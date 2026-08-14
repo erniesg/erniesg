@@ -4,10 +4,37 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   PUBLICATION_TOOLCHAIN,
+  publicationPdfRendererForRuntime,
+  publicationPlatformKey,
+  publicationPlaywrightCompatibilityForPlatform,
+  publicationPlaywrightRuntimeEvidenceForPlatform,
+  publicationPuppeteerRuntimeEvidenceForPlatform,
   publicationToolchainForRuntime,
-  publicationPdfRendererForArchitecture,
   verifyPublicationToolchain,
 } from './toolchain'
+
+const identity = {
+  executableSha256: 'a'.repeat(64),
+  executableByteLength: 123,
+  bundleSha256: '2'.repeat(64),
+  bundleByteLength: 1_234,
+  bundleEntryCount: 12,
+  playwrightPackageJsonSha256: 'b'.repeat(64),
+  playwrightCorePackageJsonSha256: 'c'.repeat(64),
+  browsersJsonSha256: 'd'.repeat(64),
+}
+
+const puppeteerIdentity = {
+  observedVersion: '150.0.7871.115',
+  executableSha256: 'e'.repeat(64),
+  executableByteLength: 456,
+  bundleSha256: '3'.repeat(64),
+  bundleByteLength: 4_567,
+  bundleEntryCount: 23,
+  puppeteerBrowsersPackageJsonSha256: 'f'.repeat(64),
+  puppeteerCorePackageJsonSha256: '1'.repeat(64),
+  vivliostyleCliPackageJsonSha256: '0'.repeat(64),
+}
 
 describe('publication toolchain manifest', () => {
   it('pins and verifies the renderer, browser, EPUBCheck artifact, and fonts', async () => {
@@ -19,9 +46,18 @@ describe('publication toolchain manifest', () => {
       browser: {
         revision: '150.0.7871.115',
         browserVersion: '150.0.7871.115',
+        launcher: { package: 'puppeteer-core', version: '25.1.0' },
         compatibility: {
-          arm64Revision: '1228',
-          arm64BrowserVersion: '149.0.7827.55',
+          platforms: {
+            'linux-arm64': {
+              revision: '1228',
+              expectedVersion: '149.0.7827.0',
+            },
+            'mac-arm64': {
+              revision: '1228',
+              expectedVersion: '149.0.7827.55',
+            },
+          },
         },
       },
       rendererPolicy: {
@@ -35,14 +71,129 @@ describe('publication toolchain manifest', () => {
         }),
       ]),
     })
-    expect(publicationPdfRendererForArchitecture('x64')).toBe('vivliostyle-cli')
-    expect(publicationPdfRendererForArchitecture('arm64')).toBe(
+    expect(publicationPdfRendererForRuntime('linux', 'x64')).toBe(
+      'vivliostyle-cli',
+    )
+    expect(publicationPdfRendererForRuntime('linux', 'arm64')).toBe(
       'playwright-chromium',
     )
-    expect(publicationToolchainForRuntime().node).toBe(process.versions.node)
-    expect(publicationToolchainForRuntime().runtime.node).toBe(
-      process.versions.node,
+  })
+
+  it('binds the pinned Puppeteer browser identity for x64 rendering', () => {
+    const browser = publicationPuppeteerRuntimeEvidenceForPlatform(
+      puppeteerIdentity,
+      'linux',
+      'x64',
     )
+    expect(browser).toMatchObject({
+      platformKey: 'linux-x64',
+      packageName: '@puppeteer/browsers',
+      browserRevision: '150.0.7871.115',
+      expectedVersion: '150.0.7871.115',
+      observedVersion: '150.0.7871.115',
+      puppeteerCorePackageJsonSha256: '1'.repeat(64),
+    })
+    expect(
+      publicationToolchainForRuntime(browser, 'linux', 'x64').runtime
+        .publicationBrowser,
+    ).toEqual(browser)
+    expect(() =>
+      publicationToolchainForRuntime(null, 'linux', 'x64'),
+    ).toThrow(/browser evidence is required/i)
+  })
+
+  it('selects reviewed Playwright identities by OS and architecture', () => {
+    expect(publicationPlatformKey('linux', 'arm64')).toBe('linux-arm64')
+    expect(publicationPlatformKey('darwin', 'arm64')).toBe('mac-arm64')
+    expect(
+      publicationPlaywrightCompatibilityForPlatform('linux', 'arm64'),
+    ).toMatchObject({
+      platformKey: 'linux-arm64',
+      browserRevision: '1228',
+      expectedVersion: '149.0.7827.0',
+    })
+    expect(
+      publicationPlaywrightCompatibilityForPlatform('darwin', 'arm64'),
+    ).toMatchObject({
+      platformKey: 'mac-arm64',
+      browserRevision: '1228',
+      expectedVersion: '149.0.7827.55',
+    })
+  })
+
+  it('accepts each observed ARM64 browser only under its own platform contract', () => {
+    const linuxEvidence = publicationPlaywrightRuntimeEvidenceForPlatform(
+      { ...identity, observedVersion: '149.0.7827.0' },
+      'linux',
+      'arm64',
+    )
+    expect(linuxEvidence).toMatchObject({
+      platformKey: 'linux-arm64',
+      expectedVersion: '149.0.7827.0',
+      observedVersion: '149.0.7827.0',
+    })
+    expect(
+      publicationToolchainForRuntime(linuxEvidence, 'linux', 'arm64').runtime
+        .publicationBrowser,
+    ).toEqual(linuxEvidence)
+    expect(() =>
+      publicationToolchainForRuntime(
+        { ...linuxEvidence, expectedVersion: '149.0.7827.55' },
+        'linux',
+        'arm64',
+      ),
+    ).toThrow(/does not match linux-arm64/)
+    expect(() =>
+      publicationPlaywrightRuntimeEvidenceForPlatform(
+        { ...identity, observedVersion: '149.0.7827.55' },
+        'linux',
+        'arm64',
+      ),
+    ).toThrow(/149\.0\.7827\.55.*149\.0\.7827\.0/)
+    expect(
+      publicationPlaywrightRuntimeEvidenceForPlatform(
+        { ...identity, observedVersion: '149.0.7827.55' },
+        'darwin',
+        'arm64',
+      ),
+    ).toMatchObject({
+      platformKey: 'mac-arm64',
+      expectedVersion: '149.0.7827.55',
+      observedVersion: '149.0.7827.55',
+    })
+    expect(() =>
+      publicationPlaywrightRuntimeEvidenceForPlatform(
+        { ...identity, observedVersion: '149.0.7827.0' },
+        'darwin',
+        'arm64',
+      ),
+    ).toThrow(/149\.0\.7827\.0.*149\.0\.7827\.55/)
+  })
+
+  it('fails closed for unsupported runtime and Playwright platform keys', () => {
+    expect(() => publicationPlatformKey('linux', 'riscv64')).toThrow(
+      /Unsupported publication architecture/,
+    )
+    expect(() =>
+      publicationPlaywrightCompatibilityForPlatform('win32', 'arm64'),
+    ).toThrow(/Unsupported publication operating system/i)
+    expect(() => publicationPdfRendererForRuntime('win32', 'arm64')).toThrow(
+      /Unsupported publication operating system/i,
+    )
+    expect(() =>
+      publicationToolchainForRuntime(null, 'linux', 'arm64'),
+    ).toThrow(/browser evidence is required/)
+    expect(() =>
+      publicationToolchainForRuntime(
+        publicationPlaywrightRuntimeEvidenceForPlatform(
+          { ...identity, observedVersion: '149.0.7827.0' },
+          'linux',
+          'arm64',
+        ),
+        'linux',
+        'x64',
+      ),
+    ).toThrow(/does not match expected.*linux-x64/)
   })
 
   it('fails closed when repository toolchain assets are missing or mismatched', async () => {

@@ -8,6 +8,10 @@ import { canonicalPublicationSourceResult } from '../src/publication/adapter-con
 import { adaptPayloadLexical } from '../src/publication/adapters/payload-lexical.ts'
 import { PUBLICATION_PROFILES } from '../src/publication/renderers/vivliostyle.ts'
 import {
+  publicationPlaywrightRuntimeEvidenceForPlatform,
+  publicationPuppeteerRuntimeEvidenceForPlatform,
+} from '../src/publication/toolchain.ts'
+import {
   publicationGraphSchema,
   serializePublicationGraph,
 } from '../src/publication/schema.ts'
@@ -24,6 +28,7 @@ import {
   assertPublicationReceiptSourceBinding,
   assertPublicationReceiptMappingVersion,
   assertPublicationReceiptPolicyVersions,
+  assertPublicationReceiptRuntime,
   checkWebPubReceipt,
   normalizePdfSearchableText,
   normalizePdfVerificationText,
@@ -39,6 +44,18 @@ import {
   validateWebPubGraph,
   verifyArtifactReceipt,
 } from './publication-check.mjs'
+
+const browserIdentity = {
+  observedVersion: '149.0.7827.0',
+  executableSha256: 'a'.repeat(64),
+  executableByteLength: 123,
+  bundleSha256: '2'.repeat(64),
+  bundleByteLength: 1_234,
+  bundleEntryCount: 12,
+  playwrightPackageJsonSha256: 'b'.repeat(64),
+  playwrightCorePackageJsonSha256: 'c'.repeat(64),
+  browsersJsonSha256: 'd'.repeat(64),
+}
 
 describe('publication:check CLI', () => {
   it('requires the exact four-output matrix', () => {
@@ -58,6 +75,154 @@ describe('publication:check CLI', () => {
         'phone-webpub,eink-epub',
       ]),
     ).toThrow(/exactly/)
+  })
+
+  it('requires the current platform browser attestation in the receipt', () => {
+    const publicationBrowser = publicationPlaywrightRuntimeEvidenceForPlatform(
+      browserIdentity,
+      'linux',
+      'arm64',
+    )
+    const receipt = {
+      toolchain: {
+        node: process.versions.node,
+        runtime: {
+          node: process.versions.node,
+          platformKey: 'linux-arm64',
+          pdfRenderer: 'playwright-chromium',
+          publicationBrowser,
+        },
+      },
+    }
+    expect(() =>
+      assertPublicationReceiptRuntime(receipt, publicationBrowser, {
+        platform: 'linux',
+        architecture: 'arm64',
+      }),
+    ).not.toThrow()
+
+    for (const field of [
+      'platformKey',
+      'packageName',
+      'packageVersion',
+      'browserRevision',
+      'expectedVersion',
+      'observedVersion',
+      'executableSha256',
+      'executableByteLength',
+      'bundleSha256',
+      'bundleByteLength',
+      'bundleEntryCount',
+      'playwrightPackageJsonSha256',
+      'playwrightCorePackageJsonSha256',
+      'browsersJsonSha256',
+    ]) {
+      const changed = structuredClone(receipt)
+      delete changed.toolchain.runtime.publicationBrowser[field]
+      expect(() =>
+        assertPublicationReceiptRuntime(changed, publicationBrowser, {
+          platform: 'linux',
+          architecture: 'arm64',
+        }),
+      ).toThrow(/browser runtime binding/i)
+    }
+
+    const driftedExecutable = structuredClone(publicationBrowser)
+    driftedExecutable.executableSha256 = 'e'.repeat(64)
+    expect(() =>
+      assertPublicationReceiptRuntime(receipt, driftedExecutable, {
+        platform: 'linux',
+        architecture: 'arm64',
+      }),
+    ).toThrow(/browser runtime binding/i)
+
+    const driftedBundle = structuredClone(publicationBrowser)
+    driftedBundle.bundleSha256 = '4'.repeat(64)
+    expect(() =>
+      assertPublicationReceiptRuntime(receipt, driftedBundle, {
+        platform: 'linux',
+        architecture: 'arm64',
+      }),
+    ).toThrow(/browser runtime binding/i)
+  })
+
+  it('requires the current Puppeteer browser attestation for x64 receipts', () => {
+    const publicationBrowser = publicationPuppeteerRuntimeEvidenceForPlatform(
+      {
+        observedVersion: '150.0.7871.115',
+        executableSha256: 'e'.repeat(64),
+        executableByteLength: 456,
+        bundleSha256: '3'.repeat(64),
+        bundleByteLength: 4_567,
+        bundleEntryCount: 23,
+        puppeteerBrowsersPackageJsonSha256: 'f'.repeat(64),
+        puppeteerCorePackageJsonSha256: '1'.repeat(64),
+        vivliostyleCliPackageJsonSha256: '0'.repeat(64),
+      },
+      'linux',
+      'x64',
+    )
+    const receipt = {
+      toolchain: {
+        node: process.versions.node,
+        runtime: {
+          node: process.versions.node,
+          platformKey: 'linux-x64',
+          pdfRenderer: 'vivliostyle-cli',
+          publicationBrowser,
+        },
+      },
+    }
+    expect(() =>
+      assertPublicationReceiptRuntime(receipt, publicationBrowser, {
+        platform: 'linux',
+        architecture: 'x64',
+      }),
+    ).not.toThrow()
+
+    for (const field of [
+      'platformKey',
+      'packageName',
+      'packageVersion',
+      'browserRevision',
+      'expectedVersion',
+      'observedVersion',
+      'executableSha256',
+      'executableByteLength',
+      'bundleSha256',
+      'bundleByteLength',
+      'bundleEntryCount',
+      'puppeteerBrowsersPackageJsonSha256',
+      'puppeteerCorePackageJsonSha256',
+      'vivliostyleCliPackageJsonSha256',
+    ]) {
+      const changed = structuredClone(receipt)
+      delete changed.toolchain.runtime.publicationBrowser[field]
+      expect(() =>
+        assertPublicationReceiptRuntime(changed, publicationBrowser, {
+          platform: 'linux',
+          architecture: 'x64',
+        }),
+      ).toThrow(/browser runtime binding/i)
+    }
+
+    const driftedExecutable = structuredClone(publicationBrowser)
+    driftedExecutable.executableSha256 = '1'.repeat(64)
+    expect(() =>
+      assertPublicationReceiptRuntime(receipt, driftedExecutable, {
+        platform: 'linux',
+        architecture: 'x64',
+      }),
+    ).toThrow(/browser runtime binding/i)
+
+    const driftedBundle = structuredClone(publicationBrowser)
+    driftedBundle.bundleSha256 = '4'.repeat(64)
+    expect(() =>
+      assertPublicationReceiptRuntime(receipt, driftedBundle, {
+        platform: 'linux',
+        architecture: 'x64',
+      }),
+    ).toThrow(/browser runtime binding/i)
   })
 
   it('derives canonical Astro route parity from source identity and isolates conformance mode', () => {

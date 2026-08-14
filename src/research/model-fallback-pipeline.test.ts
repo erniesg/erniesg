@@ -1169,6 +1169,18 @@ describe('PDF model fallback production adapter', () => {
       true,
     )
 
+    const legacy = structuredClone(adjudicated)
+    delete legacy.humanAdjudications.noteSourceAnchorReceipts
+    legacy.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        legacy,
+        legacy.modelConsultations!,
+      )
+    expect(modelConsultationReceiptMatchesPdfReconstruction(legacy)).toBe(true)
+    expect(pdfModelDerivedDecisionKeys(withoutReceipt(legacy))).toEqual(
+      new Set(),
+    )
+
     const mutations = [
       (current: typeof relationship) => {
         current.referenceRegionId = 'retargeted-note-reference-region'
@@ -1233,6 +1245,17 @@ describe('PDF model fallback production adapter', () => {
         modelConsultationReceiptMatchesPdfReconstruction(adjudicated),
       ).toBe(true)
 
+      const legacy = structuredClone(adjudicated)
+      delete legacy.humanAdjudications.noteSourceAnchorReceipts
+      legacy.modelConsultations!.semanticStateSha256 =
+        pdfModelConsultationSemanticStateSha256(
+          legacy,
+          legacy.modelConsultations!,
+        )
+      expect(modelConsultationReceiptMatchesPdfReconstruction(legacy)).toBe(
+        true,
+      )
+
       const mutations = [
         (copy: typeof adjudicated) => {
           const current = copy.noteRelationships.find(
@@ -1292,6 +1315,27 @@ describe('PDF model fallback production adapter', () => {
       }
 
       if (resolutionType === 'reclassify-plain-text') {
+        const movedLegacy = structuredClone(legacy)
+        const legacyRelationship = movedLegacy.noteRelationships.find(
+          ({ id }) => id === relationship.id,
+        )!
+        legacyRelationship.referenceStart += 1
+        legacyRelationship.referenceEnd += 1
+        if (legacyRelationship.canonicalAnchor?.kind === 'node') {
+          legacyRelationship.canonicalAnchor.start =
+            legacyRelationship.referenceStart
+          legacyRelationship.canonicalAnchor.end =
+            legacyRelationship.referenceEnd
+        }
+        movedLegacy.modelConsultations!.semanticStateSha256 =
+          pdfModelConsultationSemanticStateSha256(
+            movedLegacy,
+            movedLegacy.modelConsultations!,
+          )
+        expect(
+          modelConsultationReceiptMatchesPdfReconstruction(movedLegacy),
+        ).toBe(false)
+
         const zeroRun = structuredClone(adjudicated)
         const current = zeroRun.noteRelationships.find(
           ({ id }) => id === relationship.id,

@@ -631,17 +631,41 @@ function humanNoteSourceAnchorMatches(
     reconstruction.humanAdjudications?.noteSourceAnchorReceipts?.filter(
       ({ relationshipId }) => relationshipId === relationship.id,
     ) ?? []
-  if (sourceAnchorReceipts.length !== 1) return false
-  const sourceAnchorReceipt = sourceAnchorReceipts[0]!
-  if (
-    sourceAnchorReceipt.label !== relationship.label ||
-    sourceAnchorReceipt.referenceRegionId !== relationship.referenceRegionId ||
-    sourceAnchorReceipt.referenceStart !== relationship.referenceStart ||
-    sourceAnchorReceipt.referenceEnd !== relationship.referenceEnd ||
-    stableModelConsultationJson(sourceAnchorReceipt.canonicalAnchor) !==
-      stableModelConsultationJson(relationship.canonicalAnchor)
-  ) {
-    return false
+  if (sourceAnchorReceipts.length > 1) return false
+  const sourceAnchorReceipt = sourceAnchorReceipts[0]
+  if (sourceAnchorReceipt) {
+    if (
+      sourceAnchorReceipt.label !== relationship.label ||
+      sourceAnchorReceipt.referenceRegionId !==
+        relationship.referenceRegionId ||
+      sourceAnchorReceipt.referenceStart !== relationship.referenceStart ||
+      sourceAnchorReceipt.referenceEnd !== relationship.referenceEnd ||
+      stableModelConsultationJson(sourceAnchorReceipt.canonicalAnchor) !==
+        stableModelConsultationJson(relationship.canonicalAnchor)
+    ) {
+      return false
+    }
+  } else {
+    // Reconstructions adjudicated before source-anchor receipts were added
+    // still retain the exact classifier record that opened the note decision.
+    // Reconstruct only the source fields that record independently commits;
+    // the canonical owner and installed projection are verified below.
+    const legacyClassifications = reconstruction.diagnostics
+      .flatMap(({ noteMarkerClassification }) =>
+        noteMarkerClassification ? [noteMarkerClassification] : [],
+      )
+      .filter(({ id }) => id === relationship.id)
+    if (
+      legacyClassifications.length !== 1 ||
+      legacyClassifications[0]!.disposition !== 'note-reference' ||
+      legacyClassifications[0]!.label !== relationship.label ||
+      legacyClassifications[0]!.referenceRegionId !==
+        relationship.referenceRegionId ||
+      legacyClassifications[0]!.start !== relationship.referenceStart ||
+      legacyClassifications[0]!.end !== relationship.referenceEnd
+    ) {
+      return false
+    }
   }
   const candidateTargetRegionIds = new Set(
     relationship.candidates.map(({ targetRegionId }) => targetRegionId),

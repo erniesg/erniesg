@@ -1212,6 +1212,87 @@ describe('PDF model fallback production adapter', () => {
     }
   })
 
+  it('fails closed for receiptless legacy human note author anchors', async () => {
+    const authorAnchored = structuredClone(adjudicationRequired)
+    const relationship = authorAnchored.noteRelationships.find(
+      ({ candidates }) => candidates.length > 0,
+    )!
+    const originalAuthor = 'Ada Example'
+    const replacementAuthor = 'Grace Example'
+    authorAnchored.paper.authors = [originalAuthor, replacementAuthor]
+    relationship.canonicalAnchor = {
+      kind: 'author',
+      author: originalAuthor,
+    }
+    authorAnchored.paper.nodes = authorAnchored.paper.nodes.filter(
+      (node) =>
+        !authorAnchored.provenance[node.id]?.regionIds.includes(
+          relationship.referenceRegionId,
+        ),
+    )
+    const failed = await resolvePdfModelFallbacks(authorAnchored, {
+      enabled: true,
+      ownerOptIn: true,
+      model: {
+        identity: modelIdentity,
+        consult: () => {
+          throw new Error('provider failed')
+        },
+      },
+    })
+    const diagnostic = failed.diagnostics.find(
+      ({ code, target }) =>
+        code === 'AMBIGUOUS_NOTE_MATCH' && target?.markerId === relationship.id,
+    )!
+    const candidate = relationship.candidates[0]!
+    const adjudicated = applyHumanDecisionFile(
+      failed,
+      upsertHumanDecision(createHumanDecisionFile(failed.source.sha256), {
+        diagnosticCode: diagnostic.code,
+        target: structuredClone(diagnostic.target!),
+        resolution: {
+          type: 'accept-note-match',
+          targetNoteId: candidate.targetNoteId,
+          targetRegionId: candidate.targetRegionId,
+        },
+      }),
+    )
+    expect(modelConsultationReceiptMatchesPdfReconstruction(adjudicated)).toBe(
+      true,
+    )
+
+    const legacy = structuredClone(adjudicated)
+    delete legacy.humanAdjudications.noteSourceAnchorReceipts
+    legacy.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        legacy,
+        legacy.modelConsultations!,
+      )
+    const retargeted = structuredClone(legacy)
+    const retargetedRelationship = retargeted.noteRelationships.find(
+      ({ id }) => id === relationship.id,
+    )!
+    retargetedRelationship.canonicalAnchor = {
+      kind: 'author',
+      author: replacementAuthor,
+    }
+    retargeted.paper.authorNotes = retargeted.paper.authorNotes?.map((note) =>
+      note.id === relationship.id
+        ? { ...note, author: replacementAuthor }
+        : note,
+    )
+    retargeted.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        retargeted,
+        retargeted.modelConsultations!,
+      )
+
+    expect([
+      modelConsultationReceiptMatchesPdfReconstruction(legacy),
+      modelConsultationReceiptMatchesPdfReconstruction(retargeted),
+    ]).toEqual([false, false])
+  })
+
   it.each(['reclassify-citation', 'reclassify-plain-text'] as const)(
     'binds human note %s supersession to the adjudicated source marker',
     async (resolutionType) => {
@@ -1252,9 +1333,11 @@ describe('PDF model fallback production adapter', () => {
           legacy,
           legacy.modelConsultations!,
         )
-      expect(modelConsultationReceiptMatchesPdfReconstruction(legacy)).toBe(
-        true,
-      )
+      if (resolutionType === 'reclassify-citation') {
+        expect(modelConsultationReceiptMatchesPdfReconstruction(legacy)).toBe(
+          true,
+        )
+      }
 
       const mutations = [
         (copy: typeof adjudicated) => {
@@ -1315,7 +1398,32 @@ describe('PDF model fallback production adapter', () => {
       }
 
       if (resolutionType === 'reclassify-plain-text') {
-        const movedLegacy = structuredClone(legacy)
+        const zeroRunLegacy = structuredClone(legacy)
+        const zeroRunRelationship = zeroRunLegacy.noteRelationships.find(
+          ({ id }) => id === relationship.id,
+        )!
+        const zeroRunAnchor = zeroRunRelationship.canonicalAnchor
+        expect(zeroRunAnchor?.kind).toBe('node')
+        const zeroRunOwner = zeroRunLegacy.paper.nodes.find(
+          ({ id }) =>
+            zeroRunAnchor?.kind === 'node' && id === zeroRunAnchor.nodeId,
+        )!
+        if (!('inlineRuns' in zeroRunOwner)) {
+          throw new Error('Missing inline-run owner for legacy note marker')
+        }
+        zeroRunOwner.inlineRuns = zeroRunOwner.inlineRuns?.filter(
+          ({ relationshipId }) => relationshipId !== relationship.id,
+        )
+        if (zeroRunOwner.inlineRuns?.length === 0) {
+          delete zeroRunOwner.inlineRuns
+        }
+        zeroRunLegacy.modelConsultations!.semanticStateSha256 =
+          pdfModelConsultationSemanticStateSha256(
+            zeroRunLegacy,
+            zeroRunLegacy.modelConsultations!,
+          )
+
+        const movedLegacy = structuredClone(zeroRunLegacy)
         const legacyRelationship = movedLegacy.noteRelationships.find(
           ({ id }) => id === relationship.id,
         )!
@@ -1327,14 +1435,23 @@ describe('PDF model fallback production adapter', () => {
           legacyRelationship.canonicalAnchor.end =
             legacyRelationship.referenceEnd
         }
+        const legacyClassification = movedLegacy.diagnostics
+          .flatMap(({ noteMarkerClassification }) =>
+            noteMarkerClassification ? [noteMarkerClassification] : [],
+          )
+          .find(({ id }) => id === relationship.id)!
+        legacyClassification.start = legacyRelationship.referenceStart
+        legacyClassification.end = legacyRelationship.referenceEnd
         movedLegacy.modelConsultations!.semanticStateSha256 =
           pdfModelConsultationSemanticStateSha256(
             movedLegacy,
             movedLegacy.modelConsultations!,
           )
-        expect(
+        expect([
+          modelConsultationReceiptMatchesPdfReconstruction(legacy),
+          modelConsultationReceiptMatchesPdfReconstruction(zeroRunLegacy),
           modelConsultationReceiptMatchesPdfReconstruction(movedLegacy),
-        ).toBe(false)
+        ]).toEqual([true, false, false])
 
         const zeroRun = structuredClone(adjudicated)
         const current = zeroRun.noteRelationships.find(

@@ -683,6 +683,7 @@ function humanNoteSourceAnchorMatches(
   const anchor = relationship.canonicalAnchor
   if (!anchor) return false
   if (anchor.kind === 'author') {
+    if (!sourceAnchorReceipt) return false
     if (resolution.type !== 'accept-note-match') {
       return reconstruction.paper.authors.includes(anchor.author)
     }
@@ -757,7 +758,7 @@ function humanNoteSourceAnchorMatches(
       ) ?? []
     return (
       !noteReferences?.some(({ id }) => id === relationship.id) &&
-      (retainedMarkerRuns.length === 0 ||
+      ((retainedMarkerRuns.length === 0 && sourceAnchorReceipt !== undefined) ||
         (retainedMarkerRuns.length === 1 &&
           retainedMarkerRuns[0]!.semanticRole === 'note-reference' &&
           retainedMarkerRuns[0]!.start === relationship.referenceStart &&

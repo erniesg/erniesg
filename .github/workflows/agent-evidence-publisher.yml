@@ -20,9 +20,10 @@ jobs:
     if: >-
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.conclusion == 'success'
-    # This job executes candidate dependencies without a write token, so it may
-    # follow the same private-repository fallback as the candidate evidence job.
-    runs-on: ${{ fromJSON(vars.RUCKSACK_RUNS_ON || '["ubuntu-latest"]') }}
+    # Candidate code cannot choose this repository-variable selector. Privileged
+    # disposable-UID revalidation defaults to ephemeral hosted Ubuntu and never
+    # inherits the ordinary candidate pool configured by RUCKSACK_RUNS_ON.
+    runs-on: ${{ fromJSON(vars.RUCKSACK_REVALIDATOR_RUNS_ON || '["ubuntu-latest"]') }}
     permissions:
       contents: read
     outputs:
@@ -102,16 +103,26 @@ jobs:
             exit 1
           fi
           readonly producer_source
-          producer_node="$(command -v node)"
-          producer_node="$(realpath -e -- "$producer_node")"
+          selected_producer_node="$(command -v node)"
+          selected_producer_node="$(realpath -e -- "$selected_producer_node")"
           workspace_real="$(realpath -e -- "$GITHUB_WORKSPACE")"
-          case "$producer_node" in
+          case "$selected_producer_node" in
             "$workspace_real"|"$workspace_real"/*)
               echo "Producer runtime resolves inside the candidate workspace." >&2
               exit 1
               ;;
           esac
-          readonly producer_node
+          if [ ! -f "$selected_producer_node" ] || [ -L "$selected_producer_node" ]; then
+            echo "Selected producer runtime must resolve to one regular file." >&2
+            exit 1
+          fi
+          selected_node_bin="${selected_producer_node%/*}"
+          selected_node_root="${selected_node_bin%/*}"
+          if [ "$selected_node_bin/node" != "$selected_producer_node" ] ||              [ ! -d "$selected_node_root" ] || [ -L "$selected_node_root" ]; then
+            echo "Selected producer runtime must belong to one real Node distribution." >&2
+            exit 1
+          fi
+          readonly selected_producer_node selected_node_root
           producer_git="$(command -v git)"
           producer_git="$(realpath -e -- "$producer_git")"
           case "$producer_git" in
@@ -126,7 +137,7 @@ jobs:
             echo "Trusted candidate isolation currently requires Linux." >&2
             exit 1
           fi
-          for trusted_tool in sudo pkill pgrep useradd userdel id install rm; do
+          for trusted_tool in sudo pkill pgrep useradd userdel id install rm cmp cp chown chmod; do
             trusted_path="$(command -v "$trusted_tool")"
             case "$trusted_path" in
               /*) ;;
@@ -150,6 +161,14 @@ jobs:
             exit 1
           fi
           isolation_root="$(mktemp -d "$RUNNER_TEMP/rucksack-evidence-isolation.XXXXXX")"
+          isolation_root="$(realpath -e -- "$isolation_root")"
+          case "$isolation_root" in
+            "$workspace_real"|"$workspace_real"/*)
+              "$RUCKSACK_TRUSTED_RM" -rf -- "$isolation_root"
+              echo "Trusted candidate isolation root resolves inside the workspace." >&2
+              exit 1
+              ;;
+          esac
           chmod 0711 "$isolation_root"
           readonly isolation_root
           candidate_user="rsk${GITHUB_RUN_ID}a${GITHUB_RUN_ATTEMPT}"
@@ -166,6 +185,37 @@ jobs:
             "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_RM"               -rf -- "$isolation_root" >/dev/null 2>&1 || true
           }
           trap cleanup_candidate_isolation EXIT
+          trusted_runtime_root="$isolation_root/trusted-runtime"
+          "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_INSTALL"             -d -o 0 -g 0 -m 0555 -- "$trusted_runtime_root"
+          "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_CP"             -a -- "$selected_node_root/." "$trusted_runtime_root/"
+          "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_CHOWN"             -R 0:0 -- "$trusted_runtime_root"
+          "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_CHMOD"             -R go-w -- "$trusted_runtime_root"
+          "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_CHMOD"             0555 -- "$trusted_runtime_root" "$trusted_runtime_root/bin"
+          producer_node="$trusted_runtime_root/bin/node"
+          "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_RM" -f -- "$producer_node"
+          "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_INSTALL"             -o 0 -g 0 -m 0555 -- "$selected_producer_node" "$producer_node"
+          producer_node="$(realpath -e -- "$producer_node")"
+          if ! "$RUCKSACK_TRUSTED_CMP" -s -- "$selected_producer_node" "$producer_node"; then
+            echo "Staged producer runtime bytes do not match the selected runtime." >&2
+            exit 1
+          fi
+          selected_node_version="$("$selected_producer_node" --version)"
+          staged_node_version="$("$producer_node" --version)"
+          if [ "$staged_node_version" != "$selected_node_version" ]; then
+            echo "Staged producer runtime version does not match the selected runtime." >&2
+            exit 1
+          fi
+          if [[ "$staged_node_version" =~ ^v([0-9]+)\. ]]; then
+            staged_node_major="${BASH_REMATCH[1]}"
+          else
+            echo "Staged producer runtime returned an invalid Node version." >&2
+            exit 1
+          fi
+          if [ "$staged_node_major" -lt 20 ]; then
+            echo "Staged producer runtime must be Node 20 or newer." >&2
+            exit 1
+          fi
+          readonly trusted_runtime_root producer_node
           "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_USERADD"             --system --no-create-home --home-dir "$isolation_root/home"             --shell /usr/sbin/nologin "$candidate_user"
           candidate_created=1
           RUCKSACK_CANDIDATE_UID="$("$RUCKSACK_TRUSTED_ID" -u "$candidate_user")"
@@ -1009,6 +1059,8 @@ jobs:
           readonly install_source
 
           set +e
+          (
+          unset LD_AUDIT LD_LIBRARY_PATH LD_PRELOAD NODE_OPTIONS NODE_PATH
           "$producer_node" --experimental-vm-modules 3<<<"$producer_source" 4<<<"$install_source" <<'RUCKSACK_TRUSTED_LAUNCHER'
           const fs = require("node:fs");
           const { spawnSync } = require("node:child_process");
@@ -1054,15 +1106,37 @@ jobs:
             } catch (error) {
               fail(`${label} is unavailable: ${error.message}`);
             }
-            if (!stats.isFile() || stats.isSymbolicLink()) fail(`${label} must be one regular file`);
+            if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1) {
+              fail(`${label} must be one unshared regular file`);
+            }
             return {
               dev: stats.dev.toString(),
               ino: stats.ino.toString(),
               mode: stats.mode,
               uid: stats.uid,
               gid: stats.gid,
+              nlink: stats.nlink,
               size: stats.size,
               digest: createHash("sha256").update(fs.readFileSync(target)).digest("hex"),
+            };
+          }
+
+          function pinnedDirectory(target, label) {
+            let stats;
+            try {
+              stats = fs.lstatSync(target);
+            } catch (error) {
+              fail(`${label} is unavailable: ${error.message}`);
+            }
+            if (!stats.isDirectory() || stats.isSymbolicLink()) {
+              fail(`${label} must be one real directory`);
+            }
+            return {
+              dev: stats.dev.toString(),
+              ino: stats.ino.toString(),
+              mode: stats.mode,
+              uid: stats.uid,
+              gid: stats.gid,
             };
           }
 
@@ -1071,12 +1145,29 @@ jobs:
           const pinnedSudo = pinnedRegularFile(trustedSudo, "trusted sudo executable");
           const producerNode = fs.realpathSync(process.execPath);
           const pinnedProducerNode = pinnedRegularFile(producerNode, "trusted producer runtime");
+          const producerNodeRoot = path.dirname(producerNode);
+          const pinnedProducerNodeRoot = pinnedDirectory(
+            producerNodeRoot,
+            "trusted producer runtime directory",
+          );
+          const producerNodeDistributionRoot = path.dirname(producerNodeRoot);
+          const pinnedProducerNodeDistributionRoot = pinnedDirectory(
+            producerNodeDistributionRoot,
+            "trusted producer runtime distribution",
+          );
           let candidateGitLink = "";
           let pinnedCandidateGitLink = null;
 
           function assertPinnedRegularFile(target, expected, label, stage) {
             const actual = pinnedRegularFile(target, label);
-            for (const field of ["dev", "ino", "mode", "uid", "gid", "size", "digest"]) {
+            for (const field of ["dev", "ino", "mode", "uid", "gid", "nlink", "size", "digest"]) {
+              if (actual[field] !== expected[field]) fail(`${stage}: ${label} changed`);
+            }
+          }
+
+          function assertPinnedDirectory(target, expected, label, stage) {
+            const actual = pinnedDirectory(target, label);
+            for (const field of ["dev", "ino", "mode", "uid", "gid"]) {
               if (actual[field] !== expected[field]) fail(`${stage}: ${label} changed`);
             }
           }
@@ -1094,6 +1185,12 @@ jobs:
           if (candidateCanWrite(pinnedRunner)) fail("candidate can write trusted candidate runner");
           if (candidateCanWrite(pinnedSudo)) fail("candidate can write trusted sudo executable");
           if (candidateCanWrite(pinnedProducerNode)) fail("candidate can write trusted producer runtime");
+          if (candidateCanWrite(pinnedProducerNodeRoot)) {
+            fail("candidate can replace trusted producer runtime");
+          }
+          if (candidateCanWrite(pinnedProducerNodeDistributionRoot)) {
+            fail("candidate can replace trusted producer runtime distribution");
+          }
           const trustedProducerRoot = fs.realpathSync(trustedProducerRootInput);
           const trustedProducerRootStats = fs.lstatSync(trustedProducerRoot);
           if (
@@ -1172,6 +1269,18 @@ jobs:
             assertPinnedRegularFile(candidateRunner, pinnedRunner, "trusted candidate runner", stage);
             assertPinnedRegularFile(trustedSudo, pinnedSudo, "trusted sudo executable", stage);
             assertPinnedRegularFile(producerNode, pinnedProducerNode, "trusted producer runtime", stage);
+            assertPinnedDirectory(
+              producerNodeRoot,
+              pinnedProducerNodeRoot,
+              "trusted producer runtime directory",
+              stage,
+            );
+            assertPinnedDirectory(
+              producerNodeDistributionRoot,
+              pinnedProducerNodeDistributionRoot,
+              "trusted producer runtime distribution",
+              stage,
+            );
             assertPinnedRegularFile(
               trustedProducerPath,
               pinnedTrustedProducer,
@@ -1202,6 +1311,18 @@ jobs:
             assertPinnedRegularFile(candidateGit, pinnedGit, "trusted git executable", stage);
             assertPinnedRegularFile(trustedSudo, pinnedSudo, "trusted sudo executable", stage);
             assertPinnedRegularFile(producerNode, pinnedProducerNode, "trusted producer runtime", stage);
+            assertPinnedDirectory(
+              producerNodeRoot,
+              pinnedProducerNodeRoot,
+              "trusted producer runtime directory",
+              stage,
+            );
+            assertPinnedDirectory(
+              producerNodeDistributionRoot,
+              pinnedProducerNodeDistributionRoot,
+              "trusted producer runtime distribution",
+              stage,
+            );
             assertPinnedRegularFile(
               trustedProducerPath,
               pinnedTrustedProducer,
@@ -2322,6 +2443,7 @@ jobs:
           copyTrustedEvidence(".agent/evidence", trustedEvidenceRoot);
           process.exit(producerStatus);
           RUCKSACK_TRUSTED_LAUNCHER
+          )
           status=$?
           set -e
           printf 'status=%s\n' "$status" >> "$GITHUB_OUTPUT"
@@ -2342,9 +2464,9 @@ jobs:
       always() &&
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.conclusion == 'success'
-    # Keep fixed validation off the candidate execution pool. Self-hosted-only
-    # repositories must use the dedicated, ephemeral publisher runner pool.
-    runs-on: ${{ fromJSON(vars.RUCKSACK_PUBLISHER_RUNS_ON || '["ubuntu-latest"]') }}
+    # Validation stays tokenless on the same fresh-machine pool as privileged
+    # revalidation. It never inherits the ordinary or write-capable pools.
+    runs-on: ${{ fromJSON(vars.RUCKSACK_REVALIDATOR_RUNS_ON || '["ubuntu-latest"]') }}
     permissions:
       actions: read
       contents: read

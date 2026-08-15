@@ -1,9 +1,7 @@
 import { createHash } from 'node:crypto'
-import { execFileSync, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { constants as fsConstants } from 'node:fs'
 import {
-  access,
-  chmod,
   copyFile,
   mkdir,
   readFile,
@@ -12,12 +10,19 @@ import {
 } from 'node:fs/promises'
 import { basename, dirname, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { Browser, computeExecutablePath } from '@puppeteer/browsers'
 import JSZip from 'jszip'
 import { PDFDocument } from 'pdf-lib'
 import { chromium } from 'playwright'
 import { canonicalPublicationSubsetSha256 } from '../adapter-conformance'
 import { serializeAssetBundle } from '../asset-bundle'
+import {
+  preparePublicationPlaywrightRuntime,
+  preparePublicationPuppeteerRuntime,
+} from '../browser-runtime'
+export {
+  publicationBrowserVersionMatches,
+  publicationPlaywrightExecutableCandidates,
+} from '../browser-runtime'
 import { PUBLICATION_OUTPUT_POLICY_VERSIONS } from '../output-contract'
 import type {
   PublicationGraph,
@@ -31,9 +36,10 @@ import type {
 } from '../adapter-registry'
 import {
   PUBLICATION_TOOLCHAIN,
+  publicationPdfRendererForRuntime,
   publicationToolchainForRuntime,
-  publicationPdfRendererForArchitecture,
   verifyPublicationToolchain,
+  type PublicationBrowserRuntimeEvidence,
 } from '../toolchain'
 
 export const PUBLICATION_PROFILES = [
@@ -49,14 +55,6 @@ const FIXED_DATE = new Date('2000-01-01T00:00:00.000Z')
 // pre-existing entry (symlink, hard link, FIFO, or regular file) is never
 // followed, truncated, or blocked on — creation fails closed instead.
 const EXCLUSIVE_WRITE = { flag: 'wx' } as const
-const PUBLICATION_BROWSER_CACHE = resolve(
-  'node_modules/.cache/publication-browsers',
-)
-const PLAYWRIGHT_BROWSER_CACHE = resolve(
-  PUBLICATION_BROWSER_CACHE,
-  'playwright',
-)
-const PUPPETEER_BROWSER_CACHE = resolve(PUBLICATION_BROWSER_CACHE, 'puppeteer')
 const PROFILE_DETAILS = {
   'phone-webpub': {
     dimensions: '390px x continuous',
@@ -759,86 +757,35 @@ export function publicationEpubAccessibilityMetadata(graph: PublicationGraph) {
   }
 }
 
-export function publicationPlaywrightExecutableCandidates(
-  revision: string,
-  platform = process.platform,
-  architecture = process.arch,
-) {
-  const platformKey =
-    platform === 'darwin'
-      ? `mac-${architecture === 'arm64' ? 'arm64' : 'x64'}`
-      : platform === 'win32'
-        ? 'win-x64'
-        : `linux-${architecture === 'arm64' ? 'arm64' : 'x64'}`
-  const chromiumPaths: Record<string, string[]> = {
-    'linux-x64': ['chrome-linux64', 'chrome'],
-    'linux-arm64': ['chrome-linux', 'chrome'],
-    'mac-x64': [
-      'chrome-mac-x64',
-      'Google Chrome for Testing.app',
-      'Contents',
-      'MacOS',
-      'Google Chrome for Testing',
-    ],
-    'mac-arm64': [
-      'chrome-mac-arm64',
-      'Google Chrome for Testing.app',
-      'Contents',
-      'MacOS',
-      'Google Chrome for Testing',
-    ],
-    'win-x64': ['chrome-win64', 'chrome.exe'],
-  }
-  const headlessPaths: Record<string, string[]> = {
-    'linux-x64': ['chrome-headless-shell-linux64', 'chrome-headless-shell'],
-    'linux-arm64': ['chrome-linux', 'headless_shell'],
-    'mac-x64': ['chrome-headless-shell-mac-x64', 'chrome-headless-shell'],
-    'mac-arm64': ['chrome-headless-shell-mac-arm64', 'chrome-headless-shell'],
-    'win-x64': ['chrome-headless-shell-win64', 'chrome-headless-shell.exe'],
-  }
-  return [
-    resolve(
-      PLAYWRIGHT_BROWSER_CACHE,
-      `chromium-${revision}`,
-      ...chromiumPaths[platformKey],
-    ),
-    resolve(
-      PLAYWRIGHT_BROWSER_CACHE,
-      `chromium_headless_shell-${revision}`,
-      ...headlessPaths[platformKey],
-    ),
-  ]
-}
+type PreparedPdfRenderer =
+  | {
+      renderer: 'playwright-chromium'
+      executablePath: string
+      publicationBrowser: PublicationBrowserRuntimeEvidence
+      assertUnchanged: () => Promise<void>
+      verifyUnchanged: () => Promise<void>
+      cleanup: () => Promise<void>
+    }
+  | {
+      renderer: 'vivliostyle-cli'
+      executablePath: string
+      publicationBrowser: PublicationBrowserRuntimeEvidence
+      assertUnchanged: () => Promise<void>
+      verifyUnchanged: () => Promise<void>
+      cleanup: () => Promise<void>
+    }
 
-export function publicationBrowserVersionMatches(
-  versionOutput: string,
-  expectedVersion: string,
-) {
-  const actual = String(versionOutput).match(/\b(\d+\.\d+\.\d+\.\d+)\b/u)?.[1]
-  const expected = String(expectedVersion).match(/^(\d+\.\d+\.\d+\.\d+)$/u)?.[1]
-  return Boolean(actual && expected && actual === expected)
-}
-
-function verifyPublicationBrowserExecutable(
-  executablePath: string,
-  expectedVersion: string,
-) {
-  let versionOutput = ''
-  try {
-    versionOutput = execFileSync(executablePath, ['--version'], {
-      encoding: 'utf8',
-      timeout: 10_000,
-    })
-  } catch (error) {
-    throw new Error(
-      `Pinned publication browser could not report its version: ${String(error)}`,
-    )
+async function preparePdfRenderer(): Promise<PreparedPdfRenderer> {
+  const renderer = publicationPdfRendererForRuntime()
+  if (renderer === 'playwright-chromium')
+    return {
+      renderer,
+      ...(await preparePublicationPlaywrightRuntime()),
+    }
+  return {
+    renderer: 'vivliostyle-cli',
+    ...(await preparePublicationPuppeteerRuntime()),
   }
-  if (!publicationBrowserVersionMatches(versionOutput, expectedVersion))
-    throw new Error(
-      `Pinned publication browser version ${versionOutput.trim() || '(missing)'} does not match ${expectedVersion}`,
-    )
-  return versionOutput.trim()
 }
 
 async function createEpub(
@@ -966,11 +913,6 @@ async function run(command: string, args: string[], environment = process.env) {
   })
 }
 
-type PdfRenderer = Extract<
-  ArtifactRenderer,
-  'vivliostyle-cli' | 'playwright-chromium'
->
-
 // PDF bytes are first written by the pinned browser or Vivliostyle CLI, which
 // cannot take O_EXCL flags; both only ever target paths inside the fresh
 // invocation-owned render directory created above, and this normalization
@@ -978,16 +920,16 @@ type PdfRenderer = Extract<
 async function normalizePdf(
   path: string,
   title: string,
-  renderer: PdfRenderer,
+  prepared: PreparedPdfRenderer,
 ) {
   const pdf = await PDFDocument.load(await readFile(path))
   pdf.setTitle(title)
   pdf.setAuthor('')
   pdf.setCreator('ernie.sg publication compiler')
   pdf.setProducer(
-    renderer === 'vivliostyle-cli'
+    prepared.renderer === 'vivliostyle-cli'
       ? `Vivliostyle CLI ${PUBLICATION_TOOLCHAIN.vivliostyleCli.version}`
-      : `Playwright Chromium ${PUBLICATION_TOOLCHAIN.browser.compatibility.arm64BrowserVersion}`,
+      : `Playwright Chromium ${prepared.publicationBrowser.expectedVersion}`,
   )
   pdf.setCreationDate(FIXED_DATE)
   pdf.setModificationDate(FIXED_DATE)
@@ -998,33 +940,14 @@ async function createPdf(
   htmlPath: string,
   outputPath: string,
   size: 'A4' | 'A5',
-): Promise<PdfRenderer> {
-  const renderer = publicationPdfRendererForArchitecture()
-  if (renderer === 'playwright-chromium') {
-    const revision = PUBLICATION_TOOLCHAIN.browser.compatibility.arm64Revision
-    const candidates = publicationPlaywrightExecutableCandidates(revision)
-    const executablePath = await candidates.reduce<Promise<string>>(
-      async (previous, candidate) => {
-        const found = await previous
-        if (found) return found
-        try {
-          await access(candidate)
-          return candidate
-        } catch {
-          return ''
-        }
-      },
-      Promise.resolve(''),
-    )
-    if (!executablePath)
-      throw new Error(
-        'Pinned Playwright Chromium is not installed in the repository-local publication browser cache. Run `npm ci` before disabling network access.',
-      )
-    verifyPublicationBrowserExecutable(
-      executablePath,
-      PUBLICATION_TOOLCHAIN.browser.compatibility.arm64BrowserVersion,
-    )
-    const browser = await chromium.launch({ executablePath, headless: true })
+  prepared: PreparedPdfRenderer,
+): Promise<void> {
+  if (prepared.renderer === 'playwright-chromium') {
+    await prepared.assertUnchanged()
+    const browser = await chromium.launch({
+      executablePath: prepared.executablePath,
+      headless: true,
+    })
     try {
       const page = await browser.newPage()
       await page.emulateMedia({ media: 'print' })
@@ -1040,60 +963,46 @@ async function createPdf(
       })
     } finally {
       await browser.close()
+      await prepared.assertUnchanged()
     }
-    return 'playwright-chromium'
+    return
   }
-  if (renderer !== 'vivliostyle-cli')
-    throw new Error(`Unsupported PDF renderer policy: ${renderer}`)
-  let browserPath: string
-  try {
-    browserPath = computeExecutablePath({
-      browser: Browser.CHROME,
-      buildId: PUBLICATION_TOOLCHAIN.browser.revision,
-      cacheDir: PUPPETEER_BROWSER_CACHE,
-    })
-    await chmod(browserPath, 0o755)
-  } catch {
-    throw new Error(
-      'Pinned Chromium is not installed in the repository-local publication browser cache. Run `npm ci` before disabling network access.',
-    )
-  }
-  verifyPublicationBrowserExecutable(
-    browserPath,
-    PUBLICATION_TOOLCHAIN.browser.browserVersion,
-  )
   const cli = resolve('node_modules/.bin/vivliostyle')
-  await run(
-    cli,
-    [
-      'build',
-      htmlPath,
-      '--single-doc',
-      '--output',
-      outputPath,
-      '--format',
-      'pdf',
-      '--size',
-      size,
-      '--executable-browser',
-      browserPath,
-      '--viewer-param',
-      'allowScripts=false',
-      '--no-vite-config-file',
-      '--no-enable-static-serve',
-      '--log-level',
-      'silent',
-    ],
-    {
-      ...process.env,
-      NO_PROXY: '*',
-      no_proxy: '*',
-      HTTP_PROXY: '',
-      HTTPS_PROXY: '',
-      ALL_PROXY: '',
-    },
-  )
-  return 'vivliostyle-cli'
+  await prepared.assertUnchanged()
+  try {
+    await run(
+      cli,
+      [
+        'build',
+        htmlPath,
+        '--single-doc',
+        '--output',
+        outputPath,
+        '--format',
+        'pdf',
+        '--size',
+        size,
+        '--executable-browser',
+        prepared.executablePath,
+        '--viewer-param',
+        'allowScripts=false',
+        '--no-vite-config-file',
+        '--no-enable-static-serve',
+        '--log-level',
+        'silent',
+      ],
+      {
+        ...process.env,
+        NO_PROXY: '*',
+        no_proxy: '*',
+        HTTP_PROXY: '',
+        HTTPS_PROXY: '',
+        ALL_PROXY: '',
+      },
+    )
+  } finally {
+    await prepared.assertUnchanged()
+  }
 }
 
 async function receiptFor(
@@ -1224,22 +1133,34 @@ export const vivliostyleRenderer: PublicationRenderer = {
         fsConstants.COPYFILE_EXCL,
       )
     const pdfArtifacts: ArtifactReceipt[] = []
-    for (const [profile, size] of [
-      ['a5-pdf', 'A5'],
-      ['a4-pdf', 'A4'],
-    ] as const) {
-      const htmlPath = resolve(output, `${profile}.html`)
-      await writeFile(
-        htmlPath,
-        publicationGraphToHtml(bundle.graph, layoutAssets, profile),
-        EXCLUSIVE_WRITE,
-      )
-      const path = resolve(output, `${profile}.pdf`)
-      const renderer = await createPdf(htmlPath, path, size)
-      await normalizePdf(path, bundle.graph.metadata.title, renderer)
-      pdfArtifacts.push(
-        await receiptFor(profile, path, renderer, `${profile}.pdf`),
-      )
+    const preparedPdfRenderer = await preparePdfRenderer()
+    const pdfRenderer = preparedPdfRenderer.renderer
+    const publicationBrowser = preparedPdfRenderer.publicationBrowser
+    try {
+      for (const [profile, size] of [
+        ['a5-pdf', 'A5'],
+        ['a4-pdf', 'A4'],
+      ] as const) {
+        const htmlPath = resolve(output, `${profile}.html`)
+        await writeFile(
+          htmlPath,
+          publicationGraphToHtml(bundle.graph, layoutAssets, profile),
+          EXCLUSIVE_WRITE,
+        )
+        const path = resolve(output, `${profile}.pdf`)
+        await createPdf(htmlPath, path, size, preparedPdfRenderer)
+        await normalizePdf(
+          path,
+          bundle.graph.metadata.title,
+          preparedPdfRenderer,
+        )
+        pdfArtifacts.push(
+          await receiptFor(profile, path, pdfRenderer, `${profile}.pdf`),
+        )
+      }
+      await preparedPdfRenderer.verifyUnchanged()
+    } finally {
+      await preparedPdfRenderer.cleanup()
     }
     const artifacts = [
       await receiptForDirectory(
@@ -1268,7 +1189,7 @@ export const vivliostyleRenderer: PublicationRenderer = {
       },
       profiles: PROFILE_DETAILS,
       policyVersions: PUBLICATION_OUTPUT_POLICY_VERSIONS,
-      toolchain: publicationToolchainForRuntime(),
+      toolchain: publicationToolchainForRuntime(publicationBrowser),
       repository,
       artifacts,
     }

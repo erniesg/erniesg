@@ -305,12 +305,16 @@ jobs:
                       not isinstance(directory, str)
                       or not directory.startswith("/")
                       or "\x00" in directory
+                      or os.path.normpath(directory) != directory
                       for directory in requested_safe_directories
                   )
               ):
                   refuse("candidate Git safe-directory list is invalid")
               safe_directories: list[str] = []
               for directory in requested_safe_directories:
+                  details = os.lstat(directory)
+                  if not stat.S_ISDIR(details.st_mode) or stat.S_ISLNK(details.st_mode):
+                      refuse("candidate Git safe directory must be one real directory")
                   resolved = os.path.realpath(directory)
                   try:
                       if os.path.commonpath((candidate_root, resolved)) != candidate_root:

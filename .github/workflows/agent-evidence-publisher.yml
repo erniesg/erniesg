@@ -123,6 +123,25 @@ jobs:
             exit 1
           fi
           readonly selected_producer_node selected_node_root
+          selected_candidate_python="$(command -v python3)"
+          selected_candidate_python="$(realpath -e -- "$selected_candidate_python")"
+          case "$selected_candidate_python" in
+            "$workspace_real"|"$workspace_real"/*)
+              echo "Candidate Python resolves inside the candidate workspace." >&2
+              exit 1
+              ;;
+          esac
+          if [ ! -f "$selected_candidate_python" ] || [ -L "$selected_candidate_python" ]; then
+            echo "Selected candidate Python must resolve to one regular file." >&2
+            exit 1
+          fi
+          selected_python_bin="${selected_candidate_python%/*}"
+          selected_python_root="${selected_python_bin%/*}"
+          if [ "$selected_python_root/bin" != "$selected_python_bin" ] ||              [ ! -d "$selected_python_root" ] || [ -L "$selected_python_root" ]; then
+            echo "Selected candidate Python must belong to one real distribution." >&2
+            exit 1
+          fi
+          readonly selected_candidate_python selected_python_root
           producer_git="$(command -v git)"
           producer_git="$(realpath -e -- "$producer_git")"
           case "$producer_git" in
@@ -137,7 +156,7 @@ jobs:
             echo "Trusted candidate isolation currently requires Linux." >&2
             exit 1
           fi
-          for trusted_tool in sudo pkill pgrep useradd userdel id install rm cmp cp chown chmod; do
+          for trusted_tool in sudo env pkill pgrep useradd userdel id install rm cmp cp chown chmod find stat readelf; do
             trusted_path="$(command -v "$trusted_tool")"
             case "$trusted_path" in
               /*) ;;
@@ -156,6 +175,47 @@ jobs:
             printf -v "RUCKSACK_TRUSTED_${trusted_tool^^}" '%s' "$trusted_path"
             export "RUCKSACK_TRUSTED_${trusted_tool^^}"
           done
+          selected_python_loader=""
+          while IFS= read -r loader_line; do
+            case "$loader_line" in
+              *"Requesting program interpreter:"*)
+                selected_python_loader="${loader_line#*Requesting program interpreter: }"
+                selected_python_loader="${selected_python_loader%]}"
+                selected_python_loader="${selected_python_loader#[}"
+                ;;
+            esac
+          done < <("$RUCKSACK_TRUSTED_READELF" -lW -- "$selected_candidate_python")
+          if [ -z "$selected_python_loader" ]; then
+            echo "Selected candidate Python must name one dynamic loader." >&2
+            exit 1
+          fi
+          selected_python_loader="$(realpath -e -- "$selected_python_loader")"
+          case "$selected_python_loader" in
+            "$workspace_real"|"$workspace_real"/*)
+              echo "Selected Python loader resolves inside the candidate workspace." >&2
+              exit 1
+              ;;
+          esac
+          if [ ! -f "$selected_python_loader" ] || [ -L "$selected_python_loader" ]; then
+            echo "Selected Python loader must resolve to one regular file." >&2
+            exit 1
+          fi
+          selected_python_loader_stat="$(
+            "$RUCKSACK_TRUSTED_STAT" -c '%u:%g:%a' -- "$selected_python_loader"
+          )"
+          case "$selected_python_loader_stat" in
+            0:0:??? ) ;;
+            *)
+              echo "Selected Python loader must be root-owned." >&2
+              exit 1
+              ;;
+          esac
+          selected_python_loader_mode="${selected_python_loader_stat##*:}"
+          if [ $((8#$selected_python_loader_mode & 8#022)) -ne 0 ]; then
+            echo "Selected Python loader must be candidate-immutable." >&2
+            exit 1
+          fi
+          readonly selected_python_loader
           if ! "$RUCKSACK_TRUSTED_SUDO" -n -- true; then
             echo "Trusted candidate isolation requires non-interactive sudo." >&2
             exit 1
@@ -216,6 +276,616 @@ jobs:
             exit 1
           fi
           readonly trusted_runtime_root producer_node
+          trusted_python_root="$isolation_root/trusted-python"
+          (
+            unset NODE_OPTIONS NODE_PATH LD_AUDIT LD_LIBRARY_PATH LD_PRELOAD
+            "$RUCKSACK_TRUSTED_SUDO" -n -- "$producer_node" -               "$selected_python_root" "$trusted_python_root" <<'RUCKSACK_TRUSTED_PYTHON_STAGER'
+          const fs = require("node:fs");
+          const { createHash } = require("node:crypto");
+          const path = require("node:path");
+
+          const MAX_ENTRY_COUNT = 50000;
+          const MAX_DEPTH = 64;
+          const MAX_FILE_BYTES = 128 * 1024 * 1024;
+          const MAX_TOTAL_BYTES = 1024 * 1024 * 1024;
+          const MAX_RELATIVE_PATH_BYTES = 4096;
+          const COPY_BUFFER_BYTES = 1024 * 1024;
+
+          const sourceInput = String(process.argv[2] || "");
+          const destinationInput = String(process.argv[3] || "");
+          let destinationCreated = false;
+
+          function refuse(message) {
+            throw new Error(message);
+          }
+
+          function inside(root, target) {
+            return target === root || target.startsWith(`${root}${path.sep}`);
+          }
+
+          function metadata(stats) {
+            return {
+              dev: stats.dev.toString(),
+              ino: stats.ino.toString(),
+              mode: stats.mode.toString(),
+              uid: stats.uid.toString(),
+              gid: stats.gid.toString(),
+              nlink: stats.nlink.toString(),
+              size: stats.size.toString(),
+              mtimeNs: stats.mtimeNs.toString(),
+              ctimeNs: stats.ctimeNs.toString(),
+            };
+          }
+
+          function sameMetadata(left, right) {
+            return Object.keys(left).every((field) => left[field] === right[field]);
+          }
+
+          function entryType(stats) {
+            if (stats.isDirectory()) return "directory";
+            if (stats.isFile()) return "file";
+            if (stats.isSymbolicLink()) return "symlink";
+            return "unsupported";
+          }
+
+          function snapshot(target, label) {
+            let stats;
+            try {
+              stats = fs.lstatSync(target, { bigint: true });
+            } catch (error) {
+              refuse(`${label} is unavailable: ${error.message}`);
+            }
+            return { stats, metadata: metadata(stats), type: entryType(stats) };
+          }
+
+          function decodedLeaf(name, label) {
+            const bytes = Buffer.isBuffer(name) ? name : Buffer.from(name);
+            const leaf = bytes.toString("utf8");
+            if (!Buffer.from(leaf, "utf8").equals(bytes) || !leaf || leaf.includes("/") || leaf.includes("\0")) {
+              refuse(`${label} contains an unsupported filename`);
+            }
+            return leaf;
+          }
+
+          function checkedSymlink(target, root, label) {
+            let link;
+            let resolved;
+            try {
+              link = fs.readlinkSync(target, "utf8");
+              resolved = fs.realpathSync(target);
+            } catch (error) {
+              refuse(`${label} contains a dangling or unreadable symlink: ${error.message}`);
+            }
+            if (!link || link.includes("\0") || path.isAbsolute(link) || !inside(root, resolved)) {
+              refuse(`${label} symlink escapes its prefix`);
+            }
+            return link;
+          }
+
+          function enforceCountAndSize(state, relative, depth, size, label) {
+            state.entryCount += 1;
+            if (state.entryCount > MAX_ENTRY_COUNT) {
+              refuse(`${label} exceeds ${MAX_ENTRY_COUNT} entries`);
+            }
+            if (depth > MAX_DEPTH) {
+              refuse(`${label} exceeds depth ${MAX_DEPTH}`);
+            }
+            if (Buffer.byteLength(relative, "utf8") > MAX_RELATIVE_PATH_BYTES) {
+              refuse(`${label} contains an overlong relative path`);
+            }
+            if (size === null) return;
+            if (size > BigInt(MAX_FILE_BYTES)) {
+              refuse(`${label} file exceeds ${Math.floor(MAX_FILE_BYTES / (1024 * 1024))} MiB`);
+            }
+            state.totalBytes += size;
+            if (state.totalBytes > BigInt(MAX_TOTAL_BYTES)) {
+              refuse(`${label} exceeds ${MAX_TOTAL_BYTES} aggregate bytes`);
+            }
+          }
+
+          function identityFingerprint(records) {
+            const hash = createHash("sha256");
+            const sorted = [...records.keys()].sort();
+            for (const relative of sorted) {
+              const record = records.get(relative);
+              hash.update(relative);
+              hash.update("\0");
+              hash.update(record.type);
+              hash.update("\0");
+              hash.update(JSON.stringify(record.metadata));
+              hash.update("\0");
+              hash.update(record.link || "");
+              hash.update("\0");
+            }
+            return hash.digest("hex");
+          }
+
+          function inspectSourceTree(sourceRoot) {
+            const state = { entryCount: 0, totalBytes: 0n };
+            const records = new Map();
+
+            function visit(target, relative, depth) {
+              const before = snapshot(target, "source Python distribution entry");
+              if (before.type === "unsupported") {
+                refuse("source Python distribution contains an unsupported entry");
+              }
+              enforceCountAndSize(
+                state,
+                relative,
+                depth,
+                before.type === "file" ? before.stats.size : null,
+                "source",
+              );
+              const record = {
+                relative,
+                type: before.type,
+                metadata: before.metadata,
+                permissions: Number(before.stats.mode & 0o777n),
+                link: null,
+                copyDigest: null,
+              };
+              records.set(relative, record);
+
+              if (before.type === "symlink") {
+                record.link = checkedSymlink(target, sourceRoot, "source Python distribution");
+              } else if (before.type === "directory") {
+                let directory;
+                try {
+                  directory = fs.opendirSync(target, { encoding: "buffer" });
+                  let entry;
+                  while ((entry = directory.readSync()) !== null) {
+                    const leaf = decodedLeaf(entry.name, "source Python distribution");
+                    const childRelative = relative ? `${relative}/${leaf}` : leaf;
+                    visit(path.join(target, leaf), childRelative, depth + 1);
+                  }
+                } catch (error) {
+                  if (error && error.message && error.message.startsWith("source ")) throw error;
+                  refuse(`source Python distribution cannot be enumerated: ${error.message}`);
+                } finally {
+                  if (directory) {
+                    try {
+                      directory.closeSync();
+                    } catch (_error) {
+                      // A fully consumed directory may already be closed by Node.
+                    }
+                  }
+                }
+              }
+
+              const after = snapshot(target, "source Python distribution entry");
+              if (after.type !== before.type || !sameMetadata(after.metadata, before.metadata)) {
+                refuse("source changed during preflight");
+              }
+              if (record.link !== null) {
+                const linkAfter = checkedSymlink(target, sourceRoot, "source Python distribution");
+                if (linkAfter !== record.link) refuse("source changed during preflight");
+              }
+            }
+
+            visit(sourceRoot, "", 0);
+            return {
+              entryCount: state.entryCount,
+              totalBytes: state.totalBytes,
+              records,
+              fingerprint: identityFingerprint(records),
+            };
+          }
+
+          function assertSourceRecord(sourcePath, expected) {
+            const actual = snapshot(sourcePath, "source Python distribution entry");
+            if (actual.type !== expected.type || !sameMetadata(actual.metadata, expected.metadata)) {
+              refuse("source changed after preflight");
+            }
+            if (expected.link !== null) {
+              const link = checkedSymlink(sourcePath, sourceRoot, "source Python distribution");
+              if (link !== expected.link) refuse("source changed after preflight");
+            }
+            return actual;
+          }
+
+          function writeAll(descriptor, buffer, length) {
+            let offset = 0;
+            while (offset < length) {
+              const written = fs.writeSync(descriptor, buffer, offset, length - offset, null);
+              if (written <= 0) refuse("staged Python distribution write made no progress");
+              offset += written;
+            }
+          }
+
+          function copyRegularFile(sourcePath, destinationPath, expected) {
+            const readFlags = fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW;
+            const writeFlags =
+              fs.constants.O_WRONLY |
+              fs.constants.O_CREAT |
+              fs.constants.O_EXCL |
+              fs.constants.O_NOFOLLOW;
+            let sourceDescriptor = -1;
+            let destinationDescriptor = -1;
+            const hash = createHash("sha256");
+            const buffer = Buffer.allocUnsafe(COPY_BUFFER_BYTES);
+            let copied = 0;
+            try {
+              sourceDescriptor = fs.openSync(sourcePath, readFlags);
+              const opened = fs.fstatSync(sourceDescriptor, { bigint: true });
+              if (!sameMetadata(metadata(opened), expected.metadata) || !opened.isFile()) {
+                refuse("source changed after preflight");
+              }
+              destinationDescriptor = fs.openSync(destinationPath, writeFlags, 0o600);
+              while (true) {
+                const count = fs.readSync(sourceDescriptor, buffer, 0, buffer.length, null);
+                if (count === 0) break;
+                copied += count;
+                if (copied > MAX_FILE_BYTES || copied > Number(opened.size)) {
+                  refuse("source changed after preflight");
+                }
+                hash.update(buffer.subarray(0, count));
+                writeAll(destinationDescriptor, buffer, count);
+              }
+              if (copied !== Number(opened.size)) refuse("source changed after preflight");
+              const sourceAfter = fs.fstatSync(sourceDescriptor, { bigint: true });
+              if (!sameMetadata(metadata(sourceAfter), expected.metadata)) {
+                refuse("source changed after preflight");
+              }
+              assertSourceRecord(sourcePath, expected);
+              fs.fchownSync(destinationDescriptor, 0, 0);
+              fs.fchmodSync(destinationDescriptor, expected.permissions & ~0o022);
+              fs.fsyncSync(destinationDescriptor);
+              const destinationAfter = fs.fstatSync(destinationDescriptor, { bigint: true });
+              if (destinationAfter.size !== opened.size || destinationAfter.nlink !== 1n) {
+                refuse("staged Python distribution file copy is inconsistent");
+              }
+              return hash.digest("hex");
+            } catch (error) {
+              if (error && error.message && (
+                error.message.startsWith("source ") ||
+                error.message.startsWith("staged ")
+              )) throw error;
+              refuse(`cannot copy source Python distribution file: ${error.message}`);
+            } finally {
+              if (destinationDescriptor >= 0) fs.closeSync(destinationDescriptor);
+              if (sourceDescriptor >= 0) fs.closeSync(sourceDescriptor);
+            }
+          }
+
+          function copySourceTree(sourceRoot, preflight) {
+            fs.mkdirSync(destinationInput, { mode: 0o700 });
+            destinationCreated = true;
+            fs.chownSync(destinationInput, 0, 0);
+            const records = [...preflight.records.values()];
+            for (const record of records) {
+              const sourcePath = record.relative
+                ? path.join(sourceRoot, ...record.relative.split("/"))
+                : sourceRoot;
+              const destinationPath = record.relative
+                ? path.join(destinationInput, ...record.relative.split("/"))
+                : destinationInput;
+              assertSourceRecord(sourcePath, record);
+              if (!record.relative) {
+                fs.chmodSync(destinationPath, record.permissions & ~0o022);
+                continue;
+              }
+              if (record.type === "directory") {
+                fs.mkdirSync(destinationPath, { mode: 0o700 });
+                fs.chownSync(destinationPath, 0, 0);
+                fs.chmodSync(destinationPath, record.permissions & ~0o022);
+              } else if (record.type === "symlink") {
+                fs.symlinkSync(record.link, destinationPath);
+                fs.lchownSync(destinationPath, 0, 0);
+              } else if (record.type === "file") {
+                record.copyDigest = copyRegularFile(sourcePath, destinationPath, record);
+              } else {
+                refuse("source Python distribution contains an unsupported entry");
+              }
+            }
+            return fs.realpathSync(destinationInput);
+          }
+
+          function digestStagedFile(target, expected, label) {
+            const descriptor = fs.openSync(target, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+            const hash = createHash("sha256");
+            const buffer = Buffer.allocUnsafe(COPY_BUFFER_BYTES);
+            let total = 0;
+            try {
+              const opened = fs.fstatSync(descriptor, { bigint: true });
+              if (!opened.isFile() || !sameMetadata(metadata(opened), expected.metadata)) {
+                refuse(`${label} changed while hashing`);
+              }
+              while (true) {
+                const count = fs.readSync(descriptor, buffer, 0, buffer.length, null);
+                if (count === 0) break;
+                total += count;
+                if (total > MAX_FILE_BYTES || total > Number(opened.size)) {
+                  refuse(`${label} changed while hashing`);
+                }
+                hash.update(buffer.subarray(0, count));
+              }
+              if (total !== Number(opened.size)) refuse(`${label} changed while hashing`);
+              const after = fs.fstatSync(descriptor, { bigint: true });
+              if (!sameMetadata(metadata(after), expected.metadata)) {
+                refuse(`${label} changed while hashing`);
+              }
+            } finally {
+              fs.closeSync(descriptor);
+            }
+            const pathAfter = snapshot(target, `${label} entry`);
+            if (!sameMetadata(pathAfter.metadata, expected.metadata)) {
+              refuse(`${label} changed while hashing`);
+            }
+            return hash.digest("hex");
+          }
+
+          function inspectStagedTree(destinationRoot) {
+            const state = { entryCount: 0, totalBytes: 0n };
+            const records = new Map();
+
+            function visit(target, relative, depth) {
+              const before = snapshot(target, "staged Python distribution entry");
+              if (before.type === "unsupported") {
+                refuse("staged Python distribution contains an unsupported entry");
+              }
+              enforceCountAndSize(
+                state,
+                relative,
+                depth,
+                before.type === "file" ? before.stats.size : null,
+                "staged",
+              );
+              if (before.stats.uid !== 0n || before.stats.gid !== 0n) {
+                refuse("staged Python distribution contains a non-root-owned entry");
+              }
+              if (before.type !== "symlink" && (before.stats.mode & 0o022n) !== 0n) {
+                refuse("staged Python distribution contains a group/world-writable entry");
+              }
+              if (before.type === "file" && before.stats.nlink !== 1n) {
+                refuse("staged Python distribution contains a shared regular file");
+              }
+              const record = {
+                relative,
+                type: before.type,
+                metadata: before.metadata,
+                link: null,
+                digest: null,
+              };
+              records.set(relative, record);
+              if (before.type === "symlink") {
+                record.link = checkedSymlink(target, destinationRoot, "staged Python distribution");
+              } else if (before.type === "directory") {
+                let directory;
+                try {
+                  directory = fs.opendirSync(target, { encoding: "buffer" });
+                  let entry;
+                  while ((entry = directory.readSync()) !== null) {
+                    const leaf = decodedLeaf(entry.name, "staged Python distribution");
+                    const childRelative = relative ? `${relative}/${leaf}` : leaf;
+                    visit(path.join(target, leaf), childRelative, depth + 1);
+                  }
+                } catch (error) {
+                  if (error && error.message && error.message.startsWith("staged ")) throw error;
+                  refuse(`staged Python distribution cannot be enumerated: ${error.message}`);
+                } finally {
+                  if (directory) {
+                    try {
+                      directory.closeSync();
+                    } catch (_error) {
+                      // A fully consumed directory may already be closed by Node.
+                    }
+                  }
+                }
+              } else {
+                record.digest = digestStagedFile(target, before, "staged Python distribution");
+              }
+              const after = snapshot(target, "staged Python distribution entry");
+              if (after.type !== before.type || !sameMetadata(after.metadata, before.metadata)) {
+                refuse("staged Python distribution changed during inspection");
+              }
+            }
+
+            visit(destinationRoot, "", 0);
+            return records;
+          }
+
+          function verifyCopiedTree(sourcePreflight, stagedRecords) {
+            if (sourcePreflight.records.size !== stagedRecords.size) {
+              refuse("staged Python distribution entry set differs from source preflight");
+            }
+            for (const [relative, sourceRecord] of sourcePreflight.records) {
+              const stagedRecord = stagedRecords.get(relative);
+              if (!stagedRecord || stagedRecord.type !== sourceRecord.type) {
+                refuse("staged Python distribution entry type differs from source preflight");
+              }
+              if (sourceRecord.type === "symlink" && stagedRecord.link !== sourceRecord.link) {
+                refuse("staged Python distribution symlink differs from source preflight");
+              }
+              if (sourceRecord.type === "file" && stagedRecord.digest !== sourceRecord.copyDigest) {
+                refuse("staged Python distribution bytes differ from bounded copy");
+              }
+            }
+          }
+
+          let sourceRoot = "";
+          try {
+            if (process.getuid?.() !== 0 || process.geteuid?.() !== 0) {
+              refuse("stager must run as root");
+            }
+            if (
+              !path.isAbsolute(sourceInput) ||
+              !path.isAbsolute(destinationInput) ||
+              sourceInput.includes("\0") ||
+              destinationInput.includes("\0") ||
+              path.resolve(sourceInput) !== sourceInput ||
+              path.resolve(destinationInput) !== destinationInput
+            ) {
+              refuse("source and destination must be normalized absolute paths");
+            }
+            sourceRoot = fs.realpathSync(sourceInput);
+            if (sourceRoot !== sourceInput) refuse("source prefix must already be canonical");
+            const sourceRootStats = fs.lstatSync(sourceRoot);
+            if (!sourceRootStats.isDirectory() || sourceRootStats.isSymbolicLink()) {
+              refuse("source prefix must be one real directory");
+            }
+            try {
+              fs.lstatSync(destinationInput);
+              refuse("destination already exists");
+            } catch (error) {
+              if (error && error.message === "destination already exists") throw error;
+              if (!error || error.code !== "ENOENT") throw error;
+            }
+            const destinationParent = fs.realpathSync(path.dirname(destinationInput));
+            if (path.join(destinationParent, path.basename(destinationInput)) !== destinationInput) {
+              refuse("destination parent is not canonical");
+            }
+
+            const sourcePreflight = inspectSourceTree(sourceRoot);
+            const destinationRoot = copySourceTree(sourceRoot, sourcePreflight);
+            const sourceAfterCopy = inspectSourceTree(sourceRoot);
+            if (
+              sourceAfterCopy.fingerprint !== sourcePreflight.fingerprint ||
+              sourceAfterCopy.entryCount !== sourcePreflight.entryCount ||
+              sourceAfterCopy.totalBytes !== sourcePreflight.totalBytes
+            ) {
+              refuse("source changed after bounded copy");
+            }
+            const stagedFingerprint = inspectStagedTree(destinationRoot);
+            verifyCopiedTree(sourcePreflight, stagedFingerprint);
+          } catch (error) {
+            if (destinationCreated) {
+              try {
+                fs.rmSync(destinationInput, { recursive: true, force: true });
+              } catch (_cleanupError) {
+                // The workflow's trusted isolation-root cleanup remains the final backstop.
+              }
+            }
+            console.error(`trusted Python stager refused: ${error && error.message ? error.message : error}`);
+            process.exitCode = 1;
+          }
+          RUCKSACK_TRUSTED_PYTHON_STAGER
+          )
+          "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_CHOWN"             -R 0:0 -- "$trusted_python_root"
+          "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_CHMOD"             -R go-w -- "$trusted_python_root"
+          "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_CHMOD"             0555 -- "$trusted_python_root" "$trusted_python_root/bin"
+          trusted_python_libexec="$trusted_python_root/libexec"
+          "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_RM"             -rf -- "$trusted_python_libexec"
+          "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_INSTALL"             -d -o 0 -g 0 -m 0555 -- "$trusted_python_libexec"
+          RUCKSACK_TRUSTED_PYTHON_RUNTIME="$trusted_python_libexec/rucksack-python-runtime"
+          RUCKSACK_TRUSTED_PYTHON_LOADER="$trusted_python_libexec/rucksack-python-loader"
+          "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_INSTALL"             -o 0 -g 0 -m 0555 --             "$selected_candidate_python" "$RUCKSACK_TRUSTED_PYTHON_RUNTIME"
+          "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_INSTALL"             -o 0 -g 0 -m 0555 --             "$selected_python_loader" "$RUCKSACK_TRUSTED_PYTHON_LOADER"
+          RUCKSACK_CANDIDATE_PYTHON="$trusted_python_root/bin/python3"
+          "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_RM"             -f -- "$RUCKSACK_CANDIDATE_PYTHON"
+          python_launcher_source="$isolation_root/python-launcher"
+          cat > "$python_launcher_source" <<'RUCKSACK_PYTHON_LAUNCHER'
+          #!/bin/sh
+          set -eu
+          python_bin=${0%/*}
+          python_root=${python_bin%/*}
+          exec "$python_root/libexec/rucksack-python-loader"             --library-path "$python_root/lib"             --argv0 "$0"             "$python_root/libexec/rucksack-python-runtime" "$@"
+          RUCKSACK_PYTHON_LAUNCHER
+          chmod 0500 "$python_launcher_source"
+          "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_INSTALL"             -o 0 -g 0 -m 0555 -- "$python_launcher_source"             "$RUCKSACK_CANDIDATE_PYTHON"
+          "$RUCKSACK_TRUSTED_RM" -f -- "$python_launcher_source"
+          RUCKSACK_CANDIDATE_PYTHON="$(realpath -e -- "$RUCKSACK_CANDIDATE_PYTHON")"
+          if ! "$RUCKSACK_TRUSTED_CMP" -s --             "$selected_candidate_python" "$RUCKSACK_TRUSTED_PYTHON_RUNTIME"; then
+            echo "Staged Python runtime bytes do not match the selected runtime." >&2
+            exit 1
+          fi
+          if ! "$RUCKSACK_TRUSTED_CMP" -s --             "$selected_python_loader" "$RUCKSACK_TRUSTED_PYTHON_LOADER"; then
+            echo "Staged Python loader bytes do not match the selected loader." >&2
+            exit 1
+          fi
+          unsafe_python_entry="$(
+            "$RUCKSACK_TRUSTED_FIND" "$trusted_python_root" -xdev ! -type l               \( ! -uid 0 -o -perm /022 \) -print -quit
+          )"
+          if [ -n "$unsafe_python_entry" ]; then
+            echo "Staged Python distribution contains a non-root-owned or writable entry." >&2
+            exit 1
+          fi
+          unsafe_python_link="$(
+            "$RUCKSACK_TRUSTED_FIND" "$trusted_python_root" -xdev -type l               ! -uid 0 -print -quit
+          )"
+          if [ -n "$unsafe_python_link" ]; then
+            echo "Staged Python distribution contains a non-root-owned symlink." >&2
+            exit 1
+          fi
+          while IFS= read -r -d '' staged_python_link; do
+            if ! staged_python_target="$(realpath -e -- "$staged_python_link")"; then
+              echo "Staged Python distribution contains a dangling symlink." >&2
+              exit 1
+            fi
+            case "$staged_python_target" in
+              "$trusted_python_root"|"$trusted_python_root"/*) ;;
+              *)
+                echo "Staged Python distribution contains a symlink outside its prefix." >&2
+                exit 1
+                ;;
+            esac
+          done < <("$RUCKSACK_TRUSTED_FIND" "$trusted_python_root" -xdev -type l -print0)
+          for staged_python_file in             "$RUCKSACK_CANDIDATE_PYTHON"             "$RUCKSACK_TRUSTED_PYTHON_RUNTIME"             "$RUCKSACK_TRUSTED_PYTHON_LOADER"; do
+            if [ "$("$RUCKSACK_TRUSTED_STAT" -c '%u:%g:%a:%h' --               "$staged_python_file")" != "0:0:555:1" ]; then
+              echo "Staged Python launch files must be root-owned unshared executables." >&2
+              exit 1
+            fi
+          done
+          for staged_python_directory in             "$trusted_python_root" "$trusted_python_root/bin" "$trusted_python_libexec"; do
+            if [ "$("$RUCKSACK_TRUSTED_STAT" -c '%u:%g:%a' --               "$staged_python_directory")" != "0:0:555" ]; then
+              echo "Staged Python runtime ancestors must be root-owned and immutable." >&2
+              exit 1
+            fi
+          done
+          RUCKSACK_TRUSTED_PYTHON_LIBRARY_PATH="$trusted_python_root/lib"
+          if [ ! -d "$RUCKSACK_TRUSTED_PYTHON_LIBRARY_PATH" ] ||              [ -L "$RUCKSACK_TRUSTED_PYTHON_LIBRARY_PATH" ] ||              [ "$(realpath -e -- "$RUCKSACK_TRUSTED_PYTHON_LIBRARY_PATH")" !=                "$RUCKSACK_TRUSTED_PYTHON_LIBRARY_PATH" ]; then
+            echo "Staged Python library path must be one real prefix/lib directory." >&2
+            exit 1
+          fi
+          staged_python_library_stat="$(
+            "$RUCKSACK_TRUSTED_STAT" -c '%u:%g:%a' --               "$RUCKSACK_TRUSTED_PYTHON_LIBRARY_PATH"
+          )"
+          case "$staged_python_library_stat" in
+            0:0:??? ) ;;
+            *)
+              echo "Staged Python library path must be root-owned." >&2
+              exit 1
+              ;;
+          esac
+          staged_python_library_mode="${staged_python_library_stat##*:}"
+          if [ $((8#$staged_python_library_mode & 8#022)) -ne 0 ]; then
+            echo "Staged Python library path must be candidate-immutable." >&2
+            exit 1
+          fi
+          clean_python_version() (
+            unset PYTHONHOME PYTHONPATH LD_AUDIT LD_LIBRARY_PATH LD_PRELOAD
+            LD_LIBRARY_PATH="$RUCKSACK_TRUSTED_PYTHON_LIBRARY_PATH"               "$1" -I -B -c 'import platform; print(platform.python_version())'
+          )
+          staged_python_version="$(clean_python_version "$RUCKSACK_CANDIDATE_PYTHON")"
+          if [[ "$staged_python_version" =~ ^3\.([0-9]+)\.([0-9]+)$ ]]; then
+            staged_python_minor="${BASH_REMATCH[1]}"
+          else
+            echo "Staged Python runtime returned an invalid Python version." >&2
+            exit 1
+          fi
+          if [ "$staged_python_minor" -lt 11 ]; then
+            echo "Staged Python runtime must be Python 3.11 or newer." >&2
+            exit 1
+          fi
+          staged_python_probe="$(
+            unset PYTHONHOME PYTHONPATH LD_AUDIT LD_LIBRARY_PATH LD_PRELOAD
+            LD_LIBRARY_PATH="$RUCKSACK_TRUSTED_PYTHON_LIBRARY_PATH"               "$RUCKSACK_CANDIDATE_PYTHON" -I -B -c               'import os, pip, sys; print(os.path.realpath(sys.prefix)); print(os.path.realpath(pip.__file__))'
+          )"
+          mapfile -t staged_python_paths <<< "$staged_python_probe"
+          if [ "${#staged_python_paths[@]}" -ne 2 ] ||              [ "${staged_python_paths[0]}" != "$trusted_python_root" ]; then
+            echo "Staged Python runtime does not resolve its staged distribution." >&2
+            exit 1
+          fi
+          case "${staged_python_paths[1]}" in
+            "$trusted_python_root"/*) ;;
+            *)
+              echo "Staged Python distribution does not contain its pip module." >&2
+              exit 1
+              ;;
+          esac
+          readonly trusted_python_root RUCKSACK_CANDIDATE_PYTHON
+          readonly RUCKSACK_TRUSTED_PYTHON_LIBRARY_PATH
+          readonly RUCKSACK_TRUSTED_PYTHON_RUNTIME RUCKSACK_TRUSTED_PYTHON_LOADER
+          export RUCKSACK_CANDIDATE_PYTHON RUCKSACK_TRUSTED_PYTHON_LIBRARY_PATH
           "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_USERADD"             --system --no-create-home --home-dir "$isolation_root/home"             --shell /usr/sbin/nologin "$candidate_user"
           candidate_created=1
           RUCKSACK_CANDIDATE_UID="$("$RUCKSACK_TRUSTED_ID" -u "$candidate_user")"
@@ -330,6 +1000,9 @@ jobs:
                           "GITHUB_OUTPUT",
                           "GITHUB_PATH",
                           "GITHUB_STEP_SUMMARY",
+                          "LD_AUDIT",
+                          "LD_LIBRARY_PATH",
+                          "LD_PRELOAD",
                           "RUCKSACK_CANDIDATE_GID",
                           "RUCKSACK_CANDIDATE_HOME",
                           "RUCKSACK_CANDIDATE_DEPENDENCY_ROOT",
@@ -338,6 +1011,8 @@ jobs:
                           "RUCKSACK_CANDIDATE_UID",
                           "RUCKSACK_PRODUCER_GIT",
                           "RUCKSACK_TRUSTED_EVIDENCE_ROOT",
+                          "PYTHONHOME",
+                          "PYTHONPATH",
                       }
                   ):
                       environment.pop(name, None)
@@ -449,6 +1124,24 @@ jobs:
                   or stat.S_IMODE(details.st_mode) & 0o022
               ):
                   refuse(f"{label} must be one candidate-immutable regular file")
+              return resolved
+
+
+          def trusted_runtime_directory(path: str, *, candidate_uid: int, label: str) -> str:
+              resolved = os.path.realpath(path)
+              if not os.path.isabs(resolved) or "\x00" in resolved or resolved != path:
+                  refuse(f"{label} must resolve to one real absolute path")
+              try:
+                  details = os.lstat(resolved)
+              except OSError as error:
+                  refuse(f"cannot inspect {label}: {error}")
+              if (
+                  not stat.S_ISDIR(details.st_mode)
+                  or stat.S_ISLNK(details.st_mode)
+                  or details.st_uid == candidate_uid
+                  or stat.S_IMODE(details.st_mode) & 0o022
+              ):
+                  refuse(f"{label} must be one candidate-immutable real directory")
               return resolved
 
 
@@ -936,6 +1629,10 @@ jobs:
               home = required_path("RUCKSACK_CANDIDATE_HOME")
               dependency_root = required_path("RUCKSACK_CANDIDATE_DEPENDENCY_ROOT")
               sudo = required_path("RUCKSACK_TRUSTED_SUDO")
+              trusted_env = required_path("RUCKSACK_TRUSTED_ENV")
+              python_library_path = required_path(
+                  "RUCKSACK_TRUSTED_PYTHON_LIBRARY_PATH"
+              )
               pkill = required_path("RUCKSACK_TRUSTED_PKILL")
               pgrep = required_path("RUCKSACK_TRUSTED_PGREP")
               environment = candidate_environment(home, dependency_root)
@@ -943,10 +1640,32 @@ jobs:
               runner = trusted_runtime_path(
                   __file__, candidate_uid=uid, label="trusted candidate runner"
               )
+              configured_python = trusted_runtime_path(
+                  required_path("RUCKSACK_CANDIDATE_PYTHON"),
+                  candidate_uid=uid,
+                  label="trusted Python runtime",
+              )
               python = trusted_runtime_path(
                   sys.executable, candidate_uid=uid, label="trusted Python runtime"
               )
+              if not os.path.samefile(configured_python, python):
+                  refuse("trusted Python runtime does not match the pinned staged runtime")
+              if sys.version_info < (3, 11):
+                  refuse("trusted Python runtime must be Python 3.11 or newer")
+              python = configured_python
               trusted_runtime_path(sudo, candidate_uid=uid, label="trusted sudo executable")
+              trusted_env = trusted_runtime_path(
+                  trusted_env, candidate_uid=uid, label="trusted env executable"
+              )
+              python_library_path = trusted_runtime_directory(
+                  python_library_path,
+                  candidate_uid=uid,
+                  label="trusted Python library directory",
+              )
+              if python_library_path != os.path.join(
+                  os.path.dirname(os.path.dirname(python)), "lib"
+              ):
+                  refuse("trusted Python library directory does not match the pinned runtime")
               trusted_runtime_path(pkill, candidate_uid=uid, label="trusted pkill executable")
               trusted_runtime_path(pgrep, candidate_uid=uid, label="trusted pgrep executable")
               config = write_command_config(
@@ -960,7 +1679,11 @@ jobs:
                   sudo,
                   "-n",
                   "--",
+                  trusted_env,
+                  f"LD_LIBRARY_PATH={python_library_path}",
                   python,
+                  "-I",
+                  "-B",
                   runner,
                   "--child",
                   config,
@@ -1029,7 +1752,7 @@ jobs:
               raise SystemExit(main())
           RUCKSACK_CANDIDATE_RUNNER_PY
           chmod 0500 "$RUCKSACK_CANDIDATE_RUNNER"
-          RUCKSACK_CANDIDATE_TRUSTED_PATH="$PATH"
+          RUCKSACK_CANDIDATE_TRUSTED_PATH="$trusted_python_root/bin:$PATH"
           export RUCKSACK_CANDIDATE_TRUSTED_PATH
           if [ -e "$RUCKSACK_TRUSTED_EVIDENCE_ROOT" ]; then
             echo "Trusted evidence root already exists." >&2
@@ -1038,14 +1761,14 @@ jobs:
           mkdir -m 0700 -- "$RUCKSACK_TRUSTED_EVIDENCE_ROOT"
           cd -- "$GITHUB_WORKSPACE/candidate"
           install_source="$(cat <<'RUCKSACK_INSTALL'
-          python3 -m pip install --user --upgrade pip
+          "$RUCKSACK_CANDIDATE_PYTHON" -I -B -m pip install --user --upgrade pip
           dependency_source="$RUCKSACK_CANDIDATE_DEPENDENCY_ROOT/source"
           if [ -f pyproject.toml ]; then
-            python3 -m pip install --user "$dependency_source[dev]" ||               python3 -m pip install --user "$dependency_source"
+            "$RUCKSACK_CANDIDATE_PYTHON" -I -B -m pip install --user "$dependency_source[dev]" ||               "$RUCKSACK_CANDIDATE_PYTHON" -I -B -m pip install --user "$dependency_source"
           fi
           for requirements_file in requirements*.txt; do
             [ -f "$requirements_file" ] || continue
-            python3 -m pip install --user -r "$dependency_source/$requirements_file"
+            "$RUCKSACK_CANDIDATE_PYTHON" -I -B -m pip install --user               -r "$dependency_source/$requirements_file"
           done
           if [ -f package-lock.json ]; then
             npm ci --prefix "$dependency_source"
@@ -1061,6 +1784,7 @@ jobs:
           set +e
           (
           unset LD_AUDIT LD_LIBRARY_PATH LD_PRELOAD NODE_OPTIONS NODE_PATH
+          unset PYTHONHOME PYTHONPATH
           "$producer_node" --experimental-vm-modules 3<<<"$producer_source" 4<<<"$install_source" <<'RUCKSACK_TRUSTED_LAUNCHER'
           const fs = require("node:fs");
           const { spawnSync } = require("node:child_process");
@@ -1075,29 +1799,101 @@ jobs:
           const producerSource = fs.readFileSync(3, "utf8").replace(/\n$/, "");
           const installSource = fs.readFileSync(4, "utf8").replace(/\n$/, "");
           const commandEnvironment = { ...process.env };
-          for (const name of ["GITHUB_OUTPUT", "GITHUB_ENV", "GITHUB_PATH", "GITHUB_STEP_SUMMARY"]) {
+          for (const name of [
+            "GITHUB_OUTPUT",
+            "GITHUB_ENV",
+            "GITHUB_PATH",
+            "GITHUB_STEP_SUMMARY",
+            "LD_AUDIT",
+            "LD_LIBRARY_PATH",
+            "LD_PRELOAD",
+            "PYTHONHOME",
+            "PYTHONPATH",
+          ]) {
             delete commandEnvironment[name];
           }
 
           const candidateGit = String(process.env.RUCKSACK_PRODUCER_GIT || "");
           const candidateRunner = String(process.env.RUCKSACK_CANDIDATE_RUNNER || "");
+          const candidatePythonInput = String(process.env.RUCKSACK_CANDIDATE_PYTHON || "");
+          const trustedPythonLibraryInput = String(
+            process.env.RUCKSACK_TRUSTED_PYTHON_LIBRARY_PATH || "",
+          );
           const trustedEvidenceRoot = String(process.env.RUCKSACK_TRUSTED_EVIDENCE_ROOT || "");
           const trustedProducerRootInput = String(process.env.RUCKSACK_TRUSTED_PRODUCER_ROOT || "");
           const candidateDependencyRoot = String(process.env.RUCKSACK_CANDIDATE_DEPENDENCY_ROOT || "");
           const trustedSudo = String(process.env.RUCKSACK_TRUSTED_SUDO || "");
+          const trustedEnv = String(process.env.RUCKSACK_TRUSTED_ENV || "");
           const expectedHead = String(process.env.GITHUB_HEAD_SHA || "").trim().toLowerCase();
           const candidateUid = Number(process.env.RUCKSACK_CANDIDATE_UID);
           const candidateGid = Number(process.env.RUCKSACK_CANDIDATE_GID);
           const originalCandidateRoot = fs.realpathSync(".");
           if (!candidateGit.startsWith("/")) fail("trusted git executable must be one absolute path");
           if (!candidateRunner.startsWith("/")) fail("candidate runner must be one absolute path");
+          if (!candidatePythonInput.startsWith("/")) fail("candidate Python must be one absolute path");
+          if (!trustedPythonLibraryInput.startsWith("/")) {
+            fail("trusted Python library path must be one absolute path");
+          }
           if (!trustedEvidenceRoot.startsWith("/")) fail("trusted evidence root must be one absolute path");
           if (!trustedProducerRootInput.startsWith("/")) fail("trusted producer root must be one absolute path");
           if (!candidateDependencyRoot.startsWith("/")) fail("candidate dependency root must be one absolute path");
           if (!trustedSudo.startsWith("/")) fail("trusted sudo must be one absolute path");
+          if (!trustedEnv.startsWith("/")) fail("trusted env executable must be one absolute path");
           if (!/^[0-9a-f]{40}$/.test(expectedHead)) fail("event head must be one full commit SHA");
           if (!Number.isSafeInteger(candidateUid) || candidateUid <= 0) fail("candidate uid must be positive");
           if (!Number.isSafeInteger(candidateGid) || candidateGid <= 0) fail("candidate gid must be positive");
+
+          const MAX_PINNED_FILE_BYTES = 128 * 1024 * 1024;
+          const MAX_PYTHON_ENTRY_COUNT = 50000;
+          const MAX_PYTHON_DEPTH = 64;
+          const MAX_PYTHON_FILE_BYTES = 128 * 1024 * 1024;
+          const MAX_PYTHON_TOTAL_BYTES = 1024 * 1024 * 1024;
+          const MAX_PYTHON_RELATIVE_PATH_BYTES = 4096;
+          const HASH_BUFFER_BYTES = 1024 * 1024;
+
+          function sameFileIdentity(left, right) {
+            return ["dev", "ino", "mode", "uid", "gid", "nlink", "size", "mtimeMs", "ctimeMs"]
+              .every((field) => left[field] === right[field]);
+          }
+
+          function boundedRegularFileDigest(target, expected, label, limit = MAX_PINNED_FILE_BYTES) {
+            if (expected.size > limit) fail(`${label} exceeds ${Math.floor(limit / (1024 * 1024))} MiB`);
+            let descriptor;
+            const hash = createHash("sha256");
+            const buffer = Buffer.allocUnsafe(HASH_BUFFER_BYTES);
+            let total = 0;
+            try {
+              descriptor = fs.openSync(target, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+              const opened = fs.fstatSync(descriptor);
+              if (!opened.isFile() || !sameFileIdentity(opened, expected)) {
+                fail(`${label} changed before bounded hashing`);
+              }
+              while (true) {
+                const count = fs.readSync(descriptor, buffer, 0, buffer.length, null);
+                if (count === 0) break;
+                total += count;
+                if (total > limit || total > opened.size) {
+                  fail(`${label} changed during bounded hashing`);
+                }
+                hash.update(buffer.subarray(0, count));
+              }
+              if (total !== opened.size) fail(`${label} changed during bounded hashing`);
+              const after = fs.fstatSync(descriptor);
+              if (!sameFileIdentity(after, expected)) {
+                fail(`${label} changed during bounded hashing`);
+              }
+            } catch (error) {
+              if (error && error.message && error.message.startsWith(label)) throw error;
+              fail(`${label} cannot be hashed safely: ${error.message}`);
+            } finally {
+              if (descriptor !== undefined) fs.closeSync(descriptor);
+            }
+            const pathAfter = fs.lstatSync(target);
+            if (!pathAfter.isFile() || pathAfter.isSymbolicLink() || !sameFileIdentity(pathAfter, expected)) {
+              fail(`${label} changed during bounded hashing`);
+            }
+            return hash.digest("hex");
+          }
 
           function pinnedRegularFile(target, label) {
             let stats;
@@ -1109,6 +1905,7 @@ jobs:
             if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1) {
               fail(`${label} must be one unshared regular file`);
             }
+            const digest = boundedRegularFileDigest(target, stats, label);
             return {
               dev: stats.dev.toString(),
               ino: stats.ino.toString(),
@@ -1117,7 +1914,7 @@ jobs:
               gid: stats.gid,
               nlink: stats.nlink,
               size: stats.size,
-              digest: createHash("sha256").update(fs.readFileSync(target)).digest("hex"),
+              digest,
             };
           }
 
@@ -1143,6 +1940,39 @@ jobs:
           const pinnedGit = pinnedRegularFile(candidateGit, "trusted git executable");
           const pinnedRunner = pinnedRegularFile(candidateRunner, "trusted candidate runner");
           const pinnedSudo = pinnedRegularFile(trustedSudo, "trusted sudo executable");
+          const pinnedEnv = pinnedRegularFile(trustedEnv, "trusted env executable");
+          const candidatePython = fs.realpathSync(candidatePythonInput);
+          if (candidatePython !== candidatePythonInput) {
+            fail("candidate Python must already name the staged regular file");
+          }
+          const pinnedCandidatePython = pinnedRegularFile(candidatePython, "trusted Python runtime");
+          const candidatePythonBin = path.dirname(candidatePython);
+          const pinnedCandidatePythonBin = pinnedDirectory(
+            candidatePythonBin,
+            "trusted Python runtime directory",
+          );
+          const candidatePythonDistributionRoot = path.dirname(candidatePythonBin);
+          const pinnedCandidatePythonDistributionRoot = pinnedDirectory(
+            candidatePythonDistributionRoot,
+            "trusted Python runtime distribution",
+          );
+          if (
+            path.basename(candidatePythonBin) !== "bin" ||
+            path.dirname(candidatePythonDistributionRoot) === candidatePythonDistributionRoot
+          ) {
+            fail("trusted Python runtime must belong to one staged distribution");
+          }
+          const candidatePythonLibraryPath = fs.realpathSync(trustedPythonLibraryInput);
+          if (
+            candidatePythonLibraryPath !== trustedPythonLibraryInput ||
+            candidatePythonLibraryPath !== path.join(candidatePythonDistributionRoot, "lib")
+          ) {
+            fail("trusted Python library path must be the real staged-prefix lib directory");
+          }
+          const pinnedCandidatePythonLibraryPath = pinnedDirectory(
+            candidatePythonLibraryPath,
+            "trusted Python library directory",
+          );
           const producerNode = fs.realpathSync(process.execPath);
           const pinnedProducerNode = pinnedRegularFile(producerNode, "trusted producer runtime");
           const producerNodeRoot = path.dirname(producerNode);
@@ -1181,15 +2011,258 @@ jobs:
             );
           }
 
+          function pythonHelperEnvironment(base = {}) {
+            const environment = { ...base };
+            for (const name of [
+              "LD_AUDIT",
+              "LD_LIBRARY_PATH",
+              "LD_PRELOAD",
+              "PYTHONHOME",
+              "PYTHONPATH",
+            ]) {
+              delete environment[name];
+            }
+            environment.LD_LIBRARY_PATH = candidatePythonLibraryPath;
+            return environment;
+          }
+
+          function trustedSudoPythonArgs(args) {
+            return [
+              "-n",
+              "--",
+              trustedEnv,
+              `LD_LIBRARY_PATH=${candidatePythonLibraryPath}`,
+              candidatePython,
+              ...args,
+            ];
+          }
+
+          function pythonRuntimeProbe(stage) {
+            const source = [
+              "import json, os, sys; import pip; print(json.dumps({",
+              "'executable': os.path.realpath(sys.executable),",
+              "'pip': os.path.realpath(pip.__file__),",
+              "'prefix': os.path.realpath(sys.prefix),",
+              "'version': list(sys.version_info[:3]),",
+              "}, sort_keys=True))",
+            ].join(" ");
+            const result = spawnSync(candidatePython, ["-I", "-B", "-c", source], {
+              encoding: "utf8",
+              env: pythonHelperEnvironment({
+                HOME: "/nonexistent",
+                LANG: "C",
+                LC_ALL: "C",
+                PATH: "/usr/bin:/bin",
+              }),
+              maxBuffer: 1024 * 1024,
+            });
+            if (result.error || result.signal || result.status !== 0) {
+              fail(`${stage}: trusted Python runtime probe failed: ${result.error?.message || result.stderr || result.signal || `exit ${result.status}`}`);
+            }
+            let probe;
+            try {
+              probe = JSON.parse(result.stdout);
+            } catch (error) {
+              fail(`${stage}: trusted Python runtime probe returned invalid JSON: ${error.message}`);
+            }
+            if (
+              probe.executable !== candidatePython ||
+              probe.prefix !== candidatePythonDistributionRoot ||
+              typeof probe.pip !== "string" ||
+              !probe.pip.startsWith(`${candidatePythonDistributionRoot}${path.sep}`) ||
+              !Array.isArray(probe.version) ||
+              probe.version.length !== 3 ||
+              !probe.version.every((part) => Number.isSafeInteger(part) && part >= 0) ||
+              probe.version[0] !== 3 ||
+              probe.version[1] < 11
+            ) {
+              fail(`${stage}: trusted Python distribution is incomplete or unsupported`);
+            }
+            return JSON.stringify(probe);
+          }
+
+          function pythonRuntimeFingerprint(stage) {
+            const hash = createHash("sha256");
+            const expectedUid = pinnedCandidatePython.uid;
+            const expectedGid = pinnedCandidatePython.gid;
+            let entryCount = 0;
+            let totalBytes = 0;
+            function visit(target, relative, depth) {
+              entryCount += 1;
+              if (entryCount > MAX_PYTHON_ENTRY_COUNT) {
+                fail(`${stage}: trusted Python distribution exceeds ${MAX_PYTHON_ENTRY_COUNT} entries`);
+              }
+              if (depth > MAX_PYTHON_DEPTH) {
+                fail(`${stage}: trusted Python distribution exceeds depth ${MAX_PYTHON_DEPTH}`);
+              }
+              if (Buffer.byteLength(relative, "utf8") > MAX_PYTHON_RELATIVE_PATH_BYTES) {
+                fail(`${stage}: trusted Python distribution contains an overlong relative path`);
+              }
+              let stats;
+              try {
+                stats = fs.lstatSync(target);
+              } catch (error) {
+                fail(`${stage}: trusted Python distribution entry is unavailable: ${error.message}`);
+              }
+              hash.update(relative);
+              hash.update("\0");
+              hash.update(`${stats.mode}:${stats.uid}:${stats.gid}:${stats.nlink}:${stats.size}\0`);
+              if (stats.uid !== expectedUid || stats.gid !== expectedGid) {
+                fail(`${stage}: trusted Python distribution ownership changed`);
+              }
+              if (stats.isSymbolicLink()) {
+                let link;
+                let resolved;
+                try {
+                  link = fs.readlinkSync(target);
+                  resolved = fs.realpathSync(target);
+                } catch (error) {
+                  fail(`${stage}: trusted Python distribution contains a dangling symlink: ${error.message}`);
+                }
+                if (
+                  path.isAbsolute(link) ||
+                  resolved !== candidatePythonDistributionRoot &&
+                  !resolved.startsWith(`${candidatePythonDistributionRoot}${path.sep}`)
+                ) {
+                  fail(`${stage}: trusted Python distribution symlink escapes its prefix`);
+                }
+                hash.update("symlink\0");
+                hash.update(link);
+                hash.update("\0");
+                return;
+              }
+              if (candidateCanWrite(stats)) {
+                fail(`${stage}: candidate can write trusted Python distribution entry ${Buffer.from(relative).toString("hex")}`);
+              }
+              if (stats.isDirectory()) {
+                hash.update("directory\0");
+                let directory;
+                const leaves = [];
+                try {
+                  directory = fs.opendirSync(target, { encoding: "buffer" });
+                  let entry;
+                  while ((entry = directory.readSync()) !== null) {
+                    const leafBytes = Buffer.isBuffer(entry.name) ? entry.name : Buffer.from(entry.name);
+                    const leaf = leafBytes.toString("utf8");
+                    if (!Buffer.from(leaf, "utf8").equals(leafBytes) || !leaf || leaf.includes("/") || leaf.includes("\0")) {
+                      fail(`${stage}: trusted Python distribution contains an unsupported filename`);
+                    }
+                    leaves.push(leaf);
+                    if (entryCount + leaves.length > MAX_PYTHON_ENTRY_COUNT) {
+                      fail(`${stage}: trusted Python distribution exceeds ${MAX_PYTHON_ENTRY_COUNT} entries`);
+                    }
+                  }
+                } catch (error) {
+                  if (error && error.message && error.message.startsWith(`${stage}:`)) throw error;
+                  fail(`${stage}: trusted Python distribution cannot be enumerated: ${error.message}`);
+                } finally {
+                  if (directory) {
+                    try {
+                      directory.closeSync();
+                    } catch (_error) {
+                      // A fully consumed directory may already be closed by Node.
+                    }
+                  }
+                }
+                leaves.sort();
+                for (const leaf of leaves) {
+                  visit(
+                    path.join(target, leaf),
+                    relative ? `${relative}/${leaf}` : leaf,
+                    depth + 1,
+                  );
+                }
+                const after = fs.lstatSync(target);
+                if (!after.isDirectory() || !sameFileIdentity(after, stats)) {
+                  fail(`${stage}: trusted Python distribution directory changed`);
+                }
+                return;
+              }
+              if (!stats.isFile()) {
+                fail(`${stage}: trusted Python distribution contains an unsupported entry`);
+              }
+              if (stats.nlink !== 1) {
+                fail(`${stage}: trusted Python distribution contains a shared regular file`);
+              }
+              if (stats.size > MAX_PYTHON_FILE_BYTES) {
+                fail(`${stage}: trusted Python distribution file exceeds ${Math.floor(MAX_PYTHON_FILE_BYTES / (1024 * 1024))} MiB`);
+              }
+              totalBytes += stats.size;
+              if (totalBytes > MAX_PYTHON_TOTAL_BYTES) {
+                fail(`${stage}: trusted Python distribution exceeds one GiB`);
+              }
+              hash.update("file\0");
+              hash.update(
+                boundedRegularFileDigest(
+                  target,
+                  stats,
+                  `${stage}: trusted Python distribution file`,
+                  MAX_PYTHON_FILE_BYTES,
+                ),
+              );
+            }
+            visit(candidatePythonDistributionRoot, "", 0);
+            return hash.digest("hex");
+          }
+
           if (candidateCanWrite(pinnedGit)) fail("candidate can write trusted git executable");
           if (candidateCanWrite(pinnedRunner)) fail("candidate can write trusted candidate runner");
           if (candidateCanWrite(pinnedSudo)) fail("candidate can write trusted sudo executable");
+          if (candidateCanWrite(pinnedEnv)) fail("candidate can write trusted env executable");
+          if (candidateCanWrite(pinnedCandidatePython)) fail("candidate can write trusted Python runtime");
+          if (candidateCanWrite(pinnedCandidatePythonBin)) {
+            fail("candidate can replace trusted Python runtime");
+          }
+          if (candidateCanWrite(pinnedCandidatePythonDistributionRoot)) {
+            fail("candidate can replace trusted Python runtime distribution");
+          }
+          if (candidateCanWrite(pinnedCandidatePythonLibraryPath)) {
+            fail("candidate can replace trusted Python runtime libraries");
+          }
           if (candidateCanWrite(pinnedProducerNode)) fail("candidate can write trusted producer runtime");
           if (candidateCanWrite(pinnedProducerNodeRoot)) {
             fail("candidate can replace trusted producer runtime");
           }
           if (candidateCanWrite(pinnedProducerNodeDistributionRoot)) {
             fail("candidate can replace trusted producer runtime distribution");
+          }
+          const pinnedCandidatePythonProbe = pythonRuntimeProbe("capture trusted Python runtime");
+          const pinnedCandidatePythonFingerprint = pythonRuntimeFingerprint(
+            "capture trusted Python runtime",
+          );
+
+          function assertPinnedPythonRuntime(stage) {
+            assertPinnedRegularFile(trustedEnv, pinnedEnv, "trusted env executable", stage);
+            assertPinnedRegularFile(
+              candidatePython,
+              pinnedCandidatePython,
+              "trusted Python runtime",
+              stage,
+            );
+            assertPinnedDirectory(
+              candidatePythonBin,
+              pinnedCandidatePythonBin,
+              "trusted Python runtime directory",
+              stage,
+            );
+            assertPinnedDirectory(
+              candidatePythonDistributionRoot,
+              pinnedCandidatePythonDistributionRoot,
+              "trusted Python runtime distribution",
+              stage,
+            );
+            assertPinnedDirectory(
+              candidatePythonLibraryPath,
+              pinnedCandidatePythonLibraryPath,
+              "trusted Python library directory",
+              stage,
+            );
+            if (pythonRuntimeProbe(stage) !== pinnedCandidatePythonProbe) {
+              fail(`${stage}: trusted Python runtime version or prefix changed`);
+            }
+            if (pythonRuntimeFingerprint(stage) !== pinnedCandidatePythonFingerprint) {
+              fail(`${stage}: trusted Python distribution changed`);
+            }
           }
           const trustedProducerRoot = fs.realpathSync(trustedProducerRootInput);
           const trustedProducerRootStats = fs.lstatSync(trustedProducerRoot);
@@ -1268,6 +2341,7 @@ jobs:
             assertPinnedRegularFile(candidateGit, pinnedGit, "trusted git executable", stage);
             assertPinnedRegularFile(candidateRunner, pinnedRunner, "trusted candidate runner", stage);
             assertPinnedRegularFile(trustedSudo, pinnedSudo, "trusted sudo executable", stage);
+            assertPinnedPythonRuntime(stage);
             assertPinnedRegularFile(producerNode, pinnedProducerNode, "trusted producer runtime", stage);
             assertPinnedDirectory(
               producerNodeRoot,
@@ -1301,8 +2375,8 @@ jobs:
               JSON.stringify({ argv, timeout_ms: timeoutMs }),
               "utf8",
             ).toString("base64url");
-            const result = spawnSync(candidateRunner, [payload], {
-              env: commandEnvironment,
+            const result = spawnSync(candidatePython, ["-I", "-B", candidateRunner, payload], {
+              env: pythonHelperEnvironment(commandEnvironment),
               ...(options.encoding ? { encoding: options.encoding } : {}),
               ...(options.stdio ? { stdio: options.stdio } : {}),
               maxBuffer: Math.min(Number(options.maxBuffer) || 64 * 1024 * 1024, 64 * 1024 * 1024),
@@ -1310,6 +2384,7 @@ jobs:
             assertPinnedRegularFile(candidateRunner, pinnedRunner, "trusted candidate runner", stage);
             assertPinnedRegularFile(candidateGit, pinnedGit, "trusted git executable", stage);
             assertPinnedRegularFile(trustedSudo, pinnedSudo, "trusted sudo executable", stage);
+            assertPinnedPythonRuntime(stage);
             assertPinnedRegularFile(producerNode, pinnedProducerNode, "trusted producer runtime", stage);
             assertPinnedDirectory(
               producerNodeRoot,
@@ -1785,16 +2860,16 @@ jobs:
             assertPinnedRegularFile(trustedSudo, pinnedSudo, "trusted sudo executable", label);
             const sealed = spawnSync(
               trustedSudo,
-              [
-                "-n",
-                "--",
+              trustedSudoPythonArgs([
+                "-I",
+                "-B",
                 candidateRunner,
                 "--seal-workspace",
                 target,
                 String(process.getuid()),
                 String(candidateUid),
                 String(candidateGid),
-              ],
+              ]),
               {
                 encoding: "utf8",
                 env: { HOME: "/root", LANG: "C", LC_ALL: "C", PATH: "/usr/bin:/bin" },
@@ -1826,9 +2901,9 @@ jobs:
             assertPinnedRegularFile(trustedSudo, pinnedSudo, "trusted sudo executable", label);
             const prepared = spawnSync(
               trustedSudo,
-              [
-                "-n",
-                "--",
+              trustedSudoPythonArgs([
+                "-I",
+                "-B",
                 candidateRunner,
                 "--prepare-workspace",
                 target,
@@ -1836,7 +2911,7 @@ jobs:
                 String(process.getgid()),
                 String(candidateUid),
                 String(candidateGid),
-              ],
+              ]),
               {
                 encoding: "utf8",
                 env: { HOME: "/root", LANG: "C", LC_ALL: "C", PATH: "/usr/bin:/bin" },
@@ -1867,15 +2942,15 @@ jobs:
             assertPinnedRegularFile(trustedSudo, pinnedSudo, "trusted sudo executable", label);
             const sealed = spawnSync(
               trustedSudo,
-              [
-                "-n",
-                "--",
+              trustedSudoPythonArgs([
+                "-I",
+                "-B",
                 candidateRunner,
                 "--seal-readable-tree",
                 target,
                 String(process.getuid()),
                 String(candidateGid),
-              ],
+              ]),
               {
                 encoding: "utf8",
                 env: { HOME: "/root", LANG: "C", LC_ALL: "C", PATH: "/usr/bin:/bin" },
@@ -1907,16 +2982,16 @@ jobs:
             assertPinnedRegularFile(trustedSudo, pinnedSudo, "trusted sudo executable", label);
             const anchored = spawnSync(
               trustedSudo,
-              [
-                "-n",
-                "--",
+              trustedSudoPythonArgs([
+                "-I",
+                "-B",
                 candidateRunner,
                 "--anchor-control-directory",
                 target,
                 String(process.getuid()),
                 String(candidateUid),
                 String(candidateGid),
-              ],
+              ]),
               {
                 encoding: "utf8",
                 env: { HOME: "/root", LANG: "C", LC_ALL: "C", PATH: "/usr/bin:/bin" },
@@ -1947,15 +3022,15 @@ jobs:
             assertPinnedRegularFile(trustedSudo, pinnedSudo, "trusted sudo executable", label);
             const sealed = spawnSync(
               trustedSudo,
-              [
-                "-n",
-                "--",
+              trustedSudoPythonArgs([
+                "-I",
+                "-B",
                 candidateRunner,
                 "--seal-control-file",
                 target,
                 String(process.getuid()),
                 String(candidateGid),
-              ],
+              ]),
               {
                 encoding: "utf8",
                 env: { HOME: "/root", LANG: "C", LC_ALL: "C", PATH: "/usr/bin:/bin" },

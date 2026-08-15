@@ -304,6 +304,40 @@ describe('source-backed structured extraction verifier', () => {
     }
   })
 
+  it('does not invent line breaks between code fragments on the same source line', () => {
+    const base = context()
+    base.sourceRuns.push(
+      {
+        id: 'code-fragment-a',
+        text: '  const value = ',
+        page: 2,
+        order: 8,
+        lineId: 'code-line-1',
+      } as never,
+      {
+        id: 'code-fragment-b',
+        text: '42',
+        page: 2,
+        order: 9,
+        lineId: 'code-line-1',
+      } as never,
+    )
+    const candidate = validProposal()
+    candidate.nodes.push({
+      id: 'fragmented-listing',
+      type: 'code',
+      sourceRunIds: ['code-fragment-a', 'code-fragment-b'],
+      text: '  const value = 42',
+    })
+
+    const result = verifyStructuredExtraction(base, candidate)
+
+    expect(result.status).toBe('passed')
+    if (result.status === 'passed') {
+      expect(result.output.nodes.at(-1)?.text).toBe('  const value = 42')
+    }
+  })
+
   it('rejects a table node that carries no semantic cells', () => {
     // `verifyNodeTable` returns early when `table` is absent, so a candidate
     // can label a source span a table, score as one, and publish a table with
@@ -378,6 +412,44 @@ describe('source-backed structured extraction verifier', () => {
     }
   })
 
+  it('includes table-cell provenance when enforcing order across nodes', () => {
+    const input = context()
+    input.sourceRuns.find(({ id }) => id === 'table-value')!.order = 9
+    input.sourceRuns.push({
+      id: 'after-table',
+      text: 'After the table.',
+      page: 2,
+      order: 8,
+    })
+    const candidate = validProposal()
+    candidate.nodes.push(
+      {
+        id: 'late-table',
+        type: 'table',
+        sourceRunIds: ['table-head'],
+        table: {
+          rows: [
+            {
+              cells: [{ sourceRunIds: ['table-value'], headerScope: 'none' }],
+            },
+          ],
+        },
+      },
+      {
+        id: 'after-table',
+        type: 'paragraph',
+        sourceRunIds: ['after-table'],
+      },
+    )
+
+    const result = verifyStructuredExtraction(input, candidate)
+
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues.map(({ code }) => code)).toContain('unverified-span')
+    }
+  })
+
   it('preserves note and citation targets with reciprocal backlinks', () => {
     const input = context()
     input.sourceRuns.push(
@@ -385,6 +457,20 @@ describe('source-backed structured extraction verifier', () => {
       { id: 'note-body', text: 'A note.', page: 2, order: 9 },
       { id: 'citation-marker', text: '[1]', page: 2, order: 10 },
       { id: 'reference', text: 'A reference.', page: 2, order: 11 },
+    )
+    input.provenArtifacts!.push(
+      {
+        id: 'note-link',
+        kind: 'note-relationship',
+        sourceRunIds: ['note-marker'],
+        targetSourceRunIds: ['note-body'],
+      },
+      {
+        id: 'citation-link',
+        kind: 'citation-relationship',
+        sourceRunIds: ['citation-marker'],
+        targetSourceRunIds: ['reference'],
+      },
     )
     const candidate = validProposal()
     candidate.nodes.push(
@@ -421,6 +507,50 @@ describe('source-backed structured extraction verifier', () => {
       expect(result.output.nodes.at(-1)?.relationships?.backlinks).toEqual([
         'citation-marker',
       ])
+    }
+  })
+
+  it('rejects a reciprocal note link to the wrong proven source target', () => {
+    const input = context()
+    input.sourceRuns.push(
+      { id: 'note-marker', text: '1', page: 2, order: 8 },
+      { id: 'right-note', text: 'Right note.', page: 2, order: 9 },
+      { id: 'wrong-note', text: 'Wrong note.', page: 2, order: 10 },
+    )
+    input.provenArtifacts!.push({
+      id: 'note-link-1',
+      kind: 'note-relationship',
+      sourceRunIds: ['note-marker'],
+      targetSourceRunIds: ['right-note'],
+    } as never)
+    const candidate = validProposal()
+    candidate.nodes.push(
+      {
+        id: 'note-marker',
+        type: 'paragraph',
+        sourceRunIds: ['note-marker'],
+        relationships: { noteTargetNodeIds: ['wrong-note'] },
+      },
+      {
+        id: 'right-note',
+        type: 'footnote',
+        sourceRunIds: ['right-note'],
+      },
+      {
+        id: 'wrong-note',
+        type: 'footnote',
+        sourceRunIds: ['wrong-note'],
+        relationships: { backlinks: ['note-marker'] },
+      },
+    )
+
+    const result = verifyStructuredExtraction(input, candidate)
+
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues.map(({ code }) => code)).toContain(
+        'invalid-relationship',
+      )
     }
   })
 

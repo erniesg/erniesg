@@ -45,6 +45,8 @@ export type StructuredSourceRun = {
   text: string
   page: number
   order: number
+  /** Stable deterministic line ownership for whitespace-sensitive material. */
+  lineId?: string
   /** A source run is already normalized by the deterministic extractor. */
   layout?: StructuredExtractionLayout
   stratum?: string
@@ -87,6 +89,8 @@ export type StructuredProvenArtifact = {
     | 'citation-relationship'
     | 'source-run-provenance'
   sourceRunIds: string[]
+  /** Deterministic destination ownership for note/citation relationships. */
+  targetSourceRunIds?: string[]
 }
 
 export type StructuredExtractionContext = {
@@ -222,6 +226,7 @@ const sourceRunSchema = z
     text: z.string(),
     page: z.number().int().positive(),
     order: z.number().int().nonnegative(),
+    lineId: idSchema.optional(),
     layout: z.enum(STRUCTURED_EXTRACTION_LAYOUTS).optional(),
     stratum: z.string().min(1).optional(),
   })
@@ -274,6 +279,7 @@ const sourceArtifactSchema = z
       'source-run-provenance',
     ]),
     sourceRunIds: z.array(idSchema),
+    targetSourceRunIds: z.array(idSchema).optional(),
   })
   .strict()
 
@@ -376,6 +382,7 @@ export function structuredExtractionContextFromReconstruction({
           text: run.text,
           page: run.page,
           order: order++,
+          lineId: `${region.id}:${line.id}`,
           layout,
           ...(stratum ? { stratum } : {}),
         })
@@ -393,6 +400,12 @@ export function structuredExtractionContextFromReconstruction({
         .filter(Boolean),
     )
   }
+  const runIdsForNode = (nodeId: string | null) =>
+    nodeId
+      ? (reconstruction.provenance[nodeId]?.regionIds ?? []).flatMap(
+          runIdsForRegion,
+        )
+      : []
   const sourceAssets: StructuredSourceAsset[] = reconstruction.assets.map(
     (asset) => {
       const relationship = reconstruction.visualRelationships.find(
@@ -452,11 +465,13 @@ export function structuredExtractionContextFromReconstruction({
       id: relationship.id,
       kind: 'note-relationship' as const,
       sourceRunIds: [relationship.referenceRegionId].flatMap(runIdsForRegion),
+      targetSourceRunIds: runIdsForNode(relationship.targetNoteId),
     })),
     ...reconstruction.citationRelationships.map((relationship) => ({
       id: relationship.id,
       kind: 'citation-relationship' as const,
       sourceRunIds: [relationship.referenceRegionId].flatMap(runIdsForRegion),
+      targetSourceRunIds: relationship.targetNodeIds.flatMap(runIdsForNode),
     })),
     {
       id: 'source-run-provenance',
@@ -553,11 +568,31 @@ function nodeTextForRunIds(
 ) {
   if (!PREFORMATTED_NODE_TYPES.has(type))
     return sourceTextForRunIds(sourceRunIds, runsById)
-  return sourceRunIds
-    .map((id) => runsById.get(id)?.text ?? '')
-    .filter((text) => text.length > 0)
-    .join('\n')
+  const runs = sourceRunIds
+    .map((id) => runsById.get(id))
+    .filter((run): run is StructuredSourceRun => run !== undefined)
+  return runs
+    .map((run, index) => {
+      const previous = runs[index - 1]
+      const lineBreak =
+        previous?.lineId !== undefined &&
+        run.lineId !== undefined &&
+        previous.lineId !== run.lineId
+          ? '\n'
+          : ''
+      return `${lineBreak}${run.text}`
+    })
+    .join('')
     .normalize('NFKC')
+}
+
+function nodeOwnedSourceRunIds(node: StructuredExtractionNode) {
+  return [
+    ...node.sourceRunIds,
+    ...(node.table?.rows.flatMap(({ cells }) =>
+      cells.flatMap(({ sourceRunIds }) => sourceRunIds),
+    ) ?? []),
+  ]
 }
 
 function issue(
@@ -855,10 +890,26 @@ function captionTextForNode(
 }
 
 function verifyRelationships(
+  context: StructuredExtractionContext,
   proposal: StructuredExtractionProposal,
   nodesById: ReadonlyMap<string, StructuredExtractionNode>,
   issues: StructuredExtractionVerificationIssue[],
 ) {
+  const provenArtifacts = context.provenArtifacts ?? []
+  const relationshipIsProven = (
+    source: StructuredExtractionNode,
+    target: StructuredExtractionNode,
+    kind: 'note-relationship' | 'citation-relationship',
+  ) => {
+    const sourceRuns = new Set(nodeOwnedSourceRunIds(source))
+    const targetRuns = new Set(nodeOwnedSourceRunIds(target))
+    return provenArtifacts.some(
+      (artifact) =>
+        artifact.kind === kind &&
+        artifact.sourceRunIds.some((id) => sourceRuns.has(id)) &&
+        (artifact.targetSourceRunIds ?? []).some((id) => targetRuns.has(id)),
+    )
+  }
   const targetLists = (node: StructuredExtractionNode) => [
     ...(node.relationships?.noteTargetNodeIds ?? []),
     ...(node.relationships?.citationTargetNodeIds ?? []),
@@ -884,12 +935,13 @@ function verifyRelationships(
       const target = nodesById.get(targetId)
       if (
         target?.type !== 'footnote' ||
-        !target.relationships?.backlinks?.includes(node.id)
+        !target.relationships?.backlinks?.includes(node.id) ||
+        !relationshipIsProven(node, target, 'note-relationship')
       ) {
         issues.push(
           issue(
             'invalid-relationship',
-            `Note target ${targetId} must be a footnote with a reciprocal backlink.`,
+            `Note target ${targetId} must be a deterministically proven footnote with a reciprocal backlink.`,
             { nodeId: node.id },
           ),
         )
@@ -900,12 +952,13 @@ function verifyRelationships(
       const target = nodesById.get(targetId)
       if (
         target?.type !== 'reference' ||
-        !target.relationships?.backlinks?.includes(node.id)
+        !target.relationships?.backlinks?.includes(node.id) ||
+        !relationshipIsProven(node, target, 'citation-relationship')
       ) {
         issues.push(
           issue(
             'invalid-relationship',
-            `Citation target ${targetId} must be a reference with a reciprocal backlink.`,
+            `Citation target ${targetId} must be a deterministically proven reference with a reciprocal backlink.`,
             { nodeId: node.id },
           ),
         )
@@ -1007,7 +1060,7 @@ export function verifyStructuredExtraction(
   // node boundaries too.
   let previousNodeOrder: { id: string; order: number } | undefined
   for (const node of proposal.nodes) {
-    const nodeOrders = node.sourceRunIds
+    const nodeOrders = nodeOwnedSourceRunIds(node)
       .map((sourceRunId) => runsById.get(sourceRunId)?.order)
       .filter((order): order is number => order !== undefined)
     if (nodeOrders.length > 0) {
@@ -1155,7 +1208,7 @@ export function verifyStructuredExtraction(
     })
   }
 
-  verifyRelationships(proposal, nodesById, issues)
+  verifyRelationships(context, proposal, nodesById, issues)
 
   for (const sourceRunId of excluded) {
     if (!boilerplate.has(sourceRunId)) {

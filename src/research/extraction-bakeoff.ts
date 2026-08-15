@@ -110,6 +110,8 @@ export type ExtractionBakeoffCaseScore = {
   /** Only present when the case declares `expectedHeadingLevels`. */
   headingLevelRecall?: number
   boilerplateContamination: number
+  /** Hash of the verified structure owned by this case's source labels. */
+  structureHash: string | null
   verification: ExtractionBakeoffVerification
 }
 
@@ -196,6 +198,22 @@ function finiteNonNegative(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
 }
 
+function validExtractionArmResult(
+  value: unknown,
+): value is ExtractionBakeoffArmResult & {
+  metrics: ExtractionBakeoffRunMetrics
+} {
+  if (!value || typeof value !== 'object') return false
+  const metrics = (value as Partial<ExtractionBakeoffArmResult>).metrics
+  return Boolean(
+    metrics &&
+    finiteNonNegative(metrics.latencyMs) &&
+    finiteNonNegative(metrics.costUsd) &&
+    (metrics.pageCount === undefined ||
+      (Number.isSafeInteger(metrics.pageCount) && metrics.pageCount >= 1)),
+  )
+}
+
 function stableJson(value: unknown) {
   return structuredExtractionStableJson(value)
 }
@@ -239,19 +257,6 @@ function hasForbiddenGroundTruth(value: unknown, path = ''): string | null {
 
 function unique(values: readonly string[]) {
   return new Set(values).size === values.length
-}
-
-const defaultScoreOnceStores = new WeakMap<
-  ExtractionBakeoffCorpus,
-  Set<string>
->()
-
-function scoreOnceStoreFor(corpus: ExtractionBakeoffCorpus) {
-  const existing = defaultScoreOnceStores.get(corpus)
-  if (existing) return existing
-  const store = new Set<string>()
-  defaultScoreOnceStores.set(corpus, store)
-  return store
 }
 
 function validateCase(
@@ -470,6 +475,30 @@ function scoreCase(
     verification.status === 'passed' && nodes.length > 0
       ? terms.reduce((sum, term) => sum + term, 0) / terms.length
       : 0
+  const relevantNodes = output?.nodes.filter((node) => {
+    const ownedRunIds = [
+      ...node.sourceRunIds,
+      ...(node.table?.rows.flatMap(({ cells }) =>
+        cells.flatMap(({ sourceRunIds }) => sourceRunIds),
+      ) ?? []),
+    ]
+    if (ownedRunIds.some((id) => expectedRuns.has(id))) return true
+    if (node.assetId && expectedAssets.has(node.assetId)) return true
+    return (
+      expectedRuns.size === 0 &&
+      expectedAssets.size === 0 &&
+      expectedTypes.includes(node.type)
+    )
+  })
+  const structureHash = output
+    ? structuredExtractionHash({
+        nodes: relevantNodes,
+        assetIds: output.assetIds.filter((id) => expectedAssets.has(id)),
+        excludedBoilerplateRunIds: output.excludedBoilerplateRunIds.filter(
+          (id) => boilerplate.has(id),
+        ),
+      })
+    : null
   return {
     caseId: caseInput.id,
     documentId: caseInput.documentId,
@@ -482,6 +511,7 @@ function scoreCase(
     assetRecall,
     ...(headingLevelRecall === undefined ? {} : { headingLevelRecall }),
     boilerplateContamination,
+    structureHash,
     verification,
   }
 }
@@ -675,6 +705,7 @@ function comparisons(
               score.assetRecall,
               score.headingLevelRecall ?? 'none',
               score.boilerplateContamination,
+              score.structureHash ?? 'none',
             ].join('\u0000'),
           )
           .sort()
@@ -713,7 +744,7 @@ export async function runExtractionBakeoff({
    * claims compliance again. Pass a caller-owned, run-spanning set to make the
    * guard mean what the report says.
    */
-  scoredHeldOutKeys?: Set<string>
+  scoredHeldOutKeys: Set<string>
 }): Promise<ExtractionBakeoffReport> {
   const corpusReceipt = validateExtractionBakeoffCorpus(corpus)
   if (
@@ -734,7 +765,7 @@ export async function runExtractionBakeoff({
     'llm-authored': [],
     'llm-grounded': [],
   } as Record<ExtractionBakeoffArmId, ExtractionBakeoffDocumentResult[]>
-  const identityRunKeys = scoredHeldOutKeys ?? scoreOnceStoreFor(corpus)
+  const identityRunKeys = scoredHeldOutKeys
   const documents = includeDevelopment
     ? [...corpus.development, ...corpus.heldOut]
     : corpus.heldOut
@@ -756,7 +787,7 @@ export async function runExtractionBakeoff({
       }
     }
     for (const document of documents) {
-      const runKey = `${structuredExtractionHash(arm.identity)}\u0000${document.id}`
+      const runKey = `${corpusReceipt.heldOutIdentitySha256}\u0000${structuredExtractionHash(arm.identity)}\u0000${document.id}`
       if (document.split === 'held-out' && identityRunKeys.has(runKey))
         throw new Error(
           `HELD_OUT_SCORED_MORE_THAN_ONCE:${arm.id}:${document.id}`,
@@ -794,12 +825,17 @@ export async function runExtractionBakeoff({
         resultByArm[arm.id].push(
           disqualifiedDocumentResult(document, 'adapter-failure', 'failed'),
         )
-        identityRunKeys.add(runKey)
+        if (document.split === 'held-out') identityRunKeys.add(runKey)
         continue
       }
       const first = firstRun.value
-      if (!first || typeof first !== 'object')
-        throw new Error(`INVALID_EXTRACTION_ARM_RESULT:${arm.id}`)
+      if (!validExtractionArmResult(first)) {
+        resultByArm[arm.id].push(
+          disqualifiedDocumentResult(document, 'adapter-failure', 'failed'),
+        )
+        if (document.split === 'held-out') identityRunKeys.add(runKey)
+        continue
+      }
       if (document.split === 'held-out') {
         try {
           assertNoHeldOutContamination(arm, first.proposal, document.split)
@@ -827,12 +863,17 @@ export async function runExtractionBakeoff({
         resultByArm[arm.id].push(
           disqualifiedDocumentResult(document, 'adapter-failure', 'failed'),
         )
-        identityRunKeys.add(runKey)
+        if (document.split === 'held-out') identityRunKeys.add(runKey)
         continue
       }
       const second = secondRun.value
-      if (!second || typeof second !== 'object')
-        throw new Error(`INVALID_EXTRACTION_ARM_RESULT:${arm.id}`)
+      if (!validExtractionArmResult(second)) {
+        resultByArm[arm.id].push(
+          disqualifiedDocumentResult(document, 'adapter-failure', 'failed'),
+        )
+        if (document.split === 'held-out') identityRunKeys.add(runKey)
+        continue
+      }
       if (document.split === 'held-out') {
         try {
           assertNoHeldOutContamination(arm, second.proposal, document.split)
@@ -862,14 +903,6 @@ export async function runExtractionBakeoff({
         byteStable,
       )
       const metrics = first.metrics
-      if (!metrics) throw new Error(`MISSING_EXTRACTION_RUN_METRICS:${arm.id}`)
-      if (
-        !finiteNonNegative(metrics.latencyMs) ||
-        !finiteNonNegative(metrics.costUsd) ||
-        (metrics.pageCount !== undefined &&
-          (!Number.isSafeInteger(metrics.pageCount) || metrics.pageCount < 1))
-      )
-        throw new Error(`INVALID_EXTRACTION_RUN_METRICS:${arm.id}`)
       // Derive the denominator from the document, never from the arm. An arm
       // that reports its own page count can drive latency and cost per page
       // arbitrarily close to zero and win the operating-profile comparison on
@@ -924,6 +957,9 @@ export async function runExtractionBakeoff({
       const scores = states.map(({ rowScores }) =>
         stableJson(rowScores.map(({ score }) => score)),
       )
+      const structures = states.map(({ rowScores }) =>
+        stableJson(rowScores.map(({ structureHash }) => structureHash)),
+      )
       return {
         documentId,
         stratum: row.stratum,
@@ -933,9 +969,11 @@ export async function runExtractionBakeoff({
           .map(({ arm }) => arm),
         reason: states.some(({ result }) => result?.status !== 'passed')
           ? ('verification' as const)
-          : new Set(scores).size > 1
-            ? ('score' as const)
-            : ('structure' as const),
+          : new Set(structures).size > 1
+            ? ('structure' as const)
+            : new Set(scores).size > 1
+              ? ('score' as const)
+              : ('structure' as const),
       }
     }),
   )

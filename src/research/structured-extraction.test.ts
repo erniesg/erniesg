@@ -242,15 +242,216 @@ describe('source-backed structured extraction verifier', () => {
     }
   })
 
-  it('only exposes proved artifacts to the grounded arm and stays byte-stable', () => {
-    const input = modelInputForStructuredExtraction(context(), 'llm-grounded')
+  it('shares page evidence without leaking deterministic labels to the authored arm', () => {
+    const inputContext = context()
+    inputContext.pageRenditions = [
+      {
+        page: 1,
+        mediaType: 'image/png',
+        width: 1200,
+        height: 1600,
+        bytesSha256: '3'.repeat(64),
+        reference: 'owner-local-page-1',
+      },
+    ]
+    const input = modelInputForStructuredExtraction(
+      inputContext,
+      'llm-grounded',
+    )
     expect(input.provenArtifacts).toHaveLength(1)
     expect(input).not.toHaveProperty('groundTruth')
+    expect(input.pageRenditions).toEqual(inputContext.pageRenditions)
+    const authored = modelInputForStructuredExtraction(
+      inputContext,
+      'llm-authored',
+    )
+    expect(authored.pageRenditions).toEqual(inputContext.pageRenditions)
+    expect(authored).not.toHaveProperty('boilerplateRunIds')
+    expect(input).toHaveProperty('boilerplateRunIds', ['running-head'])
+  })
+
+  it('stays byte-stable for repeated verified output', () => {
     const first = verifyStructuredExtraction(context(), validProposal())
     const second = verifyStructuredExtraction(
       context(),
       structuredClone(validProposal()),
     )
     expect(first).toEqual(second)
+  })
+
+  it('preserves the preformatted structure of a source-backed code listing', () => {
+    // Prose normalization collapses every run of whitespace to one space. A
+    // code listing that survives that has lost the indentation and line breaks
+    // that make it a listing, so the verified document no longer preserves the
+    // source.
+    const listing = 'function main() {\n  return 42\n}'
+    const base = context()
+    base.sourceRuns.push({ id: 'code-run', text: listing, page: 2, order: 8 })
+    const candidate = validProposal()
+    candidate.nodes.push({
+      id: 'listing',
+      type: 'code',
+      sourceRunIds: ['code-run'],
+      text: listing,
+    })
+
+    const result = verifyStructuredExtraction(base, candidate)
+
+    expect(result.status).toBe('passed')
+    if (result.status === 'passed') {
+      const code = result.output.nodes.find(({ id }) => id === 'listing')!
+      expect(code.text).toBe(listing)
+    }
+  })
+
+  it('rejects a table node that carries no semantic cells', () => {
+    // `verifyNodeTable` returns early when `table` is absent, so a candidate
+    // can label a source span a table, score as one, and publish a table with
+    const candidate = validProposal()
+    candidate.nodes.push({
+      id: 'table',
+      type: 'table',
+      sourceRunIds: ['table-head', 'table-value'],
+    })
+
+    const result = verifyStructuredExtraction(context(), candidate)
+
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues.map(({ code }) => code)).toContain('invalid-table')
+      expect(result.output).toBeNull()
+    }
+  })
+
+  it('rejects a figure that references no deterministic asset', () => {
+    // `verifyAsset` returns immediately without an `assetId`, so every
+    // figure-specific check — bounded asset, caption, caption-derived alt text
+    // — is skipped for a figure that simply omits one.
+    const candidate = validProposal()
+    delete candidate.nodes[2]!.assetId
+    delete candidate.nodes[2]!.captionNodeId
+    delete candidate.nodes[2]!.altText
+    delete candidate.nodes[2]!.altTextSource
+    candidate.assetIds = []
+
+    const result = verifyStructuredExtraction(context(), candidate)
+
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues.map(({ code }) => code)).toContain('unknown-asset')
+      expect(result.output).toBeNull()
+    }
+  })
+
+  it('rejects model-authored alt text on a node that is not a figure', () => {
+    // The alt-text checks are figure-only, but the verified node is built with
+    // an unconditional `altText` copy, so a paragraph can carry invented text
+    // into the supposedly source-backed document.
+    const candidate = validProposal()
+    candidate.nodes[3]!.altText = 'invented'
+    candidate.nodes[3]!.altTextSource = 'model'
+
+    const result = verifyStructuredExtraction(context(), candidate)
+
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues.map(({ code }) => code)).toContain(
+        'model-authored-alt-text',
+      )
+      expect(result.output).toBeNull()
+    }
+  })
+
+  it('rejects nodes emitted out of source order relative to one another', () => {
+    // Each node's own run IDs stay sorted, so the per-node order check passes
+    // while the document reads back to front.
+    const candidate = validProposal()
+    const [title, caption, figure, body] = candidate.nodes
+    candidate.nodes = [body!, title!, caption!, figure!]
+
+    const result = verifyStructuredExtraction(context(), candidate)
+
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues.map(({ code }) => code)).toContain('unverified-span')
+      expect(result.output).toBeNull()
+    }
+  })
+
+  it('preserves note and citation targets with reciprocal backlinks', () => {
+    const input = context()
+    input.sourceRuns.push(
+      { id: 'note-marker', text: '1', page: 2, order: 8 },
+      { id: 'note-body', text: 'A note.', page: 2, order: 9 },
+      { id: 'citation-marker', text: '[1]', page: 2, order: 10 },
+      { id: 'reference', text: 'A reference.', page: 2, order: 11 },
+    )
+    const candidate = validProposal()
+    candidate.nodes.push(
+      {
+        id: 'note-marker',
+        type: 'paragraph',
+        sourceRunIds: ['note-marker'],
+        relationships: { noteTargetNodeIds: ['note-body'] },
+      },
+      {
+        id: 'note-body',
+        type: 'footnote',
+        sourceRunIds: ['note-body'],
+        relationships: { backlinks: ['note-marker'] },
+      },
+      {
+        id: 'citation-marker',
+        type: 'paragraph',
+        sourceRunIds: ['citation-marker'],
+        relationships: { citationTargetNodeIds: ['reference'] },
+      },
+      {
+        id: 'reference',
+        type: 'reference',
+        sourceRunIds: ['reference'],
+        relationships: { backlinks: ['citation-marker'] },
+      },
+    )
+
+    const result = verifyStructuredExtraction(input, candidate)
+
+    expect(result.status).toBe('passed')
+    if (result.status === 'passed') {
+      expect(result.output.nodes.at(-1)?.relationships?.backlinks).toEqual([
+        'citation-marker',
+      ])
+    }
+  })
+
+  it('rejects a relationship without a reciprocal backlink', () => {
+    const input = context()
+    input.sourceRuns.push(
+      { id: 'note-marker', text: '1', page: 2, order: 8 },
+      { id: 'note-body', text: 'A note.', page: 2, order: 9 },
+    )
+    const candidate = validProposal()
+    candidate.nodes.push(
+      {
+        id: 'note-marker',
+        type: 'paragraph',
+        sourceRunIds: ['note-marker'],
+        relationships: { noteTargetNodeIds: ['note-body'] },
+      },
+      {
+        id: 'note-body',
+        type: 'footnote',
+        sourceRunIds: ['note-body'],
+      },
+    )
+
+    const result = verifyStructuredExtraction(input, candidate)
+
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues.map(({ code }) => code)).toContain(
+        'invalid-relationship',
+      )
+    }
   })
 })

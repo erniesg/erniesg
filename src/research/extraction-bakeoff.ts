@@ -107,7 +107,11 @@ export type ExtractionBakeoffCaseScore = {
   typeRecall: number
   sourceRecall: number
   assetRecall: number
+  /** Only present when the case declares `expectedHeadingLevels`. */
+  headingLevelRecall?: number
   boilerplateContamination: number
+  /** Hash of the verified structure owned by this case's source labels. */
+  structureHash: string | null
   verification: ExtractionBakeoffVerification
 }
 
@@ -194,6 +198,36 @@ function finiteNonNegative(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
 }
 
+function materializeExtractionArmResult(value: unknown):
+  | (ExtractionBakeoffArmResult & {
+      metrics: ExtractionBakeoffRunMetrics
+    })
+  | null {
+  let materialized: unknown
+  try {
+    // Snapshot the complete adapter result before validation. Structured clone
+    // either strips accessors/prototypes from the value used downstream or
+    // fails here, where the caller can isolate the adapter.
+    materialized = structuredClone(value)
+  } catch {
+    return null
+  }
+  if (!materialized || typeof materialized !== 'object') return null
+  const metrics = (materialized as Partial<ExtractionBakeoffArmResult>).metrics
+  if (
+    !metrics ||
+    !finiteNonNegative(metrics.latencyMs) ||
+    !finiteNonNegative(metrics.costUsd) ||
+    (metrics.pageCount !== undefined &&
+      (!Number.isSafeInteger(metrics.pageCount) || metrics.pageCount < 1))
+  ) {
+    return null
+  }
+  return materialized as ExtractionBakeoffArmResult & {
+    metrics: ExtractionBakeoffRunMetrics
+  }
+}
+
 function stableJson(value: unknown) {
   return structuredExtractionStableJson(value)
 }
@@ -208,31 +242,46 @@ function identityValid(identity: ExtractionBakeoffModelIdentity) {
   )
 }
 
-function hasForbiddenGroundTruth(value: unknown, path = ''): string | null {
-  if (Array.isArray(value)) {
-    for (const [index, item] of value.entries()) {
-      const found = hasForbiddenGroundTruth(item, `${path}[${index}]`)
+function hasForbiddenGroundTruth(
+  value: unknown,
+  path = '',
+  ancestors = new WeakSet<object>(),
+): string | null {
+  if (!value || typeof value !== 'object') return null
+  if (ancestors.has(value))
+    throw new Error('INVALID_EXTRACTION_ARM_RESULT:cyclic-proposal')
+  ancestors.add(value)
+  try {
+    if (Array.isArray(value)) {
+      for (const [index, item] of value.entries()) {
+        const found = hasForbiddenGroundTruth(
+          item,
+          `${path}[${index}]`,
+          ancestors,
+        )
+        if (found) return found
+      }
+      return null
+    }
+    for (const [key, child] of Object.entries(value)) {
+      const normalizedKey = key
+        .normalize('NFKC')
+        .replace(/[^A-Za-z0-9]/gu, '')
+        .toLowerCase()
+      if (
+        FORBIDDEN_GROUND_TRUTH_KEYS.has(normalizedKey) ||
+        /^(?:gold|groundtruth|expected|labels?|reviewer|targetbox)/u.test(
+          normalizedKey,
+        )
+      )
+        return `${path}.${key}`
+      const found = hasForbiddenGroundTruth(child, `${path}.${key}`, ancestors)
       if (found) return found
     }
     return null
+  } finally {
+    ancestors.delete(value)
   }
-  if (!value || typeof value !== 'object') return null
-  for (const [key, child] of Object.entries(value)) {
-    const normalizedKey = key
-      .normalize('NFKC')
-      .replace(/[^A-Za-z0-9]/gu, '')
-      .toLowerCase()
-    if (
-      FORBIDDEN_GROUND_TRUTH_KEYS.has(normalizedKey) ||
-      /^(?:gold|groundtruth|expected|labels?|reviewer|targetbox)/u.test(
-        normalizedKey,
-      )
-    )
-      return `${path}.${key}`
-    const found = hasForbiddenGroundTruth(child, `${path}.${key}`)
-    if (found) return found
-  }
-  return null
 }
 
 function unique(values: readonly string[]) {
@@ -243,6 +292,9 @@ function validateCase(
   caseInput: ExtractionBakeoffCase,
   document: ExtractionBakeoffDocument,
 ) {
+  const sourceRunIds = new Set(document.context.sourceRuns.map(({ id }) => id))
+  const assetIds = new Set(document.context.sourceAssets.map(({ id }) => id))
+  const boilerplateRunIds = new Set(document.context.boilerplateRunIds ?? [])
   if (
     !SAFE_ID.test(caseInput.id) ||
     caseInput.documentId !== document.id ||
@@ -254,7 +306,19 @@ function validateCase(
     ) ||
     !unique(caseInput.expectedAssetIds ?? []) ||
     !unique(caseInput.expectedSourceRunIds ?? []) ||
-    !unique(caseInput.expectedExcludedBoilerplateRunIds ?? [])
+    !unique(caseInput.expectedExcludedBoilerplateRunIds ?? []) ||
+    (caseInput.expectedHeadingLevels ?? []).some(
+      (level) => !Number.isSafeInteger(level) || level < 1 || level > 6,
+    ) ||
+    (caseInput.expectedSourceRunIds ?? []).some(
+      (sourceRunId) => !sourceRunIds.has(sourceRunId),
+    ) ||
+    (caseInput.expectedAssetIds ?? []).some(
+      (assetId) => !assetIds.has(assetId),
+    ) ||
+    (caseInput.expectedExcludedBoilerplateRunIds ?? []).some(
+      (sourceRunId) => !boilerplateRunIds.has(sourceRunId),
+    )
   ) {
     throw new Error(`INVALID_EXTRACTION_BAKEOFF_CASE:${caseInput.id}`)
   }
@@ -268,13 +332,27 @@ export function validateExtractionBakeoffCorpus(
   if (corpus.development.length === 0 || corpus.heldOut.length === 0) {
     throw new Error('EXTRACTION_BAKEOFF_REQUIRES_DEVELOPMENT_AND_HELD_OUT')
   }
-  const documents = [...corpus.development, ...corpus.heldOut]
-  if (!unique(documents.map(({ id }) => id)))
+  // Bind each entry to the array holding it. A development-tagged entry under
+  // `heldOut` still contributes to the held-out identity and layout checks but
+  // bypasses the contamination guards and drops out of held-out comparisons,
+  // and a held-out-tagged development entry is bound by no identity at all.
+  const documents = [
+    ...corpus.development.map((document) => ({
+      document,
+      split: 'development' as const,
+    })),
+    ...corpus.heldOut.map((document) => ({
+      document,
+      split: 'held-out' as const,
+    })),
+  ]
+  if (!unique(documents.map(({ document }) => document.id)))
     throw new Error('DUPLICATE_EXTRACTION_BAKEOFF_DOCUMENT')
-  for (const document of documents) {
+  for (const { document, split } of documents) {
     if (
       !SAFE_ID.test(document.id) ||
       document.context.documentId !== document.id ||
+      document.split !== split ||
       document.context.split !== document.split ||
       document.context.layout !== document.layout
     ) {
@@ -353,14 +431,42 @@ function ratio(numerator: number, denominator: number) {
     : Math.max(0, Math.min(1, numerator / denominator))
 }
 
+function verifiedNodeSourceRunIds(
+  node: VerifiedStructuredExtraction['nodes'][number],
+) {
+  return [
+    ...node.sourceRunIds,
+    ...(node.table?.rows.flatMap(({ cells }) =>
+      cells.flatMap(({ sourceRunIds }) => sourceRunIds),
+    ) ?? []),
+  ]
+}
+
 function scoreCase(
   caseInput: ExtractionBakeoffCase,
   output: VerifiedStructuredExtraction | null,
   verification: ExtractionBakeoffVerification,
 ): ExtractionBakeoffCaseScore {
-  const nodes = output?.nodes ?? []
-  const actualTypes = nodes.map(({ type }) => type)
   const expectedTypes = [...caseInput.expectedNodeTypes]
+  const expectedRuns = new Set(caseInput.expectedSourceRunIds ?? [])
+  const expectedAssets = new Set(caseInput.expectedAssetIds ?? [])
+  const boilerplate = new Set(caseInput.expectedExcludedBoilerplateRunIds ?? [])
+  const caseRunIds = new Set([...expectedRuns, ...boilerplate])
+  const nodes = (output?.nodes ?? []).filter((node) => {
+    if (
+      verifiedNodeSourceRunIds(node).some((sourceRunId) =>
+        caseRunIds.has(sourceRunId),
+      )
+    )
+      return true
+    if (node.assetId && expectedAssets.has(node.assetId)) return true
+    return (
+      caseRunIds.size === 0 &&
+      expectedAssets.size === 0 &&
+      expectedTypes.includes(node.type)
+    )
+  })
+  const actualTypes = nodes.map(({ type }) => type)
   const matchedTypes = expectedTypes.filter(
     (type, index) => actualTypes[index] === type,
   ).length
@@ -381,33 +487,57 @@ function scoreCase(
     actualTypes.length,
   )
   const typeRecall = ratio(matchedTypes, expectedTypes.length)
-  const expectedRuns = new Set(caseInput.expectedSourceRunIds ?? [])
-  const actualRuns = new Set(nodes.flatMap(({ sourceRunIds }) => sourceRunIds))
+  const actualRuns = new Set(nodes.flatMap(verifiedNodeSourceRunIds))
   const sourceRecall = ratio(
     [...expectedRuns].filter((id) => actualRuns.has(id)).length,
     expectedRuns.size,
   )
-  const expectedAssets = new Set(caseInput.expectedAssetIds ?? [])
   const actualAssets = new Set(output?.assetIds ?? [])
   const assetRecall = ratio(
     [...expectedAssets].filter((id) => actualAssets.has(id)).length,
     expectedAssets.size,
   )
-  const boilerplate = new Set(caseInput.expectedExcludedBoilerplateRunIds ?? [])
   const bodyRuns = [...actualRuns].filter((id) => boilerplate.has(id)).length
   const boilerplateContamination =
     boilerplate.size === 0 ? 0 : ratio(bodyRuns, boilerplate.size)
+  // A sectioning case that declares the expected hierarchy is scored on it.
+  // Without this, a candidate can emit every heading at the wrong depth — a
+  // broken hierarchy — and score exactly as well as one that gets it right.
+  const expectedHeadingLevels = caseInput.expectedHeadingLevels
+  const headingLevelRecall =
+    expectedHeadingLevels === undefined
+      ? undefined
+      : ratio(
+          expectedHeadingLevels.filter(
+            (level, index) =>
+              nodes.filter(({ type }) => type === 'heading')[index]?.level ===
+              level,
+          ).length,
+          expectedHeadingLevels.length,
+        )
   // A failed verifier and a degenerate/no-object answer are both zero. The
   // precision term keeps "every line is a heading" below a useful answer.
+  const terms = [
+    typePrecision,
+    typeRecall,
+    sourceRecall,
+    assetRecall,
+    1 - boilerplateContamination,
+    ...(headingLevelRecall === undefined ? [] : [headingLevelRecall]),
+  ]
   const score =
     verification.status === 'passed' && nodes.length > 0
-      ? (typePrecision +
-          typeRecall +
-          sourceRecall +
-          assetRecall +
-          (1 - boilerplateContamination)) /
-        5
+      ? terms.reduce((sum, term) => sum + term, 0) / terms.length
       : 0
+  const structureHash = output
+    ? structuredExtractionHash({
+        nodes,
+        assetIds: output.assetIds.filter((id) => expectedAssets.has(id)),
+        excludedBoilerplateRunIds: output.excludedBoilerplateRunIds.filter(
+          (id) => boilerplate.has(id),
+        ),
+      })
+    : null
   return {
     caseId: caseInput.id,
     documentId: caseInput.documentId,
@@ -418,7 +548,9 @@ function scoreCase(
     typeRecall,
     sourceRecall,
     assetRecall,
+    ...(headingLevelRecall === undefined ? {} : { headingLevelRecall }),
     boilerplateContamination,
+    structureHash,
     verification,
   }
 }
@@ -468,6 +600,7 @@ function combinedVerification(
 function disqualifiedDocumentResult(
   document: ExtractionBakeoffDocument,
   issueCode: string,
+  status: ExtractionBakeoffDocumentResult['status'] = 'disqualified',
 ): ExtractionBakeoffDocumentResult {
   const verification: ExtractionBakeoffVerification = {
     status: 'failed',
@@ -478,7 +611,7 @@ function disqualifiedDocumentResult(
     documentId: document.id,
     split: document.split,
     layout: document.layout,
-    status: 'disqualified',
+    status,
     verification,
     outputHash: null,
     byteStable: false,
@@ -587,14 +720,35 @@ function comparisons(
         relevant.flatMap((items) => items.map(({ documentId }) => documentId)),
       ),
     ].sort()
+    // Compare what this row is about. The whole-document output hash differs
+    // whenever the arms diverge anywhere in the document, which marks it a
+    // disagreement for every stratum it appears in and stops the report from
+    // saying where the architectures actually diverge.
     const disagreementDocumentIds = documentIds.filter((documentId) => {
       const states = EXTRACTION_BAKEOFF_ARMS.map((arm) => {
         const result = results[arm].find(
           ({ documentId: id }) => id === documentId,
         )
-        return result
-          ? `${result.status}\u0000${result.outputHash ?? 'none'}\u0000${result.byteStable}`
-          : 'missing'
+        if (!result) return 'missing'
+        const rowScores = result.caseScores
+          .filter(
+            (score) => score.stratum === stratum && score.layout === layout,
+          )
+          .map((score) =>
+            [
+              score.caseId,
+              score.score,
+              score.typePrecision,
+              score.typeRecall,
+              score.sourceRecall,
+              score.assetRecall,
+              score.headingLevelRecall ?? 'none',
+              score.boilerplateContamination,
+              score.structureHash ?? 'none',
+            ].join('\u0000'),
+          )
+          .sort()
+        return [result.status, result.byteStable, ...rowScores].join('\u0001')
       })
       return new Set(states).size > 1
     })
@@ -617,10 +771,19 @@ export async function runExtractionBakeoff({
   corpus,
   arms,
   includeDevelopment = false,
+  scoredHeldOutKeys,
 }: {
   corpus: ExtractionBakeoffCorpus
   arms: readonly ExtractionBakeoffArm[]
   includeDevelopment?: boolean
+  /**
+   * Ledger of held-out (identity, document) pairs already scored. A run-local
+   * set cannot substantiate `heldOutScoredOnce`: calling this function again
+   * with the same corpus and identities rescores every held-out document and
+   * claims compliance again. Pass a caller-owned, run-spanning set to make the
+   * guard mean what the report says.
+   */
+  scoredHeldOutKeys: Set<string>
 }): Promise<ExtractionBakeoffReport> {
   const corpusReceipt = validateExtractionBakeoffCorpus(corpus)
   if (
@@ -641,14 +804,29 @@ export async function runExtractionBakeoff({
     'llm-authored': [],
     'llm-grounded': [],
   } as Record<ExtractionBakeoffArmId, ExtractionBakeoffDocumentResult[]>
-  const identityRunKeys = new Set<string>()
+  const identityRunKeys = scoredHeldOutKeys
   const documents = includeDevelopment
     ? [...corpus.development, ...corpus.heldOut]
     : corpus.heldOut
 
   for (const arm of arms) {
+    // Once an arm has leaked on the held-out split it must not be handed any
+    // more held-out papers. Advancing only to the next document keeps feeding
+    // held-out input to an adapter already recorded as contaminated, widening
+    // the leak it was disqualified for.
+    let contaminatedOnHeldOut: string | undefined
+    // Isolate the adapter. A provider error, timeout, or adapter exception on
+    // one document must not reject the whole run: the other arms are healthy
+    // and their side-by-side evidence is the point of the bake-off.
+    const runArm = async (input: StructuredExtractionContext) => {
+      try {
+        return { ok: true as const, value: await arm.run(input) }
+      } catch {
+        return { ok: false as const, value: null }
+      }
+    }
     for (const document of documents) {
-      const runKey = `${structuredExtractionHash(arm.identity)}\u0000${document.id}`
+      const runKey = `${corpusReceipt.heldOutIdentitySha256}\u0000${structuredExtractionHash(arm.identity)}\u0000${document.id}`
       if (document.split === 'held-out' && identityRunKeys.has(runKey))
         throw new Error(
           `HELD_OUT_SCORED_MORE_THAN_ONCE:${arm.id}:${document.id}`,
@@ -658,10 +836,18 @@ export async function runExtractionBakeoff({
       if (document.split === 'held-out') {
         if (!identityValid(arm.identity))
           throw new Error(`INVALID_EXTRACTION_MODEL_IDENTITY:${arm.id}`)
+        if (contaminatedOnHeldOut) {
+          resultByArm[arm.id].push(
+            disqualifiedDocumentResult(document, contaminatedOnHeldOut),
+          )
+          identityRunKeys.add(runKey)
+          continue
+        }
         const staticContamination =
           !arm.tunedOn.every((value) => value === 'development') ||
           Boolean(arm.usedHeldOutForTuning)
         if (staticContamination) {
+          contaminatedOnHeldOut = 'held-out-contamination'
           resultByArm[arm.id].push(
             disqualifiedDocumentResult(document, 'held-out-contamination'),
           )
@@ -673,15 +859,35 @@ export async function runExtractionBakeoff({
         document.context,
         inputArm,
       )
-      const first = await arm.run(firstInput)
-      if (!first || typeof first !== 'object')
-        throw new Error(`INVALID_EXTRACTION_ARM_RESULT:${arm.id}`)
+      const firstRun = await runArm(firstInput)
+      if (!firstRun.ok) {
+        resultByArm[arm.id].push(
+          disqualifiedDocumentResult(document, 'adapter-failure', 'failed'),
+        )
+        if (document.split === 'held-out') identityRunKeys.add(runKey)
+        continue
+      }
+      const first = materializeExtractionArmResult(firstRun.value)
+      if (!first) {
+        resultByArm[arm.id].push(
+          disqualifiedDocumentResult(document, 'adapter-failure', 'failed'),
+        )
+        if (document.split === 'held-out') identityRunKeys.add(runKey)
+        continue
+      }
       if (document.split === 'held-out') {
         try {
           assertNoHeldOutContamination(arm, first.proposal, document.split)
         } catch (error) {
           const issueCode = heldOutContaminationCode(error)
-          if (!issueCode) throw error
+          if (!issueCode) {
+            resultByArm[arm.id].push(
+              disqualifiedDocumentResult(document, 'adapter-failure', 'failed'),
+            )
+            identityRunKeys.add(runKey)
+            continue
+          }
+          contaminatedOnHeldOut = issueCode
           resultByArm[arm.id].push(
             disqualifiedDocumentResult(document, issueCode),
           )
@@ -697,15 +903,35 @@ export async function runExtractionBakeoff({
         document.context,
         inputArm,
       )
-      const second = await arm.run(secondInput)
-      if (!second || typeof second !== 'object')
-        throw new Error(`INVALID_EXTRACTION_ARM_RESULT:${arm.id}`)
+      const secondRun = await runArm(secondInput)
+      if (!secondRun.ok) {
+        resultByArm[arm.id].push(
+          disqualifiedDocumentResult(document, 'adapter-failure', 'failed'),
+        )
+        if (document.split === 'held-out') identityRunKeys.add(runKey)
+        continue
+      }
+      const second = materializeExtractionArmResult(secondRun.value)
+      if (!second) {
+        resultByArm[arm.id].push(
+          disqualifiedDocumentResult(document, 'adapter-failure', 'failed'),
+        )
+        if (document.split === 'held-out') identityRunKeys.add(runKey)
+        continue
+      }
       if (document.split === 'held-out') {
         try {
           assertNoHeldOutContamination(arm, second.proposal, document.split)
         } catch (error) {
           const issueCode = heldOutContaminationCode(error)
-          if (!issueCode) throw error
+          if (!issueCode) {
+            resultByArm[arm.id].push(
+              disqualifiedDocumentResult(document, 'adapter-failure', 'failed'),
+            )
+            identityRunKeys.add(runKey)
+            continue
+          }
+          contaminatedOnHeldOut = issueCode
           resultByArm[arm.id].push(
             disqualifiedDocumentResult(document, issueCode),
           )
@@ -728,15 +954,11 @@ export async function runExtractionBakeoff({
         byteStable,
       )
       const metrics = first.metrics
-      if (!metrics) throw new Error(`MISSING_EXTRACTION_RUN_METRICS:${arm.id}`)
-      if (
-        !finiteNonNegative(metrics.latencyMs) ||
-        !finiteNonNegative(metrics.costUsd) ||
-        (metrics.pageCount !== undefined &&
-          (!Number.isSafeInteger(metrics.pageCount) || metrics.pageCount < 1))
-      )
-        throw new Error(`INVALID_EXTRACTION_RUN_METRICS:${arm.id}`)
-      const pages = metrics.pageCount ?? pageCount(document.context)
+      // Derive the denominator from the document, never from the arm. An arm
+      // that reports its own page count can drive latency and cost per page
+      // arbitrarily close to zero and win the operating-profile comparison on
+      // nothing. `metrics.pageCount` stays validated above but is not used.
+      const pages = pageCount(document.context)
       const output =
         firstVerification.status === 'passed' &&
         secondVerification.status === 'passed' &&
@@ -770,59 +992,42 @@ export async function runExtractionBakeoff({
   }
 
   const comparison = comparisons(corpus, resultByArm)
-  const disagreements = comparison.flatMap((row) => {
-    const armResults = EXTRACTION_BAKEOFF_ARMS.map((arm) =>
-      resultByArm[arm]
-        .filter(({ split }) => split === 'held-out')
-        .filter((result) =>
-          result.caseScores.some(
-            (score) =>
-              score.stratum === row.stratum && score.layout === row.layout,
-          ),
-        ),
-    )
-    const ids = [
-      ...new Set(
-        armResults.flatMap((items) =>
-          items.map(({ documentId }) => documentId),
-        ),
-      ),
-    ].sort()
-    return ids.flatMap((documentId) => {
+  const disagreements = comparison.flatMap((row) =>
+    row.disagreementDocumentIds.map((documentId) => {
       const states = EXTRACTION_BAKEOFF_ARMS.map((arm) => {
         const result = resultByArm[arm].find(
           (item) => item.documentId === documentId && item.split === 'held-out',
         )
-        return {
-          arm,
-          result,
-          state: result
-            ? `${result.status}\u0000${result.outputHash ?? 'none'}\u0000${result.byteStable}`
-            : 'missing',
-        }
-      })
-      if (new Set(states.map(({ state }) => state)).size === 1) return []
-      const matches = states
-        .filter(({ result }) =>
-          result?.caseScores.some(
+        const rowScores =
+          result?.caseScores.filter(
             (score) =>
               score.stratum === row.stratum && score.layout === row.layout,
-          ),
-        )
-        .map(({ arm }) => arm)
-      return [
-        {
-          documentId,
-          stratum: row.stratum,
-          layout: row.layout,
-          arms: matches,
-          reason: states.some(({ result }) => result?.status !== 'passed')
-            ? ('verification' as const)
-            : ('structure' as const),
-        },
-      ]
-    })
-  })
+          ) ?? []
+        return { arm, result, rowScores }
+      })
+      const scores = states.map(({ rowScores }) =>
+        stableJson(rowScores.map(({ score }) => score)),
+      )
+      const structures = states.map(({ rowScores }) =>
+        stableJson(rowScores.map(({ structureHash }) => structureHash)),
+      )
+      return {
+        documentId,
+        stratum: row.stratum,
+        layout: row.layout,
+        arms: states
+          .filter(({ rowScores }) => rowScores.length > 0)
+          .map(({ arm }) => arm),
+        reason: states.some(({ result }) => result?.status !== 'passed')
+          ? ('verification' as const)
+          : new Set(structures).size > 1
+            ? ('structure' as const)
+            : new Set(scores).size > 1
+              ? ('score' as const)
+              : ('structure' as const),
+      }
+    }),
+  )
   const reportWithoutHash = {
     schemaVersion: EXTRACTION_BAKEOFF_SCHEMA_VERSION,
     corpusId: corpus.id,
@@ -857,6 +1062,14 @@ export function createExtractionArchitectureDecision({
   report: ExtractionBakeoffReport
   decisionId?: string
 }): ExtractionArchitectureDecision {
+  // The decision copies `reportSha256` forward as the binding between the
+  // recorded owner and the rows it was derived from. Verify that binding
+  // before reading the rows, or a mutated report yields a decision that
+  // presents the old hash as vouching for the altered comparison.
+  const { reportSha256, ...reportWithoutHash } = report
+  if (structuredExtractionHash(reportWithoutHash) !== reportSha256) {
+    throw new Error('EXTRACTION_BAKEOFF_REPORT_HASH_MISMATCH')
+  }
   const perStratum: Record<string, ExtractionBakeoffArmId | 'tie' | 'pending'> =
     {}
   for (const row of report.comparison) {

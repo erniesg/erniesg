@@ -1,8 +1,34 @@
-import { access, cp, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import {
+  access,
+  chmod,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  readdir,
+  rename,
+  rm,
+  stat,
+  symlink,
+  unlink,
+  utimes,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { resolve } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { basename, dirname, relative, resolve } from 'node:path'
+import { describe, expect, it, vi } from 'vitest'
 import { adaptAstroBlogEntry } from '../adapters/astro'
+import {
+  PUBLICATION_BROWSER_SNAPSHOT_ROOT,
+  PUBLICATION_BROWSER_CACHE,
+  preparePublicationBrowserSnapshot,
+  publicationBrowserSnapshotRootPath,
+  publicationBrowserBundleForExecutable,
+  publicationPuppeteerBrowserBundleForExecutable,
+  publicationPlaywrightPackageIdentityPaths,
+  snapshotPublicationBrowserBundle,
+} from '../browser-runtime'
 import {
   PUBLICATION_PROFILES,
   preparePublicationAssetDirectory,
@@ -292,9 +318,16 @@ describe('Vivliostyle publication renderer boundary', () => {
       entryId: 'synthetic-publication',
       contentRoot,
     })
-    const paragraph = bundle.graph.nodes.find((node) => node.type === 'paragraph')
+    const paragraph = bundle.graph.nodes.find(
+      (node) => node.type === 'paragraph',
+    )
     const note = bundle.graph.nodes.find((node) => node.type === 'note')
-    if (!paragraph || paragraph.type !== 'paragraph' || !note || note.type !== 'note')
+    if (
+      !paragraph ||
+      paragraph.type !== 'paragraph' ||
+      !note ||
+      note.type !== 'note'
+    )
       throw new Error('missing semantic fixture')
     const graph = {
       ...bundle.graph,
@@ -317,7 +350,12 @@ describe('Vivliostyle publication renderer boundary', () => {
         )
         .concat(
           { ...note, id: 'endnote', noteKind: 'endnote', backlinkIds: [] },
-          { ...note, id: 'author-note', noteKind: 'author-note', backlinkIds: [] },
+          {
+            ...note,
+            id: 'author-note',
+            noteKind: 'author-note',
+            backlinkIds: [],
+          },
         ),
     }
     const html = publicationGraphToHtml(
@@ -370,7 +408,8 @@ describe('Vivliostyle publication renderer boundary', () => {
       entryId: 'moving-to-cloudflare-with-astro',
     })
     const template = bundle.graph.nodes[0]
-    if (!template || template.type !== 'figure') throw new Error('missing figure fixture')
+    if (!template || template.type !== 'figure')
+      throw new Error('missing figure fixture')
     const figure = { ...template, id: 'orphan-figure' } as any
     delete figure.captionId
     const caption = {
@@ -401,8 +440,15 @@ describe('Vivliostyle publication renderer boundary', () => {
       entryId: 'moving-to-cloudflare-with-astro',
     })
     const figure = bundle.graph.nodes.find((node) => node.type === 'figure')
-    const paragraph = bundle.graph.nodes.find((node) => node.type === 'paragraph')
-    if (!figure || !paragraph || figure.type !== 'figure' || paragraph.type !== 'paragraph')
+    const paragraph = bundle.graph.nodes.find(
+      (node) => node.type === 'paragraph',
+    )
+    if (
+      !figure ||
+      !paragraph ||
+      figure.type !== 'figure' ||
+      paragraph.type !== 'paragraph'
+    )
       throw new Error('missing variant fixture')
     const graph = {
       ...bundle.graph,
@@ -443,7 +489,9 @@ describe('Vivliostyle publication renderer boundary', () => {
     const a5 = publicationGraphToHtml(graph, paths, 'a5-pdf')
     expect(a5).toContain('مختصر')
     const phone = publicationGraphToHtml(graph, paths, 'phone-webpub')
-    expect(phone).toContain(`src="assets/${bundle.assetBundle.descriptor.assets[0]?.fileName}"`)
+    expect(phone).toContain(
+      `src="assets/${bundle.assetBundle.descriptor.assets[0]?.fileName}"`,
+    )
     expect(phone).not.toContain('مختصر')
   })
 
@@ -470,7 +518,11 @@ describe('Vivliostyle publication renderer boundary', () => {
           parentId: 'equation',
           text: 'Canonical equation caption',
           variants: [
-            { kind: 'compact' as const, text: 'Compact equation caption', reviewed: true },
+            {
+              kind: 'compact' as const,
+              text: 'Compact equation caption',
+              reviewed: true,
+            },
           ],
         },
       ],
@@ -850,17 +902,20 @@ describe('Vivliostyle publication renderer boundary', () => {
 
   it('resolves Playwright executables using each supported host layout', () => {
     expect(
+      publicationPlaywrightExecutableCandidates('1228', 'linux', 'arm64'),
+    ).toEqual([
+      expect.stringContaining('chrome-linux/chrome'),
+      expect.stringContaining('chrome-linux/headless_shell'),
+    ])
+    expect(
       publicationPlaywrightExecutableCandidates('1228', 'darwin', 'arm64'),
     ).toEqual([
       expect.stringContaining('chrome-mac-arm64/Google Chrome for Testing.app'),
       expect.stringContaining('chrome-headless-shell-mac-arm64'),
     ])
-    expect(
+    expect(() =>
       publicationPlaywrightExecutableCandidates('1228', 'win32', 'arm64'),
-    ).toEqual([
-      expect.stringContaining('chrome-win64/chrome.exe'),
-      expect.stringContaining('chrome-headless-shell-win64'),
-    ])
+    ).toThrow(/Unsupported publication operating system/i)
   })
 
   it('requires the pinned browser build before rendering', () => {
@@ -878,8 +933,738 @@ describe('Vivliostyle publication renderer boundary', () => {
     ).toBe(false)
   })
 
+  it('accepts regular browser executables beneath an aliased cache ancestor', async () => {
+    const temporaryRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-browser-cache-alias-'),
+    )
+    const root = await realpath(temporaryRoot)
+    try {
+      const canonicalRoot = resolve(root, 'canonical')
+      const aliasedRoot = resolve(root, 'alias')
+      await mkdir(canonicalRoot)
+      await symlink(canonicalRoot, aliasedRoot, 'dir')
+
+      const playwrightCache = resolve(aliasedRoot, 'playwright')
+      const playwrightBrowser = resolve(
+        playwrightCache,
+        'chromium-1228/chrome-linux/chrome',
+      )
+      await mkdir(dirname(playwrightBrowser), { recursive: true })
+      await writeFile(playwrightBrowser, 'reviewed Playwright browser bytes')
+      await expect(
+        publicationBrowserBundleForExecutable(
+          playwrightBrowser,
+          playwrightCache,
+        ),
+      ).resolves.toEqual({
+        bundleRoot: resolve(canonicalRoot, 'playwright/chromium-1228'),
+        executableRelativePath: 'chrome-linux/chrome',
+      })
+
+      const puppeteerCache = resolve(aliasedRoot, 'puppeteer')
+      const puppeteerBrowser = resolve(
+        puppeteerCache,
+        'chrome/linux-150.0.7871.115/chrome-linux64/chrome',
+      )
+      await mkdir(dirname(puppeteerBrowser), { recursive: true })
+      await writeFile(puppeteerBrowser, 'reviewed Puppeteer browser bytes')
+      await expect(
+        publicationPuppeteerBrowserBundleForExecutable(puppeteerBrowser, {
+          cacheRoot: puppeteerCache,
+          platform: 'linux',
+          architecture: 'x64',
+          buildId: '150.0.7871.115',
+        }),
+      ).resolves.toEqual({
+        bundleRoot: resolve(
+          canonicalRoot,
+          'puppeteer/chrome/linux-150.0.7871.115',
+        ),
+        executableRelativePath: 'chrome-linux64/chrome',
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects cache-escaping browser links and snapshots regular bundles', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-browser-bundle-'))
+    try {
+      const cache = resolve(root, 'cache')
+      const bundle = resolve(cache, 'chromium-1228')
+      const browser = resolve(bundle, 'chrome-linux/chrome')
+      await mkdir(resolve(bundle, 'chrome-linux'), { recursive: true })
+      await writeFile(browser, 'reviewed browser bytes')
+      await writeFile(resolve(bundle, 'resource'), 'linked resource')
+      await symlink('../resource', resolve(bundle, 'chrome-linux/resource'))
+      const selected = await publicationBrowserBundleForExecutable(
+        browser,
+        cache,
+      )
+      const snapshot = await snapshotPublicationBrowserBundle(
+        selected,
+        resolve(root, 'snapshots'),
+      )
+      await writeFile(browser, 'changed source bytes')
+      await expect(readFile(snapshot.executablePath, 'utf8')).resolves.toBe(
+        'reviewed browser bytes',
+      )
+      await expect(
+        readFile(resolve(dirname(snapshot.executablePath), 'resource'), 'utf8'),
+      ).resolves.toBe('linked resource')
+      await snapshot.cleanup()
+
+      const defaultSnapshot = await snapshotPublicationBrowserBundle(selected)
+      const defaultPrivateRoot = dirname(
+        dirname(dirname(defaultSnapshot.executablePath)),
+      )
+      expect(
+        relative(
+          PUBLICATION_BROWSER_SNAPSHOT_ROOT,
+          defaultSnapshot.executablePath,
+        ),
+      ).not.toMatch(/^\.\.(?:\/|$)/u)
+      expect(publicationBrowserSnapshotRootPath({})).toBe(
+        resolve(
+          PUBLICATION_BROWSER_CACHE,
+          '../../..',
+          '.publication-browser-snapshots',
+        ),
+      )
+      expect(
+        publicationBrowserSnapshotRootPath({
+          PUBLICATION_BROWSER_SNAPSHOT_ROOT: resolve(root, 'operator-root'),
+        }),
+      ).toBe(resolve(root, 'operator-root'))
+      expect(() =>
+        publicationBrowserSnapshotRootPath({
+          PUBLICATION_BROWSER_SNAPSHOT_ROOT: 'relative/snapshots',
+        }),
+      ).toThrow(/absolute normalized path/i)
+      expect(relative(cache, defaultSnapshot.executablePath)).toMatch(
+        /^\.\.(?:\/|$)/u,
+      )
+      expect((await stat(defaultPrivateRoot)).mode & 0o777).toBe(0o700)
+      await defaultSnapshot.cleanup()
+      await expect(access(defaultPrivateRoot)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+
+      const outsideResource = resolve(root, 'outside-resource')
+      const escapingResource = resolve(bundle, 'chrome-linux/escape')
+      await writeFile(outsideResource, 'must not be copied')
+      await symlink(
+        relative(dirname(escapingResource), outsideResource),
+        escapingResource,
+      )
+      await expect(
+        snapshotPublicationBrowserBundle(selected, resolve(root, 'snapshots')),
+      ).rejects.toThrow(/escaping symlink/i)
+      await rm(escapingResource)
+
+      const cleanupSnapshot = await snapshotPublicationBrowserBundle(
+        selected,
+        resolve(root, 'snapshots'),
+      )
+      const cleanupPrivateRoot = dirname(
+        dirname(dirname(cleanupSnapshot.executablePath)),
+      )
+      const movedSnapshots = resolve(root, 'moved-snapshots')
+      await rename(resolve(root, 'snapshots'), movedSnapshots)
+      await mkdir(resolve(root, 'snapshots'))
+      const replacementPrivateRoot = resolve(
+        root,
+        'snapshots',
+        basename(cleanupPrivateRoot),
+      )
+      await mkdir(replacementPrivateRoot)
+      const sentinel = resolve(replacementPrivateRoot, 'do-not-delete')
+      await writeFile(sentinel, 'replacement directory')
+      await expect(cleanupSnapshot.cleanup()).rejects.toThrow(
+        /cleanup refused.*identity changed/i,
+      )
+      await expect(readFile(sentinel, 'utf8')).resolves.toBe(
+        'replacement directory',
+      )
+
+      const outsideSnapshots = resolve(root, 'outside-snapshots')
+      await mkdir(outsideSnapshots)
+      const linkedSnapshots = resolve(root, 'linked-snapshots')
+      await symlink(outsideSnapshots, linkedSnapshots)
+      await expect(
+        snapshotPublicationBrowserBundle(selected, linkedSnapshots),
+      ).rejects.toThrow(/snapshot.*symlink/i)
+      await expect(
+        snapshotPublicationBrowserBundle(
+          selected,
+          resolve(bundle, 'snapshots'),
+        ),
+      ).rejects.toThrow(/snapshot.*overlaps/i)
+
+      const outside = resolve(root, 'outside-browser')
+      await writeFile(outside, 'outside')
+      const linked = resolve(bundle, 'chrome-linux/linked-chrome')
+      await symlink(outside, linked)
+      await expect(
+        publicationBrowserBundleForExecutable(linked, cache),
+      ).rejects.toThrow(/regular file|outside.*cache/i)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('fails closed when a cache file is replaced between inspection and open', async () => {
+    const root = await realpath(
+      await mkdtemp(resolve(tmpdir(), 'publication-browser-race-')),
+    )
+    const cache = resolve(root, 'cache')
+    const bundle = resolve(cache, 'chromium-1228')
+    const browser = resolve(bundle, 'chrome-linux/chrome')
+    const originalBrowser = `${browser}.original`
+    const originalFsPromises = await import('node:fs/promises')
+    let replacementInjected = false
+
+    vi.resetModules()
+    vi.doMock('node:fs/promises', () => ({
+      ...originalFsPromises,
+      open: async (path: unknown, ...args: unknown[]) => {
+        if (!replacementInjected && resolve(String(path)) === browser) {
+          replacementInjected = true
+          await originalFsPromises.rename(browser, originalBrowser)
+          await originalFsPromises.writeFile(browser, 'replacement bytes')
+        }
+        return (originalFsPromises.open as (...values: unknown[]) => unknown)(
+          path,
+          ...args,
+        )
+      },
+    }))
+
+    try {
+      await mkdir(dirname(browser), { recursive: true })
+      await writeFile(browser, 'reviewed browser bytes')
+      const runtime = await import('../browser-runtime')
+      const selected = await runtime.publicationBrowserBundleForExecutable(
+        browser,
+        cache,
+      )
+      await expect(
+        runtime.snapshotPublicationBrowserBundle(
+          selected,
+          resolve(root, 'snapshots'),
+        ),
+      ).rejects.toThrow(/cache bundle changed during snapshot creation/i)
+      expect(replacementInjected).toBe(true)
+    } finally {
+      vi.doUnmock('node:fs/promises')
+      vi.resetModules()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('reclaims stale browser snapshots without disturbing active snapshots', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-browser-lease-'))
+    try {
+      const cache = resolve(root, 'cache')
+      const bundle = resolve(cache, 'chromium-1228')
+      const browser = resolve(bundle, 'chrome-linux/chrome')
+      const snapshotRoot = resolve(root, 'snapshots')
+      await mkdir(dirname(browser), { recursive: true })
+      await writeFile(browser, 'reviewed browser bytes')
+      const selected = await publicationBrowserBundleForExecutable(
+        browser,
+        cache,
+      )
+      const active = await snapshotPublicationBrowserBundle(
+        selected,
+        snapshotRoot,
+      )
+      const expired = await snapshotPublicationBrowserBundle(
+        selected,
+        snapshotRoot,
+      )
+      const expiredRoot = dirname(dirname(dirname(expired.executablePath)))
+      await utimes(resolve(expiredRoot, '.lease'), new Date(0), new Date(0))
+
+      const current = await snapshotPublicationBrowserBundle(
+        selected,
+        snapshotRoot,
+      )
+      await expect(access(expiredRoot)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+      await expect(expired.assertDirectoryIdentity()).rejects.toThrow(
+        /snapshot directory identity changed|lease ownership was lost/i,
+      )
+      await expect(expired.cleanup()).rejects.toThrow(
+        /cleanup refused.*identity changed/i,
+      )
+      await expect(readFile(active.executablePath, 'utf8')).resolves.toBe(
+        'reviewed browser bytes',
+      )
+
+      const quarantines = (await readdir(snapshotRoot)).filter((entry) =>
+        entry.startsWith('reap-'),
+      )
+      expect(quarantines).toHaveLength(1)
+      const expiredQuarantine = resolve(snapshotRoot, quarantines[0])
+      await utimes(expiredQuarantine, new Date(0), new Date(0))
+
+      const leaseGapRoot = resolve(snapshotRoot, 'browser-lease-gap')
+      await mkdir(leaseGapRoot, { mode: 0o700 })
+      await writeFile(resolve(leaseGapRoot, 'orphan'), 'stale browser bytes')
+      await utimes(leaseGapRoot, new Date(0), new Date(0))
+      const reapingResults = await Promise.allSettled(
+        Array.from({ length: 4 }, () =>
+          snapshotPublicationBrowserBundle(selected, snapshotRoot),
+        ),
+      )
+      expect(
+        reapingResults.filter((result) => result.status === 'rejected'),
+      ).toEqual([])
+      const afterReap = reapingResults.map((result) => {
+        if (result.status === 'rejected') throw result.reason
+        return result.value
+      })
+      await expect(access(expiredQuarantine)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+      await expect(access(leaseGapRoot)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+
+      const gapQuarantines = (await readdir(snapshotRoot)).filter((entry) =>
+        entry.startsWith('reap-'),
+      )
+      expect(gapQuarantines).toHaveLength(1)
+      const gapQuarantine = resolve(snapshotRoot, gapQuarantines[0])
+      await utimes(gapQuarantine, new Date(0), new Date(0))
+      const final = await snapshotPublicationBrowserBundle(
+        selected,
+        snapshotRoot,
+      )
+      await expect(access(gapQuarantine)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+      await final.cleanup()
+      await Promise.all(afterReap.map((snapshot) => snapshot.cleanup()))
+      await current.cleanup()
+      await active.cleanup()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('allows concurrent scavengers to finish the same fenced quarantine', async () => {
+    const root = await realpath(
+      await mkdtemp(resolve(tmpdir(), 'publication-browser-reap-')),
+    )
+    const cache = resolve(root, 'cache')
+    const bundle = resolve(cache, 'chromium-1228')
+    const browser = resolve(bundle, 'chrome-linux/chrome')
+    const snapshotRoot = resolve(root, 'snapshots')
+    const quarantineRoot = resolve(snapshotRoot, 'delete-stale-fixture')
+    const orphan = resolve(quarantineRoot, 'snapshot/orphan')
+    const originalFsPromises = await import('node:fs/promises')
+    let orphanUnlinks = 0
+    let releaseUnlinks: () => void = () => undefined
+    const bothAtUnlink = new Promise<void>((resolveBarrier) => {
+      releaseUnlinks = resolveBarrier
+    })
+
+    vi.resetModules()
+    vi.doMock('node:fs/promises', () => ({
+      ...originalFsPromises,
+      unlink: async (path: unknown, ...args: unknown[]) => {
+        if (resolve(String(path)) === orphan) {
+          orphanUnlinks += 1
+          if (orphanUnlinks === 2) releaseUnlinks()
+          await bothAtUnlink
+        }
+        return (originalFsPromises.unlink as (...values: unknown[]) => unknown)(
+          path,
+          ...args,
+        )
+      },
+    }))
+
+    try {
+      await mkdir(dirname(browser), { recursive: true })
+      await writeFile(browser, 'reviewed browser bytes')
+      await mkdir(dirname(orphan), { recursive: true, mode: 0o700 })
+      await writeFile(orphan, 'stale browser bytes')
+      await utimes(quarantineRoot, new Date(0), new Date(0))
+      const runtime = await import('../browser-runtime')
+      const selected = await runtime.publicationBrowserBundleForExecutable(
+        browser,
+        cache,
+      )
+      const results = await Promise.allSettled([
+        runtime.snapshotPublicationBrowserBundle(selected, snapshotRoot),
+        runtime.snapshotPublicationBrowserBundle(selected, snapshotRoot),
+      ])
+      expect(orphanUnlinks).toBe(2)
+      expect(results.filter((result) => result.status === 'rejected')).toEqual(
+        [],
+      )
+      const snapshots = results.map((result) => {
+        if (result.status === 'rejected') throw result.reason
+        return result.value
+      })
+      await Promise.all(snapshots.map((snapshot) => snapshot.cleanup()))
+    } finally {
+      vi.doUnmock('node:fs/promises')
+      vi.resetModules()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('claims an aged quarantine before a paused publisher can populate it', async () => {
+    const root = await realpath(
+      await mkdtemp(resolve(tmpdir(), 'publication-browser-claim-')),
+    )
+    const cache = resolve(root, 'cache')
+    const bundle = resolve(cache, 'chromium-1228')
+    const browser = resolve(bundle, 'chrome-linux/chrome')
+    const snapshotRoot = resolve(root, 'snapshots')
+    const quarantineRoot = resolve(snapshotRoot, 'reap-paused-publisher')
+    const publisherRoot = resolve(snapshotRoot, 'paused-publisher-payload')
+    const originalFsPromises = await import('node:fs/promises')
+    let deletionRoot = ''
+    let publishError: unknown
+
+    vi.resetModules()
+    vi.doMock('node:fs/promises', () => ({
+      ...originalFsPromises,
+      rename: async (from: unknown, to: unknown, ...args: unknown[]) => {
+        const source = resolve(String(from))
+        const destination = resolve(String(to))
+        const result = await (
+          originalFsPromises.rename as (...values: unknown[]) => unknown
+        )(from, to, ...args)
+        if (
+          source === quarantineRoot &&
+          basename(destination).startsWith('delete-')
+        ) {
+          deletionRoot = destination
+          try {
+            await originalFsPromises.rename(
+              publisherRoot,
+              resolve(quarantineRoot, 'snapshot'),
+            )
+          } catch (error) {
+            publishError = error
+          }
+        }
+        return result
+      },
+    }))
+
+    try {
+      await mkdir(dirname(browser), { recursive: true })
+      await writeFile(browser, 'reviewed browser bytes')
+      await mkdir(snapshotRoot, { mode: 0o700 })
+      await mkdir(quarantineRoot, { mode: 0o700 })
+      await utimes(quarantineRoot, new Date(0), new Date(0))
+      await mkdir(publisherRoot, { mode: 0o700 })
+      await writeFile(resolve(publisherRoot, 'orphan'), 'paused browser bytes')
+      const runtime = await import('../browser-runtime')
+      const selected = await runtime.publicationBrowserBundleForExecutable(
+        browser,
+        cache,
+      )
+      const snapshot = await runtime.snapshotPublicationBrowserBundle(
+        selected,
+        snapshotRoot,
+      )
+      expect(basename(deletionRoot)).toMatch(/^delete-/)
+      expect(publishError).toMatchObject({ code: 'ENOENT' })
+      await expect(
+        readFile(resolve(publisherRoot, 'orphan'), 'utf8'),
+      ).resolves.toBe('paused browser bytes')
+      await expect(access(deletionRoot)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+      await snapshot.cleanup()
+    } finally {
+      vi.doUnmock('node:fs/promises')
+      vi.resetModules()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('grants a second grace interval when a paused publisher wins the claim race', async () => {
+    const root = await realpath(
+      await mkdtemp(resolve(tmpdir(), 'publication-browser-grace-')),
+    )
+    const cache = resolve(root, 'cache')
+    const bundle = resolve(cache, 'chromium-1228')
+    const browser = resolve(bundle, 'chrome-linux/chrome')
+    const snapshotRoot = resolve(root, 'snapshots')
+    const quarantineRoot = resolve(snapshotRoot, 'reap-publisher-wins')
+    const publisherRoot = resolve(snapshotRoot, 'publisher-winner-payload')
+    const originalFsPromises = await import('node:fs/promises')
+    let deletionRoot = ''
+    let publishedBeforeClaim = false
+
+    vi.resetModules()
+    vi.doMock('node:fs/promises', () => ({
+      ...originalFsPromises,
+      rename: async (from: unknown, to: unknown, ...args: unknown[]) => {
+        const source = resolve(String(from))
+        const destination = resolve(String(to))
+        if (
+          source === quarantineRoot &&
+          basename(destination).startsWith('delete-')
+        ) {
+          await originalFsPromises.rename(
+            publisherRoot,
+            resolve(quarantineRoot, 'snapshot'),
+          )
+          publishedBeforeClaim = true
+          deletionRoot = destination
+        }
+        return (originalFsPromises.rename as (...values: unknown[]) => unknown)(
+          from,
+          to,
+          ...args,
+        )
+      },
+    }))
+
+    try {
+      await mkdir(dirname(browser), { recursive: true })
+      await writeFile(browser, 'reviewed browser bytes')
+      await mkdir(snapshotRoot, { mode: 0o700 })
+      await mkdir(quarantineRoot, { mode: 0o700 })
+      await utimes(quarantineRoot, new Date(0), new Date(0))
+      await mkdir(publisherRoot, { mode: 0o700 })
+      await writeFile(resolve(publisherRoot, 'orphan'), 'paused browser bytes')
+      const runtime = await import('../browser-runtime')
+      const selected = await runtime.publicationBrowserBundleForExecutable(
+        browser,
+        cache,
+      )
+      const snapshot = await runtime.snapshotPublicationBrowserBundle(
+        selected,
+        snapshotRoot,
+      )
+      expect(publishedBeforeClaim).toBe(true)
+      await expect(
+        readFile(resolve(deletionRoot, 'snapshot/orphan'), 'utf8'),
+      ).resolves.toBe('paused browser bytes')
+
+      await utimes(deletionRoot, new Date(0), new Date(0))
+      const afterGrace = await runtime.snapshotPublicationBrowserBundle(
+        selected,
+        snapshotRoot,
+      )
+      await expect(access(deletionRoot)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+      await afterGrace.cleanup()
+      await snapshot.cleanup()
+    } finally {
+      vi.doUnmock('node:fs/promises')
+      vi.resetModules()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the lease until snapshot payload cleanup finishes', async () => {
+    const root = await mkdtemp(
+      resolve(tmpdir(), 'publication-browser-cleanup-'),
+    )
+    const cache = resolve(root, 'cache')
+    const bundle = resolve(cache, 'chromium-1228')
+    const browser = resolve(bundle, 'chrome-linux/chrome')
+    const snapshotRoot = resolve(root, 'snapshots')
+    const originalFsPromises = await import('node:fs/promises')
+    let payloadPath = ''
+    let leasePath = ''
+    let observedLease = false
+
+    vi.resetModules()
+    vi.doMock('node:fs/promises', () => ({
+      ...originalFsPromises,
+      unlink: async (path: unknown, ...args: unknown[]) => {
+        if (resolve(String(path)) === payloadPath) {
+          const lease = await originalFsPromises.lstat(leasePath)
+          observedLease = lease.isFile()
+        }
+        return (originalFsPromises.unlink as (...values: unknown[]) => unknown)(
+          path,
+          ...args,
+        )
+      },
+    }))
+
+    try {
+      await mkdir(dirname(browser), { recursive: true })
+      await writeFile(browser, 'reviewed browser bytes')
+      const runtime = await import('../browser-runtime')
+      const selected = await runtime.publicationBrowserBundleForExecutable(
+        browser,
+        cache,
+      )
+      const snapshot = await runtime.snapshotPublicationBrowserBundle(
+        selected,
+        snapshotRoot,
+      )
+      payloadPath = snapshot.executablePath
+      const privateRoot = dirname(dirname(dirname(payloadPath)))
+      leasePath = resolve(privateRoot, '.lease')
+      await snapshot.cleanup()
+      expect(observedLease).toBe(true)
+      await expect(access(privateRoot)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+    } finally {
+      vi.doUnmock('node:fs/promises')
+      vi.resetModules()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('prepares an immutable verified Puppeteer browser snapshot', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-puppeteer-'))
+    try {
+      const cache = resolve(root, 'cache')
+      const bundle = resolve(cache, 'chrome/linux-150.0.7871.115')
+      const browser = resolve(bundle, 'chrome-linux64/chrome')
+      await mkdir(dirname(browser), { recursive: true })
+      await writeFile(resolve(dirname(browser), 'icudtl.dat'), 'icu-data-v1')
+      await writeFile(
+        resolve(dirname(browser), 'icudtl-alt.dat'),
+        'icu-data-v1',
+      )
+      await symlink('icudtl.dat', resolve(dirname(browser), 'icudtl-link.dat'))
+      await writeFile(
+        browser,
+        '#!/bin/sh\necho "Google Chrome for Testing 150.0.7871.115"\n',
+      )
+      const selected = await publicationPuppeteerBrowserBundleForExecutable(
+        browser,
+        {
+          cacheRoot: cache,
+          platform: 'linux',
+          architecture: 'x64',
+          buildId: '150.0.7871.115',
+        },
+      )
+      const prepared = await preparePublicationBrowserSnapshot(
+        selected,
+        '150.0.7871.115',
+        resolve(root, 'snapshots'),
+      )
+      expect(prepared.executablePath).not.toBe(browser)
+
+      await writeFile(browser, '#!/bin/sh\necho "changed source cache"\n')
+      await expect(prepared.assertUnchanged()).resolves.toBeUndefined()
+      await expect(prepared.verifyUnchanged()).resolves.toBeUndefined()
+      expect(prepared).toMatchObject({
+        bundleSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        bundleByteLength: expect.any(Number),
+        bundleEntryCount: expect.any(Number),
+      })
+
+      const pinnedResource = resolve(
+        dirname(prepared.executablePath),
+        'icudtl.dat',
+      )
+      await chmod(pinnedResource, 0o600)
+      await writeFile(pinnedResource, 'icu-data-v2')
+      await expect(prepared.verifyUnchanged()).rejects.toThrow(
+        /browser.*bundle.*changed/i,
+      )
+
+      await writeFile(pinnedResource, 'icu-data-v1')
+      await chmod(pinnedResource, 0o444)
+      await expect(prepared.verifyUnchanged()).resolves.toBeUndefined()
+      const pinnedLink = resolve(
+        dirname(prepared.executablePath),
+        'icudtl-link.dat',
+      )
+      await unlink(pinnedLink)
+      await symlink('icudtl-alt.dat', pinnedLink)
+      await expect(prepared.verifyUnchanged()).rejects.toThrow(
+        /browser.*bundle.*changed/i,
+      )
+
+      await chmod(prepared.executablePath, 0o700)
+      await writeFile(
+        prepared.executablePath,
+        '#!/bin/sh\n# changed bytes\necho "Google Chrome for Testing 150.0.7871.115"\n',
+      )
+      await expect(prepared.assertUnchanged()).rejects.toThrow(
+        /browser.*changed/i,
+      )
+      await prepared.cleanup()
+
+      await writeFile(
+        browser,
+        '#!/bin/sh\necho "Google Chrome for Testing 150.0.7871.115"\n',
+      )
+      const identityPrepared = await preparePublicationBrowserSnapshot(
+        selected,
+        '150.0.7871.115',
+        resolve(root, 'snapshots'),
+      )
+      const identityPrivateRoot = dirname(
+        dirname(dirname(identityPrepared.executablePath)),
+      )
+      const movedIdentityPrivateRoot = `${identityPrivateRoot}-moved`
+      const pinnedBrowserBytes = await readFile(identityPrepared.executablePath)
+      await rename(identityPrivateRoot, movedIdentityPrivateRoot)
+      await mkdir(dirname(identityPrepared.executablePath), { recursive: true })
+      await writeFile(identityPrepared.executablePath, pinnedBrowserBytes)
+      await chmod(identityPrepared.executablePath, 0o500)
+      await expect(identityPrepared.assertUnchanged()).rejects.toThrow(
+        /snapshot directory identity changed/i,
+      )
+      await expect(identityPrepared.cleanup()).rejects.toThrow(
+        /cleanup refused.*identity changed/i,
+      )
+      await expect(readFile(identityPrepared.executablePath)).resolves.toEqual(
+        pinnedBrowserBytes,
+      )
+
+      const outside = resolve(root, 'outside-browser')
+      await writeFile(outside, '#!/bin/sh\necho outside\n')
+      const linked = resolve(bundle, 'chrome-linux64/linked-chrome')
+      await symlink(outside, linked)
+      await expect(
+        publicationPuppeteerBrowserBundleForExecutable(linked, {
+          cacheRoot: cache,
+          platform: 'linux',
+          architecture: 'x64',
+          buildId: '150.0.7871.115',
+        }),
+      ).rejects.toThrow(/symlink|outside.*cache/i)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('resolves package identity independently of the process working directory', async () => {
+    const before = publicationPlaywrightPackageIdentityPaths()
+    const original = process.cwd()
+    const elsewhere = await mkdtemp(resolve(tmpdir(), 'publication-cwd-'))
+    try {
+      process.chdir(elsewhere)
+      expect(publicationPlaywrightPackageIdentityPaths()).toEqual(before)
+      for (const path of Object.values(before))
+        await expect(access(path)).resolves.toBeUndefined()
+    } finally {
+      process.chdir(original)
+      await rm(elsewhere, { recursive: true, force: true })
+    }
+  })
+
   it('refuses to reuse pre-existing WebPub and layout asset directories', async () => {
-    const root = await mkdtemp(resolve(tmpdir(), 'publication-webpub-exclusive-'))
+    const root = await mkdtemp(
+      resolve(tmpdir(), 'publication-webpub-exclusive-'),
+    )
     try {
       const webpub = resolve(root, 'phone-webpub')
       await mkdir(resolve(webpub, 'assets'), { recursive: true })

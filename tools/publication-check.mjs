@@ -17,10 +17,15 @@ import {
   publicationNodeForProfile,
 } from '../src/publication/renderers/vivliostyle.ts'
 import { serializeAssetBundle } from '../src/publication/asset-bundle.ts'
+import { publicationBrowserRuntimeEvidenceForCurrentPlatform } from '../src/publication/browser-runtime.ts'
 import { PUBLICATION_OUTPUT_POLICY_VERSIONS } from '../src/publication/output-contract.ts'
 import { publicationGraphSchema } from '../src/publication/schema.ts'
 import { serializePublicationGraph } from '../src/publication/schema.ts'
-import { publicationPdfRendererForArchitecture } from '../src/publication/toolchain.ts'
+import {
+  publicationPdfRendererForRuntime,
+  publicationPlatformKey,
+  publicationBrowserRuntimeEvidenceForPlatform,
+} from '../src/publication/toolchain.ts'
 import {
   canonicalRouteBodyFingerprint,
   publicationGraphBodyFingerprint,
@@ -119,6 +124,66 @@ async function run(command, args) {
 
 function assert(value, message) {
   if (!value) throw new Error(message)
+}
+
+function sameExactRecord(left, right) {
+  if (
+    !left ||
+    typeof left !== 'object' ||
+    Array.isArray(left) ||
+    !right ||
+    typeof right !== 'object' ||
+    Array.isArray(right)
+  )
+    return false
+  const leftKeys = Object.keys(left).sort()
+  const rightKeys = Object.keys(right).sort()
+  return (
+    JSON.stringify(leftKeys) === JSON.stringify(rightKeys) &&
+    leftKeys.every((key) => left[key] === right[key])
+  )
+}
+
+export function assertPublicationReceiptRuntime(
+  receipt,
+  currentPublicationBrowser,
+  environment = {},
+) {
+  const platform = environment.platform ?? process.platform
+  const architecture = environment.architecture ?? process.arch
+  const node = environment.node ?? process.versions.node
+  const expectedPdfRenderer = publicationPdfRendererForRuntime(
+    platform,
+    architecture,
+  )
+  const platformKey = publicationPlatformKey(platform, architecture)
+  const runtime = receipt?.toolchain?.runtime
+  assert(
+    receipt?.toolchain?.node === node &&
+      runtime?.node === node &&
+      runtime?.platformKey === platformKey &&
+      runtime?.pdfRenderer === expectedPdfRenderer,
+    'Publication receipt runtime binding is missing or stale',
+  )
+  let normalizedReceiptBrowser
+  try {
+    const browser = runtime.publicationBrowser
+    normalizedReceiptBrowser = publicationBrowserRuntimeEvidenceForPlatform(
+      browser,
+      platform,
+      architecture,
+    )
+  } catch {
+    throw new Error(
+      'Publication receipt browser runtime binding is missing or stale',
+    )
+  }
+  assert(
+    sameExactRecord(runtime.publicationBrowser, normalizedReceiptBrowser) &&
+      sameExactRecord(runtime.publicationBrowser, currentPublicationBrowser),
+    'Publication receipt browser runtime binding is missing or stale',
+  )
+  return expectedPdfRenderer
 }
 
 export function assertPublicationReceiptPolicyVersions(receipt) {
@@ -1081,14 +1146,10 @@ export async function publicationCheck(
     receipt.repository?.dirty === false && !currentDirty,
     'Publication receipt is not bound to a clean checked-out repository',
   )
-  assert(
-    receipt.toolchain?.node === process.versions.node,
-    'Publication receipt does not record the current Node runtime',
-  )
-  assert(
-    receipt.toolchain?.runtime?.node === process.versions.node,
-    'Publication receipt runtime binding is missing or stale',
-  )
+  const expectedPdfRenderer = publicationPdfRendererForRuntime()
+  const currentPublicationBrowser =
+    await publicationBrowserRuntimeEvidenceForCurrentPlatform()
+  assertPublicationReceiptRuntime(receipt, currentPublicationBrowser)
   assert(
     receipt.artifacts.length === 4,
     'Publication receipt matrix is incomplete',
@@ -1195,12 +1256,11 @@ export async function publicationCheck(
       receipt.profiles['a4-pdf'].figurePlacement,
     'A5 and A4 figure placement policies must differ',
   )
-  const expectedPdfRenderer = publicationPdfRendererForArchitecture()
   for (const profile of ['a5-pdf', 'a4-pdf'])
     assert(
       receipt.artifacts.find((artifact) => artifact.profile === profile)
         ?.renderer === expectedPdfRenderer,
-      `${profile} receipt renderer does not match the ${process.arch} policy (${expectedPdfRenderer})`,
+      `${profile} receipt renderer does not match the ${process.platform}-${process.arch} policy (${expectedPdfRenderer})`,
     )
   if (!requiresCanonicalRouteParity) {
     process.stdout.write(

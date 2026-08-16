@@ -45,9 +45,18 @@ export type StructuredSourceRun = {
   text: string
   page: number
   order: number
+  /** Stable deterministic line ownership for whitespace-sensitive material. */
+  lineId?: string
   /** A source run is already normalized by the deterministic extractor. */
   layout?: StructuredExtractionLayout
   stratum?: string
+}
+
+export type StructuredSourceLine = {
+  id: string
+  /** Canonical deterministic line text, including inferred run boundaries. */
+  text: string
+  sourceRunIds: string[]
 }
 
 export type StructuredSourceAsset = {
@@ -65,6 +74,18 @@ export type StructuredSourceAsset = {
   captionRunIds?: string[]
 }
 
+/** Owner-local page evidence shared by every extraction arm. */
+export type StructuredExtractionPageRendition = {
+  id?: string
+  page: number
+  mediaType?: string
+  width?: number
+  height?: number
+  bytesSha256?: string
+  reference?: string
+  data?: string
+}
+
 export type StructuredProvenArtifact = {
   id: string
   kind:
@@ -75,6 +96,10 @@ export type StructuredProvenArtifact = {
     | 'citation-relationship'
     | 'source-run-provenance'
   sourceRunIds: string[]
+  /** Deterministic destination ownership for note/citation relationships. */
+  targetSourceRunIds?: string[]
+  /** One exact destination group per deterministic relationship target. */
+  targetSourceRunIdGroups?: string[][]
 }
 
 export type StructuredExtractionContext = {
@@ -83,7 +108,9 @@ export type StructuredExtractionContext = {
   split: StructuredExtractionSplit
   layout: StructuredExtractionLayout
   sourceRuns: StructuredSourceRun[]
+  sourceLines?: StructuredSourceLine[]
   sourceAssets: StructuredSourceAsset[]
+  pageRenditions?: StructuredExtractionPageRendition[]
   provenArtifacts?: StructuredProvenArtifact[]
   /** These runs remain accounted for but may not enter body flow. */
   boilerplateRunIds?: string[]
@@ -100,6 +127,12 @@ export type StructuredExtractionTable = {
   rows: Array<{ cells: StructuredExtractionTableCell[] }>
 }
 
+export type StructuredExtractionRelationships = {
+  noteTargetNodeIds?: string[]
+  citationTargetNodeIds?: string[]
+  backlinks?: string[]
+}
+
 export type StructuredExtractionNode = {
   id: string
   type: StructuredExtractionNodeType
@@ -112,6 +145,7 @@ export type StructuredExtractionNode = {
   altText?: string
   altTextSource?: 'caption' | 'model' | 'image'
   table?: StructuredExtractionTable
+  relationships?: StructuredExtractionRelationships
 }
 
 export type StructuredExtractionProposal = {
@@ -172,6 +206,7 @@ export type StructuredExtractionVerificationIssueCode =
   | 'model-authored-alt-text'
   | 'invalid-heading-level'
   | 'invalid-table'
+  | 'invalid-relationship'
 
 export type StructuredExtractionVerificationIssue = {
   code: StructuredExtractionVerificationIssueCode
@@ -201,6 +236,7 @@ const sourceRunSchema = z
     text: z.string(),
     page: z.number().int().positive(),
     order: z.number().int().nonnegative(),
+    lineId: idSchema.optional(),
     layout: z.enum(STRUCTURED_EXTRACTION_LAYOUTS).optional(),
     stratum: z.string().min(1).optional(),
   })
@@ -225,6 +261,30 @@ const sourceAssetSchema = z
   })
   .strict()
 
+const sourceLineSchema = z
+  .object({
+    id: idSchema,
+    text: z.string(),
+    sourceRunIds: z.array(idSchema).min(1),
+  })
+  .strict()
+
+const pageRenditionSchema = z
+  .object({
+    id: idSchema.optional(),
+    page: z.number().int().positive(),
+    mediaType: z.string().min(1).optional(),
+    width: z.number().finite().positive().optional(),
+    height: z.number().finite().positive().optional(),
+    bytesSha256: sha256Schema.optional(),
+    reference: z.string().min(1).optional(),
+    data: z.string().min(1).optional(),
+  })
+  .strict()
+  .refine(
+    ({ reference, data }) => reference !== undefined || data !== undefined,
+  )
+
 const sourceArtifactSchema = z
   .object({
     id: idSchema,
@@ -237,6 +297,8 @@ const sourceArtifactSchema = z
       'source-run-provenance',
     ]),
     sourceRunIds: z.array(idSchema),
+    targetSourceRunIds: z.array(idSchema).optional(),
+    targetSourceRunIdGroups: z.array(z.array(idSchema).min(1)).optional(),
   })
   .strict()
 
@@ -247,7 +309,9 @@ const contextSchema = z
     split: z.enum(STRUCTURED_EXTRACTION_SPLITS),
     layout: z.enum(STRUCTURED_EXTRACTION_LAYOUTS),
     sourceRuns: z.array(sourceRunSchema),
+    sourceLines: z.array(sourceLineSchema).optional(),
     sourceAssets: z.array(sourceAssetSchema),
+    pageRenditions: z.array(pageRenditionSchema).min(1).optional(),
     provenArtifacts: z.array(sourceArtifactSchema).optional(),
     boilerplateRunIds: z.array(idSchema).optional(),
   })
@@ -262,6 +326,20 @@ const tableCellSchema = z
   })
   .strict()
 
+const relationshipsSchema = z
+  .object({
+    noteTargetNodeIds: z.array(idSchema).min(1).optional(),
+    citationTargetNodeIds: z.array(idSchema).min(1).optional(),
+    backlinks: z.array(idSchema).min(1).optional(),
+  })
+  .strict()
+  .refine(
+    ({ noteTargetNodeIds, citationTargetNodeIds, backlinks }) =>
+      noteTargetNodeIds !== undefined ||
+      citationTargetNodeIds !== undefined ||
+      backlinks !== undefined,
+  )
+
 const nodeSchema = z
   .object({
     id: idSchema,
@@ -273,6 +351,7 @@ const nodeSchema = z
     captionNodeId: idSchema.optional(),
     altText: z.string().optional(),
     altTextSource: z.enum(['caption', 'model', 'image']).optional(),
+    relationships: relationshipsSchema.optional(),
     table: z
       .object({ rows: z.array(z.object({ cells: z.array(tableCellSchema) })) })
       .strict()
@@ -301,29 +380,39 @@ export function structuredExtractionContextFromReconstruction({
   split,
   layout,
   stratum,
+  pageRenditions,
 }: {
   reconstruction: PdfReconstruction
   documentId?: string
   split: StructuredExtractionSplit
   layout: StructuredExtractionLayout
   stratum?: string
+  pageRenditions?: StructuredExtractionPageRendition[]
 }): StructuredExtractionContext {
   const sourceRuns: StructuredSourceRun[] = []
+  const sourceLines: StructuredSourceLine[] = []
   const runIdsByKey = new Map<string, string>()
   let order = 0
   for (const region of reconstruction.regions) {
     for (const line of region.lines) {
+      const lineId = `${region.id}:${line.id}`
+      const sourceRunIds: string[] = []
       for (const [runIndex, run] of line.runs.entries()) {
         const id = `r-${region.id}-${line.id}-${runIndex}`
+        sourceRunIds.push(id)
         runIdsByKey.set(`${region.id}\u0000${line.id}\u0000${runIndex}`, id)
         sourceRuns.push({
           id,
           text: run.text,
           page: run.page,
           order: order++,
+          lineId,
           layout,
           ...(stratum ? { stratum } : {}),
         })
+      }
+      if (sourceRunIds.length > 0) {
+        sourceLines.push({ id: lineId, text: line.text, sourceRunIds })
       }
     }
   }
@@ -338,6 +427,12 @@ export function structuredExtractionContextFromReconstruction({
         .filter(Boolean),
     )
   }
+  const runIdsForNode = (nodeId: string | null) =>
+    nodeId
+      ? (reconstruction.provenance[nodeId]?.regionIds ?? []).flatMap(
+          runIdsForRegion,
+        )
+      : []
   const sourceAssets: StructuredSourceAsset[] = reconstruction.assets.map(
     (asset) => {
       const relationship = reconstruction.visualRelationships.find(
@@ -397,11 +492,15 @@ export function structuredExtractionContextFromReconstruction({
       id: relationship.id,
       kind: 'note-relationship' as const,
       sourceRunIds: [relationship.referenceRegionId].flatMap(runIdsForRegion),
+      targetSourceRunIdGroups: relationship.targetNoteId
+        ? [runIdsForNode(relationship.targetNoteId)]
+        : [],
     })),
     ...reconstruction.citationRelationships.map((relationship) => ({
       id: relationship.id,
       kind: 'citation-relationship' as const,
       sourceRunIds: [relationship.referenceRegionId].flatMap(runIdsForRegion),
+      targetSourceRunIdGroups: relationship.targetNodeIds.map(runIdsForNode),
     })),
     {
       id: 'source-run-provenance',
@@ -415,7 +514,9 @@ export function structuredExtractionContextFromReconstruction({
     split,
     layout,
     sourceRuns,
+    sourceLines,
     sourceAssets,
+    ...(pageRenditions ? { pageRenditions } : {}),
     provenArtifacts,
     boilerplateRunIds,
   }
@@ -481,6 +582,64 @@ function sourceTextForRunIds(
   )
 }
 
+/**
+ * A code listing's whitespace *is* its structure. Prose normalization collapses
+ * every run of whitespace to one space, which republishes a source-backed
+ * listing as a single flattened line, so preformatted nodes keep their source
+ * bytes (NFKC-normalized, like prose) and are joined by line rather than space.
+ */
+const PREFORMATTED_NODE_TYPES: ReadonlySet<StructuredExtractionNodeType> =
+  new Set(['code'])
+
+function nodeTextForRunIds(
+  type: StructuredExtractionNodeType,
+  sourceRunIds: readonly string[],
+  runsById: ReadonlyMap<string, StructuredSourceRun>,
+  linesById: ReadonlyMap<string, StructuredSourceLine>,
+) {
+  if (!PREFORMATTED_NODE_TYPES.has(type))
+    return sourceTextForRunIds(sourceRunIds, runsById)
+  const runs = sourceRunIds
+    .map((id) => runsById.get(id))
+    .filter((run): run is StructuredSourceRun => run !== undefined)
+  if (
+    runs.length > 0 &&
+    runs.every((run) => run.lineId !== undefined && linesById.has(run.lineId))
+  ) {
+    const lineIds = runs.flatMap(({ lineId }, index) =>
+      lineId !== runs[index - 1]?.lineId ? [lineId!] : [],
+    )
+    return lineIds
+      .map((lineId) => linesById.get(lineId)!.text)
+      .join('\n')
+      .normalize('NFKC')
+  }
+  return runs
+    .map((run, index) => {
+      const previous = runs[index - 1]
+      const lineBreak =
+        previous?.lineId !== undefined &&
+        run.lineId !== undefined &&
+        previous.lineId !== run.lineId
+          ? '\n'
+          : ''
+      return `${lineBreak}${run.text}`
+    })
+    .join('')
+    .normalize('NFKC')
+}
+
+function nodeOwnedSourceRunIds(node: StructuredExtractionNode) {
+  return [
+    ...node.sourceRunIds,
+    ...(node.type === 'table'
+      ? (node.table?.rows.flatMap(({ cells }) =>
+          cells.flatMap(({ sourceRunIds }) => sourceRunIds),
+        ) ?? [])
+      : []),
+  ]
+}
+
 function issue(
   code: StructuredExtractionVerificationIssueCode,
   message: string,
@@ -492,11 +651,22 @@ function issue(
 function verifyNodeTable(
   node: StructuredExtractionNode,
   runsById: ReadonlyMap<string, StructuredSourceRun>,
+  provenArtifacts: readonly StructuredProvenArtifact[],
   claimed: Set<string>,
   issues: StructuredExtractionVerificationIssue[],
   boilerplate: ReadonlySet<string>,
 ) {
-  if (!node.table || node.type !== 'table') return undefined
+  if (node.type !== 'table') return undefined
+  // A table node without semantic cells publishes no rows, header scopes, or
+  // per-cell provenance, yet would score as a table. It is not a table.
+  if (!node.table) {
+    issues.push(
+      issue('invalid-table', 'A table must carry its semantic cells.', {
+        nodeId: node.id,
+      }),
+    )
+    return undefined
+  }
   if (node.table.rows.length === 0) {
     issues.push(
       issue('invalid-table', 'A table must contain at least one row.', {
@@ -504,6 +674,60 @@ function verifyNodeTable(
       }),
     )
     return undefined
+  }
+  const cellSourceRunIds = node.table.rows.flatMap(({ cells }) =>
+    cells.flatMap(({ sourceRunIds }) => sourceRunIds),
+  )
+  const cellSourceRunCounts = new Map<string, number>()
+  for (const sourceRunId of cellSourceRunIds) {
+    cellSourceRunCounts.set(
+      sourceRunId,
+      (cellSourceRunCounts.get(sourceRunId) ?? 0) + 1,
+    )
+  }
+  const matchingScopes = provenArtifacts.filter((artifact) => {
+    if (
+      artifact.kind !== 'table-scope' ||
+      artifact.sourceRunIds.length !== cellSourceRunIds.length
+    ) {
+      return false
+    }
+    const scopeCounts = new Map<string, number>()
+    for (const sourceRunId of artifact.sourceRunIds) {
+      scopeCounts.set(sourceRunId, (scopeCounts.get(sourceRunId) ?? 0) + 1)
+    }
+    return (
+      scopeCounts.size === cellSourceRunCounts.size &&
+      [...scopeCounts].every(
+        ([sourceRunId, count]) =>
+          cellSourceRunCounts.get(sourceRunId) === count,
+      )
+    )
+  })
+  if (matchingScopes.length !== 1) {
+    issues.push(
+      issue(
+        'invalid-table',
+        'Semantic table cells must exactly match one deterministic table scope.',
+        { nodeId: node.id },
+      ),
+    )
+  }
+  const cellSourceOrders = cellSourceRunIds
+    .map((sourceRunId) => runsById.get(sourceRunId)?.order)
+    .filter((order): order is number => order !== undefined)
+  if (
+    cellSourceOrders.some(
+      (order, index) => index > 0 && order < cellSourceOrders[index - 1]!,
+    )
+  ) {
+    issues.push(
+      issue(
+        'unverified-span',
+        'Table cells and rows must follow deterministic source order.',
+        { nodeId: node.id },
+      ),
+    )
   }
   const rows: VerifiedStructuredExtractionNode['table'] = { rows: [] }
   for (const row of node.table.rows) {
@@ -568,6 +792,7 @@ function verifyNodeTable(
 function validateNodeText(
   node: StructuredExtractionNode,
   runsById: ReadonlyMap<string, StructuredSourceRun>,
+  linesById: ReadonlyMap<string, StructuredSourceLine>,
   claimed: Set<string>,
   issues: StructuredExtractionVerificationIssue[],
 ) {
@@ -581,7 +806,54 @@ function validateNodeText(
     )
     return ''
   }
-  const text = sourceTextForRunIds(node.sourceRunIds, runsById)
+  const knownRuns = node.sourceRunIds
+    .map((sourceRunId) => runsById.get(sourceRunId))
+    .filter((run): run is StructuredSourceRun => run !== undefined)
+  if (
+    node.type === 'code' &&
+    node.sourceRunIds.length > 1 &&
+    knownRuns.length === node.sourceRunIds.length &&
+    knownRuns.some(({ lineId }) => lineId === undefined)
+  ) {
+    issues.push(
+      issue(
+        'unverified-span',
+        'Multi-run code requires deterministic line ownership.',
+        { nodeId: node.id },
+      ),
+    )
+  }
+  if (node.type === 'code') {
+    const selectedByLineId = new Map<string, string[]>()
+    for (const run of knownRuns) {
+      if (!run.lineId) continue
+      const selected = selectedByLineId.get(run.lineId) ?? []
+      selected.push(run.id)
+      selectedByLineId.set(run.lineId, selected)
+    }
+    for (const [lineId, selected] of selectedByLineId) {
+      const sourceLine = linesById.get(lineId)
+      if (
+        !sourceLine ||
+        sourceLine.sourceRunIds.length !== selected.length ||
+        sourceLine.sourceRunIds.some((id, index) => id !== selected[index])
+      ) {
+        issues.push(
+          issue(
+            'unverified-span',
+            `Code line ${lineId} requires complete canonical line ownership.`,
+            { nodeId: node.id },
+          ),
+        )
+      }
+    }
+  }
+  const text = nodeTextForRunIds(
+    node.type,
+    node.sourceRunIds,
+    runsById,
+    linesById,
+  )
   if (!text) {
     issues.push(
       issue('unverified-span', 'A node references no readable source text.', {
@@ -589,7 +861,12 @@ function validateNodeText(
       }),
     )
   }
-  if (node.text !== undefined && normalizedText(node.text) !== text) {
+  const proposedText = PREFORMATTED_NODE_TYPES.has(node.type)
+    ? node.text?.normalize('NFKC')
+    : node.text === undefined
+      ? undefined
+      : normalizedText(node.text)
+  if (node.text !== undefined && proposedText !== text) {
     issues.push(
       issue(
         'source-text-mismatch',
@@ -643,7 +920,21 @@ function verifyAsset(
   nodesById: ReadonlyMap<string, StructuredExtractionNode>,
   issues: StructuredExtractionVerificationIssue[],
 ) {
-  if (!node.assetId) return
+  if (!node.assetId) {
+    // Returning here for a figure skips every figure-specific check, so a
+    // proposal that simply omits `assetId` publishes a figure with no bounded
+    // asset, no caption, and no caption-derived alt text.
+    if (node.type === 'figure') {
+      issues.push(
+        issue(
+          'unknown-asset',
+          `Figure ${node.id} must reference a deterministic asset.`,
+          { nodeId: node.id },
+        ),
+      )
+    }
+    return
+  }
   const asset = assetsById.get(node.assetId)
   if (!asset) {
     issues.push(
@@ -746,6 +1037,159 @@ function captionTextForNode(
     : undefined
 }
 
+function verifyRelationships(
+  context: StructuredExtractionContext,
+  proposal: StructuredExtractionProposal,
+  nodesById: ReadonlyMap<string, StructuredExtractionNode>,
+  issues: StructuredExtractionVerificationIssue[],
+) {
+  const provenArtifacts = context.provenArtifacts ?? []
+  const targetGroupsForArtifact = (artifact: StructuredProvenArtifact) => [
+    ...(artifact.targetSourceRunIdGroups ?? []),
+    ...(artifact.targetSourceRunIds ? [artifact.targetSourceRunIds] : []),
+  ]
+  const targetMatchesGroup = (
+    target: StructuredExtractionNode,
+    group: readonly string[],
+  ) => {
+    const targetRuns = new Set(nodeOwnedSourceRunIds(target))
+    const artifactTargetRuns = new Set(group)
+    return (
+      targetRuns.size > 0 &&
+      artifactTargetRuns.size === targetRuns.size &&
+      [...targetRuns].every((id) => artifactTargetRuns.has(id))
+    )
+  }
+  const sourceMatchesArtifact = (
+    source: StructuredExtractionNode,
+    artifact: StructuredProvenArtifact,
+  ) => {
+    const sourceRuns = new Set(nodeOwnedSourceRunIds(source))
+    const artifactSourceRuns = new Set(artifact.sourceRunIds)
+    return (
+      sourceRuns.size > 0 &&
+      [...sourceRuns].every((id) => artifactSourceRuns.has(id))
+    )
+  }
+  const relationshipIsProven = (
+    source: StructuredExtractionNode,
+    target: StructuredExtractionNode,
+    kind: 'note-relationship' | 'citation-relationship',
+  ) => {
+    return provenArtifacts.some((artifact) => {
+      if (artifact.kind !== kind) return false
+      return (
+        sourceMatchesArtifact(source, artifact) &&
+        targetGroupsForArtifact(artifact).some((group) =>
+          targetMatchesGroup(target, group),
+        )
+      )
+    })
+  }
+  const targetLists = (node: StructuredExtractionNode) => [
+    ...(node.relationships?.noteTargetNodeIds ?? []),
+    ...(node.relationships?.citationTargetNodeIds ?? []),
+  ]
+
+  for (const node of proposal.nodes) {
+    const relationships = node.relationships
+    if (!relationships) continue
+    const lists = [
+      relationships.noteTargetNodeIds ?? [],
+      relationships.citationTargetNodeIds ?? [],
+      relationships.backlinks ?? [],
+    ]
+    if (lists.some((ids) => new Set(ids).size !== ids.length)) {
+      issues.push(
+        issue('invalid-relationship', 'Relationship targets must be unique.', {
+          nodeId: node.id,
+        }),
+      )
+    }
+
+    for (const targetId of relationships.noteTargetNodeIds ?? []) {
+      const target = nodesById.get(targetId)
+      if (
+        target?.type !== 'footnote' ||
+        !target.relationships?.backlinks?.includes(node.id) ||
+        !relationshipIsProven(node, target, 'note-relationship')
+      ) {
+        issues.push(
+          issue(
+            'invalid-relationship',
+            `Note target ${targetId} must be a deterministically proven footnote with a reciprocal backlink.`,
+            { nodeId: node.id },
+          ),
+        )
+      }
+    }
+
+    for (const targetId of relationships.citationTargetNodeIds ?? []) {
+      const target = nodesById.get(targetId)
+      if (
+        target?.type !== 'reference' ||
+        !target.relationships?.backlinks?.includes(node.id) ||
+        !relationshipIsProven(node, target, 'citation-relationship')
+      ) {
+        issues.push(
+          issue(
+            'invalid-relationship',
+            `Citation target ${targetId} must be a deterministically proven reference with a reciprocal backlink.`,
+            { nodeId: node.id },
+          ),
+        )
+      }
+    }
+
+    for (const backlinkId of relationships.backlinks ?? []) {
+      const backlink = nodesById.get(backlinkId)
+      if (
+        !['footnote', 'reference'].includes(node.type) ||
+        !backlink ||
+        !targetLists(backlink).includes(node.id)
+      ) {
+        issues.push(
+          issue(
+            'invalid-relationship',
+            `Backlink ${backlinkId} must point to ${node.id}.`,
+            { nodeId: node.id },
+          ),
+        )
+      }
+    }
+  }
+
+  for (const artifact of provenArtifacts) {
+    if (
+      artifact.kind !== 'note-relationship' &&
+      artifact.kind !== 'citation-relationship'
+    ) {
+      continue
+    }
+    for (const targetGroup of targetGroupsForArtifact(artifact)) {
+      const represented = proposal.nodes.some((source) => {
+        if (!sourceMatchesArtifact(source, artifact)) return false
+        const targetIds =
+          artifact.kind === 'note-relationship'
+            ? (source.relationships?.noteTargetNodeIds ?? [])
+            : (source.relationships?.citationTargetNodeIds ?? [])
+        return targetIds.some((targetId) => {
+          const target = nodesById.get(targetId)
+          return target ? targetMatchesGroup(target, targetGroup) : false
+        })
+      })
+      if (!represented) {
+        issues.push(
+          issue(
+            'invalid-relationship',
+            `Deterministic relationship ${artifact.id} is missing a proven target from the proposal.`,
+          ),
+        )
+      }
+    }
+  }
+}
+
 /**
  * Verify and materialize a model proposal.  On any violation this function
  * returns no document; callers must use the deterministic fallback instead of
@@ -779,6 +1223,9 @@ export function verifyStructuredExtraction(
 
   const issues: StructuredExtractionVerificationIssue[] = []
   const runsById = new Map(context.sourceRuns.map((run) => [run.id, run]))
+  const linesById = new Map(
+    (context.sourceLines ?? []).map((line) => [line.id, line]),
+  )
   const assetsById = new Map(
     context.sourceAssets.map((asset) => [asset.id, asset]),
   )
@@ -801,6 +1248,35 @@ export function verifyStructuredExtraction(
       ),
     )
   }
+  if (linesById.size !== (context.sourceLines ?? []).length) {
+    issues.push(
+      issue('invalid-output', 'Deterministic source line IDs must be unique.'),
+    )
+  }
+  const lineOwnedRunIds = new Set<string>()
+  for (const line of context.sourceLines ?? []) {
+    if (new Set(line.sourceRunIds).size !== line.sourceRunIds.length) {
+      issues.push(
+        issue(
+          'invalid-output',
+          `Source line ${line.id} run ownership must be unique.`,
+        ),
+      )
+    }
+    for (const sourceRunId of line.sourceRunIds) {
+      const run = runsById.get(sourceRunId)
+      if (!run || run.lineId !== line.id || lineOwnedRunIds.has(sourceRunId)) {
+        issues.push(
+          issue(
+            'invalid-output',
+            `Source line ${line.id} has invalid run ownership.`,
+            { sourceRunId },
+          ),
+        )
+      }
+      lineOwnedRunIds.add(sourceRunId)
+    }
+  }
   if (
     new Set(context.sourceAssets.map(({ id }) => id)).size !==
     context.sourceAssets.length
@@ -816,7 +1292,28 @@ export function verifyStructuredExtraction(
   if (nodesById.size !== proposal.nodes.length) {
     issues.push(issue('invalid-output', 'Node identifiers must be unique.'))
   }
+  // `validateNodeText` only orders the runs *within* one node, so two nodes can
+  // be supplied back to front with each one internally sorted. The proposal
+  // order is what the verified document publishes, so it has to hold across
+  // node boundaries too.
+  let previousNodeOrder: { id: string; order: number } | undefined
   for (const node of proposal.nodes) {
+    const nodeOrders = nodeOwnedSourceRunIds(node)
+      .map((sourceRunId) => runsById.get(sourceRunId)?.order)
+      .filter((order): order is number => order !== undefined)
+    if (nodeOrders.length > 0) {
+      const first = Math.min(...nodeOrders)
+      if (previousNodeOrder && first < previousNodeOrder.order) {
+        issues.push(
+          issue(
+            'unverified-span',
+            `Node ${node.id} is emitted after ${previousNodeOrder.id} but starts earlier in source order.`,
+            { nodeId: node.id },
+          ),
+        )
+      }
+      previousNodeOrder = { id: node.id, order: Math.max(...nodeOrders) }
+    }
     if (
       node.type === 'heading' &&
       (node.level === undefined || node.level < 1 || node.level > 6)
@@ -829,8 +1326,29 @@ export function verifyStructuredExtraction(
         ),
       )
     }
+    // The alt-text checks below are figure-only, but the verified node copies
+    // `altText` unconditionally. Without this, a paragraph carrying
+    // `altTextSource: 'model'` lands invented text in a source-backed document.
+    if (node.type !== 'figure' && node.altText !== undefined) {
+      issues.push(
+        issue(
+          'model-authored-alt-text',
+          `Only a figure may carry alt text; ${node.id} is a ${node.type}.`,
+          { nodeId: node.id },
+        ),
+      )
+    }
+    if (node.type !== 'table' && node.table !== undefined) {
+      issues.push(
+        issue(
+          'invalid-table',
+          `Only a table node may carry semantic cells; ${node.id} is a ${node.type}.`,
+          { nodeId: node.id },
+        ),
+      )
+    }
     const claimedBeforeNode = new Set(claimed)
-    const text = validateNodeText(node, runsById, claimed, issues)
+    const text = validateNodeText(node, runsById, linesById, claimed, issues)
     for (const sourceRunId of node.sourceRunIds) {
       if (boilerplate.has(sourceRunId)) {
         issues.push(
@@ -850,6 +1368,7 @@ export function verifyStructuredExtraction(
     const table = verifyNodeTable(
       node,
       runsById,
+      context.provenArtifacts ?? [],
       tableClaimed,
       issues,
       boilerplate,
@@ -909,10 +1428,35 @@ export function verifyStructuredExtraction(
       ...(node.altTextSource === 'caption'
         ? { altTextSource: 'caption' as const }
         : {}),
+      ...(node.relationships
+        ? {
+            relationships: {
+              ...(node.relationships.noteTargetNodeIds
+                ? {
+                    noteTargetNodeIds: [
+                      ...node.relationships.noteTargetNodeIds,
+                    ],
+                  }
+                : {}),
+              ...(node.relationships.citationTargetNodeIds
+                ? {
+                    citationTargetNodeIds: [
+                      ...node.relationships.citationTargetNodeIds,
+                    ],
+                  }
+                : {}),
+              ...(node.relationships.backlinks
+                ? { backlinks: [...node.relationships.backlinks] }
+                : {}),
+            },
+          }
+        : {}),
       provenance: { sourceRunIds: [...node.sourceRunIds] },
       ...(table ? { table } : {}),
     })
   }
+
+  verifyRelationships(context, proposal, nodesById, issues)
 
   for (const sourceRunId of excluded) {
     if (!boilerplate.has(sourceRunId)) {
@@ -1013,6 +1557,14 @@ export function modelInputForStructuredExtraction(
     split: context.split,
     layout: context.layout,
     sourceRuns: context.sourceRuns.map((run) => ({ ...run })),
+    ...(context.sourceLines
+      ? {
+          sourceLines: context.sourceLines.map((line) => ({
+            ...line,
+            sourceRunIds: [...line.sourceRunIds],
+          })),
+        }
+      : {}),
     sourceAssets: context.sourceAssets.map((asset) => ({
       ...asset,
       bounds: { ...asset.bounds },
@@ -1021,7 +1573,14 @@ export function modelInputForStructuredExtraction(
         ? { captionRunIds: [...asset.captionRunIds] }
         : {}),
     })),
-    ...(context.boilerplateRunIds
+    ...(context.pageRenditions
+      ? {
+          pageRenditions: context.pageRenditions.map((rendition) => ({
+            ...rendition,
+          })),
+        }
+      : {}),
+    ...(arm !== 'llm-authored' && context.boilerplateRunIds
       ? { boilerplateRunIds: [...context.boilerplateRunIds] }
       : {}),
   }
@@ -1029,6 +1588,16 @@ export function modelInputForStructuredExtraction(
     base.provenArtifacts = (context.provenArtifacts ?? []).map((artifact) => ({
       ...artifact,
       sourceRunIds: [...artifact.sourceRunIds],
+      ...(artifact.targetSourceRunIds
+        ? { targetSourceRunIds: [...artifact.targetSourceRunIds] }
+        : {}),
+      ...(artifact.targetSourceRunIdGroups
+        ? {
+            targetSourceRunIdGroups: artifact.targetSourceRunIdGroups.map(
+              (group) => [...group],
+            ),
+          }
+        : {}),
     }))
   }
   return deepFreeze(base)

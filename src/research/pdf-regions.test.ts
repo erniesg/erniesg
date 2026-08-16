@@ -4,6 +4,8 @@ import { buildEpub, buildReadableEpub, inspectEpub } from './epub'
 import type { PdfPageAnalysis, PdfSourceRun } from './import-types'
 import { reconstructPageAnalyses } from './pdf-layout'
 import {
+  classifyPdfFurniture,
+  digitValue,
   evaluateReadingOrder,
   hasAcceptedCycle,
   noteLabelFromText,
@@ -6854,6 +6856,237 @@ describe('deterministic scholarly page regions', () => {
       ),
     ).toBe(true)
     expect(first.regions).toEqual(second.regions)
+  })
+
+  it('splits a reviewable margin run from an adjacent first-page title run', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(1, 'Submitted for bounded source review', 0.1, 0.03, 0.3, 8),
+        run(1, 'Synthetic title block', 0.41, 0.03, 0.16, 14),
+        run(
+          1,
+          'Canonical body prose establishes the page font.',
+          0.12,
+          0.2,
+          0.72,
+        ),
+        run(
+          1,
+          'A second body line stabilizes the source geometry.',
+          0.12,
+          0.24,
+          0.72,
+        ),
+      ]),
+    ])
+
+    expect(
+      result.regions.find(
+        (region) => region.text === 'Submitted for bounded source review',
+      ),
+    ).toMatchObject({
+      furnitureReview: { reason: 'single-occurrence-margin' },
+      includedInReadingOrder: true,
+    })
+    expect(
+      result.regions.find((region) => region.text === 'Synthetic title block'),
+    ).toMatchObject({ includedInReadingOrder: true })
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'FURNITURE_REVIEW_REQUIRED',
+          severity: 'error',
+        }),
+      ]),
+    )
+  })
+
+  it('keeps short unproven margin lines on the bounded header path', () => {
+    const result = reconstructPageRegions([
+      page(1, [
+        run(
+          1,
+          'Canonical body prose establishes the page font.',
+          0.12,
+          0.2,
+          0.72,
+        ),
+        run(
+          1,
+          'A second body line stabilizes the source geometry.',
+          0.12,
+          0.24,
+          0.72,
+        ),
+        run(1, 'DRAFT', 0.2, 0.03, 0.08, 8.5),
+      ]),
+    ])
+
+    expect(
+      result.regions.find((region) => region.text === 'DRAFT'),
+    ).toMatchObject({
+      kind: 'header',
+      confidence: 0.78,
+      includedInReadingOrder: false,
+    })
+  })
+
+  it('does not attach furniture evidence to protected repeated-margin headings', () => {
+    const prefixForms = [
+      (ordinal: number) => `A.${ordinal}.`,
+      (ordinal: number) => `A.1.${ordinal}`,
+    ]
+
+    for (const prefix of prefixForms) {
+      const headingPage = (pageNumber: number, ordinal: number) =>
+        page(pageNumber, [
+          {
+            ...run(pageNumber, prefix(ordinal), 0.1, 0.08, 0.05, 14),
+            fontName: 'Synthetic-Bold',
+            bold: true,
+          },
+          {
+            ...run(
+              pageNumber,
+              `Repeated Section ${ordinal}`,
+              0.155,
+              0.08,
+              0.5,
+              14,
+            ),
+            fontName: 'Synthetic-Bold',
+            bold: true,
+          },
+          run(
+            pageNumber,
+            `Canonical body prose on page ${pageNumber}.`,
+            0.12,
+            0.2,
+            0.72,
+          ),
+        ])
+      const result = reconstructPageRegions([
+        page(1, [
+          {
+            ...run(1, 'A Parent Heading', 0.12, 0.04, 0.3, 14),
+            fontName: 'Synthetic-Bold',
+            bold: true,
+          },
+          run(1, 'Canonical body prose on page 1.', 0.12, 0.2, 0.72),
+        ]),
+        headingPage(2, 1),
+        headingPage(3, 2),
+        headingPage(4, 3),
+      ])
+
+      const headings = result.regions.filter((region) =>
+        region.text.includes('Repeated Section'),
+      )
+      expect(headings).toHaveLength(3)
+      expect(
+        headings.every(
+          (region) =>
+            region.kind === 'body' &&
+            region.furniture === undefined &&
+            region.includedInReadingOrder,
+        ),
+      ).toBe(true)
+    }
+  })
+
+  it('protects a narrow first-page title-block run while later repeats remain furniture', () => {
+    const titlePage = (pageNumber: number) =>
+      page(pageNumber, [
+        run(pageNumber, 'Ada Lovelace', 0.12, 0.09, 0.22, 9),
+        run(
+          pageNumber,
+          `Canonical body prose on page ${pageNumber}.`,
+          0.12,
+          0.2,
+          0.72,
+        ),
+        run(
+          pageNumber,
+          `A second body line stabilizes page ${pageNumber}.`,
+          0.12,
+          0.24,
+          0.72,
+        ),
+      ])
+    const result = reconstructPageRegions([
+      titlePage(1),
+      titlePage(2),
+      titlePage(3),
+    ])
+    const titleRegions = result.regions.filter(
+      (region) => region.text === 'Ada Lovelace',
+    )
+
+    expect(titleRegions).toHaveLength(3)
+    expect(titleRegions[0]).toMatchObject({
+      kind: 'body',
+      includedInReadingOrder: true,
+    })
+    expect(titleRegions[0].furniture).toBeUndefined()
+    expect(
+      titleRegions
+        .slice(1)
+        .every(
+          (region) =>
+            region.kind === 'header' &&
+            region.includedInReadingOrder === false &&
+            region.furniture?.classification === 'repeated-text',
+        ),
+    ).toBe(true)
+  })
+
+  it('recognizes every Unicode decimal digit supported by the runtime', () => {
+    const missing: string[] = []
+    for (let codePoint = 0; codePoint <= 0x10ffff; codePoint += 1) {
+      const character = String.fromCodePoint(codePoint)
+      if (!/^\p{Nd}$/u.test(character)) continue
+      if (digitValue(character) === null) {
+        missing.push(`U+${codePoint.toString(16).toUpperCase()}`)
+      }
+    }
+
+    expect(missing).toEqual([])
+  })
+
+  it('classifies a newly assigned decimal digit range as incrementing folios', () => {
+    const folio = (index: number) => String.fromCodePoint(0x10d40 + index)
+    const result = reconstructPageRegions(
+      [1, 2, 3].map((pageNumber, index) =>
+        page(pageNumber, [
+          run(
+            pageNumber,
+            `Canonical body prose on page ${pageNumber}.`,
+            0.12,
+            0.2,
+            0.72,
+          ),
+          run(pageNumber, folio(index), 0.48, 0.95, 0.03, 8),
+        ]),
+      ),
+    )
+
+    expect(
+      result.regions
+        .filter((region) =>
+          [folio(0), folio(1), folio(2)].includes(region.text),
+        )
+        .map((region) => ({
+          text: region.text,
+          kind: region.kind,
+          classification: region.furniture?.classification,
+        })),
+    ).toEqual(
+      [folio(0), folio(1), folio(2)].map((text) => ({
+        text,
+        kind: 'page-number',
+        classification: 'incrementing-numeral',
+      })),
+    )
   })
 
   it('keeps raised Unicode note markers linked while margin numerals remain furniture', async () => {

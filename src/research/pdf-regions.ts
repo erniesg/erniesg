@@ -351,7 +351,7 @@ function furnitureRunKey(run: PdfSourceRun) {
   ].join('\u001f')
 }
 
-function digitValue(character: string) {
+export function digitValue(character: string) {
   const codePoint = character.codePointAt(0) ?? -1
   const ranges = [
     [0x30, 0x39],
@@ -392,6 +392,7 @@ function digitValue(character: string) {
     [0xabf0, 0xabf9],
     [0x104a0, 0x104a9],
     [0x10d30, 0x10d39],
+    [0x10d40, 0x10d49],
     [0x11066, 0x1106f],
     [0x110f0, 0x110f9],
     [0x11136, 0x1113f],
@@ -401,18 +402,28 @@ function digitValue(character: string) {
     [0x114d0, 0x114d9],
     [0x11650, 0x11659],
     [0x116c0, 0x116c9],
+    [0x116d0, 0x116d9],
+    [0x116da, 0x116e3],
     [0x11730, 0x11739],
     [0x118e0, 0x118e9],
     [0x11950, 0x11959],
+    [0x11bf0, 0x11bf9],
     [0x11c50, 0x11c59],
     [0x11d50, 0x11d59],
     [0x11da0, 0x11da9],
+    [0x11de0, 0x11de9],
+    [0x11f50, 0x11f59],
+    [0x16130, 0x16139],
     [0x16a60, 0x16a69],
     [0x16ac0, 0x16ac9],
     [0x16b50, 0x16b59],
+    [0x16d70, 0x16d79],
+    [0x1ccf0, 0x1ccf9],
     [0x1d7ce, 0x1d7ff],
     [0x1e140, 0x1e149],
     [0x1e2f0, 0x1e2f9],
+    [0x1e4f0, 0x1e4f9],
+    [0x1e5f1, 0x1e5fa],
     [0x1e950, 0x1e959],
     [0x1fbf0, 0x1fbf9],
     [0xff10, 0xff19],
@@ -482,7 +493,9 @@ function firstPageTitleBlockRun(run: PdfSourceRun, bodyFontSize: number) {
   if (run.y < 0.08 && run.fontSize < bodyFontSize * 1.2 && run.width < 0.55) {
     return false
   }
-  return run.width >= 0.28 || run.fontSize >= bodyFontSize * 0.92
+  return (
+    run.y >= 0.08 || run.width >= 0.28 || run.fontSize >= bodyFontSize * 0.92
+  )
 }
 
 function furniturePatternProven(occurrences: FurnitureRunOccurrence[]) {
@@ -1825,6 +1838,7 @@ function splitRepeatedMarginSourceRuns(
   repeated: ReadonlySet<string>,
   protectedLines: ReadonlySet<PdfTextLine> = new Set(),
   furnitureByRunKey: ReadonlyMap<string, PdfFurnitureEvidence> = new Map(),
+  furnitureReviewByRunKey: ReadonlyMap<string, PdfFurnitureReview> = new Map(),
 ) {
   return lines.flatMap((line) => {
     if (
@@ -1839,6 +1853,7 @@ function splitRepeatedMarginSourceRuns(
     const repeatedIndexes = orderedRuns.flatMap((run, index) =>
       marginBand(run) &&
       (furnitureByRunKey.has(furnitureRunKey(run)) ||
+        furnitureReviewByRunKey.has(furnitureRunKey(run)) ||
         repeated.has(normalizeMarginText(run.text)))
         ? [index]
         : [],
@@ -5836,6 +5851,13 @@ export function reconstructPageRegions(
   )
   const protectedRepeatedMarginHeadings =
     sourceProvenRepeatedMarginHeadingLines(groupedLines, repeated)
+  const protectedRepeatedMarginHeadingRunKeys = new Set(
+    [...protectedRepeatedMarginHeadings].flatMap((line) =>
+      line.runs
+        .filter((run) => run.text.trim())
+        .map((run) => furnitureRunKey(run)),
+    ),
+  )
   const rawLines = groupedLines.map((lines) =>
     splitDetachedMathExtensionProseRuns(
       splitSourceStackedInlineFormulaLines(
@@ -5844,6 +5866,7 @@ export function reconstructPageRegions(
           repeated,
           protectedRepeatedMarginHeadings,
           furnitureAssessment.byRunKey,
+          furnitureAssessment.reviewByRunKey,
         ),
       ),
     ),
@@ -5857,6 +5880,13 @@ export function reconstructPageRegions(
   const lineFurniture = (line: PdfTextLine) => {
     const visibleRuns = line.runs.filter((run) => run.text.trim())
     if (visibleRuns.length === 0) return undefined
+    if (
+      visibleRuns.every((run) =>
+        protectedRepeatedMarginHeadingRunKeys.has(furnitureRunKey(run)),
+      )
+    ) {
+      return undefined
+    }
     const evidences = visibleRuns.flatMap((run) => {
       const evidence = furnitureAssessment.byRunKey.get(furnitureRunKey(run))
       return evidence ? [evidence] : []
@@ -5919,6 +5949,9 @@ export function reconstructPageRegions(
         )
         const { label, explicitFootnote, renderedFootnote } = noteEvidence
         const inlineStackedFragment = inlineStackedFragmentParts(line)
+        const firstPageTitleBlockLine = line.runs.some((run) =>
+          firstPageTitleBlockRun(run, fontSize),
+        )
         let kind: PdfRegionKind = 'body'
         let confidence = 0.9
         if (inEndnotes && label !== null) {
@@ -5957,13 +5990,15 @@ export function reconstructPageRegions(
                   : 'footer'
           confidence = 0.99
         } else if (
+          !firstPageTitleBlockLine &&
           marginBand(line) &&
           repeated.has(normalizeMarginText(line.text))
         ) {
           kind = line.y < 0.5 ? 'header' : 'footer'
           confidence = 0.99
         } else if (
-          furniture &&
+          !furnitureReview &&
+          !firstPageTitleBlockLine &&
           (line.y <= 0.08 || line.y + line.height >= 0.92) &&
           line.fontSize <= fontSize * 0.9
         ) {

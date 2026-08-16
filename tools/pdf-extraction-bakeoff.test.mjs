@@ -56,7 +56,7 @@ describe('extraction bake-off CLI', () => {
     rmSync(directory, { recursive: true, force: true })
   })
 
-  it('releases the score-ledger lock when persistence fails', async () => {
+  it('fails closed without stranding the active lock when persistence fails', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'extraction-bakeoff-'))
     const ledger = join(directory, 'score-ledger.json')
 
@@ -70,6 +70,15 @@ describe('extraction bake-off CLI', () => {
       ),
     ).rejects.toThrow('simulated persistence failure')
     expect(existsSync(`${ledger}.lock`)).toBe(false)
+    expect(existsSync(`${ledger}.failed`)).toBe(true)
+
+    let replayed = false
+    await expect(
+      withScoreLedger(ledger, async () => {
+        replayed = true
+      }),
+    ).rejects.toThrow('EXTRACTION_SCORE_LEDGER_RECOVERY_REQUIRED')
+    expect(replayed).toBe(false)
     rmSync(directory, { recursive: true, force: true })
   })
 })

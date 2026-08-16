@@ -228,31 +228,46 @@ function identityValid(identity: ExtractionBakeoffModelIdentity) {
   )
 }
 
-function hasForbiddenGroundTruth(value: unknown, path = ''): string | null {
-  if (Array.isArray(value)) {
-    for (const [index, item] of value.entries()) {
-      const found = hasForbiddenGroundTruth(item, `${path}[${index}]`)
+function hasForbiddenGroundTruth(
+  value: unknown,
+  path = '',
+  ancestors = new WeakSet<object>(),
+): string | null {
+  if (!value || typeof value !== 'object') return null
+  if (ancestors.has(value))
+    throw new Error('INVALID_EXTRACTION_ARM_RESULT:cyclic-proposal')
+  ancestors.add(value)
+  try {
+    if (Array.isArray(value)) {
+      for (const [index, item] of value.entries()) {
+        const found = hasForbiddenGroundTruth(
+          item,
+          `${path}[${index}]`,
+          ancestors,
+        )
+        if (found) return found
+      }
+      return null
+    }
+    for (const [key, child] of Object.entries(value)) {
+      const normalizedKey = key
+        .normalize('NFKC')
+        .replace(/[^A-Za-z0-9]/gu, '')
+        .toLowerCase()
+      if (
+        FORBIDDEN_GROUND_TRUTH_KEYS.has(normalizedKey) ||
+        /^(?:gold|groundtruth|expected|labels?|reviewer|targetbox)/u.test(
+          normalizedKey,
+        )
+      )
+        return `${path}.${key}`
+      const found = hasForbiddenGroundTruth(child, `${path}.${key}`, ancestors)
       if (found) return found
     }
     return null
+  } finally {
+    ancestors.delete(value)
   }
-  if (!value || typeof value !== 'object') return null
-  for (const [key, child] of Object.entries(value)) {
-    const normalizedKey = key
-      .normalize('NFKC')
-      .replace(/[^A-Za-z0-9]/gu, '')
-      .toLowerCase()
-    if (
-      FORBIDDEN_GROUND_TRUTH_KEYS.has(normalizedKey) ||
-      /^(?:gold|groundtruth|expected|labels?|reviewer|targetbox)/u.test(
-        normalizedKey,
-      )
-    )
-      return `${path}.${key}`
-    const found = hasForbiddenGroundTruth(child, `${path}.${key}`)
-    if (found) return found
-  }
-  return null
 }
 
 function unique(values: readonly string[]) {
@@ -851,7 +866,13 @@ export async function runExtractionBakeoff({
           assertNoHeldOutContamination(arm, first.proposal, document.split)
         } catch (error) {
           const issueCode = heldOutContaminationCode(error)
-          if (!issueCode) throw error
+          if (!issueCode) {
+            resultByArm[arm.id].push(
+              disqualifiedDocumentResult(document, 'adapter-failure', 'failed'),
+            )
+            identityRunKeys.add(runKey)
+            continue
+          }
           contaminatedOnHeldOut = issueCode
           resultByArm[arm.id].push(
             disqualifiedDocumentResult(document, issueCode),
@@ -889,7 +910,13 @@ export async function runExtractionBakeoff({
           assertNoHeldOutContamination(arm, second.proposal, document.split)
         } catch (error) {
           const issueCode = heldOutContaminationCode(error)
-          if (!issueCode) throw error
+          if (!issueCode) {
+            resultByArm[arm.id].push(
+              disqualifiedDocumentResult(document, 'adapter-failure', 'failed'),
+            )
+            identityRunKeys.add(runKey)
+            continue
+          }
           contaminatedOnHeldOut = issueCode
           resultByArm[arm.id].push(
             disqualifiedDocumentResult(document, issueCode),

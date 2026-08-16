@@ -590,6 +590,37 @@ describe('extraction architecture bake-off', () => {
     },
   )
 
+  it('isolates a cyclic adapter proposal instead of aborting the bake-off', async () => {
+    const cyclic = arm('llm-authored')
+    const cyclicProposal: Record<string, unknown> = {
+      schemaVersion: '1.0.0',
+      nodes: [],
+    }
+    cyclicProposal.self = cyclicProposal
+    cyclic.run = async () => ({
+      proposal: cyclicProposal as never,
+      metrics: { latencyMs: 12, costUsd: 0.02 },
+    })
+
+    const report = await runExtractionBakeoff({
+      corpus: corpus(),
+      arms: [arm('geometric-baseline'), cyclic, arm('llm-grounded')],
+    })
+
+    expect(
+      report.arms['llm-authored'].documents.every(
+        ({ status, verification }) =>
+          status === 'failed' &&
+          verification.issueCodes.includes('adapter-failure'),
+      ),
+    ).toBe(true)
+    expect(
+      report.arms['llm-grounded'].documents.every(
+        ({ status }) => status === 'passed',
+      ),
+    ).toBe(true)
+  })
+
   it('scopes disagreement detection to the stratum the rows describe', async () => {
     // Comparing whole-document output hashes marks a document as a
     // disagreement for every stratum it appears in, so the report can no

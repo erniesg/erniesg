@@ -273,11 +273,13 @@ describe('source-backed structured extraction verifier', () => {
   it('does not freeze or alias caller-owned relationship provenance', () => {
     const inputContext = context()
     const targetSourceRunIds = ['body-run']
+    const targetSourceRunIdGroup = ['body-run']
     inputContext.provenArtifacts!.push({
       id: 'note-link',
       kind: 'note-relationship',
       sourceRunIds: ['title-run'],
       targetSourceRunIds,
+      targetSourceRunIdGroups: [targetSourceRunIdGroup],
     })
 
     const input = modelInputForStructuredExtraction(
@@ -291,7 +293,11 @@ describe('source-backed structured extraction verifier', () => {
     expect(input.provenArtifacts?.at(-1)?.targetSourceRunIds).not.toBe(
       targetSourceRunIds,
     )
+    expect(
+      input.provenArtifacts?.at(-1)?.targetSourceRunIdGroups?.[0],
+    ).not.toBe(targetSourceRunIdGroup)
     expect(Object.isFrozen(targetSourceRunIds)).toBe(false)
+    expect(Object.isFrozen(targetSourceRunIdGroup)).toBe(false)
   })
 
   it('stays byte-stable for repeated verified output', () => {
@@ -337,15 +343,22 @@ describe('source-backed structured extraction verifier', () => {
         page: 2,
         order: 8,
         lineId: 'code-line-1',
-      } as never,
+      },
       {
         id: 'code-fragment-b',
         text: '42',
         page: 2,
         order: 9,
         lineId: 'code-line-1',
-      } as never,
+      },
     )
+    base.sourceLines = [
+      {
+        id: 'code-line-1',
+        text: '  const value = 42',
+        sourceRunIds: ['code-fragment-a', 'code-fragment-b'],
+      },
+    ]
     const candidate = validProposal()
     candidate.nodes.push({
       id: 'fragmented-listing',
@@ -359,6 +372,46 @@ describe('source-backed structured extraction verifier', () => {
     expect(result.status).toBe('passed')
     if (result.status === 'passed') {
       expect(result.output.nodes.at(-1)?.text).toBe('  const value = 42')
+    }
+  })
+
+  it('uses canonical line spacing between code fragments', () => {
+    const base = context()
+    base.sourceRuns.push(
+      {
+        id: 'spaced-code-a',
+        text: 'const',
+        page: 2,
+        order: 8,
+        lineId: 'spaced-code-line',
+      },
+      {
+        id: 'spaced-code-b',
+        text: 'value = 42',
+        page: 2,
+        order: 9,
+        lineId: 'spaced-code-line',
+      },
+    )
+    base.sourceLines = [
+      {
+        id: 'spaced-code-line',
+        text: 'const value = 42',
+        sourceRunIds: ['spaced-code-a', 'spaced-code-b'],
+      },
+    ]
+    const candidate = validProposal()
+    candidate.nodes.push({
+      id: 'spaced-listing',
+      type: 'code',
+      sourceRunIds: ['spaced-code-a', 'spaced-code-b'],
+    })
+
+    const result = verifyStructuredExtraction(base, candidate)
+
+    expect(result.status).toBe('passed')
+    if (result.status === 'passed') {
+      expect(result.output.nodes.at(-1)?.text).toBe('const value = 42')
     }
   })
 
@@ -498,6 +551,34 @@ describe('source-backed structured extraction verifier', () => {
     )
 
     const result = verifyStructuredExtraction(input, candidate)
+
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues.map(({ code }) => code)).toContain('unverified-span')
+    }
+  })
+
+  it('rejects source runs reversed inside a table cell', () => {
+    const candidate = validProposal()
+    candidate.nodes.push({
+      id: 'reversed-table',
+      type: 'table',
+      sourceRunIds: ['table-head'],
+      table: {
+        rows: [
+          {
+            cells: [
+              {
+                sourceRunIds: ['table-value', 'table-head'],
+                headerScope: 'none',
+              },
+            ],
+          },
+        ],
+      },
+    })
+
+    const result = verifyStructuredExtraction(context(), candidate)
 
     expect(result.status).toBe('failed')
     if (result.status === 'failed') {
@@ -646,6 +727,90 @@ describe('source-backed structured extraction verifier', () => {
         'invalid-relationship',
       )
     }
+  })
+
+  it('rejects a proven note target missing part of its exact provenance', () => {
+    const input = context()
+    input.sourceRuns.push(
+      { id: 'partial-marker', text: '1', page: 2, order: 8 },
+      { id: 'note-part-a', text: 'First half.', page: 2, order: 9 },
+      { id: 'note-part-b', text: 'Second half.', page: 2, order: 10 },
+    )
+    input.provenArtifacts!.push({
+      id: 'partial-note-link',
+      kind: 'note-relationship',
+      sourceRunIds: ['partial-marker'],
+      targetSourceRunIdGroups: [['note-part-a', 'note-part-b']],
+    })
+    const candidate = validProposal()
+    candidate.nodes.push(
+      {
+        id: 'partial-marker',
+        type: 'paragraph',
+        sourceRunIds: ['partial-marker'],
+        relationships: { noteTargetNodeIds: ['partial-note'] },
+      },
+      {
+        id: 'partial-note',
+        type: 'footnote',
+        sourceRunIds: ['note-part-a'],
+        relationships: { backlinks: ['partial-marker'] },
+      },
+    )
+
+    const result = verifyStructuredExtraction(input, candidate)
+
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues.map(({ code }) => code)).toContain(
+        'invalid-relationship',
+      )
+    }
+  })
+
+  it('matches each citation target against its own provenance group', () => {
+    const input = context()
+    input.sourceRuns.push(
+      { id: 'grouped-marker', text: '[1, 2]', page: 2, order: 8 },
+      { id: 'grouped-reference-a', text: 'Reference A.', page: 2, order: 9 },
+      { id: 'grouped-reference-b', text: 'Reference B.', page: 2, order: 10 },
+    )
+    input.provenArtifacts!.push({
+      id: 'grouped-citation-link',
+      kind: 'citation-relationship',
+      sourceRunIds: ['grouped-marker'],
+      targetSourceRunIdGroups: [
+        ['grouped-reference-a'],
+        ['grouped-reference-b'],
+      ],
+    })
+    const candidate = validProposal()
+    candidate.nodes.push(
+      {
+        id: 'grouped-marker',
+        type: 'paragraph',
+        sourceRunIds: ['grouped-marker'],
+        relationships: {
+          citationTargetNodeIds: ['grouped-reference-a', 'grouped-reference-b'],
+        },
+      },
+      {
+        id: 'grouped-reference-a',
+        type: 'reference',
+        sourceRunIds: ['grouped-reference-a'],
+        relationships: { backlinks: ['grouped-marker'] },
+      },
+      {
+        id: 'grouped-reference-b',
+        type: 'reference',
+        sourceRunIds: ['grouped-reference-b'],
+        relationships: { backlinks: ['grouped-marker'] },
+      },
+    )
+
+    const result = verifyStructuredExtraction(input, candidate)
+
+    expect(result.status).toBe('passed')
   })
 
   it('rejects a relationship without a reciprocal backlink', () => {

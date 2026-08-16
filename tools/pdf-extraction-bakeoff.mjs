@@ -42,6 +42,17 @@ async function loadScoreLedger(path) {
   return new Set(value.scoredHeldOutKeys)
 }
 
+async function fileExists(path) {
+  try {
+    await readFile(path)
+    return true
+  } catch (error) {
+    if (error && typeof error === 'object' && error.code === 'ENOENT')
+      return false
+    throw error
+  }
+}
+
 async function persistScoreLedger(path, scoredHeldOutKeys) {
   const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`
   try {
@@ -71,6 +82,7 @@ export async function withScoreLedger(
   const path = resolve(pathInput)
   await mkdir(dirname(path), { recursive: true })
   const lockPath = `${path}.lock`
+  const failurePath = `${path}.failed`
   let lock
   try {
     lock = await open(lockPath, 'wx', 0o600)
@@ -80,17 +92,31 @@ export async function withScoreLedger(
     throw error
   }
   let scoredHeldOutKeys
+  let persistenceFailed = false
   try {
+    // Inspect the failure receipt only after acquiring the lock so a process
+    // cannot race past a receipt being installed by the previous owner.
+    if (await fileExists(failurePath))
+      throw new Error('EXTRACTION_SCORE_LEDGER_RECOVERY_REQUIRED')
     scoredHeldOutKeys = await loadScoreLedger(path)
     return await run(scoredHeldOutKeys)
   } finally {
     try {
       if (scoredHeldOutKeys) await persist(path, scoredHeldOutKeys)
+    } catch (error) {
+      persistenceFailed = true
+      await lock.close().catch(() => undefined)
+      // A distinct failure receipt is not an active lock, but it keeps every
+      // future process fail-closed until an owner reconciles the held-out run.
+      await rename(lockPath, failurePath).catch(() => undefined)
+      throw error
     } finally {
-      try {
-        await lock.close()
-      } finally {
-        await unlink(lockPath).catch(() => undefined)
+      if (!persistenceFailed) {
+        try {
+          await lock.close()
+        } finally {
+          await unlink(lockPath).catch(() => undefined)
+        }
       }
     }
   }

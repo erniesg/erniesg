@@ -1,6 +1,15 @@
 #!/usr/bin/env node
 
-import { writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  open,
+  readFile,
+  rename,
+  unlink,
+  writeFile,
+} from 'node:fs/promises'
+import { dirname, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import {
   createExtractionArchitectureDecision,
   EXTRACTION_BAKEOFF_STRATA,
@@ -9,6 +18,109 @@ import {
 
 const SHA_A = 'a'.repeat(64)
 const SHA_B = 'b'.repeat(64)
+const SCORE_LEDGER_SCHEMA_VERSION = '1.0.0'
+
+async function loadScoreLedger(path) {
+  let value
+  try {
+    value = JSON.parse(await readFile(path, 'utf8'))
+  } catch (error) {
+    if (error && typeof error === 'object' && error.code === 'ENOENT')
+      return new Set()
+    throw new Error('INVALID_EXTRACTION_SCORE_LEDGER')
+  }
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    value.schemaVersion !== SCORE_LEDGER_SCHEMA_VERSION ||
+    !Array.isArray(value.scoredHeldOutKeys) ||
+    !value.scoredHeldOutKeys.every((key) => typeof key === 'string') ||
+    new Set(value.scoredHeldOutKeys).size !== value.scoredHeldOutKeys.length
+  ) {
+    throw new Error('INVALID_EXTRACTION_SCORE_LEDGER')
+  }
+  return new Set(value.scoredHeldOutKeys)
+}
+
+async function fileExists(path) {
+  try {
+    await readFile(path)
+    return true
+  } catch (error) {
+    if (error && typeof error === 'object' && error.code === 'ENOENT')
+      return false
+    throw error
+  }
+}
+
+async function persistScoreLedger(path, scoredHeldOutKeys) {
+  const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`
+  try {
+    await writeFile(
+      temporaryPath,
+      `${JSON.stringify(
+        {
+          schemaVersion: SCORE_LEDGER_SCHEMA_VERSION,
+          scoredHeldOutKeys: [...scoredHeldOutKeys].sort(),
+        },
+        null,
+        2,
+      )}\n`,
+      { encoding: 'utf8', mode: 0o600 },
+    )
+    await rename(temporaryPath, path)
+  } finally {
+    await unlink(temporaryPath).catch(() => undefined)
+  }
+}
+
+export async function withScoreLedger(
+  pathInput,
+  run,
+  persist = persistScoreLedger,
+) {
+  const path = resolve(pathInput)
+  await mkdir(dirname(path), { recursive: true })
+  const lockPath = `${path}.lock`
+  const failurePath = `${path}.failed`
+  let lock
+  try {
+    lock = await open(lockPath, 'wx', 0o600)
+  } catch (error) {
+    if (error && typeof error === 'object' && error.code === 'EEXIST')
+      throw new Error('EXTRACTION_SCORE_LEDGER_LOCKED')
+    throw error
+  }
+  let scoredHeldOutKeys
+  let persistenceFailed = false
+  try {
+    // Inspect the failure receipt only after acquiring the lock so a process
+    // cannot race past a receipt being installed by the previous owner.
+    if (await fileExists(failurePath))
+      throw new Error('EXTRACTION_SCORE_LEDGER_RECOVERY_REQUIRED')
+    scoredHeldOutKeys = await loadScoreLedger(path)
+    return await run(scoredHeldOutKeys)
+  } finally {
+    try {
+      if (scoredHeldOutKeys) await persist(path, scoredHeldOutKeys)
+    } catch (error) {
+      persistenceFailed = true
+      await lock.close().catch(() => undefined)
+      // A distinct failure receipt is not an active lock, but it keeps every
+      // future process fail-closed until an owner reconciles the held-out run.
+      await rename(lockPath, failurePath).catch(() => undefined)
+      throw error
+    } finally {
+      if (!persistenceFailed) {
+        try {
+          await lock.close()
+        } finally {
+          await unlink(lockPath).catch(() => undefined)
+        }
+      }
+    }
+  }
+}
 
 function context(id, split, layout) {
   return {
@@ -109,15 +221,26 @@ async function main() {
   const args = process.argv.slice(2)
   if (!args.includes('--self-test')) {
     process.stderr.write(
-      'Usage: node --experimental-strip-types tools/pdf-extraction-bakeoff.mjs --self-test [--out <path>]\n',
+      'Usage: node --experimental-strip-types tools/pdf-extraction-bakeoff.mjs --self-test --score-ledger <path> [--out <path>]\n',
     )
     process.exitCode = 2
     return
   }
-  const report = await runExtractionBakeoff({
-    corpus: makeCorpus(),
-    arms: [arm('geometric-baseline'), arm('llm-authored'), arm('llm-grounded')],
-  })
+  const scoreLedgerIndex = args.indexOf('--score-ledger')
+  const scoreLedgerPath = args[scoreLedgerIndex + 1]
+  if (scoreLedgerIndex < 0 || !scoreLedgerPath)
+    throw new Error('--score-ledger requires a path')
+  const report = await withScoreLedger(scoreLedgerPath, (scoredHeldOutKeys) =>
+    runExtractionBakeoff({
+      corpus: makeCorpus(),
+      arms: [
+        arm('geometric-baseline'),
+        arm('llm-authored'),
+        arm('llm-grounded'),
+      ],
+      scoredHeldOutKeys,
+    }),
+  )
   const decision = createExtractionArchitectureDecision({ report })
   const payload = `${JSON.stringify({ report, decision }, null, 2)}\n`
   const outIndex = args.indexOf('--out')
@@ -146,9 +269,14 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  process.stderr.write(
-    `${error instanceof Error ? error.message : 'Extraction bake-off failed.'}\n`,
-  )
-  process.exitCode = 1
-})
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(resolve(process.argv[1])).href
+) {
+  main().catch((error) => {
+    process.stderr.write(
+      `${error instanceof Error ? error.message : 'Extraction bake-off failed.'}\n`,
+    )
+    process.exitCode = 1
+  })
+}

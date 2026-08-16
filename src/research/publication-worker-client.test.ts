@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { oversizedPdfFixture } from '../../tests/fixtures/pdf-fixtures'
 import type { PublicationWorkerResponse } from './publication-worker-protocol'
 import {
   buildEpubInWorker,
@@ -65,6 +66,49 @@ const inputFile = () =>
   })
 
 describe('publication worker client', () => {
+  it('rejects an oversized browser upload before reading or starting a worker', async () => {
+    let read = false
+    const createWorker = vi.fn()
+
+    await expect(
+      reconstructPdfInWorker(
+        oversizedPdfFixture(() => {
+          read = true
+        }),
+        undefined,
+        { createWorker },
+      ),
+    ).rejects.toMatchObject({ code: 'OVERSIZED_PDF' })
+
+    expect(read).toBe(false)
+    expect(createWorker).not.toHaveBeenCalled()
+  })
+
+  it('honors cancellation before reading or starting a worker', async () => {
+    let read = false
+    const createWorker = vi.fn()
+    const controller = new AbortController()
+    controller.abort()
+    const file = {
+      ...inputFile(),
+      size: 4,
+      async arrayBuffer() {
+        read = true
+        return new ArrayBuffer(0)
+      },
+    } as File
+
+    await expect(
+      reconstructPdfInWorker(file, undefined, {
+        signal: controller.signal,
+        createWorker,
+      }),
+    ).rejects.toMatchObject({ code: 'IMPORT_CANCELLED' })
+
+    expect(read).toBe(false)
+    expect(createWorker).not.toHaveBeenCalled()
+  })
+
   it('terminates the worker immediately when cancellation is requested', async () => {
     const worker = new SilentWorker()
     const controller = new AbortController()

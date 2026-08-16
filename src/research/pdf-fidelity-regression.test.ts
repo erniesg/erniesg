@@ -128,7 +128,10 @@ describe('integrated PDF-to-EPUB fidelity fixture', () => {
       (entry) => entry.file === contract.fixture,
     )
     expect(fixtureManifest.license).toBe(contract.license)
-    expect(manifestEntry).toMatchObject({ sha256: contract.sourceSha256 })
+    expect(manifestEntry).toMatchObject({
+      byteLength: contract.byteLength,
+      sha256: contract.sourceSha256,
+    })
     expect(
       manifestEntry && 'contractSha256' in manifestEntry
         ? manifestEntry.contractSha256
@@ -137,6 +140,7 @@ describe('integrated PDF-to-EPUB fidelity fixture', () => {
     expect(createHash('sha256').update(sourceBytes).digest('hex')).toBe(
       contract.sourceSha256,
     )
+    expect(sourceBytes.byteLength).toBe(contract.byteLength)
     expect(reconstruction.source.sha256).toBe(contract.sourceSha256)
     expect(reconstruction.source.fileName).toBe(contract.fixture)
     expect(reconstruction.paper).toEqual(repeated.paper)

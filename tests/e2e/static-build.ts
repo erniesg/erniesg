@@ -5,6 +5,15 @@ import { extname, resolve, sep } from 'node:path'
 const STATIC_BUILD_DIRECTORY = process.env.SRT_STATIC_BUILD_DIR
   ? resolve(process.env.SRT_STATIC_BUILD_DIR)
   : null
+const WORKERS_DEV_BASE_URL = process.env.SRT_WORKERS_DEV_BASE_URL
+
+if (STATIC_BUILD_DIRECTORY && WORKERS_DEV_BASE_URL) {
+  throw new Error(
+    'SRT_STATIC_BUILD_DIR and SRT_WORKERS_DEV_BASE_URL are mutually exclusive',
+  )
+}
+
+const STATIC_ROUTE_ORIGIN = 'https://srt-evaluation.test'
 
 const STATIC_CONTENT_TYPES: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
@@ -65,7 +74,7 @@ async function staticFile(pathname: string) {
 
 export async function installStaticRoutes(page: Page) {
   if (!STATIC_BUILD_DIRECTORY) return
-  await page.route('https://srt-evaluation.test/**', async (route) => {
+  await page.route(`${STATIC_ROUTE_ORIGIN}/**`, async (route) => {
     try {
       const file = await staticFile(new URL(route.request().url()).pathname)
       await route.fulfill({

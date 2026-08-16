@@ -1572,6 +1572,7 @@ describe('Vivliostyle publication renderer boundary', () => {
         dirname(prepared.executablePath),
         'icudtl.dat',
       )
+      const pinnedResourceMode = (await stat(pinnedResource)).mode & 0o777
       await chmod(pinnedResource, 0o600)
       await writeFile(pinnedResource, 'icu-data-v2')
       await expect(prepared.verifyUnchanged()).rejects.toThrow(
@@ -1579,7 +1580,7 @@ describe('Vivliostyle publication renderer boundary', () => {
       )
 
       await writeFile(pinnedResource, 'icu-data-v1')
-      await chmod(pinnedResource, 0o444)
+      await chmod(pinnedResource, pinnedResourceMode)
       await expect(prepared.verifyUnchanged()).resolves.toBeUndefined()
       const pinnedLink = resolve(
         dirname(prepared.executablePath),

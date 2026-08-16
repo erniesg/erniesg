@@ -4,6 +4,7 @@ import {
   type PreviewableEpubExport,
 } from './epub-preview'
 import {
+  MAX_LOCAL_PDF_BYTES,
   type DocumentImportProgress,
   type DocumentReconstruction,
   PdfImportError,
@@ -181,6 +182,18 @@ export async function reconstructPdfInWorker(
     createWorker?: WorkerFactory
   } = {},
 ) {
+  if (options.signal?.aborted) {
+    throw new PdfImportError(
+      'IMPORT_CANCELLED',
+      'The background conversion was cancelled before reading document bytes.',
+    )
+  }
+  if (file.size > MAX_LOCAL_PDF_BYTES) {
+    throw new PdfImportError(
+      'OVERSIZED_PDF',
+      `PDF resource limit exceeded: received ${file.size} bytes; the bounded local limit is ${MAX_LOCAL_PDF_BYTES} bytes. No document bytes were read.`,
+    )
+  }
   const bytes = await file.arrayBuffer()
   return runWorkerJob<PdfReconstruction>({
     request: {

@@ -1794,6 +1794,7 @@ jobs:
               for name in tuple(environment):
                   if (
                       name.startswith("RUCKSACK_TRUSTED_")
+                      or name.startswith("GIT_")
                       or SECRET_ENVIRONMENT_NAME.search(name)
                       or name in {
                           "GITHUB_ENV",
@@ -1816,6 +1817,7 @@ jobs:
                           "XDG_CACHE_HOME",
                           "XDG_CONFIG_HOME",
                           "XDG_DATA_HOME",
+                          "XDG_RUNTIME_DIR",
                           "XDG_STATE_HOME",
                       }
                   ):
@@ -2804,6 +2806,11 @@ jobs:
           ]) {
             delete commandEnvironment[name];
           }
+          for (const name of Object.keys(commandEnvironment)) {
+            if (name.startsWith("GIT_") || name.startsWith("XDG_")) {
+              delete commandEnvironment[name];
+            }
+          }
 
           const candidateGit = String(process.env.RUCKSACK_PRODUCER_GIT || "");
           const candidateRunner = String(process.env.RUCKSACK_CANDIDATE_RUNNER || "");
@@ -2817,6 +2824,9 @@ jobs:
           const trustedSudo = String(process.env.RUCKSACK_TRUSTED_SUDO || "");
           const trustedEnv = String(process.env.RUCKSACK_TRUSTED_ENV || "");
           const expectedHead = String(process.env.GITHUB_HEAD_SHA || "").trim().toLowerCase();
+          const expectedRepository = String(
+            process.env.RUCKSACK_EXPECTED_REPOSITORY || process.env.GITHUB_REPOSITORY || "",
+          ).trim();
           const candidateUid = Number(process.env.RUCKSACK_CANDIDATE_UID);
           const candidateGid = Number(process.env.RUCKSACK_CANDIDATE_GID);
           const originalCandidateRoot = fs.realpathSync(".");
@@ -2832,6 +2842,9 @@ jobs:
           if (!trustedSudo.startsWith("/")) fail("trusted sudo must be one absolute path");
           if (!trustedEnv.startsWith("/")) fail("trusted env executable must be one absolute path");
           if (!/^[0-9a-f]{40}$/.test(expectedHead)) fail("event head must be one full commit SHA");
+          if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(expectedRepository)) {
+            fail("expected repository must be one OWNER/REPO slug");
+          }
           if (!Number.isSafeInteger(candidateUid) || candidateUid <= 0) fail("candidate uid must be positive");
           if (!Number.isSafeInteger(candidateGid) || candidateGid <= 0) fail("candidate gid must be positive");
 
@@ -2979,6 +2992,8 @@ jobs:
           );
           let candidateGitLink = "";
           let pinnedCandidateGitLink = null;
+          let candidateRepositoryPath = "";
+          let candidateRepositoryDigest = "";
 
           function assertPinnedRegularFile(target, expected, label, stage) {
             const actual = pinnedRegularFile(target, label);
@@ -4248,6 +4263,14 @@ jobs:
 
           function assertExecutionBindings(stage) {
             if (!immutableTrackedState) return;
+            if (
+              !candidateRepositoryPath ||
+              !candidateRepositoryDigest ||
+              directoryTreeDigest(candidateRepositoryPath, stage) !== candidateRepositoryDigest
+            ) {
+              fail(`${stage}: candidate repository binding changed`);
+            }
+            assertCandidateCannotWriteTree(candidateRepositoryPath, stage);
             for (const entry of initializedGitlinksFromTracked(immutableTrackedState)) {
               if (!entry.gitlinkBindingPath || !entry.gitlinkBinding) {
                 fail(`${stage}: candidate gitlink binding is missing`);
@@ -4398,8 +4421,58 @@ jobs:
               ),
             ),
           );
+          const candidateOrigin = `https://github.com/${expectedRepository}.git`;
+          candidateRepositoryPath = path.join(candidateDependencyRoot, "git-repository");
+          runTrustedGit(["init", "--bare", candidateRepositoryPath], "initialize candidate repository binding");
+          runTrustedGit(
+            [
+              "--git-dir",
+              candidateRepositoryPath,
+              "-c",
+              "protocol.file.allow=always",
+              "fetch",
+              "--no-tags",
+              "--no-write-fetch-head",
+              "--refmap=",
+              candidateGitDir,
+              expectedHead,
+            ],
+            "fetch exact candidate commit into repository binding",
+          );
+          runTrustedGit(
+            ["--git-dir", candidateRepositoryPath, "update-ref", "refs/heads/rucksack-exact", expectedHead],
+            "bind exact candidate repository commit",
+          );
+          runTrustedGit(
+            ["--git-dir", candidateRepositoryPath, "symbolic-ref", "HEAD", "refs/heads/rucksack-exact"],
+            "bind candidate repository HEAD",
+          );
+          runTrustedGit(
+            ["--git-dir", candidateRepositoryPath, "config", "core.bare", "false"],
+            "configure candidate repository worktree mode",
+          );
+          runTrustedGit(
+            ["--git-dir", candidateRepositoryPath, "config", "core.worktree", executionRoot],
+            "configure candidate repository worktree",
+          );
+          runTrustedGit(
+            ["--git-dir", candidateRepositoryPath, "read-tree", expectedHead],
+            "populate exact candidate repository index",
+          );
+          runTrustedGit(
+            ["--git-dir", candidateRepositoryPath, "config", "remote.origin.url", candidateOrigin],
+            "bind candidate repository origin",
+          );
+          candidateRepositoryPath = sealCandidateReadableTree(
+            candidateRepositoryPath,
+            "candidate repository binding",
+          );
+          candidateRepositoryDigest = directoryTreeDigest(
+            candidateRepositoryPath,
+            "capture candidate repository binding",
+          );
           candidateGitLink = path.join(executionRoot, ".git");
-          fs.writeFileSync(candidateGitLink, `gitdir: ${candidateGitDir}\n`, {
+          fs.writeFileSync(candidateGitLink, `gitdir: ${candidateRepositoryPath}\n`, {
             encoding: "utf8",
             flag: "wx",
             mode: 0o400,

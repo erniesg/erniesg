@@ -270,6 +270,30 @@ describe('source-backed structured extraction verifier', () => {
     expect(input).toHaveProperty('boilerplateRunIds', ['running-head'])
   })
 
+  it('does not freeze or alias caller-owned relationship provenance', () => {
+    const inputContext = context()
+    const targetSourceRunIds = ['body-run']
+    inputContext.provenArtifacts!.push({
+      id: 'note-link',
+      kind: 'note-relationship',
+      sourceRunIds: ['title-run'],
+      targetSourceRunIds,
+    })
+
+    const input = modelInputForStructuredExtraction(
+      inputContext,
+      'llm-grounded',
+    )
+
+    expect(input.provenArtifacts?.at(-1)?.targetSourceRunIds).toEqual([
+      'body-run',
+    ])
+    expect(input.provenArtifacts?.at(-1)?.targetSourceRunIds).not.toBe(
+      targetSourceRunIds,
+    )
+    expect(Object.isFrozen(targetSourceRunIds)).toBe(false)
+  })
+
   it('stays byte-stable for repeated verified output', () => {
     const first = verifyStructuredExtraction(context(), validProposal())
     const second = verifyStructuredExtraction(
@@ -335,6 +359,37 @@ describe('source-backed structured extraction verifier', () => {
     expect(result.status).toBe('passed')
     if (result.status === 'passed') {
       expect(result.output.nodes.at(-1)?.text).toBe('  const value = 42')
+    }
+  })
+
+  it('rejects ambiguous multi-run code without deterministic line ownership', () => {
+    const base = context()
+    base.sourceRuns.push(
+      {
+        id: 'legacy-code-line-a',
+        text: 'const value = 42',
+        page: 2,
+        order: 8,
+      },
+      {
+        id: 'legacy-code-line-b',
+        text: 'return value',
+        page: 2,
+        order: 9,
+      },
+    )
+    const candidate = validProposal()
+    candidate.nodes.push({
+      id: 'legacy-listing',
+      type: 'code',
+      sourceRunIds: ['legacy-code-line-a', 'legacy-code-line-b'],
+    })
+
+    const result = verifyStructuredExtraction(base, candidate)
+
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues.map(({ code }) => code)).toContain('unverified-span')
     }
   })
 
@@ -540,6 +595,45 @@ describe('source-backed structured extraction verifier', () => {
         id: 'wrong-note',
         type: 'footnote',
         sourceRunIds: ['wrong-note'],
+        relationships: { backlinks: ['note-marker'] },
+      },
+    )
+
+    const result = verifyStructuredExtraction(input, candidate)
+
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues.map(({ code }) => code)).toContain(
+        'invalid-relationship',
+      )
+    }
+  })
+
+  it('rejects a proven note target contaminated with unrelated source runs', () => {
+    const input = context()
+    input.sourceRuns.push(
+      { id: 'note-marker', text: '1', page: 2, order: 8 },
+      { id: 'right-note', text: 'Right note.', page: 2, order: 9 },
+      { id: 'wrong-note', text: 'Unrelated wrong note.', page: 2, order: 10 },
+    )
+    input.provenArtifacts!.push({
+      id: 'note-link-1',
+      kind: 'note-relationship',
+      sourceRunIds: ['note-marker'],
+      targetSourceRunIds: ['right-note'],
+    })
+    const candidate = validProposal()
+    candidate.nodes.push(
+      {
+        id: 'note-marker',
+        type: 'paragraph',
+        sourceRunIds: ['note-marker'],
+        relationships: { noteTargetNodeIds: ['merged-note'] },
+      },
+      {
+        id: 'merged-note',
+        type: 'footnote',
+        sourceRunIds: ['right-note', 'wrong-note'],
         relationships: { backlinks: ['note-marker'] },
       },
     )

@@ -9,6 +9,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import {
   createExtractionArchitectureDecision,
   EXTRACTION_BAKEOFF_STRATA,
@@ -41,7 +42,32 @@ async function loadScoreLedger(path) {
   return new Set(value.scoredHeldOutKeys)
 }
 
-async function withScoreLedger(pathInput, run) {
+async function persistScoreLedger(path, scoredHeldOutKeys) {
+  const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`
+  try {
+    await writeFile(
+      temporaryPath,
+      `${JSON.stringify(
+        {
+          schemaVersion: SCORE_LEDGER_SCHEMA_VERSION,
+          scoredHeldOutKeys: [...scoredHeldOutKeys].sort(),
+        },
+        null,
+        2,
+      )}\n`,
+      { encoding: 'utf8', mode: 0o600 },
+    )
+    await rename(temporaryPath, path)
+  } finally {
+    await unlink(temporaryPath).catch(() => undefined)
+  }
+}
+
+export async function withScoreLedger(
+  pathInput,
+  run,
+  persist = persistScoreLedger,
+) {
   const path = resolve(pathInput)
   await mkdir(dirname(path), { recursive: true })
   const lockPath = `${path}.lock`
@@ -58,24 +84,15 @@ async function withScoreLedger(pathInput, run) {
     scoredHeldOutKeys = await loadScoreLedger(path)
     return await run(scoredHeldOutKeys)
   } finally {
-    if (scoredHeldOutKeys) {
-      const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`
-      await writeFile(
-        temporaryPath,
-        `${JSON.stringify(
-          {
-            schemaVersion: SCORE_LEDGER_SCHEMA_VERSION,
-            scoredHeldOutKeys: [...scoredHeldOutKeys].sort(),
-          },
-          null,
-          2,
-        )}\n`,
-        { encoding: 'utf8', mode: 0o600 },
-      )
-      await rename(temporaryPath, path)
+    try {
+      if (scoredHeldOutKeys) await persist(path, scoredHeldOutKeys)
+    } finally {
+      try {
+        await lock.close()
+      } finally {
+        await unlink(lockPath).catch(() => undefined)
+      }
     }
-    await lock.close()
-    await unlink(lockPath).catch(() => undefined)
   }
 }
 
@@ -226,9 +243,14 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  process.stderr.write(
-    `${error instanceof Error ? error.message : 'Extraction bake-off failed.'}\n`,
-  )
-  process.exitCode = 1
-})
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(resolve(process.argv[1])).href
+) {
+  main().catch((error) => {
+    process.stderr.write(
+      `${error instanceof Error ? error.message : 'Extraction bake-off failed.'}\n`,
+    )
+    process.exitCode = 1
+  })
+}

@@ -705,6 +705,23 @@ function validateNodeText(
     )
     return ''
   }
+  const knownRuns = node.sourceRunIds
+    .map((sourceRunId) => runsById.get(sourceRunId))
+    .filter((run): run is StructuredSourceRun => run !== undefined)
+  if (
+    node.type === 'code' &&
+    node.sourceRunIds.length > 1 &&
+    knownRuns.length === node.sourceRunIds.length &&
+    knownRuns.some(({ lineId }) => lineId === undefined)
+  ) {
+    issues.push(
+      issue(
+        'unverified-span',
+        'Multi-run code requires deterministic line ownership.',
+        { nodeId: node.id },
+      ),
+    )
+  }
   const text = nodeTextForRunIds(node.type, node.sourceRunIds, runsById)
   if (!text) {
     issues.push(
@@ -904,10 +921,17 @@ function verifyRelationships(
     const sourceRuns = new Set(nodeOwnedSourceRunIds(source))
     const targetRuns = new Set(nodeOwnedSourceRunIds(target))
     return provenArtifacts.some(
-      (artifact) =>
-        artifact.kind === kind &&
-        artifact.sourceRunIds.some((id) => sourceRuns.has(id)) &&
-        (artifact.targetSourceRunIds ?? []).some((id) => targetRuns.has(id)),
+      (artifact) => {
+        if (artifact.kind !== kind) return false
+        const artifactSourceRuns = new Set(artifact.sourceRunIds)
+        const artifactTargetRuns = new Set(artifact.targetSourceRunIds ?? [])
+        return (
+          sourceRuns.size > 0 &&
+          targetRuns.size > 0 &&
+          [...sourceRuns].every((id) => artifactSourceRuns.has(id)) &&
+          [...targetRuns].every((id) => artifactTargetRuns.has(id))
+        )
+      },
     )
   }
   const targetLists = (node: StructuredExtractionNode) => [
@@ -1332,6 +1356,9 @@ export function modelInputForStructuredExtraction(
     base.provenArtifacts = (context.provenArtifacts ?? []).map((artifact) => ({
       ...artifact,
       sourceRunIds: [...artifact.sourceRunIds],
+      ...(artifact.targetSourceRunIds
+        ? { targetSourceRunIds: [...artifact.targetSourceRunIds] }
+        : {}),
     }))
   }
   return deepFreeze(base)

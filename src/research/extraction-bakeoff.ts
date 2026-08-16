@@ -402,14 +402,42 @@ function ratio(numerator: number, denominator: number) {
     : Math.max(0, Math.min(1, numerator / denominator))
 }
 
+function verifiedNodeSourceRunIds(
+  node: VerifiedStructuredExtraction['nodes'][number],
+) {
+  return [
+    ...node.sourceRunIds,
+    ...(node.table?.rows.flatMap(({ cells }) =>
+      cells.flatMap(({ sourceRunIds }) => sourceRunIds),
+    ) ?? []),
+  ]
+}
+
 function scoreCase(
   caseInput: ExtractionBakeoffCase,
   output: VerifiedStructuredExtraction | null,
   verification: ExtractionBakeoffVerification,
 ): ExtractionBakeoffCaseScore {
-  const nodes = output?.nodes ?? []
-  const actualTypes = nodes.map(({ type }) => type)
   const expectedTypes = [...caseInput.expectedNodeTypes]
+  const expectedRuns = new Set(caseInput.expectedSourceRunIds ?? [])
+  const expectedAssets = new Set(caseInput.expectedAssetIds ?? [])
+  const boilerplate = new Set(caseInput.expectedExcludedBoilerplateRunIds ?? [])
+  const caseRunIds = new Set([...expectedRuns, ...boilerplate])
+  const nodes = (output?.nodes ?? []).filter((node) => {
+    if (
+      verifiedNodeSourceRunIds(node).some((sourceRunId) =>
+        caseRunIds.has(sourceRunId),
+      )
+    )
+      return true
+    if (node.assetId && expectedAssets.has(node.assetId)) return true
+    return (
+      caseRunIds.size === 0 &&
+      expectedAssets.size === 0 &&
+      expectedTypes.includes(node.type)
+    )
+  })
+  const actualTypes = nodes.map(({ type }) => type)
   const matchedTypes = expectedTypes.filter(
     (type, index) => actualTypes[index] === type,
   ).length
@@ -430,19 +458,16 @@ function scoreCase(
     actualTypes.length,
   )
   const typeRecall = ratio(matchedTypes, expectedTypes.length)
-  const expectedRuns = new Set(caseInput.expectedSourceRunIds ?? [])
-  const actualRuns = new Set(nodes.flatMap(({ sourceRunIds }) => sourceRunIds))
+  const actualRuns = new Set(nodes.flatMap(verifiedNodeSourceRunIds))
   const sourceRecall = ratio(
     [...expectedRuns].filter((id) => actualRuns.has(id)).length,
     expectedRuns.size,
   )
-  const expectedAssets = new Set(caseInput.expectedAssetIds ?? [])
   const actualAssets = new Set(output?.assetIds ?? [])
   const assetRecall = ratio(
     [...expectedAssets].filter((id) => actualAssets.has(id)).length,
     expectedAssets.size,
   )
-  const boilerplate = new Set(caseInput.expectedExcludedBoilerplateRunIds ?? [])
   const bodyRuns = [...actualRuns].filter((id) => boilerplate.has(id)).length
   const boilerplateContamination =
     boilerplate.size === 0 ? 0 : ratio(bodyRuns, boilerplate.size)
@@ -475,24 +500,9 @@ function scoreCase(
     verification.status === 'passed' && nodes.length > 0
       ? terms.reduce((sum, term) => sum + term, 0) / terms.length
       : 0
-  const relevantNodes = output?.nodes.filter((node) => {
-    const ownedRunIds = [
-      ...node.sourceRunIds,
-      ...(node.table?.rows.flatMap(({ cells }) =>
-        cells.flatMap(({ sourceRunIds }) => sourceRunIds),
-      ) ?? []),
-    ]
-    if (ownedRunIds.some((id) => expectedRuns.has(id))) return true
-    if (node.assetId && expectedAssets.has(node.assetId)) return true
-    return (
-      expectedRuns.size === 0 &&
-      expectedAssets.size === 0 &&
-      expectedTypes.includes(node.type)
-    )
-  })
   const structureHash = output
     ? structuredExtractionHash({
-        nodes: relevantNodes,
+        nodes,
         assetIds: output.assetIds.filter((id) => expectedAssets.has(id)),
         excludedBoilerplateRunIds: output.excludedBoilerplateRunIds.filter(
           (id) => boilerplate.has(id),

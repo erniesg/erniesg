@@ -1,8 +1,9 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { withScoreLedger } from './pdf-extraction-bakeoff.mjs'
 
 describe('extraction bake-off CLI', () => {
   it('runs the privacy-safe synthetic held-out smoke benchmark', () => {
@@ -52,6 +53,23 @@ describe('extraction bake-off CLI', () => {
     expect(first.status, first.stderr).toBe(0)
     expect(second.status).toBe(1)
     expect(second.stderr).toContain('HELD_OUT_SCORED_MORE_THAN_ONCE')
+    rmSync(directory, { recursive: true, force: true })
+  })
+
+  it('releases the score-ledger lock when persistence fails', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'extraction-bakeoff-'))
+    const ledger = join(directory, 'score-ledger.json')
+
+    await expect(
+      withScoreLedger(
+        ledger,
+        async (scoredHeldOutKeys) => scoredHeldOutKeys.add('scored-key'),
+        async () => {
+          throw new Error('simulated persistence failure')
+        },
+      ),
+    ).rejects.toThrow('simulated persistence failure')
+    expect(existsSync(`${ledger}.lock`)).toBe(false)
     rmSync(directory, { recursive: true, force: true })
   })
 })

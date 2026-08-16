@@ -721,6 +721,77 @@ describe('extraction architecture bake-off', () => {
         .filter(({ layout }) => layout === 'one-column')
         .map(({ stratum }) => stratum),
     ).toEqual(['tables'])
+    expect(
+      report.arms['llm-grounded'].documents[0]!.caseScores.find(
+        ({ stratum }) => stratum === 'tables',
+      )?.sourceRecall,
+    ).toBe(1)
+  })
+
+  it('does not leak a stratum-owned node addition into other score rows', async () => {
+    const inputCorpus = corpus()
+    for (const document of inputCorpus.heldOut) {
+      document.context.sourceRuns.push(
+        {
+          id: `${document.id}-table-anchor`,
+          text: 'Measure',
+          page: 1,
+          order: 3,
+        },
+        {
+          id: `${document.id}-table-cell`,
+          text: '42',
+          page: 1,
+          order: 4,
+        },
+      )
+      const tableCase = document.cases.find(
+        ({ stratum }) => stratum === 'tables',
+      )!
+      tableCase.expectedNodeTypes = ['title', 'paragraph', 'table']
+      tableCase.expectedSourceRunIds = [
+        `${document.id}-title`,
+        `${document.id}-body`,
+        `${document.id}-table-anchor`,
+        `${document.id}-table-cell`,
+      ]
+    }
+    const withTable = (input: StructuredExtractionContext) => {
+      const output = proposal(input)
+      output.nodes.push({
+        id: `${input.documentId}-table`,
+        type: 'table',
+        sourceRunIds: [`${input.documentId}-table-anchor`],
+        table: {
+          rows: [
+            {
+              cells: [
+                {
+                  sourceRunIds: [`${input.documentId}-table-cell`],
+                  headerScope: 'column',
+                },
+              ],
+            },
+          ],
+        },
+      })
+      return output
+    }
+
+    const report = await runExtractionBakeoff({
+      corpus: inputCorpus,
+      arms: [
+        arm('geometric-baseline', withTable),
+        arm('llm-authored'),
+        arm('llm-grounded', withTable),
+      ],
+    })
+
+    expect(
+      report.disagreements
+        .filter(({ layout }) => layout === 'one-column')
+        .map(({ stratum }) => stratum),
+    ).toEqual(['tables'])
   })
 
   it('does not certify score-once when the same identity is rerun', async () => {

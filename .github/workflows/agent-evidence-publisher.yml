@@ -95,8 +95,6 @@ jobs:
             echo "Trusted evidence producer must be one regular file." >&2
             exit 1
           fi
-          RUCKSACK_TRUSTED_PRODUCER_ROOT="$GITHUB_WORKSPACE/trusted"
-          export RUCKSACK_TRUSTED_PRODUCER_ROOT
           producer_source="$(< "$trusted_producer")"
           if [ -z "$producer_source" ]; then
             echo "Trusted evidence producer source must not be empty." >&2
@@ -156,7 +154,7 @@ jobs:
             echo "Trusted candidate isolation currently requires Linux." >&2
             exit 1
           fi
-          for trusted_tool in sudo bash env pkill pgrep useradd userdel getent id install rm cmp cp chown chmod find stat readelf mktemp sync; do
+          for trusted_tool in sudo bash env pkill pgrep useradd userdel groupadd groupdel getent id install rm cmp cp chown chmod find stat readelf mktemp sync flock realpath; do
             trusted_path="$(command -v "$trusted_tool")"
             case "$trusted_path" in
               /*) ;;
@@ -244,11 +242,15 @@ jobs:
             fi
             [ "$("$RUCKSACK_TRUSTED_STAT" -c '%u:%g:%a' -- "$trusted_directory")" =               "0:0:$expected_mode" ]
           }
-          if ! validate_isolation_ancestor 755 /opt; then
-            echo "Trusted isolation /opt ancestor must be real root:root mode 0755." >&2
+          if ! validate_isolation_ancestor 755 /var; then
+            echo "Trusted isolation /var ancestor must be real root:root mode 0755." >&2
             exit 1
           fi
-          readonly isolation_parent="/opt/rucksack-revalidator"
+          if ! validate_isolation_ancestor 755 /var/lib; then
+            echo "Trusted isolation /var/lib ancestor must be real root:root mode 0755." >&2
+            exit 1
+          fi
+          readonly isolation_parent="/var/lib/rucksack-revalidator"
           if [ ! -e "$isolation_parent" ] && [ ! -L "$isolation_parent" ]; then
             "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_INSTALL"               -d -o 0 -g 0 -m 0755 -- "$isolation_parent"
           fi
@@ -256,7 +258,199 @@ jobs:
             echo "Trusted isolation parent must be real root:root mode 0755." >&2
             exit 1
           fi
-          isolation_template="$isolation_parent/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-XXXXXXXXXXXX"
+          trusted_owner_uid="$("$RUCKSACK_TRUSTED_ID" -u)"
+          trusted_owner_gid="$("$RUCKSACK_TRUSTED_ID" -g)"
+          readonly trusted_owner_uid trusted_owner_gid
+          isolation_lock="$isolation_parent/.publisher-cleanup.lock"
+          if [ ! -e "$isolation_lock" ] && [ ! -L "$isolation_lock" ]; then
+            "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_INSTALL"               -o 0 -g "$trusted_owner_gid" -m 0660 -- /dev/null "$isolation_lock"
+          fi
+          if [ ! -f "$isolation_lock" ] || [ -L "$isolation_lock" ] ||              [ "$(realpath -e -- "$isolation_lock")" != "$isolation_lock" ] ||              [ "$("$RUCKSACK_TRUSTED_STAT" -c '%u:%g:%a' --                "$isolation_lock")" != "0:$trusted_owner_gid:660" ]; then
+            echo "Trusted publisher cleanup lock has unsafe metadata." >&2
+            exit 1
+          fi
+          exec 9> "$isolation_lock"
+          if ! "$RUCKSACK_TRUSTED_FLOCK" -n 9; then
+            echo "Another trusted publisher owns the cleanup lock." >&2
+            exit 1
+          fi
+          "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_BASH"             --noprofile --norc -u -o pipefail -c '
+              trusted_find=$1
+              trusted_realpath=$2
+              trusted_stat=$3
+              trusted_getent=$4
+              trusted_pkill=$5
+              trusted_pgrep=$6
+              trusted_userdel=$7
+              trusted_groupdel=$8
+              trusted_rm=$9
+              isolation_parent=${10}
+              stale_count=0
+              stale_status=0
+              unexpected_stale="$(
+                "$trusted_find" "$isolation_parent" -mindepth 1 -maxdepth 1                   \( -name "[0-9]*-[0-9]*-*" -o                      -name "run[0-9]*-attempt[0-9]*-*" \)                   ! -type d -print -quit
+              )" || exit 1
+              if [ -n "$unexpected_stale" ]; then
+                echo "Trusted publisher found a non-directory stale isolation entry." >&2
+                exit 1
+              fi
+              stale_roots=()
+              stale_overflow=0
+              coproc RUCKSACK_STALE_FIND {
+                exec "$trusted_find" "$isolation_parent" -mindepth 1 -maxdepth 1                   -type d \( -name "[0-9]*-[0-9]*-*" -o                     -name "run[0-9]*-attempt[0-9]*-*" \) -print0 9>&-
+              }
+              stale_find_fd=${RUCKSACK_STALE_FIND[0]}
+              stale_find_pid=$RUCKSACK_STALE_FIND_PID
+              while IFS= read -r -d "" stale_root; do
+                stale_count=$((stale_count + 1))
+                if [ "$stale_count" -gt 32 ]; then
+                  stale_overflow=1
+                  continue
+                fi
+                stale_roots+=("$stale_root")
+              done <&"$stale_find_fd"
+              wait "$stale_find_pid"
+              stale_find_status=$?
+              if [ "$stale_find_status" -ne 0 ]; then
+                echo "Trusted publisher could not enumerate stale isolation leaves." >&2
+                exit 1
+              fi
+              if [ "$stale_overflow" != 0 ]; then
+                echo "Trusted publisher stale cleanup exceeds its bound." >&2
+                exit 1
+              fi
+              for stale_root in "${stale_roots[@]}"; do
+                stale_real="$("$trusted_realpath" -e -- "$stale_root")" || exit 1
+                stale_name="${stale_real##*/}"
+                if [ "$stale_real" != "$stale_root" ] ||                    [ "$stale_real" != "$isolation_parent/$stale_name" ]; then
+                  echo "Trusted publisher found an invalid stale isolation leaf." >&2
+                  exit 1
+                fi
+                if [[ "$stale_name" =~ ^run([0-9]{1,20})-attempt([0-9]{1,6})-([A-Za-z0-9]{12})$ ]]; then
+                  stale_run_id="${BASH_REMATCH[1]}"
+                  stale_run_attempt="${BASH_REMATCH[2]}"
+                elif [[ "$stale_name" =~ ^([0-9]{1,20})-([0-9]{1,6})-([A-Za-z0-9]{12})$ ]]; then
+                  stale_run_id="${BASH_REMATCH[1]}"
+                  stale_run_attempt="${BASH_REMATCH[2]}"
+                else
+                  echo "Trusted publisher found an invalid stale isolation leaf." >&2
+                  exit 1
+                fi
+                stale_mode="$("$trusted_stat" -c "%u:%g:%a" -- "$stale_real")" || exit 1
+                case "$stale_mode" in
+                  0:0:700|0:0:711) ;;
+                  *)
+                    echo "Trusted publisher found unsafe stale isolation metadata." >&2
+                    exit 1
+                    ;;
+                esac
+                stale_user="rsk${stale_run_id}a${stale_run_attempt}"
+                stale_home="$stale_real/home"
+                stale_shell=/usr/sbin/nologin
+                stale_control="$stale_real/control"
+                stale_intent="$stale_control/candidate-intent"
+                stale_receipt="$stale_control/candidate-created"
+                stale_group_receipt="$stale_control/candidate-group-created"
+                stale_record="$("$trusted_getent" passwd "$stale_user" 2>/dev/null)"
+                stale_passwd_status=$?
+                stale_group_record="$("$trusted_getent" group "$stale_user" 2>/dev/null)"
+                stale_group_status=$?
+                case "$stale_passwd_status" in 0|2) ;; *)
+                  echo "Trusted publisher could not inspect a stale account." >&2
+                  exit 1
+                  ;;
+                esac
+                case "$stale_group_status" in 0|2) ;; *)
+                  echo "Trusted publisher could not inspect a stale group." >&2
+                  exit 1
+                  ;;
+                esac
+                if [ "$stale_passwd_status" -eq 0 ] ||                    [ "$stale_group_status" -eq 0 ] ||                    [ -e "$stale_intent" ] || [ -L "$stale_intent" ] ||                    [ -e "$stale_receipt" ] || [ -L "$stale_receipt" ] ||                    [ -e "$stale_group_receipt" ] ||                    [ -L "$stale_group_receipt" ]; then
+                  if [ ! -d "$stale_control" ] || [ -L "$stale_control" ] ||                      [ ! -f "$stale_intent" ] || [ -L "$stale_intent" ] ||                      [ "$("$trusted_stat" -c "%u:%g:%a" --                        "$stale_intent")" != "0:0:444" ]; then
+                    echo "Trusted publisher refused a stale account without exact intent." >&2
+                    exit 1
+                  fi
+                  stale_intent_record="$(< "$stale_intent")"
+                  IFS="|" read -r stale_intent_user stale_intent_home                     stale_intent_shell stale_uid stale_gid stale_expected_record                     stale_expected_group stale_intent_extra <<< "$stale_intent_record"
+                  case "$stale_uid:$stale_gid" in
+                    *[!0-9:]*|0:*|*:0|:*|*:)
+                      echo "Trusted publisher found an invalid stale account identity." >&2
+                      exit 1
+                      ;;
+                  esac
+                  if [ -n "$stale_intent_extra" ] ||                      [ "$stale_intent_user" != "$stale_user" ] ||                      [ "$stale_intent_home" != "$stale_home" ] ||                      [ "$stale_intent_shell" != "$stale_shell" ] ||                      [ "$stale_expected_record" !=                        "$stale_user:x:$stale_uid:$stale_gid::$stale_home:$stale_shell" ] ||                      [ "$stale_expected_group" !=                        "$stale_user:x:$stale_gid:" ] ||                      [ "$stale_intent_record" !=                        "$stale_user|$stale_home|$stale_shell|$stale_uid|$stale_gid|$stale_expected_record|$stale_expected_group" ]; then
+                    echo "Trusted publisher refused mismatched stale intent metadata." >&2
+                    exit 1
+                  fi
+                  if [ -e "$stale_receipt" ] || [ -L "$stale_receipt" ]; then
+                    if [ ! -f "$stale_receipt" ] || [ -L "$stale_receipt" ] ||                        [ "$("$trusted_stat" -c "%u:%g:%a" --                          "$stale_receipt")" != "0:0:444" ] ||                        [ "$(< "$stale_receipt")" != "$stale_expected_record" ]; then
+                      echo "Trusted publisher refused an invalid stale account receipt." >&2
+                      exit 1
+                    fi
+                  fi
+                  if [ -e "$stale_group_receipt" ] || [ -L "$stale_group_receipt" ]; then
+                    if [ ! -f "$stale_group_receipt" ] ||                        [ -L "$stale_group_receipt" ] ||                        [ "$("$trusted_stat" -c "%u:%g:%a" --                          "$stale_group_receipt")" != "0:0:444" ] ||                        [ "$(< "$stale_group_receipt")" !=                          "$stale_expected_group" ]; then
+                      echo "Trusted publisher refused an invalid stale group receipt." >&2
+                      exit 1
+                    fi
+                  fi
+                fi
+                if [ "$stale_passwd_status" -eq 0 ]; then
+                  if [ "$stale_record" != "$stale_expected_record" ] ||                      [ "$stale_group_status" -ne 0 ] ||                      [ "$stale_group_record" != "$stale_expected_group" ]; then
+                    echo "Trusted publisher refused mismatched stale account metadata." >&2
+                    exit 1
+                  fi
+                  stale_clear=0
+                  for ((stale_attempt = 0; stale_attempt < 64; stale_attempt++)); do
+                    "$trusted_pkill" -KILL -u "$stale_uid" >/dev/null 2>&1
+                    stale_status=$?
+                    if [ "$stale_status" -gt 1 ]; then exit 1; fi
+                    "$trusted_pgrep" -u "$stale_uid" >/dev/null 2>&1
+                    stale_status=$?
+                    case "$stale_status" in
+                      0) ;;
+                      1) stale_clear=1; break ;;
+                      *) exit 1 ;;
+                    esac
+                  done
+                  if [ "$stale_clear" != 1 ]; then exit 1; fi
+                  "$trusted_userdel" "$stale_user" >/dev/null 2>&1 || exit 1
+                  "$trusted_getent" passwd "$stale_user" >/dev/null 2>&1
+                  if [ "$?" -ne 2 ]; then exit 1; fi
+                fi
+                stale_group_record="$("$trusted_getent" group "$stale_user" 2>/dev/null)"
+                stale_group_status=$?
+                case "$stale_group_status" in
+                  0)
+                    if [ "$stale_group_record" != "$stale_expected_group" ]; then
+                      echo "Trusted publisher refused mismatched stale group metadata." >&2
+                      exit 1
+                    fi
+                    "$trusted_groupdel" "$stale_user" >/dev/null 2>&1 || exit 1
+                    "$trusted_getent" group "$stale_user" >/dev/null 2>&1
+                    if [ "$?" -ne 2 ]; then exit 1; fi
+                    ;;
+                  2) ;;
+                  *)
+                    echo "Trusted publisher could not inspect a stale group." >&2
+                    exit 1
+                    ;;
+                esac
+                "$trusted_getent" passwd "$stale_user" >/dev/null 2>&1
+                if [ "$?" -ne 2 ]; then
+                  echo "Trusted publisher could not prove the stale account absent." >&2
+                  exit 1
+                fi
+                "$trusted_getent" group "$stale_user" >/dev/null 2>&1
+                if [ "$?" -ne 2 ]; then
+                  echo "Trusted publisher could not prove the stale group absent." >&2
+                  exit 1
+                fi
+                "$trusted_rm" -rf -- "$stale_real" >/dev/null 2>&1 || exit 1
+                if [ -e "$stale_real" ] || [ -L "$stale_real" ]; then exit 1; fi
+              done
+            ' rucksack-stale-cleanup             "$RUCKSACK_TRUSTED_FIND" "$RUCKSACK_TRUSTED_REALPATH"             "$RUCKSACK_TRUSTED_STAT" "$RUCKSACK_TRUSTED_GETENT"             "$RUCKSACK_TRUSTED_PKILL" "$RUCKSACK_TRUSTED_PGREP"             "$RUCKSACK_TRUSTED_USERDEL" "$RUCKSACK_TRUSTED_GROUPDEL"             "$RUCKSACK_TRUSTED_RM"             "$isolation_parent"
+          isolation_template="$isolation_parent/run${GITHUB_RUN_ID}-attempt${GITHUB_RUN_ATTEMPT}-XXXXXXXXXXXX"
           created_isolation_root=""
           isolation_root=""
           trusted_control_root=""
@@ -264,7 +458,13 @@ jobs:
           candidate_cleanup_armed=0
           candidate_expected_home=""
           candidate_expected_shell="/usr/sbin/nologin"
+          candidate_expected_uid=""
+          candidate_expected_gid=""
+          candidate_expected_record=""
+          candidate_expected_group=""
           candidate_receipt=""
+          candidate_group_receipt=""
+          candidate_intent=""
           candidate_preflight_record=""
           candidate_preflight_status=0
           RUCKSACK_CANDIDATE_UID=""
@@ -276,7 +476,11 @@ jobs:
           cleanup_candidate_uid=""
           cleanup_candidate_identity=""
           cleanup_candidate_record=""
+          cleanup_candidate_status=0
+          cleanup_group_record=""
+          cleanup_group_status=0
           cleanup_candidate_receipt=""
+          cleanup_candidate_group_receipt=""
           cleanup_candidate_name=""
           cleanup_candidate_password=""
           cleanup_candidate_gid=""
@@ -285,6 +489,16 @@ jobs:
           cleanup_candidate_shell=""
           cleanup_candidate_extra=""
           cleanup_receipt_record=""
+          cleanup_group_receipt_record=""
+          cleanup_intent_record=""
+          cleanup_authorized=0
+          cleanup_account_absent=0
+          cleanup_group_absent=0
+          cleanup_processes_clear=0
+          cleanup_failure=0
+          cleanup_command_status=0
+          cleanup_output_status=1
+          evidence_status=1
           cleanup_control_root=""
           cleanup_isolation_name=""
           cleanup_isolation_nonce=""
@@ -294,55 +508,254 @@ jobs:
           readonly candidate_user
           cleanup_candidate_isolation() {
             cleanup_status=$?
+            trap - EXIT HUP INT TERM
             set +e
             set +u
+            cleanup_failure=0
+            cleanup_account_absent=0
+            cleanup_group_absent=0
             cleanup_isolation_root="${created_isolation_root:-}"
             cleanup_control_root="${trusted_control_root:-}"
+            if [ -n "$cleanup_control_root" ] &&                [ "$cleanup_control_root" != "$cleanup_isolation_root/control" ]; then
+              echo "Trusted publisher cleanup control root is inconsistent." >&2
+              cleanup_failure=1
+            fi
             for trusted_source in               "${python_launcher_source:-}" "${candidate_runner_source:-}"; do
               if [ -n "$trusted_source" ]; then
-                "$RUCKSACK_TRUSTED_RM" -f -- "$trusted_source"                   >/dev/null 2>&1 || true
+                "$RUCKSACK_TRUSTED_RM" -f -- "$trusted_source"                   >/dev/null 2>&1
+                cleanup_command_status=$?
+                if [ "$cleanup_command_status" -ne 0 ] ||                    [ -e "$trusted_source" ] || [ -L "$trusted_source" ]; then
+                  echo "Trusted publisher cleanup could not remove a temporary source." >&2
+                  cleanup_failure=1
+                fi
               fi
             done
             cleanup_candidate_receipt="${candidate_receipt:-}"
-            if [ "${candidate_cleanup_armed:-0}" = 1 ] &&                [ -n "${candidate_user:-}" ] &&                [ -n "$cleanup_control_root" ] &&                [ "$cleanup_candidate_receipt" =                  "$cleanup_control_root/candidate-created" ] &&                [ -f "$cleanup_candidate_receipt" ] &&                [ ! -L "$cleanup_candidate_receipt" ] &&                [ "$("$RUCKSACK_TRUSTED_STAT" -c '%u:%g:%a' --                  "$cleanup_candidate_receipt" 2>/dev/null)" = "0:0:444" ]; then
-              cleanup_receipt_record="$(< "$cleanup_candidate_receipt")"
+            cleanup_candidate_group_receipt="${candidate_group_receipt:-}"
+            if [ "${candidate_cleanup_armed:-0}" = 1 ]; then
               cleanup_candidate_record="$(
-                "$RUCKSACK_TRUSTED_GETENT" passwd "$candidate_user"                   2>/dev/null || true
+                "$RUCKSACK_TRUSTED_GETENT" passwd "$candidate_user"                   2>/dev/null
               )"
-              IFS=: read -r cleanup_candidate_name cleanup_candidate_password                 cleanup_candidate_uid cleanup_candidate_gid                 cleanup_candidate_gecos cleanup_candidate_home                 cleanup_candidate_shell cleanup_candidate_extra                 <<< "$cleanup_receipt_record"
-              cleanup_candidate_identity=""
-              case "$cleanup_candidate_uid" in
-                ""|0|*[!0-9]*) ;;
-                *) cleanup_candidate_identity="$cleanup_candidate_uid" ;;
+              cleanup_candidate_status=$?
+              cleanup_group_record="$(
+                "$RUCKSACK_TRUSTED_GETENT" group "$candidate_user"                   2>/dev/null
+              )"
+              cleanup_group_status=$?
+              case "$cleanup_candidate_status" in
+                0|2) ;;
+                *)
+                  echo "Trusted publisher cleanup could not inspect the candidate account." >&2
+                  cleanup_failure=1
+                  ;;
               esac
-              case "$cleanup_candidate_gid" in
-                ""|0|*[!0-9]*) cleanup_candidate_identity="" ;;
+              case "$cleanup_group_status" in
+                0|2) ;;
+                *)
+                  echo "Trusted publisher cleanup could not inspect the candidate group." >&2
+                  cleanup_failure=1
+                  ;;
               esac
-              if [ -n "$cleanup_candidate_identity" ] &&                  [ -z "$cleanup_candidate_extra" ] &&                  [ "$cleanup_candidate_record" = "$cleanup_receipt_record" ] &&                  [ "$cleanup_candidate_name" = "$candidate_user" ] &&                  [ "$cleanup_candidate_home" = "${candidate_expected_home:-}" ] &&                  [ "$cleanup_candidate_shell" = "${candidate_expected_shell:-}" ] &&                  [ "$cleanup_candidate_name:$cleanup_candidate_password:$cleanup_candidate_uid:$cleanup_candidate_gid:$cleanup_candidate_gecos:$cleanup_candidate_home:$cleanup_candidate_shell" =                    "$cleanup_receipt_record" ]; then
-                for ((cleanup_attempt = 0; cleanup_attempt < 64; cleanup_attempt++)); do
-                  "$RUCKSACK_TRUSTED_SUDO" -n --                     "$RUCKSACK_TRUSTED_PKILL" -KILL                     -u "$cleanup_candidate_identity" >/dev/null 2>&1 || true
-                  "$RUCKSACK_TRUSTED_SUDO" -n --                     "$RUCKSACK_TRUSTED_PGREP"                     -u "$cleanup_candidate_identity" >/dev/null 2>&1 || break
-                done
-                "$RUCKSACK_TRUSTED_SUDO" -n --                   "$RUCKSACK_TRUSTED_USERDEL" "$candidate_user"                   >/dev/null 2>&1 || true
+              if [ "$cleanup_failure" = 0 ] &&                  { [ "$cleanup_candidate_status" -eq 0 ] ||                    [ "$cleanup_group_status" -eq 0 ] ||                    [ -e "${candidate_intent:-}" ] ||                    [ -L "${candidate_intent:-}" ] ||                    [ -e "$cleanup_candidate_receipt" ] ||                    [ -L "$cleanup_candidate_receipt" ] ||                    [ -e "$cleanup_candidate_group_receipt" ] ||                    [ -L "$cleanup_candidate_group_receipt" ]; }; then
+                cleanup_authorized=0
+                cleanup_receipt_record=""
+                cleanup_group_receipt_record=""
+                cleanup_intent_record=""
+                if [ -n "${candidate_intent:-}" ] &&                    [ "$candidate_intent" = "$cleanup_control_root/candidate-intent" ] &&                    [ -f "$candidate_intent" ] && [ ! -L "$candidate_intent" ] &&                    [ "$("$RUCKSACK_TRUSTED_STAT" -c '%u:%g:%a' --                      "$candidate_intent" 2>/dev/null)" = "0:0:444" ]; then
+                  cleanup_intent_record="$(< "$candidate_intent")"
+                fi
+                if [ "$cleanup_intent_record" =                      "$candidate_user|${candidate_expected_home:-}|${candidate_expected_shell:-}|${candidate_expected_uid:-}|${candidate_expected_gid:-}|${candidate_expected_record:-}|${candidate_expected_group:-}" ]; then
+                  cleanup_authorized=1
+                fi
+                if [ -e "$cleanup_candidate_receipt" ] ||                    [ -L "$cleanup_candidate_receipt" ]; then
+                  if [ "$cleanup_candidate_receipt" !=                        "$cleanup_control_root/candidate-created" ] ||                      [ ! -f "$cleanup_candidate_receipt" ] ||                      [ -L "$cleanup_candidate_receipt" ] ||                      [ "$("$RUCKSACK_TRUSTED_STAT" -c '%u:%g:%a' --                        "$cleanup_candidate_receipt" 2>/dev/null)" != "0:0:444" ]; then
+                    cleanup_authorized=0
+                  else
+                    cleanup_receipt_record="$(< "$cleanup_candidate_receipt")"
+                    [ "$cleanup_receipt_record" =                       "${candidate_expected_record:-}" ] || cleanup_authorized=0
+                  fi
+                fi
+                if [ -e "$cleanup_candidate_group_receipt" ] ||                    [ -L "$cleanup_candidate_group_receipt" ]; then
+                  if [ "$cleanup_candidate_group_receipt" !=                        "$cleanup_control_root/candidate-group-created" ] ||                      [ ! -f "$cleanup_candidate_group_receipt" ] ||                      [ -L "$cleanup_candidate_group_receipt" ] ||                      [ "$("$RUCKSACK_TRUSTED_STAT" -c '%u:%g:%a' --                        "$cleanup_candidate_group_receipt" 2>/dev/null)" != "0:0:444" ]; then
+                    cleanup_authorized=0
+                  else
+                    cleanup_group_receipt_record="$(< "$cleanup_candidate_group_receipt")"
+                    [ "$cleanup_group_receipt_record" =                       "${candidate_expected_group:-}" ] || cleanup_authorized=0
+                  fi
+                fi
+                case "${candidate_expected_uid:-}:${candidate_expected_gid:-}" in
+                  *[!0-9:]*|0:*|*:0|:*|*:) cleanup_authorized=0 ;;
+                esac
+                if [ "$cleanup_candidate_status" -eq 0 ] &&                    { [ "$cleanup_candidate_record" !=                        "${candidate_expected_record:-}" ] ||                      [ "$cleanup_group_status" -ne 0 ] ||                      [ "$cleanup_group_record" !=                        "${candidate_expected_group:-}" ]; }; then
+                  cleanup_authorized=0
+                fi
+                if [ "$cleanup_group_status" -eq 0 ] &&                    [ "$cleanup_group_record" !=                      "${candidate_expected_group:-}" ]; then
+                  cleanup_authorized=0
+                fi
+                if [ "$cleanup_authorized" != 1 ]; then
+                  echo "Trusted publisher cleanup refused unproven candidate identity." >&2
+                  cleanup_failure=1
+                elif [ "$cleanup_candidate_status" -eq 0 ]; then
+                  cleanup_candidate_identity="${candidate_expected_uid:-}"
+                  cleanup_processes_clear=0
+                  for ((cleanup_attempt = 0; cleanup_attempt < 64; cleanup_attempt++)); do
+                    "$RUCKSACK_TRUSTED_SUDO" -n --                       "$RUCKSACK_TRUSTED_PKILL" -KILL                       -u "$cleanup_candidate_identity" >/dev/null 2>&1
+                    cleanup_command_status=$?
+                    if [ "$cleanup_command_status" -gt 1 ]; then
+                      echo "Trusted publisher cleanup could not signal candidate processes." >&2
+                      cleanup_failure=1
+                      break
+                    fi
+                    "$RUCKSACK_TRUSTED_SUDO" -n --                       "$RUCKSACK_TRUSTED_PGREP"                       -u "$cleanup_candidate_identity" >/dev/null 2>&1
+                    cleanup_command_status=$?
+                    case "$cleanup_command_status" in
+                      0) ;;
+                      1) cleanup_processes_clear=1; break ;;
+                      *)
+                        echo "Trusted publisher cleanup could not inspect candidate processes." >&2
+                        cleanup_failure=1
+                        break
+                        ;;
+                    esac
+                  done
+                  if [ "$cleanup_processes_clear" != 1 ]; then
+                    echo "Trusted publisher cleanup left candidate processes running." >&2
+                    cleanup_failure=1
+                  fi
+                  if [ "$cleanup_failure" = 0 ]; then
+                    "$RUCKSACK_TRUSTED_SUDO" -n --                       "$RUCKSACK_TRUSTED_USERDEL" "$candidate_user"                       >/dev/null 2>&1
+                    cleanup_command_status=$?
+                    if [ "$cleanup_command_status" -ne 0 ]; then
+                      echo "Trusted publisher cleanup could not delete the candidate account." >&2
+                      cleanup_failure=1
+                    fi
+                    cleanup_candidate_record="$(
+                      "$RUCKSACK_TRUSTED_GETENT" passwd "$candidate_user"                         2>/dev/null
+                    )"
+                    cleanup_command_status=$?
+                    if [ "$cleanup_command_status" -eq 2 ]; then
+                      cleanup_account_absent=1
+                    else
+                      echo "Trusted publisher cleanup could not prove the account absent." >&2
+                      cleanup_failure=1
+                    fi
+                  fi
+                fi
               fi
-            fi
-            if [ -n "$cleanup_control_root" ] &&                [ -n "$cleanup_isolation_root" ] &&                [ "$cleanup_control_root" = "$cleanup_isolation_root/control" ]; then
-              "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_RM"                 -rf -- "$cleanup_control_root" >/dev/null 2>&1 || true
-            fi
-            if [ -n "$cleanup_isolation_root" ]; then
-              cleanup_isolation_name="${cleanup_isolation_root##*/}"
-              cleanup_isolation_prefix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-"
-              cleanup_isolation_nonce="${cleanup_isolation_name#"$cleanup_isolation_prefix"}"
-              if [ "$cleanup_isolation_root" =                    "$isolation_parent/$cleanup_isolation_name" ] &&                  [ "$cleanup_isolation_nonce" != "$cleanup_isolation_name" ] &&                  [ "${#cleanup_isolation_nonce}" -eq 12 ]; then
-                case "$cleanup_isolation_nonce" in
-                  ""|*[!A-Za-z0-9]*) ;;
+              if [ "$cleanup_candidate_status" -eq 2 ]; then
+                cleanup_account_absent=1
+              fi
+              if [ "$cleanup_failure" = 0 ] &&                  [ "$cleanup_candidate_status" -eq 0 ]; then
+                cleanup_candidate_record="$(
+                  "$RUCKSACK_TRUSTED_GETENT" passwd "$candidate_user"                     2>/dev/null
+                )"
+                cleanup_candidate_status=$?
+                if [ "$cleanup_candidate_status" -eq 2 ]; then
+                  cleanup_account_absent=1
+                else
+                  echo "Trusted publisher cleanup could not prove the account absent." >&2
+                  cleanup_failure=1
+                fi
+              fi
+              if [ "$cleanup_failure" = 0 ]; then
+                cleanup_group_record="$(
+                  "$RUCKSACK_TRUSTED_GETENT" group "$candidate_user"                     2>/dev/null
+                )"
+                cleanup_group_status=$?
+                case "$cleanup_group_status" in
+                  0)
+                    if [ "$cleanup_group_record" !=                          "${candidate_expected_group:-}" ]; then
+                      echo "Trusted publisher cleanup refused mismatched group identity." >&2
+                      cleanup_failure=1
+                    else
+                      "$RUCKSACK_TRUSTED_SUDO" -n --                         "$RUCKSACK_TRUSTED_GROUPDEL" "$candidate_user"                         >/dev/null 2>&1
+                      cleanup_command_status=$?
+                      if [ "$cleanup_command_status" -ne 0 ]; then
+                        echo "Trusted publisher cleanup could not delete the candidate group." >&2
+                        cleanup_failure=1
+                      fi
+                    fi
+                    ;;
+                  2) cleanup_group_absent=1 ;;
                   *)
-                    "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_RM"                       -rf -- "$cleanup_isolation_root"                       >/dev/null 2>&1 || true
+                    echo "Trusted publisher cleanup could not inspect the candidate group." >&2
+                    cleanup_failure=1
                     ;;
                 esac
               fi
+              if [ "$cleanup_failure" = 0 ] &&                  [ "$cleanup_group_absent" != 1 ]; then
+                cleanup_group_record="$(
+                  "$RUCKSACK_TRUSTED_GETENT" group "$candidate_user"                     2>/dev/null
+                )"
+                cleanup_group_status=$?
+                if [ "$cleanup_group_status" -eq 2 ]; then
+                  cleanup_group_absent=1
+                else
+                  echo "Trusted publisher cleanup could not prove the group absent." >&2
+                  cleanup_failure=1
+                fi
+              fi
+              if [ "$cleanup_failure" = 0 ]; then
+                "$RUCKSACK_TRUSTED_GETENT" passwd "$candidate_user"                   >/dev/null 2>&1
+                cleanup_candidate_status=$?
+                if [ "$cleanup_candidate_status" -eq 2 ]; then
+                  cleanup_account_absent=1
+                else
+                  echo "Trusted publisher cleanup could not finally prove the account absent." >&2
+                  cleanup_failure=1
+                fi
+              fi
+              if [ "$cleanup_failure" = 0 ]; then
+                "$RUCKSACK_TRUSTED_GETENT" group "$candidate_user"                   >/dev/null 2>&1
+                cleanup_group_status=$?
+                if [ "$cleanup_group_status" -eq 2 ]; then
+                  cleanup_group_absent=1
+                else
+                  echo "Trusted publisher cleanup could not finally prove the group absent." >&2
+                  cleanup_failure=1
+                fi
+              fi
+            else
+              cleanup_account_absent=1
+              cleanup_group_absent=1
             fi
-            return "$cleanup_status"
+            if [ "$cleanup_failure" = 0 ] &&                [ "$cleanup_account_absent" = 1 ] &&                [ "$cleanup_group_absent" = 1 ] &&                [ -n "$cleanup_isolation_root" ]; then
+              cleanup_isolation_name="${cleanup_isolation_root##*/}"
+              cleanup_isolation_prefix="run${GITHUB_RUN_ID}-attempt${GITHUB_RUN_ATTEMPT}-"
+              cleanup_isolation_nonce="${cleanup_isolation_name#"$cleanup_isolation_prefix"}"
+              if [ "$cleanup_isolation_root" =                    "$isolation_parent/$cleanup_isolation_name" ] &&                  [ "$cleanup_isolation_nonce" != "$cleanup_isolation_name" ] &&                  [ "${#cleanup_isolation_nonce}" -eq 12 ]; then
+                case "$cleanup_isolation_nonce" in
+                  ""|*[!A-Za-z0-9]*) cleanup_failure=1 ;;
+                  *)
+                    "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_RM"                       -rf -- "$cleanup_isolation_root" >/dev/null 2>&1
+                    cleanup_command_status=$?
+                    if [ "$cleanup_command_status" -ne 0 ] ||                        [ -e "$cleanup_isolation_root" ] ||                        [ -L "$cleanup_isolation_root" ]; then
+                      echo "Trusted publisher cleanup could not remove the isolation leaf." >&2
+                      cleanup_failure=1
+                    fi
+                    ;;
+                esac
+              else
+                echo "Trusted publisher cleanup refused an invalid isolation leaf." >&2
+                cleanup_failure=1
+              fi
+            fi
+            if [ "$cleanup_failure" != 0 ] && [ "$cleanup_status" -eq 0 ]; then
+              cleanup_status=1
+            fi
+            cleanup_output_status="${evidence_status:-1}"
+            if [ "$cleanup_failure" != 0 ]; then
+              cleanup_output_status=125
+            fi
+            if ! printf 'status=%s\n' "$cleanup_output_status" >> "$GITHUB_OUTPUT"; then
+              echo "Trusted publisher cleanup could not write its final status." >&2
+              if [ "$cleanup_status" -eq 0 ]; then cleanup_status=1; fi
+              cleanup_failure=1
+            fi
+            if [ "$cleanup_failure" != 0 ]; then
+              echo "Trusted publisher teardown failed; recovery evidence was retained." >&2
+            fi
+            exec 9>&-
+            exit "$cleanup_status"
           }
           trap cleanup_candidate_isolation EXIT
           trap 'exit 129' HUP
@@ -356,7 +769,7 @@ jobs:
             exit 1
           fi
           isolation_name="${isolation_root##*/}"
-          isolation_prefix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-"
+          isolation_prefix="run${GITHUB_RUN_ID}-attempt${GITHUB_RUN_ATTEMPT}-"
           isolation_nonce="${isolation_name#"$isolation_prefix"}"
           case "$isolation_nonce" in
             ""|*[!A-Za-z0-9]*)
@@ -388,9 +801,6 @@ jobs:
           fi
           readonly created_isolation_root isolation_root
 
-          trusted_owner_uid="$("$RUCKSACK_TRUSTED_ID" -u)"
-          trusted_owner_gid="$("$RUCKSACK_TRUSTED_ID" -g)"
-          readonly trusted_owner_uid trusted_owner_gid
           trusted_control_root="$isolation_root/control"
           "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_INSTALL"             -d -o "$trusted_owner_uid" -g "$trusted_owner_gid" -m 0700 --             "$trusted_control_root"
           if [ -L "$trusted_control_root" ] || [ ! -d "$trusted_control_root" ] ||              [ "$("$RUCKSACK_TRUSTED_STAT" -c '%u:%g:%a' --                "$trusted_control_root")" !=                "$trusted_owner_uid:$trusted_owner_gid:700" ]; then
@@ -1044,7 +1454,10 @@ jobs:
           export RUCKSACK_CANDIDATE_PYTHON RUCKSACK_TRUSTED_PYTHON_LIBRARY_PATH
           candidate_expected_home="$isolation_root/home"
           candidate_receipt="$trusted_control_root/candidate-created"
+          candidate_group_receipt="$trusted_control_root/candidate-group-created"
+          candidate_intent="$trusted_control_root/candidate-intent"
           readonly candidate_expected_home candidate_expected_shell candidate_receipt
+          readonly candidate_group_receipt candidate_intent
           if candidate_preflight_record="$(
             "$RUCKSACK_TRUSTED_GETENT" passwd "$candidate_user" 2>/dev/null
           )"; then
@@ -1057,56 +1470,141 @@ jobs:
             echo "Could not prove the disposable candidate account is absent." >&2
             exit 1
           fi
+          candidate_preflight_status=0
+          if "$RUCKSACK_TRUSTED_GETENT" group "$candidate_user"             >/dev/null 2>&1; then
+            echo "Disposable candidate group already exists." >&2
+            exit 1
+          else
+            candidate_preflight_status=$?
+          fi
+          if [ "$candidate_preflight_status" -ne 2 ]; then
+            echo "Could not prove the disposable candidate group is absent." >&2
+            exit 1
+          fi
+          for ((candidate_identity = 60000; candidate_identity <= 60127; candidate_identity++)); do
+            candidate_uid_status=0
+            candidate_gid_status=0
+            "$RUCKSACK_TRUSTED_GETENT" passwd "$candidate_identity"               >/dev/null 2>&1 || candidate_uid_status=$?
+            "$RUCKSACK_TRUSTED_GETENT" group "$candidate_identity"               >/dev/null 2>&1 || candidate_gid_status=$?
+            case "$candidate_uid_status:$candidate_gid_status" in
+              2:2)
+                candidate_expected_uid="$candidate_identity"
+                candidate_expected_gid="$candidate_identity"
+                break
+                ;;
+              0:0|0:2|2:0) ;;
+              *)
+                echo "Could not inspect a bounded disposable candidate identity." >&2
+                exit 1
+                ;;
+            esac
+          done
+          if [ -z "$candidate_expected_uid" ] || [ -z "$candidate_expected_gid" ]; then
+            echo "No bounded disposable candidate identity is available." >&2
+            exit 1
+          fi
+          candidate_expected_record="$candidate_user:x:$candidate_expected_uid:$candidate_expected_gid::$candidate_expected_home:$candidate_expected_shell"
+          candidate_expected_group="$candidate_user:x:$candidate_expected_gid:"
+          readonly candidate_expected_uid candidate_expected_gid
+          readonly candidate_expected_record candidate_expected_group
           candidate_cleanup_armed=1
           "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_BASH"             --noprofile --norc -e -o pipefail -c '
               trusted_useradd=$1
               trusted_userdel=$2
-              trusted_getent=$3
-              trusted_pkill=$4
-              trusted_pgrep=$5
-              trusted_stat=$6
-              trusted_chmod=$7
-              trusted_rm=$8
-              trusted_sync=$9
-              candidate_user=${10}
-              candidate_home=${11}
-              candidate_shell=${12}
-              candidate_receipt=${13}
+              trusted_groupadd=$3
+              trusted_groupdel=$4
+              trusted_getent=$5
+              trusted_pkill=$6
+              trusted_pgrep=$7
+              trusted_stat=$8
+              trusted_chmod=$9
+              trusted_sync=${10}
+              candidate_user=${11}
+              candidate_home=${12}
+              candidate_shell=${13}
+              candidate_uid=${14}
+              candidate_gid=${15}
+              candidate_expected_record=${16}
+              candidate_expected_group=${17}
+              candidate_receipt=${18}
+              candidate_group_receipt=${19}
+              candidate_intent=${20}
               helper_cleanup_armed=0
               helper_complete=0
-              helper_useradd_inflight=0
               helper_status=0
               helper_attempt=0
-              helper_record=""
-              helper_name=""
-              helper_password=""
-              helper_uid=""
-              helper_gid=""
-              helper_gecos=""
-              helper_home=""
-              helper_shell=""
-              helper_extra=""
-              helper_account_matches() {
-                helper_record="$(
-                  "$trusted_getent" passwd "$candidate_user" 2>/dev/null || true
-                )"
-                IFS=: read -r helper_name helper_password helper_uid helper_gid                   helper_gecos helper_home helper_shell helper_extra                   <<< "$helper_record"
-                case "$helper_uid" in
-                  ""|0|*[!0-9]*) return 1 ;;
-                esac
-                case "$helper_gid" in
-                  ""|0|*[!0-9]*) return 1 ;;
-                esac
-                [ -z "$helper_extra" ] &&                   [ "$helper_name" = "$candidate_user" ] &&                   [ "$helper_home" = "$candidate_home" ] &&                   [ "$helper_shell" = "$candidate_shell" ] &&                   [ "$helper_name:$helper_password:$helper_uid:$helper_gid:$helper_gecos:$helper_home:$helper_shell" =                     "$helper_record" ]
+              helper_command_status=0
+              helper_processes_clear=0
+              helper_passwd_record=""
+              helper_passwd_status=0
+              helper_group_record=""
+              helper_group_status=0
+              helper_query_identities() {
+                helper_passwd_status=0
+                helper_group_status=0
+                helper_passwd_record="$(
+                  "$trusted_getent" passwd "$candidate_user" 2>/dev/null
+                )" || helper_passwd_status=$?
+                helper_group_record="$(
+                  "$trusted_getent" group "$candidate_user" 2>/dev/null
+                )" || helper_group_status=$?
+                case "$helper_passwd_status" in 0|2) ;; *) return 1 ;; esac
+                case "$helper_group_status" in 0|2) ;; *) return 1 ;; esac
               }
-              helper_remove_account() {
-                if helper_account_matches; then
-                  for ((helper_attempt = 0; helper_attempt < 64; helper_attempt++)); do
-                    "$trusted_pkill" -KILL -u "$helper_uid"                       >/dev/null 2>&1 || true
-                    "$trusted_pgrep" -u "$helper_uid"                       >/dev/null 2>&1 || break
-                  done
-                  "$trusted_userdel" "$candidate_user"                     >/dev/null 2>&1 || true
+              helper_validate_recovery_evidence() {
+                [ -f "$candidate_intent" ] && [ ! -L "$candidate_intent" ] &&                   [ "$("$trusted_stat" -c "%u:%g:%a" --                     "$candidate_intent")" = "0:0:444" ] &&                   [ "$(< "$candidate_intent")" =                     "$candidate_user|$candidate_home|$candidate_shell|$candidate_uid|$candidate_gid|$candidate_expected_record|$candidate_expected_group" ] || return 1
+                if [ -e "$candidate_receipt" ] || [ -L "$candidate_receipt" ]; then
+                  [ -f "$candidate_receipt" ] && [ ! -L "$candidate_receipt" ] &&                     [ "$("$trusted_stat" -c "%u:%g:%a" --                       "$candidate_receipt")" = "0:0:444" ] &&                     [ "$(< "$candidate_receipt")" =                       "$candidate_expected_record" ] || return 1
                 fi
+                if [ -e "$candidate_group_receipt" ] ||                    [ -L "$candidate_group_receipt" ]; then
+                  [ -f "$candidate_group_receipt" ] &&                     [ ! -L "$candidate_group_receipt" ] &&                     [ "$("$trusted_stat" -c "%u:%g:%a" --                       "$candidate_group_receipt")" = "0:0:444" ] &&                     [ "$(< "$candidate_group_receipt")" =                       "$candidate_expected_group" ] || return 1
+                fi
+              }
+              helper_remove_identity() {
+                helper_validate_recovery_evidence || return 1
+                helper_query_identities || return 1
+                if [ "$helper_passwd_status" -eq 0 ]; then
+                  [ "$helper_passwd_record" = "$candidate_expected_record" ] ||                     return 1
+                  [ "$helper_group_status" -eq 0 ] &&                     [ "$helper_group_record" = "$candidate_expected_group" ] ||                     return 1
+                  helper_processes_clear=0
+                  for ((helper_attempt = 0; helper_attempt < 64; helper_attempt++)); do
+                    "$trusted_pkill" -KILL -u "$candidate_uid"                       >/dev/null 2>&1
+                    helper_command_status=$?
+                    if [ "$helper_command_status" -gt 1 ]; then
+                      return 1
+                    fi
+                    "$trusted_pgrep" -u "$candidate_uid"                       >/dev/null 2>&1
+                    helper_command_status=$?
+                    case "$helper_command_status" in
+                      0) ;;
+                      1) helper_processes_clear=1; break ;;
+                      *) return 1 ;;
+                    esac
+                  done
+                  if [ "$helper_processes_clear" != 1 ]; then
+                    return 1
+                  fi
+                  "$trusted_userdel" "$candidate_user"                     >/dev/null 2>&1 || return 1
+                  "$trusted_getent" passwd "$candidate_user"                     >/dev/null 2>&1
+                  [ "$?" -eq 2 ] || return 1
+                fi
+                helper_group_record="$(
+                  "$trusted_getent" group "$candidate_user" 2>/dev/null
+                )"
+                helper_group_status=$?
+                case "$helper_group_status" in
+                  0)
+                    [ "$helper_group_record" = "$candidate_expected_group" ] ||                       return 1
+                    "$trusted_groupdel" "$candidate_user"                       >/dev/null 2>&1 || return 1
+                    ;;
+                  2) ;;
+                  *) return 1 ;;
+                esac
+                "$trusted_getent" group "$candidate_user" >/dev/null 2>&1
+                [ "$?" -eq 2 ] || return 1
+                "$trusted_getent" passwd "$candidate_user" >/dev/null 2>&1
+                [ "$?" -eq 2 ] || return 1
+                return 0
               }
               helper_cleanup() {
                 helper_status=$?
@@ -1114,8 +1612,12 @@ jobs:
                 set +e
                 set +u
                 if [ "${helper_cleanup_armed:-0}" = 1 ] &&                    [ "${helper_complete:-0}" != 1 ]; then
-                  "$trusted_rm" -f -- "$candidate_receipt"                     >/dev/null 2>&1 || true
-                  helper_remove_account
+                  if ! helper_remove_identity; then
+                    echo "Trusted account helper cleanup failed; recovery evidence was retained." >&2
+                    if [ "$helper_status" -eq 0 ]; then
+                      helper_status=1
+                    fi
+                  fi
                 fi
                 exit "$helper_status"
               }
@@ -1125,23 +1627,40 @@ jobs:
               trap helper_cleanup EXIT
               trap helper_signal HUP INT TERM
               helper_preflight_status=0
-              if "$trusted_getent" passwd "$candidate_user"                 >/dev/null 2>&1; then
-                exit 1
-              else
-                helper_preflight_status=$?
-              fi
-              if [ "$helper_preflight_status" -ne 2 ]; then
-                exit 1
-              fi
-              helper_cleanup_armed=1
-              helper_useradd_inflight=1
-              "$trusted_useradd" --system --no-create-home                 --home-dir "$candidate_home" --shell "$candidate_shell"                 "$candidate_user"
-              helper_useradd_inflight=0
-              if ! helper_account_matches; then
-                exit 1
-              fi
+              "$trusted_getent" passwd "$candidate_user"                 >/dev/null 2>&1 || helper_preflight_status=$?
+              [ "$helper_preflight_status" -eq 2 ] || exit 1
+              helper_preflight_status=0
+              "$trusted_getent" group "$candidate_user"                 >/dev/null 2>&1 || helper_preflight_status=$?
+              [ "$helper_preflight_status" -eq 2 ] || exit 1
+              helper_preflight_status=0
+              "$trusted_getent" passwd "$candidate_uid"                 >/dev/null 2>&1 || helper_preflight_status=$?
+              [ "$helper_preflight_status" -eq 2 ] || exit 1
+              helper_preflight_status=0
+              "$trusted_getent" group "$candidate_gid"                 >/dev/null 2>&1 || helper_preflight_status=$?
+              [ "$helper_preflight_status" -eq 2 ] || exit 1
               umask 022
-              printf "%s\n" "$helper_record" > "$candidate_receipt"
+              printf "%s|%s|%s|%s|%s|%s|%s\n"                 "$candidate_user" "$candidate_home" "$candidate_shell"                 "$candidate_uid" "$candidate_gid" "$candidate_expected_record"                 "$candidate_expected_group" > "$candidate_intent"
+              "$trusted_chmod" 0444 -- "$candidate_intent"
+              if [ ! -f "$candidate_intent" ] || [ -L "$candidate_intent" ] ||                  [ "$("$trusted_stat" -c "%u:%g:%a" --                    "$candidate_intent")" != "0:0:444" ]; then
+                exit 1
+              fi
+              "$trusted_sync" -f -- "$candidate_intent"
+              helper_cleanup_armed=1
+              "$trusted_groupadd" --gid "$candidate_gid" "$candidate_user"
+              helper_query_identities || exit 1
+              [ "$helper_passwd_status" -eq 2 ] || exit 1
+              [ "$helper_group_status" -eq 0 ] &&                 [ "$helper_group_record" = "$candidate_expected_group" ] || exit 1
+              printf "%s\n" "$candidate_expected_group" >                 "$candidate_group_receipt"
+              "$trusted_chmod" 0444 -- "$candidate_group_receipt"
+              if [ ! -f "$candidate_group_receipt" ] ||                  [ -L "$candidate_group_receipt" ] ||                  [ "$("$trusted_stat" -c "%u:%g:%a" --                    "$candidate_group_receipt")" != "0:0:444" ]; then
+                exit 1
+              fi
+              "$trusted_sync" -f -- "$candidate_group_receipt"
+              "$trusted_useradd" --uid "$candidate_uid" --gid "$candidate_gid"                 --no-user-group --no-create-home --comment ""                 --home-dir "$candidate_home" --shell "$candidate_shell"                 "$candidate_user"
+              helper_query_identities || exit 1
+              [ "$helper_passwd_status" -eq 0 ] &&                 [ "$helper_passwd_record" = "$candidate_expected_record" ] || exit 1
+              [ "$helper_group_status" -eq 0 ] &&                 [ "$helper_group_record" = "$candidate_expected_group" ] || exit 1
+              printf "%s\n" "$candidate_expected_record" > "$candidate_receipt"
               "$trusted_chmod" 0444 -- "$candidate_receipt"
               if [ ! -f "$candidate_receipt" ] ||                  [ -L "$candidate_receipt" ] ||                  [ "$("$trusted_stat" -c "%u:%g:%a" --                    "$candidate_receipt")" != "0:0:444" ]; then
                 exit 1
@@ -1150,15 +1669,29 @@ jobs:
               helper_complete=1
               helper_cleanup_armed=0
               trap - EXIT HUP INT TERM
-            ' rucksack-account-helper             "$RUCKSACK_TRUSTED_USERADD" "$RUCKSACK_TRUSTED_USERDEL"             "$RUCKSACK_TRUSTED_GETENT" "$RUCKSACK_TRUSTED_PKILL"             "$RUCKSACK_TRUSTED_PGREP" "$RUCKSACK_TRUSTED_STAT"             "$RUCKSACK_TRUSTED_CHMOD" "$RUCKSACK_TRUSTED_RM" "$RUCKSACK_TRUSTED_SYNC"             "$candidate_user" "$candidate_expected_home"             "$candidate_expected_shell" "$candidate_receipt"
+            ' rucksack-account-helper             "$RUCKSACK_TRUSTED_USERADD" "$RUCKSACK_TRUSTED_USERDEL"             "$RUCKSACK_TRUSTED_GROUPADD" "$RUCKSACK_TRUSTED_GROUPDEL"             "$RUCKSACK_TRUSTED_GETENT" "$RUCKSACK_TRUSTED_PKILL"             "$RUCKSACK_TRUSTED_PGREP" "$RUCKSACK_TRUSTED_STAT"             "$RUCKSACK_TRUSTED_CHMOD" "$RUCKSACK_TRUSTED_SYNC"             "$candidate_user" "$candidate_expected_home"             "$candidate_expected_shell" "$candidate_expected_uid"             "$candidate_expected_gid" "$candidate_expected_record"             "$candidate_expected_group" "$candidate_receipt"             "$candidate_group_receipt" "$candidate_intent"
           RUCKSACK_CANDIDATE_UID="$("$RUCKSACK_TRUSTED_ID" -u "$candidate_user")"
           RUCKSACK_CANDIDATE_GID="$("$RUCKSACK_TRUSTED_ID" -g "$candidate_user")"
+          if [ "$RUCKSACK_CANDIDATE_UID" != "$candidate_expected_uid" ] ||              [ "$RUCKSACK_CANDIDATE_GID" != "$candidate_expected_gid" ]; then
+            echo "Disposable candidate account identity differs from its receipt." >&2
+            exit 1
+          fi
           RUCKSACK_CANDIDATE_HOME="$isolation_root/home"
           RUCKSACK_CANDIDATE_DEPENDENCY_ROOT="$isolation_root/dependencies"
           export RUCKSACK_CANDIDATE_UID RUCKSACK_CANDIDATE_GID
           export RUCKSACK_CANDIDATE_HOME RUCKSACK_CANDIDATE_DEPENDENCY_ROOT
           "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_INSTALL"             -d -o "$RUCKSACK_CANDIDATE_UID" -g "$RUCKSACK_CANDIDATE_GID" -m 0700             "$RUCKSACK_CANDIDATE_HOME" "$RUCKSACK_CANDIDATE_HOME/tmp"
           "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_INSTALL"             -d -o "$trusted_owner_uid" -g "$RUCKSACK_CANDIDATE_GID" -m 1770             "$RUCKSACK_CANDIDATE_DEPENDENCY_ROOT"
+          RUCKSACK_TRUSTED_PRODUCER_ROOT="$isolation_root/trusted-producer"
+          staged_trusted_producer="$RUCKSACK_TRUSTED_PRODUCER_ROOT/scripts/agent-evidence"
+          "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_INSTALL"             -d -o 0 -g 0 -m 0555 --             "$RUCKSACK_TRUSTED_PRODUCER_ROOT"             "$RUCKSACK_TRUSTED_PRODUCER_ROOT/scripts"
+          "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_INSTALL"             -o 0 -g 0 -m 0444 -- "$trusted_producer" "$staged_trusted_producer"
+          if [ "$(realpath -e -- "$staged_trusted_producer")" !=                "$staged_trusted_producer" ] ||              [ "$("$RUCKSACK_TRUSTED_STAT" -c '%u:%g:%a:%h' --                "$staged_trusted_producer")" != "0:0:444:1" ] ||              [ "$("$RUCKSACK_TRUSTED_STAT" -c '%u:%g:%a' --                "$RUCKSACK_TRUSTED_PRODUCER_ROOT")" != "0:0:555" ] ||              [ "$("$RUCKSACK_TRUSTED_STAT" -c '%u:%g:%a' --                "$RUCKSACK_TRUSTED_PRODUCER_ROOT/scripts")" != "0:0:555" ] ||              ! "$RUCKSACK_TRUSTED_CMP" -s --                "$trusted_producer" "$staged_trusted_producer"; then
+            echo "Staged trusted producer must be an exact immutable copy." >&2
+            exit 1
+          fi
+          readonly RUCKSACK_TRUSTED_PRODUCER_ROOT staged_trusted_producer
+          export RUCKSACK_TRUSTED_PRODUCER_ROOT
           RUCKSACK_CANDIDATE_RUNNER="$isolation_root/run-candidate"
           export RUCKSACK_CANDIDATE_RUNNER
           candidate_runner_source="$(
@@ -1176,6 +1709,7 @@ jobs:
           import stat
           import subprocess
           import sys
+          import sysconfig
           import tempfile
           import time
 
@@ -1253,6 +1787,7 @@ jobs:
 
           def candidate_environment(home: str, dependency_root: str) -> dict[str, str]:
               environment = dict(os.environ)
+              expected_branch = environment.pop("RUCKSACK_EXPECTED_BRANCH", "")
               safe_directories_payload = environment.pop(
                   "RUCKSACK_CANDIDATE_GIT_SAFE_DIRECTORIES", "[]"
               )
@@ -1278,10 +1813,165 @@ jobs:
                           "RUCKSACK_TRUSTED_EVIDENCE_ROOT",
                           "PYTHONHOME",
                           "PYTHONPATH",
+                          "XDG_CACHE_HOME",
+                          "XDG_CONFIG_HOME",
+                          "XDG_DATA_HOME",
+                          "XDG_STATE_HOME",
                       }
                   ):
                       environment.pop(name, None)
+              try:
+                  home_details = os.lstat(home)
+              except OSError as error:
+                  refuse(f"cannot inspect candidate home: {error}")
+              if (
+                  os.path.normpath(home) != home
+                  or os.path.realpath(home) != home
+                  or not stat.S_ISDIR(home_details.st_mode)
+                  or stat.S_ISLNK(home_details.st_mode)
+              ):
+                  refuse("candidate home must be one normalized real directory")
               python_user = os.path.join(home, ".local")
+              python_import_roots: list[str] = []
+              python_paths = sysconfig.get_paths(
+                  vars={"base": python_user, "platbase": python_user}
+              )
+              for label in ("purelib", "platlib"):
+                  candidate = python_paths.get(label, "")
+                  if (
+                      not candidate
+                      or not os.path.isabs(candidate)
+                      or "\x00" in candidate
+                      or os.path.normpath(candidate) != candidate
+                  ):
+                      refuse(f"candidate Python {label} path is invalid")
+                  try:
+                      if (
+                          candidate == python_user
+                          or os.path.commonpath((python_user, candidate)) != python_user
+                      ):
+                          refuse(f"candidate Python {label} path escapes its prefix")
+                  except ValueError:
+                      refuse(f"candidate Python {label} path is invalid")
+                  if candidate not in python_import_roots:
+                      python_import_roots.append(candidate)
+              try:
+                  dependency_details = os.lstat(dependency_root)
+              except OSError as error:
+                  refuse(f"cannot inspect candidate dependency root: {error}")
+              if (
+                  os.path.normpath(dependency_root) != dependency_root
+                  or os.path.realpath(dependency_root) != dependency_root
+                  or not stat.S_ISDIR(dependency_details.st_mode)
+                  or stat.S_ISLNK(dependency_details.st_mode)
+                  or dependency_details.st_uid != os.geteuid()
+                  or stat.S_IMODE(dependency_details.st_mode) != 0o1770
+              ):
+                  refuse("candidate dependency root must be one trusted sticky directory")
+              bootstrap_source = f"""import os as _os
+          import site as _site
+          import stat as _stat
+          import sys as _sys
+
+          _prefix = {python_user!r}
+          _roots = {tuple(python_import_roots)!r}
+
+
+          def _refuse(message):
+              print(f"trusted candidate Python bootstrap refused: {{message}}", file=_sys.stderr)
+              raise SystemExit(125)
+
+
+          try:
+              _prefix_details = _os.lstat(_prefix)
+          except FileNotFoundError:
+              _prefix_details = None
+          except OSError as _error:
+              _refuse(f"cannot inspect candidate Python prefix: {{_error}}")
+          if _prefix_details is not None and (
+              not _stat.S_ISDIR(_prefix_details.st_mode)
+              or _stat.S_ISLNK(_prefix_details.st_mode)
+              or _os.path.realpath(_prefix) != _prefix
+          ):
+              _refuse("candidate Python prefix must be one real directory")
+          for _root in _roots:
+              _current = _root
+              while _current != _prefix:
+                  try:
+                      _details = _os.lstat(_current)
+                  except FileNotFoundError:
+                      pass
+                  except OSError as _error:
+                      _refuse(f"cannot inspect candidate Python import path: {{_error}}")
+                  else:
+                      if (
+                          not _stat.S_ISDIR(_details.st_mode)
+                          or _stat.S_ISLNK(_details.st_mode)
+                          or _os.path.realpath(_current) != _current
+                      ):
+                          _refuse("candidate Python import path must contain only real directories")
+                  _current = _os.path.dirname(_current)
+              if _os.path.isdir(_root):
+                  _site.addsitedir(_root)
+          """
+              bootstrap_root = os.path.join(dependency_root, "python-bootstrap")
+              bootstrap_file = os.path.join(bootstrap_root, "sitecustomize.py")
+              expected_bootstrap = bootstrap_source.encode("utf-8")
+              try:
+                  os.mkdir(bootstrap_root, 0o700)
+                  descriptor = os.open(
+                      bootstrap_file,
+                      os.O_WRONLY
+                      | os.O_CREAT
+                      | os.O_EXCL
+                      | getattr(os, "O_NOFOLLOW", 0),
+                      0o400,
+                  )
+                  try:
+                      offset = 0
+                      while offset < len(expected_bootstrap):
+                          written = os.write(descriptor, expected_bootstrap[offset:])
+                          if written <= 0:
+                              raise OSError("trusted candidate Python bootstrap write stalled")
+                          offset += written
+                      os.fsync(descriptor)
+                  finally:
+                      os.close(descriptor)
+                  os.chmod(bootstrap_file, 0o444, follow_symlinks=False)
+                  os.chmod(bootstrap_root, 0o555, follow_symlinks=False)
+                  dependency_descriptor = os.open(
+                      dependency_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                  )
+                  try:
+                      os.fsync(dependency_descriptor)
+                  finally:
+                      os.close(dependency_descriptor)
+              except FileExistsError:
+                  pass
+              except OSError as error:
+                  refuse(f"cannot create trusted candidate Python bootstrap: {error}")
+              try:
+                  bootstrap_root_details = os.lstat(bootstrap_root)
+                  bootstrap_file_details = os.lstat(bootstrap_file)
+                  with open(bootstrap_file, "rb") as bootstrap_stream:
+                      actual_bootstrap = bootstrap_stream.read(len(expected_bootstrap) + 1)
+              except OSError as error:
+                  refuse(f"cannot inspect trusted candidate Python bootstrap: {error}")
+              if (
+                  not stat.S_ISDIR(bootstrap_root_details.st_mode)
+                  or stat.S_ISLNK(bootstrap_root_details.st_mode)
+                  or os.path.realpath(bootstrap_root) != bootstrap_root
+                  or bootstrap_root_details.st_uid != os.geteuid()
+                  or stat.S_IMODE(bootstrap_root_details.st_mode) != 0o555
+                  or not stat.S_ISREG(bootstrap_file_details.st_mode)
+                  or stat.S_ISLNK(bootstrap_file_details.st_mode)
+                  or os.path.realpath(bootstrap_file) != bootstrap_file
+                  or bootstrap_file_details.st_uid != os.geteuid()
+                  or bootstrap_file_details.st_nlink != 1
+                  or stat.S_IMODE(bootstrap_file_details.st_mode) != 0o444
+                  or actual_bootstrap != expected_bootstrap
+              ):
+                  refuse("trusted candidate Python bootstrap changed")
               dependency_source = os.path.join(dependency_root, "source")
               candidate_root = os.getcwd()
               try:
@@ -1326,6 +2016,9 @@ jobs:
               ]
               environment.update(
                   {
+                      "GITHUB_HEAD_REF": expected_branch,
+                      "GITHUB_REF_NAME": "",
+                      "GITHUB_WORKSPACE": candidate_root,
                       "HOME": home,
                       "GIT_CONFIG_COUNT": str(len(git_config)),
                       "GIT_NO_REPLACE_OBJECTS": "1",
@@ -1342,10 +2035,16 @@ jobs:
                       ),
                       "PIP_CACHE_DIR": os.path.join(home, ".cache", "pip"),
                       "PYTHONPATH": os.pathsep.join(
-                          (os.path.join(candidate_root, "src"), candidate_root)
+                          (
+                              bootstrap_root,
+                              os.path.join(candidate_root, "src"),
+                              candidate_root,
+                          )
                       ),
                       "PYTHONPYCACHEPREFIX": os.path.join(home, ".cache", "pycache"),
+                      "PYTHONUSERBASE": python_user,
                       "RUCKSACK_CANDIDATE_DEPENDENCY_ROOT": dependency_root,
+                      "RUNNER_TEMP": os.path.join(home, "tmp"),
                       "TMP": os.path.join(home, "tmp"),
                       "TEMP": os.path.join(home, "tmp"),
                       "TMPDIR": os.path.join(home, "tmp"),
@@ -2049,14 +2748,19 @@ jobs:
           mkdir -m 0700 -- "$RUCKSACK_TRUSTED_EVIDENCE_ROOT"
           cd -- "$GITHUB_WORKSPACE/candidate"
           install_source="$(cat <<'RUCKSACK_INSTALL'
-          "$RUCKSACK_CANDIDATE_PYTHON" -I -B -m pip install --user --upgrade pip
+          set -e
+          python_prefix="$PYTHONUSERBASE"
+          if [ "$python_prefix" != "$HOME/.local" ]; then
+            echo "Candidate Python prefix escaped the isolated home." >&2
+            exit 1
+          fi
           dependency_source="$RUCKSACK_CANDIDATE_DEPENDENCY_ROOT/source"
           if [ -f pyproject.toml ]; then
-            "$RUCKSACK_CANDIDATE_PYTHON" -I -B -m pip install --user "$dependency_source[dev]" ||               "$RUCKSACK_CANDIDATE_PYTHON" -I -B -m pip install --user "$dependency_source"
+            "$RUCKSACK_CANDIDATE_PYTHON" -I -B -m pip install               --prefix "$python_prefix" "$dependency_source[dev]" ||               "$RUCKSACK_CANDIDATE_PYTHON" -I -B -m pip install                 --prefix "$python_prefix" "$dependency_source"
           fi
           for requirements_file in requirements*.txt; do
             [ -f "$requirements_file" ] || continue
-            "$RUCKSACK_CANDIDATE_PYTHON" -I -B -m pip install --user               -r "$dependency_source/$requirements_file"
+            "$RUCKSACK_CANDIDATE_PYTHON" -I -B -m pip install               --prefix "$python_prefix"               -r "$dependency_source/$requirements_file"
           done
           if [ -f package-lock.json ]; then
             npm ci --prefix "$dependency_source"
@@ -2073,7 +2777,7 @@ jobs:
           (
           unset LD_AUDIT LD_LIBRARY_PATH LD_PRELOAD NODE_OPTIONS NODE_PATH
           unset PYTHONHOME PYTHONPATH
-          "$producer_node" --experimental-vm-modules 3<<<"$producer_source" 4<<<"$install_source" <<'RUCKSACK_TRUSTED_LAUNCHER'
+          "$producer_node" --experimental-vm-modules 9>&- 3<<<"$producer_source" 4<<<"$install_source" <<'RUCKSACK_TRUSTED_LAUNCHER'
           const fs = require("node:fs");
           const { spawnSync } = require("node:child_process");
           const { createHash } = require("node:crypto");
@@ -2553,19 +3257,26 @@ jobs:
             }
           }
           const trustedProducerRoot = fs.realpathSync(trustedProducerRootInput);
-          const trustedProducerRootStats = fs.lstatSync(trustedProducerRoot);
-          if (
-            !trustedProducerRootStats.isDirectory() ||
-            trustedProducerRootStats.isSymbolicLink() ||
-            candidateCanWrite(trustedProducerRootStats)
-          ) {
+          const pinnedTrustedProducerRoot = pinnedDirectory(
+            trustedProducerRoot,
+            "trusted producer root",
+          );
+          if (candidateCanWrite(pinnedTrustedProducerRoot)) {
             fail("trusted producer root must be one candidate-immutable directory");
           }
           const trustedProducerPath = fs.realpathSync(
             path.join(trustedProducerRoot, "scripts", "agent-evidence"),
           );
           if (!trustedProducerPath.startsWith(`${trustedProducerRoot}${path.sep}`)) {
-            fail("trusted evidence producer escaped the trusted default-branch checkout");
+            fail("trusted evidence producer escaped the staged producer root");
+          }
+          const trustedProducerScripts = path.dirname(trustedProducerPath);
+          const pinnedTrustedProducerScripts = pinnedDirectory(
+            trustedProducerScripts,
+            "trusted producer scripts directory",
+          );
+          if (candidateCanWrite(pinnedTrustedProducerScripts)) {
+            fail("trusted producer scripts directory must be candidate-immutable");
           }
           const pinnedTrustedProducer = pinnedRegularFile(
             trustedProducerPath,
@@ -2643,6 +3354,18 @@ jobs:
               "trusted producer runtime distribution",
               stage,
             );
+            assertPinnedDirectory(
+              trustedProducerRoot,
+              pinnedTrustedProducerRoot,
+              "trusted producer root",
+              stage,
+            );
+            assertPinnedDirectory(
+              trustedProducerScripts,
+              pinnedTrustedProducerScripts,
+              "trusted producer scripts directory",
+              stage,
+            );
             assertPinnedRegularFile(
               trustedProducerPath,
               pinnedTrustedProducer,
@@ -2684,6 +3407,18 @@ jobs:
               producerNodeDistributionRoot,
               pinnedProducerNodeDistributionRoot,
               "trusted producer runtime distribution",
+              stage,
+            );
+            assertPinnedDirectory(
+              trustedProducerRoot,
+              pinnedTrustedProducerRoot,
+              "trusted producer root",
+              stage,
+            );
+            assertPinnedDirectory(
+              trustedProducerScripts,
+              pinnedTrustedProducerScripts,
+              "trusted producer scripts directory",
               stage,
             );
             assertPinnedRegularFile(
@@ -3807,9 +4542,8 @@ jobs:
           process.exit(producerStatus);
           RUCKSACK_TRUSTED_LAUNCHER
           )
-          status=$?
+          evidence_status=$?
           set -e
-          printf 'status=%s\n' "$status" >> "$GITHUB_OUTPUT"
           exit 0
 
       - name: Upload untrusted revalidation evidence
@@ -3825,6 +4559,7 @@ jobs:
     needs: revalidate
     if: >-
       always() &&
+      needs.revalidate.result == 'success' &&
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.conclusion == 'success'
     # Validation stays tokenless on the same fresh-machine pool as privileged

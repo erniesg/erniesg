@@ -590,6 +590,41 @@ describe('extraction architecture bake-off', () => {
     },
   )
 
+  it('isolates a throwing result accessor instead of aborting the bake-off', async () => {
+    const hostile = arm('llm-authored')
+    hostile.run = async (input) => {
+      const result = { proposal: proposal(input) } as {
+        proposal: StructuredExtractionProposal
+        metrics?: { latencyMs: number; costUsd: number }
+      }
+      Object.defineProperty(result, 'metrics', {
+        enumerable: true,
+        get() {
+          throw new Error('hostile metrics accessor')
+        },
+      })
+      return result as never
+    }
+
+    const report = await runExtractionBakeoff({
+      corpus: corpus(),
+      arms: [arm('geometric-baseline'), hostile, arm('llm-grounded')],
+    })
+
+    expect(
+      report.arms['llm-authored'].documents.every(
+        ({ status, verification }) =>
+          status === 'failed' &&
+          verification.issueCodes.includes('adapter-failure'),
+      ),
+    ).toBe(true)
+    expect(
+      report.arms['llm-grounded'].documents.every(
+        ({ status }) => status === 'passed',
+      ),
+    ).toBe(true)
+  })
+
   it('isolates a cyclic adapter proposal instead of aborting the bake-off', async () => {
     const cyclic = arm('llm-authored')
     const cyclicProposal: Record<string, unknown> = {
@@ -703,6 +738,13 @@ describe('extraction architecture bake-off', () => {
           order: 4,
         },
       )
+      document.context.provenArtifacts = [
+        {
+          id: `${document.id}-table-scope`,
+          kind: 'table-scope',
+          sourceRunIds: [`${document.id}-table-cell`],
+        },
+      ]
       const tableCase = document.cases.find(
         ({ stratum }) => stratum === 'tables',
       )!
@@ -776,6 +818,13 @@ describe('extraction architecture bake-off', () => {
           order: 4,
         },
       )
+      document.context.provenArtifacts = [
+        {
+          id: `${document.id}-table-scope`,
+          kind: 'table-scope',
+          sourceRunIds: [`${document.id}-table-cell`],
+        },
+      ]
       const tableCase = document.cases.find(
         ({ stratum }) => stratum === 'tables',
       )!

@@ -632,9 +632,11 @@ function nodeTextForRunIds(
 function nodeOwnedSourceRunIds(node: StructuredExtractionNode) {
   return [
     ...node.sourceRunIds,
-    ...(node.table?.rows.flatMap(({ cells }) =>
-      cells.flatMap(({ sourceRunIds }) => sourceRunIds),
-    ) ?? []),
+    ...(node.type === 'table'
+      ? (node.table?.rows.flatMap(({ cells }) =>
+          cells.flatMap(({ sourceRunIds }) => sourceRunIds),
+        ) ?? [])
+      : []),
   ]
 }
 
@@ -649,6 +651,7 @@ function issue(
 function verifyNodeTable(
   node: StructuredExtractionNode,
   runsById: ReadonlyMap<string, StructuredSourceRun>,
+  provenArtifacts: readonly StructuredProvenArtifact[],
   claimed: Set<string>,
   issues: StructuredExtractionVerificationIssue[],
   boilerplate: ReadonlySet<string>,
@@ -672,6 +675,60 @@ function verifyNodeTable(
     )
     return undefined
   }
+  const cellSourceRunIds = node.table.rows.flatMap(({ cells }) =>
+    cells.flatMap(({ sourceRunIds }) => sourceRunIds),
+  )
+  const cellSourceRunCounts = new Map<string, number>()
+  for (const sourceRunId of cellSourceRunIds) {
+    cellSourceRunCounts.set(
+      sourceRunId,
+      (cellSourceRunCounts.get(sourceRunId) ?? 0) + 1,
+    )
+  }
+  const matchingScopes = provenArtifacts.filter((artifact) => {
+    if (
+      artifact.kind !== 'table-scope' ||
+      artifact.sourceRunIds.length !== cellSourceRunIds.length
+    ) {
+      return false
+    }
+    const scopeCounts = new Map<string, number>()
+    for (const sourceRunId of artifact.sourceRunIds) {
+      scopeCounts.set(sourceRunId, (scopeCounts.get(sourceRunId) ?? 0) + 1)
+    }
+    return (
+      scopeCounts.size === cellSourceRunCounts.size &&
+      [...scopeCounts].every(
+        ([sourceRunId, count]) =>
+          cellSourceRunCounts.get(sourceRunId) === count,
+      )
+    )
+  })
+  if (matchingScopes.length !== 1) {
+    issues.push(
+      issue(
+        'invalid-table',
+        'Semantic table cells must exactly match one deterministic table scope.',
+        { nodeId: node.id },
+      ),
+    )
+  }
+  const cellSourceOrders = cellSourceRunIds
+    .map((sourceRunId) => runsById.get(sourceRunId)?.order)
+    .filter((order): order is number => order !== undefined)
+  if (
+    cellSourceOrders.some(
+      (order, index) => index > 0 && order < cellSourceOrders[index - 1]!,
+    )
+  ) {
+    issues.push(
+      issue(
+        'unverified-span',
+        'Table cells and rows must follow deterministic source order.',
+        { nodeId: node.id },
+      ),
+    )
+  }
   const rows: VerifiedStructuredExtractionNode['table'] = { rows: [] }
   for (const row of node.table.rows) {
     if (row.cells.length === 0) {
@@ -684,22 +741,6 @@ function verifyNodeTable(
     }
     const cells = []
     for (const cell of row.cells) {
-      const sourceOrders = cell.sourceRunIds
-        .map((sourceRunId) => runsById.get(sourceRunId)?.order)
-        .filter((order): order is number => order !== undefined)
-      if (
-        sourceOrders.some(
-          (order, index) => index > 0 && order < sourceOrders[index - 1]!,
-        )
-      ) {
-        issues.push(
-          issue(
-            'unverified-span',
-            'Table cell source runs must follow deterministic source order.',
-            { nodeId: node.id },
-          ),
-        )
-      }
       const cellText = sourceTextForRunIds(cell.sourceRunIds, runsById)
       if (!cellText) {
         issues.push(
@@ -1003,30 +1044,45 @@ function verifyRelationships(
   issues: StructuredExtractionVerificationIssue[],
 ) {
   const provenArtifacts = context.provenArtifacts ?? []
+  const targetGroupsForArtifact = (artifact: StructuredProvenArtifact) => [
+    ...(artifact.targetSourceRunIdGroups ?? []),
+    ...(artifact.targetSourceRunIds ? [artifact.targetSourceRunIds] : []),
+  ]
+  const targetMatchesGroup = (
+    target: StructuredExtractionNode,
+    group: readonly string[],
+  ) => {
+    const targetRuns = new Set(nodeOwnedSourceRunIds(target))
+    const artifactTargetRuns = new Set(group)
+    return (
+      targetRuns.size > 0 &&
+      artifactTargetRuns.size === targetRuns.size &&
+      [...targetRuns].every((id) => artifactTargetRuns.has(id))
+    )
+  }
+  const sourceMatchesArtifact = (
+    source: StructuredExtractionNode,
+    artifact: StructuredProvenArtifact,
+  ) => {
+    const sourceRuns = new Set(nodeOwnedSourceRunIds(source))
+    const artifactSourceRuns = new Set(artifact.sourceRunIds)
+    return (
+      sourceRuns.size > 0 &&
+      [...sourceRuns].every((id) => artifactSourceRuns.has(id))
+    )
+  }
   const relationshipIsProven = (
     source: StructuredExtractionNode,
     target: StructuredExtractionNode,
     kind: 'note-relationship' | 'citation-relationship',
   ) => {
-    const sourceRuns = new Set(nodeOwnedSourceRunIds(source))
-    const targetRuns = new Set(nodeOwnedSourceRunIds(target))
     return provenArtifacts.some((artifact) => {
       if (artifact.kind !== kind) return false
-      const artifactSourceRuns = new Set(artifact.sourceRunIds)
-      const targetGroups =
-        artifact.targetSourceRunIdGroups ??
-        (artifact.targetSourceRunIds ? [artifact.targetSourceRunIds] : [])
       return (
-        sourceRuns.size > 0 &&
-        targetRuns.size > 0 &&
-        [...sourceRuns].every((id) => artifactSourceRuns.has(id)) &&
-        targetGroups.some((group) => {
-          const artifactTargetRuns = new Set(group)
-          return (
-            artifactTargetRuns.size === targetRuns.size &&
-            [...targetRuns].every((id) => artifactTargetRuns.has(id))
-          )
-        })
+        sourceMatchesArtifact(source, artifact) &&
+        targetGroupsForArtifact(artifact).some((group) =>
+          targetMatchesGroup(target, group),
+        )
       )
     })
   }
@@ -1097,6 +1153,36 @@ function verifyRelationships(
             'invalid-relationship',
             `Backlink ${backlinkId} must point to ${node.id}.`,
             { nodeId: node.id },
+          ),
+        )
+      }
+    }
+  }
+
+  for (const artifact of provenArtifacts) {
+    if (
+      artifact.kind !== 'note-relationship' &&
+      artifact.kind !== 'citation-relationship'
+    ) {
+      continue
+    }
+    for (const targetGroup of targetGroupsForArtifact(artifact)) {
+      const represented = proposal.nodes.some((source) => {
+        if (!sourceMatchesArtifact(source, artifact)) return false
+        const targetIds =
+          artifact.kind === 'note-relationship'
+            ? (source.relationships?.noteTargetNodeIds ?? [])
+            : (source.relationships?.citationTargetNodeIds ?? [])
+        return targetIds.some((targetId) => {
+          const target = nodesById.get(targetId)
+          return target ? targetMatchesGroup(target, targetGroup) : false
+        })
+      })
+      if (!represented) {
+        issues.push(
+          issue(
+            'invalid-relationship',
+            `Deterministic relationship ${artifact.id} is missing a proven target from the proposal.`,
           ),
         )
       }
@@ -1252,6 +1338,15 @@ export function verifyStructuredExtraction(
         ),
       )
     }
+    if (node.type !== 'table' && node.table !== undefined) {
+      issues.push(
+        issue(
+          'invalid-table',
+          `Only a table node may carry semantic cells; ${node.id} is a ${node.type}.`,
+          { nodeId: node.id },
+        ),
+      )
+    }
     const claimedBeforeNode = new Set(claimed)
     const text = validateNodeText(node, runsById, linesById, claimed, issues)
     for (const sourceRunId of node.sourceRunIds) {
@@ -1273,6 +1368,7 @@ export function verifyStructuredExtraction(
     const table = verifyNodeTable(
       node,
       runsById,
+      context.provenArtifacts ?? [],
       tableClaimed,
       issues,
       boilerplate,

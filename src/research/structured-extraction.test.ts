@@ -148,6 +148,12 @@ describe('source-backed structured extraction verifier', () => {
   })
 
   it('keeps table cell provenance source-backed', () => {
+    const input = context()
+    input.provenArtifacts!.push({
+      id: 'table-scope',
+      kind: 'table-scope',
+      sourceRunIds: ['table-head', 'table-value'],
+    })
     const candidate = validProposal()
     candidate.nodes.push({
       id: 'table',
@@ -160,7 +166,7 @@ describe('source-backed structured extraction verifier', () => {
         ],
       },
     })
-    const result = verifyStructuredExtraction(context(), candidate)
+    const result = verifyStructuredExtraction(input, candidate)
 
     expect(result.status).toBe('passed')
     if (result.status === 'passed') {
@@ -586,6 +592,102 @@ describe('source-backed structured extraction verifier', () => {
     }
   })
 
+  it('rejects a semantic table whose cells omit deterministic scope provenance', () => {
+    const input = context()
+    input.provenArtifacts!.push({
+      id: 'incomplete-table-scope',
+      kind: 'table-scope',
+      sourceRunIds: ['table-head', 'table-value'],
+    })
+    const candidate = validProposal()
+    candidate.nodes.push({
+      id: 'incomplete-table',
+      type: 'table',
+      sourceRunIds: ['table-head', 'table-value'],
+      table: {
+        rows: [
+          {
+            cells: [{ sourceRunIds: ['table-head'], headerScope: 'column' }],
+          },
+        ],
+      },
+    })
+
+    const result = verifyStructuredExtraction(input, candidate)
+
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues.map(({ code }) => code)).toContain('invalid-table')
+    }
+  })
+
+  it('rejects a semantic table with ambiguous deterministic scope ownership', () => {
+    const input = context()
+    input.provenArtifacts!.push(
+      {
+        id: 'ambiguous-table-scope-a',
+        kind: 'table-scope',
+        sourceRunIds: ['table-head', 'table-value'],
+      },
+      {
+        id: 'ambiguous-table-scope-b',
+        kind: 'table-scope',
+        sourceRunIds: ['table-head', 'table-value'],
+      },
+    )
+    const candidate = validProposal()
+    candidate.nodes.push({
+      id: 'ambiguous-table',
+      type: 'table',
+      sourceRunIds: ['table-head', 'table-value'],
+      table: {
+        rows: [
+          { cells: [{ sourceRunIds: ['table-head'] }] },
+          { cells: [{ sourceRunIds: ['table-value'] }] },
+        ],
+      },
+    })
+
+    const result = verifyStructuredExtraction(input, candidate)
+
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues.map(({ code }) => code)).toContain('invalid-table')
+    }
+  })
+
+  it('rejects table cells emitted out of flattened source order', () => {
+    const input = context()
+    input.provenArtifacts!.push({
+      id: 'reversed-table-scope',
+      kind: 'table-scope',
+      sourceRunIds: ['table-head', 'table-value'],
+    })
+    const candidate = validProposal()
+    candidate.nodes.push({
+      id: 'reversed-rows',
+      type: 'table',
+      sourceRunIds: ['table-head', 'table-value'],
+      table: {
+        rows: [
+          {
+            cells: [{ sourceRunIds: ['table-value'], headerScope: 'none' }],
+          },
+          {
+            cells: [{ sourceRunIds: ['table-head'], headerScope: 'column' }],
+          },
+        ],
+      },
+    })
+
+    const result = verifyStructuredExtraction(input, candidate)
+
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues.map(({ code }) => code)).toContain('unverified-span')
+    }
+  })
+
   it('preserves note and citation targets with reciprocal backlinks', () => {
     const input = context()
     input.sourceRuns.push(
@@ -811,6 +913,133 @@ describe('source-backed structured extraction verifier', () => {
     const result = verifyStructuredExtraction(input, candidate)
 
     expect(result.status).toBe('passed')
+  })
+
+  it('rejects omitted relationships for deterministic note provenance', () => {
+    const input = context()
+    input.sourceRuns.push(
+      { id: 'omitted-marker', text: '1', page: 2, order: 8 },
+      { id: 'omitted-note', text: 'A note.', page: 2, order: 9 },
+    )
+    input.provenArtifacts!.push({
+      id: 'omitted-note-link',
+      kind: 'note-relationship',
+      sourceRunIds: ['omitted-marker'],
+      targetSourceRunIdGroups: [['omitted-note']],
+    })
+    const candidate = validProposal()
+    candidate.nodes.push(
+      {
+        id: 'omitted-marker',
+        type: 'paragraph',
+        sourceRunIds: ['omitted-marker'],
+      },
+      {
+        id: 'omitted-note',
+        type: 'footnote',
+        sourceRunIds: ['omitted-note'],
+      },
+    )
+
+    const result = verifyStructuredExtraction(input, candidate)
+
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues.map(({ code }) => code)).toContain(
+        'invalid-relationship',
+      )
+    }
+  })
+
+  it('requires every deterministic citation target group in the proposal', () => {
+    const input = context()
+    input.sourceRuns.push(
+      { id: 'partial-citation-marker', text: '[1, 2]', page: 2, order: 8 },
+      { id: 'partial-reference-a', text: 'Reference A.', page: 2, order: 9 },
+      { id: 'partial-reference-b', text: 'Reference B.', page: 2, order: 10 },
+    )
+    input.provenArtifacts!.push({
+      id: 'partial-citation-link',
+      kind: 'citation-relationship',
+      sourceRunIds: ['partial-citation-marker'],
+      targetSourceRunIdGroups: [
+        ['partial-reference-a'],
+        ['partial-reference-b'],
+      ],
+    })
+    const candidate = validProposal()
+    candidate.nodes.push(
+      {
+        id: 'partial-citation-marker',
+        type: 'paragraph',
+        sourceRunIds: ['partial-citation-marker'],
+        relationships: {
+          citationTargetNodeIds: ['partial-reference-a'],
+        },
+      },
+      {
+        id: 'partial-reference-a',
+        type: 'reference',
+        sourceRunIds: ['partial-reference-a'],
+        relationships: { backlinks: ['partial-citation-marker'] },
+      },
+      {
+        id: 'partial-reference-b',
+        type: 'reference',
+        sourceRunIds: ['partial-reference-b'],
+      },
+    )
+
+    const result = verifyStructuredExtraction(input, candidate)
+
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues.map(({ code }) => code)).toContain(
+        'invalid-relationship',
+      )
+    }
+  })
+
+  it('rejects relationship provenance hidden in cells on a non-table target', () => {
+    const input = context()
+    input.sourceRuns.push(
+      { id: 'smuggled-marker', text: '1', page: 2, order: 8 },
+      { id: 'smuggled-note-a', text: 'First half.', page: 2, order: 9 },
+      { id: 'smuggled-note-b', text: 'Second half.', page: 2, order: 10 },
+    )
+    input.provenArtifacts!.push({
+      id: 'smuggled-note-link',
+      kind: 'note-relationship',
+      sourceRunIds: ['smuggled-marker'],
+      targetSourceRunIdGroups: [['smuggled-note-a', 'smuggled-note-b']],
+    })
+    const candidate = validProposal()
+    candidate.nodes.push(
+      {
+        id: 'smuggled-marker',
+        type: 'paragraph',
+        sourceRunIds: ['smuggled-marker'],
+        relationships: { noteTargetNodeIds: ['smuggled-note'] },
+      },
+      {
+        id: 'smuggled-note',
+        type: 'footnote',
+        sourceRunIds: ['smuggled-note-a'],
+        relationships: { backlinks: ['smuggled-marker'] },
+        table: {
+          rows: [{ cells: [{ sourceRunIds: ['smuggled-note-b'] }] }],
+        },
+      },
+    )
+
+    const result = verifyStructuredExtraction(input, candidate)
+
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues.map(({ code }) => code)).toEqual(
+        expect.arrayContaining(['invalid-table', 'invalid-relationship']),
+      )
+    }
   })
 
   it('rejects a relationship without a reciprocal backlink', () => {

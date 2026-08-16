@@ -198,20 +198,34 @@ function finiteNonNegative(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
 }
 
-function validExtractionArmResult(
-  value: unknown,
-): value is ExtractionBakeoffArmResult & {
-  metrics: ExtractionBakeoffRunMetrics
-} {
-  if (!value || typeof value !== 'object') return false
-  const metrics = (value as Partial<ExtractionBakeoffArmResult>).metrics
-  return Boolean(
-    metrics &&
-    finiteNonNegative(metrics.latencyMs) &&
-    finiteNonNegative(metrics.costUsd) &&
-    (metrics.pageCount === undefined ||
-      (Number.isSafeInteger(metrics.pageCount) && metrics.pageCount >= 1)),
-  )
+function materializeExtractionArmResult(value: unknown):
+  | (ExtractionBakeoffArmResult & {
+      metrics: ExtractionBakeoffRunMetrics
+    })
+  | null {
+  let materialized: unknown
+  try {
+    // Snapshot the complete adapter result before validation. Structured clone
+    // either strips accessors/prototypes from the value used downstream or
+    // fails here, where the caller can isolate the adapter.
+    materialized = structuredClone(value)
+  } catch {
+    return null
+  }
+  if (!materialized || typeof materialized !== 'object') return null
+  const metrics = (materialized as Partial<ExtractionBakeoffArmResult>).metrics
+  if (
+    !metrics ||
+    !finiteNonNegative(metrics.latencyMs) ||
+    !finiteNonNegative(metrics.costUsd) ||
+    (metrics.pageCount !== undefined &&
+      (!Number.isSafeInteger(metrics.pageCount) || metrics.pageCount < 1))
+  ) {
+    return null
+  }
+  return materialized as ExtractionBakeoffArmResult & {
+    metrics: ExtractionBakeoffRunMetrics
+  }
 }
 
 function stableJson(value: unknown) {
@@ -853,8 +867,8 @@ export async function runExtractionBakeoff({
         if (document.split === 'held-out') identityRunKeys.add(runKey)
         continue
       }
-      const first = firstRun.value
-      if (!validExtractionArmResult(first)) {
+      const first = materializeExtractionArmResult(firstRun.value)
+      if (!first) {
         resultByArm[arm.id].push(
           disqualifiedDocumentResult(document, 'adapter-failure', 'failed'),
         )
@@ -897,8 +911,8 @@ export async function runExtractionBakeoff({
         if (document.split === 'held-out') identityRunKeys.add(runKey)
         continue
       }
-      const second = secondRun.value
-      if (!validExtractionArmResult(second)) {
+      const second = materializeExtractionArmResult(secondRun.value)
+      if (!second) {
         resultByArm[arm.id].push(
           disqualifiedDocumentResult(document, 'adapter-failure', 'failed'),
         )

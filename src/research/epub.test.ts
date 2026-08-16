@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import { XMLParser, XMLValidator } from 'fast-xml-parser'
 import { describe, expect, it } from 'vitest'
+import { fixtureFile } from '../../tests/fixtures/pdf-fixtures'
 import rawPaper from './papers/semantic-responsive-typesetting.json'
 import {
   buildEpub,
@@ -24,6 +25,19 @@ import type {
   PublicationAsset,
   PublicationVisualRelationship,
 } from './import-types'
+import {
+  DistillationLedger,
+  MODEL_FALLBACK_REFERENCE_FIXTURES,
+  ModelConsultationGate,
+  ModelFallbackLedger,
+  validateModelConsultationReceipt,
+  type ModelFallbackReceipt,
+} from './model-fallback'
+import {
+  pdfModelConsultationSemanticStateSha256,
+  resolvePdfModelFallbacks,
+} from './model-fallback-pipeline'
+import { reconstructPdf } from './pdf'
 import { reconstructPageAnalyses } from './pdf-layout'
 import { assessPdfCompleteness } from './pdf-quality'
 import { validatedPdfVisualRelationships } from './pdf-visual-validation'
@@ -32,6 +46,107 @@ import { getTargetProfile, resolveTargetProfile } from './targets'
 import { createSourcePageCropAsset } from './visual-assets'
 
 const paper = researchPaperSchema.parse(rawPaper)
+
+function emptyModelConsultationReceipt(
+  reconstruction: PdfReconstruction,
+): ModelFallbackReceipt {
+  const receipt: ModelFallbackReceipt = {
+    schemaVersion: '1.0.0',
+    documentId: reconstruction.paper.id,
+    sourceSha256: reconstruction.source.sha256,
+    consultations: [],
+    decisions: [],
+    metrics: {
+      totalDecisionCount: 0,
+      totalConsultationCount: 0,
+      consultationRate: 0,
+      byDecisionClass: {},
+    },
+  }
+  receipt.semanticStateSha256 = pdfModelConsultationSemanticStateSha256(
+    reconstruction,
+    receipt,
+  )
+  return receipt
+}
+
+function withModelConsultations(
+  reconstruction: PdfReconstruction,
+  modelConsultations: ModelFallbackReceipt,
+) {
+  return {
+    ...reconstruction,
+    modelConsultations,
+  } as PdfReconstruction & { modelConsultations: ModelFallbackReceipt }
+}
+
+async function consultedModelConsultationReceipt(
+  reconstruction: PdfReconstruction,
+) {
+  const ledger = new ModelFallbackLedger()
+  const point = MODEL_FALLBACK_REFERENCE_FIXTURES[0]!
+  const gate = new ModelConsultationGate({
+    enabled: true,
+    ownerOptIn: true,
+    ledger,
+    model: {
+      identity: {
+        providerId: 'epub-receipt-test',
+        modelId: 'recorded-model',
+        modelVersion: '1',
+        modelDigest: 'a'.repeat(64),
+      },
+      consult: () => ({ candidateId: point.candidates[0]!.id }),
+    },
+  })
+  await gate.decide({
+    ...point,
+    documentId: reconstruction.paper.id,
+    sourceSha256: reconstruction.source.sha256,
+  })
+  return ledger.receiptFor(reconstruction.paper.id)
+}
+
+async function resolvedVisualModelConsultation(candidateIndex = 0) {
+  const reconstruction = await reconstructPdf(
+    await fixtureFile('visual-adjudication-required.pdf'),
+  )
+  return resolvePdfModelFallbacks(reconstruction, {
+    enabled: true,
+    ownerOptIn: true,
+    distillation: new DistillationLedger(),
+    model: {
+      identity: {
+        providerId: 'epub-receipt-test',
+        modelId: 'recorded-model',
+        modelVersion: '1',
+        modelDigest: 'a'.repeat(64),
+      },
+      consult: (request) => ({
+        candidateId: request.candidates[candidateIndex]!.id,
+      }),
+    },
+  })
+}
+
+async function pendingModelConsultationReceipt(
+  reconstruction: PdfReconstruction,
+) {
+  const receipt = structuredClone(
+    await consultedModelConsultationReceipt(reconstruction),
+  )
+  receipt.consultations[0]!.status = 'pending'
+  receipt.consultations[0]!.choice = null
+  receipt.decisions = []
+  receipt.metrics = {
+    totalDecisionCount: 0,
+    totalConsultationCount: 0,
+    consultationRate: 0,
+    byDecisionClass: {},
+  }
+  expect(validateModelConsultationReceipt(receipt)).toBe(true)
+  return receipt
+}
 
 function canonicalJsonForTest(value: unknown): string {
   if (Array.isArray(value)) {
@@ -4212,6 +4327,164 @@ describe('EPUB 3 export', () => {
         sourcePdfSha256: 'b'.repeat(64),
       }),
     ).toThrow(/sourcePdfSha256.*expected source/i)
+  })
+
+  it('persists an exact validated model-consultation receipt in the PDF export manifest', async () => {
+    const withReceipt = await resolvedVisualModelConsultation()
+    const modelConsultations = withReceipt.modelConsultations!
+
+    const epub = await buildReadableEpub(withReceipt.paper, withReceipt)
+    const { files, manifest } = inspectEpub(epub.bytes, undefined, {
+      canonicalPaper: withReceipt.paper,
+      sourceCanonicalPaper: withReceipt.paper,
+      sourcePdfSha256: withReceipt.source.sha256,
+    })
+    const serializedManifest = JSON.parse(
+      strFromU8(files['EPUB/export.json']),
+    ) as Record<string, unknown>
+
+    expect(serializedManifest.modelConsultations).toEqual(modelConsultations)
+    expect(manifest.modelConsultations).toEqual(modelConsultations)
+  })
+
+  it('refuses to publish model-derived state whose receipt was dropped', async () => {
+    // The receipt was validated only when present, so deleting it laundered
+    // the provenance: STRUCT refuses the same document with
+    // MISSING_MODEL_CONSULTATION_RECEIPT, but the research EPUB — a shipping
+    // export path — published it. A guarantee enforceable on one of two exits
+    // is not a guarantee.
+    const laundered = await resolvedVisualModelConsultation()
+    expect(laundered.modelConsultations).toBeDefined()
+    delete (laundered as { modelConsultations?: unknown }).modelConsultations
+
+    await expect(buildReadableEpub(laundered.paper, laundered)).rejects.toThrow(
+      'MISSING_MODEL_CONSULTATION_RECEIPT',
+    )
+  })
+
+  it('rejects a same-source receipt for a differently resolved PDF at the direct EPUB boundary', async () => {
+    const first = await resolvedVisualModelConsultation(0)
+    const differentlyResolved = await resolvedVisualModelConsultation(1)
+    differentlyResolved.modelConsultations = structuredClone(
+      first.modelConsultations,
+    )
+
+    await expect(
+      buildReadableEpub(differentlyResolved.paper, differentlyResolved),
+    ).rejects.toThrow(/model consultation receipt.*semantic state/i)
+  })
+
+  it('rejects a valid alternate-resolution receipt swapped into a packaged EPUB manifest', async () => {
+    const first = await resolvedVisualModelConsultation(0)
+    const alternate = await resolvedVisualModelConsultation(1)
+    const epub = await buildReadableEpub(first.paper, first)
+    const files = unzipSync(epub.bytes)
+    const manifest = JSON.parse(strFromU8(files['EPUB/export.json'])) as Record<
+      string,
+      unknown
+    >
+    manifest.modelConsultations = alternate.modelConsultations
+
+    expect(() =>
+      inspectEpub(
+        rezipEpub({
+          ...files,
+          'EPUB/export.json': strToU8(`${JSON.stringify(manifest)}\n`),
+        }),
+      ),
+    ).toThrow(/model consultation receipt.*binding/i)
+  })
+
+  it('rejects malformed, pending, and unknown model-consultation receipt data', async () => {
+    const { reconstruction } = await staleEquationTranscriptFixture()
+    const validReceipt = emptyModelConsultationReceipt(reconstruction)
+    const withReceipt = withModelConsultations(reconstruction, validReceipt)
+    const epub = await buildEpub(withReceipt.paper, withReceipt)
+    const files = unzipSync(epub.bytes)
+    const originalManifest = JSON.parse(
+      strFromU8(files['EPUB/export.json']),
+    ) as Record<string, unknown>
+
+    const malformed = structuredClone(originalManifest)
+    ;(
+      (malformed.modelConsultations as ModelFallbackReceipt).metrics as Record<
+        string,
+        unknown
+      >
+    ).untrustedNestedField = true
+    expect(() =>
+      inspectEpub(
+        rezipEpub({
+          ...files,
+          'EPUB/export.json': strToU8(`${JSON.stringify(malformed)}\n`),
+        }),
+      ),
+    ).toThrow(/model consultation receipt/i)
+
+    const unknown = structuredClone(originalManifest)
+    unknown.untrustedExtension = true
+    expect(() =>
+      inspectEpub(
+        rezipEpub({
+          ...files,
+          'EPUB/export.json': strToU8(`${JSON.stringify(unknown)}\n`),
+        }),
+      ),
+    ).toThrow(/unknown export manifest field/i)
+
+    const pendingReceipt = await pendingModelConsultationReceipt(reconstruction)
+    const pending = withModelConsultations(reconstruction, pendingReceipt)
+    await expect(buildEpub(pending.paper, pending)).rejects.toThrow(
+      /pending model consultation/i,
+    )
+    const pendingManifest = {
+      ...originalManifest,
+      modelConsultations: pendingReceipt,
+    }
+    expect(() =>
+      inspectEpub(
+        rezipEpub({
+          ...files,
+          'EPUB/export.json': strToU8(`${JSON.stringify(pendingManifest)}\n`),
+        }),
+      ),
+    ).toThrow(/pending model consultation/i)
+  })
+
+  it('binds a persisted model-consultation receipt to its PDF document and source', async () => {
+    const { reconstruction } = await staleEquationTranscriptFixture()
+    const validReceipt = emptyModelConsultationReceipt(reconstruction)
+
+    for (const receipt of [
+      { ...validReceipt, documentId: 'different-document' },
+      { ...validReceipt, sourceSha256: 'b'.repeat(64) },
+    ]) {
+      const mismatched = withModelConsultations(reconstruction, receipt)
+      await expect(buildEpub(mismatched.paper, mismatched)).rejects.toThrow(
+        /model consultation receipt.*(?:document|source)/i,
+      )
+    }
+
+    const withReceipt = withModelConsultations(reconstruction, validReceipt)
+    const epub = await buildEpub(withReceipt.paper, withReceipt)
+    const files = unzipSync(epub.bytes)
+    const originalManifest = JSON.parse(
+      strFromU8(files['EPUB/export.json']),
+    ) as Record<string, unknown>
+    for (const modelConsultations of [
+      { ...validReceipt, documentId: 'different-document' },
+      { ...validReceipt, sourceSha256: 'b'.repeat(64) },
+    ]) {
+      const tampered = { ...originalManifest, modelConsultations }
+      expect(() =>
+        inspectEpub(
+          rezipEpub({
+            ...files,
+            'EPUB/export.json': strToU8(`${JSON.stringify(tampered)}\n`),
+          }),
+        ),
+      ).toThrow(/model consultation receipt.*(?:document|source)/i)
+    }
   })
 
   it('rejects a publication export when a PDF reconstruction omits reassessment evidence', async () => {

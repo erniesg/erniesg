@@ -27,6 +27,14 @@ import {
   type PublicationVisualRelationship,
 } from './import-types'
 import {
+  validateModelConsultationReceipt,
+  type ModelFallbackReceipt,
+} from './model-fallback'
+import {
+  modelConsultationReceiptMatchesPdfReconstruction,
+  pdfModelDerivedDecisionKeys,
+} from './model-fallback-pipeline'
+import {
   renderSourceGeometryScriptMathMl,
   verifyRelationshipSourceGeometryScriptTranscript,
 } from './equation-geometry-transcript'
@@ -83,7 +91,10 @@ const COMPACT_RASTER_TABLE_SCROLL_MIN_SOURCE_WIDTH_PX = 1_000
 function isStructDocument(
   input: StructDocument | ResearchPaper,
 ): input is StructDocument {
-  return 'schemaVersion' in input && input.schemaVersion === '0.1.0'
+  return (
+    'schemaVersion' in input &&
+    (input.schemaVersion === '0.1.0' || input.schemaVersion === '0.2.0')
+  )
 }
 
 function duplicateVisualRelationshipNodeOwnership(
@@ -3444,6 +3455,8 @@ type EpubExportManifestReceipt = {
   sourceCompleteness?: Record<string, unknown>
   sourceReadiness?: Record<string, unknown>
   humanAdjudications?: Record<string, unknown>
+  modelConsultations?: ModelFallbackReceipt
+  modelConsultationsSha256?: string
   sourceSemanticFlowBoundaryCount?: number
   sourceSemanticFlowBoundaryLedger?: unknown[]
   sourceSemanticFlowBoundaryLedgerSha256?: string
@@ -3479,6 +3492,8 @@ const EPUB_EXPORT_MANIFEST_FIELDS = new Set([
   'sourceCompleteness',
   'sourceReadiness',
   'humanAdjudications',
+  'modelConsultations',
+  'modelConsultationsSha256',
   'sourceSemanticFlowBoundaryCount',
   'sourceSemanticFlowBoundaryLedger',
   'sourceSemanticFlowBoundaryLedgerSha256',
@@ -3990,6 +4005,8 @@ function manifestHumanAdjudications(reconstruction: PdfReconstruction) {
       reconstruction.humanAdjudications.countsByDiagnosticCode,
     appliedReceiptSha256: sha256Sync(strToU8(JSON.stringify(applied))),
     applied,
+    noteSourceAnchorReceipts:
+      reconstruction.humanAdjudications.noteSourceAnchorReceipts,
     visualDecorationReceipts:
       reconstruction.humanAdjudications.visualDecorationReceipts,
   }
@@ -4007,6 +4024,41 @@ function invalidExportManifest(profiled: boolean): never {
   throw new Error(
     `EPUB ${profiled ? 'profiled ' : ''}export manifest contract is invalid`,
   )
+}
+
+function validatedModelConsultationReceiptForExport(
+  receipt: unknown,
+  {
+    documentId,
+    sourceSha256,
+  }: {
+    documentId?: string
+    sourceSha256: string
+  },
+): ModelFallbackReceipt {
+  if (!validateModelConsultationReceipt(receipt)) {
+    throw new Error('EPUB model consultation receipt is invalid')
+  }
+  if (
+    receipt.consultations.some(
+      (consultation) => consultation.status === 'pending',
+    )
+  ) {
+    throw new Error(
+      'EPUB export cannot persist a pending model consultation receipt',
+    )
+  }
+  if (documentId !== undefined && receipt.documentId !== documentId) {
+    throw new Error(
+      'EPUB model consultation receipt documentId does not match the PDF document',
+    )
+  }
+  if (receipt.sourceSha256 !== sourceSha256) {
+    throw new Error(
+      'EPUB model consultation receipt sourceSha256 does not match the source PDF',
+    )
+  }
+  return structuredClone(receipt)
 }
 
 function parseExportManifest(
@@ -4181,8 +4233,51 @@ function parseExportManifest(
     )
   }
 
+  let modelConsultations: ModelFallbackReceipt | undefined
+  if (parsed.modelConsultations !== undefined) {
+    if (parsed.sourceFormat !== 'pdf' || parsed.sourcePdfSha256 === undefined) {
+      throw new Error(
+        'EPUB model consultation receipt is only valid for a PDF source',
+      )
+    }
+    modelConsultations = validatedModelConsultationReceiptForExport(
+      parsed.modelConsultations,
+      { sourceSha256: parsed.sourcePdfSha256 },
+    )
+    if (
+      parsed.identifier !==
+      exportIdentifier(
+        modelConsultations.documentId,
+        parsed.canonicalContentSha256,
+        parsed.exportMode,
+        profile,
+      )
+    ) {
+      throw new Error(
+        'EPUB model consultation receipt documentId does not match the PDF document',
+      )
+    }
+    requireSha256(parsed.modelConsultationsSha256, 'modelConsultationsSha256')
+    if (
+      parsed.modelConsultationsSha256 !==
+      canonicalJsonSha256(modelConsultations)
+    ) {
+      throw new Error(
+        'EPUB model consultation receipt binding does not match the packaged receipt',
+      )
+    }
+  } else if (parsed.modelConsultationsSha256 !== undefined) {
+    throw new Error(
+      'EPUB model consultation receipt binding has no packaged receipt',
+    )
+  }
+
   return {
-    ...(parsed as Omit<EpubExportManifestReceipt, 'profile'>),
+    ...(parsed as Omit<
+      EpubExportManifestReceipt,
+      'modelConsultations' | 'profile'
+    >),
+    ...(modelConsultations ? { modelConsultations } : {}),
     ...(profile ? { profile } : {}),
   }
 }
@@ -4994,6 +5089,14 @@ export function inspectEpub(
         'EPUB export manifest canonicalContentSha256 does not match its canonical input',
       )
     }
+    if (
+      manifest.modelConsultations !== undefined &&
+      manifest.modelConsultations.documentId !== expectation.canonicalPaper.id
+    ) {
+      throw new Error(
+        'EPUB model consultation receipt documentId does not match the PDF document',
+      )
+    }
     if (opfTitles[0].escapedText !== text(expectation.canonicalPaper.title)) {
       throw new Error(
         'EPUB OPF and XHTML title do not match the canonical paper title',
@@ -5617,6 +5720,31 @@ async function buildEpubInternal(
     mode === 'readable-fallback' && renderReconstruction
       ? renderReconstruction.paper
       : paper
+  const modelConsultations =
+    reconstruction &&
+    !isDocxReconstruction(reconstruction) &&
+    reconstruction.modelConsultations !== undefined
+      ? validatedModelConsultationReceiptForExport(
+          reconstruction.modelConsultations,
+          {
+            documentId: renderPaper.id,
+            sourceSha256: reconstruction.source.sha256,
+          },
+        )
+      : undefined
+  if (
+    modelConsultations &&
+    reconstruction &&
+    !isDocxReconstruction(reconstruction) &&
+    !modelConsultationReceiptMatchesPdfReconstruction(
+      reconstruction,
+      modelConsultations,
+    )
+  ) {
+    throw new Error(
+      'EPUB model consultation receipt does not match the PDF semantic state',
+    )
+  }
   let publicationPdfAssessment:
     ReturnType<typeof assessPdfCompleteness> | undefined
   assertUniqueCanonicalNodeIds(renderPaper)
@@ -5640,6 +5768,19 @@ async function buildEpubInternal(
       }),
     },
   )
+  // Validating the receipt only when one is present makes dropping it the way
+  // to launder provenance: STRUCT refuses such a document, but this export
+  // exit published it, so the guarantee held on only one of the two. Checked
+  // after the structural assertions above so a malformed document still
+  // reports what is actually wrong with it.
+  if (
+    reconstruction &&
+    !isDocxReconstruction(reconstruction) &&
+    reconstruction.modelConsultations === undefined &&
+    pdfModelDerivedDecisionKeys(reconstruction).size > 0
+  ) {
+    throw new Error('MISSING_MODEL_CONSULTATION_RECEIPT')
+  }
   if (renderReconstruction) {
     const validatedPdfRelationshipIds = isDocxReconstruction(
       renderReconstruction,
@@ -5876,6 +6017,10 @@ async function buildEpubInternal(
       reconstruction && !isDocxReconstruction(reconstruction)
         ? manifestHumanAdjudications(reconstruction)
         : undefined,
+    modelConsultations,
+    modelConsultationsSha256: modelConsultations
+      ? canonicalJsonSha256(modelConsultations)
+      : undefined,
     ...sourceSemanticFlowBoundaryReceipt,
     ...canonicalHyphenDeletionReceipt,
     assets: packaged.map(({ source, asset, policy }) => {

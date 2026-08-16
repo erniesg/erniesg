@@ -36,6 +36,8 @@ import {
   applyHumanDecisionFile,
   type HumanDecisionFile,
 } from './decision-record'
+import { resolvePdfModelFallbacks } from './model-fallback-pipeline'
+import type { ModelConsultationGateOptions } from './model-fallback'
 import {
   extractPdfLinkAnnotations,
   resolvePdfNamedDestinationEvidence,
@@ -52,6 +54,7 @@ type PdfImportOptions = {
   language?: string
   tableCandidateProvider?: TableCandidateProvider
   allowRemoteTableCandidateProvider?: boolean
+  modelFallback?: ModelConsultationGateOptions
 }
 
 export const MAX_OCR_RASTER_PIXELS = 3_200_000
@@ -473,6 +476,7 @@ async function raceWithAbort<T>(
   if (!signal) return operation
   if (signal.aborted) {
     onAbort()
+    void operation.catch(() => undefined)
     throw cancelledError()
   }
   return new Promise<T>((resolve, reject) => {
@@ -485,6 +489,15 @@ async function raceWithAbort<T>(
       signal.removeEventListener('abort', abort)
     })
   })
+}
+
+function effectiveModelFallbackSignal(
+  importSignal?: AbortSignal,
+  fallbackSignal?: AbortSignal,
+) {
+  if (!importSignal) return fallbackSignal
+  if (!fallbackSignal || fallbackSignal === importSignal) return importSignal
+  return AbortSignal.any([importSignal, fallbackSignal])
 }
 
 function countImages(fnArray: number[], imageOps: Set<number>) {
@@ -1555,9 +1568,26 @@ export async function reconstructPdf(
       },
     })
     throwIfAborted(options.signal)
-    return options.decisionFile
+    const adjudicated = options.decisionFile
       ? applyHumanDecisionFile(reconstruction, options.decisionFile)
       : reconstruction
+    const modelFallbackSignal = effectiveModelFallbackSignal(
+      options.signal,
+      options.modelFallback?.signal,
+    )
+    const resolved =
+      options.modelFallback === undefined
+        ? adjudicated
+        : await raceWithAbort(
+            resolvePdfModelFallbacks(adjudicated, {
+              ...options.modelFallback,
+              signal: modelFallbackSignal,
+            }),
+            modelFallbackSignal,
+            () => undefined,
+          )
+    throwIfAborted(options.signal)
+    return resolved
   } catch (error) {
     if (options.signal?.aborted) throw cancelledError()
     throw error

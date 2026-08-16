@@ -6,7 +6,15 @@ import type {
 } from '../research/import-types'
 import type { ResearchNode } from '../research/schema'
 import { recoveryDiagnosticInputs } from '../research/recovery-projection'
+import {
+  modelConsultationReceiptMatchesPdfReconstruction,
+  pdfModelDerivedDecisionKeys,
+} from '../research/model-fallback-pipeline'
 import { structDigest, structId } from './ids'
+import {
+  validateModelConsultationReceipt,
+  type ModelFallbackReceipt,
+} from './model-consultation-receipt'
 import { recoverySummary, toStructDiagnostic } from './recovery'
 import { orderBlocksByLayout, pageLayoutsFromBlocks } from './reading-order'
 import type {
@@ -23,6 +31,7 @@ import type {
   StructTable,
   StructTableCell,
 } from './types'
+import { STRUCT_SCHEMA_VERSION } from './types'
 
 function isPdf(
   reconstruction: DocumentReconstruction,
@@ -34,6 +43,34 @@ function sourceFormat(
   reconstruction: DocumentReconstruction,
 ): StructSourceFormat {
   return reconstruction.source.format === 'docx' ? 'docx' : 'pdf'
+}
+
+function closedModelConsultations(
+  reconstruction: DocumentReconstruction,
+): ModelFallbackReceipt | undefined {
+  if (!isPdf(reconstruction)) return undefined
+  const receipt = reconstruction.modelConsultations
+  if (receipt === undefined) {
+    // Legacy documents predate the receipt and carry no model-derived state.
+    // A document that does carry it may not launder the provenance away by
+    // dropping the receipt.
+    if (pdfModelDerivedDecisionKeys(reconstruction).size > 0)
+      throw new Error('MISSING_MODEL_CONSULTATION_RECEIPT')
+    return undefined
+  }
+  if (!validateModelConsultationReceipt(receipt))
+    throw new Error('INVALID_MODEL_CONSULTATION_RECEIPT')
+  if (receipt.consultations.some(({ status }) => status === 'pending'))
+    throw new Error('PENDING_MODEL_CONSULTATION_RECEIPT')
+  if (receipt.documentId !== reconstruction.paper.id)
+    throw new Error('MODEL_CONSULTATION_DOCUMENT_MISMATCH')
+  if (receipt.sourceSha256 !== reconstruction.source.sha256)
+    throw new Error('MODEL_CONSULTATION_SOURCE_MISMATCH')
+  if (
+    !modelConsultationReceiptMatchesPdfReconstruction(reconstruction, receipt)
+  )
+    throw new Error('MODEL_CONSULTATION_SEMANTIC_STATE_MISMATCH')
+  return structuredClone(receipt)
 }
 
 function boxEvidence(
@@ -336,6 +373,7 @@ export function buildStructDocument(
   reconstruction: DocumentReconstruction,
 ): StructDocument {
   const pdf = isPdf(reconstruction)
+  const modelConsultations = closedModelConsultations(reconstruction)
   const provenance = reconstruction.provenance ?? {}
   const sourceToStructId = new Map<string, string>()
   const tableCellAnchorsByRelationshipId = new Map<
@@ -1242,7 +1280,8 @@ export function buildStructDocument(
     left.id.localeCompare(right.id),
   )
   const withoutReceipt = {
-    schemaVersion: '0.1.0' as const,
+    schemaVersion: STRUCT_SCHEMA_VERSION,
+    documentId: reconstruction.paper.id,
     source,
     metadata,
     blocks: orderedBlocks,
@@ -1255,13 +1294,16 @@ export function buildStructDocument(
   const generatedSha256 = structDigest({
     ...withoutReceipt,
     conservation,
+    ...(modelConsultations ? { modelConsultations } : {}),
     assets: canonicalAssets.map(({ bytes: _bytes, ...asset }) => asset),
   })
   return {
     ...withoutReceipt,
     receipt: {
-      schemaVersion: '0.1.0',
+      schemaVersion: STRUCT_SCHEMA_VERSION,
+      documentId: reconstruction.paper.id,
       sourceSha256: source.sha256,
+      ...(modelConsultations ? { modelConsultations } : {}),
       blockCount: orderedBlocks.length,
       assetCount: assets.length,
       relationshipCount: relationships.length,

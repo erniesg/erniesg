@@ -13,6 +13,7 @@ import {
   readingOrderCandidates,
   serializeHumanDecisionFile,
   upsertHumanDecision,
+  visualDecisionCandidateId,
 } from './decision-record'
 import { verifyEquationTranscriptAdjudication } from './equation-transcript-adjudication'
 import {
@@ -1566,6 +1567,9 @@ describe('human adjudication decision records', () => {
       (item) => item.code === 'AMBIGUOUS_READING_ORDER',
     )!
     targeted(readingDiagnostic)
+    readingDiagnostic.target.regionIds = [...readingDiagnostic.target.regionIds]
+      .sort()
+      .reverse()
 
     let file = createHumanDecisionFile(base.source.sha256)
     for (const [index, relationship] of base.noteRelationships.entries()) {
@@ -1608,6 +1612,18 @@ describe('human adjudication decision records', () => {
       AMBIGUOUS_NOTE_MATCH: 2,
       AMBIGUOUS_READING_ORDER: 1,
     })
+    expect(
+      result.readingOrder.resolutions.find(
+        ({ regionIds }) =>
+          JSON.stringify([...regionIds].sort()) ===
+          JSON.stringify([...readingDiagnostic.target.regionIds].sort()),
+      ),
+    ).toMatchObject({ resolutionOrigin: 'human-adjudication' })
+    const reapplied = applyHumanDecisionFile(result, file)
+    expect(reapplied.humanAdjudications.applied).toEqual(
+      result.humanAdjudications.applied,
+    )
+    expect(reapplied.humanAdjudications.stale).toEqual([])
 
     await expect(buildEpub(result.paper, result)).rejects.toThrow(
       /UNPROVENANCED_RENDERED_UNIT/u,
@@ -1678,6 +1694,56 @@ describe('human adjudication decision records', () => {
       relationships: { backlinks: expect.arrayContaining([relationship.id]) },
     })
     expect(result.humanAdjudications.stale).toEqual([])
+  })
+
+  it('accepts an ambiguous note match owned by an author anchor', async () => {
+    const base = await reconstructPdf(
+      await fixtureFile('adjudication-required.pdf'),
+    )
+    const relationship = base.noteRelationships.find(
+      ({ candidates }) => candidates.length > 0,
+    )!
+    const diagnostic = base.diagnostics.find(
+      ({ code, target }) =>
+        code === 'AMBIGUOUS_NOTE_MATCH' && target?.markerId === relationship.id,
+    )!
+    const candidate = relationship.candidates[0]!
+    relationship.canonicalAnchor = { kind: 'author', author: 'Ada Example' }
+    base.paper.nodes = base.paper.nodes.filter(
+      (node) =>
+        !base.provenance[node.id]?.regionIds.includes(
+          relationship.referenceRegionId,
+        ),
+    )
+    const file = upsertHumanDecision(
+      createHumanDecisionFile(base.source.sha256),
+      {
+        diagnosticCode: diagnostic.code,
+        target: diagnostic.target!,
+        resolution: {
+          type: 'accept-note-match',
+          targetNoteId: candidate.targetNoteId,
+          targetRegionId: candidate.targetRegionId,
+        },
+      },
+    )
+
+    const result = applyHumanDecisionFile(base, file)
+
+    expect(result.humanAdjudications.applied).toHaveLength(1)
+    expect(
+      result.noteRelationships.find(({ id }) => id === relationship.id),
+    ).toMatchObject({
+      status: 'matched',
+      targetNoteId: candidate.targetNoteId,
+      canonicalAnchor: { kind: 'author', author: 'Ada Example' },
+    })
+    expect(result.paper.authorNotes).toContainEqual({
+      id: relationship.id,
+      author: 'Ada Example',
+      label: relationship.label,
+      target: candidate.targetNoteId,
+    })
   })
 
   it.each(['reclassify-citation', 'reclassify-plain-text'] as const)(
@@ -1872,11 +1938,23 @@ describe('human adjudication decision records', () => {
     )
     const serialized = serializeHumanDecisionFile(file)
     const first = applyHumanDecisionFile(base, file)
+    const reapplied = applyHumanDecisionFile(first, file)
     const replay = applyHumanDecisionFile(
       base,
       parseHumanDecisionFile(serialized),
     )
     const resolved = first.visualRelationships[0]
+
+    expect(reapplied.humanAdjudications.applied).toEqual(
+      first.humanAdjudications.applied,
+    )
+    expect(reapplied.humanAdjudications.stale).toEqual([])
+    const changedKind = structuredClone(first)
+    changedKind.visualRelationships[0]!.kind =
+      changedKind.visualRelationships[0]!.kind === 'figure' ? 'table' : 'figure'
+    const rejectedReapply = applyHumanDecisionFile(changedKind, file)
+    expect(rejectedReapply.humanAdjudications.applied).toEqual([])
+    expect(rejectedReapply.humanAdjudications.stale).toHaveLength(1)
 
     expect(JSON.parse(serialized)).toEqual({
       schemaVersion: '1.3.0',
@@ -1888,7 +1966,7 @@ describe('human adjudication decision records', () => {
           resolution: {
             type: 'accept-visual-match',
             relationshipId: relationship.id,
-            candidateId: candidate.id,
+            candidateId: decision.resolution.candidateId,
           },
         },
       ],
@@ -1925,6 +2003,21 @@ describe('human adjudication decision records', () => {
       ]),
     )
     expect(JSON.stringify(replay)).toBe(JSON.stringify(first))
+  })
+
+  it('binds an inherited visual candidate text in its decision ID', async () => {
+    const base = await ambiguousVisualReconstruction()
+    const relationship = base.visualRelationships[0]
+    const candidate = relationship.candidates[0]
+    candidate.sourceText = undefined
+    relationship.sourceText = 'inherited candidate text alpha'
+    const original = visualDecisionCandidateId(relationship, candidate)
+
+    relationship.sourceText = 'inherited candidate text beta'
+
+    expect(visualDecisionCandidateId(relationship, candidate)).not.toBe(
+      original,
+    )
   })
 
   it('keeps the named visual adjudication fixture review-required with both visual blockers', async () => {
@@ -1965,8 +2058,29 @@ describe('human adjudication decision records', () => {
         'utf8',
       ),
     )
-    const resolved = applyHumanDecisionFile(base, sidecar)
-    const replay = applyHumanDecisionFile(base, sidecar)
+    const legacy = applyHumanDecisionFile(base, sidecar)
+    expect(legacy.humanAdjudications.applied).toEqual([])
+    expect(legacy.humanAdjudications.stale).toHaveLength(2)
+    const currentSidecar = sidecar.decisions.reduce((file, decision) => {
+      if (
+        decision.resolution.type !== 'accept-visual-match' &&
+        decision.resolution.type !== 'accept-visual-fallback'
+      ) {
+        return file
+      }
+      return upsertHumanDecision(
+        file,
+        createVisualMatchDecision(
+          base,
+          decision.resolution.relationshipId,
+          decision.resolution.candidateId,
+          decision.resolution.type,
+        ),
+      )
+    }, createHumanDecisionFile(base.source.sha256))
+    const resolved = applyHumanDecisionFile(base, currentSidecar)
+    const replay = applyHumanDecisionFile(base, currentSidecar)
+    const reapplied = applyHumanDecisionFile(resolved, currentSidecar)
     expect(resolved.humanAdjudications).toMatchObject({
       stale: [],
       countsByDiagnosticCode: {
@@ -1985,6 +2099,7 @@ describe('human adjudication decision records', () => {
       ]),
     )
     expect(JSON.stringify(replay)).toBe(JSON.stringify(resolved))
+    expect(JSON.stringify(reapplied)).toBe(JSON.stringify(resolved))
     const [firstEpub, replayEpub] = await Promise.all([
       buildEpub(resolved.paper, resolved),
       buildEpub(replay.paper, replay),

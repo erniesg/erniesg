@@ -5,11 +5,17 @@ const { join } = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { createHash } = require("node:crypto");
 const { validAssociationAudit } = require("./tools/association-audit-receipt.cjs");
+const { validModelConsultationEvidence } = require("./tools/model-consultation-evidence-receipt.cjs");
 
 const allLanes = [
   {
     "id": "association-audit",
     "command": "node tools/pdf-association-fixture-audit.mjs",
+    "required": true
+  },
+  {
+    "id": "unit",
+    "command": "node --experimental-strip-types --disable-warning=ExperimentalWarning tools/model-consultation-evidence.ts",
     "required": true
   },
   {
@@ -28,6 +34,9 @@ const allLanes = [
     "required": false
   }
 ];
+// The hosted manifest schema uses the generic `unit` lane id. Keep the public,
+// task-specific selector while emitting that compatibility id in the receipt.
+const laneAliases = new Map([["model-consultation", "unit"]]);
 const invocation = {
   argv: process.argv.slice(2),
   npm_config_e2e: process.env.npm_config_e2e || "",
@@ -90,6 +99,14 @@ function parseSelection(argv) {
     } else {
       unknownArgs.push(arg);
     }
+  }
+
+  const requestsModelConsultation = requestedOnly.includes("model-consultation");
+  for (let index = 0; index < requestedOnly.length; index += 1) {
+    requestedOnly[index] = laneAliases.get(requestedOnly[index]) || requestedOnly[index];
+  }
+  if (requestsModelConsultation && !requestedOnly.includes("association-audit")) {
+    requestedOnly.push("association-audit");
   }
 
   const known = new Set(allLanes.map((lane) => lane.id));
@@ -193,6 +210,7 @@ const dirty = sh("git status --short").stdout.trim().length > 0;
 const startedAt = new Date();
 const results = [];
 let associationAudit = null;
+let modelConsultation = null;
 const selection = parseSelection(invocation.argv);
 const largeFiles = largeUntrackedEvidence();
 
@@ -245,6 +263,18 @@ for (const lane of lanes) {
       output += `\n[agent-evidence] invalid association audit receipt: ${redact(error.message)}\n`;
     }
   }
+  if (lane.id === "unit" && exitCode === 0) {
+    try {
+      const candidate = JSON.parse(proc.stdout || "");
+      if (!validModelConsultationEvidence(candidate)) {
+        throw new Error("invalid receipt");
+      }
+      modelConsultation = candidate;
+    } catch (_error) {
+      exitCode = 1;
+      output += "\n[agent-evidence] invalid model-consultation evidence receipt\n";
+    }
+  }
   const logPath = join(outDir, "logs", `${lane.id}.log`);
   writeFileSync(logPath, output);
   results.push({
@@ -260,6 +290,12 @@ const requiredFailures = results
   .filter((lane) => lane.required && lane.exit_code !== 0)
   .map((lane) => lane.id);
 const endedAt = new Date();
+const modelConsultationArtifact = modelConsultation
+  ? [{
+      kind: "model-consultation-evidence",
+      path: results.find(({ id }) => id === "unit").log_path,
+    }]
+  : [];
 const manifest = {
   schema_version: "1",
   run_id: `agent-evidence-${stamp}`,
@@ -280,7 +316,11 @@ const manifest = {
   },
   lanes: results,
   association_audit: associationAudit,
-  artifacts: [{ kind: "manifest", path: join(outDir, "manifest.json") }, ...largeFiles.artifacts],
+  artifacts: [
+    { kind: "manifest", path: join(outDir, "manifest.json") },
+    ...modelConsultationArtifact,
+    ...largeFiles.artifacts,
+  ],
   caveats: largeFiles.caveats,
   result: requiredFailures.length === 0 ? "passed" : "failed",
   required_failures: requiredFailures,

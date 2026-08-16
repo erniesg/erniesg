@@ -1,7 +1,27 @@
 import { strFromU8, unzipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
 import { buildStructEpub } from './epub'
+import { legacyStructDigest, structDigest } from './ids'
 import type { StructDocument } from './types'
+
+function refreshReceipt(document: StructDocument) {
+  document.receipt.documentId = document.documentId
+  document.receipt.sourceSha256 = document.source.sha256
+  document.receipt.blockCount = document.blocks.length
+  document.receipt.assetCount = document.assets.length
+  document.receipt.relationshipCount = document.relationships.length
+  document.receipt.diagnosticCount = document.diagnostics.length
+  const { receipt, ...withoutReceipt } = document
+  receipt.generatedSha256 = structDigest({
+    ...withoutReceipt,
+    conservation: receipt.conservation,
+    ...(receipt.modelConsultations
+      ? { modelConsultations: receipt.modelConsultations }
+      : {}),
+    assets: document.assets.map(({ bytes: _bytes, ...asset }) => asset),
+  })
+  return document
+}
 
 function documentWithHref(href: string): StructDocument {
   const evidence = {
@@ -10,8 +30,9 @@ function documentWithHref(href: string): StructDocument {
     boxes: [],
     sourceIds: ['fixture-source'],
   }
-  return {
-    schemaVersion: '0.1.0',
+  return refreshReceipt({
+    schemaVersion: '0.2.0',
+    documentId: 'epub-integrity-document',
     source: {
       format: 'unknown',
       fileName: 'epub-integrity.fixture',
@@ -76,7 +97,8 @@ function documentWithHref(href: string): StructDocument {
       issues: [],
     },
     receipt: {
-      schemaVersion: '0.1.0',
+      schemaVersion: '0.2.0',
+      documentId: 'epub-integrity-document',
       sourceSha256: 'a'.repeat(64),
       blockCount: 2,
       assetCount: 0,
@@ -105,7 +127,37 @@ function documentWithHref(href: string): StructDocument {
       },
       generatedSha256: 'b'.repeat(64),
     },
+  })
+}
+
+function legacyDocumentWithHref(href: string, locale?: string): StructDocument {
+  const current = documentWithHref(href)
+  if (locale) {
+    current.blocks[0]!.evidence.boxes = [
+      { page: 1, x: 0.1, y: 0.2, width: 0.3, height: 0.4, rotation: 0 },
+    ]
   }
+  const {
+    documentId: _documentId,
+    receipt: currentReceipt,
+    ...documentFields
+  } = current
+  const { documentId: _receiptDocumentId, ...legacyReceipt } = currentReceipt
+  const legacy: StructDocument = {
+    ...documentFields,
+    schemaVersion: '0.1.0',
+    receipt: { ...legacyReceipt, schemaVersion: '0.1.0' },
+  }
+  const { receipt, ...withoutReceipt } = legacy
+  receipt.generatedSha256 = legacyStructDigest(
+    {
+      ...withoutReceipt,
+      conservation: receipt.conservation,
+      assets: legacy.assets.map(({ bytes: _bytes, ...asset }) => asset),
+    },
+    locale,
+  )
+  return legacy
 }
 
 describe('STRUCT EPUB href integrity', () => {
@@ -123,6 +175,92 @@ describe('STRUCT EPUB href integrity', () => {
       mediaType: 'application/epub+zip',
       mode: 'publication',
     })
+  })
+
+  it('accepts serialized legacy 0.1.0 documents without document bindings', async () => {
+    await expect(
+      buildStructEpub(legacyDocumentWithHref('#target')),
+    ).resolves.toMatchObject({
+      mediaType: 'application/epub+zip',
+      mode: 'publication',
+    })
+  })
+
+  it('accepts a legacy digest created under a different ICU collation', async () => {
+    const lithuanian = legacyDocumentWithHref('#target', 'lt')
+    const english = legacyDocumentWithHref('#target', 'en')
+    expect(lithuanian.receipt.generatedSha256).not.toBe(
+      english.receipt.generatedSha256,
+    )
+    await expect(buildStructEpub(lithuanian)).resolves.toMatchObject({
+      mediaType: 'application/epub+zip',
+      mode: 'publication',
+    })
+  })
+
+  it('requires document bindings on current 0.2.0 documents', async () => {
+    const document = documentWithHref('#target')
+    delete document.documentId
+    delete document.receipt.documentId
+
+    await expect(buildStructEpub(refreshReceipt(document))).rejects.toThrow(
+      'STRUCT_RECEIPT_BINDING_MISMATCH',
+    )
+  })
+
+  it('rejects partial or invalid document bindings', async () => {
+    const invalidBindings: Array<[string, (document: StructDocument) => void]> =
+      [
+        [
+          'document only',
+          (document) => {
+            delete document.receipt.documentId
+          },
+        ],
+        [
+          'receipt only',
+          (document) => {
+            delete document.documentId
+          },
+        ],
+        [
+          'empty',
+          (document) => {
+            document.documentId = ''
+            document.receipt.documentId = ''
+          },
+        ],
+        [
+          'null',
+          (document) => {
+            Object.assign(document, { documentId: null })
+            Object.assign(document.receipt, { documentId: null })
+          },
+        ],
+        [
+          'mismatched',
+          (document) => {
+            document.receipt.documentId = 'another-document'
+          },
+        ],
+      ]
+    for (const [label, mutate] of invalidBindings) {
+      const document = documentWithHref('#target')
+      mutate(document)
+      await expect(
+        buildStructEpub(document),
+        `${label} bindings must fail closed`,
+      ).rejects.toThrow('STRUCT_RECEIPT_BINDING_MISMATCH')
+    }
+  })
+
+  it('rejects matching unsupported STRUCT versions', async () => {
+    const document = documentWithHref('#target')
+    Object.assign(document, { schemaVersion: '9.9.9' })
+    Object.assign(document.receipt, { schemaVersion: '9.9.9' })
+    await expect(buildStructEpub(refreshReceipt(document))).rejects.toThrow(
+      'STRUCT_RECEIPT_BINDING_MISMATCH',
+    )
   })
 
   it('packages the hidden-link rule used by expanded semantic groups', async () => {
@@ -175,7 +313,7 @@ describe('STRUCT EPUB href integrity', () => {
         fallback: 'asset',
       })
 
-      await expect(buildStructEpub(document)).rejects.toThrow(
+      await expect(buildStructEpub(refreshReceipt(document))).rejects.toThrow(
         /dangling internal reference/i,
       )
     },
@@ -211,7 +349,9 @@ describe('STRUCT EPUB href integrity', () => {
       },
       fallback: 'asset',
     })
-    await expect(buildStructEpub(document)).rejects.toThrow(/reserved/i)
+    await expect(buildStructEpub(refreshReceipt(document))).rejects.toThrow(
+      /reserved/i,
+    )
   })
 
   it('rejects malformed packaged XHTML assets', async () => {
@@ -234,7 +374,7 @@ describe('STRUCT EPUB href integrity', () => {
       },
       fallback: 'asset',
     })
-    await expect(buildStructEpub(document)).rejects.toThrow(
+    await expect(buildStructEpub(refreshReceipt(document))).rejects.toThrow(
       /well-formed XHTML/i,
     )
   })
@@ -261,7 +401,7 @@ describe('STRUCT EPUB href integrity', () => {
       },
       fallback: 'asset',
     })
-    await expect(buildStructEpub(document)).rejects.toThrow(
+    await expect(buildStructEpub(refreshReceipt(document))).rejects.toThrow(
       /dangling internal reference/i,
     )
   })

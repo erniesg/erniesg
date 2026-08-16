@@ -1,4 +1,5 @@
 import type { ResearchPaper } from './schema'
+import type { ModelFallbackReceipt } from './model-fallback'
 import type { TableCandidateReceipt } from './table-candidate-provider'
 
 export const MAX_LOCAL_PDF_BYTES = 50 * 1024 * 1024
@@ -556,6 +557,9 @@ export type PdfReadingOrderAmbiguityClass =
   | 'sparse-column-gutter'
   | 'fragmented-inline-cluster'
 
+export type PdfCandidateResolutionOrigin =
+  'model-consultation' | 'deterministic-distillation'
+
 export type PdfReadingOrderResolution = {
   policyVersion: '1.0.0'
   page: number
@@ -565,6 +569,7 @@ export type PdfReadingOrderResolution = {
   threshold: number
   evidence: PdfReadingOrderEvidence[]
   regionIds: string[]
+  resolutionOrigin?: 'human-adjudication' | PdfCandidateResolutionOrigin
 }
 
 export type PdfReadingOrderEdge = {
@@ -662,6 +667,9 @@ export type PdfNoteRelationship = {
   referenceEnd: number
   targetNoteId: string | null
   status: 'matched' | 'ambiguous' | 'unresolved' | 'citation' | 'plain-text'
+  resolutionOrigin?: 'human-adjudication' | PdfCandidateResolutionOrigin
+  /** Ambiguity confidence presented to the rule before its choice was installed. */
+  resolutionInputConfidence?: number
   canonicalAnchor: PdfNoteCanonicalAnchor
   confidence: number
   threshold: number
@@ -853,6 +861,9 @@ export type PdfVisualRelationship = {
   assetIds: string[]
   status: 'matched' | 'ambiguous' | 'unresolved'
   confidence: number
+  resolutionOrigin?: 'human-adjudication' | PdfCandidateResolutionOrigin
+  /** Ambiguity confidence presented to the rule before its choice was installed. */
+  resolutionInputConfidence?: number
   evidence: string[]
   candidates: PdfVisualMatchCandidate[]
   sourceBoxes: NormalizedSourceBox[]
@@ -1105,6 +1116,15 @@ export type HumanAdjudicationRecord = {
   resolution: HumanAdjudicationResolution
 }
 
+export type HumanNoteSourceAnchorReceipt = {
+  relationshipId: string
+  label: string
+  referenceRegionId: string
+  referenceStart: number
+  referenceEnd: number
+  canonicalAnchor: PdfNoteCanonicalAnchor
+}
+
 export type HumanAdjudicationProvenance = {
   schemaVersion: '1.0.0' | '1.1.0' | '1.2.0' | '1.3.0'
   documentSha256: string
@@ -1118,6 +1138,7 @@ export type HumanAdjudicationProvenance = {
     }
   >
   countsByDiagnosticCode: Record<string, number>
+  noteSourceAnchorReceipts?: HumanNoteSourceAnchorReceipt[]
   visualDecorationReceipts?: Array<{
     relationshipId: string
     sourceObjectIds: string[]
@@ -1156,6 +1177,7 @@ export type PdfReconstruction = {
   assets: PdfVisualAsset[]
   provenance: Record<string, NodeSourceEvidence>
   humanAdjudications: HumanAdjudicationProvenance
+  modelConsultations?: ModelFallbackReceipt
   diagnostics: ReconstructionDiagnostic[]
   tableCandidateReceipts?: TableCandidateReceipt[]
   semanticSignals: PdfSemanticSignals

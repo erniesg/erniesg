@@ -1,7 +1,16 @@
 import { readFile } from 'node:fs/promises'
-import { describe, expect, it } from 'vitest'
+import { strFromU8, unzipSync } from 'fflate'
+import { describe, expect, it, vi } from 'vitest'
+import { fixtureFile } from '../../tests/fixtures/pdf-fixtures'
 import { buildStructDocument } from './from-reconstruction'
 import { buildStructEpub } from './epub'
+import {
+  legacyStructDigest,
+  legacyStructDigestMatches,
+  legacyStructDigests,
+  structDigest,
+} from './ids'
+import { sha256HexSync } from '../research/sha256-sync'
 import { renderPublicationXhtml } from './xhtml'
 import { orderBlocksByLayout } from './reading-order'
 import {
@@ -17,6 +26,16 @@ import {
   renderPublicationXhtml as renderPublicXhtml,
 } from '../research/epub'
 import { reconstructPageAnalyses } from '../research/pdf-layout'
+import {
+  DistillationLedger,
+  MODEL_FALLBACK_REFERENCE_FIXTURES,
+  ModelFallbackLedger,
+  ModelConsultationGate,
+  validateModelConsultationReceipt,
+  type ModelFallbackReceipt,
+} from '../research/model-fallback'
+import { resolvePdfModelFallbacks } from '../research/model-fallback-pipeline'
+import { reconstructPdf } from '../research/pdf'
 import { ambiguousNoteMarkerFixture } from '../../tests/fixtures/note-marker-fixtures'
 
 async function structuredDocx() {
@@ -33,6 +52,38 @@ async function structuredDocx() {
   )
 }
 
+async function modelConsultationPdf() {
+  return reconstructPageAnalyses({
+    pages: ambiguousNoteMarkerFixture.pages,
+    sourceHash: 'a'.repeat(64),
+    fileName: 'model-consultation.pdf',
+    byteLength: 4096,
+    metadata: {},
+  })
+}
+
+async function resolvedVisualModelConsultation(candidateIndex = 0) {
+  const reconstruction = await reconstructPdf(
+    await fixtureFile('visual-adjudication-required.pdf'),
+  )
+  return resolvePdfModelFallbacks(reconstruction, {
+    enabled: true,
+    ownerOptIn: true,
+    distillation: new DistillationLedger(),
+    model: {
+      identity: {
+        providerId: 'struct-receipt-test',
+        modelId: 'recorded-model',
+        modelVersion: '1',
+        modelDigest: 'c'.repeat(64),
+      },
+      consult: (request) => ({
+        candidateId: request.candidates[candidateIndex]!.id,
+      }),
+    },
+  })
+}
+
 describe('STRUCT canonical document graph', () => {
   it('adapts a structured DOCX without exposing source-specific node types', async () => {
     const reconstruction = await structuredDocx()
@@ -47,7 +98,7 @@ describe('STRUCT canonical document graph', () => {
       reconstruction.noteRelationships.length +
       sourceAnnotationCount
 
-    expect(graph.schemaVersion).toBe('0.1.0')
+    expect(graph.schemaVersion).toBe('0.2.0')
     expect(graph.source.format).toBe('docx')
     expect(graph.source.localOnly).toBe(true)
     expect(graph.blocks.some((block) => block.kind === 'heading')).toBe(true)
@@ -138,8 +189,250 @@ describe('STRUCT canonical document graph', () => {
   it('pins the structured DOCX receipt', async () => {
     const graph = buildStructDocument(await structuredDocx())
     expect(graph.receipt.generatedSha256).toBe(
-      '7756fff21303bee4c87652126a403d89c450e2139ba9cc6ad62e61b8325baca7',
+      'fdefd031eb619b48c92f71d6470b96ce91369f8ea41a62e88156fa234e07015f',
     )
+  })
+
+  it('binds a closed model consultation receipt into the STRUCT digest and EPUB', async () => {
+    const reconstruction = await modelConsultationPdf()
+    const withoutReceipt = buildStructDocument(reconstruction)
+    const withReceipt = await resolvePdfModelFallbacks(reconstruction)
+    const modelConsultations = withReceipt.modelConsultations!
+
+    const graph = buildStructDocument(withReceipt)
+
+    expect(graph.receipt.modelConsultations).toEqual(modelConsultations)
+    expect(graph.receipt.generatedSha256).not.toBe(
+      withoutReceipt.receipt.generatedSha256,
+    )
+
+    const epub = await buildStructEpub(graph)
+    const packaged = JSON.parse(
+      strFromU8(unzipSync(epub.bytes)['EPUB/struct.json']!),
+    )
+    expect(packaged.receipt.modelConsultations).toEqual(modelConsultations)
+  })
+
+  it('rejects a same-source receipt for a differently resolved PDF at the direct STRUCT boundary', async () => {
+    const first = await resolvedVisualModelConsultation(0)
+    const differentlyResolved = await resolvedVisualModelConsultation(1)
+    differentlyResolved.modelConsultations = structuredClone(
+      first.modelConsultations,
+    )
+
+    expect(() => buildStructDocument(differentlyResolved)).toThrow(
+      'MODEL_CONSULTATION_SEMANTIC_STATE_MISMATCH',
+    )
+  })
+
+  it('rejects model consultation receipt tampering at the final STRUCT EPUB boundary', async () => {
+    const reconstruction = await resolvePdfModelFallbacks(
+      await modelConsultationPdf(),
+    )
+    const graph = buildStructDocument(reconstruction)
+
+    const malformed = structuredClone(graph)
+    malformed.receipt.modelConsultations = {
+      ...malformed.receipt.modelConsultations!,
+      schemaVersion: 'invalid',
+    } as unknown as ModelFallbackReceipt
+    await expect(buildStructEpub(malformed)).rejects.toThrow(
+      'INVALID_MODEL_CONSULTATION_RECEIPT',
+    )
+
+    const wrongSource = structuredClone(graph)
+    wrongSource.receipt.modelConsultations = {
+      ...wrongSource.receipt.modelConsultations!,
+      sourceSha256: 'b'.repeat(64),
+    }
+    await expect(buildStructEpub(wrongSource)).rejects.toThrow(
+      'MODEL_CONSULTATION_SOURCE_MISMATCH',
+    )
+
+    const staleDigest = structuredClone(graph)
+    staleDigest.receipt.modelConsultations = {
+      ...staleDigest.receipt.modelConsultations!,
+      documentId: 'another-document',
+    }
+    await expect(buildStructEpub(staleDigest)).rejects.toThrow(
+      'INVALID_MODEL_CONSULTATION_RECEIPT',
+    )
+
+    const wrongDocument = structuredClone(graph)
+    wrongDocument.receipt.modelConsultations = {
+      schemaVersion: '1.0.0',
+      documentId: 'another-document',
+      sourceSha256: wrongDocument.source.sha256,
+      consultations: [],
+      decisions: [],
+      metrics: {
+        totalDecisionCount: 0,
+        totalConsultationCount: 0,
+        consultationRate: 0,
+        byDecisionClass: {},
+      },
+    }
+    const { receipt, ...withoutReceipt } = wrongDocument
+    receipt.generatedSha256 = structDigest({
+      ...withoutReceipt,
+      conservation: receipt.conservation,
+      modelConsultations: receipt.modelConsultations,
+      assets: wrongDocument.assets.map(({ bytes: _bytes, ...asset }) => asset),
+    })
+    await expect(buildStructEpub(wrongDocument)).rejects.toThrow(
+      'MODEL_CONSULTATION_DOCUMENT_MISMATCH',
+    )
+  })
+
+  it('orders digest keys by code unit rather than by collation', () => {
+    // `localeCompare` asks the runtime's ICU collation, which differs by
+    // locale: `en-US` orders `a` before `B`, code units order `B` first, and
+    // Lithuanian collation orders `y` before `w` — which are `StructBox` keys.
+    // Now that the digest is enforced at packaging time, a document built on
+    // one machine could not be packaged on another.
+    expect(structDigest({ B: 1, a: 2 })).toBe(structDigest({ a: 2, B: 1 }))
+    expect(structDigest({ B: 1, a: 2 })).toBe(
+      structDigest(JSON.parse('{"B":1,"a":2}')),
+    )
+    expect(structDigest({ y: 1, w: 2 })).not.toBe(structDigest({ y: 2, w: 1 }))
+    // Pin the order itself, not merely that two orderings agree: `{"B":1,"a":2}`
+    // is the code-unit serialization, and `{"a":2,"B":1}` the `en-US` one.
+    expect(structDigest({ a: 2, B: 1 })).toBe(sha256HexSync('{"B":1,"a":2}'))
+  })
+
+  it('recovers legacy digests from supported three-letter base locales', () => {
+    expect(Intl.Collator.supportedLocalesOf(['haw'])).toEqual(['haw'])
+    const value = { authorAffiliations: 1, abstract: 2 }
+    expect(legacyStructDigests(value)).toContain(
+      legacyStructDigest(value, 'haw'),
+    )
+  })
+
+  it('traverses a legacy document once while checking locale orderings', () => {
+    const plain = {
+      wrapper: { authorAffiliations: 1, abstract: 2 },
+    }
+    const hawDigest = legacyStructDigest(plain, 'haw')
+    const instrumented = () => {
+      let wrapperReads = 0
+      return {
+        value: {
+          get wrapper() {
+            wrapperReads += 1
+            return { authorAffiliations: 1, abstract: 2 }
+          },
+        },
+        wrapperReads: () => wrapperReads,
+      }
+    }
+
+    let observed = instrumented()
+    expect(legacyStructDigests(observed.value)).toContain(hawDigest)
+    expect(observed.wrapperReads()).toBe(1)
+
+    observed = instrumented()
+    expect(legacyStructDigestMatches(observed.value, hawDigest)).toBe(true)
+    expect(observed.wrapperReads()).toBe(1)
+  })
+
+  it('refuses to package a document whose blocks no longer match its digest', async () => {
+    // `assertStructReceiptIntegrity` recomputes `generatedSha256` over the
+    // document. Every other tamper case in this file either recomputes the
+    // digest or trips an earlier check, so nothing pinned this one: deleting
+    // the comparison left the suite green.
+    const graph = buildStructDocument(
+      await resolvePdfModelFallbacks(await modelConsultationPdf()),
+    )
+    const tampered = structuredClone(graph)
+    const block = tampered.blocks.find(
+      ({ text }) => typeof text === 'string' && text.length > 0,
+    )!
+    block.text = `${block.text} appended after the receipt was sealed`
+
+    await expect(buildStructEpub(tampered)).rejects.toThrow(
+      'STRUCT_RECEIPT_DIGEST_MISMATCH',
+    )
+  })
+
+  it('rejects invalid or incorrectly bound model consultation receipts', async () => {
+    const reconstruction = await resolvePdfModelFallbacks(
+      await modelConsultationPdf(),
+    )
+    const valid = structuredClone(reconstruction.modelConsultations!)
+
+    reconstruction.modelConsultations = {
+      ...valid,
+      schemaVersion: 'invalid',
+    } as unknown as ModelFallbackReceipt
+    expect(() => buildStructDocument(reconstruction)).toThrow(
+      'INVALID_MODEL_CONSULTATION_RECEIPT',
+    )
+
+    reconstruction.modelConsultations = {
+      ...valid,
+      documentId: 'another-document',
+    }
+    expect(() => buildStructDocument(reconstruction)).toThrow(
+      'INVALID_MODEL_CONSULTATION_RECEIPT',
+    )
+
+    reconstruction.modelConsultations = {
+      ...valid,
+      sourceSha256: 'b'.repeat(64),
+    }
+    expect(() => buildStructDocument(reconstruction)).toThrow(
+      'MODEL_CONSULTATION_SOURCE_MISMATCH',
+    )
+  })
+
+  it('rejects a valid receipt while a model consultation is pending', async () => {
+    const reconstruction = await modelConsultationPdf()
+    const ledger = new ModelFallbackLedger()
+    let finishConsultation:
+      ((response: { candidateId: string }) => void) | undefined
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      ownerOptIn: true,
+      ledger,
+      model: {
+        identity: {
+          providerId: 'recorded-stub',
+          modelId: 'candidate-picker',
+          modelVersion: '1.0.0',
+          modelDigest: 'd'.repeat(64),
+        },
+        consult: () =>
+          new Promise((resolve) => {
+            finishConsultation = resolve
+          }),
+      },
+    })
+    const point = {
+      ...MODEL_FALLBACK_REFERENCE_FIXTURES[0]!,
+      documentId: reconstruction.paper.id,
+      sourceSha256: reconstruction.source.sha256,
+    }
+    const decision = gate.decide(point)
+    await vi.waitFor(() =>
+      expect(ledger.receiptFor(point.documentId).consultations).toHaveLength(1),
+    )
+    const pendingReceipt = ledger.receiptFor(point.documentId)
+    expect(validateModelConsultationReceipt(pendingReceipt)).toBe(true)
+    reconstruction.modelConsultations = pendingReceipt
+
+    expect(() => buildStructDocument(reconstruction)).toThrow(
+      'PENDING_MODEL_CONSULTATION_RECEIPT',
+    )
+
+    delete reconstruction.modelConsultations
+    const graph = buildStructDocument(reconstruction)
+    graph.receipt.modelConsultations = pendingReceipt
+    await expect(buildStructEpub(graph)).rejects.toThrow(
+      'PENDING_MODEL_CONSULTATION_RECEIPT',
+    )
+
+    finishConsultation!({ candidateId: point.candidates[0]!.id })
+    await decision
   })
 
   it('renders XHTML directly from the source-agnostic graph', async () => {
@@ -935,9 +1228,18 @@ describe('STRUCT canonical document graph', () => {
   })
 
   it('keeps the renderer side of STRUCT independent from research modules', async () => {
-    for (const file of ['types.ts', 'ids.ts', 'reading-order.ts', 'xhtml.ts']) {
+    for (const file of [
+      'types.ts',
+      'ids.ts',
+      'reading-order.ts',
+      'model-consultation-receipt.ts',
+      'xhtml.ts',
+      'epub.ts',
+    ]) {
       const source = await readFile(new URL(file, import.meta.url), 'utf8')
-      expect(source).not.toMatch(/from ['"]\.\.\/research\//)
+      expect(source).not.toMatch(
+        /(?:from\s+|import\s*\()\s*['"][^'"]*\bresearch\//u,
+      )
       expect(source).not.toContain('ResearchPaper')
       expect(source).not.toContain('Astro')
     }

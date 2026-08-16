@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import type {
   HumanAdjudicationRecord,
+  HumanNoteSourceAnchorReceipt,
+  PdfCandidateResolutionOrigin,
   PdfReconstruction,
   ReconstructionDiagnostic,
 } from './import-types'
@@ -18,6 +20,7 @@ import {
   materializeCanonicalVisualNode,
   visualCanonicalNodeId,
 } from './pdf-layout'
+import { rebindModelConsultationReceipt } from './model-consultation-binding'
 import {
   pdfVisualMatchCandidateId,
   VISUAL_MATCH_DECISION_SCHEMA_VERSION,
@@ -28,6 +31,7 @@ export {
   equationTranscriptDecisionBinding,
   type EquationTranscriptDecisionBinding,
 } from './equation-transcript-adjudication'
+export type { PdfCandidateResolutionOrigin } from './import-types'
 
 export const HUMAN_DECISION_SCHEMA_VERSION =
   VISUAL_MATCH_DECISION_SCHEMA_VERSION
@@ -370,6 +374,11 @@ export type VisualMatchDecision = Omit<
   >
 }
 
+export type VerifiedPdfCandidateResolution = {
+  decision: HumanAdjudicationRecord
+  origin: PdfCandidateResolutionOrigin
+}
+
 const QUALITY_DIAGNOSTIC_CODES = new Set<ReconstructionDiagnostic['code']>([
   'OCR_REQUIRED',
   'UNRESOLVED_EQUATION_TRANSCRIPT',
@@ -462,6 +471,150 @@ function sameTarget(
   return (
     normalizedLeft.markerId === normalizedRight.markerId &&
     sameValues(normalizedLeft.regionIds, normalizedRight.regionIds)
+  )
+}
+
+function sameDecision(
+  left: HumanAdjudicationRecord,
+  right: HumanAdjudicationRecord,
+) {
+  return (
+    JSON.stringify(normalizedRecord(left)) ===
+    JSON.stringify(normalizedRecord(right))
+  )
+}
+
+function noteSourceAnchorReceiptForDecision(
+  reconstruction: PdfReconstruction,
+  decision: HumanAdjudicationRecord,
+): HumanNoteSourceAnchorReceipt | null {
+  if (
+    decision.resolution.type !== 'accept-note-match' &&
+    decision.resolution.type !== 'reclassify-citation' &&
+    decision.resolution.type !== 'reclassify-plain-text'
+  ) {
+    return null
+  }
+  const relationship = reconstruction.noteRelationships.find(
+    ({ id }) => id === decision.target.markerId,
+  )
+  if (!relationship) return null
+  return {
+    relationshipId: relationship.id,
+    label: relationship.label,
+    referenceRegionId: relationship.referenceRegionId,
+    referenceStart: relationship.referenceStart,
+    referenceEnd: relationship.referenceEnd,
+    canonicalAnchor: structuredClone(relationship.canonicalAnchor),
+  }
+}
+
+function readingOrderDecisionStillInstalled(
+  reconstruction: PdfReconstruction,
+  decision: HumanAdjudicationRecord,
+) {
+  if (
+    decision.diagnosticCode !== 'AMBIGUOUS_READING_ORDER' ||
+    decision.resolution.type !== 'accept-reading-order'
+  ) {
+    return false
+  }
+  const targetIds = new Set(decision.target.regionIds)
+  const installed = reconstruction.readingOrder.order.filter((regionId) =>
+    targetIds.has(regionId),
+  )
+  return sameValues(installed, decision.resolution.regionIds)
+}
+
+function noteDecisionStillInstalled(
+  reconstruction: PdfReconstruction,
+  decision: HumanAdjudicationRecord,
+) {
+  if (
+    decision.diagnosticCode !== 'AMBIGUOUS_NOTE_MATCH' ||
+    decision.resolution.type !== 'accept-note-match'
+  ) {
+    return false
+  }
+  const resolution = decision.resolution
+  const relationship = reconstruction.noteRelationships.find(
+    ({ id }) => id === decision.target.markerId,
+  )
+  const candidates = relationship?.candidates.filter(
+    ({ targetNoteId, targetRegionId }) =>
+      targetNoteId === resolution.targetNoteId &&
+      targetRegionId === resolution.targetRegionId,
+  )
+  const candidate = candidates?.length === 1 ? candidates[0] : undefined
+  return Boolean(
+    relationship?.status === 'matched' &&
+    relationship.evidence.includes('human-adjudication') &&
+    candidate &&
+    relationship.targetNoteId === candidate.targetNoteId &&
+    relationship.confidence === candidate.score &&
+    JSON.stringify(relationship.sourceBoxes) ===
+      JSON.stringify(candidate.sourceBoxes),
+  )
+}
+
+function visualDecisionStillInstalled(
+  reconstruction: PdfReconstruction,
+  decision: HumanAdjudicationRecord,
+) {
+  if (!(
+    (decision.diagnosticCode === 'AMBIGUOUS_VISUAL_MATCH' &&
+      decision.resolution.type === 'accept-visual-match') ||
+    (decision.diagnosticCode === 'UNRESOLVED_VISUAL_OBJECT' &&
+      decision.resolution.type === 'accept-visual-fallback')
+  )) {
+    return false
+  }
+  const resolution = decision.resolution
+  const existingDecisionCandidate =
+    reconstruction.humanAdjudications.applied.find((candidate) =>
+      sameDecision(candidate, decision),
+    )
+  if (!existingDecisionCandidate) return false
+  const relationship = reconstruction.visualRelationships.find(
+    ({ id }) =>
+      id === decision.target.markerId && id === resolution.relationshipId,
+  )
+  const candidates = relationship?.candidates.filter(
+    (candidate) =>
+      visualDecisionCandidateId(relationship, candidate) ===
+      resolution.candidateId,
+  )
+  const candidate = candidates?.length === 1 ? candidates[0] : undefined
+  const captionBox = relationship
+    ? ((relationship.captionNodeId
+        ? reconstruction.provenance[relationship.captionNodeId]?.boxes[0]
+        : undefined) ??
+      reconstruction.regions.find(
+        ({ id }) => id === relationship.captionRegionId,
+      )?.box)
+    : undefined
+  const installedBoxes =
+    captionBox && candidate
+      ? [{ ...captionBox }, ...candidate.sourceBoxes.map((box) => ({ ...box }))]
+      : null
+  return Boolean(
+    relationship?.status === 'matched' &&
+    relationship.evidence.includes('human-adjudicated-visual-match') &&
+    relationship.evidence.includes(
+      `human-adjudicated-visual-kind:${relationship.kind}`,
+    ) &&
+    candidate &&
+    installedBoxes &&
+    relationship.confidence === candidate.score &&
+    JSON.stringify(relationship.sourceBoxes) ===
+      JSON.stringify(installedBoxes) &&
+    sameValues(relationship.sourceRegionIds, candidate.sourceRegionIds) &&
+    sameValues(
+      relationship.sourceLineIds ?? [],
+      candidate.sourceLineIds ?? [],
+    ) &&
+    sameValues(relationship.sourceObjectIds, candidate.sourceObjectIds) &&
+    sameValues(relationship.assetIds, candidate.assetIds),
   )
 }
 
@@ -603,11 +756,35 @@ export function createVisualMatchDecision(
       'Visual match decision is not legal for the current diagnostic.',
     )
   }
+  const semanticCandidateId = visualDecisionCandidateId(relationship, candidate)
   return humanAdjudicationRecordSchema.parse({
     diagnosticCode: diagnostic.code,
     target: diagnostic.target,
-    resolution: { type, relationshipId, candidateId },
+    resolution: { type, relationshipId, candidateId: semanticCandidateId },
   }) as VisualMatchDecision
+}
+
+export function visualDecisionCandidateId(
+  relationship: PdfReconstruction['visualRelationships'][number],
+  candidate: PdfReconstruction['visualRelationships'][number]['candidates'][number],
+) {
+  const sourceCandidateId =
+    candidate.id ?? pdfVisualMatchCandidateId(relationship.id, candidate)
+  return `visual-decision-${sha256HexSync(
+    JSON.stringify({
+      sourceCandidateId,
+      kind: relationship.kind,
+      score: candidate.score,
+      sourceBoxes: candidate.sourceBoxes,
+      sourceRegionIds: candidate.sourceRegionIds,
+      sourceLineIds: candidate.sourceLineIds ?? [],
+      sourceObjectIds: candidate.sourceObjectIds,
+      assetIds: candidate.assetIds,
+      sourceTextSha256: sha256HexSync(
+        candidate.sourceText ?? relationship.sourceText ?? '',
+      ),
+    }),
+  )}`
 }
 
 export function readingOrderCandidates(
@@ -675,6 +852,8 @@ function diagnosticForDecision(
 function updateNoteRelationship(
   reconstruction: PdfReconstruction,
   decision: HumanAdjudicationRecord,
+  evidenceOrigin:
+    'human-adjudication' | PdfCandidateResolutionOrigin = 'human-adjudication',
 ) {
   if (
     decision.diagnosticCode !== 'AMBIGUOUS_NOTE_MATCH' &&
@@ -692,6 +871,7 @@ function updateNoteRelationship(
   ) {
     return false
   }
+  const resolutionInputConfidence = relationship.confidence
 
   const referenceNode = reconstruction.paper.nodes.find((node) =>
     reconstruction.provenance[node.id]?.regionIds.includes(
@@ -750,11 +930,22 @@ function updateNoteRelationship(
         decision.target.regionIds.includes(item.targetRegionId),
     )
     if (!candidate) return false
+    const targetNote = reconstruction.paper.nodes.find(
+      (node) => node.id === candidate.targetNoteId && node.type === 'footnote',
+    )
+    const authorAnchor = relationship.canonicalAnchor?.kind === 'author'
+    if (
+      !targetNote ||
+      (!referenceNode && !authorAnchor) ||
+      (referenceNode?.type === 'figure' && !tableCellAnchor)
+    ) {
+      return false
+    }
     targetNoteId = candidate.targetNoteId
     relationship.targetNoteId = candidate.targetNoteId
     relationship.status = 'matched'
     relationship.confidence = candidate.score
-    relationship.evidence = [...candidate.evidence, 'human-adjudication']
+    relationship.evidence = [...candidate.evidence, evidenceOrigin]
     relationship.sourceBoxes = [...candidate.sourceBoxes]
   } else if (decision.resolution.type === 'reclassify-citation') {
     const labels = relationship.label.split(',').filter(Boolean)
@@ -766,7 +957,7 @@ function updateNoteRelationship(
     }
     relationship.targetNoteId = null
     relationship.status = 'citation'
-    relationship.evidence = [...relationship.evidence, 'human-adjudication']
+    relationship.evidence = [...relationship.evidence, evidenceOrigin]
     const bibliographyTargets = new Map<string, string>()
     for (const node of reconstruction.paper.nodes) {
       if (
@@ -855,9 +1046,15 @@ function updateNoteRelationship(
   } else if (decision.resolution.type === 'reclassify-plain-text') {
     relationship.targetNoteId = null
     relationship.status = 'plain-text'
-    relationship.evidence = [...relationship.evidence, 'human-adjudication']
+    relationship.evidence = [...relationship.evidence, evidenceOrigin]
   } else {
     return false
+  }
+  relationship.resolutionOrigin = evidenceOrigin
+  if (evidenceOrigin === 'human-adjudication') {
+    delete relationship.resolutionInputConfidence
+  } else {
+    relationship.resolutionInputConfidence = resolutionInputConfidence
   }
 
   for (const node of reconstruction.paper.nodes) {
@@ -942,7 +1139,7 @@ function updateNoteRelationship(
         ),
     )
   }
-  let projectedNoteReference = false
+  let projectedNoteReference = relationship.canonicalAnchor?.kind === 'author'
   if (targetNoteId && referenceNode && referenceNode.type !== 'figure') {
     referenceNode.noteReferences = [
       ...(referenceNode.noteReferences ?? []),
@@ -992,6 +1189,20 @@ function updateNoteRelationship(
         ...new Set([...target.relationships.backlinks, relationship.id]),
       ].sort()
     }
+    if (relationship.canonicalAnchor?.kind === 'author') {
+      const authorNote = {
+        id: relationship.id,
+        author: relationship.canonicalAnchor.author,
+        label: relationship.label,
+        target: targetNoteId,
+      }
+      reconstruction.paper.authorNotes = [
+        ...(reconstruction.paper.authorNotes ?? []).filter(
+          ({ id }) => id !== relationship.id,
+        ),
+        authorNote,
+      ].sort((left, right) => left.id.localeCompare(right.id))
+    }
   }
   return true
 }
@@ -1000,6 +1211,8 @@ function updateReadingOrder(
   reconstruction: PdfReconstruction,
   diagnostic: ReconstructionDiagnostic,
   decision: HumanAdjudicationRecord,
+  resolutionOrigin:
+    'human-adjudication' | PdfCandidateResolutionOrigin = 'human-adjudication',
 ) {
   if (
     decision.diagnosticCode !== 'AMBIGUOUS_READING_ORDER' ||
@@ -1045,6 +1258,16 @@ function updateReadingOrder(
         : edge,
     )
   reconstruction.readingOrder.order = nextOrder
+  for (const resolution of reconstruction.readingOrder.resolutions) {
+    if (
+      sameValues(
+        [...resolution.regionIds].sort(),
+        [...decision.target.regionIds].sort(),
+      )
+    ) {
+      resolution.resolutionOrigin = resolutionOrigin
+    }
+  }
   const unresolvedEdgeCount = reconstruction.readingOrder.edges.filter(
     (edge) => edge.status === 'candidate',
   ).length
@@ -1566,6 +1789,8 @@ function updateVisualMatch(
   reconstruction: PdfReconstruction,
   diagnostic: ReconstructionDiagnostic,
   decision: HumanAdjudicationRecord,
+  evidenceOrigin:
+    'human-adjudication' | PdfCandidateResolutionOrigin = 'human-adjudication',
 ) {
   if (
     (diagnostic.code !== 'AMBIGUOUS_VISUAL_MATCH' &&
@@ -1587,10 +1812,10 @@ function updateVisualMatch(
   ) {
     return false
   }
+  const resolutionInputConfidence = relationship.confidence
   const candidates = relationship.candidates.filter(
     (candidate) =>
-      (candidate.id ??
-        pdfVisualMatchCandidateId(relationship.id, candidate)) ===
+      visualDecisionCandidateId(relationship, candidate) ===
       resolution.candidateId,
   )
   if (candidates.length !== 1) return false
@@ -1643,10 +1868,25 @@ function updateVisualMatch(
     assetIds: [...candidate.assetIds],
     status: 'matched' as const,
     confidence: candidate.score,
+    resolutionOrigin: evidenceOrigin,
     evidence: [
       ...candidate.evidence,
-      'human-adjudicated-visual-match',
-      `human-adjudicated-${diagnostic.code.toLocaleLowerCase()}`,
+      evidenceOrigin === 'human-adjudication'
+        ? 'human-adjudicated-visual-match'
+        : evidenceOrigin,
+      ...(evidenceOrigin === 'human-adjudication'
+        ? [`human-adjudicated-visual-kind:${relationship.kind}`]
+        : []),
+      evidenceOrigin === 'human-adjudication'
+        ? // `toLocaleLowerCase` folds by the runtime's locale: under `tr`/`az`
+          // `AMBIGUOUS_VISUAL_MATCH` becomes `ambıguous_vısual_match`, and
+          // these strings are serialized into both the EPUB manifest and the
+          // STRUCT relationships. The published bytes must not depend on the
+          // host's locale.
+          `human-adjudicated-${diagnostic.code.toLowerCase()}`
+        : evidenceOrigin === 'model-consultation'
+          ? `model-consulted-${diagnostic.code.toLowerCase()}`
+          : `deterministically-distilled-${diagnostic.code.toLowerCase()}`,
     ],
     sourceBoxes: [
       { ...captionBox },
@@ -1662,6 +1902,11 @@ function updateVisualMatch(
     return false
   }
   Object.assign(relationship, materializedRelationship, { canonicalNodeId })
+  if (evidenceOrigin === 'human-adjudication') {
+    delete relationship.resolutionInputConfidence
+  } else {
+    relationship.resolutionInputConfidence = resolutionInputConfidence
+  }
   const canonicalNode = materializeCanonicalVisualNode({
     relationship,
     id: canonicalNodeId,
@@ -1761,6 +2006,102 @@ function legalDismissal(diagnostic: ReconstructionDiagnostic) {
   return diagnostic.severity !== 'error'
 }
 
+export function reassessPdfReconstruction(
+  reconstruction: PdfReconstruction,
+  additionalDiagnostics: ReconstructionDiagnostic[] = [],
+) {
+  const assessment = assessPdfCompleteness({
+    pages: reconstruction.pages,
+    sourceSha256: reconstruction.source.sha256,
+    paper: reconstruction.paper,
+    diagnostics: reconstruction.diagnostics,
+    readingOrder: reconstruction.readingOrder,
+    regions: reconstruction.regions,
+    visualRelationships: reconstruction.visualRelationships,
+    assets: reconstruction.assets,
+    citationRelationships: reconstruction.citationRelationships,
+    noteRelationships: reconstruction.noteRelationships,
+    provenance: reconstruction.provenance,
+    lineBoundaryDecisions: reconstruction.lineBoundaryDecisions,
+    sourceSemanticFlowBoundaryDecisions:
+      reconstruction.sourceSemanticFlowBoundaryDecisions,
+    sourceSemanticFlowBoundaryDecisionCount:
+      reconstruction.sourceSemanticFlowBoundaryDecisionCount,
+    canonicalHyphenBoundaryDecisions:
+      reconstruction.canonicalHyphenBoundaryDecisions,
+    canonicalHyphenBoundaryDecisionCount:
+      reconstruction.canonicalHyphenBoundaryDecisionCount,
+    unresolvedCorruptingJoinCount: reconstruction.unresolvedCorruptingJoinCount,
+    structurallyConsumedLineBoundaryCount:
+      reconstruction.structurallyConsumedLineBoundaryCount,
+    inlineSpanLedger: {
+      expected: reconstruction.completeness.expectedInlineSpanCount,
+      mapped: reconstruction.completeness.mappedInlineSpanCount,
+    },
+    policy: reconstruction.readiness.policy,
+    reclassifiedNoteReferenceCount: reconstruction.noteRelationships.filter(
+      (relationship) =>
+        relationship.status === 'citation' ||
+        relationship.status === 'plain-text',
+    ).length,
+    reclassifiedCitationCount: reconstruction.noteRelationships.filter(
+      (relationship) => relationship.status === 'citation',
+    ).length,
+  })
+  reconstruction.semanticSignals = assessment.semanticSignals
+  reconstruction.completeness = assessment.completeness
+  reconstruction.diagnostics = [
+    ...assessment.diagnostics,
+    ...additionalDiagnostics,
+  ]
+  reconstruction.readiness = assessment.readiness
+  return reconstruction
+}
+
+export function applyVerifiedPdfCandidateResolutions(
+  reconstruction: PdfReconstruction,
+  resolutions: readonly VerifiedPdfCandidateResolution[],
+) {
+  const result = structuredClone(reconstruction)
+  const applied: HumanAdjudicationRecord[] = []
+
+  for (const { decision: rawDecision, origin } of resolutions) {
+    const parsed = humanAdjudicationRecordSchema.safeParse(rawDecision)
+    if (!parsed.success) continue
+    const decision = normalizedRecord(parsed.data as HumanAdjudicationRecord)
+    const diagnostic = diagnosticForDecision(result, decision)
+    if (!diagnostic) continue
+
+    const legalModelResolution =
+      (decision.diagnosticCode === 'AMBIGUOUS_NOTE_MATCH' &&
+        decision.resolution.type === 'accept-note-match') ||
+      (decision.diagnosticCode === 'AMBIGUOUS_READING_ORDER' &&
+        decision.resolution.type === 'accept-reading-order') ||
+      (decision.diagnosticCode === 'AMBIGUOUS_VISUAL_MATCH' &&
+        decision.resolution.type === 'accept-visual-match')
+    if (!legalModelResolution) continue
+
+    const appliedLegally =
+      updateNoteRelationship(result, decision, origin) ||
+      updateReadingOrder(result, diagnostic, decision, origin) ||
+      updateVisualMatch(result, diagnostic, decision, origin)
+    if (!appliedLegally) continue
+
+    result.diagnostics = result.diagnostics.filter(
+      (candidate) => candidate !== diagnostic,
+    )
+    applied.push(decision)
+  }
+
+  if (applied.length > 0) {
+    result.diagnostics = result.diagnostics.filter(
+      (diagnostic) => !QUALITY_DIAGNOSTIC_CODES.has(diagnostic.code),
+    )
+    reassessPdfReconstruction(result)
+  }
+  return { reconstruction: result, applied }
+}
+
 export function applyHumanDecisionFile(
   reconstruction: PdfReconstruction,
   input: HumanDecisionFile,
@@ -1781,7 +2122,7 @@ export function applyHumanDecisionFile(
       (diagnostic) => diagnostic.code === 'STALE_HUMAN_DECISION',
     )
   ) {
-    return {
+    return rebindModelConsultationReceipt(reconstruction, {
       ...reconstruction,
       humanAdjudications: {
         schemaVersion: file.schemaVersion,
@@ -1790,7 +2131,7 @@ export function applyHumanDecisionFile(
         stale: [],
         countsByDiagnosticCode: {},
       },
-    }
+    })
   }
   const result = structuredClone(reconstruction)
   const decisionDiagnostics = [...result.diagnostics]
@@ -1801,6 +2142,7 @@ export function applyHumanDecisionFile(
   )
   const applied: HumanAdjudicationRecord[] = []
   const stale: PdfReconstruction['humanAdjudications']['stale'] = []
+  const noteSourceAnchorReceipts: HumanNoteSourceAnchorReceipt[] = []
   const visualDecorationReceipts: Array<{
     relationshipId: string
     sourceObjectIds: string[]
@@ -1864,6 +2206,16 @@ export function applyHumanDecisionFile(
         ? decorationReceipt !== null ||
           updateVisualMatch(result, diagnostic, decision)
         : false
+      if (
+        !diagnostic &&
+        existingAdjudications.applied.some((candidate) =>
+          sameDecision(candidate, decision),
+        ) &&
+        visualDecisionStillInstalled(result, decision)
+      ) {
+        applied.push(decision)
+        continue
+      }
       if (!diagnostic || !appliedLegally) {
         stale.push({
           ...decision,
@@ -1889,12 +2241,30 @@ export function applyHumanDecisionFile(
     }
     const diagnostic = diagnosticForDecision(result, decision)
     if (!diagnostic) {
+      if (
+        existingAdjudications.applied.some((candidate) =>
+          sameDecision(candidate, decision),
+        ) &&
+        (readingOrderDecisionStillInstalled(result, decision) ||
+          noteDecisionStillInstalled(result, decision))
+      ) {
+        const retainedReceipt =
+          existingAdjudications.noteSourceAnchorReceipts?.find(
+            ({ relationshipId }) => relationshipId === decision.target.markerId,
+          )
+        if (retainedReceipt) {
+          noteSourceAnchorReceipts.push(structuredClone(retainedReceipt))
+        }
+        applied.push(decision)
+        continue
+      }
       stale.push({ ...decision, reason: 'diagnostic-target-missing' })
       continue
     }
 
+    const noteApplied = updateNoteRelationship(result, decision)
     const appliedLegally =
-      updateNoteRelationship(result, decision) ||
+      noteApplied ||
       updateReadingOrder(result, diagnostic, decision) ||
       (decision.resolution.type === 'dismiss' && legalDismissal(diagnostic))
     if (!appliedLegally) {
@@ -1904,58 +2274,22 @@ export function applyHumanDecisionFile(
     result.diagnostics = result.diagnostics.filter(
       (candidate) => candidate !== diagnostic,
     )
+    if (noteApplied) {
+      const receipt = noteSourceAnchorReceiptForDecision(result, decision)
+      if (receipt) noteSourceAnchorReceipts.push(receipt)
+    }
     applied.push(decision)
   }
 
-  const assessment = assessPdfCompleteness({
-    pages: result.pages,
-    sourceSha256: result.source.sha256,
-    paper: result.paper,
-    diagnostics: result.diagnostics,
-    readingOrder: result.readingOrder,
-    regions: result.regions,
-    visualRelationships: result.visualRelationships,
-    assets: result.assets,
-    citationRelationships: result.citationRelationships,
-    noteRelationships: result.noteRelationships,
-    provenance: result.provenance,
-    lineBoundaryDecisions: result.lineBoundaryDecisions,
-    sourceSemanticFlowBoundaryDecisions:
-      result.sourceSemanticFlowBoundaryDecisions,
-    sourceSemanticFlowBoundaryDecisionCount:
-      result.sourceSemanticFlowBoundaryDecisionCount,
-    canonicalHyphenBoundaryDecisions: result.canonicalHyphenBoundaryDecisions,
-    canonicalHyphenBoundaryDecisionCount:
-      result.canonicalHyphenBoundaryDecisionCount,
-    unresolvedCorruptingJoinCount: result.unresolvedCorruptingJoinCount,
-    structurallyConsumedLineBoundaryCount:
-      result.structurallyConsumedLineBoundaryCount,
-    inlineSpanLedger: {
-      expected: result.completeness.expectedInlineSpanCount,
-      mapped: result.completeness.mappedInlineSpanCount,
-    },
-    policy: result.readiness.policy,
-    reclassifiedNoteReferenceCount: result.noteRelationships.filter(
-      (relationship) =>
-        relationship.status === 'citation' ||
-        relationship.status === 'plain-text',
-    ).length,
-    reclassifiedCitationCount: result.noteRelationships.filter(
-      (relationship) => relationship.status === 'citation',
-    ).length,
-  })
-  result.semanticSignals = assessment.semanticSignals
-  result.completeness = assessment.completeness
-  result.diagnostics = [
-    ...assessment.diagnostics,
-    ...stale.map<ReconstructionDiagnostic>((decision) => ({
+  reassessPdfReconstruction(
+    result,
+    stale.map<ReconstructionDiagnostic>((decision) => ({
       code: 'STALE_HUMAN_DECISION',
       severity: 'warning',
       message: `A saved ${decision.diagnosticCode} decision is stale (${decision.reason}).`,
       target: { ...decision.target, regionIds: [...decision.target.regionIds] },
     })),
-  ]
-  result.readiness = assessment.readiness
+  )
   const countsByDiagnosticCode = applied.reduce<Record<string, number>>(
     (counts, decision) => {
       counts[decision.diagnosticCode] =
@@ -1970,16 +2304,27 @@ export function applyHumanDecisionFile(
     applied,
     stale,
     countsByDiagnosticCode,
+    ...(noteSourceAnchorReceipts.length > 0
+      ? {
+          noteSourceAnchorReceipts: noteSourceAnchorReceipts.sort(
+            (left, right) =>
+              left.relationshipId < right.relationshipId
+                ? -1
+                : left.relationshipId > right.relationshipId
+                  ? 1
+                  : 0,
+          ),
+        }
+      : {}),
     ...(visualDecorationReceipts.length > 0
       ? {
           visualDecorationReceipts: visualDecorationReceipts.map((receipt) => ({
             ...receipt,
-            newExpectedObjectDenominator:
-              assessment.completeness.sourceAssetCount,
-            resultingCoverage: assessment.completeness.assetCoverage,
+            newExpectedObjectDenominator: result.completeness.sourceAssetCount,
+            resultingCoverage: result.completeness.assetCoverage,
           })),
         }
       : {}),
   }
-  return result
+  return rebindModelConsultationReceipt(reconstruction, result)
 }

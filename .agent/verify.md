@@ -16,9 +16,21 @@ scripts/agent-evidence --only=lint,type-check
 
 Validation lanes discovered:
 
+- `model-consultation`: reopens actual PDF-to-EPUB fixture receipts and validates privacy-safe per-document, per-class consultation aggregates (required)
 - `build`: `npm run build` (required)
 - `test`: `npm run test` (required)
 - `e2e`: `npm run test:e2e` (optional)
+
+Run the model-consultation receipt lane on its own with:
+
+```bash
+scripts/agent-evidence --only=model-consultation
+```
+
+Its `model-consultation-evidence` artifact contains only hashed document IDs,
+exact decision classes, counts, rates, provider-call counts, and retirement
+booleans. It does not serialize source content, candidate data, model identity,
+credentials, or raw consultation receipts.
 
 Deploy contract:
 

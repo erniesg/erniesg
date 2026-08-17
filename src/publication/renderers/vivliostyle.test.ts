@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process'
 import {
   access,
   chmod,
@@ -17,6 +18,9 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, relative, resolve } from 'node:path'
+import { promisify } from 'node:util'
+import * as epubcheck from 'epubcheck-static'
+import JSZip from 'jszip'
 import { describe, expect, it, vi } from 'vitest'
 import { adaptAstroBlogEntry } from '../adapters/astro'
 import {
@@ -34,6 +38,7 @@ import {
   preparePublicationAssetDirectory,
   prepareWebPubDirectory,
   publicationAssetFileExtension,
+  createPublicationEpub,
   publicationEpubAccessibilityMetadata,
   publicationEpubManifestItemId,
   publicationEpubNavigationLabels,
@@ -46,6 +51,8 @@ import {
   vivliostyleRenderer,
 } from './vivliostyle'
 import type { PublicationNode } from '../schema'
+
+const execFileAsync = promisify(execFile)
 
 async function fixtureCollection(name: string) {
   const root = await mkdtemp(resolve(tmpdir(), 'publication-renderer-'))
@@ -376,7 +383,50 @@ describe('Vivliostyle publication renderer boundary', () => {
       'epub:type="endnote" role="doc-footnote" data-note-kind="endnote"',
     )
     expect(html).not.toContain('role="doc-endnote"')
-    expect(html).toContain('role="doc-annotation"')
+    expect(html).toContain('role="note" data-note-kind="author-note"')
+
+    const outputRoot = await mkdtemp(resolve(tmpdir(), 'publication-endnote-'))
+    const epubPath = resolve(outputRoot, 'note-bearing.epub')
+    try {
+      await createPublicationEpub(
+        {
+          ...bundle,
+          graph: {
+            ...bundle.graph,
+            nodes: [
+              ...bundle.graph.nodes,
+              {
+                ...note,
+                id: 'packaged-endnote',
+                noteKind: 'endnote',
+                backlinkIds: [],
+              },
+            ],
+          },
+        },
+        epubPath,
+        await readFile('src/styles/publication/publication.css', 'utf8'),
+      )
+      const archive = await JSZip.loadAsync(await readFile(epubPath))
+      const content = await archive.file('EPUB/content.xhtml')!.async('string')
+      expect(content).toContain(
+        '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"',
+      )
+      expect(content).toContain(
+        'epub:type="endnote" role="doc-footnote" data-note-kind="endnote"',
+      )
+      if (process.env.SRT_EPUBCHECK_JAVA_BIN) {
+        await expect(
+          execFileAsync(
+            process.env.SRT_EPUBCHECK_JAVA_BIN,
+            ['-jar', epubcheck.path, '--failonwarnings', epubPath],
+            { timeout: 120_000 },
+          ),
+        ).resolves.toBeDefined()
+      }
+    } finally {
+      await rm(outputRoot, { recursive: true, force: true })
+    }
   })
 
   it('prints nondecorative audio transcripts in paged profiles', async () => {

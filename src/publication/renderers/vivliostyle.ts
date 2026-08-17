@@ -388,7 +388,7 @@ function renderNode(
         const role =
           node.noteKind === 'footnote' || node.noteKind === 'endnote'
             ? 'doc-footnote'
-            : 'doc-annotation'
+            : 'note'
         const epubType =
           node.noteKind === 'footnote' || node.noteKind === 'endnote'
             ? `epub:type="${node.noteKind}"`
@@ -790,7 +790,7 @@ async function preparePdfRenderer(): Promise<PreparedPdfRenderer> {
   }
 }
 
-async function createEpub(
+export async function createPublicationEpub(
   bundle: PublicationBundle,
   outputPath: string,
   css: string,
@@ -847,7 +847,10 @@ async function createEpub(
   )
   const xhtml = publicationGraphToHtml(bundle.graph, assetPaths, 'eink-epub')
     .replace('<!doctype html>', '<?xml version="1.0" encoding="utf-8"?>')
-    .replace('<html ', '<html xmlns="http://www.w3.org/1999/xhtml" ')
+    .replace(
+      '<html ',
+      '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" ',
+    )
     .replaceAll(/<(meta|link|img|br)([^>]*?)(?<!\/)>/g, '<$1$2 />')
   zip.file('EPUB/content.xhtml', xhtml, zipOptions())
   const headings = publicationEpubTocHeadings(bundle.graph.nodes)
@@ -1118,7 +1121,7 @@ export const vivliostyleRenderer: PublicationRenderer = {
     await writeFile(resolve(output, 'publication.css'), css, EXCLUSIVE_WRITE)
     const webpub = await createWebPub(bundle, output, css)
     const epub = resolve(output, 'eink.epub')
-    await createEpub(bundle, epub, css)
+    await createPublicationEpub(bundle, epub, css)
     const layoutAssets = await writeAssets(
       bundle,
       resolve(output, 'layout-assets'),

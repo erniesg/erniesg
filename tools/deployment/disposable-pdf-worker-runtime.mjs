@@ -36,8 +36,7 @@ function isWithin(parent, candidate) {
 async function regularFileIdentity(filePath, requireExecutable) {
   if (!path.isAbsolute(filePath)) fail()
   const canonicalPath = await realpath(filePath).catch(() => null)
-  const requestedMetadata = await lstat(filePath).catch(() => null)
-  if (!canonicalPath || requestedMetadata?.isSymbolicLink()) fail()
+  if (!canonicalPath) fail()
   const metadata = await lstat(canonicalPath).catch(() => null)
   if (
     !metadata?.isFile() ||

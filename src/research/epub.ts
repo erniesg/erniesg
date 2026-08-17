@@ -56,7 +56,7 @@ import {
   PDF_HYPHEN_REMOVAL_REQUIRED_EVIDENCE,
 } from './pdf-hyphenation'
 import {
-  hasValidatedNativeAsset,
+  hasValidatedSourcePageRenderAsset,
   validatedPdfVisualRelationships,
 } from './pdf-visual-validation'
 import {
@@ -78,6 +78,15 @@ import {
 } from './targets'
 import { targetProfileSchema } from './target-schema'
 import { downscalePngAsset } from './visual-assets'
+import {
+  MAX_EPUB_ASSET_BYTES_PER_BOOK,
+  MAX_EPUB_ASSETS_PER_BOOK,
+} from './publication-resource-limits'
+
+export {
+  MAX_EPUB_ASSET_BYTES_PER_BOOK,
+  MAX_EPUB_ASSETS_PER_BOOK,
+} from './publication-resource-limits'
 
 const EPUB_MIMETYPE = 'application/epub+zip'
 const ZIP_MTIME = new Date(1980, 0, 1, 0, 0, 0)
@@ -87,8 +96,6 @@ export const EPUB_EXPORT_POLICY_VERSION = '1.2.0' as const
 export type EpubExportMode = 'publication' | 'readable-fallback'
 const MAX_READABLE_FALLBACK_ASSETS_PER_VISUAL = 16
 const MAX_READABLE_FALLBACK_OPTIONAL_ASSETS_PER_BOOK = 64
-export const MAX_EPUB_ASSETS_PER_BOOK = 512
-export const MAX_EPUB_ASSET_BYTES_PER_BOOK = 128 * 1024 * 1024
 export const MAX_READABLE_FALLBACK_EQUATIONS_PER_BOOK = 512
 const COMPACT_RASTER_TABLE_SCROLL_MIN_SOURCE_WIDTH_PX = 1_000
 
@@ -5256,28 +5263,25 @@ function hasReadableText(paper: ResearchPaper) {
   })
 }
 
-function sourcePreservedScanFallback(
+function sourcePreservedOcrFallback(
   reconstruction: PdfReconstruction,
+  readableProjection: PdfReconstruction,
 ): PdfReconstruction | undefined {
-  if (
-    hasReadableText(reconstruction.paper) ||
-    reconstruction.pages.length === 0 ||
-    reconstruction.completeness.ocrRequiredPages.length !==
-      reconstruction.pages.length ||
-    reconstruction.pages.some(
-      (page) =>
-        page.kind !== 'ocr-required' ||
-        page.runs.some((run) => run.text.trim().length > 0),
-    )
-  ) {
+  const requiredPages = reconstruction.completeness.ocrRequiredPages
+  if (reconstruction.pages.length === 0 || requiredPages.length === 0) {
     return undefined
   }
 
-  const selected = reconstruction.pages.map((page) => {
+  const selected = requiredPages.map((pageNumber) => {
+    const page = reconstruction.pages.find(
+      (candidate) => candidate.page === pageNumber,
+    )
+    if (!page) return undefined
     const candidates = (page.assets ?? []).filter((asset) => {
       if (
         asset.kind !== 'raster' ||
-        !['image/png', 'image/jpeg', 'image/gif'].includes(asset.mediaType) ||
+        asset.rendition !== 'source-page-render' ||
+        asset.mediaType !== 'image/png' ||
         asset.bytes.byteLength === 0 ||
         asset.sourceObjectIds.length !== 1 ||
         asset.sourceBoxes.length !== 1
@@ -5289,11 +5293,13 @@ function sourcePreservedScanFallback(
         (object) =>
           object.id === asset.sourceObjectIds[0] &&
           object.assetId === asset.id &&
-          object.kind === 'image',
+          object.kind === 'image' &&
+          object.role === 'scan-source' &&
+          object.rolePolicy === 'pdfjs-complete-page-render-v1',
       )
       return (
         sourceObject !== undefined &&
-        hasValidatedNativeAsset(sourceObject, page.assets) &&
+        hasValidatedSourcePageRenderAsset(sourceObject, page.assets) &&
         sourceBox.page === page.page &&
         sourceObject.box.page === page.page &&
         sourceBox.x === sourceObject.box.x &&
@@ -5301,8 +5307,14 @@ function sourcePreservedScanFallback(
         sourceBox.width === sourceObject.box.width &&
         sourceBox.height === sourceObject.box.height &&
         sourceBox.rotation === sourceObject.box.rotation &&
-        sourceBox.width * sourceBox.height >= 0.5 &&
-        sourceObject.box.width * sourceObject.box.height >= 0.5
+        sourceBox.x === 0 &&
+        sourceBox.y === 0 &&
+        sourceBox.width === 1 &&
+        sourceBox.height === 1 &&
+        sourceObject.box.x === 0 &&
+        sourceObject.box.y === 0 &&
+        sourceObject.box.width === 1 &&
+        sourceObject.box.height === 1
       )
     })
     return candidates.length === 1 ? { page, asset: candidates[0]! } : undefined
@@ -5312,7 +5324,13 @@ function sourcePreservedScanFallback(
     page: PdfPageAnalysis
     asset: PublicationAsset
   }>
-  const usage = epubAssetResourceUsage(selectedPages.map(({ asset }) => asset))
+  const projectedAssets = new Map(
+    [
+      ...readableProjection.assets,
+      ...selectedPages.map(({ asset }) => asset),
+    ].map((asset) => [asset.id, asset]),
+  )
+  const usage = epubAssetResourceUsage([...projectedAssets.values()])
   if (
     usage.count > MAX_EPUB_ASSETS_PER_BOOK ||
     usage.bytes > MAX_EPUB_ASSET_BYTES_PER_BOOK
@@ -5320,9 +5338,15 @@ function sourcePreservedScanFallback(
     return undefined
   }
 
-  const nodes: ResearchPaper['nodes'] = []
-  const provenance = { ...reconstruction.provenance }
-  const relationships: PublicationVisualRelationship[] = []
+  const fallbackNodes: Array<{
+    page: number
+    nodes: ResearchPaper['nodes']
+  }> = []
+  const provenance = { ...readableProjection.provenance }
+  const relationships: PublicationVisualRelationship[] = [
+    ...readableProjection.visualRelationships,
+  ]
+  const regions = [...readableProjection.regions]
   for (const { page, asset } of selectedPages) {
     const suffix = String(page.page).padStart(3, '0')
     const nodeId = `source-scan-page-${suffix}`
@@ -5330,35 +5354,50 @@ function sourcePreservedScanFallback(
     const captionRegionId = `${nodeId}-caption-region`
     const title = `Source page ${page.page} — text recovery required.`
     const sourceBox = asset.sourceBoxes[0]!
-    nodes.push(
-      {
-        id: nodeId,
-        type: 'figure',
-        title,
-        relationships: { caption: captionNodeId, assets: [asset.id] },
-        source: `pdf:${reconstruction.source.sha256}#page=${page.page}`,
-      },
-      {
-        id: captionNodeId,
-        type: 'caption',
-        text: title,
-        source: `pdf:${reconstruction.source.sha256}#page=${page.page}`,
-      },
-    )
+    fallbackNodes.push({
+      page: page.page,
+      nodes: [
+        {
+          id: nodeId,
+          type: 'figure',
+          title,
+          relationships: { caption: captionNodeId, assets: [asset.id] },
+          source: `pdf:${reconstruction.source.sha256}#page=${page.page}`,
+        },
+        {
+          id: captionNodeId,
+          type: 'caption',
+          text: title,
+          source: `pdf:${reconstruction.source.sha256}#page=${page.page}`,
+        },
+      ],
+    })
     provenance[nodeId] = {
-      confidence: 1,
+      confidence: 0,
       pages: [page.page],
       regionIds: [],
       boxes: [sourceBox],
       links: [],
     }
     provenance[captionNodeId] = {
-      confidence: 1,
+      confidence: 0,
       pages: [page.page],
       regionIds: [captionRegionId],
       boxes: [sourceBox],
       links: [],
     }
+    regions.push({
+      id: captionRegionId,
+      page: page.page,
+      kind: 'caption',
+      column: 'span',
+      text: title,
+      confidence: 0,
+      box: sourceBox,
+      lines: [],
+      nativeObjectIds: [...asset.sourceObjectIds],
+      includedInReadingOrder: false,
+    })
     relationships.push({
       id: `${nodeId}-relationship`,
       kind: 'figure',
@@ -5370,7 +5409,10 @@ function sourcePreservedScanFallback(
       assetIds: [asset.id],
       status: 'unresolved',
       confidence: 0,
-      evidence: ['source-preserved-scan-page-fallback'],
+      evidence: [
+        'source-preserved-unresolved-page-fallback',
+        'pdfjs-complete-page-render-v1',
+      ],
       candidates: [],
       sourceBoxes: [sourceBox],
       sourceText: '',
@@ -5380,12 +5422,32 @@ function sourcePreservedScanFallback(
       captionNodeId,
     })
   }
+  const nodes: ResearchPaper['nodes'] = []
+  const pendingFallbackNodes = fallbackNodes.sort(
+    (left, right) => left.page - right.page,
+  )
+  for (const node of readableProjection.paper.nodes) {
+    const sourcePages = provenance[node.id]?.pages ?? []
+    const sourcePage =
+      sourcePages.length > 0
+        ? Math.min(...sourcePages)
+        : Number.POSITIVE_INFINITY
+    while (
+      pendingFallbackNodes[0] &&
+      pendingFallbackNodes[0].page < sourcePage
+    ) {
+      nodes.push(...pendingFallbackNodes.shift()!.nodes)
+    }
+    nodes.push(node)
+  }
+  for (const fallback of pendingFallbackNodes) nodes.push(...fallback.nodes)
   return {
-    ...reconstruction,
-    paper: { ...reconstruction.paper, nodes },
+    ...readableProjection,
+    paper: { ...readableProjection.paper, nodes },
     provenance,
+    regions,
     visualRelationships: relationships,
-    assets: selectedPages.map(({ asset }) => asset),
+    assets: [...projectedAssets.values()],
   }
 }
 
@@ -5553,15 +5615,10 @@ function projectRenderableNoteRelationships(
   }
 }
 
-export function projectReadableFallbackReconstruction(
+function projectReadableTextFallbackReconstruction(
   reconstruction: PdfReconstruction,
 ): PdfReconstruction {
-  const scanFallback = sourcePreservedScanFallback(reconstruction)
-  if (scanFallback) return scanFallback
-  if (
-    reconstruction.completeness.ocrRequiredPages.length > 0 ||
-    !hasReadableText(reconstruction.paper)
-  ) {
+  if (!hasReadableText(reconstruction.paper)) {
     throw new PdfImportError(
       'INCOMPLETE_RECONSTRUCTION',
       'A readable EPUB requires recovered text for every source page; run local OCR first.',
@@ -5786,6 +5843,31 @@ export function projectReadableFallbackReconstruction(
     visualRelationships: relationships,
     assets: projectedAssets,
   }
+}
+
+export function projectReadableFallbackReconstruction(
+  reconstruction: PdfReconstruction,
+): PdfReconstruction {
+  if (reconstruction.completeness.ocrRequiredPages.length === 0) {
+    return projectReadableTextFallbackReconstruction(reconstruction)
+  }
+  const readableProjection = hasReadableText(reconstruction.paper)
+    ? projectReadableTextFallbackReconstruction(reconstruction)
+    : {
+        ...reconstruction,
+        paper: { ...reconstruction.paper, nodes: [] },
+        visualRelationships: [],
+        assets: [],
+      }
+  const sourcePreserved = sourcePreservedOcrFallback(
+    reconstruction,
+    readableProjection,
+  )
+  if (sourcePreserved) return sourcePreserved
+  throw new PdfImportError(
+    'INCOMPLETE_RECONSTRUCTION',
+    'A readable EPUB requires a bounded complete-page source render for every page that still needs text recovery.',
+  )
 }
 
 function epubFileName(

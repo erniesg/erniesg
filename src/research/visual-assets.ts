@@ -1130,6 +1130,55 @@ export async function createPngAsset(input: {
   })
 }
 
+export async function createSourcePageRenderAsset(input: {
+  sourceObjectId: string
+  sourceBox: NormalizedSourceBox
+  pixels: Uint8Array
+  width: number
+  height: number
+}) {
+  const { sourceBox } = input
+  if (
+    !input.sourceObjectId.trim() ||
+    sourceBox.x !== 0 ||
+    sourceBox.y !== 0 ||
+    sourceBox.width !== 1 ||
+    sourceBox.height !== 1 ||
+    !Number.isInteger(sourceBox.page) ||
+    sourceBox.page < 1 ||
+    !Number.isInteger(input.width) ||
+    input.width < 2 ||
+    !Number.isInteger(input.height) ||
+    input.height < 2 ||
+    input.pixels.byteLength !== input.width * input.height * 4
+  ) {
+    throw new Error(
+      'Source page renders require one complete bounded page raster',
+    )
+  }
+  return asset({
+    bytes: encodePng({
+      pixels: input.pixels,
+      width: input.width,
+      height: input.height,
+      colorSpace: 'rgba',
+    }),
+    mediaType: 'image/png',
+    kind: 'raster',
+    rendition: 'source-page-render',
+    width: input.width,
+    height: input.height,
+    resolutionDpi: null,
+    sourceObjectIds: [input.sourceObjectId],
+    sourceBoxes: [sourceBox],
+    identityKey: JSON.stringify({
+      rendition: 'source-page-render',
+      sourceObjectId: input.sourceObjectId,
+      sourceBox: sourceBoxIdentity(sourceBox),
+    }),
+  })
+}
+
 export async function createCompositePngAsset(input: {
   sourceObjectIds: string[]
   sourceBoxes: NormalizedSourceBox[]

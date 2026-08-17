@@ -267,6 +267,7 @@ describe('publication worker client', () => {
     expect(completed).toEqual({ ...result, preview })
     expect(completed.bytes).toBe(result.bytes)
     expect(completed.sha256).toBe(result.sha256)
+    expect(worker.posted[0].transfer).toEqual([])
     expect(worker.terminated).toBe(true)
   })
 

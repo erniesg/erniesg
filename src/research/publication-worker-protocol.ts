@@ -65,9 +65,16 @@ export type PublicationWorkerResponse =
 export function transferableReconstructionBuffers(
   reconstruction: PdfReconstruction,
 ) {
+  // The reconstruction owner retains its structured-clone copy. Transfer the
+  // worker's backing stores exactly once, including page-local derived renders
+  // that are intentionally excluded from the canonical top-level asset set.
+  const assets = [
+    ...reconstruction.assets,
+    ...reconstruction.pages.flatMap((page) => page.assets ?? []),
+  ]
   return [
     ...new Set(
-      reconstruction.assets.flatMap((asset) =>
+      assets.flatMap((asset) =>
         asset.bytes.buffer instanceof ArrayBuffer ? [asset.bytes.buffer] : [],
       ),
     ),

@@ -150,6 +150,30 @@
       "features": ["scanned-page"]
     },
     {
+      "file": "two-physical-page-scan.pdf",
+      "features": ["scanned-page", "two-physical-pages"]
+    },
+    {
+      "file": "tiled-multi-image-scan.pdf",
+      "features": [
+        "scanned-page",
+        "tiled-source-images",
+        "no-whole-page-native-image"
+      ]
+    },
+    {
+      "file": "mixed-digital-scan.pdf",
+      "features": ["born-digital-page", "scanned-page", "mixed-physical-pages"]
+    },
+    {
+      "file": "scan-digital-hybrid.pdf",
+      "features": [
+        "scanned-page",
+        "born-digital-page",
+        "scan-first-source-order"
+      ]
+    },
+    {
       "file": "mixed-page.pdf",
       "features": ["mixed-page"]
     },

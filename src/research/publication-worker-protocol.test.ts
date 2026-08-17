@@ -10,14 +10,27 @@ import {
 describe('publication worker transfer protocol', () => {
   it('deduplicates shared asset buffers before posting a reconstruction', () => {
     const buffer = new ArrayBuffer(16)
+    const pageBuffer = new ArrayBuffer(24)
     const reconstruction = {
       assets: [
         { bytes: new Uint8Array(buffer, 0, 8) },
         { bytes: new Uint8Array(buffer, 8, 8) },
       ],
+      pages: [
+        {
+          assets: [
+            { bytes: new Uint8Array(buffer, 4, 4) },
+            { bytes: new Uint8Array(pageBuffer, 0, 12) },
+            { bytes: new Uint8Array(pageBuffer, 12, 12) },
+          ],
+        },
+      ],
     } as PdfReconstruction
 
-    expect(transferableReconstructionBuffers(reconstruction)).toEqual([buffer])
+    expect(transferableReconstructionBuffers(reconstruction)).toEqual([
+      buffer,
+      pageBuffer,
+    ])
   })
 
   it('transfers the unchanged EPUB and every referenced preview asset once', () => {

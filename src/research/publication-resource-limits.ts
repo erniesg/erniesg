@@ -1,0 +1,2 @@
+export const MAX_EPUB_ASSETS_PER_BOOK = 512
+export const MAX_EPUB_ASSET_BYTES_PER_BOOK = 128 * 1024 * 1024

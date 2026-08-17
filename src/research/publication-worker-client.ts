@@ -259,6 +259,10 @@ export function buildEpubInWorker(
       mode,
     },
     expectedResult: 'epub-result',
+    // Keep the bounded reconstruction owned by the UI so it can build another
+    // profile or return to review after this worker exits. This intentionally
+    // uses a structured clone rather than detaching it; complete-page render
+    // contribution is separately capped at 512 assets / 128 MiB.
     transfer: [],
     signal: options.signal,
     onProgress: options.onProgress,

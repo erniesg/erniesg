@@ -77,6 +77,48 @@ const scannedFixture = path.resolve(
   'pdf',
   'scanned-page.pdf',
 )
+const scanVariantFixtures = [
+  { name: 'rotated scan', fileName: 'rotated-scan.pdf', pages: [1] },
+  { name: 'two-page spread scan', fileName: 'two-page-scan.pdf', pages: [1] },
+  {
+    name: 'true two-physical-page scan',
+    fileName: 'two-physical-page-scan.pdf',
+    pages: [1, 2],
+  },
+  {
+    name: 'tiled multi-image scan',
+    fileName: 'tiled-multi-image-scan.pdf',
+    pages: [1],
+  },
+  {
+    name: 'mixed digital and scan document',
+    fileName: 'mixed-digital-scan.pdf',
+    pages: [2],
+    expectedText: 'Readable digital introduction',
+  },
+  {
+    name: 'mixed raster page',
+    fileName: 'mixed-page.pdf',
+    pages: [1],
+    expectedText: 'Mixed page with sparse embedded text',
+  },
+  {
+    name: 'sparse embedded-text page',
+    fileName: 'sparse-embedded-text.pdf',
+    pages: [1],
+    expectedText: 'Section divider',
+  },
+  {
+    name: 'multilingual scan',
+    fileName: 'multilingual-scan.pdf',
+    pages: [1],
+  },
+] satisfies Array<{
+  name: string
+  fileName: string
+  pages: number[]
+  expectedText?: string
+}>
 if (fixtureBytes.byteLength !== contract.byteLength) {
   throw new Error(
     `Fidelity fixture byte length changed: expected ${contract.byteLength}, received ${fixtureBytes.byteLength}`,
@@ -1382,11 +1424,70 @@ test('downloads a source-preserved scan fallback without post-upload network acc
   expect(manifest.assets).toHaveLength(1)
   expect(manifest.visualRelationships).toHaveLength(1)
   expect(manifest.visualRelationships[0]!.evidence).toContain(
-    'source-preserved-scan-page-fallback',
+    'source-preserved-unresolved-page-fallback',
   )
   await requireEpubCheckPass(bytes, 'source-preserved-scan-fallback')
   expect(postUploadRequests).toEqual([])
 })
+
+for (const scanVariant of scanVariantFixtures) {
+  test(`downloads complete rendered source pages for a ${scanVariant.name}`, async ({
+    page,
+  }) => {
+    await page.goto(studioPath())
+    await waitForImporter(page)
+    const postUploadRequests = await forbidPostUploadNetwork(page)
+
+    await page
+      .locator('#publication-pdf')
+      .setInputFiles(
+        path.resolve('tests', 'fixtures', 'pdf', scanVariant.fileName),
+      )
+    await expect(
+      page.locator(
+        '.publication-importer[data-conversion-status="review-required"]',
+      ),
+    ).toBeVisible({ timeout: 90_000 })
+    await waitForMaterializedEpub(page)
+    const bytes = await downloadBytes(
+      page,
+      'Download Mobile EPUB review artifact (not publication-ready)',
+    )
+    const files = unzipSync(bytes)
+    const manifest = JSON.parse(strFromU8(files['EPUB/export.json']!)) as {
+      sourceCompleteness: { ocrRequiredPages: number[] }
+      assets: unknown[]
+      visualRelationships: Array<{ evidence: string[] }>
+    }
+
+    expect(manifest.sourceCompleteness.ocrRequiredPages).toEqual(
+      scanVariant.pages,
+    )
+    expect(manifest.assets.length).toBeGreaterThanOrEqual(
+      scanVariant.pages.length,
+    )
+    const sourcePageRelationships = manifest.visualRelationships.filter(
+      (relationship) =>
+        relationship.evidence.includes(
+          'source-preserved-unresolved-page-fallback',
+        ),
+    )
+    expect(sourcePageRelationships).toHaveLength(scanVariant.pages.length)
+    for (const relationship of sourcePageRelationships) {
+      expect(relationship.evidence).toContain('pdfjs-complete-page-render-v1')
+    }
+    if (scanVariant.expectedText) {
+      expect(strFromU8(files['EPUB/content.xhtml']!)).toContain(
+        scanVariant.expectedText,
+      )
+    }
+    await requireEpubCheckPass(
+      bytes,
+      scanVariant.fileName.replace(/\.pdf$/u, ''),
+    )
+    expect(postUploadRequests).toEqual([])
+  })
+}
 
 test('invalidates preview receipts and object URLs before reusing a filename', async ({
   page,

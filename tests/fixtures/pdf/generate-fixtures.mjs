@@ -1353,6 +1353,70 @@ const fixtures = {
       image: { x: 54, y: 54, width: 504, height: 684, raster: scannedPage },
     },
   ],
+  'two-physical-page-scan.pdf': [
+    {
+      image: { x: 54, y: 54, width: 504, height: 684, raster: scannedPage },
+    },
+    {
+      image: {
+        x: 54,
+        y: 54,
+        width: 504,
+        height: 684,
+        raster: multilingualScan,
+      },
+    },
+  ],
+  'tiled-multi-image-scan.pdf': [
+    {
+      images: [
+        { x: 30, y: 402, width: 270, height: 360, raster: scannedPage },
+        { x: 312, y: 402, width: 270, height: 360, raster: rotatedScan },
+        { x: 30, y: 30, width: 270, height: 360, raster: multilingualScan },
+        { x: 312, y: 30, width: 270, height: 360, raster: mixedRaster },
+      ],
+    },
+  ],
+  'mixed-digital-scan.pdf': [
+    {
+      lines: [
+        { text: 'Readable digital introduction', x: 72, y: 720, size: 22 },
+        {
+          text: 'This first page remains ordinary reflowable source text.',
+          x: 72,
+          y: 674,
+        },
+        {
+          text: 'Only the following physical page requires image preservation.',
+          x: 72,
+          y: 646,
+        },
+      ],
+    },
+    {
+      image: { x: 54, y: 54, width: 504, height: 684, raster: scannedPage },
+    },
+  ],
+  'scan-digital-hybrid.pdf': [
+    {
+      image: { x: 54, y: 54, width: 504, height: 684, raster: scannedPage },
+    },
+    {
+      lines: [
+        { text: 'Readable digital conclusion', x: 72, y: 720, size: 22 },
+        {
+          text: 'This second page must follow the source-preserved first page.',
+          x: 72,
+          y: 674,
+        },
+        {
+          text: 'The fallback merge follows physical source order.',
+          x: 72,
+          y: 646,
+        },
+      ],
+    },
+  ],
   'mixed-page.pdf': [
     {
       lines: [

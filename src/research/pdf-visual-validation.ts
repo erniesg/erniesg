@@ -298,7 +298,27 @@ function validAssetContent(asset: PdfVisualAsset) {
             })}`,
           ),
         )
-      : contentSha256
+      : asset.rendition === 'source-page-render' &&
+          asset.sourceObjectIds.length === 1 &&
+          asset.sourceBoxes.length === 1
+        ? sha256(
+            new TextEncoder().encode(
+              `${contentSha256}\n${JSON.stringify({
+                rendition: 'source-page-render',
+                sourceObjectId: asset.sourceObjectIds[0],
+                sourceBox: [
+                  asset.sourceBoxes[0].page,
+                  asset.sourceBoxes[0].x,
+                  asset.sourceBoxes[0].y,
+                  asset.sourceBoxes[0].width,
+                  asset.sourceBoxes[0].height,
+                  asset.sourceBoxes[0].rotation,
+                  asset.sourceBoxes[0].method,
+                ],
+              })}`,
+            ),
+          )
+        : contentSha256
   return (
     validSourceExclusionMask &&
     isCanonicalPdfSourceCropAttempts(asset) &&
@@ -1677,6 +1697,30 @@ export function hasValidatedNativeAsset(
     validAssetContent(asset) &&
     asset.rendition === 'source-preserved' &&
     asset.kind === (object.kind === 'image' ? 'raster' : 'vector') &&
+    sameStrings(asset.sourceObjectIds, [object.id]) &&
+    sameBoxes(asset.sourceBoxes, [object.box]),
+  )
+}
+
+export function hasValidatedSourcePageRenderAsset(
+  object: PdfNativeObject,
+  assets: PdfVisualAsset[] | undefined,
+) {
+  if (!object.assetId) return false
+  const asset = uniqueAssetsById(assets ?? []).get(object.assetId)
+  return Boolean(
+    object.role === 'scan-source' &&
+    object.rolePolicy === 'pdfjs-complete-page-render-v1' &&
+    object.kind === 'image' &&
+    object.box.x === 0 &&
+    object.box.y === 0 &&
+    object.box.width === 1 &&
+    object.box.height === 1 &&
+    asset &&
+    validAssetContent(asset) &&
+    asset.rendition === 'source-page-render' &&
+    asset.kind === 'raster' &&
+    asset.mediaType === 'image/png' &&
     sameStrings(asset.sourceObjectIds, [object.id]) &&
     sameBoxes(asset.sourceBoxes, [object.box]),
   )

@@ -6,6 +6,7 @@ import { PdfImportError } from './import-types'
 import { buildLayoutManifest, validateLayoutManifest } from './manifest'
 import { ModelFallbackLedger } from './model-fallback'
 import {
+  advanceSourcePageRenderBudget,
   createPdfOcrRasterSurface,
   extractPdfLinkAnnotations,
   isFlowAlignedPdfTextTransform,
@@ -13,10 +14,15 @@ import {
   pdfTextItemWhitespaceEvidence,
   reconstructPdf,
   resolvePdfTextFontHeight,
+  sourcePageRenderBudgetUsage,
 } from './pdf'
 import { resolvePdfNamedDestinationEvidence } from './pdf-links'
 import type { PdfOcrOptions, PdfOcrRecognition, PdfOcrSession } from './pdf-ocr'
 import { getTargetProfile, TARGET_PROFILE_IDS } from './targets'
+import {
+  MAX_EPUB_ASSET_BYTES_PER_BOOK,
+  MAX_EPUB_ASSETS_PER_BOOK,
+} from './publication-resource-limits'
 import {
   fixtureFile,
   oversizedPdfFixture,
@@ -25,6 +31,94 @@ import {
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+})
+
+describe('source page render budget', () => {
+  it('fails closed before accumulating more than the EPUB asset limits', () => {
+    expect(
+      advanceSourcePageRenderBudget(MAX_EPUB_ASSETS_PER_BOOK - 1, 0, 1),
+    ).toEqual({
+      count: MAX_EPUB_ASSETS_PER_BOOK,
+      byteLength: 1,
+    })
+    expect(
+      advanceSourcePageRenderBudget(MAX_EPUB_ASSETS_PER_BOOK, 0, 1),
+    ).toBeNull()
+    expect(
+      advanceSourcePageRenderBudget(0, MAX_EPUB_ASSET_BYTES_PER_BOOK - 1, 1),
+    ).toEqual({
+      count: 1,
+      byteLength: MAX_EPUB_ASSET_BYTES_PER_BOOK,
+    })
+    expect(
+      advanceSourcePageRenderBudget(0, MAX_EPUB_ASSET_BYTES_PER_BOOK - 1, 2),
+    ).toBeNull()
+    expect(advanceSourcePageRenderBudget(0, 0, 0)).toBeNull()
+  })
+
+  it('does not let an unselected page-local native asset starve a complete-page render', () => {
+    const oversizedNative = {
+      id: 'native-unselected',
+      rendition: 'source-preserved',
+      bytes: { byteLength: MAX_EPUB_ASSET_BYTES_PER_BOOK + 1 },
+    }
+    const sourceRender = {
+      id: 'complete-page',
+      rendition: 'source-page-render',
+      bytes: { byteLength: 17 },
+    }
+    const usage = sourcePageRenderBudgetUsage(
+      [],
+      [
+        {
+          assets: [oversizedNative, sourceRender] as unknown as NonNullable<
+            import('./import-types').PdfPageAnalysis['assets']
+          >,
+        },
+      ],
+    )
+
+    expect(usage).toEqual({ count: 1, byteLength: 17 })
+  })
+
+  it.each([
+    {
+      name: 'one oversized ordinary top-level asset',
+      assets: [
+        {
+          id: 'ordinary-oversized',
+          rendition: 'source-preserved',
+          bytes: { byteLength: MAX_EPUB_ASSET_BYTES_PER_BOOK + 1 },
+        },
+      ],
+    },
+    {
+      name: '512 ordinary top-level assets',
+      assets: Array.from({ length: MAX_EPUB_ASSETS_PER_BOOK }, (_, index) => ({
+        id: `ordinary-${index + 1}`,
+        rendition: 'source-preserved',
+        bytes: { byteLength: 1 },
+      })),
+    },
+  ])('does not let $name consume the source-render budget', ({ assets }) => {
+    const sourceRender = {
+      id: 'complete-page',
+      rendition: 'source-page-render',
+      bytes: { byteLength: 17 },
+    }
+    const typedAssets = assets as unknown as NonNullable<
+      import('./import-types').PdfPageAnalysis['assets']
+    >
+    const typedSourceRender = sourceRender as unknown as NonNullable<
+      import('./import-types').PdfPageAnalysis['assets']
+    >[number]
+
+    expect(
+      sourcePageRenderBudgetUsage(typedAssets, [
+        { assets: [typedSourceRender] },
+      ]),
+    ).toEqual({ count: 1, byteLength: 17 })
+  })
 })
 
 describe('PDF.js browser ingestion', () => {

@@ -1,5 +1,13 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -23,6 +31,12 @@ import {
   validateOwnedWorkerName,
   validateTeardownProof,
 } from './disposable-pdf-worker-lib.mjs'
+import {
+  bindExecutable,
+  bindToolTree,
+  runIntegrityBound,
+  verifyExecutable,
+} from './disposable-pdf-worker-runtime.mjs'
 
 const head = 'a'.repeat(40)
 const nonce = 'b'.repeat(24)
@@ -126,6 +140,10 @@ function lifecycle(overrides = {}) {
       deleteAttempted: true,
       deploymentsAbsent: true,
       versionsAbsent: true,
+      routesAbsent: true,
+      bindingsAbsent: true,
+      settingsAbsent: true,
+      subdomainAbsent: true,
       customDomains: [],
       remainingResources: [],
       urlUnavailable: true,
@@ -292,6 +310,88 @@ describe('disposable Worker CLI safety', () => {
       expect(result.stdout).toBe('')
       expect(result.stderr).toContain('Usage: disposable-pdf-worker.mjs')
       expect(await readFile(receiptPath, 'utf8')).toBe('preserve-me')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a same-version Wrangler replacement before credential-bearing execution', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'disposable-worker-tool-binding-'),
+    )
+    const wranglerDirectory = path.join(
+      directory,
+      'node_modules',
+      'wrangler',
+      'bin',
+    )
+    const wranglerPath = path.join(wranglerDirectory, 'wrangler.js')
+    const packagePath = path.join(
+      directory,
+      'node_modules',
+      'wrangler',
+      'package.json',
+    )
+    const markerPath = path.join(directory, 'credential-bearing-executed')
+    try {
+      await mkdir(wranglerDirectory, { recursive: true })
+      await writeFile(
+        packagePath,
+        JSON.stringify({ name: 'wrangler', version: '4.113.0' }),
+      )
+      await writeFile(wranglerPath, 'process.exit(0)\n', { mode: 0o700 })
+      const binding = await bindToolTree(directory, wranglerPath)
+
+      await chmod(wranglerPath, 0o600)
+      await writeFile(
+        wranglerPath,
+        `await import('node:fs/promises').then(({ writeFile }) => writeFile(${JSON.stringify(
+          markerPath,
+        )}, process.env.CLOUDFLARE_API_TOKEN ?? 'missing'))\n`,
+      )
+
+      await expect(
+        runIntegrityBound(binding, async () => {
+          await writeFile(markerPath, 'credential-bearing-executed')
+        }),
+      ).rejects.toMatchObject({ code: 'TOOL_INTEGRITY_FAILED' })
+      await expect(readFile(markerPath, 'utf8')).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+      expect(JSON.parse(await readFile(packagePath, 'utf8')).version).toBe(
+        '4.113.0',
+      )
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('binds EPUBCheck to an absolute executable instead of hostile PATH', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'disposable-worker-java-binding-'),
+    )
+    const trustedDirectory = path.join(directory, 'trusted')
+    const hostileDirectory = path.join(directory, 'hostile')
+    const trustedJava = path.join(trustedDirectory, 'java')
+    const hostileJava = path.join(hostileDirectory, 'java')
+    try {
+      await mkdir(trustedDirectory)
+      await mkdir(hostileDirectory)
+      await writeFile(trustedJava, '#!/bin/sh\nexit 0\n', { mode: 0o700 })
+      await writeFile(hostileJava, '#!/bin/sh\nexit 0\n', { mode: 0o700 })
+      const previousPath = process.env.PATH
+      process.env.PATH = hostileDirectory
+      try {
+        const binding = await bindExecutable(trustedJava)
+        expect(binding.path).toBe(await realpath(trustedJava))
+        await verifyExecutable(binding)
+        await writeFile(trustedJava, '#!/bin/sh\nexit 1\n', { mode: 0o700 })
+        await expect(verifyExecutable(binding)).rejects.toMatchObject({
+          code: 'TOOL_INTEGRITY_FAILED',
+        })
+      } finally {
+        process.env.PATH = previousPath
+      }
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
@@ -525,6 +625,10 @@ describe('browser and teardown receipts', () => {
       deleteAttempted: true,
       deploymentsAbsent: true,
       versionsAbsent: true,
+      routesAbsent: true,
+      bindingsAbsent: true,
+      settingsAbsent: true,
+      subdomainAbsent: true,
       customDomains: [],
       remainingResources: [],
       urlUnavailable: true,
@@ -538,6 +642,10 @@ describe('browser and teardown receipts', () => {
       { deleteAttempted: false },
       { deploymentsAbsent: false },
       { versionsAbsent: false },
+      { routesAbsent: false },
+      { bindingsAbsent: false },
+      { settingsAbsent: false },
+      { subdomainAbsent: false },
       { customDomains: ['ernie.sg'] },
       { remainingResources: [workerName] },
       { urlUnavailable: false },
@@ -576,6 +684,10 @@ describe('sanitized lifecycle receipts', () => {
         deleteAttempted: true,
         deploymentsAbsent: true,
         versionsAbsent: true,
+        routesAbsent: true,
+        bindingsAbsent: true,
+        settingsAbsent: true,
+        subdomainAbsent: true,
         customDomains: [],
         remainingResources: [],
         urlUnavailable: true,
@@ -659,6 +771,10 @@ describe('sanitized lifecycle receipts', () => {
     { teardown: { deleteAttempted: false } },
     { teardown: { deploymentsAbsent: false } },
     { teardown: { versionsAbsent: false } },
+    { teardown: { routesAbsent: false } },
+    { teardown: { bindingsAbsent: false } },
+    { teardown: { settingsAbsent: false } },
+    { teardown: { subdomainAbsent: false } },
     { teardown: { urlUnavailable: false } },
   ])(
     'never passes without every lifecycle binding and teardown fact',
@@ -673,6 +789,10 @@ describe('sanitized lifecycle receipts', () => {
         deleteAttempted: true,
         deploymentsAbsent: true,
         versionsAbsent: true,
+        routesAbsent: true,
+        bindingsAbsent: true,
+        settingsAbsent: true,
+        subdomainAbsent: true,
         customDomains: [],
         remainingResources: [],
         urlUnavailable: true,
@@ -716,6 +836,10 @@ describe('sanitized lifecycle receipts', () => {
         deleteAttempted: true,
         deploymentsAbsent: true,
         versionsAbsent: true,
+        routesAbsent: true,
+        bindingsAbsent: true,
+        settingsAbsent: true,
+        subdomainAbsent: true,
         customDomains: ['private.example'],
         remainingResources: ['SECRET-resource-name'],
         urlUnavailable: true,
@@ -763,6 +887,10 @@ describe('cleanup-on-failure lifecycle', () => {
           deleteAttempted: true,
           deploymentsAbsent: true,
           versionsAbsent: true,
+          routesAbsent: true,
+          bindingsAbsent: true,
+          settingsAbsent: true,
+          subdomainAbsent: true,
           customDomains: [],
           remainingResources: [],
           urlUnavailable: true,

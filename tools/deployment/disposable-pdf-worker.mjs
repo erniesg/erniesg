@@ -31,6 +31,13 @@ import {
   validateDeployOutput,
   validateTeardownProof,
 } from './disposable-pdf-worker-lib.mjs'
+import {
+  ToolIntegrityError,
+  bindExecutable,
+  bindToolTree,
+  runIntegrityBound,
+  verifyExecutable,
+} from './disposable-pdf-worker-runtime.mjs'
 
 const WRANGLER_VERSION = '4.113.0'
 const COMPATIBILITY_DATE = '2026-07-11'
@@ -374,19 +381,6 @@ async function verifyRepositoryPins() {
 }
 
 async function verifyLocalTools() {
-  const wranglerPackagePath = path.join(
-    REPOSITORY_ROOT,
-    'node_modules',
-    'wrangler',
-    'package.json',
-  )
-  const wranglerBin = path.join(
-    REPOSITORY_ROOT,
-    'node_modules',
-    'wrangler',
-    'bin',
-    'wrangler.js',
-  )
   const playwrightBin = path.join(
     REPOSITORY_ROOT,
     'node_modules',
@@ -394,22 +388,146 @@ async function verifyLocalTools() {
     'test',
     'cli.js',
   )
-  let wranglerPackage
-  try {
-    wranglerPackage = JSON.parse(await readFile(wranglerPackagePath, 'utf8'))
-  } catch {
+  const metadata = await lstat(playwrightBin).catch(() => null)
+  if (!metadata?.isFile() || metadata.isSymbolicLink()) {
     fail('BUILD_FAILED', 2)
   }
-  for (const executable of [wranglerBin, playwrightBin]) {
-    const metadata = await lstat(executable).catch(() => null)
-    if (!metadata?.isFile() || metadata.isSymbolicLink()) {
-      fail('BUILD_FAILED', 2)
+  return { playwrightBin }
+}
+
+async function makeTreeReadOnly(root) {
+  const entries = await readdir(root, { withFileTypes: true })
+  for (const entry of entries) {
+    const candidate = path.join(root, entry.name)
+    const metadata = await lstat(candidate)
+    if (metadata.isSymbolicLink()) fail('PREFLIGHT_FAILED', 2)
+    if (metadata.isDirectory()) {
+      await makeTreeReadOnly(candidate)
+      await chmod(candidate, 0o500)
+    } else if (metadata.isFile()) {
+      await chmod(candidate, metadata.mode & 0o111 ? 0o500 : 0o400)
+    } else {
+      fail('PREFLIGHT_FAILED', 2)
     }
   }
-  if (wranglerPackage.version !== WRANGLER_VERSION) {
-    fail('BUILD_FAILED', 2)
+}
+
+async function makeTreeRemovable(root) {
+  const metadata = await lstat(root).catch(() => null)
+  if (!metadata) return
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+    fail('CLEANUP_FAILED')
   }
-  return { wranglerBin, playwrightBin }
+  await chmod(root, 0o700)
+  const entries = await readdir(root, { withFileTypes: true })
+  for (const entry of entries) {
+    const candidate = path.join(root, entry.name)
+    const child = await lstat(candidate)
+    if (child.isSymbolicLink()) fail('CLEANUP_FAILED')
+    if (child.isDirectory()) {
+      await makeTreeRemovable(candidate)
+    } else if (child.isFile()) {
+      await chmod(candidate, 0o600)
+    } else {
+      fail('CLEANUP_FAILED')
+    }
+  }
+}
+
+async function installTrustedWrangler(tempRoot, tempHome) {
+  const trustedRoot = path.join(tempRoot, 'trusted-wrangler')
+  await mkdir(trustedRoot, { mode: 0o700 })
+  const [packageBytes, lockfileBytes] = await Promise.all([
+    readPinnedFile('package.json', 1024 * 1024),
+    readPinnedFile('package-lock.json', 4 * 1024 * 1024),
+  ])
+  await Promise.all([
+    writeFile(path.join(trustedRoot, 'package.json'), packageBytes, {
+      flag: 'wx',
+      mode: 0o600,
+    }),
+    writeFile(path.join(trustedRoot, 'package-lock.json'), lockfileBytes, {
+      flag: 'wx',
+      mode: 0o600,
+    }),
+  ])
+  await runChecked(
+    process.platform === 'win32' ? 'npm.cmd' : 'npm',
+    ['ci', '--ignore-scripts', '--no-audit', '--fund=false'],
+    {
+      cwd: trustedRoot,
+      env: basicEnvironment(tempHome),
+      timeoutMs: 15 * 60_000,
+      captureStdout: false,
+    },
+    'PREFLIGHT_FAILED',
+    2,
+  )
+  await rm(path.join(trustedRoot, 'node_modules', '.bin'), {
+    recursive: true,
+    force: true,
+  })
+  const packagePath = path.join(
+    trustedRoot,
+    'node_modules',
+    'wrangler',
+    'package.json',
+  )
+  const wranglerBin = path.join(
+    trustedRoot,
+    'node_modules',
+    'wrangler',
+    'bin',
+    'wrangler.js',
+  )
+  let installedPackage
+  try {
+    installedPackage = JSON.parse(await readFile(packagePath, 'utf8'))
+  } catch {
+    fail('PREFLIGHT_FAILED', 2)
+  }
+  if (installedPackage.version !== WRANGLER_VERSION) {
+    fail('PREFLIGHT_FAILED', 2)
+  }
+  await makeTreeReadOnly(trustedRoot)
+  await chmod(trustedRoot, 0o500)
+  try {
+    return await bindToolTree(
+      trustedRoot,
+      wranglerBin,
+    )
+  } catch {
+    fail('PREFLIGHT_FAILED', 2)
+  }
+}
+
+async function runBoundWrangler(
+  binding,
+  args,
+  options,
+  failureCode,
+  exitCode = 1,
+) {
+  try {
+    return await runIntegrityBound(binding, async (wranglerBin) =>
+      await runProcess(process.execPath, [wranglerBin, ...args], options),
+    )
+  } catch (error) {
+    if (error instanceof ToolIntegrityError) fail(failureCode, exitCode)
+    throw error
+  }
+}
+
+async function resolveJavaBinding() {
+  const candidate =
+    process.env.SRT_EPUBCHECK_JAVA_BIN ??
+    (process.platform === 'win32' ? null : '/usr/bin/java')
+  if (!candidate || !path.isAbsolute(candidate)) fail('PREFLIGHT_FAILED', 2)
+  try {
+    return await bindExecutable(candidate)
+  } catch {
+    fail('PREFLIGHT_FAILED', 2)
+  }
 }
 
 async function snapshotDirectory(sourceRoot, snapshotRoot) {
@@ -489,7 +607,10 @@ async function snapshotDirectory(sourceRoot, snapshotRoot) {
   await visit(sourceRoot, snapshotRoot, '')
   if (index.length === 0) fail('BUILD_FAILED')
   index.sort((left, right) => left.path.localeCompare(right.path, 'en'))
-  return sha256(Buffer.from(JSON.stringify(index)))
+  return {
+    sha256: sha256(Buffer.from(JSON.stringify(index))),
+    paths: index.map(({ path: relativePath }) => `/${relativePath}`),
+  }
 }
 
 function existingCloudflareAuthEnvironment(apiToken, accountId) {
@@ -521,34 +642,43 @@ function existingCloudflareAuthEnvironment(apiToken, accountId) {
   }
 }
 
-async function readCredentials(wranglerBin) {
+function takeExplicitCloudflareCredentials() {
   const apiToken = process.env.CLOUDFLARE_API_TOKEN
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID
   delete process.env.CLOUDFLARE_API_TOKEN
   delete process.env.CLOUDFLARE_ACCOUNT_ID
+  return { apiToken, accountId }
+}
+
+async function readCredentials(wranglerBinding, explicitCredentials) {
+  const { apiToken, accountId } = explicitCredentials
   const environment = existingCloudflareAuthEnvironment(apiToken, accountId)
-  const authToken = await runProcess(
-    process.execPath,
-    [wranglerBin, 'auth', 'token', '--json'],
+  const authToken = await runBoundWrangler(
+    wranglerBinding,
+    ['auth', 'token', '--json'],
     {
       cwd: REPOSITORY_ROOT,
       env: environment,
       timeoutMs: 30_000,
       captureStdout: true,
     },
+    'PREFLIGHT_FAILED',
+    3,
   )
   if (!authToken.ok) {
     fail('PREFLIGHT_FAILED', 3)
   }
-  const whoami = await runProcess(
-    process.execPath,
-    [wranglerBin, 'whoami', '--json'],
+  const whoami = await runBoundWrangler(
+    wranglerBinding,
+    ['whoami', '--json'],
     {
       cwd: REPOSITORY_ROOT,
       env: environment,
       timeoutMs: 30_000,
       captureStdout: true,
     },
+    'PREFLIGHT_FAILED',
+    3,
   )
   if (!whoami.ok) fail('PREFLIGHT_FAILED', 3)
   try {
@@ -666,14 +796,35 @@ function exactCustomDomains(result, workerName) {
 }
 
 async function probeOwnedResources(client, paths, workerName) {
-  const [deployments, versions, customDomains] = await Promise.all([
+  const [
+    deployments,
+    versions,
+    settings,
+    subdomain,
+    routes,
+    bindings,
+    customDomains,
+  ] = await Promise.all([
     client(paths.deployments, { allowAbsent: true }),
     client(paths.versions, { allowAbsent: true }),
+    client(paths.settings, { allowAbsent: true }),
+    client(paths.subdomain, { allowAbsent: true }),
+    client(paths.routes, { allowAbsent: true }),
+    client(paths.bindings, { allowAbsent: true }),
     client(paths.customDomains),
   ])
+  const emptyCollection = (probe) =>
+    probe.absent ||
+    (Array.isArray(probe.result)
+      ? probe.result.length === 0
+      : isRecord(probe.result) && Object.keys(probe.result).length === 0)
   return {
     deployments,
     versions,
+    settingsAbsent: settings.absent,
+    subdomainAbsent: subdomain.absent,
+    routesAbsent: emptyCollection(routes),
+    bindingsAbsent: emptyCollection(bindings),
     customDomains: exactCustomDomains(customDomains.result, workerName),
   }
 }
@@ -686,6 +837,10 @@ async function preflightCloudflare(client, paths, workerName) {
   if (
     !probe.deployments.absent ||
     !probe.versions.absent ||
+    !probe.settingsAbsent ||
+    !probe.subdomainAbsent ||
+    !probe.routesAbsent ||
+    !probe.bindingsAbsent ||
     probe.customDomains.length !== 0 ||
     !isRecord(accountSubdomain.result) ||
     typeof accountSubdomain.result.subdomain !== 'string' ||
@@ -732,7 +887,7 @@ async function parseWranglerOutput(outputPath) {
 }
 
 async function deployWorker({
-  wranglerBin,
+  wranglerBinding,
   configPath,
   tempRoot,
   tempHome,
@@ -747,10 +902,9 @@ async function deployWorker({
   const outputPath = path.join(tempRoot, 'wrangler-deploy.jsonl')
   const tag = `issue171-${expectedHead.slice(0, 12)}-${nonce}`
   const message = `issue=171;head=${expectedHead};lock=${lockfileSha256};build=${buildSha256}`
-  const result = await runProcess(
-    process.execPath,
+  const result = await runBoundWrangler(
+    wranglerBinding,
     [
-      wranglerBin,
       'deploy',
       '--config',
       configPath,
@@ -773,6 +927,7 @@ async function deployWorker({
       timeoutMs: 5 * 60_000,
       captureStdout: false,
     },
+    'DEPLOY_FAILED',
   )
   const entries = await parseWranglerOutput(outputPath).catch((error) => {
     if (!result.ok) fail('DEPLOY_FAILED')
@@ -906,6 +1061,8 @@ function browserEnvironment(
   origin,
   receiptPath,
   proofContext,
+  javaBinding,
+  assetManifest,
 ) {
   const environment = basicEnvironment(tempHome)
   return {
@@ -921,12 +1078,18 @@ function browserEnvironment(
     SRT_WORKERS_DEV_BASE_URL: origin,
     SRT_BROWSER_RECEIPT_PATH: receiptPath,
     SRT_BROWSER_PROOF_CONTEXT: JSON.stringify(proofContext),
+    SRT_EPUBCHECK_JAVA_BIN: javaBinding.path,
+    SRT_EPUBCHECK_JAVA_SHA256: javaBinding.sha256,
+    SRT_BROWSER_ASSET_MANIFEST_PATH: assetManifest.path,
+    SRT_BROWSER_ASSET_MANIFEST_SHA256: assetManifest.sha256,
     AGENT_EVIDENCE_DIR: path.join(tempRoot, 'browser-evidence'),
   }
 }
 
 async function runBrowserValidation({
   playwrightBin,
+  javaBinding,
+  assetManifest,
   tempRoot,
   tempHome,
   deploy,
@@ -943,36 +1106,54 @@ async function runBrowserValidation({
     runNonce: nonce,
     origin: deploy.url,
   }
-  await runChecked(
-    process.execPath,
-    [
-      playwrightBin,
-      'test',
-      'tests/e2e/pdf-to-epub-fidelity.spec.ts',
-      '--config',
-      'playwright.config.ts',
-      '--workers=1',
-      '--retries=0',
-      '--forbid-only',
-      '--trace=off',
-      '--reporter=line',
-      `--output=${outputPath}`,
-      '--global-timeout=900000',
-    ],
-    {
-      cwd: REPOSITORY_ROOT,
-      env: browserEnvironment(
-        tempRoot,
-        tempHome,
-        deploy.url,
-        browserReceiptPath,
-        proofContext,
-      ),
-      timeoutMs: 16 * 60_000,
-      captureStdout: false,
-    },
-    'BROWSER_FAILED',
-  )
+  try {
+    await verifyExecutable(javaBinding)
+    const beforeAssets = await readPinnedExternalFile(
+      assetManifest.path,
+      MAX_CAPTURE_BYTES,
+    )
+    if (sha256(beforeAssets) !== assetManifest.sha256) fail('BROWSER_FAILED')
+    await runChecked(
+      process.execPath,
+      [
+        playwrightBin,
+        'test',
+        'tests/e2e/pdf-to-epub-fidelity.spec.ts',
+        '--config',
+        'playwright.config.ts',
+        '--workers=1',
+        '--retries=0',
+        '--forbid-only',
+        '--trace=off',
+        '--reporter=line',
+        `--output=${outputPath}`,
+        '--global-timeout=900000',
+      ],
+      {
+        cwd: REPOSITORY_ROOT,
+        env: browserEnvironment(
+          tempRoot,
+          tempHome,
+          deploy.url,
+          browserReceiptPath,
+          proofContext,
+          javaBinding,
+          assetManifest,
+        ),
+        timeoutMs: 16 * 60_000,
+        captureStdout: false,
+      },
+      'BROWSER_FAILED',
+    )
+    await verifyExecutable(javaBinding)
+    const afterAssets = await readPinnedExternalFile(
+      assetManifest.path,
+      MAX_CAPTURE_BYTES,
+    )
+    if (sha256(afterAssets) !== assetManifest.sha256) fail('BROWSER_FAILED')
+  } catch {
+    fail('BROWSER_FAILED')
+  }
   const receiptBytes = await readPinnedExternalFile(
     browserReceiptPath,
     MAX_CAPTURE_BYTES,
@@ -999,7 +1180,7 @@ async function readPinnedExternalFile(filePath, maximumBytes) {
 }
 
 async function deleteWorker({
-  wranglerBin,
+  wranglerBinding,
   configPath,
   tempRoot,
   tempHome,
@@ -1007,11 +1188,11 @@ async function deleteWorker({
   workerName,
 }) {
   const outputPath = path.join(tempRoot, 'wrangler-delete.jsonl')
+  let integrityFailed = false
   try {
-    await runProcess(
-      process.execPath,
+    await runBoundWrangler(
+      wranglerBinding,
       [
-        wranglerBin,
         'delete',
         workerName,
         '--config',
@@ -1029,15 +1210,19 @@ async function deleteWorker({
         captureStdout: false,
         allowInterrupted: true,
       },
+      'CLEANUP_FAILED',
     )
     const metadata = await lstat(outputPath).catch(() => null)
     if (metadata) {
       await parseWranglerOutput(outputPath)
     }
-  } catch {
+  } catch (error) {
+    integrityFailed =
+      error instanceof CliFailure && error.code === 'CLEANUP_FAILED'
     // Teardown success is determined only by the bounded remote postconditions
     // below. A partial deploy may leave no structured Wrangler record at all.
   }
+  return { integrityFailed }
 }
 
 async function verifyTeardown(client, paths, workerName, origin, nonce) {
@@ -1053,6 +1238,10 @@ async function verifyTeardown(client, paths, workerName, origin, nonce) {
       const absent =
         lastProbe.deployments.absent &&
         lastProbe.versions.absent &&
+        lastProbe.settingsAbsent &&
+        lastProbe.subdomainAbsent &&
+        lastProbe.routesAbsent &&
+        lastProbe.bindingsAbsent &&
         lastProbe.customDomains.length === 0 &&
         urlUnavailable
       consecutive = absent ? consecutive + 1 : 0
@@ -1062,6 +1251,10 @@ async function verifyTeardown(client, paths, workerName, origin, nonce) {
             deleteAttempted: true,
             deploymentsAbsent: true,
             versionsAbsent: true,
+            routesAbsent: true,
+            bindingsAbsent: true,
+            settingsAbsent: true,
+            subdomainAbsent: true,
             customDomains: [],
             remainingResources: [],
             urlUnavailable: true,
@@ -1083,7 +1276,7 @@ async function cleanupDeployment({
   expectedHead,
   nonce,
   origin,
-  wranglerBin,
+  wranglerBinding,
   configPath,
   tempRoot,
   tempHome,
@@ -1092,21 +1285,23 @@ async function cleanupDeployment({
   cleanupProgress,
 }) {
   cleanupProgress.deleteAttempted = true
-  await deleteWorker({
-    wranglerBin,
+  const deleted = await deleteWorker({
+    wranglerBinding,
     configPath,
     tempRoot,
     tempHome,
     credentials,
     workerName,
   })
-  return await verifyTeardown(
+  const teardown = await verifyTeardown(
     client,
     { ...paths, expectedHead },
     workerName,
     origin,
     nonce,
   )
+  if (deleted.integrityFailed) fail('CLEANUP_FAILED')
+  return teardown
 }
 
 async function writeSanitizedReceipt(receiptPath, receipt, credentials) {
@@ -1149,6 +1344,7 @@ async function main() {
     failures: [],
     fixture: { ...DISPOSABLE_PDF_FIXTURE_PIN },
   }
+  const explicitCloudflareCredentials = takeExplicitCloudflareCredentials()
   let credentials
   let tempRoot
   let stage = 'preflight'
@@ -1164,8 +1360,6 @@ async function main() {
     await requireExactCleanCheckout(parsed.expectedHead)
     const pins = await verifyRepositoryPins()
     state.lockfileSha256 = pins.lockfileSha256
-    tools = await verifyLocalTools()
-    credentials = await readCredentials(tools.wranglerBin)
 
     tempRoot = await mkdtemp(
       path.join(await safeTemporaryBase(), 'erniesg-issue171-'),
@@ -1173,6 +1367,16 @@ async function main() {
     await chmod(tempRoot, 0o700)
     const tempHome = path.join(tempRoot, 'home')
     await mkdir(tempHome, { mode: 0o700 })
+
+    tools = {
+      ...(await verifyLocalTools()),
+      wranglerBinding: await installTrustedWrangler(tempRoot, tempHome),
+      javaBinding: await resolveJavaBinding(),
+    }
+    credentials = await readCredentials(
+      tools.wranglerBinding,
+      explicitCloudflareCredentials,
+    )
 
     client = createCloudflareClient(credentials)
     paths = workerApiPaths(credentials.accountId, parsed.workerName)
@@ -1197,7 +1401,7 @@ async function main() {
       'BUILD_FAILED',
       2,
     )
-    tools = await verifyLocalTools()
+    tools = { ...tools, ...(await verifyLocalTools()) }
     await requireExactCleanCheckout(parsed.expectedHead)
     const afterInstallPins = await verifyRepositoryPins()
     if (afterInstallPins.lockfileSha256 !== state.lockfileSha256) {
@@ -1220,10 +1424,26 @@ async function main() {
       fail('BUILD_FAILED')
     }
     const assetsPath = path.join(tempRoot, 'assets')
-    state.buildSha256 = await snapshotDirectory(
+    const assetSnapshot = await snapshotDirectory(
       path.join(REPOSITORY_ROOT, 'dist'),
       assetsPath,
     )
+    state.buildSha256 = assetSnapshot.sha256
+    const browserAssetManifestBytes = Buffer.from(
+      `${JSON.stringify({ paths: assetSnapshot.paths })}\n`,
+    )
+    const browserAssetManifestPath = path.join(
+      tempRoot,
+      'browser-assets.json',
+    )
+    await writeFile(browserAssetManifestPath, browserAssetManifestBytes, {
+      flag: 'wx',
+      mode: 0o600,
+    })
+    tools.assetManifest = {
+      path: browserAssetManifestPath,
+      sha256: sha256(browserAssetManifestBytes),
+    }
     const configPath = path.join(tempRoot, 'wrangler.json')
     const config = {
       name: parsed.workerName,
@@ -1310,6 +1530,10 @@ async function main() {
           deleteAttempted: cleanupProgress.deleteAttempted,
           deploymentsAbsent: false,
           versionsAbsent: false,
+          routesAbsent: false,
+          bindingsAbsent: false,
+          settingsAbsent: false,
+          subdomainAbsent: false,
           customDomains: ['unverified'],
           remainingResources: [parsed.workerName],
           urlUnavailable: false,
@@ -1319,6 +1543,12 @@ async function main() {
       }
     }
     if (tempRoot) {
+      await makeTreeRemovable(
+        path.join(tempRoot, 'trusted-wrangler'),
+      ).catch(() => {
+        state.failures.push(stageFailure('cleanup'))
+        exitCode = 1
+      })
       await rm(tempRoot, { recursive: true, force: true }).catch(() => {
         state.failures.push(stageFailure('cleanup'))
         exitCode = 1

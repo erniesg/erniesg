@@ -6,6 +6,7 @@ import {
   mkdtemp,
   open,
   readFile,
+  readdir,
   realpath,
   rm,
   writeFile,
@@ -17,6 +18,10 @@ import { expect, test, type Page } from '@playwright/test'
 import * as epubcheck from 'epubcheck-static'
 import { strFromU8, unzipSync } from 'fflate'
 import { MAX_LOCAL_PDF_BYTES } from '../../src/research/import-types'
+import {
+  bindExecutable,
+  verifyExecutable,
+} from '../../tools/deployment/disposable-pdf-worker-runtime.mjs'
 import { installStaticRoutes } from './static-build'
 
 type FidelityContract = {
@@ -191,6 +196,21 @@ if (
   process.env.SRT_WORKERS_DEV_BASE_URL !== browserProofContext.origin
 ) {
   throw new Error('Browser proof origin does not match the configured Worker')
+}
+const epubcheckJavaBinding = (await bindExecutable(
+  process.env.SRT_EPUBCHECK_JAVA_BIN ??
+    (process.platform === 'win32' ? '' : '/usr/bin/java'),
+)) as Awaited<ReturnType<typeof bindExecutable>> & {
+  path: string
+  sha256: string
+}
+const expectedJavaSha256 = process.env.SRT_EPUBCHECK_JAVA_SHA256
+if (
+  (browserProofContext && !expectedJavaSha256) ||
+  (expectedJavaSha256 !== undefined &&
+    expectedJavaSha256 !== epubcheckJavaBinding.sha256)
+) {
+  throw new Error('EPUBCheck Java executable does not match its trusted binding')
 }
 const profileUi = {
   mobile: { label: 'Mobile', download: 'Download Mobile EPUB' },
@@ -394,6 +414,92 @@ function fullyDecoded(value: string) {
   return decoded
 }
 
+function validateFrozenPaths(value: unknown) {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.length > 25_000 ||
+    !value.every(
+      (candidate) =>
+        typeof candidate === 'string' &&
+        candidate.startsWith('/') &&
+        candidate.length <= 2_048 &&
+        new URL(candidate, expectedBrowserOrigin()).pathname === candidate &&
+        !candidate.includes('?') &&
+        !candidate.includes('#'),
+    )
+  ) {
+    throw new Error('Browser asset allowlist is malformed')
+  }
+  const sorted = [...new Set(value)].sort((left, right) =>
+    left.localeCompare(right, 'en'),
+  )
+  if (JSON.stringify(sorted) !== JSON.stringify(value)) {
+    throw new Error('Browser asset allowlist must be unique and sorted')
+  }
+  return new Set(sorted)
+}
+
+async function staticBuildPaths(rootArgument: string) {
+  const root = await realpath(path.resolve(rootArgument))
+  const paths: string[] = []
+  async function visit(directory: string, relativeDirectory: string) {
+    const entries = await readdir(directory, { withFileTypes: true })
+    entries.sort((left, right) => left.name.localeCompare(right.name, 'en'))
+    for (const entry of entries) {
+      const absolutePath = path.join(directory, entry.name)
+      const relativePath = relativeDirectory
+        ? path.posix.join(relativeDirectory, entry.name)
+        : entry.name
+      const metadata = await lstat(absolutePath)
+      if (metadata.isSymbolicLink()) {
+        throw new Error('Static browser asset allowlist contains a symlink')
+      }
+      if (metadata.isDirectory()) {
+        await visit(absolutePath, relativePath)
+      } else if (metadata.isFile()) {
+        paths.push(`/${relativePath}`)
+      } else {
+        throw new Error('Static browser asset allowlist contains a special file')
+      }
+      if (paths.length > 25_000) {
+        throw new Error('Static browser asset allowlist is unbounded')
+      }
+    }
+  }
+  await visit(root, '')
+  return validateFrozenPaths(paths.sort((left, right) => left.localeCompare(right, 'en')))
+}
+
+async function frozenBrowserAssetPaths() {
+  const manifestPath = process.env.SRT_BROWSER_ASSET_MANIFEST_PATH
+  const expectedSha256 = process.env.SRT_BROWSER_ASSET_MANIFEST_SHA256
+  if (browserProofContext) {
+    if (!manifestPath || !path.isAbsolute(manifestPath) || !expectedSha256) {
+      throw new Error('Workers browser proof requires a bound asset allowlist')
+    }
+    const metadata = await lstat(manifestPath)
+    if (
+      !metadata.isFile() ||
+      metadata.isSymbolicLink() ||
+      metadata.size > 2 * 1024 * 1024
+    ) {
+      throw new Error('Workers browser asset allowlist is not a bounded file')
+    }
+    const bytes = await readFile(manifestPath)
+    if (createHash('sha256').update(bytes).digest('hex') !== expectedSha256) {
+      throw new Error('Workers browser asset allowlist changed')
+    }
+    const parsed = JSON.parse(bytes.toString('utf8')) as { paths?: unknown }
+    return validateFrozenPaths(parsed.paths)
+  }
+  return process.env.SRT_STATIC_BUILD_DIR
+    ? await staticBuildPaths(process.env.SRT_STATIC_BUILD_DIR)
+    : null
+}
+
+const frozenAssetPaths = await frozenBrowserAssetPaths()
+
 function allowedRequestTarget(url: URL) {
   if (url.origin !== expectedBrowserOrigin()) return false
   // Vite serves source modules and opens an HMR socket in the local Playwright
@@ -401,25 +507,16 @@ function allowedRequestTarget(url: URL) {
   // allowlist below; local traffic is still rejected when it carries source
   // evidence, a request body, or a non-read method.
   if (isLocalDevBrowser()) return true
-  const pathAllowed =
+  const routeAllowed =
     url.pathname === '/' ||
     url.pathname === '/research/studio' ||
-    url.pathname === '/research/studio/' ||
-    url.pathname === '/apple-touch-icon.png' ||
-    url.pathname === '/favicon-16x16.png' ||
-    url.pathname === '/favicon-32x32.png' ||
-    url.pathname === '/favicon.ico' ||
-    url.pathname === '/favicon.svg' ||
-    url.pathname === '/safari-pinned-tab.svg' ||
-    url.pathname === '/site.webmanifest' ||
-    url.pathname.startsWith('/assets/ocr/') ||
-    url.pathname.startsWith('/fonts/') ||
-    url.pathname.startsWith('/_astro/') ||
-    url.pathname.startsWith('/static/')
-  if (!pathAllowed) return false
+    url.pathname === '/research/studio/'
+  const assetAllowed = frozenAssetPaths?.has(url.pathname) === true
+  if (!routeAllowed && !assetAllowed) return false
   if (!url.search) return true
   return (
     browserProofContext !== undefined &&
+    routeAllowed &&
     (url.pathname === '/research/studio' ||
       url.pathname === '/research/studio/') &&
     url.searchParams.size === 1 &&
@@ -508,11 +605,13 @@ async function requireEpubCheckPass(bytes: Uint8Array, profileId: string) {
   const epubPath = join(directory, `${profileId}.epub`)
   try {
     await writeFile(epubPath, bytes, { mode: 0o600 })
+    await verifyExecutable(epubcheckJavaBinding)
     await execFileAsync(
-      'java',
+      epubcheckJavaBinding.path,
       ['-jar', epubcheck.path, '--failonwarnings', epubPath],
       { timeout: 120_000 },
     )
+    await verifyExecutable(epubcheckJavaBinding)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
@@ -580,6 +679,24 @@ const emptyBrowserPersistence = {
   sourceBearingCookieCount: 0,
   sessionStorageLength: 0,
 }
+
+test('flags encoded source bytes disguised as a static asset request', async ({
+  page,
+}) => {
+  test.skip(isLocalDevBrowser(), 'Local Vite requests are intentionally dynamic')
+  await page.goto(studioPath())
+  await waitForImporter(page)
+  const violations = observeSourceBearingRequests(page)
+  const encoded = fixtureBytes.subarray(0, 18).toString('base64url')
+  await page.evaluate(async (pathname) => {
+    await fetch(pathname).catch(() => undefined)
+  }, `/_astro/source-${encoded}.js`)
+  await expect.poll(() => violations.length).toBe(1)
+  expect(violations[0]).toEqual({
+    method: 'GET',
+    origin: expectedBrowserOrigin(),
+  })
+})
 
 test('uploads once and previews the matching Mobile, Move, and Pro EPUB artifacts without overflow', async ({
   page,

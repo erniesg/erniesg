@@ -554,6 +554,10 @@ export function validateTeardownProof(proof, ownership) {
     proof.deleteAttempted !== true ||
     proof.deploymentsAbsent !== true ||
     proof.versionsAbsent !== true ||
+    proof.routesAbsent !== true ||
+    proof.bindingsAbsent !== true ||
+    proof.settingsAbsent !== true ||
+    proof.subdomainAbsent !== true ||
     !Array.isArray(proof.customDomains) ||
     proof.customDomains.length !== 0 ||
     !Array.isArray(proof.remainingResources) ||
@@ -567,6 +571,10 @@ export function validateTeardownProof(proof, ownership) {
     deleteAttempted: true,
     deploymentsAbsent: true,
     versionsAbsent: true,
+    routesAbsent: true,
+    bindingsAbsent: true,
+    settingsAbsent: true,
+    subdomainAbsent: true,
     customDomains: [],
     remainingResources: [],
     urlUnavailable: true,
@@ -617,6 +625,10 @@ export function createSanitizedReceipt(state) {
     delete_attempted: state.teardown?.deleteAttempted === true,
     deployments_absent: state.teardown?.deploymentsAbsent === true,
     versions_absent: state.teardown?.versionsAbsent === true,
+    routes_absent: state.teardown?.routesAbsent === true,
+    bindings_absent: state.teardown?.bindingsAbsent === true,
+    settings_absent: state.teardown?.settingsAbsent === true,
+    subdomain_absent: state.teardown?.subdomainAbsent === true,
     custom_domains: safePresenceArray(
       state.teardown?.customDomains,
       'present',
@@ -709,6 +721,10 @@ export function createSanitizedReceipt(state) {
     teardown.delete_attempted &&
     teardown.deployments_absent &&
     teardown.versions_absent &&
+    teardown.routes_absent &&
+    teardown.bindings_absent &&
+    teardown.settings_absent &&
+    teardown.subdomain_absent &&
     teardown.custom_domains.length === 0 &&
     teardown.remaining_resources.length === 0 &&
     teardown.url_unavailable

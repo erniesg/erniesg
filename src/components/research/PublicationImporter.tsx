@@ -38,6 +38,14 @@ import type {
 } from '../../research/import-types'
 import { DocxImportError, PdfImportError } from '../../research/import-types'
 import {
+  buildEpubInWorker,
+  reconstructPdfInWorker,
+} from '../../research/publication-worker-client'
+import {
+  createBrowserPdfRuntime,
+  warmBrowserPdfRuntime,
+} from '../../research/pdf-browser-runtime'
+import {
   buildPdfLineJoinReviewContext,
   type PdfLineJoinReviewContext,
 } from '../../research/pdf-lines'
@@ -192,6 +200,8 @@ function PdfPageRaster({ file, page }: { file: File; page: number }) {
     let active = true
     let loadingTask:
       ReturnType<(typeof import('pdfjs-dist'))['getDocument']> | undefined
+    let pdfRuntime:
+      Awaited<ReturnType<typeof createBrowserPdfRuntime>> | undefined
     let renderTask:
       { cancel: () => void; promise: Promise<unknown> } | undefined
     setStatus('loading')
@@ -199,17 +209,24 @@ function PdfPageRaster({ file, page }: { file: File; page: number }) {
       try {
         const bytes = new Uint8Array(await file.arrayBuffer())
         if (!active) return
-        const pdfjs = await import('pdfjs-dist')
-        const { default: pdfWorkerUrl } =
-          await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
-        pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
+        pdfRuntime = await createBrowserPdfRuntime()
+        if (!active) {
+          await pdfRuntime.destroy()
+          return
+        }
+        const { pdfjs, worker } = pdfRuntime
         loadingTask = pdfjs.getDocument({
           data: bytes,
           isEvalSupported: false,
           useSystemFonts: true,
+          worker,
         })
         const document = await loadingTask.promise
-        if (!active) return
+        if (!active) {
+          await document.destroy()
+          await pdfRuntime.destroy()
+          return
+        }
         const sourcePage = await document.getPage(page)
         if (!active || !canvas.current) return
         const viewport = sourcePage.getViewport({ scale: 1.8 })
@@ -235,6 +252,7 @@ function PdfPageRaster({ file, page }: { file: File; page: number }) {
       active = false
       renderTask?.cancel()
       void loadingTask?.destroy()
+      void pdfRuntime?.destroy()
     }
   }, [file, page])
 
@@ -992,7 +1010,6 @@ export default function PublicationImporter({
   const [isHydrated, setIsHydrated] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [paperUrl, setPaperUrl] = useState('')
-  const [ocrLanguage, setOcrLanguage] = useState<'auto' | 'eng'>('auto')
   const [selectedProfileId, setSelectedProfileId] =
     useState<PreviewProfileId>('mobile')
   const [selectedOrientation, setSelectedOrientation] =
@@ -1042,8 +1059,27 @@ export default function PublicationImporter({
   }
 
   useEffect(() => {
-    setIsHydrated(true)
+    let active = true
+    void Promise.all([
+      warmBrowserPdfRuntime(),
+      document.fonts.load('10px "Geist Mono"'),
+    ])
+      .then(() => {
+        if (active) setIsHydrated(true)
+      })
+      .catch((error: unknown) => {
+        if (!active) return
+        setState({
+          status: 'error',
+          code: 'PDF_RUNTIME_UNAVAILABLE',
+          message:
+            error instanceof Error
+              ? error.message
+              : 'The local PDF runtime could not be prepared.',
+        })
+      })
     return () => {
+      active = false
       activeImport.current?.abort()
       activeProfileBuilds.current.clear()
       activeProfileBuildIssues.current = {}
@@ -1151,11 +1187,8 @@ export default function PublicationImporter({
           await import('../../research/docx-import')
         ).reconstructDocx(file, onProgress, { signal: controller.signal })
       } else {
-        baseResult = await (
-          await import('../../research/publication-worker-client')
-        ).reconstructPdfInWorker(file, onProgress, {
+        baseResult = await reconstructPdfInWorker(file, onProgress, {
           signal: controller.signal,
-          ocrLanguage,
         })
         decisionFile =
           pendingDecisionFile ??
@@ -1376,9 +1409,7 @@ export default function PublicationImporter({
         const profile = resolveTargetProfile(profileId, orientation)
         const epub =
           result.readiness.ready || isPdfReconstruction(result)
-            ? await (
-                await import('../../research/publication-worker-client')
-              ).buildEpubInWorker(
+            ? await buildEpubInWorker(
                 result,
                 profile,
                 result.readiness.ready ? 'publication' : 'readable-fallback',
@@ -1611,21 +1642,11 @@ export default function PublicationImporter({
       {state.status === 'idle' && (
         <>
           <div className="publication-ocr-options">
-            <label htmlFor="publication-ocr-language">OCR language</label>
-            <select
-              id="publication-ocr-language"
-              disabled={!isHydrated}
-              value={ocrLanguage}
-              onChange={(event) =>
-                setOcrLanguage(event.target.value === 'eng' ? 'eng' : 'auto')
-              }
-            >
-              <option value="auto">Auto (English fallback)</option>
-              <option value="eng">English</option>
-            </select>
+            <strong>Scanned pages stay local</strong>
             <small>
-              OCR runs offline. Auto uses the bundled English fallback; other
-              languages require an integrity-pinned local language pack.
+              Pages without recoverable text are preserved as source-page images
+              in a review artifact. This private conversion does not start OCR
+              or fetch OCR assets after you choose a file.
             </small>
           </div>
           <div className="publication-intake">

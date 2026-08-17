@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import { XMLParser, XMLValidator } from 'fast-xml-parser'
+import { PDFDocument, rgb } from 'pdf-lib'
 import { describe, expect, it } from 'vitest'
 import { fixtureFile } from '../../tests/fixtures/pdf-fixtures'
 import rawPaper from './papers/semantic-responsive-typesetting.json'
@@ -37,12 +38,17 @@ import {
   pdfModelConsultationSemanticStateSha256,
   resolvePdfModelFallbacks,
 } from './model-fallback-pipeline'
-import { reconstructPdf } from './pdf'
+import {
+  attachRequiredSourcePageRenders,
+  reconstructPdf,
+  sourcePageRenderBudgetUsage,
+} from './pdf'
 import { reconstructPageAnalyses } from './pdf-layout'
 import { assessPdfCompleteness } from './pdf-quality'
 import { validatedPdfVisualRelationships } from './pdf-visual-validation'
 import { researchPaperSchema } from './schema'
 import { getTargetProfile, resolveTargetProfile } from './targets'
+import { MAX_EPUB_ASSETS_PER_BOOK } from './publication-resource-limits'
 import { createSourcePageCropAsset } from './visual-assets'
 
 const paper = researchPaperSchema.parse(rawPaper)
@@ -5803,6 +5809,349 @@ describe('EPUB 3 export', () => {
     ).rejects.toMatchObject({
       code: 'INCOMPLETE_RECONSTRUCTION',
     })
+  })
+
+  it('builds a bounded source-preserved page fallback when a scan has no recovered text', async () => {
+    const reconstruction = await reconstructPdf(
+      await fixtureFile('scanned-page.pdf'),
+    )
+
+    expect(reconstruction.completeness.ocrRequiredPages).toEqual([1])
+    const fallback = await buildReadableEpub(
+      reconstruction.paper,
+      reconstruction,
+    )
+    const { files, manifest } = inspectEpub(fallback.bytes)
+    const content = strFromU8(files['EPUB/content.xhtml'])
+
+    expect(fallback.mode).toBe('readable-fallback')
+    expect(content).toContain('Source page 1')
+    expect(content).toContain('text recovery required')
+    expect(content).toContain('<img')
+    expect(manifest).toMatchObject({
+      publicationGrade: false,
+      sourceCompleteness: { ocrRequiredPages: [1] },
+      excludedUnresolvedVisualRelationshipCount: 0,
+    })
+    expect(manifest.assets).toHaveLength(1)
+    const sourceAsset = reconstruction.pages[0]!.assets!.find(
+      (asset) => asset.rendition === 'source-page-render',
+    )!
+    expect(manifest.assets[0]).toMatchObject({ sourceAssetId: sourceAsset.id })
+    expect(files[`EPUB/${sourceAsset.href}`]).toBeInstanceOf(Uint8Array)
+  })
+
+  it.each([
+    {
+      name: 'an oversized unselected ordinary top-level asset',
+      ordinaryAssets: (source: PublicationAsset) => [
+        {
+          ...source,
+          id: 'ordinary-oversized-top-level',
+          bytes: {
+            byteLength: MAX_EPUB_ASSET_BYTES_PER_BOOK + 1,
+          } as unknown as Uint8Array,
+        },
+      ],
+    },
+    {
+      name: '512 unselected ordinary top-level assets',
+      ordinaryAssets: (source: PublicationAsset) =>
+        Array.from({ length: MAX_EPUB_ASSETS_PER_BOOK }, (_, index) => ({
+          ...source,
+          id: `ordinary-top-level-${index + 1}`,
+        })),
+    },
+  ])(
+    'keeps an unresolved page render bounded when reconstruction also has $name',
+    async ({ ordinaryAssets }) => {
+      const reconstruction = await reconstructPdf(
+        await fixtureFile('scanned-page.pdf'),
+      )
+      const sourceRender = reconstruction.pages[0]!.assets!.find(
+        (asset) => asset.rendition === 'source-page-render',
+      )!
+      const sourceObject = reconstruction.pages[0]!.objects!.find(
+        (object) => object.rolePolicy === 'pdfjs-complete-page-render-v1',
+      )!
+      const ordinarySource = reconstruction.pages[0]!.assets!.find(
+        (asset) => asset.rendition === 'source-preserved',
+      )!
+      reconstruction.pages[0]!.assets = reconstruction.pages[0]!.assets!.filter(
+        (asset) => asset.id !== sourceRender.id,
+      )
+      reconstruction.pages[0]!.objects =
+        reconstruction.pages[0]!.objects!.filter(
+          (object) => object.id !== sourceObject.id,
+        )
+      reconstruction.assets = ordinaryAssets(ordinarySource)
+
+      expect(reconstruction.completeness.ocrRequiredPages).toEqual([1])
+      expect(
+        reconstruction.pages[0]!.assets!.some(
+          (asset) => asset.rendition === 'source-page-render',
+        ),
+      ).toBe(false)
+      await attachRequiredSourcePageRenders(
+        reconstruction,
+        async (target, maximumBytes) => {
+          expect(maximumBytes).toBeGreaterThanOrEqual(
+            sourceRender.bytes.byteLength,
+          )
+          target.assets = [...(target.assets ?? []), sourceRender]
+          target.objects = [...(target.objects ?? []), sourceObject]
+          return sourceRender.bytes.byteLength
+        },
+      )
+      expect(
+        reconstruction.pages[0]!.assets!.some(
+          (asset) => asset.id === sourceRender.id,
+        ),
+      ).toBe(true)
+      expect(
+        sourcePageRenderBudgetUsage(
+          reconstruction.assets,
+          reconstruction.pages,
+        ),
+      ).toEqual({
+        count: 1,
+        byteLength: sourceRender.bytes.byteLength,
+      })
+
+      const projected = projectReadableFallbackReconstruction(reconstruction)
+      expect(projected.assets).toEqual([sourceRender])
+      expect(projected.assets.length).toBeLessThanOrEqual(
+        MAX_EPUB_ASSETS_PER_BOOK,
+      )
+      expect(
+        projected.assets.reduce(
+          (total, asset) => total + asset.bytes.byteLength,
+          0,
+        ),
+      ).toBeLessThanOrEqual(MAX_EPUB_ASSET_BYTES_PER_BOOK)
+    },
+    120_000,
+  )
+
+  it.each([
+    'scanned-page.pdf',
+    'rotated-scan.pdf',
+    'two-page-scan.pdf',
+    'two-physical-page-scan.pdf',
+    'tiled-multi-image-scan.pdf',
+    'multilingual-scan.pdf',
+  ])(
+    'uses complete rendered source pages with closed fallback lineage for %s',
+    async (name) => {
+      const reconstruction = await reconstructPdf(await fixtureFile(name))
+      const projected = projectReadableFallbackReconstruction(reconstruction)
+
+      expect(projected.assets).toHaveLength(reconstruction.pages.length)
+      for (const page of reconstruction.pages) {
+        const surface = page.objects?.find(
+          (object) =>
+            object.role === 'scan-source' &&
+            object.rolePolicy === 'pdfjs-complete-page-render-v1' &&
+            object.box.x === 0 &&
+            object.box.y === 0 &&
+            object.box.width === 1 &&
+            object.box.height === 1,
+        )
+        expect(surface).toBeDefined()
+        const sourceAsset = page.assets?.find(
+          (asset) => asset.id === surface?.assetId,
+        )
+        expect(sourceAsset).toMatchObject({
+          rendition: 'source-page-render',
+          mediaType: 'image/png',
+          sourceObjectIds: [surface!.id],
+          sourceBoxes: [surface!.box],
+        })
+        expect(sourceAsset!.width / sourceAsset!.height).toBeCloseTo(
+          page.width / page.height,
+          2,
+        )
+        expect(sourceAsset!.sourceBoxes[0]!.rotation).toBe(page.rotation)
+        expect(
+          projected.assets.some((asset) => asset.id === sourceAsset!.id),
+        ).toBe(true)
+      }
+      for (const relationship of projected.visualRelationships) {
+        expect(
+          projected.regions.some(
+            (region) => region.id === relationship.captionRegionId,
+          ),
+        ).toBe(true)
+        expect(projected.provenance[relationship.captionNodeId!]).toMatchObject(
+          {
+            confidence: 0,
+            regionIds: [relationship.captionRegionId],
+          },
+        )
+      }
+    },
+    120_000,
+  )
+
+  it.each(['mixed-page.pdf', 'sparse-embedded-text.pdf'])(
+    'preserves readable text and appends a complete-page figure for unresolved %s',
+    async (name) => {
+      const reconstruction = await reconstructPdf(await fixtureFile(name))
+      const readableNodeIds = reconstruction.paper.nodes
+        .filter((node) => 'text' in node && node.text.trim())
+        .map((node) => node.id)
+      const projected = projectReadableFallbackReconstruction(reconstruction)
+
+      expect(reconstruction.completeness.ocrRequiredPages).toEqual([1])
+      expect(readableNodeIds.length).toBeGreaterThan(0)
+      expect(projected.paper.nodes.map((node) => node.id)).toEqual(
+        expect.arrayContaining(readableNodeIds),
+      )
+      expect(
+        projected.paper.nodes.filter(
+          (node) =>
+            node.type === 'figure' && node.id === 'source-scan-page-001',
+        ),
+      ).toHaveLength(1)
+      expect(
+        projected.assets.filter(
+          (asset) => asset.rendition === 'source-page-render',
+        ),
+      ).toHaveLength(1)
+      const fallback = await buildReadableEpub(
+        reconstruction.paper,
+        reconstruction,
+      )
+      const { files } = inspectEpub(fallback.bytes)
+      const content = strFromU8(files['EPUB/content.xhtml'])
+      expect(content).toContain('Source page 1')
+      expect(content).toContain('<img')
+    },
+    120_000,
+  )
+
+  it('keeps a resolved digital page readable and renders only the unresolved physical page', async () => {
+    const reconstruction = await reconstructPdf(
+      await fixtureFile('mixed-digital-scan.pdf'),
+    )
+    const projected = projectReadableFallbackReconstruction(reconstruction)
+
+    expect(reconstruction.completeness.ocrRequiredPages).toEqual([2])
+    expect(
+      reconstruction.pages[0]!.assets?.some(
+        (asset) => asset.rendition === 'source-page-render',
+      ) ?? false,
+    ).toBe(false)
+    expect(
+      reconstruction.pages[1]!.assets?.some(
+        (asset) => asset.rendition === 'source-page-render',
+      ),
+    ).toBe(true)
+    expect(
+      projected.paper.nodes.some(
+        (node) =>
+          'text' in node && node.text.includes('Readable digital introduction'),
+      ),
+    ).toBe(true)
+    expect(
+      projected.paper.nodes
+        .filter(
+          (node) =>
+            node.type === 'figure' && node.id.startsWith('source-scan-page-'),
+        )
+        .map((node) => node.id),
+    ).toEqual(['source-scan-page-002'])
+  }, 120_000)
+
+  it('places a scan-first fallback before readable nodes from later physical pages', async () => {
+    const reconstruction = await reconstructPdf(
+      await fixtureFile('scan-digital-hybrid.pdf'),
+    )
+    const projected = projectReadableFallbackReconstruction(reconstruction)
+    const nodeIds = projected.paper.nodes.map((node) => node.id)
+    const fallbackIndex = nodeIds.indexOf('source-scan-page-001')
+    const laterTextIndex = projected.paper.nodes.findIndex(
+      (node) =>
+        'text' in node && node.text.includes('Readable digital conclusion'),
+    )
+
+    expect(reconstruction.completeness.ocrRequiredPages).toEqual([1])
+    expect(fallbackIndex).toBeGreaterThanOrEqual(0)
+    expect(laterTextIndex).toBeGreaterThan(fallbackIndex)
+  }, 120_000)
+
+  it('uses a complete page render instead of a large embedded image when the page adds an overlay', async () => {
+    const source = await fixtureFile('scanned-page.pdf')
+    const sourceDocument = await PDFDocument.load(await source.arrayBuffer())
+    const overlaidDocument = await PDFDocument.create()
+    const [page] = await overlaidDocument.copyPages(sourceDocument, [0])
+    overlaidDocument.addPage(page)
+    page.drawRectangle({
+      x: 12,
+      y: 12,
+      width: 72,
+      height: 36,
+      borderColor: rgb(0.8, 0.1, 0.1),
+      borderWidth: 5,
+    })
+    const bytes = await overlaidDocument.save({ useObjectStreams: false })
+    const reconstruction = await reconstructPdf(
+      new File([bytes], 'unseen-overlay-scan.pdf', {
+        type: 'application/pdf',
+        lastModified: 0,
+      }),
+    )
+    const projected = projectReadableFallbackReconstruction(reconstruction)
+    const nativeAssets = reconstruction.pages[0]!.assets!.filter(
+      (asset) => asset.rendition === 'source-preserved',
+    )
+
+    expect(nativeAssets.length).toBeGreaterThan(0)
+    expect(projected.assets).toHaveLength(1)
+    expect(projected.assets[0]).toMatchObject({
+      rendition: 'source-page-render',
+    })
+    expect(
+      nativeAssets.some(
+        (asset) => asset.sha256 === projected.assets[0]!.sha256,
+      ),
+    ).toBe(false)
+  })
+
+  it.each([
+    {
+      name: 'a derived rendition',
+      mutate: (reconstruction: PdfReconstruction) => {
+        reconstruction.pages[0]!.assets!.find(
+          (asset) => asset.rendition === 'source-page-render',
+        )!.rendition = 'profile-downscaled'
+      },
+    },
+    {
+      name: 'content that no longer matches its digest',
+      mutate: (reconstruction: PdfReconstruction) => {
+        reconstruction.pages[0]!.assets!.find(
+          (asset) => asset.rendition === 'source-page-render',
+        )!.bytes[0] ^= 0xff
+      },
+    },
+    {
+      name: 'an href that no longer matches its digest',
+      mutate: (reconstruction: PdfReconstruction) => {
+        reconstruction.pages[0]!.assets!.find(
+          (asset) => asset.rendition === 'source-page-render',
+        )!.href = 'assets/forged-source-page.png'
+      },
+    },
+  ])('refuses a scan fallback backed by $name', async ({ mutate }) => {
+    const reconstruction = await reconstructPdf(
+      await fixtureFile('scanned-page.pdf'),
+    )
+    mutate(reconstruction)
+
+    await expect(
+      buildReadableEpub(reconstruction.paper, reconstruction),
+    ).rejects.toMatchObject({ code: 'INCOMPLETE_RECONSTRUCTION' })
   })
 
   it('keeps a complete bounded source-backed table image in readable fallback', async () => {

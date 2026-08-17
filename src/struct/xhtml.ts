@@ -414,7 +414,7 @@ function renderBlock(document: StructDocument, block: StructBlock) {
           `<a href="#${attribute(stableId(relationship.id))}" class="note-backlink" aria-label="Back to note reference">↩</a>`,
       )
       .join(' ')
-    return `<aside id="${id}" data-struct-id="${id}" epub:type="${block.kind}" role="doc-${block.kind}"><p>${content}${backlinks ? ` ${backlinks}` : ''}</p></aside>`
+    return `<aside id="${id}" data-struct-id="${id}" epub:type="${block.kind}" role="doc-footnote" data-note-kind="${block.kind}"><p>${content}${backlinks ? ` ${backlinks}` : ''}</p></aside>`
   }
   if (block.kind === 'code') {
     return `<pre id="${id}" data-struct-id="${id}"><code>${content}</code></pre>`

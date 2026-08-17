@@ -67,7 +67,13 @@ one wide physical PDF page with two logical page regions and a central gutter;
 `rotated-scan.pdf` preserves a 90-degree source rotation; and
 `multilingual-scan.pdf` carries repository-drawn bitmap glyphs for 本地研究 so
 language-pack and Unicode behavior can be tested without copying a third-party
-document or font.
+document or font. `two-physical-page-scan.pdf` proves that separate physical
+PDF pages each retain their own complete render. `tiled-multi-image-scan.pdf`
+proves that four partial source images are not mistaken for a whole page.
+`mixed-digital-scan.pdf` proves that readable text on a resolved physical page
+is preserved while only the unresolved physical page receives a source-page
+fallback figure. `scan-digital-hybrid.pdf` reverses that order and proves the
+source-page figure remains before later readable nodes.
 
 `diagnostic-overlays.pdf` deliberately retains two plausible column orders and
 two equally scored note bodies, with a running head and page number at the

@@ -434,7 +434,7 @@ function PaperNode({
       <aside
         {...data}
         id={node.id}
-        role={node.kind === 'footnote' ? 'doc-footnote' : 'doc-endnote'}
+        role="doc-footnote"
         data-note-kind={node.kind}
         data-variant={composition.chosenVariant}
       >

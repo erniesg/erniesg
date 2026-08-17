@@ -8,7 +8,6 @@ import {
   type PdfReconstruction,
 } from './import-types'
 import { reconstructPdf } from './pdf'
-import { createBrowserOcrSession } from './pdf-ocr-browser'
 import {
   PUBLICATION_WORKER_HEARTBEAT_INTERVAL_MS,
   transferableEpubBuffers,
@@ -77,14 +76,7 @@ async function handleRequest(request: PublicationWorkerRequest) {
         type: request.file.type || 'application/pdf',
         lastModified: request.file.lastModified,
       })
-      const result = await reconstructPdf(file, reportProgress, {
-        ocr: {
-          languages: ['eng'],
-          languageMode:
-            request.ocrLanguage === 'auto' ? 'automatic-fallback' : 'explicit',
-          createSession: createBrowserOcrSession,
-        },
-      })
+      const result = await reconstructPdf(file, reportProgress)
       post(
         { type: 'pdf-result', jobId: request.jobId, result },
         transferableReconstructionBuffers(result),

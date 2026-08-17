@@ -744,10 +744,8 @@ function relationshipIntegrityFailure(
     const targetRole = htmlAttribute(target.attributes, 'role')
     if (
       target.tag !== 'aside' ||
-      !hasToken(targetType, 'footnote') ||
-      !['doc-footnote', 'doc-endnote'].some((role) =>
-        hasToken(targetRole, role),
-      )
+      !['footnote', 'endnote'].some((type) => hasToken(targetType, type)) ||
+      !hasToken(targetRole, 'doc-footnote')
     ) {
       return `Marker ${expected.markerText} does not target a semantic note body.`
     }

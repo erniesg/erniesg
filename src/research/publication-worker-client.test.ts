@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
+import { oversizedPdfFixture } from '../../tests/fixtures/pdf-fixtures'
 import type { PublicationWorkerResponse } from './publication-worker-protocol'
 import {
   buildEpubInWorker,
+  createOwnedInlineWorker,
   reconstructPdfInWorker,
 } from './publication-worker-client'
 
@@ -65,6 +67,84 @@ const inputFile = () =>
   })
 
 describe('publication worker client', () => {
+  it('revokes inline worker URLs after termination and failed construction', () => {
+    const originalCreateObjectUrl = URL.createObjectURL
+    const originalRevokeObjectUrl = URL.revokeObjectURL
+    const created = vi.fn(() => 'blob:owned-publication-worker')
+    const revoked = vi.fn()
+    URL.createObjectURL = created
+    URL.revokeObjectURL = revoked
+    try {
+      const worker = new SilentWorker()
+      const ownedWorker = createOwnedInlineWorker(() => {
+        URL.createObjectURL(new Blob())
+        return worker as never
+      })
+      expect(URL.createObjectURL).toBe(created)
+      expect(revoked).not.toHaveBeenCalled()
+
+      ownedWorker.terminate()
+      expect(worker.terminated).toBe(true)
+      expect(revoked).toHaveBeenCalledWith('blob:owned-publication-worker')
+
+      const constructionError = new Error('worker construction failed')
+      expect(() =>
+        createOwnedInlineWorker(() => {
+          URL.createObjectURL(new Blob())
+          throw constructionError
+        }),
+      ).toThrow(constructionError)
+      expect(revoked).toHaveBeenCalledTimes(2)
+      expect(URL.createObjectURL).toBe(created)
+    } finally {
+      URL.createObjectURL = originalCreateObjectUrl
+      URL.revokeObjectURL = originalRevokeObjectUrl
+    }
+  })
+
+  it('rejects an oversized browser upload before reading or starting a worker', async () => {
+    let read = false
+    const createWorker = vi.fn()
+
+    await expect(
+      reconstructPdfInWorker(
+        oversizedPdfFixture(() => {
+          read = true
+        }),
+        undefined,
+        { createWorker },
+      ),
+    ).rejects.toMatchObject({ code: 'OVERSIZED_PDF' })
+
+    expect(read).toBe(false)
+    expect(createWorker).not.toHaveBeenCalled()
+  })
+
+  it('honors cancellation before reading or starting a worker', async () => {
+    let read = false
+    const createWorker = vi.fn()
+    const controller = new AbortController()
+    controller.abort()
+    const file = {
+      ...inputFile(),
+      size: 4,
+      async arrayBuffer() {
+        read = true
+        return new ArrayBuffer(0)
+      },
+    } as File
+
+    await expect(
+      reconstructPdfInWorker(file, undefined, {
+        signal: controller.signal,
+        createWorker,
+      }),
+    ).rejects.toMatchObject({ code: 'IMPORT_CANCELLED' })
+
+    expect(read).toBe(false)
+    expect(createWorker).not.toHaveBeenCalled()
+  })
+
   it('terminates the worker immediately when cancellation is requested', async () => {
     const worker = new SilentWorker()
     const controller = new AbortController()
@@ -187,6 +267,7 @@ describe('publication worker client', () => {
     expect(completed).toEqual({ ...result, preview })
     expect(completed.bytes).toBe(result.bytes)
     expect(completed.sha256).toBe(result.sha256)
+    expect(worker.posted[0].transfer).toEqual([])
     expect(worker.terminated).toBe(true)
   })
 

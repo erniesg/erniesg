@@ -4,6 +4,7 @@ import {
   type PreviewableEpubExport,
 } from './epub-preview'
 import {
+  MAX_LOCAL_PDF_BYTES,
   type DocumentImportProgress,
   type DocumentReconstruction,
   PdfImportError,
@@ -15,6 +16,7 @@ import {
   type PublicationWorkerResponse,
 } from './publication-worker-protocol'
 import type { TargetProfile } from './targets'
+import PublicationWorker from './publication.worker?worker&inline'
 
 type WorkerLike = Pick<
   Worker,
@@ -23,11 +25,35 @@ type WorkerLike = Pick<
 
 type WorkerFactory = () => WorkerLike
 
+export function createOwnedInlineWorker(
+  createWorker: () => WorkerLike = () => new PublicationWorker(),
+) {
+  const ownedUrls: string[] = []
+  const createObjectUrl = URL.createObjectURL
+  URL.createObjectURL = function (object: Blob | MediaSource) {
+    const url = createObjectUrl.call(URL, object)
+    ownedUrls.push(url)
+    return url
+  }
+  let worker: WorkerLike
+  try {
+    worker = createWorker()
+  } catch (error) {
+    for (const url of ownedUrls.splice(0)) URL.revokeObjectURL(url)
+    throw error
+  } finally {
+    URL.createObjectURL = createObjectUrl
+  }
+  const terminate = worker.terminate.bind(worker)
+  worker.terminate = () => {
+    terminate()
+    for (const url of ownedUrls.splice(0)) URL.revokeObjectURL(url)
+  }
+  return worker
+}
+
 function defaultWorkerFactory() {
-  return new Worker(new URL('./publication.worker.ts', import.meta.url), {
-    type: 'module',
-    name: 'pdf-epub-publication-worker',
-  })
+  return createOwnedInlineWorker()
 }
 
 function jobId(prefix: string) {
@@ -176,11 +202,22 @@ export async function reconstructPdfInWorker(
   onProgress?: (progress: DocumentImportProgress) => void,
   options: {
     signal?: AbortSignal
-    ocrLanguage?: 'auto' | 'eng'
     watchdogMs?: number
     createWorker?: WorkerFactory
   } = {},
 ) {
+  if (options.signal?.aborted) {
+    throw new PdfImportError(
+      'IMPORT_CANCELLED',
+      'The background conversion was cancelled before reading document bytes.',
+    )
+  }
+  if (file.size > MAX_LOCAL_PDF_BYTES) {
+    throw new PdfImportError(
+      'OVERSIZED_PDF',
+      `PDF resource limit exceeded: received ${file.size} bytes; the bounded local limit is ${MAX_LOCAL_PDF_BYTES} bytes. No document bytes were read.`,
+    )
+  }
   const bytes = await file.arrayBuffer()
   return runWorkerJob<PdfReconstruction>({
     request: {
@@ -192,7 +229,6 @@ export async function reconstructPdfInWorker(
         lastModified: file.lastModified,
         bytes,
       },
-      ocrLanguage: options.ocrLanguage ?? 'auto',
     },
     expectedResult: 'pdf-result',
     transfer: [bytes],
@@ -223,6 +259,10 @@ export function buildEpubInWorker(
       mode,
     },
     expectedResult: 'epub-result',
+    // Keep the bounded reconstruction owned by the UI so it can build another
+    // profile or return to review after this worker exits. This intentionally
+    // uses a structured clone rather than detaching it; complete-page render
+    // contribution is separately capped at 512 assets / 128 MiB.
     transfer: [],
     signal: options.signal,
     onProgress: options.onProgress,

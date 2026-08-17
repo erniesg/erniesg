@@ -225,14 +225,13 @@ describe('publication importer OCR controls', () => {
     ).toBe(true)
   })
 
-  it('offers automatic English fallback and explicit local language selection', () => {
+  it('explains the private source-page fallback for scans', () => {
     const markup = renderToStaticMarkup(<PublicationImporter />)
 
-    expect(markup).toContain('for="publication-ocr-language"')
-    expect(markup).toContain('id="publication-ocr-language"')
-    expect(markup).toContain('value="auto" selected=""')
-    expect(markup).toContain('English fallback')
-    expect(markup).toContain('local language pack')
+    expect(markup).toContain('Scanned pages stay local')
+    expect(markup).toContain('preserved as source-page images')
+    expect(markup).toContain('does not start OCR')
+    expect(markup).not.toContain('publication-ocr-language')
   })
 
   it('states the actual 50 MiB local upload limit', () => {

@@ -75,7 +75,8 @@
     {
       "file": "pdf-to-epub-fidelity.pdf",
       "contract": "pdf-to-epub-fidelity.contract.json",
-      "contractSha256": "7578b22d89f05d98b915639a85938df56cf696dd1dd9d82ea62c54ec9de1e294",
+      "contractSha256": "db531134a4274520c1dfdc694de2e1b1fd2c51876392871494260c680c275953",
+      "byteLength": 16759,
       "sha256": "17921375594e87b1377e86d304f9f151c393255eb94b8e0f523179f6b9e07cea",
       "features": [
         "explicit-en-US-document-language",
@@ -147,6 +148,30 @@
     {
       "file": "scanned-page.pdf",
       "features": ["scanned-page"]
+    },
+    {
+      "file": "two-physical-page-scan.pdf",
+      "features": ["scanned-page", "two-physical-pages"]
+    },
+    {
+      "file": "tiled-multi-image-scan.pdf",
+      "features": [
+        "scanned-page",
+        "tiled-source-images",
+        "no-whole-page-native-image"
+      ]
+    },
+    {
+      "file": "mixed-digital-scan.pdf",
+      "features": ["born-digital-page", "scanned-page", "mixed-physical-pages"]
+    },
+    {
+      "file": "scan-digital-hybrid.pdf",
+      "features": [
+        "scanned-page",
+        "born-digital-page",
+        "scan-first-source-order"
+      ]
     },
     {
       "file": "mixed-page.pdf",

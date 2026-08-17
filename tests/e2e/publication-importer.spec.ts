@@ -154,17 +154,20 @@ async function installPublicationWorkerFault(
   }, fault)
 }
 
-test('offers an explicit offline OCR language choice', async ({ page }) => {
+test('explains the private source-page fallback for scans', async ({
+  page,
+}) => {
   await page.goto('/research/studio')
   await waitForImporter(page)
 
-  await expect(page.getByLabel('OCR language')).toHaveValue('auto')
+  await expect(page.getByText('Scanned pages stay local')).toBeVisible()
   await expect(
-    page.getByText(
-      /OCR runs offline\. Auto uses the bundled English fallback/i,
-    ),
+    page.getByText(/preserved as source-page images in a review artifact/i),
   ).toBeVisible()
-  await expect(page.getByText(/local language pack/i)).toBeVisible()
+  await expect(
+    page.getByText(/does not start OCR or fetch OCR assets/i),
+  ).toBeVisible()
+  await expect(page.getByLabel('OCR language')).toHaveCount(0)
   await expect(async () => {
     const dropzone = page.locator('.publication-dropzone')
     await dropzone.dispatchEvent('dragenter')
@@ -495,7 +498,10 @@ test('imports a born-structured DOCX and downloads its EPUB', async ({
     )
     .not.toBe('none')
   await expect(frame.locator('aside[role="doc-footnote"]')).toBeVisible()
-  await expect(frame.locator('aside[role="doc-endnote"]')).toBeVisible()
+  await expect(
+    frame.locator('aside[role="doc-footnote"][data-note-kind="endnote"]'),
+  ).toBeVisible()
+  await expect(frame.locator('aside[role="doc-endnote"]')).toHaveCount(0)
   const backlink = frame.locator('.note-backlink').first()
   await expect(backlink).toBeVisible()
   const backlinkHref = await backlink.getAttribute('href')

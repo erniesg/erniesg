@@ -3,6 +3,7 @@ import type {
   PdfImportProgress,
   PdfNativeObject,
   PdfPageAnalysis,
+  PdfReconstruction,
   PdfSourceRun,
   PdfTextOperationFilterRequest,
 } from './import-types'
@@ -18,6 +19,7 @@ import {
 } from './pdf-ocr'
 import {
   createPngAsset,
+  createSourcePageRenderAsset,
   createSourcePageCropAsset,
   createVectorSvgAsset,
 } from './visual-assets'
@@ -43,6 +45,14 @@ import {
   resolvePdfNamedDestinationEvidence,
 } from './pdf-links'
 import type { TableCandidateProvider } from './table-candidate-provider'
+import {
+  MAX_EPUB_ASSET_BYTES_PER_BOOK,
+  MAX_EPUB_ASSETS_PER_BOOK,
+} from './publication-resource-limits'
+import {
+  createBrowserPdfRuntime,
+  warmBrowserPdfRuntime,
+} from './pdf-browser-runtime'
 
 export { extractPdfLinkAnnotations } from './pdf-links'
 
@@ -61,6 +71,91 @@ export const MAX_OCR_RASTER_PIXELS = 3_200_000
 const COMPOSITE_RASTER_TIMEOUT_MS = 15_000
 const BROWSER_WORKER_COOPERATIVE_DELAY_MS = 4
 
+export function advanceSourcePageRenderBudget(
+  count: number,
+  byteLength: number,
+  candidateByteLength: number,
+) {
+  if (
+    !Number.isInteger(count) ||
+    count < 0 ||
+    !Number.isInteger(byteLength) ||
+    byteLength < 0 ||
+    !Number.isInteger(candidateByteLength) ||
+    candidateByteLength < 1 ||
+    count + 1 > MAX_EPUB_ASSETS_PER_BOOK ||
+    byteLength + candidateByteLength > MAX_EPUB_ASSET_BYTES_PER_BOOK
+  ) {
+    return null
+  }
+  return {
+    count: count + 1,
+    byteLength: byteLength + candidateByteLength,
+  }
+}
+
+export function sourcePageRenderBudgetUsage(
+  assets: NonNullable<PdfPageAnalysis['assets']>,
+  pages: Array<Pick<PdfPageAnalysis, 'assets'>>,
+) {
+  const retained = new Map(
+    [
+      ...assets.filter((asset) => asset.rendition === 'source-page-render'),
+      ...pages.flatMap((page) =>
+        (page.assets ?? []).filter(
+          (asset) => asset.rendition === 'source-page-render',
+        ),
+      ),
+    ].map((asset) => [asset.id, asset]),
+  )
+  return {
+    count: retained.size,
+    byteLength: [...retained.values()].reduce(
+      (total, asset) => total + asset.bytes.byteLength,
+      0,
+    ),
+  }
+}
+
+export async function attachRequiredSourcePageRenders(
+  reconstruction: Pick<PdfReconstruction, 'assets' | 'pages' | 'completeness'>,
+  attach: (target: PdfPageAnalysis, maximumBytes: number) => Promise<number>,
+) {
+  let usage = sourcePageRenderBudgetUsage(
+    reconstruction.assets,
+    reconstruction.pages,
+  )
+  for (const pageNumber of reconstruction.completeness.ocrRequiredPages) {
+    if (
+      usage.count >= MAX_EPUB_ASSETS_PER_BOOK ||
+      usage.byteLength >= MAX_EPUB_ASSET_BYTES_PER_BOOK
+    ) {
+      break
+    }
+    const target = reconstruction.pages.find((page) => page.page === pageNumber)
+    if (
+      !target ||
+      (target.assets ?? []).some(
+        (asset) => asset.rendition === 'source-page-render',
+      )
+    ) {
+      continue
+    }
+    const byteLength = await attach(
+      target,
+      MAX_EPUB_ASSET_BYTES_PER_BOOK - usage.byteLength,
+    )
+    const next = advanceSourcePageRenderBudget(
+      usage.count,
+      usage.byteLength,
+      byteLength,
+    )
+    if (!next) break
+    usage = next
+  }
+  return usage
+}
+
 function cancelledError() {
   return new PdfImportError(
     'IMPORT_CANCELLED',
@@ -76,7 +171,7 @@ function isBrowserWorkerRuntime() {
   return (
     typeof document === 'undefined' &&
     typeof location !== 'undefined' &&
-    (location.protocol === 'http:' || location.protocol === 'https:') &&
+    ['blob:', 'http:', 'https:'].includes(location.protocol) &&
     typeof globalThis.postMessage === 'function'
   )
 }
@@ -417,7 +512,7 @@ export async function createPdfOcrRasterSurface(width: number, height: number) {
 async function renderPageRaster(
   page: RasterizablePage,
   signal?: AbortSignal,
-): Promise<PdfOcrRaster> {
+): Promise<PdfOcrRaster & { pixels: Uint8Array }> {
   throwIfAborted(signal)
   const base = page.getViewport({ scale: 1 })
   const scale = Math.min(
@@ -451,6 +546,18 @@ async function renderPageRaster(
       }),
     ])
     throwIfAborted(signal)
+    const imageData = (
+      context as {
+        getImageData(
+          x: number,
+          y: number,
+          width: number,
+          height: number,
+        ): { data: Uint8Array | Uint8ClampedArray }
+      }
+    ).getImageData(0, 0, canvas.width, canvas.height)
+    const pixels = new Uint8Array(imageData.data.byteLength)
+    pixels.set(imageData.data)
     const bytes = await encodePng()
     throwIfAborted(signal)
     return {
@@ -459,6 +566,7 @@ async function renderPageRaster(
       width: canvas.width,
       height: canvas.height,
       sha256: await sha256(bytes),
+      pixels,
     }
   } finally {
     if (timeout !== undefined) clearTimeout(timeout)
@@ -466,6 +574,55 @@ async function renderPageRaster(
     canvas.width = 0
     canvas.height = 0
   }
+}
+
+async function attachSourcePageRender(
+  page: RasterizablePage,
+  target: PdfPageAnalysis,
+  signal?: AbortSignal,
+  rendered?: PdfOcrRaster,
+  maximumBytes = MAX_EPUB_ASSET_BYTES_PER_BOOK,
+) {
+  const sourceObjectId = `page-${String(target.page).padStart(3, '0')}-source-render`
+  const sourceBox: NormalizedSourceBox = {
+    page: target.page,
+    x: 0,
+    y: 0,
+    width: 1,
+    height: 1,
+    rotation: target.rotation,
+    method: 'pdf-object',
+  }
+  const raster =
+    rendered && 'pixels' in rendered && rendered.pixels instanceof Uint8Array
+      ? (rendered as PdfOcrRaster & { pixels: Uint8Array })
+      : await renderPageRaster(page, signal)
+  const sourceAsset = await createSourcePageRenderAsset({
+    sourceObjectId,
+    sourceBox,
+    pixels: raster.pixels,
+    width: raster.width,
+    height: raster.height,
+  })
+  if (sourceAsset.bytes.byteLength > maximumBytes) return 0
+  target.objects = [
+    ...(target.objects ?? []).filter((object) => object.id !== sourceObjectId),
+    {
+      id: sourceObjectId,
+      page: target.page,
+      kind: 'image',
+      box: sourceBox,
+      confidence: 1,
+      assetId: sourceAsset.id,
+      role: 'scan-source',
+      rolePolicy: 'pdfjs-complete-page-render-v1',
+    },
+  ]
+  target.assets = [
+    ...(target.assets ?? []).filter((asset) => asset.id !== sourceAsset.id),
+    sourceAsset,
+  ]
+  return sourceAsset.bytes.byteLength
 }
 
 async function raceWithAbort<T>(
@@ -953,28 +1110,7 @@ function normalizedPdfDate(value?: string) {
   return Number.isNaN(parsed.valueOf()) ? undefined : parsed.toISOString()
 }
 
-let browserPdfRuntimePromise: Promise<typeof import('pdfjs-dist')> | undefined
-
-async function loadBrowserPdfRuntime() {
-  browserPdfRuntimePromise ??= (async () => {
-    const pdfjs = await import('pdfjs-dist')
-    const { default: pdfWorkerUrl } =
-      await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
-    pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
-    return pdfjs
-  })()
-  try {
-    return await browserPdfRuntimePromise
-  } catch (error) {
-    browserPdfRuntimePromise = undefined
-    throw error
-  }
-}
-
-export async function warmBrowserPdfRuntime() {
-  if (typeof window === 'undefined') return
-  await loadBrowserPdfRuntime()
-}
+export { warmBrowserPdfRuntime }
 
 export async function reconstructPdf(
   file: File,
@@ -1003,21 +1139,29 @@ export async function reconstructPdf(
 
   const sourceHash = await sha256(bytes)
   const browserExecution =
-    typeof window !== 'undefined' ||
-    (typeof location !== 'undefined' &&
-      (location.protocol === 'http:' || location.protocol === 'https:'))
-  const pdfjs = browserExecution
-    ? await loadBrowserPdfRuntime()
-    : await import('pdfjs-dist/legacy/build/pdf.mjs')
+    typeof window !== 'undefined' || isBrowserWorkerRuntime()
+  const browserPdfRuntime = browserExecution
+    ? await createBrowserPdfRuntime()
+    : undefined
+  const pdfjs =
+    browserPdfRuntime?.pdfjs ??
+    (await import('pdfjs-dist/legacy/build/pdf.mjs'))
   throwIfAborted(options.signal)
-  const loadingTask = pdfjs.getDocument({
-    data: bytes.slice(),
-    isEvalSupported: false,
-    useSystemFonts: true,
-    ...(options.standardFontDataUrl
-      ? { standardFontDataUrl: options.standardFontDataUrl }
-      : {}),
-  })
+  let loadingTask: ReturnType<typeof pdfjs.getDocument>
+  try {
+    loadingTask = pdfjs.getDocument({
+      data: bytes.slice(),
+      isEvalSupported: false,
+      useSystemFonts: true,
+      ...(options.standardFontDataUrl
+        ? { standardFontDataUrl: options.standardFontDataUrl }
+        : {}),
+      ...(browserPdfRuntime ? { worker: browserPdfRuntime.worker } : {}),
+    })
+  } catch (error) {
+    await browserPdfRuntime?.destroy().catch(() => undefined)
+    throw error
+  }
 
   let passwordReject: ((error: PdfImportError) => void) | undefined
   const passwordRequired = new Promise<never>((_resolve, reject) => {
@@ -1052,6 +1196,7 @@ export async function reconstructPdf(
   } catch (error) {
     options.signal?.removeEventListener('abort', cancelLoading)
     await loadingTask.destroy().catch(() => undefined)
+    await browserPdfRuntime?.destroy().catch(() => undefined)
     if (error instanceof PdfImportError) throw error
     const message = error instanceof Error ? error.message : String(error)
     if (/password/i.test(message)) {
@@ -1587,6 +1732,25 @@ export async function reconstructPdf(
             () => undefined,
           )
     throwIfAborted(options.signal)
+    await attachRequiredSourcePageRenders(
+      resolved,
+      async (target, maximumBytes) => {
+        throwIfAborted(options.signal)
+        const page = await document.getPage(target.page)
+        try {
+          return await attachSourcePageRender(
+            page as RasterizablePage,
+            target,
+            options.signal,
+            undefined,
+            maximumBytes,
+          )
+        } finally {
+          page.cleanup()
+        }
+      },
+    )
+    throwIfAborted(options.signal)
     return resolved
   } catch (error) {
     if (options.signal?.aborted) throw cancelledError()
@@ -1595,5 +1759,6 @@ export async function reconstructPdf(
     options.signal?.removeEventListener('abort', cancelLoading)
     await terminateOcrSession()
     await document.destroy().catch(() => undefined)
+    await browserPdfRuntime?.destroy().catch(() => undefined)
   }
 }

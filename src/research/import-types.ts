@@ -283,6 +283,7 @@ export type PdfVisualAsset = {
   kind: 'raster' | 'vector' | 'table' | 'equation'
   rendition:
     | 'source-preserved'
+    | 'source-page-render'
     | 'profile-downscaled'
     | 'browser-composite-raster'
     | 'source-page-crop'
@@ -308,7 +309,7 @@ export type PdfNativeObject = {
   confidence: number
   assetId: string | null
   role?: 'semantic' | 'scan-source'
-  rolePolicy?: 'ocr-scan-surface-v1'
+  rolePolicy?: 'ocr-scan-surface-v1' | 'pdfjs-complete-page-render-v1'
 }
 
 type PdfLinkAnnotationBase = {

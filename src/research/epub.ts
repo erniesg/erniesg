@@ -20,6 +20,7 @@ import {
   type DocxReconstruction,
   type HumanAdjudicationRecord,
   type NormalizedSourceBox,
+  type PdfPageAnalysis,
   type PdfLinkAnnotation,
   type PdfReconstruction,
   type PdfScholarlyCrossReferenceKind,
@@ -54,7 +55,10 @@ import {
   PDF_HYPHEN_REMOVAL_FORBIDDEN_EVIDENCE,
   PDF_HYPHEN_REMOVAL_REQUIRED_EVIDENCE,
 } from './pdf-hyphenation'
-import { validatedPdfVisualRelationships } from './pdf-visual-validation'
+import {
+  hasValidatedSourcePageRenderAsset,
+  validatedPdfVisualRelationships,
+} from './pdf-visual-validation'
 import {
   assertPublicationIntegrity,
   isBoundedScholarlyReferenceText,
@@ -74,6 +78,15 @@ import {
 } from './targets'
 import { targetProfileSchema } from './target-schema'
 import { downscalePngAsset } from './visual-assets'
+import {
+  MAX_EPUB_ASSET_BYTES_PER_BOOK,
+  MAX_EPUB_ASSETS_PER_BOOK,
+} from './publication-resource-limits'
+
+export {
+  MAX_EPUB_ASSET_BYTES_PER_BOOK,
+  MAX_EPUB_ASSETS_PER_BOOK,
+} from './publication-resource-limits'
 
 const EPUB_MIMETYPE = 'application/epub+zip'
 const ZIP_MTIME = new Date(1980, 0, 1, 0, 0, 0)
@@ -83,8 +96,6 @@ export const EPUB_EXPORT_POLICY_VERSION = '1.2.0' as const
 export type EpubExportMode = 'publication' | 'readable-fallback'
 const MAX_READABLE_FALLBACK_ASSETS_PER_VISUAL = 16
 const MAX_READABLE_FALLBACK_OPTIONAL_ASSETS_PER_BOOK = 64
-export const MAX_EPUB_ASSETS_PER_BOOK = 512
-export const MAX_EPUB_ASSET_BYTES_PER_BOOK = 128 * 1024 * 1024
 export const MAX_READABLE_FALLBACK_EQUATIONS_PER_BOOK = 512
 const COMPACT_RASTER_TABLE_SCROLL_MIN_SOURCE_WIDTH_PX = 1_000
 
@@ -2264,7 +2275,7 @@ function renderNode(
       ...(node.inlineRuns ?? []),
       ...literalExternalHyperlinkRuns(node.text),
     ]
-    return `<aside id="${id}" data-canonical-id="${id}" epub:type="footnote" role="doc-${node.kind}" data-note-kind="${node.kind}" class="publication-note"><span class="note-label" data-semantic-ledger-ignore="true">${text(node.markerText ?? node.label)} </span>${renderTextWithNoteReferences(node.text, node.noteReferences, inlineRuns, scholarlyTargetKinds)}${backlinks ? ` ${backlinks}` : ''}</aside>`
+    return `<aside id="${id}" data-canonical-id="${id}" epub:type="${node.kind}" role="doc-footnote" data-note-kind="${node.kind}" class="publication-note"><span class="note-label" data-semantic-ledger-ignore="true">${text(node.markerText ?? node.label)} </span>${renderTextWithNoteReferences(node.text, node.noteReferences, inlineRuns, scholarlyTargetKinds)}${backlinks ? ` ${backlinks}` : ''}</aside>`
   }
   if (node.type === 'figure') {
     const caption = captions.get(node.relationships.caption)
@@ -5252,6 +5263,194 @@ function hasReadableText(paper: ResearchPaper) {
   })
 }
 
+function sourcePreservedOcrFallback(
+  reconstruction: PdfReconstruction,
+  readableProjection: PdfReconstruction,
+): PdfReconstruction | undefined {
+  const requiredPages = reconstruction.completeness.ocrRequiredPages
+  if (reconstruction.pages.length === 0 || requiredPages.length === 0) {
+    return undefined
+  }
+
+  const selected = requiredPages.map((pageNumber) => {
+    const page = reconstruction.pages.find(
+      (candidate) => candidate.page === pageNumber,
+    )
+    if (!page) return undefined
+    const candidates = (page.assets ?? []).filter((asset) => {
+      if (
+        asset.kind !== 'raster' ||
+        asset.rendition !== 'source-page-render' ||
+        asset.mediaType !== 'image/png' ||
+        asset.bytes.byteLength === 0 ||
+        asset.sourceObjectIds.length !== 1 ||
+        asset.sourceBoxes.length !== 1
+      ) {
+        return false
+      }
+      const sourceBox = asset.sourceBoxes[0]
+      const sourceObject = page.objects?.find(
+        (object) =>
+          object.id === asset.sourceObjectIds[0] &&
+          object.assetId === asset.id &&
+          object.kind === 'image' &&
+          object.role === 'scan-source' &&
+          object.rolePolicy === 'pdfjs-complete-page-render-v1',
+      )
+      return (
+        sourceObject !== undefined &&
+        hasValidatedSourcePageRenderAsset(sourceObject, page.assets) &&
+        sourceBox.page === page.page &&
+        sourceObject.box.page === page.page &&
+        sourceBox.x === sourceObject.box.x &&
+        sourceBox.y === sourceObject.box.y &&
+        sourceBox.width === sourceObject.box.width &&
+        sourceBox.height === sourceObject.box.height &&
+        sourceBox.rotation === sourceObject.box.rotation &&
+        sourceBox.x === 0 &&
+        sourceBox.y === 0 &&
+        sourceBox.width === 1 &&
+        sourceBox.height === 1 &&
+        sourceObject.box.x === 0 &&
+        sourceObject.box.y === 0 &&
+        sourceObject.box.width === 1 &&
+        sourceObject.box.height === 1
+      )
+    })
+    return candidates.length === 1 ? { page, asset: candidates[0]! } : undefined
+  })
+  if (selected.some((candidate) => candidate === undefined)) return undefined
+  const selectedPages = selected as Array<{
+    page: PdfPageAnalysis
+    asset: PublicationAsset
+  }>
+  const projectedAssets = new Map(
+    [
+      ...readableProjection.assets,
+      ...selectedPages.map(({ asset }) => asset),
+    ].map((asset) => [asset.id, asset]),
+  )
+  const usage = epubAssetResourceUsage([...projectedAssets.values()])
+  if (
+    usage.count > MAX_EPUB_ASSETS_PER_BOOK ||
+    usage.bytes > MAX_EPUB_ASSET_BYTES_PER_BOOK
+  ) {
+    return undefined
+  }
+
+  const fallbackNodes: Array<{
+    page: number
+    nodes: ResearchPaper['nodes']
+  }> = []
+  const provenance = { ...readableProjection.provenance }
+  const relationships: PublicationVisualRelationship[] = [
+    ...readableProjection.visualRelationships,
+  ]
+  const regions = [...readableProjection.regions]
+  for (const { page, asset } of selectedPages) {
+    const suffix = String(page.page).padStart(3, '0')
+    const nodeId = `source-scan-page-${suffix}`
+    const captionNodeId = `${nodeId}-caption`
+    const captionRegionId = `${nodeId}-caption-region`
+    const title = `Source page ${page.page} — text recovery required.`
+    const sourceBox = asset.sourceBoxes[0]!
+    fallbackNodes.push({
+      page: page.page,
+      nodes: [
+        {
+          id: nodeId,
+          type: 'figure',
+          title,
+          relationships: { caption: captionNodeId, assets: [asset.id] },
+          source: `pdf:${reconstruction.source.sha256}#page=${page.page}`,
+        },
+        {
+          id: captionNodeId,
+          type: 'caption',
+          text: title,
+          source: `pdf:${reconstruction.source.sha256}#page=${page.page}`,
+        },
+      ],
+    })
+    provenance[nodeId] = {
+      confidence: 0,
+      pages: [page.page],
+      regionIds: [],
+      boxes: [sourceBox],
+      links: [],
+    }
+    provenance[captionNodeId] = {
+      confidence: 0,
+      pages: [page.page],
+      regionIds: [captionRegionId],
+      boxes: [sourceBox],
+      links: [],
+    }
+    regions.push({
+      id: captionRegionId,
+      page: page.page,
+      kind: 'caption',
+      column: 'span',
+      text: title,
+      confidence: 0,
+      box: sourceBox,
+      lines: [],
+      nativeObjectIds: [...asset.sourceObjectIds],
+      includedInReadingOrder: false,
+    })
+    relationships.push({
+      id: `${nodeId}-relationship`,
+      kind: 'figure',
+      label: `Source page ${page.page}`,
+      captionRegionId,
+      sourceRegionIds: [],
+      sourceLineIds: [],
+      sourceObjectIds: [...asset.sourceObjectIds],
+      assetIds: [asset.id],
+      status: 'unresolved',
+      confidence: 0,
+      evidence: [
+        'source-preserved-unresolved-page-fallback',
+        'pdfjs-complete-page-render-v1',
+      ],
+      candidates: [],
+      sourceBoxes: [sourceBox],
+      sourceText: '',
+      altText: title,
+      altTextSource: 'caption',
+      canonicalNodeId: nodeId,
+      captionNodeId,
+    })
+  }
+  const nodes: ResearchPaper['nodes'] = []
+  const pendingFallbackNodes = fallbackNodes.sort(
+    (left, right) => left.page - right.page,
+  )
+  for (const node of readableProjection.paper.nodes) {
+    const sourcePages = provenance[node.id]?.pages ?? []
+    const sourcePage =
+      sourcePages.length > 0
+        ? Math.min(...sourcePages)
+        : Number.POSITIVE_INFINITY
+    while (
+      pendingFallbackNodes[0] &&
+      pendingFallbackNodes[0].page < sourcePage
+    ) {
+      nodes.push(...pendingFallbackNodes.shift()!.nodes)
+    }
+    nodes.push(node)
+  }
+  for (const fallback of pendingFallbackNodes) nodes.push(...fallback.nodes)
+  return {
+    ...readableProjection,
+    paper: { ...readableProjection.paper, nodes },
+    provenance,
+    regions,
+    visualRelationships: relationships,
+    assets: [...projectedAssets.values()],
+  }
+}
+
 function isSolidFillVectorFragment(asset: PublicationAsset) {
   if (
     asset.mediaType !== 'image/svg+xml' ||
@@ -5416,13 +5615,10 @@ function projectRenderableNoteRelationships(
   }
 }
 
-export function projectReadableFallbackReconstruction(
+function projectReadableTextFallbackReconstruction(
   reconstruction: PdfReconstruction,
 ): PdfReconstruction {
-  if (
-    reconstruction.completeness.ocrRequiredPages.length > 0 ||
-    !hasReadableText(reconstruction.paper)
-  ) {
+  if (!hasReadableText(reconstruction.paper)) {
     throw new PdfImportError(
       'INCOMPLETE_RECONSTRUCTION',
       'A readable EPUB requires recovered text for every source page; run local OCR first.',
@@ -5647,6 +5843,31 @@ export function projectReadableFallbackReconstruction(
     visualRelationships: relationships,
     assets: projectedAssets,
   }
+}
+
+export function projectReadableFallbackReconstruction(
+  reconstruction: PdfReconstruction,
+): PdfReconstruction {
+  if (reconstruction.completeness.ocrRequiredPages.length === 0) {
+    return projectReadableTextFallbackReconstruction(reconstruction)
+  }
+  const readableProjection = hasReadableText(reconstruction.paper)
+    ? projectReadableTextFallbackReconstruction(reconstruction)
+    : {
+        ...reconstruction,
+        paper: { ...reconstruction.paper, nodes: [] },
+        visualRelationships: [],
+        assets: [],
+      }
+  const sourcePreserved = sourcePreservedOcrFallback(
+    reconstruction,
+    readableProjection,
+  )
+  if (sourcePreserved) return sourcePreserved
+  throw new PdfImportError(
+    'INCOMPLETE_RECONSTRUCTION',
+    'A readable EPUB requires a bounded complete-page source render for every page that still needs text recovery.',
+  )
 }
 
 function epubFileName(
@@ -6030,8 +6251,12 @@ async function buildEpubInternal(
     visualRelationships: packagedRelationships,
     excludedUnresolvedVisualRelationshipCount:
       reconstruction && renderReconstruction
-        ? reconstruction.visualRelationships.length -
-          renderReconstruction.visualRelationships.length
+        ? reconstruction.visualRelationships.filter(
+            (relationship) =>
+              !renderReconstruction.visualRelationships.some(
+                (candidate) => candidate.id === relationship.id,
+              ),
+          ).length
         : 0,
     profile: profile ? profileManifestReceipt(profile) : undefined,
     rendition:

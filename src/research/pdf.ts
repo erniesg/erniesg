@@ -43,6 +43,10 @@ import {
   resolvePdfNamedDestinationEvidence,
 } from './pdf-links'
 import type { TableCandidateProvider } from './table-candidate-provider'
+import {
+  createBrowserPdfRuntime,
+  warmBrowserPdfRuntime,
+} from './pdf-browser-runtime'
 
 export { extractPdfLinkAnnotations } from './pdf-links'
 
@@ -76,7 +80,7 @@ function isBrowserWorkerRuntime() {
   return (
     typeof document === 'undefined' &&
     typeof location !== 'undefined' &&
-    (location.protocol === 'http:' || location.protocol === 'https:') &&
+    ['blob:', 'http:', 'https:'].includes(location.protocol) &&
     typeof globalThis.postMessage === 'function'
   )
 }
@@ -953,28 +957,7 @@ function normalizedPdfDate(value?: string) {
   return Number.isNaN(parsed.valueOf()) ? undefined : parsed.toISOString()
 }
 
-let browserPdfRuntimePromise: Promise<typeof import('pdfjs-dist')> | undefined
-
-async function loadBrowserPdfRuntime() {
-  browserPdfRuntimePromise ??= (async () => {
-    const pdfjs = await import('pdfjs-dist')
-    const { default: pdfWorkerUrl } =
-      await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
-    pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
-    return pdfjs
-  })()
-  try {
-    return await browserPdfRuntimePromise
-  } catch (error) {
-    browserPdfRuntimePromise = undefined
-    throw error
-  }
-}
-
-export async function warmBrowserPdfRuntime() {
-  if (typeof window === 'undefined') return
-  await loadBrowserPdfRuntime()
-}
+export { warmBrowserPdfRuntime }
 
 export async function reconstructPdf(
   file: File,
@@ -1003,21 +986,29 @@ export async function reconstructPdf(
 
   const sourceHash = await sha256(bytes)
   const browserExecution =
-    typeof window !== 'undefined' ||
-    (typeof location !== 'undefined' &&
-      (location.protocol === 'http:' || location.protocol === 'https:'))
-  const pdfjs = browserExecution
-    ? await loadBrowserPdfRuntime()
-    : await import('pdfjs-dist/legacy/build/pdf.mjs')
+    typeof window !== 'undefined' || isBrowserWorkerRuntime()
+  const browserPdfRuntime = browserExecution
+    ? await createBrowserPdfRuntime()
+    : undefined
+  const pdfjs =
+    browserPdfRuntime?.pdfjs ??
+    (await import('pdfjs-dist/legacy/build/pdf.mjs'))
   throwIfAborted(options.signal)
-  const loadingTask = pdfjs.getDocument({
-    data: bytes.slice(),
-    isEvalSupported: false,
-    useSystemFonts: true,
-    ...(options.standardFontDataUrl
-      ? { standardFontDataUrl: options.standardFontDataUrl }
-      : {}),
-  })
+  let loadingTask: ReturnType<typeof pdfjs.getDocument>
+  try {
+    loadingTask = pdfjs.getDocument({
+      data: bytes.slice(),
+      isEvalSupported: false,
+      useSystemFonts: true,
+      ...(options.standardFontDataUrl
+        ? { standardFontDataUrl: options.standardFontDataUrl }
+        : {}),
+      ...(browserPdfRuntime ? { worker: browserPdfRuntime.worker } : {}),
+    })
+  } catch (error) {
+    await browserPdfRuntime?.destroy().catch(() => undefined)
+    throw error
+  }
 
   let passwordReject: ((error: PdfImportError) => void) | undefined
   const passwordRequired = new Promise<never>((_resolve, reject) => {
@@ -1052,6 +1043,7 @@ export async function reconstructPdf(
   } catch (error) {
     options.signal?.removeEventListener('abort', cancelLoading)
     await loadingTask.destroy().catch(() => undefined)
+    await browserPdfRuntime?.destroy().catch(() => undefined)
     if (error instanceof PdfImportError) throw error
     const message = error instanceof Error ? error.message : String(error)
     if (/password/i.test(message)) {
@@ -1595,5 +1587,6 @@ export async function reconstructPdf(
     options.signal?.removeEventListener('abort', cancelLoading)
     await terminateOcrSession()
     await document.destroy().catch(() => undefined)
+    await browserPdfRuntime?.destroy().catch(() => undefined)
   }
 }

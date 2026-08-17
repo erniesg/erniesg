@@ -3,6 +3,7 @@ import { oversizedPdfFixture } from '../../tests/fixtures/pdf-fixtures'
 import type { PublicationWorkerResponse } from './publication-worker-protocol'
 import {
   buildEpubInWorker,
+  createOwnedInlineWorker,
   reconstructPdfInWorker,
 } from './publication-worker-client'
 
@@ -66,6 +67,41 @@ const inputFile = () =>
   })
 
 describe('publication worker client', () => {
+  it('revokes inline worker URLs after termination and failed construction', () => {
+    const originalCreateObjectUrl = URL.createObjectURL
+    const originalRevokeObjectUrl = URL.revokeObjectURL
+    const created = vi.fn(() => 'blob:owned-publication-worker')
+    const revoked = vi.fn()
+    URL.createObjectURL = created
+    URL.revokeObjectURL = revoked
+    try {
+      const worker = new SilentWorker()
+      const ownedWorker = createOwnedInlineWorker(() => {
+        URL.createObjectURL(new Blob())
+        return worker as never
+      })
+      expect(URL.createObjectURL).toBe(created)
+      expect(revoked).not.toHaveBeenCalled()
+
+      ownedWorker.terminate()
+      expect(worker.terminated).toBe(true)
+      expect(revoked).toHaveBeenCalledWith('blob:owned-publication-worker')
+
+      const constructionError = new Error('worker construction failed')
+      expect(() =>
+        createOwnedInlineWorker(() => {
+          URL.createObjectURL(new Blob())
+          throw constructionError
+        }),
+      ).toThrow(constructionError)
+      expect(revoked).toHaveBeenCalledTimes(2)
+      expect(URL.createObjectURL).toBe(created)
+    } finally {
+      URL.createObjectURL = originalCreateObjectUrl
+      URL.revokeObjectURL = originalRevokeObjectUrl
+    }
+  })
+
   it('rejects an oversized browser upload before reading or starting a worker', async () => {
     let read = false
     const createWorker = vi.fn()

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { createBrowserPdfRuntime } from '../../research/pdf-browser-runtime'
 import PageNavigation from './PageNavigation'
 import PageZoomControls from './PageZoomControls'
 import {
@@ -47,24 +48,30 @@ export default function SourcePdfPageViewer({
     let active = true
     let loadingTask:
       ReturnType<(typeof import('pdfjs-dist'))['getDocument']> | undefined
+    let pdfRuntime:
+      Awaited<ReturnType<typeof createBrowserPdfRuntime>> | undefined
     setDocument(null)
     setPage(1)
     setError('')
     setStatus('Opening source PDF…')
     void (async () => {
       try {
-        const pdfjs = await import('pdfjs-dist')
-        const { default: pdfWorkerUrl } =
-          await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
-        pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
+        pdfRuntime = await createBrowserPdfRuntime()
+        if (!active) {
+          await pdfRuntime.destroy()
+          return
+        }
+        const { pdfjs, worker } = pdfRuntime
         loadingTask = pdfjs.getDocument({
           url: sourceUrl,
           isEvalSupported: false,
           useSystemFonts: true,
+          worker,
         })
         const loadedDocument = await loadingTask.promise
         if (!active) {
           await loadedDocument.destroy()
+          await pdfRuntime.destroy()
           return
         }
         setDocument(loadedDocument)
@@ -80,6 +87,7 @@ export default function SourcePdfPageViewer({
     return () => {
       active = false
       void loadingTask?.destroy()
+      void pdfRuntime?.destroy()
     }
   }, [sourceUrl])
 

@@ -55,7 +55,10 @@ import {
   PDF_HYPHEN_REMOVAL_FORBIDDEN_EVIDENCE,
   PDF_HYPHEN_REMOVAL_REQUIRED_EVIDENCE,
 } from './pdf-hyphenation'
-import { validatedPdfVisualRelationships } from './pdf-visual-validation'
+import {
+  hasValidatedNativeAsset,
+  validatedPdfVisualRelationships,
+} from './pdf-visual-validation'
 import {
   assertPublicationIntegrity,
   isBoundedScholarlyReferenceText,
@@ -5290,6 +5293,7 @@ function sourcePreservedScanFallback(
       )
       return (
         sourceObject !== undefined &&
+        hasValidatedNativeAsset(sourceObject, page.assets) &&
         sourceBox.page === page.page &&
         sourceObject.box.page === page.page &&
         sourceBox.x === sourceObject.box.x &&

@@ -22,7 +22,6 @@ export type PublicationWorkerRequest =
       type: 'convert-pdf'
       jobId: string
       file: PublicationWorkerFile
-      ocrLanguage: 'auto' | 'eng'
     }
   | {
       type: 'build-epub'

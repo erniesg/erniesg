@@ -25,8 +25,35 @@ type WorkerLike = Pick<
 
 type WorkerFactory = () => WorkerLike
 
+export function createOwnedInlineWorker(
+  createWorker: () => WorkerLike = () => new PublicationWorker(),
+) {
+  const ownedUrls: string[] = []
+  const createObjectUrl = URL.createObjectURL
+  URL.createObjectURL = function (object: Blob | MediaSource) {
+    const url = createObjectUrl.call(URL, object)
+    ownedUrls.push(url)
+    return url
+  }
+  let worker: WorkerLike
+  try {
+    worker = createWorker()
+  } catch (error) {
+    for (const url of ownedUrls.splice(0)) URL.revokeObjectURL(url)
+    throw error
+  } finally {
+    URL.createObjectURL = createObjectUrl
+  }
+  const terminate = worker.terminate.bind(worker)
+  worker.terminate = () => {
+    terminate()
+    for (const url of ownedUrls.splice(0)) URL.revokeObjectURL(url)
+  }
+  return worker
+}
+
 function defaultWorkerFactory() {
-  return new PublicationWorker()
+  return createOwnedInlineWorker()
 }
 
 function jobId(prefix: string) {
@@ -175,7 +202,6 @@ export async function reconstructPdfInWorker(
   onProgress?: (progress: DocumentImportProgress) => void,
   options: {
     signal?: AbortSignal
-    ocrLanguage?: 'auto' | 'eng'
     watchdogMs?: number
     createWorker?: WorkerFactory
   } = {},
@@ -203,7 +229,6 @@ export async function reconstructPdfInWorker(
         lastModified: file.lastModified,
         bytes,
       },
-      ocrLanguage: options.ocrLanguage ?? 'auto',
     },
     expectedResult: 'pdf-result',
     transfer: [bytes],

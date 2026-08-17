@@ -5833,6 +5833,37 @@ describe('EPUB 3 export', () => {
     expect(files[`EPUB/${sourceAsset.href}`]).toBeInstanceOf(Uint8Array)
   })
 
+  it.each([
+    {
+      name: 'a derived rendition',
+      mutate: (reconstruction: PdfReconstruction) => {
+        reconstruction.pages[0]!.assets![0]!.rendition = 'profile-downscaled'
+      },
+    },
+    {
+      name: 'content that no longer matches its digest',
+      mutate: (reconstruction: PdfReconstruction) => {
+        reconstruction.pages[0]!.assets![0]!.bytes[0] ^= 0xff
+      },
+    },
+    {
+      name: 'an href that no longer matches its digest',
+      mutate: (reconstruction: PdfReconstruction) => {
+        reconstruction.pages[0]!.assets![0]!.href =
+          'assets/forged-source-page.png'
+      },
+    },
+  ])('refuses a scan fallback backed by $name', async ({ mutate }) => {
+    const reconstruction = await reconstructPdf(
+      await fixtureFile('scanned-page.pdf'),
+    )
+    mutate(reconstruction)
+
+    await expect(
+      buildReadableEpub(reconstruction.paper, reconstruction),
+    ).rejects.toMatchObject({ code: 'INCOMPLETE_RECONSTRUCTION' })
+  })
+
   it('keeps a complete bounded source-backed table image in readable fallback', async () => {
     const run: PdfSourceRun = {
       page: 1,

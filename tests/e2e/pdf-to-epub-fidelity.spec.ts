@@ -71,6 +71,12 @@ const contract = JSON.parse(
 ) as FidelityContract
 const fixture = path.resolve('tests', 'fixtures', 'pdf', contract.fixture)
 const fixtureBytes = await readFile(fixture)
+const scannedFixture = path.resolve(
+  'tests',
+  'fixtures',
+  'pdf',
+  'scanned-page.pdf',
+)
 if (fixtureBytes.byteLength !== contract.byteLength) {
   throw new Error(
     `Fidelity fixture byte length changed: expected ${contract.byteLength}, received ${fixtureBytes.byteLength}`,
@@ -1339,6 +1345,47 @@ test('uploads once and previews the matching Mobile, Move, and Pro EPUB artifact
   expect(postUploadRequests).toEqual([])
   browserProof.sourceBearingRequestCount = 0
   browserProof.sourceBearingLogCount = 0
+})
+
+test('downloads a source-preserved scan fallback without post-upload network access', async ({
+  page,
+}) => {
+  await page.goto(studioPath())
+  await waitForImporter(page)
+  const postUploadRequests = await forbidPostUploadNetwork(page)
+
+  await page.locator('#publication-pdf').setInputFiles(scannedFixture)
+  await expect(
+    page.locator(
+      '.publication-importer[data-conversion-status="review-required"]',
+    ),
+  ).toBeVisible({ timeout: 90_000 })
+  await waitForMaterializedEpub(page)
+  const bytes = await downloadBytes(
+    page,
+    'Download Mobile EPUB review artifact (not publication-ready)',
+  )
+  const files = unzipSync(bytes)
+  const manifest = JSON.parse(strFromU8(files['EPUB/export.json']!)) as {
+    exportMode: string
+    publicationGrade: boolean
+    sourceCompleteness: { ocrRequiredPages: number[] }
+    assets: unknown[]
+    visualRelationships: Array<{ evidence: string[] }>
+  }
+
+  expect(manifest).toMatchObject({
+    exportMode: 'readable-fallback',
+    publicationGrade: false,
+    sourceCompleteness: { ocrRequiredPages: [1] },
+  })
+  expect(manifest.assets).toHaveLength(1)
+  expect(manifest.visualRelationships).toHaveLength(1)
+  expect(manifest.visualRelationships[0]!.evidence).toContain(
+    'source-preserved-scan-page-fallback',
+  )
+  await requireEpubCheckPass(bytes, 'source-preserved-scan-fallback')
+  expect(postUploadRequests).toEqual([])
 })
 
 test('invalidates preview receipts and object URLs before reusing a filename', async ({

@@ -609,7 +609,10 @@ async function snapshotDirectory(sourceRoot, snapshotRoot) {
   index.sort((left, right) => left.path.localeCompare(right.path, 'en'))
   return {
     sha256: sha256(Buffer.from(JSON.stringify(index))),
-    paths: index.map(({ path: relativePath }) => `/${relativePath}`),
+    paths: index.map(
+      ({ path: relativePath }) =>
+        `/${relativePath.split('/').map(encodeURIComponent).join('/')}`,
+    ),
   }
 }
 

@@ -458,7 +458,9 @@ async function staticBuildPaths(rootArgument: string) {
       if (metadata.isDirectory()) {
         await visit(absolutePath, relativePath)
       } else if (metadata.isFile()) {
-        paths.push(`/${relativePath}`)
+        paths.push(
+          `/${relativePath.split('/').map(encodeURIComponent).join('/')}`,
+        )
       } else {
         throw new Error('Static browser asset allowlist contains a special file')
       }

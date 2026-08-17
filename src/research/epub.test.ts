@@ -5805,6 +5805,32 @@ describe('EPUB 3 export', () => {
     })
   })
 
+  it('builds a bounded source-preserved page fallback when a scan has no recovered text', async () => {
+    const reconstruction = await reconstructPdf(
+      await fixtureFile('scanned-page.pdf'),
+    )
+
+    expect(reconstruction.completeness.ocrRequiredPages).toEqual([1])
+    const fallback = await buildReadableEpub(
+      reconstruction.paper,
+      reconstruction,
+    )
+    const { files, manifest } = inspectEpub(fallback.bytes)
+    const content = strFromU8(files['EPUB/content.xhtml'])
+
+    expect(fallback.mode).toBe('readable-fallback')
+    expect(content).toContain('Source page 1')
+    expect(content).toContain('text recovery required')
+    expect(content).toContain('<img')
+    expect(manifest).toMatchObject({
+      publicationGrade: false,
+      sourceCompleteness: { ocrRequiredPages: [1] },
+      excludedUnresolvedVisualRelationshipCount: 0,
+    })
+    expect(manifest.assets).toHaveLength(1)
+    expect(files[`EPUB/${manifest.assets[0]!.href}`]).toBeInstanceOf(Uint8Array)
+  })
+
   it('keeps a complete bounded source-backed table image in readable fallback', async () => {
     const run: PdfSourceRun = {
       page: 1,

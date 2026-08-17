@@ -20,6 +20,7 @@ import {
   type DocxReconstruction,
   type HumanAdjudicationRecord,
   type NormalizedSourceBox,
+  type PdfPageAnalysis,
   type PdfLinkAnnotation,
   type PdfReconstruction,
   type PdfScholarlyCrossReferenceKind,
@@ -5252,6 +5253,138 @@ function hasReadableText(paper: ResearchPaper) {
   })
 }
 
+function sourcePreservedScanFallback(
+  reconstruction: PdfReconstruction,
+): PdfReconstruction | undefined {
+  if (
+    hasReadableText(reconstruction.paper) ||
+    reconstruction.pages.length === 0 ||
+    reconstruction.completeness.ocrRequiredPages.length !==
+      reconstruction.pages.length ||
+    reconstruction.pages.some(
+      (page) =>
+        page.kind !== 'ocr-required' ||
+        page.runs.some((run) => run.text.trim().length > 0),
+    )
+  ) {
+    return undefined
+  }
+
+  const selected = reconstruction.pages.map((page) => {
+    const candidates = (page.assets ?? []).filter((asset) => {
+      if (
+        asset.kind !== 'raster' ||
+        !['image/png', 'image/jpeg', 'image/gif'].includes(asset.mediaType) ||
+        asset.bytes.byteLength === 0 ||
+        asset.sourceObjectIds.length !== 1 ||
+        asset.sourceBoxes.length !== 1
+      ) {
+        return false
+      }
+      const sourceBox = asset.sourceBoxes[0]
+      const sourceObject = page.objects?.find(
+        (object) =>
+          object.id === asset.sourceObjectIds[0] &&
+          object.assetId === asset.id &&
+          object.kind === 'image',
+      )
+      return (
+        sourceObject !== undefined &&
+        sourceBox.page === page.page &&
+        sourceObject.box.page === page.page &&
+        sourceBox.x === sourceObject.box.x &&
+        sourceBox.y === sourceObject.box.y &&
+        sourceBox.width === sourceObject.box.width &&
+        sourceBox.height === sourceObject.box.height &&
+        sourceBox.rotation === sourceObject.box.rotation &&
+        sourceBox.width * sourceBox.height >= 0.5 &&
+        sourceObject.box.width * sourceObject.box.height >= 0.5
+      )
+    })
+    return candidates.length === 1 ? { page, asset: candidates[0]! } : undefined
+  })
+  if (selected.some((candidate) => candidate === undefined)) return undefined
+  const selectedPages = selected as Array<{
+    page: PdfPageAnalysis
+    asset: PublicationAsset
+  }>
+  const usage = epubAssetResourceUsage(selectedPages.map(({ asset }) => asset))
+  if (
+    usage.count > MAX_EPUB_ASSETS_PER_BOOK ||
+    usage.bytes > MAX_EPUB_ASSET_BYTES_PER_BOOK
+  ) {
+    return undefined
+  }
+
+  const nodes: ResearchPaper['nodes'] = []
+  const provenance = { ...reconstruction.provenance }
+  const relationships: PublicationVisualRelationship[] = []
+  for (const { page, asset } of selectedPages) {
+    const suffix = String(page.page).padStart(3, '0')
+    const nodeId = `source-scan-page-${suffix}`
+    const captionNodeId = `${nodeId}-caption`
+    const captionRegionId = `${nodeId}-caption-region`
+    const title = `Source page ${page.page} — text recovery required.`
+    const sourceBox = asset.sourceBoxes[0]!
+    nodes.push(
+      {
+        id: nodeId,
+        type: 'figure',
+        title,
+        relationships: { caption: captionNodeId, assets: [asset.id] },
+        source: `pdf:${reconstruction.source.sha256}#page=${page.page}`,
+      },
+      {
+        id: captionNodeId,
+        type: 'caption',
+        text: title,
+        source: `pdf:${reconstruction.source.sha256}#page=${page.page}`,
+      },
+    )
+    provenance[nodeId] = {
+      confidence: 1,
+      pages: [page.page],
+      regionIds: [],
+      boxes: [sourceBox],
+      links: [],
+    }
+    provenance[captionNodeId] = {
+      confidence: 1,
+      pages: [page.page],
+      regionIds: [captionRegionId],
+      boxes: [sourceBox],
+      links: [],
+    }
+    relationships.push({
+      id: `${nodeId}-relationship`,
+      kind: 'figure',
+      label: `Source page ${page.page}`,
+      captionRegionId,
+      sourceRegionIds: [],
+      sourceLineIds: [],
+      sourceObjectIds: [...asset.sourceObjectIds],
+      assetIds: [asset.id],
+      status: 'unresolved',
+      confidence: 0,
+      evidence: ['source-preserved-scan-page-fallback'],
+      candidates: [],
+      sourceBoxes: [sourceBox],
+      sourceText: '',
+      altText: title,
+      altTextSource: 'caption',
+      canonicalNodeId: nodeId,
+      captionNodeId,
+    })
+  }
+  return {
+    ...reconstruction,
+    paper: { ...reconstruction.paper, nodes },
+    provenance,
+    visualRelationships: relationships,
+    assets: selectedPages.map(({ asset }) => asset),
+  }
+}
+
 function isSolidFillVectorFragment(asset: PublicationAsset) {
   if (
     asset.mediaType !== 'image/svg+xml' ||
@@ -5419,6 +5552,8 @@ function projectRenderableNoteRelationships(
 export function projectReadableFallbackReconstruction(
   reconstruction: PdfReconstruction,
 ): PdfReconstruction {
+  const scanFallback = sourcePreservedScanFallback(reconstruction)
+  if (scanFallback) return scanFallback
   if (
     reconstruction.completeness.ocrRequiredPages.length > 0 ||
     !hasReadableText(reconstruction.paper)
@@ -6030,8 +6165,12 @@ async function buildEpubInternal(
     visualRelationships: packagedRelationships,
     excludedUnresolvedVisualRelationshipCount:
       reconstruction && renderReconstruction
-        ? reconstruction.visualRelationships.length -
-          renderReconstruction.visualRelationships.length
+        ? reconstruction.visualRelationships.filter(
+            (relationship) =>
+              !renderReconstruction.visualRelationships.some(
+                (candidate) => candidate.id === relationship.id,
+              ),
+          ).length
         : 0,
     profile: profile ? profileManifestReceipt(profile) : undefined,
     rendition:

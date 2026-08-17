@@ -77,6 +77,12 @@ const scannedFixture = path.resolve(
   'pdf',
   'scanned-page.pdf',
 )
+const noteCitationAssociationsFixture = path.resolve(
+  'tests',
+  'fixtures',
+  'pdf',
+  'note-citation-associations.pdf',
+)
 const scanVariantFixtures = [
   { name: 'rotated scan', fileName: 'rotated-scan.pdf', pages: [1] },
   { name: 'two-page spread scan', fileName: 'two-page-scan.pdf', pages: [1] },
@@ -1427,6 +1433,49 @@ test('downloads a source-preserved scan fallback without post-upload network acc
     'source-preserved-unresolved-page-fallback',
   )
   await requireEpubCheckPass(bytes, 'source-preserved-scan-fallback')
+  expect(postUploadRequests).toEqual([])
+})
+
+test('exports EPUB 3.3-valid endnotes from the note and citation association fixture', async ({
+  page,
+}) => {
+  await page.goto(studioPath())
+  await waitForImporter(page)
+  const postUploadRequests = await forbidPostUploadNetwork(page)
+
+  await page
+    .locator('#publication-pdf')
+    .setInputFiles(noteCitationAssociationsFixture)
+  await expect(
+    page.locator(
+      '.publication-importer[data-conversion-status="review-required"]',
+    ),
+  ).toBeVisible({ timeout: 90_000 })
+  await waitForMaterializedEpub(page)
+  const bytes = await downloadBytes(
+    page,
+    'Download Mobile EPUB review artifact (not publication-ready)',
+  )
+  const files = unzipSync(bytes)
+  const content = strFromU8(files['EPUB/content.xhtml']!)
+  const endnoteBodies =
+    content.match(
+      /<aside\b[^>]*data-note-kind="endnote"[^>]*>[\s\S]*?<\/aside>/gu,
+    ) ?? []
+
+  expect(endnoteBodies.length).toBeGreaterThan(0)
+  expect(
+    endnoteBodies.every(
+      (body) =>
+        body.includes('epub:type="endnote"') &&
+        body.includes('role="doc-footnote"'),
+    ),
+  ).toBe(true)
+  expect(
+    endnoteBodies.some((body) => body.includes('class="note-backlink"')),
+  ).toBe(true)
+  expect(content).not.toContain('role="doc-endnote"')
+  await requireEpubCheckPass(bytes, 'note-citation-associations-mobile')
   expect(postUploadRequests).toEqual([])
 })
 

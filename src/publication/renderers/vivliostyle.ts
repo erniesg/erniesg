@@ -386,12 +386,14 @@ function renderNode(
     case 'note':
       {
         const role =
-          node.noteKind === 'footnote'
+          node.noteKind === 'footnote' || node.noteKind === 'endnote'
             ? 'doc-footnote'
-            : node.noteKind === 'endnote'
-              ? 'doc-endnote'
-              : 'doc-annotation'
-        return `<aside ${nodeAttributes(node, edition, [`role="${role}"`])}><span class="note-label">${escapeHtml(node.label)}</span> ${text}${node.backlinkIds.map((id) => `<a class="backlink" href="#${id}" aria-label="Back to reference">↩</a>`).join('')}</aside>`
+            : 'doc-annotation'
+        const epubType =
+          node.noteKind === 'footnote' || node.noteKind === 'endnote'
+            ? `epub:type="${node.noteKind}"`
+            : ''
+        return `<aside ${nodeAttributes(node, edition, [epubType, `role="${role}"`, `data-note-kind="${node.noteKind}"`])}><span class="note-label">${escapeHtml(node.label)}</span> ${text}${node.backlinkIds.map((id) => `<a class="backlink" href="#${id}" aria-label="Back to reference">↩</a>`).join('')}</aside>`
       }
     case 'figure': {
       const caption = node.captionId ? byId.get(node.captionId) : undefined

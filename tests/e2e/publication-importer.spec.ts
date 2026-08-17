@@ -498,7 +498,10 @@ test('imports a born-structured DOCX and downloads its EPUB', async ({
     )
     .not.toBe('none')
   await expect(frame.locator('aside[role="doc-footnote"]')).toBeVisible()
-  await expect(frame.locator('aside[role="doc-endnote"]')).toBeVisible()
+  await expect(
+    frame.locator('aside[role="doc-footnote"][data-note-kind="endnote"]'),
+  ).toBeVisible()
+  await expect(frame.locator('aside[role="doc-endnote"]')).toHaveCount(0)
   const backlink = frame.locator('.note-backlink').first()
   await expect(backlink).toBeVisible()
   const backlinkHref = await backlink.getAttribute('href')

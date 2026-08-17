@@ -506,7 +506,10 @@ describe('STRUCT canonical document graph', () => {
       )
     }
     expect(xhtml).toContain('role="doc-footnote"')
-    expect(xhtml).toContain('role="doc-endnote"')
+    expect(xhtml).toContain(
+      'epub:type="endnote" role="doc-footnote" data-note-kind="endnote"',
+    )
+    expect(xhtml).not.toContain('role="doc-endnote"')
   })
 
   it('retains every ambiguous note candidate without creating a false link', async () => {

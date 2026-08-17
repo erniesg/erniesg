@@ -372,7 +372,10 @@ describe('Vivliostyle publication renderer boundary', () => {
     const heroLink = html.match(/<a[^>]+href="#hero-figure"[^>]*>/)?.[0]
     expect(heroLink).toBeDefined()
     expect(heroLink).not.toContain('role="doc-noteref"')
-    expect(html).toContain('role="doc-endnote"')
+    expect(html).toContain(
+      'epub:type="endnote" role="doc-footnote" data-note-kind="endnote"',
+    )
+    expect(html).not.toContain('role="doc-endnote"')
     expect(html).toContain('role="doc-annotation"')
   })
 

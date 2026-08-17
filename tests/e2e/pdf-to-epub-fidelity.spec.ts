@@ -210,7 +210,9 @@ if (
   (expectedJavaSha256 !== undefined &&
     expectedJavaSha256 !== epubcheckJavaBinding.sha256)
 ) {
-  throw new Error('EPUBCheck Java executable does not match its trusted binding')
+  throw new Error(
+    'EPUBCheck Java executable does not match its trusted binding',
+  )
 }
 const profileUi = {
   mobile: { label: 'Mobile', download: 'Download Mobile EPUB' },
@@ -462,7 +464,9 @@ async function staticBuildPaths(rootArgument: string) {
           `/${relativePath.split('/').map(encodeURIComponent).join('/')}`,
         )
       } else {
-        throw new Error('Static browser asset allowlist contains a special file')
+        throw new Error(
+          'Static browser asset allowlist contains a special file',
+        )
       }
       if (paths.length > 25_000) {
         throw new Error('Static browser asset allowlist is unbounded')
@@ -470,7 +474,9 @@ async function staticBuildPaths(rootArgument: string) {
     }
   }
   await visit(root, '')
-  return validateFrozenPaths(paths.sort((left, right) => left.localeCompare(right, 'en')))
+  return validateFrozenPaths(
+    paths.sort((left, right) => left.localeCompare(right, 'en')),
+  )
 }
 
 async function frozenBrowserAssetPaths() {
@@ -571,6 +577,22 @@ function observeSourceBearingRequests(
       method: 'WEBSOCKET',
       origin: socketUrl.origin,
     })
+  })
+  return requests
+}
+
+async function forbidPostUploadNetwork(page: Page) {
+  const requests: Array<{ method: string; origin: string }> = []
+  if (isLocalDevBrowser()) return requests
+  await page.waitForLoadState('networkidle')
+  await page.evaluate(() => document.fonts.ready)
+  await page.route(/^https?:\/\//u, async (route) => {
+    const request = route.request()
+    requests.push({
+      method: request.method(),
+      origin: new URL(request.url()).origin,
+    })
+    await route.abort('blockedbyclient')
   })
   return requests
 }
@@ -682,17 +704,29 @@ const emptyBrowserPersistence = {
   sessionStorageLength: 0,
 }
 
-test('flags encoded source bytes disguised as a static asset request', async ({
+test('blocks encoded source bytes sent to an allowlisted static asset', async ({
   page,
 }) => {
-  test.skip(isLocalDevBrowser(), 'Local Vite requests are intentionally dynamic')
+  test.skip(
+    isLocalDevBrowser(),
+    'Local Vite requests are intentionally dynamic',
+  )
   await page.goto(studioPath())
   await waitForImporter(page)
-  const violations = observeSourceBearingRequests(page)
+  const allowedAsset = [...(frozenAssetPaths ?? [])].find((candidate) =>
+    candidate.startsWith('/_astro/'),
+  )
+  expect(allowedAsset).toBeDefined()
+  const violations = await forbidPostUploadNetwork(page)
   const encoded = fixtureBytes.subarray(0, 18).toString('base64url')
-  await page.evaluate(async (pathname) => {
-    await fetch(pathname).catch(() => undefined)
-  }, `/_astro/source-${encoded}.js`)
+  await page.evaluate(
+    async ({ pathname, source }) => {
+      await fetch(pathname, { headers: { 'X-Leak': source } }).catch(
+        () => undefined,
+      )
+    },
+    { pathname: allowedAsset!, source: encoded },
+  )
   await expect.poll(() => violations.length).toBe(1)
   expect(violations[0]).toEqual({
     method: 'GET',
@@ -726,6 +760,7 @@ test('uploads once and previews the matching Mobile, Move, and Pro EPUB artifact
   await waitForImporter(page)
   const sourceBearingRequests = observeSourceBearingRequests(page)
   const sourceBearingLogs = observeSourceBearingLogs(page)
+  const postUploadRequests = await forbidPostUploadNetwork(page)
   await page.locator('#publication-pdf').setInputFiles(fixture)
   await expect(page.getByText('EPUB ready', { exact: true })).toBeVisible({
     timeout: 90_000,
@@ -1301,6 +1336,7 @@ test('uploads once and previews the matching Mobile, Move, and Pro EPUB artifact
   ).toBe(true)
   expect(sourceBearingRequests).toEqual([])
   expect(sourceBearingLogs).toEqual([])
+  expect(postUploadRequests).toEqual([])
   browserProof.sourceBearingRequestCount = 0
   browserProof.sourceBearingLogCount = 0
 })
@@ -1376,6 +1412,7 @@ test('invalidates preview receipts and object URLs before reusing a filename', a
     crossRequestMarkers,
   )
   const sourceBearingLogs = observeSourceBearingLogs(page, crossRequestMarkers)
+  const postUploadRequests = await forbidPostUploadNetwork(page)
   await page.locator('#publication-pdf').setInputFiles(upload(first))
   await expect(page.getByText('EPUB ready', { exact: true })).toBeVisible({
     timeout: 90_000,
@@ -1546,6 +1583,7 @@ test('invalidates preview receipts and object URLs before reusing a filename', a
   browserProof.retainedSourceMarkerCount = 0
   expect(sourceBearingRequests).toEqual([])
   expect(sourceBearingLogs).toEqual([])
+  expect(postUploadRequests).toEqual([])
   await expect(
     page
       .getByTitle('Generated EPUB rendition on Mobile')
@@ -1573,6 +1611,7 @@ test('rejects oversized and malformed browser uploads without sending or retaini
     page,
     negativeSourceMarkers,
   )
+  const postUploadRequests = await forbidPostUploadNetwork(page)
   await page.evaluate((maximumBytes) => {
     const trackedWindow = window as unknown as Window & {
       __oversizedPdfReadCount: number
@@ -1635,6 +1674,7 @@ test('rejects oversized and malformed browser uploads without sending or retaini
   await expect(page.getByText('EPUB ready', { exact: true })).toHaveCount(0)
   expect(sourceBearingRequests).toEqual([])
   expect(sourceBearingLogs).toEqual([])
+  expect(postUploadRequests).toEqual([])
   expect(await browserPersistenceState(page)).toEqual(emptyBrowserPersistence)
   browserProof.negativeInputs = 'passed'
   browserProof.retainedSourceMarkerCount = 0

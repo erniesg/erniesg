@@ -16,6 +16,7 @@ import {
   type PublicationWorkerResponse,
 } from './publication-worker-protocol'
 import type { TargetProfile } from './targets'
+import PublicationWorker from './publication.worker?worker&inline'
 
 type WorkerLike = Pick<
   Worker,
@@ -25,10 +26,7 @@ type WorkerLike = Pick<
 type WorkerFactory = () => WorkerLike
 
 function defaultWorkerFactory() {
-  return new Worker(new URL('./publication.worker.ts', import.meta.url), {
-    type: 'module',
-    name: 'pdf-epub-publication-worker',
-  })
+  return new PublicationWorker()
 }
 
 function jobId(prefix: string) {

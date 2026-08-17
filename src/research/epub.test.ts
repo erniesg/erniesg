@@ -5828,7 +5828,9 @@ describe('EPUB 3 export', () => {
       excludedUnresolvedVisualRelationshipCount: 0,
     })
     expect(manifest.assets).toHaveLength(1)
-    expect(files[`EPUB/${manifest.assets[0]!.href}`]).toBeInstanceOf(Uint8Array)
+    const sourceAsset = reconstruction.pages[0]!.assets![0]!
+    expect(manifest.assets[0]).toMatchObject({ sourceAssetId: sourceAsset.id })
+    expect(files[`EPUB/${sourceAsset.href}`]).toBeInstanceOf(Uint8Array)
   })
 
   it('keeps a complete bounded source-backed table image in readable fallback', async () => {

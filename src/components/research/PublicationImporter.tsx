@@ -38,6 +38,10 @@ import type {
 } from '../../research/import-types'
 import { DocxImportError, PdfImportError } from '../../research/import-types'
 import {
+  buildEpubInWorker,
+  reconstructPdfInWorker,
+} from '../../research/publication-worker-client'
+import {
   buildPdfLineJoinReviewContext,
   type PdfLineJoinReviewContext,
 } from '../../research/pdf-lines'
@@ -1151,9 +1155,7 @@ export default function PublicationImporter({
           await import('../../research/docx-import')
         ).reconstructDocx(file, onProgress, { signal: controller.signal })
       } else {
-        baseResult = await (
-          await import('../../research/publication-worker-client')
-        ).reconstructPdfInWorker(file, onProgress, {
+        baseResult = await reconstructPdfInWorker(file, onProgress, {
           signal: controller.signal,
           ocrLanguage,
         })
@@ -1376,9 +1378,7 @@ export default function PublicationImporter({
         const profile = resolveTargetProfile(profileId, orientation)
         const epub =
           result.readiness.ready || isPdfReconstruction(result)
-            ? await (
-                await import('../../research/publication-worker-client')
-              ).buildEpubInWorker(
+            ? await buildEpubInWorker(
                 result,
                 profile,
                 result.readiness.ready ? 'publication' : 'readable-fallback',

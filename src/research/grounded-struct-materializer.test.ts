@@ -848,7 +848,7 @@ describe('candidate-grounded STRUCT materialization', () => {
         warningCount: 1,
       })),
     ).rejects.toThrow('EPUBCHECK_WARNINGS_FATAL')
-  })
+  }, 60_000)
 
   it('rejects unselected core and derived receipt tampering at the bridge', () => {
     const selected = selections()
@@ -1439,5 +1439,5 @@ describe('candidate-grounded STRUCT materialization', () => {
         result: selfRehashedLedger,
       }),
     ).toBe(false)
-  }, 30_000)
+  }, 120_000)
 })

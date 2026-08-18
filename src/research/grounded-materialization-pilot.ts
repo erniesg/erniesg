@@ -245,6 +245,7 @@ export type GroundedMaterializationPilotDocument = {
 
 export type GroundedMaterializationPilotPacket = {
   schemaVersion: typeof GROUNDED_MATERIALIZATION_PILOT_SCHEMA_VERSION
+  expectedJavaExecutableSha256: string
   documents: GroundedMaterializationPilotDocument[]
   negativeControls: Array<{
     id: 'malformed-source-evidence'
@@ -255,6 +256,7 @@ export type GroundedMaterializationPilotPacket = {
 
 export type GroundedMaterializationPilotReceipt = {
   schemaVersion: typeof GROUNDED_MATERIALIZATION_PILOT_SCHEMA_VERSION
+  expectedJavaExecutableSha256: string
   caseIds: typeof GROUNDED_MATERIALIZATION_PILOT_CASES
   documentCount: 5
   profileCount: 15
@@ -577,7 +579,10 @@ export async function verifyGroundedMaterializationPilotMineruExecution(input: {
   }
 }
 
-async function verifyDocument(document: GroundedMaterializationPilotDocument) {
+async function verifyDocument(
+  document: GroundedMaterializationPilotDocument,
+  expectedJavaExecutableSha256: string,
+) {
   if (
     document.materialization.document.schemaVersion !== '0.2.0' ||
     document.materialization.receipt.status !== 'publication-ready' ||
@@ -704,7 +709,7 @@ async function verifyDocument(document: GroundedMaterializationPilotDocument) {
   }
   if (
     canonicalTraceJson(
-      document.refinement.initialEvidence.failedEvaluation.coordinatorTrace,
+      document.refinement.initialEvidence.priorEvaluation.coordinatorTrace,
     ) !== canonicalTraceJson(priorTrace) ||
     canonicalTraceJson(document.refinement.initialEvidence.codexResult) !==
       canonicalTraceJson(document.localCodexResult) ||
@@ -726,6 +731,7 @@ async function verifyDocument(document: GroundedMaterializationPilotDocument) {
         prompt: traceCodexProvider.prompt,
         tool: traceCodexProvider.tool,
       },
+      expectedJavaExecutableSha256,
     })
   ) {
     invalid('GROUNDED_MATERIALIZATION_PILOT_REFINEMENT_MISMATCH')
@@ -827,6 +833,7 @@ export async function verifyGroundedMaterializationPilotPacket(
 ): Promise<GroundedMaterializationPilotReceipt> {
   if (
     packet.schemaVersion !== GROUNDED_MATERIALIZATION_PILOT_SCHEMA_VERSION ||
+    !SHA256.test(packet.expectedJavaExecutableSha256) ||
     packet.documents.length !== GROUNDED_MATERIALIZATION_PILOT_CASES.length ||
     packet.negativeControls.length !== 1 ||
     packet.negativeControls[0]?.id !== 'malformed-source-evidence' ||
@@ -852,7 +859,10 @@ export async function verifyGroundedMaterializationPilotPacket(
   const documents = [] as GroundedMaterializationPilotReceipt['documents']
   for (const caseId of GROUNDED_MATERIALIZATION_PILOT_CASES) {
     const document = byCase.get(caseId)!
-    const { byProfile, mineru } = await verifyDocument(document)
+    const { byProfile, mineru } = await verifyDocument(
+      document,
+      packet.expectedJavaExecutableSha256,
+    )
     documents.push({
       caseId,
       sourcePdfSha256: document.materialization.receipt.sourcePdfSha256,
@@ -887,6 +897,7 @@ export async function verifyGroundedMaterializationPilotPacket(
   }
   const projection = {
     schemaVersion: GROUNDED_MATERIALIZATION_PILOT_SCHEMA_VERSION,
+    expectedJavaExecutableSha256: packet.expectedJavaExecutableSha256,
     caseIds: GROUNDED_MATERIALIZATION_PILOT_CASES,
     documentCount: 5 as const,
     profileCount: 15 as const,

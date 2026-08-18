@@ -35,14 +35,15 @@ import {
 import {
   advanceGroundedRefinementLedger,
   assertGroundedThreeProfileEvaluationEvidence,
-  createGroundedInitialRefinementEvidence,
   evaluateGroundedThreeProfileAttempt,
-  runGroundedThreeProfileRefinement,
   selectGroundedCoordinatorProfile,
   type GroundedThreeProfileEvaluationInput,
   verifyGroundedThreeProfileRefinementResult,
-  verifyGroundedThreeProfileEvaluationEvidence,
 } from './grounded-reconstruction-refinement'
+import {
+  runRetainedOwnerLocalGroundedRefinement,
+  type LoadedRetainedGroundedMaterializationPacket,
+} from './retained-grounded-materialization-job'
 import { createSourceEvidenceContract } from './source-evidence-contract'
 import { applyGroundedStructRepair } from './grounded-struct-repair-applicator'
 import {
@@ -1767,7 +1768,7 @@ describe('candidate-grounded STRUCT materialization', () => {
     const seedCodexResult = testOnlyMeasuredCodexResult(
       selected.graph.graphSha256,
     )
-    const failedEvaluation = await testOnlyTableSpanEvaluation(
+    const priorEvaluation = await testOnlyTableSpanEvaluation(
       {
         attemptId: 'observed-pre-codex-baseline',
         sourcePdf,
@@ -1804,8 +1805,8 @@ describe('candidate-grounded STRUCT materialization', () => {
     const initialCodexResult = testOnlyMeasuredCodexResult(
       selected.graph.graphSha256,
       {
-        comparisonEvidenceSha256: failedEvaluation.coordinatorTrace.traceSha256,
-        attemptId: failedEvaluation.coordinatorTrace.attemptId,
+        comparisonEvidenceSha256: priorEvaluation.coordinatorTrace.traceSha256,
+        attemptId: priorEvaluation.coordinatorTrace.attemptId,
         selections: [
           {
             decisionId: 'initial-heading-selection',
@@ -1814,33 +1815,64 @@ describe('candidate-grounded STRUCT materialization', () => {
         ],
       },
     )
-    const initialEvidence = createGroundedInitialRefinementEvidence({
-      failedEvaluation,
-      codexResult: initialCodexResult,
-    })
     assertGroundedThreeProfileEvaluationEvidence({
-      evaluation: failedEvaluation,
+      evaluation: priorEvaluation,
       sourcePdf,
       sourceContract,
       codexIdentity,
     })
+    const packet = {
+      caseId: 'prose-hierarchy' as const,
+      sourcePdfBytes: new Uint8Array(source.byteLength),
+      sourceExecution: {
+        kind: 'retained-real-provider-packet' as const,
+        artifactRoot: '/test-only/retained',
+        manifestBytes: new Uint8Array([1]),
+        sourceEvidenceGraphBytes: sourceContract.graphBytes,
+        sourceEvidenceContractBytes: new Uint8Array([1]),
+        expectedObservationPayloads: sourceContract.expectedObservationSets.map(
+          ({ check, payloadBytes }) => ({ check, payloadBytes }),
+        ),
+      },
+      sourceContract,
+      receipt: {
+        schemaVersion: '1.0.0' as const,
+        caseId: 'prose-hierarchy' as const,
+        sourcePdfSha256: source.sha256,
+        sourceGraphSha256: sourceContract.graphArtifact.sha256,
+        retainedContractSha256: digest('test-retained-contract'),
+        manifestSha256: digest('test-manifest'),
+        producerReceiptSha256: digest('test-producer'),
+        artifactSetSha256: digest('test-artifact-set'),
+        observationSetSha256: digest('test-observations'),
+        receiptSha256: digest('test-packet-receipt'),
+      },
+    } satisfies LoadedRetainedGroundedMaterializationPacket
     let evaluatedAttempts = 0
-    const result = await runGroundedThreeProfileRefinement({
+    const jobInput = {
       contract,
       initialCandidate,
       initialMaterialization,
       initialMaterializationInput: materializationInput,
       sourcePdf,
-      sourceContract,
       codexIdentity,
-      initialEvidence,
-      codex,
+      codexClient: undefined as never,
       materializationVerification: {
         sourceEvidenceVerifier: sourceContract.verifier,
         evidenceCandidates: sourceContract.evidenceCandidates,
         groundedVerifier,
       },
       epubCheckAuthority,
+      retainedPacket: {
+        caseId: 'prose-hierarchy',
+        sourcePdfPath: '/test-only/source.pdf',
+        artifactRoot: '/test-only/retained',
+        packetDirectory: '/test-only/packet',
+      },
+      observedPriorEvaluation: priorEvaluation,
+      buildInitialReconciliationRequest: () => {
+        throw new Error('TEST_ONLY_REQUEST_BUILDER_MUST_NOT_RUN')
+      },
       resolveResultingProposal: ({ patch }) => {
         const resultingProposal = proposal()
         resultingProposal.nodes.find(({ id }) => id === 'heading-node')!.level =
@@ -1850,14 +1882,47 @@ describe('candidate-grounded STRUCT materialization', () => {
             : 3
         return resultingProposal
       },
-      testOnlyEvaluateAttempt: async (evaluationInput) => {
-        evaluatedAttempts += 1
-        return testOnlyTableSpanEvaluation(
-          evaluationInput,
-          evaluatedAttempts < 3,
-        )
+      testOnly: {
+        packet,
+        initialCodexResult,
+        codex,
+        evaluateAttempt: async (evaluationInput) => {
+          evaluatedAttempts += 1
+          return testOnlyTableSpanEvaluation(
+            evaluationInput,
+            evaluatedAttempts < 4,
+          )
+        },
+      },
+    } satisfies Parameters<typeof runRetainedOwnerLocalGroundedRefinement>[0]
+    const forgedInitialCodexResult = structuredClone(initialCodexResult)
+    forgedInitialCodexResult.receipt.counts.decisionCount = 9
+    forgedInitialCodexResult.receipt.selectionSetSha256 = digest(
+      'forged-positive-selection-digest',
+    )
+    await expect(
+      runRetainedOwnerLocalGroundedRefinement({
+        ...jobInput,
+        testOnly: {
+          ...jobInput.testOnly,
+          initialCodexResult: forgedInitialCodexResult,
+        },
+      }),
+    ).rejects.toThrow('RETAINED_GROUNDED_TEST_RECEIPT_FORGED')
+    const alreadyValid = await runRetainedOwnerLocalGroundedRefinement({
+      ...jobInput,
+      testOnly: {
+        ...jobInput.testOnly,
+        evaluateAttempt: (evaluationInput) =>
+          testOnlyTableSpanEvaluation(evaluationInput, false),
       },
     })
+    expect(alreadyValid.status).toBe('already-valid')
+    expect('result' in alreadyValid).toBe(false)
+    const execution = await runRetainedOwnerLocalGroundedRefinement(jobInput)
+    expect(execution.status).toBe('refined')
+    if (execution.status !== 'refined') throw new Error('EXPECTED_REFINEMENT')
+    const { result } = execution
 
     expect(createdTasks).toBe(1)
     expect(proposals).toBe(2)
@@ -1938,6 +2003,7 @@ describe('candidate-grounded STRUCT materialization', () => {
       sourcePdf,
       sourceContract,
       codexIdentity,
+      expectedJavaExecutableSha256: digest('test-java-policy'),
     }
     expect(verifyGroundedThreeProfileRefinementResult(replayInput)).toBe(true)
     const tampered = structuredClone(result)

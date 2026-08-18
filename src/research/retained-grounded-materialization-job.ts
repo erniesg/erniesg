@@ -11,6 +11,18 @@ import {
   runOwnerLocalGroundedRefinement,
   type OwnerLocalGroundedRefinementInput,
 } from './grounded-refinement-codex-client'
+import { createLocalCodexRefinementSession } from './local-codex-refinement-session'
+import type { LocalCodexReconciliationRequest } from './local-codex-reconciliation'
+import {
+  createGroundedInitialRefinementEvidence,
+  evaluateGroundedThreeProfileAttempt,
+  runGroundedThreeProfileRefinement,
+  verifyGroundedThreeProfileEvaluationEvidence,
+  type GroundedRefinementCodexClient,
+  type GroundedThreeProfileEvaluation,
+  type GroundedThreeProfileEvaluationInput,
+} from './grounded-reconstruction-refinement'
+import type { LocalCodexReconciliationResult } from './local-codex-reconciliation'
 import {
   SOURCE_EPUB_OBSERVATION_CHECK_IDS,
   hashTraceValue,
@@ -54,9 +66,23 @@ export type LoadedRetainedGroundedMaterializationPacket = {
 
 export type RetainedOwnerLocalGroundedRefinementInput = Omit<
   OwnerLocalGroundedRefinementInput,
-  'sourceContract'
+  'sourceContract' | 'initialEvidence'
 > & {
   retainedPacket: RetainedGroundedMaterializationPacketPaths
+  observedPriorEvaluation: GroundedThreeProfileEvaluation
+  buildInitialReconciliationRequest: (input: {
+    packet: LoadedRetainedGroundedMaterializationPacket
+    observedPriorEvaluation: GroundedThreeProfileEvaluation
+  }) =>
+    LocalCodexReconciliationRequest | Promise<LocalCodexReconciliationRequest>
+  testOnly?: {
+    packet: LoadedRetainedGroundedMaterializationPacket
+    initialCodexResult: LocalCodexReconciliationResult
+    codex: GroundedRefinementCodexClient
+    evaluateAttempt: (
+      input: GroundedThreeProfileEvaluationInput,
+    ) => Promise<GroundedThreeProfileEvaluation>
+  }
 }
 
 function invalid(code: string): never {
@@ -156,8 +182,16 @@ export async function loadRetainedGroundedMaterializationPacket(
 export async function runRetainedOwnerLocalGroundedRefinement(
   input: RetainedOwnerLocalGroundedRefinementInput,
 ) {
-  const { retainedPacket, ...refinement } = input
-  const packet = await loadRetainedGroundedMaterializationPacket(retainedPacket)
+  const {
+    retainedPacket,
+    observedPriorEvaluation,
+    buildInitialReconciliationRequest,
+    testOnly,
+    ...refinement
+  } = input
+  const packet =
+    testOnly?.packet ??
+    (await loadRetainedGroundedMaterializationPacket(retainedPacket))
   if (
     refinement.sourcePdf.artifact.sha256 !== packet.receipt.sourcePdfSha256 ||
     refinement.sourcePdf.artifact.byteLength !==
@@ -170,13 +204,179 @@ export async function runRetainedOwnerLocalGroundedRefinement(
     refinement.initialMaterialization.receipt.sourcePdfSha256 !==
       packet.receipt.sourcePdfSha256 ||
     refinement.initialMaterialization.receipt.sourceEvidenceGraphSha256 !==
-      packet.sourceContract.graphArtifact.sha256
+      packet.sourceContract.graphArtifact.sha256 ||
+    refinement.initialCandidate.binding.canonicalStruct.sha256 !==
+      refinement.initialMaterialization.receipt.repairCore.sha256 ||
+    refinement.initialCandidate.binding.sourcePdfSha256 !==
+      packet.receipt.sourcePdfSha256 ||
+    refinement.initialCandidate.binding.sourceEvidenceGraphSha256 !==
+      packet.sourceContract.graphArtifact.sha256 ||
+    observedPriorEvaluation.materialization.receipt.receiptSha256 !==
+      refinement.initialMaterialization.receipt.receiptSha256 ||
+    observedPriorEvaluation.coordinatorTrace.terminalState !== 'failed' ||
+    !verifyGroundedThreeProfileEvaluationEvidence({
+      evaluation: observedPriorEvaluation,
+      sourcePdf: refinement.sourcePdf,
+      sourceContract: packet.sourceContract,
+      codexIdentity: refinement.codexIdentity,
+    })
   ) {
     invalid('RETAINED_GROUNDED_MATERIALIZATION_JOB_INPUT_MISMATCH')
   }
-  const result = await runOwnerLocalGroundedRefinement({
-    ...refinement,
-    sourceContract: packet.sourceContract,
+  if (testOnly) {
+    if (
+      testOnly.initialCodexResult.receipt.comparisonEvidenceSha256 !==
+        observedPriorEvaluation.coordinatorTrace.traceSha256 ||
+      testOnly.initialCodexResult.receipt.attemptIdSha256 !==
+        sha256HexSync(observedPriorEvaluation.coordinatorTrace.attemptId) ||
+      testOnly.initialCodexResult.receipt.graphSha256 !==
+        packet.sourceContract.graph.graphSha256 ||
+      testOnly.initialCodexResult.receipt.selectionSetSha256 !==
+        hashTraceValue(testOnly.initialCodexResult.selections) ||
+      testOnly.initialCodexResult.receipt.counts.decisionCount !==
+        testOnly.initialCodexResult.selections.length ||
+      testOnly.initialCodexResult.receipt.usage.totalTokens !==
+        testOnly.initialCodexResult.receipt.usage.inputTokens +
+          testOnly.initialCodexResult.receipt.usage.outputTokens ||
+      testOnly.initialCodexResult.receipt.usage.inputTokens < 1 ||
+      testOnly.initialCodexResult.receipt.usage.outputTokens < 1 ||
+      testOnly.initialCodexResult.receipt.usage.durationMs < 1 ||
+      [
+        testOnly.initialCodexResult.receipt.requestSha256,
+        testOnly.initialCodexResult.receipt.responseSha256,
+        testOnly.initialCodexResult.receipt.cropEvidenceSha256,
+        testOnly.initialCodexResult.receipt.threadSha256,
+        testOnly.initialCodexResult.receipt.turnSha256,
+        ...Object.values(testOnly.initialCodexResult.receipt.identities),
+      ].some((value) => !/^[a-f0-9]{64}$/u.test(value))
+    ) {
+      invalid('RETAINED_GROUNDED_TEST_RECEIPT_FORGED')
+    }
+    const failedEvaluation = await testOnly.evaluateAttempt({
+      attemptId: `${refinement.contract.runId}-owned-baseline`,
+      sourcePdf: refinement.sourcePdf,
+      materialization: refinement.initialMaterialization,
+      sourceContract: packet.sourceContract,
+      codexIdentity: refinement.codexIdentity,
+      codexResult: testOnly.initialCodexResult,
+      lineage: {
+        attemptIndex: 0,
+        parentTraceSha256: null,
+        immutablePriorTraceSha256: null,
+        appliedRepair: null,
+      },
+      critiqueRepair: null,
+      budget: {
+        policy: {
+          ...refinement.contract.budget,
+        },
+        usage: {
+          refinements: 0,
+          freshTasks: 0,
+          tokens: 0,
+          durationMs: 0,
+        },
+      },
+      epubCheckAuthority: refinement.epubCheckAuthority,
+    })
+    if (failedEvaluation.coordinatorTrace.terminalState !== 'failed') {
+      return {
+        status: 'already-valid' as const,
+        packet,
+        baselineEvaluation: failedEvaluation,
+      }
+    }
+    const { codexClient: _codexClient, ...rawRefinement } = refinement
+    const result = await runGroundedThreeProfileRefinement({
+      ...rawRefinement,
+      sourceContract: packet.sourceContract,
+      initialEvidence: createGroundedInitialRefinementEvidence({
+        priorEvaluation: observedPriorEvaluation,
+        failedEvaluation,
+        codexResult: testOnly.initialCodexResult,
+      }),
+      codex: testOnly.codex,
+      testOnlyEvaluateAttempt: testOnly.evaluateAttempt,
+    })
+    return { status: 'refined' as const, packet, result }
+  }
+  const session = await createLocalCodexRefinementSession({
+    config: refinement.codexClient.config,
+    documentId: refinement.contract.documentId,
+    runId: refinement.contract.runId,
+    maxTurns: 3,
   })
-  return { packet, result }
+  let handedOffSession = false
+  try {
+    const initialRequest = await buildInitialReconciliationRequest({
+      packet,
+      observedPriorEvaluation: structuredClone(observedPriorEvaluation),
+    })
+    if (
+      initialRequest.documentId !== refinement.contract.documentId ||
+      initialRequest.graphSha256 !== packet.sourceContract.graph.graphSha256 ||
+      initialRequest.comparisonEvidence.traceSha256 !==
+        observedPriorEvaluation.coordinatorTrace.traceSha256
+    ) {
+      invalid('RETAINED_GROUNDED_INITIAL_RECONCILIATION_MISMATCH')
+    }
+    const initialCodexResult = await session.reconcile(initialRequest, {
+      ...(refinement.signal ? { signal: refinement.signal } : {}),
+    })
+    const failedEvaluation = await evaluateGroundedThreeProfileAttempt({
+      attemptId: `${refinement.contract.runId}-owned-baseline`,
+      sourcePdf: refinement.sourcePdf,
+      materialization: refinement.initialMaterialization,
+      sourceContract: packet.sourceContract,
+      codexIdentity: refinement.codexIdentity,
+      codexResult: initialCodexResult,
+      lineage: {
+        attemptIndex: 0,
+        parentTraceSha256: null,
+        immutablePriorTraceSha256: null,
+        appliedRepair: null,
+      },
+      critiqueRepair: null,
+      budget: {
+        policy: {
+          maxRefinements: refinement.contract.budget.maxRefinements,
+          maxFreshTasks: refinement.contract.budget.maxFreshTasks,
+          maxTokens: refinement.contract.budget.maxTokens,
+          maxDurationMs: refinement.contract.budget.maxDurationMs,
+          repairPolicySha256: refinement.contract.budget.repairPolicySha256,
+        },
+        usage: {
+          refinements: 0,
+          freshTasks: 0,
+          tokens: 0,
+          durationMs: 0,
+        },
+      },
+      epubCheckAuthority: refinement.epubCheckAuthority,
+    })
+    if (failedEvaluation.coordinatorTrace.terminalState !== 'failed') {
+      return {
+        status: 'already-valid' as const,
+        packet,
+        baselineEvaluation: failedEvaluation,
+      }
+    }
+    const initialEvidence = createGroundedInitialRefinementEvidence({
+      priorEvaluation: observedPriorEvaluation,
+      failedEvaluation,
+      codexResult: initialCodexResult,
+    })
+    handedOffSession = true
+    const result = await runOwnerLocalGroundedRefinement(
+      {
+        ...refinement,
+        sourceContract: packet.sourceContract,
+        initialEvidence,
+      },
+      session,
+    )
+    return { status: 'refined' as const, packet, result }
+  } finally {
+    if (!handedOffSession) await session.close()
+  }
 }

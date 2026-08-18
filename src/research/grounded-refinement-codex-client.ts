@@ -113,9 +113,10 @@ function immutable<T>(value: T): Readonly<T> {
  */
 export function createGroundedRefinementCodexClient(
   input: GroundedRefinementCodexClientInput,
+  existingSession?: LocalCodexRefinementSession,
 ): GroundedRefinementCodexClient {
   assertIdentity(input)
-  let session: LocalCodexRefinementSession | undefined
+  let session: LocalCodexRefinementSession | undefined = existingSession
   let opening: Promise<LocalCodexRefinementSession> | undefined
   let task: Readonly<RefinementTask> | undefined
   let closed = false
@@ -298,6 +299,7 @@ export function createGroundedRefinementCodexClient(
 /** Production composition boundary for one owner-local #200 document run. */
 export async function runOwnerLocalGroundedRefinement(
   input: OwnerLocalGroundedRefinementInput,
+  existingSession?: LocalCodexRefinementSession,
 ) {
   if (
     input.codexClient.documentId !== input.contract.documentId ||
@@ -310,6 +312,6 @@ export async function runOwnerLocalGroundedRefinement(
   const { codexClient, ...refinement } = input
   return runGroundedThreeProfileRefinement({
     ...refinement,
-    codex: createGroundedRefinementCodexClient(codexClient),
+    codex: createGroundedRefinementCodexClient(codexClient, existingSession),
   })
 }

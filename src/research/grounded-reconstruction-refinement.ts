@@ -208,6 +208,7 @@ export type GroundedThreeProfileRefinementResult = {
 }
 
 export type GroundedInitialRefinementEvidence = {
+  priorEvaluation: GroundedThreeProfileEvaluation
   failedEvaluation: GroundedThreeProfileEvaluation
   codexResult: LocalCodexReconciliationResult
   evidenceSha256: string
@@ -490,6 +491,7 @@ export function verifyGroundedThreeProfileRefinementResult(input: {
   sourcePdf: SourcePdfBinding
   sourceContract: SourceEvidenceContract
   codexIdentity: OwnerLocalCodexTraceIdentity
+  expectedJavaExecutableSha256: string
 }) {
   try {
     const fail = (code: string): never => {
@@ -497,6 +499,7 @@ export function verifyGroundedThreeProfileRefinementResult(input: {
     }
     const { result } = input
     const initialProjection = initialEvidenceProjection({
+      priorEvaluation: result.initialEvidence.priorEvaluation,
       failedEvaluation: result.initialEvidence.failedEvaluation,
       codexResult: result.initialEvidence.codexResult,
     })
@@ -504,15 +507,26 @@ export function verifyGroundedThreeProfileRefinementResult(input: {
       result.initialEvidence.evidenceSha256 !==
         hashTraceValue(initialProjection) ||
       !verifyGroundedThreeProfileEvaluationEvidence({
+        evaluation: result.initialEvidence.priorEvaluation,
+        sourcePdf: input.sourcePdf,
+        sourceContract: input.sourceContract,
+        codexIdentity: input.codexIdentity,
+      }) ||
+      !verifyGroundedThreeProfileEvaluationEvidence({
         evaluation: result.initialEvidence.failedEvaluation,
         sourcePdf: input.sourcePdf,
         sourceContract: input.sourceContract,
         codexIdentity: input.codexIdentity,
       }) ||
+      result.initialEvidence.priorEvaluation.coordinatorTrace.terminalState !==
+        'failed' ||
       result.initialEvidence.failedEvaluation.coordinatorTrace.terminalState !==
         'failed' ||
       result.initialEvidence.codexResult.receipt.comparisonEvidenceSha256 !==
-        result.initialEvidence.failedEvaluation.coordinatorTrace.traceSha256 ||
+        result.initialEvidence.priorEvaluation.coordinatorTrace.traceSha256 ||
+      canonicalTraceJson(
+        result.initialEvidence.failedEvaluation.codexResult,
+      ) !== canonicalTraceJson(result.initialEvidence.codexResult) ||
       result.evaluations.length < 1 ||
       result.evaluations.length > 4 ||
       result.evaluations.length !== result.receipt.attempts.length ||
@@ -769,8 +783,7 @@ export function verifyGroundedThreeProfileRefinementResult(input: {
     const { receiptSha256: _receiptSha256, ...receiptProjection } =
       result.receipt
     const finalIndex = result.evaluations.length - 1
-    const expectedJavaExecutableSha256 =
-      result.receipt.javaExecutableSha256 ?? ''
+    const expectedJavaExecutableSha256 = input.expectedJavaExecutableSha256
     const canPublish =
       result.refinement.publicReceipt.status === 'publication-ready' &&
       hasProductionEpubCheckAuthority(
@@ -779,6 +792,7 @@ export function verifyGroundedThreeProfileRefinementResult(input: {
       ) &&
       result.receipt.evaluationAuthority === 'production' &&
       /^[a-f0-9]{64}$/u.test(expectedJavaExecutableSha256) &&
+      result.receipt.javaExecutableSha256 === expectedJavaExecutableSha256 &&
       bestIndex === finalIndex &&
       hasProductionEpubCheckAuthority(
         result.evaluations,
@@ -786,7 +800,13 @@ export function verifyGroundedThreeProfileRefinementResult(input: {
       ) &&
       result.evaluations[finalIndex]!.vectors.every(
         ({ failedCount }) => failedCount === 0,
-      )
+      ) &&
+      result.codexRepairEvidence.length >= 1 &&
+      result.refinement.privateEvidence.applications.length >= 1 &&
+      result.refinement.publicReceipt.freshTaskCount === 1 &&
+      result.refinement.publicReceipt.refinementCount >= 1 &&
+      result.refinement.publicReceipt.usage.inputTokens > 0 &&
+      result.refinement.publicReceipt.usage.outputTokens > 0
     if (
       result.receipt.receiptSha256 !== hashTraceValue(receiptProjection) ||
       result.receipt.initialEvidenceSha256 !==
@@ -931,6 +951,9 @@ function initialEvidenceProjection(
   evidence: Omit<GroundedInitialRefinementEvidence, 'evidenceSha256'>,
 ) {
   return {
+    priorEvaluationSha256: hashGroundedThreeProfileEvaluationEvidence(
+      evidence.priorEvaluation,
+    ),
     failedEvaluationSha256: hashGroundedThreeProfileEvaluationEvidence(
       evidence.failedEvaluation,
     ),
@@ -939,11 +962,13 @@ function initialEvidenceProjection(
 }
 
 export function createGroundedInitialRefinementEvidence(input: {
+  priorEvaluation: GroundedThreeProfileEvaluation
   failedEvaluation: GroundedThreeProfileEvaluation
   codexResult: LocalCodexReconciliationResult
 }): GroundedInitialRefinementEvidence {
   const projection = initialEvidenceProjection(input)
   return {
+    priorEvaluation: structuredClone(input.priorEvaluation),
     failedEvaluation: structuredClone(input.failedEvaluation),
     codexResult: structuredClone(input.codexResult),
     evidenceSha256: hashTraceValue(projection),
@@ -1029,10 +1054,13 @@ export async function runGroundedThreeProfileRefinement(
     input.initialMaterialization,
   )
   const initialEvidenceProjectionValue = initialEvidenceProjection({
+    priorEvaluation: input.initialEvidence.priorEvaluation,
     failedEvaluation: input.initialEvidence.failedEvaluation,
     codexResult: input.initialEvidence.codexResult,
   })
   const priorTrace = input.initialEvidence.failedEvaluation.coordinatorTrace
+  const observedPriorTrace =
+    input.initialEvidence.priorEvaluation.coordinatorTrace
   const initialReceipt = input.initialEvidence.codexResult.receipt
   const installedCandidateIds = new Set(
     input.initialMaterialization.receipt.selections.flatMap((selection) =>
@@ -1057,15 +1085,29 @@ export async function runGroundedThreeProfileRefinement(
     input.initialEvidence.evidenceSha256 !==
       hashTraceValue(initialEvidenceProjectionValue) ||
     !verifyGroundedThreeProfileEvaluationEvidence({
+      evaluation: input.initialEvidence.priorEvaluation,
+      sourcePdf: input.sourcePdf,
+      sourceContract: input.sourceContract,
+      codexIdentity: input.codexIdentity,
+    }) ||
+    !verifyGroundedThreeProfileEvaluationEvidence({
       evaluation: input.initialEvidence.failedEvaluation,
       sourcePdf: input.sourcePdf,
       sourceContract: input.sourceContract,
       codexIdentity: input.codexIdentity,
     }) ||
+    observedPriorTrace.terminalState !== 'failed' ||
+    observedPriorTrace.comparator.status !== 'failed' ||
     priorTrace.terminalState !== 'failed' ||
     priorTrace.comparator.status !== 'failed' ||
-    initialReceipt.comparisonEvidenceSha256 !== priorTrace.traceSha256 ||
-    initialReceipt.attemptIdSha256 !== sha256HexSync(priorTrace.attemptId) ||
+    initialReceipt.comparisonEvidenceSha256 !==
+      observedPriorTrace.traceSha256 ||
+    initialReceipt.attemptIdSha256 !==
+      sha256HexSync(observedPriorTrace.attemptId) ||
+    canonicalTraceJson(input.initialEvidence.failedEvaluation.codexResult) !==
+      canonicalTraceJson(input.initialEvidence.codexResult) ||
+    input.initialEvidence.failedEvaluation.materialization.receipt
+      .receiptSha256 !== input.initialMaterialization.receipt.receiptSha256 ||
     initialReceipt.graphSha256 !== input.sourceContract.graph.graphSha256 ||
     selectedCandidateIds.length < 1 ||
     selectedCandidateIds.some(
@@ -1277,6 +1319,12 @@ export async function runGroundedThreeProfileRefinement(
         : '',
     ) &&
     input.testOnlyEvaluateAttempt === undefined &&
+    codexRepairEvidence.length >= 1 &&
+    refinement.privateEvidence.applications.length >= 1 &&
+    refinement.publicReceipt.freshTaskCount === 1 &&
+    refinement.publicReceipt.refinementCount >= 1 &&
+    refinement.publicReceipt.usage.inputTokens > 0 &&
+    refinement.publicReceipt.usage.outputTokens > 0 &&
     bestState.candidate.binding.bindingSha256 ===
       finalState.candidate.binding.bindingSha256
   const closedReceipt = canPublish
@@ -1330,6 +1378,10 @@ export async function runGroundedThreeProfileRefinement(
       sourcePdf: input.sourcePdf,
       sourceContract: input.sourceContract,
       codexIdentity: input.codexIdentity,
+      expectedJavaExecutableSha256:
+        input.epubCheckAuthority.kind === 'pinned-java-jar'
+          ? input.epubCheckAuthority.expectedJavaExecutableSha256
+          : '0'.repeat(64),
     })
   ) {
     throw new Error('GROUNDED_THREE_PROFILE_REFINEMENT_REPLAY_FAILED')

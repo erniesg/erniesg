@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import {
   chmod,
@@ -49,6 +49,27 @@ function fixturePath(name: string) {
 
 const fixturePdf = fixturePath('born-digital.pdf')
 const scanFixturePdf = fixturePath('scanned-page.pdf')
+
+function linuxIsolationPreflightFailure() {
+  if (process.platform !== 'linux') return null
+  const plan = buildOwnerLocalMineruIsolationCommand({
+    isolation: 'linux-user-netns-loopback-only-v1',
+    isolationExecutable: '/usr/bin/unshare',
+    runDirectory: tmpdir(),
+    program: '/bin/true',
+    args: [],
+  })
+  const result = spawnSync(plan.command, plan.args, {
+    stdio: 'ignore',
+    timeout: 5_000,
+  })
+  return result.status === 0 && result.signal === null
+    ? null
+    : `exact user+network namespace preflight unavailable (${result.error ? (result.error as NodeJS.ErrnoException).code : `status ${result.status ?? 'none'}, signal ${result.signal ?? 'none'}`})`
+}
+
+const linuxIsolationSkipReason = linuxIsolationPreflightFailure()
+const liveIsolationIt = linuxIsolationSkipReason === null ? it : it.skip
 
 const realMlxSmokeReceipts = [
   {
@@ -335,7 +356,9 @@ describe('owner-local MinerU runner', () => {
     ).toThrow(/ABSOLUTE_PATH_REQUIRED/u)
   })
 
-  it('executes through a real OS network-isolation boundary', async () => {
+  liveIsolationIt(
+    `executes through a real OS network-isolation boundary${linuxIsolationSkipReason ? ` [${linuxIsolationSkipReason}]` : ''}`,
+    async () => {
     const runDirectory = await realpath(
       await mkdtemp(join(tmpdir(), 'mineru-network-probe-')),
     )
@@ -368,9 +391,12 @@ describe('owner-local MinerU runner', () => {
         )
       })
     })
-  })
+    },
+  )
 
-  it('enforces the measured execution snapshot as read-only inside isolation', async () => {
+  liveIsolationIt(
+    `enforces the measured execution snapshot as read-only inside isolation${linuxIsolationSkipReason ? ` [${linuxIsolationSkipReason}]` : ''}`,
+    async () => {
     const runDirectory = await realpath(
       await mkdtemp(join(tmpdir(), 'mineru-readonly-probe-')),
     )
@@ -410,6 +436,26 @@ describe('owner-local MinerU runner', () => {
       })
     })
     expect(await readFile(measuredFile, 'utf8')).toBe('measured')
+    },
+  )
+
+  it('keeps unsupported Linux isolation fail-closed without a fallback command', () => {
+    const plan = buildOwnerLocalMineruIsolationCommand({
+      isolation: 'linux-user-netns-loopback-only-v1',
+      isolationExecutable: '/usr/bin/unshare',
+      runDirectory: '/private/tmp/mineru-isolation-contract',
+      program: '/bin/true',
+      args: [],
+    })
+    expect(plan.command).toBe('/usr/bin/unshare')
+    expect(plan.args.slice(0, 4)).toEqual([
+      '--user',
+      '--map-root-user',
+      '--net',
+      '--mount',
+    ])
+    expect(plan.args.join(' ')).toContain('/usr/sbin/ip link set lo up')
+    expect(plan.args.at(-1)).toBe('/bin/true')
   })
 
   it('seals execution bytes before use and rejects swap-use-restore aliases', async () => {

@@ -515,6 +515,7 @@ describe('owner-local MinerU runner', () => {
     await writeFile(join(source, 'bin', 'python'), 'runtime', {
       mode: 0o755,
     })
+    await writeFile(join(source, 'bin.cache'), 'cache')
     await writeFile(join(source, 'CACHEDIR.TAG'), 'cache-tag')
 
     const preflight = await measureOwnerLocalExecutionTree(source)

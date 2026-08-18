@@ -370,6 +370,7 @@ export async function sealOwnerLocalExecutionTree(input: {
   let allocatedByteLength = 0
   let fileCount = 0
   const inventory: Array<{
+    relativePath: string
     pathSha256: string
     byteLength: number
     sha256: string
@@ -430,6 +431,7 @@ export async function sealOwnerLocalExecutionTree(input: {
       }
       const relativePath = relative(sealedRoot, sealedPath)
       inventory.push({
+        relativePath,
         pathSha256: createHash('sha256').update(relativePath).digest('hex'),
         byteLength: copyDetails.size,
         sha256: await hashFile(sealedPath),
@@ -438,13 +440,18 @@ export async function sealOwnerLocalExecutionTree(input: {
   }
   await visit(sourceRoot, sealedRoot, new Set())
   await chmod(sealedRoot, 0o555)
+  const canonicalInventory = inventory
+    .sort((left, right) =>
+      compareCanonicalCodeUnits(left.relativePath, right.relativePath),
+    )
+    .map(({ relativePath: _relativePath, ...item }) => item)
   return Object.freeze({
     sourceRoot,
     sealedRoot,
     byteLength,
     allocatedByteLength,
     fileCount,
-    inventorySha256: canonicalHash(inventory),
+    inventorySha256: canonicalHash(canonicalInventory),
   })
 }
 

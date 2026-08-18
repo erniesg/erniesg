@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { path as epubCheckJarPath } from 'epubcheck-static'
 import { sha256HexSync } from '../struct/sha256'
 import {
@@ -30,9 +34,14 @@ import {
 } from './grounded-epub-comparison'
 import {
   advanceGroundedRefinementLedger,
+  assertGroundedThreeProfileEvaluationEvidence,
+  createGroundedInitialRefinementEvidence,
+  evaluateGroundedThreeProfileAttempt,
   runGroundedThreeProfileRefinement,
   selectGroundedCoordinatorProfile,
+  type GroundedThreeProfileEvaluationInput,
   verifyGroundedThreeProfileRefinementResult,
+  verifyGroundedThreeProfileEvaluationEvidence,
 } from './grounded-reconstruction-refinement'
 import { createSourceEvidenceContract } from './source-evidence-contract'
 import { applyGroundedStructRepair } from './grounded-struct-repair-applicator'
@@ -71,23 +80,29 @@ const digest = (value: string | Uint8Array) => sha256HexSync(value)
 /** Non-promotable unit receipt; pilot acceptance requires retained real evidence. */
 function testOnlyMeasuredCodexResult(
   graphSha256: string,
-  comparisonEvidenceSha256 = digest('prior-comparison-evidence'),
+  options: {
+    comparisonEvidenceSha256?: string
+    attemptId?: string
+    selections?: Array<{ decisionId: string; candidateId: string }>
+    sessionId?: string
+  } = {},
 ) {
-  const selections: never[] = []
+  const selections = options.selections ?? []
   return {
     selections,
     receipt: {
       schemaVersion: '1.0.0' as const,
       status: 'accepted' as const,
       documentIdSha256: digest('document'),
-      attemptIdSha256: digest('attempt'),
-      isolatedSessionSha256: digest('session'),
+      attemptIdSha256: digest(options.attemptId ?? 'attempt'),
+      isolatedSessionSha256: digest(options.sessionId ?? 'session'),
       graphSha256,
       candidateSetSha256: digest('candidate-set'),
       requestSha256: digest('request'),
       responseSha256: digest('response'),
       selectionSetSha256: hashTraceValue(selections),
-      comparisonEvidenceSha256,
+      comparisonEvidenceSha256:
+        options.comparisonEvidenceSha256 ?? digest('prior-comparison-evidence'),
       cropEvidenceSha256: digest('crops'),
       threadSha256: digest('thread'),
       turnSha256: digest('turn'),
@@ -101,8 +116,8 @@ function testOnlyMeasuredCodexResult(
         observedModelSha256: digest('observed-model'),
       },
       counts: {
-        decisionCount: 0,
-        candidateCount: 0,
+        decisionCount: selections.length,
+        candidateCount: selections.length,
         renderCount: 0,
         sourceCropCount: 0,
         epubCropCount: 0,
@@ -118,6 +133,58 @@ function testOnlyMeasuredCodexResult(
       },
     },
   }
+}
+
+async function testOnlyTableSpanEvaluation(
+  input: GroundedThreeProfileEvaluationInput,
+  failMobile: boolean,
+) {
+  const evaluation = await evaluateGroundedThreeProfileAttempt(input)
+  if (!failMobile) return evaluation
+  const failed = structuredClone(evaluation)
+  const mobile = failed.profiles.find(
+    ({ build }) => build.profileId === 'mobile',
+  )!
+  const cell = mobile.render.blockFacts.flatMap(({ cells }) => cells)[0]
+  if (!cell) throw new Error('TEST_TABLE_CELL_REQUIRED')
+  cell.columnSpan = cell.columnSpan === 1 ? 2 : 1
+  const {
+    domBytes: _domBytes,
+    screenshotBytes: _screenshotBytes,
+    receiptSha256: _receiptSha256,
+    ...renderProjection
+  } = mobile.render
+  mobile.render.receiptSha256 = hashTraceValue(renderProjection)
+  mobile.comparison = compareGroundedProfiledEpub({
+    materialization: input.materialization,
+    sourceContract: input.sourceContract,
+    build: mobile.build,
+    render: mobile.render,
+    epubCheck: mobile.epubCheck,
+  })
+  mobile.trace = createGroundedActualReconstructionTrace({
+    attemptId: `${input.attemptId}-mobile`,
+    sourcePdf: input.sourcePdf,
+    materialization: input.materialization,
+    sourceContract: input.sourceContract,
+    comparison: mobile.comparison,
+    codexIdentity: input.codexIdentity,
+    codexResult: input.codexResult,
+    lineage: input.lineage,
+    critiqueRepair: input.critiqueRepair,
+    ...(input.repairProviderReceipt
+      ? { repairProviderReceipt: input.repairProviderReceipt }
+      : {}),
+    budget: input.budget,
+  })
+  failed.attempt.traces.mobile = mobile.trace
+  failed.vectors = failed.profiles.map(({ build, trace }) =>
+    createReconstructionHardCheckVector(build.profileId, trace),
+  )
+  failed.coordinatorProfileId = selectGroundedCoordinatorProfile(failed.vectors)
+  failed.coordinatorTrace = failed.attempt.traces[failed.coordinatorProfileId]
+  failed.attempt.coordinatorProfileId = failed.coordinatorProfileId
+  return failed
 }
 
 function groundedVerifierReceipt(
@@ -1117,7 +1184,12 @@ describe('candidate-grounded STRUCT materialization', () => {
     ).toThrow('UNGROUNDED_SEMANTIC_TABLE_CANDIDATE')
   })
 
-  it.runIf(Boolean(process.env.RUCKSACK_EPUBCHECK_JAVA))(
+  it.runIf(
+    Boolean(
+      process.env.RUCKSACK_EPUBCHECK_JAVA &&
+      process.env.RUCKSACK_EPUBCHECK_JAVA_SHA256,
+    ),
+  )(
     'executes the pinned EPUBCheck jar with warnings fatal for all profiles',
     async () => {
       const selected = selections()
@@ -1139,6 +1211,8 @@ describe('candidate-grounded STRUCT materialization', () => {
             executePinnedEpubCheck({
               epubBytes,
               javaPath: process.env.RUCKSACK_EPUBCHECK_JAVA!,
+              expectedJavaExecutableSha256:
+                process.env.RUCKSACK_EPUBCHECK_JAVA_SHA256!,
               epubCheckJarPath,
               toolVersion: '5.3.0',
             }),
@@ -1148,6 +1222,55 @@ describe('candidate-grounded STRUCT materialization', () => {
     },
     20_000,
   )
+
+  it('rejects replaced Java and jar bytes before launching EPUBCheck', async () => {
+    const fakeExecutablePath = fileURLToPath(
+      new URL('../../package.json', import.meta.url),
+    )
+    await expect(
+      executePinnedEpubCheck({
+        epubBytes: new Uint8Array([1]),
+        javaPath: fakeExecutablePath,
+        expectedJavaExecutableSha256: digest('wrong-java'),
+        epubCheckJarPath,
+        toolVersion: '5.3.0',
+      }),
+    ).rejects.toThrow('EPUBCHECK_PINNED_EXECUTABLE_IDENTITY_MISMATCH')
+    await expect(
+      executePinnedEpubCheck({
+        epubBytes: new Uint8Array([1]),
+        javaPath: fakeExecutablePath,
+        expectedJavaExecutableSha256: digest(
+          await readFile(fakeExecutablePath),
+        ),
+        epubCheckJarPath: fakeExecutablePath,
+        toolVersion: '5.3.0',
+      }),
+    ).rejects.toThrow('EPUBCHECK_PINNED_EXECUTABLE_IDENTITY_MISMATCH')
+  })
+
+  it('rejects Java executable replacement during EPUBCheck execution', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'rucksack-fake-java-'))
+    const fakeJavaPath = join(directory, 'java')
+    const fakeJava = new TextEncoder().encode(
+      '#!/bin/sh\nprintf \'#!/bin/sh\\nexit 0\\n\' > "$0"\nprintf \'{"messages":[]}\' > "$4"\n',
+    )
+    try {
+      await writeFile(fakeJavaPath, fakeJava, { flag: 'wx' })
+      await chmod(fakeJavaPath, 0o700)
+      await expect(
+        executePinnedEpubCheck({
+          epubBytes: new Uint8Array([1]),
+          javaPath: fakeJavaPath,
+          expectedJavaExecutableSha256: digest(fakeJava),
+          epubCheckJarPath,
+          toolVersion: '5.3.0',
+        }),
+      ).rejects.toThrow('EPUBCHECK_EXECUTABLE_CHANGED_DURING_RUN')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
 
   it('applies a selected full-schema repair through the receipt-free core bridge', () => {
     const selected = selections()
@@ -1356,7 +1479,7 @@ describe('candidate-grounded STRUCT materialization', () => {
     ).toThrow('INVALID_MATERIALIZED_REPAIR_APPLICATION_RECEIPT')
   })
 
-  it('closes one actual three-profile attempt without opening a repair task', async () => {
+  it('continues one #199 task through a rejected sibling to terminal promotion', async () => {
     const selected = selections(
       undefined,
       'title-candidate',
@@ -1497,7 +1620,15 @@ describe('candidate-grounded STRUCT materialization', () => {
     let createdTasks = 0
     let proposals = 0
     let closes = 0
-    let repairReceipt: ProviderReceiptBinding | undefined
+    const repairReceipts = new Map<string, ProviderReceiptBinding>()
+    const repairEvidence: Array<{
+      sessionSha256: string
+      proposalSha256: string
+      result: ReturnType<typeof testOnlyMeasuredCodexResult>
+      providerReceipt: ProviderReceiptBinding
+      evidenceSha256: string
+    }> = []
+    const sessionSha256 = digest('one-owner-local-session')
     const codex = {
       identity: codexIdentity,
       probe: async () => ({ available: true }),
@@ -1520,15 +1651,23 @@ describe('candidate-grounded STRUCT materialization', () => {
       },
       proposeRepair: async (request: {
         task: { taskIdSha256: string }
-        immutablePriorTrace: { traceSha256: string; comparator: unknown }
+        immutablePriorTrace: {
+          attemptId: string
+          traceSha256: string
+          comparator: unknown
+          structure: { artifact: { sha256: string } }
+        }
       }) => {
         proposals += 1
+        const selectedReference =
+          proposals === 1 ? headingLevel2 : headingLevel3
         const patch = createStructEvidencePatch({
           schemaVersion: '1.0.0',
           documentId: source.documentId,
           sourcePdfSha256: source.sha256,
           sourceEvidenceGraphSha256: selected.graph.graphSha256,
-          baseStructSha256: initialMaterialization.receipt.repairCore.sha256,
+          baseStructSha256:
+            request.immutablePriorTrace.structure.artifact.sha256,
           priorTraceSha256: request.immutablePriorTrace.traceSha256,
           taskIdSha256: request.task.taskIdSha256,
           operations: [
@@ -1536,18 +1675,38 @@ describe('candidate-grounded STRUCT materialization', () => {
               op: 'select-evidence-candidate',
               targetKind: 'block',
               targetId: headingBlock.id,
-              candidateReferenceSha256: headingLevel2.referenceSha256,
+              candidateReferenceSha256: selectedReference.referenceSha256,
             },
           ],
         })
-        repairReceipt = Object.freeze({
-          id: 'owner-local-codex-repair-1',
+        const localResult = testOnlyMeasuredCodexResult(
+          selected.graph.graphSha256,
+          {
+            comparisonEvidenceSha256: request.immutablePriorTrace.traceSha256,
+            attemptId: request.immutablePriorTrace.attemptId,
+            sessionId: 'one-owner-local-session',
+            selections: [
+              {
+                decisionId: `heading-repair-${proposals}`,
+                candidateId: selectedReference.candidateId,
+              },
+            ],
+          },
+        )
+        const providerProjection = {
+          schemaVersion: '1.0.0',
+          sessionSha256,
+          localReceipt: localResult.receipt,
+          proposalSha256: patch.proposalSha256,
+        }
+        const providerReceipt = Object.freeze({
+          id: `owner-local-codex-repair-${proposals}`,
           role: 'owner-local-codex-repair' as const,
           required: true,
           enabledBeforeRun: true,
           providerId: codexIdentity.server.id,
           identitySha256: hashTraceValue(codexIdentity),
-          receiptSha256: digest('owner-local-codex-repair-receipt'),
+          receiptSha256: hashTraceValue(providerProjection),
           inputSha256: hashTraceValue(request.immutablePriorTrace.comparator),
           outputSha256: patch.proposalSha256,
           prompt: codexIdentity.prompt,
@@ -1556,18 +1715,29 @@ describe('candidate-grounded STRUCT materialization', () => {
           server: codexIdentity.server,
           status: 'succeeded' as const,
         })
+        repairReceipts.set(patch.proposalSha256, providerReceipt)
+        const evidenceProjection = {
+          sessionSha256,
+          proposalSha256: patch.proposalSha256,
+          result: localResult,
+          providerReceipt,
+        }
+        repairEvidence.push({
+          ...evidenceProjection,
+          evidenceSha256: hashTraceValue(evidenceProjection),
+        })
         return {
           proposal: patch,
-          usage: { inputTokens: 120, outputTokens: 30, elapsedMs: 10 },
+          usage: { inputTokens: 1, outputTokens: 1, elapsedMs: 1 },
         }
       },
-      repairProviderReceipt: () => repairReceipt!,
-      repairEvidence: () => [],
+      repairProviderReceipt: (patch: { proposalSha256: string }) =>
+        repairReceipts.get(patch.proposalSha256)!,
+      repairEvidence: () => structuredClone(repairEvidence),
       close: async () => {
         closes += 1
       },
     }
-    const repairedProposal = proposal()
     const sourcePdf = {
       artifact: { sha256: source.sha256, byteLength: source.byteLength },
       pageCount: 1,
@@ -1582,9 +1752,79 @@ describe('candidate-grounded STRUCT materialization', () => {
         },
       ],
     }
-    const initialCodexResult = testOnlyMeasuredCodexResult(
+    const epubCheckAuthority = {
+      kind: 'test-only-injected' as const,
+      execute: async () => ({
+        toolId: 'epubcheck' as const,
+        toolVersion: '5.3.0-unit',
+        executableSha256: digest('unit-epubcheck'),
+        exitCode: 0,
+        reportBytes: new TextEncoder().encode('{"messages":[]}'),
+        errorCount: 0,
+        warningCount: 0,
+      }),
+    }
+    const seedCodexResult = testOnlyMeasuredCodexResult(
       selected.graph.graphSha256,
     )
+    const failedEvaluation = await testOnlyTableSpanEvaluation(
+      {
+        attemptId: 'observed-pre-codex-baseline',
+        sourcePdf,
+        materialization: initialMaterialization,
+        sourceContract,
+        codexIdentity,
+        codexResult: seedCodexResult,
+        lineage: {
+          attemptIndex: 0,
+          parentTraceSha256: null,
+          immutablePriorTraceSha256: null,
+          appliedRepair: null,
+        },
+        critiqueRepair: null,
+        budget: {
+          policy: {
+            maxRefinements: 3,
+            maxFreshTasks: 1,
+            maxTokens: 24_000,
+            maxDurationMs: 30 * 60_000,
+            repairPolicySha256: digest('repair-policy'),
+          },
+          usage: {
+            refinements: 0,
+            freshTasks: 0,
+            tokens: 0,
+            durationMs: 0,
+          },
+        },
+        epubCheckAuthority,
+      },
+      true,
+    )
+    const initialCodexResult = testOnlyMeasuredCodexResult(
+      selected.graph.graphSha256,
+      {
+        comparisonEvidenceSha256: failedEvaluation.coordinatorTrace.traceSha256,
+        attemptId: failedEvaluation.coordinatorTrace.attemptId,
+        selections: [
+          {
+            decisionId: 'initial-heading-selection',
+            candidateId: headingLevel3.candidateId,
+          },
+        ],
+      },
+    )
+    const initialEvidence = createGroundedInitialRefinementEvidence({
+      failedEvaluation,
+      codexResult: initialCodexResult,
+    })
+    assertGroundedThreeProfileEvaluationEvidence({
+      evaluation: failedEvaluation,
+      sourcePdf,
+      sourceContract,
+      codexIdentity,
+    })
+    let evaluatedAttempts = 0
     const result = await runGroundedThreeProfileRefinement({
       contract,
       initialCandidate,
@@ -1593,32 +1833,36 @@ describe('candidate-grounded STRUCT materialization', () => {
       sourcePdf,
       sourceContract,
       codexIdentity,
-      initialCodexResult,
+      initialEvidence,
       codex,
       materializationVerification: {
         sourceEvidenceVerifier: sourceContract.verifier,
         evidenceCandidates: sourceContract.evidenceCandidates,
         groundedVerifier,
       },
-      epubCheckAuthority: {
-        kind: 'test-only-injected',
-        execute: async () => ({
-          toolId: 'epubcheck',
-          toolVersion: '5.3.0-unit',
-          executableSha256: digest('unit-epubcheck'),
-          exitCode: 0,
-          reportBytes: new TextEncoder().encode('{"messages":[]}'),
-          errorCount: 0,
-          warningCount: 0,
-        }),
+      epubCheckAuthority,
+      resolveResultingProposal: ({ patch }) => {
+        const resultingProposal = proposal()
+        resultingProposal.nodes.find(({ id }) => id === 'heading-node')!.level =
+          patch.operations[0]!.candidateReferenceSha256 ===
+          headingLevel2.referenceSha256
+            ? 2
+            : 3
+        return resultingProposal
       },
-      resolveResultingProposal: () => repairedProposal,
+      testOnlyEvaluateAttempt: async (evaluationInput) => {
+        evaluatedAttempts += 1
+        return testOnlyTableSpanEvaluation(
+          evaluationInput,
+          evaluatedAttempts < 3,
+        )
+      },
     })
 
-    expect(createdTasks).toBe(0)
-    expect(proposals).toBe(0)
+    expect(createdTasks).toBe(1)
+    expect(proposals).toBe(2)
     expect(closes).toBe(1)
-    expect(result.evaluations).toHaveLength(1)
+    expect(result.evaluations).toHaveLength(3)
     expect(
       result.evaluations[0]!.profiles.map(({ build }) => build.profileId),
     ).toEqual(['mobile', 'paperProMove', 'paperPro'])
@@ -1636,12 +1880,10 @@ describe('candidate-grounded STRUCT materialization', () => {
           )?.receiptSha256 === hashTraceValue(initialCodexResult.receipt),
       ),
     ).toBe(true)
-    expect(result.evaluations[0]!.coordinatorTrace.terminalState).toBe(
-      'publication-ready',
-    )
+    expect(result.evaluations[0]!.coordinatorTrace.terminalState).toBe('failed')
     expect(
       result.receipt.attempts.map(({ disposition }) => disposition),
-    ).toEqual(['terminal-pass'])
+    ).toEqual(['baseline', 'rejected-exploratory', 'terminal-pass'])
     expect(result.receipt.attempts[0]).toMatchObject({
       parentCandidateBindingSha256: null,
       activeBeforeCandidateBindingSha256:
@@ -1649,7 +1891,7 @@ describe('candidate-grounded STRUCT materialization', () => {
       activeAfterCandidateBindingSha256: initialCandidate.binding.bindingSha256,
       bestBeforeCandidateBindingSha256: initialCandidate.binding.bindingSha256,
       bestAfterCandidateBindingSha256: initialCandidate.binding.bindingSha256,
-      allThreeProfilesPassed: true,
+      allThreeProfilesPassed: false,
       rejectedBudgetAfter: {
         refinements: 0,
         freshTasks: 0,
@@ -1658,18 +1900,39 @@ describe('candidate-grounded STRUCT materialization', () => {
       },
     })
     expect(result.receipt).toMatchObject({
-      activeCandidateBindingSha256: initialCandidate.binding.bindingSha256,
-      bestCandidateBindingSha256: initialCandidate.binding.bindingSha256,
-      rejectedBudget: {
-        refinements: 0,
-        freshTasks: 0,
-        tokens: 0,
-        durationMs: 0,
-      },
+      activeCandidateBindingSha256:
+        result.receipt.attempts[2]!.candidateBindingSha256,
+      bestCandidateBindingSha256:
+        result.receipt.attempts[2]!.candidateBindingSha256,
+      rejectedBudget: result.receipt.attempts[1]!.rejectedBudgetAfter,
+    })
+    expect(result.receipt.rejectedBudget).toMatchObject({
+      refinements: 1,
+      freshTasks: 1,
+      tokens: 2,
+    })
+    expect(result.receipt.rejectedBudget.durationMs).toBeGreaterThan(0)
+    expect(result.receipt.attempts[1]).toMatchObject({
+      activeBeforeCandidateBindingSha256:
+        result.receipt.attempts[0]!.candidateBindingSha256,
+      activeAfterCandidateBindingSha256:
+        result.receipt.attempts[1]!.candidateBindingSha256,
+      bestAfterCandidateBindingSha256:
+        result.receipt.attempts[0]!.candidateBindingSha256,
+      disposition: 'rejected-exploratory',
+      rejectionReason: 'hard-gate-regression',
+    })
+    expect(result.receipt.attempts[2]).toMatchObject({
+      activeBeforeCandidateBindingSha256:
+        result.receipt.attempts[1]!.candidateBindingSha256,
+      bestAfterCandidateBindingSha256:
+        result.receipt.attempts[2]!.candidateBindingSha256,
+      disposition: 'terminal-pass',
+      allThreeProfilesPassed: true,
     })
     expect(result.refinement.publicReceipt.failureCode).toBe(null)
-    expect(result.receipt.status).toBe('publication-ready')
-    expect(result.closedReceipt?.status).toBe('publication-ready')
+    expect(result.receipt.status).toBe('failed')
+    expect(result.closedReceipt).toBeNull()
     const replayInput = {
       result,
       sourcePdf,
@@ -1686,7 +1949,7 @@ describe('candidate-grounded STRUCT materialization', () => {
       }),
     ).toBe(false)
     const selfRehashedLedger = structuredClone(result)
-    selfRehashedLedger.receipt.attempts[0]!.disposition = 'baseline'
+    selfRehashedLedger.receipt.attempts[0]!.disposition = 'accepted-best'
     const { entrySha256: _entrySha256, ...entryProjection } =
       selfRehashedLedger.receipt.attempts[0]!
     selfRehashedLedger.receipt.attempts[0]!.entrySha256 =

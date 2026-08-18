@@ -1,4 +1,6 @@
 import {
+  PINNED_EPUBCHECK_JAR_SHA256,
+  PINNED_EPUBCHECK_TOOL_VERSION,
   verifyActualProfiledEpubRender,
   verifyEpubCheckReceipt,
   type ActualProfiledEpubRender,
@@ -25,13 +27,21 @@ import {
   type ReconstructionAttemptTrace,
 } from './reconstruction-attempt-trace'
 import { sha256HexSync } from './sha256-sync'
-import type { SourceEvidenceContract } from './source-evidence-contract'
+import {
+  createSourceEvidenceContract,
+  serializeSourceEvidenceContractAudit,
+  type SourceEvidenceContract,
+} from './source-evidence-contract'
 import type { LocalCodexReconciliationResult } from './local-codex-reconciliation'
 import {
   verifyGroundedThreeProfileRefinementResult,
   type GroundedThreeProfileRefinementResult,
 } from './grounded-reconstruction-refinement'
-import { readSourceEvidenceGraph } from './source-evidence-graph'
+import {
+  buildSourceEvidenceGraph,
+  readSourceEvidenceGraph,
+  type PdfEvidenceBundle,
+} from './source-evidence-graph'
 import {
   inspectMineruSourceEvidence,
   type MineruArtifactManifest,
@@ -40,8 +50,8 @@ import {
 export const GROUNDED_MATERIALIZATION_PILOT_SCHEMA_VERSION = '1.0.0' as const
 const SHA256 = /^[a-f0-9]{64}$/u
 export const GROUNDED_MATERIALIZATION_PINNED_EPUBCHECK = {
-  toolVersion: '5.3.0',
-  jarSha256: 'f7f96617c929371821609b88c8484d6dc9f24fe916499863c46094c5fb778a65',
+  toolVersion: PINNED_EPUBCHECK_TOOL_VERSION,
+  jarSha256: PINNED_EPUBCHECK_JAR_SHA256,
 } as const
 
 export const GROUNDED_MATERIALIZATION_PILOT_CASES = [
@@ -52,15 +62,152 @@ export const GROUNDED_MATERIALIZATION_PILOT_CASES = [
   'link-destinations',
 ] as const
 
-/** Exact retained #198/#200 source inputs authorized for this evidence pilot. */
-export const GROUNDED_MATERIALIZATION_RETAINED_SOURCE_SHA256S = [
-  '50874645b2cec033726018c86974241db2048ac46291e02fcb25d3cb7fbaa907',
-  '2bb7049bf4c854d31a95eadc0d8462306708b36bc8a11eb7c885549e0c241c01',
-  '3812a7ef7b1de172ad2dab7367c5bdc1c7ca085e30c25a5ef8a72debdff92d2f',
-  '7a75163906224b0dbf78e28975f6e16ec0e3b7485532995f9a1226b3f1928500',
-  '2bf82220bb559f9b39d388aa99c5a4011b6788da85a513a6edd62a42b365c56d',
-  '17921375594e87b1377e86d304f9f151c393255eb94b8e0f523179f6b9e07cea',
-] as const
+/** Exact retained packet identities authorized for the five #200 cases. */
+export const GROUNDED_MATERIALIZATION_RETAINED_PACKETS = {
+  'prose-hierarchy': {
+    observationFilePrefix: 'expected-',
+    contractLayout: 'expected-observations-first',
+    source: {
+      sha256:
+        '50874645b2cec033726018c86974241db2048ac46291e02fcb25d3cb7fbaa907',
+      byteLength: 909,
+      pageCount: 1,
+    },
+    manifestSha256:
+      '8d1d273c53f884ce1459f02940076526dad89430e2c5cd248ddb5cbc6a571583',
+    producerReceiptSha256:
+      'dfcb4a838450f85f33a731773f378509e4bcd4d7c294a06398115f0876c3a786',
+    artifactSetSha256:
+      '666e549ac5b20897a92849ce949fe7e1b712cde502348f7bfb94f949e4493ac3',
+    graph: {
+      sha256:
+        'e1a3003d3aba37376e022be00bd898fa6ee6d1da6a78610266ee27f0e51cfeed',
+      byteLength: 94_488,
+    },
+    contract: {
+      sha256:
+        '2d104940c4b4440b258e6348dc6595d5a5b1c1190bddcd927d8749b5c9a40f2e',
+      byteLength: 40_135,
+      sourceEvidenceReceiptSha256:
+        '2795404e7fafb8e8e2e3dbcc690ab3e78c76c525faccfcaed421c7b7d73878c3',
+    },
+  },
+  'semantic-table-spans': {
+    observationFilePrefix: 'expected-',
+    contractLayout: 'expected-observations-first',
+    source: {
+      sha256:
+        '7a75163906224b0dbf78e28975f6e16ec0e3b7485532995f9a1226b3f1928500',
+      byteLength: 6_075,
+      pageCount: 1,
+    },
+    manifestSha256:
+      '17fc3326619a1d2fe74a45d3d4d97e3fb6db0b6b4427556b90da540aba891327',
+    producerReceiptSha256:
+      '4e6622c80b1cdd2ff6cb42165e2ef6da77671d34382b68a15f1da02bc921b59b',
+    artifactSetSha256:
+      'f841e05f4568358f4d4c0227c1074efb1c0d6142a98f708d57305411a37edac0',
+    graph: {
+      sha256:
+        'd0d90647db91a713ed6c72f5f4a64884ca53d1432bd2919561140bb6cffc16ac',
+      byteLength: 276_759,
+    },
+    contract: {
+      sha256:
+        'f1abb6037652d033c6026631bf4957f8c9f70f42ca3b80ac5943f91bd3b70f33',
+      byteLength: 110_294,
+      sourceEvidenceReceiptSha256:
+        '80eae024af58e23b44fb5ac9939a0b34679a38505371a1069fce825a9fa7cb59',
+    },
+  },
+  'formula-text': {
+    observationFilePrefix: '',
+    contractLayout: 'candidate-references-first',
+    source: {
+      sha256:
+        '17921375594e87b1377e86d304f9f151c393255eb94b8e0f523179f6b9e07cea',
+      byteLength: 16_759,
+      pageCount: 3,
+    },
+    manifestSha256:
+      'f7b3c3f4c6d6d650e66dbbc290566a0ba2479895952fbc222f8b21bd403ff60a',
+    producerReceiptSha256:
+      '96d546550d15a9f995108b8ceb57f5843b6077570576e0916a5668b8ea68e6c0',
+    artifactSetSha256:
+      'f51d12baa239ada8322675a72b464c222a76e1e98246c17c5d307ae31af31efc',
+    graph: {
+      sha256:
+        'd595cf6935deeda4236e88b2fedd9d615cfb286b7abdcf96ffb92060e2bae009',
+      byteLength: 459_445,
+    },
+    contract: {
+      sha256:
+        'f1ae75866807064187cb22017e9d821fd59847cf42b627c5f1cc2e2154e604d4',
+      byteLength: 181_853,
+      sourceEvidenceReceiptSha256:
+        '8eaca4458ba1d5f5d1be72fe0fbf3df34a2e3db15b2394a9d7a89e06f6705079',
+    },
+  },
+  'source-backed-figure': {
+    observationFilePrefix: 'expected-',
+    contractLayout: 'expected-observations-first',
+    source: {
+      sha256:
+        '3812a7ef7b1de172ad2dab7367c5bdc1c7ca085e30c25a5ef8a72debdff92d2f',
+      byteLength: 56_301,
+      pageCount: 4,
+    },
+    manifestSha256:
+      'bde77bfd3e95cbf20ad4b711d9dccd214231c613e581a6d83ca8c0309ceb1bb2',
+    producerReceiptSha256:
+      'f1ce8464fa00f77ce8e6dc187e8ee732a2c4fc426d278440749bac30ba7eaaf1',
+    artifactSetSha256:
+      '1048ce36a62a73e983e0b0f8872bdd42a1f1cc065590759f74709a24c6f8e6d2',
+    graph: {
+      sha256:
+        '849f71dece39865b644c7c7feade175578b6829eaf4d239d509d5239049d616e',
+      byteLength: 632_737,
+    },
+    contract: {
+      sha256:
+        '5e5f664dff119797e883f958617fff5ae4c4afed6d028c62546101fa0e7e3a0c',
+      byteLength: 233_078,
+      sourceEvidenceReceiptSha256:
+        'af574b6a96b28efcbfef9d8f9548b55b392b1f38139f13aff2113b9659454a7b',
+    },
+  },
+  'link-destinations': {
+    observationFilePrefix: '',
+    contractLayout: 'candidate-references-first',
+    source: {
+      sha256:
+        '2bf82220bb559f9b39d388aa99c5a4011b6788da85a513a6edd62a42b365c56d',
+      byteLength: 1_414,
+      pageCount: 2,
+    },
+    manifestSha256:
+      '1e34ba4c901dea1a637bbb91e941211881ecf4b8db97ac886ae0eebee7ad55df',
+    producerReceiptSha256:
+      '2036cd37ed8f12bd51c9d52024fcba463508d376c56525e52e56c7efda129eb1',
+    artifactSetSha256:
+      'b63c6e929c951ba93738a18bc93c8ad7c7718d979efb1befbd51a7698cbc0f4f',
+    graph: {
+      sha256:
+        '5ebe4cea992eb7ea8019b3898d8ac6529aeb90e1de0f7ae852882f02606af258',
+      byteLength: 115_462,
+    },
+    contract: {
+      sha256:
+        '48bab76a99ce87ce1274c1dc5316b858d6871457371f389caf0428883ed0a688',
+      byteLength: 54_292,
+      sourceEvidenceReceiptSha256:
+        '2d01c5d71193011f7393e318b347049d61d1731b4d2fd5356e08ef123da7cd56',
+    },
+  },
+} as const satisfies Record<
+  (typeof GROUNDED_MATERIALIZATION_PILOT_CASES)[number],
+  unknown
+>
 
 export type GroundedMaterializationPilotCase =
   (typeof GROUNDED_MATERIALIZATION_PILOT_CASES)[number]
@@ -81,6 +228,7 @@ export type GroundedMaterializationPilotDocument = {
     artifactRoot: string
     manifestBytes: Uint8Array
     sourceEvidenceGraphBytes: Uint8Array
+    sourceEvidenceContractBytes: Uint8Array
     expectedObservationPayloads: Array<{
       check: SourceEvidenceContract['expectedObservationSets'][number]['check']
       payloadBytes: Uint8Array
@@ -117,6 +265,7 @@ export type GroundedMaterializationPilotReceipt = {
     mineruProducerReceiptSha256: string
     mineruArtifactSetSha256: string
     retainedSourceGraphSha256: string
+    retainedContractSha256: string
     retainedObservationSetSha256: string
     materializationReceiptSha256: string
     outerReceiptSha256: string
@@ -157,35 +306,87 @@ export function verifyGroundedMaterializationPilotEpubCheckAuthority(
 }
 
 export function verifyGroundedMaterializationPilotRetainedSource(
-  sourcePdfSha256: string,
+  caseId: GroundedMaterializationPilotCase,
+  source: { sha256: string; byteLength: number; pageCount: number },
 ) {
-  if (
-    !GROUNDED_MATERIALIZATION_RETAINED_SOURCE_SHA256S.includes(
-      sourcePdfSha256 as (typeof GROUNDED_MATERIALIZATION_RETAINED_SOURCE_SHA256S)[number],
-    )
-  ) {
+  const expected = GROUNDED_MATERIALIZATION_RETAINED_PACKETS[caseId].source
+  if (hashTraceValue(source) !== hashTraceValue(expected)) {
     invalid('GROUNDED_MATERIALIZATION_PILOT_UNRETAINED_SOURCE')
   }
 }
 
 export function verifyRetainedGroundedMaterializationSourceArtifacts(input: {
+  caseId: GroundedMaterializationPilotCase
   sourceExecution: GroundedMaterializationPilotDocument['sourceExecution']
   sourceContract: SourceEvidenceContract
 }) {
   const { sourceExecution, sourceContract } = input
+  const expected = GROUNDED_MATERIALIZATION_RETAINED_PACKETS[input.caseId]
   if (
     sourceExecution.kind !== 'retained-real-provider-packet' ||
     !(sourceExecution.sourceEvidenceGraphBytes instanceof Uint8Array) ||
     !Array.isArray(sourceExecution.expectedObservationPayloads) ||
+    !(sourceExecution.sourceEvidenceContractBytes instanceof Uint8Array) ||
     sha256HexSync(sourceExecution.sourceEvidenceGraphBytes) !==
-      sourceContract.graphArtifact.sha256 ||
+      expected.graph.sha256 ||
     sourceExecution.sourceEvidenceGraphBytes.byteLength !==
-      sourceContract.graphArtifact.byteLength ||
-    !Buffer.from(sourceExecution.sourceEvidenceGraphBytes).equals(
-      Buffer.from(sourceContract.graphBytes),
-    )
+      expected.graph.byteLength ||
+    sha256HexSync(sourceExecution.sourceEvidenceContractBytes) !==
+      expected.contract.sha256 ||
+    sourceExecution.sourceEvidenceContractBytes.byteLength !==
+      expected.contract.byteLength
   ) {
     invalid('GROUNDED_MATERIALIZATION_PILOT_RETAINED_GRAPH_MISMATCH')
+  }
+  let retainedGraphInput: unknown
+  let retainedContractProjection: unknown
+  try {
+    retainedGraphInput = JSON.parse(
+      new TextDecoder('utf-8', { fatal: true }).decode(
+        sourceExecution.sourceEvidenceGraphBytes,
+      ),
+    )
+    retainedContractProjection = JSON.parse(
+      new TextDecoder('utf-8', { fatal: true }).decode(
+        sourceExecution.sourceEvidenceContractBytes,
+      ),
+    )
+  } catch {
+    invalid('GROUNDED_MATERIALIZATION_PILOT_RETAINED_GRAPH_MISMATCH')
+  }
+  const reconstructedContract = createSourceEvidenceContract(
+    buildSourceEvidenceGraph(
+      retainedGraphInput as Parameters<typeof buildSourceEvidenceGraph>[0],
+    ),
+    sourceContract.verifier.identity,
+  )
+  const reconstructedContractBytes = serializeSourceEvidenceContractAudit(
+    reconstructedContract,
+    expected.contractLayout,
+  )
+  const callerContractBytes = serializeSourceEvidenceContractAudit(
+    sourceContract,
+    expected.contractLayout,
+  )
+  if (
+    !Buffer.from(sourceExecution.sourceEvidenceContractBytes).equals(
+      Buffer.from(reconstructedContractBytes),
+    ) ||
+    !Buffer.from(reconstructedContractBytes).equals(
+      Buffer.from(callerContractBytes),
+    ) ||
+    canonicalTraceJson(retainedContractProjection) !==
+      canonicalTraceJson(
+        JSON.parse(new TextDecoder().decode(reconstructedContractBytes)),
+      ) ||
+    reconstructedContract.graphArtifact.sha256 !== expected.graph.sha256 ||
+    reconstructedContract.sourceEvidenceReceipt.receiptSha256 !==
+      expected.contract.sourceEvidenceReceiptSha256 ||
+    !Buffer.from(sourceExecution.sourceEvidenceGraphBytes).equals(
+      Buffer.from(reconstructedContract.graphBytes),
+    )
+  ) {
+    invalid('GROUNDED_MATERIALIZATION_PILOT_RETAINED_CONTRACT_MISMATCH')
   }
   const retainedObservationPayloads = new Map(
     sourceExecution.expectedObservationPayloads.map((payload) => [
@@ -195,21 +396,22 @@ export function verifyRetainedGroundedMaterializationSourceArtifacts(input: {
   )
   if (
     retainedObservationPayloads.size !==
-      sourceContract.expectedObservationSets.length ||
-    sourceContract.expectedObservationSets.some((expected) => {
-      const bytes = retainedObservationPayloads.get(expected.check)
+      reconstructedContract.expectedObservationSets.length ||
+    reconstructedContract.expectedObservationSets.some((observation) => {
+      const bytes = retainedObservationPayloads.get(observation.check)
       return (
         !bytes ||
-        sha256HexSync(bytes) !== expected.payload.sha256 ||
-        bytes.byteLength !== expected.payload.byteLength ||
-        !Buffer.from(bytes).equals(Buffer.from(expected.payloadBytes))
+        sha256HexSync(bytes) !== observation.payload.sha256 ||
+        bytes.byteLength !== observation.payload.byteLength ||
+        !Buffer.from(bytes).equals(Buffer.from(observation.payloadBytes))
       )
     })
   ) {
     invalid('GROUNDED_MATERIALIZATION_PILOT_RETAINED_OBSERVATIONS_MISMATCH')
   }
   return {
-    sourceGraphSha256: sourceContract.graphArtifact.sha256,
+    sourceGraphSha256: reconstructedContract.graphArtifact.sha256,
+    contractSha256: expected.contract.sha256,
     observationSetSha256: hashTraceValue(
       sourceContract.expectedObservationSets.map(({ check, payload }) => ({
         check,
@@ -283,6 +485,7 @@ function assertCaseSemantics(document: GroundedMaterializationPilotDocument) {
 }
 
 export async function verifyGroundedMaterializationPilotMineruExecution(input: {
+  caseId: GroundedMaterializationPilotCase
   sourceExecution: GroundedMaterializationPilotDocument['sourceExecution']
   sourcePdfSha256: string
   sourceContract: SourceEvidenceContract
@@ -294,6 +497,9 @@ export async function verifyGroundedMaterializationPilotMineruExecution(input: {
     input.sourceExecution.artifactRoot.length === 0 ||
     !(input.sourceExecution.manifestBytes instanceof Uint8Array) ||
     !(input.sourceExecution.sourceEvidenceGraphBytes instanceof Uint8Array) ||
+    !(
+      input.sourceExecution.sourceEvidenceContractBytes instanceof Uint8Array
+    ) ||
     !Array.isArray(input.sourceExecution.expectedObservationPayloads)
   ) {
     invalid('GROUNDED_MATERIALIZATION_PILOT_MINERU_EXECUTION_REQUIRED')
@@ -314,18 +520,54 @@ export async function verifyGroundedMaterializationPilotMineruExecution(input: {
   })
   const retainedArtifacts =
     verifyRetainedGroundedMaterializationSourceArtifacts({
+      caseId: input.caseId,
       sourceExecution: input.sourceExecution,
       sourceContract: input.sourceContract,
     })
   const retained = input.sourceContract.graph.bundles.filter(
     ({ armId }) => armId === 'mineru',
   )
+  const expected = GROUNDED_MATERIALIZATION_RETAINED_PACKETS[input.caseId]
+  if (
+    sha256HexSync(input.sourceExecution.manifestBytes) !==
+      expected.manifestSha256 ||
+    manifest.producerReceipt.receiptSha256 !== expected.producerReceiptSha256 ||
+    manifest.producerReceipt.artifactSetSha256 !== expected.artifactSetSha256
+  ) {
+    invalid('GROUNDED_MATERIALIZATION_PILOT_MINERU_MANIFEST_MISMATCH')
+  }
   if (
     retained.length !== 1 ||
-    manifest.document.sha256 !== input.sourcePdfSha256 ||
-    hashTraceValue(retained[0]) !== hashTraceValue(inspected)
+    manifest.document.sha256 !== input.sourcePdfSha256
   ) {
     invalid('GROUNDED_MATERIALIZATION_PILOT_MINERU_GRAPH_MISMATCH')
+  }
+  const comparableMineruBundle = (bundle: PdfEvidenceBundle) => ({
+    schemaVersion: bundle.schemaVersion,
+    id: bundle.id,
+    armId: bundle.armId,
+    source: {
+      sha256: bundle.source.sha256,
+      byteLength: bundle.source.byteLength,
+      pageCount: bundle.source.pageCount,
+    },
+    provider: bundle.provider,
+    pages: [...bundle.pages].sort((left, right) => left.page - right.page),
+    artifacts: [...bundle.artifacts].sort((left, right) =>
+      left.id.localeCompare(right.id),
+    ),
+    sources: [...bundle.sources].sort((left, right) =>
+      left.id.localeCompare(right.id),
+    ),
+    candidates: [...bundle.candidates].sort((left, right) =>
+      left.id.localeCompare(right.id),
+    ),
+  })
+  if (
+    hashTraceValue(comparableMineruBundle(retained[0]!)) !==
+    hashTraceValue(comparableMineruBundle(inspected))
+  ) {
+    invalid('GROUNDED_MATERIALIZATION_PILOT_MINERU_REPLAY_MISMATCH')
   }
   return {
     manifestSha256: sha256HexSync(input.sourceExecution.manifestBytes),
@@ -349,11 +591,14 @@ async function verifyDocument(document: GroundedMaterializationPilotDocument) {
   ) {
     invalid('INVALID_GROUNDED_MATERIALIZATION_PILOT_DOCUMENT')
   }
-  verifyGroundedMaterializationPilotRetainedSource(
-    document.materialization.receipt.sourcePdfSha256,
-  )
+  verifyGroundedMaterializationPilotRetainedSource(document.caseId, {
+    sha256: document.materialization.receipt.sourcePdfSha256,
+    byteLength: document.sourcePdfBytes.byteLength,
+    pageCount: document.materialization.document.source.pageCount,
+  })
   verifyGroundedCoreMaterializationBinding(document.materialization)
   const mineru = await verifyGroundedMaterializationPilotMineruExecution({
+    caseId: document.caseId,
     sourceExecution: document.sourceExecution,
     sourcePdfSha256: document.materialization.receipt.sourcePdfSha256,
     sourceContract: document.sourceContract,
@@ -437,11 +682,6 @@ async function verifyDocument(document: GroundedMaterializationPilotDocument) {
   }
   const repairEvidence = document.refinement?.codexRepairEvidence
   const lastRepair = repairEvidence?.at(-1)
-  const repairParent = repairEvidence
-    ? document.refinement.refinement.privateEvidence.traces[
-        repairEvidence.length - 1
-      ]
-    : undefined
   const finalEvaluation = document.refinement?.evaluations.at(-1)
   const traceCodexProvider =
     finalEvaluation?.coordinatorTrace.providerReceipts.find(
@@ -453,7 +693,6 @@ async function verifyDocument(document: GroundedMaterializationPilotDocument) {
     !repairEvidence ||
     repairEvidence.length < 1 ||
     !lastRepair ||
-    !repairParent ||
     !finalEvaluation ||
     !traceCodexProvider ||
     !traceCodexProvider.server ||
@@ -464,12 +703,15 @@ async function verifyDocument(document: GroundedMaterializationPilotDocument) {
     invalid('GROUNDED_MATERIALIZATION_PILOT_REFINEMENT_MISMATCH')
   }
   if (
+    canonicalTraceJson(
+      document.refinement.initialEvidence.failedEvaluation.coordinatorTrace,
+    ) !== canonicalTraceJson(priorTrace) ||
+    canonicalTraceJson(document.refinement.initialEvidence.codexResult) !==
+      canonicalTraceJson(document.localCodexResult) ||
     canonicalTraceJson(lastRepair.result) !==
-      canonicalTraceJson(document.localCodexResult) ||
-    canonicalTraceJson(finalEvaluation.codexResult) !==
-      canonicalTraceJson(document.localCodexResult) ||
-    traceCodexProvider.receiptSha256 !== hashTraceValue(localReceipt) ||
-    canonicalTraceJson(repairParent) !== canonicalTraceJson(priorTrace) ||
+      canonicalTraceJson(finalEvaluation.codexResult) ||
+    traceCodexProvider.receiptSha256 !==
+      hashTraceValue(finalEvaluation.codexResult.receipt) ||
     finalEvaluation.materialization.receipt.receiptSha256 !==
       document.materialization.receipt.receiptSha256 ||
     canonicalTraceJson(document.refinement.closedReceipt) !==
@@ -618,6 +860,7 @@ export async function verifyGroundedMaterializationPilotPacket(
       mineruProducerReceiptSha256: mineru.producerReceiptSha256,
       mineruArtifactSetSha256: mineru.artifactSetSha256,
       retainedSourceGraphSha256: mineru.sourceGraphSha256,
+      retainedContractSha256: mineru.contractSha256,
       retainedObservationSetSha256: mineru.observationSetSha256,
       materializationReceiptSha256:
         document.materialization.receipt.receiptSha256,

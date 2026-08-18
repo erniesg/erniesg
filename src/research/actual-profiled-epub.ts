@@ -18,6 +18,9 @@ import { sha256HexSync } from './sha256-sync'
 import { resolveTargetProfile } from './targets'
 
 export const ACTUAL_PROFILED_EPUB_SCHEMA_VERSION = '1.0.0' as const
+export const PINNED_EPUBCHECK_TOOL_VERSION = '5.3.0' as const
+export const PINNED_EPUBCHECK_JAR_SHA256 =
+  'f7f96617c929371821609b88c8484d6dc9f24fe916499863c46094c5fb778a65' as const
 
 export type ActualProfiledEpubRender = {
   schemaVersion: typeof ACTUAL_PROFILED_EPUB_SCHEMA_VERSION
@@ -474,9 +477,22 @@ function runProcess(command: string, args: string[]) {
 export async function executePinnedEpubCheck(input: {
   epubBytes: Uint8Array
   javaPath: string
+  expectedJavaExecutableSha256: string
   epubCheckJarPath: string
   toolVersion: string
 }): Promise<EpubCheckExecution> {
+  if (!/^[a-f0-9]{64}$/u.test(input.expectedJavaExecutableSha256)) {
+    throw new Error('EPUBCHECK_JAVA_IDENTITY_REQUIRED')
+  }
+  const beforeJavaSha256 = sha256HexSync(await readFile(input.javaPath))
+  const beforeJarSha256 = sha256HexSync(await readFile(input.epubCheckJarPath))
+  if (
+    input.toolVersion !== PINNED_EPUBCHECK_TOOL_VERSION ||
+    beforeJavaSha256 !== input.expectedJavaExecutableSha256 ||
+    beforeJarSha256 !== PINNED_EPUBCHECK_JAR_SHA256
+  ) {
+    throw new Error('EPUBCHECK_PINNED_EXECUTABLE_IDENTITY_MISMATCH')
+  }
   const directory = await mkdtemp(join(tmpdir(), 'rucksack-epubcheck-'))
   try {
     const epubPath = join(directory, 'publication.epub')
@@ -507,12 +523,20 @@ export async function executePinnedEpubCheck(input: {
       message && typeof message === 'object' && 'severity' in message
         ? String((message as { severity: unknown }).severity).toUpperCase()
         : ''
+    const afterJavaSha256 = sha256HexSync(await readFile(input.javaPath))
+    const afterJarSha256 = sha256HexSync(await readFile(input.epubCheckJarPath))
+    if (
+      afterJavaSha256 !== beforeJavaSha256 ||
+      afterJarSha256 !== beforeJarSha256
+    ) {
+      throw new Error('EPUBCHECK_EXECUTABLE_CHANGED_DURING_RUN')
+    }
     return {
       toolId: 'epubcheck',
       toolVersion: input.toolVersion,
       authority: 'pinned-java-jar',
-      javaExecutableSha256: sha256HexSync(await readFile(input.javaPath)),
-      executableSha256: sha256HexSync(await readFile(input.epubCheckJarPath)),
+      javaExecutableSha256: beforeJavaSha256,
+      executableSha256: beforeJarSha256,
       exitCode: executed.exitCode,
       reportBytes,
       errorCount: list.filter((message) =>

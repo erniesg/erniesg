@@ -54,6 +54,34 @@ export type SourceEvidenceContract = {
   verifier: SourceEvidenceVerifier
 }
 
+/** Retained audit projection; executable verifier functions are excluded. */
+export function serializeSourceEvidenceContractAudit(
+  contract: SourceEvidenceContract,
+  layout:
+    | 'expected-observations-first'
+    | 'candidate-references-first' = 'expected-observations-first',
+) {
+  const expectedObservationSets = contract.expectedObservationSets.map(
+    ({ payloadBytes: _payloadBytes, ...set }) => set,
+  )
+  const candidateReferences = contract.candidateReferences.map(
+    ({ payloadBytes: _payloadBytes, ...reference }) => reference,
+  )
+  return new TextEncoder().encode(
+    JSON.stringify({
+      schemaVersion: contract.schemaVersion,
+      graphArtifact: contract.graphArtifact,
+      sourceEvidenceReceipt: contract.sourceEvidenceReceipt,
+      sourceRegions: contract.sourceRegions,
+      evidenceCandidates: contract.evidenceCandidates,
+      ...(layout === 'candidate-references-first'
+        ? { candidateReferences, expectedObservationSets }
+        : { expectedObservationSets, candidateReferences }),
+      verifier: contract.verifier.identity,
+    }),
+  )
+}
+
 function sourceObligationProjection(obligations: PdfEvidenceObligation[]) {
   return obligations.map((obligation) => ({
     id: obligation.id,
@@ -269,9 +297,7 @@ function expectedSets(
           sha256: sha256HexSync(payloadBytes),
           byteLength: payloadBytes.byteLength,
         },
-        sourceRegionIds: [
-          ...new Set(applicable.map(({ id }) => id)),
-        ].sort(),
+        sourceRegionIds: [...new Set(applicable.map(({ id }) => id))].sort(),
       }
       const set: SourceExpectedObservationSet = {
         ...base,

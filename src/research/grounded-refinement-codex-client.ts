@@ -60,7 +60,7 @@ export type GroundedRefinementCodexClientInput = {
 
 export type OwnerLocalGroundedRefinementInput = Omit<
   GroundedThreeProfileRefinementInput,
-  'codex'
+  'codex' | 'testOnlyEvaluateAttempt'
 > & {
   codexClient: GroundedRefinementCodexClientInput
 }

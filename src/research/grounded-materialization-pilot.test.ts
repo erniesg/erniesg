@@ -1121,7 +1121,11 @@ async function actualLocalCodexResult(input: {
 
 async function pilotDocument(
   caseId: GroundedMaterializationPilotCase,
-  providers: { endpoint: string; javaPath: string },
+  providers: {
+    endpoint: string
+    javaPath: string
+    expectedJavaExecutableSha256: string
+  },
 ): Promise<
   Omit<GroundedMaterializationPilotDocument, 'sourceExecution' | 'refinement'>
 > {
@@ -1203,6 +1207,7 @@ async function pilotDocument(
     epubCheckAuthority: {
       kind: 'pinned-java-jar',
       javaPath: providers.javaPath,
+      expectedJavaExecutableSha256: providers.expectedJavaExecutableSha256,
       epubCheckJarPath,
       toolVersion: '5.3.0',
     },
@@ -1236,6 +1241,7 @@ describe('public synthetic grounded materialization provider smoke', () => {
   it('requires a retained owner-local MinerU execution before pilot acceptance', async () => {
     await expect(
       verifyGroundedMaterializationPilotMineruExecution({
+        caseId: 'prose-hierarchy',
         sourceExecution: undefined as never,
         sourcePdfSha256: digest('missing-source-execution'),
         sourceContract: undefined as never,
@@ -1294,14 +1300,19 @@ describe('public synthetic grounded materialization provider smoke', () => {
 
   it('demotes generated PDFs by allowing only the retained real-source registry', () => {
     expect(() =>
-      verifyGroundedMaterializationPilotRetainedSource(
-        digest('generated-one-line-pdf'),
-      ),
+      verifyGroundedMaterializationPilotRetainedSource('prose-hierarchy', {
+        sha256: digest('generated-one-line-pdf'),
+        byteLength: 1,
+        pageCount: 1,
+      }),
     ).toThrow('GROUNDED_MATERIALIZATION_PILOT_UNRETAINED_SOURCE')
     expect(() =>
-      verifyGroundedMaterializationPilotRetainedSource(
-        '2bf82220bb559f9b39d388aa99c5a4011b6788da85a513a6edd62a42b365c56d',
-      ),
+      verifyGroundedMaterializationPilotRetainedSource('link-destinations', {
+        sha256:
+          '2bf82220bb559f9b39d388aa99c5a4011b6788da85a513a6edd62a42b365c56d',
+        byteLength: 1_414,
+        pageCount: 2,
+      }),
     ).not.toThrow()
   })
 
@@ -1335,7 +1346,8 @@ describe('public synthetic grounded materialization provider smoke', () => {
 
   const ownerLocalEndpoint = process.env.RUCKSACK_CODEX_APP_SOCKET
   const epubCheckJava = process.env.RUCKSACK_EPUBCHECK_JAVA
-  it.skipIf(!ownerLocalEndpoint || !epubCheckJava)(
+  const epubCheckJavaSha256 = process.env.RUCKSACK_EPUBCHECK_JAVA_SHA256
+  it.skipIf(!ownerLocalEndpoint || !epubCheckJava || !epubCheckJavaSha256)(
     'exercises five synthetic cases over real local providers without claiming pilot acceptance',
     async () => {
       expect(() =>
@@ -1349,6 +1361,7 @@ describe('public synthetic grounded materialization provider smoke', () => {
           await pilotDocument(caseId, {
             endpoint: ownerLocalEndpoint!,
             javaPath: epubCheckJava!,
+            expectedJavaExecutableSha256: epubCheckJavaSha256!,
           }),
         )
       }

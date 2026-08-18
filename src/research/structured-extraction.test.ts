@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   modelInputForStructuredExtraction,
+  structuredExtractionContextFromReconstruction,
   verifyStructuredExtraction,
   type StructuredExtractionContext,
   type StructuredExtractionProposal,
 } from './structured-extraction'
+import type { PdfReconstruction } from './import-types'
 
 const sourceSha256 = '1'.repeat(64)
 const assetSha256 = '2'.repeat(64)
@@ -73,6 +75,12 @@ function validProposal(): StructuredExtractionProposal {
         sourceRunIds: ['body-run'],
         text: 'A continuous paragraph.',
       },
+      {
+        id: 'table-source-text',
+        type: 'paragraph',
+        sourceRunIds: ['table-head', 'table-value'],
+        text: 'Measure 42',
+      },
     ],
     assetIds: ['figure-asset'],
     excludedBoilerplateRunIds: ['running-head'],
@@ -80,6 +88,292 @@ function validProposal(): StructuredExtractionProposal {
 }
 
 describe('source-backed structured extraction verifier', () => {
+  it('retains every physical-page run even when region extraction omits one', () => {
+    const retained = {
+      page: 1,
+      text: 'Retained body.',
+      x: 0.1,
+      y: 0.2,
+      width: 0.3,
+      height: 0.03,
+      rotation: 0,
+      method: 'pdf-text' as const,
+      fontName: 'Fixture',
+      fontSize: 10,
+      confidence: 1,
+      sourceSequenceIndex: 0,
+    }
+    const omitted = {
+      ...retained,
+      text: 'Right column heading',
+      x: 0.7,
+      y: 0.1,
+      fontSize: 14,
+      sourceSequenceIndex: 1,
+    }
+    const reconstruction = {
+      source: {
+        fileName: 'private.pdf',
+        byteLength: 100,
+        sha256: sourceSha256,
+        pageCount: 1,
+        localOnly: true,
+      },
+      pages: [
+        {
+          page: 1,
+          kind: 'born-digital',
+          width: 612,
+          height: 792,
+          rotation: 0,
+          textCharacters: retained.text.length + omitted.text.length,
+          imageCount: 0,
+          runs: [retained, omitted],
+        },
+      ],
+      regions: [
+        {
+          id: 'body-region',
+          kind: 'paragraph',
+          page: 1,
+          column: 0,
+          box: retained,
+          text: retained.text,
+          confidence: 1,
+          includedInReadingOrder: true,
+          lines: [
+            {
+              id: 'body-line',
+              text: retained.text,
+              box: retained,
+              runs: [retained],
+            },
+          ],
+        },
+      ],
+      assets: [],
+      readingOrder: { edges: [] },
+      lineBoundaryDecisions: [],
+      noteRelationships: [],
+      citationRelationships: [],
+      crossReferenceRelationships: [],
+      visualRelationships: [],
+      provenance: {},
+    } as unknown as PdfReconstruction
+    const extracted = structuredExtractionContextFromReconstruction({
+      reconstruction,
+      split: 'development',
+      layout: 'multi-region',
+    })
+    expect(extracted.sourceRuns.map(({ text }) => text)).toEqual([
+      retained.text,
+      omitted.text,
+    ])
+    expect(new Set(extracted.sourceRuns.map(({ id }) => id)).size).toBe(2)
+  })
+
+  it('orders orphan physical-page runs by sourceSequenceIndex rather than array position', () => {
+    const run = (text: string, sourceSequenceIndex: number) => ({
+      page: 1,
+      text,
+      x: 0.1,
+      y: 0.1 + sourceSequenceIndex / 100,
+      width: 0.3,
+      height: 0.03,
+      rotation: 0,
+      method: 'pdf-text' as const,
+      fontName: 'Fixture',
+      fontSize: 10,
+      confidence: 1,
+      sourceSequenceIndex,
+    })
+    const reconstruction = {
+      source: {
+        fileName: 'private.pdf',
+        byteLength: 100,
+        sha256: sourceSha256,
+        pageCount: 1,
+        localOnly: true,
+      },
+      pages: [
+        {
+          page: 1,
+          kind: 'born-digital',
+          width: 612,
+          height: 792,
+          rotation: 0,
+          textCharacters: 10,
+          imageCount: 0,
+          runs: [run('Later orphan', 9), run('Earlier orphan', 2)],
+        },
+      ],
+      regions: [],
+      assets: [],
+      readingOrder: { edges: [] },
+      lineBoundaryDecisions: [],
+      noteRelationships: [],
+      citationRelationships: [],
+      crossReferenceRelationships: [],
+      visualRelationships: [],
+      provenance: {},
+    } as unknown as PdfReconstruction
+    const extracted = structuredExtractionContextFromReconstruction({
+      reconstruction,
+      split: 'development',
+      layout: 'multi-region',
+    })
+
+    expect(
+      extracted.sourceRuns.map(({ text, order, sourceSequenceIndex }) => ({
+        text,
+        order,
+        sourceSequenceIndex,
+      })),
+    ).toEqual([
+      { text: 'Earlier orphan', order: 0, sourceSequenceIndex: 2 },
+      { text: 'Later orphan', order: 1, sourceSequenceIndex: 9 },
+    ])
+  })
+
+  it('derives exact deterministic asset and source-object ownership for an image-only link', () => {
+    const box = {
+      page: 1,
+      x: 0.1,
+      y: 0.2,
+      width: 0.3,
+      height: 0.2,
+      rotation: 0,
+      method: 'pdf-object' as const,
+    }
+    const reconstruction = {
+      source: {
+        fileName: 'image-link.pdf',
+        byteLength: 100,
+        sha256: sourceSha256,
+        pageCount: 1,
+        localOnly: true,
+      },
+      pages: [
+        {
+          page: 1,
+          kind: 'born-digital',
+          width: 612,
+          height: 792,
+          rotation: 0,
+          textCharacters: 0,
+          imageCount: 1,
+          runs: [],
+          links: [
+            {
+              id: 'image-link',
+              page: 1,
+              status: 'external',
+              url: 'https://example.test/image',
+              box,
+            },
+          ],
+        },
+      ],
+      regions: [],
+      assets: [
+        {
+          id: 'exact-image-asset',
+          href: 'assets/image.png',
+          mediaType: 'image/png',
+          kind: 'raster',
+          rendition: 'source-preserved',
+          bytes: new Uint8Array([1]),
+          sha256: assetSha256,
+          sourceObjectIds: ['native-image-object'],
+          sourceBoxes: [box],
+          sourceCropBox: box,
+        },
+      ],
+      readingOrder: { edges: [] },
+      lineBoundaryDecisions: [],
+      noteRelationships: [],
+      citationRelationships: [],
+      crossReferenceRelationships: [],
+      visualRelationships: [],
+      provenance: {},
+    } as unknown as PdfReconstruction
+
+    const extracted = structuredExtractionContextFromReconstruction({
+      reconstruction,
+      split: 'development',
+      layout: 'one-column',
+    })
+    expect(extracted.sourceLinks).toEqual([
+      expect.objectContaining({
+        id: 'image-link',
+        sourceRunIds: [],
+        sourceAssetIds: ['exact-image-asset'],
+        sourceObjectIds: ['native-image-object'],
+      }),
+    ])
+  })
+
+  it('binds an image-only link to its exact overlapping deterministic asset node', () => {
+    const input = context()
+    input.sourceLinks = [
+      {
+        id: 'image-only-link',
+        page: 1,
+        sourceRunIds: [],
+        sourceAssetIds: ['figure-asset'],
+        sourceObjectIds: ['native-figure'],
+        box: { x: 0.12, y: 0.22, width: 0.1, height: 0.1 },
+        destination: { kind: 'external', url: 'https://example.test/image' },
+      },
+    ]
+    const candidate = validProposal()
+    candidate.links = [
+      { sourceLinkId: 'image-only-link', sourceNodeId: 'figure' },
+    ]
+    const passed = verifyStructuredExtraction(input, candidate)
+    expect(passed.status).toBe('passed')
+
+    candidate.links[0]!.sourceNodeId = 'body'
+    const swapped = verifyStructuredExtraction(input, candidate)
+    expect(swapped.status).toBe('failed')
+    if (swapped.status === 'failed') {
+      expect(swapped.issues.map(({ code }) => code)).toContain('invalid-link')
+    }
+  })
+
+  it('rejects an equal-overlap image link owned by the wrong deterministic asset', () => {
+    const input = context()
+    input.sourceAssets.push({
+      ...structuredClone(input.sourceAssets[0]!),
+      id: 'decoy-asset',
+      required: false,
+      bytesSha256: '3'.repeat(64),
+      sourceObjectIds: ['native-decoy'],
+    })
+    input.sourceLinks = [
+      {
+        id: 'image-only-link',
+        page: 1,
+        sourceRunIds: [],
+        sourceAssetIds: ['figure-asset'],
+        sourceObjectIds: ['native-figure'],
+        box: { x: 0.12, y: 0.22, width: 0.1, height: 0.1 },
+        destination: { kind: 'external', url: 'https://example.test/image' },
+      },
+    ]
+    const candidate = validProposal()
+    candidate.assetIds = ['figure-asset', 'decoy-asset']
+    candidate.nodes[2]!.assetId = 'decoy-asset'
+    candidate.links = [
+      { sourceLinkId: 'image-only-link', sourceNodeId: 'figure' },
+    ]
+    const result = verifyStructuredExtraction(input, candidate)
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues.map(({ code }) => code)).toContain('invalid-link')
+    }
+  })
+
   it('materializes text and alt text from source runs rather than proposal text', () => {
     const proposal = validProposal()
     proposal.nodes[0]!.text = 'A source-backed title'
@@ -155,6 +449,9 @@ describe('source-backed structured extraction verifier', () => {
       sourceRunIds: ['table-head', 'table-value'],
     })
     const candidate = validProposal()
+    candidate.nodes = candidate.nodes.filter(
+      ({ id }) => id !== 'table-source-text',
+    )
     candidate.nodes.push({
       id: 'table',
       type: 'table',
@@ -1070,6 +1367,188 @@ describe('source-backed structured extraction verifier', () => {
       expect(result.issues.map(({ code }) => code)).toContain(
         'invalid-relationship',
       )
+    }
+  })
+
+  it('rejects the omitted right-column heading even when other obligations were selected', () => {
+    const input: StructuredExtractionContext = {
+      documentId: 'three-column-source',
+      sourceSha256,
+      split: 'development',
+      layout: 'multi-region',
+      regionTopology: {
+        regions: [
+          {
+            id: 'left',
+            page: 1,
+            order: 0,
+            role: 'heading',
+            bounds: { x: 0, y: 0, width: 0.3, height: 1 },
+          },
+          {
+            id: 'middle',
+            page: 1,
+            order: 1,
+            role: 'body',
+            bounds: { x: 0.35, y: 0, width: 0.3, height: 1 },
+          },
+          {
+            id: 'right',
+            page: 1,
+            order: 2,
+            role: 'heading',
+            bounds: { x: 0.7, y: 0, width: 0.3, height: 1 },
+          },
+        ],
+        edges: [
+          { fromRegionId: 'left', toRegionId: 'middle' },
+          { fromRegionId: 'middle', toRegionId: 'right' },
+        ],
+      },
+      sourceRuns: [
+        {
+          id: 'left-heading',
+          text: 'Column 1',
+          page: 1,
+          order: 0,
+          regionId: 'left',
+        },
+        {
+          id: 'middle-body',
+          text: 'Middle body.',
+          page: 1,
+          order: 1,
+          regionId: 'middle',
+        },
+        {
+          id: 'right-heading',
+          text: 'Column 3',
+          page: 1,
+          order: 2,
+          regionId: 'right',
+        },
+      ],
+      sourceAssets: [],
+    }
+    const result = verifyStructuredExtraction(input, {
+      schemaVersion: '1.0.0',
+      nodes: [
+        {
+          id: 'left',
+          type: 'heading',
+          level: 2,
+          sourceRunIds: ['left-heading'],
+        },
+        { id: 'middle', type: 'paragraph', sourceRunIds: ['middle-body'] },
+      ],
+    })
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: 'missing-source-run',
+            sourceRunId: 'right-heading',
+          }),
+        ]),
+      )
+    }
+    const restored = verifyStructuredExtraction(input, {
+      schemaVersion: '1.0.0',
+      nodes: [
+        {
+          id: 'left',
+          type: 'heading',
+          level: 2,
+          sourceRunIds: ['left-heading'],
+        },
+        { id: 'middle', type: 'paragraph', sourceRunIds: ['middle-body'] },
+        {
+          id: 'right',
+          type: 'heading',
+          level: 2,
+          sourceRunIds: ['right-heading'],
+        },
+      ],
+    })
+    expect(restored.status).toBe('passed')
+    if (restored.status === 'passed') {
+      expect(restored.output.nodes.at(-1)).toMatchObject({
+        id: 'right',
+        text: 'Column 3',
+      })
+    }
+
+    const laundered = verifyStructuredExtraction(input, {
+      schemaVersion: '1.0.0',
+      nodes: [
+        {
+          id: 'left',
+          type: 'heading',
+          level: 2,
+          sourceRunIds: ['left-heading'],
+        },
+        { id: 'middle', type: 'paragraph', sourceRunIds: ['middle-body'] },
+        {
+          id: 'right',
+          type: 'paragraph',
+          sourceRunIds: ['right-heading'],
+        },
+      ],
+    })
+    expect(laundered.status).toBe('failed')
+    if (laundered.status === 'failed') {
+      expect(laundered.issues.map(({ code }) => code)).toContain(
+        'semantic-role-mismatch',
+      )
+    }
+  })
+
+  it('requires every typed source link to materialize exactly once', () => {
+    const input: StructuredExtractionContext = {
+      documentId: 'linked-source',
+      sourceSha256,
+      split: 'development',
+      layout: 'one-column',
+      sourceRuns: [
+        { id: 'linked-run', text: 'Open source', page: 1, order: 0 },
+      ],
+      sourceAssets: [],
+      sourceLinks: [
+        {
+          id: 'source-link',
+          page: 1,
+          sourceRunIds: ['linked-run'],
+          box: { x: 0.1, y: 0.1, width: 0.2, height: 0.03 },
+          destination: { kind: 'external', url: 'https://example.test/paper' },
+        },
+      ],
+    }
+    const proposal: StructuredExtractionProposal = {
+      schemaVersion: '1.0.0',
+      nodes: [
+        { id: 'linked-node', type: 'paragraph', sourceRunIds: ['linked-run'] },
+      ],
+    }
+    const omitted = verifyStructuredExtraction(input, proposal)
+    expect(omitted.status).toBe('failed')
+    if (omitted.status === 'failed') {
+      expect(omitted.issues.map(({ code }) => code)).toContain('missing-link')
+    }
+
+    proposal.links = [
+      { sourceLinkId: 'source-link', sourceNodeId: 'linked-node' },
+    ]
+    const materialized = verifyStructuredExtraction(input, proposal)
+    expect(materialized.status).toBe('passed')
+    if (materialized.status === 'passed') {
+      expect(materialized.output.links).toEqual([
+        {
+          sourceLinkId: 'source-link',
+          sourceNodeId: 'linked-node',
+          destination: { kind: 'external', url: 'https://example.test/paper' },
+        },
+      ])
     }
   })
 })

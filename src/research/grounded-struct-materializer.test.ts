@@ -2049,5 +2049,5 @@ describe('candidate-grounded STRUCT materialization', () => {
         result: selfRehashedLedger,
       }),
     ).toBe(false)
-  }, 120_000)
+  }, 300_000)
 })

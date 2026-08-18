@@ -39,6 +39,10 @@ import {
 
 export const GROUNDED_MATERIALIZATION_PILOT_SCHEMA_VERSION = '1.0.0' as const
 const SHA256 = /^[a-f0-9]{64}$/u
+export const GROUNDED_MATERIALIZATION_PINNED_EPUBCHECK = {
+  toolVersion: '5.3.0',
+  jarSha256: 'f7f96617c929371821609b88c8484d6dc9f24fe916499863c46094c5fb778a65',
+} as const
 
 export const GROUNDED_MATERIALIZATION_PILOT_CASES = [
   'prose-hierarchy',
@@ -46,6 +50,16 @@ export const GROUNDED_MATERIALIZATION_PILOT_CASES = [
   'formula-text',
   'source-backed-figure',
   'link-destinations',
+] as const
+
+/** Exact retained #198/#200 source inputs authorized for this evidence pilot. */
+export const GROUNDED_MATERIALIZATION_RETAINED_SOURCE_SHA256S = [
+  '50874645b2cec033726018c86974241db2048ac46291e02fcb25d3cb7fbaa907',
+  '2bb7049bf4c854d31a95eadc0d8462306708b36bc8a11eb7c885549e0c241c01',
+  '3812a7ef7b1de172ad2dab7367c5bdc1c7ca085e30c25a5ef8a72debdff92d2f',
+  '7a75163906224b0dbf78e28975f6e16ec0e3b7485532995f9a1226b3f1928500',
+  '2bf82220bb559f9b39d388aa99c5a4011b6788da85a513a6edd62a42b365c56d',
+  '17921375594e87b1377e86d304f9f151c393255eb94b8e0f523179f6b9e07cea',
 ] as const
 
 export type GroundedMaterializationPilotCase =
@@ -63,8 +77,14 @@ export type GroundedMaterializationPilotDocument = {
   caseId: GroundedMaterializationPilotCase
   sourcePdfBytes: Uint8Array
   sourceExecution: {
+    kind: 'retained-real-provider-packet'
     artifactRoot: string
     manifestBytes: Uint8Array
+    sourceEvidenceGraphBytes: Uint8Array
+    expectedObservationPayloads: Array<{
+      check: SourceEvidenceContract['expectedObservationSets'][number]['check']
+      payloadBytes: Uint8Array
+    }>
   }
   materialization: GroundedStructMaterialization
   sourceContract: SourceEvidenceContract
@@ -96,6 +116,8 @@ export type GroundedMaterializationPilotReceipt = {
     mineruManifestSha256: string
     mineruProducerReceiptSha256: string
     mineruArtifactSetSha256: string
+    retainedSourceGraphSha256: string
+    retainedObservationSetSha256: string
     materializationReceiptSha256: string
     outerReceiptSha256: string
     localCodexReceiptSha256: string
@@ -117,6 +139,84 @@ export type GroundedMaterializationPilotReceipt = {
 
 function invalid(code: string): never {
   throw new Error(code)
+}
+
+export function verifyGroundedMaterializationPilotEpubCheckAuthority(
+  receipt: EpubCheckReceipt,
+) {
+  verifyEpubCheckReceipt(receipt)
+  if (
+    receipt.authority !== 'pinned-java-jar' ||
+    receipt.toolVersion !==
+      GROUNDED_MATERIALIZATION_PINNED_EPUBCHECK.toolVersion ||
+    receipt.executableSha256 !==
+      GROUNDED_MATERIALIZATION_PINNED_EPUBCHECK.jarSha256
+  ) {
+    invalid('GROUNDED_MATERIALIZATION_PILOT_REAL_EPUBCHECK_REQUIRED')
+  }
+}
+
+export function verifyGroundedMaterializationPilotRetainedSource(
+  sourcePdfSha256: string,
+) {
+  if (
+    !GROUNDED_MATERIALIZATION_RETAINED_SOURCE_SHA256S.includes(
+      sourcePdfSha256 as (typeof GROUNDED_MATERIALIZATION_RETAINED_SOURCE_SHA256S)[number],
+    )
+  ) {
+    invalid('GROUNDED_MATERIALIZATION_PILOT_UNRETAINED_SOURCE')
+  }
+}
+
+export function verifyRetainedGroundedMaterializationSourceArtifacts(input: {
+  sourceExecution: GroundedMaterializationPilotDocument['sourceExecution']
+  sourceContract: SourceEvidenceContract
+}) {
+  const { sourceExecution, sourceContract } = input
+  if (
+    sourceExecution.kind !== 'retained-real-provider-packet' ||
+    !(sourceExecution.sourceEvidenceGraphBytes instanceof Uint8Array) ||
+    !Array.isArray(sourceExecution.expectedObservationPayloads) ||
+    sha256HexSync(sourceExecution.sourceEvidenceGraphBytes) !==
+      sourceContract.graphArtifact.sha256 ||
+    sourceExecution.sourceEvidenceGraphBytes.byteLength !==
+      sourceContract.graphArtifact.byteLength ||
+    !Buffer.from(sourceExecution.sourceEvidenceGraphBytes).equals(
+      Buffer.from(sourceContract.graphBytes),
+    )
+  ) {
+    invalid('GROUNDED_MATERIALIZATION_PILOT_RETAINED_GRAPH_MISMATCH')
+  }
+  const retainedObservationPayloads = new Map(
+    sourceExecution.expectedObservationPayloads.map((payload) => [
+      payload.check,
+      payload.payloadBytes,
+    ]),
+  )
+  if (
+    retainedObservationPayloads.size !==
+      sourceContract.expectedObservationSets.length ||
+    sourceContract.expectedObservationSets.some((expected) => {
+      const bytes = retainedObservationPayloads.get(expected.check)
+      return (
+        !bytes ||
+        sha256HexSync(bytes) !== expected.payload.sha256 ||
+        bytes.byteLength !== expected.payload.byteLength ||
+        !Buffer.from(bytes).equals(Buffer.from(expected.payloadBytes))
+      )
+    })
+  ) {
+    invalid('GROUNDED_MATERIALIZATION_PILOT_RETAINED_OBSERVATIONS_MISMATCH')
+  }
+  return {
+    sourceGraphSha256: sourceContract.graphArtifact.sha256,
+    observationSetSha256: hashTraceValue(
+      sourceContract.expectedObservationSets.map(({ check, payload }) => ({
+        check,
+        payload,
+      })),
+    ),
+  }
 }
 
 function assertCaseSemantics(document: GroundedMaterializationPilotDocument) {
@@ -189,9 +289,12 @@ export async function verifyGroundedMaterializationPilotMineruExecution(input: {
 }) {
   if (
     !input.sourceExecution ||
+    input.sourceExecution.kind !== 'retained-real-provider-packet' ||
     typeof input.sourceExecution.artifactRoot !== 'string' ||
     input.sourceExecution.artifactRoot.length === 0 ||
-    !(input.sourceExecution.manifestBytes instanceof Uint8Array)
+    !(input.sourceExecution.manifestBytes instanceof Uint8Array) ||
+    !(input.sourceExecution.sourceEvidenceGraphBytes instanceof Uint8Array) ||
+    !Array.isArray(input.sourceExecution.expectedObservationPayloads)
   ) {
     invalid('GROUNDED_MATERIALIZATION_PILOT_MINERU_EXECUTION_REQUIRED')
   }
@@ -209,6 +312,11 @@ export async function verifyGroundedMaterializationPilotMineruExecution(input: {
     artifactRoot: input.sourceExecution.artifactRoot,
     manifest,
   })
+  const retainedArtifacts =
+    verifyRetainedGroundedMaterializationSourceArtifacts({
+      sourceExecution: input.sourceExecution,
+      sourceContract: input.sourceContract,
+    })
   const retained = input.sourceContract.graph.bundles.filter(
     ({ armId }) => armId === 'mineru',
   )
@@ -223,6 +331,7 @@ export async function verifyGroundedMaterializationPilotMineruExecution(input: {
     manifestSha256: sha256HexSync(input.sourceExecution.manifestBytes),
     producerReceiptSha256: manifest.producerReceipt.receiptSha256,
     artifactSetSha256: manifest.producerReceipt.artifactSetSha256,
+    ...retainedArtifacts,
   }
 }
 
@@ -240,6 +349,9 @@ async function verifyDocument(document: GroundedMaterializationPilotDocument) {
   ) {
     invalid('INVALID_GROUNDED_MATERIALIZATION_PILOT_DOCUMENT')
   }
+  verifyGroundedMaterializationPilotRetainedSource(
+    document.materialization.receipt.sourcePdfSha256,
+  )
   verifyGroundedCoreMaterializationBinding(document.materialization)
   const mineru = await verifyGroundedMaterializationPilotMineruExecution({
     sourceExecution: document.sourceExecution,
@@ -354,6 +466,9 @@ async function verifyDocument(document: GroundedMaterializationPilotDocument) {
   if (
     canonicalTraceJson(lastRepair.result) !==
       canonicalTraceJson(document.localCodexResult) ||
+    canonicalTraceJson(finalEvaluation.codexResult) !==
+      canonicalTraceJson(document.localCodexResult) ||
+    traceCodexProvider.receiptSha256 !== hashTraceValue(localReceipt) ||
     canonicalTraceJson(repairParent) !== canonicalTraceJson(priorTrace) ||
     finalEvaluation.materialization.receipt.receiptSha256 !==
       document.materialization.receipt.receiptSha256 ||
@@ -369,7 +484,6 @@ async function verifyDocument(document: GroundedMaterializationPilotDocument) {
         prompt: traceCodexProvider.prompt,
         tool: traceCodexProvider.tool,
       },
-      codexReconciliationReceiptSha256: traceCodexProvider.receiptSha256,
     })
   ) {
     invalid('GROUNDED_MATERIALIZATION_PILOT_REFINEMENT_MISMATCH')
@@ -413,7 +527,7 @@ async function verifyDocument(document: GroundedMaterializationPilotDocument) {
   for (const profileId of CLOSED_RECONSTRUCTION_PROFILE_IDS) {
     const profile = byProfile.get(profileId)!
     verifyActualProfiledEpubRender(profile.render)
-    verifyEpubCheckReceipt(profile.epubCheck)
+    verifyGroundedMaterializationPilotEpubCheckAuthority(profile.epubCheck)
     const replayed = compareGroundedProfiledEpub({
       materialization: document.materialization,
       sourceContract: document.sourceContract,
@@ -503,6 +617,8 @@ export async function verifyGroundedMaterializationPilotPacket(
       mineruManifestSha256: mineru.manifestSha256,
       mineruProducerReceiptSha256: mineru.producerReceiptSha256,
       mineruArtifactSetSha256: mineru.artifactSetSha256,
+      retainedSourceGraphSha256: mineru.sourceGraphSha256,
+      retainedObservationSetSha256: mineru.observationSetSha256,
       materializationReceiptSha256:
         document.materialization.receipt.receiptSha256,
       outerReceiptSha256: document.outerReceipt.receiptSha256,

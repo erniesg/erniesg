@@ -75,6 +75,8 @@ export type ActualProfiledEpubRender = {
 export type EpubCheckExecution = {
   toolId: 'epubcheck'
   toolVersion: string
+  authority: 'pinned-java-jar' | 'test-only-injected'
+  javaExecutableSha256: string | null
   executableSha256: string
   exitCode: number
   reportBytes: Uint8Array
@@ -87,6 +89,8 @@ export type EpubCheckReceipt = {
   epub: HashedArtifact
   toolId: 'epubcheck'
   toolVersion: string
+  authority: 'pinned-java-jar' | 'test-only-injected'
+  javaExecutableSha256: string | null
   executableSha256: string
   report: HashedArtifact
   errorCount: 0
@@ -379,6 +383,11 @@ export function verifyEpubCheckReceipt(receipt: EpubCheckReceipt) {
     receipt.errorCount !== 0 ||
     receipt.warningCount !== 0 ||
     receipt.report.byteLength === 0 ||
+    (receipt.authority === 'pinned-java-jar'
+      ? !receipt.javaExecutableSha256 ||
+        !/^[a-f0-9]{64}$/u.test(receipt.javaExecutableSha256)
+      : receipt.javaExecutableSha256 !== null) ||
+    !/^[a-f0-9]{64}$/u.test(receipt.executableSha256) ||
     receiptSha256 !== hashTraceValue(projection)
   ) {
     throw new Error('INVALID_EPUBCHECK_RECEIPT')
@@ -412,6 +421,11 @@ export async function runEpubCheckWarningsFatal(
     execution.errorCount !== 0 ||
     execution.warningCount !== 0 ||
     execution.reportBytes.byteLength === 0 ||
+    (execution.authority === 'pinned-java-jar'
+      ? !execution.javaExecutableSha256 ||
+        !/^[a-f0-9]{64}$/u.test(execution.javaExecutableSha256)
+      : execution.authority !== 'test-only-injected' ||
+        execution.javaExecutableSha256 !== null) ||
     !/^[a-f0-9]{64}$/u.test(execution.executableSha256)
   ) {
     throw new Error(
@@ -423,6 +437,8 @@ export async function runEpubCheckWarningsFatal(
     epub: build.epub,
     toolId: 'epubcheck',
     toolVersion: execution.toolVersion,
+    authority: execution.authority,
+    javaExecutableSha256: execution.javaExecutableSha256,
     executableSha256: execution.executableSha256,
     report: artifact(execution.reportBytes),
     errorCount: 0,
@@ -494,6 +510,8 @@ export async function executePinnedEpubCheck(input: {
     return {
       toolId: 'epubcheck',
       toolVersion: input.toolVersion,
+      authority: 'pinned-java-jar',
+      javaExecutableSha256: sha256HexSync(await readFile(input.javaPath)),
       executableSha256: sha256HexSync(await readFile(input.epubCheckJarPath)),
       exitCode: executed.exitCode,
       reportBytes,

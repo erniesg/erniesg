@@ -37,6 +37,7 @@ import type {
   SourceEvidenceContract,
   VerifiedExpectedObservationSet,
 } from './source-evidence-contract'
+import type { LocalCodexReconciliationResult } from './local-codex-reconciliation'
 
 export const GROUNDED_EPUB_COMPARISON_SCHEMA_VERSION = '1.0.0' as const
 
@@ -540,12 +541,11 @@ export function createGroundedActualReconstructionTrace(input: {
   sourceContract: SourceEvidenceContract
   comparison: GroundedProfiledEpubComparison
   codexIdentity: OwnerLocalCodexTraceIdentity
-  codexReceiptSha256: string
-  lineage?: ReconstructionAttemptTrace['lineage']
-  critiqueRepair?: ReconstructionAttemptTrace['critiqueRepair']
+  codexResult: LocalCodexReconciliationResult
+  lineage: ReconstructionAttemptTrace['lineage']
+  critiqueRepair: ReconstructionAttemptTrace['critiqueRepair']
   repairProviderReceipt?: ProviderReceiptBinding
-  budget?: ReconstructionAttemptTrace['budget']
-  usage?: { tokens: number; durationMs: number }
+  budget: ReconstructionAttemptTrace['budget']
 }): ReconstructionAttemptTrace {
   const {
     attemptId,
@@ -555,7 +555,19 @@ export function createGroundedActualReconstructionTrace(input: {
     comparison,
     codexIdentity,
   } = input
-  const critiqueRepair = input.critiqueRepair ?? null
+  const critiqueRepair = input.critiqueRepair
+  const codexReceipt = input.codexResult.receipt
+  const codexReceiptHashes = [
+    codexReceipt.isolatedSessionSha256,
+    codexReceipt.requestSha256,
+    codexReceipt.responseSha256,
+    codexReceipt.selectionSetSha256,
+    codexReceipt.comparisonEvidenceSha256,
+    codexReceipt.cropEvidenceSha256,
+    codexReceipt.threadSha256,
+    codexReceipt.turnSha256,
+    ...Object.values(codexReceipt.identities),
+  ]
   if (
     sourcePdf.artifact.sha256 !== materialization.receipt.sourcePdfSha256 ||
     sourcePdf.pageCount !== materialization.document.source.pageCount ||
@@ -563,7 +575,23 @@ export function createGroundedActualReconstructionTrace(input: {
       materialization.receipt.sourceEvidenceGraphSha256 ||
     (critiqueRepair !== null) !== (input.repairProviderReceipt !== undefined) ||
     (critiqueRepair !== null &&
-      input.repairProviderReceipt?.role !== 'owner-local-codex-repair')
+      input.repairProviderReceipt?.role !== 'owner-local-codex-repair') ||
+    codexReceipt.status !== 'accepted' ||
+    codexReceipt.graphSha256 !== sourceContract.graph.graphSha256 ||
+    codexReceipt.selectionSetSha256 !==
+      hashTraceValue(input.codexResult.selections) ||
+    codexReceipt.counts.decisionCount !== input.codexResult.selections.length ||
+    new Set(input.codexResult.selections.map(({ decisionId }) => decisionId))
+      .size !== input.codexResult.selections.length ||
+    codexReceipt.usage.totalTokens !==
+      codexReceipt.usage.inputTokens + codexReceipt.usage.outputTokens ||
+    codexReceipt.usage.totalTokens < 1 ||
+    codexReceipt.usage.inputTokens < 1 ||
+    codexReceipt.usage.outputTokens < 1 ||
+    codexReceipt.usage.durationMs < 1 ||
+    codexReceiptHashes.some((value) => !/^[a-f0-9]{64}$/u.test(value)) ||
+    (input.lineage.attemptIndex > 0 &&
+      codexReceipt.comparisonEvidenceSha256 !== input.lineage.parentTraceSha256)
   ) {
     invalid('INVALID_GROUNDED_ACTUAL_TRACE_INPUT')
   }
@@ -606,42 +634,19 @@ export function createGroundedActualReconstructionTrace(input: {
       required: true,
       enabledBeforeRun: true,
       providerId: codexIdentity.server.id,
-      receiptSha256: input.codexReceiptSha256,
+      receiptSha256: hashTraceValue(codexReceipt),
       inputSha256: reconciliationInputSha256,
       outputSha256: hashTraceValue(comparator),
       status: 'succeeded',
     }),
-    receiptSha256: input.codexReceiptSha256,
+    receiptSha256: hashTraceValue(codexReceipt),
     inputSha256: reconciliationInputSha256,
     outputSha256: hashTraceValue(comparator),
     ...structuredClone(codexIdentity),
     status: 'succeeded',
   }
-  const lineage = input.lineage ?? {
-    attemptIndex: 0,
-    parentTraceSha256: null,
-    immutablePriorTraceSha256: null,
-    appliedRepair: null,
-  }
-  const budget = input.budget ?? {
-    policy: {
-      maxRefinements: 3,
-      maxFreshTasks: 1,
-      maxTokens: 24_000,
-      maxDurationMs: 30 * 60 * 1_000,
-      repairPolicySha256: hashTraceValue({
-        id: 'closed-candidate-grounded-reconstruction',
-        maxRefinements: 3,
-        maxFreshTasks: 1,
-      }),
-    },
-    usage: {
-      refinements: lineage.attemptIndex,
-      freshTasks: lineage.attemptIndex > 0 ? 1 : 0,
-      tokens: input.usage?.tokens ?? 0,
-      durationMs: input.usage?.durationMs ?? 0,
-    },
-  }
+  const lineage = input.lineage
+  const budget = input.budget
   return createReconstructionAttemptTrace({
     schemaVersion: RECONSTRUCTION_ATTEMPT_TRACE_SCHEMA_VERSION,
     attemptId,

@@ -1,4 +1,5 @@
 import {
+  executePinnedEpubCheck,
   renderExactThreeProfileEpubs,
   runEpubCheckWarningsFatal,
   verifyActualProfiledEpubRender,
@@ -65,6 +66,7 @@ export const GROUNDED_RECONSTRUCTION_REFINEMENT_SCHEMA_VERSION =
 export type GroundedThreeProfileEvaluation = {
   schemaVersion: typeof GROUNDED_RECONSTRUCTION_REFINEMENT_SCHEMA_VERSION
   materialization: GroundedStructMaterialization
+  codexResult: LocalCodexReconciliationResult
   attempt: ClosedThreeProfileAttempt
   profiles: Array<{
     build: ProfiledStructEpubArtifact
@@ -84,15 +86,27 @@ export type GroundedThreeProfileEvaluationInput = {
   materialization: GroundedStructMaterialization
   sourceContract: SourceEvidenceContract
   codexIdentity: OwnerLocalCodexTraceIdentity
-  codexReceiptSha256: string
-  lineage?: ReconstructionAttemptTrace['lineage']
-  critiqueRepair?: ReconstructionAttemptTrace['critiqueRepair']
+  codexResult: LocalCodexReconciliationResult
+  lineage: ReconstructionAttemptTrace['lineage']
+  critiqueRepair: ReconstructionAttemptTrace['critiqueRepair']
   repairProviderReceipt?: ProviderReceiptBinding
-  budget?: ReconstructionAttemptTrace['budget']
-  executeEpubCheck: (
-    epubBytes: Uint8Array,
-    profileId: ClosedReconstructionProfileId,
-  ) => Promise<EpubCheckExecution>
+  budget: ReconstructionAttemptTrace['budget']
+  epubCheckAuthority:
+    | {
+        kind: 'pinned-java-jar'
+        javaPath: string
+        epubCheckJarPath: string
+        toolVersion: string
+      }
+    | {
+        kind: 'test-only-injected'
+        execute: (
+          epubBytes: Uint8Array,
+          profileId: ClosedReconstructionProfileId,
+        ) => Promise<
+          Omit<EpubCheckExecution, 'authority' | 'javaExecutableSha256'>
+        >
+      }
 }
 
 export type GroundedRefinementCodexClient = RefinementCodexClient & {
@@ -114,6 +128,9 @@ export type GroundedCodexRepairEvidence = {
 export type GroundedRefinementAttemptLedgerEntry = {
   attemptIndex: number
   candidateBindingSha256: string
+  parentCandidateBindingSha256: string | null
+  activeBeforeCandidateBindingSha256: string
+  activeAfterCandidateBindingSha256: string
   selectedTraceSha256: string
   profileTraceSha256s: Record<ClosedReconstructionProfileId, string>
   profileBuildReceiptSha256s: Record<ClosedReconstructionProfileId, string>
@@ -122,6 +139,19 @@ export type GroundedRefinementAttemptLedgerEntry = {
   disposition:
     'baseline' | 'accepted-best' | 'rejected-exploratory' | 'terminal-pass'
   rejectionReason: 'hard-gate-regression' | 'first-cause-not-improved' | null
+  allThreeProfilesPassed: boolean
+  budgetDelta: {
+    refinements: number
+    freshTasks: number
+    tokens: number
+    durationMs: number
+  }
+  rejectedBudgetAfter: {
+    refinements: number
+    freshTasks: number
+    tokens: number
+    durationMs: number
+  }
   entrySha256: string
 }
 
@@ -132,7 +162,14 @@ export type GroundedThreeProfileRefinementReceipt = {
   attempts: GroundedRefinementAttemptLedgerEntry[]
   codexRepairEvidenceSha256s: string[]
   bestCandidateBindingSha256: string
+  activeCandidateBindingSha256: string
   finalCandidateBindingSha256: string
+  rejectedBudget: {
+    refinements: number
+    freshTasks: number
+    tokens: number
+    durationMs: number
+  }
   closedReceiptSha256: string | null
   status: 'publication-ready' | 'failed'
   receiptSha256: string
@@ -154,10 +191,10 @@ export type GroundedThreeProfileRefinementInput = {
   sourcePdf: SourcePdfBinding
   sourceContract: SourceEvidenceContract
   codexIdentity: OwnerLocalCodexTraceIdentity
-  codexReconciliationReceiptSha256: string
+  initialCodexResult: LocalCodexReconciliationResult
   codex: GroundedRefinementCodexClient
   materializationVerification: MaterializationVerificationAuthorities
-  executeEpubCheck: GroundedThreeProfileEvaluationInput['executeEpubCheck']
+  epubCheckAuthority: GroundedThreeProfileEvaluationInput['epubCheckAuthority']
   resolveResultingProposal: (input: {
     before: GroundedStructMaterializationInput
     patch: StructEvidencePatch
@@ -174,9 +211,12 @@ type CandidateState = {
   patch?: StructEvidencePatch
   parentEvaluation?: GroundedThreeProfileEvaluation
   repairProviderReceipt?: ProviderReceiptBinding
+  codexResult: LocalCodexReconciliationResult
 }
 
-function coordinatorProfile(vectors: readonly ReconstructionHardCheckVector[]) {
+export function selectGroundedCoordinatorProfile(
+  vectors: readonly ReconstructionHardCheckVector[],
+) {
   for (const profileId of CLOSED_RECONSTRUCTION_PROFILE_IDS) {
     if (vectors.find((vector) => vector.profileId === profileId)?.firstCause) {
       return profileId
@@ -201,9 +241,21 @@ export async function evaluateGroundedThreeProfileAttempt(
   const renders = await renderExactThreeProfileEpubs(builds)
   const epubChecks = await Promise.all(
     builds.map((build) =>
-      runEpubCheckWarningsFatal(build, (bytes) =>
-        input.executeEpubCheck(bytes, build.profileId),
-      ),
+      runEpubCheckWarningsFatal(build, async (bytes) => {
+        if (input.epubCheckAuthority.kind === 'pinned-java-jar') {
+          return executePinnedEpubCheck({
+            epubBytes: bytes,
+            javaPath: input.epubCheckAuthority.javaPath,
+            epubCheckJarPath: input.epubCheckAuthority.epubCheckJarPath,
+            toolVersion: input.epubCheckAuthority.toolVersion,
+          })
+        }
+        return {
+          ...(await input.epubCheckAuthority.execute(bytes, build.profileId)),
+          authority: 'test-only-injected' as const,
+          javaExecutableSha256: null,
+        }
+      }),
     ),
   )
   const comparisons = builds.map((build, index) =>
@@ -225,22 +277,20 @@ export async function evaluateGroundedThreeProfileAttempt(
         sourceContract: input.sourceContract,
         comparison,
         codexIdentity: input.codexIdentity,
-        codexReceiptSha256: input.codexReceiptSha256,
-        ...(input.lineage ? { lineage: input.lineage } : {}),
-        ...(input.critiqueRepair !== undefined
-          ? { critiqueRepair: input.critiqueRepair }
-          : {}),
+        codexResult: input.codexResult,
+        lineage: input.lineage,
+        critiqueRepair: input.critiqueRepair,
         ...(input.repairProviderReceipt
           ? { repairProviderReceipt: input.repairProviderReceipt }
           : {}),
-        ...(input.budget ? { budget: input.budget } : {}),
+        budget: input.budget,
       }),
     ]),
   ) as Record<ClosedReconstructionProfileId, ReconstructionAttemptTrace>
   const vectors = CLOSED_RECONSTRUCTION_PROFILE_IDS.map((profileId) =>
     createReconstructionHardCheckVector(profileId, traces[profileId]),
   )
-  const coordinatorProfileId = coordinatorProfile(vectors)
+  const coordinatorProfileId = selectGroundedCoordinatorProfile(vectors)
   const attempt: ClosedThreeProfileAttempt = {
     coordinatorProfileId,
     canonicalStructSha256: input.materialization.receipt.repairCore.sha256,
@@ -261,6 +311,7 @@ export async function evaluateGroundedThreeProfileAttempt(
   return {
     schemaVersion: GROUNDED_RECONSTRUCTION_REFINEMENT_SCHEMA_VERSION,
     materialization: structuredClone(input.materialization),
+    codexResult: structuredClone(input.codexResult),
     attempt,
     profiles,
     vectors,
@@ -279,7 +330,6 @@ export function verifyGroundedThreeProfileRefinementResult(input: {
   sourcePdf: SourcePdfBinding
   sourceContract: SourceEvidenceContract
   codexIdentity: OwnerLocalCodexTraceIdentity
-  codexReconciliationReceiptSha256: string
 }) {
   try {
     const fail = (code: string): never => {
@@ -359,11 +409,20 @@ export function verifyGroundedThreeProfileRefinementResult(input: {
       measuredInputTokens !==
         result.refinement.publicReceipt.usage.inputTokens ||
       measuredOutputTokens !==
-        result.refinement.publicReceipt.usage.outputTokens
+        result.refinement.publicReceipt.usage.outputTokens ||
+      new Set(
+        result.codexRepairEvidence.map(({ sessionSha256 }) => sessionSha256),
+      ).size > 1
     ) {
       fail('GROUNDED_REFINEMENT_CODEX_USAGE_MISMATCH')
     }
     let bestIndex = 0
+    const replayedRejectedBudget = {
+      refinements: 0,
+      freshTasks: 0,
+      tokens: 0,
+      durationMs: 0,
+    }
     for (const [attemptIndex, evaluation] of result.evaluations.entries()) {
       if (
         evaluation.schemaVersion !==
@@ -419,7 +478,7 @@ export function verifyGroundedThreeProfileRefinementResult(input: {
           sourceContract: input.sourceContract,
           comparison: replayedComparison,
           codexIdentity: input.codexIdentity,
-          codexReceiptSha256: input.codexReconciliationReceiptSha256,
+          codexResult: evaluation.codexResult,
           lineage: trace.lineage,
           critiqueRepair: trace.critiqueRepair,
           ...(repairProviders[0]
@@ -461,10 +520,40 @@ export function verifyGroundedThreeProfileRefinementResult(input: {
             : 'rejected-exploratory'
       const expectedRejectionReason =
         transition?.status === 'rejected' ? transition.reason : null
+      const previousUsage =
+        attemptIndex === 0
+          ? { refinements: 0, freshTasks: 0, tokens: 0, durationMs: 0 }
+          : result.evaluations[attemptIndex - 1]!.coordinatorTrace.budget.usage
+      const usage = evaluation.coordinatorTrace.budget.usage
+      const expectedBudgetDelta = {
+        refinements: usage.refinements - previousUsage.refinements,
+        freshTasks: usage.freshTasks - previousUsage.freshTasks,
+        tokens: usage.tokens - previousUsage.tokens,
+        durationMs: usage.durationMs - previousUsage.durationMs,
+      }
+      if (
+        expectedDisposition === 'rejected-exploratory' &&
+        Object.values(expectedBudgetDelta).every((value) => value >= 0)
+      ) {
+        replayedRejectedBudget.refinements += expectedBudgetDelta.refinements
+        replayedRejectedBudget.freshTasks += expectedBudgetDelta.freshTasks
+        replayedRejectedBudget.tokens += expectedBudgetDelta.tokens
+        replayedRejectedBudget.durationMs += expectedBudgetDelta.durationMs
+      }
+      const activeBefore =
+        attemptIndex === 0
+          ? entry.candidateBindingSha256
+          : result.receipt.attempts[attemptIndex - 1]!
+              .activeAfterCandidateBindingSha256
       if (
         entry.entrySha256 !== hashTraceValue(entryProjection) ||
         entry.attemptIndex !== attemptIndex ||
         entry.candidateBindingSha256.length !== 64 ||
+        entry.parentCandidateBindingSha256 !==
+          (attemptIndex === 0 ? null : activeBefore) ||
+        entry.activeBeforeCandidateBindingSha256 !== activeBefore ||
+        entry.activeAfterCandidateBindingSha256 !==
+          entry.candidateBindingSha256 ||
         entry.selectedTraceSha256 !== evaluation.coordinatorTrace.traceSha256 ||
         entry.bestBeforeCandidateBindingSha256 !==
           result.receipt.attempts[bestBeforeIndex]!.candidateBindingSha256 ||
@@ -472,6 +561,11 @@ export function verifyGroundedThreeProfileRefinementResult(input: {
           result.receipt.attempts[bestIndex]!.candidateBindingSha256 ||
         entry.disposition !== expectedDisposition ||
         entry.rejectionReason !== expectedRejectionReason ||
+        entry.allThreeProfilesPassed !== terminal ||
+        hashTraceValue(entry.budgetDelta) !==
+          hashTraceValue(expectedBudgetDelta) ||
+        hashTraceValue(entry.rejectedBudgetAfter) !==
+          hashTraceValue(replayedRejectedBudget) ||
         CLOSED_RECONSTRUCTION_PROFILE_IDS.some(
           (profileId) =>
             entry.profileTraceSha256s[profileId] !==
@@ -511,8 +605,12 @@ export function verifyGroundedThreeProfileRefinementResult(input: {
         ) ||
       result.receipt.bestCandidateBindingSha256 !==
         result.receipt.attempts[bestIndex]!.candidateBindingSha256 ||
+      result.receipt.activeCandidateBindingSha256 !==
+        result.receipt.attempts[finalIndex]!.candidateBindingSha256 ||
       result.receipt.finalCandidateBindingSha256 !==
         result.receipt.attempts[finalIndex]!.candidateBindingSha256 ||
+      hashTraceValue(result.receipt.rejectedBudget) !==
+        hashTraceValue(replayedRejectedBudget) ||
       result.receipt.status !== (canPublish ? 'publication-ready' : 'failed')
     ) {
       fail('GROUNDED_REFINEMENT_RECEIPT_MISMATCH')
@@ -618,6 +716,73 @@ function codexEvidenceProjection(
   return evidence
 }
 
+/** Pure #200 pointer transition used by the live loop and ledger replay tests. */
+export function advanceGroundedRefinementLedger(input: {
+  attemptIndex: number
+  activeBeforeCandidateBindingSha256: string
+  candidateBindingSha256: string
+  bestBeforeCandidateBindingSha256: string
+  bestVectors: readonly ReconstructionHardCheckVector[] | null
+  candidateVectors: readonly ReconstructionHardCheckVector[]
+  budgetDelta: GroundedRefinementAttemptLedgerEntry['budgetDelta']
+  rejectedBudgetBefore: GroundedRefinementAttemptLedgerEntry['rejectedBudgetAfter']
+}) {
+  if (
+    input.attemptIndex < 0 ||
+    !Number.isSafeInteger(input.attemptIndex) ||
+    (input.attemptIndex === 0) !== (input.bestVectors === null) ||
+    [
+      input.activeBeforeCandidateBindingSha256,
+      input.candidateBindingSha256,
+      input.bestBeforeCandidateBindingSha256,
+    ].some((value) => !/^[a-f0-9]{64}$/u.test(value)) ||
+    [
+      ...Object.values(input.budgetDelta),
+      ...Object.values(input.rejectedBudgetBefore),
+    ].some((value) => !Number.isSafeInteger(value) || value < 0)
+  ) {
+    throw new Error('INVALID_GROUNDED_REFINEMENT_LEDGER_STEP')
+  }
+  const allThreeProfilesPassed = input.candidateVectors.every(
+    ({ failedCount }) => failedCount === 0,
+  )
+  const transition = input.bestVectors
+    ? classifyMonotonicReconstructionTransition(
+        input.bestVectors,
+        input.candidateVectors,
+      )
+    : null
+  const accepted = transition === null || transition.status === 'accepted'
+  const disposition: GroundedRefinementAttemptLedgerEntry['disposition'] =
+    input.attemptIndex === 0
+      ? allThreeProfilesPassed
+        ? 'terminal-pass'
+        : 'baseline'
+      : accepted
+        ? allThreeProfilesPassed
+          ? 'terminal-pass'
+          : 'accepted-best'
+        : 'rejected-exploratory'
+  const rejectedBudgetAfter = { ...input.rejectedBudgetBefore }
+  if (disposition === 'rejected-exploratory') {
+    rejectedBudgetAfter.refinements += input.budgetDelta.refinements
+    rejectedBudgetAfter.freshTasks += input.budgetDelta.freshTasks
+    rejectedBudgetAfter.tokens += input.budgetDelta.tokens
+    rejectedBudgetAfter.durationMs += input.budgetDelta.durationMs
+  }
+  return {
+    disposition,
+    rejectionReason:
+      transition?.status === 'rejected' ? transition.reason : null,
+    activeAfterCandidateBindingSha256: input.candidateBindingSha256,
+    bestAfterCandidateBindingSha256: accepted
+      ? input.candidateBindingSha256
+      : input.bestBeforeCandidateBindingSha256,
+    allThreeProfilesPassed,
+    rejectedBudgetAfter,
+  }
+}
+
 /**
  * Run the #199 bounded loop exactly once while each evaluation closes all
  * three real profiles. Exploration may continue through a rejected sibling;
@@ -643,6 +808,7 @@ export async function runGroundedThreeProfileRefinement(
     candidate: input.initialCandidate,
     materialization: input.initialMaterialization,
     materializationInput: input.initialMaterializationInput,
+    codexResult: input.initialCodexResult,
   })
   const evaluations: GroundedThreeProfileEvaluation[] = []
   const entries: GroundedRefinementAttemptLedgerEntry[] = []
@@ -651,6 +817,12 @@ export async function runGroundedThreeProfileRefinement(
   )!
   let bestEvaluation: GroundedThreeProfileEvaluation | undefined
   let finalState = bestState
+  const rejectedBudget = {
+    refinements: 0,
+    freshTasks: 0,
+    tokens: 0,
+    durationMs: 0,
+  }
   let refinement: ReconstructionRefinementRunResult
   try {
     refinement = await runReconstructionRefinement({
@@ -674,7 +846,7 @@ export async function runGroundedThreeProfileRefinement(
             materialization: state.materialization,
             sourceContract: input.sourceContract,
             codexIdentity: input.codexIdentity,
-            codexReceiptSha256: input.codexReconciliationReceiptSha256,
+            codexResult: state.codexResult,
             lineage: lineage.lineage,
             critiqueRepair: lineage.critiqueRepair,
             ...(lineage.repairProviderReceipt
@@ -690,43 +862,56 @@ export async function runGroundedThreeProfileRefinement(
               },
               usage: context.usage,
             },
-            executeEpubCheck: input.executeEpubCheck,
+            epubCheckAuthority: input.epubCheckAuthority,
           })
+          const activeBefore =
+            entries.at(-1)?.activeAfterCandidateBindingSha256 ??
+            input.initialCandidate.binding.bindingSha256
+          const priorUsage = evaluations.at(-1)?.coordinatorTrace.budget
+            .usage ?? {
+            refinements: 0,
+            freshTasks: 0,
+            tokens: 0,
+            durationMs: 0,
+          }
+          const budgetDelta = {
+            refinements: context.usage.refinements - priorUsage.refinements,
+            freshTasks: context.usage.freshTasks - priorUsage.freshTasks,
+            tokens: context.usage.tokens - priorUsage.tokens,
+            durationMs: context.usage.durationMs - priorUsage.durationMs,
+          }
+          if (Object.values(budgetDelta).some((value) => value < 0)) {
+            throw new Error('GROUNDED_REFINEMENT_BUDGET_REGRESSION')
+          }
           const bestBefore = bestState.candidate.binding.bindingSha256
-          let disposition: GroundedRefinementAttemptLedgerEntry['disposition']
-          let rejectionReason: GroundedRefinementAttemptLedgerEntry['rejectionReason'] =
-            null
-          if (!bestEvaluation) {
+          const advanced = advanceGroundedRefinementLedger({
+            attemptIndex: context.attemptIndex,
+            activeBeforeCandidateBindingSha256: activeBefore,
+            candidateBindingSha256: candidate.binding.bindingSha256,
+            bestBeforeCandidateBindingSha256: bestBefore,
+            bestVectors: bestEvaluation?.vectors ?? null,
+            candidateVectors: evaluation.vectors,
+            budgetDelta,
+            rejectedBudgetBefore: rejectedBudget,
+          })
+          if (
+            advanced.bestAfterCandidateBindingSha256 ===
+            candidate.binding.bindingSha256
+          ) {
             bestEvaluation = evaluation
             bestState = state
-            disposition = evaluation.vectors.every(
-              ({ failedCount }) => failedCount === 0,
-            )
-              ? 'terminal-pass'
-              : 'baseline'
-          } else {
-            const decision = classifyMonotonicReconstructionTransition(
-              bestEvaluation.vectors,
-              evaluation.vectors,
-            )
-            if (decision.status === 'accepted') {
-              bestEvaluation = evaluation
-              bestState = state
-              disposition = evaluation.vectors.every(
-                ({ failedCount }) => failedCount === 0,
-              )
-                ? 'terminal-pass'
-                : 'accepted-best'
-            } else {
-              disposition = 'rejected-exploratory'
-              rejectionReason = decision.reason
-            }
           }
+          Object.assign(rejectedBudget, advanced.rejectedBudgetAfter)
           finalState = state
           evaluations.push(evaluation)
           const projection = ledgerProjection({
             attemptIndex: context.attemptIndex,
             candidateBindingSha256: candidate.binding.bindingSha256,
+            parentCandidateBindingSha256:
+              context.attemptIndex === 0 ? null : activeBefore,
+            activeBeforeCandidateBindingSha256: activeBefore,
+            activeAfterCandidateBindingSha256:
+              advanced.activeAfterCandidateBindingSha256,
             selectedTraceSha256: evaluation.coordinatorTrace.traceSha256,
             profileTraceSha256s: Object.fromEntries(
               CLOSED_RECONSTRUCTION_PROFILE_IDS.map((profileId) => [
@@ -742,9 +927,12 @@ export async function runGroundedThreeProfileRefinement(
             ) as Record<ClosedReconstructionProfileId, string>,
             bestBeforeCandidateBindingSha256: bestBefore,
             bestAfterCandidateBindingSha256:
-              bestState.candidate.binding.bindingSha256,
-            disposition,
-            rejectionReason,
+              advanced.bestAfterCandidateBindingSha256,
+            disposition: advanced.disposition,
+            rejectionReason: advanced.rejectionReason,
+            allThreeProfilesPassed: advanced.allThreeProfilesPassed,
+            budgetDelta,
+            rejectedBudgetAfter: { ...rejectedBudget },
           })
           entries.push({
             ...projection,
@@ -770,6 +958,14 @@ export async function runGroundedThreeProfileRefinement(
             authorities: input.materializationVerification,
           })
           const repairProviderReceipt = input.codex.repairProviderReceipt(patch)
+          const repairEvidence = input.codex
+            .repairEvidence()
+            .find(
+              (evidence) => evidence.proposalSha256 === patch.proposalSha256,
+            )
+          if (!repairEvidence) {
+            throw new Error('MISSING_GROUNDED_REPAIR_CODEX_EVIDENCE')
+          }
           stateByBinding.set(application.candidate.binding.bindingSha256, {
             candidate: application.candidate,
             materialization: application.materialization,
@@ -782,6 +978,7 @@ export async function runGroundedThreeProfileRefinement(
             patch,
             parentEvaluation: evaluations.at(-1),
             repairProviderReceipt,
+            codexResult: repairEvidence.result,
           })
           return application.applicationReceipt
         },
@@ -809,7 +1006,9 @@ export async function runGroundedThreeProfileRefinement(
       ({ evidenceSha256 }) => evidenceSha256,
     ),
     bestCandidateBindingSha256: bestState.candidate.binding.bindingSha256,
+    activeCandidateBindingSha256: finalState.candidate.binding.bindingSha256,
     finalCandidateBindingSha256: finalState.candidate.binding.bindingSha256,
+    rejectedBudget,
     closedReceiptSha256: closedReceipt?.receiptSha256 ?? null,
     status: canPublish ? ('publication-ready' as const) : ('failed' as const),
   }
@@ -826,7 +1025,6 @@ export async function runGroundedThreeProfileRefinement(
       sourcePdf: input.sourcePdf,
       sourceContract: input.sourceContract,
       codexIdentity: input.codexIdentity,
-      codexReconciliationReceiptSha256: input.codexReconciliationReceiptSha256,
     })
   ) {
     throw new Error('GROUNDED_THREE_PROFILE_REFINEMENT_REPLAY_FAILED')

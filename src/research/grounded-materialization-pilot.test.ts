@@ -3,9 +3,11 @@ import { PDFDocument, StandardFonts } from 'pdf-lib'
 import { path as epubCheckJarPath } from 'epubcheck-static'
 import sharp from 'sharp'
 import { readFile } from 'node:fs/promises'
-import { executePinnedEpubCheck } from './actual-profiled-epub'
 import {
   GROUNDED_MATERIALIZATION_PILOT_CASES,
+  GROUNDED_MATERIALIZATION_PINNED_EPUBCHECK,
+  verifyGroundedMaterializationPilotEpubCheckAuthority,
+  verifyGroundedMaterializationPilotRetainedSource,
   verifyGroundedMaterializationPilotMineruExecution,
   type GroundedMaterializationPilotCase,
   type GroundedMaterializationPilotDocument,
@@ -49,6 +51,55 @@ import type {
 } from './structured-extraction'
 
 const digest = (value: string | Uint8Array) => sha256HexSync(value)
+
+/** Explicitly non-promotable seed used only by the synthetic provider smoke. */
+function untrustedSmokeCodexResult(graphSha256: string) {
+  const selections: never[] = []
+  return {
+    selections,
+    receipt: {
+      schemaVersion: '1.0.0' as const,
+      status: 'accepted' as const,
+      documentIdSha256: digest('synthetic-document'),
+      attemptIdSha256: digest('synthetic-attempt'),
+      isolatedSessionSha256: digest('synthetic-session'),
+      graphSha256,
+      candidateSetSha256: digest('synthetic-candidates'),
+      requestSha256: digest('synthetic-request'),
+      responseSha256: digest('synthetic-response'),
+      selectionSetSha256: hashTraceValue(selections),
+      comparisonEvidenceSha256: digest('synthetic-prior-trace'),
+      cropEvidenceSha256: digest('synthetic-crops'),
+      threadSha256: digest('synthetic-thread'),
+      turnSha256: digest('synthetic-turn'),
+      identities: {
+        endpointSha256: digest('synthetic-endpoint'),
+        serverSha256: digest('synthetic-server'),
+        toolSha256: digest('synthetic-tool'),
+        modelSha256: digest('synthetic-model'),
+        promptSha256: digest('synthetic-prompt'),
+        renderArtifactResolverSha256: digest('synthetic-resolver'),
+        observedModelSha256: digest('synthetic-observed-model'),
+      },
+      counts: {
+        decisionCount: 0,
+        candidateCount: 0,
+        renderCount: 0,
+        sourceCropCount: 0,
+        epubCropCount: 0,
+      },
+      usage: {
+        totalTokens: 2,
+        inputTokens: 1,
+        cachedInputTokens: 0,
+        cacheWriteInputTokens: 0,
+        outputTokens: 1,
+        reasoningOutputTokens: 0,
+        durationMs: 1,
+      },
+    },
+  }
+}
 const verifierIdentity = {
   id: 'pilot-source-evidence-verifier',
   version: '1.0.0',
@@ -1126,14 +1177,35 @@ async function pilotDocument(
     materialization,
     sourceContract,
     codexIdentity,
-    codexReceiptSha256: digest(`codex-${caseId}`),
-    executeEpubCheck: (epubBytes) =>
-      executePinnedEpubCheck({
-        epubBytes,
-        javaPath: providers.javaPath,
-        epubCheckJarPath,
-        toolVersion: '5.3.0',
-      }),
+    codexResult: untrustedSmokeCodexResult(fixture.graph.graphSha256),
+    lineage: {
+      attemptIndex: 0,
+      parentTraceSha256: null,
+      immutablePriorTraceSha256: null,
+      appliedRepair: null,
+    },
+    critiqueRepair: null,
+    budget: {
+      policy: {
+        maxRefinements: 3,
+        maxFreshTasks: 1,
+        maxTokens: 24_000,
+        maxDurationMs: 30 * 60_000,
+        repairPolicySha256: digest('synthetic-smoke-repair-policy'),
+      },
+      usage: {
+        refinements: 0,
+        freshTasks: 0,
+        tokens: 0,
+        durationMs: 0,
+      },
+    },
+    epubCheckAuthority: {
+      kind: 'pinned-java-jar',
+      javaPath: providers.javaPath,
+      epubCheckJarPath,
+      toolVersion: '5.3.0',
+    },
   })
   const profiles = evaluation.profiles
   const outerReceipt = createClosedThreeProfileReconstructionReceipt({
@@ -1171,6 +1243,66 @@ describe('public synthetic grounded materialization provider smoke', () => {
     ).rejects.toThrow(
       'GROUNDED_MATERIALIZATION_PILOT_MINERU_EXECUTION_REQUIRED',
     )
+  })
+
+  it('rejects structurally passing test-only EPUBCheck receipts from pilot acceptance', () => {
+    const projection = {
+      schemaVersion: '1.0.0' as const,
+      epub: { sha256: digest('epub'), byteLength: 1 },
+      toolId: 'epubcheck' as const,
+      toolVersion: '5.3.0-unit',
+      authority: 'test-only-injected' as const,
+      javaExecutableSha256: null,
+      executableSha256: digest('test-epubcheck'),
+      report: { sha256: digest('report'), byteLength: 1 },
+      errorCount: 0 as const,
+      warningCount: 0 as const,
+      status: 'passed' as const,
+    }
+    expect(() =>
+      verifyGroundedMaterializationPilotEpubCheckAuthority({
+        ...projection,
+        receiptSha256: hashTraceValue(projection),
+      }),
+    ).toThrow('GROUNDED_MATERIALIZATION_PILOT_REAL_EPUBCHECK_REQUIRED')
+    const staleProjection = {
+      ...projection,
+      toolVersion: '4.2.6',
+      authority: 'pinned-java-jar' as const,
+      javaExecutableSha256: digest('java'),
+    }
+    expect(() =>
+      verifyGroundedMaterializationPilotEpubCheckAuthority({
+        ...staleProjection,
+        receiptSha256: hashTraceValue(staleProjection),
+      }),
+    ).toThrow('GROUNDED_MATERIALIZATION_PILOT_REAL_EPUBCHECK_REQUIRED')
+    const pinnedProjection = {
+      ...projection,
+      toolVersion: GROUNDED_MATERIALIZATION_PINNED_EPUBCHECK.toolVersion,
+      authority: 'pinned-java-jar' as const,
+      javaExecutableSha256: digest('java'),
+      executableSha256: GROUNDED_MATERIALIZATION_PINNED_EPUBCHECK.jarSha256,
+    }
+    expect(() =>
+      verifyGroundedMaterializationPilotEpubCheckAuthority({
+        ...pinnedProjection,
+        receiptSha256: hashTraceValue(pinnedProjection),
+      }),
+    ).not.toThrow()
+  })
+
+  it('demotes generated PDFs by allowing only the retained real-source registry', () => {
+    expect(() =>
+      verifyGroundedMaterializationPilotRetainedSource(
+        digest('generated-one-line-pdf'),
+      ),
+    ).toThrow('GROUNDED_MATERIALIZATION_PILOT_UNRETAINED_SOURCE')
+    expect(() =>
+      verifyGroundedMaterializationPilotRetainedSource(
+        '2bf82220bb559f9b39d388aa99c5a4011b6788da85a513a6edd62a42b365c56d',
+      ),
+    ).not.toThrow()
   })
 
   it.each([

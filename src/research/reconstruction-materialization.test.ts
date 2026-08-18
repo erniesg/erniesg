@@ -536,6 +536,15 @@ function syntheticMaterializationReceipt(
     verifiedExtractionSha256: digest('verified-extraction'),
     selectionSetSha256: hashTraceValue(selections),
     selections,
+    obligationBindings: [
+      {
+        obligationId: 'public-paragraph-obligation',
+        outputBlockId: 'public-paragraph',
+        sourceAnchorIds: ['public-paragraph-source'],
+        observationCategories: ['text-exactness'],
+        candidateReferenceSha256: [candidateReferenceSha256],
+      },
+    ],
     repairCore: {
       sha256: digest('synthetic-repair-core'),
       byteLength: 64,

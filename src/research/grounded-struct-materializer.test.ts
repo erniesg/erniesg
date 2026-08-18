@@ -17,6 +17,7 @@ import {
   type SelectedGroundingVerificationRequest,
 } from './reconstruction-refinement'
 import { buildExactThreeProfileStructEpubs } from './reconstruction-materialization'
+import { compareGroundedProfiledEpub } from './grounded-epub-comparison'
 import { createSourceEvidenceContract } from './source-evidence-contract'
 import { applyGroundedStructRepair } from './grounded-struct-repair-applicator'
 import {
@@ -604,6 +605,7 @@ describe('candidate-grounded STRUCT materialization', () => {
     })
 
     expect(materialized.receipt.status).toBe('publication-ready')
+    expect(materialized.receipt.obligationBindings).toHaveLength(3)
     expect(
       materialized.document.blocks.find(({ kind }) => kind === 'table')?.table
         ?.cells[0],
@@ -632,6 +634,18 @@ describe('candidate-grounded STRUCT materialization', () => {
         anchors.includes(materialized.document.blocks[0]!.id),
       ),
     ).toBe(true)
+    const expectedAnchorIds = [
+      ...new Set(
+        materialized.receipt.obligationBindings.flatMap(
+          ({ sourceAnchorIds }) => sourceAnchorIds,
+        ),
+      ),
+    ]
+    expect(
+      renders.every(({ anchors }) =>
+        expectedAnchorIds.every((anchorId) => anchors.includes(anchorId)),
+      ),
+    ).toBe(true)
     expect(renders.every(({ metrics }) => !metrics.horizontalOverflow)).toBe(
       true,
     )
@@ -640,6 +654,59 @@ describe('candidate-grounded STRUCT materialization', () => {
         new TextDecoder().decode(domBytes).includes('scope="col"'),
       ),
     ).toBe(true)
+
+    const sourceContract = createSourceEvidenceContract(
+      selected.graph,
+      verifierIdentity,
+    )
+    const epubChecks = await Promise.all(
+      builds.map((build) =>
+        runEpubCheckWarningsFatal(build, async () => ({
+          toolId: 'epubcheck',
+          toolVersion: '5.3.0',
+          executableSha256: digest('epubcheck-jar'),
+          exitCode: 0,
+          reportBytes: new TextEncoder().encode('{"messages":[]}'),
+          errorCount: 0,
+          warningCount: 0,
+        })),
+      ),
+    )
+    const comparisons = builds.map((build, index) =>
+      compareGroundedProfiledEpub({
+        materialization: materialized,
+        sourceContract,
+        build,
+        render: renders[index]!,
+        epubCheck: epubChecks[index]!,
+      }),
+    )
+    expect(
+      comparisons.every(
+        ({ comparator }) =>
+          comparator.status === 'publication-ready' && comparator.failed === 0,
+      ),
+    ).toBe(true)
+    const spanTamper = structuredClone(renders[0]!)
+    spanTamper.blockFacts
+      .flatMap(({ cells }) => cells)
+      .find(({ text }) => text === 'Header')!.columnSpan = 1
+    const {
+      domBytes: _tamperedDomBytes,
+      screenshotBytes: _tamperedScreenshotBytes,
+      receiptSha256: _tamperedReceiptSha256,
+      ...tamperedRenderProjection
+    } = spanTamper
+    spanTamper.receiptSha256 = hashTraceValue(tamperedRenderProjection)
+    expect(() =>
+      compareGroundedProfiledEpub({
+        materialization: materialized,
+        sourceContract,
+        build: builds[0]!,
+        render: spanTamper,
+        epubCheck: epubChecks[0]!,
+      }),
+    ).toThrow('ACTUAL_RENDER_SOURCE_OBSERVATION_MISMATCH')
 
     await expect(
       runEpubCheckWarningsFatal(builds[0]!, async () => ({

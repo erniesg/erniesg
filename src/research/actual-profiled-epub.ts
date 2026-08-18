@@ -35,6 +35,7 @@ export type ActualProfiledEpubRender = {
   anchors: string[]
   screenshot: HashedArtifact
   screenshotBytes: Uint8Array
+  screenshotDimensions: { width: number; height: number }
   locators: Array<{
     anchorId: string
     rect: { x: number; y: number; width: number; height: number }
@@ -47,6 +48,26 @@ export type ActualProfiledEpubRender = {
     clippedElementCount: number
     horizontalOverflow: boolean
   }
+  blockFacts: Array<{
+    blockId: string
+    tagName: string
+    text: string
+    cells: Array<{
+      id: string
+      tagName: string
+      text: string
+      rowSpan: number
+      columnSpan: number
+      scope: string | null
+    }>
+    images: Array<{
+      src: string
+      complete: boolean
+      naturalWidth: number
+      naturalHeight: number
+    }>
+    links: Array<{ href: string }>
+  }>
   status: 'rendered'
   receiptSha256: string
 }
@@ -136,6 +157,33 @@ function renderProjection(
   return render
 }
 
+export function verifyActualProfiledEpubRender(
+  render: ActualProfiledEpubRender,
+) {
+  const { domBytes, screenshotBytes, receiptSha256, ...projection } = render
+  const dimensions =
+    screenshotBytes.byteLength >= 24
+      ? {
+          width: Buffer.from(screenshotBytes).readUInt32BE(16),
+          height: Buffer.from(screenshotBytes).readUInt32BE(20),
+        }
+      : null
+  if (
+    hashTraceValue(render.dom) !== hashTraceValue(artifact(domBytes)) ||
+    hashTraceValue(render.screenshot) !==
+      hashTraceValue(artifact(screenshotBytes)) ||
+    !dimensions ||
+    hashTraceValue(dimensions) !==
+      hashTraceValue(render.screenshotDimensions) ||
+    receiptSha256 !== hashTraceValue(projection) ||
+    new Set(render.anchors).size !== render.anchors.length ||
+    hashTraceValue(render.anchors) !==
+      hashTraceValue([...render.anchors].sort())
+  ) {
+    throw new Error('INVALID_ACTUAL_PROFILED_EPUB_RENDER_RECEIPT')
+  }
+}
+
 async function renderOne(browser: Browser, build: ProfiledStructEpubArtifact) {
   const profile = resolveTargetProfile(build.profileId)
   const width = profile.preview.widthCssPx
@@ -182,10 +230,10 @@ async function renderOne(browser: Browser, build: ProfiledStructEpubArtifact) {
                 {
                   anchorId,
                   rect: {
-                    x: Math.max(0, rect.x),
-                    y: Math.max(0, rect.y),
-                    width: Math.min(rect.width, window.innerWidth),
-                    height: Math.min(rect.height, window.innerHeight),
+                    x: rect.x,
+                    y: rect.y,
+                    width: rect.width,
+                    height: rect.height,
                   },
                 },
               ]
@@ -204,6 +252,34 @@ async function renderOne(browser: Browser, build: ProfiledStructEpubArtifact) {
           dom: new XMLSerializer().serializeToString(document),
           anchors,
           locators,
+          blockFacts: [
+            ...document.querySelectorAll<HTMLElement>('[data-struct-id]'),
+          ].map((element) => ({
+            blockId: element.dataset.structId!,
+            tagName: element.tagName.toLowerCase(),
+            text: element.textContent ?? '',
+            cells: [
+              ...element.querySelectorAll<HTMLTableCellElement>('th,td'),
+            ].map((cell) => ({
+              id: cell.id,
+              tagName: cell.tagName.toLowerCase(),
+              text: cell.textContent ?? '',
+              rowSpan: cell.rowSpan,
+              columnSpan: cell.colSpan,
+              scope: cell.getAttribute('scope'),
+            })),
+            images: [...element.querySelectorAll<HTMLImageElement>('img')].map(
+              (image) => ({
+                src: image.getAttribute('src') ?? '',
+                complete: image.complete,
+                naturalWidth: image.naturalWidth,
+                naturalHeight: image.naturalHeight,
+              }),
+            ),
+            links: [...element.querySelectorAll<HTMLAnchorElement>('a')].map(
+              (link) => ({ href: link.getAttribute('href') ?? '' }),
+            ),
+          })),
           metrics: {
             scrollWidth: root.scrollWidth,
             clientWidth: root.clientWidth,
@@ -220,6 +296,10 @@ async function renderOne(browser: Browser, build: ProfiledStructEpubArtifact) {
         fullPage: true,
         animations: 'disabled',
       })
+      const screenshotDimensions = {
+        width: screenshotBytes.readUInt32BE(16),
+        height: screenshotBytes.readUInt32BE(20),
+      }
       const executableBytes = await readFile(chromium.executablePath())
       const projection = renderProjection({
         schemaVersion: ACTUAL_PROFILED_EPUB_SCHEMA_VERSION,
@@ -235,8 +315,10 @@ async function renderOne(browser: Browser, build: ProfiledStructEpubArtifact) {
         dom: artifact(domBytes),
         anchors: captured.anchors,
         screenshot: artifact(screenshotBytes),
+        screenshotDimensions,
         locators: captured.locators,
         metrics: captured.metrics,
+        blockFacts: captured.blockFacts,
         status: 'rendered',
       })
       return {
@@ -284,6 +366,19 @@ export async function renderExactThreeProfileEpubs(
 
 function epubCheckProjection(receipt: Omit<EpubCheckReceipt, 'receiptSha256'>) {
   return receipt
+}
+
+export function verifyEpubCheckReceipt(receipt: EpubCheckReceipt) {
+  const { receiptSha256, ...projection } = receipt
+  if (
+    receipt.status !== 'passed' ||
+    receipt.errorCount !== 0 ||
+    receipt.warningCount !== 0 ||
+    receipt.report.byteLength === 0 ||
+    receiptSha256 !== hashTraceValue(projection)
+  ) {
+    throw new Error('INVALID_EPUBCHECK_RECEIPT')
+  }
 }
 
 function epubCheckFailureCode(reportBytes: Uint8Array) {

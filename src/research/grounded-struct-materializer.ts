@@ -67,6 +67,13 @@ export type GroundedStructMaterializationReceipt = {
     bindingSha256: string
     resolutionReceiptSha256: string
   }>
+  obligationBindings: Array<{
+    obligationId: string
+    outputBlockId: string
+    sourceAnchorIds: string[]
+    observationCategories: string[]
+    candidateReferenceSha256: string[]
+  }>
   repairCore: HashedArtifact
   canonicalStruct: HashedArtifact
   coreToDocumentBindingSha256: string
@@ -102,6 +109,7 @@ type ResolvedSelection = {
 }
 
 const SHA256 = /^[a-f0-9]{64}$/u
+const EPUB_ANCHOR_ID = /^[A-Za-z_][A-Za-z0-9_.:-]*$/u
 const BOX_EPSILON = 1e-9
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -686,6 +694,109 @@ function materializeProvenRelationships(
   })
 }
 
+function selectionOwnerNodeId(
+  selection: ResolvedSelection,
+  context: StructuredExtractionContext,
+  output: VerifiedStructuredExtraction,
+) {
+  if (selection.selection.targetKind === 'block') {
+    return output.nodes.some(({ id }) => id === selection.selection.targetId)
+      ? selection.selection.targetId
+      : null
+  }
+  if (selection.selection.targetKind === 'asset') {
+    return (
+      output.nodes.find(
+        ({ assetId }) => assetId === selection.selection.targetId,
+      )?.id ?? null
+    )
+  }
+  const link = output.links.find(
+    ({ sourceLinkId }) => sourceLinkId === selection.selection.targetId,
+  )
+  if (link) return link.sourceNodeId
+  const artifact = (context.provenArtifacts ?? []).find(
+    ({ id }) => id === selection.selection.targetId,
+  )
+  return artifact
+    ? (output.nodes.find((node) =>
+        artifact.sourceRunIds.some((id) => node.sourceRunIds.includes(id)),
+      )?.id ?? null)
+    : null
+}
+
+function bindSourceObservationObligations(
+  contract: SourceEvidenceContract,
+  context: StructuredExtractionContext,
+  output: VerifiedStructuredExtraction,
+  selections: ResolvedSelection[],
+  blocksByNodeId: ReadonlyMap<string, StructBlock>,
+) {
+  const reader = readSourceEvidenceGraph(contract.graph)
+  const blockIds = new Set([...blocksByNodeId.values()].map(({ id }) => id))
+  const bindings = contract.graph.obligations
+    .filter(({ required, semantic }) => required && semantic)
+    .map((obligation) => {
+      const selected = selections.filter(({ candidate }) =>
+        obligation.candidateIds.includes(candidate.id),
+      )
+      const ownerNodeIds = new Set(
+        selected.flatMap((selection) => {
+          const owner = selectionOwnerNodeId(selection, context, output)
+          return owner ? [owner] : []
+        }),
+      )
+      if (selected.length === 0 || ownerNodeIds.size !== 1) {
+        invalid('UNCLOSED_SOURCE_OBSERVATION_OBLIGATION')
+      }
+      const outputBlock = blocksByNodeId.get([...ownerNodeIds][0]!)
+      if (!outputBlock) invalid('UNCLOSED_SOURCE_OBSERVATION_OBLIGATION')
+      const sourceAnchorIds = [
+        ...new Set([
+          ...obligation.sourceIds,
+          ...obligation.candidateIds.flatMap(
+            (candidateId) => reader.candidate(candidateId)!.sourceIds,
+          ),
+        ]),
+      ].sort()
+      if (
+        sourceAnchorIds.length === 0 ||
+        sourceAnchorIds.some(
+          (id) => !EPUB_ANCHOR_ID.test(id) || blockIds.has(id),
+        )
+      ) {
+        invalid('UNRENDERABLE_SOURCE_OBSERVATION_ANCHOR')
+      }
+      outputBlock.sourceObservationAnchorIds = [
+        ...new Set([
+          ...(outputBlock.sourceObservationAnchorIds ?? []),
+          ...sourceAnchorIds,
+        ]),
+      ].sort()
+      return {
+        obligationId: obligation.id,
+        outputBlockId: outputBlock.id,
+        sourceAnchorIds,
+        observationCategories: [...obligation.observationCategories].sort(),
+        candidateReferenceSha256: selected
+          .map(({ selection }) => selection.candidateReferenceSha256)
+          .sort(),
+      }
+    })
+    .sort((left, right) => left.obligationId.localeCompare(right.obligationId))
+  const anchorOwners = new Map<string, string>()
+  for (const binding of bindings) {
+    for (const anchorId of binding.sourceAnchorIds) {
+      const owner = anchorOwners.get(anchorId)
+      if (owner && owner !== binding.outputBlockId) {
+        invalid('AMBIGUOUS_SOURCE_OBSERVATION_ANCHOR')
+      }
+      anchorOwners.set(anchorId, binding.outputBlockId)
+    }
+  }
+  return bindings
+}
+
 function receiptProjection(
   receipt: Omit<GroundedStructMaterializationReceipt, 'receiptSha256'>,
 ) {
@@ -842,6 +953,13 @@ export function materializeGroundedStruct(
       selections,
     ),
   ].sort((left, right) => left.id.localeCompare(right.id))
+  const obligationBindings = bindSourceObservationObligations(
+    contract,
+    input.context,
+    output,
+    selections,
+    blocksByNodeId,
+  )
   if (output.nodes.some(({ type }) => type === 'source-fallback')) {
     reviewReasons.add('source-fallback')
   }
@@ -1023,6 +1141,7 @@ export function materializeGroundedStruct(
     verifiedExtractionSha256: hashTraceValue(output),
     selectionSetSha256: hashTraceValue(selectionReceipts),
     selections: selectionReceipts,
+    obligationBindings,
     repairCore: repairCoreArtifact,
     canonicalStruct,
     coreToDocumentBindingSha256,

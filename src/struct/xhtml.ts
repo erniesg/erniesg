@@ -364,21 +364,31 @@ function renderAuthors(document: StructDocument) {
   return `<p class="authors">${authors}</p>`
 }
 
+function renderSourceObservationAnchors(block: StructBlock) {
+  return (block.sourceObservationAnchorIds ?? [])
+    .map(
+      (anchorId) =>
+        `<span id="${attribute(anchorId)}" class="visually-hidden source-observation-anchor" aria-hidden="true"></span>`,
+    )
+    .join('')
+}
+
 function renderBlock(document: StructDocument, block: StructBlock) {
   // Furniture remains queryable in STRUCT with its source evidence, but is
   // intentionally outside the publication reading flow.
   if (block.kind === 'furniture') return ''
   const id = attribute(block.id)
   const content = renderInline(document, block.text, block.inline)
+  const sourceAnchors = renderSourceObservationAnchors(block)
   if (block.kind === 'heading') {
     const level = Math.max(1, Math.min(6, Number(block.attributes?.level ?? 2)))
-    return `<h${level} id="${id}" data-struct-id="${id}">${content}</h${level}>`
+    return `<h${level} id="${id}" data-struct-id="${id}">${sourceAnchors}${content}</h${level}>`
   }
   if (block.kind === 'quote') {
-    return `<blockquote id="${id}" data-struct-id="${id}"><p>${content}</p></blockquote>`
+    return `<blockquote id="${id}" data-struct-id="${id}">${sourceAnchors}<p>${content}</p></blockquote>`
   }
   if (block.kind === 'table' && block.table) {
-    return `<figure id="${id}" data-struct-id="${id}">${renderTable(document, block.table, block.id)}</figure>`
+    return `<figure id="${id}" data-struct-id="${id}">${sourceAnchors}${renderTable(document, block.table, block.id)}</figure>`
   }
   if (
     block.kind === 'figure' ||
@@ -394,10 +404,10 @@ function renderBlock(document: StructDocument, block: StructBlock) {
           `<img src="${attribute(asset.href)}" alt="${attribute(block.label ?? block.text)}" />`,
       )
       .join('')
-    return `<figure id="${id}" data-struct-id="${id}">${artwork}<figcaption>${content || text(block.label ?? '')}</figcaption></figure>`
+    return `<figure id="${id}" data-struct-id="${id}">${sourceAnchors}${artwork}<figcaption>${content || text(block.label ?? '')}</figcaption></figure>`
   }
   if (block.kind === 'caption') {
-    return `<p id="${id}" data-struct-id="${id}" class="caption">${content}</p>`
+    return `<p id="${id}" data-struct-id="${id}" class="caption">${sourceAnchors}${content}</p>`
   }
   if (block.kind === 'footnote' || block.kind === 'endnote') {
     const renderedRelationships = renderedInlineRelationshipIds(document)
@@ -415,15 +425,15 @@ function renderBlock(document: StructDocument, block: StructBlock) {
           `<a href="#${attribute(stableId(relationship.id))}" class="note-backlink" aria-label="Back to note reference">↩</a>`,
       )
       .join(' ')
-    return `<aside id="${id}" data-struct-id="${id}" epub:type="${block.kind}" role="doc-footnote" data-note-kind="${block.kind}"><p>${content}${backlinks ? ` ${backlinks}` : ''}</p></aside>`
+    return `<aside id="${id}" data-struct-id="${id}" epub:type="${block.kind}" role="doc-footnote" data-note-kind="${block.kind}">${sourceAnchors}<p>${content}${backlinks ? ` ${backlinks}` : ''}</p></aside>`
   }
   if (block.kind === 'code') {
-    return `<pre id="${id}" data-struct-id="${id}"><code>${content}</code></pre>`
+    return `<pre id="${id}" data-struct-id="${id}">${sourceAnchors}<code>${content}</code></pre>`
   }
   const bibliographyEntry = block.attributes?.bibliographyEntry
     ? ' role="doc-biblioentry" data-semantic-role="bibliography-entry"'
     : ''
-  return `<p id="${id}" data-struct-id="${id}"${bibliographyEntry}>${content}</p>`
+  return `<p id="${id}" data-struct-id="${id}"${bibliographyEntry}>${sourceAnchors}${content}</p>`
 }
 
 /** Render a source-agnostic STRUCT graph without consulting extractor state. */

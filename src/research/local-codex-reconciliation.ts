@@ -46,7 +46,6 @@ const REDACTED_NOTIFICATION_METHODS = Object.freeze([
   'item/commandExecution/outputDelta',
   'turn/diff/updated',
   'turn/plan/updated',
-  'thread/tokenUsage/updated',
 ])
 
 type JsonPrimitive = string | number | boolean | null
@@ -245,6 +244,15 @@ export type LocalCodexReconciliationReceipt = Readonly<{
     renderCount: number
     sourceCropCount: number
     epubCropCount: number
+  }>
+  usage: Readonly<{
+    totalTokens: number
+    inputTokens: number
+    cachedInputTokens: number
+    cacheWriteInputTokens: number
+    outputTokens: number
+    reasoningOutputTokens: number
+    durationMs: number
   }>
 }>
 
@@ -1114,9 +1122,7 @@ function comparisonProjection(
   })
 }
 
-function normalizeRenderProvenance(
-  value: unknown,
-): LocalCodexRenderProvenance {
+function normalizeRenderProvenance(value: unknown): LocalCodexRenderProvenance {
   if (!record(value) || typeof value.kind !== 'string') {
     invalid('LOCAL_CODEX_INVALID_RENDER_EVIDENCE')
   }
@@ -1177,10 +1183,7 @@ function normalizeRenderProvenance(
         value.anchorId,
         'LOCAL_CODEX_INVALID_RENDER_EVIDENCE',
       ),
-      domSha256: sha256(
-        value.domSha256,
-        'LOCAL_CODEX_INVALID_RENDER_EVIDENCE',
-      ),
+      domSha256: sha256(value.domSha256, 'LOCAL_CODEX_INVALID_RENDER_EVIDENCE'),
       screenshotSha256: sha256(
         value.screenshotSha256,
         'LOCAL_CODEX_INVALID_RENDER_EVIDENCE',
@@ -1708,10 +1711,7 @@ function threadIdentity(value: unknown) {
   }
   return {
     id,
-    modelId: boundedId(
-      result.model,
-      'LOCAL_CODEX_INVALID_MODEL_IDENTITY',
-    ),
+    modelId: boundedId(result.model, 'LOCAL_CODEX_INVALID_MODEL_IDENTITY'),
     providerId: boundedId(
       result.modelProvider,
       'LOCAL_CODEX_INVALID_MODEL_IDENTITY',
@@ -1745,6 +1745,57 @@ function messageIdsMatch(
   return true
 }
 
+type ObservedTokenUsage = Readonly<{
+  totalTokens: number
+  inputTokens: number
+  cachedInputTokens: number
+  cacheWriteInputTokens: number
+  outputTokens: number
+  reasoningOutputTokens: number
+}>
+
+function tokenCount(value: unknown) {
+  return finiteInteger(
+    value,
+    -1,
+    0,
+    100_000_000,
+    'LOCAL_CODEX_INVALID_TOKEN_USAGE',
+  )
+}
+
+function observedTokenUsage(value: unknown): ObservedTokenUsage {
+  if (
+    !record(value) ||
+    !exactKeys(value, [
+      'totalTokens',
+      'inputTokens',
+      'cachedInputTokens',
+      'cacheWriteInputTokens',
+      'outputTokens',
+      'reasoningOutputTokens',
+    ])
+  ) {
+    invalid('LOCAL_CODEX_INVALID_TOKEN_USAGE')
+  }
+  const usage = {
+    totalTokens: tokenCount(value.totalTokens),
+    inputTokens: tokenCount(value.inputTokens),
+    cachedInputTokens: tokenCount(value.cachedInputTokens),
+    cacheWriteInputTokens: tokenCount(value.cacheWriteInputTokens),
+    outputTokens: tokenCount(value.outputTokens),
+    reasoningOutputTokens: tokenCount(value.reasoningOutputTokens),
+  }
+  if (
+    usage.totalTokens === 0 ||
+    usage.cachedInputTokens > usage.inputTokens ||
+    usage.reasoningOutputTokens > usage.outputTokens
+  ) {
+    invalid('LOCAL_CODEX_INVALID_TOKEN_USAGE')
+  }
+  return Object.freeze(usage)
+}
+
 function agentTextFromItems(value: unknown): string | null {
   if (!Array.isArray(value)) return null
   let finalText: string | null = null
@@ -1772,6 +1823,7 @@ async function waitForFinalResponse(
 ) {
   let finalText: string | null = null
   let observedModelId = initialModelId
+  let usage: ObservedTokenUsage | null = null
   for (;;) {
     const message = await abortable(
       Promise.resolve(transport.nextMessage({ signal })),
@@ -1810,6 +1862,24 @@ async function waitForFinalResponse(
       )
       continue
     }
+    if (message.method === 'thread/tokenUsage/updated') {
+      if (!record(message.params.tokenUsage)) {
+        invalid('LOCAL_CODEX_INVALID_TOKEN_USAGE')
+      }
+      const tokenUsage = message.params.tokenUsage
+      if (
+        !exactKeys(tokenUsage, ['total', 'last', 'modelContextWindow']) ||
+        (tokenUsage.modelContextWindow !== null &&
+          (typeof tokenUsage.modelContextWindow !== 'number' ||
+            !Number.isSafeInteger(tokenUsage.modelContextWindow) ||
+            tokenUsage.modelContextWindow <= 0))
+      ) {
+        invalid('LOCAL_CODEX_INVALID_TOKEN_USAGE')
+      }
+      observedTokenUsage(tokenUsage.total)
+      usage = observedTokenUsage(tokenUsage.last)
+      continue
+    }
     if (message.method !== 'turn/completed') continue
     const turn = message.params.turn
     if (!record(turn) || turn.id !== turnId) {
@@ -1824,7 +1894,8 @@ async function waitForFinalResponse(
       finalText = fromTurn
     }
     if (finalText === null) invalid('LOCAL_CODEX_INVALID_RESPONSE')
-    return { text: finalText, observedModelId }
+    if (usage === null) invalid('LOCAL_CODEX_TOKEN_USAGE_REQUIRED')
+    return { text: finalText, observedModelId, usage }
   }
 }
 
@@ -2038,9 +2109,7 @@ export class LocalCodexReconciliationClient {
     if (reader.candidateSetSha256(candidateIds) !== candidateSetSha256) {
       invalid('LOCAL_CODEX_CANDIDATE_SET_HASH_MISMATCH')
     }
-    const priorTrace = normalizeComparisonEvidence(
-      request.comparisonEvidence,
-    )
+    const priorTrace = normalizeComparisonEvidence(request.comparisonEvidence)
     const comparisonEvidence = comparisonProjection(priorTrace)
     if (comparisonEvidence.sourcePdfSha256 !== reader.source.sha256) {
       invalid('LOCAL_CODEX_INVALID_COMPARISON_EVIDENCE')
@@ -2294,6 +2363,7 @@ export class LocalCodexReconciliationClient {
           url: `data:${mimeType};base64,${dataBase64}`,
         })),
       ]
+      const turnStartedAt = performance.now()
       turnId = turnIdentity(
         await this.rpc(transport, deadline.signal, 'turn/start', {
           threadId,
@@ -2366,6 +2436,10 @@ export class LocalCodexReconciliationClient {
           epubCropCount: prepared.renders.filter(
             ({ provenance }) => provenance.kind === 'rendered-epub',
           ).length,
+        },
+        usage: {
+          ...observed.usage,
+          durationMs: Math.max(1, Math.ceil(performance.now() - turnStartedAt)),
         },
       }
       return deepFreeze({ selections, receipt })

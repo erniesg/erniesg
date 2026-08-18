@@ -128,7 +128,7 @@ export type StructTableCell = {
   column: number
   rowSpan: number
   columnSpan: number
-  headerScope: 'column' | 'row' | null
+  headerScope: 'column' | 'row' | 'colgroup' | 'rowgroup' | null
   inline: StructInline[]
   evidence: StructEvidence
 }
@@ -150,6 +150,8 @@ export type StructBlock = {
   column: 'single' | 'left' | 'right' | 'span' | null
   inline: StructInline[]
   evidence: StructEvidence
+  /** Exact #198 source anchors resolved to this rendered block by #200. */
+  sourceObservationAnchorIds?: string[]
   table?: StructTable
   fallbackAssetIds?: string[]
   furniture?: StructFurnitureEvidence

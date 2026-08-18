@@ -14,6 +14,11 @@ import {
   type LocalCodexReconciliationClientConfig,
   type LocalCodexReconciliationRequest,
 } from './local-codex-reconciliation'
+import { createLocalCodexRefinementSession } from './local-codex-refinement-session'
+import {
+  createGroundedRefinementCodexClient,
+  runOwnerLocalGroundedRefinement,
+} from './grounded-refinement-codex-client'
 import {
   SOURCE_EPUB_OBSERVATION_CHECK_IDS,
   createReconstructionAttemptTrace,
@@ -21,6 +26,7 @@ import {
   hashRenderedActualObservationSet,
   hashRenderedEpubEvidence,
   hashTraceValue,
+  toRefinementTraceBinding,
 } from './reconstruction-attempt-trace'
 import {
   compareSourceToRenderedEpub,
@@ -83,10 +89,7 @@ function graphFixture(documentId = 'document-private-id'): SourceEvidenceGraph {
     rotation: 0,
     method: 'pdf-text' as const,
   }
-  const graphInput: Omit<
-    SourceEvidenceGraphInput,
-    'deterministicContext'
-  > = {
+  const graphInput: Omit<SourceEvidenceGraphInput, 'deterministicContext'> = {
     schemaVersion: '1.0.0',
     source,
     arms: [
@@ -588,6 +591,7 @@ type FakeTransportOptions = {
   stall?: boolean
   modelId?: string
   providerId?: string
+  omitTokenUsage?: boolean
 }
 
 class FakeTransport implements LocalCodexJsonRpcTransport {
@@ -603,6 +607,7 @@ class FakeTransport implements LocalCodexJsonRpcTransport {
   readonly stall: boolean
   readonly modelId: string
   readonly providerId: string
+  readonly omitTokenUsage: boolean
   interrupted = 0
   closed = 0
 
@@ -616,6 +621,7 @@ class FakeTransport implements LocalCodexJsonRpcTransport {
     this.stall = options.stall ?? false
     this.modelId = options.modelId ?? 'gpt-local-test'
     this.providerId = options.providerId ?? 'codex-subscription'
+    this.omitTokenUsage = options.omitTokenUsage ?? false
   }
 
   async request(message: LocalCodexJsonRpcRequest) {
@@ -664,6 +670,35 @@ class FakeTransport implements LocalCodexJsonRpcTransport {
             },
           },
         },
+        ...(this.omitTokenUsage
+          ? []
+          : [
+              {
+                method: 'thread/tokenUsage/updated',
+                params: {
+                  threadId: this.threadId,
+                  tokenUsage: {
+                    total: {
+                      totalTokens: 180,
+                      inputTokens: 140,
+                      cachedInputTokens: 20,
+                      cacheWriteInputTokens: 0,
+                      outputTokens: 40,
+                      reasoningOutputTokens: 10,
+                    },
+                    last: {
+                      totalTokens: 180,
+                      inputTokens: 140,
+                      cachedInputTokens: 20,
+                      cacheWriteInputTokens: 0,
+                      outputTokens: 40,
+                      reasoningOutputTokens: 10,
+                    },
+                    modelContextWindow: 128_000,
+                  },
+                },
+              },
+            ]),
         {
           method: 'turn/completed',
           params: {
@@ -887,14 +922,10 @@ describe('local Codex reconciliation contract', () => {
             extendedLength === 0 ? encodedLength : buffered.readUInt16BE(2)
           const headerLength = 2 + extendedLength + 4
           if (buffered.byteLength < headerLength + payloadLength) break
-          const mask = buffered.subarray(
-            2 + extendedLength,
-            headerLength,
-          )
+          const mask = buffered.subarray(2 + extendedLength, headerLength)
           const payload = Buffer.alloc(payloadLength)
           for (let index = 0; index < payloadLength; index += 1) {
-            payload[index] =
-              buffered[headerLength + index]! ^ mask[index % 4]!
+            payload[index] = buffered[headerLength + index]! ^ mask[index % 4]!
           }
           buffered = buffered.subarray(headerLength + payloadLength)
           const message = JSON.parse(
@@ -936,6 +967,31 @@ describe('local Codex reconciliation contract', () => {
                   type: 'agentMessage',
                   phase: 'final_answer',
                   text: validOutput(request),
+                },
+              },
+            })
+            send({
+              method: 'thread/tokenUsage/updated',
+              params: {
+                threadId: 'unix-thread-1',
+                tokenUsage: {
+                  total: {
+                    totalTokens: 180,
+                    inputTokens: 140,
+                    cachedInputTokens: 20,
+                    cacheWriteInputTokens: 0,
+                    outputTokens: 40,
+                    reasoningOutputTokens: 10,
+                  },
+                  last: {
+                    totalTokens: 180,
+                    inputTokens: 140,
+                    cachedInputTokens: 20,
+                    cacheWriteInputTokens: 0,
+                    outputTokens: 40,
+                    reasoningOutputTokens: 10,
+                  },
+                  modelContextWindow: 128_000,
                 },
               },
             })
@@ -1185,7 +1241,9 @@ describe('local Codex reconciliation contract', () => {
       )
       await expect(
         client.reconcile(attempt as LocalCodexReconciliationRequest),
-      ).rejects.toThrow(/LOCAL_CODEX_(?:RENDER_CROP_MISMATCH|INVALID_RENDER_EVIDENCE)/u)
+      ).rejects.toThrow(
+        /LOCAL_CODEX_(?:RENDER_CROP_MISMATCH|INVALID_RENDER_EVIDENCE)/u,
+      )
     }
   })
 
@@ -1240,6 +1298,261 @@ describe('local Codex reconciliation contract', () => {
     expect(new Set(transports.map(({ threadId }) => threadId)).size).toBe(
       transports.length,
     )
+  })
+
+  it('reuses one production thread for baseline plus all three repair turns', async () => {
+    const request = reconciliationRequest()
+    const transport = new FakeTransport({ output: validOutput(request) })
+    let opens = 0
+    const session = await createLocalCodexRefinementSession({
+      config: config(() => {
+        opens += 1
+        return transport
+      }),
+      documentId: request.documentId,
+      runId: 'refinement-run-1',
+      maxTurns: 4,
+    })
+
+    const first = await session.reconcile(request)
+    const secondRequest = { ...request, attemptId: 'attempt-2' }
+    const second = await session.reconcile(secondRequest)
+    const replay = await session.reconcile(secondRequest)
+    const third = await session.reconcile({
+      ...request,
+      attemptId: 'attempt-3',
+    })
+    const fourth = await session.reconcile({
+      ...request,
+      attemptId: 'attempt-4',
+    })
+
+    expect(opens).toBe(1)
+    expect(transport.requests.map(({ method }) => method)).toEqual([
+      'initialize',
+      'thread/start',
+      'turn/start',
+      'turn/start',
+      'turn/start',
+      'turn/start',
+    ])
+    expect(transport.notifications).toEqual([
+      { method: 'initialized', params: {} },
+    ])
+    expect(first.receipt.threadSha256).toBe(second.receipt.threadSha256)
+    expect(third.receipt.threadSha256).toBe(first.receipt.threadSha256)
+    expect(fourth.receipt.threadSha256).toBe(first.receipt.threadSha256)
+    expect(first.receipt.usage).toMatchObject({
+      totalTokens: 180,
+      inputTokens: 140,
+      outputTokens: 40,
+      reasoningOutputTokens: 10,
+      durationMs: expect.any(Number),
+    })
+    expect(replay).toEqual(second)
+    await expect(
+      session.reconcile({ ...request, attemptId: 'attempt-5' }),
+    ).rejects.toThrow('LOCAL_CODEX_REFINEMENT_SESSION_TURN_LIMIT_EXHAUSTED')
+    await session.close()
+    await session.close()
+    expect(transport.closed).toBe(1)
+    await expect(
+      session.reconcile({ ...request, attemptId: 'attempt-3' }),
+    ).rejects.toThrow('LOCAL_CODEX_REFINEMENT_SESSION_CLOSED')
+  })
+
+  it('closes an assumed shared session once when owner job identity rejects', async () => {
+    let closes = 0
+    const session = {
+      schemaVersion: '1.0.0' as const,
+      sessionSha256: SHA_A,
+      reconcile: async () => {
+        throw new Error('UNEXPECTED_RECONCILIATION')
+      },
+      close: async () => {
+        closes += 1
+      },
+    }
+    await expect(
+      runOwnerLocalGroundedRefinement(
+        {
+          codexClient: { documentId: 'wrong-document' },
+          contract: { documentId: 'expected-document' },
+        } as never,
+        session,
+      ),
+    ).rejects.toThrow('OWNER_LOCAL_GROUNDED_REFINEMENT_JOB_MISMATCH')
+    expect(closes).toBe(1)
+  })
+
+  it('rejects more than baseline plus three refinement turns before opening', async () => {
+    const request = reconciliationRequest()
+    let opens = 0
+    await expect(
+      createLocalCodexRefinementSession({
+        config: config(() => {
+          opens += 1
+          return new FakeTransport({ output: validOutput(request) })
+        }),
+        documentId: request.documentId,
+        runId: 'over-budget-refinement-run',
+        maxTurns: 5,
+      }),
+    ).rejects.toThrow('LOCAL_CODEX_REFINEMENT_SESSION_INVALID_TURN_LIMIT')
+    expect(opens).toBe(0)
+  })
+
+  it('fails closed when app-server omits measured token usage', async () => {
+    const request = reconciliationRequest()
+    const transport = new FakeTransport({
+      output: validOutput(request),
+      omitTokenUsage: true,
+    })
+    const client = createLocalCodexReconciliationClient(config(() => transport))
+    await expect(client.reconcile(request)).rejects.toThrow(
+      'LOCAL_CODEX_TOKEN_USAGE_REQUIRED',
+    )
+  })
+
+  it('adapts one measured owner-local task into a bound repair receipt', async () => {
+    const reconciliation = reconciliationRequest()
+    const transport = new FakeTransport({ output: validOutput(reconciliation) })
+    const clientConfig = config(() => transport)
+    const identity = {
+      server: {
+        id: 'owner-local-codex-server',
+        version: '0.146.0',
+        transport: clientConfig.endpoint,
+        executableSha256: clientConfig.toolIdentity.executableSha256!,
+      },
+      model: {
+        id: clientConfig.modelIdentity.modelId,
+        version: clientConfig.modelIdentity.modelVersion,
+        sha256: clientConfig.modelIdentity.modelDigest!,
+      },
+      prompt: {
+        id: clientConfig.promptIdentity.id,
+        version: clientConfig.promptIdentity.version,
+        sha256: hashTraceValue(clientConfig.promptIdentity),
+      },
+      tool: {
+        id: 'codex' as const,
+        version: clientConfig.toolIdentity.version,
+      },
+    }
+    let attempt = 0
+    const codex = createGroundedRefinementCodexClient({
+      documentId: reconciliation.documentId,
+      runId: 'refinement-run-1',
+      identity,
+      config: clientConfig,
+      buildReconciliationRequest: ({ immutablePriorTrace }) => ({
+        ...reconciliation,
+        attemptId: `repair-attempt-${(attempt += 1)}`,
+        comparisonEvidence: immutablePriorTrace,
+      }),
+      buildPatch: ({ task, immutablePriorTrace, result }) => {
+        expect(result.selections).toEqual([
+          { decisionId: 'reading-order', candidateId: 'candidate-1' },
+        ])
+        const projection = {
+          schemaVersion: '1.0.0' as const,
+          documentId: reconciliation.documentId,
+          sourcePdfSha256: reconciliation.evidenceGraph.source.sha256,
+          sourceEvidenceGraphSha256: reconciliation.graphSha256,
+          baseStructSha256: immutablePriorTrace.structure.artifact.sha256,
+          priorTraceSha256: immutablePriorTrace.traceSha256,
+          taskIdSha256: task.taskIdSha256,
+          operations: [
+            {
+              op: 'select-evidence-candidate' as const,
+              targetKind: 'block' as const,
+              targetId: 'block-1',
+              candidateReferenceSha256: SHA_A,
+            },
+          ],
+        }
+        return { ...projection, proposalSha256: hashTraceValue(projection) }
+      },
+    })
+    const stageLease = {
+      runId: 'refinement-run-1',
+      generationSha256: SHA_A,
+      stageSha256: SHA_B,
+      tryCommit: () => true,
+      acknowledgeAbort: () => false,
+    }
+    const trace = reconciliation.comparisonEvidence
+    const binding = toRefinementTraceBinding(trace)
+    await expect(
+      codex.probe(new AbortController().signal, stageLease),
+    ).resolves.toEqual({
+      available: true,
+    })
+    const task = await codex.createFreshTask(
+      {
+        documentId: reconciliation.documentId,
+        runId: 'refinement-run-1',
+        immutablePriorTrace: trace,
+        priorTraceSha256: trace.traceSha256,
+        firstCause: binding.firstCause!,
+        budget: trace.budget.policy,
+      },
+      new AbortController().signal,
+      stageLease,
+    )
+    const proposed = (await codex.proposeRepair(
+      {
+        task: task as never,
+        immutablePriorTrace: trace,
+        priorTraceSha256: trace.traceSha256,
+        firstCause: binding.firstCause!,
+        remainingTokens: 24_000,
+        remainingTimeMs: 60_000,
+      },
+      new AbortController().signal,
+      stageLease,
+    )) as {
+      proposal: { proposalSha256: string }
+      usage: { inputTokens: number; outputTokens: number; elapsedMs: number }
+    }
+    expect(proposed.usage).toMatchObject({
+      inputTokens: 140,
+      outputTokens: 40,
+      elapsedMs: expect.any(Number),
+    })
+    expect(
+      codex.repairProviderReceipt(proposed.proposal as never),
+    ).toMatchObject({
+      role: 'owner-local-codex-repair',
+      identitySha256: hashTraceValue(identity),
+      inputSha256: hashTraceValue(trace.comparator),
+      outputSha256: proposed.proposal.proposalSha256,
+      status: 'succeeded',
+    })
+    const repairEvidence = codex.repairEvidence()
+    expect(repairEvidence).toHaveLength(1)
+    expect(repairEvidence[0]).toMatchObject({
+      proposalSha256: proposed.proposal.proposalSha256,
+      result: {
+        receipt: {
+          usage: { inputTokens: 140, outputTokens: 40, totalTokens: 180 },
+        },
+      },
+      providerReceipt: { role: 'owner-local-codex-repair' },
+    })
+    const { evidenceSha256: _evidenceSha256, ...evidenceProjection } =
+      repairEvidence[0]!
+    expect(repairEvidence[0]!.evidenceSha256).toBe(
+      hashTraceValue(evidenceProjection),
+    )
+    expect(transport.requests.map(({ method }) => method)).toEqual([
+      'initialize',
+      'thread/start',
+      'turn/start',
+    ])
+    await codex.close()
+    expect(transport.closed).toBe(1)
   })
 
   it('rejects reuse of one transport across separate attempts', async () => {
@@ -1408,7 +1721,7 @@ describe('local Codex reconciliation contract', () => {
     expect(turnPayload).toContain('candidate-1')
     expect(turnPayload).toContain(request.renders![0]!.sha256)
     expect(receipt).not.toMatch(
-      /(?:sourceText|rawText|reasoning|image|path|credential|apiKey|token)/iu,
+      /(?:sourceText|rawText|reasoning(?:Text|Summary|Content)|image(?:Base64|Bytes)|path|credential|apiKey|accessToken|refreshToken|bearer)/iu,
     )
     expect(Object.isFrozen(result)).toBe(true)
     expect(Object.isFrozen(result.receipt)).toBe(true)
@@ -1453,8 +1766,7 @@ describe('local Codex reconciliation contract', () => {
               kind: 'source-pdf',
               sourcePdfSha256: graph.source.sha256,
               sourcePageRenderSha256: sha256(SOURCE_RENDER_BYTES),
-              failureId:
-                request.comparisonEvidence.comparator.failures[0]!.id,
+              failureId: request.comparisonEvidence.comparator.failures[0]!.id,
             },
           },
         ],
@@ -1479,8 +1791,7 @@ describe('local Codex reconciliation contract', () => {
               kind: 'source-pdf',
               sourcePdfSha256: graph.source.sha256,
               sourcePageRenderSha256: sha256(SOURCE_RENDER_BYTES),
-              failureId:
-                request.comparisonEvidence.comparator.failures[0]!.id,
+              failureId: request.comparisonEvidence.comparator.failures[0]!.id,
             },
           },
         ],

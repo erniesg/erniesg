@@ -212,6 +212,11 @@ function sameFileIdentity(
   )
 }
 
+function compareCanonicalCodeUnits(left: string, right: string) {
+  if (left === right) return 0
+  return left < right ? -1 : 1
+}
+
 async function listFiles(root: string): Promise<OutputFile[]> {
   const canonicalRoot = await realpath(root)
   const output: OutputFile[] = []
@@ -240,7 +245,7 @@ async function listFiles(root: string): Promise<OutputFile[]> {
   }
   await visit(canonicalRoot)
   return output.sort((left, right) =>
-    left.relativePath < right.relativePath ? -1 : 1,
+    compareCanonicalCodeUnits(left.relativePath, right.relativePath),
   )
 }
 
@@ -260,7 +265,9 @@ async function listMaterializedExecutionFiles(
     }
     const nextAncestry = new Set(ancestry).add(canonicalDirectory)
     const entries = await readdir(sourceDirectory, { withFileTypes: true })
-    entries.sort((left, right) => left.name.localeCompare(right.name))
+    entries.sort((left, right) =>
+      compareCanonicalCodeUnits(left.name, right.name),
+    )
     for (const entry of entries) {
       const sourcePath = join(sourceDirectory, entry.name)
       const logicalPath = join(logicalDirectory, entry.name)
@@ -284,7 +291,7 @@ async function listMaterializedExecutionFiles(
   }
   await visit(canonicalRoot, canonicalRoot, new Set())
   return output.sort((left, right) =>
-    left.relativePath.localeCompare(right.relativePath),
+    compareCanonicalCodeUnits(left.relativePath, right.relativePath),
   )
 }
 
@@ -379,7 +386,7 @@ export async function sealOwnerLocalExecutionTree(input: {
     const nextAncestry = new Set(ancestry).add(canonicalSourceDirectory)
     const entries = await readdir(sourceDirectory, { withFileTypes: true })
     entries.sort((left, right) =>
-      left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
+      compareCanonicalCodeUnits(left.name, right.name),
     )
     for (const entry of entries) {
       const sourcePath = join(sourceDirectory, entry.name)

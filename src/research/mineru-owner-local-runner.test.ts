@@ -505,6 +505,32 @@ describe('owner-local MinerU runner', () => {
     await chmod(ordinarySnapshot.sealedRoot, 0o700)
   })
 
+  it('uses one code-unit inventory order for preflight and sealed runtime trees', async () => {
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'mineru-runtime-order-test-')),
+    )
+    roots.push(root)
+    const source = join(root, 'runtime')
+    await mkdir(join(source, 'bin'), { recursive: true, mode: 0o700 })
+    await writeFile(join(source, 'bin', 'python'), 'runtime', {
+      mode: 0o755,
+    })
+    await writeFile(join(source, 'CACHEDIR.TAG'), 'cache-tag')
+
+    const preflight = await measureOwnerLocalExecutionTree(source)
+    const sealed = await sealOwnerLocalExecutionTree({
+      sourceRoot: source,
+      sealedRoot: join(root, 'sealed-runtime'),
+      maximumLogicalBytes: 32 * 1024,
+      maximumAllocatedBytes: 32 * 1024,
+    })
+    await chmod(join(sealed.sealedRoot, 'bin'), 0o700)
+    await chmod(sealed.sealedRoot, 0o700)
+
+    expect(sealed.inventorySha256).toBe(preflight.sha256)
+    expect(sealed.byteLength).toBe(preflight.byteLength)
+  })
+
   it('admits unaligned logical model bytes by remaining global allocation and rejects true overflow', async () => {
     const root = await realpath(
       await mkdtemp(join(tmpdir(), 'mineru-model-allocation-test-')),

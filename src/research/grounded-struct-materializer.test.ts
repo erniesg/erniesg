@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest'
+import { sha256HexSync } from '../struct/sha256'
+import { hashTraceValue } from './reconstruction-attempt-trace'
+import {
+  createReconstructionCandidateBinding,
+  createReconstructionCandidateContract,
+  createStructEvidencePatch,
+  deriveStructRepairProjections,
+  type GroundedVerifierIdentity,
+  type OwnerLocalCodexIdentity,
+  type SelectedGroundingVerificationRequest,
+} from './reconstruction-refinement'
 import { buildExactThreeProfileStructEpubs } from './reconstruction-materialization'
 import { createSourceEvidenceContract } from './source-evidence-contract'
+import { applyGroundedStructRepair } from './grounded-struct-repair-applicator'
 import {
   PDF_EVIDENCE_BUNDLE_SCHEMA_VERSION,
   SOURCE_EVIDENCE_GRAPH_SCHEMA_VERSION,
@@ -11,6 +23,7 @@ import {
 } from './source-evidence-graph'
 import {
   materializeGroundedStruct,
+  verifyGroundedCoreMaterializationBinding,
   type GroundedStructCandidateSelection,
 } from './grounded-struct-materializer'
 import type {
@@ -30,6 +43,73 @@ const verifierIdentity = {
   configurationSha256: '3'.repeat(64),
   executableSha256: '4'.repeat(64),
 }
+const digest = (value: string | Uint8Array) => sha256HexSync(value)
+
+function groundedVerifierReceipt(
+  identity: GroundedVerifierIdentity,
+  request: SelectedGroundingVerificationRequest,
+) {
+  const before = deriveStructRepairProjections(
+    request.beforeCanonicalStructBytes,
+    request.operations,
+  )
+  const resulting = deriveStructRepairProjections(
+    request.resultingCanonicalStructBytes,
+    request.operations,
+  )
+  const candidatePayloads = request.candidatePayloads.map(
+    ({ payloadBytes: _payloadBytes, ...binding }) => binding,
+  )
+  const requestProjection = {
+    schemaVersion: request.schemaVersion,
+    sourceEvidenceGraphSha256: request.sourceEvidenceGraphSha256,
+    proposalSha256: request.proposalSha256,
+    operations: request.operations,
+    beforeCanonicalStruct: request.beforeCanonicalStruct,
+    resultingCanonicalStruct: request.resultingCanonicalStruct,
+    beforeSelectedProjection: request.beforeSelectedProjection,
+    resultingSelectedProjection: request.resultingSelectedProjection,
+    candidatePayloads,
+  }
+  const projection = {
+    schemaVersion: '1.0.0' as const,
+    verifierIdentity: structuredClone(identity),
+    verifierIdentitySha256: hashTraceValue(identity),
+    sourceEvidenceGraphSha256: request.sourceEvidenceGraphSha256,
+    proposalSha256: request.proposalSha256,
+    operationTargetSetSha256: hashTraceValue(
+      request.operations
+        .map(({ targetKind, targetId }) => ({ targetKind, targetId }))
+        .sort((left, right) =>
+          left.targetKind === right.targetKind
+            ? left.targetId.localeCompare(right.targetId)
+            : left.targetKind.localeCompare(right.targetKind),
+        ),
+    ),
+    candidateReferenceSetSha256: hashTraceValue(
+      request.operations
+        .map(({ candidateReferenceSha256 }) => candidateReferenceSha256)
+        .sort(),
+    ),
+    candidatePayloadSetSha256: hashTraceValue(candidatePayloads),
+    beforeStructSha256: request.beforeCanonicalStruct.sha256,
+    resultingStructSha256: request.resultingCanonicalStruct.sha256,
+    beforeSelectedProjectionSha256: request.beforeSelectedProjection.sha256,
+    beforeUnselectedProjectionSha256: before.unselected.sha256,
+    resultingSelectedProjectionSha256:
+      request.resultingSelectedProjection.sha256,
+    resultingUnselectedProjectionSha256: resulting.unselected.sha256,
+    inputSha256: hashTraceValue(requestProjection),
+    outputSha256: hashTraceValue({
+      resultingStructSha256: request.resultingCanonicalStruct.sha256,
+      resultingSelectedProjectionSha256:
+        request.resultingSelectedProjection.sha256,
+      resultingUnselectedProjectionSha256: resulting.unselected.sha256,
+    }),
+    status: 'succeeded' as const,
+  }
+  return { ...projection, receiptSha256: hashTraceValue(projection) }
+}
 const titleBox = {
   page: 1,
   x: 0.1,
@@ -45,6 +125,15 @@ const tableBox = {
   y: 0.2,
   width: 0.7,
   height: 0.2,
+  rotation: 0,
+  method: 'pdf-text' as const,
+}
+const headingBox = {
+  page: 1,
+  x: 0.1,
+  y: 0.16,
+  width: 0.7,
+  height: 0.03,
   rotation: 0,
   method: 'pdf-text' as const,
 }
@@ -110,6 +199,14 @@ function graphInput(tableColumnSpan = 2): SourceEvidenceGraphInput {
           payload: { text: 'Table Pilot' },
         },
         {
+          id: 'heading-source',
+          providerId: 'pdfjs-provider',
+          kind: 'heading',
+          page: 1,
+          box: headingBox,
+          payload: { text: 'Methods' },
+        },
+        {
           id: 'table-source',
           providerId: 'pdfjs-provider',
           kind: 'table-relationship',
@@ -141,6 +238,24 @@ function graphInput(tableColumnSpan = 2): SourceEvidenceGraphInput {
           boxes: [titleBox],
           sourceIds: ['title-source'],
           payload: { text: 'Table Pilot' },
+        },
+        {
+          id: 'heading-level-2-candidate',
+          providerId: 'pdfjs-provider',
+          kind: 'heading',
+          page: 1,
+          boxes: [headingBox],
+          sourceIds: ['heading-source'],
+          payload: { text: 'Methods', level: 2 },
+        },
+        {
+          id: 'heading-level-3-candidate',
+          providerId: 'pdfjs-provider',
+          kind: 'heading',
+          page: 1,
+          boxes: [headingBox],
+          sourceIds: ['heading-source'],
+          payload: { text: 'Methods', level: 3 },
         },
         {
           id: 'table-candidate',
@@ -243,6 +358,26 @@ function graphInput(tableColumnSpan = 2): SourceEvidenceGraphInput {
         semantic: true,
       },
       {
+        id: 'heading-obligation',
+        kind: 'hierarchy',
+        page: 1,
+        sourceIds: ['heading-source'],
+        artifactIds: [],
+        candidateIds: [
+          'heading-level-2-candidate',
+          'heading-level-3-candidate',
+        ],
+        observationCategories: [
+          'text-exactness',
+          'reading-order',
+          'hierarchy',
+          'clipping',
+          'overflow',
+        ],
+        required: true,
+        semantic: true,
+      },
+      {
         id: 'table-obligation',
         kind: 'table-relationship',
         page: 1,
@@ -308,10 +443,23 @@ function context(): StructuredExtractionContext {
         },
       },
       {
+        id: 'heading-run',
+        text: 'Methods',
+        page: 1,
+        order: 1,
+        regionId: 'heading-region',
+        bounds: {
+          x: headingBox.x,
+          y: headingBox.y,
+          width: headingBox.width,
+          height: headingBox.height,
+        },
+      },
+      {
         id: 'header-run',
         text: 'Header',
         page: 1,
-        order: 1,
+        order: 2,
         regionId: 'table-region',
         bounds: { x: 0.1, y: 0.2, width: 0.7, height: 0.08 },
       },
@@ -319,7 +467,7 @@ function context(): StructuredExtractionContext {
         id: 'body-run',
         text: 'Body',
         page: 1,
-        order: 2,
+        order: 3,
         regionId: 'table-region',
         bounds: { x: 0.1, y: 0.3, width: 0.7, height: 0.08 },
       },
@@ -356,7 +504,7 @@ function context(): StructuredExtractionContext {
       {
         id: 'source-run-provenance',
         kind: 'source-run-provenance',
-        sourceRunIds: ['title-run', 'header-run', 'body-run'],
+        sourceRunIds: ['title-run', 'heading-run', 'header-run', 'body-run'],
       },
     ],
   }
@@ -367,6 +515,12 @@ function proposal(): StructuredExtractionProposal {
     schemaVersion: '1.0.0',
     nodes: [
       { id: 'title-node', type: 'title', sourceRunIds: ['title-run'] },
+      {
+        id: 'heading-node',
+        type: 'heading',
+        sourceRunIds: ['heading-run'],
+        level: 2,
+      },
       {
         id: 'table-node',
         type: 'table',
@@ -403,6 +557,7 @@ function proposal(): StructuredExtractionProposal {
 function selections(
   graph = buildSourceEvidenceGraph(graphInput()),
   titleCandidateId = 'title-candidate',
+  headingCandidateId = 'heading-level-2-candidate',
 ) {
   const contract = createSourceEvidenceContract(graph, verifierIdentity)
   const selected = (
@@ -424,6 +579,7 @@ function selections(
     graph,
     values: [
       selected('title-node', titleCandidateId),
+      selected('heading-node', headingCandidateId),
       selected('table-node', 'table-candidate'),
     ],
   }
@@ -442,18 +598,47 @@ describe('candidate-grounded STRUCT materialization', () => {
     })
 
     expect(materialized.receipt.status).toBe('publication-ready')
-    expect(materialized.document.blocks[1]!.table?.cells[0]).toMatchObject({
+    expect(
+      materialized.document.blocks.find(({ kind }) => kind === 'table')?.table
+        ?.cells[0],
+    ).toMatchObject({
       text: 'Header',
       rowSpan: 1,
       columnSpan: 2,
       headerScope: 'column',
     })
+    expect(() =>
+      verifyGroundedCoreMaterializationBinding(materialized),
+    ).not.toThrow()
     await expect(
       buildExactThreeProfileStructEpubs(
         materialized.document,
         materialized.canonicalStructBytes,
       ),
     ).resolves.toHaveLength(3)
+  })
+
+  it('rejects unselected core and derived receipt tampering at the bridge', () => {
+    const selected = selections()
+    const materialized = materializeGroundedStruct({
+      graph: selected.graph,
+      context: context(),
+      proposal: proposal(),
+      verifierIdentity,
+      selections: selected.values,
+      sourceFileName: 'public-table-pilot.pdf',
+    })
+    const coreTamper = structuredClone(materialized)
+    coreTamper.document.blocks[0]!.text = 'Invented title'
+    expect(() => verifyGroundedCoreMaterializationBinding(coreTamper)).toThrow(
+      'INVALID_GROUNDED_CORE_MATERIALIZATION_BINDING',
+    )
+
+    const receiptTamper = structuredClone(materialized)
+    receiptTamper.document.receipt.generatedSha256 = 'f'.repeat(64)
+    expect(() =>
+      verifyGroundedCoreMaterializationBinding(receiptTamper),
+    ).toThrow('INVALID_GROUNDED_CORE_MATERIALIZATION_BINDING')
   })
 
   it('rejects a selected candidate that does not own the source text', () => {
@@ -483,5 +668,212 @@ describe('candidate-grounded STRUCT materialization', () => {
         sourceFileName: 'public-table-pilot.pdf',
       }),
     ).toThrow('UNGROUNDED_SEMANTIC_TABLE_CANDIDATE')
+  })
+
+  it('applies a selected full-schema repair through the receipt-free core bridge', () => {
+    const selected = selections()
+    const materializationInput = {
+      graph: selected.graph,
+      context: context(),
+      proposal: proposal(),
+      verifierIdentity,
+      selections: selected.values,
+      sourceFileName: 'public-table-pilot.pdf',
+    }
+    const beforeMaterialization =
+      materializeGroundedStruct(materializationInput)
+    const headingBlock = beforeMaterialization.document.blocks.find(
+      ({ text }) => text === 'Methods',
+    )!
+    const sourceContract = createSourceEvidenceContract(
+      selected.graph,
+      verifierIdentity,
+    )
+    const headingLevel2 = sourceContract.candidateReferences.find(
+      ({ candidateId }) => candidateId === 'heading-level-2-candidate',
+    )!
+    const headingLevel3 = sourceContract.candidateReferences.find(
+      ({ candidateId }) => candidateId === 'heading-level-3-candidate',
+    )!
+    const codexIdentity: OwnerLocalCodexIdentity = {
+      server: {
+        id: 'owner-local-codex-server',
+        version: '2026.08.1',
+        transport: 'http://127.0.0.1:4500/v1',
+        executableSha256: digest('codex-server'),
+      },
+      model: {
+        id: 'gpt-5.6-sol',
+        version: '2026-08-01',
+        sha256: digest('codex-model'),
+      },
+      prompt: {
+        id: 'grounded-struct-repair',
+        version: '1.0.0',
+        sha256: digest('prompt'),
+      },
+      tool: { id: 'codex', version: '0.99.0' },
+    }
+    const groundedVerifierIdentity = {
+      id: 'selected-grounding-verifier',
+      version: '1.0.0',
+      configurationSha256: digest('selected-grounding-configuration'),
+      executableSha256: digest('selected-grounding-executable'),
+    }
+    const artifactResolverIdentity = {
+      id: 'owner-local-artifact-resolver',
+      version: '1.0.0',
+      configurationSha256: digest('artifact-resolver-configuration'),
+    }
+    const renderExtractorIdentity = {
+      id: 'render-observation-extractor',
+      version: '1.0.0',
+      configurationSha256: digest('render-extractor-configuration'),
+      executableSha256: digest('render-extractor-executable'),
+    }
+    const contract = createReconstructionCandidateContract({
+      schemaVersion: '1.0.0',
+      runId: 'public-table-pilot-run',
+      documentId: source.documentId,
+      sourcePdfSha256: source.sha256,
+      sourceEvidenceGraph: {
+        schemaVersion: '1.0.0',
+        sha256: selected.graph.graphSha256,
+      },
+      authorities: {
+        codex: {
+          identity: codexIdentity,
+          identitySha256: hashTraceValue(codexIdentity),
+        },
+        groundedVerifier: {
+          identity: groundedVerifierIdentity,
+          identitySha256: hashTraceValue(groundedVerifierIdentity),
+        },
+        artifactResolver: {
+          identity: artifactResolverIdentity,
+          identitySha256: hashTraceValue(artifactResolverIdentity),
+        },
+        sourceEvidenceVerifier: {
+          identity: verifierIdentity,
+          identitySha256: hashTraceValue(verifierIdentity),
+        },
+        renderObservationExtractor: {
+          identity: renderExtractorIdentity,
+          identitySha256: hashTraceValue(renderExtractorIdentity),
+        },
+      },
+      budget: {
+        maxRefinements: 3,
+        maxFreshTasks: 1,
+        maxTokens: 24_000,
+        maxDurationMs: 30 * 60 * 1_000,
+        repairPolicySha256: digest('repair-policy'),
+      },
+      repairScope: [
+        {
+          targetKind: 'block',
+          targetId: headingBlock.id,
+          candidateReferenceSha256s: [
+            headingLevel2.referenceSha256,
+            headingLevel3.referenceSha256,
+          ],
+        },
+      ],
+    })
+    const beforeCandidate = {
+      binding: createReconstructionCandidateBinding({
+        schemaVersion: '1.0.0',
+        sourcePdfSha256: source.sha256,
+        sourceEvidenceGraphSha256: selected.graph.graphSha256,
+        canonicalStruct: beforeMaterialization.receipt.repairCore,
+        selections: [
+          {
+            op: 'select-evidence-candidate' as const,
+            targetKind: 'block' as const,
+            targetId: headingBlock.id,
+            candidateReferenceSha256: headingLevel2.referenceSha256,
+          },
+        ],
+      }),
+      canonicalStructBytes: beforeMaterialization.repairCoreBytes,
+    }
+    const patch = createStructEvidencePatch({
+      schemaVersion: '1.0.0',
+      documentId: source.documentId,
+      sourcePdfSha256: source.sha256,
+      sourceEvidenceGraphSha256: selected.graph.graphSha256,
+      baseStructSha256: beforeMaterialization.receipt.repairCore.sha256,
+      priorTraceSha256: digest('prior-trace'),
+      taskIdSha256: digest('fresh-task'),
+      operations: [
+        {
+          op: 'select-evidence-candidate',
+          targetKind: 'block',
+          targetId: headingBlock.id,
+          candidateReferenceSha256: headingLevel3.referenceSha256,
+        },
+      ],
+    })
+    const resultingProposal = proposal()
+    resultingProposal.nodes.find(({ id }) => id === 'heading-node')!.level = 3
+    const groundedVerifier = {
+      identity: groundedVerifierIdentity,
+      verifySelected: (request: SelectedGroundingVerificationRequest) =>
+        groundedVerifierReceipt(groundedVerifierIdentity, request),
+    }
+    const result = applyGroundedStructRepair({
+      contract,
+      beforeCandidate,
+      beforeMaterialization,
+      materializationInput,
+      patch,
+      resultingProposal,
+      authorities: {
+        sourceEvidenceVerifier: sourceContract.verifier,
+        evidenceCandidates: sourceContract.evidenceCandidates,
+        groundedVerifier,
+      },
+    })
+
+    expect(result.applicationReceipt.unchangedUnselected).toMatchObject({
+      beforeSha256:
+        result.applicationReceipt.resultingUnselectedProjection.sha256,
+      afterSha256:
+        result.applicationReceipt.resultingUnselectedProjection.sha256,
+    })
+    expect(
+      result.materialization.document.blocks.find(
+        ({ text }) => text === 'Methods',
+      )?.attributes,
+    ).toEqual({ level: 3 })
+    expect(result.materialization.document.receipt.generatedSha256).not.toBe(
+      beforeMaterialization.document.receipt.generatedSha256,
+    )
+    expect(() =>
+      verifyGroundedCoreMaterializationBinding(result.materialization),
+    ).not.toThrow()
+
+    const forgedVerifier = {
+      ...groundedVerifier,
+      verifySelected: (request: SelectedGroundingVerificationRequest) => ({
+        ...groundedVerifierReceipt(groundedVerifierIdentity, request),
+        outputSha256: digest('forged-output'),
+      }),
+    }
+    expect(() =>
+      applyGroundedStructRepair({
+        contract,
+        beforeCandidate,
+        beforeMaterialization,
+        materializationInput,
+        patch,
+        resultingProposal,
+        authorities: {
+          sourceEvidenceVerifier: sourceContract.verifier,
+          evidenceCandidates: sourceContract.evidenceCandidates,
+          groundedVerifier: forgedVerifier,
+        },
+      }),
+    ).toThrow('INVALID_MATERIALIZED_REPAIR_APPLICATION_RECEIPT')
   })
 })

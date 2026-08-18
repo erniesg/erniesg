@@ -67,7 +67,9 @@ export type GroundedStructMaterializationReceipt = {
     bindingSha256: string
     resolutionReceiptSha256: string
   }>
+  repairCore: HashedArtifact
   canonicalStruct: HashedArtifact
+  coreToDocumentBindingSha256: string
   status: 'publication-ready' | 'review-required'
   reviewReasons: Array<
     'table-visual-crop' | 'formula-visual-crop' | 'source-fallback'
@@ -77,6 +79,7 @@ export type GroundedStructMaterializationReceipt = {
 
 export type GroundedStructMaterialization = {
   document: StructDocument
+  repairCoreBytes: Uint8Array
   canonicalStructBytes: Uint8Array
   receipt: GroundedStructMaterializationReceipt
 }
@@ -111,6 +114,13 @@ function invalid(code: string): never {
 
 function artifact(bytes: Uint8Array): HashedArtifact {
   return { sha256: sha256HexSync(bytes), byteLength: bytes.byteLength }
+}
+
+function sameBytes(left: Uint8Array, right: Uint8Array) {
+  return (
+    left.byteLength === right.byteLength &&
+    left.every((byte, index) => byte === right[index])
+  )
 }
 
 function candidateForReference(
@@ -298,6 +308,15 @@ function consumeBlockSelections(
     ) {
       invalid('UNGROUNDED_SEMANTIC_TABLE_CANDIDATE')
     }
+  }
+  if (
+    node.level !== undefined &&
+    !matches.some(
+      ({ candidate }) =>
+        isRecord(candidate.payload) && candidate.payload.level === node.level,
+    )
+  ) {
+    invalid('UNGROUNDED_HEADING_LEVEL_CANDIDATE')
   }
   matches.forEach((selection) => {
     selection.consumed = true
@@ -673,6 +692,66 @@ function receiptProjection(
   return receipt
 }
 
+function repairCore(document: StructDocument) {
+  return {
+    schemaVersion: GROUNDED_STRUCT_MATERIALIZATION_SCHEMA_VERSION,
+    documentId: document.documentId,
+    sourcePdfSha256: document.source.sha256,
+    blocks: document.blocks,
+    assets: document.assets.map(({ bytes: _bytes, ...asset }) => asset),
+    relationships: document.relationships,
+  }
+}
+
+export function verifyGroundedCoreMaterializationBinding(
+  materialization: GroundedStructMaterialization,
+) {
+  const computedCoreBytes = new TextEncoder().encode(
+    canonicalTraceJson(repairCore(materialization.document)),
+  )
+  const canonicalDocument = {
+    ...materialization.document,
+    assets: materialization.document.assets.map(
+      ({ bytes: _bytes, ...asset }) => asset,
+    ),
+  }
+  const computedCanonicalBytes = new TextEncoder().encode(
+    canonicalTraceJson(canonicalDocument),
+  )
+  const { receiptSha256, ...receipt } = materialization.receipt
+  const { receipt: documentReceipt, ...withoutReceipt } =
+    materialization.document
+  const expectedGeneratedSha256 = structDigest({
+    ...withoutReceipt,
+    conservation: documentReceipt.conservation,
+    assets: materialization.document.assets.map(
+      ({ bytes: _bytes, ...asset }) => asset,
+    ),
+  })
+  const core = artifact(computedCoreBytes)
+  const canonicalStruct = artifact(computedCanonicalBytes)
+  const binding = hashTraceValue({
+    schemaVersion: GROUNDED_STRUCT_MATERIALIZATION_SCHEMA_VERSION,
+    repairCore: core,
+    canonicalStruct,
+    generatedSha256: documentReceipt.generatedSha256,
+  })
+  if (
+    !sameBytes(materialization.repairCoreBytes, computedCoreBytes) ||
+    !sameBytes(materialization.canonicalStructBytes, computedCanonicalBytes) ||
+    hashTraceValue(materialization.receipt.repairCore) !==
+      hashTraceValue(core) ||
+    hashTraceValue(materialization.receipt.canonicalStruct) !==
+      hashTraceValue(canonicalStruct) ||
+    materialization.receipt.coreToDocumentBindingSha256 !== binding ||
+    documentReceipt.generatedSha256 !== expectedGeneratedSha256 ||
+    receiptSha256 !== hashTraceValue(receipt)
+  ) {
+    invalid('INVALID_GROUNDED_CORE_MATERIALIZATION_BINDING')
+  }
+  return { repairCore: core, canonicalStruct, bindingSha256: binding }
+}
+
 /**
  * Close a verified structured proposal over exact #198 candidate resolutions
  * and package bytes. No proposed text, geometry, destinations, or bytes enter
@@ -912,7 +991,17 @@ export function materializeGroundedStruct(
   const canonicalStructBytes = new TextEncoder().encode(
     canonicalTraceJson(canonicalDocument),
   )
+  const repairCoreBytes = new TextEncoder().encode(
+    canonicalTraceJson(repairCore(document)),
+  )
+  const repairCoreArtifact = artifact(repairCoreBytes)
   const canonicalStruct = artifact(canonicalStructBytes)
+  const coreToDocumentBindingSha256 = hashTraceValue({
+    schemaVersion: GROUNDED_STRUCT_MATERIALIZATION_SCHEMA_VERSION,
+    repairCore: repairCoreArtifact,
+    canonicalStruct,
+    generatedSha256: document.receipt.generatedSha256,
+  })
   const selectionReceipts = selections
     .map(({ selection, resolutionReceiptSha256 }) => ({
       targetKind: selection.targetKind,
@@ -934,12 +1023,15 @@ export function materializeGroundedStruct(
     verifiedExtractionSha256: hashTraceValue(output),
     selectionSetSha256: hashTraceValue(selectionReceipts),
     selections: selectionReceipts,
+    repairCore: repairCoreArtifact,
     canonicalStruct,
+    coreToDocumentBindingSha256,
     status: reviewReasons.size === 0 ? 'publication-ready' : 'review-required',
     reviewReasons: [...reviewReasons].sort(),
   })
   return {
     document,
+    repairCoreBytes,
     canonicalStructBytes,
     receipt: { ...projection, receiptSha256: hashTraceValue(projection) },
   }

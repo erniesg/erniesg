@@ -3,6 +3,10 @@ import { structDigest } from '../struct/ids'
 import { sha256HexSync } from '../struct/sha256'
 import type { StructDocument } from '../struct/types'
 import {
+  GROUNDED_STRUCT_MATERIALIZATION_SCHEMA_VERSION,
+  type GroundedStructMaterializationReceipt,
+} from './grounded-struct-materializer'
+import {
   RECONSTRUCTION_ATTEMPT_TRACE_SCHEMA_VERSION,
   DETERMINISTIC_CHECK_IDS,
   canonicalTraceJson,
@@ -510,6 +514,40 @@ function hardCheckVector(
   return { ...projection, vectorSha256: hashTraceValue(projection) }
 }
 
+function syntheticMaterializationReceipt(
+  canonicalStruct: ProfiledStructEpubArtifact['canonicalStruct'],
+): GroundedStructMaterializationReceipt {
+  const selections = [
+    {
+      targetKind: 'block' as const,
+      targetId: 'public-paragraph',
+      candidateReferenceSha256,
+      bindingSha256: digest('candidate-binding'),
+      resolutionReceiptSha256: digest('candidate-resolution'),
+    },
+  ]
+  const projection = {
+    schemaVersion: GROUNDED_STRUCT_MATERIALIZATION_SCHEMA_VERSION,
+    documentId: 'public-synthetic-document',
+    sourcePdfSha256,
+    sourceEvidenceGraphSha256,
+    structuredContextSha256: digest('structured-context'),
+    structuredProposalSha256: digest('structured-proposal'),
+    verifiedExtractionSha256: digest('verified-extraction'),
+    selectionSetSha256: hashTraceValue(selections),
+    selections,
+    repairCore: {
+      sha256: digest('synthetic-repair-core'),
+      byteLength: 64,
+    },
+    canonicalStruct,
+    coreToDocumentBindingSha256: digest('synthetic-core-binding'),
+    status: 'publication-ready' as const,
+    reviewReasons: [] as [],
+  }
+  return { ...projection, receiptSha256: hashTraceValue(projection) }
+}
+
 describe('closed three-profile reconstruction materialization', () => {
   it('builds and reopens three distinct EPUBs and closes valid #199 traces', async () => {
     const document = publicDocument()
@@ -538,6 +576,9 @@ describe('closed three-profile reconstruction materialization', () => {
         attempts: [
           {
             canonicalStructSha256: builds[0]!.canonicalStruct.sha256,
+            materializationReceipt: syntheticMaterializationReceipt(
+              builds[0]!.canonicalStruct,
+            ),
             builds,
             traces,
           },

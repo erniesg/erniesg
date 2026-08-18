@@ -1,6 +1,7 @@
 import { strFromU8, unzipSync } from 'fflate'
 import { buildStructEpub } from '../struct/epub'
 import type { StructDocument } from '../struct/types'
+import type { GroundedStructMaterializationReceipt } from './grounded-struct-materializer'
 import {
   DETERMINISTIC_CHECK_IDS,
   canonicalTraceJson,
@@ -86,6 +87,7 @@ export type ReconstructionMonotonicTransition = {
 
 export type ClosedThreeProfileAttempt = {
   canonicalStructSha256: string
+  materializationReceipt: GroundedStructMaterializationReceipt
   traces: Record<ClosedReconstructionProfileId, ReconstructionAttemptTrace>
   builds: readonly ProfiledStructEpubArtifact[]
 }
@@ -98,6 +100,7 @@ export type ClosedThreeProfileReconstructionReceipt = {
   baselineVectorSetSha256: string
   transitions: ReconstructionMonotonicTransition[]
   finalCanonicalStructSha256: string
+  finalMaterializationReceiptSha256: string
   finalProfiles: Array<{
     profileId: ClosedReconstructionProfileId
     traceSha256: string
@@ -477,6 +480,20 @@ function vectorsForAttempt(attempt: ClosedThreeProfileAttempt) {
   ) {
     throw new Error('INCOMPLETE_RECONSTRUCTION_PROFILE_SET')
   }
+  const {
+    receiptSha256: materializationReceiptSha256,
+    ...materializationProjection
+  } = attempt.materializationReceipt
+  if (
+    attempt.materializationReceipt.status !== 'publication-ready' ||
+    attempt.materializationReceipt.reviewReasons.length !== 0 ||
+    attempt.materializationReceipt.selections.length === 0 ||
+    attempt.materializationReceipt.canonicalStruct.sha256 !==
+      attempt.canonicalStructSha256 ||
+    materializationReceiptSha256 !== hashTraceValue(materializationProjection)
+  ) {
+    throw new Error('INVALID_GROUNDED_MATERIALIZATION_RECEIPT')
+  }
   return CLOSED_RECONSTRUCTION_PROFILE_IDS.map((profileId) => {
     const trace = parseReconstructionAttemptTrace(attempt.traces[profileId])
     const build = attempt.builds.find(
@@ -488,6 +505,23 @@ function vectorsForAttempt(attempt: ClosedThreeProfileAttempt) {
     }
     if (trace.epub.bytes.sha256 !== build.epub.sha256) {
       throw new Error('RECONSTRUCTION_PROFILE_TRACE_MISMATCH')
+    }
+    if (
+      trace.sourcePdf.artifact.sha256 !==
+        attempt.materializationReceipt.sourcePdfSha256 ||
+      trace.evidenceGraph.artifact.sha256 !==
+        attempt.materializationReceipt.sourceEvidenceGraphSha256 ||
+      attempt.materializationReceipt.selections.some(
+        (selection) =>
+          !trace.evidenceCandidates.some(
+            (candidate) =>
+              candidate.referenceSha256 ===
+                selection.candidateReferenceSha256 &&
+              candidate.bindingSha256 === selection.bindingSha256,
+          ),
+      )
+    ) {
+      throw new Error('RECONSTRUCTION_MATERIALIZATION_TRACE_MISMATCH')
     }
     return createReconstructionHardCheckVector(profileId, trace)
   })
@@ -572,6 +606,8 @@ export function createClosedThreeProfileReconstructionReceipt(input: {
     baselineVectorSetSha256: vectorSetSha256(vectorHistory[0]!),
     transitions,
     finalCanonicalStructSha256: finalAttempt.canonicalStructSha256,
+    finalMaterializationReceiptSha256:
+      finalAttempt.materializationReceipt.receiptSha256,
     finalProfiles,
     status: 'publication-ready',
   })

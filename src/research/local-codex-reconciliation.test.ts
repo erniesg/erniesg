@@ -15,7 +15,10 @@ import {
   type LocalCodexReconciliationRequest,
 } from './local-codex-reconciliation'
 import { createLocalCodexRefinementSession } from './local-codex-refinement-session'
-import { createGroundedRefinementCodexClient } from './grounded-refinement-codex-client'
+import {
+  createGroundedRefinementCodexClient,
+  runOwnerLocalGroundedRefinement,
+} from './grounded-refinement-codex-client'
 import {
   SOURCE_EPUB_OBSERVATION_CHECK_IDS,
   createReconstructionAttemptTrace,
@@ -1297,7 +1300,7 @@ describe('local Codex reconciliation contract', () => {
     )
   })
 
-  it('reuses one pinned thread for bounded refinement turns and closes it once', async () => {
+  it('reuses one production thread for baseline plus all three repair turns', async () => {
     const request = reconciliationRequest()
     const transport = new FakeTransport({ output: validOutput(request) })
     let opens = 0
@@ -1308,12 +1311,21 @@ describe('local Codex reconciliation contract', () => {
       }),
       documentId: request.documentId,
       runId: 'refinement-run-1',
+      maxTurns: 4,
     })
 
     const first = await session.reconcile(request)
     const secondRequest = { ...request, attemptId: 'attempt-2' }
     const second = await session.reconcile(secondRequest)
     const replay = await session.reconcile(secondRequest)
+    const third = await session.reconcile({
+      ...request,
+      attemptId: 'attempt-3',
+    })
+    const fourth = await session.reconcile({
+      ...request,
+      attemptId: 'attempt-4',
+    })
 
     expect(opens).toBe(1)
     expect(transport.requests.map(({ method }) => method)).toEqual([
@@ -1321,11 +1333,15 @@ describe('local Codex reconciliation contract', () => {
       'thread/start',
       'turn/start',
       'turn/start',
+      'turn/start',
+      'turn/start',
     ])
     expect(transport.notifications).toEqual([
       { method: 'initialized', params: {} },
     ])
     expect(first.receipt.threadSha256).toBe(second.receipt.threadSha256)
+    expect(third.receipt.threadSha256).toBe(first.receipt.threadSha256)
+    expect(fourth.receipt.threadSha256).toBe(first.receipt.threadSha256)
     expect(first.receipt.usage).toMatchObject({
       totalTokens: 180,
       inputTokens: 140,
@@ -1334,12 +1350,56 @@ describe('local Codex reconciliation contract', () => {
       durationMs: expect.any(Number),
     })
     expect(replay).toEqual(second)
+    await expect(
+      session.reconcile({ ...request, attemptId: 'attempt-5' }),
+    ).rejects.toThrow('LOCAL_CODEX_REFINEMENT_SESSION_TURN_LIMIT_EXHAUSTED')
     await session.close()
     await session.close()
     expect(transport.closed).toBe(1)
     await expect(
       session.reconcile({ ...request, attemptId: 'attempt-3' }),
     ).rejects.toThrow('LOCAL_CODEX_REFINEMENT_SESSION_CLOSED')
+  })
+
+  it('closes an assumed shared session once when owner job identity rejects', async () => {
+    let closes = 0
+    const session = {
+      schemaVersion: '1.0.0' as const,
+      sessionSha256: SHA_A,
+      reconcile: async () => {
+        throw new Error('UNEXPECTED_RECONCILIATION')
+      },
+      close: async () => {
+        closes += 1
+      },
+    }
+    await expect(
+      runOwnerLocalGroundedRefinement(
+        {
+          codexClient: { documentId: 'wrong-document' },
+          contract: { documentId: 'expected-document' },
+        } as never,
+        session,
+      ),
+    ).rejects.toThrow('OWNER_LOCAL_GROUNDED_REFINEMENT_JOB_MISMATCH')
+    expect(closes).toBe(1)
+  })
+
+  it('rejects more than baseline plus three refinement turns before opening', async () => {
+    const request = reconciliationRequest()
+    let opens = 0
+    await expect(
+      createLocalCodexRefinementSession({
+        config: config(() => {
+          opens += 1
+          return new FakeTransport({ output: validOutput(request) })
+        }),
+        documentId: request.documentId,
+        runId: 'over-budget-refinement-run',
+        maxTurns: 5,
+      }),
+    ).rejects.toThrow('LOCAL_CODEX_REFINEMENT_SESSION_INVALID_TURN_LIMIT')
+    expect(opens).toBe(0)
   })
 
   it('fails closed when app-server omits measured token usage', async () => {

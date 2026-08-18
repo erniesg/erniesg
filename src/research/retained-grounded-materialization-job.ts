@@ -201,6 +201,8 @@ export async function runRetainedOwnerLocalGroundedRefinement(
     refinement.contract.sourcePdfSha256 !== packet.receipt.sourcePdfSha256 ||
     refinement.contract.sourceEvidenceGraph.sha256 !==
       packet.sourceContract.graphArtifact.sha256 ||
+    refinement.contract.budget.maxRefinements !== 3 ||
+    refinement.contract.budget.maxFreshTasks !== 1 ||
     refinement.initialMaterialization.receipt.sourcePdfSha256 !==
       packet.receipt.sourcePdfSha256 ||
     refinement.initialMaterialization.receipt.sourceEvidenceGraphSha256 !==
@@ -304,9 +306,8 @@ export async function runRetainedOwnerLocalGroundedRefinement(
     config: refinement.codexClient.config,
     documentId: refinement.contract.documentId,
     runId: refinement.contract.runId,
-    maxTurns: 3,
+    maxTurns: 1 + refinement.contract.budget.maxRefinements,
   })
-  let handedOffSession = false
   try {
     const initialRequest = await buildInitialReconciliationRequest({
       packet,
@@ -366,7 +367,6 @@ export async function runRetainedOwnerLocalGroundedRefinement(
       failedEvaluation,
       codexResult: initialCodexResult,
     })
-    handedOffSession = true
     const result = await runOwnerLocalGroundedRefinement(
       {
         ...refinement,
@@ -377,6 +377,6 @@ export async function runRetainedOwnerLocalGroundedRefinement(
     )
     return { status: 'refined' as const, packet, result }
   } finally {
-    if (!handedOffSession) await session.close()
+    await session.close()
   }
 }

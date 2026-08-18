@@ -2014,6 +2014,26 @@ describe('candidate-grounded STRUCT materialization', () => {
         result: tampered,
       }),
     ).toBe(false)
+    const multipleThreads = structuredClone(result)
+    const crossThreadEvidence = multipleThreads.codexRepairEvidence[0]!
+    Object.assign(crossThreadEvidence.result.receipt, {
+      threadSha256: digest('different-owner-local-thread'),
+    })
+    crossThreadEvidence.providerReceipt.receiptSha256 = hashTraceValue({
+      schemaVersion: '1.0.0',
+      sessionSha256: crossThreadEvidence.sessionSha256,
+      localReceipt: crossThreadEvidence.result.receipt,
+      proposalSha256: crossThreadEvidence.proposalSha256,
+    })
+    const { evidenceSha256: _crossThreadSha256, ...crossThreadProjection } =
+      crossThreadEvidence
+    crossThreadEvidence.evidenceSha256 = hashTraceValue(crossThreadProjection)
+    expect(
+      verifyGroundedThreeProfileRefinementResult({
+        ...replayInput,
+        result: multipleThreads,
+      }),
+    ).toBe(false)
     const selfRehashedLedger = structuredClone(result)
     selfRehashedLedger.receipt.attempts[0]!.disposition = 'accepted-best'
     const { entrySha256: _entrySha256, ...entryProjection } =

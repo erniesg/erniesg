@@ -571,6 +571,7 @@ export function verifyGroundedThreeProfileRefinementResult(input: {
         localReceipt: evidence.result.receipt,
         proposalSha256: evidence.proposalSha256,
       }
+      const initialCodexReceipt = result.initialEvidence.codexResult.receipt
       if (
         evidence.evidenceSha256 !== hashTraceValue(evidenceProjection) ||
         evidence.proposalSha256 !==
@@ -582,6 +583,10 @@ export function verifyGroundedThreeProfileRefinementResult(input: {
             evidence.result.receipt.usage.outputTokens ||
         evidence.result.receipt.usage.totalTokens < 1 ||
         evidence.result.receipt.usage.durationMs < 1 ||
+        evidence.result.receipt.threadSha256 !==
+          initialCodexReceipt.threadSha256 ||
+        hashTraceValue(evidence.result.receipt.identities) !==
+          hashTraceValue(initialCodexReceipt.identities) ||
         evidence.providerReceipt.role !== 'owner-local-codex-repair' ||
         evidence.providerReceipt.receiptSha256 !==
           hashTraceValue(providerProjection) ||

@@ -301,17 +301,21 @@ export async function runOwnerLocalGroundedRefinement(
   input: OwnerLocalGroundedRefinementInput,
   existingSession?: LocalCodexRefinementSession,
 ) {
-  if (
-    input.codexClient.documentId !== input.contract.documentId ||
-    input.codexClient.runId !== input.contract.runId ||
-    hashTraceValue(input.codexClient.identity) !==
-      input.contract.authorities.codex.identitySha256
-  ) {
-    invalid('OWNER_LOCAL_GROUNDED_REFINEMENT_JOB_MISMATCH')
+  try {
+    if (
+      input.codexClient.documentId !== input.contract.documentId ||
+      input.codexClient.runId !== input.contract.runId ||
+      hashTraceValue(input.codexClient.identity) !==
+        input.contract.authorities.codex.identitySha256
+    ) {
+      invalid('OWNER_LOCAL_GROUNDED_REFINEMENT_JOB_MISMATCH')
+    }
+    const { codexClient, ...refinement } = input
+    return await runGroundedThreeProfileRefinement({
+      ...refinement,
+      codex: createGroundedRefinementCodexClient(codexClient, existingSession),
+    })
+  } finally {
+    await existingSession?.close()
   }
-  const { codexClient, ...refinement } = input
-  return runGroundedThreeProfileRefinement({
-    ...refinement,
-    codex: createGroundedRefinementCodexClient(codexClient, existingSession),
-  })
 }

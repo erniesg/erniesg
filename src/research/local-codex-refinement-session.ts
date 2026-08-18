@@ -47,6 +47,10 @@ export async function createLocalCodexRefinementSession(input: {
     documentId: input.documentId,
     runId: input.runId,
   })
+  const maxTurns = input.maxTurns ?? 3
+  if (!Number.isSafeInteger(maxTurns) || maxTurns < 1 || maxTurns > 4) {
+    invalid('LOCAL_CODEX_REFINEMENT_SESSION_INVALID_TURN_LIMIT')
+  }
   const endpoint = validateLocalCodexEndpoint(input.config.endpoint)
   const raw = await Promise.resolve(
     input.config.transportFactory(endpoint, sessionSha256),
@@ -60,10 +64,6 @@ export async function createLocalCodexRefinementSession(input: {
   let initialized = false
   let nextId = 1
   let turnCount = 0
-  const maxTurns = input.maxTurns ?? 3
-  if (!Number.isSafeInteger(maxTurns) || maxTurns < 1 || maxTurns > 3) {
-    invalid('LOCAL_CODEX_REFINEMENT_SESSION_INVALID_TURN_LIMIT')
-  }
   const requests = new Map<string, CachedRequest>()
   const proxy: LocalCodexJsonRpcTransport = {
     get endpoint() {

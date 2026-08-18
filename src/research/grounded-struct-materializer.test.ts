@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import { path as epubCheckJarPath } from 'epubcheck-static'
 import { sha256HexSync } from '../struct/sha256'
 import { hashTraceValue } from './reconstruction-attempt-trace'
+import {
+  renderExactThreeProfileEpubs,
+  executePinnedEpubCheck,
+  runEpubCheckWarningsFatal,
+} from './actual-profiled-epub'
 import {
   createReconstructionCandidateBinding,
   createReconstructionCandidateContract,
@@ -610,12 +616,55 @@ describe('candidate-grounded STRUCT materialization', () => {
     expect(() =>
       verifyGroundedCoreMaterializationBinding(materialized),
     ).not.toThrow()
-    await expect(
-      buildExactThreeProfileStructEpubs(
-        materialized.document,
-        materialized.canonicalStructBytes,
+    const builds = await buildExactThreeProfileStructEpubs(
+      materialized.document,
+      materialized.canonicalStructBytes,
+    )
+    const renders = await renderExactThreeProfileEpubs(builds)
+    expect(builds).toHaveLength(3)
+    expect(renders.map(({ profileId }) => profileId)).toEqual([
+      'mobile',
+      'paperProMove',
+      'paperPro',
+    ])
+    expect(
+      renders.every(({ anchors }) =>
+        anchors.includes(materialized.document.blocks[0]!.id),
       ),
-    ).resolves.toHaveLength(3)
+    ).toBe(true)
+    expect(renders.every(({ metrics }) => !metrics.horizontalOverflow)).toBe(
+      true,
+    )
+    expect(
+      renders.every(({ domBytes }) =>
+        new TextDecoder().decode(domBytes).includes('scope="col"'),
+      ),
+    ).toBe(true)
+
+    await expect(
+      runEpubCheckWarningsFatal(builds[0]!, async () => ({
+        toolId: 'epubcheck',
+        toolVersion: '5.3.0',
+        executableSha256: digest('epubcheck-jar'),
+        exitCode: 0,
+        reportBytes: new TextEncoder().encode('{"messages":[]}'),
+        errorCount: 0,
+        warningCount: 0,
+      })),
+    ).resolves.toMatchObject({ status: 'passed', warningCount: 0 })
+    await expect(
+      runEpubCheckWarningsFatal(builds[0]!, async () => ({
+        toolId: 'epubcheck',
+        toolVersion: '5.3.0',
+        executableSha256: digest('epubcheck-jar'),
+        exitCode: 0,
+        reportBytes: new TextEncoder().encode(
+          '{"messages":[{"severity":"WARNING"}]}',
+        ),
+        errorCount: 0,
+        warningCount: 1,
+      })),
+    ).rejects.toThrow('EPUBCHECK_WARNINGS_FATAL')
   })
 
   it('rejects unselected core and derived receipt tampering at the bridge', () => {
@@ -669,6 +718,38 @@ describe('candidate-grounded STRUCT materialization', () => {
       }),
     ).toThrow('UNGROUNDED_SEMANTIC_TABLE_CANDIDATE')
   })
+
+  it.runIf(Boolean(process.env.RUCKSACK_EPUBCHECK_JAVA))(
+    'executes the pinned EPUBCheck jar with warnings fatal for all profiles',
+    async () => {
+      const selected = selections()
+      const materialized = materializeGroundedStruct({
+        graph: selected.graph,
+        context: context(),
+        proposal: proposal(),
+        verifierIdentity,
+        selections: selected.values,
+        sourceFileName: 'public-table-pilot.pdf',
+      })
+      const builds = await buildExactThreeProfileStructEpubs(
+        materialized.document,
+        materialized.canonicalStructBytes,
+      )
+      for (const build of builds) {
+        await expect(
+          runEpubCheckWarningsFatal(build, (epubBytes) =>
+            executePinnedEpubCheck({
+              epubBytes,
+              javaPath: process.env.RUCKSACK_EPUBCHECK_JAVA!,
+              epubCheckJarPath,
+              toolVersion: '5.3.0',
+            }),
+          ),
+        ).resolves.toMatchObject({ status: 'passed', warningCount: 0 })
+      }
+    },
+    20_000,
+  )
 
   it('applies a selected full-schema repair through the receipt-free core bridge', () => {
     const selected = selections()

@@ -305,7 +305,8 @@ function renderTable(
   const rows = Array.from({ length: table.rows }, () => [] as string[])
   for (const cell of table.cells) {
     const tag = cell.headerScope ? 'th' : 'td'
-    const scope = cell.headerScope ? ` scope="${cell.headerScope}"` : ''
+    const htmlScope = cell.headerScope === 'column' ? 'col' : cell.headerScope
+    const scope = htmlScope ? ` scope="${htmlScope}"` : ''
     const rowSpan = cell.rowSpan > 1 ? ` rowspan="${cell.rowSpan}"` : ''
     const columnSpan =
       cell.columnSpan > 1 ? ` colspan="${cell.columnSpan}"` : ''

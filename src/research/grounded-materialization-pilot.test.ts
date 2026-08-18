@@ -1,19 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { PDFDocument, StandardFonts } from 'pdf-lib'
 import { path as epubCheckJarPath } from 'epubcheck-static'
-import {
-  executePinnedEpubCheck,
-  renderExactThreeProfileEpubs,
-  runEpubCheckWarningsFatal,
-} from './actual-profiled-epub'
-import {
-  compareGroundedProfiledEpub,
-  createGroundedActualReconstructionTrace,
-} from './grounded-epub-comparison'
+import sharp from 'sharp'
+import { readFile } from 'node:fs/promises'
+import { executePinnedEpubCheck } from './actual-profiled-epub'
 import {
   GROUNDED_MATERIALIZATION_PILOT_CASES,
-  GROUNDED_MATERIALIZATION_PILOT_SCHEMA_VERSION,
-  verifyGroundedMaterializationPilotPacket,
+  verifyGroundedMaterializationPilotMineruExecution,
   type GroundedMaterializationPilotCase,
   type GroundedMaterializationPilotDocument,
 } from './grounded-materialization-pilot'
@@ -21,13 +14,24 @@ import {
   materializeGroundedStruct,
   type GroundedStructCandidateSelection,
 } from './grounded-struct-materializer'
+import { createClosedThreeProfileReconstructionReceipt } from './reconstruction-materialization'
+import { evaluateGroundedThreeProfileAttempt } from './grounded-reconstruction-refinement'
 import {
-  buildExactThreeProfileStructEpubs,
-  createClosedThreeProfileReconstructionReceipt,
-} from './reconstruction-materialization'
-import { hashTraceValue } from './reconstruction-attempt-trace'
+  RECONSTRUCTION_ATTEMPT_TRACE_SCHEMA_VERSION,
+  createReconstructionAttemptTrace,
+  hashRenderedActualObservationSet,
+  hashRenderedEpubEvidence,
+  hashTraceValue,
+  type ReconstructionAttemptTrace,
+} from './reconstruction-attempt-trace'
 import { sha256HexSync } from './sha256-sync'
 import { createSourceEvidenceContract } from './source-evidence-contract'
+import { compareSourceToRenderedEpub } from './source-epub-comparator'
+import {
+  createLocalCodexReconciliationClient,
+  createOwnerLocalUnixSocketTransport,
+  type LocalCodexRenderEvidence,
+} from './local-codex-reconciliation'
 import {
   PDF_EVIDENCE_BUNDLE_SCHEMA_VERSION,
   SOURCE_EVIDENCE_GRAPH_SCHEMA_VERSION,
@@ -37,6 +41,7 @@ import {
   type PdfEvidenceCandidate,
   type PdfEvidenceObligation,
   type PdfEvidenceSource,
+  readSourceEvidenceGraph,
 } from './source-evidence-graph'
 import type {
   StructuredExtractionContext,
@@ -817,10 +822,271 @@ function pilotFixture(
   }
 }
 
+function failedPriorTrace(
+  finalTrace: ReconstructionAttemptTrace,
+): ReconstructionAttemptTrace {
+  const { traceSha256: _traceSha256, ...prior } = structuredClone(finalTrace)
+  const actual = prior.renderedEpub.actualObservationSets.find(
+    ({ check }) => check === 'text-exactness',
+  )!
+  actual.setSha256 = digest(`prior-failed-${finalTrace.attemptId}`)
+  actual.payload.sha256 = actual.setSha256
+  actual.receiptSha256 = hashRenderedActualObservationSet(actual)
+  prior.renderedEpub.receiptSha256 = hashRenderedEpubEvidence(
+    prior.renderedEpub,
+  )
+  const observation = prior.comparisonEvidence.observations.find(
+    ({ check }) => check === 'text-exactness',
+  )!
+  observation.actualSetReceiptSha256 = actual.receiptSha256
+  const { receiptSha256: _observationReceipt, ...observationCore } = observation
+  observation.receiptSha256 = hashTraceValue(observationCore)
+  prior.comparator = compareSourceToRenderedEpub({
+    sourcePdfSha256: prior.sourcePdf.artifact.sha256,
+    sourceEvidence: prior.sourceEvidence,
+    structure: prior.structure,
+    epub: prior.epub,
+    renderedEpub: prior.renderedEpub,
+    sourceRegions: prior.comparisonEvidence.sourceRegions,
+    mappings: prior.mappings,
+    observations: prior.comparisonEvidence.observations,
+  })
+  const renderProvider = prior.providerReceipts.find(
+    ({ role }) => role === 'actual-render',
+  )!
+  renderProvider.outputSha256 = prior.renderedEpub.receiptSha256
+  const codexProvider = prior.providerReceipts.find(
+    ({ role }) => role === 'owner-local-codex-reconciliation',
+  )!
+  codexProvider.inputSha256 = hashTraceValue({
+    sourcePdfSha256: prior.sourcePdf.artifact.sha256,
+    evidenceGraphSha256: prior.evidenceGraph.artifact.sha256,
+    candidateSetSha256: prior.sourceEvidence.candidateSetSha256,
+    structSha256: prior.structure.artifact.sha256,
+    epubSha256: prior.epub.bytes.sha256,
+    renderObservationReceiptSha256: prior.renderedEpub.receiptSha256,
+  })
+  codexProvider.outputSha256 = hashTraceValue(prior.comparator)
+  prior.attemptId = `${finalTrace.attemptId}-prior`
+  prior.terminalState = 'failed'
+  return createReconstructionAttemptTrace({
+    ...prior,
+    schemaVersion: RECONSTRUCTION_ATTEMPT_TRACE_SCHEMA_VERSION,
+  })
+}
+
+async function cropImage(
+  bytes: Uint8Array,
+  dimensions: { width: number; height: number },
+  box: { x: number; y: number; width: number; height: number },
+) {
+  const left = Math.floor(box.x * dimensions.width + 1e-9)
+  const top = Math.floor(box.y * dimensions.height + 1e-9)
+  const right = Math.ceil((box.x + box.width) * dimensions.width - 1e-9)
+  const bottom = Math.ceil((box.y + box.height) * dimensions.height - 1e-9)
+  return new Uint8Array(
+    await sharp(bytes)
+      .extract({
+        left,
+        top,
+        width: right - left,
+        height: bottom - top,
+      })
+      .png()
+      .toBuffer(),
+  )
+}
+
+async function actualLocalCodexResult(input: {
+  endpoint: string
+  materialization: ReturnType<typeof materializeGroundedStruct>
+  sourceContract: ReturnType<typeof createSourceEvidenceContract>
+  priorTrace: ReconstructionAttemptTrace
+  sourcePageBytes: Uint8Array
+  screenshotBytes: Uint8Array
+}) {
+  const {
+    endpoint,
+    materialization,
+    sourceContract,
+    priorTrace,
+    sourcePageBytes,
+    screenshotBytes,
+  } = input
+  const candidateByReference = new Map(
+    sourceContract.candidateReferences.map((reference) => [
+      reference.referenceSha256,
+      reference.candidateId,
+    ]),
+  )
+  const decisions = materialization.receipt.obligationBindings.map(
+    (binding) => ({
+      decisionId: binding.obligationId,
+      candidateIds: [
+        ...new Set(
+          binding.candidateReferenceSha256.map((reference) =>
+            candidateByReference.get(reference)!,
+          ),
+        ),
+      ],
+    }),
+  )
+  const candidateIds = [
+    ...new Set(decisions.flatMap(({ candidateIds }) => candidateIds)),
+  ]
+  const failure = priorTrace.comparator.failures.find(
+    ({ check }) => check === 'text-exactness',
+  )!
+  const sourceBox = failure.source!.boxes[0]!
+  const output = failure.output[0]!
+  const locator = output.rendered!
+  const epubBox = {
+    x: locator.rect.x / locator.viewport.width,
+    y: locator.rect.y / locator.viewport.height,
+    width: locator.rect.width / locator.viewport.width,
+    height: locator.rect.height / locator.viewport.height,
+  }
+  const sourceCrop = await cropImage(
+    sourcePageBytes,
+    {
+      width: priorTrace.sourcePdf.pageRenders[0]!.width,
+      height: priorTrace.sourcePdf.pageRenders[0]!.height,
+    },
+    sourceBox,
+  )
+  const screenshot = priorTrace.renderedEpub.screenshots.find(
+    ({ id }) => id === locator.screenshotId,
+  )!
+  const epubCrop = await cropImage(
+    screenshotBytes,
+    { width: screenshot.width, height: screenshot.height },
+    epubBox,
+  )
+  const renders: LocalCodexRenderEvidence[] = [
+    {
+      id: 'source-first-cause',
+      mimeType: 'image/png',
+      dataBase64: Buffer.from(sourceCrop).toString('base64'),
+      sha256: digest(sourceCrop),
+      page: sourceBox.page,
+      box: {
+        x: sourceBox.x,
+        y: sourceBox.y,
+        width: sourceBox.width,
+        height: sourceBox.height,
+      },
+      candidateIds,
+      provenance: {
+        kind: 'source-pdf',
+        sourcePdfSha256: priorTrace.sourcePdf.artifact.sha256,
+        sourcePageRenderSha256:
+          priorTrace.sourcePdf.pageRenders[0]!.image.sha256,
+        failureId: failure.id,
+      },
+    },
+    {
+      id: 'epub-first-cause',
+      mimeType: 'image/png',
+      dataBase64: Buffer.from(epubCrop).toString('base64'),
+      sha256: digest(epubCrop),
+      page: sourceBox.page,
+      box: epubBox,
+      candidateIds,
+      provenance: {
+        kind: 'rendered-epub',
+        epubSha256: priorTrace.epub.bytes.sha256,
+        renderReceiptSha256: priorTrace.renderedEpub.receiptSha256,
+        spineHref: output.spineHref,
+        anchorId: output.anchorId,
+        domSha256: screenshot.domSha256,
+        screenshotSha256: screenshot.image.sha256,
+        screenshotId: screenshot.id,
+        failureId: failure.id,
+      },
+    },
+  ]
+  const executablePath =
+    process.env.RUCKSACK_CODEX_EXECUTABLE ?? '/Users/erniesg/.codex/bin/codex'
+  if (!endpoint.startsWith('unix:///')) {
+    throw new Error('PILOT_OWNER_LOCAL_UNIX_SOCKET_REQUIRED')
+  }
+  const client = createLocalCodexReconciliationClient({
+    endpoint,
+    transportFactory: createOwnerLocalUnixSocketTransport,
+    timeoutMs: 5 * 60_000,
+    interruptTimeoutMs: 2_000,
+    toolIdentity: {
+      id: 'codex-cli',
+      version: '0.147.0',
+      executableSha256: digest(await readFile(executablePath)),
+    },
+    modelIdentity: {
+      providerId: 'openai',
+      modelId: 'gpt-5.6-sol',
+      modelVersion: '2026-08-18',
+      reasoningEffort: 'high',
+    },
+    promptIdentity: {
+      id: 'source-grounded-reconciliation',
+      version: '1.0.0',
+      instructions:
+        'Select the supplied candidate for every closed candidate-grounded decision. Abstain if any candidate lacks source evidence.',
+    },
+    renderArtifactResolver: {
+      identity: {
+        id: 'pilot-owner-local-render-resolver',
+        version: '1.0.0',
+        configurationSha256: hashTraceValue({
+          source: priorTrace.sourcePdf.pageRenders[0]!.image,
+          screenshot: screenshot.image,
+        }),
+      },
+      resolve: ({ artifact }) => {
+        if (
+          artifact.sha256 === priorTrace.sourcePdf.pageRenders[0]!.image.sha256
+        ) {
+          return sourcePageBytes.slice()
+        }
+        if (artifact.sha256 === screenshot.image.sha256) {
+          return screenshotBytes.slice()
+        }
+        throw new Error('UNEXPECTED_PILOT_RENDER_ARTIFACT')
+      },
+    },
+  })
+  return client.reconcile({
+    documentId: materialization.receipt.documentId,
+    attemptId: priorTrace.attemptId,
+    evidenceGraph: sourceContract.graph,
+    graphSha256: sourceContract.graph.graphSha256,
+    candidateSetSha256: readSourceEvidenceGraph(
+      sourceContract.graph,
+    ).candidateSetSha256(candidateIds),
+    decisions,
+    comparisonEvidence: priorTrace,
+    renders,
+  })
+}
+
 async function pilotDocument(
   caseId: GroundedMaterializationPilotCase,
-): Promise<GroundedMaterializationPilotDocument> {
+  providers: { endpoint: string; javaPath: string },
+): Promise<
+  Omit<GroundedMaterializationPilotDocument, 'sourceExecution' | 'refinement'>
+> {
   const sourcePdfBytes = await publicPdf(caseId)
+  const sourcePageBytes = new Uint8Array(
+    await sharp({
+      create: {
+        width: 612,
+        height: 792,
+        channels: 3,
+        background: { r: 250, g: 250, b: 248 },
+      },
+    })
+      .png()
+      .toBuffer(),
+  )
   const fixture = pilotFixture(caseId, sourcePdfBytes)
   const materialization = materializeGroundedStruct({
     graph: fixture.graph,
@@ -835,104 +1101,78 @@ async function pilotDocument(
     fixture.graph,
     verifierIdentity,
   )
-  const builds = await buildExactThreeProfileStructEpubs(
-    materialization.document,
-    materialization.canonicalStructBytes,
-  )
-  const renders = await renderExactThreeProfileEpubs(builds)
-  const epubChecks = await Promise.all(
-    builds.map((build) =>
-      runEpubCheckWarningsFatal(build, (epubBytes) =>
-        process.env.RUCKSACK_EPUBCHECK_JAVA
-          ? executePinnedEpubCheck({
-              epubBytes,
-              javaPath: process.env.RUCKSACK_EPUBCHECK_JAVA,
-              epubCheckJarPath,
-              toolVersion: '5.3.0',
-            })
-          : Promise.resolve({
-              toolId: 'epubcheck' as const,
-              toolVersion: '5.3.0',
-              executableSha256: digest('epubcheck-jar'),
-              exitCode: 0,
-              reportBytes: new TextEncoder().encode('{"messages":[]}'),
-              errorCount: 0,
-              warningCount: 0,
-            }),
-      ),
-    ),
-  )
-  const profiles = builds.map((build, index) => {
-    const comparison = compareGroundedProfiledEpub({
-      materialization,
-      sourceContract,
-      build,
-      render: renders[index]!,
-      epubCheck: epubChecks[index]!,
-    })
-    const trace = createGroundedActualReconstructionTrace({
-      attemptId: `${caseId}-${build.profileId}-0`,
-      sourcePdf: {
-        artifact: {
-          sha256: digest(sourcePdfBytes),
-          byteLength: sourcePdfBytes.byteLength,
-        },
-        pageCount: 1,
-        pageRenders: [
-          {
-            page: 1,
-            sourcePdfSha256: digest(sourcePdfBytes),
-            image: {
-              sha256: digest(imageBytes),
-              byteLength: imageBytes.byteLength,
-            },
-            mediaType: 'image/png',
-            width: 612,
-            height: 792,
+  const evaluation = await evaluateGroundedThreeProfileAttempt({
+    attemptId: `${caseId}-0`,
+    sourcePdf: {
+      artifact: {
+        sha256: digest(sourcePdfBytes),
+        byteLength: sourcePdfBytes.byteLength,
+      },
+      pageCount: 1,
+      pageRenders: [
+        {
+          page: 1,
+          sourcePdfSha256: digest(sourcePdfBytes),
+          image: {
+            sha256: digest(sourcePageBytes),
+            byteLength: sourcePageBytes.byteLength,
           },
-        ],
-      },
-      materialization,
-      sourceContract,
-      comparison,
-      codexIdentity,
-      codexReceiptSha256: digest(`codex-${caseId}-${build.profileId}`),
-    })
-    return {
-      build,
-      render: renders[index]!,
-      epubCheck: epubChecks[index]!,
-      comparison,
-      trace,
-    }
+          mediaType: 'image/png',
+          width: 612,
+          height: 792,
+        },
+      ],
+    },
+    materialization,
+    sourceContract,
+    codexIdentity,
+    codexReceiptSha256: digest(`codex-${caseId}`),
+    executeEpubCheck: (epubBytes) =>
+      executePinnedEpubCheck({
+        epubBytes,
+        javaPath: providers.javaPath,
+        epubCheckJarPath,
+        toolVersion: '5.3.0',
+      }),
   })
-  const traces = Object.fromEntries(
-    profiles.map(({ build, trace }) => [build.profileId, trace]),
-  ) as Record<
-    (typeof builds)[number]['profileId'],
-    (typeof profiles)[number]['trace']
-  >
+  const profiles = evaluation.profiles
   const outerReceipt = createClosedThreeProfileReconstructionReceipt({
-    attempts: [
-      {
-        canonicalStructSha256: materialization.receipt.canonicalStruct.sha256,
-        materializationReceipt: materialization.receipt,
-        traces,
-        builds,
-      },
-    ],
+    attempts: [evaluation.attempt],
+  })
+  const priorTrace = failedPriorTrace(profiles[0]!.trace)
+  const localCodexResult = await actualLocalCodexResult({
+    endpoint: providers.endpoint,
+    materialization,
+    sourceContract,
+    priorTrace,
+    sourcePageBytes,
+    screenshotBytes: profiles[0]!.render.screenshotBytes,
   })
   return {
     caseId,
     sourcePdfBytes,
     materialization,
     sourceContract,
+    priorTrace,
+    localCodexResult,
     profiles,
     outerReceipt,
   }
 }
 
-describe('current-schema five-success grounded materialization pilot', () => {
+describe('public synthetic grounded materialization provider smoke', () => {
+  it('requires a retained owner-local MinerU execution before pilot acceptance', async () => {
+    await expect(
+      verifyGroundedMaterializationPilotMineruExecution({
+        sourceExecution: undefined as never,
+        sourcePdfSha256: digest('missing-source-execution'),
+        sourceContract: undefined as never,
+      }),
+    ).rejects.toThrow(
+      'GROUNDED_MATERIALIZATION_PILOT_MINERU_EXECUTION_REQUIRED',
+    )
+  })
+
   it.each([
     ['table', 'table-visual-crop'],
     ['equation', 'formula-visual-crop'],
@@ -961,33 +1201,33 @@ describe('current-schema five-success grounded materialization pilot', () => {
     },
   )
 
-  it('reopens fifteen actual EPUBs and keeps malformed evidence outside the five successes', async () => {
-    expect(() =>
-      buildSourceEvidenceGraph({
-        schemaVersion: SOURCE_EVIDENCE_GRAPH_SCHEMA_VERSION,
-      } as never),
-    ).toThrow('Invalid source evidence graph')
-    const documents = []
-    for (const caseId of GROUNDED_MATERIALIZATION_PILOT_CASES) {
-      documents.push(await pilotDocument(caseId))
-    }
-    const receipt = verifyGroundedMaterializationPilotPacket({
-      schemaVersion: GROUNDED_MATERIALIZATION_PILOT_SCHEMA_VERSION,
-      documents,
-      negativeControls: [
-        {
-          id: 'malformed-source-evidence',
-          status: 'rejected',
-          reason:
-            'The malformed #198 graph is rejected before materialization.',
-        },
-      ],
-    })
-    expect(receipt).toMatchObject({
-      status: 'passed',
-      documentCount: 5,
-      profileCount: 15,
-    })
-    expect(receipt.documents).toHaveLength(5)
-  }, 60_000)
+  const ownerLocalEndpoint = process.env.RUCKSACK_CODEX_APP_SOCKET
+  const epubCheckJava = process.env.RUCKSACK_EPUBCHECK_JAVA
+  it.skipIf(!ownerLocalEndpoint || !epubCheckJava)(
+    'exercises five synthetic cases over real local providers without claiming pilot acceptance',
+    async () => {
+      expect(() =>
+        buildSourceEvidenceGraph({
+          schemaVersion: SOURCE_EVIDENCE_GRAPH_SCHEMA_VERSION,
+        } as never),
+      ).toThrow('Invalid source evidence graph')
+      const documents = []
+      for (const caseId of GROUNDED_MATERIALIZATION_PILOT_CASES) {
+        documents.push(
+          await pilotDocument(caseId, {
+            endpoint: ownerLocalEndpoint!,
+            javaPath: epubCheckJava!,
+          }),
+        )
+      }
+      expect(documents).toHaveLength(5)
+      expect(documents.flatMap(({ profiles }) => profiles)).toHaveLength(15)
+      expect(
+        documents.every(
+          ({ outerReceipt }) => outerReceipt.status === 'publication-ready',
+        ),
+      ).toBe(true)
+    },
+    30 * 60_000,
+  )
 })

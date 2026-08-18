@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { path as epubCheckJarPath } from 'epubcheck-static'
 import { sha256HexSync } from '../struct/sha256'
-import { hashTraceValue } from './reconstruction-attempt-trace'
+import {
+  hashTraceValue,
+  type ProviderReceiptBinding,
+} from './reconstruction-attempt-trace'
 import {
   renderExactThreeProfileEpubs,
   executePinnedEpubCheck,
@@ -25,6 +28,10 @@ import {
   compareGroundedProfiledEpub,
   createGroundedActualReconstructionTrace,
 } from './grounded-epub-comparison'
+import {
+  runGroundedThreeProfileRefinement,
+  verifyGroundedThreeProfileRefinementResult,
+} from './grounded-reconstruction-refinement'
 import { createSourceEvidenceContract } from './source-evidence-contract'
 import { applyGroundedStructRepair } from './grounded-struct-repair-applicator'
 import {
@@ -749,7 +756,8 @@ describe('candidate-grounded STRUCT materialization', () => {
     const outerReceipt = createClosedThreeProfileReconstructionReceipt({
       attempts: [
         {
-          canonicalStructSha256: materialized.receipt.canonicalStruct.sha256,
+          coordinatorProfileId: 'mobile',
+          canonicalStructSha256: materialized.receipt.repairCore.sha256,
           materializationReceipt: materialized.receipt,
           traces,
           builds,
@@ -776,15 +784,45 @@ describe('candidate-grounded STRUCT materialization', () => {
       ...tamperedRenderProjection
     } = spanTamper
     spanTamper.receiptSha256 = hashTraceValue(tamperedRenderProjection)
-    expect(() =>
-      compareGroundedProfiledEpub({
-        materialization: materialized,
-        sourceContract,
-        build: builds[0]!,
-        render: spanTamper,
-        epubCheck: epubChecks[0]!,
-      }),
-    ).toThrow('ACTUAL_RENDER_SOURCE_OBSERVATION_MISMATCH')
+    const failedSpanComparison = compareGroundedProfiledEpub({
+      materialization: materialized,
+      sourceContract,
+      build: builds[0]!,
+      render: spanTamper,
+      epubCheck: epubChecks[0]!,
+    })
+    expect(failedSpanComparison.comparator.status).toBe('failed')
+    expect(failedSpanComparison.mappings).toContainEqual(
+      expect.objectContaining({ status: 'missing' }),
+    )
+    const failedSpanTrace = createGroundedActualReconstructionTrace({
+      attemptId: 'public-table-mobile-failed-span',
+      sourcePdf: {
+        artifact: { sha256: source.sha256, byteLength: source.byteLength },
+        pageCount: 1,
+        pageRenders: [
+          {
+            page: 1,
+            sourcePdfSha256: source.sha256,
+            image: { sha256: digest('source-page-1'), byteLength: 128 },
+            mediaType: 'image/png',
+            width: 612,
+            height: 792,
+          },
+        ],
+      },
+      materialization: materialized,
+      sourceContract,
+      comparison: failedSpanComparison,
+      codexIdentity,
+      codexReceiptSha256: digest('codex-failed-span'),
+    })
+    expect(failedSpanTrace).toMatchObject({
+      terminalState: 'failed',
+      structure: { artifact: materialized.receipt.repairCore },
+      comparator: { status: 'failed' },
+    })
+    expect(failedSpanTrace.comparator.firstCauseFailureId).not.toBeNull()
 
     await expect(
       runEpubCheckWarningsFatal(builds[0]!, async () => ({
@@ -1102,4 +1140,304 @@ describe('candidate-grounded STRUCT materialization', () => {
       }),
     ).toThrow('INVALID_MATERIALIZED_REPAIR_APPLICATION_RECEIPT')
   })
+
+  it('closes one actual three-profile attempt without opening a repair task', async () => {
+    const selected = selections(
+      undefined,
+      'title-candidate',
+      'heading-level-3-candidate',
+    )
+    const initialProposal = proposal()
+    initialProposal.nodes.find(({ id }) => id === 'heading-node')!.level = 3
+    const materializationInput = {
+      graph: selected.graph,
+      context: context(),
+      proposal: initialProposal,
+      verifierIdentity,
+      selections: selected.values,
+      sourceFileName: 'public-table-pilot.pdf',
+    }
+    const initialMaterialization =
+      materializeGroundedStruct(materializationInput)
+    const headingBlock = initialMaterialization.document.blocks.find(
+      ({ text }) => text === 'Methods',
+    )!
+    const sourceContract = createSourceEvidenceContract(
+      selected.graph,
+      verifierIdentity,
+    )
+    const headingLevel2 = sourceContract.candidateReferences.find(
+      ({ candidateId }) => candidateId === 'heading-level-2-candidate',
+    )!
+    const headingLevel3 = sourceContract.candidateReferences.find(
+      ({ candidateId }) => candidateId === 'heading-level-3-candidate',
+    )!
+    const codexIdentity: OwnerLocalCodexIdentity = {
+      server: {
+        id: 'owner-local-codex-server',
+        version: '2026.08.1',
+        transport: 'unix:///private/tmp/codex-app-server.sock',
+        executableSha256: digest('codex-server'),
+      },
+      model: {
+        id: 'gpt-5.6-sol',
+        version: '2026-08-01',
+        sha256: digest('codex-model'),
+      },
+      prompt: {
+        id: 'grounded-struct-repair',
+        version: '1.0.0',
+        sha256: digest('prompt'),
+      },
+      tool: { id: 'codex', version: '0.99.0' },
+    }
+    const groundedVerifierIdentity = {
+      id: 'selected-grounding-verifier',
+      version: '1.0.0',
+      configurationSha256: digest('selected-grounding-configuration'),
+      executableSha256: digest('selected-grounding-executable'),
+    }
+    const artifactResolverIdentity = {
+      id: 'owner-local-artifact-resolver',
+      version: '1.0.0',
+      configurationSha256: digest('artifact-resolver-configuration'),
+    }
+    const renderExtractorIdentity = {
+      id: 'render-observation-extractor',
+      version: '1.0.0',
+      configurationSha256: digest('render-extractor-configuration'),
+      executableSha256: digest('render-extractor-executable'),
+    }
+    const contract = createReconstructionCandidateContract({
+      schemaVersion: '1.0.0',
+      runId: 'public-table-refinement-run',
+      documentId: source.documentId,
+      sourcePdfSha256: source.sha256,
+      sourceEvidenceGraph: {
+        schemaVersion: '1.0.0',
+        sha256: selected.graph.graphSha256,
+      },
+      authorities: {
+        codex: {
+          identity: codexIdentity,
+          identitySha256: hashTraceValue(codexIdentity),
+        },
+        groundedVerifier: {
+          identity: groundedVerifierIdentity,
+          identitySha256: hashTraceValue(groundedVerifierIdentity),
+        },
+        artifactResolver: {
+          identity: artifactResolverIdentity,
+          identitySha256: hashTraceValue(artifactResolverIdentity),
+        },
+        sourceEvidenceVerifier: {
+          identity: verifierIdentity,
+          identitySha256: hashTraceValue(verifierIdentity),
+        },
+        renderObservationExtractor: {
+          identity: renderExtractorIdentity,
+          identitySha256: hashTraceValue(renderExtractorIdentity),
+        },
+      },
+      budget: {
+        maxRefinements: 3,
+        maxFreshTasks: 1,
+        maxTokens: 24_000,
+        maxDurationMs: 30 * 60 * 1_000,
+        repairPolicySha256: digest('repair-policy'),
+      },
+      repairScope: [
+        {
+          targetKind: 'block',
+          targetId: headingBlock.id,
+          candidateReferenceSha256s: [
+            headingLevel2.referenceSha256,
+            headingLevel3.referenceSha256,
+          ],
+        },
+      ],
+    })
+    const initialCandidate = {
+      binding: createReconstructionCandidateBinding({
+        schemaVersion: '1.0.0',
+        sourcePdfSha256: source.sha256,
+        sourceEvidenceGraphSha256: selected.graph.graphSha256,
+        canonicalStruct: initialMaterialization.receipt.repairCore,
+        selections: [
+          {
+            op: 'select-evidence-candidate' as const,
+            targetKind: 'block' as const,
+            targetId: headingBlock.id,
+            candidateReferenceSha256: headingLevel3.referenceSha256,
+          },
+        ],
+      }),
+      canonicalStructBytes: initialMaterialization.repairCoreBytes,
+    }
+    const groundedVerifier = {
+      identity: groundedVerifierIdentity,
+      verifySelected: (request: SelectedGroundingVerificationRequest) =>
+        groundedVerifierReceipt(groundedVerifierIdentity, request),
+    }
+    let createdTasks = 0
+    let proposals = 0
+    let closes = 0
+    let repairReceipt: ProviderReceiptBinding | undefined
+    const codex = {
+      identity: codexIdentity,
+      probe: async () => ({ available: true }),
+      createFreshTask: async (request: {
+        documentId: string
+        runId: string
+        priorTraceSha256: string
+      }) => {
+        createdTasks += 1
+        return {
+          taskIdSha256: digest('one-owner-local-task'),
+          documentId: request.documentId,
+          runId: request.runId,
+          fresh: true as const,
+          parentTaskId: null,
+          contextPolicy: 'immutable-prior-trace-only' as const,
+          acceptedTraceSha256: request.priorTraceSha256,
+          identity: codexIdentity,
+        }
+      },
+      proposeRepair: async (request: {
+        task: { taskIdSha256: string }
+        immutablePriorTrace: { traceSha256: string; comparator: unknown }
+      }) => {
+        proposals += 1
+        const patch = createStructEvidencePatch({
+          schemaVersion: '1.0.0',
+          documentId: source.documentId,
+          sourcePdfSha256: source.sha256,
+          sourceEvidenceGraphSha256: selected.graph.graphSha256,
+          baseStructSha256: initialMaterialization.receipt.repairCore.sha256,
+          priorTraceSha256: request.immutablePriorTrace.traceSha256,
+          taskIdSha256: request.task.taskIdSha256,
+          operations: [
+            {
+              op: 'select-evidence-candidate',
+              targetKind: 'block',
+              targetId: headingBlock.id,
+              candidateReferenceSha256: headingLevel2.referenceSha256,
+            },
+          ],
+        })
+        repairReceipt = Object.freeze({
+          id: 'owner-local-codex-repair-1',
+          role: 'owner-local-codex-repair' as const,
+          required: true,
+          enabledBeforeRun: true,
+          providerId: codexIdentity.server.id,
+          identitySha256: hashTraceValue(codexIdentity),
+          receiptSha256: digest('owner-local-codex-repair-receipt'),
+          inputSha256: hashTraceValue(request.immutablePriorTrace.comparator),
+          outputSha256: patch.proposalSha256,
+          prompt: codexIdentity.prompt,
+          tool: codexIdentity.tool,
+          model: codexIdentity.model,
+          server: codexIdentity.server,
+          status: 'succeeded' as const,
+        })
+        return {
+          proposal: patch,
+          usage: { inputTokens: 120, outputTokens: 30, elapsedMs: 10 },
+        }
+      },
+      repairProviderReceipt: () => repairReceipt!,
+      repairEvidence: () => [],
+      close: async () => {
+        closes += 1
+      },
+    }
+    const repairedProposal = proposal()
+    const sourcePdf = {
+      artifact: { sha256: source.sha256, byteLength: source.byteLength },
+      pageCount: 1,
+      pageRenders: [
+        {
+          page: 1,
+          sourcePdfSha256: source.sha256,
+          image: { sha256: digest('source-page-1'), byteLength: 128 },
+          mediaType: 'image/png' as const,
+          width: 612,
+          height: 792,
+        },
+      ],
+    }
+    const codexReconciliationReceiptSha256 = digest('codex-reconciliation')
+    const result = await runGroundedThreeProfileRefinement({
+      contract,
+      initialCandidate,
+      initialMaterialization,
+      initialMaterializationInput: materializationInput,
+      sourcePdf,
+      sourceContract,
+      codexIdentity,
+      codexReconciliationReceiptSha256,
+      codex,
+      materializationVerification: {
+        sourceEvidenceVerifier: sourceContract.verifier,
+        evidenceCandidates: sourceContract.evidenceCandidates,
+        groundedVerifier,
+      },
+      executeEpubCheck: async () => ({
+        toolId: 'epubcheck',
+        toolVersion: '5.3.0-unit',
+        executableSha256: digest('unit-epubcheck'),
+        exitCode: 0,
+        reportBytes: new TextEncoder().encode('{"messages":[]}'),
+        errorCount: 0,
+        warningCount: 0,
+      }),
+      resolveResultingProposal: () => repairedProposal,
+    })
+
+    expect(createdTasks).toBe(0)
+    expect(proposals).toBe(0)
+    expect(closes).toBe(1)
+    expect(result.evaluations).toHaveLength(1)
+    expect(result.evaluations[0]!.coordinatorTrace.terminalState).toBe(
+      'publication-ready',
+    )
+    expect(
+      result.receipt.attempts.map(({ disposition }) => disposition),
+    ).toEqual(['terminal-pass'])
+    expect(result.refinement.publicReceipt.failureCode).toBe(null)
+    expect(result.receipt.status).toBe('publication-ready')
+    expect(result.closedReceipt?.status).toBe('publication-ready')
+    const replayInput = {
+      result,
+      sourcePdf,
+      sourceContract,
+      codexIdentity,
+      codexReconciliationReceiptSha256,
+    }
+    expect(verifyGroundedThreeProfileRefinementResult(replayInput)).toBe(true)
+    const tampered = structuredClone(result)
+    tampered.evaluations[0]!.profiles[0]!.render.screenshotBytes[0] ^= 1
+    expect(
+      verifyGroundedThreeProfileRefinementResult({
+        ...replayInput,
+        result: tampered,
+      }),
+    ).toBe(false)
+    const selfRehashedLedger = structuredClone(result)
+    selfRehashedLedger.receipt.attempts[0]!.disposition = 'baseline'
+    const { entrySha256: _entrySha256, ...entryProjection } =
+      selfRehashedLedger.receipt.attempts[0]!
+    selfRehashedLedger.receipt.attempts[0]!.entrySha256 =
+      hashTraceValue(entryProjection)
+    const { receiptSha256: _receiptSha256, ...receiptProjection } =
+      selfRehashedLedger.receipt
+    selfRehashedLedger.receipt.receiptSha256 = hashTraceValue(receiptProjection)
+    expect(
+      verifyGroundedThreeProfileRefinementResult({
+        ...replayInput,
+        result: selfRehashedLedger,
+      }),
+    ).toBe(false)
+  }, 30_000)
 })

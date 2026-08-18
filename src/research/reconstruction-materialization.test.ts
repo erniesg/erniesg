@@ -24,6 +24,8 @@ import {
   RECONSTRUCTION_MATERIALIZATION_SCHEMA_VERSION,
   acceptMonotonicReconstructionTransition,
   buildExactThreeProfileStructEpubs,
+  classifyMonotonicReconstructionTransition,
+  classifyReconstructionAttemptHistory,
   createClosedThreeProfileReconstructionReceipt,
   type ClosedReconstructionProfileId,
   type ProfiledStructEpubArtifact,
@@ -545,10 +547,7 @@ function syntheticMaterializationReceipt(
         candidateReferenceSha256: [candidateReferenceSha256],
       },
     ],
-    repairCore: {
-      sha256: digest('synthetic-repair-core'),
-      byteLength: 64,
-    },
+    repairCore: canonicalStruct,
     canonicalStruct,
     coreToDocumentBindingSha256: digest('synthetic-core-binding'),
     status: 'publication-ready' as const,
@@ -584,6 +583,7 @@ describe('closed three-profile reconstruction materialization', () => {
       createClosedThreeProfileReconstructionReceipt({
         attempts: [
           {
+            coordinatorProfileId: 'mobile',
             canonicalStructSha256: builds[0]!.canonicalStruct.sha256,
             materializationReceipt: syntheticMaterializationReceipt(
               builds[0]!.canonicalStruct,
@@ -638,5 +638,44 @@ describe('closed three-profile reconstruction materialization', () => {
     expect(() =>
       acceptMonotonicReconstructionTransition(baseline, resulting),
     ).toThrow('RECONSTRUCTION_HARD_GATE_REGRESSION')
+    expect(
+      classifyMonotonicReconstructionTransition(baseline, resulting),
+    ).toMatchObject({
+      status: 'rejected',
+      reason: 'hard-gate-regression',
+      metric: { before: 65, after: 65 },
+    })
+  })
+
+  it('retains the best vector set across a rejected exploratory sibling', () => {
+    const baseline = CLOSED_RECONSTRUCTION_PROFILE_IDS.map((profileId) =>
+      hardCheckVector(profileId, profileId === 'mobile' ? ['table-spans'] : []),
+    )
+    const rejected = CLOSED_RECONSTRUCTION_PROFILE_IDS.map((profileId) =>
+      hardCheckVector(
+        profileId,
+        profileId === 'paperPro' ? ['figures'] : [],
+        'rejected-sibling',
+      ),
+    )
+    const accepted = CLOSED_RECONSTRUCTION_PROFILE_IDS.map((profileId) =>
+      hardCheckVector(profileId, [], 'accepted-sibling'),
+    )
+    const history = classifyReconstructionAttemptHistory([
+      baseline,
+      rejected,
+      accepted,
+    ])
+    expect(history.bestIndex).toBe(2)
+    expect(history.decisions).toMatchObject([
+      { status: 'rejected', reason: 'hard-gate-regression' },
+      { status: 'accepted' },
+    ])
+    expect(
+      classifyMonotonicReconstructionTransition(baseline, accepted),
+    ).toMatchObject({ status: 'accepted' })
+    expect(
+      classifyMonotonicReconstructionTransition(rejected, accepted),
+    ).toMatchObject({ status: 'accepted' })
   })
 })

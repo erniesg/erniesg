@@ -85,7 +85,30 @@ export type ReconstructionMonotonicTransition = {
   receiptSha256: string
 }
 
+export type ReconstructionRejectedTransition = {
+  schemaVersion: typeof RECONSTRUCTION_MATERIALIZATION_SCHEMA_VERSION
+  declaredFirstCause: {
+    profileId: ClosedReconstructionProfileId
+    failureId: string
+    check: DeterministicCheckId
+  }
+  baselineVectorSetSha256: string
+  resultingVectorSetSha256: string
+  metric: {
+    id: 'passed-hard-check-count'
+    before: number
+    after: number
+  }
+  reason: 'hard-gate-regression' | 'first-cause-not-improved'
+  status: 'rejected'
+  receiptSha256: string
+}
+
+export type ReconstructionTransitionDecision =
+  ReconstructionMonotonicTransition | ReconstructionRejectedTransition
+
 export type ClosedThreeProfileAttempt = {
+  coordinatorProfileId: ClosedReconstructionProfileId
   canonicalStructSha256: string
   materializationReceipt: GroundedStructMaterializationReceipt
   traces: Record<ClosedReconstructionProfileId, ReconstructionAttemptTrace>
@@ -99,7 +122,11 @@ export type ClosedThreeProfileReconstructionReceipt = {
   profileIds: typeof CLOSED_RECONSTRUCTION_PROFILE_IDS
   baselineVectorSetSha256: string
   transitions: ReconstructionMonotonicTransition[]
+  rejectedTransitions: ReconstructionRejectedTransition[]
+  /** Receipt-free repair core consumed by the frozen #199 loop. */
   finalCanonicalStructSha256: string
+  /** Full current-schema STRUCT from which all three EPUBs were built. */
+  finalMaterializedCanonicalStructSha256: string
   finalMaterializationReceiptSha256: string
   finalProfiles: Array<{
     profileId: ClosedReconstructionProfileId
@@ -368,6 +395,24 @@ export function acceptMonotonicReconstructionTransition(
   baseline: readonly ReconstructionHardCheckVector[],
   resulting: readonly ReconstructionHardCheckVector[],
 ): ReconstructionMonotonicTransition {
+  const decision = classifyMonotonicReconstructionTransition(
+    baseline,
+    resulting,
+  )
+  if (decision.status === 'rejected') {
+    throw new Error(
+      decision.reason === 'hard-gate-regression'
+        ? 'RECONSTRUCTION_HARD_GATE_REGRESSION'
+        : 'RECONSTRUCTION_FIRST_CAUSE_NOT_IMPROVED',
+    )
+  }
+  return decision
+}
+
+export function classifyMonotonicReconstructionTransition(
+  baseline: readonly ReconstructionHardCheckVector[],
+  resulting: readonly ReconstructionHardCheckVector[],
+): ReconstructionTransitionDecision {
   baseline.forEach(assertValidHardCheckVector)
   resulting.forEach(assertValidHardCheckVector)
   const baselineByProfile = new Map(
@@ -391,6 +436,7 @@ export function acceptMonotonicReconstructionTransition(
     throw new Error('RECONSTRUCTION_BASELINE_ALREADY_PASSED')
   }
   const declared = baselineByProfile.get(declaredProfileId)!.firstCause!
+  let reason: ReconstructionRejectedTransition['reason'] | null = null
   for (const profileId of CLOSED_RECONSTRUCTION_PROFILE_IDS) {
     const before = baselineByProfile.get(profileId)!
     const after = resultingByProfile.get(profileId)!
@@ -411,7 +457,7 @@ export function acceptMonotonicReconstructionTransition(
         (afterCheck.status !== 'passed' ||
           beforeCheck.expectedSha256 !== afterCheck.expectedSha256)
       ) {
-        throw new Error('RECONSTRUCTION_HARD_GATE_REGRESSION')
+        reason = 'hard-gate-regression'
       }
     }
   }
@@ -421,9 +467,9 @@ export function acceptMonotonicReconstructionTransition(
   const beforePassed = totalPassed(baseline)
   const afterPassed = totalPassed(resulting)
   if (declaredAfter?.status !== 'passed' || afterPassed <= beforePassed) {
-    throw new Error('RECONSTRUCTION_FIRST_CAUSE_NOT_IMPROVED')
+    reason ??= 'first-cause-not-improved'
   }
-  const projection = {
+  const common = {
     schemaVersion: RECONSTRUCTION_MATERIALIZATION_SCHEMA_VERSION,
     declaredFirstCause: {
       profileId: declaredProfileId,
@@ -437,9 +483,39 @@ export function acceptMonotonicReconstructionTransition(
       before: beforePassed,
       after: afterPassed,
     },
+  }
+  if (reason) {
+    const projection = {
+      ...common,
+      reason,
+      status: 'rejected' as const,
+    }
+    return { ...projection, receiptSha256: hashTraceValue(projection) }
+  }
+  const projection = {
+    ...common,
     status: 'accepted' as const,
   }
   return { ...projection, receiptSha256: hashTraceValue(projection) }
+}
+
+export function classifyReconstructionAttemptHistory(
+  vectorHistory: readonly (readonly ReconstructionHardCheckVector[])[],
+) {
+  if (vectorHistory.length < 1 || vectorHistory.length > 4) {
+    throw new Error('MISSING_RECONSTRUCTION_ATTEMPT')
+  }
+  let bestIndex = 0
+  const decisions: ReconstructionTransitionDecision[] = []
+  for (let index = 1; index < vectorHistory.length; index += 1) {
+    const decision = classifyMonotonicReconstructionTransition(
+      vectorHistory[bestIndex]!,
+      vectorHistory[index]!,
+    )
+    decisions.push(decision)
+    if (decision.status === 'accepted') bestIndex = index
+  }
+  return { bestIndex, decisions }
 }
 
 function validateProfileBuild(
@@ -506,7 +582,7 @@ function vectorsForAttempt(attempt: ClosedThreeProfileAttempt) {
     attempt.materializationReceipt.status !== 'publication-ready' ||
     attempt.materializationReceipt.reviewReasons.length !== 0 ||
     attempt.materializationReceipt.selections.length === 0 ||
-    attempt.materializationReceipt.canonicalStruct.sha256 !==
+    attempt.materializationReceipt.repairCore.sha256 !==
       attempt.canonicalStructSha256 ||
     materializationReceiptSha256 !== hashTraceValue(materializationProjection)
   ) {
@@ -517,7 +593,10 @@ function vectorsForAttempt(attempt: ClosedThreeProfileAttempt) {
     const build = attempt.builds.find(
       (candidate) => candidate.profileId === profileId,
     )!
-    validateProfileBuild(build, attempt.canonicalStructSha256)
+    validateProfileBuild(
+      build,
+      attempt.materializationReceipt.canonicalStruct.sha256,
+    )
     if (trace.structure.artifact.sha256 !== attempt.canonicalStructSha256) {
       throw new Error('STALE_RECONSTRUCTION_ATTEMPT_STRUCT')
     }
@@ -558,10 +637,32 @@ export function createClosedThreeProfileReconstructionReceipt(input: {
   if (input.attempts.length < 1 || input.attempts.length > 4) {
     throw new Error('MISSING_RECONSTRUCTION_ATTEMPT')
   }
-  for (const profileId of CLOSED_RECONSTRUCTION_PROFILE_IDS) {
-    parseReconstructionAttemptTraceLineage(
-      input.attempts.map((attempt) => attempt.traces[profileId]),
-    )
+  parseReconstructionAttemptTraceLineage(
+    input.attempts.map(
+      (attempt) => attempt.traces[attempt.coordinatorProfileId],
+    ),
+  )
+  for (const attempt of input.attempts) {
+    if (
+      !CLOSED_RECONSTRUCTION_PROFILE_IDS.includes(attempt.coordinatorProfileId)
+    ) {
+      throw new Error('INCOMPLETE_RECONSTRUCTION_PROFILE_SET')
+    }
+    const coordinator = attempt.traces[attempt.coordinatorProfileId]
+    for (const profileId of CLOSED_RECONSTRUCTION_PROFILE_IDS) {
+      const sibling = attempt.traces[profileId]
+      if (
+        sibling.lineage.attemptIndex !== coordinator.lineage.attemptIndex ||
+        sibling.lineage.parentTraceSha256 !==
+          coordinator.lineage.parentTraceSha256 ||
+        sibling.lineage.immutablePriorTraceSha256 !==
+          coordinator.lineage.immutablePriorTraceSha256 ||
+        hashTraceValue(sibling.lineage.appliedRepair) !==
+          hashTraceValue(coordinator.lineage.appliedRepair)
+      ) {
+        throw new Error('RECONSTRUCTION_PROFILE_LINEAGE_MISMATCH')
+      }
+    }
   }
   const vectorHistory = input.attempts.map(vectorsForAttempt)
   const sourcePdfSha256 = vectorHistory[0]![0]!.sourcePdfSha256
@@ -578,14 +679,19 @@ export function createClosedThreeProfileReconstructionReceipt(input: {
   ) {
     throw new Error('STALE_RECONSTRUCTION_ATTEMPT_EVIDENCE')
   }
-  const transitions = vectorHistory
-    .slice(1)
-    .map((vectors, index) =>
-      acceptMonotonicReconstructionTransition(vectorHistory[index]!, vectors),
-    )
+  const history = classifyReconstructionAttemptHistory(vectorHistory)
+  const transitions = history.decisions.filter(
+    (decision): decision is ReconstructionMonotonicTransition =>
+      decision.status === 'accepted',
+  )
+  const rejectedTransitions = history.decisions.filter(
+    (decision): decision is ReconstructionRejectedTransition =>
+      decision.status === 'rejected',
+  )
   const finalVectors = vectorHistory.at(-1)!
   const finalAttempt = input.attempts.at(-1)!
   if (
+    history.bestIndex !== input.attempts.length - 1 ||
     finalVectors.some(
       (vector) => vector.failedCount !== 0 || vector.firstCause !== null,
     )
@@ -601,7 +707,8 @@ export function createClosedThreeProfileReconstructionReceipt(input: {
     )
     if (
       !build ||
-      build.canonicalStruct.sha256 !== finalAttempt.canonicalStructSha256 ||
+      build.canonicalStruct.sha256 !==
+        finalAttempt.materializationReceipt.canonicalStruct.sha256 ||
       build.epub.sha256 !== vector.epubSha256 ||
       build.epub.byteLength !== build.bytes.byteLength ||
       build.epub.sha256 !== sha256HexSync(build.bytes)
@@ -623,7 +730,10 @@ export function createClosedThreeProfileReconstructionReceipt(input: {
     profileIds: CLOSED_RECONSTRUCTION_PROFILE_IDS,
     baselineVectorSetSha256: vectorSetSha256(vectorHistory[0]!),
     transitions,
+    rejectedTransitions,
     finalCanonicalStructSha256: finalAttempt.canonicalStructSha256,
+    finalMaterializedCanonicalStructSha256:
+      finalAttempt.materializationReceipt.canonicalStruct.sha256,
     finalMaterializationReceiptSha256:
       finalAttempt.materializationReceipt.receiptSha256,
     finalProfiles,

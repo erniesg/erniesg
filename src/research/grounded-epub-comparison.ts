@@ -235,32 +235,19 @@ function verifyGroundedActualObservationAuthority(input: {
   ) {
     invalid('GROUNDED_ACTUAL_OBSERVATION_BINDING_MISMATCH')
   }
-  const blockById = new Map(
-    materialization.document.blocks.map((block) => [block.id, block]),
+  const expectedRegionIds = new Set(
+    sourceContract.sourceRegions.map(({ id }) => id),
   )
-  for (const binding of materialization.receipt.obligationBindings) {
-    const block = blockById.get(binding.outputBlockId)
-    const failedCategory = block
-      ? binding.observationCategories.find(
-          (category) =>
-            !verifyCategory(category, block, materialization.document, render),
-        )
-      : 'missing-block'
-    if (
-      !block ||
-      !render.anchors.includes(block.id) ||
-      !render.locators.some(({ anchorId }) => anchorId === block.id) ||
-      binding.sourceAnchorIds.some(
-        (anchorId) =>
-          !render.anchors.includes(anchorId) ||
-          !block.sourceObservationAnchorIds?.includes(anchorId),
-      ) ||
-      failedCategory
-    ) {
-      invalid(
-        `ACTUAL_RENDER_SOURCE_OBSERVATION_MISMATCH:${failedCategory ?? 'binding'}`,
-      )
-    }
+  const boundRegionIds = new Set(
+    materialization.receipt.obligationBindings.map(
+      ({ obligationId }) => obligationId,
+    ),
+  )
+  if (
+    expectedRegionIds.size !== boundRegionIds.size ||
+    [...expectedRegionIds].some((id) => !boundRegionIds.has(id))
+  ) {
+    invalid('GROUNDED_ACTUAL_OBSERVATION_BINDING_MISMATCH')
   }
 }
 
@@ -300,42 +287,65 @@ function buildMappings(input: {
     ...render.screenshotDimensions,
     deviceScaleFactor: render.viewport.deviceScaleFactor,
   }
+  const blockById = new Map(
+    materialization.document.blocks.map((block) => [block.id, block]),
+  )
   return sourceContract.sourceRegions.map((region): SourceOutputMapping => {
     const binding = bindings.get(region.id)
+    const block = binding ? blockById.get(binding.outputBlockId) : undefined
     const locator = binding
       ? render.locators.find(
           ({ anchorId }) => anchorId === binding.outputBlockId,
         )
       : null
-    if (!binding || !locator) invalid('MISSING_ACTUAL_RENDER_MAPPING')
-    const rect = locator.rect
-    if (
-      rect.x < 0 ||
-      rect.y < 0 ||
-      rect.width <= 0 ||
-      rect.height <= 0 ||
-      rect.x + rect.width > viewport.width + 1 ||
-      rect.y + rect.height > viewport.height + 1
-    ) {
-      invalid('OUT_OF_BOUNDS_ACTUAL_RENDER_MAPPING')
-    }
+    const rect = locator?.rect
+    const validRect =
+      rect !== undefined &&
+      rect.x >= 0 &&
+      rect.y >= 0 &&
+      rect.width > 0 &&
+      rect.height > 0 &&
+      rect.x + rect.width <= viewport.width + 1 &&
+      rect.y + rect.height <= viewport.height + 1
+    const exactFactCount = block
+      ? render.blockFacts.filter(({ blockId }) => blockId === block.id).length
+      : 0
+    const observed = Boolean(
+      binding &&
+      block &&
+      locator &&
+      validRect &&
+      exactFactCount === 1 &&
+      render.anchors.includes(block.id) &&
+      binding.sourceAnchorIds.every(
+        (anchorId) =>
+          render.anchors.includes(anchorId) &&
+          block.sourceObservationAnchorIds?.includes(anchorId),
+      ) &&
+      binding.observationCategories.every((category) =>
+        verifyCategory(category, block, materialization.document, render),
+      ),
+    )
     return {
       id: `mapping-${region.id}`,
       obligationId: region.id,
       source: structuredClone(region.source),
-      output: [
-        {
-          spineHref: 'content.xhtml',
-          anchorId: binding.outputBlockId,
-          rendered: {
-            screenshotId,
-            viewport,
-            rect,
-            scrollOffset: { x: 0, y: 0 },
-          },
-        },
-      ],
-      status: 'mapped',
+      output:
+        observed && binding && locator && rect && validRect
+          ? [
+              {
+                spineHref: 'content.xhtml',
+                anchorId: binding.outputBlockId,
+                rendered: {
+                  screenshotId,
+                  viewport,
+                  rect,
+                  scrollOffset: { x: 0, y: 0 },
+                },
+              },
+            ]
+          : [],
+      status: observed ? 'mapped' : 'missing',
     }
   })
 }
@@ -522,7 +532,7 @@ export function compareGroundedProfiledEpub(input: {
   }
 }
 
-/** Commit a successful actual comparison as a complete frozen #199 trace. */
+/** Commit an authenticated failed or passing comparison as a frozen #199 trace. */
 export function createGroundedActualReconstructionTrace(input: {
   attemptId: string
   sourcePdf: SourcePdfBinding
@@ -531,6 +541,10 @@ export function createGroundedActualReconstructionTrace(input: {
   comparison: GroundedProfiledEpubComparison
   codexIdentity: OwnerLocalCodexTraceIdentity
   codexReceiptSha256: string
+  lineage?: ReconstructionAttemptTrace['lineage']
+  critiqueRepair?: ReconstructionAttemptTrace['critiqueRepair']
+  repairProviderReceipt?: ProviderReceiptBinding
+  budget?: ReconstructionAttemptTrace['budget']
   usage?: { tokens: number; durationMs: number }
 }): ReconstructionAttemptTrace {
   const {
@@ -541,21 +555,41 @@ export function createGroundedActualReconstructionTrace(input: {
     comparison,
     codexIdentity,
   } = input
+  const critiqueRepair = input.critiqueRepair ?? null
   if (
-    comparison.comparator.status !== 'publication-ready' ||
-    comparison.comparator.failed !== 0 ||
     sourcePdf.artifact.sha256 !== materialization.receipt.sourcePdfSha256 ||
     sourcePdf.pageCount !== materialization.document.source.pageCount ||
     sourceContract.graphArtifact.sha256 !==
-      materialization.receipt.sourceEvidenceGraphSha256
+      materialization.receipt.sourceEvidenceGraphSha256 ||
+    (critiqueRepair !== null) !== (input.repairProviderReceipt !== undefined) ||
+    (critiqueRepair !== null &&
+      input.repairProviderReceipt?.role !== 'owner-local-codex-repair')
   ) {
     invalid('INVALID_GROUNDED_ACTUAL_TRACE_INPUT')
   }
+  const structure: StructArtifactBinding = {
+    ...structuredClone(comparison.structure),
+    artifact: structuredClone(materialization.receipt.repairCore),
+  }
+  const epub: EpubArtifactBinding = {
+    ...structuredClone(comparison.epub),
+    structSha256: materialization.receipt.repairCore.sha256,
+  }
+  const comparator = compareSourceToRenderedEpub({
+    sourcePdfSha256: sourcePdf.artifact.sha256,
+    sourceEvidence: sourceContract.sourceEvidenceReceipt,
+    structure,
+    epub,
+    renderedEpub: comparison.renderedEpub,
+    sourceRegions: sourceContract.sourceRegions,
+    mappings: comparison.mappings,
+    observations: comparison.observations,
+  })
   const reconciliationInputSha256 = hashTraceValue({
     sourcePdfSha256: sourcePdf.artifact.sha256,
     evidenceGraphSha256: sourceContract.graphArtifact.sha256,
     candidateSetSha256: sourceContract.sourceEvidenceReceipt.candidateSetSha256,
-    structSha256: comparison.structure.artifact.sha256,
+    structSha256: structure.artifact.sha256,
     epubSha256: comparison.epub.bytes.sha256,
     renderObservationReceiptSha256: comparison.renderedEpub.receiptSha256,
   })
@@ -574,24 +608,44 @@ export function createGroundedActualReconstructionTrace(input: {
       providerId: codexIdentity.server.id,
       receiptSha256: input.codexReceiptSha256,
       inputSha256: reconciliationInputSha256,
-      outputSha256: hashTraceValue(comparison.comparator),
+      outputSha256: hashTraceValue(comparator),
       status: 'succeeded',
     }),
     receiptSha256: input.codexReceiptSha256,
     inputSha256: reconciliationInputSha256,
-    outputSha256: hashTraceValue(comparison.comparator),
+    outputSha256: hashTraceValue(comparator),
     ...structuredClone(codexIdentity),
     status: 'succeeded',
+  }
+  const lineage = input.lineage ?? {
+    attemptIndex: 0,
+    parentTraceSha256: null,
+    immutablePriorTraceSha256: null,
+    appliedRepair: null,
+  }
+  const budget = input.budget ?? {
+    policy: {
+      maxRefinements: 3,
+      maxFreshTasks: 1,
+      maxTokens: 24_000,
+      maxDurationMs: 30 * 60 * 1_000,
+      repairPolicySha256: hashTraceValue({
+        id: 'closed-candidate-grounded-reconstruction',
+        maxRefinements: 3,
+        maxFreshTasks: 1,
+      }),
+    },
+    usage: {
+      refinements: lineage.attemptIndex,
+      freshTasks: lineage.attemptIndex > 0 ? 1 : 0,
+      tokens: input.usage?.tokens ?? 0,
+      durationMs: input.usage?.durationMs ?? 0,
+    },
   }
   return createReconstructionAttemptTrace({
     schemaVersion: RECONSTRUCTION_ATTEMPT_TRACE_SCHEMA_VERSION,
     attemptId,
-    lineage: {
-      attemptIndex: 0,
-      parentTraceSha256: null,
-      immutablePriorTraceSha256: null,
-      appliedRepair: null,
-    },
+    lineage: structuredClone(lineage),
     sourcePdf: structuredClone(sourcePdf),
     evidenceGraph: {
       schemaVersion: sourceContract.graph.schemaVersion,
@@ -600,8 +654,8 @@ export function createGroundedActualReconstructionTrace(input: {
     },
     sourceEvidence: structuredClone(sourceContract.sourceEvidenceReceipt),
     evidenceCandidates: structuredClone(sourceContract.evidenceCandidates),
-    structure: structuredClone(comparison.structure),
-    epub: structuredClone(comparison.epub),
+    structure,
+    epub,
     renderedEpub: structuredClone(comparison.renderedEpub),
     mappings: structuredClone(comparison.mappings),
     comparisonEvidence: {
@@ -635,28 +689,13 @@ export function createGroundedActualReconstructionTrace(input: {
         status: 'succeeded',
       },
       codexProvider,
+      ...(input.repairProviderReceipt
+        ? [structuredClone(input.repairProviderReceipt)]
+        : []),
     ],
-    comparator: structuredClone(comparison.comparator),
-    critiqueRepair: null,
-    budget: {
-      policy: {
-        maxRefinements: 3,
-        maxFreshTasks: 1,
-        maxTokens: 24_000,
-        maxDurationMs: 30 * 60 * 1_000,
-        repairPolicySha256: hashTraceValue({
-          id: 'closed-candidate-grounded-reconstruction',
-          maxRefinements: 3,
-          maxFreshTasks: 1,
-        }),
-      },
-      usage: {
-        refinements: 0,
-        freshTasks: 1,
-        tokens: input.usage?.tokens ?? 0,
-        durationMs: input.usage?.durationMs ?? 0,
-      },
-    },
-    terminalState: 'publication-ready',
+    comparator,
+    critiqueRepair: structuredClone(critiqueRepair),
+    budget: structuredClone(budget),
+    terminalState: comparator.status,
   })
 }

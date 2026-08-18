@@ -22,6 +22,7 @@ export const STRUCTURED_EXTRACTION_NODE_TYPES = [
   'equation',
   'footnote',
   'reference',
+  'source-fallback',
 ] as const
 
 export type StructuredExtractionNodeType =
@@ -30,6 +31,7 @@ export type StructuredExtractionNodeType =
 export const STRUCTURED_EXTRACTION_LAYOUTS = [
   'one-column',
   'two-column',
+  'multi-region',
 ] as const
 
 export type StructuredExtractionLayout =
@@ -45,10 +47,13 @@ export type StructuredSourceRun = {
   text: string
   page: number
   order: number
+  sourceSequenceIndex?: number
   /** Stable deterministic line ownership for whitespace-sensitive material. */
   lineId?: string
   /** A source run is already normalized by the deterministic extractor. */
   layout?: StructuredExtractionLayout
+  regionId?: string
+  bounds?: { x: number; y: number; width: number; height: number }
   stratum?: string
 }
 
@@ -61,7 +66,8 @@ export type StructuredSourceLine = {
 
 export type StructuredSourceAsset = {
   id: string
-  kind: 'figure' | 'diagram' | 'table' | 'equation'
+  kind: 'figure' | 'diagram' | 'table' | 'equation' | 'source-fallback'
+  required?: boolean
   page: number
   bounds: {
     x: number
@@ -72,6 +78,32 @@ export type StructuredSourceAsset = {
   bytesSha256: string
   sourceObjectIds: string[]
   captionRunIds?: string[]
+}
+
+export type StructuredRegionTopology = {
+  regions: Array<{
+    id: string
+    page: number
+    order: number
+    role: 'body' | 'heading' | 'figure' | 'table' | 'margin' | 'other'
+    bounds: { x: number; y: number; width: number; height: number }
+  }>
+  edges: Array<{ fromRegionId: string; toRegionId: string }>
+}
+
+export type StructuredSourceLink = {
+  id: string
+  page: number
+  sourceRunIds: string[]
+  /** Exact deterministic assets that own a non-text annotation anchor. */
+  sourceAssetIds?: string[]
+  /** Exact native PDF objects beneath the linked deterministic asset. */
+  sourceObjectIds?: string[]
+  box: { x: number; y: number; width: number; height: number }
+  destination:
+    | { kind: 'external'; url: string }
+    | { kind: 'internal'; targetId: string }
+    | { kind: 'unresolved'; reason: string }
 }
 
 /** Owner-local page evidence shared by every extraction arm. */
@@ -94,6 +126,9 @@ export type StructuredProvenArtifact = {
     | 'line-boundary'
     | 'note-relationship'
     | 'citation-relationship'
+    | 'cross-reference-relationship'
+    | 'visual-relationship'
+    | 'reading-order-relationship'
     | 'source-run-provenance'
   sourceRunIds: string[]
   /** Deterministic destination ownership for note/citation relationships. */
@@ -107,9 +142,11 @@ export type StructuredExtractionContext = {
   sourceSha256: string
   split: StructuredExtractionSplit
   layout: StructuredExtractionLayout
+  regionTopology?: StructuredRegionTopology
   sourceRuns: StructuredSourceRun[]
   sourceLines?: StructuredSourceLine[]
   sourceAssets: StructuredSourceAsset[]
+  sourceLinks?: StructuredSourceLink[]
   pageRenditions?: StructuredExtractionPageRendition[]
   provenArtifacts?: StructuredProvenArtifact[]
   /** These runs remain accounted for but may not enter body flow. */
@@ -153,6 +190,7 @@ export type StructuredExtractionProposal = {
   nodes: StructuredExtractionNode[]
   /** All deterministic assets that the model associates with the flow. */
   assetIds?: string[]
+  links?: Array<{ sourceLinkId: string; sourceNodeId: string }>
   /** Explicit accounting for page furniture omitted from body flow. */
   excludedBoilerplateRunIds?: string[]
   /** Optional model diagnostics are never copied to the publication graph. */
@@ -188,6 +226,12 @@ export type VerifiedStructuredExtraction = {
   assetIds: string[]
   excludedBoilerplateRunIds: string[]
   accountedSourceRunIds: string[]
+  links: Array<{
+    sourceLinkId: string
+    sourceNodeId: string
+    destination: StructuredSourceLink['destination']
+  }>
+  relationshipIds: string[]
 }
 
 export type StructuredExtractionVerificationIssueCode =
@@ -207,6 +251,14 @@ export type StructuredExtractionVerificationIssueCode =
   | 'invalid-heading-level'
   | 'invalid-table'
   | 'invalid-relationship'
+  | 'missing-source-run'
+  | 'missing-asset'
+  | 'duplicate-asset'
+  | 'missing-link'
+  | 'duplicate-link'
+  | 'invalid-link'
+  | 'semantic-role-mismatch'
+  | 'invalid-region-topology'
 
 export type StructuredExtractionVerificationIssue = {
   code: StructuredExtractionVerificationIssueCode
@@ -236,8 +288,19 @@ const sourceRunSchema = z
     text: z.string(),
     page: z.number().int().positive(),
     order: z.number().int().nonnegative(),
+    sourceSequenceIndex: z.number().int().nonnegative().optional(),
     lineId: idSchema.optional(),
     layout: z.enum(STRUCTURED_EXTRACTION_LAYOUTS).optional(),
+    regionId: idSchema.optional(),
+    bounds: z
+      .object({
+        x: z.number().finite(),
+        y: z.number().finite(),
+        width: z.number().positive(),
+        height: z.number().positive(),
+      })
+      .strict()
+      .optional(),
     stratum: z.string().min(1).optional(),
   })
   .strict()
@@ -245,7 +308,8 @@ const sourceRunSchema = z
 const sourceAssetSchema = z
   .object({
     id: idSchema,
-    kind: z.enum(['figure', 'diagram', 'table', 'equation']),
+    kind: z.enum(['figure', 'diagram', 'table', 'equation', 'source-fallback']),
+    required: z.boolean().optional(),
     page: z.number().int().positive(),
     bounds: z
       .object({
@@ -258,6 +322,59 @@ const sourceAssetSchema = z
     bytesSha256: sha256Schema,
     sourceObjectIds: z.array(idSchema),
     captionRunIds: z.array(idSchema).optional(),
+  })
+  .strict()
+
+const boundsSchema = z
+  .object({
+    x: z.number().finite(),
+    y: z.number().finite(),
+    width: z.number().positive(),
+    height: z.number().positive(),
+  })
+  .strict()
+
+const regionTopologySchema = z
+  .object({
+    regions: z.array(
+      z
+        .object({
+          id: idSchema,
+          page: z.number().int().positive(),
+          order: z.number().int().nonnegative(),
+          role: z.enum([
+            'body',
+            'heading',
+            'figure',
+            'table',
+            'margin',
+            'other',
+          ]),
+          bounds: boundsSchema,
+        })
+        .strict(),
+    ),
+    edges: z.array(
+      z.object({ fromRegionId: idSchema, toRegionId: idSchema }).strict(),
+    ),
+  })
+  .strict()
+
+const sourceLinkSchema = z
+  .object({
+    id: idSchema,
+    page: z.number().int().positive(),
+    sourceRunIds: z.array(idSchema),
+    sourceAssetIds: z.array(idSchema).optional(),
+    sourceObjectIds: z.array(idSchema).optional(),
+    box: boundsSchema,
+    destination: z.discriminatedUnion('kind', [
+      z.object({ kind: z.literal('external'), url: z.string().url() }).strict(),
+      z.object({ kind: z.literal('internal'), targetId: idSchema }).strict(),
+      z
+        .object({ kind: z.literal('unresolved'), reason: z.string().min(1) })
+        .strict(),
+    ]),
   })
   .strict()
 
@@ -294,6 +411,9 @@ const sourceArtifactSchema = z
       'line-boundary',
       'note-relationship',
       'citation-relationship',
+      'cross-reference-relationship',
+      'visual-relationship',
+      'reading-order-relationship',
       'source-run-provenance',
     ]),
     sourceRunIds: z.array(idSchema),
@@ -308,9 +428,11 @@ const contextSchema = z
     sourceSha256: sha256Schema,
     split: z.enum(STRUCTURED_EXTRACTION_SPLITS),
     layout: z.enum(STRUCTURED_EXTRACTION_LAYOUTS),
+    regionTopology: regionTopologySchema.optional(),
     sourceRuns: z.array(sourceRunSchema),
     sourceLines: z.array(sourceLineSchema).optional(),
     sourceAssets: z.array(sourceAssetSchema),
+    sourceLinks: z.array(sourceLinkSchema).optional(),
     pageRenditions: z.array(pageRenditionSchema).min(1).optional(),
     provenArtifacts: z.array(sourceArtifactSchema).optional(),
     boilerplateRunIds: z.array(idSchema).optional(),
@@ -364,10 +486,47 @@ const proposalSchema = z
     schemaVersion: z.literal(STRUCTURED_EXTRACTION_SCHEMA_VERSION).optional(),
     nodes: z.array(nodeSchema).min(1),
     assetIds: z.array(idSchema).optional(),
+    links: z
+      .array(
+        z.object({ sourceLinkId: idSchema, sourceNodeId: idSchema }).strict(),
+      )
+      .optional(),
     excludedBoilerplateRunIds: z.array(idSchema).optional(),
     diagnostics: z.array(z.string()).optional(),
   })
   .strict()
+
+function physicalRunIdentity(run: {
+  page: number
+  text: string
+  x: number
+  y: number
+  width: number
+  height: number
+  rotation: number
+  method: string
+  fontName: string
+  fontSize: number
+  sourceSequenceIndex?: number
+}) {
+  return JSON.stringify(
+    Number.isSafeInteger(run.sourceSequenceIndex)
+      ? ['source-sequence', run.page, run.sourceSequenceIndex]
+      : [
+          'source-geometry',
+          run.page,
+          run.text,
+          run.x,
+          run.y,
+          run.width,
+          run.height,
+          run.rotation,
+          run.method,
+          run.fontName,
+          run.fontSize,
+        ],
+  )
+}
 
 /**
  * Adapt the deterministic PDF reconstruction into the arm-neutral context.
@@ -392,12 +551,18 @@ export function structuredExtractionContextFromReconstruction({
   const sourceRuns: StructuredSourceRun[] = []
   const sourceLines: StructuredSourceLine[] = []
   const runIdsByKey = new Map<string, string>()
+  const regionRunCounts = new Map<string, number>()
   let order = 0
   for (const region of reconstruction.regions) {
     for (const line of region.lines) {
       const lineId = `${region.id}:${line.id}`
       const sourceRunIds: string[] = []
       for (const [runIndex, run] of line.runs.entries()) {
+        const physicalIdentity = physicalRunIdentity(run)
+        regionRunCounts.set(
+          physicalIdentity,
+          (regionRunCounts.get(physicalIdentity) ?? 0) + 1,
+        )
         const id = `r-${region.id}-${line.id}-${runIndex}`
         sourceRunIds.push(id)
         runIdsByKey.set(`${region.id}\u0000${line.id}\u0000${runIndex}`, id)
@@ -406,8 +571,18 @@ export function structuredExtractionContextFromReconstruction({
           text: run.text,
           page: run.page,
           order: order++,
+          ...(Number.isSafeInteger(run.sourceSequenceIndex)
+            ? { sourceSequenceIndex: run.sourceSequenceIndex }
+            : {}),
           lineId,
           layout,
+          regionId: region.id,
+          bounds: {
+            x: run.x,
+            y: run.y,
+            width: run.width,
+            height: run.height,
+          },
           ...(stratum ? { stratum } : {}),
         })
       }
@@ -416,6 +591,51 @@ export function structuredExtractionContextFromReconstruction({
       }
     }
   }
+  const unmatchedRegionRunCounts = new Map(regionRunCounts)
+  for (const page of [...reconstruction.pages].sort(
+    (left, right) => left.page - right.page,
+  )) {
+    for (const [runIndex, run] of page.runs.entries()) {
+      const physicalIdentity = physicalRunIdentity(run)
+      const remaining = unmatchedRegionRunCounts.get(physicalIdentity) ?? 0
+      if (remaining > 0) {
+        unmatchedRegionRunCounts.set(physicalIdentity, remaining - 1)
+        continue
+      }
+      sourceRuns.push({
+        id: `r-page-${page.page}-${runIndex}`,
+        text: run.text,
+        page: run.page,
+        order: order++,
+        ...(Number.isSafeInteger(run.sourceSequenceIndex)
+          ? { sourceSequenceIndex: run.sourceSequenceIndex }
+          : {}),
+        layout,
+        bounds: {
+          x: run.x,
+          y: run.y,
+          width: run.width,
+          height: run.height,
+        },
+        ...(stratum ? { stratum } : {}),
+      })
+    }
+  }
+  sourceRuns
+    .sort((left, right) => {
+      if (left.page !== right.page) return left.page - right.page
+      if (
+        left.sourceSequenceIndex !== undefined &&
+        right.sourceSequenceIndex !== undefined &&
+        left.sourceSequenceIndex !== right.sourceSequenceIndex
+      ) {
+        return left.sourceSequenceIndex - right.sourceSequenceIndex
+      }
+      return left.order - right.order
+    })
+    .forEach((run, sourceOrder) => {
+      run.order = sourceOrder
+    })
   const runIdsForRegion = (regionId: string) => {
     const region = reconstruction.regions.find(({ id }) => id === regionId)
     if (!region) return []
@@ -433,43 +653,170 @@ export function structuredExtractionContextFromReconstruction({
           runIdsForRegion,
         )
       : []
-  const sourceAssets: StructuredSourceAsset[] = reconstruction.assets.map(
-    (asset) => {
-      const relationship = reconstruction.visualRelationships.find(
-        ({ assetIds }) => assetIds.includes(asset.id),
-      )
-      const kind: StructuredSourceAsset['kind'] =
-        asset.kind === 'table'
+  const retainedAssets = [
+    ...reconstruction.assets,
+    ...reconstruction.pages
+      .flatMap(({ assets }) => assets ?? [])
+      .filter(
+        (asset) =>
+          asset.rendition === 'source-page-render' &&
+          !reconstruction.assets.some(({ id }) => id === asset.id),
+      ),
+  ]
+  const sourceAssets: StructuredSourceAsset[] = retainedAssets.map((asset) => {
+    const relationship = reconstruction.visualRelationships.find(
+      ({ assetIds }) => assetIds.includes(asset.id),
+    )
+    const kind: StructuredSourceAsset['kind'] =
+      asset.rendition === 'source-page-render'
+        ? 'source-fallback'
+        : asset.kind === 'table'
           ? 'table'
           : asset.kind === 'equation'
             ? 'equation'
             : relationship?.kind === 'figure'
               ? 'figure'
               : 'diagram'
-      const box = asset.sourceCropBox ?? asset.sourceBoxes[0]
-      return {
-        id: asset.id,
-        kind,
-        page: box?.page ?? 1,
-        bounds: {
-          x: box?.x ?? 0,
-          y: box?.y ?? 0,
-          width: box?.width ?? 0.001,
-          height: box?.height ?? 0.001,
-        },
-        bytesSha256: asset.sha256,
-        sourceObjectIds: [...asset.sourceObjectIds],
-        ...(relationship
-          ? { captionRunIds: runIdsForRegion(relationship.captionRegionId) }
-          : {}),
-      }
-    },
-  )
+    const box = asset.sourceCropBox ?? asset.sourceBoxes[0]
+    return {
+      id: asset.id,
+      kind,
+      page: box?.page ?? 1,
+      bounds: {
+        x: box?.x ?? 0,
+        y: box?.y ?? 0,
+        width: box?.width ?? 0.001,
+        height: box?.height ?? 0.001,
+      },
+      bytesSha256: asset.sha256,
+      sourceObjectIds: [...asset.sourceObjectIds],
+      ...(relationship
+        ? { captionRunIds: runIdsForRegion(relationship.captionRegionId) }
+        : {}),
+    }
+  })
   const boilerplateRunIds = reconstruction.regions
     .filter((region) =>
       ['header', 'footer', 'page-number'].includes(region.kind),
     )
     .flatMap(({ id }) => runIdsForRegion(id))
+  const regionTopology: StructuredRegionTopology = {
+    regions: reconstruction.regions.map((region, regionOrder) => ({
+      id: region.id,
+      page: region.page,
+      order: regionOrder,
+      role: ['heading', 'figure', 'table'].includes(region.kind)
+        ? (region.kind as 'heading' | 'figure' | 'table')
+        : ['header', 'footer', 'page-number'].includes(region.kind)
+          ? 'margin'
+          : 'body',
+      bounds: {
+        x: region.box.x,
+        y: region.box.y,
+        width: region.box.width,
+        height: region.box.height,
+      },
+    })),
+    edges: reconstruction.readingOrder.edges
+      .filter(({ status }) => status === 'accepted')
+      .map(({ from, to }) => ({ fromRegionId: from, toRegionId: to })),
+  }
+  const sourceLinks: StructuredSourceLink[] = reconstruction.pages.flatMap(
+    (page) =>
+      (page.links ?? []).map((link, linkIndex) => {
+        const box = 'box' in link && link.box ? link.box : null
+        const linkId =
+          'id' in link && typeof link.id === 'string'
+            ? link.id
+            : `link-${page.page}-${linkIndex + 1}`
+        const provenRegionIds = Object.values(reconstruction.provenance)
+          .filter(({ links }) =>
+            links.some(
+              (provenLink) =>
+                ('id' in provenLink && provenLink.id === linkId) ||
+                (!('id' in provenLink) &&
+                  !('id' in link) &&
+                  provenLink.url === link.url),
+            ),
+          )
+          .flatMap(({ regionIds }) => regionIds)
+        const sourceRunIds = [
+          ...new Set(
+            provenRegionIds.length > 0
+              ? provenRegionIds.flatMap(runIdsForRegion)
+              : sourceRuns
+                  .filter(
+                    (run) =>
+                      box !== null &&
+                      run.page === page.page &&
+                      run.bounds !== undefined &&
+                      Math.max(run.bounds.x, box.x) <
+                        Math.min(
+                          run.bounds.x + run.bounds.width,
+                          box.x + box.width,
+                        ) &&
+                      Math.max(run.bounds.y, box.y) <
+                        Math.min(
+                          run.bounds.y + run.bounds.height,
+                          box.y + box.height,
+                        ),
+                  )
+                  .map(({ id }) => id),
+          ),
+        ]
+        const destination: StructuredSourceLink['destination'] =
+          'status' in link && link.status === 'internal'
+            ? { kind: 'internal', targetId: link.destination }
+            : 'url' in link && typeof link.url === 'string'
+              ? { kind: 'external', url: link.url }
+              : {
+                  kind: 'unresolved',
+                  reason:
+                    'reason' in link && typeof link.reason === 'string'
+                      ? link.reason
+                      : 'unresolved-source-annotation',
+                }
+        const overlappingAssets = sourceAssets.filter(
+          (asset) =>
+            box !== null &&
+            asset.page === page.page &&
+            Math.max(asset.bounds.x, box.x) <
+              Math.min(
+                asset.bounds.x + asset.bounds.width,
+                box.x + box.width,
+              ) &&
+            Math.max(asset.bounds.y, box.y) <
+              Math.min(
+                asset.bounds.y + asset.bounds.height,
+                box.y + box.height,
+              ),
+        )
+        return {
+          id: linkId,
+          page: page.page,
+          sourceRunIds,
+          ...(sourceRunIds.length === 0
+            ? {
+                sourceAssetIds: overlappingAssets.map(({ id }) => id).sort(),
+                sourceObjectIds: [
+                  ...new Set(
+                    overlappingAssets.flatMap(({ sourceObjectIds }) =>
+                      sourceObjectIds,
+                    ),
+                  ),
+                ].sort(),
+              }
+            : {}),
+          box: {
+            x: box?.x ?? 0,
+            y: box?.y ?? 0,
+            width: box?.width ?? 1,
+            height: box?.height ?? 1,
+          },
+          destination,
+        }
+      }),
+  )
   const provenArtifacts: StructuredProvenArtifact[] = [
     ...reconstruction.regions.map((region) => ({
       id: region.id,
@@ -502,6 +849,31 @@ export function structuredExtractionContextFromReconstruction({
       sourceRunIds: [relationship.referenceRegionId].flatMap(runIdsForRegion),
       targetSourceRunIdGroups: relationship.targetNodeIds.map(runIdsForNode),
     })),
+    ...reconstruction.crossReferenceRelationships.map((relationship) => ({
+      id: relationship.id,
+      kind: 'cross-reference-relationship' as const,
+      sourceRunIds: runIdsForRegion(relationship.referenceRegionId),
+      targetSourceRunIdGroups: relationship.targets
+        .map(({ targetNodeId }) => runIdsForNode(targetNodeId))
+        .filter((group) => group.length > 0),
+    })),
+    ...reconstruction.visualRelationships.map((relationship) => ({
+      id: relationship.id,
+      kind: 'visual-relationship' as const,
+      sourceRunIds: [
+        ...relationship.sourceRegionIds,
+        relationship.captionRegionId,
+      ].flatMap(runIdsForRegion),
+    })),
+    ...reconstruction.readingOrder.edges
+      .filter(({ status }) => status === 'accepted')
+      .map((relationship) => ({
+        id: relationship.id,
+        kind: 'reading-order-relationship' as const,
+        sourceRunIds: [relationship.from, relationship.to].flatMap(
+          runIdsForRegion,
+        ),
+      })),
     {
       id: 'source-run-provenance',
       kind: 'source-run-provenance' as const,
@@ -513,9 +885,11 @@ export function structuredExtractionContextFromReconstruction({
     sourceSha256: reconstruction.source.sha256,
     split,
     layout,
+    ...(layout === 'multi-region' ? { regionTopology } : {}),
     sourceRuns,
     sourceLines,
     sourceAssets,
+    ...(sourceLinks.length > 0 ? { sourceLinks } : {}),
     ...(pageRenditions ? { pageRenditions } : {}),
     provenArtifacts,
     boilerplateRunIds,
@@ -638,6 +1012,10 @@ function nodeOwnedSourceRunIds(node: StructuredExtractionNode) {
         ) ?? [])
       : []),
   ]
+}
+
+function canonicalStringSet(values: readonly string[]) {
+  return JSON.stringify([...new Set(values)].sort())
 }
 
 function issue(
@@ -1229,7 +1607,13 @@ export function verifyStructuredExtraction(
   const assetsById = new Map(
     context.sourceAssets.map((asset) => [asset.id, asset]),
   )
+  const linksById = new Map(
+    (context.sourceLinks ?? []).map((link) => [link.id, link]),
+  )
   const nodesById = new Map(proposal.nodes.map((node) => [node.id, node]))
+  const regionRoleById = new Map(
+    (context.regionTopology?.regions ?? []).map(({ id, role }) => [id, role]),
+  )
   const claimed = new Set<string>()
   const boilerplate = new Set(context.boilerplateRunIds ?? [])
   const excluded = new Set(proposal.excludedBoilerplateRunIds ?? [])
@@ -1252,6 +1636,42 @@ export function verifyStructuredExtraction(
     issues.push(
       issue('invalid-output', 'Deterministic source line IDs must be unique.'),
     )
+  }
+  if (context.layout === 'multi-region' && !context.regionTopology) {
+    issues.push(
+      issue(
+        'invalid-region-topology',
+        'Multi-region extraction requires a typed region topology.',
+      ),
+    )
+  }
+  if (context.regionTopology) {
+    const regionIds = new Set(
+      context.regionTopology.regions.map(({ id }) => id),
+    )
+    const regionOrders = new Set(
+      context.regionTopology.regions.map(({ order }) => order),
+    )
+    if (
+      regionIds.size !== context.regionTopology.regions.length ||
+      regionOrders.size !== context.regionTopology.regions.length ||
+      context.regionTopology.edges.some(
+        ({ fromRegionId, toRegionId }) =>
+          fromRegionId === toRegionId ||
+          !regionIds.has(fromRegionId) ||
+          !regionIds.has(toRegionId),
+      ) ||
+      context.sourceRuns.some(
+        ({ regionId }) => regionId !== undefined && !regionIds.has(regionId),
+      )
+    ) {
+      issues.push(
+        issue(
+          'invalid-region-topology',
+          'Region IDs, orders, edges, and source-run ownership must form one closed topology.',
+        ),
+      )
+    }
   }
   const lineOwnedRunIds = new Set<string>()
   for (const line of context.sourceLines ?? []) {
@@ -1288,6 +1708,38 @@ export function verifyStructuredExtraction(
       ),
     )
   }
+  if (linksById.size !== (context.sourceLinks ?? []).length) {
+    issues.push(
+      issue('invalid-link', 'Deterministic source link IDs must be unique.'),
+    )
+  }
+  for (const sourceLink of context.sourceLinks ?? []) {
+    if (
+      new Set(sourceLink.sourceAssetIds ?? []).size !==
+        (sourceLink.sourceAssetIds ?? []).length ||
+      new Set(sourceLink.sourceObjectIds ?? []).size !==
+        (sourceLink.sourceObjectIds ?? []).length
+    ) {
+      issues.push(
+        issue(
+          'invalid-link',
+          `Deterministic source link ${sourceLink.id} has duplicate asset ownership.`,
+        ),
+      )
+    }
+    if (
+      sourceLink.sourceRunIds.length === 0 &&
+      ((sourceLink.sourceAssetIds?.length ?? 0) === 0 ||
+        (sourceLink.sourceObjectIds?.length ?? 0) === 0)
+    ) {
+      issues.push(
+        issue(
+          'invalid-link',
+          `Image-only link ${sourceLink.id} must name its exact deterministic asset and source objects.`,
+        ),
+      )
+    }
+  }
 
   if (nodesById.size !== proposal.nodes.length) {
     issues.push(issue('invalid-output', 'Node identifiers must be unique.'))
@@ -1322,6 +1774,22 @@ export function verifyStructuredExtraction(
         issue(
           'invalid-heading-level',
           'Headings require a level from 1 through 6.',
+          { nodeId: node.id },
+        ),
+      )
+    }
+    if (
+      node.type !== 'heading' &&
+      node.sourceRunIds.some(
+        (sourceRunId) =>
+          regionRoleById.get(runsById.get(sourceRunId)?.regionId ?? '') ===
+          'heading',
+      )
+    ) {
+      issues.push(
+        issue(
+          'semantic-role-mismatch',
+          `Heading-region source runs cannot be laundered into ${node.type}.`,
           { nodeId: node.id },
         ),
       )
@@ -1495,9 +1963,46 @@ export function verifyStructuredExtraction(
     }
   }
 
+  for (const sourceRun of context.sourceRuns) {
+    if (!boilerplate.has(sourceRun.id) && !claimed.has(sourceRun.id)) {
+      issues.push(
+        issue(
+          'missing-source-run',
+          `Non-boilerplate source run ${sourceRun.id} has no materialized owner or bounded source fallback.`,
+          { sourceRunId: sourceRun.id },
+        ),
+      )
+    }
+  }
+
+  const proposalAssetIds = proposal.assetIds ?? []
+  if (new Set(proposalAssetIds).size !== proposalAssetIds.length) {
+    issues.push(
+      issue('duplicate-asset', 'Materialized asset IDs must be unique.'),
+    )
+  }
+  const nodeAssetCounts = new Map<string, number>()
+  for (const node of proposal.nodes) {
+    if (!node.assetId) continue
+    nodeAssetCounts.set(
+      node.assetId,
+      (nodeAssetCounts.get(node.assetId) ?? 0) + 1,
+    )
+  }
+  for (const [assetId, count] of nodeAssetCounts) {
+    if (count > 1) {
+      issues.push(
+        issue(
+          'duplicate-asset',
+          `Deterministic asset ${assetId} has more than one materialized owner.`,
+          { assetId },
+        ),
+      )
+    }
+  }
   const assetIds = [
     ...new Set([
-      ...(proposal.assetIds ?? []),
+      ...proposalAssetIds,
       ...proposal.nodes.flatMap((node) => (node.assetId ? [node.assetId] : [])),
     ]),
   ]
@@ -1509,8 +2014,128 @@ export function verifyStructuredExtraction(
         }),
       )
   }
+  for (const asset of context.sourceAssets) {
+    if ((asset.required ?? true) && !assetIds.includes(asset.id)) {
+      issues.push(
+        issue(
+          'missing-asset',
+          `Required deterministic asset ${asset.id} has no materialized asset or bounded source fallback.`,
+          { assetId: asset.id },
+        ),
+      )
+    }
+  }
+
+  const claimedLinks = new Set<string>()
+  const materializedLinks: VerifiedStructuredExtraction['links'] = []
+  for (const proposedLink of proposal.links ?? []) {
+    const sourceLink = linksById.get(proposedLink.sourceLinkId)
+    const sourceNode = nodesById.get(proposedLink.sourceNodeId)
+    if (!sourceLink || !sourceNode) {
+      issues.push(
+        issue(
+          'invalid-link',
+          `Link ${proposedLink.sourceLinkId} must name a deterministic source link and materialized source node.`,
+          { nodeId: proposedLink.sourceNodeId },
+        ),
+      )
+      continue
+    }
+    if (claimedLinks.has(sourceLink.id)) {
+      issues.push(
+        issue(
+          'duplicate-link',
+          `Source link ${sourceLink.id} has more than one materialized owner.`,
+          { nodeId: sourceNode.id },
+        ),
+      )
+      continue
+    }
+    if (
+      sourceLink.sourceRunIds.length > 0 &&
+      !sourceLink.sourceRunIds.some((id) =>
+        nodeOwnedSourceRunIds(sourceNode).includes(id),
+      )
+    ) {
+      issues.push(
+        issue(
+          'invalid-link',
+          `Source node ${sourceNode.id} does not own the source anchor for link ${sourceLink.id}.`,
+          { nodeId: sourceNode.id },
+        ),
+      )
+      continue
+    }
+    if (sourceLink.sourceRunIds.length === 0) {
+      const anchoredAsset = sourceNode.assetId
+        ? assetsById.get(sourceNode.assetId)
+        : undefined
+      const exactAssetOwner =
+        anchoredAsset !== undefined &&
+        (sourceLink.sourceAssetIds ?? []).length === 1 &&
+        sourceLink.sourceAssetIds![0] === anchoredAsset.id &&
+        canonicalStringSet(anchoredAsset.sourceObjectIds) ===
+          canonicalStringSet(sourceLink.sourceObjectIds ?? [])
+      const overlaps =
+        anchoredAsset !== undefined &&
+        anchoredAsset.page === sourceLink.page &&
+        Math.max(anchoredAsset.bounds.x, sourceLink.box.x) <
+          Math.min(
+            anchoredAsset.bounds.x + anchoredAsset.bounds.width,
+            sourceLink.box.x + sourceLink.box.width,
+          ) &&
+        Math.max(anchoredAsset.bounds.y, sourceLink.box.y) <
+          Math.min(
+            anchoredAsset.bounds.y + anchoredAsset.bounds.height,
+            sourceLink.box.y + sourceLink.box.height,
+          )
+      if (!exactAssetOwner || !overlaps) {
+        issues.push(
+          issue(
+            'invalid-link',
+            `Image-only link ${sourceLink.id} must be owned by the exact overlapping deterministic asset node.`,
+            { nodeId: sourceNode.id },
+          ),
+        )
+        continue
+      }
+    }
+    if (sourceLink.destination.kind === 'external') {
+      const protocol = new URL(sourceLink.destination.url).protocol
+      if (!['http:', 'https:', 'mailto:'].includes(protocol)) {
+        issues.push(
+          issue(
+            'invalid-link',
+            `Source link ${sourceLink.id} has an unsafe external destination.`,
+            { nodeId: sourceNode.id },
+          ),
+        )
+        continue
+      }
+    }
+    claimedLinks.add(sourceLink.id)
+    materializedLinks.push({
+      sourceLinkId: sourceLink.id,
+      sourceNodeId: sourceNode.id,
+      destination: structuredClone(sourceLink.destination),
+    })
+  }
+  for (const sourceLink of context.sourceLinks ?? []) {
+    if (!claimedLinks.has(sourceLink.id)) {
+      issues.push(
+        issue(
+          'missing-link',
+          `Deterministic source link ${sourceLink.id} has no materialized link or unresolved source-preserved fallback.`,
+        ),
+      )
+    }
+  }
   const accountedSourceRunIds = [...new Set([...claimed, ...excluded])].sort()
   if (issues.length > 0) return { status: 'failed', output: null, issues }
+  const relationshipIds = (context.provenArtifacts ?? [])
+    .filter(({ kind }) => kind.endsWith('-relationship'))
+    .map(({ id }) => id)
+    .sort()
   return {
     status: 'passed',
     issues: [],
@@ -1522,6 +2147,10 @@ export function verifyStructuredExtraction(
       assetIds: assetIds.sort(),
       excludedBoilerplateRunIds: [...excluded].sort(),
       accountedSourceRunIds,
+      links: materializedLinks.sort((left, right) =>
+        left.sourceLinkId.localeCompare(right.sourceLinkId),
+      ),
+      relationshipIds,
     },
   }
 }
@@ -1556,6 +2185,17 @@ export function modelInputForStructuredExtraction(
     sourceSha256: context.sourceSha256,
     split: context.split,
     layout: context.layout,
+    ...(context.regionTopology
+      ? {
+          regionTopology: {
+            regions: context.regionTopology.regions.map((region) => ({
+              ...region,
+              bounds: { ...region.bounds },
+            })),
+            edges: context.regionTopology.edges.map((edge) => ({ ...edge })),
+          },
+        }
+      : {}),
     sourceRuns: context.sourceRuns.map((run) => ({ ...run })),
     ...(context.sourceLines
       ? {
@@ -1573,6 +2213,22 @@ export function modelInputForStructuredExtraction(
         ? { captionRunIds: [...asset.captionRunIds] }
         : {}),
     })),
+    ...(context.sourceLinks
+      ? {
+          sourceLinks: context.sourceLinks.map((link) => ({
+            ...link,
+            sourceRunIds: [...link.sourceRunIds],
+            ...(link.sourceAssetIds
+              ? { sourceAssetIds: [...link.sourceAssetIds] }
+              : {}),
+            ...(link.sourceObjectIds
+              ? { sourceObjectIds: [...link.sourceObjectIds] }
+              : {}),
+            box: { ...link.box },
+            destination: { ...link.destination },
+          })),
+        }
+      : {}),
     ...(context.pageRenditions
       ? {
           pageRenditions: context.pageRenditions.map((rendition) => ({

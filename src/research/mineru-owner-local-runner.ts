@@ -217,7 +217,10 @@ function compareCanonicalCodeUnits(left: string, right: string) {
   return left < right ? -1 : 1
 }
 
-async function listFiles(root: string): Promise<OutputFile[]> {
+async function listFiles(
+  root: string,
+  options: { accountSymlinksWithoutFollowing?: boolean } = {},
+): Promise<OutputFile[]> {
   const canonicalRoot = await realpath(root)
   const output: OutputFile[] = []
   async function visit(directory: string) {
@@ -231,10 +234,20 @@ async function listFiles(root: string): Promise<OutputFile[]> {
       ) {
         fail('MINERU_RUNNER_PATH_ESCAPE')
       }
-      if (entry.isSymbolicLink()) fail('MINERU_RUNNER_SYMLINK_REJECTED')
-      if (entry.isDirectory()) await visit(path)
-      else if (entry.isFile()) {
-        const details = await stat(path)
+      const details = await lstat(path)
+      if (details.isSymbolicLink()) {
+        if (!options.accountSymlinksWithoutFollowing) {
+          fail('MINERU_RUNNER_SYMLINK_REJECTED')
+        }
+        output.push({
+          absolutePath: path,
+          relativePath,
+          size: Math.max(1, details.size, Number(details.blocks) * 512),
+        })
+        continue
+      }
+      if (details.isDirectory()) await visit(path)
+      else if (details.isFile()) {
         output.push({
           absolutePath: path,
           relativePath,
@@ -1179,8 +1192,10 @@ async function assertMeasuredFile(
   }
 }
 
-async function outputUsage(outputRoot: string) {
-  const files = await listFiles(outputRoot)
+export async function measureOwnerLocalResourceTreeUsage(outputRoot: string) {
+  const files = await listFiles(outputRoot, {
+    accountSymlinksWithoutFollowing: true,
+  })
   return {
     count: files.length,
     byteLength: files.reduce((total, file) => total + file.size, 0),
@@ -1188,7 +1203,9 @@ async function outputUsage(outputRoot: string) {
 }
 
 async function outputUsageForRoots(roots: readonly string[]) {
-  const usage = await Promise.all(roots.map((root) => outputUsage(root)))
+  const usage = await Promise.all(
+    roots.map((root) => measureOwnerLocalResourceTreeUsage(root)),
+  )
   return {
     count: usage.reduce((total, value) => total + value.count, 0),
     byteLength: usage.reduce(

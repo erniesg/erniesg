@@ -29,6 +29,7 @@ import {
   assertOwnerLocalMineruResourceUsage,
   buildOwnerLocalMineruIsolationCommand,
   measureOwnerLocalExecutionTree,
+  measureOwnerLocalResourceTreeUsage,
   normalizeMineruRunArtifacts,
   ownerLocalPrivateSnapshotAllocatedBytes,
   parseOwnerLocalMineruArguments,
@@ -278,6 +279,21 @@ describe('owner-local MinerU runner', () => {
         identity,
       } as Parameters<typeof normalizeMineruRunArtifacts>[0]),
     ).rejects.toThrow(/OUTPUT_BOUND/u)
+
+    const linked = await fakeMineruOutput()
+    await symlink(
+      join(linked.outputRoot, 'opaque.md'),
+      join(linked.outputRoot, 'linked-output'),
+    )
+    await expect(
+      normalizeMineruRunArtifacts({
+        sourcePdfPath: fixturePdf,
+        runDirectory: linked.root,
+        outputRoot: linked.outputRoot,
+        maximumCacheBytes: MINERU_MAX_OWNER_CACHE_BYTES,
+        identity,
+      }),
+    ).rejects.toThrow(/SYMLINK_REJECTED/u)
 
     const retained = await fakeMineruOutput()
     const manifest = await normalizeMineruRunArtifacts({
@@ -621,6 +637,35 @@ describe('owner-local MinerU runner', () => {
         fileCount: 4,
       }),
     ).not.toThrow()
+  })
+
+  it('accounts transient private symlinks without following their targets', async () => {
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'mineru-scratch-symlink-test-')),
+    )
+    roots.push(root)
+    const scratch = join(root, 'scratch')
+    const outside = join(root, 'outside')
+    await mkdir(scratch, { mode: 0o700 })
+    await mkdir(outside, { mode: 0o700 })
+    await writeFile(join(outside, 'large-cache-entry'), Buffer.alloc(64 * 1024))
+    await symlink(outside, join(scratch, 'transient-cache-link'))
+
+    const usage = await measureOwnerLocalResourceTreeUsage(scratch)
+    expect(usage.count).toBe(1)
+    expect(usage.byteLength).toBeGreaterThan(0)
+    expect(usage.byteLength).toBeLessThan(64 * 1024)
+    expect(() =>
+      assertOwnerLocalMineruResourceUsage({
+        maximumOutputBytes: 1,
+        maximumCacheBytes: usage.byteLength - 1,
+        cacheByteLength: 0,
+        privateSnapshotByteLength: 0,
+        outputByteLength: 0,
+        privateScratchByteLength: usage.byteLength,
+        fileCount: usage.count,
+      }),
+    ).toThrow(/CACHE_BOUND/u)
   })
 
   it('binds the real offline MLX born-digital and scan smoke receipts to distinct source bytes', async () => {

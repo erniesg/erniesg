@@ -888,7 +888,7 @@ export function structuredExtractionContextFromReconstruction({
                     .filter((id): id is string => id !== undefined),
                   rowSpan: cell.rowSpan,
                   columnSpan: cell.columnSpan,
-                  headerScope: cell.headerScope ?? 'none',
+                  headerScope: cell.headerScope ?? ('none' as const),
                 })),
               }))
             : undefined

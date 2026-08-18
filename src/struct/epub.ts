@@ -1,6 +1,7 @@
 import {
   strFromU8,
   strToU8,
+  unzipSync,
   zipSync,
   type Zippable,
   type ZipOptions,
@@ -24,6 +25,57 @@ table { border-collapse: collapse; width: 100%; }
 td, th { border: 1px solid currentColor; padding: 0.25rem; }
 figure { break-inside: avoid; margin: 1.5rem 0; }
 .visually-hidden, .additional-semantic-reference { clip: rect(0 0 0 0); clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }`
+
+export type StructEpubProfile = {
+  id: string
+  version: string
+  fileName: string
+  pageProgressionDirection: 'ltr' | 'rtl'
+  renditionFlow: 'paginated' | 'scrolled-continuous'
+  configurationSha256: string
+  css: string
+}
+
+export type StructEpubOptions = {
+  profile?: StructEpubProfile
+}
+
+export type StructEpubExport = {
+  bytes: Uint8Array
+  fileName: string
+  mediaType: typeof EPUB_MIMETYPE
+  sha256: string
+  identifier: string
+  entries: string[]
+  mode: 'publication'
+  profile?: ReturnType<typeof profileReceipt>
+}
+
+export type UnprofiledStructEpubExport = Omit<StructEpubExport, 'profile'>
+
+function validProfile(profile: StructEpubProfile) {
+  return (
+    /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(profile.id) &&
+    /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(profile.version) &&
+    /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.epub$/u.test(profile.fileName) &&
+    /^[a-f0-9]{64}$/u.test(profile.configurationSha256) &&
+    profile.css.length > 0 &&
+    !/[\u0000]/u.test(profile.css)
+  )
+}
+
+function profileReceipt(profile: StructEpubProfile) {
+  return {
+    schemaVersion: '1.0.0' as const,
+    id: profile.id,
+    version: profile.version,
+    fileName: profile.fileName,
+    pageProgressionDirection: profile.pageProgressionDirection,
+    renditionFlow: profile.renditionFlow,
+    configurationSha256: profile.configurationSha256,
+    cssSha256: sha256HexSync(profile.css),
+  }
+}
 
 function text(value: string) {
   return value
@@ -239,9 +291,24 @@ function assertStructReceiptIntegrity(document: StructDocument) {
 }
 
 /** Assemble a deterministic EPUB using only the canonical STRUCT contract. */
-export async function buildStructEpub(document: StructDocument) {
+export function buildStructEpub(
+  document: StructDocument,
+): Promise<UnprofiledStructEpubExport>
+export function buildStructEpub(
+  document: StructDocument,
+  options: StructEpubOptions,
+): Promise<StructEpubExport>
+export async function buildStructEpub(
+  document: StructDocument,
+  options: StructEpubOptions = {},
+): Promise<StructEpubExport> {
   assertStructReceiptIntegrity(document)
-  const identifier = `urn:sha256:${document.receipt.generatedSha256}`
+  const profile = options.profile
+  if (profile && !validProfile(profile)) {
+    throw new Error('STRUCT_EPUB_PROFILE_INVALID')
+  }
+  const retainedProfile = profile ? profileReceipt(profile) : undefined
+  const identifier = `urn:sha256:${document.receipt.generatedSha256}${retainedProfile ? `:${retainedProfile.id}:${retainedProfile.version}:${retainedProfile.configurationSha256.slice(0, 16)}` : ''}`
   const language = document.metadata.language ?? 'und'
   const modified = (
     document.metadata.artifactModifiedAt ??
@@ -266,6 +333,7 @@ export async function buildStructEpub(document: StructDocument) {
     'content.xhtml',
     'styles.css',
     'struct.json',
+    'profile.json',
   ])
   const assetIds = new Set<string>()
   const assetHrefs = new Set<string>()
@@ -307,15 +375,17 @@ export async function buildStructEpub(document: StructDocument) {
     <dc:language>${text(language)}</dc:language>
     ${document.metadata.authors.map((author) => `<dc:creator>${text(author)}</dc:creator>`).join('\n    ')}
     <meta property="dcterms:modified">${text(modified)}</meta>
+    ${retainedProfile ? `<meta property="rendition:flow">${retainedProfile.renditionFlow}</meta>` : ''}
   </metadata>
   <manifest>
     <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
     <item id="content" href="content.xhtml" media-type="application/xhtml+xml" />
     <item id="styles" href="styles.css" media-type="text/css" />
     <item id="struct" href="struct.json" media-type="application/json" />
+    ${retainedProfile ? '<item id="profile" href="profile.json" media-type="application/json" />' : ''}
     ${assetItems}
   </manifest>
-  <spine><itemref idref="content" /></spine>
+  <spine${retainedProfile ? ` page-progression-direction="${retainedProfile.pageProgressionDirection}"` : ''}><itemref idref="content" /></spine>
 </package>
 `
   const headings = document.blocks.filter((block) => block.kind === 'heading')
@@ -332,7 +402,7 @@ export async function buildStructEpub(document: StructDocument) {
     'EPUB/package.opf': entry(packageDocument),
     'EPUB/nav.xhtml': entry(nav),
     'EPUB/content.xhtml': entry(content),
-    'EPUB/styles.css': entry(EPUB_CSS),
+    'EPUB/styles.css': entry(profile?.css ?? EPUB_CSS),
     'EPUB/struct.json': entry(
       `${JSON.stringify({
         schemaVersion: document.schemaVersion,
@@ -340,6 +410,11 @@ export async function buildStructEpub(document: StructDocument) {
         receipt: document.receipt,
       })}\n`,
     ),
+    ...(retainedProfile
+      ? {
+          'EPUB/profile.json': entry(`${JSON.stringify(retainedProfile)}\n`),
+        }
+      : {}),
     ...Object.fromEntries(
       assets.map((asset) => [`EPUB/${asset.href}`, binaryEntry(asset.bytes)]),
     ),
@@ -362,13 +437,29 @@ export async function buildStructEpub(document: StructDocument) {
     ),
   )
   const bytes = zipSync(archive)
+  if (retainedProfile) {
+    const reopened = unzipSync(bytes)
+    const reopenedProfile = reopened['EPUB/profile.json']
+    const reopenedCss = reopened['EPUB/styles.css']
+    if (
+      !reopenedProfile ||
+      !reopenedCss ||
+      strFromU8(reopenedProfile) !== `${JSON.stringify(retainedProfile)}\n` ||
+      sha256HexSync(reopenedCss) !== retainedProfile.cssSha256
+    ) {
+      throw new Error('STRUCT_EPUB_PROFILE_REOPEN_MISMATCH')
+    }
+  }
   return {
     bytes,
-    fileName: `${slug(document.metadata.title)}-${document.receipt.generatedSha256.slice(0, 12)}.epub`,
+    fileName:
+      retainedProfile?.fileName ??
+      `${slug(document.metadata.title)}-${document.receipt.generatedSha256.slice(0, 12)}.epub`,
     mediaType: EPUB_MIMETYPE,
     sha256: sha256HexSync(bytes),
     identifier,
     entries: Object.keys(archive),
     mode: 'publication' as const,
+    ...(retainedProfile ? { profile: retainedProfile } : {}),
   }
 }

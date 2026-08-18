@@ -447,6 +447,28 @@ describe('source-backed structured extraction verifier', () => {
       id: 'table-scope',
       kind: 'table-scope',
       sourceRunIds: ['table-head', 'table-value'],
+      tableRows: [
+        {
+          cells: [
+            {
+              sourceRunIds: ['table-head'],
+              rowSpan: 2,
+              columnSpan: 1,
+              headerScope: 'rowgroup',
+            },
+          ],
+        },
+        {
+          cells: [
+            {
+              sourceRunIds: ['table-value'],
+              rowSpan: 1,
+              columnSpan: 2,
+              headerScope: 'none',
+            },
+          ],
+        },
+      ],
     })
     const candidate = validProposal()
     candidate.nodes = candidate.nodes.filter(
@@ -458,8 +480,24 @@ describe('source-backed structured extraction verifier', () => {
       sourceRunIds: ['table-head', 'table-value'],
       table: {
         rows: [
-          { cells: [{ sourceRunIds: ['table-head'], headerScope: 'column' }] },
-          { cells: [{ sourceRunIds: ['table-value'], headerScope: 'none' }] },
+          {
+            cells: [
+              {
+                sourceRunIds: ['table-head'],
+                headerScope: 'rowgroup',
+                rowSpan: 2,
+              },
+            ],
+          },
+          {
+            cells: [
+              {
+                sourceRunIds: ['table-value'],
+                headerScope: 'none',
+                columnSpan: 2,
+              },
+            ],
+          },
         ],
       },
     })
@@ -472,8 +510,80 @@ describe('source-backed structured extraction verifier', () => {
       ).toMatchObject({
         text: 'Measure',
         sourceRunIds: ['table-head'],
-        headerScope: 'column',
+        headerScope: 'rowgroup',
+        rowSpan: 2,
+        columnSpan: 1,
       })
+    }
+  })
+
+  it('rejects table spans that differ from the deterministic table grid', () => {
+    const input = context()
+    input.provenArtifacts!.push({
+      id: 'table-span-scope',
+      kind: 'table-scope',
+      sourceRunIds: ['table-head', 'table-value'],
+      tableRows: [
+        {
+          cells: [
+            {
+              sourceRunIds: ['table-head'],
+              rowSpan: 1,
+              columnSpan: 2,
+              headerScope: 'column',
+            },
+          ],
+        },
+        {
+          cells: [
+            {
+              sourceRunIds: ['table-value'],
+              rowSpan: 1,
+              columnSpan: 2,
+              headerScope: 'none',
+            },
+          ],
+        },
+      ],
+    })
+    const candidate = validProposal()
+    candidate.nodes = candidate.nodes.filter(
+      ({ id }) => id !== 'table-source-text',
+    )
+    candidate.nodes.push({
+      id: 'table',
+      type: 'table',
+      sourceRunIds: ['table-head', 'table-value'],
+      table: {
+        rows: [
+          {
+            cells: [
+              {
+                sourceRunIds: ['table-head'],
+                headerScope: 'column',
+                rowSpan: 2,
+                columnSpan: 1,
+              },
+            ],
+          },
+          {
+            cells: [
+              {
+                sourceRunIds: ['table-value'],
+                headerScope: 'none',
+                columnSpan: 2,
+              },
+            ],
+          },
+        ],
+      },
+    })
+
+    const result = verifyStructuredExtraction(input, candidate)
+
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues.map(({ code }) => code)).toContain('invalid-table')
     }
   })
 

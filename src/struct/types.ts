@@ -128,7 +128,7 @@ export type StructTableCell = {
   column: number
   rowSpan: number
   columnSpan: number
-  headerScope: 'column' | 'row' | null
+  headerScope: 'column' | 'row' | 'colgroup' | 'rowgroup' | null
   inline: StructInline[]
   evidence: StructEvidence
 }

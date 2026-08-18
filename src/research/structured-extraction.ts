@@ -135,6 +135,15 @@ export type StructuredProvenArtifact = {
   targetSourceRunIds?: string[]
   /** One exact destination group per deterministic relationship target. */
   targetSourceRunIdGroups?: string[][]
+  /** Exact deterministic table grid owned by a table-scope artifact. */
+  tableRows?: Array<{
+    cells: Array<{
+      sourceRunIds: string[]
+      rowSpan: number
+      columnSpan: number
+      headerScope: 'row' | 'column' | 'rowgroup' | 'colgroup' | 'none'
+    }>
+  }>
 }
 
 export type StructuredExtractionContext = {
@@ -158,6 +167,8 @@ export type StructuredExtractionContext = {
 export type StructuredExtractionTableCell = {
   sourceRunIds: string[]
   headerScope?: 'row' | 'column' | 'rowgroup' | 'colgroup' | 'none'
+  rowSpan?: number
+  columnSpan?: number
 }
 
 export type StructuredExtractionTable = {
@@ -213,6 +224,8 @@ export type VerifiedStructuredExtractionNode = Omit<
         text: string
         sourceRunIds: string[]
         headerScope: NonNullable<StructuredExtractionTableCell['headerScope']>
+        rowSpan: number
+        columnSpan: number
       }>
     }>
   }
@@ -419,6 +432,33 @@ const sourceArtifactSchema = z
     sourceRunIds: z.array(idSchema),
     targetSourceRunIds: z.array(idSchema).optional(),
     targetSourceRunIdGroups: z.array(z.array(idSchema).min(1)).optional(),
+    tableRows: z
+      .array(
+        z
+          .object({
+            cells: z
+              .array(
+                z
+                  .object({
+                    sourceRunIds: z.array(idSchema).min(1),
+                    rowSpan: z.number().int().positive(),
+                    columnSpan: z.number().int().positive(),
+                    headerScope: z.enum([
+                      'row',
+                      'column',
+                      'rowgroup',
+                      'colgroup',
+                      'none',
+                    ]),
+                  })
+                  .strict(),
+              )
+              .min(1),
+          })
+          .strict(),
+      )
+      .min(1)
+      .optional(),
   })
   .strict()
 
@@ -445,6 +485,8 @@ const tableCellSchema = z
     headerScope: z
       .enum(['row', 'column', 'rowgroup', 'colgroup', 'none'])
       .optional(),
+    rowSpan: z.number().int().positive().optional(),
+    columnSpan: z.number().int().positive().optional(),
   })
   .strict()
 
@@ -800,8 +842,8 @@ export function structuredExtractionContextFromReconstruction({
                 sourceAssetIds: overlappingAssets.map(({ id }) => id).sort(),
                 sourceObjectIds: [
                   ...new Set(
-                    overlappingAssets.flatMap(({ sourceObjectIds }) =>
-                      sourceObjectIds,
+                    overlappingAssets.flatMap(
+                      ({ sourceObjectIds }) => sourceObjectIds,
                     ),
                   ),
                 ].sort(),
@@ -825,11 +867,45 @@ export function structuredExtractionContextFromReconstruction({
     })),
     ...reconstruction.visualRelationships
       .filter(({ kind }) => kind === 'table')
-      .map((relationship) => ({
-        id: relationship.id,
-        kind: 'table-scope' as const,
-        sourceRunIds: relationship.sourceRegionIds.flatMap(runIdsForRegion),
-      })),
+      .map((relationship) => {
+        const tableNode = reconstruction.paper.nodes.find(
+          (node) =>
+            node.id === relationship.canonicalNodeId &&
+            node.type === 'figure' &&
+            node.objectType === 'table' &&
+            node.table !== undefined,
+        )
+        const tableRows =
+          tableNode?.type === 'figure' && tableNode.table
+            ? tableNode.table.rows.map((row) => ({
+                cells: row.cells.map((cell) => ({
+                  sourceRunIds: (cell.sourceRuns ?? [])
+                    .map(({ regionId, lineId, runIndex }) =>
+                      runIdsByKey.get(
+                        `${regionId}\u0000${lineId}\u0000${runIndex}`,
+                      ),
+                    )
+                    .filter((id): id is string => id !== undefined),
+                  rowSpan: cell.rowSpan,
+                  columnSpan: cell.columnSpan,
+                  headerScope: cell.headerScope ?? 'none',
+                })),
+              }))
+            : undefined
+        const closedTableRows = tableRows?.every(
+          ({ cells }) =>
+            cells.length > 0 &&
+            cells.every(({ sourceRunIds }) => sourceRunIds.length > 0),
+        )
+          ? tableRows
+          : undefined
+        return {
+          id: relationship.id,
+          kind: 'table-scope' as const,
+          sourceRunIds: relationship.sourceRegionIds.flatMap(runIdsForRegion),
+          ...(closedTableRows ? { tableRows: closedTableRows } : {}),
+        }
+      }),
     ...reconstruction.lineBoundaryDecisions.map((decision) => ({
       id: decision.id,
       kind: 'line-boundary' as const,
@@ -1063,6 +1139,14 @@ function verifyNodeTable(
       (cellSourceRunCounts.get(sourceRunId) ?? 0) + 1,
     )
   }
+  const proposedTableRows = node.table.rows.map((row) => ({
+    cells: row.cells.map((cell) => ({
+      sourceRunIds: [...cell.sourceRunIds],
+      rowSpan: cell.rowSpan ?? 1,
+      columnSpan: cell.columnSpan ?? 1,
+      headerScope: cell.headerScope ?? 'none',
+    })),
+  }))
   const matchingScopes = provenArtifacts.filter((artifact) => {
     if (
       artifact.kind !== 'table-scope' ||
@@ -1074,12 +1158,16 @@ function verifyNodeTable(
     for (const sourceRunId of artifact.sourceRunIds) {
       scopeCounts.set(sourceRunId, (scopeCounts.get(sourceRunId) ?? 0) + 1)
     }
-    return (
+    const ownsExactScope =
       scopeCounts.size === cellSourceRunCounts.size &&
       [...scopeCounts].every(
         ([sourceRunId, count]) =>
           cellSourceRunCounts.get(sourceRunId) === count,
       )
+    if (!ownsExactScope) return false
+    return (
+      artifact.tableRows === undefined ||
+      stableJson(artifact.tableRows) === stableJson(proposedTableRows)
     )
   })
   if (matchingScopes.length !== 1) {
@@ -1160,6 +1248,8 @@ function verifyNodeTable(
         text: cellText,
         sourceRunIds: [...cell.sourceRunIds],
         headerScope: cell.headerScope ?? 'none',
+        rowSpan: cell.rowSpan ?? 1,
+        columnSpan: cell.columnSpan ?? 1,
       })
     }
     rows.rows.push({ cells })
@@ -2252,6 +2342,16 @@ export function modelInputForStructuredExtraction(
             targetSourceRunIdGroups: artifact.targetSourceRunIdGroups.map(
               (group) => [...group],
             ),
+          }
+        : {}),
+      ...(artifact.tableRows
+        ? {
+            tableRows: artifact.tableRows.map(({ cells }) => ({
+              cells: cells.map((cell) => ({
+                ...cell,
+                sourceRunIds: [...cell.sourceRunIds],
+              })),
+            })),
           }
         : {}),
     }))

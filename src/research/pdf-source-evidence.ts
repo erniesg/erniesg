@@ -11,6 +11,7 @@ import {
   type PdfEvidenceBundle,
   type PdfEvidenceCandidate,
   type PdfEvidenceDisagreement,
+  type PdfEvidenceJsonValue,
   type PdfEvidenceObligation,
   type PdfEvidenceObservationCategory,
   type PdfEvidenceProviderIdentity,
@@ -49,6 +50,10 @@ export type PdfDeterministicEvidence = {
 }
 
 const SHA256 = /^[a-f0-9]{64}$/u
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
 
 function invalid(code: string): never {
   throw new Error(code)
@@ -562,6 +567,28 @@ export function pdfEvidenceBundlesFromReconstruction(
     })
   }
 
+  const relationshipPayload = (
+    kind: string,
+    value: PdfEvidenceJsonValue,
+  ): PdfEvidenceJsonValue => {
+    if (kind !== 'table-relationship' || !isRecord(value)) {
+      return evidenceJson(value)
+    }
+    const canonicalNodeId = value.canonicalNodeId
+    const tableNode = reconstruction.paper.nodes.find(
+      (node) =>
+        node.id === canonicalNodeId &&
+        node.type === 'figure' &&
+        node.objectType === 'table' &&
+        node.table !== undefined,
+    )
+    return tableNode?.type === 'figure' && tableNode.table
+      ? {
+          ...(evidenceJson(value) as Record<string, PdfEvidenceJsonValue>),
+          semanticTable: evidenceJson(tableNode.table),
+        }
+      : evidenceJson(value)
+  }
   const relationships = [
     ...reconstruction.noteRelationships.map((value) => ({
       kind: 'note-relationship',
@@ -599,7 +626,10 @@ export function pdfEvidenceBundlesFromReconstruction(
       box: relationship.value.sourceBoxes[0]
         ? evidenceBox(relationship.value.sourceBoxes[0])
         : undefined,
-      payload: clonePayload(relationship.value),
+      payload: relationshipPayload(
+        relationship.kind,
+        relationship.value as unknown as PdfEvidenceJsonValue,
+      ),
     })
     const relationshipCandidateIds = [selectedId]
     candidates.push({
@@ -609,7 +639,10 @@ export function pdfEvidenceBundlesFromReconstruction(
       page,
       boxes: relationship.value.sourceBoxes.map(evidenceBox),
       sourceIds: [sourceId],
-      payload: clonePayload(relationship.value),
+      payload: relationshipPayload(
+        relationship.kind,
+        relationship.value as unknown as PdfEvidenceJsonValue,
+      ),
     })
     for (const [
       alternativeIndex,

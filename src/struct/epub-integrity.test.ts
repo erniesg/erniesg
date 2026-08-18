@@ -161,6 +161,52 @@ function legacyDocumentWithHref(href: string, locale?: string): StructDocument {
 }
 
 describe('STRUCT EPUB href integrity', () => {
+  it('reopens an exact profiled stylesheet and immutable profile receipt', async () => {
+    const profile = {
+      id: 'mobile',
+      version: '1.1.0',
+      fileName: 'publication-mobile.epub',
+      pageProgressionDirection: 'ltr' as const,
+      renditionFlow: 'scrolled-continuous' as const,
+      configurationSha256: 'c'.repeat(64),
+      css: 'body { font-size: 15px; }',
+    }
+    const epub = await buildStructEpub(documentWithHref('#target'), {
+      profile,
+    })
+    const files = unzipSync(epub.bytes)
+
+    expect(epub.fileName).toBe(profile.fileName)
+    expect(epub.profile).toMatchObject({
+      id: profile.id,
+      version: profile.version,
+      configurationSha256: profile.configurationSha256,
+    })
+    expect(strFromU8(files['EPUB/styles.css']!)).toBe(profile.css)
+    expect(JSON.parse(strFromU8(files['EPUB/profile.json']!))).toEqual(
+      epub.profile,
+    )
+    expect(strFromU8(files['EPUB/package.opf']!)).toContain(
+      '<meta property="rendition:flow">scrolled-continuous</meta>',
+    )
+  })
+
+  it('rejects a self-authored or malformed profile before packaging', async () => {
+    await expect(
+      buildStructEpub(documentWithHref('#target'), {
+        profile: {
+          id: '../mobile',
+          version: '1.1.0',
+          fileName: 'publication-mobile.epub',
+          pageProgressionDirection: 'ltr',
+          renditionFlow: 'scrolled-continuous',
+          configurationSha256: 'c'.repeat(64),
+          css: 'body {}',
+        },
+      }),
+    ).rejects.toThrow('STRUCT_EPUB_PROFILE_INVALID')
+  })
+
   it.each([
     ['same-document fragment', '#target'],
     ['packaged XHTML fragment', 'content.xhtml#target'],

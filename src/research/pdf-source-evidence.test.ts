@@ -175,4 +175,82 @@ describe('deterministic PDF source evidence', () => {
       ),
     ).toBe(true)
   })
+
+  it('retains source-proved semantic table spans in the selected graph candidate', () => {
+    const input = reconstruction()
+    input.paper = {
+      id: 'ordinary-document',
+      nodes: [
+        {
+          id: 'table-node',
+          type: 'figure',
+          title: 'Table 1',
+          objectType: 'table',
+          table: {
+            rows: [
+              {
+                cells: [
+                  {
+                    text: 'Header',
+                    headerScope: 'column',
+                    rowSpan: 1,
+                    columnSpan: 2,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    } as PdfReconstruction['paper']
+    input.visualRelationships = [
+      {
+        id: 'table-relationship',
+        kind: 'table',
+        label: 'Table 1',
+        captionRegionId: 'caption-region',
+        sourceRegionIds: [],
+        sourceObjectIds: [],
+        assetIds: [],
+        status: 'matched',
+        confidence: 1,
+        evidence: ['semantic-table-source'],
+        candidates: [],
+        sourceBoxes: [
+          {
+            page: 1,
+            x: 0.1,
+            y: 0.2,
+            width: 0.2,
+            height: 0.02,
+            rotation: 0,
+            method: 'pdf-text',
+          },
+        ],
+        sourceText: 'Header',
+        altText: 'Table 1',
+        altTextSource: 'caption',
+        canonicalNodeId: 'table-node',
+        captionNodeId: null,
+      },
+    ]
+
+    const extracted = pdfEvidenceBundlesFromReconstruction(input, {
+      pageRenders: [renderEvidence()],
+    })
+    const selected = extracted.bundles[0]!.candidates.find(
+      ({ kind }) => kind === 'table-relationship',
+    )
+
+    expect(selected?.payload).toMatchObject({
+      semanticTable: {
+        rows: [
+          {
+            cells: [expect.objectContaining({ rowSpan: 1, columnSpan: 2 })],
+          },
+        ],
+      },
+    })
+    expect(() => validatePdfEvidenceBundle(extracted.bundles[0]!)).not.toThrow()
+  })
 })

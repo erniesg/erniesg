@@ -68,20 +68,42 @@ function sourceObligationProjection(obligations: PdfEvidenceObligation[]) {
   }))
 }
 
+function outputRequiredSemanticObligations(graph: SourceEvidenceGraph) {
+  return graph.obligations.filter(
+    ({ required, semantic }) => required && semantic,
+  )
+}
+
 function sourceRegions(graph: SourceEvidenceGraph): SourceRegionObligation[] {
   const reader = readSourceEvidenceGraph(graph)
-  const candidates = reader.allCandidates()
-  return graph.bundles
-    .flatMap(({ sources }) => sources)
-    .map((source) => {
-      const candidateBoxes = candidates
-        .filter(({ sourceIds }) => sourceIds.includes(source.id))
-        .flatMap(({ boxes }) => boxes ?? [])
-      const boxes = source.box ? [source.box] : candidateBoxes
+  return outputRequiredSemanticObligations(graph)
+    .map((obligation) => {
+      const boxes = [
+        ...obligation.sourceIds.flatMap((id) => {
+          const box = reader.sourceItem(id)!.box
+          return box ? [box] : []
+        }),
+        ...obligation.candidateIds.flatMap(
+          (id) => reader.candidate(id)!.boxes ?? [],
+        ),
+        ...obligation.artifactIds.flatMap((id) => {
+          const box = reader.artifact(id)!.box
+          return box ? [box] : []
+        }),
+      ].filter(
+        (box, index, all) =>
+          all.findIndex(
+            (candidate) =>
+              canonicalTraceJson(candidate) === canonicalTraceJson(box),
+          ) === index,
+      )
       const page =
-        source.page ?? boxes[0]?.page ?? graph.bundles[0]?.pages[0]?.page ?? 1
+        obligation.page ??
+        boxes[0]?.page ??
+        graph.bundles[0]?.pages[0]?.page ??
+        1
       return {
-        id: source.id,
+        id: obligation.id,
         source: {
           page,
           boxes: boxes
@@ -94,7 +116,7 @@ function sourceRegions(graph: SourceEvidenceGraph): SourceRegionObligation[] {
               height,
               rotation,
             })),
-          sourceRegionIds: [source.id],
+          sourceRegionIds: [obligation.id],
         },
       }
     })
@@ -171,8 +193,8 @@ function expectedSets(
   )
   return SOURCE_EPUB_OBSERVATION_CHECK_IDS.map(
     (check): VerifiedExpectedObservationSet => {
-      const applicable = graph.obligations.filter((obligation) =>
-        obligation.observationCategories.includes(check),
+      const applicable = outputRequiredSemanticObligations(graph).filter(
+        (obligation) => obligation.observationCategories.includes(check),
       )
       const payload: CanonicalObservationPayload = {
         schemaVersion: '1.0.0',
@@ -248,7 +270,7 @@ function expectedSets(
           byteLength: payloadBytes.byteLength,
         },
         sourceRegionIds: [
-          ...new Set(applicable.flatMap(({ sourceIds }) => sourceIds)),
+          ...new Set(applicable.map(({ id }) => id)),
         ].sort(),
       }
       const set: SourceExpectedObservationSet = {

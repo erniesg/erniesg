@@ -872,6 +872,21 @@ describe('extraction architecture bake-off', () => {
         .filter(({ layout }) => layout === 'one-column')
         .map(({ stratum }) => stratum),
     ).toEqual(['tables'])
+    expect(
+      report.arms['llm-authored'].documents.every(
+        ({ status }) => status === 'failed',
+      ),
+    ).toBe(true)
+    const authoredCases = report.arms['llm-authored'].documents[0]!.caseScores
+    expect(
+      authoredCases.find(({ stratum }) => stratum === 'tables')?.verification
+        .status,
+    ).toBe('failed')
+    expect(
+      authoredCases
+        .filter(({ stratum }) => stratum !== 'tables')
+        .every(({ verification }) => verification.status === 'passed'),
+    ).toBe(true)
   })
 
   it('does not certify score-once when the same identity is rerun', async () => {

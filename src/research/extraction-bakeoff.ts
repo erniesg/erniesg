@@ -7,6 +7,7 @@ import {
   type StructuredExtractionSplit,
   structuredExtractionHash,
   structuredExtractionStableJson,
+  parseStructuredExtractionProposal,
   verifyStructuredExtraction,
   modelInputForStructuredExtraction,
   type VerifiedStructuredExtraction,
@@ -432,7 +433,7 @@ function ratio(numerator: number, denominator: number) {
 }
 
 function verifiedNodeSourceRunIds(
-  node: VerifiedStructuredExtraction['nodes'][number],
+  node: StructuredExtractionProposal['nodes'][number],
 ) {
   return [
     ...node.sourceRunIds,
@@ -440,6 +441,170 @@ function verifiedNodeSourceRunIds(
       cells.flatMap(({ sourceRunIds }) => sourceRunIds),
     ) ?? []),
   ]
+}
+
+function caseEvidenceProjection(
+  context: StructuredExtractionContext,
+  caseInput: ExtractionBakeoffCase,
+) {
+  const sourceRunIds = new Set([
+    ...(caseInput.expectedSourceRunIds ?? []),
+    ...(caseInput.expectedExcludedBoilerplateRunIds ?? []),
+  ])
+  const assetIds = new Set(caseInput.expectedAssetIds ?? [])
+  const sourceRuns = context.sourceRuns.filter(({ id }) =>
+    sourceRunIds.has(id),
+  )
+  const sourceLines = (context.sourceLines ?? [])
+    .map((line) => ({
+      ...line,
+      sourceRunIds: line.sourceRunIds.filter((id) => sourceRunIds.has(id)),
+    }))
+    .filter(({ sourceRunIds: ids }) => ids.length > 0)
+  const sourceAssets = context.sourceAssets.filter(({ id }) =>
+    assetIds.has(id),
+  )
+  const sourceLinks = (context.sourceLinks ?? []).filter(
+    ({ sourceRunIds: runIds, sourceAssetIds: linkAssetIds }) =>
+      runIds.every((id) => sourceRunIds.has(id)) &&
+      (linkAssetIds ?? []).every((id) => assetIds.has(id)) &&
+      (runIds.length > 0 || (linkAssetIds?.length ?? 0) > 0),
+  )
+  const selectedRegionIds = new Set(
+    sourceRuns.flatMap(({ regionId }) => (regionId ? [regionId] : [])),
+  )
+  const regionTopology = context.regionTopology
+    ? {
+        regions: context.regionTopology.regions.filter(({ id }) =>
+          selectedRegionIds.has(id),
+        ),
+        edges: context.regionTopology.edges.filter(
+          ({ fromRegionId, toRegionId }) =>
+            selectedRegionIds.has(fromRegionId) &&
+            selectedRegionIds.has(toRegionId),
+        ),
+      }
+    : undefined
+  const provenArtifacts = (context.provenArtifacts ?? []).filter((artifact) =>
+    [
+      ...artifact.sourceRunIds,
+      ...(artifact.targetSourceRunIds ?? []),
+      ...(artifact.targetSourceRunIdGroups ?? []).flat(),
+    ].every((id) => sourceRunIds.has(id)),
+  )
+  const projectedContext: StructuredExtractionContext = {
+    documentId: context.documentId,
+    sourceSha256: context.sourceSha256,
+    split: context.split,
+    layout: context.layout,
+    ...(regionTopology ? { regionTopology } : {}),
+    sourceRuns,
+    ...(sourceLines.length > 0 ? { sourceLines } : {}),
+    sourceAssets,
+    ...(sourceLinks.length > 0 ? { sourceLinks } : {}),
+    ...(context.pageRenditions
+      ? { pageRenditions: context.pageRenditions }
+      : {}),
+    ...(provenArtifacts.length > 0 ? { provenArtifacts } : {}),
+    ...(caseInput.expectedExcludedBoilerplateRunIds
+      ? {
+          boilerplateRunIds: [
+            ...caseInput.expectedExcludedBoilerplateRunIds,
+          ],
+        }
+      : {}),
+  }
+  return { projectedContext, sourceRunIds, assetIds, sourceLinks }
+}
+
+function projectProposalForCase(
+  proposal: StructuredExtractionProposal,
+  caseInput: ExtractionBakeoffCase,
+  sourceRunIds: ReadonlySet<string>,
+  assetIds: ReadonlySet<string>,
+  sourceLinkIds: ReadonlySet<string>,
+): StructuredExtractionProposal {
+  const nodes = proposal.nodes.filter((node) => {
+    if (verifiedNodeSourceRunIds(node).some((id) => sourceRunIds.has(id))) {
+      return true
+    }
+    if (node.assetId && assetIds.has(node.assetId)) return true
+    return (
+      sourceRunIds.size === 0 &&
+      assetIds.size === 0 &&
+      caseInput.expectedNodeTypes.includes(node.type)
+    )
+  })
+  const nodeIds = new Set(nodes.map(({ id }) => id))
+  return {
+    ...proposal,
+    nodes,
+    assetIds: (proposal.assetIds ?? []).filter((id) => assetIds.has(id)),
+    links: (proposal.links ?? []).filter(
+      ({ sourceLinkId, sourceNodeId }) =>
+        sourceLinkIds.has(sourceLinkId) && nodeIds.has(sourceNodeId),
+    ),
+    excludedBoilerplateRunIds: (
+      proposal.excludedBoilerplateRunIds ?? []
+    ).filter((id) => sourceRunIds.has(id)),
+  }
+}
+
+function scoreCaseAttempts(
+  context: StructuredExtractionContext,
+  caseInput: ExtractionBakeoffCase,
+  firstProposalInput: unknown,
+  secondProposalInput: unknown,
+  documentVerification: ExtractionBakeoffVerification,
+) {
+  let firstProposal: StructuredExtractionProposal
+  let secondProposal: StructuredExtractionProposal
+  try {
+    firstProposal = parseStructuredExtractionProposal(firstProposalInput)
+    secondProposal = parseStructuredExtractionProposal(secondProposalInput)
+  } catch {
+    return scoreCase(caseInput, null, documentVerification)
+  }
+  const { projectedContext, sourceRunIds, assetIds, sourceLinks } =
+    caseEvidenceProjection(context, caseInput)
+  const sourceLinkIds = new Set(sourceLinks.map(({ id }) => id))
+  const firstVerification = verifyStructuredExtraction(
+    projectedContext,
+    projectProposalForCase(
+      firstProposal,
+      caseInput,
+      sourceRunIds,
+      assetIds,
+      sourceLinkIds,
+    ),
+  )
+  const secondVerification = verifyStructuredExtraction(
+    projectedContext,
+    projectProposalForCase(
+      secondProposal,
+      caseInput,
+      sourceRunIds,
+      assetIds,
+      sourceLinkIds,
+    ),
+  )
+  const byteStable =
+    firstVerification.status === 'passed' &&
+    secondVerification.status === 'passed' &&
+    structuredExtractionStableJson(firstVerification.output) ===
+      structuredExtractionStableJson(secondVerification.output)
+  const verification = combinedVerification(
+    firstVerification,
+    secondVerification,
+    byteStable,
+  )
+  const output =
+    firstVerification.status === 'passed' &&
+    secondVerification.status === 'passed' &&
+    byteStable
+      ? firstVerification.output
+      : null
+  return scoreCase(caseInput, output, verification)
 }
 
 function scoreCase(
@@ -748,7 +913,7 @@ function comparisons(
             ].join('\u0000'),
           )
           .sort()
-        return [result.status, result.byteStable, ...rowScores].join('\u0001')
+        return rowScores.length > 0 ? rowScores.join('\u0001') : 'missing'
       })
       return new Set(states).size > 1
     })
@@ -966,7 +1131,13 @@ export async function runExtractionBakeoff({
           ? firstVerification.output
           : null
       const caseScores = document.cases.map((caseInput) =>
-        scoreCase(caseInput, output, verification),
+        scoreCaseAttempts(
+          document.context,
+          caseInput,
+          first.proposal,
+          second.proposal,
+          verification,
+        ),
       )
       const status: ExtractionBakeoffDocumentResult['status'] =
         firstVerification.status === 'passed' &&
@@ -1018,7 +1189,11 @@ export async function runExtractionBakeoff({
         arms: states
           .filter(({ rowScores }) => rowScores.length > 0)
           .map(({ arm }) => arm),
-        reason: states.some(({ result }) => result?.status !== 'passed')
+        reason: states.some(({ rowScores }) =>
+          rowScores.some(
+            ({ verification }) => verification.status !== 'passed',
+          ),
+        )
           ? ('verification' as const)
           : new Set(structures).size > 1
             ? ('structure' as const)

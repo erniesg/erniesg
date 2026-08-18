@@ -76,6 +76,28 @@ function graphInput(): SourceEvidenceGraphInput {
             artifactIds: ['page-render'],
             payload: { text: 'Any incoming PDF text.' },
           },
+          {
+            id: 'page-geometry-source',
+            providerId: 'pdfjs-provider',
+            kind: 'page-geometry',
+            page: 1,
+            payload: { width: 612, height: 792, rotation: 0 },
+          },
+          {
+            id: 'font-source',
+            providerId: 'pdfjs-provider',
+            kind: 'font',
+            page: 1,
+            payload: { family: 'Fixture Serif' },
+          },
+          {
+            id: 'excluded-decoration-source',
+            providerId: 'pdfjs-provider',
+            kind: 'excluded-decoration',
+            page: 1,
+            box: { ...box, y: 0.95, height: 0.02 },
+            payload: { text: 'Running footer' },
+          },
         ],
         candidates: [
           {
@@ -178,6 +200,39 @@ function graphInput(): SourceEvidenceGraphInput {
         required: true,
         semantic: true,
       },
+      {
+        id: 'page-geometry-context',
+        kind: 'page-geometry',
+        page: 1,
+        sourceIds: ['page-geometry-source'],
+        artifactIds: [],
+        candidateIds: [],
+        observationCategories: ['clipping', 'overflow'],
+        required: true,
+        semantic: false,
+      },
+      {
+        id: 'font-context',
+        kind: 'font-context',
+        page: 1,
+        sourceIds: ['font-source'],
+        artifactIds: [],
+        candidateIds: [],
+        observationCategories: ['text-exactness'],
+        required: true,
+        semantic: false,
+      },
+      {
+        id: 'excluded-decoration-context',
+        kind: 'excluded-decoration',
+        page: 1,
+        sourceIds: ['excluded-decoration-source'],
+        artifactIds: [],
+        candidateIds: [],
+        observationCategories: ['object-counts'],
+        required: false,
+        semantic: false,
+      },
     ],
     disagreements: [],
   }
@@ -208,22 +263,33 @@ describe('source evidence contract for #199', () => {
         ({ check }) => check === 'text-exactness',
       )?.itemCount,
     ).toBe(1)
-    expect(contract.sourceRegions).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: 'text-source',
-          source: expect.objectContaining({
-            page: 1,
-            sourceRegionIds: ['text-source'],
-          }),
+    expect(contract.sourceRegions).toEqual([
+      expect.objectContaining({
+        id: 'text-obligation',
+        source: expect.objectContaining({
+          page: 1,
+          sourceRegionIds: ['text-obligation'],
         }),
-        expect.objectContaining({ id: 'mineru-source' }),
-      ]),
-    )
-    expect(contract.sourceRegions.map(({ id }) => id)).toEqual([
-      'mineru-source',
-      'text-source',
+      }),
     ])
+    expect(
+      contract.graph.bundles
+        .flatMap(({ sources }) => sources)
+        .filter(({ id }) =>
+          [
+            'page-geometry-source',
+            'font-source',
+            'excluded-decoration-source',
+          ].includes(id),
+        )
+        .map(({ kind }) => kind)
+        .sort(),
+    ).toEqual(['excluded-decoration', 'font', 'page-geometry'])
+    expect(
+      contract.expectedObservationSets
+        .flatMap(({ sourceRegionIds }) => sourceRegionIds)
+        .every((id) => id === 'text-obligation'),
+    ).toBe(true)
     expect(contract.evidenceCandidates).toEqual(
       contract.candidateReferences.map(
         ({ referenceSha256, bindingSha256 }) => ({
@@ -292,6 +358,58 @@ describe('source evidence contract for #199', () => {
         ])
       }
     }
+  })
+
+  it('authenticates context-only evidence without inventing output-region obligations', () => {
+    const graph = buildSourceEvidenceGraph(graphInput())
+    const contract = createSourceEvidenceContract(graph, verifierIdentity)
+
+    expect(contract.graphArtifact.sha256).toBe(graph.graphSha256)
+    expect(
+      contract.graph.bundles
+        .flatMap(({ sources }) => sources)
+        .filter(({ id }) =>
+          [
+            'page-geometry-source',
+            'font-source',
+            'excluded-decoration-source',
+          ].includes(id),
+        )
+        .map(({ kind }) => kind)
+        .sort(),
+    ).toEqual(['excluded-decoration', 'font', 'page-geometry'])
+    expect(contract.sourceRegions.map(({ id }) => id)).toEqual([
+      'text-obligation',
+    ])
+    expect(
+      contract.expectedObservationSets
+        .flatMap(({ sourceRegionIds }) => sourceRegionIds)
+        .every((id) => id === 'text-obligation'),
+    ).toBe(true)
+
+    const alteredInput = graphInput()
+    const deterministicBundle = alteredInput.bundles.find(
+      ({ armId }) => armId === 'deterministic',
+    )!
+    deterministicBundle.sources.find(
+      ({ id }) => id === 'font-source',
+    )!.payload = { family: 'Changed fixture font' }
+    alteredInput.deterministicContext =
+      deterministicContextReceiptForBundle(deterministicBundle)
+    expect(buildSourceEvidenceGraph(alteredInput).graphSha256).not.toBe(
+      graph.graphSha256,
+    )
+
+    const noOutputObligation = graphInput()
+    noOutputObligation.obligations.find(
+      ({ id }) => id === 'text-obligation',
+    )!.required = false
+    expect(() =>
+      createSourceEvidenceContract(
+        buildSourceEvidenceGraph(noOutputObligation),
+        verifierIdentity,
+      ),
+    ).toThrow('SOURCE_EVIDENCE_OBLIGATIONS_REQUIRED')
   })
 
   it('returns only a hash-bound source-backed candidate payload and rejects drift', () => {

@@ -243,9 +243,13 @@ async function renderOne(browser: Browser, build: ProfiledStructEpubArtifact) {
           ...document.body.querySelectorAll('*'),
         ].filter((element) => {
           const html = element as HTMLElement
+          const style = getComputedStyle(html)
           return (
-            html.scrollWidth > html.clientWidth + 1 ||
-            html.scrollHeight > html.clientHeight + 1
+            !html.classList.contains('visually-hidden') &&
+            ((['hidden', 'clip'].includes(style.overflowX) &&
+              html.scrollWidth > html.clientWidth + 1) ||
+              (['hidden', 'clip'].includes(style.overflowY) &&
+                html.scrollHeight > html.clientHeight + 1))
           )
         }).length
         return {

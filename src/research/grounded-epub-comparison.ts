@@ -1,5 +1,8 @@
 import type { StructBlock, StructDocument } from '../struct/types'
 import {
+  RECONSTRUCTION_ATTEMPT_TRACE_SCHEMA_VERSION,
+  createReconstructionAttemptTrace,
+  hashCodexProviderIdentity,
   hashRenderedActualObservationSet,
   hashRenderedEpubEvidence,
   hashTraceValue,
@@ -9,6 +12,9 @@ import {
   type SourceOutputMapping,
   type StructArtifactBinding,
   type EpubArtifactBinding,
+  type ProviderReceiptBinding,
+  type ReconstructionAttemptTrace,
+  type SourcePdfBinding,
 } from './reconstruction-attempt-trace'
 import {
   compareSourceToRenderedEpub,
@@ -49,6 +55,16 @@ export type GroundedProfiledEpubComparison = {
   observations: DeterministicComparisonObservation[]
   comparator: ReturnType<typeof compareSourceToRenderedEpub>
   receiptSha256: string
+}
+
+export type OwnerLocalCodexTraceIdentity = Pick<
+  ProviderReceiptBinding,
+  'server' | 'model' | 'prompt' | 'tool'
+> & {
+  server: NonNullable<ProviderReceiptBinding['server']>
+  model: NonNullable<ProviderReceiptBinding['model']>
+  prompt: NonNullable<ProviderReceiptBinding['prompt']>
+  tool: NonNullable<ProviderReceiptBinding['tool']>
 }
 
 function invalid(code: string): never {
@@ -224,6 +240,12 @@ function verifyGroundedActualObservationAuthority(input: {
   )
   for (const binding of materialization.receipt.obligationBindings) {
     const block = blockById.get(binding.outputBlockId)
+    const failedCategory = block
+      ? binding.observationCategories.find(
+          (category) =>
+            !verifyCategory(category, block, materialization.document, render),
+        )
+      : 'missing-block'
     if (
       !block ||
       !render.anchors.includes(block.id) ||
@@ -233,12 +255,11 @@ function verifyGroundedActualObservationAuthority(input: {
           !render.anchors.includes(anchorId) ||
           !block.sourceObservationAnchorIds?.includes(anchorId),
       ) ||
-      binding.observationCategories.some(
-        (category) =>
-          !verifyCategory(category, block, materialization.document, render),
-      )
+      failedCategory
     ) {
-      invalid('ACTUAL_RENDER_SOURCE_OBSERVATION_MISMATCH')
+      invalid(
+        `ACTUAL_RENDER_SOURCE_OBSERVATION_MISMATCH:${failedCategory ?? 'binding'}`,
+      )
     }
   }
 }
@@ -499,4 +520,143 @@ export function compareGroundedProfiledEpub(input: {
     comparator,
     receiptSha256: hashTraceValue(projection),
   }
+}
+
+/** Commit a successful actual comparison as a complete frozen #199 trace. */
+export function createGroundedActualReconstructionTrace(input: {
+  attemptId: string
+  sourcePdf: SourcePdfBinding
+  materialization: GroundedStructMaterialization
+  sourceContract: SourceEvidenceContract
+  comparison: GroundedProfiledEpubComparison
+  codexIdentity: OwnerLocalCodexTraceIdentity
+  codexReceiptSha256: string
+  usage?: { tokens: number; durationMs: number }
+}): ReconstructionAttemptTrace {
+  const {
+    attemptId,
+    sourcePdf,
+    materialization,
+    sourceContract,
+    comparison,
+    codexIdentity,
+  } = input
+  if (
+    comparison.comparator.status !== 'publication-ready' ||
+    comparison.comparator.failed !== 0 ||
+    sourcePdf.artifact.sha256 !== materialization.receipt.sourcePdfSha256 ||
+    sourcePdf.pageCount !== materialization.document.source.pageCount ||
+    sourceContract.graphArtifact.sha256 !==
+      materialization.receipt.sourceEvidenceGraphSha256
+  ) {
+    invalid('INVALID_GROUNDED_ACTUAL_TRACE_INPUT')
+  }
+  const reconciliationInputSha256 = hashTraceValue({
+    sourcePdfSha256: sourcePdf.artifact.sha256,
+    evidenceGraphSha256: sourceContract.graphArtifact.sha256,
+    candidateSetSha256: sourceContract.sourceEvidenceReceipt.candidateSetSha256,
+    structSha256: comparison.structure.artifact.sha256,
+    epubSha256: comparison.epub.bytes.sha256,
+    renderObservationReceiptSha256: comparison.renderedEpub.receiptSha256,
+  })
+  const codexProvider: ProviderReceiptBinding = {
+    id: `owner-local-codex-${comparison.profileId}`,
+    role: 'owner-local-codex-reconciliation',
+    required: true,
+    enabledBeforeRun: true,
+    providerId: codexIdentity.server.id,
+    identitySha256: hashCodexProviderIdentity({
+      ...codexIdentity,
+      id: 'identity-projection',
+      role: 'owner-local-codex-reconciliation',
+      required: true,
+      enabledBeforeRun: true,
+      providerId: codexIdentity.server.id,
+      receiptSha256: input.codexReceiptSha256,
+      inputSha256: reconciliationInputSha256,
+      outputSha256: hashTraceValue(comparison.comparator),
+      status: 'succeeded',
+    }),
+    receiptSha256: input.codexReceiptSha256,
+    inputSha256: reconciliationInputSha256,
+    outputSha256: hashTraceValue(comparison.comparator),
+    ...structuredClone(codexIdentity),
+    status: 'succeeded',
+  }
+  return createReconstructionAttemptTrace({
+    schemaVersion: RECONSTRUCTION_ATTEMPT_TRACE_SCHEMA_VERSION,
+    attemptId,
+    lineage: {
+      attemptIndex: 0,
+      parentTraceSha256: null,
+      immutablePriorTraceSha256: null,
+      appliedRepair: null,
+    },
+    sourcePdf: structuredClone(sourcePdf),
+    evidenceGraph: {
+      schemaVersion: sourceContract.graph.schemaVersion,
+      artifact: structuredClone(sourceContract.graphArtifact),
+      sourcePdfSha256: sourcePdf.artifact.sha256,
+    },
+    sourceEvidence: structuredClone(sourceContract.sourceEvidenceReceipt),
+    evidenceCandidates: structuredClone(sourceContract.evidenceCandidates),
+    structure: structuredClone(comparison.structure),
+    epub: structuredClone(comparison.epub),
+    renderedEpub: structuredClone(comparison.renderedEpub),
+    mappings: structuredClone(comparison.mappings),
+    comparisonEvidence: {
+      sourceRegions: structuredClone(sourceContract.sourceRegions),
+      observations: structuredClone(comparison.observations),
+    },
+    providerReceipts: [
+      {
+        id: `source-evidence-${comparison.profileId}`,
+        role: 'source-evidence',
+        required: true,
+        enabledBeforeRun: true,
+        providerId: sourceContract.verifier.identity.id,
+        receiptSha256: hashTraceValue({
+          graph: sourceContract.graphArtifact,
+          receipt: sourceContract.sourceEvidenceReceipt.receiptSha256,
+        }),
+        inputSha256: sourcePdf.artifact.sha256,
+        outputSha256: sourceContract.sourceEvidenceReceipt.receiptSha256,
+        status: 'succeeded',
+      },
+      {
+        id: `actual-render-${comparison.profileId}`,
+        role: 'actual-render',
+        required: true,
+        enabledBeforeRun: true,
+        providerId: comparison.renderedEpub.renderer.id,
+        receiptSha256: comparison.receiptSha256,
+        inputSha256: comparison.epub.bytes.sha256,
+        outputSha256: comparison.renderedEpub.receiptSha256,
+        status: 'succeeded',
+      },
+      codexProvider,
+    ],
+    comparator: structuredClone(comparison.comparator),
+    critiqueRepair: null,
+    budget: {
+      policy: {
+        maxRefinements: 3,
+        maxFreshTasks: 1,
+        maxTokens: 24_000,
+        maxDurationMs: 30 * 60 * 1_000,
+        repairPolicySha256: hashTraceValue({
+          id: 'closed-candidate-grounded-reconstruction',
+          maxRefinements: 3,
+          maxFreshTasks: 1,
+        }),
+      },
+      usage: {
+        refinements: 0,
+        freshTasks: 1,
+        tokens: input.usage?.tokens ?? 0,
+        durationMs: input.usage?.durationMs ?? 0,
+      },
+    },
+    terminalState: 'publication-ready',
+  })
 }

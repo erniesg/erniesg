@@ -16,8 +16,15 @@ import {
   type OwnerLocalCodexIdentity,
   type SelectedGroundingVerificationRequest,
 } from './reconstruction-refinement'
-import { buildExactThreeProfileStructEpubs } from './reconstruction-materialization'
-import { compareGroundedProfiledEpub } from './grounded-epub-comparison'
+import {
+  buildExactThreeProfileStructEpubs,
+  createClosedThreeProfileReconstructionReceipt,
+  createReconstructionHardCheckVector,
+} from './reconstruction-materialization'
+import {
+  compareGroundedProfiledEpub,
+  createGroundedActualReconstructionTrace,
+} from './grounded-epub-comparison'
 import { createSourceEvidenceContract } from './source-evidence-contract'
 import { applyGroundedStructRepair } from './grounded-struct-repair-applicator'
 import {
@@ -685,6 +692,77 @@ describe('candidate-grounded STRUCT materialization', () => {
       comparisons.every(
         ({ comparator }) =>
           comparator.status === 'publication-ready' && comparator.failed === 0,
+      ),
+    ).toBe(true)
+    const codexIdentity = {
+      server: {
+        id: 'owner-local-codex-server',
+        version: '2026.08.1',
+        transport: 'http://127.0.0.1:4500/v1',
+        executableSha256: digest('codex-server'),
+      },
+      model: {
+        id: 'gpt-5.6-sol',
+        version: '2026-08-01',
+        sha256: digest('codex-model'),
+      },
+      prompt: {
+        id: 'closed-grounded-reconstruction',
+        version: '1.0.0',
+        sha256: digest('codex-prompt'),
+      },
+      tool: { id: 'codex', version: '0.99.0' },
+    }
+    const traces = Object.fromEntries(
+      comparisons.map((comparison) => [
+        comparison.profileId,
+        createGroundedActualReconstructionTrace({
+          attemptId: `public-table-${comparison.profileId}-0`,
+          sourcePdf: {
+            artifact: {
+              sha256: source.sha256,
+              byteLength: source.byteLength,
+            },
+            pageCount: 1,
+            pageRenders: [
+              {
+                page: 1,
+                sourcePdfSha256: source.sha256,
+                image: { sha256: digest('source-page-1'), byteLength: 128 },
+                mediaType: 'image/png',
+                width: 612,
+                height: 792,
+              },
+            ],
+          },
+          materialization: materialized,
+          sourceContract,
+          comparison,
+          codexIdentity,
+          codexReceiptSha256: digest(`codex-receipt-${comparison.profileId}`),
+        }),
+      ]),
+    ) as Record<
+      (typeof builds)[number]['profileId'],
+      ReturnType<typeof createGroundedActualReconstructionTrace>
+    >
+    const outerReceipt = createClosedThreeProfileReconstructionReceipt({
+      attempts: [
+        {
+          canonicalStructSha256: materialized.receipt.canonicalStruct.sha256,
+          materializationReceipt: materialized.receipt,
+          traces,
+          builds,
+        },
+      ],
+    })
+    expect(outerReceipt.status).toBe('publication-ready')
+    expect(
+      Object.entries(traces).every(([profileId, trace]) =>
+        createReconstructionHardCheckVector(
+          profileId as (typeof builds)[number]['profileId'],
+          trace,
+        ).checks.every(({ status }) => status === 'passed'),
       ),
     ).toBe(true)
     const spanTamper = structuredClone(renders[0]!)

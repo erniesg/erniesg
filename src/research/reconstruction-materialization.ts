@@ -238,13 +238,31 @@ export function createReconstructionHardCheckVector(
   }
   const trace = parseReconstructionAttemptTrace(traceInput)
   const checks = DETERMINISTIC_CHECK_IDS.map((check) => {
-    const matches = trace.comparator.checkResults.filter(
-      (result) => result.origin === 'deterministic' && result.check === check,
-    )
-    if (matches.length !== 1) {
+    const matches = trace.comparator.checkResults
+      .filter(
+        (result) => result.origin === 'deterministic' && result.check === check,
+      )
+      .sort((left, right) => left.id.localeCompare(right.id))
+    if (matches.length === 0) {
       throw new Error('INVALID_RECONSTRUCTION_HARD_CHECK_VECTOR')
     }
-    const result = matches[0]!
+    const result =
+      matches.length === 1
+        ? matches[0]!
+        : {
+            status: matches.every(({ status }) => status === 'passed')
+              ? ('passed' as const)
+              : ('failed' as const),
+            expectedSha256: hashTraceValue(
+              matches.map(({ id, expectedSha256 }) => ({
+                id,
+                expectedSha256,
+              })),
+            ),
+            actualSha256: hashTraceValue(
+              matches.map(({ id, actualSha256 }) => ({ id, actualSha256 })),
+            ),
+          }
     return {
       check,
       status: result.status,

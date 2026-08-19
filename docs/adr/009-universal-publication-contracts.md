@@ -33,6 +33,22 @@ Source adapters may report unsupported features through diagnostics; they may
 not retain local paths, credentials, source-specific runtime objects, or target
 layout state in the graph.
 
+`StructDocument` is a distinct, earlier conservation boundary for acquired or
+reconstructed documents. It retains source evidence, page observations,
+recovery diagnostics, and conversion receipts so an importer can prove what it
+preserved without exposing extractor-private types to renderers. It is not an
+alias for `PublicationGraph`: the latter is the smaller editorial/compiler
+input and deliberately excludes source page geometry and recovery state.
+
+When reconstructed content enters the publication compiler, the adapter
+direction is `StructDocument` to `PublicationGraph`. That conversion is
+explicit and app-owned because not every recovery state has a lossless
+publication meaning; the reverse direction is not a general round trip. The
+source-neutral STRUCT core therefore exports its schema, identities, recovery,
+and renderers, but does not import or re-export erniesg's reconstruction
+adapter. The direct `src/struct/from-reconstruction.ts` path remains an explicit
+non-core application entrypoint while consumers migrate.
+
 `CompositionContext` version `1.0.0` describes flow, logical and physical
 dimensions, orientation, color, resolution, refresh, interaction, font
 control, locale and script, accessibility preferences, duplex, binding, bleed,

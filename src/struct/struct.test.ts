@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { strFromU8, unzipSync } from 'fflate'
 import { describe, expect, it, vi } from 'vitest'
 import { fixtureFile } from '../../tests/fixtures/pdf-fixtures'
+import * as structCore from './index'
 import { buildStructDocument } from './from-reconstruction'
 import { buildStructEpub } from './epub'
 import {
@@ -1230,11 +1231,15 @@ describe('STRUCT canonical document graph', () => {
     )
   })
 
-  it('keeps the renderer side of STRUCT independent from research modules', async () => {
+  it('keeps the public STRUCT core independent from research modules', async () => {
+    expect(structCore).not.toHaveProperty('buildStructDocument')
     for (const file of [
+      'index.ts',
       'types.ts',
       'ids.ts',
+      'sha256.ts',
       'reading-order.ts',
+      'recovery.ts',
       'model-consultation-receipt.ts',
       'xhtml.ts',
       'epub.ts',
@@ -1246,6 +1251,11 @@ describe('STRUCT canonical document graph', () => {
       expect(source).not.toContain('ResearchPaper')
       expect(source).not.toContain('Astro')
     }
+    const entrypoint = await readFile(
+      new URL('index.ts', import.meta.url),
+      'utf8',
+    )
+    expect(entrypoint).not.toContain('from-reconstruction')
   })
 })
 

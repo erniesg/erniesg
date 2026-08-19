@@ -1,3 +1,8 @@
+/**
+ * Erniesg's reconstruction-to-STRUCT application adapter. This module depends
+ * on private research types and is intentionally not exported from the
+ * source-neutral STRUCT core entrypoint.
+ */
 import type {
   DocumentReconstruction,
   NodeSourceEvidence,

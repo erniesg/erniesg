@@ -452,6 +452,9 @@ describe('STRUCT publication adapter', () => {
     ).toMatchObject({ inlineRuns: [{ start: 0, end: 10 }] })
     expect(result.diagnostics.map(({ code }) => code)).toEqual([
       'struct-source',
+      'unresolved-relationship-target',
+      'unresolved-relationship-target',
+      'unresolved-relationship-target',
       'unresolved-cross-reference',
       'source-preserved-table',
       'source-preserved-equation',
@@ -614,5 +617,281 @@ describe('STRUCT publication adapter', () => {
       type: 'paragraph',
       inlineRuns: [{ start: 0, end: 1, semanticRole: 'affiliation-marker' }],
     })
+  })
+
+  it('diagnoses inline references to omitted blocks without throwing the graph schema', () => {
+    const input = document([
+      block({
+        id: 'paragraph',
+        kind: 'paragraph',
+        text: 'A',
+        order: 0,
+        inline: [
+          {
+            start: 0,
+            end: 1,
+            relationshipId: 'omitted-rel',
+            targetIds: ['empty'],
+            semanticRole: 'affiliation-marker',
+          },
+        ],
+      }),
+      block({ id: 'empty', kind: 'heading', text: '', order: 1 }),
+    ])
+    input.relationships = [
+      {
+        id: 'omitted-rel',
+        kind: 'cross-reference',
+        from: 'paragraph',
+        to: ['empty'],
+        status: 'matched',
+        confidence: 1,
+        evidence,
+      },
+    ]
+
+    const result = adaptStructDocument(input)
+    expect(() => publicationGraphSchema.parse(result.graph)).not.toThrow()
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'unresolved-relationship-target' }),
+    )
+  })
+
+  it('assigns stable occurrence relationship ids for repeated valid inline references', () => {
+    const input = document([
+      block({
+        id: 'paragraph',
+        kind: 'paragraph',
+        text: 'A B',
+        order: 0,
+        inline: [
+          {
+            start: 0,
+            end: 1,
+            relationshipId: 'shared-rel',
+            targetIds: ['target'],
+            semanticRole: 'cross-reference',
+          },
+          {
+            start: 2,
+            end: 3,
+            relationshipId: 'shared-rel',
+            targetIds: ['target'],
+            semanticRole: 'cross-reference',
+          },
+        ],
+      }),
+      block({ id: 'target', kind: 'paragraph', text: 'Target', order: 1 }),
+    ])
+    input.relationships = [
+      {
+        id: 'shared-rel',
+        kind: 'cross-reference',
+        from: 'paragraph',
+        to: ['target'],
+        status: 'matched',
+        confidence: 1,
+        evidence,
+      },
+    ]
+
+    const result = adaptStructDocument(input)
+    const graph = publicationGraphSchema.parse(result.graph)
+    const paragraph = graph.nodes.find((node) => node.id === 'paragraph')
+    const runs =
+      paragraph && 'inlineRuns' in paragraph ? paragraph.inlineRuns : undefined
+
+    expect(runs?.map((run) => run.relationshipId)).toEqual([
+      'shared-rel',
+      'shared-rel-occurrence-2',
+    ])
+    expect(runs?.every((run) => run.targetIds?.[0] === 'target')).toBe(true)
+  })
+
+  it('keeps repeated note occurrences reciprocal with stable backlink ids', () => {
+    const input = document([
+      block({
+        id: 'paragraph',
+        kind: 'paragraph',
+        text: '1 2',
+        order: 0,
+        inline: [
+          {
+            start: 0,
+            end: 1,
+            relationshipId: 'note-rel',
+            targetIds: ['note'],
+            semanticRole: 'note-reference',
+          },
+          {
+            start: 2,
+            end: 3,
+            relationshipId: 'note-rel',
+            targetIds: ['note'],
+            semanticRole: 'note-reference',
+          },
+        ],
+      }),
+      block({ id: 'note', kind: 'footnote', text: 'Note', order: 1 }),
+    ])
+    input.relationships = [
+      {
+        id: 'note-rel',
+        kind: 'footnote',
+        from: 'paragraph',
+        to: ['note'],
+        status: 'matched',
+        confidence: 1,
+        evidence,
+      },
+    ]
+
+    const result = adaptStructDocument(input)
+    const graph = publicationGraphSchema.parse(result.graph)
+    const note = graph.nodes.find((node) => node.id === 'note')
+
+    expect(note).toMatchObject({
+      type: 'note',
+      backlinkIds: ['note-rel', 'note-rel-occurrence-2'],
+    })
+  })
+
+  it('diagnoses matched non-inline relationships with missing endpoints', () => {
+    const input = document([
+      block({ id: 'paragraph', kind: 'paragraph', text: 'A', order: 0 }),
+    ])
+    input.relationships = [
+      {
+        id: 'reading-order-rel',
+        kind: 'reading-order',
+        from: 'paragraph',
+        to: ['missing-target'],
+        status: 'matched',
+        confidence: 1,
+        evidence,
+      },
+    ]
+
+    const result = adaptStructDocument(input)
+    expect(() => publicationGraphSchema.parse(result.graph)).not.toThrow()
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'unresolved-relationship-target' }),
+    )
+  })
+
+  it('preserves and diagnoses generic inline relationships whose status is unresolved', () => {
+    const input = document([
+      block({
+        id: 'paragraph',
+        kind: 'paragraph',
+        text: 'A',
+        order: 0,
+        inline: [
+          {
+            start: 0,
+            end: 1,
+            relationshipId: 'affiliation-rel',
+            targetIds: ['target'],
+            semanticRole: 'affiliation-marker',
+          },
+        ],
+      }),
+      block({ id: 'target', kind: 'paragraph', text: 'Target', order: 1 }),
+    ])
+    input.relationships = [
+      {
+        id: 'affiliation-rel',
+        kind: 'cross-reference',
+        from: 'paragraph',
+        to: ['target'],
+        status: 'unresolved',
+        confidence: 0.2,
+        evidence,
+      },
+    ]
+
+    const result = adaptStructDocument(input)
+    const graph = publicationGraphSchema.parse(result.graph)
+    const paragraph = graph.nodes.find((node) => node.id === 'paragraph')
+    const run =
+      paragraph && 'inlineRuns' in paragraph
+        ? paragraph.inlineRuns?.[0]
+        : undefined
+
+    expect(run).toMatchObject({
+      relationshipId: 'affiliation-rel',
+      targetIds: ['target'],
+      semanticRole: 'affiliation-marker',
+    })
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'unresolved-relationship-status' }),
+    )
+  })
+
+  it('diagnoses sparse table row compaction rather than silently changing row meaning', () => {
+    const input = document([
+      block({
+        id: 'table',
+        kind: 'table',
+        text: 'A',
+        order: 0,
+        table: {
+          rows: 3,
+          columns: 1,
+          semantic: 'verified',
+          cells: [
+            {
+              id: 'cell',
+              text: 'A',
+              row: 2,
+              column: 0,
+              rowSpan: 1,
+              columnSpan: 1,
+              headerScope: null,
+              inline: [],
+              evidence,
+            },
+          ],
+        },
+      }),
+    ])
+
+    const result = adaptStructDocument(input)
+    const graph = publicationGraphSchema.parse(result.graph)
+    const table = graph.nodes.find((node) => node.id === 'table')
+
+    expect(table).toMatchObject({
+      type: 'table',
+      rows: [{ cells: [{ text: 'A' }] }],
+    })
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'lossy-table-geometry' }),
+    )
+  })
+
+  it('diagnoses fragment links targeting omitted blocks and removes the dangling href', () => {
+    const input = document([
+      block({
+        id: 'paragraph',
+        kind: 'paragraph',
+        text: 'A',
+        order: 0,
+        inline: [{ start: 0, end: 1, href: '#empty' }],
+      }),
+      block({ id: 'empty', kind: 'heading', text: '', order: 1 }),
+    ])
+
+    const result = adaptStructDocument(input)
+    const graph = publicationGraphSchema.parse(result.graph)
+    const paragraph = graph.nodes.find((node) => node.id === 'paragraph')
+    const run =
+      paragraph && 'inlineRuns' in paragraph
+        ? paragraph.inlineRuns?.[0]
+        : undefined
+
+    expect(run).not.toHaveProperty('href')
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'unresolved-link' }),
+    )
   })
 })

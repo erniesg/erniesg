@@ -1,6 +1,5 @@
 import {
   LEGACY_STRUCT_SCHEMA_VERSION,
-  STRUCT_SCHEMA_VERSION,
   type StructDocument,
   type StructInline,
   type StructReceipt,

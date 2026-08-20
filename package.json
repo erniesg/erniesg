@@ -8,7 +8,8 @@
     "npm": ">=10.8.2"
   },
   "scripts": {
-    "postinstall": "node tools/publication-install-browser.mjs",
+    "postinstall": "npm run struct:build && node tools/publication-install-browser.mjs",
+    "struct:build": "npm --prefix packages/struct run build",
     "dev": "astro dev",
     "start": "astro dev",
     "pretest": "npm run srt:checkpoint-evidence && npm run srt:overlay-evidence",

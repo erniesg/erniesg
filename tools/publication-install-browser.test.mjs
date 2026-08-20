@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { publicationBrowserInstallInvocation } from './publication-install-browser.mjs'
 
 describe('publication browser installer', () => {
@@ -22,5 +24,21 @@ describe('publication browser installer', () => {
     expect(() =>
       publicationBrowserInstallInvocation('linux', 'riscv64'),
     ).toThrow(/Unsupported publication architecture/)
+  })
+
+  it('builds the linked STRUCT package before browser setup in root postinstall', async () => {
+    const packageManifest = JSON.parse(
+      await readFile(resolve(process.cwd(), 'package.json'), 'utf8'),
+    )
+    const structBuild = packageManifest.scripts['struct:build']
+    const postinstall = packageManifest.scripts.postinstall
+
+    expect(structBuild).toBe('npm --prefix packages/struct run build')
+    expect(postinstall.indexOf('npm run struct:build')).toBeGreaterThanOrEqual(
+      0,
+    )
+    expect(postinstall.indexOf('npm run struct:build')).toBeLessThan(
+      postinstall.indexOf('tools/publication-install-browser.mjs'),
+    )
   })
 })

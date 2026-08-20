@@ -246,16 +246,22 @@ function renderTable(
   return `<table>${rows.map((row) => `<tr>${row.join('')}</tr>`).join('')}</table>`
 }
 
+function rendersTablePayload(block: StructBlock) {
+  return block.kind === 'table' && block.table !== undefined
+}
+
+function rendersBlockInline(block: StructBlock) {
+  return block.kind !== 'furniture' && !rendersTablePayload(block)
+}
+
 function renderedInlineRelationshipIds(document: StructDocument) {
   return new Set([
     ...document.blocks.flatMap((block) => {
       // Keep this predicate in lockstep with renderBlock: table blocks with a
       // payload render cells, while table blocks without one render `content`
       // through the fallback figcaption path. Furniture renders nothing.
-      const rendersBlockInline =
-        block.kind !== 'furniture' && (block.kind !== 'table' || !block.table)
       return [
-        ...(rendersBlockInline
+        ...(rendersBlockInline(block)
           ? block.inline.flatMap((run) =>
               run.relationshipId &&
               run.semanticRole &&
@@ -365,8 +371,8 @@ function renderBlock(
   if (block.kind === 'furniture') return ''
   const id = attribute(xhtmlId(block.id))
   const sourceAnchors = renderSourceObservationAnchors(block)
-  if (block.kind === 'table' && block.table) {
-    return `<figure id="${id}" data-struct-id="${id}">${sourceAnchors}${renderTable(document, block.table, block.id, blockIndex, emittedRelationshipIds, publicationPlan)}</figure>`
+  if (rendersTablePayload(block)) {
+    return `<figure id="${id}" data-struct-id="${id}">${sourceAnchors}${renderTable(document, block.table!, block.id, blockIndex, emittedRelationshipIds, publicationPlan)}</figure>`
   }
   const content = renderInline(
     document,

@@ -641,6 +641,29 @@ describe('STRUCT canonical document graph', () => {
     )
   })
 
+  it('rejects detached semantic inline ids in table fallback blocks', async () => {
+    const graph = buildStructDocument(await structuredDocx())
+    const source = graph.blocks[0]!
+    const detachedId = 'table-fallback-detached-source-anchor-collision'
+    source.kind = 'table'
+    source.table = undefined
+    source.text = 'See target'
+    source.inline = [
+      {
+        start: 4,
+        end: source.text.length,
+        relationshipId: detachedId,
+        semanticRole: 'cross-reference',
+        targetIds: [source.id],
+      },
+    ]
+    source.sourceObservationAnchorIds = [detachedId]
+
+    expect(() => renderPublicationXhtml(graph)).toThrow(
+      'DUPLICATE_XHTML_SOURCE_ANCHOR',
+    )
+  })
+
   it('ignores semantic inline ids in omitted furniture tables', async () => {
     const graph = buildStructDocument(await structuredDocx())
     const source = graph.blocks[0]!

@@ -208,6 +208,8 @@ describe('STRUCT package golden contract', () => {
   it('keeps XHTML, EPUB entries, and table conservation stable', async () => {
     const document = fixture()
     const assetBytes = document.assets[0]!.bytes
+    if (assetBytes === undefined)
+      throw new Error('golden STRUCT asset bytes are required')
     expect(sha256(assetBytes)).toBe(GOLDEN_ASSET_BYTES_SHA256)
     const table = document.blocks.find((block) => block.kind === 'table')!.table
     expect(

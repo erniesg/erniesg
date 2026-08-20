@@ -507,6 +507,47 @@ describe('STRUCT canonical document graph', () => {
     )
   })
 
+  it('rejects source anchors that collide with author note ids', async () => {
+    const graph = buildStructDocument(await structuredDocx())
+    const target = graph.blocks[0]!
+    const authorNoteId = 'author-note-source-anchor-collision'
+    graph.metadata.authorNotes = [
+      {
+        id: authorNoteId,
+        author: graph.metadata.authors[0]!,
+        label: '1',
+        target: target.id,
+      },
+    ]
+    target.sourceObservationAnchorIds = [authorNoteId]
+
+    expect(() => renderPublicationXhtml(graph)).toThrow(
+      'DUPLICATE_XHTML_SOURCE_ANCHOR',
+    )
+  })
+
+  it('rejects detached semantic inline ids that collide with source anchors', async () => {
+    const graph = buildStructDocument(await structuredDocx())
+    const source = graph.blocks[0]!
+    const target = graph.blocks[1]!
+    const detachedId = 'detached-source-anchor-collision'
+    source.text = 'See target'
+    source.inline = [
+      {
+        start: 4,
+        end: source.text.length,
+        relationshipId: detachedId,
+        semanticRole: 'cross-reference',
+        targetIds: [target.id],
+      },
+    ]
+    source.sourceObservationAnchorIds = [detachedId]
+
+    expect(() => renderPublicationXhtml(graph)).toThrow(
+      'DUPLICATE_XHTML_SOURCE_ANCHOR',
+    )
+  })
+
   it('maps numeric-leading matched references without colliding with canonical IDs', async () => {
     const graph = buildStructDocument(await structuredDocx())
     const source = graph.blocks[0]!

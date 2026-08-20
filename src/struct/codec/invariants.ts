@@ -306,6 +306,11 @@ function validateReferences(document: StructDocument) {
   )
   addCategoryIds(
     ids,
+    (document.metadata.authorNotes ?? []).map(({ id }) => id),
+    'metadata.authorNotes',
+  )
+  addCategoryIds(
+    ids,
     document.blocks.flatMap(
       ({ sourceObservationAnchorIds = [] }) => sourceObservationAnchorIds,
     ),

@@ -1,5 +1,6 @@
 import { strFromU8, unzipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
+import { decodeStructDocument } from '../src/codec'
 import { buildStructEpub } from '../src/epub'
 import { renderPublicationXhtml } from '../src/xhtml'
 import type { StructDocument } from '../src/types'
@@ -192,6 +193,57 @@ describe('STRUCT XHTML ID mapping', () => {
     document.blocks[0]!.sourceObservationAnchorIds = ['source-anchor']
     expect(renderPublicationXhtml(document)).toContain(
       'id="source-anchor" class="visually-hidden source-observation-anchor"',
+    )
+  })
+
+  it('rejects source anchors that collide with author note ids', async () => {
+    const document = characterizationDocument('0.2.0')
+    const source = document.blocks[0]!
+    const authorNoteId = 'author-note-source-anchor-collision'
+    document.metadata.authorNotes = [
+      {
+        id: authorNoteId,
+        author: document.metadata.authors[0]!,
+        label: '1',
+        target: source.id,
+      },
+    ]
+    source.sourceObservationAnchorIds = [authorNoteId]
+    resealDocument(document)
+
+    expect(() => decodeStructDocument(document)).toThrow(
+      /duplicate|identifier/i,
+    )
+    expect(() => renderPublicationXhtml(document)).toThrow(
+      'DUPLICATE_XHTML_SOURCE_ANCHOR',
+    )
+    await expect(buildStructEpub(document)).rejects.toThrow(
+      'DUPLICATE_XHTML_SOURCE_ANCHOR',
+    )
+  })
+
+  it('rejects detached semantic inline ids that collide with source anchors', async () => {
+    const document = characterizationDocument('0.2.0')
+    const source = document.blocks[0]!
+    const detachedId = 'detached-source-anchor-collision'
+    source.text = 'See target'
+    source.inline = [
+      {
+        start: 4,
+        end: source.text.length,
+        relationshipId: detachedId,
+        semanticRole: 'cross-reference',
+        targetIds: [source.id],
+      },
+    ]
+    source.sourceObservationAnchorIds = [detachedId]
+    resealDocument(document)
+
+    expect(() => renderPublicationXhtml(document)).toThrow(
+      'DUPLICATE_XHTML_SOURCE_ANCHOR',
+    )
+    await expect(buildStructEpub(document)).rejects.toThrow(
+      'DUPLICATE_XHTML_SOURCE_ANCHOR',
     )
   })
 

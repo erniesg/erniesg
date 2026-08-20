@@ -395,6 +395,16 @@ describe('STRUCT runtime codec', () => {
     expect(() => decodeStructDocument(value)).toThrow(/duplicate/i)
   })
 
+  it('rejects an author note id that collides with a source observation anchor', () => {
+    const value = validDocument()
+    value.blocks[0].sourceObservationAnchorIds = [
+      value.metadata.authorNotes[0].id,
+    ]
+    seal(value)
+
+    expect(() => decodeStructDocument(value)).toThrow(/duplicate|identifier/i)
+  })
+
   it.each([
     ['block id', (value: any) => (value.blocks[0].id = '../block')],
     ['asset id', (value: any) => (value.assets[0].id = 'asset id')],

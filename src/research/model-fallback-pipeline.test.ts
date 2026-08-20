@@ -30,7 +30,7 @@ import {
 } from './model-fallback-pipeline'
 import { reconstructPdf } from './pdf'
 import { pdfVisualMatchCandidateId } from './pdf-visuals'
-import { buildStructDocument } from '../struct/from-reconstruction'
+import { buildStructDocument } from './struct-from-reconstruction'
 
 const modelIdentity = {
   providerId: 'recorded-stub',

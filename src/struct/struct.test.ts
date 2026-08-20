@@ -3,7 +3,7 @@ import { strFromU8, unzipSync } from 'fflate'
 import { describe, expect, it, vi } from 'vitest'
 import { fixtureFile } from '../../tests/fixtures/pdf-fixtures'
 import * as structCore from './index'
-import { buildStructDocument } from './from-reconstruction'
+import { buildStructDocument } from '../research/struct-from-reconstruction'
 import { buildStructEpub } from './epub'
 import {
   legacyStructDigest,
@@ -1684,6 +1684,29 @@ describe('STRUCT canonical document graph', () => {
       'utf8',
     )
     expect(entrypoint).not.toContain('from-reconstruction')
+  })
+
+  it('keeps the reconstruction adapter app-owned with a historical shim', async () => {
+    const appSource = await readFile(
+      new URL('../research/struct-from-reconstruction.ts', import.meta.url),
+      'utf8',
+    )
+    const shimSource = await readFile(
+      new URL('from-reconstruction.ts', import.meta.url),
+      'utf8',
+    )
+    expect(appSource).toContain('export function buildStructDocument')
+    expect(appSource).toContain('../struct/ids')
+    expect(shimSource).toMatch(/deprecated.*app-owned/iu)
+    expect(shimSource).not.toMatch(
+      /\.\.\/research\/(?!struct-from-reconstruction)/u,
+    )
+    expect(shimSource).toMatch(
+      /export\s*\{\s*buildStructDocument,?\s*\}\s*from ['"]\.\.\/research\/struct-from-reconstruction['"]/u,
+    )
+    const appModule = await import('../research/struct-from-reconstruction')
+    const legacyModule = await import('./from-reconstruction')
+    expect(legacyModule.buildStructDocument).toBe(appModule.buildStructDocument)
   })
 })
 

@@ -14,6 +14,13 @@ function sha256(value: string | Uint8Array) {
   return createHash('sha256').update(value).digest('hex')
 }
 
+const GOLDEN_ASSET_BYTES_SHA256 =
+  'ff5d8507b6a72bee2debce2c0054798deaccdc5d8a1b945b6280ce8aa9cba52e'
+const GOLDEN_TABLE_CONSERVATION_SHA256 =
+  '8a9b741052998c6f7f23039a6af62c528589ed14aa777c1af2eba5f6977bf666'
+const GOLDEN_STRUCT_JSON_ENTRY_SHA256 =
+  '3b274aac8c4486ce6698fc485db5a1e4f6fcfe8c66f69c7e898681e0612e2284'
+
 function fixture(): StructDocument {
   const bytes = new Uint8Array([0, 1, 2, 3, 255])
   const evidence = {
@@ -196,6 +203,17 @@ describe('STRUCT package golden contract', () => {
 
   it('keeps XHTML, EPUB entries, and table conservation stable', async () => {
     const document = fixture()
+    const assetBytes = document.assets[0]!.bytes
+    expect(sha256(assetBytes)).toBe(GOLDEN_ASSET_BYTES_SHA256)
+    const table = document.blocks.find((block) => block.kind === 'table')!.table
+    expect(
+      sha256(
+        JSON.stringify({
+          table,
+          conservation: document.receipt.conservation,
+        }),
+      ),
+    ).toBe(GOLDEN_TABLE_CONSERVATION_SHA256)
     const xhtml = renderPublicationXhtml(document)
     expect(sha256(xhtml)).toBe(
       '7925d9d9ce6831aa7579851f7c7ec14e406437a5a7a9741b590a8ecbe2628e95',
@@ -221,6 +239,9 @@ describe('STRUCT package golden contract', () => {
     const files = unzipSync(epub.bytes)
     expect(sha256(files['EPUB/content.xhtml']!)).toBe(
       '7925d9d9ce6831aa7579851f7c7ec14e406437a5a7a9741b590a8ecbe2628e95',
+    )
+    expect(sha256(files['EPUB/struct.json']!)).toBe(
+      GOLDEN_STRUCT_JSON_ENTRY_SHA256,
     )
     expect(strFromU8(files['EPUB/struct.json']!)).toContain(
       'golden-struct-fixture',

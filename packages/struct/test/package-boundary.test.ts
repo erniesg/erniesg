@@ -48,11 +48,24 @@ describe('STRUCT package artifact boundary', () => {
         cwd: root,
         encoding: 'utf8',
       }),
-    )[0] as { filename: string; name: string; version: string }
+    )[0] as {
+      filename: string
+      name: string
+      version: string
+      files?: Array<{ path: string }>
+    }
     expect(pack).toMatchObject({
       filename: 'erniesg-struct-0.1.0-rc.0.tgz',
       name: '@erniesg/struct',
       version: '0.1.0-rc.0',
     })
+    const packedPaths = pack.files?.map(({ path }) => path) ?? []
+    expect(packedPaths).toContain('package.json')
+    expect(
+      packedPaths.every(
+        (path) => path === 'package.json' || path.startsWith('dist/'),
+      ),
+    ).toBe(true)
+    expect(packedPaths.some((path) => forbidden.test(path))).toBe(false)
   })
 })

@@ -12,7 +12,7 @@ import {
   validateModelConsultationReceipt,
 } from './model-fallback'
 import { validReceiptMetric } from './model-fallback-receipt'
-import { validateModelConsultationReceipt as validateGenericReceipt } from '../struct/model-consultation-receipt'
+import { validateModelConsultationReceipt as validateGenericReceipt } from '@erniesg/struct'
 
 const schema = JSON.parse(
   readFileSync(

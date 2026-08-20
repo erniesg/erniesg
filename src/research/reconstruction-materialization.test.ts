@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { structDigest } from '../struct/ids'
+import { structDigest } from '@erniesg/struct/ids'
 import { sha256HexSync } from '../struct/sha256'
-import type { StructDocument } from '../struct/types'
+import type { StructDocument } from '@erniesg/struct/schema'
 import {
   GROUNDED_STRUCT_MATERIALIZATION_SCHEMA_VERSION,
   type GroundedStructMaterializationReceipt,

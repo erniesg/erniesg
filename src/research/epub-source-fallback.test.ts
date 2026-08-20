@@ -12,7 +12,7 @@ import { recoveryDiagnosticInputs } from './recovery-projection'
 import {
   hasActionableRecovery,
   recoverySummary,
-} from '../struct/recovery'
+} from '@erniesg/struct/recovery'
 
 describe('readable EPUB source-preserved visual fallback', () => {
   it('keeps an unresolved figure with a safe asset set instead of hiding it', async () => {

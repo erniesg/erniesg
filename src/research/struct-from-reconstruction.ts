@@ -15,16 +15,16 @@ import {
   modelConsultationReceiptMatchesPdfReconstruction,
   pdfModelDerivedDecisionKeys,
 } from './model-fallback-pipeline'
-import { structDigest, structId } from '../struct/ids'
+import { structDigest, structId } from '@erniesg/struct/ids'
 import {
   validateModelConsultationReceipt,
   type ModelFallbackReceipt,
 } from './model-fallback-receipt'
-import { recoverySummary, toStructDiagnostic } from '../struct/recovery'
+import { recoverySummary, toStructDiagnostic } from '@erniesg/struct/recovery'
 import {
   orderBlocksByLayout,
   pageLayoutsFromBlocks,
-} from '../struct/reading-order'
+} from '@erniesg/struct'
 import type {
   StructAsset,
   StructBlock,
@@ -38,8 +38,8 @@ import type {
   StructSourceFormat,
   StructTable,
   StructTableCell,
-} from '../struct/types'
-import { STRUCT_SCHEMA_VERSION } from '../struct/types'
+} from '@erniesg/struct/schema'
+import { STRUCT_SCHEMA_VERSION } from '@erniesg/struct/schema'
 
 function isPdf(
   reconstruction: DocumentReconstruction,

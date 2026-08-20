@@ -1696,7 +1696,7 @@ describe('STRUCT canonical document graph', () => {
       'utf8',
     )
     expect(appSource).toContain('export function buildStructDocument')
-    expect(appSource).toContain('../struct/ids')
+    expect(appSource).toContain("'@erniesg/struct/ids'")
     expect(shimSource).toMatch(/deprecated.*app-owned/iu)
     expect(shimSource).not.toMatch(
       /\.\.\/research\/(?!struct-from-reconstruction)/u,

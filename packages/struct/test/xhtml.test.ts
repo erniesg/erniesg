@@ -340,6 +340,53 @@ describe('STRUCT XHTML ID mapping', () => {
     )
   })
 
+  it('ignores semantic inline ids in omitted furniture tables', () => {
+    const document = characterizationDocument('0.2.0')
+    const source = document.blocks[0]!
+    const furnitureId = 'furniture-detached'
+    source.sourceObservationAnchorIds = [furnitureId]
+    document.blocks.push({
+      ...source,
+      id: 'furniture-block',
+      kind: 'furniture',
+      text: 'Furniture payload',
+      inline: [],
+      table: {
+        rows: 1,
+        columns: 1,
+        semantic: 'verified',
+        cells: [
+          {
+            id: 'furniture-cell',
+            text: 'Furniture cell',
+            row: 0,
+            column: 0,
+            rowSpan: 1,
+            columnSpan: 1,
+            headerScope: null,
+            inline: [
+              {
+                start: 0,
+                end: 9,
+                relationshipId: furnitureId,
+                semanticRole: 'cross-reference',
+                targetIds: [source.id],
+              },
+            ],
+            evidence: source.evidence,
+          },
+        ],
+      },
+    })
+
+    const xhtml = renderPublicationXhtml(document)
+    expect(xhtml).toContain(
+      'id="furniture-detached" class="visually-hidden source-observation-anchor"',
+    )
+    expect(xhtml).not.toContain('Furniture payload')
+    expect(xhtml).not.toContain('Furniture cell')
+  })
+
   it('emits one global id when a valid relationship is reused across blocks', async () => {
     const document = sharedRelationshipDocument()
     expect(() => decodeStructDocument(document)).not.toThrow()

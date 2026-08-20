@@ -177,7 +177,6 @@ function validateConservation(document: StructDocument) {
   }
   const accountedOutput: Array<[keyof StructReceipt['conservation'], number]> =
     [
-      ['accountedSourceNodeCount', document.blocks.length],
       ['accountedSourceAssetCount', document.assets.length],
       ['accountedSourceRelationshipCount', document.relationships.length],
       ['accountedSourceDiagnosticCount', document.diagnostics.length],

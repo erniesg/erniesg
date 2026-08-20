@@ -271,9 +271,31 @@ function renderSourceObservationAnchors(block: StructBlock) {
   return (block.sourceObservationAnchorIds ?? [])
     .map(
       (anchorId) =>
-        `<span id="${attribute(derivedXhtmlId('source-anchor', [block.id, anchorId]))}" class="visually-hidden source-observation-anchor" aria-hidden="true"></span>`,
+        `<span id="${attribute(xhtmlId(anchorId))}" class="visually-hidden source-observation-anchor" aria-hidden="true"></span>`,
     )
     .join('')
+}
+
+function assertUniqueSourceObservationAnchorIds(document: StructDocument) {
+  const occupied = new Map<string, string>()
+  for (const block of document.blocks) {
+    if (block.kind !== 'furniture')
+      occupied.set(xhtmlId(block.id), `block ${block.id}`)
+  }
+  for (const relationship of document.relationships)
+    occupied.set(xhtmlId(relationship.id), `relationship ${relationship.id}`)
+  for (const block of document.blocks) {
+    if (block.kind === 'furniture') continue
+    for (const anchorId of block.sourceObservationAnchorIds ?? []) {
+      const renderedId = xhtmlId(anchorId)
+      const previous = occupied.get(renderedId)
+      if (previous)
+        throw new Error(
+          `DUPLICATE_XHTML_SOURCE_ANCHOR: ${anchorId} conflicts with ${previous}`,
+        )
+      occupied.set(renderedId, `source anchor ${anchorId}`)
+    }
+  }
 }
 
 function renderBlock(
@@ -354,8 +376,14 @@ export function renderPublicationXhtml(
   document: StructDocument,
   options: StructXhtmlOptions = {},
 ) {
+  assertUniqueSourceObservationAnchorIds(document)
   const publicationPlan = buildRenderedPublicationPlan(document)
-  assertUniqueEmittedIds(emittedXhtmlIds(document, publicationPlan))
+  assertUniqueEmittedIds(
+    emittedXhtmlIds(document, publicationPlan).map(({ id, path }) => ({
+      id: xhtmlId(id),
+      path,
+    })),
+  )
   const emittedRelationshipIds = new Set<string>()
   const language = document.metadata.language ?? 'und'
   const direction =

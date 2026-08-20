@@ -451,6 +451,37 @@ describe('STRUCT runtime codec', () => {
     expect(() => decodeStructDocument(value)).toThrow(/asset|bytes/i)
   })
 
+  it('rejects a spoofed Uint8Array brand after a mutating toStringTag getter', () => {
+    const value = validDocument()
+    const bytes = new Int8Array([0, -1, -128])
+    Object.setPrototypeOf(bytes, Uint8Array.prototype)
+    Object.defineProperty(bytes, Symbol.toStringTag, {
+      configurable: true,
+      get() {
+        delete (bytes as any)[Symbol.toStringTag]
+        return 'Uint8Array'
+      },
+    })
+    value.assets[0].bytes = bytes as any
+
+    expect(() => decodeStructDocument(value)).toThrow(/asset|bytes/i)
+  })
+
+  it('rejects a self-deleting toStringTag accessor on a real Uint8Array', () => {
+    const value = validDocument()
+    const bytes = new Uint8Array([0, 255, 128])
+    Object.defineProperty(bytes, Symbol.toStringTag, {
+      configurable: true,
+      get() {
+        delete (bytes as any)[Symbol.toStringTag]
+        return 'Uint8Array'
+      },
+    })
+    value.assets[0].bytes = bytes as any
+
+    expect(() => decodeStructDocument(value)).toThrow(/asset|bytes/i)
+  })
+
   it('verifies present asset bytes against the declared SHA-256 and permits absent bytes', () => {
     const tampered = validDocument()
     tampered.assets[0].bytes = 'AP+B'

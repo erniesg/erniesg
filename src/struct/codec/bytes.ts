@@ -6,13 +6,26 @@ import {
   StructCodecError,
 } from './primitives'
 
+const typedArrayTagGetter = Object.getOwnPropertyDescriptor(
+  Object.getPrototypeOf(Uint8Array.prototype),
+  Symbol.toStringTag,
+)?.get
+
 function isCanonicalUint8Array(value: unknown): value is Uint8Array {
+  if (!ArrayBuffer.isView(value)) return false
+  const bytes = value as Uint8Array
+  const ownKeys = Reflect.ownKeys(bytes)
+  if (ownKeys.length !== bytes.length) return false
   if (
-    !ArrayBuffer.isView(value) ||
-    Object.prototype.toString.call(value) !== '[object Uint8Array]'
+    !ownKeys.every(
+      (key) =>
+        typeof key === 'string' &&
+        /^(?:0|[1-9]\d*)$/u.test(key) &&
+        Number(key) < bytes.length &&
+        Object.getOwnPropertyDescriptor(bytes, key) !== undefined,
+    )
   )
     return false
-  const bytes = value as Uint8Array
   const prototype = Object.getPrototypeOf(bytes)
   if (prototype === null) return false
   const prototypeKeys = Reflect.ownKeys(prototype)
@@ -22,28 +35,29 @@ function isCanonicalUint8Array(value: unknown): value is Uint8Array {
     !prototypeKeys.includes('BYTES_PER_ELEMENT')
   )
     return false
-  const constructor = Object.getOwnPropertyDescriptor(
+  const constructor = Object.getOwnPropertyDescriptor(prototype, 'constructor')
+  const bytesPerElement = Object.getOwnPropertyDescriptor(
     prototype,
-    'constructor',
-  )?.value
+    'BYTES_PER_ELEMENT',
+  )
   if (
-    typeof constructor !== 'function' ||
-    constructor.prototype !== prototype ||
-    Object.getOwnPropertyDescriptor(prototype, 'BYTES_PER_ELEMENT')?.value !== 1
+    constructor === undefined ||
+    !('value' in constructor) ||
+    typeof constructor.value !== 'function' ||
+    constructor.value.prototype !== prototype ||
+    bytesPerElement === undefined ||
+    !('value' in bytesPerElement) ||
+    bytesPerElement.value !== 1
   )
     return false
   if (
-    Function.prototype.toString.call(constructor) !==
+    Function.prototype.toString.call(constructor.value) !==
     Function.prototype.toString.call(Uint8Array)
   )
     return false
-  const ownKeys = Reflect.ownKeys(bytes)
-  if (ownKeys.length !== bytes.length) return false
-  return ownKeys.every(
-    (key) =>
-      typeof key === 'string' &&
-      /^(?:0|[1-9]\d*)$/u.test(key) &&
-      Number(key) < bytes.length,
+  return (
+    typedArrayTagGetter !== undefined &&
+    Reflect.apply(typedArrayTagGetter, bytes, []) === 'Uint8Array'
   )
 }
 

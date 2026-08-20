@@ -340,6 +340,33 @@ describe('STRUCT XHTML ID mapping', () => {
     )
   })
 
+  it('rejects detached semantic inline ids in table fallback blocks', async () => {
+    const document = characterizationDocument('0.2.0')
+    const source = document.blocks[0]!
+    const detachedId = 'table-fallback-detached-source-anchor-collision'
+    source.kind = 'table'
+    source.table = undefined
+    source.text = 'See target'
+    source.inline = [
+      {
+        start: 4,
+        end: source.text.length,
+        relationshipId: detachedId,
+        semanticRole: 'cross-reference',
+        targetIds: [source.id],
+      },
+    ]
+    source.sourceObservationAnchorIds = [detachedId]
+    resealDocument(document)
+
+    expect(() => renderPublicationXhtml(document)).toThrow(
+      'DUPLICATE_XHTML_SOURCE_ANCHOR',
+    )
+    await expect(buildStructEpub(document)).rejects.toThrow(
+      'DUPLICATE_XHTML_SOURCE_ANCHOR',
+    )
+  })
+
   it('ignores semantic inline ids in omitted furniture tables', () => {
     const document = characterizationDocument('0.2.0')
     const source = document.blocks[0]!

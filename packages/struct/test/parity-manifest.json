@@ -24,7 +24,7 @@
     "codec/model.ts": "PDF-coupled model receipt codec is forbidden from the package",
     "codec.test.ts": "canonical codec suite is app-coupled; package characterization suite is maintained locally",
     "epub-integrity.test.ts": "canonical EPUB suite is app-coupled; package characterization suite is maintained locally",
-    "from-reconstruction.ts": "extractor adapter is explicitly outside package core",
+    "from-reconstruction.ts": "historical compatibility shim for the app-owned extractor adapter is outside package core",
     "model-consultation-receipt.ts": "provider/model receipt contract is explicitly outside package core",
     "consultation-receipt.ts": "generic app receipt binding remains an app compatibility surface; package core is source-neutral",
     "emitted-ids.ts": "app publication planning and target admission remain outside package core",

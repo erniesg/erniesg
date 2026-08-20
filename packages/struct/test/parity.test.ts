@@ -191,7 +191,7 @@ const EXCLUDED_CANONICAL: Readonly<Record<string, string>> = {
   'epub-integrity.test.ts':
     'canonical EPUB suite is app-coupled; package characterization suite is maintained locally',
   'from-reconstruction.ts':
-    'extractor adapter is explicitly outside package core',
+    'historical compatibility shim for the app-owned extractor adapter is outside package core',
   'model-consultation-receipt.ts':
     'provider/model receipt contract is explicitly outside package core',
   'consultation-receipt.ts':
@@ -203,7 +203,7 @@ const EXCLUDED_CANONICAL: Readonly<Record<string, string>> = {
 }
 
 const MANIFEST_SHA256 =
-  '32aa25f69802c4e7d71e86edaa14aa99678422166aca6b5c1212bde4f2b14e72'
+  'ddf94a4b1169103bb2058a51baa2d45edc486de1763dc2100630b7aec008b406'
 
 async function sourceFiles(root: string, base = root): Promise<string[]> {
   const entries = await readdir(root, { withFileTypes: true })

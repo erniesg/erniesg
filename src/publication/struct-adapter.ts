@@ -39,6 +39,17 @@ function uniqueId(value: string, used: Set<string>) {
   return candidate
 }
 
+function assertUniqueSourceIds(
+  kind: 'BLOCK' | 'RELATIONSHIP' | 'ASSET',
+  ids: string[],
+) {
+  const seen = new Set<string>()
+  for (const id of ids) {
+    if (seen.has(id)) throw new Error(`STRUCT_DUPLICATE_${kind}_ID:${id}`)
+    seen.add(id)
+  }
+}
+
 function localeFor(document: StructDocument) {
   const candidate = document.metadata.language ?? 'en'
   try {
@@ -134,6 +145,19 @@ export function adaptStructDocument(
       ...(nodeId ? { nodeId } : {}),
     })
   }
+
+  assertUniqueSourceIds(
+    'BLOCK',
+    document.blocks.map((block) => block.id),
+  )
+  assertUniqueSourceIds(
+    'RELATIONSHIP',
+    document.relationships.map((relationship) => relationship.id),
+  )
+  assertUniqueSourceIds(
+    'ASSET',
+    document.assets.map((asset) => asset.id),
+  )
 
   for (const diagnostic of document.diagnostics) {
     addDiagnostic(
@@ -245,9 +269,53 @@ export function adaptStructDocument(
         .map(mappedNode)
         .filter((target): target is string => Boolean(target))
       const hasMissingTarget = mappedTargets.length !== targets.length
+      const hasMissingRelationship = Boolean(
+        inline.relationshipId && !relationship,
+      )
+      const relationshipHasMissingTarget = Boolean(
+        relationship &&
+        (relationship.to.length === 0 ||
+          relationship.to.some((target) => !mappedNode(target))),
+      )
+      const hasUnavailableMatchedTarget = Boolean(
+        relationship?.status === 'matched' &&
+        (hasMissingTarget ||
+          targets.length === 0 ||
+          relationshipHasMissingTarget),
+      )
+      if (hasMissingRelationship)
+        addDiagnostic(
+          'warning',
+          'unresolved-relationship',
+          `Inline relationship ${inline.relationshipId} in ${ownerId} had no matching source relationship.`,
+          ownerId,
+        )
+      const hasRoleSpecificTargetDiagnostic =
+        inline.semanticRole === 'citation' ||
+        inline.semanticRole === 'cross-reference' ||
+        inline.semanticRole === 'note-reference'
+      if (
+        hasMissingTarget &&
+        !hasRoleSpecificTargetDiagnostic &&
+        !hasUnavailableMatchedTarget
+      )
+        addDiagnostic(
+          'warning',
+          'unresolved-relationship-target',
+          `Inline target in ${ownerId} was unavailable and was source-preserved without a destination.`,
+          ownerId,
+        )
+      if (hasUnavailableMatchedTarget)
+        addDiagnostic(
+          'warning',
+          'unresolved-relationship-target',
+          `Matched relationship ${inline.relationshipId} in ${ownerId} had an unavailable target.`,
+          ownerId,
+        )
       const resolved = relationship
-        ? relationshipStatusIsResolved(relationship)
-        : !hasMissingTarget
+        ? relationshipStatusIsResolved(relationship) &&
+          !hasUnavailableMatchedTarget
+        : !hasMissingTarget && !hasMissingRelationship
       const base = {
         start: inline.start,
         end: inline.end,
@@ -334,7 +402,7 @@ export function adaptStructDocument(
               ),
             }
           : {}),
-        ...(inline.relationshipId && (resolved || href)
+        ...(inline.relationshipId && resolved
           ? { relationshipId: mappedRelationship(inline.relationshipId) }
           : {}),
         ...(inline.semanticRole ? { semanticRole: inline.semanticRole } : {}),
@@ -407,7 +475,13 @@ export function adaptStructDocument(
         {})
       : {}),
     ...(cell.inline.length
-      ? { inlineRuns: mapInline(cell.text, cell.inline, ownerId) }
+      ? (addDiagnostic(
+          'warning',
+          'lossy-table-inline',
+          `Table cell ${cell.id} contained inline annotations that are not supported by the publication table-cell schema; annotations were omitted.`,
+          ownerId,
+        ),
+        {})
       : {}),
   })
 
@@ -724,6 +798,15 @@ export function adaptStructDocument(
   const assetBytes = new Map<string, Uint8Array>()
   const assetHashes = new Map<string, string>()
   for (const asset of document.assets) {
+    if (!asset.bytes) {
+      addDiagnostic(
+        'warning',
+        'asset-bytes-unavailable',
+        `Asset ${asset.id} has no local bytes and was omitted from the publication asset bundle.`,
+        asset.id,
+      )
+      continue
+    }
     const prior = assetHashes.get(asset.sha256)
     if (prior) {
       assetIdsMap.set(asset.id, prior)
@@ -747,14 +830,7 @@ export function adaptStructDocument(
       ...(asset.width > 0 ? { width: asset.width } : {}),
       ...(asset.height > 0 ? { height: asset.height } : {}),
     })
-    if (asset.bytes) assetBytes.set(id, new Uint8Array(asset.bytes))
-    else if (assetDescriptors.at(-1)!.byteLength > 0)
-      addDiagnostic(
-        'warning',
-        'asset-bytes-unavailable',
-        `Asset ${asset.id} has no local bytes; resolution remains explicitly unavailable.`,
-        asset.id,
-      )
+    assetBytes.set(id, new Uint8Array(asset.bytes))
   }
 
   const nodes: PublicationNode[] = []

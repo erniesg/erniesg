@@ -466,4 +466,153 @@ describe('STRUCT publication adapter', () => {
       sourceId: 'fixture.pdf',
     })
   })
+
+  it('omits table-cell inline annotations with an explicit lossy diagnostic', () => {
+    const input = document([
+      block({
+        id: 'table',
+        kind: 'table',
+        text: 'A',
+        order: 0,
+        table: {
+          rows: 1,
+          columns: 1,
+          semantic: 'verified',
+          cells: [
+            {
+              id: 'cell',
+              text: 'A',
+              row: 0,
+              column: 0,
+              rowSpan: 1,
+              columnSpan: 1,
+              headerScope: null,
+              inline: [{ start: 0, end: 1, bold: true }],
+              evidence,
+            },
+          ],
+        },
+      }),
+    ])
+
+    const result = adaptStructDocument(input)
+    const graph = publicationGraphSchema.parse(result.graph)
+
+    expect(graph.nodes[0]).toMatchObject({
+      type: 'table',
+      rows: [{ cells: [{ text: 'A' }] }],
+    })
+    expect(graph.nodes[0]).not.toHaveProperty('rows.0.cells.0.inlineRuns')
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'lossy-table-inline' }),
+    )
+  })
+
+  it('diagnoses and omits figure assets whose bytes are unavailable', () => {
+    const input = document([
+      block({
+        id: 'figure',
+        kind: 'figure',
+        text: 'Figure source',
+        label: 'A figure',
+        order: 0,
+        fallbackAssetIds: ['figure-asset'],
+      }),
+    ])
+    input.assets = input.assets.map((asset) => ({
+      ...asset,
+      bytes: undefined,
+    }))
+
+    const result = adaptStructDocument(input)
+    const figure = result.graph.nodes.find((node) => node.id === 'figure')
+
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'asset-bytes-unavailable' }),
+    )
+    expect(result.assetBundle.descriptor.assets).toEqual([])
+    expect(figure).toMatchObject({ type: 'figure', assetIds: [] })
+  })
+
+  it.each([
+    [
+      'block',
+      (input: StructDocument) => {
+        input.blocks.push(
+          block({ id: 'duplicate', kind: 'heading', text: 'Second', order: 1 }),
+        )
+      },
+    ],
+    [
+      'relationship',
+      (input: StructDocument) => {
+        input.relationships.push({
+          ...input.relationships[0]!,
+          id: 'duplicate',
+        })
+        input.relationships[0]!.id = 'duplicate'
+      },
+    ],
+    [
+      'asset',
+      (input: StructDocument) => {
+        input.assets.push({ ...input.assets[0]!, id: 'duplicate' })
+        input.assets[0]!.id = 'duplicate'
+      },
+    ],
+  ])(
+    'rejects duplicate source %s ids with a deterministic adapter error',
+    (kind, mutate) => {
+      const input = document([
+        block({ id: 'duplicate', kind: 'paragraph', text: 'First', order: 0 }),
+      ])
+      mutate(input)
+
+      expect(() => adaptStructDocument(input)).toThrow(
+        `STRUCT_DUPLICATE_${kind.toUpperCase()}_ID:duplicate`,
+      )
+    },
+  )
+
+  it('diagnoses matched relationships whose inline targets are missing', () => {
+    const input = document([
+      block({
+        id: 'paragraph',
+        kind: 'paragraph',
+        text: 'A',
+        order: 0,
+        inline: [
+          {
+            start: 0,
+            end: 1,
+            relationshipId: 'matched-rel',
+            targetIds: ['missing-target'],
+            semanticRole: 'affiliation-marker',
+          },
+        ],
+      }),
+    ])
+    input.relationships = [
+      {
+        id: 'matched-rel',
+        kind: 'cross-reference',
+        from: 'paragraph',
+        to: ['missing-target'],
+        status: 'matched',
+        confidence: 1,
+        evidence,
+      },
+    ]
+
+    const result = adaptStructDocument(input)
+    const paragraph = result.graph.nodes.find((node) => node.id === 'paragraph')
+
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'unresolved-relationship-target' }),
+    )
+    expect(paragraph).toMatchObject({
+      type: 'paragraph',
+      inlineRuns: [{ start: 0, end: 1, semanticRole: 'affiliation-marker' }],
+    })
+  })
 })

@@ -420,6 +420,37 @@ describe('STRUCT runtime codec', () => {
     expect(() => decodeStructDocument(jsonValue)).toThrow()
   })
 
+  it('rejects Uint8Array values with enumerable own string properties', () => {
+    const value = validDocument()
+    const bytes = new Uint8Array([0, 255, 128])
+    Object.defineProperty(bytes, 'extra', {
+      value: 'must not be discarded',
+      enumerable: true,
+    })
+    value.assets[0].bytes = bytes as any
+
+    expect(() => decodeStructDocument(value)).toThrow(/asset|bytes/i)
+  })
+
+  it('rejects Uint8Array values with own symbol properties', () => {
+    const value = validDocument()
+    const bytes = new Uint8Array([0, 255, 128])
+    Object.defineProperty(bytes, Symbol('extra'), {
+      value: 'must not be discarded',
+    })
+    value.assets[0].bytes = bytes as any
+
+    expect(() => decodeStructDocument(value)).toThrow(/asset|bytes/i)
+  })
+
+  it('rejects Uint8Array subclasses rather than discarding their prototype state', () => {
+    const value = validDocument()
+    class SubclassedBytes extends Uint8Array {}
+    value.assets[0].bytes = new SubclassedBytes([0, 255, 128]) as any
+
+    expect(() => decodeStructDocument(value)).toThrow(/asset|bytes/i)
+  })
+
   it('verifies present asset bytes against the declared SHA-256 and permits absent bytes', () => {
     const tampered = validDocument()
     tampered.assets[0].bytes = 'AP+B'

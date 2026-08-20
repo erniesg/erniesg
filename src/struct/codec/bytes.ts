@@ -6,9 +6,54 @@ import {
   StructCodecError,
 } from './primitives'
 
+function isCanonicalUint8Array(value: unknown): value is Uint8Array {
+  if (
+    !ArrayBuffer.isView(value) ||
+    Object.prototype.toString.call(value) !== '[object Uint8Array]'
+  )
+    return false
+  const bytes = value as Uint8Array
+  const prototype = Object.getPrototypeOf(bytes)
+  if (prototype === null) return false
+  const prototypeKeys = Reflect.ownKeys(prototype)
+  if (
+    prototypeKeys.length !== 2 ||
+    !prototypeKeys.includes('constructor') ||
+    !prototypeKeys.includes('BYTES_PER_ELEMENT')
+  )
+    return false
+  const constructor = Object.getOwnPropertyDescriptor(
+    prototype,
+    'constructor',
+  )?.value
+  if (
+    typeof constructor !== 'function' ||
+    constructor.prototype !== prototype ||
+    Object.getOwnPropertyDescriptor(prototype, 'BYTES_PER_ELEMENT')?.value !== 1
+  )
+    return false
+  if (
+    Function.prototype.toString.call(constructor) !==
+    Function.prototype.toString.call(Uint8Array)
+  )
+    return false
+  const ownKeys = Reflect.ownKeys(bytes)
+  if (ownKeys.length !== bytes.length) return false
+  return ownKeys.every(
+    (key) =>
+      typeof key === 'string' &&
+      /^(?:0|[1-9]\d*)$/u.test(key) &&
+      Number(key) < bytes.length,
+  )
+}
+
 export function parseBytes(value: unknown, path: string): Uint8Array {
   try {
-    if (value instanceof Uint8Array) return new Uint8Array(value)
+    if (ArrayBuffer.isView(value)) {
+      if (!isCanonicalUint8Array(value))
+        fail('BYTES', path, 'bytes must be a canonical Uint8Array')
+      return new Uint8Array(value)
+    }
     if (Array.isArray(value)) {
       const bytes = array(value, path).map((entry, index) => {
         const byte = integer(entry, `${path}[${index}]`, 0)

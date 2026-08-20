@@ -61,12 +61,51 @@ function localeFor(document: StructDocument) {
 
 function dateOnly(value: string | undefined) {
   if (!value) return undefined
-  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (!match) return undefined
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const daysInMonth = [
+    31,
+    year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ]
+  return month >= 1 && day >= 1 && day <= (daysInMonth[month - 1] ?? 0)
+    ? value
+    : undefined
 }
 
 function dateTime(value: string | undefined) {
   if (!value) return undefined
-  return /^\d{4}-\d{2}-\d{2}T/.test(value) ? value : undefined
+  const match =
+    /^(\d{4}-\d{2}-\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$/.exec(
+      value,
+    )
+  if (!match || !dateOnly(match[1]) || !Number.isFinite(Date.parse(value)))
+    return undefined
+  const offset = /([+-])(\d{2}):?(\d{2})$/.exec(value)
+  if (offset && (Number(offset[2]) > 23 || Number(offset[3]) > 59))
+    return undefined
+  return value
+}
+
+function parsePublicationGraph(value: unknown) {
+  const parsed = publicationGraphSchema.safeParse(value)
+  if (parsed.success) return parsed.data
+  const details = parsed.error.issues
+    .map((issue) => `${issue.path.join('.') || 'graph'}:${issue.message}`)
+    .join(';')
+  throw new Error(`STRUCT_PUBLICATION_SCHEMA_INVALID:${details}`)
 }
 
 function direction(
@@ -239,30 +278,57 @@ export function adaptStructDocument(
       })
       .map((block) => block.id),
   )
+  const blocksById = new Map(document.blocks.map((block) => [block.id, block]))
+  const captionParentKinds = new Set(['figure', 'table', 'equation', 'media'])
+  const captionLinks = new Map<
+    string,
+    { captionId: string; parentId: string }
+  >()
+  const captionIdsByParent = new Map<string, string>()
+  const captionParentsByCaption = new Map<string, string>()
   const graphBlockIds = new Set(baseGraphBlockIds)
   for (const relationship of document.relationships) {
     if (relationship.kind !== 'caption' || relationship.status !== 'matched')
       continue
-    const fromBlock = document.blocks.find(
-      (block) => block.id === relationship.from,
-    )
-    const captionId =
-      fromBlock?.kind === 'caption'
-        ? relationship.from
-        : relationship.to.find(
-            (target) =>
-              document.blocks.find((block) => block.id === target)?.kind ===
-              'caption',
-          )
-    if (
-      !captionId ||
-      !document.blocks.find((block) => block.id === captionId)?.text
-    )
+    const fromBlock = blocksById.get(relationship.from)
+    const toBlock =
+      relationship.to.length === 1
+        ? blocksById.get(relationship.to[0]!)
+        : undefined
+    if (!fromBlock || !toBlock) continue
+    const endpoints =
+      captionParentKinds.has(fromBlock.kind) && toBlock.kind === 'caption'
+        ? { captionId: toBlock.id, parentId: fromBlock.id }
+        : undefined
+    if (!endpoints) {
+      addDiagnostic(
+        'warning',
+        'invalid-caption-relationship',
+        `Caption relationship ${relationship.id} did not connect one caption to one figure, table, equation, or media node and was omitted.`,
+        relationship.from,
+      )
       continue
-    const parentId =
-      captionId === relationship.from ? relationship.to[0] : relationship.from
-    if (parentId && baseGraphBlockIds.has(parentId))
-      graphBlockIds.add(captionId)
+    }
+    if (
+      captionIdsByParent.has(endpoints.parentId) ||
+      captionParentsByCaption.has(endpoints.captionId)
+    ) {
+      addDiagnostic(
+        'warning',
+        'invalid-caption-relationship',
+        `Caption relationship ${relationship.id} would create an ambiguous caption owner and was omitted.`,
+        relationship.from,
+      )
+      continue
+    }
+    captionLinks.set(relationship.id, endpoints)
+    captionIdsByParent.set(endpoints.parentId, endpoints.captionId)
+    captionParentsByCaption.set(endpoints.captionId, endpoints.parentId)
+    if (
+      baseGraphBlockIds.has(endpoints.parentId) &&
+      blocksById.get(endpoints.captionId)?.text
+    )
+      graphBlockIds.add(endpoints.captionId)
   }
   const mappedNode = (id: string) =>
     nonGraphBlockIds.has(id) || !graphBlockIds.has(id)
@@ -313,14 +379,10 @@ export function adaptStructDocument(
 
   const captionParent = new Map<string, string>()
   for (const relationship of document.relationships) {
-    if (relationship.kind !== 'caption' || !relationship.to[0]) continue
+    if (relationship.kind !== 'caption') continue
     if (relationship.status === 'matched') {
-      const fromBlock = document.blocks.find(
-        (block) => block.id === relationship.from,
-      )
-      if (fromBlock?.kind === 'caption')
-        captionParent.set(relationship.from, relationship.to[0])
-      else captionParent.set(relationship.to[0], relationship.from)
+      const endpoints = captionLinks.get(relationship.id)
+      if (endpoints) captionParent.set(endpoints.captionId, endpoints.parentId)
     } else {
       addDiagnostic(
         'warning',
@@ -552,18 +614,8 @@ export function adaptStructDocument(
   })
 
   const captionIdFor = (block: StructBlock) => {
-    const relationship = document.relationships.find(
-      (candidate) =>
-        candidate.kind === 'caption' && candidate.from === block.id,
-    )
-    if (!relationship || relationship.status !== 'matched') return undefined
-    const target = mappedNode(relationship.to[0] ?? '')
-    if (!target) return undefined
-    return document.blocks.find(
-      (candidate) => candidate.id === relationship.to[0],
-    )?.kind === 'caption'
-      ? target
-      : undefined
+    const captionId = captionIdsByParent.get(block.id)
+    return captionId ? mappedNode(captionId) : undefined
   }
 
   const mapTableCell = (
@@ -775,15 +827,19 @@ export function adaptStructDocument(
             block.id,
           )
         const cellIds = new Map<string, string>()
-        block.table.cells.forEach((cell, index) =>
+        const sourceCellIds = new Set<string>()
+        for (const [index, cell] of block.table.cells.entries()) {
+          if (sourceCellIds.has(cell.id))
+            throw new Error(`STRUCT_DUPLICATE_TABLE_CELL_ID:${cell.id}`)
+          sourceCellIds.add(cell.id)
           cellIds.set(
             cell.id,
             uniqueId(
               `${nodeIds.get(block.id)}-cell-${cell.id || index + 1}`,
               usedNodeIds,
             ),
-          ),
-        )
+          )
+        }
         const rows = Array.from({ length: block.table.rows }, () => ({
           cells: [] as ReturnType<typeof mapTableCell>[],
         }))
@@ -1115,7 +1171,28 @@ export function adaptStructDocument(
   }
 
   if (!nodes.length) throw new Error('STRUCT_NO_PUBLICATION_NODES')
-  const graph = publicationGraphSchema.parse({
+  const created = dateOnly(document.metadata.publicationDate)
+  if (document.metadata.publicationDate && !created)
+    addDiagnostic(
+      'warning',
+      'invalid-publication-date',
+      `Publication date ${document.metadata.publicationDate} was not a valid calendar date and was omitted.`,
+    )
+  const modified = dateOnly(document.metadata.updated)
+  if (document.metadata.updated && !modified)
+    addDiagnostic(
+      'warning',
+      'invalid-updated-date',
+      `Updated date ${document.metadata.updated} was not a valid calendar date and was omitted.`,
+    )
+  const artifactModifiedAt = dateTime(document.metadata.artifactModifiedAt)
+  if (document.metadata.artifactModifiedAt && !artifactModifiedAt)
+    addDiagnostic(
+      'warning',
+      'invalid-artifact-modified-at',
+      `Artifact modified timestamp ${document.metadata.artifactModifiedAt} was not a valid offset datetime and was omitted.`,
+    )
+  const graph = parsePublicationGraph({
     version: PUBLICATION_GRAPH_VERSION,
     id: graphId,
     metadata: {
@@ -1128,15 +1205,9 @@ export function adaptStructDocument(
         ? { abstract: document.metadata.abstract }
         : {}),
       sourceDocumentVersion: document.schemaVersion,
-      ...(dateOnly(document.metadata.publicationDate)
-        ? { created: dateOnly(document.metadata.publicationDate) }
-        : {}),
-      ...(dateOnly(document.metadata.updated)
-        ? { modified: dateOnly(document.metadata.updated) }
-        : {}),
-      ...(dateTime(document.metadata.artifactModifiedAt)
-        ? { artifactModifiedAt: dateTime(document.metadata.artifactModifiedAt) }
-        : {}),
+      ...(created ? { created } : {}),
+      ...(modified ? { modified } : {}),
+      ...(artifactModifiedAt ? { artifactModifiedAt } : {}),
       defaultLocale: locale,
       defaultDirection: directionValue,
       keywords: [],

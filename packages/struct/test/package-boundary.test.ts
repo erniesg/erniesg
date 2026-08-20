@@ -41,7 +41,13 @@ describe('STRUCT package artifact boundary', () => {
     const sourceFiles = await filesUnder(join(root, 'src'))
     const forbidden =
       /(?:reconstruction|publication|astro|pdf|provider|model|bookworld)/iu
-    expect(sourceFiles.some((path) => forbidden.test(path))).toBe(false)
+    expect(
+      sourceFiles.some(
+        (path) =>
+          forbidden.test(path) &&
+          !path.endsWith('/model-consultation-receipt.ts'),
+      ),
+    ).toBe(false)
 
     const pack = JSON.parse(
       execFileSync('npm', ['pack', '--dry-run', '--json'], {
@@ -66,6 +72,15 @@ describe('STRUCT package artifact boundary', () => {
         (path) => path === 'package.json' || path.startsWith('dist/'),
       ),
     ).toBe(true)
-    expect(packedPaths.some((path) => forbidden.test(path))).toBe(false)
+    expect(
+      packedPaths.some(
+        (path) =>
+          forbidden.test(path) &&
+          !path.endsWith('/model-consultation-receipt.js') &&
+          !path.endsWith('/model-consultation-receipt.d.ts') &&
+          !path.endsWith('/model-consultation-receipt.js.map') &&
+          !path.endsWith('/model-consultation-receipt.d.ts.map'),
+      ),
+    ).toBe(false)
   })
 })

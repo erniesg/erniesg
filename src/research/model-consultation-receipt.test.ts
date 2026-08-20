@@ -3,6 +3,7 @@ import Ajv2020 from 'ajv/dist/2020.js'
 import { describe, expect, it } from 'vitest'
 import { sha256HexSync } from './sha256-sync'
 import {
+  MODEL_FALLBACK_DECISION_CLASSES,
   MODEL_FALLBACK_REFERENCE_FIXTURES,
   ModelFallbackLedger,
   ModelConsultationGate,
@@ -10,7 +11,8 @@ import {
   serializeModelConsultationReceipt,
   validateModelConsultationReceipt,
 } from './model-fallback'
-import { validReceiptMetric } from '../struct/model-consultation-receipt'
+import { validReceiptMetric } from './model-fallback-receipt'
+import { validateModelConsultationReceipt as validateGenericReceipt } from '../struct/model-consultation-receipt'
 
 const schema = JSON.parse(
   readFileSync(
@@ -204,6 +206,22 @@ describe('model consultation receipt validation', () => {
     expect(validateSchema(receipt), JSON.stringify(validateSchema.errors)).toBe(
       true,
     )
+  })
+
+  it('keeps PDF decision-class policy at the app-owned validator seam', async () => {
+    const receipt = await validReceipt()
+    const consultation = receipt.consultations[0]!
+    const priorClass = consultation.decisionClass
+    const policyClass = MODEL_FALLBACK_DECISION_CLASSES.readingOrderTie
+    consultation.decisionClass = policyClass
+    receipt.decisions[0]!.decisionClass = policyClass
+    const metric = receipt.metrics.byDecisionClass[priorClass]!
+    delete receipt.metrics.byDecisionClass[priorClass]
+    receipt.metrics.byDecisionClass[policyClass] = metric
+    recommitConsultation(consultation)
+
+    expect(validateGenericReceipt(receipt)).toBe(true)
+    expect(validateModelConsultationReceipt(receipt)).toBe(false)
   })
 
   it.each(credentialShapedIds)(

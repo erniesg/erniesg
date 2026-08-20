@@ -260,10 +260,7 @@ function assertStructReceiptIntegrity(document: StructDocument) {
     ) {
       throw new Error('PENDING_MODEL_CONSULTATION_RECEIPT')
     }
-    if (
-      document.source.format !== 'pdf' ||
-      modelConsultations.sourceSha256 !== document.source.sha256
-    ) {
+    if (modelConsultations.sourceSha256 !== document.source.sha256) {
       throw new Error('MODEL_CONSULTATION_SOURCE_MISMATCH')
     }
     if (modelConsultations.documentId !== document.documentId) {

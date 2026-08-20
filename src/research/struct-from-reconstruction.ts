@@ -19,7 +19,7 @@ import { structDigest, structId } from '../struct/ids'
 import {
   validateModelConsultationReceipt,
   type ModelFallbackReceipt,
-} from '../struct/model-consultation-receipt'
+} from './model-fallback-receipt'
 import { recoverySummary, toStructDiagnostic } from '../struct/recovery'
 import {
   orderBlocksByLayout,

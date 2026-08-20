@@ -47,6 +47,10 @@ import {
   unitInterval,
 } from './primitives.js'
 import { bytesToBase64, parseBytes } from './bytes.js'
+import {
+  copyCanonicalJson,
+  validateModelConsultationReceipt,
+} from '../model-consultation-receipt.js'
 import { validateStructDocument } from './invariants.js'
 import { sha256HexSync } from '../sha256.js'
 
@@ -991,8 +995,22 @@ function parseReceipt(value: unknown, path: string): StructReceipt {
       'conservation',
       'generatedSha256',
     ],
-    ['documentId'],
+    ['documentId', 'modelConsultations'],
   )
+  let modelConsultations: StructReceipt['modelConsultations']
+  if (has(parsed, 'modelConsultations')) {
+    const copied = copyCanonicalJson(
+      parsed.modelConsultations,
+      `${path}.modelConsultations`,
+    )
+    if (!validateModelConsultationReceipt(copied))
+      fail(
+        'MODEL_RECEIPT',
+        `${path}.modelConsultations`,
+        'invalid model consultation receipt',
+      )
+    modelConsultations = copied as StructReceipt['modelConsultations']
+  }
   return {
     schemaVersion: parseSchemaVersion(
       parsed.schemaVersion,
@@ -1002,6 +1020,7 @@ function parseReceipt(value: unknown, path: string): StructReceipt {
       ? { documentId: identifier(parsed.documentId, `${path}.documentId`) }
       : {}),
     sourceSha256: hash(parsed.sourceSha256, `${path}.sourceSha256`),
+    ...(modelConsultations ? { modelConsultations } : {}),
     blockCount: nonNegativeInteger(parsed.blockCount, `${path}.blockCount`),
     assetCount: nonNegativeInteger(parsed.assetCount, `${path}.assetCount`),
     relationshipCount: nonNegativeInteger(

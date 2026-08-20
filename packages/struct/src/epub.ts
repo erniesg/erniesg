@@ -9,6 +9,7 @@ import {
 import { XMLParser, XMLValidator } from 'fast-xml-parser'
 import { sha256HexSync } from './sha256.js'
 import { legacyStructDigestMatches, structDigest } from './ids.js'
+import { validateModelConsultationReceipt } from './model-consultation-receipt.js'
 import { renderPublicationXhtml, xhtmlId } from './xhtml.js'
 import {
   LEGACY_STRUCT_SCHEMA_VERSION,
@@ -245,10 +246,31 @@ function assertStructReceiptIntegrity(document: StructDocument) {
     throw new Error('STRUCT_RECEIPT_BINDING_MISMATCH')
   }
 
+  const modelConsultations = receipt.modelConsultations
+  if (modelConsultations !== undefined) {
+    if (!validateModelConsultationReceipt(modelConsultations)) {
+      throw new Error('INVALID_MODEL_CONSULTATION_RECEIPT')
+    }
+    if (
+      modelConsultations.consultations.some(
+        ({ status }) => status === 'pending',
+      )
+    ) {
+      throw new Error('PENDING_MODEL_CONSULTATION_RECEIPT')
+    }
+    if (modelConsultations.sourceSha256 !== document.source.sha256) {
+      throw new Error('MODEL_CONSULTATION_SOURCE_MISMATCH')
+    }
+    if (modelConsultations.documentId !== document.documentId) {
+      throw new Error('MODEL_CONSULTATION_DOCUMENT_MISMATCH')
+    }
+  }
+
   const { receipt: _receipt, ...withoutReceipt } = document
   const digestInput = {
     ...withoutReceipt,
     conservation: receipt.conservation,
+    ...(modelConsultations ? { modelConsultations } : {}),
     assets: document.assets.map(({ bytes: _bytes, ...asset }) => asset),
   }
   const expectedGeneratedSha256 = structDigest(digestInput)

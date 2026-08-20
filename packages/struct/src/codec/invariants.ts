@@ -5,6 +5,7 @@ import {
   type StructReceipt,
 } from '../types.js'
 import { legacyStructDigestMatches, structDigest } from '../ids.js'
+import { validateModelConsultationReceipt } from '../model-consultation-receipt.js'
 import { fail, SAFE_ID, type DataObject, unique } from './primitives.js'
 
 function digestInput(document: StructDocument) {
@@ -12,6 +13,9 @@ function digestInput(document: StructDocument) {
   return {
     ...withoutReceipt,
     conservation: document.receipt.conservation,
+    ...(document.receipt.modelConsultations
+      ? { modelConsultations: document.receipt.modelConsultations }
+      : {}),
     assets: document.assets.map(({ bytes: _bytes, ...asset }) => asset),
   }
 }
@@ -546,6 +550,26 @@ function validatePages(document: StructDocument) {
       checkPage(page, `$.recovery.issues[${index}].pages[${pageIndex}]`)
 }
 
+function validateModelBinding(document: StructDocument) {
+  const model = document.receipt.modelConsultations
+  if (!model) return
+  if (!validateModelConsultationReceipt(model))
+    fail(
+      'MODEL_RECEIPT',
+      '$.receipt.modelConsultations',
+      'invalid model consultation receipt',
+    )
+  if (
+    model.documentId !== document.documentId ||
+    model.sourceSha256 !== document.source.sha256
+  )
+    fail(
+      'BINDING',
+      '$.receipt.modelConsultations',
+      'model consultation receipt must match the enclosing document and source',
+    )
+}
+
 export function validateStructDocument(
   document: StructDocument,
   _input: DataObject,
@@ -564,8 +588,16 @@ export function validateStructDocument(
       'receipt source hash must match source',
     )
   if (document.schemaVersion === LEGACY_STRUCT_SCHEMA_VERSION) {
-    if (document.documentId !== undefined || receipt.documentId !== undefined)
-      fail('MIGRATION', '$', '0.1.0 documents cannot contain document bindings')
+    if (
+      document.documentId !== undefined ||
+      receipt.documentId !== undefined ||
+      receipt.modelConsultations !== undefined
+    )
+      fail(
+        'MIGRATION',
+        '$',
+        '0.1.0 documents cannot contain document bindings or model consultations',
+      )
   } else if (
     document.documentId === undefined ||
     receipt.documentId !== document.documentId
@@ -579,5 +611,6 @@ export function validateStructDocument(
   validateConservation(document)
   validateReferences(document)
   validatePages(document)
+  validateModelBinding(document)
   validateDigest(document)
 }

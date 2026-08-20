@@ -211,8 +211,8 @@ async function resolvedVisualModelConsultation(candidateIndex = 0) {
 }
 
 describe('STRUCT canonical document graph', () => {
-  it('does not expose provider/model consultation policy from the public core', () => {
-    expect(structCore).not.toHaveProperty('validateModelConsultationReceipt')
+  it('exposes only the generic receipt validator, not app consultation policy', () => {
+    expect(structCore).toHaveProperty('validateModelConsultationReceipt')
     expect(structCore).not.toHaveProperty('ModelFallbackReceipt')
     expect(structCore).not.toHaveProperty('ModelConsultationClient')
   })
@@ -387,7 +387,7 @@ describe('STRUCT canonical document graph', () => {
       documentId: 'another-document',
     }
     await expect(buildStructEpub(staleDigest)).rejects.toThrow(
-      'MODEL_CONSULTATION_DOCUMENT_MISMATCH',
+      'INVALID_MODEL_CONSULTATION_RECEIPT',
     )
 
     const wrongDocument = structuredClone(graph)
@@ -566,7 +566,9 @@ describe('STRUCT canonical document graph', () => {
       modelConsultations: pendingReceipt,
       assets: graph.assets.map(({ bytes: _bytes, ...asset }) => asset),
     })
-    await expect(buildStructEpub(graph)).resolves.toBeDefined()
+    await expect(buildStructEpub(graph)).rejects.toThrow(
+      'PENDING_MODEL_CONSULTATION_RECEIPT',
+    )
 
     finishConsultation!({ candidateId: point.candidates[0]!.id })
     await decision

@@ -28,3 +28,14 @@ export {
   type StructTable,
   type StructTableCell,
 } from './types.js'
+export type {
+  ModelConsultationMetric,
+  ModelConsultationMetrics,
+  ModelConsultationRecord,
+  ModelConsultationRecordStatus,
+  ModelDecisionMetricEvent,
+  ModelFallbackCandidate,
+  ModelFallbackChoice,
+  ModelFallbackDecisionClass,
+  ModelFallbackReceipt,
+} from './model-consultation-receipt.js'

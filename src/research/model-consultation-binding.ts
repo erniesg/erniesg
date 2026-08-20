@@ -2,7 +2,7 @@ import {
   stableJson as stableModelConsultationJson,
   validateModelConsultationReceipt,
   type ModelFallbackReceipt,
-} from './model-consultation-receipt'
+} from './model-fallback-receipt'
 import type { PdfReconstruction } from './import-types'
 import { sha256HexSync } from './sha256-sync'
 

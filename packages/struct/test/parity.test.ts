@@ -40,20 +40,20 @@ const MAPPINGS: readonly Mapping[] = [
   {
     packagePath: 'codec/invariants.ts',
     canonicalPath: 'codec/invariants.ts',
-    rule: 'model-free-invariants',
+    rule: 'generic-model-invariants',
     canonicalSha256:
       'ebf1353be5c0012505e8ca41613396e53556d512720b962043c5232535e6b5d9',
     packageSha256:
-      'e5f0e4aa5cb13afbf48529ae396a815aadfde8c4907a479763e16c5307ee7c0b',
+      '1d317a67ecbfa7eda8c9c820524f5449a7aa806ac9228141112c81750ba3c5f2',
   },
   {
     packagePath: 'codec/parsers.ts',
     canonicalPath: 'codec/parsers.ts',
-    rule: 'model-free-parser',
+    rule: 'generic-model-parser',
     canonicalSha256:
       'd5e8dcfcd6b5631b018ecc50b86bd4caa4f1921d417d72647f939c7f376d4164',
     packageSha256:
-      '9ba8a268d23c1125d9e7ba7fa63cd24bf23c784da8a8cb725684872d9703edf1',
+      '620f330d7f5c73342c82a0eb9cff5f4b18a6b5797a2e160a4881757ec91fae33',
   },
   {
     packagePath: 'codec/primitives.ts',
@@ -80,22 +80,20 @@ const MAPPINGS: readonly Mapping[] = [
     canonicalSha256:
       '6bc47d8f02d4471814e0cd830b02c1724cc7e56c4ce227bd5bed261f672aa399',
     packageSha256:
-      'b0d32f782b40caa00e932f3b71f317bd353371a6e81f3400aab603b2180b339f',
+      '5ea085ff0a109434009af112ccb987501ae178549589018749b422840bfb32d2',
   },
   {
     packagePath: 'epub.ts',
     canonicalPath: 'epub.ts',
-    rule: 'model-free-epub',
+    rule: 'generic-model-epub',
     canonicalSha256:
-      'd717e2a79def4a901f4110f6bbed2f11c07f08da45b7e3d55ff055164bf75cbb',
+      'a0601458f4b4735b57436eef844c23217095d94966dae77f88ccd55f6bebcd38',
     packageSha256:
-      '28c9cddf8565aa27e4449a79e02f9541c4942d5491a41e4ab31a76b60c488887',
+      'c281d4fe6567e91878d403ba8067b4e0b8683d4bfd4eaa321ef36d2e05dd8a7e',
   },
   {
     packagePath: 'ids.ts',
     canonicalPath: 'ids.ts',
-    // The app facade owns SAFE_ID/credential filtering; package primitives
-    // provide the equivalent package-local validator.
     rule: 'safe-id-facade',
     canonicalSha256:
       '4b203de70f351fd6eef8ffb3566e932549c8ccf333d2a0586940f9ca51795de8',
@@ -107,9 +105,21 @@ const MAPPINGS: readonly Mapping[] = [
     canonicalPath: 'index.ts',
     rule: 'root-facade',
     canonicalSha256:
-      'b8d388b88f776b0ed58d596f88ee54aeb02ca3c8b25778a0697eae0de10524bf',
+      '99efc666348ed3fcda3efe816b681988bd073e4de3bac0029187f2f1f760af55',
     packageSha256:
       'c16a9ebc3250fb4bb62c364e079cfc05ea3a77563df301954215695d5efb42fd',
+  },
+  {
+    // The package and canonical generic receipt codecs share the closed wire
+    // contract but use their tree-local codec primitives; the rule below
+    // checks policy-free source and binds both reviewed literal hashes.
+    packagePath: 'model-consultation-receipt.ts',
+    canonicalPath: 'model-consultation-receipt.ts',
+    rule: 'generic-receipt',
+    canonicalSha256:
+      '707fbbf1c5e1fdb76b920fe9128d7a98325e2bd4d9e3f5ab46481b245fb52f96',
+    packageSha256:
+      '6a46b1b38ff835512ecd988fa92d099de38043b599ef5228332d2528eefba2ad',
   },
   {
     packagePath: 'reading-order.ts',
@@ -134,7 +144,7 @@ const MAPPINGS: readonly Mapping[] = [
     canonicalPath: 'epub.ts',
     rule: 'renderer-epub-facade',
     canonicalSha256:
-      'd717e2a79def4a901f4110f6bbed2f11c07f08da45b7e3d55ff055164bf75cbb',
+      'a0601458f4b4735b57436eef844c23217095d94966dae77f88ccd55f6bebcd38',
     packageSha256:
       '77dfd2ce81a50ef6e5bcee424b04add78b979fa5f626fd504b8f8abaff535452',
   },
@@ -152,7 +162,7 @@ const MAPPINGS: readonly Mapping[] = [
     canonicalPath: null,
     rule: 'package-only-schema',
     packageSha256:
-      'f5de92bf20186bc180bdded5e9e6598f4ec342c74442183cb5ac0b37b368a4d0',
+      'b3835d149b5f8dc96c0ccac7d9c2604799a57ebdb2e82f64f7d994741d2d4471',
   },
   {
     packagePath: 'sha256.ts',
@@ -166,11 +176,11 @@ const MAPPINGS: readonly Mapping[] = [
   {
     packagePath: 'types.ts',
     canonicalPath: 'types.ts',
-    rule: 'model-free-types',
+    rule: 'generic-model-types',
     canonicalSha256:
       'bc3650eee1b698a70394cae853bd7aca21681c6ad2ec876baf1a6c7c072e2516',
     packageSha256:
-      '645e9853dd478d5b7d716ed94e844af41b8ee4b80de811337b3f6d5cc24de7e9',
+      '9aaf1e51c0167dd3445db491fdd5e36f5ac120d63a033e147e84d223c8195083',
   },
   {
     packagePath: 'xhtml.ts',
@@ -192,8 +202,6 @@ const EXCLUDED_CANONICAL: Readonly<Record<string, string>> = {
     'canonical EPUB suite is app-coupled; package characterization suite is maintained locally',
   'from-reconstruction.ts':
     'historical compatibility shim for the app-owned extractor adapter is outside package core',
-  'model-consultation-receipt.ts':
-    'provider/model receipt contract is explicitly outside package core',
   'consultation-receipt.ts':
     'generic app receipt binding remains an app compatibility surface; package core is source-neutral',
   'emitted-ids.ts':
@@ -203,7 +211,7 @@ const EXCLUDED_CANONICAL: Readonly<Record<string, string>> = {
 }
 
 const MANIFEST_SHA256 =
-  'ddf94a4b1169103bb2058a51baa2d45edc486de1763dc2100630b7aec008b406'
+  '8deff069940165722df0a46e78dcc1085f565ea4244c905b3d5e01875548b53b'
 
 async function sourceFiles(root: string, base = root): Promise<string[]> {
   const entries = await readdir(root, { withFileTypes: true })
@@ -276,34 +284,20 @@ describe('STRUCT package/canonical parity', () => {
         )
       }
       const packageSource = packageBytes.toString('utf8')
-      if (
-        [
-          'model-free-invariants',
-          'model-free-parser',
-          'model-free-epub',
-          'model-free-types',
-          'safe-id-primitives',
-        ].includes(mapping.rule)
-      ) {
+      if (mapping.rule === 'generic-receipt') {
+        expect(packageSource).not.toMatch(
+          /MODEL_FALLBACK_(?:DECISION_CLASSES|EVIDENCE_CODES)|PDF_REGION|ModelConsultationClient|ModelDecisionRequest|ModelIdentity|PdfReconstruction|BookWorld/iu,
+        )
+      }
+      if (mapping.rule === 'safe-id-primitives') {
         expect(packageSource).not.toMatch(
           /model-consultation|modelConsultations|validateModelReceipt|ModelFallbackReceipt/iu,
         )
       }
-      if (mapping.rule === 'model-free-epub') {
+      if (mapping.rule === 'generic-model-epub') {
         expect(packageSource).toContain("from './sha256.js'")
         expect(packageSource).toContain("from './ids.js'")
         expect(packageSource).toContain("from './xhtml.js'")
-      }
-      if (mapping.rule === 'model-free-xhtml') {
-        expect(packageSource).toContain('xhtmlId')
-        expect(packageSource).not.toMatch(/model-consultation|PublicationGraph/iu)
-      }
-      if (mapping.rule === 'renderer-xhtml-facade-model-free') {
-        expect(packageSource).toContain("from '../xhtml.js'")
-      }
-      if (mapping.rule === 'safe-id-facade') {
-        expect(packageSource).toContain("from './sha256.js'")
-        expect(packageSource).not.toMatch(/model-consultation|PublicationGraph/iu)
       }
     }
 

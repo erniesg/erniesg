@@ -42,7 +42,7 @@ import {
   type ModelFallbackReceipt,
   type ModelIdentity,
   type NormalizedModelIdentity,
-} from './model-consultation-receipt'
+} from './model-fallback-receipt'
 
 export {
   MODEL_ASSISTANCE_DEFAULT_ENABLED,
@@ -51,7 +51,7 @@ export {
   MODEL_FALLBACK_PROMPT_TEMPLATE_SHA256,
   MODEL_FALLBACK_SCHEMA_VERSION,
   validateModelConsultationReceipt,
-} from './model-consultation-receipt'
+} from './model-fallback-receipt'
 export type {
   ModelConsultationClient,
   ModelConsultationMetric,
@@ -69,7 +69,7 @@ export type {
   ModelFallbackReceipt,
   ModelIdentity,
   NormalizedModelIdentity,
-} from './model-consultation-receipt'
+} from './model-fallback-receipt'
 
 /**
  * Model assistance is deliberately a small decision service, rather than an

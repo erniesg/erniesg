@@ -18,6 +18,8 @@ const expected = {
     'recoverySummary',
     'renderPublicationXhtml',
     'buildStructEpub',
+    'MODEL_CONSULTATION_SCHEMA_VERSION',
+    'validateModelConsultationReceipt',
   ],
   './core': [
     'STRUCT_SCHEMA_VERSION',
@@ -26,6 +28,8 @@ const expected = {
     'migrateStructDocument',
     'orderBlocksByLayout',
     'pageLayoutsFromBlocks',
+    'MODEL_CONSULTATION_SCHEMA_VERSION',
+    'validateModelConsultationReceipt',
   ],
   './schema': ['STRUCT_SCHEMA_VERSION', 'LEGACY_STRUCT_SCHEMA_VERSION'],
   './ids': [
@@ -48,6 +52,8 @@ const forbidden = [
   'PdfReconstruction',
   'ModelFallbackReceipt',
   'ModelConsultationClient',
+  'MODEL_FALLBACK_DECISION_CLASSES',
+  'PDF_REGION_KINDS',
 ]
 
 describe('STRUCT package boundary', () => {

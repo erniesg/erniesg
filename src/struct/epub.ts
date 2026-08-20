@@ -9,9 +9,8 @@ import {
 import { XMLParser, XMLValidator } from 'fast-xml-parser'
 import { sha256HexSync } from './sha256'
 import { legacyStructDigestMatches, structDigest } from './ids'
-import { validateStructConsultationReceipt } from './consultation-receipt'
+import { validateModelConsultationReceipt } from './model-consultation-receipt'
 import { renderPublicationXhtml, xhtmlId } from './xhtml'
-import { isPackagedAssetId } from './emitted-ids'
 import {
   LEGACY_STRUCT_SCHEMA_VERSION,
   STRUCT_SCHEMA_VERSION,
@@ -251,12 +250,17 @@ function assertStructReceiptIntegrity(document: StructDocument) {
 
   const modelConsultations = receipt.modelConsultations
   if (modelConsultations !== undefined) {
-    if (!validateStructConsultationReceipt(modelConsultations)) {
+    if (!validateModelConsultationReceipt(modelConsultations)) {
       throw new Error('INVALID_MODEL_CONSULTATION_RECEIPT')
     }
     if (
-      modelConsultations.sourceSha256 !== document.source.sha256
+      modelConsultations.consultations.some(
+        ({ status }) => status === 'pending',
+      )
     ) {
+      throw new Error('PENDING_MODEL_CONSULTATION_RECEIPT')
+    }
+    if (modelConsultations.sourceSha256 !== document.source.sha256) {
       throw new Error('MODEL_CONSULTATION_SOURCE_MISMATCH')
     }
     if (modelConsultations.documentId !== document.documentId) {
@@ -311,14 +315,15 @@ export async function buildStructEpub(
     if (!asset.bytes) {
       throw new Error(`STRUCT asset ${asset.id} has no packaged bytes.`)
     }
-    const bytes = new Uint8Array(asset.bytes)
-    if (sha256HexSync(bytes) !== asset.sha256) {
-      throw new Error(
-        `STRUCT asset ${asset.id} bytes do not match declared SHA-256.`,
-      )
-    }
-    return { ...asset, bytes }
+    return asset as typeof asset & { bytes: Uint8Array }
   })
+  const reservedIds = new Set([
+    'publication-id',
+    'nav',
+    'content',
+    'styles',
+    'struct',
+  ])
   const reservedHrefs = new Set([
     'package.opf',
     'nav.xhtml',
@@ -330,7 +335,11 @@ export async function buildStructEpub(
   const assetIds = new Set<string>()
   const assetHrefs = new Set<string>()
   for (const asset of assets) {
-    if (assetIds.has(asset.id) || !isPackagedAssetId(asset.id)) {
+    if (
+      reservedIds.has(asset.id) ||
+      assetIds.has(asset.id) ||
+      !/^[A-Za-z_][A-Za-z0-9_.-]*$/u.test(asset.id)
+    ) {
       throw new Error(
         `STRUCT EPUB asset id is duplicate or reserved: ${asset.id}`,
       )

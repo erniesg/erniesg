@@ -1,37 +1,25 @@
-import { sha256HexSync } from './sha256'
-
-/**
- * Source-neutral closed receipt data carried by StructReceipt.  Decision
- * classes, candidate taxonomies, and semantic binding remain app-owned; the
- * core validates only the durable envelope and its integrity relationships.
- */
+import { sha256HexSync } from './sha256.js'
+import { dataEntries, fail, finiteNumber } from './codec/primitives.js'
 
 export const MODEL_CONSULTATION_SCHEMA_VERSION = '1.0.0' as const
 export const MODEL_FALLBACK_SCHEMA_VERSION = MODEL_CONSULTATION_SCHEMA_VERSION
 
 export type ModelFallbackDecisionClass = string
-
-export type ModelFallbackCandidate = {
-  id: string
-  [key: string]: unknown
-}
-
+export type ModelFallbackCandidate = { id: string; [key: string]: unknown }
 export type ModelFallbackChoice = {
   candidateId: string
   associationId?: string
   order?: number
 }
-
 export type ModelConsultationRecordStatus =
   'pending' | 'accepted' | 'rejected' | 'failed'
-
 export type ModelConsultationRecord = {
   schemaVersion: typeof MODEL_CONSULTATION_SCHEMA_VERSION
   requestId: string
   fixtureId: string
   documentId: string
   decisionId: string
-  decisionClass: ModelFallbackDecisionClass
+  decisionClass: string
   sourceSha256: string
   inputs: Record<string, unknown>
   inputsHash: string
@@ -51,30 +39,26 @@ export type ModelConsultationRecord = {
   latencyMs: number | null
   failureCode?: string
 }
-
 export type ModelDecisionMetricEvent = {
   documentId: string
   decisionId: string
-  decisionClass: ModelFallbackDecisionClass
+  decisionClass: string
   outcome: 'deterministic' | 'consulted' | 'review-required'
   consulted: boolean
   choice?: { candidateId: string }
   deterministicRuleId?: string
 }
-
 export type ModelConsultationMetric = {
   decisionCount: number
   consultationCount: number
   consultationRate: number
 }
-
 export type ModelConsultationMetrics = {
   totalDecisionCount: number
   totalConsultationCount: number
   consultationRate: number
-  byDecisionClass: Record<ModelFallbackDecisionClass, ModelConsultationMetric>
+  byDecisionClass: Record<string, ModelConsultationMetric>
 }
-
 export type ModelFallbackReceipt = {
   schemaVersion: typeof MODEL_CONSULTATION_SCHEMA_VERSION
   documentId: string
@@ -82,12 +66,10 @@ export type ModelFallbackReceipt = {
   consultations: ModelConsultationRecord[]
   decisions: ModelDecisionMetricEvent[]
   metrics: ModelConsultationMetrics
-  /** App adapters may bind this receipt to a semantic state digest. */
   semanticStateSha256?: string
 }
 
 const HASH = /^[a-f0-9]{64}$/u
-const MAX_RECEIPT_HISTORY_ITEMS = 100_000
 const SAFE_ID_FORMAT = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u
 const CREDENTIAL_SHAPED_ID = [
   /^sk-(?:proj-)?[A-Za-z0-9._:-]{8,}$/iu,
@@ -106,7 +88,8 @@ const SAFE_ID = {
     )
   },
 }
-const FORBIDDEN_KEYS = new Set([
+const MAX_RECEIPT_HISTORY_ITEMS = 100_000
+const forbiddenKeys = new Set([
   'text',
   'content',
   'sourceText',
@@ -123,7 +106,7 @@ const FORBIDDEN_KEYS = new Set([
   'width',
   'height',
 ])
-const FORBIDDEN_KEY_FRAGMENTS = [
+const forbiddenFragments = [
   'apikey',
   'authorization',
   'credential',
@@ -133,28 +116,30 @@ const FORBIDDEN_KEY_FRAGMENTS = [
   'secret',
 ]
 
-function receiptRecord(value: unknown): value is Record<string, unknown> {
+function record(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
 
-function ownDataKeys(value: object) {
+function ownKeys(value: object) {
   try {
     const prototype = Object.getPrototypeOf(value)
     if (prototype !== Object.prototype && prototype !== null) return null
     const keys = Reflect.ownKeys(value)
     if (keys.some((key) => typeof key !== 'string')) return null
-    for (const key of keys as string[]) {
-      const descriptor = Object.getOwnPropertyDescriptor(value, key)
-      if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value'))
-        return null
-    }
+    if (
+      (keys as string[]).some((key) => {
+        const descriptor = Object.getOwnPropertyDescriptor(value, key)
+        return !descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')
+      })
+    )
+      return null
     return keys as string[]
   } catch {
     return null
   }
 }
 
-function canonicalJson(value: unknown, ancestors = new Set<object>()): boolean {
+function canonical(value: unknown, ancestors = new Set<object>()): boolean {
   if (value === null || typeof value === 'string' || typeof value === 'boolean')
     return true
   if (typeof value === 'number') return Number.isFinite(value)
@@ -173,27 +158,27 @@ function canonicalJson(value: unknown, ancestors = new Set<object>()): boolean {
               /^\d+$/u.test(key) &&
               Object.hasOwn(value, key) &&
               Object.getOwnPropertyDescriptor(value, key)?.enumerable &&
-              canonicalJson(value[Number(key)], ancestors)),
+              canonical(value[Number(key)], ancestors)),
         )
       )
     }
-    const keys = ownDataKeys(value)
+    const keys = ownKeys(value)
     if (!keys) return false
     return keys.every((key) =>
-      canonicalJson((value as Record<string, unknown>)[key], ancestors),
+      canonical((value as Record<string, unknown>)[key], ancestors),
     )
   } finally {
     ancestors.delete(value)
   }
 }
 
-function stableJson(value: unknown): string {
+export function stableJson(value: unknown): string {
   if (value === undefined) return 'null'
   if (typeof value === 'number' && !Number.isFinite(value)) return 'null'
   if (value instanceof Uint8Array)
     return JSON.stringify({ sha256: sha256HexSync(value) })
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
-  if (value && typeof value === 'object') {
+  if (value && typeof value === 'object')
     return `{${Object.keys(value as Record<string, unknown>)
       .sort()
       .map(
@@ -201,54 +186,20 @@ function stableJson(value: unknown): string {
           `${JSON.stringify(key)}:${stableJson((value as Record<string, unknown>)[key])}`,
       )
       .join(',')}}`
-  }
   return JSON.stringify(value)
 }
 
-function hash(value: unknown) {
+export function hash(value: unknown) {
   return sha256HexSync(stableJson(value))
 }
 
-function receiptId(value: unknown): value is string {
+function id(value: unknown): value is string {
   return typeof value === 'string' && SAFE_ID.test(value)
 }
-
-function receiptHash(value: unknown): value is string {
+function digest(value: unknown): value is string {
   return typeof value === 'string' && HASH.test(value)
 }
-
-function forbiddenField(value: unknown, path = ''): string | null {
-  if (typeof value === 'string') return null
-  if (Array.isArray(value)) {
-    for (const [index, child] of value.entries()) {
-      const found = forbiddenField(child, `${path}[${index}]`)
-      if (found) return found
-    }
-    return null
-  }
-  if (!value || typeof value !== 'object') return null
-  const keys = ownDataKeys(value)
-  if (!keys) return `${path || '$'}`
-  for (const key of keys) {
-    const normalized = key
-      .normalize('NFKC')
-      .replace(/[^A-Za-z0-9]/gu, '')
-      .toLowerCase()
-    if (
-      FORBIDDEN_KEYS.has(key) ||
-      FORBIDDEN_KEY_FRAGMENTS.some((fragment) => normalized.includes(fragment))
-    )
-      return `${path}.${key}`
-    const found = forbiddenField(
-      (value as Record<string, unknown>)[key],
-      `${path}.${key}`,
-    )
-    if (found) return found
-  }
-  return null
-}
-
-function exactKeys(
+function exact(
   value: Record<string, unknown>,
   required: readonly string[],
   optional: readonly string[] = [],
@@ -259,39 +210,90 @@ function exactKeys(
     Object.keys(value).every((key) => allowed.has(key))
   )
 }
+function forbidden(value: unknown): string | null {
+  if (Array.isArray(value)) {
+    for (const child of value) {
+      const found = forbidden(child)
+      if (found) return found
+    }
+    return null
+  }
+  if (!value || typeof value !== 'object') return null
+  const keys = ownKeys(value)
+  if (!keys) return '$'
+  for (const key of keys) {
+    const normalized = key
+      .normalize('NFKC')
+      .replace(/[^A-Za-z0-9]/gu, '')
+      .toLowerCase()
+    if (
+      forbiddenKeys.has(key) ||
+      forbiddenFragments.some((fragment) => normalized.includes(fragment))
+    )
+      return key
+    const found = forbidden((value as Record<string, unknown>)[key])
+    if (found) return found
+  }
+  return null
+}
 
+export function copyCanonicalJson(
+  value: unknown,
+  path: string,
+  active = new WeakSet<object>(),
+  depth = 0,
+): unknown {
+  if (depth > 128)
+    fail('MODEL_RECEIPT', path, 'canonical JSON nesting is too deep')
+  if (value === null || typeof value === 'string' || typeof value === 'boolean')
+    return value
+  if (typeof value === 'number') return finiteNumber(value, path)
+  if (!value || typeof value !== 'object')
+    fail('TYPE', path, 'model receipt must contain canonical JSON values')
+  if (active.has(value))
+    fail('MODEL_RECEIPT', path, 'cycles are not permitted in model receipts')
+  active.add(value)
+  try {
+    if (Array.isArray(value))
+      return value.map((entry, index) =>
+        copyCanonicalJson(entry, `${path}[${index}]`, active, depth + 1),
+      )
+    return Object.fromEntries(
+      dataEntries(value, path)
+        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+        .map(([key, entry]) => [
+          key,
+          copyCanonicalJson(entry, `${path}.${key}`, active, depth + 1),
+        ]),
+    )
+  } finally {
+    active.delete(value)
+  }
+}
 function validChoice(value: unknown): value is ModelFallbackChoice {
-  if (!receiptRecord(value)) return false
   return (
-    exactKeys(value, ['candidateId'], ['associationId', 'order']) &&
-    receiptId(value.candidateId) &&
-    (!Object.hasOwn(value, 'associationId') ||
-      receiptId(value.associationId)) &&
+    record(value) &&
+    exact(value, ['candidateId'], ['associationId', 'order']) &&
+    id(value.candidateId) &&
+    (!Object.hasOwn(value, 'associationId') || id(value.associationId)) &&
     (!Object.hasOwn(value, 'order') ||
       (typeof value.order === 'number' && Number.isFinite(value.order)))
   )
 }
-
 function validModel(value: unknown) {
-  if (!receiptRecord(value)) return false
   return (
-    exactKeys(value, [
-      'providerId',
-      'modelId',
-      'modelVersion',
-      'modelDigest',
-    ]) &&
-    receiptId(value.providerId) &&
-    receiptId(value.modelId) &&
-    receiptId(value.modelVersion) &&
-    (receiptHash(value.modelDigest) || receiptId(value.modelDigest))
+    record(value) &&
+    exact(value, ['providerId', 'modelId', 'modelVersion', 'modelDigest']) &&
+    id(value.providerId) &&
+    id(value.modelId) &&
+    id(value.modelVersion) &&
+    (digest(value.modelDigest) || id(value.modelDigest))
   )
 }
-
 function validConsultation(value: unknown): value is ModelConsultationRecord {
-  if (!receiptRecord(value)) return false
+  if (!record(value)) return false
   if (
-    !exactKeys(
+    !exact(
       value,
       [
         'schemaVersion',
@@ -316,19 +318,19 @@ function validConsultation(value: unknown): value is ModelConsultationRecord {
       ['failureCode'],
     ) ||
     value.schemaVersion !== MODEL_CONSULTATION_SCHEMA_VERSION ||
-    !receiptHash(value.requestId) ||
-    !receiptId(value.fixtureId) ||
-    !receiptId(value.documentId) ||
-    !receiptId(value.decisionId) ||
-    !receiptId(value.decisionClass) ||
-    !receiptHash(value.sourceSha256) ||
-    !receiptRecord(value.inputs) ||
-    !canonicalJson(value.inputs) ||
-    forbiddenField(value.inputs) !== null ||
-    !receiptHash(value.inputsHash) ||
+    !digest(value.requestId) ||
+    !id(value.fixtureId) ||
+    !id(value.documentId) ||
+    !id(value.decisionId) ||
+    !id(value.decisionClass) ||
+    !digest(value.sourceSha256) ||
+    !record(value.inputs) ||
+    !canonical(value.inputs) ||
+    forbidden(value.inputs) !== null ||
+    !digest(value.inputsHash) ||
     !validModel(value.model) ||
-    !receiptHash(value.promptTemplateSha256) ||
-    !receiptHash(value.promptHash) ||
+    !digest(value.promptTemplateSha256) ||
+    !digest(value.promptHash) ||
     !['pending', 'accepted', 'rejected', 'failed'].includes(
       String(value.status),
     ) ||
@@ -336,31 +338,30 @@ function validConsultation(value: unknown): value is ModelConsultationRecord {
     value.candidates.length === 0 ||
     !value.candidates.every(
       (candidate) =>
-        receiptRecord(candidate) &&
-        receiptId(candidate.id) &&
-        canonicalJson(candidate) &&
-        forbiddenField(candidate) === null,
+        record(candidate) &&
+        id(candidate.id) &&
+        canonical(candidate) &&
+        forbidden(candidate) === null,
     ) ||
     !Array.isArray(value.candidateIds) ||
-    value.candidateIds.length !== value.candidates.length ||
-    value.candidateIds.some((id) => !receiptId(id)) ||
+    value.candidateIds.length !== (value.candidates as unknown[]).length ||
+    value.candidateIds.some((candidateId) => !id(candidateId)) ||
     value.candidateIds.some(
-      (id, index) =>
-        id !== (value.candidates as ModelFallbackCandidate[])[index]!.id,
+      (candidateId, index) =>
+        candidateId !==
+        (value.candidates as ModelFallbackCandidate[])[index]!.id,
     ) ||
     new Set(value.candidateIds).size !== value.candidateIds.length ||
-    (!receiptRecord(value.choice) && value.choice !== null) ||
     (value.choice !== null && !validChoice(value.choice)) ||
     typeof value.costUsd !== 'number' ||
     !Number.isFinite(value.costUsd) ||
     (value.latencyMs !== null &&
       (typeof value.latencyMs !== 'number' ||
         !Number.isFinite(value.latencyMs))) ||
-    (Object.hasOwn(value, 'failureCode') && !receiptId(value.failureCode))
+    (Object.hasOwn(value, 'failureCode') && !id(value.failureCode))
   )
     return false
-
-  const request = {
+  const promptInput = {
     schemaVersion: MODEL_CONSULTATION_SCHEMA_VERSION,
     documentId: value.documentId,
     decisionId: value.decisionId,
@@ -370,43 +371,49 @@ function validConsultation(value: unknown): value is ModelConsultationRecord {
     candidates: value.candidates,
     promptTemplateSha256: value.promptTemplateSha256,
   }
-  const expectedPromptHash = hash(request)
-  const expectedFixtureId = `fixture-${hash({
-    documentId: value.documentId,
-    decisionId: value.decisionId,
-    decisionClass: value.decisionClass,
-    sourceSha256: value.sourceSha256,
-    inputs: value.inputs,
-    candidates: value.candidates,
-  }).slice(0, 24)}`
-  const expectedRequestId = hash({
-    sourceSha256: value.sourceSha256,
-    model: value.model,
-    promptHash: value.promptHash,
-    decisionClass: value.decisionClass,
-    decisionId: value.decisionId,
-  })
   return (
     value.inputsHash === hash(value.inputs) &&
-    value.promptHash === expectedPromptHash &&
-    value.fixtureId === expectedFixtureId &&
-    value.requestId === expectedRequestId &&
+    value.promptHash === hash(promptInput) &&
+    value.fixtureId ===
+      `fixture-${hash({
+        documentId: value.documentId,
+        decisionId: value.decisionId,
+        decisionClass: value.decisionClass,
+        sourceSha256: value.sourceSha256,
+        inputs: value.inputs,
+        candidates: value.candidates,
+      }).slice(0, 24)}` &&
+    value.requestId ===
+      hash({
+        sourceSha256: value.sourceSha256,
+        model: value.model,
+        promptHash: value.promptHash,
+        decisionClass: value.decisionClass,
+        decisionId: value.decisionId,
+      }) &&
     (value.status === 'accepted'
       ? validChoice(value.choice) &&
         value.candidates.some(
-          ({ id }) => id === (value.choice as ModelFallbackChoice).candidateId,
+          ({ id: candidateId }) =>
+            (value.choice as ModelFallbackChoice).candidateId === candidateId,
         ) &&
         !Object.hasOwn(value, 'failureCode')
       : value.status === 'pending'
         ? value.choice === null && !Object.hasOwn(value, 'failureCode')
         : value.choice === null &&
           Object.hasOwn(value, 'failureCode') &&
-          receiptId(value.failureCode))
+          id(value.failureCode))
   )
 }
-
 function validDecision(value: unknown): value is ModelDecisionMetricEvent {
-  if (!receiptRecord(value)) return false
+  if (!record(value)) return false
+  if (
+    !id(value.documentId) ||
+    !id(value.decisionId) ||
+    !id(value.decisionClass) ||
+    typeof value.consulted !== 'boolean'
+  )
+    return false
   const base = [
     'documentId',
     'decisionId',
@@ -414,37 +421,25 @@ function validDecision(value: unknown): value is ModelDecisionMetricEvent {
     'outcome',
     'consulted',
   ]
-  if (
-    !receiptId(value.documentId) ||
-    !receiptId(value.decisionId) ||
-    !receiptId(value.decisionClass) ||
-    typeof value.consulted !== 'boolean'
-  )
-    return false
   if (value.outcome === 'deterministic')
     return (
-      exactKeys(value, [...base, 'choice', 'deterministicRuleId']) &&
+      exact(value, [...base, 'choice', 'deterministicRuleId']) &&
       !value.consulted &&
-      receiptRecord(value.choice) &&
-      exactKeys(value.choice, ['candidateId']) &&
-      receiptId(value.choice.candidateId) &&
-      receiptId(value.deterministicRuleId)
+      record(value.choice) &&
+      exact(value.choice, ['candidateId']) &&
+      id(value.choice.candidateId) &&
+      id(value.deterministicRuleId)
     )
   return (
-    exactKeys(value, base) &&
+    exact(value, base) &&
     ((value.outcome === 'consulted' && value.consulted) ||
       (value.outcome === 'review-required' && !value.consulted))
   )
 }
-
 function validMetric(value: unknown): value is ModelConsultationMetric {
-  if (!receiptRecord(value)) return false
+  if (!record(value)) return false
   if (
-    !exactKeys(value, [
-      'decisionCount',
-      'consultationCount',
-      'consultationRate',
-    ]) ||
+    !exact(value, ['decisionCount', 'consultationCount', 'consultationRate']) ||
     !Number.isInteger(value.decisionCount) ||
     !Number.isInteger(value.consultationCount) ||
     (value.decisionCount as number) < 0 ||
@@ -462,18 +457,17 @@ function validMetric(value: unknown): value is ModelConsultationMetric {
   )
 }
 
-/** Strict core validation for the closed, source-neutral receipt envelope. */
 export function validateModelConsultationReceipt(
   receipt: unknown,
 ): receipt is ModelFallbackReceipt {
   if (
-    !receiptRecord(receipt) ||
+    !record(receipt) ||
     !Array.isArray(receipt.consultations) ||
     receipt.consultations.length > MAX_RECEIPT_HISTORY_ITEMS ||
     !Array.isArray(receipt.decisions) ||
     receipt.decisions.length > MAX_RECEIPT_HISTORY_ITEMS ||
-    !canonicalJson(receipt) ||
-    !exactKeys(
+    !canonical(receipt) ||
+    !exact(
       receipt,
       [
         'schemaVersion',
@@ -486,23 +480,22 @@ export function validateModelConsultationReceipt(
       ['semanticStateSha256'],
     ) ||
     receipt.schemaVersion !== MODEL_CONSULTATION_SCHEMA_VERSION ||
-    !receiptId(receipt.documentId) ||
-    (receipt.sourceSha256 !== null && !receiptHash(receipt.sourceSha256)) ||
+    !id(receipt.documentId) ||
+    (receipt.sourceSha256 !== null && !digest(receipt.sourceSha256)) ||
     !receipt.consultations.every(validConsultation) ||
     !receipt.decisions.every(validDecision) ||
     (receipt.semanticStateSha256 !== undefined &&
-      !receiptHash(receipt.semanticStateSha256)) ||
-    !receiptRecord(receipt.metrics) ||
-    !exactKeys(receipt.metrics, [
+      !digest(receipt.semanticStateSha256)) ||
+    !record(receipt.metrics) ||
+    !exact(receipt.metrics, [
       'totalDecisionCount',
       'totalConsultationCount',
       'consultationRate',
       'byDecisionClass',
     ]) ||
-    !receiptRecord(receipt.metrics.byDecisionClass)
+    !record(receipt.metrics.byDecisionClass)
   )
     return false
-
   if (
     receipt.consultations.some(
       (consultation) =>
@@ -515,7 +508,6 @@ export function validateModelConsultationReceipt(
     (receipt.consultations.length > 0 && receipt.sourceSha256 === null)
   )
     return false
-
   const consultationCounts = new Map<string, number>()
   for (const consultation of receipt.consultations) {
     if (consultation.status === 'pending') continue
@@ -536,14 +528,12 @@ export function validateModelConsultationReceipt(
     ])
     consultedCounts.set(key, (consultedCounts.get(key) ?? 0) + 1)
   }
-  const keys = [
-    ...new Set([...consultationCounts.keys(), ...consultedCounts.keys()]),
-  ]
   if (
-    keys.some((key) => consultationCounts.get(key) !== consultedCounts.get(key))
+    [
+      ...new Set([...consultationCounts.keys(), ...consultedCounts.keys()]),
+    ].some((key) => consultationCounts.get(key) !== consultedCounts.get(key))
   )
     return false
-
   const classNames = Object.keys(receipt.metrics.byDecisionClass).sort()
   const decisionClasses = [
     ...new Set(receipt.decisions.map(({ decisionClass }) => decisionClass)),
@@ -567,18 +557,16 @@ export function validateModelConsultationReceipt(
     decisionTotal += metric.decisionCount
     consultationTotal += metric.consultationCount
   }
-  if (
-    !validMetric({
+  return (
+    validMetric({
       decisionCount: receipt.metrics.totalDecisionCount,
       consultationCount: receipt.metrics.totalConsultationCount,
       consultationRate: receipt.metrics.consultationRate,
-    }) ||
-    receipt.metrics.totalDecisionCount !== decisionTotal ||
-    receipt.metrics.totalDecisionCount !== receipt.decisions.length ||
-    receipt.metrics.totalConsultationCount !== consultationTotal
+    }) &&
+    receipt.metrics.totalDecisionCount === decisionTotal &&
+    receipt.metrics.totalDecisionCount === receipt.decisions.length &&
+    receipt.metrics.totalConsultationCount === consultationTotal
   )
-    return false
-  return true
 }
 
-export { HASH, SAFE_ID, hash, stableJson }
+export { HASH, SAFE_ID }

@@ -9,7 +9,6 @@ import {
   emittedXhtmlIds,
   groupedCitationLinks,
   resolveStructTarget,
-  stableId,
   type EmittedXhtmlId,
   type RenderedInlineSourcePlan,
   type RenderedPublicationPlan,
@@ -36,6 +35,62 @@ function text(value: string) {
 
 function attribute(value: string) {
   return text(value).replace(/"/g, '&quot;')
+}
+
+export function xhtmlId(value: string) {
+  const cleaned = value.replace(/[^A-Za-z0-9_.:-]/g, '-')
+  return /^[A-Za-z_]/u.test(cleaned) ? cleaned : `_${cleaned}`
+}
+
+function xhtmlHref(value: string) {
+  return value.startsWith('#') ? `#${xhtmlId(value.slice(1))}` : value
+}
+
+const UNICODE_DECIMAL_ZERO_CODE_POINTS = [
+  0x0030, 0x0660, 0x06f0, 0x07c0, 0x0966, 0x09e6, 0x0a66, 0x0ae6, 0x0b66,
+  0x0be6, 0x0c66, 0x0ce6, 0x0d66, 0x0de6, 0x0e50, 0x0ed0, 0x0f20, 0x1040,
+  0x1090, 0x17e0, 0x1810, 0x1946, 0x19d0, 0x1a80, 0x1a90, 0x1b50, 0x1bb0,
+  0x1c40, 0x1c50, 0xa620, 0xa8d0, 0xa900, 0xa9d0, 0xa9f0, 0xaa50, 0xabf0,
+  0xff10, 0x104a0, 0x10d30, 0x10d40, 0x11066, 0x110f0, 0x11136, 0x111d0,
+  0x112f0, 0x11450, 0x114d0, 0x11650, 0x116c0, 0x116d0, 0x116da, 0x11730,
+  0x118e0, 0x11950, 0x11bf0, 0x11c50, 0x11d50, 0x11da0, 0x11de0, 0x11f50,
+  0x16130, 0x16a60, 0x16ac0, 0x16b50, 0x16d70, 0x1ccf0, 0x1d7ce, 0x1d7d8,
+  0x1d7e2, 0x1d7ec, 0x1d7f6, 0x1e140, 0x1e2f0, 0x1e4f0, 0x1e5f1, 0x1e950,
+  0x1fbf0,
+] as const
+
+const SUPERSCRIPT_DIGITS: Record<string, string> = {
+  '⁰': '0',
+  '¹': '1',
+  '²': '2',
+  '³': '3',
+  '⁴': '4',
+  '⁵': '5',
+  '⁶': '6',
+  '⁷': '7',
+  '⁸': '8',
+  '⁹': '9',
+}
+
+function normalizedNumericToken(value: string) {
+  return [...value]
+    .map((character) => {
+      if (SUPERSCRIPT_DIGITS[character]) return SUPERSCRIPT_DIGITS[character]
+      const codePoint = character.codePointAt(0)!
+      const zero = UNICODE_DECIMAL_ZERO_CODE_POINTS.find(
+        (candidate) => codePoint >= candidate && codePoint <= candidate + 9,
+      )
+      return zero === undefined ? character : String(codePoint - zero)
+    })
+    .join('')
+}
+
+function foldedCitationText(value: string) {
+  return value
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .replace(/’/gu, "'")
+    .toLocaleLowerCase()
 }
 
 function renderInline(
@@ -77,11 +132,14 @@ function renderInline(
             )
           : undefined
       if (semanticRun?.relationshipId && semanticRun.semanticRole && semantic) {
-        const relationshipId = semantic.relationshipIdStable
+        const relationshipId = xhtmlId(semantic.relationshipIdStable)
         const firstSegment = !emittedRelationshipIds.has(relationshipId)
         emittedRelationshipIds.add(relationshipId)
         const id = firstSegment ? ` id="${attribute(relationshipId)}"` : ''
-        const targets = semantic.targets
+        const targets = semantic.targets.map((target) => ({
+          ...target,
+          href: xhtmlHref(target.href),
+        }))
         const semanticAttributes = semantic.semanticAttributes
         if (targets.length === 0) {
           rendered = `<span${id}${semanticAttributes}>${rendered}</span>`
@@ -114,7 +172,7 @@ function renderInline(
               )
             : undefined
         if (hyperlink)
-          rendered = `<a href="${attribute(hyperlink.href)}">${rendered}</a>`
+          rendered = `<a href="${attribute(xhtmlHref(hyperlink.href))}">${rendered}</a>`
       }
       return rendered
     })
@@ -153,7 +211,7 @@ function renderTable(
       const columnSpan =
         cell.columnSpan > 1 ? ` colspan="${cell.columnSpan}"` : ''
       rows[row]!.push(
-        `<${tag} id="${attribute(`${tableBlockId}-${cell.id}`)}"${scope}${rowSpan}${columnSpan}>${renderInline(
+        `<${tag} id="${attribute(`${xhtmlId(tableBlockId)}-${xhtmlId(cell.id)}`)}"${scope}${rowSpan}${columnSpan}>${renderInline(
           document,
           publicationPlan.sourceByKey.get(`table:${blockIndex}:${cellIndex}`)!,
           emittedRelationshipIds,
@@ -187,8 +245,8 @@ function renderAuthors(
       const references = (publicationPlan.authorNotesByAuthor.get(author) ?? [])
         .map((reference) => {
           const target = resolveStructTarget(document, reference.target)
-          emittedRelationshipIds.add(stableId(reference.id))
-          return `<sup><a id="${attribute(stableId(reference.id))}" href="${attribute(target.href)}" epub:type="noteref" role="doc-noteref">${text(reference.label)}</a></sup>`
+          emittedRelationshipIds.add(xhtmlId(reference.id))
+          return `<sup><a id="${attribute(xhtmlId(reference.id))}" href="${attribute(xhtmlHref(target.href))}" epub:type="noteref" role="doc-noteref">${text(reference.label)}</a></sup>`
         })
         .join('')
       return `${text(author)}${references}`
@@ -201,7 +259,7 @@ function renderSourceObservationAnchors(block: StructBlock) {
   return (block.sourceObservationAnchorIds ?? [])
     .map(
       (anchorId) =>
-        `<span id="${attribute(anchorId)}" class="visually-hidden source-observation-anchor" aria-hidden="true"></span>`,
+        `<span id="${attribute(xhtmlId(anchorId))}" class="visually-hidden source-observation-anchor" aria-hidden="true"></span>`,
     )
     .join('')
 }
@@ -216,7 +274,7 @@ function renderBlock(
   // Furniture remains queryable in STRUCT with its source evidence, but is
   // intentionally outside the publication reading flow.
   if (block.kind === 'furniture') return ''
-  const id = attribute(block.id)
+  const id = attribute(xhtmlId(block.id))
   const sourceAnchors = renderSourceObservationAnchors(block)
   if (block.kind === 'table' && block.table) {
     return `<figure id="${id}" data-struct-id="${id}">${sourceAnchors}${renderTable(document, block.table, block.id, blockIndex, emittedRelationshipIds, publicationPlan)}</figure>`
@@ -257,7 +315,7 @@ function renderBlock(
     const backlinks = (publicationPlan.backlinksByTarget.get(block.id) ?? [])
       .map(
         (relationship) =>
-          `<a href="#${attribute(stableId(relationship.id))}" class="note-backlink" aria-label="Back to note reference">↩</a>`,
+          `<a href="#${attribute(xhtmlId(relationship.id))}" class="note-backlink" aria-label="Back to note reference">↩</a>`,
       )
       .join(' ')
     return `<aside id="${id}" data-struct-id="${id}" epub:type="${block.kind}" role="doc-footnote" data-note-kind="${block.kind}">${sourceAnchors}<p>${content}${backlinks ? ` ${backlinks}` : ''}</p></aside>`

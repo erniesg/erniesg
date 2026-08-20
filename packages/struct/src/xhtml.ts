@@ -28,9 +28,13 @@ function attribute(value: string) {
   return text(value).replace(/"/g, '&quot;')
 }
 
-function stableId(value: string) {
+export function xhtmlId(value: string) {
   const cleaned = value.replace(/[^A-Za-z0-9_.:-]/g, '-')
-  return /^[A-Za-z_]/u.test(cleaned) ? cleaned : `n-${cleaned}`
+  return /^[A-Za-z_]/u.test(cleaned) ? cleaned : `_${cleaned}`
+}
+
+function xhtmlHref(value: string) {
+  return value.startsWith('#') ? `#${xhtmlId(value.slice(1))}` : value
 }
 
 const UNICODE_DECIMAL_ZERO_CODE_POINTS = [
@@ -223,15 +227,15 @@ function renderInline(
       )
       if (semanticRun?.relationshipId && semanticRun.semanticRole) {
         const relationship = relationships.get(semanticRun.relationshipId)
-        const relationshipId = stableId(semanticRun.relationshipId)
+        const relationshipId = xhtmlId(semanticRun.relationshipId)
         const firstSegment = !emittedRelationshipIds.has(relationshipId)
         emittedRelationshipIds.add(relationshipId)
         const id = firstSegment ? ` id="${attribute(relationshipId)}"` : ''
         const targets = relationship
           ? relationship.status === 'matched'
-            ? relationship.to.map(stableId)
+            ? relationship.to.map(xhtmlId)
             : []
-          : (semanticRun.targetIds ?? []).map(stableId)
+          : (semanticRun.targetIds ?? []).map(xhtmlId)
         const semanticAttributes = ` data-semantic-role="${attribute(semanticRun.semanticRole)}" data-relationship-id="${attribute(relationshipId)}"${targets.length > 0 ? ` data-target-ids="${attribute(targets.join(' '))}"` : ''}`
         if (targets.length === 0) {
           rendered = `<span${id}${semanticAttributes}>${rendered}</span>`
@@ -287,10 +291,11 @@ function renderInline(
         const internalTarget = hyperlinkRun?.targetIds?.[0]
         const href =
           hyperlinkRun?.href?.startsWith('#') && internalTarget
-            ? `#${internalTarget}`
+            ? `#${xhtmlId(internalTarget)}`
             : (hyperlinkRun?.href ??
-              (internalTarget ? `#${internalTarget}` : undefined))
-        if (href) rendered = `<a href="${attribute(href)}">${rendered}</a>`
+              (internalTarget ? `#${xhtmlId(internalTarget)}` : undefined))
+        if (href)
+          rendered = `<a href="${attribute(xhtmlHref(href))}">${rendered}</a>`
       }
       return rendered
     })
@@ -311,7 +316,7 @@ function renderTable(
     const columnSpan =
       cell.columnSpan > 1 ? ` colspan="${cell.columnSpan}"` : ''
     rows[cell.row]?.push(
-      `<${tag} id="${attribute(`${tableBlockId}-${cell.id}`)}"${scope}${rowSpan}${columnSpan}>${renderInline(document, cell.text, cell.inline)}</${tag}>`,
+      `<${tag} id="${attribute(`${xhtmlId(tableBlockId)}-${xhtmlId(cell.id)}`)}"${scope}${rowSpan}${columnSpan}>${renderInline(document, cell.text, cell.inline)}</${tag}>`,
     )
   }
   return `<table>${rows.map((row) => `<tr>${row.join('')}</tr>`).join('')}</table>`
@@ -355,7 +360,7 @@ function renderAuthors(document: StructDocument) {
         .filter((reference) => reference.author === author)
         .map(
           (reference) =>
-            `<sup><a id="${attribute(stableId(reference.id))}" href="#${attribute(stableId(reference.target))}" epub:type="noteref" role="doc-noteref">${text(reference.label)}</a></sup>`,
+            `<sup><a id="${attribute(xhtmlId(reference.id))}" href="#${attribute(xhtmlId(reference.target))}" epub:type="noteref" role="doc-noteref">${text(reference.label)}</a></sup>`,
         )
         .join('')
       return `${text(author)}${references}`
@@ -368,7 +373,7 @@ function renderSourceObservationAnchors(block: StructBlock) {
   return (block.sourceObservationAnchorIds ?? [])
     .map(
       (anchorId) =>
-        `<span id="${attribute(anchorId)}" class="visually-hidden source-observation-anchor" aria-hidden="true"></span>`,
+        `<span id="${attribute(xhtmlId(anchorId))}" class="visually-hidden source-observation-anchor" aria-hidden="true"></span>`,
     )
     .join('')
 }
@@ -377,7 +382,7 @@ function renderBlock(document: StructDocument, block: StructBlock) {
   // Furniture remains queryable in STRUCT with its source evidence, but is
   // intentionally outside the publication reading flow.
   if (block.kind === 'furniture') return ''
-  const id = attribute(block.id)
+  const id = attribute(xhtmlId(block.id))
   const content = renderInline(document, block.text, block.inline)
   const sourceAnchors = renderSourceObservationAnchors(block)
   if (block.kind === 'heading') {
@@ -422,7 +427,7 @@ function renderBlock(document: StructDocument, block: StructBlock) {
       )
       .map(
         (relationship) =>
-          `<a href="#${attribute(stableId(relationship.id))}" class="note-backlink" aria-label="Back to note reference">↩</a>`,
+          `<a href="#${attribute(xhtmlId(relationship.id))}" class="note-backlink" aria-label="Back to note reference">↩</a>`,
       )
       .join(' ')
     return `<aside id="${id}" data-struct-id="${id}" epub:type="${block.kind}" role="doc-footnote" data-note-kind="${block.kind}">${sourceAnchors}<p>${content}${backlinks ? ` ${backlinks}` : ''}</p></aside>`

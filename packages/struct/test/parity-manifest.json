@@ -1,0 +1,102 @@
+{
+  "entries": {
+    "codec/bytes.ts": {
+      "canonical": "codec/bytes.ts",
+      "mode": "transformed",
+      "canonicalSha256": "af31507b6cdd1c738d8aebb5d09bfe7382a18c2c68abae5f927e31685b09746f",
+      "packageSha256": "04549a3f84594453ec90c319ad3b013ac479a99a1861c70344bc5b0cdc80b805",
+      "reason": "relative imports use explicit .js extensions for standalone ESM"
+    },
+    "codec/index.ts": {
+      "canonical": "codec/index.ts",
+      "mode": "transformed",
+      "canonicalSha256": "3b6ad32b7a16b0250f6d370821d2e18bebb10aa7f65d5787d8ec2d28b2d3d1ac",
+      "packageSha256": "c6e4d730dc782a400a833f79a14f672944e23d0cffd1ac38243b2ae2995eacac",
+      "reason": "relative imports use explicit .js extensions for standalone ESM"
+    },
+    "codec/invariants.ts": {
+      "canonical": "codec/invariants.ts",
+      "mode": "transformed",
+      "canonicalSha256": "5bf72bbb5e00b282609f3b0fa8fe749a2fc4aa45fb1981a4e36f4a9e4f58a0bb",
+      "packageSha256": "5f25a080eed284a5f6c4ed73ef460097f7304f4d60c04961c06db101fcdc02f5",
+      "reason": "standalone package removes PDF-coupled model receipt binding and uses local safe IDs"
+    },
+    "codec/parsers.ts": {
+      "canonical": "codec/parsers.ts",
+      "mode": "transformed",
+      "canonicalSha256": "a74555d7a139974babda0bf84c3587c77f7e791aaca7942b5a3a811e0f230c89",
+      "packageSha256": "9ba8a268d23c1125d9e7ba7fa63cd24bf23c784da8a8cb725684872d9703edf1",
+      "reason": "standalone package removes model receipt parsing and uses explicit .js imports"
+    },
+    "codec/primitives.ts": {
+      "canonical": "codec/primitives.ts",
+      "mode": "transformed",
+      "canonicalSha256": "136fc31c551768d0bfb998ff3db7ff0e0667911811686ae5efad9a376812ccd1",
+      "packageSha256": "b276d35ddd215ce81e5cd06679342adea4e24ceb2175299c4abdfb565735a156",
+      "reason": "standalone package embeds source-neutral credential-safe ID validation"
+    },
+    "codec/structure.ts": {
+      "canonical": "codec/structure.ts",
+      "mode": "transformed",
+      "canonicalSha256": "f621c90887c13bd56ed8961b4c5a880868eecd8fccb422215c482ba76060f743",
+      "packageSha256": "1241ab23eb0da2cd85f7e0ac198b442a4cc0246d75f67603d2980cbe4387fe3e",
+      "reason": "relative imports use explicit .js extensions for standalone ESM"
+    },
+    "epub.ts": {
+      "canonical": "epub.ts",
+      "mode": "transformed",
+      "canonicalSha256": "cf7c335b45ff1ff7406a19ccab6daa5da7d166e43cd6844cd0febd0c16f56063",
+      "packageSha256": "a4d9aee5ad2350f78ffc0259ecc59569163c4077f51efda262d796df749469dc",
+      "reason": "standalone package excludes model receipt validation and uses explicit .js imports"
+    },
+    "ids.ts": {
+      "canonical": "ids.ts",
+      "mode": "transformed",
+      "canonicalSha256": "fefc2d2408acd7fc9c28167dc505af0933d153d73a58d16f5c14dcaa9a11b2d2",
+      "packageSha256": "556f86b46550760719984d392266f551e1b3a73b8dc25854f59f5e925e684202",
+      "reason": "relative imports use explicit .js extensions for standalone ESM"
+    },
+    "reading-order.ts": {
+      "canonical": "reading-order.ts",
+      "mode": "transformed",
+      "canonicalSha256": "72f87055322257fb2c9491f3ec1d6ea1540bdfe3447923df140aa16bbfa488ba",
+      "packageSha256": "7c496f3d4bb72f2810e8f9a3ef8a3cc04d359d85158a8148d6ce03bad81cd1d9",
+      "reason": "relative imports use explicit .js extensions for standalone ESM"
+    },
+    "recovery.ts": {
+      "canonical": "recovery.ts",
+      "mode": "transformed",
+      "canonicalSha256": "6e7cc1c0603d358bb8cd026538743690ebb5db0932d40bfc89945ea62f9e1b1c",
+      "packageSha256": "ac2ab6b8f674008c09a69aad84766c922e767e500e82011c1042656bde754c79",
+      "reason": "relative imports use explicit .js extensions for standalone ESM"
+    },
+    "sha256.ts": {
+      "canonical": "sha256.ts",
+      "mode": "byte-identical",
+      "canonicalSha256": "7c240348df2f60ec53ee870346ab4d1ac2dfff16b8a32b1464b7b875c1c749f4",
+      "packageSha256": "7c240348df2f60ec53ee870346ab4d1ac2dfff16b8a32b1464b7b875c1c749f4",
+      "reason": "pure source-neutral hashing implementation is copied byte-for-byte"
+    },
+    "types.ts": {
+      "canonical": "types.ts",
+      "mode": "transformed",
+      "canonicalSha256": "01478f8f0277565d70bfdf9acdc07e97db796d03cb5b3db8d2aaeddbd1434df0",
+      "packageSha256": "645e9853dd478d5b7d716ed94e844af41b8ee4b80de811337b3f6d5cc24de7e9",
+      "reason": "standalone package omits the PDF-coupled model receipt type and uses explicit .js imports"
+    },
+    "xhtml.ts": {
+      "canonical": "xhtml.ts",
+      "mode": "transformed",
+      "canonicalSha256": "de5e69b610131c824cc632b388b0b244f278062ee36bc7f4ac4b8cd5a363cb2b",
+      "packageSha256": "6f2609015425cf0e760fac4d99a40e417b2d0d792126f5f6cc1bfa197cfbfd9c",
+      "reason": "relative imports use explicit .js extensions for standalone ESM"
+    }
+  },
+  "packageOnly": [
+    "core.ts",
+    "index.ts",
+    "renderers/epub.ts",
+    "renderers/xhtml.ts",
+    "schema.ts"
+  ]
+}

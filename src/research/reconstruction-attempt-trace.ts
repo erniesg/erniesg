@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import type { StructBox } from '@erniesg/struct/schema'
-import { sha256HexSync } from './sha256-sync'
+import type { StructBox } from '../struct/types'
+import { sha256HexSync } from '../struct/sha256'
 
 /**
  * Closed, content-addressed evidence for one source-PDF reconstruction attempt.

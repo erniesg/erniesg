@@ -666,6 +666,58 @@ describe('STRUCT runtime codec', () => {
     )
   })
 
+  it.each(['single', null] as const)(
+    'accepts a %s block column mapped to a single page column',
+    (column) => {
+      const value = validDocument()
+      value.blocks[0].column = column
+      seal(value)
+      expect(() => decodeStructDocument(value)).not.toThrow()
+    },
+  )
+
+  it('accepts the explicit multi-left-column layout contract', () => {
+    const value = validDocument()
+    value.pages[0].columns.push({
+      id: 'column-2',
+      side: 'left',
+      blockIds: [],
+    })
+    seal(value)
+    expect(() => decodeStructDocument(value)).not.toThrow()
+  })
+
+  it.each([
+    [
+      'single block in left column',
+      (value: any) => (value.pages[0].columns[0].side = 'left'),
+    ],
+    [
+      'left block in single column',
+      (value: any) => (value.blocks[0].column = 'left'),
+    ],
+    [
+      'duplicate single column side',
+      (value: any) =>
+        value.pages[0].columns.push({
+          id: 'column-2',
+          side: 'single',
+          blockIds: [],
+        }),
+    ],
+  ])('rejects incoherent column semantics (%s)', (_label, mutate) => {
+    const value = validDocument()
+    mutate(value)
+    expect(() => decodeStructDocument(value)).toThrow(/column|page/i)
+  })
+
+  it('requires a paged block to list its page in block evidence', () => {
+    const value = validDocument()
+    value.blocks[0].evidence.pages = []
+    value.blocks[0].evidence.boxes = []
+    expect(() => decodeStructDocument(value)).toThrow(/page|evidence/i)
+  })
+
   it.each([
     ['row bound', (value: any) => (value.blocks[0].table.cells[0].row = 1)],
     [

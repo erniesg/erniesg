@@ -109,19 +109,32 @@ const SAFE_ID = {
 const FORBIDDEN_KEYS = new Set([
   'text',
   'content',
-  'sourceText',
-  'generatedText',
-  'altText',
+  'sourcetext',
+  'rawtext',
+  'rawcontent',
+  'generatedtext',
+  'alttext',
   'html',
   'markdown',
   'bytes',
-  'assetBytes',
+  'assetbytes',
   'bounds',
-  'assetBounds',
+  'assetbounds',
   'x',
   'y',
   'width',
   'height',
+  'apikey',
+  'authorization',
+  'accesstoken',
+  'authtoken',
+  'bearertoken',
+  'password',
+  'secret',
+  'credential',
+  'credentials',
+  'clientsecret',
+  'privatekey',
 ])
 const FORBIDDEN_KEY_FRAGMENTS = [
   'apikey',
@@ -131,6 +144,7 @@ const FORBIDDEN_KEY_FRAGMENTS = [
   'password',
   'privatekey',
   'secret',
+  'token',
 ]
 
 function receiptRecord(value: unknown): value is Record<string, unknown> {
@@ -218,7 +232,11 @@ function receiptHash(value: unknown): value is string {
 }
 
 function forbiddenField(value: unknown, path = ''): string | null {
-  if (typeof value === 'string') return null
+  if (
+    typeof value === 'string' &&
+    CREDENTIAL_SHAPED_ID.some((pattern) => pattern.test(value))
+  )
+    return path || '$'
   if (Array.isArray(value)) {
     for (const [index, child] of value.entries()) {
       const found = forbiddenField(child, `${path}[${index}]`)
@@ -235,7 +253,8 @@ function forbiddenField(value: unknown, path = ''): string | null {
       .replace(/[^A-Za-z0-9]/gu, '')
       .toLowerCase()
     if (
-      FORBIDDEN_KEYS.has(key) ||
+      !SAFE_ID.test(key) ||
+      FORBIDDEN_KEYS.has(normalized) ||
       FORBIDDEN_KEY_FRAGMENTS.some((fragment) => normalized.includes(fragment))
     )
       return `${path}.${key}`

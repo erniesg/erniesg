@@ -3,7 +3,9 @@ import {
   decodeStructDocument,
   encodeStructDocument,
   migrateStructDocument,
+  StructCodecError,
 } from './index'
+import { legacyStructDigest, structDigest } from './ids'
 
 const hash = 'a'.repeat(64)
 
@@ -26,9 +28,29 @@ function evidence() {
   }
 }
 
+function digestInput(document: any) {
+  const { receipt: _receipt, ...withoutReceipt } = document
+  return {
+    ...withoutReceipt,
+    conservation: document.receipt.conservation,
+    ...(document.receipt.modelConsultations
+      ? { modelConsultations: document.receipt.modelConsultations }
+      : {}),
+    assets: document.assets.map(({ bytes: _bytes, ...asset }: any) => asset),
+  }
+}
+
+function seal<T extends Record<string, any>>(document: T): T {
+  document.receipt.generatedSha256 =
+    document.schemaVersion === '0.1.0'
+      ? legacyStructDigest(digestInput(document))
+      : structDigest(digestInput(document))
+  return document
+}
+
 function validDocument() {
   const sharedEvidence = evidence()
-  return {
+  return seal({
     schemaVersion: '0.1.0',
     source: {
       format: 'docx',
@@ -227,7 +249,7 @@ function validDocument() {
       },
       generatedSha256: hash,
     },
-  }
+  })
 }
 
 describe('STRUCT runtime codec', () => {
@@ -454,4 +476,168 @@ describe('STRUCT runtime codec', () => {
       expect(() => migrateStructDocument(value)).toThrow(/schema version/i)
     },
   )
+
+  it('verifies the canonical generated digest for both supported versions', () => {
+    expect(() => decodeStructDocument(validDocument())).not.toThrow()
+
+    const legacy = validDocument()
+    legacy.receipt.generatedSha256 = hash
+    expect(() => decodeStructDocument(legacy)).toThrow(/digest|sha256/i)
+
+    const current = validDocument() as any
+    current.schemaVersion = '0.2.0'
+    current.documentId = 'fixture-document'
+    current.receipt.schemaVersion = '0.2.0'
+    current.receipt.documentId = 'fixture-document'
+    seal(current)
+    expect(() => decodeStructDocument(current)).not.toThrow()
+    current.receipt.generatedSha256 = hash
+    expect(() => decodeStructDocument(current)).toThrow(/digest|sha256/i)
+  })
+
+  it.each([
+    ['relationship from', (value: any) => (value.relationships[0].from = 'missing')],
+    ['relationship to', (value: any) => (value.relationships[0].to = ['missing'])],
+    ['page block', (value: any) => (value.pages[0].blocks = ['missing'])],
+    [
+      'page column block',
+      (value: any) => (value.pages[0].columns[0].blockIds = ['missing']),
+    ],
+    [
+      'fallback asset',
+      (value: any) => (value.blocks[0].fallbackAssetIds = ['missing']),
+    ],
+    [
+      'inline target',
+      (value: any) => (value.blocks[0].inline[0].targetIds = ['missing']),
+    ],
+    [
+      'author note target',
+      (value: any) => (value.metadata.authorNotes[0].target = 'missing'),
+    ],
+  ])('rejects a dangling %s reference', (_label, mutate) => {
+    const value = validDocument()
+    mutate(value)
+    expect(() => decodeStructDocument(value)).toThrow(/reference|target|dangling/i)
+  })
+
+  it.each([
+    ['asset and block', (value: any) => (value.assets[0].id = 'block-1')],
+    ['diagnostic and block', (value: any) => (value.diagnostics[0].id = 'block-1')],
+    [
+      'relationship and block',
+      (value: any) => (value.relationships[0].id = 'block-1'),
+    ],
+  ])('rejects cross-category duplicate ids (%s)', (_label, mutate) => {
+    const value = validDocument()
+    mutate(value)
+    expect(() => decodeStructDocument(value)).toThrow(/duplicate|identifier/i)
+  })
+
+  it.each([
+    ['box width', (value: any) => (value.blocks[0].evidence.boxes[0].width = -1)],
+    ['asset width', (value: any) => (value.assets[0].width = -1)],
+    ['page height', (value: any) => (value.pages[0].height = -1)],
+    ['box rotation', (value: any) => (value.blocks[0].evidence.boxes[0].rotation = 0.5)],
+    ['page rotation', (value: any) => (value.pages[0].rotation = 360)],
+  ])('rejects invalid nonnegative dimension or rotation (%s)', (_label, mutate) => {
+    const value = validDocument()
+    mutate(value)
+    expect(() => decodeStructDocument(value)).toThrow(/number|rotation|range/i)
+  })
+
+  it.each([
+    ['row bound', (value: any) => (value.blocks[0].table.cells[0].row = 1)],
+    ['column bound', (value: any) => (value.blocks[0].table.cells[0].column = 1)],
+    ['row span bound', (value: any) => (value.blocks[0].table.cells[0].rowSpan = 2)],
+    [
+      'column span bound',
+      (value: any) => (value.blocks[0].table.cells[0].columnSpan = 2),
+    ],
+  ])('rejects table cell outside table bounds (%s)', (_label, mutate) => {
+    const value = validDocument()
+    mutate(value)
+    expect(() => decodeStructDocument(value)).toThrow(/table|bound|span/i)
+  })
+
+  it.each(['content.xhtml', 'assets/figure.bin?query', 'assets/figure.bin#part', 'assets/a b.bin'])
+    ('rejects a non-canonical EPUB asset path %s', (href) => {
+      const value = validDocument()
+      value.assets[0].href = href
+      expect(() => decodeStructDocument(value)).toThrow(/href|path/i)
+    })
+
+  it('rejects incoherent conservation receipts and page bindings', () => {
+    const accounted = validDocument()
+    accounted.receipt.conservation.accountedSourceAssetCount = 2
+    expect(() => decodeStructDocument(accounted)).toThrow(/conservation|source/i)
+
+    const furniture = validDocument()
+    furniture.blocks[0].kind = 'furniture'
+    expect(() => decodeStructDocument(furniture)).toThrow(/furniture|conservation/i)
+
+    const pages = validDocument()
+    pages.source.pageCount = 0
+    expect(() => decodeStructDocument(pages)).toThrow(/page/i)
+  })
+
+  it('contains hostile descriptors, revoked proxies, and model receipt cycles as StructCodecError', () => {
+    const accessor = validDocument()
+    Object.defineProperty(accessor.blocks[0], 'hostile', {
+      enumerable: true,
+      get() {
+        throw new Error('getter executed')
+      },
+    })
+    expect(() => decodeStructDocument(accessor)).toThrow(StructCodecError)
+
+    const proxied = validDocument() as any
+    const revoked = Proxy.revocable(proxied.blocks, {})
+    revoked.revoke()
+    proxied.blocks = revoked.proxy
+    expect(() => decodeStructDocument(proxied)).toThrow(StructCodecError)
+
+    const cycle = validDocument() as any
+    cycle.schemaVersion = '0.2.0'
+    cycle.documentId = 'fixture-document'
+    cycle.receipt.schemaVersion = '0.2.0'
+    cycle.receipt.documentId = 'fixture-document'
+    cycle.receipt.modelConsultations = {
+      schemaVersion: '1.0.0',
+      documentId: 'fixture-document',
+      sourceSha256: hash,
+      consultations: [],
+      decisions: [],
+      metrics: {
+        totalDecisionCount: 0,
+        totalConsultationCount: 0,
+        consultationRate: 0,
+        byDecisionClass: {},
+      },
+    }
+    cycle.receipt.modelConsultations.inputs = cycle.receipt.modelConsultations
+    expect(() => decodeStructDocument(cycle)).toThrow(StructCodecError)
+  })
+
+  it('binds model consultation receipts to the enclosing document and source', () => {
+    const value = validDocument() as any
+    value.schemaVersion = '0.2.0'
+    value.documentId = 'fixture-document'
+    value.receipt.schemaVersion = '0.2.0'
+    value.receipt.documentId = 'fixture-document'
+    value.receipt.modelConsultations = {
+      schemaVersion: '1.0.0',
+      documentId: 'other-document',
+      sourceSha256: 'b'.repeat(64),
+      consultations: [],
+      decisions: [],
+      metrics: {
+        totalDecisionCount: 0,
+        totalConsultationCount: 0,
+        consultationRate: 0,
+        byDecisionClass: {},
+      },
+    }
+    expect(() => decodeStructDocument(value)).toThrow(/model|document|source/i)
+  })
 })

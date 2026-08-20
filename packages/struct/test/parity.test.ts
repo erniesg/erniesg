@@ -141,7 +141,7 @@ const MAPPINGS: readonly Mapping[] = [
     canonicalPath: 'xhtml.ts',
     rule: 'renderer-xhtml-facade',
     canonicalSha256:
-      '7ec09851151cb43cc3e892c655e7a4db7ba9452cd881c1d804dad471a53428a7',
+      'a41227b9fbc32096b7f5eb7caf056c80debf6c559afedfb00aae926321458ea9',
     packageSha256:
       '6907f349531561be4247374af910145a132d0c240bde6e26a4a78d7f32b680d5',
   },
@@ -175,9 +175,9 @@ const MAPPINGS: readonly Mapping[] = [
     canonicalPath: 'xhtml.ts',
     rule: 'esm-imports',
     canonicalSha256:
-      '7ec09851151cb43cc3e892c655e7a4db7ba9452cd881c1d804dad471a53428a7',
+      'a41227b9fbc32096b7f5eb7caf056c80debf6c559afedfb00aae926321458ea9',
     packageSha256:
-      '88f1c83a99d3e70c9674ed33ff3ab63614b11df7f911c81b249eba15a1dd617b',
+      '130a9a51006d1aabc255335f78dfe215dab493353dec1d37d9222d5752e14e3f',
   },
 ]
 

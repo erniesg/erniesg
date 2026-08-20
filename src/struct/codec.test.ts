@@ -677,7 +677,7 @@ describe('STRUCT runtime codec', () => {
     },
   )
 
-  it('accepts the explicit multi-left-column layout contract', () => {
+  it('accepts one single and one left column on a page', () => {
     const value = validDocument()
     value.pages[0].columns.push({
       id: 'column-2',
@@ -705,6 +705,14 @@ describe('STRUCT runtime codec', () => {
           side: 'single',
           blockIds: [],
         }),
+    ],
+    [
+      'duplicate left column side',
+      (value: any) =>
+        value.pages[0].columns.push(
+          { id: 'column-2', side: 'left', blockIds: [] },
+          { id: 'column-3', side: 'left', blockIds: [] },
+        ),
     ],
   ])('rejects incoherent column semantics (%s)', (_label, mutate) => {
     const value = validDocument()

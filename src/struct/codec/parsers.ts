@@ -35,7 +35,6 @@ import {
   identifierList,
   integer,
   nonNegativeInteger,
-  nonNegativeNumber,
   nullable,
   object,
   positiveInteger,

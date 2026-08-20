@@ -92,19 +92,32 @@ const MAX_RECEIPT_HISTORY_ITEMS = 100_000
 const forbiddenKeys = new Set([
   'text',
   'content',
-  'sourceText',
-  'generatedText',
-  'altText',
+  'sourcetext',
+  'rawtext',
+  'rawcontent',
+  'generatedtext',
+  'alttext',
   'html',
   'markdown',
   'bytes',
-  'assetBytes',
+  'assetbytes',
   'bounds',
-  'assetBounds',
+  'assetbounds',
   'x',
   'y',
   'width',
   'height',
+  'apikey',
+  'authorization',
+  'accesstoken',
+  'authtoken',
+  'bearertoken',
+  'password',
+  'secret',
+  'credential',
+  'credentials',
+  'clientsecret',
+  'privatekey',
 ])
 const forbiddenFragments = [
   'apikey',
@@ -114,6 +127,7 @@ const forbiddenFragments = [
   'password',
   'privatekey',
   'secret',
+  'token',
 ]
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -211,6 +225,11 @@ function exact(
   )
 }
 function forbidden(value: unknown): string | null {
+  if (
+    typeof value === 'string' &&
+    CREDENTIAL_SHAPED_ID.some((pattern) => pattern.test(value))
+  )
+    return '$'
   if (Array.isArray(value)) {
     for (const child of value) {
       const found = forbidden(child)
@@ -227,7 +246,8 @@ function forbidden(value: unknown): string | null {
       .replace(/[^A-Za-z0-9]/gu, '')
       .toLowerCase()
     if (
-      forbiddenKeys.has(key) ||
+      !SAFE_ID.test(key) ||
+      forbiddenKeys.has(normalized) ||
       forbiddenFragments.some((fragment) => normalized.includes(fragment))
     )
       return key

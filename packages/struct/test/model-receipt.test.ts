@@ -129,6 +129,46 @@ function acceptedReceipt(
   return receipt
 }
 
+function recommitConsultation(consultation: any) {
+  const prompt = {
+    schemaVersion: consultation.schemaVersion,
+    documentId: consultation.documentId,
+    decisionId: consultation.decisionId,
+    decisionClass: consultation.decisionClass,
+    sourceSha256: consultation.sourceSha256,
+    inputs: consultation.inputs,
+    candidates: consultation.candidates,
+    promptTemplateSha256: consultation.promptTemplateSha256,
+  }
+  consultation.inputsHash = hash(consultation.inputs)
+  consultation.promptHash = hash(prompt)
+  consultation.requestId = hash({
+    sourceSha256: consultation.sourceSha256,
+    model: consultation.model,
+    promptHash: consultation.promptHash,
+    decisionClass: consultation.decisionClass,
+    decisionId: consultation.decisionId,
+  })
+  consultation.fixtureId = `fixture-${hash({
+    documentId: consultation.documentId,
+    decisionId: consultation.decisionId,
+    decisionClass: consultation.decisionClass,
+    sourceSha256: consultation.sourceSha256,
+    inputs: consultation.inputs,
+    candidates: consultation.candidates,
+  }).slice(0, 24)}`
+}
+
+function refreshGeneratedDigest(document: any) {
+  const { receipt, ...withoutReceipt } = document
+  receipt.generatedSha256 = structDigest({
+    ...withoutReceipt,
+    conservation: receipt.conservation,
+    modelConsultations: receipt.modelConsultations,
+    assets: document.assets.map(({ bytes: _bytes, ...asset }: any) => asset),
+  })
+}
+
 describe('generic STRUCT model consultation receipt', () => {
   it('round-trips a valid closed receipt without policy symbols', () => {
     const document = sealedDocument()
@@ -162,4 +202,38 @@ describe('generic STRUCT model consultation receipt', () => {
       'PENDING_MODEL_CONSULTATION_RECEIPT',
     )
   })
+
+  it.each([
+    [
+      'credential-shaped scalar',
+      { reason: ['sk', 'proj', 'FAKEFAKEFAKEFAKE'].join('-') },
+    ],
+    ['normalized content key', { Text: 'source content' }],
+    ['normalized source-text key', { sourcetext: 'source content' }],
+    ['normalized token key', { accessToken: 'value' }],
+  ])(
+    'rejects %s at package parse and EPUB boundaries',
+    async (_name, inputs) => {
+      const document = sealedDocument()
+      const encoded = encodeStructDocument(document) as any
+      const encodedConsultation =
+        encoded.receipt.modelConsultations.consultations[0]
+      encodedConsultation.inputs = inputs
+      recommitConsultation(encodedConsultation)
+      expect(() => decodeStructDocument(encoded)).toThrow(
+        'invalid model consultation receipt',
+      )
+
+      const consultation = document.receipt.modelConsultations.consultations[0]
+      consultation.inputs = inputs
+      recommitConsultation(consultation)
+      refreshGeneratedDigest(document)
+      expect(
+        validateModelConsultationReceipt(document.receipt.modelConsultations),
+      ).toBe(false)
+      await expect(buildStructEpub(document)).rejects.toThrow(
+        'INVALID_MODEL_CONSULTATION_RECEIPT',
+      )
+    },
+  )
 })

@@ -237,6 +237,27 @@ describe('model consultation receipt validation', () => {
     },
   )
 
+  it.each([
+    [
+      'credential-shaped input scalar',
+      { reason: ['sk', 'proj', 'FAKEFAKEFAKEFAKE'].join('-') },
+    ],
+    ['normalized content key', { Text: 'source content' }],
+    ['normalized source-text key', { sourcetext: 'source content' }],
+    ['normalized token key', { accessToken: 'value' }],
+  ])(
+    'rejects %s in both generic and app receipt validators',
+    async (_name, inputs) => {
+      const receipt = await validReceipt()
+      const consultation = receipt.consultations[0]!
+      consultation.inputs = inputs
+      recommitConsultation(consultation)
+
+      expect(validateGenericReceipt(receipt)).toBe(false)
+      expect(validateModelConsultationReceipt(receipt)).toBe(false)
+    },
+  )
+
   it('rejects a credential-shaped document id in an otherwise recommitted receipt', async () => {
     const receipt = await validReceipt()
     const value = credentialShapedIds[2][1]

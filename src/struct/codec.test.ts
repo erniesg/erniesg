@@ -482,6 +482,55 @@ describe('STRUCT runtime codec', () => {
     expect(() => decodeStructDocument(value)).toThrow(/asset|bytes/i)
   })
 
+  it('rejects an own length accessor without invoking or mutating through it', () => {
+    const value = validDocument()
+    const bytes = new Uint8Array([0, 255, 128])
+    const before = [...bytes]
+    let getterCalls = 0
+    Object.defineProperty(bytes, 'length', {
+      configurable: true,
+      get() {
+        getterCalls += 1
+        bytes[0] = 17
+        return before.length
+      },
+    })
+    value.assets[0].bytes = bytes as any
+
+    expect(() => decodeStructDocument(value)).toThrow(/asset|bytes/i)
+    expect(getterCalls).toBe(0)
+    expect([...bytes]).toEqual(before)
+    expect(Object.getOwnPropertyDescriptor(bytes, 'length')?.get).toBeTypeOf(
+      'function',
+    )
+  })
+
+  it('rejects non-index bytes before touching a proxy prototype', () => {
+    const value = validDocument()
+    const bytes = new Uint8Array([0, 255, 128])
+    Object.defineProperty(bytes, 'extra', { value: true })
+    const traps = { get: 0, ownKeys: 0, descriptor: 0 }
+    const prototype = new Proxy(Uint8Array.prototype, {
+      get(target, property, receiver) {
+        traps.get += 1
+        return Reflect.get(target, property, receiver)
+      },
+      ownKeys(target) {
+        traps.ownKeys += 1
+        return Reflect.ownKeys(target)
+      },
+      getOwnPropertyDescriptor(target, property) {
+        traps.descriptor += 1
+        return Reflect.getOwnPropertyDescriptor(target, property)
+      },
+    })
+    Object.setPrototypeOf(bytes, prototype)
+    value.assets[0].bytes = bytes as any
+
+    expect(() => decodeStructDocument(value)).toThrow(/asset|bytes/i)
+    expect(traps).toEqual({ get: 0, ownKeys: 0, descriptor: 0 })
+  })
+
   it('verifies present asset bytes against the declared SHA-256 and permits absent bytes', () => {
     const tampered = validDocument()
     tampered.assets[0].bytes = 'AP+B'

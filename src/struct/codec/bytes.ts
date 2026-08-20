@@ -10,31 +10,50 @@ const typedArrayTagGetter = Object.getOwnPropertyDescriptor(
   Object.getPrototypeOf(Uint8Array.prototype),
   Symbol.toStringTag,
 )?.get
+const typedArrayLengthGetter = Object.getOwnPropertyDescriptor(
+  Object.getPrototypeOf(Uint8Array.prototype),
+  'length',
+)?.get
 
-function isCanonicalUint8Array(value: unknown): value is Uint8Array {
-  if (!ArrayBuffer.isView(value)) return false
+function copyCanonicalUint8Array(value: unknown): Uint8Array | undefined {
+  if (!ArrayBuffer.isView(value)) return undefined
   const bytes = value as Uint8Array
+  if (
+    typedArrayTagGetter === undefined ||
+    Reflect.apply(typedArrayTagGetter, bytes, []) !== 'Uint8Array' ||
+    typedArrayLengthGetter === undefined
+  )
+    return undefined
+  const length = Reflect.apply(typedArrayLengthGetter, bytes, [])
   const ownKeys = Reflect.ownKeys(bytes)
-  if (ownKeys.length !== bytes.length) return false
+  if (ownKeys.length !== length) return undefined
   if (
     !ownKeys.every(
       (key) =>
         typeof key === 'string' &&
         /^(?:0|[1-9]\d*)$/u.test(key) &&
-        Number(key) < bytes.length &&
-        Object.getOwnPropertyDescriptor(bytes, key) !== undefined,
+        Number(key) < length,
     )
   )
-    return false
+    return undefined
+  for (const key of ownKeys)
+    if (Object.getOwnPropertyDescriptor(bytes, key) === undefined)
+      return undefined
+  let snapshot: Uint8Array
+  try {
+    snapshot = new Uint8Array(bytes)
+  } catch {
+    return undefined
+  }
   const prototype = Object.getPrototypeOf(bytes)
-  if (prototype === null) return false
+  if (prototype === null) return undefined
   const prototypeKeys = Reflect.ownKeys(prototype)
   if (
     prototypeKeys.length !== 2 ||
     !prototypeKeys.includes('constructor') ||
     !prototypeKeys.includes('BYTES_PER_ELEMENT')
   )
-    return false
+    return undefined
   const constructor = Object.getOwnPropertyDescriptor(prototype, 'constructor')
   const bytesPerElement = Object.getOwnPropertyDescriptor(
     prototype,
@@ -49,24 +68,30 @@ function isCanonicalUint8Array(value: unknown): value is Uint8Array {
     !('value' in bytesPerElement) ||
     bytesPerElement.value !== 1
   )
-    return false
+    return undefined
   if (
     Function.prototype.toString.call(constructor.value) !==
     Function.prototype.toString.call(Uint8Array)
   )
-    return false
-  return (
-    typedArrayTagGetter !== undefined &&
-    Reflect.apply(typedArrayTagGetter, bytes, []) === 'Uint8Array'
+    return undefined
+  const finalKeys = Reflect.ownKeys(bytes)
+  if (
+    finalKeys.length !== ownKeys.length ||
+    finalKeys.some((key, index) => key !== ownKeys[index])
   )
+    return undefined
+  for (let index = 0; index < length; index += 1)
+    if (snapshot[index] !== bytes[index]) return undefined
+  return snapshot
 }
 
 export function parseBytes(value: unknown, path: string): Uint8Array {
   try {
     if (ArrayBuffer.isView(value)) {
-      if (!isCanonicalUint8Array(value))
+      const bytes = copyCanonicalUint8Array(value)
+      if (bytes === undefined)
         fail('BYTES', path, 'bytes must be a canonical Uint8Array')
-      return new Uint8Array(value)
+      return bytes
     }
     if (Array.isArray(value)) {
       const bytes = array(value, path).map((entry, index) => {

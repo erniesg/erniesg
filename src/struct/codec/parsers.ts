@@ -38,6 +38,8 @@ import {
   nonNegativeNumber,
   nullable,
   object,
+  positiveInteger,
+  positiveNumber,
   reference,
   referenceList,
   rotation,
@@ -48,6 +50,7 @@ import {
 import { bytesToBase64, parseBytes } from './bytes'
 import { copyCanonicalJson, validateModelReceipt } from './model'
 import { validateStructDocument } from './invariants'
+import { sha256HexSync } from '../sha256'
 
 export { StructCodecError } from './primitives'
 
@@ -142,11 +145,11 @@ function parseBox(value: unknown, path: string): StructBox {
     'rotation',
   ])
   return {
-    page: nonNegativeInteger(parsed.page, `${path}.page`),
+    page: positiveInteger(parsed.page, `${path}.page`),
     x: finiteNumber(parsed.x, `${path}.x`),
     y: finiteNumber(parsed.y, `${path}.y`),
-    width: nonNegativeNumber(parsed.width, `${path}.width`),
-    height: nonNegativeNumber(parsed.height, `${path}.height`),
+    width: positiveNumber(parsed.width, `${path}.width`),
+    height: positiveNumber(parsed.height, `${path}.height`),
     rotation: rotation(parsed.rotation, `${path}.rotation`),
   }
 }
@@ -159,7 +162,7 @@ function parseEvidence(value: unknown, path: string): StructEvidence {
     ['signals'],
   )
   const pages = array(parsed.pages, `${path}.pages`).map((page, index) =>
-    nonNegativeInteger(page, `${path}.pages[${index}]`),
+    positiveInteger(page, `${path}.pages[${index}]`),
   )
   unique(pages.map(String), `${path}.pages`, 'page')
   const sourceIds = identifierList(parsed.sourceIds, `${path}.sourceIds`)
@@ -429,7 +432,7 @@ function parseFurnitureEvidence(
     ['normalizedText', 'sequence', 'sourceRunIndexes'],
   )
   const pages = array(parsed.pages, `${path}.pages`).map((page, index) =>
-    nonNegativeInteger(page, `${path}.pages[${index}]`),
+    positiveInteger(page, `${path}.pages[${index}]`),
   )
   unique(pages.map(String), `${path}.pages`, 'page')
   return {
@@ -487,7 +490,7 @@ function parseFurnitureReview(
     'evidence',
   ])
   const pages = array(parsed.pages, `${path}.pages`).map((page, index) =>
-    nonNegativeInteger(page, `${path}.pages[${index}]`),
+    positiveInteger(page, `${path}.pages[${index}]`),
   )
   unique(pages.map(String), `${path}.pages`, 'page')
   return {
@@ -622,7 +625,7 @@ function parseBlock(value: unknown, path: string): StructBlock {
       ? { label: stringValue(parsed.label, `${path}.label`) }
       : {}),
     page: nullable(parsed.page, `${path}.page`, (entry, entryPath) =>
-      nonNegativeInteger(entry, entryPath),
+      positiveInteger(entry, entryPath),
     ),
     order: nonNegativeInteger(parsed.order, `${path}.order`),
     column:
@@ -726,17 +729,25 @@ function parseAsset(value: unknown, path: string): StructAsset {
     ]).has(href)
   )
     fail('HREF', `${path}.href`, 'asset href is reserved by the EPUB package')
+  const sha256 = hash(parsed.sha256, `${path}.sha256`)
+  const bytes = has(parsed, 'bytes')
+    ? parseBytes(parsed.bytes, `${path}.bytes`)
+    : undefined
+  if (bytes && sha256HexSync(bytes) !== sha256)
+    fail(
+      'BYTES_HASH',
+      `${path}.bytes`,
+      'asset bytes do not match the declared SHA-256 digest',
+    )
   return {
     id: identifier(parsed.id, `${path}.id`),
     kind: enumValue(parsed.kind, `${path}.kind`, ASSET_KINDS),
     href,
     mediaType: stringValue(parsed.mediaType, `${path}.mediaType`),
-    sha256: hash(parsed.sha256, `${path}.sha256`),
-    width: nonNegativeNumber(parsed.width, `${path}.width`),
-    height: nonNegativeNumber(parsed.height, `${path}.height`),
-    ...(has(parsed, 'bytes')
-      ? { bytes: parseBytes(parsed.bytes, `${path}.bytes`) }
-      : {}),
+    sha256,
+    width: positiveNumber(parsed.width, `${path}.width`),
+    height: positiveNumber(parsed.height, `${path}.height`),
+    ...(bytes ? { bytes } : {}),
     sourceObjectIds: identifierList(
       parsed.sourceObjectIds,
       `${path}.sourceObjectIds`,
@@ -799,7 +810,7 @@ function parseDiagnostic(value: unknown, path: string): StructDiagnostic {
     ['action'],
   )
   const pages = array(parsed.pages, `${path}.pages`).map((page, index) =>
-    nonNegativeInteger(page, `${path}.pages[${index}]`),
+    positiveInteger(page, `${path}.pages[${index}]`),
   )
   unique(pages.map(String), `${path}.pages`, 'page')
   return {
@@ -860,9 +871,9 @@ function parsePage(value: unknown, path: string): StructPageLayout {
     'column id',
   )
   return {
-    page: nonNegativeInteger(parsed.page, `${path}.page`),
-    width: nonNegativeNumber(parsed.width, `${path}.width`),
-    height: nonNegativeNumber(parsed.height, `${path}.height`),
+    page: positiveInteger(parsed.page, `${path}.page`),
+    width: positiveNumber(parsed.width, `${path}.width`),
+    height: positiveNumber(parsed.height, `${path}.height`),
     rotation: rotation(parsed.rotation, `${path}.rotation`),
     blocks: identifierList(parsed.blocks, `${path}.blocks`),
     columns,
@@ -889,10 +900,7 @@ function parseRecovery(value: unknown, path: string): StructRecovery {
       )
       const pages = array(entry.pages, `${path}.issues[${index}].pages`).map(
         (page, pageIndex) =>
-          nonNegativeInteger(
-            page,
-            `${path}.issues[${index}].pages[${pageIndex}]`,
-          ),
+          positiveInteger(page, `${path}.issues[${index}].pages[${pageIndex}]`),
       )
       unique(pages.map(String), `${path}.issues[${index}].pages`, 'page')
       return {
@@ -1052,9 +1060,17 @@ function parseSchemaVersion(value: unknown, path: string) {
     fail(
       'SCHEMA_VERSION',
       path,
-      `unsupported schema version ${JSON.stringify(value)}`,
+      `unsupported schema version ${schemaVersionDescription(value)}`,
     )
   return value
+}
+
+function schemaVersionDescription(value: unknown) {
+  if (typeof value === 'string') return JSON.stringify(value)
+  if (value === null) return 'null'
+  if (typeof value === 'number' || typeof value === 'boolean')
+    return String(value)
+  return `<${typeof value}>`
 }
 
 function parseDocument(value: unknown): StructDocument {

@@ -91,22 +91,28 @@ function assertInlineTargets(
 function validateEvidencePages(
   evidence: { pages: number[]; boxes: Array<{ page: number }> },
   path: string,
-  pageCount: number,
+  pageNumbers: ReadonlySet<number>,
 ) {
   for (const [index, page] of evidence.pages.entries()) {
-    if (page > pageCount)
+    if (!pageNumbers.has(page))
       fail(
         'PAGE_BINDING',
         `${path}.pages[${index}]`,
-        'page exceeds source.pageCount',
+        'page must have a corresponding document.pages layout',
       )
   }
   for (const [index, box] of evidence.boxes.entries()) {
-    if (box.page > pageCount)
+    if (!pageNumbers.has(box.page))
       fail(
         'PAGE_BINDING',
         `${path}.boxes[${index}].page`,
-        'box page exceeds source.pageCount',
+        'box page must have a corresponding document.pages layout',
+      )
+    if (!evidence.pages.includes(box.page))
+      fail(
+        'PAGE_BINDING',
+        `${path}.boxes[${index}].page`,
+        'box page must be listed in evidence.pages',
       )
   }
 }
@@ -404,50 +410,93 @@ function validatePages(document: StructDocument) {
       '$.pages',
       'page layouts cannot exceed source.pageCount',
     )
+  const pageNumbers = new Set(document.pages.map((page) => page.page))
   const checkPage = (page: number, path: string) => {
-    if (page > document.source.pageCount)
+    if (!pageNumbers.has(page))
       fail('PAGE_BINDING', path, 'page exceeds source.pageCount')
   }
-  for (const [index, page] of document.pages.entries())
+  const blocksById = new Map(document.blocks.map((block) => [block.id, block]))
+  for (const [index, page] of document.pages.entries()) {
+    if (page.page > document.source.pageCount)
+      fail(
+        'PAGE_BINDING',
+        `$.pages[${index}].page`,
+        'page exceeds source.pageCount',
+      )
     checkPage(page.page, `$.pages[${index}].page`)
+    const columnBlockIds = page.columns.flatMap((column) => column.blockIds)
+    if (new Set(columnBlockIds).size !== columnBlockIds.length)
+      fail(
+        'PAGE_BINDING',
+        `$.pages[${index}].columns`,
+        'a block cannot belong to multiple columns on the same page',
+      )
+    if (
+      columnBlockIds.length !== page.blocks.length ||
+      !page.blocks.every((blockId) => columnBlockIds.includes(blockId))
+    )
+      fail(
+        'PAGE_BINDING',
+        `$.pages[${index}]`,
+        'page.blocks and page.columns block membership must agree',
+      )
+    for (const [blockIndex, blockId] of page.blocks.entries()) {
+      const block = blocksById.get(blockId)
+      if (block?.page !== page.page)
+        fail(
+          'PAGE_BINDING',
+          `$.pages[${index}].blocks[${blockIndex}]`,
+          'page block must carry the same page number as its layout',
+        )
+    }
+  }
   for (const [index, block] of document.blocks.entries()) {
-    if (block.page !== null) checkPage(block.page, `$.blocks[${index}].page`)
+    if (block.page !== null) {
+      checkPage(block.page, `$.blocks[${index}].page`)
+      const page = document.pages.find((entry) => entry.page === block.page)
+      if (!page?.blocks.includes(block.id))
+        fail(
+          'PAGE_BINDING',
+          `$.blocks[${index}].page`,
+          'block page must list the block in page.blocks',
+        )
+    }
     validateEvidencePages(
       block.evidence,
       `$.blocks[${index}].evidence`,
-      document.source.pageCount,
+      pageNumbers,
     )
     if (block.table)
       for (const [cellIndex, cell] of block.table.cells.entries())
         validateEvidencePages(
           cell.evidence,
           `$.blocks[${index}].table.cells[${cellIndex}].evidence`,
-          document.source.pageCount,
+          pageNumbers,
         )
     if (block.furniture)
       validateEvidencePages(
         block.furniture,
         `$.blocks[${index}].furniture`,
-        document.source.pageCount,
+        pageNumbers,
       )
     if (block.furnitureReview)
       validateEvidencePages(
         block.furnitureReview,
         `$.blocks[${index}].furnitureReview`,
-        document.source.pageCount,
+        pageNumbers,
       )
   }
   for (const [index, asset] of document.assets.entries())
     validateEvidencePages(
       asset.evidence,
       `$.assets[${index}].evidence`,
-      document.source.pageCount,
+      pageNumbers,
     )
   for (const [index, relationship] of document.relationships.entries()) {
     validateEvidencePages(
       relationship.evidence,
       `$.relationships[${index}].evidence`,
-      document.source.pageCount,
+      pageNumbers,
     )
     for (const [candidateIndex, candidate] of (
       relationship.candidates ?? []
@@ -455,7 +504,7 @@ function validatePages(document: StructDocument) {
       validateEvidencePages(
         candidate.evidence,
         `$.relationships[${index}].candidates[${candidateIndex}].evidence`,
-        document.source.pageCount,
+        pageNumbers,
       )
   }
   for (const [index, diagnostic] of document.diagnostics.entries())
@@ -515,8 +564,8 @@ export function validateStructDocument(
     )
   }
   validateConservation(document)
-  validatePages(document)
   validateReferences(document)
+  validatePages(document)
   validateModelBinding(document)
   validateDigest(document)
 }

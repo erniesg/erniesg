@@ -153,9 +153,19 @@ export function nonNegativeInteger(value: unknown, path: string) {
   return integer(value, path, 0)
 }
 
+export function positiveInteger(value: unknown, path: string) {
+  return integer(value, path, 1)
+}
+
 export function nonNegativeNumber(value: unknown, path: string) {
   const parsed = finiteNumber(value, path)
   if (parsed < 0) fail('RANGE', path, 'number must be non-negative')
+  return parsed
+}
+
+export function positiveNumber(value: unknown, path: string) {
+  const parsed = finiteNumber(value, path)
+  if (parsed <= 0) fail('RANGE', path, 'number must be positive')
   return parsed
 }
 

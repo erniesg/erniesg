@@ -426,7 +426,7 @@ describe('STRUCT runtime codec', () => {
     expect(() => decodeStructDocument(tampered)).toThrow(/asset|bytes|sha256/i)
 
     const absent = validDocument()
-    delete absent.assets[0].bytes
+    delete (absent.assets[0] as any).bytes
     expect(() => decodeStructDocument(absent)).not.toThrow()
   })
 
@@ -616,8 +616,14 @@ describe('STRUCT runtime codec', () => {
   })
 
   it.each([
-    ['box width', (value: any) => (value.blocks[0].evidence.boxes[0].width = 0)],
-    ['box height', (value: any) => (value.blocks[0].evidence.boxes[0].height = 0)],
+    [
+      'box width',
+      (value: any) => (value.blocks[0].evidence.boxes[0].width = 0),
+    ],
+    [
+      'box height',
+      (value: any) => (value.blocks[0].evidence.boxes[0].height = 0),
+    ],
     ['asset width', (value: any) => (value.assets[0].width = 0)],
     ['asset height', (value: any) => (value.assets[0].height = 0)],
     ['page width', (value: any) => (value.pages[0].width = 0)],
@@ -655,7 +661,9 @@ describe('STRUCT runtime codec', () => {
   ])('rejects incoherent page topology (%s)', (_label, mutate) => {
     const value = validDocument()
     mutate(value)
-    expect(() => decodeStructDocument(value)).toThrow(/page|membership|evidence/i)
+    expect(() => decodeStructDocument(value)).toThrow(
+      /page|membership|evidence/i,
+    )
   })
 
   it.each([

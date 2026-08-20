@@ -200,9 +200,98 @@ export function adaptStructDocument(
       relationship,
     ]),
   )
+  const baseGraphBlockIds = new Set(
+    document.blocks
+      .filter((block) => {
+        if (
+          block.kind === 'furniture' ||
+          block.kind === 'unknown' ||
+          block.kind === 'caption'
+        )
+          return false
+        if (
+          [
+            'heading',
+            'paragraph',
+            'quote',
+            'code',
+            'equation',
+            'footnote',
+            'endnote',
+            'list-item',
+          ].includes(block.kind)
+        )
+          return Boolean(block.text)
+        if (block.kind === 'figure') return Boolean(block.label || block.text)
+        if (block.kind === 'table')
+          return Boolean(
+            block.table &&
+            block.table.rows > 0 &&
+            block.table.cells.some(
+              (cell) =>
+                cell.row >= 0 &&
+                cell.row < block.table!.rows &&
+                cell.column >= 0 &&
+                cell.column < block.table!.columns,
+            ),
+          )
+        return false
+      })
+      .map((block) => block.id),
+  )
+  const graphBlockIds = new Set(baseGraphBlockIds)
+  for (const relationship of document.relationships) {
+    if (relationship.kind !== 'caption' || relationship.status !== 'matched')
+      continue
+    const fromBlock = document.blocks.find(
+      (block) => block.id === relationship.from,
+    )
+    const captionId =
+      fromBlock?.kind === 'caption'
+        ? relationship.from
+        : relationship.to.find(
+            (target) =>
+              document.blocks.find((block) => block.id === target)?.kind ===
+              'caption',
+          )
+    if (
+      !captionId ||
+      !document.blocks.find((block) => block.id === captionId)?.text
+    )
+      continue
+    const parentId =
+      captionId === relationship.from ? relationship.to[0] : relationship.from
+    if (parentId && baseGraphBlockIds.has(parentId))
+      graphBlockIds.add(captionId)
+  }
   const mappedNode = (id: string) =>
-    nonGraphBlockIds.has(id) ? undefined : nodeIds.get(id)
+    nonGraphBlockIds.has(id) || !graphBlockIds.has(id)
+      ? undefined
+      : nodeIds.get(id)
   const mappedRelationship = (id: string) => relationshipIds.get(id)
+  const inlineRelationshipIds = new Map<StructInline, string>()
+  const occurrenceCounts = new Map<string, number>()
+  for (const { block } of orderedBlocks) {
+    if (!graphBlockIds.has(block.id)) continue
+    for (const inline of block.inline) {
+      const sourceRelationshipId = inline.relationshipId
+      const relationship = sourceRelationshipId
+        ? relationships.get(sourceRelationshipId)
+        : undefined
+      const mapped = sourceRelationshipId
+        ? mappedRelationship(sourceRelationshipId)
+        : undefined
+      if (!sourceRelationshipId || !relationship || !mapped) continue
+      const count = (occurrenceCounts.get(sourceRelationshipId) ?? 0) + 1
+      occurrenceCounts.set(sourceRelationshipId, count)
+      inlineRelationshipIds.set(
+        inline,
+        count === 1
+          ? mapped
+          : uniqueId(`${mapped}-occurrence-${count}`, usedNodeIds),
+      )
+    }
+  }
 
   for (const relationship of document.relationships) {
     if (relationship.status === 'matched') continue
@@ -312,6 +401,26 @@ export function adaptStructDocument(
           `Matched relationship ${inline.relationshipId} in ${ownerId} had an unavailable target.`,
           ownerId,
         )
+      const preservesGenericRelationship = Boolean(
+        relationship &&
+        !hasMissingTarget &&
+        !hasUnavailableMatchedTarget &&
+        mappedTargets.length,
+      )
+      if (
+        relationship &&
+        relationship.status !== 'matched' &&
+        preservesGenericRelationship &&
+        inline.semanticRole !== 'citation' &&
+        inline.semanticRole !== 'cross-reference' &&
+        inline.semanticRole !== 'note-reference'
+      )
+        addDiagnostic(
+          'warning',
+          'unresolved-relationship-status',
+          `Inline relationship ${inline.relationshipId} in ${ownerId} was ${relationship.status}; its safe source targets were preserved.`,
+          ownerId,
+        )
       const resolved = relationship
         ? relationshipStatusIsResolved(relationship) &&
           !hasUnavailableMatchedTarget
@@ -340,6 +449,7 @@ export function adaptStructDocument(
             ...base,
             href: `#${noteTarget}`,
             relationshipId:
+              inlineRelationshipIds.get(inline) ??
               mappedRelationship(inline.relationshipId ?? '') ??
               safeId(
                 inline.relationshipId ?? `${ownerId}-note`,
@@ -402,11 +512,15 @@ export function adaptStructDocument(
               ),
             }
           : {}),
-        ...(inline.relationshipId && resolved
-          ? { relationshipId: mappedRelationship(inline.relationshipId) }
+        ...(inline.relationshipId && (resolved || preservesGenericRelationship)
+          ? {
+              relationshipId:
+                inlineRelationshipIds.get(inline) ??
+                mappedRelationship(inline.relationshipId),
+            }
           : {}),
         ...(inline.semanticRole ? { semanticRole: inline.semanticRole } : {}),
-        ...(mappedTargets.length && resolved
+        ...(mappedTargets.length && (resolved || preservesGenericRelationship)
           ? { targetIds: mappedTargets }
           : {}),
       })
@@ -677,17 +791,43 @@ export function adaptStructDocument(
           (left, right) => left.row - right.row || left.column - right.column,
         )) {
           const row = rows[cell.row]
-          if (!row) {
+          if (
+            !row ||
+            cell.column < 0 ||
+            cell.column >= block.table.columns ||
+            cell.rowSpan < 1 ||
+            cell.columnSpan < 1
+          ) {
             addDiagnostic(
               'warning',
               'lossy-table-cell',
-              `Table cell ${cell.id} was outside the declared row count and was omitted.`,
+              `Table cell ${cell.id} was outside the declared table geometry and was omitted.`,
               block.id,
             )
             continue
           }
+          if (
+            cell.row + cell.rowSpan > block.table.rows ||
+            cell.column + cell.columnSpan > block.table.columns
+          )
+            addDiagnostic(
+              'warning',
+              'lossy-table-geometry',
+              `Table cell ${cell.id} exceeded the declared table geometry; its source span was retained.`,
+              block.id,
+            )
           row.cells.push(mapTableCell(cell, block.id, cellIds.get(cell.id)!))
         }
+        const emptyRows = rows
+          .map((row, index) => (row.cells.length ? undefined : index))
+          .filter((index): index is number => index !== undefined)
+        if (emptyRows.length)
+          addDiagnostic(
+            'warning',
+            'lossy-table-geometry',
+            `Table ${block.id} omitted empty source rows ${emptyRows.join(', ')} when projecting the strict publication table schema.`,
+            block.id,
+          )
         const validRows = rows.filter((row) => row.cells.length)
         if (!validRows.length) return undefined
         return {
@@ -767,7 +907,24 @@ export function adaptStructDocument(
                   ),
               ),
           )
-          .map((relationship) => mappedRelationship(relationship.id))
+          .flatMap((relationship) => {
+            const occurrences = document.blocks.flatMap((candidate) =>
+              candidate.inline
+                .filter(
+                  (inline) =>
+                    inline.relationshipId === relationship.id &&
+                    inline.semanticRole === 'note-reference' &&
+                    inline.targetIds?.includes(block.id) &&
+                    inline.start >= 0 &&
+                    inline.end > inline.start &&
+                    inline.end <= candidate.text.length,
+                )
+                .map((inline) => inlineRelationshipIds.get(inline)),
+            )
+            return occurrences.length
+              ? occurrences
+              : [mappedRelationship(relationship.id)]
+          })
           .filter((id): id is string => Boolean(id))
           .filter((id, index, all) => all.indexOf(id) === index)
         return {
@@ -831,6 +988,31 @@ export function adaptStructDocument(
       ...(asset.height > 0 ? { height: asset.height } : {}),
     })
     assetBytes.set(id, new Uint8Array(asset.bytes))
+  }
+
+  for (const relationship of document.relationships) {
+    if (relationship.status !== 'matched') continue
+    const appearsInline = document.blocks.some((block) =>
+      block.inline.some((inline) => inline.relationshipId === relationship.id),
+    )
+    const fromAvailable = Boolean(mappedNode(relationship.from))
+    const toAvailable =
+      relationship.to.length > 0 &&
+      relationship.to.every((target) =>
+        relationship.kind === 'figure'
+          ? assetIdsMap.has(target)
+          : Boolean(mappedNode(target)),
+      )
+    if (
+      (!fromAvailable || !toAvailable) &&
+      !(appearsInline && fromAvailable && !toAvailable)
+    )
+      addDiagnostic(
+        'warning',
+        'unresolved-relationship-target',
+        `Matched relationship ${relationship.id} (${relationship.kind}) had an unavailable endpoint and was not projected as a link.`,
+        relationship.from,
+      )
   }
 
   const nodes: PublicationNode[] = []

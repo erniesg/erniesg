@@ -894,4 +894,139 @@ describe('STRUCT publication adapter', () => {
       expect.objectContaining({ code: 'unresolved-link' }),
     )
   })
+
+  it('diagnoses invalid metadata dates without leaking a publication schema error', () => {
+    const input = document([
+      block({ id: 'paragraph', kind: 'paragraph', text: 'A', order: 0 }),
+    ])
+    input.relationships = []
+    input.metadata.publicationDate = '2024-99-99'
+    input.metadata.updated = '2024-02-30'
+    input.metadata.artifactModifiedAt = '2024-99-99T00:00:00+00:00'
+
+    const result = adaptStructDocument(input)
+
+    expect(result.graph.metadata).not.toHaveProperty('created')
+    expect(result.graph.metadata).not.toHaveProperty('modified')
+    expect(result.graph.metadata).not.toHaveProperty('artifactModifiedAt')
+    expect(
+      result.diagnostics
+        .map(({ code }) => code)
+        .filter((code) => code.startsWith('invalid-')),
+    ).toEqual([
+      'invalid-publication-date',
+      'invalid-updated-date',
+      'invalid-artifact-modified-at',
+    ])
+    expect(() => publicationGraphSchema.parse(result.graph)).not.toThrow()
+  })
+
+  it('rejects duplicate table-cell source ids before publication schema parsing', () => {
+    const input = document([
+      block({
+        id: 'table',
+        kind: 'table',
+        text: 'A B',
+        order: 0,
+        table: {
+          rows: 1,
+          columns: 2,
+          semantic: 'verified',
+          cells: [
+            {
+              id: 'duplicate-cell',
+              text: 'A',
+              row: 0,
+              column: 0,
+              rowSpan: 1,
+              columnSpan: 1,
+              headerScope: null,
+              inline: [],
+              evidence,
+            },
+            {
+              id: 'duplicate-cell',
+              text: 'B',
+              row: 0,
+              column: 1,
+              rowSpan: 1,
+              columnSpan: 1,
+              headerScope: null,
+              inline: [],
+              evidence,
+            },
+          ],
+        },
+      }),
+    ])
+
+    expect(() => adaptStructDocument(input)).toThrow(
+      'STRUCT_DUPLICATE_TABLE_CELL_ID:duplicate-cell',
+    )
+  })
+
+  it('bounds unexpected publication schema failures behind a STRUCT adapter error', () => {
+    const input = document([
+      block({ id: 'paragraph', kind: 'paragraph', text: 'A', order: 0 }),
+    ])
+    input.relationships = []
+    input.metadata.authors = ['']
+
+    expect(() => adaptStructDocument(input)).toThrow(
+      'STRUCT_PUBLICATION_SCHEMA_INVALID:',
+    )
+  })
+
+  it.each([
+    ['reverse caption relationship', 'caption', 'figure'],
+    ['caption attached to a paragraph', 'paragraph', 'caption'],
+  ])(
+    'diagnoses %s without a raw schema error or semantic mislink',
+    (_label, fromId, toId) => {
+      const input = document([
+        block({
+          id: 'figure',
+          kind: 'figure',
+          text: 'Figure source',
+          label: 'A figure',
+          order: 0,
+        }),
+        block({
+          id: 'paragraph',
+          kind: 'paragraph',
+          text: 'Paragraph',
+          order: 1,
+        }),
+        block({
+          id: 'caption',
+          kind: 'caption',
+          text: 'Caption',
+          order: 2,
+        }),
+      ])
+      input.relationships = [
+        {
+          id: 'invalid-caption-rel',
+          kind: 'caption',
+          from: fromId,
+          to: [toId],
+          status: 'matched',
+          confidence: 1,
+          evidence,
+        },
+      ]
+
+      const result = adaptStructDocument(input)
+      const figure = result.graph.nodes.find((node) => node.id === 'figure')
+
+      expect(result.graph.nodes.some((node) => node.id === 'caption')).toBe(
+        false,
+      )
+      expect(figure).not.toHaveProperty('captionId')
+      expect(result.diagnostics).toContainEqual(
+        expect.objectContaining({ code: 'invalid-caption-relationship' }),
+      )
+      expect(() => publicationGraphSchema.parse(result.graph)).not.toThrow()
+    },
+  )
 })

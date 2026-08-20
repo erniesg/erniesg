@@ -6,12 +6,14 @@ import {
   StructCodecError,
 } from './primitives'
 
+const uint8ArrayPrototype = Uint8Array.prototype
+const typedArrayPrototype = Object.getPrototypeOf(uint8ArrayPrototype)
 const typedArrayTagGetter = Object.getOwnPropertyDescriptor(
-  Object.getPrototypeOf(Uint8Array.prototype),
+  typedArrayPrototype,
   Symbol.toStringTag,
 )?.get
 const typedArrayLengthGetter = Object.getOwnPropertyDescriptor(
-  Object.getPrototypeOf(Uint8Array.prototype),
+  typedArrayPrototype,
   'length',
 )?.get
 
@@ -45,35 +47,7 @@ function copyCanonicalUint8Array(value: unknown): Uint8Array | undefined {
   } catch {
     return undefined
   }
-  const prototype = Object.getPrototypeOf(bytes)
-  if (prototype === null) return undefined
-  const prototypeKeys = Reflect.ownKeys(prototype)
-  if (
-    prototypeKeys.length !== 2 ||
-    !prototypeKeys.includes('constructor') ||
-    !prototypeKeys.includes('BYTES_PER_ELEMENT')
-  )
-    return undefined
-  const constructor = Object.getOwnPropertyDescriptor(prototype, 'constructor')
-  const bytesPerElement = Object.getOwnPropertyDescriptor(
-    prototype,
-    'BYTES_PER_ELEMENT',
-  )
-  if (
-    constructor === undefined ||
-    !('value' in constructor) ||
-    typeof constructor.value !== 'function' ||
-    constructor.value.prototype !== prototype ||
-    bytesPerElement === undefined ||
-    !('value' in bytesPerElement) ||
-    bytesPerElement.value !== 1
-  )
-    return undefined
-  if (
-    Function.prototype.toString.call(constructor.value) !==
-    Function.prototype.toString.call(Uint8Array)
-  )
-    return undefined
+  if (Object.getPrototypeOf(bytes) !== uint8ArrayPrototype) return undefined
   const finalKeys = Reflect.ownKeys(bytes)
   if (
     finalKeys.length !== ownKeys.length ||

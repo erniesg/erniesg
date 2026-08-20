@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { runInNewContext } from 'node:vm'
 import {
   decodeStructDocument,
   encodeStructDocument,
@@ -529,6 +530,53 @@ describe('STRUCT runtime codec', () => {
 
     expect(() => decodeStructDocument(value)).toThrow(/asset|bytes/i)
     expect(traps).toEqual({ get: 0, ownKeys: 0, descriptor: 0 })
+  })
+
+  it('rejects proxy prototypes before reflective traps can mutate the input', () => {
+    const value = validDocument()
+    const bytes = new Uint8Array([0, 255, 128])
+    const before = [...bytes]
+    const traps = { ownKeys: 0, descriptor: 0, constructorGet: 0 }
+    const constructor = new Proxy(Uint8Array, {
+      get(target, property, receiver) {
+        if (property === 'prototype') {
+          traps.constructorGet += 1
+          bytes[0] = 17
+        }
+        return Reflect.get(target, property, receiver)
+      },
+    })
+    const prototype = new Proxy(Uint8Array.prototype, {
+      ownKeys(target) {
+        traps.ownKeys += 1
+        bytes[0] = 17
+        return Reflect.ownKeys(target)
+      },
+      getOwnPropertyDescriptor(target, property) {
+        traps.descriptor += 1
+        const descriptor = Reflect.getOwnPropertyDescriptor(target, property)
+        return property === 'constructor' && descriptor !== undefined
+          ? { ...descriptor, value: constructor }
+          : descriptor
+      },
+    })
+    Object.setPrototypeOf(bytes, prototype)
+    value.assets[0].bytes = bytes as any
+
+    expect(() => decodeStructDocument(value)).toThrow(/asset|bytes/i)
+    expect(traps).toEqual({ ownKeys: 0, descriptor: 0, constructorGet: 0 })
+    expect([...bytes]).toEqual(before)
+  })
+
+  it('rejects cross-realm Uint8Array values in favor of JSON-safe byte forms', () => {
+    const value = validDocument()
+    value.assets[0].bytes = runInNewContext(
+      'new Uint8Array([0, 255, 128])',
+    ) as any
+
+    expect(() => decodeStructDocument(value)).toThrow(
+      /canonical Uint8Array|asset|bytes/i,
+    )
   })
 
   it('verifies present asset bytes against the declared SHA-256 and permits absent bytes', () => {

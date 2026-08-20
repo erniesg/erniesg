@@ -1,0 +1,53 @@
+{
+  "name": "@erniesg/struct",
+  "version": "0.1.0",
+  "description": "Source-neutral STRUCT document contract, codec, and publication renderers",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./core": {
+      "types": "./dist/core.d.ts",
+      "import": "./dist/core.js"
+    },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js"
+    },
+    "./ids": {
+      "types": "./dist/ids.d.ts",
+      "import": "./dist/ids.js"
+    },
+    "./recovery": {
+      "types": "./dist/recovery.d.ts",
+      "import": "./dist/recovery.js"
+    },
+    "./renderers/xhtml": {
+      "types": "./dist/renderers/xhtml.d.ts",
+      "import": "./dist/renderers/xhtml.js"
+    },
+    "./renderers/epub": {
+      "types": "./dist/renderers/epub.d.ts",
+      "import": "./dist/renderers/epub.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.10.1",
+    "fflate": "^0.8.3"
+  }
+}

@@ -742,6 +742,67 @@ describe('STRUCT canonical document graph', () => {
     })
   })
 
+  it('does not let discarded table block inline content consume a cell relationship id', async () => {
+    const graph = buildStructDocument(await structuredDocx())
+    const source = graph.blocks[0]!
+    const relationshipId = 'table-block-cell-reuse'
+    source.kind = 'table'
+    source.text = 'Hidden'
+    source.inline = [
+      {
+        start: 0,
+        end: source.text.length,
+        relationshipId,
+        semanticRole: 'cross-reference',
+        targetIds: [source.id],
+      },
+    ]
+    source.table = {
+      rows: 1,
+      columns: 1,
+      semantic: 'verified',
+      cells: [
+        {
+          id: 'cell',
+          text: 'Visible',
+          row: 0,
+          column: 0,
+          rowSpan: 1,
+          columnSpan: 1,
+          headerScope: null,
+          inline: [
+            {
+              start: 0,
+              end: 7,
+              relationshipId,
+              semanticRole: 'cross-reference',
+              targetIds: [source.id],
+            },
+          ],
+          evidence: source.evidence,
+        },
+      ],
+    }
+    graph.relationships = [
+      {
+        id: relationshipId,
+        kind: 'cross-reference',
+        from: source.id,
+        to: [source.id],
+        label: '',
+        status: 'matched',
+        confidence: 1,
+        evidence: { confidence: 1, pages: [], boxes: [], sourceIds: [] },
+      },
+    ]
+
+    const xhtml = renderPublicationXhtml(graph)
+    expect(
+      renderedIds(xhtml).filter((id) => id === relationshipId),
+    ).toHaveLength(1)
+    expect(xhtml).toContain(`data-relationship-id="${relationshipId}"`)
+  })
+
   it('maps numeric-leading matched references without colliding with canonical IDs', async () => {
     const graph = buildStructDocument(await structuredDocx())
     const source = graph.blocks[0]!

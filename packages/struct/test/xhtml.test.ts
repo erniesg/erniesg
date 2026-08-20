@@ -440,6 +440,65 @@ describe('STRUCT XHTML ID mapping', () => {
     })
   })
 
+  it('does not let discarded table block inline content consume a cell relationship id', () => {
+    const document = characterizationDocument('0.2.0')
+    const source = document.blocks[0]!
+    const relationshipId = 'table-block-cell-reuse'
+    source.kind = 'table'
+    source.text = 'Hidden'
+    source.inline = [
+      {
+        start: 0,
+        end: source.text.length,
+        relationshipId,
+        semanticRole: 'cross-reference',
+        targetIds: [source.id],
+      },
+    ]
+    source.table = {
+      rows: 1,
+      columns: 1,
+      semantic: 'verified',
+      cells: [
+        {
+          id: 'cell',
+          text: 'Visible',
+          row: 0,
+          column: 0,
+          rowSpan: 1,
+          columnSpan: 1,
+          headerScope: null,
+          inline: [
+            {
+              start: 0,
+              end: 7,
+              relationshipId,
+              semanticRole: 'cross-reference',
+              targetIds: [source.id],
+            },
+          ],
+          evidence: source.evidence,
+        },
+      ],
+    }
+    document.relationships = [
+      {
+        id: relationshipId,
+        kind: 'cross-reference',
+        from: source.id,
+        to: [source.id],
+        label: '',
+        status: 'matched',
+        confidence: 1,
+        evidence: { confidence: 1, pages: [], boxes: [], sourceIds: [] },
+      },
+    ]
+
+    const xhtml = renderPublicationXhtml(document)
+    expect(idsIn(xhtml).filter((id) => id === relationshipId)).toHaveLength(1)
+    expect(xhtml).toContain(`data-relationship-id="${relationshipId}"`)
+  })
+
   it('rejects colliding source-observation anchors instead of emitting duplicate XHTML IDs', async () => {
     const document = characterizationDocument('0.2.0')
     const evidence = document.blocks[0]!.evidence

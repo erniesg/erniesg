@@ -20,7 +20,7 @@ import {
   recoverySummary,
 } from './recovery'
 import type { PdfReconstruction } from '../research/import-types'
-import type { StructBlock } from './types'
+import type { StructBlock, StructDocument } from './types'
 import { reconstructDocx } from '../research/docx-import'
 import {
   buildEpub as buildPublicEpub,
@@ -51,6 +51,38 @@ async function structuredDocx() {
       type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     }),
   )
+}
+
+function renderedIds(xhtml: string) {
+  return [...xhtml.matchAll(/\sid="([^"]+)"/gu)].map((match) => match[1]!)
+}
+
+function tableIdFixture(document: StructDocument, id: string, cellId: string) {
+  return {
+    ...document.blocks[0]!,
+    id,
+    kind: 'table' as const,
+    text: 'Cell',
+    inline: [],
+    table: {
+      rows: 1,
+      columns: 1,
+      semantic: 'verified' as const,
+      cells: [
+        {
+          id: cellId,
+          text: 'Cell',
+          row: 0,
+          column: 0,
+          rowSpan: 1,
+          columnSpan: 1,
+          headerScope: null,
+          inline: [],
+          evidence: document.blocks[0]!.evidence,
+        },
+      ],
+    },
+  }
 }
 
 async function modelConsultationPdf() {
@@ -519,6 +551,62 @@ describe('STRUCT canonical document graph', () => {
     expect(xhtml).toContain('href="#_1block"')
     expect(xhtml).not.toContain('id="1block"')
     expect(xhtml).not.toContain('href="#1block"')
+  })
+
+  it('keeps a table cell distinct from a canonical block with a concatenating ID', async () => {
+    const graph = buildStructDocument(await structuredDocx())
+    const base = graph.blocks[0]!
+    const evidence = base.evidence
+    graph.blocks = [
+      { ...base, id: 'a-b', text: 'One', inline: [], evidence },
+      tableIdFixture(graph, 'a', 'b'),
+    ]
+    const ids = renderedIds(renderPublicationXhtml(graph))
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('keeps ambiguous table ID tuples distinct', async () => {
+    const graph = buildStructDocument(await structuredDocx())
+    graph.blocks = [
+      tableIdFixture(graph, 'a-b', 'c'),
+      tableIdFixture(graph, 'a', 'b-c'),
+    ]
+    const ids = renderedIds(renderPublicationXhtml(graph))
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('namespaces source-observation anchors by their owning block', async () => {
+    const graph = buildStructDocument(await structuredDocx())
+    const base = graph.blocks[0]!
+    const evidence = base.evidence
+    graph.blocks = [
+      {
+        ...base,
+        id: 'anchor-block',
+        text: 'One',
+        inline: [],
+        evidence,
+        sourceObservationAnchorIds: ['anchor-block'],
+      },
+      {
+        ...base,
+        id: 'second-block',
+        text: 'Two',
+        inline: [],
+        evidence,
+        sourceObservationAnchorIds: ['shared-anchor'],
+      },
+      {
+        ...base,
+        id: 'third-block',
+        text: 'Three',
+        inline: [],
+        evidence,
+        sourceObservationAnchorIds: ['shared-anchor'],
+      },
+    ]
+    const ids = renderedIds(renderPublicationXhtml(graph))
+    expect(new Set(ids).size).toBe(ids.length)
   })
 
   it('round-trips matched footnotes and endnotes with typed links and backlinks', async () => {

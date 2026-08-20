@@ -46,6 +46,18 @@ function xhtmlHref(value: string) {
   return value.startsWith('#') ? `#${xhtmlId(value.slice(1))}` : value
 }
 
+// Derived nodes need an ID space that cannot overlap a canonical SAFE_ID.
+// Length prefixes keep the tuple injective even when components contain the
+// old delimiter.
+function derivedXhtmlId(namespace: string, values: readonly string[]) {
+  return `_${namespace}-${values
+    .map((value) => {
+      const mapped = xhtmlId(value)
+      return `${mapped.length}:${mapped}`
+    })
+    .join('')}`
+}
+
 const UNICODE_DECIMAL_ZERO_CODE_POINTS = [
   0x0030, 0x0660, 0x06f0, 0x07c0, 0x0966, 0x09e6, 0x0a66, 0x0ae6, 0x0b66,
   0x0be6, 0x0c66, 0x0ce6, 0x0d66, 0x0de6, 0x0e50, 0x0ed0, 0x0f20, 0x1040,
@@ -211,7 +223,7 @@ function renderTable(
       const columnSpan =
         cell.columnSpan > 1 ? ` colspan="${cell.columnSpan}"` : ''
       rows[row]!.push(
-        `<${tag} id="${attribute(`${xhtmlId(tableBlockId)}-${xhtmlId(cell.id)}`)}"${scope}${rowSpan}${columnSpan}>${renderInline(
+        `<${tag} id="${attribute(derivedXhtmlId('table-cell', [tableBlockId, cell.id]))}"${scope}${rowSpan}${columnSpan}>${renderInline(
           document,
           publicationPlan.sourceByKey.get(`table:${blockIndex}:${cellIndex}`)!,
           emittedRelationshipIds,
@@ -259,7 +271,7 @@ function renderSourceObservationAnchors(block: StructBlock) {
   return (block.sourceObservationAnchorIds ?? [])
     .map(
       (anchorId) =>
-        `<span id="${attribute(xhtmlId(anchorId))}" class="visually-hidden source-observation-anchor" aria-hidden="true"></span>`,
+        `<span id="${attribute(derivedXhtmlId('source-anchor', [block.id, anchorId]))}" class="visually-hidden source-observation-anchor" aria-hidden="true"></span>`,
     )
     .join('')
 }

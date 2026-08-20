@@ -33,6 +33,20 @@ export function xhtmlId(value: string) {
   return /^[A-Za-z_]/u.test(cleaned) ? cleaned : `_${cleaned}`
 }
 
+// Derived nodes need an ID space that cannot overlap a canonical SAFE_ID.
+// SAFE_ID values render either unchanged or as `_` plus a leading digit, so
+// the namespace prefixes below (leading `_` plus a letter) are reserved. The
+// length prefixes make the tuple injective even when its components contain
+// the old delimiter (`a-b` + `c` versus `a` + `b-c`).
+function derivedXhtmlId(namespace: string, values: readonly string[]) {
+  return `_${namespace}-${values
+    .map((value) => {
+      const mapped = xhtmlId(value)
+      return `${mapped.length}:${mapped}`
+    })
+    .join('')}`
+}
+
 function xhtmlHref(value: string) {
   return value.startsWith('#') ? `#${xhtmlId(value.slice(1))}` : value
 }
@@ -316,7 +330,7 @@ function renderTable(
     const columnSpan =
       cell.columnSpan > 1 ? ` colspan="${cell.columnSpan}"` : ''
     rows[cell.row]?.push(
-      `<${tag} id="${attribute(`${xhtmlId(tableBlockId)}-${xhtmlId(cell.id)}`)}"${scope}${rowSpan}${columnSpan}>${renderInline(document, cell.text, cell.inline)}</${tag}>`,
+      `<${tag} id="${attribute(derivedXhtmlId('table-cell', [tableBlockId, cell.id]))}"${scope}${rowSpan}${columnSpan}>${renderInline(document, cell.text, cell.inline)}</${tag}>`,
     )
   }
   return `<table>${rows.map((row) => `<tr>${row.join('')}</tr>`).join('')}</table>`
@@ -373,7 +387,7 @@ function renderSourceObservationAnchors(block: StructBlock) {
   return (block.sourceObservationAnchorIds ?? [])
     .map(
       (anchorId) =>
-        `<span id="${attribute(xhtmlId(anchorId))}" class="visually-hidden source-observation-anchor" aria-hidden="true"></span>`,
+        `<span id="${attribute(derivedXhtmlId('source-anchor', [block.id, anchorId]))}" class="visually-hidden source-observation-anchor" aria-hidden="true"></span>`,
     )
     .join('')
 }

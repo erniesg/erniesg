@@ -1,0 +1,932 @@
+import { createAssetBundle, type AssetDescriptor } from './asset-bundle'
+import {
+  PUBLICATION_GRAPH_VERSION,
+  publicationGraphSchema,
+  type PublicationInlineRun,
+  type PublicationNode,
+} from './schema'
+import {
+  PUBLICATION_SOURCE_ADAPTER_VERSION,
+  type AdapterDiagnostic,
+  type PublicationSourceAdapter,
+  type PublicationSourceResult,
+} from './source-adapter'
+import type {
+  StructBlock,
+  StructDocument,
+  StructInline,
+  StructRelationship,
+  StructTableCell,
+} from '../../packages/struct/src/types'
+
+export const STRUCT_PUBLICATION_ADAPTER_ID = 'struct-document' as const
+export const STRUCT_PUBLICATION_MAPPING_VERSION = '1.0.0' as const
+
+type Severity = AdapterDiagnostic['severity']
+
+function safeId(value: string, fallback: string) {
+  const normalized = value.replace(/[^A-Za-z0-9._:-]+/g, '-')
+  if (!normalized) return fallback
+  return /^[A-Za-z0-9]/.test(normalized) ? normalized : `id-${normalized}`
+}
+
+function uniqueId(value: string, used: Set<string>) {
+  const base = safeId(value, 'node')
+  let candidate = base
+  let suffix = 2
+  while (used.has(candidate)) candidate = `${base}-${suffix++}`
+  used.add(candidate)
+  return candidate
+}
+
+function localeFor(document: StructDocument) {
+  const candidate = document.metadata.language ?? 'en'
+  try {
+    return Intl.getCanonicalLocales(candidate)[0] ?? 'en'
+  } catch {
+    return 'en'
+  }
+}
+
+function dateOnly(value: string | undefined) {
+  if (!value) return undefined
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined
+}
+
+function dateTime(value: string | undefined) {
+  if (!value) return undefined
+  return /^\d{4}-\d{2}-\d{2}T/.test(value) ? value : undefined
+}
+
+function direction(
+  value: StructDocument['metadata']['baseDirection'],
+): 'ltr' | 'rtl' | 'auto' {
+  return value === 'ltr' || value === 'rtl' ? value : 'auto'
+}
+
+function basename(value: string) {
+  const withoutQuery = value.split(/[?#]/, 1)[0] ?? ''
+  const part = withoutQuery.split(/[\\/]/).at(-1)
+  return part && /^[^\u0000-\u001f\u007f/\\]+$/.test(part) ? part : undefined
+}
+
+function isExternalHref(value: string) {
+  try {
+    const url = new URL(value)
+    return (
+      ['http:', 'https:', 'mailto:'].includes(url.protocol) &&
+      !url.username &&
+      !url.password
+    )
+  } catch {
+    return false
+  }
+}
+
+function inlineStyle(
+  inline: StructInline,
+): Omit<PublicationInlineRun, 'start' | 'end'> {
+  return {
+    ...(inline.bold ? { bold: true } : {}),
+    ...(inline.italic ? { italic: true } : {}),
+    ...(inline.verticalAlign ? { verticalAlign: inline.verticalAlign } : {}),
+    ...(inline.compactMathAtom ? { compactMathAtom: true } : {}),
+  }
+}
+
+function relationshipStatusIsResolved(
+  relationship: StructRelationship | undefined,
+) {
+  return relationship?.status === 'matched'
+}
+
+function sourceType(
+  document: StructDocument,
+): 'astro' | 'payload' | 'docx' | 'pdf' | 'research-paper' {
+  if (document.source.format === 'pdf') return 'pdf'
+  if (document.source.format === 'docx') return 'docx'
+  return 'research-paper'
+}
+
+/**
+ * Convert the source-neutral STRUCT document into the app-owned publication
+ * graph.  Page geometry, recovery state, model receipts, and provider
+ * evidence are deliberately read only for diagnostics and never projected.
+ */
+export function adaptStructDocument(
+  document: StructDocument,
+): PublicationSourceResult {
+  const diagnostics: AdapterDiagnostic[] = []
+  const sourceId =
+    basename(document.source.fileName) ??
+    `struct-${document.source.sha256.slice(0, 16)}`
+  const addDiagnostic = (
+    severity: Severity,
+    code: string,
+    message: string,
+    nodeId?: string,
+  ) => {
+    diagnostics.push({
+      severity,
+      code,
+      message,
+      sourceId,
+      ...(nodeId ? { nodeId } : {}),
+    })
+  }
+
+  for (const diagnostic of document.diagnostics) {
+    addDiagnostic(
+      diagnostic.severity,
+      `struct-${diagnostic.category}`,
+      `${diagnostic.title}: ${diagnostic.message}`,
+    )
+  }
+
+  const locale = localeFor(document)
+  const directionValue = direction(document.metadata.baseDirection)
+  const graphId = uniqueId(
+    document.documentId ?? `struct-${document.source.sha256.slice(0, 16)}`,
+    new Set(),
+  )
+  const editionId = uniqueId(`${graphId}-${locale}`, new Set())
+  const orderedBlocks = document.blocks
+    .map((block, index) => ({ block, index }))
+    .sort(
+      (left, right) =>
+        left.block.order - right.block.order || left.index - right.index,
+    )
+
+  const usedNodeIds = new Set<string>()
+  const nodeIds = new Map<string, string>()
+  for (const { block } of orderedBlocks)
+    nodeIds.set(block.id, uniqueId(block.id, usedNodeIds))
+  const nonGraphBlockIds = new Set(
+    document.blocks
+      .filter((block) => block.kind === 'furniture' || block.kind === 'unknown')
+      .map((block) => block.id),
+  )
+  const relationshipIds = new Map<string, string>()
+  for (const relationship of document.relationships) {
+    relationshipIds.set(relationship.id, uniqueId(relationship.id, usedNodeIds))
+  }
+  const relationships = new Map(
+    document.relationships.map((relationship) => [
+      relationship.id,
+      relationship,
+    ]),
+  )
+  const mappedNode = (id: string) =>
+    nonGraphBlockIds.has(id) ? undefined : nodeIds.get(id)
+  const mappedRelationship = (id: string) => relationshipIds.get(id)
+
+  for (const relationship of document.relationships) {
+    if (relationship.status === 'matched') continue
+    const appearsInline = document.blocks.some((block) =>
+      block.inline.some((inline) => inline.relationshipId === relationship.id),
+    )
+    if (appearsInline || relationship.kind === 'caption') continue
+    const prefix =
+      relationship.status === 'source-preserved'
+        ? 'source-preserved'
+        : 'unresolved'
+    addDiagnostic(
+      'warning',
+      `${prefix}-${relationship.kind}`,
+      `Relationship ${relationship.id} (${relationship.kind}) was ${relationship.status} and was not projected as a link.`,
+      relationship.from,
+    )
+  }
+
+  const captionParent = new Map<string, string>()
+  for (const relationship of document.relationships) {
+    if (relationship.kind !== 'caption' || !relationship.to[0]) continue
+    if (relationship.status === 'matched') {
+      const fromBlock = document.blocks.find(
+        (block) => block.id === relationship.from,
+      )
+      if (fromBlock?.kind === 'caption')
+        captionParent.set(relationship.from, relationship.to[0])
+      else captionParent.set(relationship.to[0], relationship.from)
+    } else {
+      addDiagnostic(
+        'warning',
+        'unresolved-caption',
+        `Caption relationship ${relationship.id} was ${relationship.status} and was not linked.`,
+      )
+    }
+  }
+
+  const mapInline = (
+    text: string,
+    source: StructInline[],
+    ownerId: string,
+  ): PublicationInlineRun[] => {
+    const result: PublicationInlineRun[] = []
+    for (const inline of source) {
+      if (
+        inline.start < 0 ||
+        inline.end <= inline.start ||
+        inline.end > text.length
+      ) {
+        addDiagnostic(
+          'warning',
+          'lossy-inline-range',
+          `Inline range ${inline.start}:${inline.end} was outside ${ownerId} and was omitted.`,
+          ownerId,
+        )
+        continue
+      }
+      const relationship = inline.relationshipId
+        ? relationships.get(inline.relationshipId)
+        : undefined
+      const targets = inline.targetIds ?? []
+      const mappedTargets = targets
+        .map(mappedNode)
+        .filter((target): target is string => Boolean(target))
+      const hasMissingTarget = mappedTargets.length !== targets.length
+      const resolved = relationship
+        ? relationshipStatusIsResolved(relationship)
+        : !hasMissingTarget
+      const base = {
+        start: inline.start,
+        end: inline.end,
+        ...inlineStyle(inline),
+      }
+
+      if (inline.semanticRole === 'note-reference') {
+        const noteTarget = mappedTargets.find((target) => {
+          const block = document.blocks.find(
+            (candidate) => mappedNode(candidate.id) === target,
+          )
+          return block?.kind === 'footnote' || block?.kind === 'endnote'
+        })
+        if (
+          resolved &&
+          !hasMissingTarget &&
+          noteTarget &&
+          (relationship?.kind === 'footnote' ||
+            relationship?.kind === 'endnote')
+        ) {
+          result.push({
+            ...base,
+            href: `#${noteTarget}`,
+            relationshipId:
+              mappedRelationship(inline.relationshipId ?? '') ??
+              safeId(
+                inline.relationshipId ?? `${ownerId}-note`,
+                `${ownerId}-note`,
+              ),
+            semanticRole: 'cross-reference',
+            targetIds: [noteTarget],
+          })
+        } else {
+          addDiagnostic(
+            'warning',
+            'unresolved-note-reference',
+            `Note reference in ${ownerId} was source-preserved without a destination.`,
+            ownerId,
+          )
+          result.push(base)
+        }
+        continue
+      }
+
+      if (
+        (inline.semanticRole === 'citation' ||
+          inline.semanticRole === 'cross-reference') &&
+        (!resolved || hasMissingTarget || !mappedTargets.length)
+      ) {
+        addDiagnostic(
+          'warning',
+          'unresolved-cross-reference',
+          `The ${inline.semanticRole} in ${ownerId} was source-preserved without an unverified destination.`,
+          ownerId,
+        )
+        result.push(base)
+        continue
+      }
+
+      const href = inline.href
+        ? inline.href.startsWith('#')
+          ? mappedNode(inline.href.slice(1))
+            ? `#${mappedNode(inline.href.slice(1))}`
+            : undefined
+          : isExternalHref(inline.href)
+            ? inline.href
+            : undefined
+        : undefined
+      if (inline.href && !href)
+        addDiagnostic(
+          'warning',
+          'unresolved-link',
+          `Link in ${ownerId} was source-preserved without an unsafe or unresolved destination.`,
+          ownerId,
+        )
+      result.push({
+        ...base,
+        ...(href ? { href } : {}),
+        ...(inline.annotationId
+          ? {
+              annotationId: safeId(
+                inline.annotationId,
+                `${ownerId}-annotation`,
+              ),
+            }
+          : {}),
+        ...(inline.relationshipId && (resolved || href)
+          ? { relationshipId: mappedRelationship(inline.relationshipId) }
+          : {}),
+        ...(inline.semanticRole ? { semanticRole: inline.semanticRole } : {}),
+        ...(mappedTargets.length && resolved
+          ? { targetIds: mappedTargets }
+          : {}),
+      })
+    }
+    return result
+  }
+
+  const common = (block: StructBlock) => ({
+    id: nodeIds.get(block.id)!,
+    locale,
+    direction: directionValue,
+    requirement: 'required' as const,
+    importance:
+      block.kind === 'caption' ||
+      block.kind === 'footnote' ||
+      block.kind === 'endnote'
+        ? ('supporting' as const)
+        : ('essential' as const),
+    provenance: {
+      adapterId: STRUCT_PUBLICATION_ADAPTER_ID,
+      sourceId,
+      sourceRevision: document.source.sha256,
+      evidence: [],
+    },
+    accessibility: { decorative: false },
+    variants: [],
+    permittedTransformationIds: [],
+    edition: { editionId },
+  })
+
+  const captionIdFor = (block: StructBlock) => {
+    const relationship = document.relationships.find(
+      (candidate) =>
+        candidate.kind === 'caption' && candidate.from === block.id,
+    )
+    if (!relationship || relationship.status !== 'matched') return undefined
+    const target = mappedNode(relationship.to[0] ?? '')
+    if (!target) return undefined
+    return document.blocks.find(
+      (candidate) => candidate.id === relationship.to[0],
+    )?.kind === 'caption'
+      ? target
+      : undefined
+  }
+
+  const mapTableCell = (
+    cell: StructTableCell,
+    ownerId: string,
+    cellId: string,
+  ) => ({
+    ...(cell.id ? { id: cellId } : {}),
+    text: cell.text,
+    headerScope:
+      cell.headerScope === 'column' || cell.headerScope === 'row'
+        ? cell.headerScope
+        : null,
+    columnSpan: cell.columnSpan,
+    rowSpan: cell.rowSpan,
+    ...(cell.headerScope === 'colgroup' || cell.headerScope === 'rowgroup'
+      ? (addDiagnostic(
+          'warning',
+          'lossy-table-header-scope',
+          `Table cell ${cell.id} used unsupported ${cell.headerScope} scope; it was projected to an unscoped cell.`,
+          ownerId,
+        ),
+        {})
+      : {}),
+    ...(cell.inline.length
+      ? { inlineRuns: mapInline(cell.text, cell.inline, ownerId) }
+      : {}),
+  })
+
+  const mapBlock = (block: StructBlock): PublicationNode | undefined => {
+    const base = common(block)
+    const inlineRuns = block.inline.length
+      ? mapInline(block.text, block.inline, block.id)
+      : undefined
+    switch (block.kind) {
+      case 'heading':
+        if (!block.text) {
+          addDiagnostic(
+            'warning',
+            'unsupported-heading',
+            `Heading ${block.id} had no text and was omitted.`,
+            block.id,
+          )
+          return undefined
+        }
+        return {
+          ...base,
+          type: 'heading',
+          level:
+            typeof block.attributes?.level === 'number'
+              ? Math.min(6, Math.max(1, Math.trunc(block.attributes.level)))
+              : 1,
+          text: block.text,
+          ...(inlineRuns ? { inlineRuns } : {}),
+        }
+      case 'paragraph':
+        if (!block.text) {
+          addDiagnostic(
+            'warning',
+            'unsupported-paragraph',
+            `Paragraph ${block.id} had no text and was omitted.`,
+            block.id,
+          )
+          return undefined
+        }
+        if (block.attributes?.bibliographyEntry === true)
+          return {
+            ...base,
+            type: 'reference',
+            targetIds: [],
+            text: block.text,
+            ...(inlineRuns ? { inlineRuns } : {}),
+          }
+        return {
+          ...base,
+          type: 'paragraph',
+          text: block.text,
+          ...(inlineRuns ? { inlineRuns } : {}),
+        }
+      case 'quote':
+        if (!block.text) {
+          addDiagnostic(
+            'warning',
+            'unsupported-quote',
+            `Quote ${block.id} had no text and was omitted.`,
+            block.id,
+          )
+          return undefined
+        }
+        return {
+          ...base,
+          type: 'quote',
+          text: block.text,
+          ...(typeof block.attributes?.attribution === 'string'
+            ? { attribution: block.attributes.attribution }
+            : {}),
+          ...(inlineRuns ? { inlineRuns } : {}),
+        }
+      case 'code':
+        if (!block.text) {
+          addDiagnostic(
+            'warning',
+            'unsupported-code',
+            `Code block ${block.id} had no text and was omitted.`,
+            block.id,
+          )
+          return undefined
+        }
+        return {
+          ...base,
+          type: 'code',
+          code: block.text,
+          ...(typeof block.attributes?.language === 'string'
+            ? { language: block.attributes.language }
+            : {}),
+        }
+      case 'figure': {
+        const title = block.label || block.text
+        if (!title) {
+          addDiagnostic(
+            'error',
+            'unsupported-figure',
+            `Figure ${block.id} had no title and was omitted.`,
+            block.id,
+          )
+          return undefined
+        }
+        const relatedAssetIds = document.relationships
+          .filter(
+            (relationship) =>
+              relationship.from === block.id &&
+              relationship.kind === 'figure' &&
+              relationship.status === 'matched',
+          )
+          .flatMap((relationship) => relationship.to)
+        const sourceAssetIds = block.fallbackAssetIds?.length
+          ? block.fallbackAssetIds
+          : relatedAssetIds
+        const assetIds = sourceAssetIds
+          .map((id) => assetIdsMap.get(id))
+          .filter((id): id is string => Boolean(id))
+        if (sourceAssetIds.length > assetIds.length)
+          addDiagnostic(
+            'warning',
+            'unresolved-asset',
+            `Figure ${block.id} referenced an unavailable asset; its source text was retained.`,
+            block.id,
+          )
+        return {
+          ...base,
+          type: 'figure',
+          title,
+          ...(block.text ? { sourceText: block.text } : {}),
+          ...(inlineRuns ? { inlineRuns } : {}),
+          assetIds,
+          ...(captionIdFor(block) ? { captionId: captionIdFor(block) } : {}),
+        }
+      }
+      case 'caption': {
+        if (!block.text) {
+          addDiagnostic(
+            'warning',
+            'unsupported-caption',
+            `Caption ${block.id} had no text and was omitted.`,
+            block.id,
+          )
+          return undefined
+        }
+        const parent = captionParent.get(block.id)
+        const parentId = parent ? mappedNode(parent) : undefined
+        if (!parentId) {
+          addDiagnostic(
+            'warning',
+            'unsupported-caption',
+            `Caption ${block.id} had no verified owning node and was omitted.`,
+            block.id,
+          )
+          return undefined
+        }
+        return {
+          ...base,
+          type: 'caption',
+          parentId,
+          text: block.text,
+          ...(inlineRuns ? { inlineRuns } : {}),
+        }
+      }
+      case 'table': {
+        if (!block.table) {
+          addDiagnostic(
+            'warning',
+            'unsupported-table',
+            `Table ${block.id} had no cell grid and was omitted.`,
+            block.id,
+          )
+          return undefined
+        }
+        if (block.table.semantic !== 'verified')
+          addDiagnostic(
+            'warning',
+            `source-preserved-table`,
+            `Table ${block.id} was ${block.table.semantic}; its text and spans were retained without promoting its semantics.`,
+            block.id,
+          )
+        const cellIds = new Map<string, string>()
+        block.table.cells.forEach((cell, index) =>
+          cellIds.set(
+            cell.id,
+            uniqueId(
+              `${nodeIds.get(block.id)}-cell-${cell.id || index + 1}`,
+              usedNodeIds,
+            ),
+          ),
+        )
+        const rows = Array.from({ length: block.table.rows }, () => ({
+          cells: [] as ReturnType<typeof mapTableCell>[],
+        }))
+        for (const cell of [...block.table.cells].sort(
+          (left, right) => left.row - right.row || left.column - right.column,
+        )) {
+          const row = rows[cell.row]
+          if (!row) {
+            addDiagnostic(
+              'warning',
+              'lossy-table-cell',
+              `Table cell ${cell.id} was outside the declared row count and was omitted.`,
+              block.id,
+            )
+            continue
+          }
+          row.cells.push(mapTableCell(cell, block.id, cellIds.get(cell.id)!))
+        }
+        const validRows = rows.filter((row) => row.cells.length)
+        if (!validRows.length) return undefined
+        return {
+          ...base,
+          type: 'table',
+          rows: validRows,
+          ...(captionIdFor(block) ? { captionId: captionIdFor(block) } : {}),
+        }
+      }
+      case 'equation': {
+        const format = block.attributes?.equationFormat
+        const equationFormat =
+          format === 'mathml' || format === 'latex' || format === 'plain-text'
+            ? format
+            : 'plain-text'
+        if (block.attributes?.equationFormat && format !== equationFormat)
+          addDiagnostic(
+            'warning',
+            'lossy-equation-format',
+            `Equation ${block.id} used an unsupported format and was retained as plain text.`,
+            block.id,
+          )
+        if (block.attributes?.sourcePreserved === true)
+          addDiagnostic(
+            'warning',
+            'source-preserved-equation',
+            `Equation ${block.id} was source-preserved; no unverified transcription was introduced.`,
+            block.id,
+          )
+        if (!block.text) {
+          addDiagnostic(
+            'error',
+            'unsupported-equation',
+            `Equation ${block.id} had no source text and was omitted.`,
+            block.id,
+          )
+          return undefined
+        }
+        return {
+          ...base,
+          type: 'equation',
+          source: block.text,
+          format: equationFormat,
+          ...(block.label ? { label: block.label } : {}),
+          ...(captionIdFor(block) ? { captionId: captionIdFor(block) } : {}),
+        }
+      }
+      case 'footnote':
+      case 'endnote': {
+        if (!block.text) {
+          addDiagnostic(
+            'warning',
+            'unsupported-note',
+            `Note ${block.id} had no text and was omitted.`,
+            block.id,
+          )
+          return undefined
+        }
+        const backlinks = document.relationships
+          .filter(
+            (relationship) =>
+              (relationship.kind === 'footnote' ||
+                relationship.kind === 'endnote') &&
+              relationship.status === 'matched' &&
+              relationship.to.includes(block.id) &&
+              document.blocks.some(
+                (candidate) =>
+                  candidate.text.length > 0 &&
+                  candidate.inline.some(
+                    (inline) =>
+                      inline.relationshipId === relationship.id &&
+                      inline.semanticRole === 'note-reference' &&
+                      inline.targetIds?.includes(block.id) &&
+                      inline.start >= 0 &&
+                      inline.end > inline.start &&
+                      inline.end <= candidate.text.length,
+                  ),
+              ),
+          )
+          .map((relationship) => mappedRelationship(relationship.id))
+          .filter((id): id is string => Boolean(id))
+          .filter((id, index, all) => all.indexOf(id) === index)
+        return {
+          ...base,
+          type: 'note',
+          noteKind: block.kind === 'endnote' ? 'endnote' : 'footnote',
+          label: block.label || block.id,
+          backlinkIds: backlinks,
+          text: block.text,
+          ...(inlineRuns ? { inlineRuns } : {}),
+        }
+      }
+      default:
+        addDiagnostic(
+          'warning',
+          block.kind === 'furniture'
+            ? 'unsupported-furniture'
+            : 'unsupported-block',
+          `STRUCT block ${block.id} (${block.kind}) was not flattened into PublicationGraph.`,
+          block.id,
+        )
+        return undefined
+    }
+  }
+
+  const assetIdsMap = new Map<string, string>()
+  const assetDescriptors: AssetDescriptor[] = []
+  const assetBytes = new Map<string, Uint8Array>()
+  const assetHashes = new Map<string, string>()
+  for (const asset of document.assets) {
+    const prior = assetHashes.get(asset.sha256)
+    if (prior) {
+      assetIdsMap.set(asset.id, prior)
+      addDiagnostic(
+        'warning',
+        'duplicate-asset-content',
+        `Asset ${asset.id} shared content with ${prior}; the bundle uses one stable descriptor.`,
+        asset.id,
+      )
+      continue
+    }
+    const id = uniqueId(asset.id, usedNodeIds)
+    assetIdsMap.set(asset.id, id)
+    assetHashes.set(asset.sha256, id)
+    assetDescriptors.push({
+      id,
+      sha256: asset.sha256,
+      byteLength: asset.bytes?.byteLength ?? 0,
+      mediaType: asset.mediaType,
+      ...(basename(asset.href) ? { fileName: basename(asset.href) } : {}),
+      ...(asset.width > 0 ? { width: asset.width } : {}),
+      ...(asset.height > 0 ? { height: asset.height } : {}),
+    })
+    if (asset.bytes) assetBytes.set(id, new Uint8Array(asset.bytes))
+    else if (assetDescriptors.at(-1)!.byteLength > 0)
+      addDiagnostic(
+        'warning',
+        'asset-bytes-unavailable',
+        `Asset ${asset.id} has no local bytes; resolution remains explicitly unavailable.`,
+        asset.id,
+      )
+  }
+
+  const nodes: PublicationNode[] = []
+  const listGroups = new Map<
+    string,
+    {
+      id: string
+      level: number
+      ordered: boolean
+      start?: number
+      itemIds: string[]
+      firstIndex: number
+      parentItemId?: string
+    }
+  >()
+  const listStack: Array<{
+    level: number
+    group: {
+      id: string
+      level: number
+      ordered: boolean
+      start?: number
+      itemIds: string[]
+      firstIndex: number
+      parentItemId?: string
+    }
+  }> = []
+  for (const { block, index } of orderedBlocks) {
+    if (block.kind === 'list-item') {
+      if (!block.text) {
+        addDiagnostic(
+          'warning',
+          'unsupported-list-item',
+          `List item ${block.id} had no text and was omitted.`,
+          block.id,
+        )
+        continue
+      }
+      const level =
+        typeof block.attributes?.listLevel === 'number'
+          ? Math.max(0, Math.trunc(block.attributes.listLevel))
+          : 0
+      const ordered = block.attributes?.listOrdered === true
+      while (listStack.at(-1) && listStack.at(-1)!.level > level)
+        listStack.pop()
+      let group =
+        listStack.at(-1)?.level === level &&
+        listStack.at(-1)?.group.ordered === ordered
+          ? listStack.at(-1)!.group
+          : undefined
+      if (!group) {
+        group = {
+          id: uniqueId(`${nodeIds.get(block.id)}-list`, usedNodeIds),
+          level,
+          ordered,
+          ...(ordered && typeof block.attributes?.listOrdinal === 'number'
+            ? { start: Math.max(0, Math.trunc(block.attributes.listOrdinal)) }
+            : {}),
+          itemIds: [],
+          firstIndex: index,
+          ...(listStack.at(-1)
+            ? { parentItemId: listStack.at(-1)!.group.itemIds.at(-1) }
+            : {}),
+        }
+        listGroups.set(`${level}:${ordered}:${index}`, group)
+        listStack.push({ level, group })
+        nodes.push({
+          ...common(block),
+          id: group.id,
+          type: 'list',
+          ordered,
+          itemIds: [],
+          ...(group.start !== undefined ? { start: group.start } : {}),
+        })
+      }
+      group.itemIds.push(nodeIds.get(block.id)!)
+      const listInlineRuns = inlineRunsFor(block, mapInline)
+      nodes.push({
+        ...common(block),
+        type: 'list-item',
+        parentListId: group.id,
+        childListIds: [],
+        text: block.text,
+        ...(listInlineRuns ? { inlineRuns: listInlineRuns } : {}),
+      })
+      continue
+    }
+    listStack.length = 0
+    const mapped = mapBlock(block)
+    if (mapped) nodes.push(mapped)
+  }
+  for (const group of listGroups.values()) {
+    const list = nodes.find((node) => node.id === group.id)
+    if (list?.type === 'list') list.itemIds = group.itemIds
+  }
+  for (const group of listGroups.values()) {
+    if (!group.parentItemId) continue
+    const parent = nodes.find((node) => node.id === group.parentItemId)
+    if (parent?.type === 'list-item') parent.childListIds.push(group.id)
+  }
+
+  if (!nodes.length) throw new Error('STRUCT_NO_PUBLICATION_NODES')
+  const graph = publicationGraphSchema.parse({
+    version: PUBLICATION_GRAPH_VERSION,
+    id: graphId,
+    metadata: {
+      title: document.metadata.title || sourceId,
+      ...(document.metadata.subtitle
+        ? { subtitle: document.metadata.subtitle }
+        : {}),
+      contributors: document.metadata.authors,
+      ...(document.metadata.abstract
+        ? { abstract: document.metadata.abstract }
+        : {}),
+      sourceDocumentVersion: document.schemaVersion,
+      ...(dateOnly(document.metadata.publicationDate)
+        ? { created: dateOnly(document.metadata.publicationDate) }
+        : {}),
+      ...(dateOnly(document.metadata.updated)
+        ? { modified: dateOnly(document.metadata.updated) }
+        : {}),
+      ...(dateTime(document.metadata.artifactModifiedAt)
+        ? { artifactModifiedAt: dateTime(document.metadata.artifactModifiedAt) }
+        : {}),
+      defaultLocale: locale,
+      defaultDirection: directionValue,
+      keywords: [],
+    },
+    edition: { id: editionId, locale, direction: directionValue },
+    nodes,
+  })
+  return {
+    graph,
+    assetBundle: createAssetBundle(
+      { version: '1.0.0', assets: assetDescriptors },
+      async (descriptor) => {
+        const bytesForAsset = assetBytes.get(descriptor.id)
+        if (!bytesForAsset)
+          throw new Error(`STRUCT_ASSET_BYTES_UNAVAILABLE:${descriptor.id}`)
+        return new Uint8Array(bytesForAsset)
+      },
+    ),
+    diagnostics,
+    provenance: {
+      adapterId: STRUCT_PUBLICATION_ADAPTER_ID,
+      adapterVersion: PUBLICATION_SOURCE_ADAPTER_VERSION,
+      sourceType: sourceType(document),
+      sourceId,
+      sourceRevision: document.source.sha256,
+      mappingVersion: STRUCT_PUBLICATION_MAPPING_VERSION,
+    },
+  }
+}
+
+function inlineRunsFor(
+  block: StructBlock,
+  mapInline: (
+    text: string,
+    source: StructInline[],
+    ownerId: string,
+  ) => PublicationInlineRun[],
+) {
+  return block.inline.length
+    ? mapInline(block.text, block.inline, block.id)
+    : undefined
+}
+
+export const structPublicationAdapter: PublicationSourceAdapter<StructDocument> =
+  {
+    id: STRUCT_PUBLICATION_ADAPTER_ID,
+    version: PUBLICATION_SOURCE_ADAPTER_VERSION,
+    adapt: adaptStructDocument,
+  }
+
+export const structDocumentToPublicationSourceResult = adaptStructDocument

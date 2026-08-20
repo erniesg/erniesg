@@ -1,4 +1,11 @@
 export * from './types'
+export {
+  StructCodecError,
+  decodeStructDocument,
+  encodeStructDocument,
+  migrateStructDocument,
+  type StructDocumentJson,
+} from './codec'
 export * from './ids'
 export {
   validateModelConsultationReceipt,

@@ -1,0 +1,457 @@
+import { describe, expect, it } from 'vitest'
+import {
+  decodeStructDocument,
+  encodeStructDocument,
+  migrateStructDocument,
+} from './index'
+
+const hash = 'a'.repeat(64)
+
+function evidence() {
+  return {
+    confidence: 1,
+    pages: [1],
+    boxes: [
+      {
+        page: 1,
+        x: 0,
+        y: 0,
+        width: 10,
+        height: 10,
+        rotation: 0,
+      },
+    ],
+    sourceIds: ['source-node'],
+    signals: ['fixture'],
+  }
+}
+
+function validDocument() {
+  const sharedEvidence = evidence()
+  return {
+    schemaVersion: '0.1.0',
+    source: {
+      format: 'docx',
+      fileName: 'fixture.docx',
+      sha256: hash,
+      byteLength: 3,
+      pageCount: 1,
+      localOnly: true,
+    },
+    metadata: {
+      title: 'Fixture',
+      subtitle: '',
+      authors: ['Author'],
+      abstract: 'Abstract',
+      language: 'en',
+      baseDirection: 'ltr',
+      publicationDate: '2026-08-20',
+      artifactModifiedAt: '2026-08-20T00:00:00Z',
+      updated: '2026-08-20',
+      affiliations: ['Example University'],
+      authorAffiliations: [{ author: 'Author', label: '1' }],
+      authorNotes: [
+        {
+          id: 'author-note-1',
+          author: 'Author',
+          label: '1',
+          target: 'block-1',
+        },
+      ],
+    },
+    blocks: [
+      {
+        id: 'block-1',
+        kind: 'paragraph',
+        text: 'Hello',
+        label: 'Body',
+        page: 1,
+        order: 0,
+        column: 'single',
+        inline: [
+          {
+            start: 0,
+            end: 5,
+            href: '#block-1',
+            annotationId: 'annotation-1',
+            relationshipId: 'relationship-1',
+            targetIds: ['block-1'],
+            bold: true,
+            italic: false,
+            verticalAlign: 'superscript',
+            compactMathAtom: false,
+            semanticRole: 'cross-reference',
+          },
+        ],
+        evidence: sharedEvidence,
+        sourceObservationAnchorIds: ['anchor-1'],
+        table: {
+          rows: 1,
+          columns: 1,
+          cells: [
+            {
+              id: 'cell-1',
+              text: 'Cell',
+              row: 0,
+              column: 0,
+              rowSpan: 1,
+              columnSpan: 1,
+              headerScope: null,
+              inline: [],
+              evidence: sharedEvidence,
+            },
+          ],
+          semantic: 'verified',
+        },
+        furniture: {
+          classification: 'repeated-text',
+          band: 'top',
+          pages: [1],
+          boxes: [],
+          evidence: ['fixture-furniture'],
+          normalizedText: 'Header',
+          sequence: [1],
+          sourceRunIndexes: [0],
+        },
+        furnitureReview: {
+          reason: 'single-occurrence-margin',
+          band: 'right',
+          pages: [1],
+          boxes: [],
+          evidence: ['fixture-review'],
+        },
+        fallbackAssetIds: ['asset-1'],
+        attributes: { level: 1, bibliographyEntry: false, objectType: 'body' },
+      },
+    ],
+    assets: [
+      {
+        id: 'asset-1',
+        kind: 'figure',
+        href: 'assets/asset-1.bin',
+        mediaType: 'application/octet-stream',
+        sha256: hash,
+        width: 10,
+        height: 10,
+        bytes: 'AP+A',
+        sourceObjectIds: ['source-asset'],
+        evidence: sharedEvidence,
+        fallback: 'asset',
+      },
+    ],
+    relationships: [
+      {
+        id: 'relationship-1',
+        kind: 'reading-order',
+        from: 'block-1',
+        to: ['block-1'],
+        label: 'next',
+        status: 'matched',
+        confidence: 1,
+        evidence: sharedEvidence,
+        candidates: [
+          { target: 'block-1', confidence: 1, evidence: sharedEvidence },
+        ],
+      },
+    ],
+    pages: [
+      {
+        page: 1,
+        width: 600,
+        height: 800,
+        rotation: 0,
+        blocks: ['block-1'],
+        columns: [{ id: 'column-1', side: 'single', blockIds: ['block-1'] }],
+      },
+    ],
+    diagnostics: [
+      {
+        id: 'diagnostic-1',
+        severity: 'info',
+        category: 'source',
+        title: 'Fixture',
+        message: 'Fixture diagnostic',
+        action: 'Continue',
+        pages: [1],
+        sourceIds: ['source-node'],
+      },
+    ],
+    recovery: {
+      status: 'ready',
+      title: 'Ready',
+      summary: 'No recovery required',
+      issues: [
+        {
+          category: 'source',
+          title: 'None',
+          count: 0,
+          pages: [],
+          action: 'None',
+        },
+      ],
+      userAction: 'None',
+    },
+    receipt: {
+      schemaVersion: '0.1.0',
+      sourceSha256: hash,
+      blockCount: 1,
+      assetCount: 1,
+      relationshipCount: 1,
+      diagnosticCount: 1,
+      textCharacterCount: 5,
+      conservation: {
+        sourceNodeCount: 1,
+        accountedSourceNodeCount: 1,
+        sourceRegionCount: 0,
+        accountedSourceRegionCount: 0,
+        sourceAnnotationCount: 1,
+        accountedSourceAnnotationCount: 1,
+        sourceAssetCount: 1,
+        accountedSourceAssetCount: 1,
+        sourceRelationshipCount: 1,
+        accountedSourceRelationshipCount: 1,
+        sourceDiagnosticCount: 1,
+        accountedSourceDiagnosticCount: 1,
+        sourceTextCharacterCount: 5,
+        structBlockCount: 1,
+        structAssetCount: 1,
+        structRelationshipCount: 1,
+        structDiagnosticCount: 1,
+        structTextCharacterCount: 5,
+        sourceFurnitureBlockCount: 0,
+        accountedFurnitureBlockCount: 0,
+        sourceFurnitureTextCharacterCount: 0,
+        structFurnitureBlockCount: 0,
+        structFurnitureTextCharacterCount: 0,
+        furnitureContaminationCount: 0,
+      },
+      generatedSha256: hash,
+    },
+  }
+}
+
+describe('STRUCT runtime codec', () => {
+  it('decodes a strict 0.1.0 document and restores JSON-safe asset bytes', () => {
+    const decoded = decodeStructDocument(validDocument())
+
+    expect(decoded.schemaVersion).toBe('0.1.0')
+    expect(decoded.assets[0]?.bytes).toEqual(new Uint8Array([0, 255, 128]))
+    expect(decoded.assets[0]?.bytes).not.toBe(
+      (validDocument().assets[0] as { bytes: unknown }).bytes,
+    )
+    expect(decoded.blocks[0]?.attributes).toEqual({
+      level: 1,
+      bibliographyEntry: false,
+      objectType: 'body',
+    })
+  })
+
+  it('encodes asset bytes as canonical JSON-safe base64 and round-trips them', () => {
+    const document = decodeStructDocument(validDocument())
+    const encoded = encodeStructDocument(document)
+
+    expect(encoded.assets[0]).toMatchObject({ bytes: 'AP+A' })
+    expect(JSON.parse(JSON.stringify(encoded))).toEqual(encoded)
+    expect(decodeStructDocument(encoded).assets[0]?.bytes).toEqual(
+      new Uint8Array([0, 255, 128]),
+    )
+  })
+
+  it('preserves JSON text whitespace without coercion', () => {
+    const value = validDocument() as any
+    value.metadata.abstract = 'Abstract\nwith\twhitespace'
+    value.blocks[0].text = 'Hello\n'
+    value.receipt.textCharacterCount = 6
+    value.receipt.conservation.sourceTextCharacterCount = 6
+    value.receipt.conservation.structTextCharacterCount = 6
+
+    const decoded = decodeStructDocument(value)
+
+    expect(decoded.metadata.abstract).toBe('Abstract\nwith\twhitespace')
+    expect(decoded.blocks[0]?.text).toBe('Hello\n')
+  })
+
+  it.each([
+    ['document', (value: any) => (value.extra = true)],
+    ['source', (value: any) => (value.source.extra = true)],
+    ['metadata', (value: any) => (value.metadata.extra = true)],
+    [
+      'author affiliation',
+      (value: any) => (value.metadata.authorAffiliations[0].extra = true),
+    ],
+    [
+      'author note',
+      (value: any) => (value.metadata.authorNotes[0].extra = true),
+    ],
+    ['block', (value: any) => (value.blocks[0].extra = true)],
+    ['inline', (value: any) => (value.blocks[0].inline[0].extra = true)],
+    ['evidence', (value: any) => (value.blocks[0].evidence.extra = true)],
+    ['box', (value: any) => (value.blocks[0].evidence.boxes[0].extra = true)],
+    ['table', (value: any) => (value.blocks[0].table.extra = true)],
+    [
+      'table cell',
+      (value: any) => (value.blocks[0].table.cells[0].extra = true),
+    ],
+    ['furniture', (value: any) => (value.blocks[0].furniture.extra = true)],
+    [
+      'furniture review',
+      (value: any) => (value.blocks[0].furnitureReview.extra = true),
+    ],
+    ['asset', (value: any) => (value.assets[0].extra = true)],
+    ['relationship', (value: any) => (value.relationships[0].extra = true)],
+    [
+      'relationship candidate',
+      (value: any) => (value.relationships[0].candidates[0].extra = true),
+    ],
+    ['page', (value: any) => (value.pages[0].extra = true)],
+    ['page column', (value: any) => (value.pages[0].columns[0].extra = true)],
+    ['diagnostic', (value: any) => (value.diagnostics[0].extra = true)],
+    ['recovery', (value: any) => (value.recovery.extra = true)],
+    ['recovery issue', (value: any) => (value.recovery.issues[0].extra = true)],
+    ['receipt', (value: any) => (value.receipt.extra = true)],
+    ['conservation', (value: any) => (value.receipt.conservation.extra = true)],
+  ])('rejects an unknown field at the %s object layer', (_layer, mutate) => {
+    const value = validDocument()
+    mutate(value)
+    expect(() => decodeStructDocument(value)).toThrow(/unknown field/i)
+  })
+
+  it.each([
+    ['schemaVersion', (value: any) => (value.schemaVersion = 1)],
+    ['source', (value: any) => (value.source = 'source')],
+    ['blocks', (value: any) => (value.blocks = {})],
+    ['block kind', (value: any) => (value.blocks[0].kind = 1)],
+    ['inline start', (value: any) => (value.blocks[0].inline[0].start = '0')],
+    ['asset bytes', (value: any) => (value.assets[0].bytes = ['0'])],
+    ['recovery status', (value: any) => (value.recovery.status = false)],
+  ])('rejects a wrong primitive for %s', (_field, mutate) => {
+    const value = validDocument()
+    mutate(value)
+    expect(() => decodeStructDocument(value)).toThrow()
+  })
+
+  it('rejects non-finite numeric values without coercion', () => {
+    const value = validDocument()
+    value.blocks[0].evidence.confidence = Number.NaN
+    expect(() => decodeStructDocument(value)).toThrow(/finite/i)
+  })
+
+  it('rejects inline ranges outside their owning text', () => {
+    const value = validDocument()
+    value.blocks[0].inline[0].end = 6
+    expect(() => decodeStructDocument(value)).toThrow(/text length/i)
+  })
+
+  it.each([
+    [
+      'duplicate block id',
+      (value: any) => value.blocks.push({ ...value.blocks[0] }),
+    ],
+    [
+      'duplicate relationship target',
+      (value: any) => (value.relationships[0].to = ['block-1', 'block-1']),
+    ],
+    [
+      'duplicate inline target',
+      (value: any) =>
+        (value.blocks[0].inline[0].targetIds = ['block-1', 'block-1']),
+    ],
+    [
+      'duplicate author note id',
+      (value: any) =>
+        value.metadata.authorNotes.push({
+          ...value.metadata.authorNotes[0],
+        }),
+    ],
+  ])('rejects %s', (_label, mutate) => {
+    const value = validDocument()
+    mutate(value)
+    expect(() => decodeStructDocument(value)).toThrow(/duplicate/i)
+  })
+
+  it.each([
+    ['block id', (value: any) => (value.blocks[0].id = '../block')],
+    ['asset id', (value: any) => (value.assets[0].id = 'asset id')],
+    ['document id', (value: any) => (value.documentId = ' document')],
+  ])('rejects a non-canonical %s', (_label, mutate) => {
+    const value = validDocument()
+    mutate(value)
+    expect(() => decodeStructDocument(value)).toThrow(/identifier|id/i)
+  })
+
+  it('rejects malformed bytes and preserves no binary object representation', () => {
+    const value = validDocument()
+    for (const bytes of ['not-base64', 'AB==']) {
+      value.assets[0].bytes = bytes
+      expect(() => decodeStructDocument(value)).toThrow(/base64/i)
+    }
+
+    const jsonValue = JSON.parse(JSON.stringify(validDocument()))
+    jsonValue.assets[0].bytes = [0, 255, 128]
+    expect(decodeStructDocument(jsonValue).assets[0]?.bytes).toEqual(
+      new Uint8Array([0, 255, 128]),
+    )
+    jsonValue.assets[0].bytes = { 0: 0, 1: 255, 2: 128 }
+    expect(() => decodeStructDocument(jsonValue)).toThrow()
+  })
+
+  it('keeps a supported 0.1.0 document unchanged through migration', () => {
+    const migrated = migrateStructDocument(validDocument())
+    expect(migrated.schemaVersion).toBe('0.1.0')
+    expect(migrated).not.toHaveProperty('documentId')
+    expect(migrated.receipt).not.toHaveProperty('documentId')
+  })
+
+  it('canonically decodes the declared current 0.2.0 binding without migration', () => {
+    const value = validDocument() as any
+    value.schemaVersion = '0.2.0'
+    value.documentId = 'fixture-document'
+    value.receipt.schemaVersion = '0.2.0'
+    value.receipt.documentId = 'fixture-document'
+
+    expect(migrateStructDocument(value)).toMatchObject({
+      schemaVersion: '0.2.0',
+      documentId: 'fixture-document',
+      receipt: { schemaVersion: '0.2.0', documentId: 'fixture-document' },
+    })
+  })
+
+  it('strictly decodes the optional model consultation receipt on 0.2.0', () => {
+    const value = validDocument() as any
+    value.schemaVersion = '0.2.0'
+    value.documentId = 'fixture-document'
+    value.receipt.schemaVersion = '0.2.0'
+    value.receipt.documentId = 'fixture-document'
+    value.receipt.modelConsultations = {
+      schemaVersion: '1.0.0',
+      documentId: 'fixture-document',
+      sourceSha256: hash,
+      consultations: [],
+      decisions: [],
+      metrics: {
+        totalDecisionCount: 0,
+        totalConsultationCount: 0,
+        consultationRate: 0,
+        byDecisionClass: {},
+      },
+    }
+
+    const decoded = decodeStructDocument(value)
+    expect(decoded.receipt.modelConsultations).toMatchObject({
+      schemaVersion: '1.0.0',
+      documentId: 'fixture-document',
+    })
+
+    value.receipt.modelConsultations.extra = true
+    expect(() => decodeStructDocument(value)).toThrow()
+  })
+
+  it.each(['0.3.0', '9.9.9', '', null, 1])(
+    'fails closed on unknown schema version %s',
+    (schemaVersion) => {
+      const value = validDocument()
+      value.schemaVersion = schemaVersion as never
+      expect(() => migrateStructDocument(value)).toThrow(/schema version/i)
+    },
+  )
+})

@@ -426,7 +426,7 @@ function validatePages(document: StructDocument) {
     checkPage(page.page, `$.pages[${index}].page`)
     const seenColumnSides = new Set<string>()
     for (const [columnIndex, column] of page.columns.entries()) {
-      if (seenColumnSides.has(column.side) && column.side !== 'left')
+      if (seenColumnSides.has(column.side))
         fail(
           'PAGE_BINDING',
           `$.pages[${index}].columns[${columnIndex}].side`,

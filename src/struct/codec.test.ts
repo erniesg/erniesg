@@ -670,7 +670,8 @@ describe('STRUCT runtime codec', () => {
     'accepts a %s block column mapped to a single page column',
     (column) => {
       const value = validDocument()
-      value.blocks[0].column = column
+      const mutable = value as any
+      mutable.blocks[0].column = column
       seal(value)
       expect(() => decodeStructDocument(value)).not.toThrow()
     },

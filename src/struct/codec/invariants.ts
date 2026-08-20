@@ -424,6 +424,26 @@ function validatePages(document: StructDocument) {
         'page exceeds source.pageCount',
       )
     checkPage(page.page, `$.pages[${index}].page`)
+    const seenColumnSides = new Set<string>()
+    for (const [columnIndex, column] of page.columns.entries()) {
+      if (seenColumnSides.has(column.side) && column.side !== 'left')
+        fail(
+          'PAGE_BINDING',
+          `$.pages[${index}].columns[${columnIndex}].side`,
+          `duplicate ${column.side} column sides are not permitted`,
+        )
+      seenColumnSides.add(column.side)
+      for (const [blockIndex, blockId] of column.blockIds.entries()) {
+        const block = blocksById.get(blockId)
+        const expectedSide = block?.column ?? 'single'
+        if (expectedSide !== column.side)
+          fail(
+            'PAGE_BINDING',
+            `$.pages[${index}].columns[${columnIndex}].blockIds[${blockIndex}]`,
+            'column side must match the member block column',
+          )
+      }
+    }
     const columnBlockIds = page.columns.flatMap((column) => column.blockIds)
     if (new Set(columnBlockIds).size !== columnBlockIds.length)
       fail(
@@ -453,6 +473,12 @@ function validatePages(document: StructDocument) {
   for (const [index, block] of document.blocks.entries()) {
     if (block.page !== null) {
       checkPage(block.page, `$.blocks[${index}].page`)
+      if (!block.evidence.pages.includes(block.page))
+        fail(
+          'PAGE_BINDING',
+          `$.blocks[${index}].page`,
+          'block page must be listed in block.evidence.pages',
+        )
       const page = document.pages.find((entry) => entry.page === block.page)
       if (!page?.blocks.includes(block.id))
         fail(

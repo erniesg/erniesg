@@ -6,8 +6,10 @@ import {
   StructCodecError,
 } from './index'
 import { legacyStructDigest, structDigest } from './ids'
+import { sha256HexSync } from './sha256'
 
 const hash = 'a'.repeat(64)
+const assetBytesHash = sha256HexSync(new Uint8Array([0, 255, 128]))
 
 function evidence() {
   return {
@@ -152,7 +154,7 @@ function validDocument() {
         kind: 'figure',
         href: 'assets/asset-1.bin',
         mediaType: 'application/octet-stream',
-        sha256: hash,
+        sha256: assetBytesHash,
         width: 10,
         height: 10,
         bytes: 'AP+A',
@@ -418,6 +420,16 @@ describe('STRUCT runtime codec', () => {
     expect(() => decodeStructDocument(jsonValue)).toThrow()
   })
 
+  it('verifies present asset bytes against the declared SHA-256 and permits absent bytes', () => {
+    const tampered = validDocument()
+    tampered.assets[0].bytes = 'AP+B'
+    expect(() => decodeStructDocument(tampered)).toThrow(/asset|bytes|sha256/i)
+
+    const absent = validDocument()
+    delete absent.assets[0].bytes
+    expect(() => decodeStructDocument(absent)).not.toThrow()
+  })
+
   it('keeps a supported 0.1.0 document unchanged through migration', () => {
     const migrated = migrateStructDocument(validDocument())
     expect(migrated.schemaVersion).toBe('0.1.0')
@@ -479,6 +491,18 @@ describe('STRUCT runtime codec', () => {
       expect(() => migrateStructDocument(value)).toThrow(/schema version/i)
     },
   )
+
+  it('contains cyclic and bigint schema versions as StructCodecError', () => {
+    const cyclic = validDocument() as any
+    const version: any = {}
+    version.self = version
+    cyclic.schemaVersion = version
+    expect(() => decodeStructDocument(cyclic)).toThrow(StructCodecError)
+
+    const bigint = validDocument() as any
+    bigint.schemaVersion = 1n
+    expect(() => decodeStructDocument(bigint)).toThrow(StructCodecError)
+  })
 
   it('verifies the canonical generated digest for both supported versions', () => {
     expect(() => decodeStructDocument(validDocument())).not.toThrow()
@@ -570,6 +594,69 @@ describe('STRUCT runtime codec', () => {
       )
     },
   )
+
+  it.each([
+    ['box page', (value: any) => (value.blocks[0].evidence.boxes[0].page = 0)],
+    ['evidence page', (value: any) => (value.blocks[0].evidence.pages[0] = 0)],
+    ['block page', (value: any) => (value.blocks[0].page = 0)],
+    ['page layout page', (value: any) => (value.pages[0].page = 0)],
+    ['diagnostic page', (value: any) => (value.diagnostics[0].pages[0] = 0)],
+    [
+      'recovery issue page',
+      (value: any) => (value.recovery.issues[0].pages = [0]),
+    ],
+    [
+      'furniture page',
+      (value: any) => (value.blocks[0].furniture.pages[0] = 0),
+    ],
+  ])('rejects a non-positive %s', (_label, mutate) => {
+    const value = validDocument()
+    mutate(value)
+    expect(() => decodeStructDocument(value)).toThrow(/page|number|range/i)
+  })
+
+  it.each([
+    ['box width', (value: any) => (value.blocks[0].evidence.boxes[0].width = 0)],
+    ['box height', (value: any) => (value.blocks[0].evidence.boxes[0].height = 0)],
+    ['asset width', (value: any) => (value.assets[0].width = 0)],
+    ['asset height', (value: any) => (value.assets[0].height = 0)],
+    ['page width', (value: any) => (value.pages[0].width = 0)],
+    ['page height', (value: any) => (value.pages[0].height = 0)],
+  ])('rejects non-positive materialized geometry (%s)', (_label, mutate) => {
+    const value = validDocument()
+    mutate(value)
+    expect(() => decodeStructDocument(value)).toThrow(/positive|range|number/i)
+  })
+
+  it.each([
+    [
+      'missing page layout for block',
+      (value: any) => {
+        value.blocks[0].page = null
+        value.pages = []
+      },
+    ],
+    ['page block membership', (value: any) => (value.pages[0].blocks = [])],
+    [
+      'column membership',
+      (value: any) => (value.pages[0].columns[0].blockIds = []),
+    ],
+    [
+      'evidence page membership',
+      (value: any) => {
+        value.blocks[0].page = null
+        value.blocks[0].evidence.pages = []
+      },
+    ],
+    [
+      'evidence box page agreement',
+      (value: any) => (value.blocks[0].evidence.pages = []),
+    ],
+  ])('rejects incoherent page topology (%s)', (_label, mutate) => {
+    const value = validDocument()
+    mutate(value)
+    expect(() => decodeStructDocument(value)).toThrow(/page|membership|evidence/i)
+  })
 
   it.each([
     ['row bound', (value: any) => (value.blocks[0].table.cells[0].row = 1)],

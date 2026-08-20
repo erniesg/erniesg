@@ -188,6 +188,7 @@ function renderInline(
   document: StructDocument,
   value: string,
   runs: readonly StructInline[],
+  emittedRelationshipIds = new Set<string>(),
 ) {
   const validRuns = runs
     .filter(
@@ -213,7 +214,6 @@ function renderInline(
       relationship,
     ]),
   )
-  const emittedRelationshipIds = new Set<string>()
   return positions
     .slice(0, -1)
     .map((start, index) => {
@@ -320,6 +320,7 @@ function renderTable(
   document: StructDocument,
   table: StructTable,
   tableBlockId: string,
+  emittedRelationshipIds: Set<string>,
 ) {
   const rows = Array.from({ length: table.rows }, () => [] as string[])
   for (const cell of table.cells) {
@@ -330,7 +331,7 @@ function renderTable(
     const columnSpan =
       cell.columnSpan > 1 ? ` colspan="${cell.columnSpan}"` : ''
     rows[cell.row]?.push(
-      `<${tag} id="${attribute(derivedXhtmlId('table-cell', [tableBlockId, cell.id]))}"${scope}${rowSpan}${columnSpan}>${renderInline(document, cell.text, cell.inline)}</${tag}>`,
+      `<${tag} id="${attribute(derivedXhtmlId('table-cell', [tableBlockId, cell.id]))}"${scope}${rowSpan}${columnSpan}>${renderInline(document, cell.text, cell.inline, emittedRelationshipIds)}</${tag}>`,
     )
   }
   return `<table>${rows.map((row) => `<tr>${row.join('')}</tr>`).join('')}</table>`
@@ -439,12 +440,21 @@ function assertUniqueSourceObservationAnchorIds(document: StructDocument) {
   }
 }
 
-function renderBlock(document: StructDocument, block: StructBlock) {
+function renderBlock(
+  document: StructDocument,
+  block: StructBlock,
+  emittedRelationshipIds: Set<string>,
+) {
   // Furniture remains queryable in STRUCT with its source evidence, but is
   // intentionally outside the publication reading flow.
   if (block.kind === 'furniture') return ''
   const id = attribute(xhtmlId(block.id))
-  const content = renderInline(document, block.text, block.inline)
+  const content = renderInline(
+    document,
+    block.text,
+    block.inline,
+    emittedRelationshipIds,
+  )
   const sourceAnchors = renderSourceObservationAnchors(block)
   if (block.kind === 'heading') {
     const level = Math.max(1, Math.min(6, Number(block.attributes?.level ?? 2)))
@@ -454,7 +464,7 @@ function renderBlock(document: StructDocument, block: StructBlock) {
     return `<blockquote id="${id}" data-struct-id="${id}">${sourceAnchors}<p>${content}</p></blockquote>`
   }
   if (block.kind === 'table' && block.table) {
-    return `<figure id="${id}" data-struct-id="${id}">${sourceAnchors}${renderTable(document, block.table, block.id)}</figure>`
+    return `<figure id="${id}" data-struct-id="${id}">${sourceAnchors}${renderTable(document, block.table, block.id, emittedRelationshipIds)}</figure>`
   }
   if (
     block.kind === 'figure' ||
@@ -515,6 +525,7 @@ export function renderPublicationXhtml(
       ? ` dir="${document.metadata.baseDirection}"`
       : ''
   const styles = options.styles ?? DEFAULT_STYLES
+  const emittedRelationshipIds = new Set<string>()
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${attribute(language)}" lang="${attribute(language)}"${direction}>
@@ -525,7 +536,7 @@ export function renderPublicationXhtml(
 </head>
 <body>
   <header><h1>${text(document.metadata.title)}</h1>${document.metadata.subtitle ? `<p>${text(document.metadata.subtitle)}</p>` : ''}${renderAuthors(document)}</header>
-  ${document.blocks.map((block) => renderBlock(document, block)).join('\n  ')}
+  ${document.blocks.map((block) => renderBlock(document, block, emittedRelationshipIds)).join('\n  ')}
 </body>
 </html>
 `

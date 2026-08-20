@@ -85,6 +85,99 @@ function tableIdFixture(document: StructDocument, id: string, cellId: string) {
   }
 }
 
+function sharedRelationshipDocument(graph: StructDocument, tableCells = false) {
+  const source = graph.blocks[0]!
+  const second = graph.blocks[1]!
+  for (const block of graph.blocks) {
+    block.inline = []
+    for (const cell of block.table?.cells ?? []) cell.inline = []
+  }
+  source.text = 'First text'
+  source.inline = [
+    {
+      start: 0,
+      end: 5,
+      relationshipId: 'shared-rel',
+      semanticRole: 'citation',
+    },
+  ]
+  second.text = 'Second text'
+  second.inline = [
+    {
+      start: 0,
+      end: 6,
+      relationshipId: 'shared-rel',
+      semanticRole: 'citation',
+    },
+  ]
+  graph.relationships.push({
+    id: 'shared-rel',
+    kind: 'citation',
+    from: source.id,
+    to: [source.id],
+    label: '',
+    status: 'matched',
+    confidence: 1,
+    evidence: { confidence: 1, pages: [], boxes: [], sourceIds: [] },
+  })
+  if (tableCells) {
+    for (const block of [source, second]) {
+      block.kind = 'table'
+      block.text = 'Table'
+      block.inline = []
+      block.table = {
+        rows: 1,
+        columns: 1,
+        semantic: 'verified',
+        cells: [
+          {
+            id: `${block.id}-cell`,
+            text: 'Cell text',
+            row: 0,
+            column: 0,
+            rowSpan: 1,
+            columnSpan: 1,
+            headerScope: null,
+            inline: [
+              {
+                start: 0,
+                end: 4,
+                relationshipId: 'shared-rel',
+                semanticRole: 'citation',
+              },
+            ],
+            evidence: block.evidence,
+          },
+        ],
+      }
+    }
+  }
+  const textCharacterCount = graph.blocks.reduce(
+    (count, block) => count + block.text.length,
+    0,
+  )
+  const relationshipCount = graph.relationships.length
+  graph.receipt.blockCount = graph.blocks.length
+  graph.receipt.relationshipCount = relationshipCount
+  graph.receipt.textCharacterCount = textCharacterCount
+  graph.receipt.conservation.sourceNodeCount = graph.blocks.length
+  graph.receipt.conservation.accountedSourceNodeCount = graph.blocks.length
+  graph.receipt.conservation.sourceRelationshipCount = relationshipCount
+  graph.receipt.conservation.accountedSourceRelationshipCount =
+    relationshipCount
+  graph.receipt.conservation.sourceTextCharacterCount = textCharacterCount
+  graph.receipt.conservation.structBlockCount = graph.blocks.length
+  graph.receipt.conservation.structRelationshipCount = relationshipCount
+  graph.receipt.conservation.structTextCharacterCount = textCharacterCount
+  const { receipt, ...withoutReceipt } = graph
+  receipt.generatedSha256 = structDigest({
+    ...withoutReceipt,
+    conservation: receipt.conservation,
+    assets: graph.assets.map(({ bytes: _bytes, ...asset }) => asset),
+  })
+  return graph
+}
+
 async function modelConsultationPdf() {
   return reconstructPageAnalyses({
     pages: ambiguousNoteMarkerFixture.pages,
@@ -546,6 +639,37 @@ describe('STRUCT canonical document graph', () => {
     expect(() => renderPublicationXhtml(graph)).toThrow(
       'DUPLICATE_XHTML_SOURCE_ANCHOR',
     )
+  })
+
+  it('emits one global id when a valid relationship is reused across blocks', async () => {
+    const graph = sharedRelationshipDocument(
+      buildStructDocument(await structuredDocx()),
+    )
+    expect(() => structCore.decodeStructDocument(graph)).not.toThrow()
+
+    const xhtml = renderPublicationXhtml(graph)
+    const ids = renderedIds(xhtml)
+    expect(ids.filter((id) => id === 'shared-rel')).toHaveLength(1)
+    expect(new Set(ids).size).toBe(ids.length)
+    await expect(buildStructEpub(graph)).resolves.toMatchObject({
+      mediaType: 'application/epub+zip',
+    })
+  })
+
+  it('emits one global id when a valid relationship is reused across table cells', async () => {
+    const graph = sharedRelationshipDocument(
+      buildStructDocument(await structuredDocx()),
+      true,
+    )
+    expect(() => structCore.decodeStructDocument(graph)).not.toThrow()
+
+    const xhtml = renderPublicationXhtml(graph)
+    const ids = renderedIds(xhtml)
+    expect(ids.filter((id) => id === 'shared-rel')).toHaveLength(1)
+    expect(new Set(ids).size).toBe(ids.length)
+    await expect(buildStructEpub(graph)).resolves.toMatchObject({
+      mediaType: 'application/epub+zip',
+    })
   })
 
   it('maps numeric-leading matched references without colliding with canonical IDs', async () => {

@@ -85,6 +85,99 @@ function baseBlock(document: StructDocument, id: string, text: string) {
   return { ...document.blocks[0]!, id, text, inline: [] }
 }
 
+function sharedRelationshipDocument(tableCells = false) {
+  const document = characterizationDocument('0.2.0')
+  const source = document.blocks[0]!
+  const evidence = source.evidence
+  source.id = 'first'
+  source.text = 'First text'
+  source.inline = [
+    {
+      start: 0,
+      end: 5,
+      relationshipId: 'shared-rel',
+      semanticRole: 'citation',
+    },
+  ]
+  const second = {
+    ...source,
+    id: 'second',
+    text: 'Second text',
+    inline: [
+      {
+        start: 0,
+        end: 6,
+        relationshipId: 'shared-rel',
+        semanticRole: 'citation' as const,
+      },
+    ],
+    evidence,
+  }
+  document.blocks = [source, second]
+  document.pages[0]!.blocks = ['first', 'second']
+  document.pages[0]!.columns[0]!.blockIds = ['first', 'second']
+  document.relationships = [
+    {
+      id: 'shared-rel',
+      kind: 'citation',
+      from: 'first',
+      to: ['first'],
+      label: '',
+      status: 'matched',
+      confidence: 1,
+      evidence: { confidence: 1, pages: [], boxes: [], sourceIds: [] },
+    },
+  ]
+  if (tableCells) {
+    for (const block of document.blocks) {
+      block.kind = 'table'
+      block.text = 'Table'
+      block.inline = []
+      block.table = {
+        rows: 1,
+        columns: 1,
+        semantic: 'verified',
+        cells: [
+          {
+            id: `${block.id}-cell`,
+            text: 'Cell text',
+            row: 0,
+            column: 0,
+            rowSpan: 1,
+            columnSpan: 1,
+            headerScope: null,
+            inline: [
+              {
+                start: 0,
+                end: 4,
+                relationshipId: 'shared-rel',
+                semanticRole: 'citation',
+              },
+            ],
+            evidence: block.evidence,
+          },
+        ],
+      }
+    }
+  }
+  const textCharacterCount = document.blocks.reduce(
+    (count, block) => count + block.text.length,
+    0,
+  )
+  document.receipt.blockCount = 2
+  document.receipt.relationshipCount = 1
+  document.receipt.textCharacterCount = textCharacterCount
+  document.receipt.conservation.sourceNodeCount = 2
+  document.receipt.conservation.accountedSourceNodeCount = 2
+  document.receipt.conservation.sourceRelationshipCount = 1
+  document.receipt.conservation.accountedSourceRelationshipCount = 1
+  document.receipt.conservation.sourceTextCharacterCount = textCharacterCount
+  document.receipt.conservation.structBlockCount = 2
+  document.receipt.conservation.structRelationshipCount = 1
+  document.receipt.conservation.structTextCharacterCount = textCharacterCount
+  return resealDocument(document)
+}
+
 describe('STRUCT XHTML ID mapping', () => {
   it('maps numeric-leading matched references without colliding with canonical IDs', () => {
     const xhtml = renderPublicationXhtml(numericReferenceDocument())
@@ -245,6 +338,32 @@ describe('STRUCT XHTML ID mapping', () => {
     await expect(buildStructEpub(document)).rejects.toThrow(
       'DUPLICATE_XHTML_SOURCE_ANCHOR',
     )
+  })
+
+  it('emits one global id when a valid relationship is reused across blocks', async () => {
+    const document = sharedRelationshipDocument()
+    expect(() => decodeStructDocument(document)).not.toThrow()
+
+    const xhtml = renderPublicationXhtml(document)
+    const ids = idsIn(xhtml)
+    expect(ids.filter((id) => id === 'shared-rel')).toHaveLength(1)
+    expect(new Set(ids).size).toBe(ids.length)
+    await expect(buildStructEpub(document)).resolves.toMatchObject({
+      mediaType: 'application/epub+zip',
+    })
+  })
+
+  it('emits one global id when a valid relationship is reused across table cells', async () => {
+    const document = sharedRelationshipDocument(true)
+    expect(() => decodeStructDocument(document)).not.toThrow()
+
+    const xhtml = renderPublicationXhtml(document)
+    const ids = idsIn(xhtml)
+    expect(ids.filter((id) => id === 'shared-rel')).toHaveLength(1)
+    expect(new Set(ids).size).toBe(ids.length)
+    await expect(buildStructEpub(document)).resolves.toMatchObject({
+      mediaType: 'application/epub+zip',
+    })
   })
 
   it('rejects colliding source-observation anchors instead of emitting duplicate XHTML IDs', async () => {

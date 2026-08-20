@@ -1,6 +1,6 @@
 {
   "name": "@erniesg/struct",
-  "version": "0.1.0",
+  "version": "0.1.0-rc.0",
   "description": "Source-neutral STRUCT document contract, codec, and publication renderers",
   "type": "module",
   "license": "MIT",

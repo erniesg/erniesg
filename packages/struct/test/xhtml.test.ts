@@ -187,7 +187,15 @@ describe('STRUCT XHTML ID mapping', () => {
     })
   })
 
-  it('namespaces source-observation anchors by their owning block', async () => {
+  it('preserves unique source-observation anchors as literal evidence IDs', async () => {
+    const document = characterizationDocument('0.2.0')
+    document.blocks[0]!.sourceObservationAnchorIds = ['source-anchor']
+    expect(renderPublicationXhtml(document)).toContain(
+      'id="source-anchor" class="visually-hidden source-observation-anchor"',
+    )
+  })
+
+  it('rejects colliding source-observation anchors instead of emitting duplicate XHTML IDs', async () => {
     const document = characterizationDocument('0.2.0')
     const evidence = document.blocks[0]!.evidence
     const value = derivedIdentityDocument([
@@ -207,11 +215,11 @@ describe('STRUCT XHTML ID mapping', () => {
         sourceObservationAnchorIds: ['shared-anchor'],
       },
     ])
-    const xhtml = renderPublicationXhtml(value)
-    const ids = idsIn(xhtml)
-    expect(new Set(ids).size).toBe(ids.length)
-    await expect(buildStructEpub(value)).resolves.toMatchObject({
-      mediaType: 'application/epub+zip',
-    })
+    expect(() => renderPublicationXhtml(value)).toThrow(
+      'DUPLICATE_XHTML_SOURCE_ANCHOR',
+    )
+    await expect(buildStructEpub(value)).rejects.toThrow(
+      'DUPLICATE_XHTML_SOURCE_ANCHOR',
+    )
   })
 })

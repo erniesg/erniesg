@@ -564,7 +564,15 @@ describe('STRUCT canonical document graph', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
-  it('namespaces source-observation anchors by their owning block', async () => {
+  it('preserves unique source-observation anchors as literal evidence IDs', async () => {
+    const graph = buildStructDocument(await structuredDocx())
+    graph.blocks[0]!.sourceObservationAnchorIds = ['source-anchor']
+    expect(renderPublicationXhtml(graph)).toContain(
+      'id="source-anchor" class="visually-hidden source-observation-anchor"',
+    )
+  })
+
+  it('rejects colliding source-observation anchors instead of emitting duplicate XHTML IDs', async () => {
     const graph = buildStructDocument(await structuredDocx())
     const base = graph.blocks[0]!
     const evidence = base.evidence
@@ -594,8 +602,9 @@ describe('STRUCT canonical document graph', () => {
         sourceObservationAnchorIds: ['shared-anchor'],
       },
     ]
-    const ids = renderedIds(renderPublicationXhtml(graph))
-    expect(new Set(ids).size).toBe(ids.length)
+    expect(() => renderPublicationXhtml(graph)).toThrow(
+      'DUPLICATE_XHTML_SOURCE_ANCHOR',
+    )
   })
 
   it('round-trips matched footnotes and endnotes with typed links and backlinks', async () => {

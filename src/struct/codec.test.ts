@@ -286,6 +286,7 @@ describe('STRUCT runtime codec', () => {
     value.receipt.textCharacterCount = 6
     value.receipt.conservation.sourceTextCharacterCount = 6
     value.receipt.conservation.structTextCharacterCount = 6
+    seal(value)
 
     const decoded = decodeStructDocument(value)
 
@@ -430,6 +431,7 @@ describe('STRUCT runtime codec', () => {
     value.documentId = 'fixture-document'
     value.receipt.schemaVersion = '0.2.0'
     value.receipt.documentId = 'fixture-document'
+    seal(value)
 
     expect(migrateStructDocument(value)).toMatchObject({
       schemaVersion: '0.2.0',
@@ -457,6 +459,7 @@ describe('STRUCT runtime codec', () => {
         byDecisionClass: {},
       },
     }
+    seal(value)
 
     const decoded = decodeStructDocument(value)
     expect(decoded.receipt.modelConsultations).toMatchObject({
@@ -496,8 +499,14 @@ describe('STRUCT runtime codec', () => {
   })
 
   it.each([
-    ['relationship from', (value: any) => (value.relationships[0].from = 'missing')],
-    ['relationship to', (value: any) => (value.relationships[0].to = ['missing'])],
+    [
+      'relationship from',
+      (value: any) => (value.relationships[0].from = 'missing'),
+    ],
+    [
+      'relationship to',
+      (value: any) => (value.relationships[0].to = ['missing']),
+    ],
     ['page block', (value: any) => (value.pages[0].blocks = ['missing'])],
     [
       'page column block',
@@ -518,12 +527,17 @@ describe('STRUCT runtime codec', () => {
   ])('rejects a dangling %s reference', (_label, mutate) => {
     const value = validDocument()
     mutate(value)
-    expect(() => decodeStructDocument(value)).toThrow(/reference|target|dangling/i)
+    expect(() => decodeStructDocument(value)).toThrow(
+      /reference|target|dangling/i,
+    )
   })
 
   it.each([
     ['asset and block', (value: any) => (value.assets[0].id = 'block-1')],
-    ['diagnostic and block', (value: any) => (value.diagnostics[0].id = 'block-1')],
+    [
+      'diagnostic and block',
+      (value: any) => (value.diagnostics[0].id = 'block-1'),
+    ],
     [
       'relationship and block',
       (value: any) => (value.relationships[0].id = 'block-1'),
@@ -535,21 +549,38 @@ describe('STRUCT runtime codec', () => {
   })
 
   it.each([
-    ['box width', (value: any) => (value.blocks[0].evidence.boxes[0].width = -1)],
+    [
+      'box width',
+      (value: any) => (value.blocks[0].evidence.boxes[0].width = -1),
+    ],
     ['asset width', (value: any) => (value.assets[0].width = -1)],
     ['page height', (value: any) => (value.pages[0].height = -1)],
-    ['box rotation', (value: any) => (value.blocks[0].evidence.boxes[0].rotation = 0.5)],
+    [
+      'box rotation',
+      (value: any) => (value.blocks[0].evidence.boxes[0].rotation = 0.5),
+    ],
     ['page rotation', (value: any) => (value.pages[0].rotation = 360)],
-  ])('rejects invalid nonnegative dimension or rotation (%s)', (_label, mutate) => {
-    const value = validDocument()
-    mutate(value)
-    expect(() => decodeStructDocument(value)).toThrow(/number|rotation|range/i)
-  })
+  ])(
+    'rejects invalid nonnegative dimension or rotation (%s)',
+    (_label, mutate) => {
+      const value = validDocument()
+      mutate(value)
+      expect(() => decodeStructDocument(value)).toThrow(
+        /number|rotation|range/i,
+      )
+    },
+  )
 
   it.each([
     ['row bound', (value: any) => (value.blocks[0].table.cells[0].row = 1)],
-    ['column bound', (value: any) => (value.blocks[0].table.cells[0].column = 1)],
-    ['row span bound', (value: any) => (value.blocks[0].table.cells[0].rowSpan = 2)],
+    [
+      'column bound',
+      (value: any) => (value.blocks[0].table.cells[0].column = 1),
+    ],
+    [
+      'row span bound',
+      (value: any) => (value.blocks[0].table.cells[0].rowSpan = 2),
+    ],
     [
       'column span bound',
       (value: any) => (value.blocks[0].table.cells[0].columnSpan = 2),
@@ -560,21 +591,29 @@ describe('STRUCT runtime codec', () => {
     expect(() => decodeStructDocument(value)).toThrow(/table|bound|span/i)
   })
 
-  it.each(['content.xhtml', 'assets/figure.bin?query', 'assets/figure.bin#part', 'assets/a b.bin'])
-    ('rejects a non-canonical EPUB asset path %s', (href) => {
-      const value = validDocument()
-      value.assets[0].href = href
-      expect(() => decodeStructDocument(value)).toThrow(/href|path/i)
-    })
+  it.each([
+    'content.xhtml',
+    'assets/figure.bin?query',
+    'assets/figure.bin#part',
+    'assets/a b.bin',
+  ])('rejects a non-canonical EPUB asset path %s', (href) => {
+    const value = validDocument()
+    value.assets[0].href = href
+    expect(() => decodeStructDocument(value)).toThrow(/href|path/i)
+  })
 
   it('rejects incoherent conservation receipts and page bindings', () => {
     const accounted = validDocument()
     accounted.receipt.conservation.accountedSourceAssetCount = 2
-    expect(() => decodeStructDocument(accounted)).toThrow(/conservation|source/i)
+    expect(() => decodeStructDocument(accounted)).toThrow(
+      /conservation|source/i,
+    )
 
     const furniture = validDocument()
     furniture.blocks[0].kind = 'furniture'
-    expect(() => decodeStructDocument(furniture)).toThrow(/furniture|conservation/i)
+    expect(() => decodeStructDocument(furniture)).toThrow(
+      /furniture|conservation/i,
+    )
 
     const pages = validDocument()
     pages.source.pageCount = 0
@@ -596,6 +635,12 @@ describe('STRUCT runtime codec', () => {
     revoked.revoke()
     proxied.blocks = revoked.proxy
     expect(() => decodeStructDocument(proxied)).toThrow(StructCodecError)
+
+    const hostileBytes = validDocument() as any
+    const bytes = Proxy.revocable(new Uint8Array([0, 255, 128]), {})
+    bytes.revoke()
+    hostileBytes.assets[0].bytes = bytes.proxy
+    expect(() => decodeStructDocument(hostileBytes)).toThrow(StructCodecError)
 
     const cycle = validDocument() as any
     cycle.schemaVersion = '0.2.0'

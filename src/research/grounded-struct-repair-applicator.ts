@@ -1,4 +1,4 @@
-import { structId } from '../struct/ids'
+import { structId } from '@erniesg/struct/ids'
 import {
   canonicalTraceJson,
   hashTraceValue,

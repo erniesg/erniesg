@@ -60,7 +60,7 @@ import {
   diagnosticCopy,
   hasActionableRecovery,
   recoverySummary,
-} from '../../struct/recovery'
+} from '@erniesg/struct/recovery'
 import EpubDownloadLink from './EpubDownloadLink'
 import EpubRenditionPreview, {
   epubPreviewArtifactKey,

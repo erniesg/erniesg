@@ -1,4 +1,4 @@
-import type { StructBlock, StructDocument } from '../struct/types'
+import type { StructBlock, StructDocument } from '@erniesg/struct/schema'
 import {
   RECONSTRUCTION_ATTEMPT_TRACE_SCHEMA_VERSION,
   createReconstructionAttemptTrace,

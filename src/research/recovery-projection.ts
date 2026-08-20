@@ -1,5 +1,5 @@
 import type { ReconstructionDiagnostic } from './import-types'
-import type { RecoveryDiagnosticInput } from '../struct/recovery'
+import type { RecoveryDiagnosticInput } from '@erniesg/struct/recovery'
 
 type RecoveryProjectionSource = {
   diagnostics: ReadonlyArray<

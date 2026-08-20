@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { sha256HexSync } from '../struct/sha256'
+import { sha256HexSync } from './sha256-sync'
 import {
   RECONSTRUCTION_ATTEMPT_DEFAULT_BUDGET,
   canonicalTraceJson,

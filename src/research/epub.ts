@@ -7,12 +7,12 @@ import {
   type ZipOptions,
 } from 'fflate'
 import { XMLValidator } from 'fast-xml-parser'
-import { buildStructEpub } from '../struct/epub'
+import { buildStructEpub } from '@erniesg/struct/renderers/epub'
 import {
   renderPublicationXhtml as renderStructPublicationXhtml,
   type StructXhtmlOptions,
-} from '../struct/xhtml'
-import type { StructDocument } from '../struct/types'
+} from '@erniesg/struct/renderers/xhtml'
+import type { StructDocument } from '@erniesg/struct/schema'
 import {
   DocxImportError,
   PdfImportError,

@@ -1,4 +1,4 @@
-import { structDigest, structId } from '../struct/ids'
+import { structDigest, structId } from '@erniesg/struct/ids'
 import {
   STRUCT_SCHEMA_VERSION,
   type StructAsset,
@@ -9,7 +9,7 @@ import {
   type StructInline,
   type StructRelationship,
   type StructTable,
-} from '../struct/types'
+} from '@erniesg/struct/schema'
 import {
   canonicalTraceJson,
   hashTraceValue,

@@ -262,19 +262,21 @@ function renderedInlineRelationshipIds(document: StructDocument) {
               : [],
           )
         : []),
-      ...(block.table?.cells.flatMap((cell) =>
-        cell.inline.flatMap((run) =>
-          run.relationshipId &&
-          run.semanticRole &&
-          Number.isInteger(run.start) &&
-          Number.isInteger(run.end) &&
-          run.start >= 0 &&
-          run.start < run.end &&
-          run.end <= cell.text.length
-            ? [run.relationshipId]
-            : [],
-        ),
-      ) ?? []),
+      ...(block.kind === 'table'
+        ? (block.table?.cells.flatMap((cell) =>
+            cell.inline.flatMap((run) =>
+              run.relationshipId &&
+              run.semanticRole &&
+              Number.isInteger(run.start) &&
+              Number.isInteger(run.end) &&
+              run.start >= 0 &&
+              run.start < run.end &&
+              run.end <= cell.text.length
+                ? [run.relationshipId]
+                : [],
+            ),
+          ) ?? [])
+        : []),
     ]),
   )
 }

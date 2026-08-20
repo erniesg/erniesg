@@ -475,6 +475,41 @@ describe('STRUCT canonical document graph', () => {
     )
   })
 
+  it('maps numeric-leading matched references without colliding with canonical IDs', async () => {
+    const graph = buildStructDocument(await structuredDocx())
+    const source = graph.blocks[0]!
+    const numericTarget = graph.blocks[1]!
+    const collisionCandidate = graph.blocks[2]!
+    source.text = 'See 1'
+    numericTarget.id = '1block'
+    collisionCandidate.id = 'n-1block'
+    source.inline = [
+      {
+        start: 4,
+        end: 5,
+        relationshipId: 'numeric-reference',
+        semanticRole: 'citation',
+      },
+    ]
+    graph.relationships.push({
+      id: 'numeric-reference',
+      kind: 'citation',
+      from: source.id,
+      to: [numericTarget.id],
+      label: '1',
+      status: 'matched',
+      confidence: 1,
+      evidence: { confidence: 1, pages: [], boxes: [], sourceIds: [] },
+    })
+
+    const xhtml = renderPublicationXhtml(graph)
+    expect(xhtml).toContain('id="_1block" data-struct-id="_1block"')
+    expect(xhtml).toContain('id="n-1block" data-struct-id="n-1block"')
+    expect(xhtml).toContain('href="#_1block"')
+    expect(xhtml).not.toContain('id="1block"')
+    expect(xhtml).not.toContain('href="#1block"')
+  })
+
   it('round-trips matched footnotes and endnotes with typed links and backlinks', async () => {
     const graph = buildStructDocument(await structuredDocx())
     const noteRelationships = graph.relationships.filter(

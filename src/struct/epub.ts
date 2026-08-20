@@ -10,7 +10,7 @@ import { XMLParser, XMLValidator } from 'fast-xml-parser'
 import { sha256HexSync } from './sha256'
 import { legacyStructDigestMatches, structDigest } from './ids'
 import { validateModelConsultationReceipt } from './model-consultation-receipt'
-import { renderPublicationXhtml } from './xhtml'
+import { renderPublicationXhtml, xhtmlId } from './xhtml'
 import {
   LEGACY_STRUCT_SCHEMA_VERSION,
   STRUCT_SCHEMA_VERSION,
@@ -391,7 +391,7 @@ export async function buildStructEpub(
   const headings = document.blocks.filter((block) => block.kind === 'heading')
   const nav = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${attribute(language)}"><head><title>Contents</title></head><body><nav epub:type="toc"><h1>Contents</h1><ol><li><a href="content.xhtml">${text(document.metadata.title)}</a></li>${headings.map((block) => `<li><a href="content.xhtml#${attribute(block.id)}">${text(block.text)}</a></li>`).join('')}</ol></nav></body></html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${attribute(language)}"><head><title>Contents</title></head><body><nav epub:type="toc"><h1>Contents</h1><ol><li><a href="content.xhtml">${text(document.metadata.title)}</a></li>${headings.map((block) => `<li><a href="content.xhtml#${attribute(xhtmlId(block.id))}">${text(block.text)}</a></li>`).join('')}</ol></nav></body></html>
 `
   const content = renderPublicationXhtml(document)
   const archive: Zippable = {

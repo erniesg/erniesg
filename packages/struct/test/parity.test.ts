@@ -87,9 +87,9 @@ const MAPPINGS: readonly Mapping[] = [
     canonicalPath: 'epub.ts',
     rule: 'model-free-epub',
     canonicalSha256:
-      'cf7c335b45ff1ff7406a19ccab6daa5da7d166e43cd6844cd0febd0c16f56063',
+      'be3b6f13b24a6a4e1c37bc75a819a1c8670fa82541a6d649403670d556b2ea0f',
     packageSha256:
-      'a4d9aee5ad2350f78ffc0259ecc59569163c4077f51efda262d796df749469dc',
+      '72dc0e76a6634b6e4fa0ed0d69880bb0a355e05fdef6bbf7b191d8f5d9923537',
   },
   {
     packagePath: 'ids.ts',
@@ -132,7 +132,7 @@ const MAPPINGS: readonly Mapping[] = [
     canonicalPath: 'epub.ts',
     rule: 'renderer-epub-facade',
     canonicalSha256:
-      'cf7c335b45ff1ff7406a19ccab6daa5da7d166e43cd6844cd0febd0c16f56063',
+      'be3b6f13b24a6a4e1c37bc75a819a1c8670fa82541a6d649403670d556b2ea0f',
     packageSha256:
       '77dfd2ce81a50ef6e5bcee424b04add78b979fa5f626fd504b8f8abaff535452',
   },
@@ -141,7 +141,7 @@ const MAPPINGS: readonly Mapping[] = [
     canonicalPath: 'xhtml.ts',
     rule: 'renderer-xhtml-facade',
     canonicalSha256:
-      'de5e69b610131c824cc632b388b0b244f278062ee36bc7f4ac4b8cd5a363cb2b',
+      '71374ef18cb2983e8878029a6c3ee9e8c0013b447269457e8614b2308f40a979',
     packageSha256:
       '6907f349531561be4247374af910145a132d0c240bde6e26a4a78d7f32b680d5',
   },
@@ -175,9 +175,9 @@ const MAPPINGS: readonly Mapping[] = [
     canonicalPath: 'xhtml.ts',
     rule: 'esm-imports',
     canonicalSha256:
-      'de5e69b610131c824cc632b388b0b244f278062ee36bc7f4ac4b8cd5a363cb2b',
+      '71374ef18cb2983e8878029a6c3ee9e8c0013b447269457e8614b2308f40a979',
     packageSha256:
-      '6f2609015425cf0e760fac4d99a40e417b2d0d792126f5f6cc1bfa197cfbfd9c',
+      '11144512c3c946565582a057fd67d4f44cba7743a3f3089b19674776347283f8',
   },
 ]
 

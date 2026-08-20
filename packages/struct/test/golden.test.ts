@@ -20,6 +20,8 @@ const GOLDEN_TABLE_CONSERVATION_SHA256 =
   '8a9b741052998c6f7f23039a6af62c528589ed14aa777c1af2eba5f6977bf666'
 const GOLDEN_STRUCT_JSON_ENTRY_SHA256 =
   '3b274aac8c4486ce6698fc485db5a1e4f6fcfe8c66f69c7e898681e0612e2284'
+const GOLDEN_EPUB_ARCHIVE_SHA256 =
+  'e1fec1fa5dc51963dc7089c8d211fa164edebd9d827b5b3206cdc911267bc153'
 
 function fixture(): StructDocument {
   const bytes = new Uint8Array([0, 1, 2, 3, 255])
@@ -226,6 +228,7 @@ describe('STRUCT package golden contract', () => {
       structAssetCount: 1,
     })
     const epub = await buildStructEpub(document)
+    expect(sha256(epub.bytes)).toBe(GOLDEN_EPUB_ARCHIVE_SHA256)
     expect(epub.entries).toEqual([
       'mimetype',
       'META-INF/container.xml',

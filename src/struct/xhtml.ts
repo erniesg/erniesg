@@ -246,6 +246,39 @@ function renderTable(
   return `<table>${rows.map((row) => `<tr>${row.join('')}</tr>`).join('')}</table>`
 }
 
+function renderedInlineRelationshipIds(document: StructDocument) {
+  return new Set(
+    document.blocks.flatMap((block) => [
+      ...(block.kind !== 'furniture' && block.kind !== 'table'
+        ? block.inline.flatMap((run) =>
+            run.relationshipId &&
+            run.semanticRole &&
+            Number.isInteger(run.start) &&
+            Number.isInteger(run.end) &&
+            run.start >= 0 &&
+            run.start < run.end &&
+            run.end <= block.text.length
+              ? [run.relationshipId]
+              : [],
+          )
+        : []),
+      ...(block.table?.cells.flatMap((cell) =>
+        cell.inline.flatMap((run) =>
+          run.relationshipId &&
+          run.semanticRole &&
+          Number.isInteger(run.start) &&
+          Number.isInteger(run.end) &&
+          run.start >= 0 &&
+          run.start < run.end &&
+          run.end <= cell.text.length
+            ? [run.relationshipId]
+            : [],
+        ),
+      ) ?? []),
+    ]),
+  )
+}
+
 function renderAuthors(
   document: StructDocument,
   emittedRelationshipIds: Set<string>,
@@ -278,12 +311,25 @@ function renderSourceObservationAnchors(block: StructBlock) {
 
 function assertUniqueSourceObservationAnchorIds(document: StructDocument) {
   const occupied = new Map<string, string>()
+  const declaredRelationshipIds = new Set(
+    document.relationships.map((relationship) => relationship.id),
+  )
   for (const block of document.blocks) {
     if (block.kind !== 'furniture')
       occupied.set(xhtmlId(block.id), `block ${block.id}`)
   }
   for (const relationship of document.relationships)
     occupied.set(xhtmlId(relationship.id), `relationship ${relationship.id}`)
+  for (const relationshipId of renderedInlineRelationshipIds(document)) {
+    if (declaredRelationshipIds.has(relationshipId)) continue
+    const renderedId = xhtmlId(relationshipId)
+    const previous = occupied.get(renderedId)
+    if (previous)
+      throw new Error(
+        `DUPLICATE_XHTML_SOURCE_ANCHOR: ${relationshipId} conflicts with ${previous}`,
+      )
+    occupied.set(renderedId, `inline relationship ${relationshipId}`)
+  }
   for (const block of document.blocks) {
     if (block.kind === 'furniture') continue
     for (const anchorId of block.sourceObservationAnchorIds ?? []) {

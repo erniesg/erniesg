@@ -3,12 +3,4 @@ import { fileURLToPath } from "node:url";
 
 export default defineConfig({
   root: fileURLToPath(new URL(".", import.meta.url)),
-  oxc: {
-    tsconfig: {
-      compilerOptions: {
-        target: "ES2022",
-        module: "ESNext",
-      },
-    },
-  },
 });

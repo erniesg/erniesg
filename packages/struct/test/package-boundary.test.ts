@@ -6,9 +6,11 @@ import {
   readdir,
   rm,
   symlink,
+  stat,
   writeFile,
 } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
+import { createRequire } from 'node:module'
 import { basename, dirname, join, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -16,6 +18,18 @@ import { describe, expect, it } from 'vitest'
 import { auditPackageImportBoundary } from './package-import-boundary.js'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+const require = createRequire(import.meta.url)
+
+async function resolveTypeScriptCompiler(): Promise<string> {
+  const compiler = require.resolve('typescript/bin/tsc')
+  const compilerStat = await stat(compiler)
+  if (!compilerStat.isFile()) {
+    throw new Error(
+      `resolved TypeScript compiler is not a regular file: ${compiler}`,
+    )
+  }
+  return compiler
+}
 
 async function filesUnder(path: string): Promise<string[]> {
   const entries = await readdir(path, { withFileTypes: true })
@@ -1157,19 +1171,20 @@ describe('STRUCT package artifact boundary', () => {
   it('compiles and packs from a package-only temporary copy', async () => {
     const fixture = await mkdtemp(join(tmpdir(), 'struct-package-only-'))
     try {
+      const typeScriptCompiler = await resolveTypeScriptCompiler()
       await cp(join(root, 'src'), join(fixture, 'src'), { recursive: true })
       await cp(join(root, 'package.json'), join(fixture, 'package.json'))
       await cp(join(root, 'tsconfig.json'), join(fixture, 'tsconfig.json'))
       await mkdir(join(fixture, 'empty-types'))
       await symlink(
-        join(root, 'node_modules'),
+        dirname(dirname(dirname(typeScriptCompiler))),
         join(fixture, 'node_modules'),
       )
 
       execFileSync(
         process.execPath,
         [
-          join(root, 'node_modules/typescript/bin/tsc'),
+          typeScriptCompiler,
           '-p',
           join(fixture, 'tsconfig.json'),
           '--noEmit',
@@ -1180,11 +1195,7 @@ describe('STRUCT package artifact boundary', () => {
       )
       execFileSync(
         process.execPath,
-        [
-          join(root, 'node_modules/typescript/bin/tsc'),
-          '-p',
-          join(fixture, 'tsconfig.json'),
-        ],
+        [typeScriptCompiler, '-p', join(fixture, 'tsconfig.json')],
         { cwd: fixture, stdio: 'pipe' },
       )
       const distPaths = (await filesUnder(join(fixture, 'dist'))).map((path) =>

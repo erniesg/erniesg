@@ -431,8 +431,29 @@ describe('STRUCT package artifact boundary', () => {
       },
       {
         name: 'block comment with pragma text',
-        source: '/* @jsxImportSource evil */\nexport const value = true\n',
+        source: '/* @jsxImportSource evil */\nexport const value = <div />\n',
         jsx: 'react-jsx',
+        pragma: '@jsxImportSource',
+      },
+      {
+        name: 'block automatic runtime override',
+        source: '/* @jsxRuntime automatic */\nexport const value = <div />\n',
+        jsx: 'react',
+        pragma: '@jsxRuntime',
+      },
+      {
+        name: 'lowercase block import source pragma',
+        source: '/* @jsximportsource evil */\nexport const value = <div />\n',
+        jsx: 'react-jsx',
+        pragma: '@jsxImportSource',
+        marker: '@jsximportsource',
+      },
+      {
+        name: 'uppercase block runtime pragma',
+        source: '/* @JSXRUNTIME automatic */\nexport const value = <div />\n',
+        jsx: 'react',
+        pragma: '@jsxRuntime',
+        marker: '@JSXRUNTIME',
       },
     ]
 
@@ -481,7 +502,9 @@ describe('STRUCT package artifact boundary', () => {
           } else {
             expect(matching).toMatchObject({
               importer: 'src/index.tsx',
-              offset: testCase.source.indexOf(testCase.pragma),
+              offset: testCase.source.indexOf(
+                testCase.marker ?? testCase.pragma,
+              ),
               message: `${testCase.pragma} is not part of the package source dialect`,
             })
           }

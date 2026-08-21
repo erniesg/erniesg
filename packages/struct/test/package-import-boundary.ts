@@ -677,11 +677,13 @@ function collectJsxPragmaViolations(
   for (const comment of ts.getLeadingCommentRanges(sourceFile.text, 0) ?? []) {
     if (comment.kind !== ts.SyntaxKind.MultiLineCommentTrivia) continue
     const text = sourceFile.text.slice(comment.pos, comment.end)
-    if (!text.startsWith('/**')) continue
-    const match = /@(jsxRuntime|jsxImportSource)\b/u.exec(text)
+    const match = /@(jsxRuntime|jsxImportSource)\b/iu.exec(text)
     if (!match || match.index === undefined) continue
     found = true
-    const specifier = `@${match[1]}`
+    const specifier =
+      match[1].toLowerCase() === 'jsxruntime'
+        ? '@jsxRuntime'
+        : '@jsxImportSource'
     violations.push(
       violation(
         packageRoot,

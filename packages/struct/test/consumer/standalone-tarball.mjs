@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -59,13 +59,10 @@ try {
     await stat(join(installedRoot, declarationPath));
   }
 
-  const root = await import("@erniesg/struct");
-  const core = await import("@erniesg/struct/core");
-  const schema = await import("@erniesg/struct/schema");
-  const ids = await import("@erniesg/struct/ids");
-  const recovery = await import("@erniesg/struct/recovery");
-  const xhtml = await import("@erniesg/struct/renderers/xhtml");
-  const epub = await import("@erniesg/struct/renderers/epub");
+  const probePath = join(consumerRoot, "installed-consumer.mjs");
+  await writeFile(probePath, consumerProbeSource(), "utf8");
+  const probe = await import(probePath);
+  const { root, core, schema, ids, recovery, xhtml, epub } = probe;
 
   assert.equal(schema.STRUCT_SCHEMA_VERSION, "0.2.0");
   assert.match(ids.structId("consumer", "sample"), /^struct-consumer-/u);
@@ -90,15 +87,6 @@ try {
   assert.equal(exportResult.mediaType, "application/epub+zip");
   assert.ok(exportResult.bytes.byteLength > 0);
 
-  await assert.rejects(
-    import("@erniesg/struct/src/index.js"),
-    (error) => error?.code === "ERR_PACKAGE_PATH_NOT_EXPORTED",
-  );
-  await assert.rejects(
-    import("@erniesg/struct/package.json"),
-    (error) => error?.code === "ERR_PACKAGE_PATH_NOT_EXPORTED",
-  );
-
   console.log(
     JSON.stringify({
       tarball: packed.filename,
@@ -110,6 +98,52 @@ try {
 } finally {
   if (tarballPath) await rm(tarballPath, { force: true });
   await rm(consumerRoot, { recursive: true, force: true });
+}
+
+function consumerProbeSource() {
+  return `
+import assert from "node:assert/strict";
+
+const publicSpecifiers = [
+  "@erniesg/struct",
+  "@erniesg/struct/core",
+  "@erniesg/struct/schema",
+  "@erniesg/struct/ids",
+  "@erniesg/struct/recovery",
+  "@erniesg/struct/renderers/xhtml",
+  "@erniesg/struct/renderers/epub",
+];
+const installedRootUrl = new URL(
+  ".",
+  await import.meta.resolve("@erniesg/struct"),
+);
+const publicResolvedUrls = await Promise.all(
+  publicSpecifiers.map((specifier) => import.meta.resolve(specifier)),
+);
+for (const resolvedUrl of publicResolvedUrls) {
+  assert.ok(
+    resolvedUrl.startsWith(installedRootUrl.href),
+    resolvedUrl + " must resolve below " + installedRootUrl.href,
+  );
+}
+
+export const root = await import("@erniesg/struct");
+export const core = await import("@erniesg/struct/core");
+export const schema = await import("@erniesg/struct/schema");
+export const ids = await import("@erniesg/struct/ids");
+export const recovery = await import("@erniesg/struct/recovery");
+export const xhtml = await import("@erniesg/struct/renderers/xhtml");
+export const epub = await import("@erniesg/struct/renderers/epub");
+
+await assert.rejects(
+  import("@erniesg/struct/src/index.js"),
+  (error) => error?.code === "ERR_PACKAGE_PATH_NOT_EXPORTED",
+);
+await assert.rejects(
+  import("@erniesg/struct/package.json"),
+  (error) => error?.code === "ERR_PACKAGE_PATH_NOT_EXPORTED",
+);
+`;
 }
 
 function consumerDocument(structDigest) {

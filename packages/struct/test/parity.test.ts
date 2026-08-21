@@ -13,13 +13,19 @@ import manifest from './parity-manifest.json'
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 
+function normalizeParityPath(pathValue: string): string {
+  return pathValue.replaceAll('\\', '/')
+}
+
 async function sourceFiles(root: string, base = root): Promise<string[]> {
   const entries = await readdir(root, { withFileTypes: true })
   const nested = await Promise.all(
     entries.map(async (entry) => {
       const path = join(root, entry.name)
       if (entry.isDirectory()) return sourceFiles(path, base)
-      return entry.name.endsWith('.ts') ? [relative(base, path)] : []
+      return entry.name.endsWith('.ts')
+        ? [normalizeParityPath(relative(base, path))]
+        : []
     }),
   )
   return nested.flat().sort()
@@ -31,6 +37,9 @@ function sha256(bytes: Buffer) {
 
 describe('STRUCT package source conformance', () => {
   it('uses a code-owned, hash-bound inventory for package sources', async () => {
+    expect(normalizeParityPath(String.raw`codec\bytes.ts`)).toBe(
+      'codec/bytes.ts',
+    )
     const packageSources = await sourceFiles(join(packageRoot, 'src'))
     const expectedPackageSources = PARITY_ENTRIES.map(
       ({ packagePath }) => packagePath,

@@ -35,6 +35,22 @@ function fixtureRelativePath(fixture: string, pathValue: string): string {
   return normalizeFixtureRelativePath(relative(fixture, pathValue))
 }
 
+const allowedModelReceiptPaths = new Set([
+  'src/model-consultation-receipt.ts',
+  'dist/model-consultation-receipt.js',
+  'dist/model-consultation-receipt.d.ts',
+  'dist/model-consultation-receipt.js.map',
+  'dist/model-consultation-receipt.d.ts.map',
+])
+
+function isAllowedModelReceiptPath(pathValue: string): boolean {
+  const normalized = normalizeFixtureRelativePath(pathValue)
+  return (
+    allowedModelReceiptPaths.has(normalized) &&
+    basename(normalized).startsWith('model-consultation-receipt.')
+  )
+}
+
 async function validatePackageRoot(
   name: string,
   packageRoot: string,
@@ -170,6 +186,31 @@ async function stagedTypeScriptCompiler(nodeModules: string): Promise<string> {
 
 type PackageOnlyLayout = 'package-local' | 'root-hoisted' | 'pnpm-virtual-store'
 
+type StagedPackageOnlyFixture = {
+  packageRoot: string
+  nodeModules: string
+  compiler: string
+}
+
+function packageOnlyRootForLayout(
+  fixture: string,
+  layout: PackageOnlyLayout,
+): string {
+  return layout === 'root-hoisted'
+    ? join(fixture, 'workspace', 'packages', 'struct')
+    : fixture
+}
+
+async function pathExists(pathValue: string): Promise<boolean> {
+  try {
+    await stat(pathValue)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw error
+  }
+}
+
 async function packageVersion(packageRoot: PackageRoot): Promise<string> {
   const manifest = JSON.parse(
     await readFile(join(packageRoot.root, 'package.json'), 'utf8'),
@@ -195,7 +236,7 @@ async function stagePackageOnlyLayout(
   dependencies: PackageRoot[],
   typeScript: PackageRoot & { compiler: string },
   layout: PackageOnlyLayout,
-): Promise<string> {
+): Promise<StagedPackageOnlyFixture> {
   const packages = [...dependencies, typeScript]
   if (layout === 'package-local') {
     const nodeModules = join(fixture, 'node_modules')
@@ -203,24 +244,29 @@ async function stagePackageOnlyLayout(
     for (const packageRoot of packages) {
       await copyPackageRoot(nodeModules, packageRoot)
     }
-    return stagedTypeScriptCompiler(nodeModules)
+    return {
+      packageRoot: fixture,
+      nodeModules,
+      compiler: await stagedTypeScriptCompiler(nodeModules),
+    }
   }
 
   if (layout === 'root-hoisted') {
-    const hoistedNodeModules = join(fixture, 'root-hoisted-node_modules')
+    const packageRoot = packageOnlyRootForLayout(fixture, layout)
+    const hoistedNodeModules = join(fixture, 'workspace', 'node_modules')
     await mkdir(hoistedNodeModules)
     for (const packageRoot of packages) {
       await copyPackageRoot(hoistedNodeModules, packageRoot)
     }
-    await symlink(
-      hoistedNodeModules,
-      join(fixture, 'node_modules'),
-      directoryLinkType,
-    )
-    return stagedTypeScriptCompiler(hoistedNodeModules)
+    return {
+      packageRoot,
+      nodeModules: hoistedNodeModules,
+      compiler: await stagedTypeScriptCompiler(hoistedNodeModules),
+    }
   }
 
-  const nodeModules = join(fixture, 'node_modules')
+  const packageRoot = packageOnlyRootForLayout(fixture, layout)
+  const nodeModules = join(packageRoot, 'node_modules')
   const virtualStore = join(nodeModules, '.pnpm')
   await mkdir(virtualStore, { recursive: true })
   let compiler = typeScript.compiler
@@ -250,26 +296,26 @@ async function stagePackageOnlyLayout(
       }
     }
   }
-  return compiler
+  return { packageRoot, nodeModules, compiler }
 }
 
 async function assertPackageOnlyFixture(
-  fixture: string,
-  compiler: string,
+  fixture: StagedPackageOnlyFixture,
 ): Promise<void> {
-  const emptyTypes = join(fixture, 'empty-types')
-  const tsconfig = join(fixture, 'tsconfig.json')
+  const { packageRoot, compiler } = fixture
+  const emptyTypes = join(packageRoot, 'empty-types')
+  const tsconfig = join(packageRoot, 'tsconfig.json')
   execFileSync(
     process.execPath,
     [compiler, '-p', tsconfig, '--noEmit', '--typeRoots', emptyTypes],
-    { cwd: fixture, stdio: 'pipe' },
+    { cwd: packageRoot, stdio: 'pipe' },
   )
   execFileSync(process.execPath, [compiler, '-p', tsconfig], {
-    cwd: fixture,
+    cwd: packageRoot,
     stdio: 'pipe',
   })
-  const distPaths = (await filesUnder(join(fixture, 'dist'))).map((path) =>
-    fixtureRelativePath(fixture, path),
+  const distPaths = (await filesUnder(join(packageRoot, 'dist'))).map((path) =>
+    fixtureRelativePath(packageRoot, path),
   )
   expect(distPaths).toEqual(
     expect.arrayContaining([
@@ -284,7 +330,7 @@ async function assertPackageOnlyFixture(
   )
   const pack = JSON.parse(
     execFileSync('npm', ['pack', '--dry-run', '--ignore-scripts', '--json'], {
-      cwd: fixture,
+      cwd: packageRoot,
       encoding: 'utf8',
     }),
   )[0] as { files?: Array<{ path: string }> }
@@ -298,9 +344,9 @@ async function assertPackageOnlyFixture(
 }
 
 async function assertNoHostDependencyLeakage(
-  fixture: string,
-  compiler: string,
+  fixture: StagedPackageOnlyFixture,
 ): Promise<void> {
+  const { packageRoot, nodeModules, compiler } = fixture
   const hostOnlyEntry = require.resolve('vitest')
   const hostOnlyStat = await stat(hostOnlyEntry)
   if (!hostOnlyStat.isFile()) {
@@ -309,7 +355,7 @@ async function assertNoHostDependencyLeakage(
     )
   }
 
-  const dependencyRoot = join(fixture, 'node_modules', 'fflate')
+  const dependencyRoot = join(nodeModules, 'fflate')
   const dependencyManifest = JSON.parse(
     await readFile(join(dependencyRoot, 'package.json'), 'utf8'),
   ) as { types?: unknown }
@@ -338,14 +384,14 @@ async function assertNoHostDependencyLeakage(
       [
         compiler,
         '-p',
-        join(fixture, 'tsconfig.json'),
+        join(packageRoot, 'tsconfig.json'),
         '--noEmit',
         '--typeRoots',
-        join(fixture, 'empty-types'),
+        join(packageRoot, 'empty-types'),
         '--skipLibCheck',
         'false',
       ],
-      { cwd: fixture, encoding: 'utf8', stdio: 'pipe' },
+      { cwd: packageRoot, encoding: 'utf8', stdio: 'pipe' },
     )
   } catch (error) {
     const compilerError = error as { stdout?: string; stderr?: string }
@@ -382,6 +428,14 @@ describe('STRUCT package artifact boundary', () => {
   })
 
   it('publishes only built files and contains no private consumer contracts', async () => {
+    expect(
+      isAllowedModelReceiptPath(String.raw`src\model-consultation-receipt.ts`),
+    ).toBe(true)
+    expect(
+      isAllowedModelReceiptPath(
+        String.raw`dist\model-consultation-receipt.d.ts.map`,
+      ),
+    ).toBe(true)
     const manifest = JSON.parse(
       await readFile(join(root, 'package.json'), 'utf8'),
     ) as {
@@ -405,11 +459,13 @@ describe('STRUCT package artifact boundary', () => {
     const forbidden =
       /(?:reconstruction|publication|astro|pdf|provider|model|bookworld)/iu
     expect(
-      sourceFiles.some(
-        (path) =>
-          forbidden.test(path) &&
-          !path.endsWith('/model-consultation-receipt.ts'),
-      ),
+      sourceFiles.some((path) => {
+        const relativePath = fixtureRelativePath(root, path)
+        return (
+          forbidden.test(relativePath) &&
+          !isAllowedModelReceiptPath(relativePath)
+        )
+      }),
     ).toBe(false)
 
     const pack = JSON.parse(
@@ -437,12 +493,7 @@ describe('STRUCT package artifact boundary', () => {
     ).toBe(true)
     expect(
       packedPaths.some(
-        (path) =>
-          forbidden.test(path) &&
-          !path.endsWith('/model-consultation-receipt.js') &&
-          !path.endsWith('/model-consultation-receipt.d.ts') &&
-          !path.endsWith('/model-consultation-receipt.js.map') &&
-          !path.endsWith('/model-consultation-receipt.d.ts.map'),
+        (path) => forbidden.test(path) && !isAllowedModelReceiptPath(path),
       ),
     ).toBe(false)
   })
@@ -1565,18 +1616,31 @@ describe('STRUCT package artifact boundary', () => {
     ] as const) {
       const fixture = await mkdtemp(join(tmpdir(), `struct-package-${layout}-`))
       try {
-        await cp(join(root, 'src'), join(fixture, 'src'), { recursive: true })
-        await cp(join(root, 'package.json'), join(fixture, 'package.json'))
-        await cp(join(root, 'tsconfig.json'), join(fixture, 'tsconfig.json'))
-        await mkdir(join(fixture, 'empty-types'))
-        const compiler = await stagePackageOnlyLayout(
+        const packageRoot = packageOnlyRootForLayout(fixture, layout)
+        await mkdir(packageRoot, { recursive: true })
+        await cp(join(root, 'src'), join(packageRoot, 'src'), {
+          recursive: true,
+        })
+        await cp(join(root, 'package.json'), join(packageRoot, 'package.json'))
+        await cp(
+          join(root, 'tsconfig.json'),
+          join(packageRoot, 'tsconfig.json'),
+        )
+        await mkdir(join(packageRoot, 'empty-types'))
+        const stagedFixture = await stagePackageOnlyLayout(
           fixture,
           dependencies,
           typeScript,
           layout,
         )
-        await assertPackageOnlyFixture(fixture, compiler)
-        await assertNoHostDependencyLeakage(fixture, compiler)
+        expect(stagedFixture.packageRoot).toBe(packageRoot)
+        if (layout === 'root-hoisted') {
+          expect(await pathExists(join(packageRoot, 'node_modules'))).toBe(
+            false,
+          )
+        }
+        await assertPackageOnlyFixture(stagedFixture)
+        await assertNoHostDependencyLeakage(stagedFixture)
       } finally {
         await rm(fixture, { recursive: true, force: true })
       }

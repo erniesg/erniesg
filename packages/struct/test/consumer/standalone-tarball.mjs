@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const packageManifest = JSON.parse(
@@ -61,7 +61,11 @@ try {
 
   const probePath = join(consumerRoot, "installed-consumer.mjs");
   await writeFile(probePath, consumerProbeSource(), "utf8");
-  const probe = await import(probePath);
+  assert.equal(
+    pathToFileURL(String.raw`C:\Users\struct\installed-consumer.mjs`).protocol,
+    "file:",
+  );
+  const probe = await import(pathToFileURL(probePath).href);
   const { root, core, schema, ids, recovery, xhtml, epub } = probe;
 
   assert.equal(schema.STRUCT_SCHEMA_VERSION, "0.2.0");

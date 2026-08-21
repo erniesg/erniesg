@@ -20,7 +20,90 @@ import { auditPackageImportBoundary } from './package-import-boundary.js'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const require = createRequire(import.meta.url)
 
-async function resolveTypeScriptCompiler(): Promise<string> {
+type PackageRoot = {
+  name: string
+  root: string
+}
+
+const directoryLinkType = process.platform === 'win32' ? 'junction' : 'dir'
+
+async function validatePackageRoot(
+  name: string,
+  packageRoot: string,
+  manifestPath: string,
+): Promise<PackageRoot> {
+  const rootStat = await stat(packageRoot)
+  if (!rootStat.isDirectory()) {
+    throw new Error(`resolved package root is not a directory: ${packageRoot}`)
+  }
+  const manifestStat = await stat(manifestPath)
+  if (!manifestStat.isFile()) {
+    throw new Error(
+      `resolved package manifest is not a regular file: ${manifestPath}`,
+    )
+  }
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
+    name?: unknown
+  }
+  if (manifest.name !== name) {
+    throw new Error(
+      `resolved package manifest identity mismatch: expected ${name}, got ${String(manifest.name)}`,
+    )
+  }
+  return { name, root: packageRoot }
+}
+
+async function resolvePackageRootFromManifest(
+  name: string,
+): Promise<PackageRoot> {
+  const manifestPath = require.resolve(`${name}/package.json`)
+  return validatePackageRoot(name, dirname(manifestPath), manifestPath)
+}
+
+async function resolvePackageRootFromEntry(name: string): Promise<PackageRoot> {
+  const entry = require.resolve(name)
+  const entryStat = await stat(entry)
+  if (!entryStat.isFile()) {
+    throw new Error(`resolved package entry is not a regular file: ${entry}`)
+  }
+
+  let candidate = dirname(entry)
+  for (let depth = 0; depth < 8; depth += 1) {
+    const manifestPath = join(candidate, 'package.json')
+    try {
+      const manifestStat = await stat(manifestPath)
+      if (manifestStat.isFile()) {
+        const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
+          name?: unknown
+        }
+        if (manifest.name === name) {
+          return validatePackageRoot(name, candidate, manifestPath)
+        }
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error
+      }
+    }
+    const parent = dirname(candidate)
+    if (parent === candidate) break
+    candidate = parent
+  }
+  throw new Error(
+    `could not find bounded package root for ${name} from ${entry}`,
+  )
+}
+
+async function resolveDeclaredPackageRoot(name: string): Promise<PackageRoot> {
+  if (name === 'fast-xml-parser') {
+    return resolvePackageRootFromEntry(name)
+  }
+  return resolvePackageRootFromManifest(name)
+}
+
+async function resolveTypeScriptPackage(): Promise<
+  PackageRoot & { compiler: string }
+> {
   const compiler = require.resolve('typescript/bin/tsc')
   const compilerStat = await stat(compiler)
   if (!compilerStat.isFile()) {
@@ -28,7 +111,17 @@ async function resolveTypeScriptCompiler(): Promise<string> {
       `resolved TypeScript compiler is not a regular file: ${compiler}`,
     )
   }
-  return compiler
+  return { ...(await resolvePackageRootFromManifest('typescript')), compiler }
+}
+
+async function linkPackageRoot(fixture: string, packageRoot: PackageRoot) {
+  const destination = join(
+    fixture,
+    'node_modules',
+    ...packageRoot.name.split('/'),
+  )
+  await mkdir(dirname(destination), { recursive: true })
+  await symlink(packageRoot.root, destination, directoryLinkType)
 }
 
 async function filesUnder(path: string): Promise<string[]> {
@@ -1168,23 +1261,90 @@ describe('STRUCT package artifact boundary', () => {
     expect(await auditPackageImportBoundary(root)).toEqual([])
   })
 
-  it('compiles and packs from a package-only temporary copy', async () => {
-    const fixture = await mkdtemp(join(tmpdir(), 'struct-package-only-'))
+  it('reproduces the PNPM dirname^3 dependency omission', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'struct-package-pnpm-red-'))
     try {
-      const typeScriptCompiler = await resolveTypeScriptCompiler()
+      const typeScript = await resolveTypeScriptPackage()
       await cp(join(root, 'src'), join(fixture, 'src'), { recursive: true })
       await cp(join(root, 'package.json'), join(fixture, 'package.json'))
       await cp(join(root, 'tsconfig.json'), join(fixture, 'tsconfig.json'))
       await mkdir(join(fixture, 'empty-types'))
-      await symlink(
-        dirname(dirname(dirname(typeScriptCompiler))),
-        join(fixture, 'node_modules'),
+
+      const pnpmNodeModules = join(
+        fixture,
+        'node_modules-store',
+        '.pnpm',
+        `typescript@${
+          JSON.parse(
+            await readFile(join(typeScript.root, 'package.json'), 'utf8'),
+          ).version
+        }`,
+        'node_modules',
       )
+      const innerTypeScript = join(pnpmNodeModules, 'typescript')
+      await mkdir(pnpmNodeModules, { recursive: true })
+      await symlink(typeScript.root, innerTypeScript, directoryLinkType)
+      await symlink(
+        pnpmNodeModules,
+        join(fixture, 'node_modules'),
+        directoryLinkType,
+      )
+
+      const dirnameThreeNodeModules = dirname(
+        dirname(dirname(join(innerTypeScript, 'bin', 'tsc'))),
+      )
+      expect(dirnameThreeNodeModules).toBe(pnpmNodeModules)
+
+      let compilerOutput = ''
+      try {
+        execFileSync(
+          process.execPath,
+          [
+            join(innerTypeScript, 'bin', 'tsc'),
+            '-p',
+            join(fixture, 'tsconfig.json'),
+            '--noEmit',
+            '--typeRoots',
+            join(fixture, 'empty-types'),
+          ],
+          { cwd: fixture, encoding: 'utf8', stdio: 'pipe' },
+        )
+      } catch (error) {
+        const compilerError = error as { stdout?: string; stderr?: string }
+        compilerOutput = `${compilerError.stdout ?? ''}\n${compilerError.stderr ?? ''}`
+      }
+      expect(compilerOutput).toContain('TS2307')
+      expect(compilerOutput).toContain("Cannot find module 'fflate'")
+      expect(compilerOutput).toContain("Cannot find module 'fast-xml-parser'")
+    } finally {
+      await rm(fixture, { recursive: true, force: true })
+    }
+  })
+
+  it('compiles and packs from a package-only temporary copy', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'struct-package-only-'))
+    try {
+      const typeScript = await resolveTypeScriptPackage()
+      await cp(join(root, 'src'), join(fixture, 'src'), { recursive: true })
+      await cp(join(root, 'package.json'), join(fixture, 'package.json'))
+      await cp(join(root, 'tsconfig.json'), join(fixture, 'tsconfig.json'))
+      await mkdir(join(fixture, 'empty-types'))
+      await mkdir(join(fixture, 'node_modules'))
+      for (const dependency of Object.keys(
+        JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
+          .dependencies,
+      )) {
+        await linkPackageRoot(
+          fixture,
+          await resolveDeclaredPackageRoot(dependency),
+        )
+      }
+      await linkPackageRoot(fixture, typeScript)
 
       execFileSync(
         process.execPath,
         [
-          typeScriptCompiler,
+          typeScript.compiler,
           '-p',
           join(fixture, 'tsconfig.json'),
           '--noEmit',
@@ -1195,7 +1355,7 @@ describe('STRUCT package artifact boundary', () => {
       )
       execFileSync(
         process.execPath,
-        [typeScriptCompiler, '-p', join(fixture, 'tsconfig.json')],
+        [typeScript.compiler, '-p', join(fixture, 'tsconfig.json')],
         { cwd: fixture, stdio: 'pipe' },
       )
       const distPaths = (await filesUnder(join(fixture, 'dist'))).map((path) =>

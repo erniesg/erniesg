@@ -134,10 +134,30 @@ async function resolveTypeScriptPackage(): Promise<
   return { ...(await resolvePackageRootFromManifest('typescript')), compiler }
 }
 
+async function copyPackageRoot(nodeModules: string, packageRoot: PackageRoot) {
+  const destination = join(nodeModules, ...packageRoot.name.split('/'))
+  await mkdir(dirname(destination), { recursive: true })
+  await cp(packageRoot.root, destination, {
+    recursive: true,
+    dereference: true,
+  })
+}
+
 async function linkPackageRoot(nodeModules: string, packageRoot: PackageRoot) {
   const destination = join(nodeModules, ...packageRoot.name.split('/'))
   await mkdir(dirname(destination), { recursive: true })
   await symlink(packageRoot.root, destination, directoryLinkType)
+}
+
+async function stagedTypeScriptCompiler(nodeModules: string): Promise<string> {
+  const compiler = join(nodeModules, 'typescript', 'bin', 'tsc')
+  const compilerStat = await stat(compiler)
+  if (!compilerStat.isFile()) {
+    throw new Error(
+      `staged TypeScript compiler is not a regular file: ${compiler}`,
+    )
+  }
+  return compiler
 }
 
 type PackageOnlyLayout = 'package-local' | 'root-hoisted' | 'pnpm-virtual-store'
@@ -173,23 +193,23 @@ async function stagePackageOnlyLayout(
     const nodeModules = join(fixture, 'node_modules')
     await mkdir(nodeModules)
     for (const packageRoot of packages) {
-      await linkPackageRoot(nodeModules, packageRoot)
+      await copyPackageRoot(nodeModules, packageRoot)
     }
-    return typeScript.compiler
+    return stagedTypeScriptCompiler(nodeModules)
   }
 
   if (layout === 'root-hoisted') {
     const hoistedNodeModules = join(fixture, 'root-hoisted-node_modules')
     await mkdir(hoistedNodeModules)
     for (const packageRoot of packages) {
-      await linkPackageRoot(hoistedNodeModules, packageRoot)
+      await copyPackageRoot(hoistedNodeModules, packageRoot)
     }
     await symlink(
       hoistedNodeModules,
       join(fixture, 'node_modules'),
       directoryLinkType,
     )
-    return typeScript.compiler
+    return stagedTypeScriptCompiler(hoistedNodeModules)
   }
 
   const nodeModules = join(fixture, 'node_modules')
@@ -207,8 +227,7 @@ async function stagePackageOnlyLayout(
       storePackage,
       ...packageRoot.name.split('/'),
     )
-    await mkdir(dirname(virtualPackageRoot), { recursive: true })
-    await symlink(packageRoot.root, virtualPackageRoot, directoryLinkType)
+    await copyPackageRoot(storePackage, packageRoot)
     await linkPackageRoot(nodeModules, {
       ...packageRoot,
       root: virtualPackageRoot,
@@ -268,6 +287,64 @@ async function assertPackageOnlyFixture(
       (path) => path === 'package.json' || path.startsWith('dist/'),
     ),
   ).toBe(true)
+}
+
+async function assertNoHostDependencyLeakage(
+  fixture: string,
+  compiler: string,
+): Promise<void> {
+  const hostOnlyEntry = require.resolve('vitest')
+  const hostOnlyStat = await stat(hostOnlyEntry)
+  if (!hostOnlyStat.isFile()) {
+    throw new Error(
+      `host-only probe package is not a regular file: ${hostOnlyEntry}`,
+    )
+  }
+
+  const dependencyRoot = join(fixture, 'node_modules', 'fflate')
+  const dependencyManifest = JSON.parse(
+    await readFile(join(dependencyRoot, 'package.json'), 'utf8'),
+  ) as { types?: unknown }
+  if (typeof dependencyManifest.types !== 'string') {
+    throw new Error(
+      `staged fflate package has no declaration entry: ${dependencyRoot}`,
+    )
+  }
+  const declarationPath = join(dependencyRoot, dependencyManifest.types)
+  const declarationPaths = (await filesUnder(dependencyRoot)).filter((path) =>
+    /\.d\.[cm]?ts$/u.test(path),
+  )
+  expect(declarationPaths).toContain(declarationPath)
+  for (const path of declarationPaths) {
+    const declaration = await readFile(path, 'utf8')
+    await writeFile(
+      path,
+      `${declaration}\nimport type * as HostOnlyPackage from 'vitest'\n`,
+    )
+  }
+
+  let compilerOutput = ''
+  try {
+    execFileSync(
+      process.execPath,
+      [
+        compiler,
+        '-p',
+        join(fixture, 'tsconfig.json'),
+        '--noEmit',
+        '--typeRoots',
+        join(fixture, 'empty-types'),
+        '--skipLibCheck',
+        'false',
+      ],
+      { cwd: fixture, encoding: 'utf8', stdio: 'pipe' },
+    )
+  } catch (error) {
+    const compilerError = error as { stdout?: string; stderr?: string }
+    compilerOutput = `${compilerError.stdout ?? ''}\n${compilerError.stderr ?? ''}`
+  }
+  expect(compilerOutput).toContain('TS2307')
+  expect(compilerOutput).toContain("Cannot find module 'vitest'")
 }
 
 async function filesUnder(path: string): Promise<string[]> {
@@ -1488,11 +1565,12 @@ describe('STRUCT package artifact boundary', () => {
           layout,
         )
         await assertPackageOnlyFixture(fixture, compiler)
+        await assertNoHostDependencyLeakage(fixture, compiler)
       } finally {
         await rm(fixture, { recursive: true, force: true })
       }
     }
-  })
+  }, 60_000)
 })
 
 type FixtureExtra = Record<string, string | undefined>

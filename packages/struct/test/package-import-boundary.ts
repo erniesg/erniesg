@@ -353,6 +353,21 @@ function collectStaticEdges(
   }
   visit(sourceFile)
 
+  for (const dependency of sourceFile.amdDependencies) {
+    const offset = sourceFile.text.indexOf(dependency.path)
+    checkModuleSpecifier(
+      dependency.path,
+      offset < 0 ? sourceFile.getStart(sourceFile) : offset,
+      importer,
+      packageRoot,
+      sourceFiles,
+      dependencies,
+      options,
+      cache,
+      violations,
+    )
+  }
+
   const runtime = skipJsxRuntime
     ? undefined
     : jsxRuntimeSpecifier(sourceFile, options)
@@ -472,10 +487,7 @@ function checkModuleSpecifier(
     Object.prototype.hasOwnProperty.call(dependencies, packageName)
   ) {
     const declaration = dependencies[packageName]
-    if (
-      typeof declaration === 'string' &&
-      /^(?:file|link|workspace):/iu.test(declaration)
-    ) {
+    if (isNonPortableDependencyDeclaration(declaration)) {
       violations.push(
         violation(
           packageRoot,
@@ -558,6 +570,17 @@ function checkModuleSpecifier(
       ),
     )
   }
+}
+
+function isNonPortableDependencyDeclaration(declaration: unknown) {
+  if (typeof declaration !== 'string') return true
+  const trimmed = declaration.trim()
+  if (trimmed.length === 0 || trimmed !== declaration) return true
+  return (
+    /^(?:file|link|workspace|git\+file):/iu.test(trimmed) ||
+    /^(?:\.\.?[\\/]|[\\/]|[A-Za-z]:[\\/])/u.test(trimmed) ||
+    trimmed.includes('\\')
+  )
 }
 
 function normalizePath(fileName: string) {
@@ -678,7 +701,7 @@ function collectJsxPragmaViolations(
     if (comment.kind !== ts.SyntaxKind.MultiLineCommentTrivia) continue
     const text = sourceFile.text.slice(comment.pos, comment.end)
     let lineStart = 0
-    for (const line of text.split(/\r?\n/u)) {
+    for (const line of text.split(/\r\n|[\r\n\u2028\u2029]/u)) {
       const at = line.indexOf('@')
       if (at >= 0) {
         const match = /^@(\S+)/u.exec(line.slice(at))

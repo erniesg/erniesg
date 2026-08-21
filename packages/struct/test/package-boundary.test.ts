@@ -137,6 +137,31 @@ describe('STRUCT package artifact boundary', () => {
         expected: 'undeclared-runtime-dependency',
         specifier: 'vitest',
       },
+      {
+        name: 'undeclared AMD dependency directive',
+        source:
+          '/// <amd-dependency path="evil" />\nexport const value = true\n',
+        extra: {
+          'node_modules/evil/package.json': JSON.stringify({
+            name: 'evil',
+            types: 'index.d.ts',
+          }),
+          'node_modules/evil/index.d.ts': 'export {}\n',
+          'tsconfig.json': JSON.stringify({
+            compilerOptions: {
+              target: 'ES2022',
+              module: 'AMD',
+              moduleResolution: 'Node10',
+              strict: true,
+              skipLibCheck: true,
+              rootDir: 'src',
+            },
+            include: ['src/**/*.ts'],
+          }),
+        },
+        expected: 'undeclared-runtime-dependency',
+        specifier: 'evil',
+      },
       ...['constructor', 'toString', 'hasOwnProperty'].map((name) => ({
         name: `inherited dependency name: ${name}`,
         source: `import '${name}'\n`,
@@ -234,6 +259,67 @@ describe('STRUCT package artifact boundary', () => {
           importer: testCase.importer ?? 'src/index.ts',
           ...(testCase.specifier ? { specifier: testCase.specifier } : {}),
         })
+      } finally {
+        await rm(fixture, { recursive: true, force: true })
+      }
+    }
+  })
+
+  it('rejects non-portable dependency declarations while retaining portable forms', async () => {
+    const cases = [
+      { name: 'parent path', declaration: '../evil' },
+      { name: 'current path', declaration: './evil' },
+      { name: 'POSIX absolute path', declaration: '/tmp/evil' },
+      { name: 'Windows drive path', declaration: 'C:\\evil' },
+      { name: 'Windows drive slash path', declaration: 'C:/evil' },
+      { name: 'Windows UNC path', declaration: '\\\\server\\share\\evil' },
+      { name: 'file protocol', declaration: 'file:../evil' },
+      { name: 'link protocol', declaration: 'link:../evil' },
+      { name: 'workspace protocol', declaration: 'workspace:*' },
+      { name: 'git file protocol', declaration: 'git+file:///tmp/evil' },
+      { name: 'empty declaration', declaration: '' },
+      { name: 'whitespace declaration', declaration: '   ' },
+      { name: 'null declaration', declaration: null },
+      { name: 'object declaration', declaration: { path: 'evil' } },
+      { name: 'exact semver', declaration: '1.2.3', portable: true },
+      { name: 'semver range', declaration: '^1.2.3', portable: true },
+      { name: 'npm alias', declaration: 'npm:evil@^1.2.3', portable: true },
+      {
+        name: 'HTTPS archive',
+        declaration: 'https://example.com/evil.tgz',
+        portable: true,
+      },
+      {
+        name: 'HTTPS git repository',
+        declaration: 'git+https://github.com/example/evil.git',
+        portable: true,
+      },
+    ]
+
+    for (const testCase of cases) {
+      const fixture = await makeFixture("import 'evil'\n", {
+        'package.json': JSON.stringify({
+          name: 'fixture',
+          version: '1.0.0',
+          dependencies: { evil: testCase.declaration },
+        }),
+        'node_modules/evil/package.json': JSON.stringify({
+          name: 'evil',
+          types: 'index.d.ts',
+        }),
+        'node_modules/evil/index.d.ts': 'export {}\n',
+      })
+      try {
+        const diagnostics = await auditPackageImportBoundary(fixture)
+        const matching = diagnostics.filter(
+          ({ code, specifier }) =>
+            code === 'non-portable-dependency' && specifier === 'evil',
+        )
+        if (testCase.portable) {
+          expect(matching, testCase.name).toEqual([])
+        } else {
+          expect(matching, testCase.name).toHaveLength(1)
+        }
       } finally {
         await rm(fixture, { recursive: true, force: true })
       }
@@ -469,6 +555,22 @@ describe('STRUCT package artifact boundary', () => {
         jsx: 'react',
         allowRuntimeEdge: true,
       },
+      ...[
+        { name: 'CRLF', lineBreak: '\r\n' },
+        { name: 'LF', lineBreak: '\n' },
+        { name: 'bare CR', lineBreak: '\r' },
+        { name: 'line separator', lineBreak: '\u2028' },
+        { name: 'paragraph separator', lineBreak: '\u2029' },
+      ].map(({ name, lineBreak }) => {
+        const marker = '@jSxImPoRtSoUrCe'
+        return {
+          name: `pragma after ${name}`,
+          source: `/* @notAThing${lineBreak}${marker} evil */\nexport const value = <div />\n`,
+          jsx: 'react-jsx',
+          pragma: '@jsxImportSource',
+          marker,
+        }
+      }),
     ]
 
     const missing: string[] = []

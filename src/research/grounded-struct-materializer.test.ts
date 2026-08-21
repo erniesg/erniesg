@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { path as epubCheckJarPath } from 'epubcheck-static'
-import { sha256HexSync } from '../struct/sha256'
+import { sha256HexSync } from './sha256-sync'
 import {
   hashTraceValue,
   type ProviderReceiptBinding,

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { sha256HexSync } from '../struct/sha256'
+import { sha256HexSync } from './sha256-sync'
 import {
   RECONSTRUCTION_ATTEMPT_TRACE_SCHEMA_VERSION,
   createReconstructionAttemptTrace,

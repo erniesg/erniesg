@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { structDigest } from '@erniesg/struct/ids'
-import { sha256HexSync } from '../struct/sha256'
+import { sha256HexSync } from './sha256-sync'
 import type { StructDocument } from '@erniesg/struct/schema'
 import {
   GROUNDED_STRUCT_MATERIALIZATION_SCHEMA_VERSION,

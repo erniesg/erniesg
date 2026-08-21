@@ -95,10 +95,30 @@ async function resolvePackageRootFromEntry(name: string): Promise<PackageRoot> {
 }
 
 async function resolveDeclaredPackageRoot(name: string): Promise<PackageRoot> {
-  if (name === 'fast-xml-parser') {
-    return resolvePackageRootFromEntry(name)
+  try {
+    return await resolvePackageRootFromManifest(name)
+  } catch (error) {
+    if (
+      (error as NodeJS.ErrnoException).code !== 'ERR_PACKAGE_PATH_NOT_EXPORTED'
+    ) {
+      throw new Error(
+        `could not resolve ${name}/package.json from the package-boundary test: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        { cause: error },
+      )
+    }
+    try {
+      return await resolvePackageRootFromEntry(name)
+    } catch (entryError) {
+      throw new Error(
+        `could not resolve the package root for ${name} after its package.json export was blocked: ${
+          entryError instanceof Error ? entryError.message : String(entryError)
+        }`,
+        { cause: entryError },
+      )
+    }
   }
-  return resolvePackageRootFromManifest(name)
 }
 
 async function resolveTypeScriptPackage(): Promise<
@@ -114,14 +134,140 @@ async function resolveTypeScriptPackage(): Promise<
   return { ...(await resolvePackageRootFromManifest('typescript')), compiler }
 }
 
-async function linkPackageRoot(fixture: string, packageRoot: PackageRoot) {
-  const destination = join(
-    fixture,
-    'node_modules',
-    ...packageRoot.name.split('/'),
-  )
+async function linkPackageRoot(nodeModules: string, packageRoot: PackageRoot) {
+  const destination = join(nodeModules, ...packageRoot.name.split('/'))
   await mkdir(dirname(destination), { recursive: true })
   await symlink(packageRoot.root, destination, directoryLinkType)
+}
+
+type PackageOnlyLayout = 'package-local' | 'root-hoisted' | 'pnpm-virtual-store'
+
+async function packageVersion(packageRoot: PackageRoot): Promise<string> {
+  const manifest = JSON.parse(
+    await readFile(join(packageRoot.root, 'package.json'), 'utf8'),
+  ) as { version?: unknown }
+  if (typeof manifest.version !== 'string' || manifest.version.length === 0) {
+    throw new Error(
+      `resolved package has no usable version: ${packageRoot.root}`,
+    )
+  }
+  return manifest.version
+}
+
+async function resolvePackageOnlyDependencies(): Promise<PackageRoot[]> {
+  const manifest = JSON.parse(
+    await readFile(join(root, 'package.json'), 'utf8'),
+  ) as { dependencies?: Record<string, string> }
+  const dependencyNames = Object.keys(manifest.dependencies ?? {})
+  return Promise.all(dependencyNames.map(resolveDeclaredPackageRoot))
+}
+
+async function stagePackageOnlyLayout(
+  fixture: string,
+  dependencies: PackageRoot[],
+  typeScript: PackageRoot & { compiler: string },
+  layout: PackageOnlyLayout,
+): Promise<string> {
+  const packages = [...dependencies, typeScript]
+  if (layout === 'package-local') {
+    const nodeModules = join(fixture, 'node_modules')
+    await mkdir(nodeModules)
+    for (const packageRoot of packages) {
+      await linkPackageRoot(nodeModules, packageRoot)
+    }
+    return typeScript.compiler
+  }
+
+  if (layout === 'root-hoisted') {
+    const hoistedNodeModules = join(fixture, 'root-hoisted-node_modules')
+    await mkdir(hoistedNodeModules)
+    for (const packageRoot of packages) {
+      await linkPackageRoot(hoistedNodeModules, packageRoot)
+    }
+    await symlink(
+      hoistedNodeModules,
+      join(fixture, 'node_modules'),
+      directoryLinkType,
+    )
+    return typeScript.compiler
+  }
+
+  const nodeModules = join(fixture, 'node_modules')
+  const virtualStore = join(nodeModules, '.pnpm')
+  await mkdir(virtualStore, { recursive: true })
+  let compiler = typeScript.compiler
+  for (const packageRoot of packages) {
+    const version = await packageVersion(packageRoot)
+    const storePackage = join(
+      virtualStore,
+      `${packageRoot.name.replaceAll('/', '+')}@${version}`,
+      'node_modules',
+    )
+    const virtualPackageRoot = join(
+      storePackage,
+      ...packageRoot.name.split('/'),
+    )
+    await mkdir(dirname(virtualPackageRoot), { recursive: true })
+    await symlink(packageRoot.root, virtualPackageRoot, directoryLinkType)
+    await linkPackageRoot(nodeModules, {
+      ...packageRoot,
+      root: virtualPackageRoot,
+    })
+    if (packageRoot.name === 'typescript') {
+      compiler = join(virtualPackageRoot, 'bin', 'tsc')
+      const compilerStat = await stat(compiler)
+      if (!compilerStat.isFile()) {
+        throw new Error(
+          `staged TypeScript compiler is not a regular file: ${compiler}`,
+        )
+      }
+    }
+  }
+  return compiler
+}
+
+async function assertPackageOnlyFixture(
+  fixture: string,
+  compiler: string,
+): Promise<void> {
+  const emptyTypes = join(fixture, 'empty-types')
+  const tsconfig = join(fixture, 'tsconfig.json')
+  execFileSync(
+    process.execPath,
+    [compiler, '-p', tsconfig, '--noEmit', '--typeRoots', emptyTypes],
+    { cwd: fixture, stdio: 'pipe' },
+  )
+  execFileSync(process.execPath, [compiler, '-p', tsconfig], {
+    cwd: fixture,
+    stdio: 'pipe',
+  })
+  const distPaths = (await filesUnder(join(fixture, 'dist'))).map((path) =>
+    path.slice(fixture.length + 1),
+  )
+  expect(distPaths).toEqual(
+    expect.arrayContaining([
+      'dist/index.js',
+      'dist/core.js',
+      'dist/schema.js',
+      'dist/ids.js',
+      'dist/recovery.js',
+      'dist/renderers/xhtml.js',
+      'dist/renderers/epub.js',
+    ]),
+  )
+  const pack = JSON.parse(
+    execFileSync('npm', ['pack', '--dry-run', '--ignore-scripts', '--json'], {
+      cwd: fixture,
+      encoding: 'utf8',
+    }),
+  )[0] as { files?: Array<{ path: string }> }
+  const packedPaths = pack.files?.map(({ path }) => path) ?? []
+  expect(packedPaths).toContain('package.json')
+  expect(
+    packedPaths.every(
+      (path) => path === 'package.json' || path.startsWith('dist/'),
+    ),
+  ).toBe(true)
 }
 
 async function filesUnder(path: string): Promise<string[]> {
@@ -1321,76 +1467,30 @@ describe('STRUCT package artifact boundary', () => {
     }
   })
 
-  it('compiles and packs from a package-only temporary copy', async () => {
-    const fixture = await mkdtemp(join(tmpdir(), 'struct-package-only-'))
-    try {
-      const typeScript = await resolveTypeScriptPackage()
-      await cp(join(root, 'src'), join(fixture, 'src'), { recursive: true })
-      await cp(join(root, 'package.json'), join(fixture, 'package.json'))
-      await cp(join(root, 'tsconfig.json'), join(fixture, 'tsconfig.json'))
-      await mkdir(join(fixture, 'empty-types'))
-      await mkdir(join(fixture, 'node_modules'))
-      for (const dependency of Object.keys(
-        JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
-          .dependencies,
-      )) {
-        await linkPackageRoot(
+  it('compiles and packs from package-local, root-hoisted, and PNPM layouts', async () => {
+    const dependencies = await resolvePackageOnlyDependencies()
+    const typeScript = await resolveTypeScriptPackage()
+    for (const layout of [
+      'package-local',
+      'root-hoisted',
+      'pnpm-virtual-store',
+    ] as const) {
+      const fixture = await mkdtemp(join(tmpdir(), `struct-package-${layout}-`))
+      try {
+        await cp(join(root, 'src'), join(fixture, 'src'), { recursive: true })
+        await cp(join(root, 'package.json'), join(fixture, 'package.json'))
+        await cp(join(root, 'tsconfig.json'), join(fixture, 'tsconfig.json'))
+        await mkdir(join(fixture, 'empty-types'))
+        const compiler = await stagePackageOnlyLayout(
           fixture,
-          await resolveDeclaredPackageRoot(dependency),
+          dependencies,
+          typeScript,
+          layout,
         )
+        await assertPackageOnlyFixture(fixture, compiler)
+      } finally {
+        await rm(fixture, { recursive: true, force: true })
       }
-      await linkPackageRoot(fixture, typeScript)
-
-      execFileSync(
-        process.execPath,
-        [
-          typeScript.compiler,
-          '-p',
-          join(fixture, 'tsconfig.json'),
-          '--noEmit',
-          '--typeRoots',
-          join(fixture, 'empty-types'),
-        ],
-        { cwd: fixture, stdio: 'pipe' },
-      )
-      execFileSync(
-        process.execPath,
-        [typeScript.compiler, '-p', join(fixture, 'tsconfig.json')],
-        { cwd: fixture, stdio: 'pipe' },
-      )
-      const distPaths = (await filesUnder(join(fixture, 'dist'))).map((path) =>
-        path.slice(fixture.length + 1),
-      )
-      expect(distPaths).toEqual(
-        expect.arrayContaining([
-          'dist/index.js',
-          'dist/core.js',
-          'dist/schema.js',
-          'dist/ids.js',
-          'dist/recovery.js',
-          'dist/renderers/xhtml.js',
-          'dist/renderers/epub.js',
-        ]),
-      )
-      const pack = JSON.parse(
-        execFileSync(
-          'npm',
-          ['pack', '--dry-run', '--ignore-scripts', '--json'],
-          {
-            cwd: fixture,
-            encoding: 'utf8',
-          },
-        ),
-      )[0] as { files?: Array<{ path: string }> }
-      const packedPaths = pack.files?.map(({ path }) => path) ?? []
-      expect(packedPaths).toContain('package.json')
-      expect(
-        packedPaths.every(
-          (path) => path === 'package.json' || path.startsWith('dist/'),
-        ),
-      ).toBe(true)
-    } finally {
-      await rm(fixture, { recursive: true, force: true })
     }
   })
 })

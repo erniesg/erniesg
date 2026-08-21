@@ -401,6 +401,64 @@ async function assertNoHostDependencyLeakage(
   expect(compilerOutput).toContain("Cannot find module 'vitest'")
 }
 
+async function assertVitestIsHermeticFromPoisonedArchive(): Promise<void> {
+  const fixture = await mkdtemp(join(tmpdir(), 'struct-vitest-hermetic-'))
+  const archiveRoot = join(fixture, 'archive')
+  const packageRoot = join(archiveRoot, 'packages', 'struct')
+  const testRoot = join(packageRoot, 'test')
+  const vitestPackageRoot = dirname(require.resolve('vitest'))
+  const vitestEntry = join(vitestPackageRoot, 'dist', 'index.js')
+  const configPath = join(packageRoot, 'vitest.config.mjs')
+  const testPath = join(testRoot, 'hermetic.test.ts')
+  try {
+    await mkdir(testRoot, { recursive: true })
+    await writeFile(
+      join(archiveRoot, 'tsconfig.json'),
+      JSON.stringify({ extends: 'astro/tsconfigs/strict' }),
+    )
+    await writeFile(
+      join(packageRoot, 'package.json'),
+      JSON.stringify({ name: '@fixture/struct', type: 'module' }),
+    )
+    await cp(
+      join(root, 'test', 'tsconfig.json'),
+      join(testRoot, 'tsconfig.json'),
+    )
+    await writeFile(
+      configPath,
+      `export default { root: ${JSON.stringify(packageRoot)} }\n`,
+    )
+    await writeFile(
+      testPath,
+      [
+        `import { expect, it } from ${JSON.stringify(vitestEntry)}`,
+        "it('collects and transforms from the package fixture', () => { expect(true).toBe(true) })",
+      ].join('\n'),
+    )
+
+    const { NODE_PATH: _nodePath, ...hermeticEnv } = process.env
+    execFileSync(
+      process.execPath,
+      [
+        join(vitestPackageRoot, 'vitest.mjs'),
+        'run',
+        '--config',
+        configPath,
+        '--maxWorkers=1',
+        'test/hermetic.test.ts',
+      ],
+      {
+        cwd: packageRoot,
+        env: hermeticEnv,
+        encoding: 'utf8',
+        stdio: 'pipe',
+      },
+    )
+  } finally {
+    await rm(fixture, { recursive: true, force: true })
+  }
+}
+
 async function filesUnder(path: string): Promise<string[]> {
   const entries = await readdir(path, { withFileTypes: true })
   const nested = await Promise.all(
@@ -1607,6 +1665,7 @@ describe('STRUCT package artifact boundary', () => {
     expect(
       normalizeFixtureRelativePath(String.raw`dist\renderers\epub.js`),
     ).toBe('dist/renderers/epub.js')
+    await assertVitestIsHermeticFromPoisonedArchive()
     const dependencies = await resolvePackageOnlyDependencies()
     const typeScript = await resolveTypeScriptPackage()
     for (const layout of [

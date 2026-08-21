@@ -31,6 +31,7 @@ const forbiddenResolutionOptions = new Set([
 ])
 
 const forbiddenDialectOptions = new Set(['importHelpers'])
+const forbiddenModuleKinds = new Set([ts.ModuleKind.AMD, ts.ModuleKind.UMD])
 
 export async function auditPackageImportBoundary(
   packageRoot: string,
@@ -98,6 +99,22 @@ export async function auditPackageImportBoundary(
         ),
       )
     }
+  }
+  if (
+    parsed.options.module !== undefined &&
+    forbiddenModuleKinds.has(parsed.options.module)
+  ) {
+    violations.push(
+      violation(
+        packagePath,
+        configPath,
+        0,
+        'compiler-option-not-allowed',
+        'compiler option module is not permitted by the package dialect',
+        undefined,
+        'module',
+      ),
+    )
   }
   if ('extends' in config) {
     violations.push(
@@ -353,37 +370,6 @@ function collectStaticEdges(
   }
   visit(sourceFile)
 
-  if (sourceFile.amdDependencies.length > 0) {
-    const paths = amdDependencyPathOffsets(sourceFile)
-    if (!paths) {
-      violations.push(
-        violation(
-          packageRoot,
-          importer,
-          sourceFile.getStart(sourceFile),
-          'invalid-amd-dependency',
-          'AMD dependency directives could not be paired with compiler metadata',
-        ),
-      )
-    } else {
-      for (let index = 0; index < sourceFile.amdDependencies.length; index++) {
-        const dependency = sourceFile.amdDependencies[index]
-        const path = paths[index]
-        checkModuleSpecifier(
-          dependency.path,
-          path.offset,
-          importer,
-          packageRoot,
-          sourceFiles,
-          dependencies,
-          options,
-          cache,
-          violations,
-        )
-      }
-    }
-  }
-
   const runtime = skipJsxRuntime
     ? undefined
     : jsxRuntimeSpecifier(sourceFile, options)
@@ -400,34 +386,6 @@ function collectStaticEdges(
       violations,
     )
   }
-}
-
-function amdDependencyPathOffsets(sourceFile: ts.SourceFile) {
-  const paths: Array<{ path: string; offset: number }> = []
-  let lineStart = 0
-  for (const line of sourceFile.text.split(/\r\n|[\r\n\u2028\u2029]/u)) {
-    const directive = /^\/\/\/\s*<amd-dependency\b.*\/>\s*$/u.exec(line)
-    if (directive) {
-      const attributes = /\bpath\s*=\s*(["'])(.*?)\1/u.exec(line)
-      if (!attributes) return undefined
-      const attributeOffset = line.indexOf(attributes[0])
-      const quoteOffset = attributes[0].indexOf(attributes[1])
-      paths.push({
-        path: attributes[2],
-        offset: lineStart + attributeOffset + quoteOffset + 1,
-      })
-    }
-    lineStart += line.length
-    if (lineStart < sourceFile.text.length) {
-      lineStart += sourceFile.text.startsWith('\r\n', lineStart) ? 2 : 1
-    }
-  }
-  return paths.length === sourceFile.amdDependencies.length &&
-    paths.every(
-      ({ path }, index) => path === sourceFile.amdDependencies[index].path,
-    )
-    ? paths
-    : undefined
 }
 
 function checkModuleSpecifier(
@@ -625,7 +583,8 @@ function isNonPortableDependencyDeclaration(declaration: unknown) {
     /^~(?:[\\/]|$)/u.test(trimmed) ||
     /^[A-Za-z]:/u.test(trimmed) ||
     /^(?:\.\.?[\\/]|[\\/])/u.test(trimmed) ||
-    trimmed.includes('\\')
+    trimmed.includes('\\') ||
+    (!trimmed.includes(':') && /\.(?:tgz|tar\.gz|tar)$/iu.test(trimmed))
   )
 }
 

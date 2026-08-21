@@ -138,15 +138,10 @@ describe('STRUCT package artifact boundary', () => {
         specifier: 'vitest',
       },
       {
-        name: 'undeclared AMD dependency directive',
+        name: 'AMD module compiler option',
         source:
           '/// <amd-dependency path="evil" />\nexport const value = true\n',
         extra: {
-          'node_modules/evil/package.json': JSON.stringify({
-            name: 'evil',
-            types: 'index.d.ts',
-          }),
-          'node_modules/evil/index.d.ts': 'export {}\n',
           'tsconfig.json': JSON.stringify({
             compilerOptions: {
               target: 'ES2022',
@@ -159,8 +154,9 @@ describe('STRUCT package artifact boundary', () => {
             include: ['src/**/*.ts'],
           }),
         },
-        expected: 'undeclared-runtime-dependency',
-        specifier: 'evil',
+        expected: 'compiler-option-not-allowed',
+        importer: 'tsconfig.json',
+        specifier: 'module',
       },
       ...['constructor', 'toString', 'hasOwnProperty'].map((name) => ({
         name: `inherited dependency name: ${name}`,
@@ -265,54 +261,80 @@ describe('STRUCT package artifact boundary', () => {
     }
   })
 
-  it('pairs AMD dependency paths with ordered public edges and exact offsets', async () => {
+  it('rejects AMD and UMD options without lexically parsing directive text', async () => {
+    const cases = [
+      { name: 'AMD', module: 'AMD' },
+      { name: 'UMD', module: 'UMD' },
+    ]
     const source =
-      '// ordinary comment mentions evil\n' +
-      '/// <amd-dependency path="evil" name="first" />\n' +
-      "/// <amd-dependency   name='second'   path = 'evil'   />\n" +
-      '/// <amd-dependency path = "" name="empty" />\n' +
-      '/// <amd-dependency path="evil" />\n' +
-      'export const value = true\n'
-    const fixture = await makeFixture(source, {
-      'node_modules/evil/package.json': JSON.stringify({
-        name: 'evil',
-        types: 'index.d.ts',
-      }),
-      'node_modules/evil/index.d.ts': 'export {}\n',
-      'tsconfig.json': JSON.stringify({
-        compilerOptions: {
-          target: 'ES2022',
-          module: 'AMD',
-          moduleResolution: 'Node10',
-          strict: true,
-          skipLibCheck: true,
-          rootDir: 'src',
-        },
-        include: ['src/**/*.ts'],
-      }),
-    })
-    try {
-      const diagnostics = await auditPackageImportBoundary(fixture)
-      const undeclared = diagnostics.filter(
-        ({ code, specifier }) =>
-          code === 'undeclared-runtime-dependency' && specifier === 'evil',
-      )
-      const firstDirective = source.indexOf('path="evil"')
-      const secondDirective = source.indexOf("path = 'evil'")
-      const thirdDirective = source.lastIndexOf('path="evil"')
-      expect(undeclared.map(({ offset }) => offset)).toEqual([
-        source.indexOf('evil', firstDirective),
-        source.indexOf('evil', secondDirective),
-        source.indexOf('evil', thirdDirective),
-      ])
+      '/// <amd-dependency name=\'path="evil"\' data-path="evil" />\n' +
+      'export const value = true\n' +
+      '//// <amd-dependency path="late" />\n' +
+      'text = "<amd-dependency path=\\"ignored\\" />"\n' +
+      '/// <amd-dependency path="post-code" />\n'
 
-      const empty = diagnostics.find(({ specifier }) => specifier === '')
-      expect(empty).toMatchObject({
-        code: 'unresolved-module',
-        offset: source.indexOf('path = ""') + 'path = "'.length,
+    for (const testCase of cases) {
+      const fixture = await makeFixture(source, {
+        'tsconfig.json': JSON.stringify({
+          compilerOptions: {
+            target: 'ES2022',
+            module: testCase.module,
+            moduleResolution: 'Node10',
+            strict: true,
+            skipLibCheck: true,
+            rootDir: 'src',
+          },
+          include: ['src/**/*.ts'],
+        }),
       })
-    } finally {
-      await rm(fixture, { recursive: true, force: true })
+      try {
+        const diagnostics = await auditPackageImportBoundary(fixture)
+        expect(diagnostics).toContainEqual(
+          expect.objectContaining({
+            code: 'compiler-option-not-allowed',
+            importer: 'tsconfig.json',
+            offset: 0,
+            specifier: 'module',
+          }),
+        )
+        expect(
+          diagnostics.filter(({ code }) => code === 'invalid-amd-dependency'),
+          testCase.name,
+        ).toEqual([])
+      } finally {
+        await rm(fixture, { recursive: true, force: true })
+      }
+    }
+  })
+
+  it('does not treat AMD dependency lookalikes as edges for allowed modules', async () => {
+    const cases = [
+      { module: 'ESNext', moduleResolution: 'Bundler' },
+      { module: 'CommonJS', moduleResolution: 'Node10' },
+    ]
+    for (const compilerOptions of cases) {
+      const fixture = await makeFixture(
+        '/// <amd-dependency path="evil" />\n' +
+          'export const value = true\n' +
+          '/// <amd-dependency path="late" />\n',
+        {
+          'tsconfig.json': JSON.stringify({
+            compilerOptions: {
+              target: 'ES2022',
+              ...compilerOptions,
+              strict: true,
+              skipLibCheck: true,
+              rootDir: 'src',
+            },
+            include: ['src/**/*.ts'],
+          }),
+        },
+      )
+      try {
+        await expect(auditPackageImportBoundary(fixture)).resolves.toEqual([])
+      } finally {
+        await rm(fixture, { recursive: true, force: true })
+      }
     }
   })
 
@@ -329,6 +351,14 @@ describe('STRUCT package artifact boundary', () => {
       { name: 'Windows drive-relative parent', declaration: 'C:../evil' },
       { name: 'Windows drive-relative archive', declaration: 'Z:package.tgz' },
       { name: 'Windows UNC path', declaration: '\\\\server\\share\\evil' },
+      { name: 'bare tgz archive', declaration: 'evil.tgz' },
+      { name: 'bare tgz archive is case-insensitive', declaration: 'evil.TGZ' },
+      { name: 'bare tar.gz archive', declaration: 'evil.tar.gz' },
+      {
+        name: 'bare tar.gz archive is case-insensitive',
+        declaration: 'evil.TAR.GZ',
+      },
+      { name: 'bare tar archive', declaration: 'evil.tar' },
       { name: 'file protocol', declaration: 'file:../evil' },
       { name: 'link protocol', declaration: 'link:../evil' },
       { name: 'workspace protocol', declaration: 'workspace:*' },

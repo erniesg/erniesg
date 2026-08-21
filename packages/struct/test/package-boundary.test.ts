@@ -307,14 +307,17 @@ describe('STRUCT package artifact boundary', () => {
     }
   })
 
-  it('does not treat AMD dependency lookalikes as edges for allowed modules', async () => {
+  it('rejects compiler-recognized AMD directives in every module mode', async () => {
     const cases = [
       { module: 'ESNext', moduleResolution: 'Bundler' },
       { module: 'CommonJS', moduleResolution: 'Node10' },
+      { module: 'System', moduleResolution: 'Node10' },
+      { module: 'None', moduleResolution: 'Node10' },
     ]
     for (const compilerOptions of cases) {
       const fixture = await makeFixture(
         '/// <amd-dependency path="evil" />\n' +
+          '/// <amd-dependency path="second" />\n' +
           'export const value = true\n' +
           '/// <amd-dependency path="late" />\n',
         {
@@ -330,6 +333,44 @@ describe('STRUCT package artifact boundary', () => {
           }),
         },
       )
+      try {
+        const diagnostics = await auditPackageImportBoundary(fixture)
+        expect(
+          diagnostics.filter(({ code }) => code === 'invalid-amd-dependency'),
+        ).toHaveLength(1)
+        expect(diagnostics).toEqual([
+          expect.objectContaining({
+            code: 'invalid-amd-dependency',
+            importer: 'src/index.ts',
+            offset: 0,
+          }),
+        ])
+      } finally {
+        await rm(fixture, { recursive: true, force: true })
+      }
+    }
+  })
+
+  it('ignores AMD directive lookalikes that TypeScript does not recognize', async () => {
+    const sources = [
+      '//// <amd-dependency path="four-slash" />\nexport const value = true\n',
+      'export const value = true\n/// <amd-dependency path="post-code" />\n',
+      '/// <amd-dependency name=\'path="decoy"\' data-path="decoy" />\nexport const value = true\n',
+    ]
+    for (const source of sources) {
+      const fixture = await makeFixture(source, {
+        'tsconfig.json': JSON.stringify({
+          compilerOptions: {
+            target: 'ES2022',
+            module: 'ESNext',
+            moduleResolution: 'Bundler',
+            strict: true,
+            skipLibCheck: true,
+            rootDir: 'src',
+          },
+          include: ['src/**/*.ts'],
+        }),
+      })
       try {
         await expect(auditPackageImportBoundary(fixture)).resolves.toEqual([])
       } finally {
@@ -359,6 +400,14 @@ describe('STRUCT package artifact boundary', () => {
         declaration: 'evil.TAR.GZ',
       },
       { name: 'bare tar archive', declaration: 'evil.tar' },
+      { name: 'dot-prefixed local directory', declaration: '.hidden' },
+      {
+        name: 'dot-prefixed nested local directory',
+        declaration: '.config/pkg',
+      },
+      { name: 'multi-dot local directory', declaration: '.../evil' },
+      { name: 'nested local directory', declaration: 'dir/sub/local' },
+      { name: 'raw scoped local directory', declaration: '@scope/pkg' },
       { name: 'file protocol', declaration: 'file:../evil' },
       { name: 'link protocol', declaration: 'link:../evil' },
       { name: 'workspace protocol', declaration: 'workspace:*' },
@@ -371,6 +420,37 @@ describe('STRUCT package artifact boundary', () => {
       { name: 'semver range', declaration: '^1.2.3', portable: true },
       { name: 'semver tilde', declaration: '~1.2.3', portable: true },
       { name: 'npm alias', declaration: 'npm:evil@^1.2.3', portable: true },
+      {
+        name: 'npm scoped alias',
+        declaration: 'npm:@scope/pkg@^1.2.3',
+        portable: true,
+      },
+      { name: 'GitHub shorthand', declaration: 'user/repo', portable: true },
+      {
+        name: 'GitHub shorthand tgz repository',
+        declaration: 'user/repo.tgz',
+        portable: true,
+      },
+      {
+        name: 'GitHub shorthand tar.gz repository',
+        declaration: 'user/repo.tar.gz',
+        portable: true,
+      },
+      {
+        name: 'GitHub shorthand tar repository',
+        declaration: 'user/repo.tar',
+        portable: true,
+      },
+      {
+        name: 'GitHub shorthand archive fragment',
+        declaration: 'user/repo.tgz#main',
+        portable: true,
+      },
+      {
+        name: 'GitHub shorthand semver fragment',
+        declaration: 'user/repo#semver:^1.2.3',
+        portable: true,
+      },
       {
         name: 'HTTPS archive',
         declaration: 'https://example.com/evil.tgz',

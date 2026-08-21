@@ -578,13 +578,47 @@ function isNonPortableDependencyDeclaration(declaration: unknown) {
   if (typeof declaration !== 'string') return true
   const trimmed = declaration.trim()
   if (trimmed.length === 0 || trimmed !== declaration) return true
-  return (
+  if (
     /^(?:file|link|workspace|git\+file):/iu.test(trimmed) ||
     /^~(?:[\\/]|$)/u.test(trimmed) ||
     /^[A-Za-z]:/u.test(trimmed) ||
     /^(?:\.\.?[\\/]|[\\/])/u.test(trimmed) ||
-    trimmed.includes('\\') ||
-    (!trimmed.includes(':') && /\.(?:tgz|tar\.gz|tar)$/iu.test(trimmed))
+    trimmed.includes('\\')
+  ) {
+    return true
+  }
+  return isLocalDependencyDeclaration(trimmed)
+}
+
+function isLocalDependencyDeclaration(value: string) {
+  if (isPortableHostedShorthand(value)) return false
+  return (
+    value.startsWith('.') ||
+    (!value.includes(':') && value.includes('/')) ||
+    (!value.includes(':') && /\.(?:tgz|tar\.gz|tar)(?:#.*)?$/iu.test(value))
+  )
+}
+
+function isPortableHostedShorthand(value: string) {
+  if (
+    value.startsWith('.') ||
+    value.startsWith('@') ||
+    value.includes('\\') ||
+    value.includes(':')
+  ) {
+    return false
+  }
+  const fragmentOffset = value.indexOf('#')
+  const repository = fragmentOffset < 0 ? value : value.slice(0, fragmentOffset)
+  if (fragmentOffset >= 0 && value.length === fragmentOffset + 1) {
+    return false
+  }
+  const segments = repository.split('/')
+  return (
+    segments.length === 2 &&
+    segments.every(
+      (segment) => segment.length > 0 && segment !== '.' && segment !== '..',
+    )
   )
 }
 
@@ -634,6 +668,17 @@ function collectDialectViolations(
   packageRoot: string,
   violations: ImportBoundaryViolation[],
 ) {
+  if (sourceFile.amdDependencies.length > 0) {
+    violations.push(
+      violation(
+        packageRoot,
+        importer,
+        0,
+        'invalid-amd-dependency',
+        'AMD dependency directives are not part of the package source dialect',
+      ),
+    )
+  }
   const hasUnsupportedJsxPragma = collectJsxPragmaViolations(
     sourceFile,
     importer,

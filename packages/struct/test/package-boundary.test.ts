@@ -424,6 +424,16 @@ describe('STRUCT package artifact boundary', () => {
           '// ordinary comment mentioning jsxRuntime automatic\nexport const value = true\n',
         jsx: 'react-jsx',
       },
+      {
+        name: 'line comment with pragma text',
+        source: '// @jsxRuntime automatic\nexport const value = true\n',
+        jsx: 'react-jsx',
+      },
+      {
+        name: 'block comment with pragma text',
+        source: '/* @jsxImportSource evil */\nexport const value = true\n',
+        jsx: 'react-jsx',
+      },
     ]
 
     const missing: string[] = []

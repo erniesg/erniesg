@@ -675,7 +675,9 @@ function collectJsxPragmaViolations(
 ) {
   let found = false
   for (const comment of ts.getLeadingCommentRanges(sourceFile.text, 0) ?? []) {
+    if (comment.kind !== ts.SyntaxKind.MultiLineCommentTrivia) continue
     const text = sourceFile.text.slice(comment.pos, comment.end)
+    if (!text.startsWith('/**')) continue
     const match = /@(jsxRuntime|jsxImportSource)\b/u.exec(text)
     if (!match || match.index === undefined) continue
     found = true

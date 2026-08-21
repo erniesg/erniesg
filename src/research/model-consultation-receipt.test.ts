@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import Ajv2020 from 'ajv/dist/2020.js'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { sha256HexSync } from './sha256-sync'
 import {
   MODEL_FALLBACK_DECISION_CLASSES,
@@ -13,6 +13,7 @@ import {
 } from './model-fallback'
 import { validReceiptMetric } from './model-fallback-receipt'
 import { validateModelConsultationReceipt as validateGenericReceipt } from '@erniesg/struct'
+import * as Struct from '@erniesg/struct'
 
 const schema = JSON.parse(
   readFileSync(
@@ -180,6 +181,19 @@ describe('model consultation receipt validation', () => {
       true,
     )
     expect(validateModelConsultationReceipt(receipt)).toBe(true)
+  })
+
+  it('delegates generic receipt validation to Struct before app policy checks', async () => {
+    const receipt = await validReceipt()
+    const genericValidator = vi.spyOn(
+      Struct,
+      'validateModelConsultationReceipt',
+    )
+
+    expect(validateModelConsultationReceipt(receipt)).toBe(true)
+    expect(genericValidator).toHaveBeenCalledWith(receipt)
+
+    genericValidator.mockRestore()
   })
 
   it('accepts receipts produced for bounded custom deterministic classes', async () => {

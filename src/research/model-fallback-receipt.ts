@@ -1,4 +1,5 @@
 import { sha256HexSync } from './sha256-sync'
+import * as Struct from '@erniesg/struct'
 
 /**
  * Application-owned model consultation policy for PDF reconstruction receipts.
@@ -1354,6 +1355,10 @@ export function validReceiptMetric(value: unknown) {
 export function validateModelConsultationReceipt(
   receipt: unknown,
 ): receipt is ModelFallbackReceipt {
+  // Struct owns the source-neutral receipt envelope. Keep the app validator
+  // as the policy extension, but make generic acceptance the first gate so
+  // the two validators cannot silently drift apart at their boundary.
+  if (!Struct.validateModelConsultationReceipt(receipt)) return false
   if (!receiptRecord(receipt)) return false
   if (
     !Array.isArray(receipt.consultations) ||

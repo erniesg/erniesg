@@ -9,9 +9,9 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, sep } from 'node:path'
 import { tmpdir } from 'node:os'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { auditPackageImportBoundary } from './package-import-boundary.js'
 
@@ -29,6 +29,20 @@ async function filesUnder(path: string): Promise<string[]> {
 }
 
 describe('STRUCT package artifact boundary', () => {
+  it('resolves the Vitest root when the package path contains spaces', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'struct package config-'))
+    const configPath = join(fixture, 'vitest.config.ts')
+    try {
+      await cp(join(root, 'vitest.config.ts'), configPath)
+      const configModule = (await import(
+        `${pathToFileURL(configPath).href}?space-path-regression`
+      )) as { default: { root?: string } }
+      expect(configModule.default.root).toBe(`${fixture}${sep}`)
+    } finally {
+      await rm(fixture, { recursive: true, force: true })
+    }
+  })
+
   it('publishes only built files and contains no private consumer contracts', async () => {
     const manifest = JSON.parse(
       await readFile(join(root, 'package.json'), 'utf8'),

@@ -27,6 +27,8 @@ import { createCanvas, loadImage } from '@napi-rs/canvas'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { structDigest } from '@erniesg/struct/ids'
 
+export const sourceOutputStructDigest = structDigest
+
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const DEFAULT_DOCUMENT = resolve(
   REPOSITORY_ROOT,
@@ -349,7 +351,6 @@ async function createFixtureStructDocument({
   fileName,
   page,
   asset,
-  structDigest,
 }) {
   const figureAsset = await cropFixtureFigure(asset)
   const sourceEvidence = evidence(
@@ -642,7 +643,7 @@ async function createFixtureStructDocument({
     },
   }
   const { receipt, ...withoutReceipt } = document
-  receipt.generatedSha256 = structDigest({
+  receipt.generatedSha256 = sourceOutputStructDigest({
     ...withoutReceipt,
     conservation: receipt.conservation,
     assets: document.assets.map(({ bytes: _bytes, ...asset }) => asset),
@@ -762,6 +763,16 @@ async function renderRendition({
   }
 }
 
+export async function loadViteModules(loadModule) {
+  const [checkpoints, pdf, struct, targets] = await Promise.all([
+    loadModule('/src/research/source-output-checkpoints.ts'),
+    loadModule('/src/research/pdf.ts'),
+    loadModule('/src/research/epub.ts'),
+    loadModule('/src/research/targets.ts'),
+  ])
+  return { checkpoints, pdf, struct, targets }
+}
+
 async function createViteModules() {
   const vite = await createServer({
     appType: 'custom',
@@ -770,13 +781,10 @@ async function createViteModules() {
     server: { middlewareMode: true, watch: null },
   })
   try {
-    const [checkpoints, pdf, struct, targets] = await Promise.all([
-      vite.ssrLoadModule('/src/research/source-output-checkpoints.ts'),
-      vite.ssrLoadModule('/src/research/pdf.ts'),
-      vite.ssrLoadModule('/src/research/epub.ts'),
-      vite.ssrLoadModule('/src/research/targets.ts'),
-    ])
-    return { vite, checkpoints, pdf, struct, targets }
+    const modules = await loadViteModules((specifier) =>
+      vite.ssrLoadModule(specifier),
+    )
+    return { vite, ...modules }
   } catch (error) {
     await vite.close()
     throw error
@@ -872,7 +880,6 @@ async function run(options) {
           fileName: basename(options.document),
           page: checkpoints[0].page,
           asset: sourceAsset,
-          structDigest,
         })
       : null
     const document = await loadStructDocument(options.struct, fallback)

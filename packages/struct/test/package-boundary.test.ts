@@ -384,6 +384,7 @@ describe('STRUCT package artifact boundary', () => {
       { name: 'parent path', declaration: '../evil' },
       { name: 'current path', declaration: './evil' },
       { name: 'npm local path', declaration: '~/evil' },
+      { name: 'npm local backslash path', declaration: '~\\evil' },
       { name: 'npm local archive', declaration: '~/evil.tgz' },
       { name: 'POSIX absolute path', declaration: '/tmp/evil' },
       { name: 'Windows drive path', declaration: 'C:\\evil' },
@@ -408,6 +409,58 @@ describe('STRUCT package artifact boundary', () => {
       { name: 'multi-dot local directory', declaration: '.../evil' },
       { name: 'nested local directory', declaration: 'dir/sub/local' },
       { name: 'raw scoped local directory', declaration: '@scope/pkg' },
+      {
+        name: 'hosted shorthand with version suffix',
+        declaration: 'user/repo@1.2.3',
+      },
+      {
+        name: 'hosted shorthand with tag suffix',
+        declaration: 'foo/bar@latest',
+      },
+      {
+        name: 'hosted shorthand with whitespace',
+        declaration: 'user/repo name',
+      },
+      {
+        name: 'hosted shorthand with tab whitespace',
+        declaration: 'user/repo\tname',
+      },
+      {
+        name: 'hosted shorthand with control character',
+        declaration: 'user/repo\u0000name',
+      },
+      {
+        name: 'hosted shorthand with user at-sign',
+        declaration: 'user@name/repo',
+      },
+      {
+        name: 'hosted shorthand with invalid repository escape',
+        declaration: 'user/repo%ZZ',
+      },
+      {
+        name: 'hosted shorthand with invalid user escape',
+        declaration: 'user/%ZZ',
+      },
+      {
+        name: 'slash value with non-protocol colon',
+        declaration: 'user/repo:tag',
+      },
+      {
+        name: 'multisegment shorthand with semver fragment',
+        declaration: 'dir/sub/local#semver:^1.2.3',
+      },
+      {
+        name: 'multisegment shorthand with path fragment',
+        declaration: 'user/repo/extra#path:packages/a',
+      },
+      {
+        name: 'scoped multisegment shorthand with semver fragment',
+        declaration: '@scope/pkg/path#semver:^1.2.3',
+      },
+      {
+        name: 'hosted shorthand with invalid fragment escape',
+        declaration: 'user/repo#main%ZZ',
+      },
       { name: 'file protocol', declaration: 'file:../evil' },
       { name: 'link protocol', declaration: 'link:../evil' },
       { name: 'workspace protocol', declaration: 'workspace:*' },
@@ -419,6 +472,12 @@ describe('STRUCT package artifact boundary', () => {
       { name: 'exact semver', declaration: '1.2.3', portable: true },
       { name: 'semver range', declaration: '^1.2.3', portable: true },
       { name: 'semver tilde', declaration: '~1.2.3', portable: true },
+      { name: 'bare tilde registry tag', declaration: '~', portable: true },
+      {
+        name: 'named tilde registry tag',
+        declaration: '~latest',
+        portable: true,
+      },
       { name: 'npm alias', declaration: 'npm:evil@^1.2.3', portable: true },
       {
         name: 'npm scoped alias',
@@ -426,6 +485,26 @@ describe('STRUCT package artifact boundary', () => {
         portable: true,
       },
       { name: 'GitHub shorthand', declaration: 'user/repo', portable: true },
+      {
+        name: 'GitHub shorthand empty fragment',
+        declaration: 'user/repo#',
+        portable: true,
+      },
+      {
+        name: 'GitHub shorthand space escape',
+        declaration: 'user/repo%20',
+        portable: true,
+      },
+      {
+        name: 'GitHub shorthand letter escape',
+        declaration: 'user/repo%72',
+        portable: true,
+      },
+      {
+        name: 'GitHub shorthand slash escape',
+        declaration: 'user/repo%2F',
+        portable: true,
+      },
       {
         name: 'GitHub shorthand tgz repository',
         declaration: 'user/repo.tgz',
@@ -459,6 +538,31 @@ describe('STRUCT package artifact boundary', () => {
       {
         name: 'HTTPS git repository',
         declaration: 'git+https://github.com/example/evil.git',
+        portable: true,
+      },
+      {
+        name: 'GitHub protocol repository',
+        declaration: 'github:user/repo',
+        portable: true,
+      },
+      {
+        name: 'GitLab protocol repository',
+        declaration: 'gitlab:user/repo',
+        portable: true,
+      },
+      {
+        name: 'Bitbucket protocol repository',
+        declaration: 'bitbucket:user/repo',
+        portable: true,
+      },
+      {
+        name: 'git+ssh repository',
+        declaration: 'git+ssh://git@github.com/example/evil.git',
+        portable: true,
+      },
+      {
+        name: 'SCP git repository',
+        declaration: 'git@github.com:example/evil.git',
         portable: true,
       },
     ]

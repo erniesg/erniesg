@@ -580,7 +580,7 @@ function isNonPortableDependencyDeclaration(declaration: unknown) {
   if (trimmed.length === 0 || trimmed !== declaration) return true
   if (
     /^(?:file|link|workspace|git\+file):/iu.test(trimmed) ||
-    /^~(?:[\\/]|$)/u.test(trimmed) ||
+    /^~[\\/]/u.test(trimmed) ||
     /^[A-Za-z]:/u.test(trimmed) ||
     /^(?:\.\.?[\\/]|[\\/])/u.test(trimmed) ||
     trimmed.includes('\\')
@@ -591,26 +591,30 @@ function isNonPortableDependencyDeclaration(declaration: unknown) {
 }
 
 function isLocalDependencyDeclaration(value: string) {
-  if (isPortableHostedShorthand(value)) return false
-  return (
-    value.startsWith('.') ||
-    (!value.includes(':') && value.includes('/')) ||
-    (!value.includes(':') && /\.(?:tgz|tar\.gz|tar)(?:#.*)?$/iu.test(value))
-  )
-}
-
-function isPortableHostedShorthand(value: string) {
-  if (
-    value.startsWith('.') ||
-    value.startsWith('@') ||
-    value.includes('\\') ||
-    value.includes(':')
-  ) {
+  if (isPortableHostedShorthand(value) || isPortableRemoteDeclaration(value)) {
     return false
   }
   const fragmentOffset = value.indexOf('#')
   const repository = fragmentOffset < 0 ? value : value.slice(0, fragmentOffset)
-  if (fragmentOffset >= 0 && value.length === fragmentOffset + 1) {
+  return (
+    repository.startsWith('.') ||
+    repository.includes('/') ||
+    /\.(?:tgz|tar\.gz|tar)(?:#.*)?$/iu.test(value)
+  )
+}
+
+function isPortableHostedShorthand(value: string) {
+  const fragmentOffset = value.indexOf('#')
+  const repository = fragmentOffset < 0 ? value : value.slice(0, fragmentOffset)
+  if (
+    repository.startsWith('.') ||
+    repository.startsWith('@') ||
+    repository.includes('@') ||
+    repository.includes('\\') ||
+    repository.includes(':') ||
+    /[\s\p{Cc}]/u.test(repository) ||
+    /%(?![0-9a-f]{2})/iu.test(value)
+  ) {
     return false
   }
   const segments = repository.split('/')
@@ -619,6 +623,15 @@ function isPortableHostedShorthand(value: string) {
     segments.every(
       (segment) => segment.length > 0 && segment !== '.' && segment !== '..',
     )
+  )
+}
+
+function isPortableRemoteDeclaration(value: string) {
+  return (
+    /^(?:https?|git|ssh):/iu.test(value) ||
+    /^git\+(?:https|ssh):/iu.test(value) ||
+    /^(?:github|gitlab|bitbucket|npm):/iu.test(value) ||
+    /^[^/\s:@]+@[^/\s:]+:[^\s]+$/u.test(value)
   )
 }
 

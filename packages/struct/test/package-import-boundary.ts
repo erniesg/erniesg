@@ -353,19 +353,35 @@ function collectStaticEdges(
   }
   visit(sourceFile)
 
-  for (const dependency of sourceFile.amdDependencies) {
-    const offset = sourceFile.text.indexOf(dependency.path)
-    checkModuleSpecifier(
-      dependency.path,
-      offset < 0 ? sourceFile.getStart(sourceFile) : offset,
-      importer,
-      packageRoot,
-      sourceFiles,
-      dependencies,
-      options,
-      cache,
-      violations,
-    )
+  if (sourceFile.amdDependencies.length > 0) {
+    const paths = amdDependencyPathOffsets(sourceFile)
+    if (!paths) {
+      violations.push(
+        violation(
+          packageRoot,
+          importer,
+          sourceFile.getStart(sourceFile),
+          'invalid-amd-dependency',
+          'AMD dependency directives could not be paired with compiler metadata',
+        ),
+      )
+    } else {
+      for (let index = 0; index < sourceFile.amdDependencies.length; index++) {
+        const dependency = sourceFile.amdDependencies[index]
+        const path = paths[index]
+        checkModuleSpecifier(
+          dependency.path,
+          path.offset,
+          importer,
+          packageRoot,
+          sourceFiles,
+          dependencies,
+          options,
+          cache,
+          violations,
+        )
+      }
+    }
   }
 
   const runtime = skipJsxRuntime
@@ -384,6 +400,34 @@ function collectStaticEdges(
       violations,
     )
   }
+}
+
+function amdDependencyPathOffsets(sourceFile: ts.SourceFile) {
+  const paths: Array<{ path: string; offset: number }> = []
+  let lineStart = 0
+  for (const line of sourceFile.text.split(/\r\n|[\r\n\u2028\u2029]/u)) {
+    const directive = /^\/\/\/\s*<amd-dependency\b.*\/>\s*$/u.exec(line)
+    if (directive) {
+      const attributes = /\bpath\s*=\s*(["'])(.*?)\1/u.exec(line)
+      if (!attributes) return undefined
+      const attributeOffset = line.indexOf(attributes[0])
+      const quoteOffset = attributes[0].indexOf(attributes[1])
+      paths.push({
+        path: attributes[2],
+        offset: lineStart + attributeOffset + quoteOffset + 1,
+      })
+    }
+    lineStart += line.length
+    if (lineStart < sourceFile.text.length) {
+      lineStart += sourceFile.text.startsWith('\r\n', lineStart) ? 2 : 1
+    }
+  }
+  return paths.length === sourceFile.amdDependencies.length &&
+    paths.every(
+      ({ path }, index) => path === sourceFile.amdDependencies[index].path,
+    )
+    ? paths
+    : undefined
 }
 
 function checkModuleSpecifier(
@@ -578,7 +622,9 @@ function isNonPortableDependencyDeclaration(declaration: unknown) {
   if (trimmed.length === 0 || trimmed !== declaration) return true
   return (
     /^(?:file|link|workspace|git\+file):/iu.test(trimmed) ||
-    /^(?:\.\.?[\\/]|[\\/]|[A-Za-z]:[\\/])/u.test(trimmed) ||
+    /^~(?:[\\/]|$)/u.test(trimmed) ||
+    /^[A-Za-z]:/u.test(trimmed) ||
+    /^(?:\.\.?[\\/]|[\\/])/u.test(trimmed) ||
     trimmed.includes('\\')
   )
 }

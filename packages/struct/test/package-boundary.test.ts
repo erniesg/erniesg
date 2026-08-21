@@ -265,13 +265,69 @@ describe('STRUCT package artifact boundary', () => {
     }
   })
 
+  it('pairs AMD dependency paths with ordered public edges and exact offsets', async () => {
+    const source =
+      '// ordinary comment mentions evil\n' +
+      '/// <amd-dependency path="evil" name="first" />\n' +
+      "/// <amd-dependency   name='second'   path = 'evil'   />\n" +
+      '/// <amd-dependency path = "" name="empty" />\n' +
+      '/// <amd-dependency path="evil" />\n' +
+      'export const value = true\n'
+    const fixture = await makeFixture(source, {
+      'node_modules/evil/package.json': JSON.stringify({
+        name: 'evil',
+        types: 'index.d.ts',
+      }),
+      'node_modules/evil/index.d.ts': 'export {}\n',
+      'tsconfig.json': JSON.stringify({
+        compilerOptions: {
+          target: 'ES2022',
+          module: 'AMD',
+          moduleResolution: 'Node10',
+          strict: true,
+          skipLibCheck: true,
+          rootDir: 'src',
+        },
+        include: ['src/**/*.ts'],
+      }),
+    })
+    try {
+      const diagnostics = await auditPackageImportBoundary(fixture)
+      const undeclared = diagnostics.filter(
+        ({ code, specifier }) =>
+          code === 'undeclared-runtime-dependency' && specifier === 'evil',
+      )
+      const firstDirective = source.indexOf('path="evil"')
+      const secondDirective = source.indexOf("path = 'evil'")
+      const thirdDirective = source.lastIndexOf('path="evil"')
+      expect(undeclared.map(({ offset }) => offset)).toEqual([
+        source.indexOf('evil', firstDirective),
+        source.indexOf('evil', secondDirective),
+        source.indexOf('evil', thirdDirective),
+      ])
+
+      const empty = diagnostics.find(({ specifier }) => specifier === '')
+      expect(empty).toMatchObject({
+        code: 'unresolved-module',
+        offset: source.indexOf('path = ""') + 'path = "'.length,
+      })
+    } finally {
+      await rm(fixture, { recursive: true, force: true })
+    }
+  })
+
   it('rejects non-portable dependency declarations while retaining portable forms', async () => {
     const cases = [
       { name: 'parent path', declaration: '../evil' },
       { name: 'current path', declaration: './evil' },
+      { name: 'npm local path', declaration: '~/evil' },
+      { name: 'npm local archive', declaration: '~/evil.tgz' },
       { name: 'POSIX absolute path', declaration: '/tmp/evil' },
       { name: 'Windows drive path', declaration: 'C:\\evil' },
       { name: 'Windows drive slash path', declaration: 'C:/evil' },
+      { name: 'Windows drive-relative path', declaration: 'C:evil' },
+      { name: 'Windows drive-relative parent', declaration: 'C:../evil' },
+      { name: 'Windows drive-relative archive', declaration: 'Z:package.tgz' },
       { name: 'Windows UNC path', declaration: '\\\\server\\share\\evil' },
       { name: 'file protocol', declaration: 'file:../evil' },
       { name: 'link protocol', declaration: 'link:../evil' },
@@ -283,6 +339,7 @@ describe('STRUCT package artifact boundary', () => {
       { name: 'object declaration', declaration: { path: 'evil' } },
       { name: 'exact semver', declaration: '1.2.3', portable: true },
       { name: 'semver range', declaration: '^1.2.3', portable: true },
+      { name: 'semver tilde', declaration: '~1.2.3', portable: true },
       { name: 'npm alias', declaration: 'npm:evil@^1.2.3', portable: true },
       {
         name: 'HTTPS archive',

@@ -30,6 +30,8 @@ const forbiddenResolutionOptions = new Set([
   'typeRoots',
 ])
 
+const forbiddenDialectOptions = new Set(['importHelpers'])
+
 export async function auditPackageImportBoundary(
   packageRoot: string,
 ): Promise<readonly ImportBoundaryViolation[]> {
@@ -77,6 +79,22 @@ export async function auditPackageImportBoundary(
           0,
           'resolution-indirection-not-allowed',
           `compiler option ${option} is not permitted`,
+        ),
+      )
+    }
+  }
+  for (const option of forbiddenDialectOptions) {
+    const parsedOption = parsedOptionValue(option, parsed.options)
+    if (option in rawCompilerOptions || parsedOption !== undefined) {
+      violations.push(
+        violation(
+          packagePath,
+          configPath,
+          0,
+          'compiler-option-not-allowed',
+          `compiler option ${option} is not permitted by the package dialect`,
+          undefined,
+          option,
         ),
       )
     }
@@ -219,8 +237,8 @@ export async function auditPackageImportBoundary(
       parsed.options,
       resolutionCache,
       violations,
+      collectDialectViolations(syntax, importer, packagePath, violations),
     )
-    collectDialectViolations(syntax, importer, packagePath, violations)
   }
 
   return sortViolations(violations)
@@ -296,6 +314,7 @@ function collectStaticEdges(
   options: ts.CompilerOptions,
   cache: ts.ModuleResolutionCache,
   violations: ImportBoundaryViolation[],
+  skipJsxRuntime = false,
 ) {
   const check = (node: ts.Node, literal: ts.StringLiteralLike) => {
     checkModuleSpecifier(
@@ -334,7 +353,9 @@ function collectStaticEdges(
   }
   visit(sourceFile)
 
-  const runtime = jsxRuntimeSpecifier(sourceFile, options)
+  const runtime = skipJsxRuntime
+    ? undefined
+    : jsxRuntimeSpecifier(sourceFile, options)
   if (runtime) {
     checkModuleSpecifier(
       runtime.specifier,
@@ -553,16 +574,7 @@ function jsxRuntimeSpecifier(
   ) {
     return undefined
   }
-  const pragma = (
-    sourceFile as ts.SourceFile & {
-      pragmas?: ReadonlyMap<
-        string,
-        { arguments?: { factory?: string | undefined } }
-      >
-    }
-  ).pragmas?.get('jsximportsource')
-  const importSource =
-    pragma?.arguments?.factory ?? options.jsxImportSource ?? 'react'
+  const importSource = options.jsxImportSource ?? 'react'
   let offset: number | undefined
   const visit = (node: ts.Node) => {
     if (
@@ -594,6 +606,12 @@ function collectDialectViolations(
   packageRoot: string,
   violations: ImportBoundaryViolation[],
 ) {
+  const hasUnsupportedJsxPragma = collectJsxPragmaViolations(
+    sourceFile,
+    importer,
+    packageRoot,
+    violations,
+  )
   const visit = (node: ts.Node) => {
     if (ts.isImportEqualsDeclaration(node)) {
       violations.push(
@@ -646,6 +664,35 @@ function collectDialectViolations(
     ts.forEachChild(node, visit)
   }
   visit(sourceFile)
+  return hasUnsupportedJsxPragma
+}
+
+function collectJsxPragmaViolations(
+  sourceFile: ts.SourceFile,
+  importer: string,
+  packageRoot: string,
+  violations: ImportBoundaryViolation[],
+) {
+  let found = false
+  for (const comment of ts.getLeadingCommentRanges(sourceFile.text, 0) ?? []) {
+    const text = sourceFile.text.slice(comment.pos, comment.end)
+    const match = /@(jsxRuntime|jsxImportSource)\b/u.exec(text)
+    if (!match || match.index === undefined) continue
+    found = true
+    const specifier = `@${match[1]}`
+    violations.push(
+      violation(
+        packageRoot,
+        importer,
+        comment.pos + match.index,
+        'jsx-pragma-not-allowed',
+        `${specifier} is not part of the package source dialect`,
+        undefined,
+        specifier,
+      ),
+    )
+  }
+  return found
 }
 
 function violation(

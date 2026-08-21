@@ -345,14 +345,6 @@ describe('STRUCT package artifact boundary', () => {
         runtimeFile: 'jsx-dev-runtime.d.ts',
         runtime: 'react/jsx-dev-runtime',
       },
-      {
-        name: 'source JSX import pragma',
-        source: '/** @jsxImportSource evil */\nexport const value = <div />\n',
-        packageName: 'evil',
-        jsx: 'react-jsx',
-        runtimeFile: 'jsx-runtime.d.ts',
-        runtime: 'evil/jsx-runtime',
-      },
     ]
 
     const missing: string[] = []
@@ -399,6 +391,135 @@ describe('STRUCT package artifact boundary', () => {
       }
     }
     expect(missing).toEqual([])
+  })
+
+  it('rejects unsupported source JSX pragmas with exact diagnostics', async () => {
+    const cases = [
+      {
+        name: 'automatic runtime override',
+        source: '/** @jsxRuntime automatic */\nexport const value = <div />\n',
+        jsx: 'react',
+        pragma: '@jsxRuntime',
+      },
+      {
+        name: 'classic runtime override',
+        source: '/** @jsxRuntime classic */\nexport const value = <div />\n',
+        jsx: 'react-jsx',
+        pragma: '@jsxRuntime',
+      },
+      {
+        name: 'source import override',
+        source: '/** @jsxImportSource evil */\nexport const value = <div />\n',
+        jsx: 'react-jsx',
+        pragma: '@jsxImportSource',
+      },
+      {
+        name: 'pragma-looking string',
+        source: 'const value = "@jsxRuntime automatic"\nexport { value }\n',
+        jsx: 'react-jsx',
+      },
+      {
+        name: 'ordinary comment',
+        source:
+          '// ordinary comment mentioning jsxRuntime automatic\nexport const value = true\n',
+        jsx: 'react-jsx',
+      },
+    ]
+
+    const missing: string[] = []
+    for (const testCase of cases) {
+      const fixture = await makeFixture(
+        testCase.source,
+        {
+          'node_modules/react/package.json': JSON.stringify({
+            name: 'react',
+            types: 'jsx-runtime.d.ts',
+          }),
+          'node_modules/react/jsx-runtime.d.ts':
+            'export function jsx(): unknown\n',
+          'node_modules/evil/package.json': JSON.stringify({
+            name: 'evil',
+            types: 'jsx-runtime.d.ts',
+          }),
+          'node_modules/evil/jsx-runtime.d.ts':
+            'export function jsx(): unknown\n',
+          'tsconfig.json': JSON.stringify({
+            compilerOptions: {
+              target: 'ES2022',
+              module: 'ESNext',
+              moduleResolution: 'Bundler',
+              jsx: testCase.jsx,
+              strict: true,
+              skipLibCheck: true,
+              rootDir: 'src',
+            },
+            include: ['src/**/*.tsx'],
+          }),
+        },
+        'src/index.tsx',
+      )
+      try {
+        const diagnostics = await auditPackageImportBoundary(fixture)
+        if (testCase.pragma) {
+          const matching = diagnostics.find(
+            ({ code, specifier }) =>
+              code === 'jsx-pragma-not-allowed' &&
+              specifier === testCase.pragma,
+          )
+          if (!matching) {
+            missing.push(testCase.name)
+          } else {
+            expect(matching).toMatchObject({
+              importer: 'src/index.tsx',
+              offset: testCase.source.indexOf(testCase.pragma),
+              message: `${testCase.pragma} is not part of the package source dialect`,
+            })
+          }
+        } else if (diagnostics.length > 0) {
+          missing.push(testCase.name)
+        }
+      } finally {
+        await rm(fixture, { recursive: true, force: true })
+      }
+    }
+    expect(missing).toEqual([])
+  })
+
+  it('rejects compiler helper imports as an unsupported dialect option', async () => {
+    const fixture = await makeFixture(
+      'export async function value() { await Promise.resolve() }\n',
+      {
+        'node_modules/tslib/package.json': JSON.stringify({
+          name: 'tslib',
+          types: 'index.d.ts',
+        }),
+        'node_modules/tslib/index.d.ts':
+          'export declare const __awaiter: unknown\n',
+        'tsconfig.json': JSON.stringify({
+          compilerOptions: {
+            target: 'ES2015',
+            module: 'ESNext',
+            moduleResolution: 'Bundler',
+            importHelpers: true,
+            strict: true,
+            skipLibCheck: true,
+            rootDir: 'src',
+          },
+          include: ['src/**/*.ts'],
+        }),
+      },
+    )
+    try {
+      expect(await auditPackageImportBoundary(fixture)).toContainEqual(
+        expect.objectContaining({
+          code: 'compiler-option-not-allowed',
+          importer: 'tsconfig.json',
+          specifier: 'importHelpers',
+        }),
+      )
+    } finally {
+      await rm(fixture, { recursive: true, force: true })
+    }
   })
 
   it('reports exact lexical policy diagnostics for unsupported capabilities', async () => {

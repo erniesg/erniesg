@@ -442,6 +442,42 @@ describe('STRUCT package artifact boundary', () => {
         declaration: 'user/%ZZ',
       },
       {
+        name: 'hosted shorthand with invalid UTF-8 byte',
+        declaration: 'user/%FF',
+      },
+      {
+        name: 'hosted shorthand with overlong UTF-8 sequence',
+        declaration: 'user/%C0%AF',
+      },
+      {
+        name: 'hosted shorthand with surrogate UTF-8 sequence',
+        declaration: 'user/%ED%A0%80',
+      },
+      {
+        name: 'hosted shorthand with invalid fragment UTF-8 byte',
+        declaration: 'user/repo#foo%FF',
+      },
+      {
+        name: 'hosted shorthand with overlong four-byte sequence',
+        declaration: 'user/%F0%80%80%AF',
+      },
+      {
+        name: 'hosted shorthand with truncated three-byte sequence',
+        declaration: 'user/%E2%82',
+      },
+      {
+        name: 'hosted shorthand with truncated four-byte sequence',
+        declaration: 'user/%F0%9F%92',
+      },
+      {
+        name: 'hosted shorthand with invalid continuation byte',
+        declaration: 'user/%E2%28%A1',
+      },
+      {
+        name: 'hosted shorthand with out-of-range UTF-8 sequence',
+        declaration: 'user/%F4%90%80%80',
+      },
+      {
         name: 'slash value with non-protocol colon',
         declaration: 'user/repo:tag',
       },
@@ -503,6 +539,16 @@ describe('STRUCT package artifact boundary', () => {
       {
         name: 'GitHub shorthand slash escape',
         declaration: 'user/repo%2F',
+        portable: true,
+      },
+      {
+        name: 'GitHub shorthand encoded repository dot',
+        declaration: 'user/repo%2e',
+        portable: true,
+      },
+      {
+        name: 'GitHub shorthand encoded owner dot',
+        declaration: 'user%2e/repo',
         portable: true,
       },
       {

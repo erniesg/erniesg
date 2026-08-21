@@ -613,7 +613,7 @@ function isPortableHostedShorthand(value: string) {
     repository.includes('\\') ||
     repository.includes(':') ||
     /[\s\p{Cc}]/u.test(repository) ||
-    /%(?![0-9a-f]{2})/iu.test(value)
+    !hasValidPercentDecoding(value)
   ) {
     return false
   }
@@ -624,6 +624,15 @@ function isPortableHostedShorthand(value: string) {
       (segment) => segment.length > 0 && segment !== '.' && segment !== '..',
     )
   )
+}
+
+function hasValidPercentDecoding(value: string) {
+  try {
+    decodeURIComponent(value)
+    return true
+  } catch {
+    return false
+  }
 }
 
 function isPortableRemoteDeclaration(value: string) {

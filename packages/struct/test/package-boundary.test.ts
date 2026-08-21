@@ -150,6 +150,32 @@ describe('STRUCT package artifact boundary', () => {
         specifier: 'fflate/../fast-xml-parser',
       },
       {
+        name: 'dot dependency subpath',
+        source: "import 'fflate/./index'\n",
+        extra: {
+          'node_modules/fflate/package.json': JSON.stringify({
+            name: 'fflate',
+            types: 'index.d.ts',
+          }),
+          'node_modules/fflate/index.d.ts': 'export {}\n',
+        },
+        expected: 'unsafe-module-specifier',
+        specifier: 'fflate/./index',
+      },
+      {
+        name: 'dot package root subpath',
+        source: "import 'fflate/.'\n",
+        extra: {
+          'node_modules/fflate/package.json': JSON.stringify({
+            name: 'fflate',
+            types: 'index.d.ts',
+          }),
+          'node_modules/fflate/index.d.ts': 'export {}\n',
+        },
+        expected: 'unsafe-module-specifier',
+        specifier: 'fflate/.',
+      },
+      {
         name: 'encoded dependency traversal',
         source: "import 'fflate%2e%2fsecret'\n",
         expected: 'unsafe-module-specifier',

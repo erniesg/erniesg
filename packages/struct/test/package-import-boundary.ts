@@ -371,7 +371,7 @@ function collectStaticEdges(
     if (
       !relativeImport &&
       packageName &&
-      /(?:^|\/)\.\.(?:\/|$)/u.test(specifier)
+      /(?:^|\/)(?:\.|\.\.)(?:\/|$)/u.test(specifier)
     ) {
       violations.push(
         violation(

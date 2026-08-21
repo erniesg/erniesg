@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
+import { structDigest as packageStructDigest } from '@erniesg/struct/ids'
 import { renditionSourceForCheckpoint } from './srt-source-output-evidence.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -49,6 +50,16 @@ function privateFixture() {
 }
 
 describe('source/output evidence privacy boundary', () => {
+  it('resolves STRUCT digest from the reviewed package export', async () => {
+    const source = readFileSync(tool, 'utf8')
+
+    expect(source).toContain("from '@erniesg/struct/ids'")
+    expect(source).not.toContain("'/src/struct/ids.ts'")
+    expect(packageStructDigest({ B: 1, a: 2 })).toBe(
+      '812e5e7fb7bb816dc477e91a136430192eadcf83ff303881298146e106ae0161',
+    )
+  })
+
   it.each([
     'marker-to-body',
     'citation-to-entry',

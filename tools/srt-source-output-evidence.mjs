@@ -25,6 +25,7 @@ import { chromium } from '@playwright/test'
 import { strFromU8, unzipSync } from 'fflate'
 import { createCanvas, loadImage } from '@napi-rs/canvas'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { structDigest } from '@erniesg/struct/ids'
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const DEFAULT_DOCUMENT = resolve(
@@ -769,14 +770,13 @@ async function createViteModules() {
     server: { middlewareMode: true, watch: null },
   })
   try {
-    const [checkpoints, pdf, struct, targets, structIds] = await Promise.all([
+    const [checkpoints, pdf, struct, targets] = await Promise.all([
       vite.ssrLoadModule('/src/research/source-output-checkpoints.ts'),
       vite.ssrLoadModule('/src/research/pdf.ts'),
       vite.ssrLoadModule('/src/research/epub.ts'),
       vite.ssrLoadModule('/src/research/targets.ts'),
-      vite.ssrLoadModule('/src/struct/ids.ts'),
     ])
-    return { vite, checkpoints, pdf, struct, targets, structIds }
+    return { vite, checkpoints, pdf, struct, targets }
   } catch (error) {
     await vite.close()
     throw error
@@ -872,7 +872,7 @@ async function run(options) {
           fileName: basename(options.document),
           page: checkpoints[0].page,
           asset: sourceAsset,
-          structDigest: modules.structIds.structDigest,
+          structDigest,
         })
       : null
     const document = await loadStructDocument(options.struct, fallback)

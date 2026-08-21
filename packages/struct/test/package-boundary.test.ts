@@ -9,7 +9,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -96,7 +96,7 @@ describe('STRUCT package artifact boundary', () => {
   })
 
   it('reports exact graph-boundary diagnostics for red fixtures', async () => {
-    const cases = [
+    const cases: GraphBoundaryCase[] = [
       {
         name: 'relative import escaping source',
         source: "import '../app.js'\n",
@@ -286,9 +286,17 @@ describe('STRUCT package artifact boundary', () => {
   })
 
   it('rejects compiler-selected local declaration closure outside src', async () => {
-    const fixture = await makeFixture('export const value = true\n', {
-      '../ambient/index.d.ts': 'declare const ambient: unique symbol\n',
-      'tsconfig.json': JSON.stringify({
+    const fixture = await makeFixture('export const value = true\n')
+    const ambientName = `ambient-${basename(fixture)}`
+    const ambientPath = join(fixture, '..', ambientName)
+    await mkdir(ambientPath, { recursive: true })
+    await writeFile(
+      join(ambientPath, 'index.d.ts'),
+      'declare const ambient: unique symbol\n',
+    )
+    await writeFile(
+      join(fixture, 'tsconfig.json'),
+      JSON.stringify({
         compilerOptions: {
           target: 'ES2022',
           module: 'ESNext',
@@ -296,57 +304,101 @@ describe('STRUCT package artifact boundary', () => {
           strict: true,
           skipLibCheck: true,
           rootDir: 'src',
-          types: ['../ambient'],
+          types: [`../${ambientName}`],
         },
         include: ['src/**/*.ts'],
       }),
-    })
+    )
     try {
       expect(
         (await auditPackageImportBoundary(fixture)).map(({ code }) => code),
       ).toContain('source-closure-outside-source')
     } finally {
       await rm(fixture, { recursive: true, force: true })
-      await rm(join(fixture, '..', 'ambient'), {
-        recursive: true,
-        force: true,
-      })
+      await rm(ambientPath, { recursive: true, force: true })
     }
   })
 
   it('classifies the implicit JSX runtime module edge', async () => {
-    const fixture = await makeFixture(
-      'export const value = <div />\n',
+    const cases = [
       {
-        'node_modules/evil/package.json': JSON.stringify({
-          name: 'evil',
-          types: 'jsx-runtime.d.ts',
-        }),
-        'node_modules/evil/jsx-runtime.d.ts':
-          'export function jsx(): unknown\n',
-        'tsconfig.json': JSON.stringify({
-          compilerOptions: {
-            target: 'ES2022',
-            module: 'ESNext',
-            moduleResolution: 'Bundler',
-            jsx: 'react-jsx',
-            jsxImportSource: 'evil',
-            strict: true,
-            skipLibCheck: true,
-            rootDir: 'src',
-          },
-          include: ['src/**/*.tsx'],
-        }),
+        name: 'configured JSX import source',
+        source: 'export const value = <div />\n',
+        packageName: 'evil',
+        jsx: 'react-jsx',
+        runtimeFile: 'jsx-runtime.d.ts',
+        runtime: 'evil/jsx-runtime',
       },
-      'src/index.tsx',
-    )
-    try {
-      expect(
-        (await auditPackageImportBoundary(fixture)).map(({ code }) => code),
-      ).toContain('undeclared-runtime-dependency')
-    } finally {
-      await rm(fixture, { recursive: true, force: true })
+      {
+        name: 'default React JSX runtime',
+        source: 'export const value = <div />\n',
+        packageName: 'react',
+        jsx: 'react-jsx',
+        runtimeFile: 'jsx-runtime.d.ts',
+        runtime: 'react/jsx-runtime',
+      },
+      {
+        name: 'default React JSX dev runtime',
+        source: 'export const value = <div />\n',
+        packageName: 'react',
+        jsx: 'react-jsxdev',
+        runtimeFile: 'jsx-dev-runtime.d.ts',
+        runtime: 'react/jsx-dev-runtime',
+      },
+      {
+        name: 'source JSX import pragma',
+        source: '/** @jsxImportSource evil */\nexport const value = <div />\n',
+        packageName: 'evil',
+        jsx: 'react-jsx',
+        runtimeFile: 'jsx-runtime.d.ts',
+        runtime: 'evil/jsx-runtime',
+      },
+    ]
+
+    const missing: string[] = []
+    for (const testCase of cases) {
+      const fixture = await makeFixture(
+        testCase.source,
+        {
+          [`node_modules/${testCase.packageName}/package.json`]: JSON.stringify(
+            {
+              name: testCase.packageName,
+              types: testCase.runtimeFile,
+            },
+          ),
+          [`node_modules/${testCase.packageName}/${testCase.runtimeFile}`]:
+            'export function jsx(): unknown\n',
+          'tsconfig.json': JSON.stringify({
+            compilerOptions: {
+              target: 'ES2022',
+              module: 'ESNext',
+              moduleResolution: 'Bundler',
+              jsx: testCase.jsx,
+              ...(testCase.packageName === 'evil' &&
+              !testCase.source.includes('@jsxImportSource')
+                ? { jsxImportSource: 'evil' }
+                : {}),
+              strict: true,
+              skipLibCheck: true,
+              rootDir: 'src',
+            },
+            include: ['src/**/*.tsx'],
+          }),
+        },
+        'src/index.tsx',
+      )
+      try {
+        const matching = (await auditPackageImportBoundary(fixture)).find(
+          ({ code, specifier }) =>
+            code === 'undeclared-runtime-dependency' &&
+            specifier === testCase.runtime,
+        )
+        if (!matching) missing.push(testCase.name)
+      } finally {
+        await rm(fixture, { recursive: true, force: true })
+      }
     }
+    expect(missing).toEqual([])
   })
 
   it('reports exact lexical policy diagnostics for unsupported capabilities', async () => {
@@ -505,6 +557,16 @@ describe('STRUCT package artifact boundary', () => {
 })
 
 type FixtureExtra = Record<string, string | undefined>
+
+type GraphBoundaryCase = {
+  name: string
+  source: string
+  extra?: FixtureExtra
+  expected: string
+  symlink?: boolean
+  importer?: string
+  specifier?: string
+}
 
 async function makeFixture(
   source: string,

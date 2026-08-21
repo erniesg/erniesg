@@ -1,5 +1,5 @@
 import { lstat, readFile, readdir } from 'node:fs/promises'
-import { dirname, extname, relative, resolve } from 'node:path'
+import { extname, relative, resolve } from 'node:path'
 import * as ts from 'typescript'
 
 export type ImportBoundaryViolation = {
@@ -167,8 +167,8 @@ export async function auditPackageImportBoundary(
     const sourcePath = resolve(sourceFile.fileName)
     if (!sourceFiles.has(sourcePath)) {
       if (
-        !isExternalLibraryPath(sourcePath) &&
-        !isDefaultLibraryPath(sourcePath, parsed.options)
+        !program.isSourceFileFromExternalLibrary(sourceFile) &&
+        !program.isSourceFileDefaultLibrary(sourceFile)
       ) {
         violations.push(
           violation(
@@ -539,21 +539,6 @@ function checkModuleSpecifier(
   }
 }
 
-function isExternalLibraryPath(fileName: string) {
-  return /(?:^|\/)node_modules\//u.test(normalizePath(fileName))
-}
-
-function isDefaultLibraryPath(fileName: string, options: ts.CompilerOptions) {
-  const normalized = normalizePath(fileName)
-  const defaultLibDirectory = normalizePath(
-    dirname(ts.getDefaultLibFilePath(options)),
-  )
-  return (
-    normalized.startsWith(`${defaultLibDirectory}/`) &&
-    /\/lib\.[^/]+\.d\.ts$/u.test(normalized)
-  )
-}
-
 function normalizePath(fileName: string) {
   return fileName.replaceAll('\\', '/')
 }
@@ -563,12 +548,21 @@ function jsxRuntimeSpecifier(
   options: ts.CompilerOptions,
 ) {
   if (
-    !options.jsxImportSource ||
-    (options.jsx !== ts.JsxEmit.ReactJSX &&
-      options.jsx !== ts.JsxEmit.ReactJSXDev)
+    options.jsx !== ts.JsxEmit.ReactJSX &&
+    options.jsx !== ts.JsxEmit.ReactJSXDev
   ) {
     return undefined
   }
+  const pragma = (
+    sourceFile as ts.SourceFile & {
+      pragmas?: ReadonlyMap<
+        string,
+        { arguments?: { factory?: string | undefined } }
+      >
+    }
+  ).pragmas?.get('jsximportsource')
+  const importSource =
+    pragma?.arguments?.factory ?? options.jsxImportSource ?? 'react'
   let offset: number | undefined
   const visit = (node: ts.Node) => {
     if (
@@ -586,7 +580,7 @@ function jsxRuntimeSpecifier(
     ? undefined
     : {
         offset,
-        specifier: `${options.jsxImportSource}/${
+        specifier: `${importSource}/${
           options.jsx === ts.JsxEmit.ReactJSXDev
             ? 'jsx-dev-runtime'
             : 'jsx-runtime'
@@ -663,21 +657,26 @@ function violation(
   resolvedTarget?: string,
   specifier?: string,
 ): ImportBoundaryViolation {
+  const normalizedImporter = normalizePath(importer)
   return {
     code,
-    importer: importer.startsWith('/')
-      ? displayPath(packageRoot, importer)
-      : importer,
+    importer: isAbsolutePath(normalizedImporter)
+      ? displayPath(packageRoot, normalizedImporter)
+      : normalizedImporter,
     offset,
     ...(specifier === undefined ? {} : { specifier }),
-    ...(resolvedTarget === undefined ? {} : { resolvedTarget }),
+    ...(resolvedTarget === undefined
+      ? {}
+      : { resolvedTarget: normalizePath(resolvedTarget) }),
     message,
   }
 }
 
 function displayPath(packageRoot: string, fileName: string) {
   return (
-    normalizePath(relative(packageRoot, fileName)) || normalizePath(fileName)
+    normalizePath(
+      relative(normalizePath(packageRoot), normalizePath(fileName)),
+    ) || normalizePath(fileName)
   )
 }
 
@@ -718,6 +717,10 @@ function isAbsoluteModuleSpecifier(specifier: string) {
     normalized.startsWith('//') ||
     /^[A-Za-z]:\//u.test(normalized)
   )
+}
+
+function isAbsolutePath(fileName: string) {
+  return isAbsoluteModuleSpecifier(fileName)
 }
 
 function isLoaderSpecifier(specifier: string) {

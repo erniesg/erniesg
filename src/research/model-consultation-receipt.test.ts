@@ -200,6 +200,50 @@ describe('model consultation receipt validation', () => {
     }
   })
 
+  it('short-circuits app policy inspection when Struct rejects first', async () => {
+    const receipt = await validReceipt()
+    expect(validateModelConsultationReceipt(receipt)).toBe(true)
+
+    const consultations = receipt.consultations
+    const consultationsDescriptor = Object.getOwnPropertyDescriptor(
+      receipt,
+      'consultations',
+    )
+    if (!consultationsDescriptor)
+      throw new Error('receipt consultations descriptor missing')
+
+    let consultationReads = 0
+    let result: boolean | undefined
+    let readsBeforeAssertions = -1
+    let packageCallCount = -1
+    let delegatedReceipt: unknown
+    const genericValidator = vi
+      .spyOn(Struct, 'validateModelConsultationReceipt')
+      .mockReturnValue(false)
+    try {
+      Object.defineProperty(receipt, 'consultations', {
+        configurable: true,
+        enumerable: true,
+        get() {
+          consultationReads += 1
+          return consultations
+        },
+      })
+      result = validateModelConsultationReceipt(receipt)
+      readsBeforeAssertions = consultationReads
+      packageCallCount = genericValidator.mock.calls.length
+      delegatedReceipt = genericValidator.mock.calls[0]?.[0]
+    } finally {
+      Object.defineProperty(receipt, 'consultations', consultationsDescriptor)
+      genericValidator.mockRestore()
+    }
+
+    expect(result).toBe(false)
+    expect(readsBeforeAssertions).toBe(0)
+    expect(packageCallCount).toBe(1)
+    expect(delegatedReceipt).toBe(receipt)
+  })
+
   it('accepts receipts produced for bounded custom deterministic classes', async () => {
     const ledger = new ModelFallbackLedger()
     const gate = new ModelConsultationGate({ ledger })

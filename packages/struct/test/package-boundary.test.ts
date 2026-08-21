@@ -455,6 +455,20 @@ describe('STRUCT package artifact boundary', () => {
         pragma: '@jsxRuntime',
         marker: '@JSXRUNTIME',
       },
+      {
+        name: 'unknown prefix before import source token',
+        source:
+          '/* @notAThing @jsxImportSource evil */\nexport const value = <div />\n',
+        jsx: 'react-jsx',
+        allowRuntimeEdge: true,
+      },
+      {
+        name: 'unknown prefix before runtime token',
+        source:
+          '/* @notAThing @jsxRuntime automatic */\nexport const value = <div />\n',
+        jsx: 'react',
+        allowRuntimeEdge: true,
+      },
     ]
 
     const missing: string[] = []
@@ -508,7 +522,10 @@ describe('STRUCT package artifact boundary', () => {
               message: `${testCase.pragma} is not part of the package source dialect`,
             })
           }
-        } else if (diagnostics.length > 0) {
+        } else if (
+          diagnostics.some(({ code }) => code === 'jsx-pragma-not-allowed') ||
+          (!testCase.allowRuntimeEdge && diagnostics.length > 0)
+        ) {
           missing.push(testCase.name)
         }
       } finally {

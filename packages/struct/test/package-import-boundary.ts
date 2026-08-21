@@ -677,24 +677,36 @@ function collectJsxPragmaViolations(
   for (const comment of ts.getLeadingCommentRanges(sourceFile.text, 0) ?? []) {
     if (comment.kind !== ts.SyntaxKind.MultiLineCommentTrivia) continue
     const text = sourceFile.text.slice(comment.pos, comment.end)
-    const match = /@(jsxRuntime|jsxImportSource)\b/iu.exec(text)
-    if (!match || match.index === undefined) continue
-    found = true
-    const specifier =
-      match[1].toLowerCase() === 'jsxruntime'
-        ? '@jsxRuntime'
-        : '@jsxImportSource'
-    violations.push(
-      violation(
-        packageRoot,
-        importer,
-        comment.pos + match.index,
-        'jsx-pragma-not-allowed',
-        `${specifier} is not part of the package source dialect`,
-        undefined,
-        specifier,
-      ),
-    )
+    let lineStart = 0
+    for (const line of text.split(/\r?\n/u)) {
+      const at = line.indexOf('@')
+      if (at >= 0) {
+        const match = /^@(\S+)/u.exec(line.slice(at))
+        if (match) {
+          const name = match[1].toLowerCase()
+          if (name === 'jsxruntime' || name === 'jsximportsource') {
+            found = true
+            const specifier =
+              name === 'jsxruntime' ? '@jsxRuntime' : '@jsxImportSource'
+            violations.push(
+              violation(
+                packageRoot,
+                importer,
+                comment.pos + lineStart + at,
+                'jsx-pragma-not-allowed',
+                `${specifier} is not part of the package source dialect`,
+                undefined,
+                specifier,
+              ),
+            )
+          }
+        }
+      }
+      lineStart += line.length
+      if (lineStart < text.length) {
+        lineStart += text.startsWith('\r\n', lineStart) ? 2 : 1
+      }
+    }
   }
   return found
 }

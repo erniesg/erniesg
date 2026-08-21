@@ -1,5 +1,5 @@
 import { lstat, readFile, readdir } from 'node:fs/promises'
-import { extname, relative, resolve } from 'node:path'
+import { dirname, extname, relative, resolve } from 'node:path'
 import * as ts from 'typescript'
 
 export type ImportBoundaryViolation = {
@@ -134,9 +134,7 @@ export async function auditPackageImportBoundary(
     )
   }
   const configuredFiles = new Set(
-    parsed.fileNames
-      .filter((fileName) => /\.(?:tsx?)$/iu.test(fileName))
-      .map((fileName) => resolve(fileName)),
+    parsed.fileNames.map((fileName) => resolve(fileName)),
   )
   if (!sameSet(configuredFiles, sourceFiles)) {
     violations.push(
@@ -169,8 +167,8 @@ export async function auditPackageImportBoundary(
     const sourcePath = resolve(sourceFile.fileName)
     if (!sourceFiles.has(sourcePath)) {
       if (
-        !sourceFile.isDeclarationFile &&
-        !sourcePath.includes('/node_modules/')
+        !isExternalLibraryPath(sourcePath) &&
+        !isDefaultLibraryPath(sourcePath, parsed.options)
       ) {
         violations.push(
           violation(
@@ -300,180 +298,17 @@ function collectStaticEdges(
   violations: ImportBoundaryViolation[],
 ) {
   const check = (node: ts.Node, literal: ts.StringLiteralLike) => {
-    const specifier = literal.text
-    const offset = literal.getStart(sourceFile)
-    if (
-      specifier.includes('%') ||
-      specifier.includes('\\') ||
-      specifier.includes('\0')
-    ) {
-      violations.push(
-        violation(
-          packageRoot,
-          importer,
-          offset,
-          'unsafe-module-specifier',
-          'module specifier contains an encoded or platform escape',
-          undefined,
-          specifier,
-        ),
-      )
-      return
-    }
-    if (specifier.startsWith('/') || /^[A-Za-z]:[\\/]/u.test(specifier)) {
-      violations.push(
-        violation(
-          packageRoot,
-          importer,
-          offset,
-          'unsafe-module-specifier',
-          'absolute module specifiers are not part of the package dialect',
-          undefined,
-          specifier,
-        ),
-      )
-      return
-    }
-    if (isLoaderSpecifier(specifier)) {
-      violations.push(
-        violation(
-          packageRoot,
-          importer,
-          offset,
-          'loader-module-not-allowed',
-          'module loader and process modules are outside the package dialect',
-          undefined,
-          specifier,
-        ),
-      )
-      return
-    }
-    if (specifier.startsWith('node:')) {
-      violations.push(
-        violation(
-          packageRoot,
-          importer,
-          offset,
-          'node-builtin-not-allowed',
-          'Node builtin modules are not part of the package source dialect',
-          undefined,
-          specifier,
-        ),
-      )
-      return
-    }
-    const relativeImport =
-      specifier === '.' ||
-      specifier === '..' ||
-      specifier.startsWith('./') ||
-      specifier.startsWith('../')
-    const packageName = barePackageName(specifier)
-    if (
-      !relativeImport &&
-      packageName &&
-      /(?:^|\/)(?:\.|\.\.)(?:\/|$)/u.test(specifier)
-    ) {
-      violations.push(
-        violation(
-          packageRoot,
-          importer,
-          offset,
-          'unsafe-module-specifier',
-          'dependency subpaths may not contain traversal segments',
-          undefined,
-          specifier,
-        ),
-      )
-      return
-    }
-    if (!relativeImport && packageName && packageName in dependencies) {
-      const declaration = dependencies[packageName]
-      if (
-        typeof declaration === 'string' &&
-        /^(?:file|link|workspace):/iu.test(declaration)
-      ) {
-        violations.push(
-          violation(
-            packageRoot,
-            importer,
-            offset,
-            'non-portable-dependency',
-            'runtime dependencies may not point into the repository',
-            undefined,
-            specifier,
-          ),
-        )
-        return
-      }
-      const resolved = ts.resolveModuleName(
-        specifier,
-        resolve(packageRoot, importer),
-        options,
-        ts.sys,
-        cache,
-      ).resolvedModule
-      if (!resolved || !resolved.isExternalLibraryImport) {
-        violations.push(
-          violation(
-            packageRoot,
-            importer,
-            offset,
-            'unresolved-module',
-            'declared dependency does not resolve as an external library',
-            resolved?.resolvedFileName,
-            specifier,
-          ),
-        )
-      }
-      return
-    }
-    const resolved = ts.resolveModuleName(
-      specifier,
-      resolve(packageRoot, importer),
+    checkModuleSpecifier(
+      literal.text,
+      literal.getStart(sourceFile),
+      importer,
+      packageRoot,
+      sourceFiles,
+      dependencies,
       options,
-      ts.sys,
       cache,
-    ).resolvedModule
-    const resolvedTarget = resolved?.resolvedFileName
-      ? resolve(resolved.resolvedFileName)
-      : undefined
-    if (!resolvedTarget) {
-      violations.push(
-        violation(
-          packageRoot,
-          importer,
-          offset,
-          'unresolved-module',
-          'module specifier does not resolve',
-          undefined,
-          specifier,
-        ),
-      )
-    } else if (relativeImport && !sourceFiles.has(resolvedTarget)) {
-      violations.push(
-        violation(
-          packageRoot,
-          importer,
-          offset,
-          'relative-outside-source',
-          'relative module resolves outside the canonical source set',
-          resolvedTarget,
-          specifier,
-        ),
-      )
-    } else if (!relativeImport) {
-      violations.push(
-        violation(
-          packageRoot,
-          importer,
-          offset,
-          'undeclared-runtime-dependency',
-          'bare module is not an exact declared runtime dependency',
-          resolvedTarget,
-          specifier,
-        ),
-      )
-    }
+      violations,
+    )
   }
 
   const visit = (node: ts.Node) => {
@@ -498,6 +333,265 @@ function collectStaticEdges(
     ts.forEachChild(node, visit)
   }
   visit(sourceFile)
+
+  const runtime = jsxRuntimeSpecifier(sourceFile, options)
+  if (runtime) {
+    checkModuleSpecifier(
+      runtime.specifier,
+      runtime.offset,
+      importer,
+      packageRoot,
+      sourceFiles,
+      dependencies,
+      options,
+      cache,
+      violations,
+    )
+  }
+}
+
+function checkModuleSpecifier(
+  specifier: string,
+  offset: number,
+  importer: string,
+  packageRoot: string,
+  sourceFiles: Set<string>,
+  dependencies: Record<string, unknown>,
+  options: ts.CompilerOptions,
+  cache: ts.ModuleResolutionCache,
+  violations: ImportBoundaryViolation[],
+) {
+  if (
+    specifier.includes('%') ||
+    specifier.includes('\\') ||
+    specifier.includes('\0')
+  ) {
+    violations.push(
+      violation(
+        packageRoot,
+        importer,
+        offset,
+        'unsafe-module-specifier',
+        'module specifier contains an encoded or platform escape',
+        undefined,
+        specifier,
+      ),
+    )
+    return
+  }
+  if (isAbsoluteModuleSpecifier(specifier)) {
+    violations.push(
+      violation(
+        packageRoot,
+        importer,
+        offset,
+        'unsafe-module-specifier',
+        'absolute module specifiers are not part of the package dialect',
+        undefined,
+        specifier,
+      ),
+    )
+    return
+  }
+  if (isLoaderSpecifier(specifier)) {
+    violations.push(
+      violation(
+        packageRoot,
+        importer,
+        offset,
+        'loader-module-not-allowed',
+        'module loader and process modules are outside the package dialect',
+        undefined,
+        specifier,
+      ),
+    )
+    return
+  }
+  if (specifier.startsWith('node:')) {
+    violations.push(
+      violation(
+        packageRoot,
+        importer,
+        offset,
+        'node-builtin-not-allowed',
+        'Node builtin modules are not part of the package source dialect',
+        undefined,
+        specifier,
+      ),
+    )
+    return
+  }
+  const relativeImport =
+    specifier === '.' ||
+    specifier === '..' ||
+    specifier.startsWith('./') ||
+    specifier.startsWith('../')
+  const packageName = barePackageName(specifier)
+  if (
+    !relativeImport &&
+    packageName &&
+    /(?:^|\/)(?:\.|\.\.)(?:\/|$)/u.test(specifier)
+  ) {
+    violations.push(
+      violation(
+        packageRoot,
+        importer,
+        offset,
+        'unsafe-module-specifier',
+        'dependency subpaths may not contain traversal segments',
+        undefined,
+        specifier,
+      ),
+    )
+    return
+  }
+  if (
+    !relativeImport &&
+    packageName &&
+    Object.prototype.hasOwnProperty.call(dependencies, packageName)
+  ) {
+    const declaration = dependencies[packageName]
+    if (
+      typeof declaration === 'string' &&
+      /^(?:file|link|workspace):/iu.test(declaration)
+    ) {
+      violations.push(
+        violation(
+          packageRoot,
+          importer,
+          offset,
+          'non-portable-dependency',
+          'runtime dependencies may not point into the repository',
+          undefined,
+          specifier,
+        ),
+      )
+      return
+    }
+    const resolved = ts.resolveModuleName(
+      specifier,
+      resolve(packageRoot, importer),
+      options,
+      ts.sys,
+      cache,
+    ).resolvedModule
+    if (!resolved || !resolved.isExternalLibraryImport) {
+      violations.push(
+        violation(
+          packageRoot,
+          importer,
+          offset,
+          'unresolved-module',
+          'declared dependency does not resolve as an external library',
+          resolved?.resolvedFileName,
+          specifier,
+        ),
+      )
+    }
+    return
+  }
+  const resolved = ts.resolveModuleName(
+    specifier,
+    resolve(packageRoot, importer),
+    options,
+    ts.sys,
+    cache,
+  ).resolvedModule
+  const resolvedTarget = resolved?.resolvedFileName
+    ? resolve(resolved.resolvedFileName)
+    : undefined
+  if (!resolvedTarget) {
+    violations.push(
+      violation(
+        packageRoot,
+        importer,
+        offset,
+        'unresolved-module',
+        'module specifier does not resolve',
+        undefined,
+        specifier,
+      ),
+    )
+  } else if (relativeImport && !sourceFiles.has(resolvedTarget)) {
+    violations.push(
+      violation(
+        packageRoot,
+        importer,
+        offset,
+        'relative-outside-source',
+        'relative module resolves outside the canonical source set',
+        resolvedTarget,
+        specifier,
+      ),
+    )
+  } else if (!relativeImport) {
+    violations.push(
+      violation(
+        packageRoot,
+        importer,
+        offset,
+        'undeclared-runtime-dependency',
+        'bare module is not an exact declared runtime dependency',
+        resolvedTarget,
+        specifier,
+      ),
+    )
+  }
+}
+
+function isExternalLibraryPath(fileName: string) {
+  return /(?:^|\/)node_modules\//u.test(normalizePath(fileName))
+}
+
+function isDefaultLibraryPath(fileName: string, options: ts.CompilerOptions) {
+  const normalized = normalizePath(fileName)
+  const defaultLibDirectory = normalizePath(
+    dirname(ts.getDefaultLibFilePath(options)),
+  )
+  return (
+    normalized.startsWith(`${defaultLibDirectory}/`) &&
+    /\/lib\.[^/]+\.d\.ts$/u.test(normalized)
+  )
+}
+
+function normalizePath(fileName: string) {
+  return fileName.replaceAll('\\', '/')
+}
+
+function jsxRuntimeSpecifier(
+  sourceFile: ts.SourceFile,
+  options: ts.CompilerOptions,
+) {
+  if (
+    !options.jsxImportSource ||
+    (options.jsx !== ts.JsxEmit.ReactJSX &&
+      options.jsx !== ts.JsxEmit.ReactJSXDev)
+  ) {
+    return undefined
+  }
+  let offset: number | undefined
+  const visit = (node: ts.Node) => {
+    if (
+      offset === undefined &&
+      (ts.isJsxElement(node) ||
+        ts.isJsxSelfClosingElement(node) ||
+        ts.isJsxFragment(node))
+    ) {
+      offset = node.getStart(sourceFile)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return offset === undefined
+    ? undefined
+    : {
+        offset,
+        specifier: `${options.jsxImportSource}/${
+          options.jsx === ts.JsxEmit.ReactJSXDev
+            ? 'jsx-dev-runtime'
+            : 'jsx-runtime'
+        }`,
+      }
 }
 
 function collectDialectViolations(
@@ -582,7 +676,9 @@ function violation(
 }
 
 function displayPath(packageRoot: string, fileName: string) {
-  return relative(packageRoot, fileName).split('/').join('/') || fileName
+  return (
+    normalizePath(relative(packageRoot, fileName)) || normalizePath(fileName)
+  )
 }
 
 function sortViolations(violations: ImportBoundaryViolation[]) {
@@ -609,14 +705,19 @@ function parsedOptionValue(option: string, options: ts.CompilerOptions) {
 }
 
 function barePackageName(specifier: string) {
-  if (
-    specifier.startsWith('.') ||
-    specifier.startsWith('/') ||
-    /^[A-Za-z]:[\\/]/u.test(specifier)
-  )
+  if (specifier.startsWith('.') || isAbsoluteModuleSpecifier(specifier))
     return undefined
   const parts = specifier.split('/')
   return specifier.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0]
+}
+
+function isAbsoluteModuleSpecifier(specifier: string) {
+  const normalized = normalizePath(specifier)
+  return (
+    normalized.startsWith('/') ||
+    normalized.startsWith('//') ||
+    /^[A-Za-z]:\//u.test(normalized)
+  )
 }
 
 function isLoaderSpecifier(specifier: string) {

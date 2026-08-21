@@ -137,6 +137,19 @@ describe('STRUCT package artifact boundary', () => {
         expected: 'undeclared-runtime-dependency',
         specifier: 'vitest',
       },
+      ...['constructor', 'toString', 'hasOwnProperty'].map((name) => ({
+        name: `inherited dependency name: ${name}`,
+        source: `import '${name}'\n`,
+        extra: {
+          [`node_modules/${name}/package.json`]: JSON.stringify({
+            name,
+            types: 'index.d.ts',
+          }),
+          [`node_modules/${name}/index.d.ts`]: 'export {}\n',
+        },
+        expected: 'undeclared-runtime-dependency',
+        specifier: name,
+      })),
       {
         name: 'unresolved dependency',
         source: "import 'missing-runtime'\n",
@@ -224,6 +237,115 @@ describe('STRUCT package artifact boundary', () => {
       } finally {
         await rm(fixture, { recursive: true, force: true })
       }
+    }
+  })
+
+  it('rejects every parsed root outside the canonical source set', async () => {
+    const cases = [
+      { name: 'mts', path: 'src/extra.mts', compilerOptions: {} },
+      { name: 'cts', path: 'src/extra.cts', compilerOptions: {} },
+      {
+        name: 'javascript with allowJs',
+        path: 'src/extra.js',
+        compilerOptions: { allowJs: true },
+      },
+      {
+        name: 'json with resolveJsonModule',
+        path: 'src/extra.json',
+        compilerOptions: { resolveJsonModule: true },
+      },
+    ]
+
+    for (const testCase of cases) {
+      const fixture = await makeFixture('export const value = true\n', {
+        [testCase.path]: testCase.path.endsWith('.json')
+          ? '{"value":true}\n'
+          : 'export const extra = true\n',
+        'tsconfig.json': JSON.stringify({
+          compilerOptions: {
+            target: 'ES2022',
+            module: 'ESNext',
+            moduleResolution: 'Bundler',
+            strict: true,
+            skipLibCheck: true,
+            rootDir: 'src',
+            ...testCase.compilerOptions,
+          },
+          files: ['src/index.ts', testCase.path],
+        }),
+      })
+      try {
+        expect(
+          (await auditPackageImportBoundary(fixture)).map(({ code }) => code),
+          testCase.name,
+        ).toContain('configured-source-set-mismatch')
+      } finally {
+        await rm(fixture, { recursive: true, force: true })
+      }
+    }
+  })
+
+  it('rejects compiler-selected local declaration closure outside src', async () => {
+    const fixture = await makeFixture('export const value = true\n', {
+      '../ambient/index.d.ts': 'declare const ambient: unique symbol\n',
+      'tsconfig.json': JSON.stringify({
+        compilerOptions: {
+          target: 'ES2022',
+          module: 'ESNext',
+          moduleResolution: 'Bundler',
+          strict: true,
+          skipLibCheck: true,
+          rootDir: 'src',
+          types: ['../ambient'],
+        },
+        include: ['src/**/*.ts'],
+      }),
+    })
+    try {
+      expect(
+        (await auditPackageImportBoundary(fixture)).map(({ code }) => code),
+      ).toContain('source-closure-outside-source')
+    } finally {
+      await rm(fixture, { recursive: true, force: true })
+      await rm(join(fixture, '..', 'ambient'), {
+        recursive: true,
+        force: true,
+      })
+    }
+  })
+
+  it('classifies the implicit JSX runtime module edge', async () => {
+    const fixture = await makeFixture(
+      'export const value = <div />\n',
+      {
+        'node_modules/evil/package.json': JSON.stringify({
+          name: 'evil',
+          types: 'jsx-runtime.d.ts',
+        }),
+        'node_modules/evil/jsx-runtime.d.ts':
+          'export function jsx(): unknown\n',
+        'tsconfig.json': JSON.stringify({
+          compilerOptions: {
+            target: 'ES2022',
+            module: 'ESNext',
+            moduleResolution: 'Bundler',
+            jsx: 'react-jsx',
+            jsxImportSource: 'evil',
+            strict: true,
+            skipLibCheck: true,
+            rootDir: 'src',
+          },
+          include: ['src/**/*.tsx'],
+        }),
+      },
+      'src/index.tsx',
+    )
+    try {
+      expect(
+        (await auditPackageImportBoundary(fixture)).map(({ code }) => code),
+      ).toContain('undeclared-runtime-dependency')
+    } finally {
+      await rm(fixture, { recursive: true, force: true })
     }
   })
 
@@ -384,10 +506,14 @@ describe('STRUCT package artifact boundary', () => {
 
 type FixtureExtra = Record<string, string | undefined>
 
-async function makeFixture(source: string, extra: FixtureExtra = {}) {
+async function makeFixture(
+  source: string,
+  extra: FixtureExtra = {},
+  sourcePath = 'src/index.ts',
+) {
   const fixture = await mkdtemp(join(tmpdir(), 'struct-boundary-'))
   await mkdir(join(fixture, 'src'), { recursive: true })
-  await writeFile(join(fixture, 'src/index.ts'), source)
+  await writeFile(join(fixture, sourcePath), source)
   await writeFile(
     join(fixture, 'package.json'),
     JSON.stringify({

@@ -6,6 +6,8 @@ const CREDENTIAL_SHAPED_ID = [
   /^(?:AKIA|ASIA)[A-Z0-9]{12,}$/u,
   /^bearer[.:-][A-Za-z0-9._:-]{8,}$/iu,
   /^eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}$/u,
+  /^(?:-----)?BEGIN[.:-]?(?:(?:RSA|EC|OPENSSH)[.:-]?)?PRIVATE[.:-]?KEY/iu,
+  /^xox[baprs]-[A-Za-z0-9._:-]{8,}$/iu,
   /^(?:gh[pousr]|github_pat)_/iu,
 ] as const
 export const SAFE_ID = {

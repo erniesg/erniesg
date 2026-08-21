@@ -62,7 +62,7 @@ const MAPPINGS: readonly Mapping[] = [
     canonicalSha256:
       '136fc31c551768d0bfb998ff3db7ff0e0667911811686ae5efad9a376812ccd1',
     packageSha256:
-      'b276d35ddd215ce81e5cd06679342adea4e24ceb2175299c4abdfb565735a156',
+      '707ced139e00b4d80aae27d52d7f4fb3ef6e604296be874677643715047287c5',
   },
   {
     packagePath: 'codec/structure.ts',
@@ -119,7 +119,7 @@ const MAPPINGS: readonly Mapping[] = [
     canonicalSha256:
       'f5bb7c8638ff23b75d2cc8f284e687b9d9799fd703c6784717731a4faf38d778',
     packageSha256:
-      'fec7f837a6a1806de8a48e11a02f631913500615df3884724c03eb1583d808b6',
+      'c98da5d50eaee762fe01c4f1ad326d20d55f3b5d8d14041696866d6f21d66bc6',
   },
   {
     packagePath: 'reading-order.ts',

@@ -3,12 +3,22 @@ import {
   buildStructEpub,
   decodeStructDocument,
   encodeStructDocument,
+  StructCodecError,
   structDigest,
   type ModelFallbackReceipt,
   validateModelConsultationReceipt,
 } from '../src/index'
-import { hash } from '../src/model-consultation-receipt'
-import { characterizationDocument } from './characterization-fixtures'
+import {
+  copyCanonicalJson,
+  hash,
+  SAFE_ID as packageReceiptSafeId,
+} from '../src/model-consultation-receipt'
+import { SAFE_ID as packageDocumentSafeId } from '../src/codec/primitives'
+import { SAFE_ID as canonicalSafeId } from '../../../src/struct/model-consultation-receipt'
+import {
+  characterizationDocument,
+  resealDocument,
+} from './characterization-fixtures'
 
 function sealedDocument() {
   const document = characterizationDocument('0.2.0') as any
@@ -170,6 +180,64 @@ function refreshGeneratedDigest(document: any) {
 }
 
 describe('generic STRUCT model consultation receipt', () => {
+  it('contains hostile array inspection and enforces canonical resource bounds', () => {
+    const hostile: unknown[] = []
+    let getterExecuted = false
+    Object.defineProperty(hostile, 'map', {
+      enumerable: true,
+      get() {
+        getterExecuted = true
+        throw new Error('HOSTILE_MAP_GETTER_EXECUTED')
+      },
+    })
+    expect(() =>
+      copyCanonicalJson(hostile, '$.receipt.modelConsultations'),
+    ).toThrow(StructCodecError)
+    expect(getterExecuted).toBe(false)
+
+    const revoked = Proxy.revocable([], {})
+    revoked.revoke()
+    expect(() =>
+      copyCanonicalJson(revoked.proxy, '$.receipt.modelConsultations'),
+    ).toThrow(StructCodecError)
+
+    let atDepthLimit: unknown = null
+    for (let depth = 0; depth < 128; depth += 1) atDepthLimit = [atDepthLimit]
+    expect(() => copyCanonicalJson(atDepthLimit, '$')).not.toThrow()
+    expect(() => copyCanonicalJson([atDepthLimit], '$')).toThrow(
+      /nesting is too deep/,
+    )
+
+    const overNodeLimit = Array.from({ length: 100_000 }, () => null)
+    expect(() => copyCanonicalJson(overNodeLimit, '$')).toThrow(/node bound/)
+  })
+
+  it.each([
+    ['OpenAI', 'sk-proj-FAKEFAKEFAKE'],
+    ['AWS', 'AKIAFAKEFAKEFAKE'],
+    ['bearer', 'bearer-FAKEFAKEFAKE'],
+    ['JWT', 'eyJFAKE.payloadFAKE.signatureFAKE'],
+    ['encoded private key', 'BEGIN-RSA-PRIVATE-KEY'],
+    ['Slack', 'xoxb-FAKEFAKEFAKE'],
+    ['GitHub', 'github_pat_FAKEFAKEFAKE'],
+  ])(
+    'keeps package and canonical credential-shaped ID denial in parity (%s)',
+    (_label, credentialShapedId) => {
+      expect(canonicalSafeId.test(credentialShapedId)).toBe(false)
+      expect(packageReceiptSafeId.test(credentialShapedId)).toBe(false)
+      expect(packageDocumentSafeId.test(credentialShapedId)).toBe(false)
+
+      const document = characterizationDocument('0.2.0') as any
+      document.blocks[0].id = credentialShapedId
+      document.pages[0].blocks = [credentialShapedId]
+      document.pages[0].columns[0].blockIds = [credentialShapedId]
+      resealDocument(document)
+      expect(() => decodeStructDocument(document)).toThrow(
+        /STRUCT_CODEC_IDENTIFIER/,
+      )
+    },
+  )
+
   it('round-trips a valid closed receipt without policy symbols', () => {
     const document = sealedDocument()
     expect(

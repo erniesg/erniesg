@@ -1,5 +1,11 @@
 import { sha256HexSync } from './sha256.js'
-import { dataEntries, fail, finiteNumber } from './codec/primitives.js'
+import {
+  array,
+  copyRecord,
+  dataEntries,
+  fail,
+  finiteNumber,
+} from './codec/primitives.js'
 
 export const MODEL_CONSULTATION_SCHEMA_VERSION = '1.0.0' as const
 export const MODEL_FALLBACK_SCHEMA_VERSION = MODEL_CONSULTATION_SCHEMA_VERSION
@@ -89,6 +95,8 @@ const SAFE_ID = {
   },
 }
 const MAX_RECEIPT_HISTORY_ITEMS = 100_000
+const MAX_CANONICAL_DEPTH = 128
+const MAX_CANONICAL_NODES = 100_000
 const forbiddenKeys = new Set([
   'text',
   'content',
@@ -260,34 +268,51 @@ function forbidden(value: unknown): string | null {
 export function copyCanonicalJson(
   value: unknown,
   path: string,
-  active = new WeakSet<object>(),
+  state: { active: WeakSet<object>; nodes: number } = {
+    active: new WeakSet<object>(),
+    nodes: 0,
+  },
   depth = 0,
 ): unknown {
-  if (depth > 128)
+  if (depth > MAX_CANONICAL_DEPTH)
     fail('MODEL_RECEIPT', path, 'canonical JSON nesting is too deep')
+  state.nodes += 1
+  if (state.nodes > MAX_CANONICAL_NODES)
+    fail('MODEL_RECEIPT', path, 'canonical JSON exceeds the node bound')
   if (value === null || typeof value === 'string' || typeof value === 'boolean')
     return value
   if (typeof value === 'number') return finiteNumber(value, path)
-  if (!value || typeof value !== 'object')
+  if (typeof value !== 'object')
     fail('TYPE', path, 'model receipt must contain canonical JSON values')
-  if (active.has(value))
+  if (state.active.has(value))
     fail('MODEL_RECEIPT', path, 'cycles are not permitted in model receipts')
-  active.add(value)
+  state.active.add(value)
   try {
-    if (Array.isArray(value))
-      return value.map((entry, index) =>
-        copyCanonicalJson(entry, `${path}[${index}]`, active, depth + 1),
+    let isArray = false
+    try {
+      isArray = Array.isArray(value)
+    } catch {
+      fail(
+        'MODEL_RECEIPT',
+        path,
+        'model receipt object cannot be inspected safely',
       )
-    return Object.fromEntries(
-      dataEntries(value, path)
-        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-        .map(([key, entry]) => [
-          key,
-          copyCanonicalJson(entry, `${path}.${key}`, active, depth + 1),
-        ]),
+    }
+    if (isArray)
+      return array(value, path).map((entry, index) =>
+        copyCanonicalJson(entry, `${path}[${index}]`, state, depth + 1),
+      )
+    const entries = dataEntries(value, path).sort(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0,
+    )
+    return copyRecord(
+      entries.map(([key, entry]) => [
+        key,
+        copyCanonicalJson(entry, `${path}.${key}`, state, depth + 1),
+      ]),
     )
   } finally {
-    active.delete(value)
+    state.active.delete(value)
   }
 }
 function validChoice(value: unknown): value is ModelFallbackChoice {

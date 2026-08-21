@@ -11,7 +11,7 @@ import {
 } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { basename, dirname, join, sep } from 'node:path'
+import { basename, dirname, join, relative, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -26,6 +26,14 @@ type PackageRoot = {
 }
 
 const directoryLinkType = process.platform === 'win32' ? 'junction' : 'dir'
+
+function normalizeFixtureRelativePath(pathValue: string): string {
+  return pathValue.replaceAll('\\', '/')
+}
+
+function fixtureRelativePath(fixture: string, pathValue: string): string {
+  return normalizeFixtureRelativePath(relative(fixture, pathValue))
+}
 
 async function validatePackageRoot(
   name: string,
@@ -261,7 +269,7 @@ async function assertPackageOnlyFixture(
     stdio: 'pipe',
   })
   const distPaths = (await filesUnder(join(fixture, 'dist'))).map((path) =>
-    path.slice(fixture.length + 1),
+    fixtureRelativePath(fixture, path),
   )
   expect(distPaths).toEqual(
     expect.arrayContaining([
@@ -1544,7 +1552,10 @@ describe('STRUCT package artifact boundary', () => {
     }
   })
 
-  it('compiles and packs from package-local, root-hoisted, and PNPM layouts', async () => {
+  it('compiles, packs, and normalizes Windows-shaped paths across layouts', async () => {
+    expect(
+      normalizeFixtureRelativePath(String.raw`dist\renderers\epub.js`),
+    ).toBe('dist/renderers/epub.js')
     const dependencies = await resolvePackageOnlyDependencies()
     const typeScript = await resolveTypeScriptPackage()
     for (const layout of [

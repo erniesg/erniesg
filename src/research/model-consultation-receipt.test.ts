@@ -183,17 +183,21 @@ describe('model consultation receipt validation', () => {
     expect(validateModelConsultationReceipt(receipt)).toBe(true)
   })
 
-  it('delegates generic receipt validation to Struct before app policy checks', async () => {
+  it('propagates Struct receipt rejection before app policy acceptance', async () => {
     const receipt = await validReceipt()
-    const genericValidator = vi.spyOn(
-      Struct,
-      'validateModelConsultationReceipt',
-    )
-
+    expect(validateGenericReceipt(receipt)).toBe(true)
     expect(validateModelConsultationReceipt(receipt)).toBe(true)
-    expect(genericValidator).toHaveBeenCalledWith(receipt)
 
-    genericValidator.mockRestore()
+    const genericValidator = vi
+      .spyOn(Struct, 'validateModelConsultationReceipt')
+      .mockReturnValue(false)
+    try {
+      expect(validateModelConsultationReceipt(receipt)).toBe(false)
+      expect(genericValidator).toHaveBeenCalledOnce()
+      expect(genericValidator).toHaveBeenCalledWith(receipt)
+    } finally {
+      genericValidator.mockRestore()
+    }
   })
 
   it('accepts receipts produced for bounded custom deterministic classes', async () => {

@@ -30,7 +30,7 @@ const forbiddenResolutionOptions = new Set([
   'typeRoots',
 ])
 
-const forbiddenDialectOptions = new Set(['importHelpers'])
+const forbiddenDialectOptions = new Set(['importHelpers', 'types'])
 const forbiddenModuleKinds = new Set([ts.ModuleKind.AMD, ts.ModuleKind.UMD])
 
 export async function auditPackageImportBoundary(
@@ -187,15 +187,40 @@ export async function auditPackageImportBoundary(
     await readFile(resolve(packagePath, 'package.json'), 'utf8'),
   ) as { dependencies?: Record<string, unknown> }
   const dependencies = packageManifest.dependencies ?? {}
+  // The package boundary is closed over source files and explicitly declared
+  // runtime dependencies.  Do not let the repository's ambient @types tree
+  // widen that graph (or make the result depend on a host checkout).
+  const isolatedOptions: ts.CompilerOptions = {
+    ...parsed.options,
+    noEmit: true,
+  }
+  if (!Object.prototype.hasOwnProperty.call(rawCompilerOptions, 'types')) {
+    isolatedOptions.typeRoots = []
+    isolatedOptions.types = []
+  }
   const program = ts.createProgram({
     rootNames: [...sourceFiles],
-    options: parsed.options,
+    options: isolatedOptions,
   })
+  for (const diagnostic of ts.getPreEmitDiagnostics(program)) {
+    const diagnosticPath = diagnostic.file?.fileName
+      ? resolve(diagnostic.file.fileName)
+      : configPath
+    violations.push(
+      violation(
+        packagePath,
+        diagnostic.file ? displayPath(packagePath, diagnosticPath) : configPath,
+        diagnostic.start ?? 0,
+        'compiler-diagnostic',
+        flattenMessage(diagnostic.messageText),
+      ),
+    )
+  }
   const resolutionCache = ts.createModuleResolutionCache(
     packagePath,
     (fileName) =>
       ts.sys.useCaseSensitiveFileNames ? fileName : fileName.toLowerCase(),
-    parsed.options,
+    isolatedOptions,
   )
 
   for (const sourceFile of program.getSourceFiles()) {
@@ -251,7 +276,7 @@ export async function auditPackageImportBoundary(
       packagePath,
       sourceFiles,
       dependencies,
-      parsed.options,
+      isolatedOptions,
       resolutionCache,
       violations,
       collectDialectViolations(syntax, importer, packagePath, violations),

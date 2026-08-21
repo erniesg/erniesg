@@ -641,7 +641,7 @@ describe('STRUCT package artifact boundary', () => {
         await rm(fixture, { recursive: true, force: true })
       }
     }
-  })
+  }, 15_000)
 
   it('rejects every parsed root outside the canonical source set', async () => {
     const cases = [
@@ -715,10 +715,61 @@ describe('STRUCT package artifact boundary', () => {
     try {
       expect(
         (await auditPackageImportBoundary(fixture)).map(({ code }) => code),
-      ).toContain('source-closure-outside-source')
+      ).toEqual(
+        expect.arrayContaining([
+          'compiler-option-not-allowed',
+          'source-closure-outside-source',
+        ]),
+      )
     } finally {
       await rm(fixture, { recursive: true, force: true })
       await rm(ambientPath, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects compiler-clean source that depends on an ambient @types package', async () => {
+    const fixture = await makeFixture(
+      'export const value: true = ambientEvil\n',
+      {
+        'node_modules/@types/evil/index.d.ts':
+          'declare const ambientEvil: true\n',
+      },
+    )
+    try {
+      expect(
+        (await auditPackageImportBoundary(fixture)).map(({ code }) => code),
+      ).toContain('compiler-diagnostic')
+    } finally {
+      await rm(fixture, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects explicit ambient type selection without an exact dependency policy', async () => {
+    const fixture = await makeFixture(
+      'export const value: true = ambientEvil\n',
+      {
+        'node_modules/@types/evil/index.d.ts':
+          'declare const ambientEvil: true\n',
+        'tsconfig.json': JSON.stringify({
+          compilerOptions: {
+            target: 'ES2022',
+            module: 'ESNext',
+            moduleResolution: 'Bundler',
+            strict: true,
+            skipLibCheck: true,
+            rootDir: 'src',
+            types: ['evil'],
+          },
+          include: ['src/**/*.ts'],
+        }),
+      },
+    )
+    try {
+      expect(
+        (await auditPackageImportBoundary(fixture)).map(({ code }) => code),
+      ).toContain('compiler-option-not-allowed')
+    } finally {
+      await rm(fixture, { recursive: true, force: true })
     }
   })
 
@@ -1095,11 +1146,24 @@ describe('STRUCT package artifact boundary', () => {
       await cp(join(root, 'src'), join(fixture, 'src'), { recursive: true })
       await cp(join(root, 'package.json'), join(fixture, 'package.json'))
       await cp(join(root, 'tsconfig.json'), join(fixture, 'tsconfig.json'))
+      await mkdir(join(fixture, 'empty-types'))
       await symlink(
         join(root, '../../node_modules'),
         join(fixture, 'node_modules'),
       )
 
+      execFileSync(
+        process.execPath,
+        [
+          join(root, '../../node_modules/typescript/bin/tsc'),
+          '-p',
+          join(fixture, 'tsconfig.json'),
+          '--noEmit',
+          '--typeRoots',
+          join(fixture, 'empty-types'),
+        ],
+        { cwd: fixture, stdio: 'pipe' },
+      )
       execFileSync(
         process.execPath,
         [

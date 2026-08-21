@@ -44,11 +44,17 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run test --maxWorkers=1",
+    "ci": "npm run build && npm test",
+    "test": "vitest run --config vitest.config.ts --maxWorkers=1",
+    "test:consumer": "node test/consumer/standalone-tarball.mjs",
     "prepack": "npm run build"
   },
   "dependencies": {
     "fast-xml-parser": "^5.10.1",
     "fflate": "^0.8.3"
+  },
+  "devDependencies": {
+    "typescript": "5.7.2",
+    "vitest": "4.1.10"
   }
 }

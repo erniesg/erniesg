@@ -1148,14 +1148,14 @@ describe('STRUCT package artifact boundary', () => {
       await cp(join(root, 'tsconfig.json'), join(fixture, 'tsconfig.json'))
       await mkdir(join(fixture, 'empty-types'))
       await symlink(
-        join(root, '../../node_modules'),
+        join(root, 'node_modules'),
         join(fixture, 'node_modules'),
       )
 
       execFileSync(
         process.execPath,
         [
-          join(root, '../../node_modules/typescript/bin/tsc'),
+          join(root, 'node_modules/typescript/bin/tsc'),
           '-p',
           join(fixture, 'tsconfig.json'),
           '--noEmit',
@@ -1167,7 +1167,7 @@ describe('STRUCT package artifact boundary', () => {
       execFileSync(
         process.execPath,
         [
-          join(root, '../../node_modules/typescript/bin/tsc'),
+          join(root, 'node_modules/typescript/bin/tsc'),
           '-p',
           join(fixture, 'tsconfig.json'),
         ],

@@ -14,11 +14,11 @@ import {
   SAFE_ID as packageReceiptSafeId,
 } from '../src/model-consultation-receipt'
 import { SAFE_ID as packageDocumentSafeId } from '../src/codec/primitives'
-import { SAFE_ID as canonicalSafeId } from '../../../src/struct/model-consultation-receipt'
 import {
   characterizationDocument,
   resealDocument,
 } from './characterization-fixtures'
+import { SAFE_ID_DENIAL_CASES } from './contracts/model-receipt.js'
 
 function sealedDocument() {
   const document = characterizationDocument('0.2.0') as any
@@ -212,20 +212,11 @@ describe('generic STRUCT model consultation receipt', () => {
     expect(() => copyCanonicalJson(overNodeLimit, '$')).toThrow(/node bound/)
   })
 
-  it.each([
-    ['OpenAI', 'sk-proj-FAKEFAKEFAKE'],
-    ['AWS', 'AKIAFAKEFAKEFAKE'],
-    ['bearer', 'bearer-FAKEFAKEFAKE'],
-    ['JWT', 'eyJFAKE.payloadFAKE.signatureFAKE'],
-    ['encoded private key', 'BEGIN-RSA-PRIVATE-KEY'],
-    ['Slack', 'xoxb-FAKEFAKEFAKE'],
-    ['GitHub', 'github_pat_FAKEFAKEFAKE'],
-  ])(
-    'keeps package and canonical credential-shaped ID denial in parity (%s)',
-    (_label, credentialShapedId) => {
-      expect(canonicalSafeId.test(credentialShapedId)).toBe(false)
-      expect(packageReceiptSafeId.test(credentialShapedId)).toBe(false)
-      expect(packageDocumentSafeId.test(credentialShapedId)).toBe(false)
+  it.each(SAFE_ID_DENIAL_CASES)(
+    'denies frozen credential-shaped IDs in every package SAFE_ID contract (%s)',
+    (_label, credentialShapedId, expected) => {
+      expect(packageReceiptSafeId.test(credentialShapedId)).toBe(expected)
+      expect(packageDocumentSafeId.test(credentialShapedId)).toBe(expected)
 
       const document = characterizationDocument('0.2.0') as any
       document.blocks[0].id = credentialShapedId

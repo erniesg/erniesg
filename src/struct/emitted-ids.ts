@@ -19,6 +19,7 @@ export const MAX_RENDERED_INLINE_SEGMENTS = 250_000
 export const MAX_RENDERED_INLINE_ACTIVE_OWNER_VISITS = 750_000
 export const MAX_RENDERED_INLINE_WRAPPER_BYTES = 16_000_000
 const ESTIMATED_WRAPPER_BYTES_PER_OWNER = 64
+const ESTIMATED_CITATION_RANGE_VISIT_BYTES = 16
 const MAX_RENDERED_INLINE_EVENT_STORAGE = MAX_RENDERED_INLINE_SEGMENTS * 4
 
 export type StructTarget = {
@@ -438,7 +439,10 @@ function semanticPlanForRun(
     epubRole,
     additionalTargets,
     citationRanges: ranges,
-    estimatedBytesPerSegment: openingBytes + targetMarkupBytes,
+    estimatedBytesPerSegment:
+      openingBytes +
+      targetMarkupBytes +
+      (ranges?.length ?? 0) * ESTIMATED_CITATION_RANGE_VISIT_BYTES,
   }
 }
 

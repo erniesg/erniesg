@@ -1679,6 +1679,36 @@ describe('STRUCT runtime codec', () => {
     expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
   })
 
+  it('charges short semantic targets only across segments owned by that run', () => {
+    const value = validDocument() as any
+    const targetIds = Array.from(
+      { length: 800 },
+      (_, index) => `https://example.test/short-${index}`,
+    )
+    value.metadata.authors = []
+    value.metadata.authorNotes = []
+    value.relationships[0] = {
+      ...value.relationships[0],
+      to: targetIds,
+      status: 'matched',
+    }
+    value.blocks[0].text = 'x'.repeat(800)
+    value.blocks[0].inline = [
+      {
+        start: 0,
+        end: 1,
+        relationshipId: value.relationships[0].id,
+        semanticRole: 'cross-reference',
+      },
+      ...Array.from({ length: 800 }, (_, index) => ({
+        start: index,
+        end: index + 1,
+        bold: true,
+      })),
+    ]
+    expect(() => renderPublicationXhtml(value)).not.toThrow()
+  })
+
   it('charges citation matching work across selected owners and sources', () => {
     const value = validDocument() as any
     const ownerCount = 7

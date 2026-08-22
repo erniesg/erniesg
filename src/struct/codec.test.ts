@@ -1436,6 +1436,9 @@ describe('STRUCT runtime codec', () => {
     const value = validDocument() as any
     value.metadata.authors = ['Author', 'Author']
     seal(value)
+    expect(() => renderPublicationXhtml(value)).toThrow(
+      /metadata\.authors|duplicate/i,
+    )
     for (const decode of [decodeStructDocument, migrateStructDocument]) {
       expect(() => decode(value)).toThrow(StructCodecError)
       expect(() => decode(value)).toThrow(/metadata\.authors|duplicate/i)

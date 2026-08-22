@@ -6,7 +6,11 @@ import {
 } from '../types'
 import { legacyStructDigestMatches, structDigest } from '../ids'
 import { SAFE_ID } from '../model-consultation-receipt'
-import { emittedXhtmlIds, isPackagedAssetId } from '../emitted-ids'
+import {
+  emittedXhtmlIds,
+  isPackagedAssetId,
+  RenderedPublicationPlanError,
+} from '../emitted-ids'
 import { fail, type DataObject, unique } from './primitives'
 
 const MODEL_RECEIPT_BINDING =
@@ -338,7 +342,15 @@ function validateReferences(document: StructDocument) {
     'blocks.sourceObservationAnchorIds',
   )
   const emittedIds = new Map<string, string>()
-  for (const { id, path } of emittedXhtmlIds(document)) {
+  let emittedEntries
+  try {
+    emittedEntries = emittedXhtmlIds(document)
+  } catch (error) {
+    if (error instanceof RenderedPublicationPlanError)
+      fail(error.code, error.path, error.message)
+    throw error
+  }
+  for (const { id, path } of emittedEntries) {
     const previous = emittedIds.get(id)
     if (previous)
       fail(

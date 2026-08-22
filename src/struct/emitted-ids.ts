@@ -10,11 +10,15 @@ const EPUB_RESERVED_IDS = new Set([
 ])
 
 /**
- * Bound rendered ownership planning before its segment/run sweep can amplify
- * nested inline input. This is deliberately conservative: valid publication
- * output is never truncated; inputs above the exact boundary fail closed.
+ * Publication planning budgets. These bound the work which can be expanded
+ * into owner arrays and markup, rather than rejecting a raw run count: a
+ * document with many disjoint runs is linear, while nested runs can be
+ * quadratic. No valid run is truncated or reordered.
  */
-export const MAX_RENDERED_INLINE_RUNS = 4_096
+export const MAX_RENDERED_INLINE_SEGMENTS = 250_000
+export const MAX_RENDERED_INLINE_ACTIVE_OWNER_VISITS = 750_000
+export const MAX_RENDERED_INLINE_WRAPPER_BYTES = 16_000_000
+const ESTIMATED_WRAPPER_BYTES_PER_OWNER = 64
 
 export type StructTarget = {
   id: string
@@ -73,6 +77,7 @@ function validInline(run: StructInline, text: string) {
 }
 
 type RenderedInlineSource = {
+  key: string
   value: string
   runs: readonly StructInline[]
   paths: readonly string[]
@@ -84,6 +89,32 @@ export type RenderedInlineSegment = {
   owners: readonly StructInline[]
 }
 
+export type RenderedInlineSourcePlan = RenderedInlineSource & {
+  segments: readonly RenderedInlineSegment[]
+}
+
+export type RenderedPublicationPlan = {
+  sources: readonly RenderedInlineSourcePlan[]
+  sourceByKey: ReadonlyMap<string, RenderedInlineSourcePlan>
+  relationships: ReadonlyMap<string, StructDocument['relationships'][number]>
+  renderedRelationshipIds: ReadonlySet<string>
+  authorNotesByAuthor: ReadonlyMap<
+    string,
+    readonly NonNullable<StructDocument['metadata']['authorNotes']>[number][]
+  >
+}
+
+export class RenderedPublicationPlanError extends Error {
+  constructor(
+    readonly code: 'BUDGET' | 'DUPLICATE_IDENTIFIER',
+    readonly path: string,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'RenderedPublicationPlanError'
+  }
+}
+
 /** Return exactly the inline sources that the publication renderer consumes. */
 function renderedInlineSources(document: StructDocument) {
   return document.blocks.flatMap(
@@ -91,6 +122,7 @@ function renderedInlineSources(document: StructDocument) {
       if (block.kind === 'furniture') return []
       if (block.kind === 'table' && block.table) {
         return block.table.cells.map((cell, cellIndex) => ({
+          key: `table:${blockIndex}:${cellIndex}`,
           value: cell.text,
           runs: cell.inline,
           paths: cell.inline.map(
@@ -101,6 +133,7 @@ function renderedInlineSources(document: StructDocument) {
       }
       return [
         {
+          key: `block:${blockIndex}`,
           value: block.text,
           runs: block.inline,
           paths: block.inline.map(
@@ -113,15 +146,70 @@ function renderedInlineSources(document: StructDocument) {
   )
 }
 
-function assertRenderedInlineBudget(sources: readonly RenderedInlineSource[]) {
-  const runCount = sources.reduce(
-    (count, source) => count + source.runs.length,
-    0,
-  )
-  if (runCount > MAX_RENDERED_INLINE_RUNS)
-    throw new Error(
-      `STRUCT inline ownership work exceeds ${MAX_RENDERED_INLINE_RUNS} runs`,
+type InlineEvent = { position: number; runIndex: number; end: boolean }
+
+type InlineDraft = {
+  source: RenderedInlineSource
+  runs: StructInline[]
+  events: InlineEvent[]
+  positions: number[]
+  segmentCount: number
+  activeOwnerVisits: number
+  wrapperBytes: number
+}
+
+function draftInlinePlan(source: RenderedInlineSource): InlineDraft {
+  const runs = source.runs.filter((run) => validInline(run, source.value))
+  if (runs.length * 2 > MAX_RENDERED_INLINE_SEGMENTS * 4)
+    throw new RenderedPublicationPlanError(
+      'BUDGET',
+      source.paths[0] ?? `$.${source.key}`,
+      'inline event storage exceeds the publication planning budget',
     )
+  runs.sort((left, right) => left.start - right.start || right.end - left.end)
+  const boundaries = new Set<number>([0, source.value.length])
+  const events: InlineEvent[] = []
+  runs.forEach((run, runIndex) => {
+    boundaries.add(run.start)
+    boundaries.add(run.end)
+    events.push(
+      { position: run.start, runIndex, end: false },
+      { position: run.end, runIndex, end: true },
+    )
+  })
+  events.sort((left, right) => left.position - right.position)
+  const positions = [...boundaries].sort((left, right) => left - right)
+  const active = new Set<number>()
+  let eventIndex = 0
+  let segmentCount = 0
+  let activeOwnerVisits = 0
+  let wrapperBytes = 0
+  for (
+    let positionIndex = 0;
+    positionIndex < positions.length - 1;
+    positionIndex += 1
+  ) {
+    const position = positions[positionIndex]!
+    while (events[eventIndex]?.position === position) {
+      const event = events[eventIndex++]!
+      if (event.end) active.delete(event.runIndex)
+      else active.add(event.runIndex)
+    }
+    const next = positions[positionIndex + 1]!
+    if (next <= position) continue
+    segmentCount += 1
+    activeOwnerVisits += active.size
+    wrapperBytes += active.size * ESTIMATED_WRAPPER_BYTES_PER_OWNER
+  }
+  return {
+    source,
+    runs,
+    events,
+    positions,
+    segmentCount,
+    activeOwnerVisits,
+    wrapperBytes,
+  }
 }
 
 /** Build the owner plan shared by XHTML rendering, emitted IDs, and backlinks. */
@@ -129,60 +217,131 @@ export function renderedInlinePlan(
   value: string,
   runs: readonly StructInline[],
 ): RenderedInlineSegment[] {
-  if (runs.length > MAX_RENDERED_INLINE_RUNS)
-    throw new Error(
-      `STRUCT inline ownership work exceeds ${MAX_RENDERED_INLINE_RUNS} runs`,
+  const draft = draftInlinePlan({ key: 'direct', value, runs, paths: [] })
+  if (
+    draft.segmentCount > MAX_RENDERED_INLINE_SEGMENTS ||
+    draft.activeOwnerVisits > MAX_RENDERED_INLINE_ACTIVE_OWNER_VISITS ||
+    draft.wrapperBytes > MAX_RENDERED_INLINE_WRAPPER_BYTES
+  )
+    throw new RenderedPublicationPlanError(
+      'BUDGET',
+      '$.blocks.inline',
+      'inline ownership work exceeds the publication planning budget',
     )
-  const validRuns = runs
-    .filter((run) => validInline(run, value))
-    .sort((left, right) => left.start - right.start || right.end - left.end)
-  if (validRuns.length === 0) return []
-  const boundaries = new Set([0, value.length])
-  for (const run of validRuns) {
-    boundaries.add(run.start)
-    boundaries.add(run.end)
-  }
-  const positions = [...boundaries].sort((left, right) => left - right)
-  return positions.slice(0, -1).map((start, index) => {
-    const end = positions[index + 1]!
-    return {
-      start,
-      end,
-      owners: validRuns.filter((run) => run.start <= start && run.end >= end),
-    }
-  })
+  return materializeInlinePlan(draft)
 }
 
-/** Return relationship IDs that have an owner in the actual rendered plan. */
-export function renderedInlineRelationshipIds(document: StructDocument) {
-  const ids = new Set<string>()
-  const sources = renderedInlineSources(document)
-  assertRenderedInlineBudget(sources)
+function materializeInlinePlan(draft: InlineDraft): RenderedInlineSegment[] {
+  const active = new Set<number>()
+  let eventIndex = 0
+  const segments: RenderedInlineSegment[] = []
+  for (
+    let positionIndex = 0;
+    positionIndex < draft.positions.length - 1;
+    positionIndex += 1
+  ) {
+    const position = draft.positions[positionIndex]!
+    while (draft.events[eventIndex]?.position === position) {
+      const event = draft.events[eventIndex++]!
+      if (event.end) active.delete(event.runIndex)
+      else active.add(event.runIndex)
+    }
+    const end = draft.positions[positionIndex + 1]!
+    if (end <= position) continue
+    segments.push({
+      start: position,
+      end,
+      owners: [...active]
+        .sort((left, right) => left - right)
+        .map((index) => draft.runs[index]!),
+    })
+  }
+  return segments
+}
+
+/** Build one document-local publication plan before any rendered owner arrays. */
+export function buildRenderedPublicationPlan(
+  document: StructDocument,
+): RenderedPublicationPlan {
+  const authors = document.metadata.authors
+  const authorNotes = document.metadata.authorNotes ?? []
+  const seenAuthors = new Set<string>()
+  for (const [index, author] of authors.entries()) {
+    if (seenAuthors.has(author))
+      throw new RenderedPublicationPlanError(
+        'DUPLICATE_IDENTIFIER',
+        `$.metadata.authors[${index}]`,
+        `duplicate metadata author ${author} is ambiguous without a stable identity`,
+      )
+    seenAuthors.add(author)
+  }
+  const drafts = renderedInlineSources(document).map(draftInlinePlan)
+  let segmentCount = 0
+  let activeOwnerVisits = 0
+  let wrapperBytes = 0
+  for (const draft of drafts) {
+    segmentCount += draft.segmentCount
+    activeOwnerVisits += draft.activeOwnerVisits
+    wrapperBytes += draft.wrapperBytes
+    if (
+      segmentCount > MAX_RENDERED_INLINE_SEGMENTS ||
+      activeOwnerVisits > MAX_RENDERED_INLINE_ACTIVE_OWNER_VISITS ||
+      wrapperBytes > MAX_RENDERED_INLINE_WRAPPER_BYTES
+    )
+      throw new RenderedPublicationPlanError(
+        'BUDGET',
+        draft.source.paths[0] ?? `$.${draft.source.key}`,
+        `inline ownership work exceeds publication budgets (segments ${MAX_RENDERED_INLINE_SEGMENTS}, active-owner visits ${MAX_RENDERED_INLINE_ACTIVE_OWNER_VISITS}, wrapper bytes ${MAX_RENDERED_INLINE_WRAPPER_BYTES})`,
+      )
+  }
   const relationships = new Map(
     document.relationships.map((relationship) => [
       relationship.id,
       relationship,
     ]),
   )
-  for (const note of document.metadata.authorNotes ?? []) {
-    if (!document.metadata.authors.includes(note.author)) continue
+  const renderedRelationshipIds = new Set<string>()
+  for (const note of authorNotes) {
     const relationship = relationships.get(note.id)
     if (
+      authors.includes(note.author) &&
       relationship?.status === 'matched' &&
       (relationship.kind === 'footnote' || relationship.kind === 'endnote') &&
       relationship.to.includes(note.target)
     )
-      ids.add(note.id)
+      renderedRelationshipIds.add(note.id)
   }
-  for (const source of sources) {
-    for (const segment of renderedInlinePlan(source.value, source.runs)) {
+  const sources = drafts.map((draft) => ({
+    ...draft.source,
+    segments: materializeInlinePlan(draft),
+  }))
+  const sourceByKey = new Map(sources.map((source) => [source.key, source]))
+  for (const source of sources)
+    for (const segment of source.segments) {
       const semanticRun = segment.owners.find(
         (run) => run.semanticRole && run.relationshipId,
       )
-      if (semanticRun?.relationshipId) ids.add(semanticRun.relationshipId)
+      if (semanticRun?.relationshipId)
+        renderedRelationshipIds.add(semanticRun.relationshipId)
     }
+  const authorNotesByAuthor = new Map<string, typeof authorNotes>()
+  for (const note of authorNotes) {
+    const notes = authorNotesByAuthor.get(note.author) ?? []
+    notes.push(note)
+    authorNotesByAuthor.set(note.author, notes)
   }
-  return ids
+  return {
+    sources,
+    sourceByKey,
+    relationships,
+    renderedRelationshipIds,
+    authorNotesByAuthor,
+  }
+}
+
+/** Return relationship IDs that have an owner in the actual rendered plan. */
+export function renderedInlineRelationshipIds(document: StructDocument) {
+  return buildRenderedPublicationPlan(document).renderedRelationshipIds
 }
 
 /**
@@ -190,10 +349,11 @@ export function renderedInlineRelationshipIds(document: StructDocument) {
  * ids are document-scoped: one relationship occurrence receives the id and
  * later occurrences reuse its data without emitting another id attribute.
  */
-export function emittedXhtmlIds(document: StructDocument): EmittedXhtmlId[] {
+export function emittedXhtmlIds(
+  document: StructDocument,
+  publicationPlan = buildRenderedPublicationPlan(document),
+): EmittedXhtmlId[] {
   const entries: EmittedXhtmlId[] = []
-  const sources = renderedInlineSources(document)
-  assertRenderedInlineBudget(sources)
   for (const [blockIndex, block] of document.blocks.entries()) {
     if (block.kind === 'furniture') continue
     entries.push({ id: block.id, path: `$.blocks[${blockIndex}].id` })
@@ -235,8 +395,8 @@ export function emittedXhtmlIds(document: StructDocument): EmittedXhtmlId[] {
       id: stableId(note.id),
       path: `$.metadata.authorNotes[${index}].id`,
     })
-  for (const source of sources) {
-    for (const segment of renderedInlinePlan(source.value, source.runs)) {
+  for (const source of publicationPlan.sources) {
+    for (const segment of source.segments) {
       const run = segment.owners.find(
         (owner) => owner.relationshipId && owner.semanticRole,
       )

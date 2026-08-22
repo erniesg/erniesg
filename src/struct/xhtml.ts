@@ -1,17 +1,17 @@
 import type {
   StructBlock,
   StructDocument,
-  StructInline,
   StructTable,
   StructTableCell,
 } from './types'
 import {
+  buildRenderedPublicationPlan,
   emittedXhtmlIds,
-  renderedInlinePlan,
-  renderedInlineRelationshipIds,
   resolveStructTarget,
   stableId,
   type EmittedXhtmlId,
+  type RenderedInlineSourcePlan,
+  type RenderedPublicationPlan,
   type StructTarget,
 } from './emitted-ids'
 
@@ -175,18 +175,14 @@ function groupedCitationLinks(
 
 function renderInline(
   document: StructDocument,
-  value: string,
-  runs: readonly StructInline[],
+  source: RenderedInlineSourcePlan,
   emittedRelationshipIds: Set<string>,
+  publicationPlan: RenderedPublicationPlan,
 ) {
-  const plan = renderedInlinePlan(value, runs)
+  const { value } = source
+  const plan = source.segments
   if (plan.length === 0) return text(value)
-  const relationships = new Map(
-    document.relationships.map((relationship) => [
-      relationship.id,
-      relationship,
-    ]),
-  )
+  const relationships = publicationPlan.relationships
   return plan
     .map(({ start, end, owners }) => {
       const segmentValue = value.slice(start, end)
@@ -300,22 +296,27 @@ function renderTable(
   document: StructDocument,
   table: StructTable,
   tableBlockId: string,
+  blockIndex: number,
   emittedRelationshipIds: Set<string>,
+  publicationPlan: RenderedPublicationPlan,
 ) {
   const rows = Array.from({ length: table.rows }, () => [] as string[])
-  const cells = new Map<string, StructTableCell>(
-    table.cells.map((cell) => [`${cell.row}:${cell.column}`, cell] as const),
+  const cells = new Map<string, { cell: StructTableCell; index: number }>(
+    table.cells.map(
+      (cell, index) => [`${cell.row}:${cell.column}`, { cell, index }] as const,
+    ),
   )
   const occupied = new Set<string>()
   for (let row = 0; row < table.rows; row += 1) {
     for (let column = 0; column < table.columns; column += 1) {
       const coordinate = `${row}:${column}`
       if (occupied.has(coordinate)) continue
-      const cell = cells.get(coordinate)
-      if (!cell) {
+      const cellEntry = cells.get(coordinate)
+      if (!cellEntry) {
         rows[row]!.push('<td></td>')
         continue
       }
+      const { cell, index: cellIndex } = cellEntry
       const tag = cell.headerScope ? 'th' : 'td'
       const htmlScope = cell.headerScope === 'column' ? 'col' : cell.headerScope
       const scope = htmlScope ? ` scope="${htmlScope}"` : ''
@@ -323,7 +324,12 @@ function renderTable(
       const columnSpan =
         cell.columnSpan > 1 ? ` colspan="${cell.columnSpan}"` : ''
       rows[row]!.push(
-        `<${tag} id="${attribute(`${tableBlockId}-${cell.id}`)}"${scope}${rowSpan}${columnSpan}>${renderInline(document, cell.text, cell.inline, emittedRelationshipIds)}</${tag}>`,
+        `<${tag} id="${attribute(`${tableBlockId}-${cell.id}`)}"${scope}${rowSpan}${columnSpan}>${renderInline(
+          document,
+          publicationPlan.sourceByKey.get(`table:${blockIndex}:${cellIndex}`)!,
+          emittedRelationshipIds,
+          publicationPlan,
+        )}</${tag}>`,
       )
       for (
         let occupiedRow = cell.row;
@@ -344,12 +350,12 @@ function renderTable(
 function renderAuthors(
   document: StructDocument,
   emittedRelationshipIds: Set<string>,
+  publicationPlan: RenderedPublicationPlan,
 ) {
   if (document.metadata.authors.length === 0) return ''
   const authors = document.metadata.authors
     .map((author) => {
-      const references = (document.metadata.authorNotes ?? [])
-        .filter((reference) => reference.author === author)
+      const references = (publicationPlan.authorNotesByAuthor.get(author) ?? [])
         .map((reference) => {
           const target = resolveStructTarget(document, reference.target)
           emittedRelationshipIds.add(stableId(reference.id))
@@ -374,28 +380,30 @@ function renderSourceObservationAnchors(block: StructBlock) {
 function renderBlock(
   document: StructDocument,
   block: StructBlock,
+  blockIndex: number,
   emittedRelationshipIds: Set<string>,
+  publicationPlan: RenderedPublicationPlan,
 ) {
   // Furniture remains queryable in STRUCT with its source evidence, but is
   // intentionally outside the publication reading flow.
   if (block.kind === 'furniture') return ''
   const id = attribute(block.id)
+  const sourceAnchors = renderSourceObservationAnchors(block)
+  if (block.kind === 'table' && block.table) {
+    return `<figure id="${id}" data-struct-id="${id}">${sourceAnchors}${renderTable(document, block.table, block.id, blockIndex, emittedRelationshipIds, publicationPlan)}</figure>`
+  }
   const content = renderInline(
     document,
-    block.text,
-    block.inline,
+    publicationPlan.sourceByKey.get(`block:${blockIndex}`)!,
     emittedRelationshipIds,
+    publicationPlan,
   )
-  const sourceAnchors = renderSourceObservationAnchors(block)
   if (block.kind === 'heading') {
     const level = Math.max(1, Math.min(6, Number(block.attributes?.level ?? 2)))
     return `<h${level} id="${id}" data-struct-id="${id}">${sourceAnchors}${content}</h${level}>`
   }
   if (block.kind === 'quote') {
     return `<blockquote id="${id}" data-struct-id="${id}">${sourceAnchors}<p>${content}</p></blockquote>`
-  }
-  if (block.kind === 'table' && block.table) {
-    return `<figure id="${id}" data-struct-id="${id}">${sourceAnchors}${renderTable(document, block.table, block.id, emittedRelationshipIds)}</figure>`
   }
   if (
     block.kind === 'figure' ||
@@ -417,7 +425,7 @@ function renderBlock(
     return `<p id="${id}" data-struct-id="${id}" class="caption">${sourceAnchors}${content}</p>`
   }
   if (block.kind === 'footnote' || block.kind === 'endnote') {
-    const renderedRelationships = renderedInlineRelationshipIds(document)
+    const renderedRelationships = publicationPlan.renderedRelationshipIds
     const backlinks = document.relationships
       .filter(
         (relationship) =>
@@ -456,7 +464,8 @@ export function renderPublicationXhtml(
   document: StructDocument,
   options: StructXhtmlOptions = {},
 ) {
-  assertUniqueEmittedIds(emittedXhtmlIds(document))
+  const publicationPlan = buildRenderedPublicationPlan(document)
+  assertUniqueEmittedIds(emittedXhtmlIds(document, publicationPlan))
   const emittedRelationshipIds = new Set<string>()
   const language = document.metadata.language ?? 'und'
   const direction =
@@ -474,8 +483,8 @@ export function renderPublicationXhtml(
   ${options.embedStyles ? `<style>${text(styles)}</style>` : '<link rel="stylesheet" type="text/css" href="styles.css" />'}
 </head>
 <body>
-  <header><h1>${text(document.metadata.title)}</h1>${document.metadata.subtitle ? `<p>${text(document.metadata.subtitle)}</p>` : ''}${renderAuthors(document, emittedRelationshipIds)}</header>
-  ${document.blocks.map((block) => renderBlock(document, block, emittedRelationshipIds)).join('\n  ')}
+  <header><h1>${text(document.metadata.title)}</h1>${document.metadata.subtitle ? `<p>${text(document.metadata.subtitle)}</p>` : ''}${renderAuthors(document, emittedRelationshipIds, publicationPlan)}</header>
+  ${document.blocks.map((block, blockIndex) => renderBlock(document, block, blockIndex, emittedRelationshipIds, publicationPlan)).join('\n  ')}
 </body>
 </html>
 `

@@ -899,6 +899,105 @@ describe('STRUCT runtime codec', () => {
     },
   )
 
+  it('keeps a numeric block author-note target on its exact raw fragment', async () => {
+    const value = validDocument() as any
+    value.blocks[0].id = '1'
+    value.metadata.authorNotes[0].target = '1'
+    value.relationships[0].from = '1'
+    value.relationships[0].to = ['1']
+    value.relationships[0].candidates[0].target = '1'
+    value.blocks[0].inline[0].href = '#1'
+    value.blocks[0].inline[0].targetIds = ['1']
+    value.pages[0].blocks = ['1']
+    value.pages[0].columns[0].blockIds = ['1']
+    seal(value)
+    const decoded = decodeStructDocument(value)
+    const xhtml = renderPublicationXhtml(decoded)
+    expect(xhtml).toContain('href="#1"')
+    expect(xhtml).toContain('id="1"')
+    await expect(buildStructEpub(decoded)).resolves.toMatchObject({
+      mediaType: 'application/epub+zip',
+    })
+  })
+
+  it('uses an asset href for an author-note target', async () => {
+    const value = validDocument() as any
+    value.metadata.authorNotes[0].target = 'asset-1'
+    seal(value)
+    const decoded = decodeStructDocument(value)
+    const xhtml = renderPublicationXhtml(decoded)
+    expect(xhtml).toContain('href="assets/asset-1.bin"')
+    await expect(buildStructEpub(decoded)).resolves.toMatchObject({
+      mediaType: 'application/epub+zip',
+    })
+  })
+
+  it('uses an asset href for a plain inline target', async () => {
+    const value = validDocument() as any
+    value.blocks[0].inline[0] = {
+      start: 0,
+      end: 5,
+      href: '#asset-1',
+      targetIds: ['asset-1'],
+    }
+    seal(value)
+    const decoded = decodeStructDocument(value)
+    const xhtml = renderPublicationXhtml(decoded)
+    expect(xhtml).toContain('href="assets/asset-1.bin"')
+    await expect(buildStructEpub(decoded)).resolves.toMatchObject({
+      mediaType: 'application/epub+zip',
+    })
+  })
+
+  it('rejects numeric asset ids before publication can diverge', () => {
+    const value = validDocument() as any
+    value.assets[0].id = '1'
+    value.blocks[0].fallbackAssetIds = ['1']
+    value.relationships[0].to = ['1']
+    value.relationships[0].candidates[0].target = '1'
+    seal(value)
+    expect(() => decodeStructDocument(value)).toThrow(/asset|identifier/i)
+  })
+
+  it('fails closed when an author note targets non-rendered furniture', () => {
+    const value = validDocument() as any
+    value.blocks[0].kind = 'furniture'
+    value.receipt.conservation.sourceFurnitureBlockCount = 1
+    value.receipt.conservation.accountedFurnitureBlockCount = 1
+    value.receipt.conservation.structFurnitureBlockCount = 1
+    value.receipt.conservation.sourceFurnitureTextCharacterCount = 5
+    value.receipt.conservation.structFurnitureTextCharacterCount = 5
+    seal(value)
+    const decoded = decodeStructDocument(value)
+    expect(() => renderPublicationXhtml(decoded)).toThrow(/not rendered/i)
+  })
+
+  it('checks later-position anchors on non-rendered furniture through decode and migration', () => {
+    const value = validDocument() as any
+    value.metadata.authorNotes[0].id = '1'
+    value.blocks.push({
+      ...value.blocks[0],
+      id: 'furniture-1',
+      kind: 'furniture',
+      text: '',
+      page: null,
+      order: 1,
+      column: null,
+      inline: [],
+      sourceObservationAnchorIds: ['furniture-anchor', '1'],
+    })
+    value.receipt.blockCount = 2
+    value.receipt.conservation.structBlockCount = 2
+    value.receipt.conservation.sourceFurnitureBlockCount = 1
+    value.receipt.conservation.accountedFurnitureBlockCount = 1
+    value.receipt.conservation.structFurnitureBlockCount = 1
+    value.receipt.conservation.sourceFurnitureTextCharacterCount = 0
+    value.receipt.conservation.structFurnitureTextCharacterCount = 0
+    seal(value)
+    expect(() => decodeStructDocument(value)).toThrow(/duplicate|identifier/i)
+    expect(() => migrateStructDocument(value)).toThrow(/duplicate|identifier/i)
+  })
+
   it('rejects later-position source anchors through decode and migration', () => {
     const value = validDocument() as any
     value.blocks[0].sourceObservationAnchorIds = ['anchor-1', 'n-1']

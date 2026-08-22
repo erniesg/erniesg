@@ -1,5 +1,48 @@
 import type { StructDocument, StructInline } from './types'
 
+const EPUB_RESERVED_IDS = new Set([
+  'publication-id',
+  'nav',
+  'content',
+  'styles',
+  'struct',
+])
+
+export type StructTarget = {
+  id: string
+  href: string
+  kind: 'asset' | 'block' | 'external'
+}
+
+export function isPackagedAssetId(value: string) {
+  return (
+    /^[A-Za-z_][A-Za-z0-9_.-]*$/u.test(value) && !EPUB_RESERVED_IDS.has(value)
+  )
+}
+
+/** Resolve every publication target through the same local/external rules. */
+export function resolveStructTarget(
+  document: StructDocument,
+  value: string,
+): StructTarget {
+  const id = value.startsWith('#') ? value.slice(1) : value
+  if (/^(?:https?|mailto):/iu.test(value))
+    return { id: value, href: value, kind: 'external' }
+  const asset = document.assets.find((entry) => entry.id === id)
+  if (asset) {
+    if (!isPackagedAssetId(asset.id))
+      throw new Error(`STRUCT target asset is not packageable: ${asset.id}`)
+    return { id: asset.id, href: asset.href, kind: 'asset' }
+  }
+  const block = document.blocks.find((entry) => entry.id === id)
+  if (block) {
+    if (block.kind === 'furniture')
+      throw new Error(`STRUCT target block is not rendered: ${block.id}`)
+    return { id: block.id, href: `#${block.id}`, kind: 'block' }
+  }
+  throw new Error(`STRUCT target is not renderable: ${value}`)
+}
+
 export type EmittedXhtmlId = {
   id: string
   path: string

@@ -4,7 +4,13 @@ import type {
   StructInline,
   StructTable,
 } from './types'
-import { emittedXhtmlIds, stableId, type EmittedXhtmlId } from './emitted-ids'
+import {
+  emittedXhtmlIds,
+  resolveStructTarget,
+  stableId,
+  type EmittedXhtmlId,
+  type StructTarget,
+} from './emitted-ids'
 
 export type StructXhtmlOptions = {
   embedStyles?: boolean
@@ -17,26 +23,6 @@ table { border-collapse: collapse; width: 100%; }
 td, th { border: 1px solid currentColor; padding: 0.25rem; }
 figure { break-inside: avoid; margin: 1.5rem 0; }
 .visually-hidden, .additional-semantic-reference { clip: rect(0 0 0 0); clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }`
-
-type RelationshipTarget = {
-  id: string
-  href: string
-}
-
-function relationshipTarget(
-  document: StructDocument,
-  value: string,
-): RelationshipTarget {
-  const id = value.startsWith('#') ? value.slice(1) : value
-  if (/^(?:https?|mailto):/iu.test(value)) return { id: value, href: value }
-  const asset = document.assets.find((entry) => entry.id === id)
-  if (asset) return { id: asset.id, href: asset.href }
-  const block = document.blocks.find((entry) => entry.id === id)
-  if (block) return { id: block.id, href: `#${block.id}` }
-  throw new Error(
-    `STRUCT XHTML relationship target is not renderable: ${value}`,
-  )
-}
 
 function text(value: string) {
   return value
@@ -99,7 +85,7 @@ function foldedCitationText(value: string) {
 function groupedCitationLinks(
   value: string,
   labels: readonly string[],
-  targets: readonly RelationshipTarget[],
+  targets: readonly StructTarget[],
   epubRole: string,
   sourceValue = value,
   sourceOffset = 0,
@@ -248,13 +234,12 @@ function renderInline(
         const targets = relationship
           ? relationship.status === 'matched'
             ? relationship.to.map((target) =>
-                relationshipTarget(document, target),
+                resolveStructTarget(document, target),
               )
             : []
-          : (semanticRun.targetIds ?? []).map((target) => ({
-              id: target,
-              href: `#${target}`,
-            }))
+          : (semanticRun.targetIds ?? []).map((target) =>
+              resolveStructTarget(document, target),
+            )
         const semanticAttributes = ` data-semantic-role="${attribute(semanticRun.semanticRole)}" data-relationship-id="${attribute(relationshipId)}"${targets.length > 0 ? ` data-target-ids="${attribute(targets.map((target) => target.id).join(' '))}"` : ''}`
         if (targets.length === 0) {
           rendered = `<span${id}${semanticAttributes}>${rendered}</span>`
@@ -308,11 +293,20 @@ function renderInline(
           (run) => run.href || run.targetIds?.length,
         )
         const internalTarget = hyperlinkRun?.targetIds?.[0]
-        const href =
-          hyperlinkRun?.href?.startsWith('#') && internalTarget
-            ? `#${internalTarget}`
-            : (hyperlinkRun?.href ??
-              (internalTarget ? `#${internalTarget}` : undefined))
+        const rawHref = hyperlinkRun?.href
+        const href = rawHref?.startsWith('#')
+          ? internalTarget ||
+            document.assets.some((asset) => asset.id === rawHref.slice(1)) ||
+            document.blocks.some((block) => block.id === rawHref.slice(1))
+            ? resolveStructTarget(document, internalTarget ?? rawHref).href
+            : rawHref
+          : rawHref
+            ? /^(?:https?|mailto):/iu.test(rawHref)
+              ? resolveStructTarget(document, rawHref).href
+              : rawHref
+            : internalTarget
+              ? resolveStructTarget(document, internalTarget).href
+              : undefined
         if (href) rendered = `<a href="${attribute(href)}">${rendered}</a>`
       }
       return rendered
@@ -377,10 +371,10 @@ function renderAuthors(document: StructDocument) {
     .map((author) => {
       const references = (document.metadata.authorNotes ?? [])
         .filter((reference) => reference.author === author)
-        .map(
-          (reference) =>
-            `<sup><a id="${attribute(stableId(reference.id))}" href="#${attribute(stableId(reference.target))}" epub:type="noteref" role="doc-noteref">${text(reference.label)}</a></sup>`,
-        )
+        .map((reference) => {
+          const target = resolveStructTarget(document, reference.target)
+          return `<sup><a id="${attribute(stableId(reference.id))}" href="${attribute(target.href)}" epub:type="noteref" role="doc-noteref">${text(reference.label)}</a></sup>`
+        })
         .join('')
       return `${text(author)}${references}`
     })

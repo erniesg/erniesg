@@ -6,7 +6,7 @@ import {
 } from '../types'
 import { legacyStructDigestMatches, structDigest } from '../ids'
 import { SAFE_ID } from '../model-consultation-receipt'
-import { emittedXhtmlIds } from '../emitted-ids'
+import { emittedXhtmlIds, isPackagedAssetId } from '../emitted-ids'
 import { fail, type DataObject, unique } from './primitives'
 
 const MODEL_RECEIPT_BINDING =
@@ -342,6 +342,13 @@ function validateReferences(document: StructDocument) {
     '$.assets',
     'asset href',
   )
+  for (const [index, asset] of document.assets.entries())
+    if (!isPackagedAssetId(asset.id))
+      fail(
+        'IDENTIFIER',
+        `$.assets[${index}].id`,
+        `asset id is not a valid EPUB manifest id: ${asset.id}`,
+      )
 
   for (const [index, relationship] of document.relationships.entries()) {
     if (!nodeIds.has(relationship.from))

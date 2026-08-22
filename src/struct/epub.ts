@@ -11,6 +11,7 @@ import { sha256HexSync } from './sha256'
 import { legacyStructDigestMatches, structDigest } from './ids'
 import { validateModelConsultationReceipt } from './model-consultation-receipt'
 import { renderPublicationXhtml } from './xhtml'
+import { isPackagedAssetId } from './emitted-ids'
 import {
   LEGACY_STRUCT_SCHEMA_VERSION,
   STRUCT_SCHEMA_VERSION,
@@ -320,13 +321,6 @@ export async function buildStructEpub(
     }
     return asset as typeof asset & { bytes: Uint8Array }
   })
-  const reservedIds = new Set([
-    'publication-id',
-    'nav',
-    'content',
-    'styles',
-    'struct',
-  ])
   const reservedHrefs = new Set([
     'package.opf',
     'nav.xhtml',
@@ -338,11 +332,7 @@ export async function buildStructEpub(
   const assetIds = new Set<string>()
   const assetHrefs = new Set<string>()
   for (const asset of assets) {
-    if (
-      reservedIds.has(asset.id) ||
-      assetIds.has(asset.id) ||
-      !/^[A-Za-z_][A-Za-z0-9_.-]*$/u.test(asset.id)
-    ) {
+    if (assetIds.has(asset.id) || !isPackagedAssetId(asset.id)) {
       throw new Error(
         `STRUCT EPUB asset id is duplicate or reserved: ${asset.id}`,
       )

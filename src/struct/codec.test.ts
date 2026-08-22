@@ -1493,26 +1493,30 @@ describe('STRUCT runtime codec', () => {
     expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
   })
 
-  it('rejects shadowed semantic owners before expanding every target list', () => {
+  it('does not expand shadowed semantic owners before selecting the rendered owner', () => {
     const value = validDocument() as any
     const runCount = 800
-    const targetIds = Array.from(
-      { length: runCount },
-      (_, index) => `https://example.test/shadowed-${index}`,
+    value.metadata.authors = []
+    value.metadata.authorNotes = []
+    value.relationships = Array.from({ length: runCount }, (_, index) =>
+      index === 0
+        ? { ...value.relationships[0], id: 'shadowed-0', to: ['block-1'] }
+        : {
+            ...value.relationships[0],
+            id: `shadowed-${index}`,
+            get to() {
+              throw new Error('SHADOWED_TARGET_EXPANSION')
+            },
+          },
     )
-    value.relationships[0] = {
-      ...value.relationships[0],
-      to: targetIds,
-      status: 'matched',
-    }
     value.blocks[0].text = 'x'.repeat(runCount)
-    value.blocks[0].inline = Array.from({ length: runCount }, () => ({
+    value.blocks[0].inline = Array.from({ length: runCount }, (_, index) => ({
       start: 0,
       end: runCount,
-      relationshipId: value.relationships[0].id,
+      relationshipId: `shadowed-${index}`,
       semanticRole: 'cross-reference',
     }))
-    expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
+    expect(() => renderPublicationXhtml(value)).not.toThrow()
   })
 
   it('refuses same-year citation matching before touching a later hostile source', () => {
@@ -1566,6 +1570,8 @@ describe('STRUCT runtime codec', () => {
 
   it('uses the planning target index instead of scanning document nodes per target', () => {
     const value = validDocument() as any
+    value.metadata.authors = []
+    value.metadata.authorNotes = []
     value.relationships[0] = {
       ...value.relationships[0],
       to: ['block-1'],

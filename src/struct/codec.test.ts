@@ -1363,7 +1363,7 @@ describe('STRUCT runtime codec', () => {
     expect(() => decodeStructDocument(value)).toThrow(/duplicate|identifier/i)
   })
 
-  it('rejects inline ownership work above the documented cap', () => {
+  it('accepts benign disjoint inline ownership above the historical cap', () => {
     const value = validDocument() as any
     const runCount = 4_097
     value.blocks[0].text = 'x'.repeat(runCount)
@@ -1374,6 +1374,24 @@ describe('STRUCT runtime codec', () => {
     value.receipt.textCharacterCount = runCount
     value.receipt.conservation.sourceTextCharacterCount = runCount
     value.receipt.conservation.structTextCharacterCount = runCount
+    seal(value)
+    const decoded = decodeStructDocument(value)
+    expect(renderPublicationXhtml(decoded)).toContain('x'.repeat(runCount))
+  })
+
+  it('rejects nested inline ownership before rendering large markup', () => {
+    const value = validDocument() as any
+    const runCount = 2_000
+    const textLength = runCount * 2
+    value.blocks[0].text = 'x'.repeat(textLength)
+    value.blocks[0].inline = Array.from({ length: runCount }, (_, index) => ({
+      start: index,
+      end: textLength - index,
+      bold: true,
+    }))
+    value.receipt.textCharacterCount = textLength
+    value.receipt.conservation.sourceTextCharacterCount = textLength
+    value.receipt.conservation.structTextCharacterCount = textLength
     seal(value)
     expect(() => decodeStructDocument(value)).toThrow(/inline|bound|work/i)
   })
@@ -1391,6 +1409,38 @@ describe('STRUCT runtime codec', () => {
     value.receipt.conservation.structTextCharacterCount = runCount
     seal(value)
     expect(() => decodeStructDocument(value)).not.toThrow()
+  })
+
+  it('does not plan discarded inline runs on a real table block', () => {
+    const value = validDocument() as any
+    const runCount = 5_000
+    value.blocks[0].kind = 'table'
+    value.blocks[0].text = 'x'.repeat(runCount)
+    value.blocks[0].inline = Array.from({ length: runCount }, (_, index) => ({
+      start: index,
+      end: index + 1,
+    }))
+    value.blocks[0].table.cells[0].text = 'Cell'
+    value.blocks[0].table.cells[0].inline = []
+    value.receipt.textCharacterCount = runCount
+    value.receipt.conservation.sourceTextCharacterCount = runCount
+    value.receipt.conservation.structTextCharacterCount = runCount
+    seal(value)
+    const decoded = decodeStructDocument(value)
+    const xhtml = renderPublicationXhtml(decoded)
+    expect(xhtml).toContain('<table>')
+    expect(xhtml).not.toContain('x'.repeat(runCount))
+  })
+
+  it('rejects duplicate metadata authors at the strict boundary', () => {
+    const value = validDocument() as any
+    value.metadata.authors = ['Author', 'Author']
+    seal(value)
+    for (const decode of [decodeStructDocument, migrateStructDocument]) {
+      expect(() => decode(value)).toThrow(StructCodecError)
+      expect(() => decode(value)).toThrow(/metadata\.authors|duplicate/i)
+    }
+    expect(() => encodeStructDocument(value as any)).toThrow(StructCodecError)
   })
 
   it('does not create a footnote backlink for a non-table block table payload', async () => {

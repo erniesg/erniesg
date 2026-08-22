@@ -104,6 +104,19 @@ function resolvePlanningTarget(
   throw new Error(`STRUCT target is not renderable: ${value}`)
 }
 
+function resolvePlanningTargetLazily(
+  getTargetIndex: () => PlanningTargetIndex,
+  value: string,
+): StructTarget {
+  if (/^(?:https?|mailto):/iu.test(value)) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(value))
+      return { id: value, href: value, kind: 'external' }
+    const index = getTargetIndex()
+    if (!index.has(value)) return { id: value, href: value, kind: 'external' }
+  }
+  return resolvePlanningTarget(getTargetIndex(), value)
+}
+
 export type EmittedXhtmlId = {
   id: string
   path: string
@@ -178,6 +191,7 @@ function citationRanges(
   labels: readonly string[],
   targets: readonly StructTarget[],
   path: string,
+  totals: PlanningTotals,
 ) {
   if (
     labels.length !== targets.length ||
@@ -213,7 +227,6 @@ function citationRanges(
       : []
   })
   const linkedTargets = new Set(ranges.map((range) => range.target))
-  let matchWork = 0
   for (const match of sourceValue.matchAll(/\b(?:18|19|20)\d{2}[a-z]?\b/giu)) {
     const start = match.index ?? -1
     if (start < 0) continue
@@ -222,13 +235,13 @@ function citationRanges(
       sourceValue.slice(Math.max(0, start - 96), start),
     )
     const yearLabels = labelsByYear.get(year) ?? []
-    matchWork += yearLabels.length
-    if (matchWork > MAX_CITATION_MATCH_WORK)
+    if (totals.citationWork + yearLabels.length > MAX_CITATION_MATCH_WORK)
       throw new RenderedPublicationPlanError(
         'BUDGET',
         path,
         'citation matching work exceeds the publication planning budget',
       )
+    totals.citationWork += yearLabels.length
     const candidates = yearLabels.flatMap(({ index, surname }) => {
       const position = prefix.lastIndexOf(surname)
       return position >= 0 && !linkedTargets.has(targets[index]!.id)
@@ -351,6 +364,7 @@ type PlanningTotals = {
   activeOwnerVisits: number
   wrapperBytes: number
   eventStorage: number
+  citationWork: number
 }
 
 export type RenderedPublicationPlan = {
@@ -427,26 +441,47 @@ function semanticPlanForRun(
   run: StructInline,
   path: string,
   relationships: ReadonlyMap<string, StructDocument['relationships'][number]>,
-  targetCache: Map<string, StructTarget[]>,
-  targetIndex: PlanningTargetIndex,
+  targetCache: WeakMap<readonly string[], StructTarget[]>,
+  getTargetIndex: () => PlanningTargetIndex,
+  totals: PlanningTotals,
+  remainingSegments: number,
 ): RenderedSemanticPlan | undefined {
   if (!run.semanticRole || !run.relationshipId) return undefined
   const relationship = relationships.get(run.relationshipId)
   const rawTargets =
     relationship?.status === 'matched' ? relationship.to : (run.targetIds ?? [])
-  const targetKey = rawTargets.join('\u0000')
-  let targets = targetCache.get(targetKey)
-  if (!targets) {
-    targets = rawTargets.map((target) =>
-      resolvePlanningTarget(targetIndex, target),
-    )
-    targetCache.set(targetKey, targets)
-  }
-  const relationshipIdStable = stableId(run.relationshipId)
   const labels = (relationship?.label ?? '')
     .split(',')
     .map((label) => label.trim())
     .filter(Boolean)
+  let targets = targetCache.get(rawTargets)
+  if (!targets) {
+    targets = []
+    let targetEstimate = 0
+    for (
+      let targetIndex = 0;
+      targetIndex < rawTargets.length;
+      targetIndex += 1
+    ) {
+      const rawTarget = rawTargets[targetIndex]!
+      const target = resolvePlanningTargetLazily(getTargetIndex, rawTarget)
+      targets.push(target)
+      targetEstimate +=
+        `<a href="${attribute(target.href)}"${run.semanticRole === 'note-reference' ? ' epub:type="noteref" role="doc-noteref"' : run.semanticRole === 'citation' ? ' epub:type="biblioref" role="doc-biblioref"' : ''}>${text(labels[targetIndex] ?? String(targetIndex + 1))}</a>`
+          .length
+      if (
+        totals.wrapperBytes + targetEstimate * Math.max(1, remainingSegments) >
+        MAX_RENDERED_INLINE_WRAPPER_BYTES
+      )
+        throw new RenderedPublicationPlanError(
+          'BUDGET',
+          path,
+          'semantic target expansion exceeds the publication planning budget',
+        )
+    }
+    targetCache.set(rawTargets, targets)
+  }
+  const relationshipIdStable = stableId(run.relationshipId)
   const epubRole =
     run.semanticRole === 'note-reference'
       ? ' epub:type="noteref" role="doc-noteref"'
@@ -465,6 +500,7 @@ function semanticPlanForRun(
           labels,
           targets,
           path,
+          totals,
         )
       : null
   const visibleTargets = new Set((ranges ?? []).map((range) => range.target))
@@ -514,29 +550,22 @@ function semanticPlanForRun(
 function hyperlinkPlanForRun(
   document: StructDocument,
   run: StructInline,
-  targetCache: Map<string, StructTarget[]>,
-  targetIndex: PlanningTargetIndex,
+  getTargetIndex: () => PlanningTargetIndex,
 ): RenderedHyperlinkPlan | undefined {
   if (!run.href && !run.targetIds?.length) return undefined
   const internalTarget = run.targetIds?.[0]
   const rawHref = run.href
   const href = rawHref?.startsWith('#')
-    ? internalTarget || targetIndex.has(rawHref.slice(1))
-      ? resolvePlanningTarget(targetIndex, internalTarget ?? rawHref).href
+    ? internalTarget || getTargetIndex().has(rawHref.slice(1))
+      ? resolvePlanningTarget(getTargetIndex(), internalTarget ?? rawHref).href
       : rawHref
     : rawHref
       ? /^(?:https?|mailto):/iu.test(rawHref)
-        ? resolvePlanningTarget(targetIndex, rawHref).href
+        ? resolvePlanningTargetLazily(getTargetIndex, rawHref).href
         : rawHref
       : internalTarget
         ? (() => {
-            const key = [internalTarget].join('\u0000')
-            let targets = targetCache.get(key)
-            if (!targets) {
-              targets = [resolvePlanningTarget(targetIndex, internalTarget)]
-              targetCache.set(key, targets)
-            }
-            return targets[0]!.href
+            return resolvePlanningTarget(getTargetIndex(), internalTarget).href
           })()
         : undefined
   if (!href) return undefined
@@ -550,7 +579,7 @@ function draftInlinePlan(
   document: StructDocument,
   source: RenderedInlineSource,
   relationships: ReadonlyMap<string, StructDocument['relationships'][number]>,
-  targetCache: Map<string, StructTarget[]>,
+  targetCache: WeakMap<readonly string[], StructTarget[]>,
   getTargetIndex: () => PlanningTargetIndex,
   seenSemanticIds: Set<string>,
   totals: PlanningTotals,
@@ -652,7 +681,9 @@ function draftInlinePlan(
           semanticRun.path,
           relationships,
           targetCache,
-          getTargetIndex(),
+          getTargetIndex,
+          totals,
+          positions.length - 1,
         )
         if (semantic) semanticByOwnerKey.set(semanticRun.key, semantic)
       }
@@ -676,8 +707,7 @@ function draftInlinePlan(
           hyperlink = hyperlinkPlanForRun(
             document,
             hyperlinkRun.run,
-            targetCache,
-            getTargetIndex(),
+            getTargetIndex,
           )
           if (hyperlink) hyperlinkByOwnerKey.set(hyperlinkRun.key, hyperlink)
         }
@@ -721,7 +751,7 @@ export function renderedInlinePlan(
     {} as StructDocument,
     { key: 'direct', value, runs, pathPrefix: '$.blocks.inline' },
     relationships,
-    new Map(),
+    new WeakMap(),
     () => new Map(),
     new Set(),
     {
@@ -729,6 +759,7 @@ export function renderedInlinePlan(
       activeOwnerVisits: 0,
       wrapperBytes: 0,
       eventStorage: 0,
+      citationWork: 0,
     },
   )
   if (
@@ -808,7 +839,7 @@ export function buildRenderedPublicationPlan(
       })
       .map((note) => stableId(note.id)),
   )
-  const targetCache = new Map<string, StructTarget[]>()
+  const targetCache = new WeakMap<readonly string[], StructTarget[]>()
   let targetIndex: PlanningTargetIndex | undefined
   const getTargetIndex = () =>
     (targetIndex ??= buildPlanningTargetIndex(document))
@@ -818,6 +849,7 @@ export function buildRenderedPublicationPlan(
     activeOwnerVisits: 0,
     wrapperBytes: 0,
     eventStorage: 0,
+    citationWork: 0,
   }
   const renderedRelationshipIds = new Set<string>()
   for (const note of authorNotes)

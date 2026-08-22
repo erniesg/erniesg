@@ -302,23 +302,48 @@ function renderTable(
   emittedRelationshipIds: Set<string>,
 ) {
   const rows = Array.from({ length: table.rows }, () => [] as string[])
-  for (const cell of [...table.cells].sort(
-    (left, right) => left.row - right.row || left.column - right.column,
-  )) {
-    const tag = cell.headerScope ? 'th' : 'td'
-    const htmlScope = cell.headerScope === 'column' ? 'col' : cell.headerScope
-    const scope = htmlScope ? ` scope="${htmlScope}"` : ''
-    const rowSpan = cell.rowSpan > 1 ? ` rowspan="${cell.rowSpan}"` : ''
-    const columnSpan =
-      cell.columnSpan > 1 ? ` colspan="${cell.columnSpan}"` : ''
-    rows[cell.row]?.push(
-      `<${tag} id="${attribute(`${tableBlockId}-${cell.id}`)}"${scope}${rowSpan}${columnSpan}>${renderInline(document, cell.text, cell.inline, emittedRelationshipIds)}</${tag}>`,
-    )
+  const cells = new Map(
+    table.cells.map((cell) => [`${cell.row}:${cell.column}`, cell] as const),
+  )
+  const occupied = new Set<string>()
+  for (let row = 0; row < table.rows; row += 1) {
+    for (let column = 0; column < table.columns; column += 1) {
+      const coordinate = `${row}:${column}`
+      if (occupied.has(coordinate)) continue
+      const cell = cells.get(coordinate)
+      if (!cell) {
+        rows[row]!.push('<td></td>')
+        continue
+      }
+      const tag = cell.headerScope ? 'th' : 'td'
+      const htmlScope = cell.headerScope === 'column' ? 'col' : cell.headerScope
+      const scope = htmlScope ? ` scope="${htmlScope}"` : ''
+      const rowSpan = cell.rowSpan > 1 ? ` rowspan="${cell.rowSpan}"` : ''
+      const columnSpan =
+        cell.columnSpan > 1 ? ` colspan="${cell.columnSpan}"` : ''
+      rows[row]!.push(
+        `<${tag} id="${attribute(`${tableBlockId}-${cell.id}`)}"${scope}${rowSpan}${columnSpan}>${renderInline(document, cell.text, cell.inline, emittedRelationshipIds)}</${tag}>`,
+      )
+      for (
+        let occupiedRow = cell.row;
+        occupiedRow < cell.row + cell.rowSpan;
+        occupiedRow += 1
+      )
+        for (
+          let occupiedColumn = cell.column;
+          occupiedColumn < cell.column + cell.columnSpan;
+          occupiedColumn += 1
+        )
+          occupied.add(`${occupiedRow}:${occupiedColumn}`)
+    }
   }
   return `<table>${rows.map((row) => `<tr>${row.join('')}</tr>`).join('')}</table>`
 }
 
-function renderAuthors(document: StructDocument) {
+function renderAuthors(
+  document: StructDocument,
+  emittedRelationshipIds: Set<string>,
+) {
   if (document.metadata.authors.length === 0) return ''
   const authors = document.metadata.authors
     .map((author) => {
@@ -326,6 +351,7 @@ function renderAuthors(document: StructDocument) {
         .filter((reference) => reference.author === author)
         .map((reference) => {
           const target = resolveStructTarget(document, reference.target)
+          emittedRelationshipIds.add(stableId(reference.id))
           return `<sup><a id="${attribute(stableId(reference.id))}" href="${attribute(target.href)}" epub:type="noteref" role="doc-noteref">${text(reference.label)}</a></sup>`
         })
         .join('')
@@ -447,7 +473,7 @@ export function renderPublicationXhtml(
   ${options.embedStyles ? `<style>${text(styles)}</style>` : '<link rel="stylesheet" type="text/css" href="styles.css" />'}
 </head>
 <body>
-  <header><h1>${text(document.metadata.title)}</h1>${document.metadata.subtitle ? `<p>${text(document.metadata.subtitle)}</p>` : ''}${renderAuthors(document)}</header>
+  <header><h1>${text(document.metadata.title)}</h1>${document.metadata.subtitle ? `<p>${text(document.metadata.subtitle)}</p>` : ''}${renderAuthors(document, emittedRelationshipIds)}</header>
   ${document.blocks.map((block) => renderBlock(document, block, emittedRelationshipIds)).join('\n  ')}
 </body>
 </html>

@@ -305,11 +305,33 @@ function validateReferences(document: StructDocument) {
     document.diagnostics.map(({ id }) => id),
     'diagnostics',
   )
-  addCategoryIds(
-    ids,
-    (document.metadata.authorNotes ?? []).map(({ id }) => id),
-    'metadata.authorNotes',
-  )
+  for (const [index, note] of (document.metadata.authorNotes ?? []).entries()) {
+    if (!document.metadata.authors.includes(note.author))
+      fail(
+        'REFERENCE',
+        `$.metadata.authorNotes[${index}].author`,
+        `author note author ${note.author} must be listed in metadata.authors`,
+      )
+    const previous = ids.get(note.id)
+    if (!previous) {
+      ids.set(note.id, 'metadata.authorNotes')
+      continue
+    }
+    const relationship = document.relationships.find(
+      (entry) => entry.id === note.id,
+    )
+    if (
+      previous !== 'relationships' ||
+      relationship?.status !== 'matched' ||
+      (relationship.kind !== 'footnote' && relationship.kind !== 'endnote') ||
+      !relationship.to.includes(note.target)
+    )
+      fail(
+        'DUPLICATE_IDENTIFIER',
+        `$.metadata.authorNotes[${index}].id`,
+        `identifier ${note.id} is also used by ${previous}`,
+      )
+  }
   addCategoryIds(
     ids,
     document.blocks.flatMap((block) => block.sourceObservationAnchorIds ?? []),

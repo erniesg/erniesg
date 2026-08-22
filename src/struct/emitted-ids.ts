@@ -9,6 +9,13 @@ const EPUB_RESERVED_IDS = new Set([
   'profile',
 ])
 
+/**
+ * Bound rendered ownership planning before its segment/run sweep can amplify
+ * nested inline input. This is deliberately conservative: valid publication
+ * output is never truncated; inputs above the exact boundary fail closed.
+ */
+export const MAX_RENDERED_INLINE_RUNS = 4_096
+
 export type StructTarget = {
   id: string
   href: string
@@ -106,11 +113,26 @@ function renderedInlineSources(document: StructDocument) {
   )
 }
 
+function assertRenderedInlineBudget(sources: readonly RenderedInlineSource[]) {
+  const runCount = sources.reduce(
+    (count, source) => count + source.runs.length,
+    0,
+  )
+  if (runCount > MAX_RENDERED_INLINE_RUNS)
+    throw new Error(
+      `STRUCT inline ownership work exceeds ${MAX_RENDERED_INLINE_RUNS} runs`,
+    )
+}
+
 /** Build the owner plan shared by XHTML rendering, emitted IDs, and backlinks. */
 export function renderedInlinePlan(
   value: string,
   runs: readonly StructInline[],
 ): RenderedInlineSegment[] {
+  if (runs.length > MAX_RENDERED_INLINE_RUNS)
+    throw new Error(
+      `STRUCT inline ownership work exceeds ${MAX_RENDERED_INLINE_RUNS} runs`,
+    )
   const validRuns = runs
     .filter((run) => validInline(run, value))
     .sort((left, right) => left.start - right.start || right.end - left.end)
@@ -134,7 +156,25 @@ export function renderedInlinePlan(
 /** Return relationship IDs that have an owner in the actual rendered plan. */
 export function renderedInlineRelationshipIds(document: StructDocument) {
   const ids = new Set<string>()
-  for (const source of renderedInlineSources(document)) {
+  const sources = renderedInlineSources(document)
+  assertRenderedInlineBudget(sources)
+  const relationships = new Map(
+    document.relationships.map((relationship) => [
+      relationship.id,
+      relationship,
+    ]),
+  )
+  for (const note of document.metadata.authorNotes ?? []) {
+    if (!document.metadata.authors.includes(note.author)) continue
+    const relationship = relationships.get(note.id)
+    if (
+      relationship?.status === 'matched' &&
+      (relationship.kind === 'footnote' || relationship.kind === 'endnote') &&
+      relationship.to.includes(note.target)
+    )
+      ids.add(note.id)
+  }
+  for (const source of sources) {
     for (const segment of renderedInlinePlan(source.value, source.runs)) {
       const semanticRun = segment.owners.find(
         (run) => run.semanticRole && run.relationshipId,
@@ -152,6 +192,8 @@ export function renderedInlineRelationshipIds(document: StructDocument) {
  */
 export function emittedXhtmlIds(document: StructDocument): EmittedXhtmlId[] {
   const entries: EmittedXhtmlId[] = []
+  const sources = renderedInlineSources(document)
+  assertRenderedInlineBudget(sources)
   for (const [blockIndex, block] of document.blocks.entries()) {
     if (block.kind === 'furniture') continue
     entries.push({ id: block.id, path: `$.blocks[${blockIndex}].id` })
@@ -172,19 +214,37 @@ export function emittedXhtmlIds(document: StructDocument): EmittedXhtmlId[] {
       }
     }
   }
+  const relationshipIds = new Set<string>()
+  const authorNoteAliasIds = new Set(
+    (document.metadata.authorNotes ?? [])
+      .filter((note) => {
+        const relationship = document.relationships.find(
+          (entry) => entry.id === note.id,
+        )
+        return (
+          relationship?.status === 'matched' &&
+          (relationship.kind === 'footnote' ||
+            relationship.kind === 'endnote') &&
+          relationship.to.includes(note.target)
+        )
+      })
+      .map((note) => note.id),
+  )
   for (const [index, note] of (document.metadata.authorNotes ?? []).entries())
     entries.push({
       id: stableId(note.id),
       path: `$.metadata.authorNotes[${index}].id`,
     })
-
-  const relationshipIds = new Set<string>()
-  for (const source of renderedInlineSources(document)) {
+  for (const source of sources) {
     for (const segment of renderedInlinePlan(source.value, source.runs)) {
       const run = segment.owners.find(
         (owner) => owner.relationshipId && owner.semanticRole,
       )
-      if (!run?.relationshipId || relationshipIds.has(run.relationshipId))
+      if (
+        !run?.relationshipId ||
+        relationshipIds.has(run.relationshipId) ||
+        authorNoteAliasIds.has(run.relationshipId)
+      )
         continue
       relationshipIds.add(run.relationshipId)
       const index = source.runs.indexOf(run)

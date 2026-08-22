@@ -572,14 +572,6 @@ function parseTableCell(value: unknown, path: string): StructTableCell {
 
 function parseTable(value: unknown, path: string): StructTable {
   const parsed = object(value, path, ['rows', 'columns', 'cells', 'semantic'])
-  const cells = array(parsed.cells, `${path}.cells`).map((cell, index) =>
-    parseTableCell(cell, `${path}.cells[${index}]`),
-  )
-  unique(
-    cells.map((cell) => cell.id),
-    `${path}.cells`,
-    'table cell id',
-  )
   const rows = nonNegativeInteger(parsed.rows, `${path}.rows`)
   const columns = nonNegativeInteger(parsed.columns, `${path}.columns`)
   if (
@@ -592,6 +584,21 @@ function parseTable(value: unknown, path: string): StructTable {
       path,
       `table dimensions must fit within ${MAX_TABLE_DIMENSION} rows/columns and ${MAX_TABLE_AREA} cells`,
     )
+  const rawCells = array(parsed.cells, `${path}.cells`)
+  if (rawCells.length > rows * columns)
+    fail(
+      'TABLE_BOUNDS',
+      `${path}.cells`,
+      'table cell count cannot exceed the declared table area',
+    )
+  const cells = rawCells.map((cell, index) =>
+    parseTableCell(cell, `${path}.cells[${index}]`),
+  )
+  unique(
+    cells.map((cell) => cell.id),
+    `${path}.cells`,
+    'table cell id',
+  )
   for (const [index, cell] of cells.entries()) {
     if (cell.row >= rows || cell.row + cell.rowSpan > rows)
       fail(

@@ -1095,7 +1095,9 @@ describe('STRUCT runtime codec', () => {
     seal(value)
     const decoded = decodeStructDocument(value)
     const xhtml = renderPublicationXhtml(decoded)
-    expect(xhtml).toContain('<tr><td></td><td id="block-1-right">RIGHT</td></tr>')
+    expect(xhtml).toContain(
+      '<tr><td></td><td id="block-1-right">RIGHT</td></tr>',
+    )
     await expect(buildStructEpub(decoded)).resolves.toMatchObject({
       mediaType: 'application/epub+zip',
     })
@@ -1134,7 +1136,7 @@ describe('STRUCT runtime codec', () => {
     seal(value)
     const xhtml = renderPublicationXhtml(decodeStructDocument(value))
     expect(xhtml).toContain(
-      '<tr><td id="block-1-top" rowspan="2">TOP</td></tr><tr><td id="block-1-bottom">BOTTOM</td></tr>',
+      '<tr><td id="block-1-top" rowspan="2">TOP</td><td></td></tr><tr><td id="block-1-bottom">BOTTOM</td></tr>',
     )
     expect(xhtml).not.toContain('<tr><td></td><td id="block-1-bottom">')
   })
@@ -1183,8 +1185,20 @@ describe('STRUCT runtime codec', () => {
       rows: 2,
       columns: 3,
       cells: [
-        { ...value.blocks[0].table.cells[0], id: 'a', text: 'A', row: 0, column: 2 },
-        { ...value.blocks[0].table.cells[0], id: 'b', text: 'B', row: 1, column: 1 },
+        {
+          ...value.blocks[0].table.cells[0],
+          id: 'a',
+          text: 'A',
+          row: 0,
+          column: 2,
+        },
+        {
+          ...value.blocks[0].table.cells[0],
+          id: 'b',
+          text: 'B',
+          row: 1,
+          column: 1,
+        },
       ],
       semantic: 'verified',
     }
@@ -1264,6 +1278,29 @@ describe('STRUCT runtime codec', () => {
     expect(traps).toEqual({ ownKeys: 0, descriptor: 0 })
   })
 
+  it('rejects a cell list over the table area before parsing cell payloads', () => {
+    const value = validDocument() as any
+    const traps = { ownKeys: 0, descriptor: 0 }
+    value.blocks[0].table.rows = 1
+    value.blocks[0].table.columns = 1
+    const hostileCell = new Proxy(
+      {},
+      {
+        ownKeys() {
+          traps.ownKeys += 1
+          throw new Error('cell payload inspected')
+        },
+        getOwnPropertyDescriptor() {
+          traps.descriptor += 1
+          throw new Error('cell payload inspected')
+        },
+      },
+    )
+    value.blocks[0].table.cells = [hostileCell, hostileCell]
+    expect(() => decodeStructDocument(value)).toThrow(/table|bound/i)
+    expect(traps).toEqual({ ownKeys: 0, descriptor: 0 })
+  })
+
   it('allows an author note to alias its matched relationship occurrence', async () => {
     const value = validDocument() as any
     const note = {
@@ -1310,11 +1347,20 @@ describe('STRUCT runtime codec', () => {
     seal(value)
     const decoded = decodeStructDocument(value)
     const xhtml = renderPublicationXhtml(decoded)
-    expect(xhtml.match(/id="author-note-1"/g)).toHaveLength(1)
+    expect(xhtml.match(/<a id="author-note-1"/g)).toHaveLength(1)
     expect(xhtml).toContain('href="#author-note-1" class="note-backlink"')
     await expect(buildStructEpub(decoded)).resolves.toMatchObject({
       mediaType: 'application/epub+zip',
     })
+  })
+
+  it('rejects an author-note identifier reused by an unrelated relationship', () => {
+    const value = validDocument() as any
+    value.metadata.authorNotes[0].id = value.relationships[0].id
+    value.relationships[0].kind = 'reading-order'
+    value.relationships[0].to = ['block-1']
+    seal(value)
+    expect(() => decodeStructDocument(value)).toThrow(/duplicate|identifier/i)
   })
 
   it('rejects inline ownership work above the documented cap', () => {
@@ -1330,6 +1376,21 @@ describe('STRUCT runtime codec', () => {
     value.receipt.conservation.structTextCharacterCount = runCount
     seal(value)
     expect(() => decodeStructDocument(value)).toThrow(/inline|bound|work/i)
+  })
+
+  it('accepts inline ownership work exactly at the documented cap', () => {
+    const value = validDocument() as any
+    const runCount = 4_096
+    value.blocks[0].text = 'x'.repeat(runCount)
+    value.blocks[0].inline = Array.from({ length: runCount }, (_, index) => ({
+      start: index,
+      end: index + 1,
+    }))
+    value.receipt.textCharacterCount = runCount
+    value.receipt.conservation.sourceTextCharacterCount = runCount
+    value.receipt.conservation.structTextCharacterCount = runCount
+    seal(value)
+    expect(() => decodeStructDocument(value)).not.toThrow()
   })
 
   it('does not create a footnote backlink for a non-table block table payload', async () => {

@@ -3,6 +3,7 @@ import type {
   StructDocument,
   StructInline,
   StructTable,
+  StructTableCell,
 } from './types'
 import {
   emittedXhtmlIds,
@@ -302,7 +303,7 @@ function renderTable(
   emittedRelationshipIds: Set<string>,
 ) {
   const rows = Array.from({ length: table.rows }, () => [] as string[])
-  const cells = new Map(
+  const cells = new Map<string, StructTableCell>(
     table.cells.map((cell) => [`${cell.row}:${cell.column}`, cell] as const),
   )
   const occupied = new Set<string>()

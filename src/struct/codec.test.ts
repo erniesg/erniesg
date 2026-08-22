@@ -901,8 +901,8 @@ describe('STRUCT runtime codec', () => {
 
   it('rejects later-position source anchors through decode and migration', () => {
     const value = validDocument() as any
-    value.blocks[0].sourceObservationAnchorIds = ['anchor-1', 'anchor-2']
-    value.metadata.authorNotes[0].id = 'anchor-2'
+    value.blocks[0].sourceObservationAnchorIds = ['anchor-1', 'n-1']
+    value.metadata.authorNotes[0].id = '1'
     seal(value)
     expect(() => decodeStructDocument(value)).toThrow(/duplicate|identifier/i)
     expect(() => migrateStructDocument(value)).toThrow(/duplicate|identifier/i)
@@ -918,9 +918,9 @@ describe('STRUCT runtime codec', () => {
     delete second.fallbackAssetIds
     second.inline = []
     second.text = ''
-    second.sourceObservationAnchorIds = ['anchor-1', 'anchor-2']
+    second.sourceObservationAnchorIds = ['anchor-1', 'n-1']
     value.blocks.push(second)
-    value.metadata.authorNotes[0].id = 'anchor-2'
+    value.metadata.authorNotes[0].id = '1'
     value.receipt.blockCount = 2
     value.receipt.conservation.structBlockCount = 2
     seal(value)

@@ -304,6 +304,16 @@ function validateReferences(document: StructDocument) {
     document.diagnostics.map(({ id }) => id),
     'diagnostics',
   )
+  addCategoryIds(
+    ids,
+    (document.metadata.authorNotes ?? []).map(({ id }) => id),
+    'metadata.authorNotes',
+  )
+  addCategoryIds(
+    ids,
+    document.blocks.flatMap((block) => block.sourceObservationAnchorIds ?? []),
+    'blocks.sourceObservationAnchorIds',
+  )
   if (document.documentId && ids.has(document.documentId))
     fail(
       'DUPLICATE_IDENTIFIER',

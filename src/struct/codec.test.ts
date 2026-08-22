@@ -272,10 +272,14 @@ describe('STRUCT runtime codec', () => {
   })
 
   it('encodes asset bytes as canonical JSON-safe base64 and round-trips them', () => {
-    const document = decodeStructDocument(validDocument())
+    const fixture = validDocument()
+    const document = decodeStructDocument(fixture)
     const encoded = encodeStructDocument(document)
 
     expect(encoded.assets[0]).toMatchObject({ bytes: 'AP+A' })
+    expect(encoded.receipt.generatedSha256).toBe(
+      fixture.receipt.generatedSha256,
+    )
     expect(JSON.parse(JSON.stringify(encoded))).toEqual(encoded)
     expect(decodeStructDocument(encoded).assets[0]?.bytes).toEqual(
       new Uint8Array([0, 255, 128]),
@@ -729,6 +733,55 @@ describe('STRUCT runtime codec', () => {
     const value = validDocument()
     mutate(value)
     expect(() => decodeStructDocument(value)).toThrow(/duplicate|identifier/i)
+  })
+
+  it.each([
+    [
+      'author notes within the namespace',
+      (value: any) =>
+        value.metadata.authorNotes.push({
+          ...value.metadata.authorNotes[0],
+        }),
+    ],
+    [
+      'source observation anchors within the namespace',
+      (value: any) =>
+        (value.blocks[0].sourceObservationAnchorIds = ['anchor-1', 'anchor-1']),
+    ],
+    [
+      'author note and block',
+      (value: any) => (value.metadata.authorNotes[0].id = 'block-1'),
+    ],
+    [
+      'author note and source observation anchor',
+      (value: any) => (value.metadata.authorNotes[0].id = 'anchor-1'),
+    ],
+    [
+      'source observation anchor and block',
+      (value: any) =>
+        (value.blocks[0].sourceObservationAnchorIds = ['block-1']),
+    ],
+    [
+      'source observation anchors across blocks',
+      (value: any) => {
+        value.blocks.push({
+          ...value.blocks[0],
+          id: 'block-2',
+          order: 1,
+          page: null,
+          text: '',
+          inline: [],
+          sourceObservationAnchorIds: ['anchor-1'],
+        })
+        value.receipt.blockCount = value.blocks.length
+        value.receipt.conservation.structBlockCount = value.blocks.length
+      },
+    ],
+  ])('rejects semantic ids reused across namespaces (%s)', (_label, mutate) => {
+    const value = validDocument()
+    mutate(value)
+    seal(value)
+    expect(() => decodeStructDocument(value)).toThrow(/DUPLICATE_IDENTIFIER/i)
   })
 
   it.each([

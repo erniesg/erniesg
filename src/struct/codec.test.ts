@@ -1493,6 +1493,105 @@ describe('STRUCT runtime codec', () => {
     expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
   })
 
+  it('rejects shadowed semantic owners before expanding every target list', () => {
+    const value = validDocument() as any
+    const runCount = 800
+    const targetIds = Array.from(
+      { length: runCount },
+      (_, index) => `https://example.test/shadowed-${index}`,
+    )
+    value.relationships[0] = {
+      ...value.relationships[0],
+      to: targetIds,
+      status: 'matched',
+    }
+    value.blocks[0].text = 'x'.repeat(runCount)
+    value.blocks[0].inline = Array.from({ length: runCount }, () => ({
+      start: 0,
+      end: runCount,
+      relationshipId: value.relationships[0].id,
+      semanticRole: 'cross-reference',
+    }))
+    expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
+  })
+
+  it('refuses same-year citation matching before touching a later hostile source', () => {
+    const value = validDocument() as any
+    const occurrenceCount = 800
+    const labels = Array.from(
+      { length: occurrenceCount },
+      (_, index) => `Author${index}:2000`,
+    )
+    const targetIds = labels.map(
+      (_, index) => `https://example.test/citation-${index}`,
+    )
+    value.relationships[0] = {
+      ...value.relationships[0],
+      to: targetIds,
+      label: labels.join(', '),
+      status: 'matched',
+    }
+    const citationText = labels
+      .map((label) => `${label.split(':')[0]} 2000`)
+      .join(' ')
+    value.blocks[0].text = citationText
+    value.blocks[0].inline = [
+      {
+        start: 0,
+        end: citationText.length,
+        relationshipId: value.relationships[0].id,
+        semanticRole: 'citation',
+      },
+    ]
+    const later = new Proxy(
+      {
+        id: 'later-citation',
+        kind: 'paragraph',
+        text: 'later',
+        inline: [],
+        page: 1,
+        order: 1,
+        column: 'single',
+      },
+      {
+        get(_target, property) {
+          if (property === 'inline') throw new Error('LATE_CITATION_TRAP')
+          return Reflect.get(_target, property)
+        },
+      },
+    )
+    value.blocks.push(later)
+    expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
+  })
+
+  it('uses the planning target index instead of scanning document nodes per target', () => {
+    const value = validDocument() as any
+    value.relationships[0] = {
+      ...value.relationships[0],
+      to: ['block-1'],
+      status: 'matched',
+    }
+    value.blocks[0].inline = [
+      {
+        start: 0,
+        end: 5,
+        relationshipId: value.relationships[0].id,
+        semanticRole: 'cross-reference',
+      },
+    ]
+    Object.defineProperty(value.blocks, 'find', {
+      value: () => {
+        throw new Error('block find must not be used during planning')
+      },
+    })
+    Object.defineProperty(value.assets, 'find', {
+      value: () => {
+        throw new Error('asset find must not be used during planning')
+      },
+    })
+    expect(() => renderPublicationXhtml(value)).not.toThrow()
+  })
+
   it('rejects an early source budget before inspecting a later hostile source', () => {
     const value = validDocument() as any
     const runCount = 2_000

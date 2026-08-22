@@ -138,6 +138,22 @@ function citationRanges(
   const targetByLabel = new Map(
     labels.map((label, index) => [label, targets[index]!.id] as const),
   )
+  const labelsByYear = new Map<
+    string,
+    Array<{ label: string; index: number; surname: string }>
+  >()
+  for (const [index, label] of labels.entries()) {
+    const separator = label.lastIndexOf(':')
+    if (separator <= 0) continue
+    const year = label.slice(separator + 1)
+    const candidates = labelsByYear.get(year) ?? []
+    candidates.push({
+      label,
+      index,
+      surname: foldedCitationText(label.slice(0, separator)),
+    })
+    labelsByYear.set(year, candidates)
+  }
   const ranges: Array<{ start: number; end: number; target: string }> = [
     ...sourceValue.matchAll(/[\p{Nd}⁰¹²³⁴⁵⁶⁷⁸⁹]+/gu),
   ].flatMap((match) => {
@@ -155,15 +171,14 @@ function citationRanges(
     const prefix = foldedCitationText(
       sourceValue.slice(Math.max(0, start - 96), start),
     )
-    const candidates = labels.flatMap((label, index) => {
-      const separator = label.lastIndexOf(':')
-      if (separator <= 0 || label.slice(separator + 1) !== year) return []
-      const surname = foldedCitationText(label.slice(0, separator))
-      const position = prefix.lastIndexOf(surname)
-      return position >= 0 && !linkedTargets.has(targets[index]!.id)
-        ? [{ target: targets[index]!.id, position }]
-        : []
-    })
+    const candidates = (labelsByYear.get(year) ?? []).flatMap(
+      ({ index, surname }) => {
+        const position = prefix.lastIndexOf(surname)
+        return position >= 0 && !linkedTargets.has(targets[index]!.id)
+          ? [{ target: targets[index]!.id, position }]
+          : []
+      },
+    )
     const nearest = Math.max(...candidates.map(({ position }) => position))
     const selected = candidates.filter(({ position }) => position === nearest)
     if (selected.length !== 1) continue
@@ -185,7 +200,7 @@ function citationRanges(
 export function groupedCitationLinks(
   value: string,
   ranges: readonly { start: number; end: number; target: string }[] | null,
-  targets: readonly StructTarget[],
+  targetById: ReadonlyMap<string, StructTarget>,
   epubRole: string,
   sourceOffset = 0,
 ) {
@@ -209,7 +224,7 @@ export function groupedCitationLinks(
   let html = ''
   for (const range of segmentRanges) {
     html += text(value.slice(cursor, range.start))
-    const target = targets.find((entry) => entry.id === range.target)
+    const target = targetById.get(range.target)
     if (!target) return { html: text(value), linkedTargets: new Set<string>() }
     html += `<a href="${attribute(target.href)}"${epubRole}>${text(value.slice(range.start, range.end))}</a>`
     cursor = range.end
@@ -254,11 +269,17 @@ export type RenderedSemanticPlan = {
   relationshipId: string
   relationshipIdStable: string
   targets: readonly StructTarget[]
+  targetById: ReadonlyMap<string, StructTarget>
   labels: readonly string[]
   semanticAttributes: string
   epubRole: string
   additionalTargets: string
   citationRanges: readonly CitationRange[] | null
+  estimatedBytesPerSegment: number
+}
+
+export type RenderedHyperlinkPlan = {
+  href: string
   estimatedBytesPerSegment: number
 }
 
@@ -268,6 +289,7 @@ type DraftRun = {
   path: string
   key: string
   semantic?: RenderedSemanticPlan
+  hyperlink?: RenderedHyperlinkPlan
 }
 
 export type RenderedPublicationPlan = {
@@ -284,6 +306,7 @@ export type RenderedPublicationPlan = {
     readonly NonNullable<StructDocument['metadata']['authorNotes']>[number][]
   >
   semanticByOwnerKey: ReadonlyMap<string, RenderedSemanticPlan>
+  hyperlinkByOwnerKey: ReadonlyMap<string, RenderedHyperlinkPlan>
 }
 
 export class RenderedPublicationPlanError extends Error {
@@ -333,6 +356,7 @@ type InlineDraft = {
   activeOwnerVisits: number
   wrapperBytes: number
   semanticByOwnerKey: Map<string, RenderedSemanticPlan>
+  hyperlinkByOwnerKey: Map<string, RenderedHyperlinkPlan>
   renderedRelationshipIds: Set<string>
 }
 
@@ -365,6 +389,9 @@ function semanticPlanForRun(
         ? ' epub:type="biblioref" role="doc-biblioref"'
         : ''
   const targetIds = targets.map((target) => target.id).join(' ')
+  const targetById = new Map(
+    targets.map((target) => [target.id, target] as const),
+  )
   const semanticAttributes = ` data-semantic-role="${attribute(run.semanticRole)}" data-relationship-id="${attribute(relationshipIdStable)}"${targets.length > 0 ? ` data-target-ids="${attribute(targetIds)}"` : ''}`
   const ranges =
     run.semanticRole === 'citation'
@@ -405,6 +432,7 @@ function semanticPlanForRun(
     relationshipId: run.relationshipId,
     relationshipIdStable,
     targets,
+    targetById,
     labels,
     semanticAttributes,
     epubRole,
@@ -414,11 +442,47 @@ function semanticPlanForRun(
   }
 }
 
+function hyperlinkPlanForRun(
+  document: StructDocument,
+  run: StructInline,
+  nodeIds: ReadonlySet<string>,
+  targetCache: Map<string, StructTarget[]>,
+): RenderedHyperlinkPlan | undefined {
+  if (!run.href && !run.targetIds?.length) return undefined
+  const internalTarget = run.targetIds?.[0]
+  const rawHref = run.href
+  const href = rawHref?.startsWith('#')
+    ? internalTarget || nodeIds.has(rawHref.slice(1))
+      ? resolveStructTarget(document, internalTarget ?? rawHref).href
+      : rawHref
+    : rawHref
+      ? /^(?:https?|mailto):/iu.test(rawHref)
+        ? resolveStructTarget(document, rawHref).href
+        : rawHref
+      : internalTarget
+        ? (() => {
+            const key = [internalTarget].join('\u0000')
+            let targets = targetCache.get(key)
+            if (!targets) {
+              targets = [resolveStructTarget(document, internalTarget)]
+              targetCache.set(key, targets)
+            }
+            return targets[0]!.href
+          })()
+        : undefined
+  if (!href) return undefined
+  return {
+    href,
+    estimatedBytesPerSegment: `<a href="${attribute(href)}"></a>`.length,
+  }
+}
+
 function draftInlinePlan(
   document: StructDocument,
   source: RenderedInlineSource,
   relationships: ReadonlyMap<string, StructDocument['relationships'][number]>,
   targetCache: Map<string, StructTarget[]>,
+  nodeIds: ReadonlySet<string>,
   seenSemanticIds: Set<string>,
 ): InlineDraft {
   if (source.runs.length * 2 > MAX_RENDERED_INLINE_EVENT_STORAGE)
@@ -443,6 +507,7 @@ function draftInlinePlan(
         relationships,
         targetCache,
       ),
+      hyperlink: hyperlinkPlanForRun(document, run, nodeIds, targetCache),
     })
   }
   runs.sort(
@@ -467,6 +532,7 @@ function draftInlinePlan(
   let activeOwnerVisits = 0
   let wrapperBytes = 0
   const semanticByOwnerKey = new Map<string, RenderedSemanticPlan>()
+  const hyperlinkByOwnerKey = new Map<string, RenderedHyperlinkPlan>()
   const renderedRelationshipIds = new Set<string>()
   for (
     let positionIndex = 0;
@@ -503,6 +569,14 @@ function draftInlinePlan(
       const semanticRun = runs[semanticIndex]!
       semanticByOwnerKey.set(semanticRun.key, semantic)
       renderedRelationshipIds.add(semantic.relationshipId)
+    } else {
+      for (const runIndex of active) {
+        const hyperlink = runs[runIndex]!.hyperlink
+        if (!hyperlink) continue
+        wrapperBytes += hyperlink.estimatedBytesPerSegment
+        hyperlinkByOwnerKey.set(runs[runIndex]!.key, hyperlink)
+        break
+      }
     }
   }
   return {
@@ -514,6 +588,7 @@ function draftInlinePlan(
     activeOwnerVisits,
     wrapperBytes,
     semanticByOwnerKey,
+    hyperlinkByOwnerKey,
     renderedRelationshipIds,
   }
 }
@@ -532,6 +607,7 @@ export function renderedInlinePlan(
     { key: 'direct', value, runs, pathPrefix: '$.blocks.inline' },
     relationships,
     new Map(),
+    new Set(),
     new Set(),
   )
   if (
@@ -612,6 +688,10 @@ export function buildRenderedPublicationPlan(
       .map((note) => stableId(note.id)),
   )
   const targetCache = new Map<string, StructTarget[]>()
+  const nodeIds = new Set([
+    ...document.blocks.map(({ id }) => id),
+    ...document.assets.map(({ id }) => id),
+  ])
   const drafts: InlineDraft[] = []
   let segmentCount = 0
   let activeOwnerVisits = 0
@@ -627,6 +707,7 @@ export function buildRenderedPublicationPlan(
       source,
       relationships,
       targetCache,
+      nodeIds,
       seenSemanticIds,
     )
     segmentCount += draft.segmentCount
@@ -654,9 +735,13 @@ export function buildRenderedPublicationPlan(
   }))
   const sourceByKey = new Map(sources.map((source) => [source.key, source]))
   const semanticByOwnerKey = new Map<string, RenderedSemanticPlan>()
+  const hyperlinkByOwnerKey = new Map<string, RenderedHyperlinkPlan>()
   for (const draft of drafts)
     for (const [key, semantic] of draft.semanticByOwnerKey)
       semanticByOwnerKey.set(key, semantic)
+  for (const draft of drafts)
+    for (const [key, hyperlink] of draft.hyperlinkByOwnerKey)
+      hyperlinkByOwnerKey.set(key, hyperlink)
   const backlinksByTarget = new Map<
     string,
     StructDocument['relationships'][number][]
@@ -688,6 +773,7 @@ export function buildRenderedPublicationPlan(
     backlinksByTarget,
     authorNotesByAuthor,
     semanticByOwnerKey,
+    hyperlinkByOwnerKey,
   }
 }
 

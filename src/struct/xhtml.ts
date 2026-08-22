@@ -231,7 +231,7 @@ function renderInline(
                 ? groupedCitationLinks(
                     segmentValue,
                     semantic.citationRanges,
-                    targets,
+                    semantic.targetById,
                     epubRole,
                     start - semanticRun.start!,
                   )
@@ -240,25 +240,17 @@ function renderInline(
           }
         }
       } else {
-        const hyperlinkRun = owners.find(
+        const hyperlinkOwnerIndex = owners.findIndex(
           (run) => run.href || run.targetIds?.length,
         )
-        const internalTarget = hyperlinkRun?.targetIds?.[0]
-        const rawHref = hyperlinkRun?.href
-        const href = rawHref?.startsWith('#')
-          ? internalTarget ||
-            document.assets.some((asset) => asset.id === rawHref.slice(1)) ||
-            document.blocks.some((block) => block.id === rawHref.slice(1))
-            ? resolveStructTarget(document, internalTarget ?? rawHref).href
-            : rawHref
-          : rawHref
-            ? /^(?:https?|mailto):/iu.test(rawHref)
-              ? resolveStructTarget(document, rawHref).href
-              : rawHref
-            : internalTarget
-              ? resolveStructTarget(document, internalTarget).href
-              : undefined
-        if (href) rendered = `<a href="${attribute(href)}">${rendered}</a>`
+        const hyperlink =
+          hyperlinkOwnerIndex >= 0
+            ? publicationPlan.hyperlinkByOwnerKey.get(
+                segment.ownerKeys[hyperlinkOwnerIndex]!,
+              )
+            : undefined
+        if (hyperlink)
+          rendered = `<a href="${attribute(hyperlink.href)}">${rendered}</a>`
       }
       return rendered
     })

@@ -98,6 +98,10 @@ export type RenderedPublicationPlan = {
   sourceByKey: ReadonlyMap<string, RenderedInlineSourcePlan>
   relationships: ReadonlyMap<string, StructDocument['relationships'][number]>
   renderedRelationshipIds: ReadonlySet<string>
+  backlinksByTarget: ReadonlyMap<
+    string,
+    readonly StructDocument['relationships'][number][]
+  >
   authorNotesByAuthor: ReadonlyMap<
     string,
     readonly NonNullable<StructDocument['metadata']['authorNotes']>[number][]
@@ -324,6 +328,23 @@ export function buildRenderedPublicationPlan(
       if (semanticRun?.relationshipId)
         renderedRelationshipIds.add(semanticRun.relationshipId)
     }
+  const backlinksByTarget = new Map<
+    string,
+    StructDocument['relationships'][number][]
+  >()
+  for (const relationship of document.relationships) {
+    if (
+      relationship.status !== 'matched' ||
+      !renderedRelationshipIds.has(relationship.id) ||
+      (relationship.kind !== 'footnote' && relationship.kind !== 'endnote')
+    )
+      continue
+    for (const target of relationship.to) {
+      const backlinks = backlinksByTarget.get(target) ?? []
+      backlinks.push(relationship)
+      backlinksByTarget.set(target, backlinks)
+    }
+  }
   const authorNotesByAuthor = new Map<string, typeof authorNotes>()
   for (const note of authorNotes) {
     const notes = authorNotesByAuthor.get(note.author) ?? []
@@ -335,6 +356,7 @@ export function buildRenderedPublicationPlan(
     sourceByKey,
     relationships,
     renderedRelationshipIds,
+    backlinksByTarget,
     authorNotesByAuthor,
   }
 }
@@ -378,9 +400,7 @@ export function emittedXhtmlIds(
   const authorNoteAliasIds = new Set(
     (document.metadata.authorNotes ?? [])
       .filter((note) => {
-        const relationship = document.relationships.find(
-          (entry) => entry.id === note.id,
-        )
+        const relationship = publicationPlan.relationships.get(note.id)
         return (
           relationship?.status === 'matched' &&
           (relationship.kind === 'footnote' ||

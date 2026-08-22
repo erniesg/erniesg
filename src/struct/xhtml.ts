@@ -425,16 +425,7 @@ function renderBlock(
     return `<p id="${id}" data-struct-id="${id}" class="caption">${sourceAnchors}${content}</p>`
   }
   if (block.kind === 'footnote' || block.kind === 'endnote') {
-    const renderedRelationships = publicationPlan.renderedRelationshipIds
-    const backlinks = document.relationships
-      .filter(
-        (relationship) =>
-          relationship.status === 'matched' &&
-          renderedRelationships.has(relationship.id) &&
-          (relationship.kind === 'footnote' ||
-            relationship.kind === 'endnote') &&
-          relationship.to.includes(block.id),
-      )
+    const backlinks = (publicationPlan.backlinksByTarget.get(block.id) ?? [])
       .map(
         (relationship) =>
           `<a href="#${attribute(stableId(relationship.id))}" class="note-backlink" aria-label="Back to note reference">↩</a>`,

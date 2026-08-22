@@ -1403,6 +1403,75 @@ describe('STRUCT runtime codec', () => {
     }
   })
 
+  it('rejects semantic target expansion before materializing the cross-product', () => {
+    const value = validDocument() as any
+    const targetCount = 800
+    const segmentCount = 800
+    const targetIds = Array.from({ length: targetCount }, (_, index) => `target-${index}`)
+    value.assets = [
+      ...value.assets,
+      ...targetIds.map((id) => ({
+        id,
+        kind: 'figure',
+        href: `assets/${id}.bin`,
+        mediaType: 'application/octet-stream',
+        byteLength: 0,
+        sha256: hash,
+      })),
+    ]
+    value.relationships[0] = {
+      ...value.relationships[0],
+      to: targetIds,
+      status: 'matched',
+      label: targetIds.map((_, index) => `Author:${2000 + index}`).join(', '),
+    }
+    value.blocks[0].text = 'x'.repeat(segmentCount)
+    value.blocks[0].inline = [
+      {
+        start: 0,
+        end: segmentCount,
+        relationshipId: value.relationships[0].id,
+        semanticRole: 'citation',
+      },
+      ...Array.from({ length: segmentCount }, (_, index) => ({
+        start: index,
+        end: index + 1,
+        bold: true,
+      })),
+    ]
+    expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
+  })
+
+  it('rejects an early source budget before inspecting a later hostile source', () => {
+    const value = validDocument() as any
+    const runCount = 2_000
+    value.blocks[0].text = 'x'.repeat(runCount * 2)
+    value.blocks[0].inline = Array.from({ length: runCount }, (_, index) => ({
+      start: index,
+      end: runCount * 2 - index,
+      bold: true,
+    }))
+    const later = new Proxy(
+      {
+        id: 'later',
+        kind: 'paragraph',
+        text: 'later',
+        inline: [],
+        page: 1,
+        order: 1,
+        column: 'single',
+      },
+      {
+        get(_target, property) {
+          if (property === 'inline') throw new Error('LATE_SOURCE_TRAP')
+          return Reflect.get(_target, property)
+        },
+      },
+    )
+    value.blocks.push(later)
+    expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
+  })
+
   it('accepts the exact active-owner and wrapper budget boundary', () => {
     const value = validDocument() as any
     const runCount = 500

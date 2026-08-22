@@ -269,16 +269,16 @@ async function renderOne(browser: Browser, build: ProfiledStructEpubArtifact) {
             blockId: element.dataset.structId!,
             tagName: element.tagName.toLowerCase(),
             text: element.textContent ?? '',
-            cells: [
-              ...element.querySelectorAll<HTMLTableCellElement>('th,td'),
-            ].map((cell) => ({
-              id: cell.id,
-              tagName: cell.tagName.toLowerCase(),
-              text: cell.textContent ?? '',
-              rowSpan: cell.rowSpan,
-              columnSpan: cell.colSpan,
-              scope: cell.getAttribute('scope'),
-            })),
+            cells: [...element.querySelectorAll<HTMLTableCellElement>('th,td')]
+              .filter((cell) => cell.id.length > 0)
+              .map((cell) => ({
+                id: cell.id,
+                tagName: cell.tagName.toLowerCase(),
+                text: cell.textContent ?? '',
+                rowSpan: cell.rowSpan,
+                columnSpan: cell.colSpan,
+                scope: cell.getAttribute('scope'),
+              })),
             images: [...element.querySelectorAll<HTMLImageElement>('img')].map(
               (image) => ({
                 src: image.getAttribute('src') ?? '',

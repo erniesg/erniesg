@@ -1393,7 +1393,31 @@ describe('STRUCT runtime codec', () => {
     value.receipt.conservation.sourceTextCharacterCount = textLength
     value.receipt.conservation.structTextCharacterCount = textLength
     seal(value)
-    expect(() => decodeStructDocument(value)).toThrow(/inline|bound|work/i)
+    try {
+      decodeStructDocument(value)
+      throw new Error('expected nested ownership budget failure')
+    } catch (error) {
+      expect(error).toBeInstanceOf(StructCodecError)
+      expect((error as StructCodecError).code).toBe('BUDGET')
+      expect((error as StructCodecError).path).toBe('$.blocks[0].inline[0]')
+    }
+  })
+
+  it('accepts the exact active-owner and wrapper budget boundary', () => {
+    const value = validDocument() as any
+    const runCount = 500
+    const textLength = runCount * 2
+    value.blocks[0].text = 'x'.repeat(textLength)
+    value.blocks[0].inline = Array.from({ length: runCount }, (_, index) => ({
+      start: index,
+      end: textLength - index,
+      bold: true,
+    }))
+    value.receipt.textCharacterCount = textLength
+    value.receipt.conservation.sourceTextCharacterCount = textLength
+    value.receipt.conservation.structTextCharacterCount = textLength
+    seal(value)
+    expect(() => decodeStructDocument(value)).not.toThrow()
   })
 
   it('accepts inline ownership work exactly at the documented cap', () => {
@@ -1432,7 +1456,7 @@ describe('STRUCT runtime codec', () => {
     expect(xhtml).not.toContain('x'.repeat(runCount))
   })
 
-  it('rejects duplicate metadata authors at the strict boundary', () => {
+  it('rejects duplicate metadata authors at strict, direct, and EPUB boundaries', async () => {
     const value = validDocument() as any
     value.metadata.authors = ['Author', 'Author']
     seal(value)
@@ -1444,6 +1468,10 @@ describe('STRUCT runtime codec', () => {
       expect(() => decode(value)).toThrow(/metadata\.authors|duplicate/i)
     }
     expect(() => encodeStructDocument(value as any)).toThrow(StructCodecError)
+    value.assets[0].bytes = new Uint8Array([0, 255, 128])
+    await expect(buildStructEpub(value as any)).rejects.toThrow(
+      /duplicate|author/i,
+    )
   })
 
   it('does not create a footnote backlink for a non-table block table payload', async () => {

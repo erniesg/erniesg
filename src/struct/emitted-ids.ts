@@ -632,6 +632,11 @@ function draftInlinePlan(
   const semanticByOwnerKey = new Map<string, RenderedSemanticPlan>()
   const hyperlinkByOwnerKey = new Map<string, RenderedHyperlinkPlan>()
   const renderedRelationshipIds = new Set<string>()
+  const selectedOwners: Array<{
+    semanticIndex: number
+    hyperlinkIndex: number
+  }> = []
+  const semanticSegmentCounts = new Map<number, number>()
   for (
     let positionIndex = 0;
     positionIndex < positions.length - 1;
@@ -661,7 +666,6 @@ function draftInlinePlan(
         `${source.pathPrefix}[0]`,
         'inline ownership work exceeds publication budgets',
       )
-    let semantic: RenderedSemanticPlan | undefined
     let semanticIndex = -1
     for (const runIndex of active) {
       const candidate = runs[runIndex]!
@@ -670,9 +674,26 @@ function draftInlinePlan(
         break
       }
     }
+    let hyperlinkIndex = -1
+    if (semanticIndex < 0)
+      for (const runIndex of active) {
+        const hyperlinkRun = runs[runIndex]!
+        if (hyperlinkRun.run.href || hyperlinkRun.run.targetIds?.length) {
+          hyperlinkIndex = runIndex
+          break
+        }
+      }
+    selectedOwners.push({ semanticIndex, hyperlinkIndex })
+    if (semanticIndex >= 0)
+      semanticSegmentCounts.set(
+        semanticIndex,
+        (semanticSegmentCounts.get(semanticIndex) ?? 0) + 1,
+      )
+  }
+  for (const { semanticIndex, hyperlinkIndex } of selectedOwners) {
     if (semanticIndex >= 0) {
       const semanticRun = runs[semanticIndex]!
-      semantic = semanticByOwnerKey.get(semanticRun.key)
+      let semantic = semanticByOwnerKey.get(semanticRun.key)
       if (!semantic) {
         semantic = semanticPlanForRun(
           document,
@@ -683,12 +704,11 @@ function draftInlinePlan(
           targetCache,
           getTargetIndex,
           totals,
-          positions.length - 1,
+          semanticSegmentCounts.get(semanticIndex)!,
         )
-        if (semantic) semanticByOwnerKey.set(semanticRun.key, semantic)
+        if (!semantic) continue
+        semanticByOwnerKey.set(semanticRun.key, semantic)
       }
-    }
-    if (semantic) {
       wrapperBytes += semantic.estimatedBytesPerSegment
       totals.wrapperBytes += semantic.estimatedBytesPerSegment
       if (!seenSemanticIds.has(semantic.relationshipIdStable)) {
@@ -697,25 +717,20 @@ function draftInlinePlan(
         seenSemanticIds.add(semantic.relationshipIdStable)
       }
       renderedRelationshipIds.add(semantic.relationshipId)
-    } else {
-      for (const runIndex of active) {
-        const hyperlinkRun = runs[runIndex]!
-        if (!hyperlinkRun.run.href && !hyperlinkRun.run.targetIds?.length)
-          continue
-        let hyperlink = hyperlinkByOwnerKey.get(hyperlinkRun.key)
-        if (!hyperlink) {
-          hyperlink = hyperlinkPlanForRun(
-            document,
-            hyperlinkRun.run,
-            getTargetIndex,
-          )
-          if (hyperlink) hyperlinkByOwnerKey.set(hyperlinkRun.key, hyperlink)
-        }
+    } else if (hyperlinkIndex >= 0) {
+      const hyperlinkRun = runs[hyperlinkIndex]!
+      let hyperlink = hyperlinkByOwnerKey.get(hyperlinkRun.key)
+      if (!hyperlink) {
+        hyperlink = hyperlinkPlanForRun(
+          document,
+          hyperlinkRun.run,
+          getTargetIndex,
+        )
         if (!hyperlink) continue
-        wrapperBytes += hyperlink.estimatedBytesPerSegment
-        totals.wrapperBytes += hyperlink.estimatedBytesPerSegment
-        break
+        hyperlinkByOwnerKey.set(hyperlinkRun.key, hyperlink)
       }
+      wrapperBytes += hyperlink.estimatedBytesPerSegment
+      totals.wrapperBytes += hyperlink.estimatedBytesPerSegment
     }
     if (totals.wrapperBytes > MAX_RENDERED_INLINE_WRAPPER_BYTES)
       throw new RenderedPublicationPlanError(

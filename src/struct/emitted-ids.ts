@@ -20,6 +20,7 @@ export const MAX_RENDERED_INLINE_ACTIVE_OWNER_VISITS = 750_000
 export const MAX_RENDERED_INLINE_WRAPPER_BYTES = 16_000_000
 const ESTIMATED_WRAPPER_BYTES_PER_OWNER = 64
 const ESTIMATED_CITATION_RANGE_VISIT_BYTES = 16
+const MAX_CITATION_MATCH_WORK = MAX_RENDERED_INLINE_SEGMENTS
 const MAX_RENDERED_INLINE_EVENT_STORAGE = MAX_RENDERED_INLINE_SEGMENTS * 4
 
 export type StructTarget = {
@@ -51,6 +52,52 @@ export function resolveStructTarget(
     if (block.kind === 'furniture')
       throw new Error(`STRUCT target block is not rendered: ${block.id}`)
     return { id: block.id, href: `#${block.id}`, kind: 'block' }
+  }
+  if (/^(?:https?|mailto):/iu.test(value))
+    return { id: value, href: value, kind: 'external' }
+  throw new Error(`STRUCT target is not renderable: ${value}`)
+}
+
+type PlanningTargetIndex = ReadonlyMap<
+  string,
+  { id: string; href: string; kind: 'asset' | 'block'; furniture?: boolean }
+>
+
+function buildPlanningTargetIndex(
+  document: StructDocument,
+): PlanningTargetIndex {
+  const index = new Map<
+    string,
+    { id: string; href: string; kind: 'asset' | 'block'; furniture?: boolean }
+  >()
+  for (const asset of document.assets)
+    index.set(asset.id, { id: asset.id, href: asset.href, kind: 'asset' })
+  for (const block of document.blocks)
+    if (!index.has(block.id))
+      index.set(block.id, {
+        id: block.id,
+        href: `#${block.id}`,
+        kind: 'block',
+        furniture: block.kind === 'furniture',
+      })
+  return index
+}
+
+function resolvePlanningTarget(
+  index: PlanningTargetIndex,
+  value: string,
+): StructTarget {
+  const id = value.startsWith('#') ? value.slice(1) : value
+  const target = index.get(id)
+  if (target) {
+    if (target.kind === 'asset') {
+      if (!isPackagedAssetId(target.id))
+        throw new Error(`STRUCT target asset is not packageable: ${target.id}`)
+      return { id: target.id, href: target.href, kind: target.kind }
+    }
+    if (target.furniture)
+      throw new Error(`STRUCT target block is not rendered: ${target.id}`)
+    return { id: target.id, href: target.href, kind: target.kind }
   }
   if (/^(?:https?|mailto):/iu.test(value))
     return { id: value, href: value, kind: 'external' }
@@ -130,6 +177,7 @@ function citationRanges(
   sourceValue: string,
   labels: readonly string[],
   targets: readonly StructTarget[],
+  path: string,
 ) {
   if (
     labels.length !== targets.length ||
@@ -165,6 +213,7 @@ function citationRanges(
       : []
   })
   const linkedTargets = new Set(ranges.map((range) => range.target))
+  let matchWork = 0
   for (const match of sourceValue.matchAll(/\b(?:18|19|20)\d{2}[a-z]?\b/giu)) {
     const start = match.index ?? -1
     if (start < 0) continue
@@ -172,14 +221,20 @@ function citationRanges(
     const prefix = foldedCitationText(
       sourceValue.slice(Math.max(0, start - 96), start),
     )
-    const candidates = (labelsByYear.get(year) ?? []).flatMap(
-      ({ index, surname }) => {
-        const position = prefix.lastIndexOf(surname)
-        return position >= 0 && !linkedTargets.has(targets[index]!.id)
-          ? [{ target: targets[index]!.id, position }]
-          : []
-      },
-    )
+    const yearLabels = labelsByYear.get(year) ?? []
+    matchWork += yearLabels.length
+    if (matchWork > MAX_CITATION_MATCH_WORK)
+      throw new RenderedPublicationPlanError(
+        'BUDGET',
+        path,
+        'citation matching work exceeds the publication planning budget',
+      )
+    const candidates = yearLabels.flatMap(({ index, surname }) => {
+      const position = prefix.lastIndexOf(surname)
+      return position >= 0 && !linkedTargets.has(targets[index]!.id)
+        ? [{ target: targets[index]!.id, position }]
+        : []
+    })
     const nearest = Math.max(...candidates.map(({ position }) => position))
     const selected = candidates.filter(({ position }) => position === nearest)
     if (selected.length !== 1) continue
@@ -289,8 +344,13 @@ type DraftRun = {
   originalIndex: number
   path: string
   key: string
-  semantic?: RenderedSemanticPlan
-  hyperlink?: RenderedHyperlinkPlan
+}
+
+type PlanningTotals = {
+  segmentCount: number
+  activeOwnerVisits: number
+  wrapperBytes: number
+  eventStorage: number
 }
 
 export type RenderedPublicationPlan = {
@@ -365,8 +425,10 @@ function semanticPlanForRun(
   document: StructDocument,
   source: RenderedInlineSource,
   run: StructInline,
+  path: string,
   relationships: ReadonlyMap<string, StructDocument['relationships'][number]>,
   targetCache: Map<string, StructTarget[]>,
+  targetIndex: PlanningTargetIndex,
 ): RenderedSemanticPlan | undefined {
   if (!run.semanticRole || !run.relationshipId) return undefined
   const relationship = relationships.get(run.relationshipId)
@@ -375,7 +437,9 @@ function semanticPlanForRun(
   const targetKey = rawTargets.join('\u0000')
   let targets = targetCache.get(targetKey)
   if (!targets) {
-    targets = rawTargets.map((target) => resolveStructTarget(document, target))
+    targets = rawTargets.map((target) =>
+      resolvePlanningTarget(targetIndex, target),
+    )
     targetCache.set(targetKey, targets)
   }
   const relationshipIdStable = stableId(run.relationshipId)
@@ -400,6 +464,7 @@ function semanticPlanForRun(
           source.value.slice(run.start!, run.end!),
           labels,
           targets,
+          path,
         )
       : null
   const visibleTargets = new Set((ranges ?? []).map((range) => range.target))
@@ -451,24 +516,25 @@ function hyperlinkPlanForRun(
   run: StructInline,
   nodeIds: ReadonlySet<string>,
   targetCache: Map<string, StructTarget[]>,
+  targetIndex: PlanningTargetIndex,
 ): RenderedHyperlinkPlan | undefined {
   if (!run.href && !run.targetIds?.length) return undefined
   const internalTarget = run.targetIds?.[0]
   const rawHref = run.href
   const href = rawHref?.startsWith('#')
     ? internalTarget || nodeIds.has(rawHref.slice(1))
-      ? resolveStructTarget(document, internalTarget ?? rawHref).href
+      ? resolvePlanningTarget(targetIndex, internalTarget ?? rawHref).href
       : rawHref
     : rawHref
       ? /^(?:https?|mailto):/iu.test(rawHref)
-        ? resolveStructTarget(document, rawHref).href
+        ? resolvePlanningTarget(targetIndex, rawHref).href
         : rawHref
       : internalTarget
         ? (() => {
             const key = [internalTarget].join('\u0000')
             let targets = targetCache.get(key)
             if (!targets) {
-              targets = [resolveStructTarget(document, internalTarget)]
+              targets = [resolvePlanningTarget(targetIndex, internalTarget)]
               targetCache.set(key, targets)
             }
             return targets[0]!.href
@@ -487,7 +553,9 @@ function draftInlinePlan(
   relationships: ReadonlyMap<string, StructDocument['relationships'][number]>,
   targetCache: Map<string, StructTarget[]>,
   nodeIds: ReadonlySet<string>,
+  targetIndex: PlanningTargetIndex,
   seenSemanticIds: Set<string>,
+  totals: PlanningTotals,
 ): InlineDraft {
   if (source.runs.length * 2 > MAX_RENDERED_INLINE_EVENT_STORAGE)
     throw new RenderedPublicationPlanError(
@@ -504,14 +572,6 @@ function draftInlinePlan(
       originalIndex,
       path,
       key: `${source.key}:${originalIndex}`,
-      semantic: semanticPlanForRun(
-        document,
-        source,
-        run,
-        relationships,
-        targetCache,
-      ),
-      hyperlink: hyperlinkPlanForRun(document, run, nodeIds, targetCache),
     })
   }
   runs.sort(
@@ -529,6 +589,13 @@ function draftInlinePlan(
     )
   })
   events.sort((left, right) => left.position - right.position)
+  totals.eventStorage += events.length
+  if (totals.eventStorage > MAX_RENDERED_INLINE_EVENT_STORAGE)
+    throw new RenderedPublicationPlanError(
+      'BUDGET',
+      `${source.pathPrefix}[0]`,
+      'inline event storage exceeds the publication planning budget',
+    )
   const positions = [...boundaries].sort((left, right) => left - right)
   const active = new Set<number>()
   let eventIndex = 0
@@ -554,34 +621,81 @@ function draftInlinePlan(
     segmentCount += 1
     activeOwnerVisits += active.size
     wrapperBytes += active.size * ESTIMATED_WRAPPER_BYTES_PER_OWNER
+    totals.segmentCount += 1
+    totals.activeOwnerVisits += active.size
+    totals.wrapperBytes += active.size * ESTIMATED_WRAPPER_BYTES_PER_OWNER
+    if (
+      totals.segmentCount > MAX_RENDERED_INLINE_SEGMENTS ||
+      totals.activeOwnerVisits > MAX_RENDERED_INLINE_ACTIVE_OWNER_VISITS ||
+      totals.wrapperBytes > MAX_RENDERED_INLINE_WRAPPER_BYTES
+    )
+      throw new RenderedPublicationPlanError(
+        'BUDGET',
+        `${source.pathPrefix}[0]`,
+        'inline ownership work exceeds publication budgets',
+      )
     let semantic: RenderedSemanticPlan | undefined
     let semanticIndex = -1
     for (const runIndex of active) {
       const candidate = runs[runIndex]!
-      if (candidate.semantic) {
-        semantic = candidate.semantic
+      if (candidate.run.semanticRole && candidate.run.relationshipId) {
         semanticIndex = runIndex
         break
       }
     }
+    if (semanticIndex >= 0) {
+      const semanticRun = runs[semanticIndex]!
+      semantic = semanticByOwnerKey.get(semanticRun.key)
+      if (!semantic) {
+        semantic = semanticPlanForRun(
+          document,
+          source,
+          semanticRun.run,
+          semanticRun.path,
+          relationships,
+          targetCache,
+          targetIndex,
+        )
+        if (semantic) semanticByOwnerKey.set(semanticRun.key, semantic)
+      }
+    }
     if (semantic) {
       wrapperBytes += semantic.estimatedBytesPerSegment
+      totals.wrapperBytes += semantic.estimatedBytesPerSegment
       if (!seenSemanticIds.has(semantic.relationshipIdStable)) {
         wrapperBytes += semantic.additionalTargets.length
+        totals.wrapperBytes += semantic.additionalTargets.length
         seenSemanticIds.add(semantic.relationshipIdStable)
       }
-      const semanticRun = runs[semanticIndex]!
-      semanticByOwnerKey.set(semanticRun.key, semantic)
       renderedRelationshipIds.add(semantic.relationshipId)
     } else {
       for (const runIndex of active) {
-        const hyperlink = runs[runIndex]!.hyperlink
+        const hyperlinkRun = runs[runIndex]!
+        if (!hyperlinkRun.run.href && !hyperlinkRun.run.targetIds?.length)
+          continue
+        let hyperlink = hyperlinkByOwnerKey.get(hyperlinkRun.key)
+        if (!hyperlink) {
+          hyperlink = hyperlinkPlanForRun(
+            document,
+            hyperlinkRun.run,
+            nodeIds,
+            targetCache,
+            targetIndex,
+          )
+          if (hyperlink) hyperlinkByOwnerKey.set(hyperlinkRun.key, hyperlink)
+        }
         if (!hyperlink) continue
         wrapperBytes += hyperlink.estimatedBytesPerSegment
-        hyperlinkByOwnerKey.set(runs[runIndex]!.key, hyperlink)
+        totals.wrapperBytes += hyperlink.estimatedBytesPerSegment
         break
       }
     }
+    if (totals.wrapperBytes > MAX_RENDERED_INLINE_WRAPPER_BYTES)
+      throw new RenderedPublicationPlanError(
+        'BUDGET',
+        `${source.pathPrefix}[0]`,
+        'inline ownership work exceeds publication budgets',
+      )
   }
   return {
     source,
@@ -612,7 +726,14 @@ export function renderedInlinePlan(
     relationships,
     new Map(),
     new Set(),
+    new Map(),
     new Set(),
+    {
+      segmentCount: 0,
+      activeOwnerVisits: 0,
+      wrapperBytes: 0,
+      eventStorage: 0,
+    },
   )
   if (
     draft.segmentCount > MAX_RENDERED_INLINE_SEGMENTS ||
@@ -692,15 +813,18 @@ export function buildRenderedPublicationPlan(
       .map((note) => stableId(note.id)),
   )
   const targetCache = new Map<string, StructTarget[]>()
+  const targetIndex = buildPlanningTargetIndex(document)
   const nodeIds = new Set([
     ...document.blocks.map(({ id }) => id),
     ...document.assets.map(({ id }) => id),
   ])
   const drafts: InlineDraft[] = []
-  let segmentCount = 0
-  let activeOwnerVisits = 0
-  let wrapperBytes = 0
-  let eventStorage = 0
+  const totals: PlanningTotals = {
+    segmentCount: 0,
+    activeOwnerVisits: 0,
+    wrapperBytes: 0,
+    eventStorage: 0,
+  }
   const renderedRelationshipIds = new Set<string>()
   for (const note of authorNotes)
     if (seenSemanticIds.has(stableId(note.id)))
@@ -712,25 +836,12 @@ export function buildRenderedPublicationPlan(
       relationships,
       targetCache,
       nodeIds,
+      targetIndex,
       seenSemanticIds,
+      totals,
     )
-    segmentCount += draft.segmentCount
-    activeOwnerVisits += draft.activeOwnerVisits
-    wrapperBytes += draft.wrapperBytes
-    eventStorage += draft.events.length
     for (const relationshipId of draft.renderedRelationshipIds)
       renderedRelationshipIds.add(relationshipId)
-    if (
-      segmentCount > MAX_RENDERED_INLINE_SEGMENTS ||
-      activeOwnerVisits > MAX_RENDERED_INLINE_ACTIVE_OWNER_VISITS ||
-      wrapperBytes > MAX_RENDERED_INLINE_WRAPPER_BYTES ||
-      eventStorage > MAX_RENDERED_INLINE_EVENT_STORAGE
-    )
-      throw new RenderedPublicationPlanError(
-        'BUDGET',
-        `${draft.source.pathPrefix}[0]`,
-        `inline ownership work exceeds publication budgets (segments ${MAX_RENDERED_INLINE_SEGMENTS}, active-owner visits ${MAX_RENDERED_INLINE_ACTIVE_OWNER_VISITS}, wrapper bytes ${MAX_RENDERED_INLINE_WRAPPER_BYTES}, events ${MAX_RENDERED_INLINE_EVENT_STORAGE})`,
-      )
     drafts.push(draft)
   }
   const sources = drafts.map((draft) => ({

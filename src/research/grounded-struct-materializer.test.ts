@@ -765,6 +765,39 @@ describe('candidate-grounded STRUCT materialization', () => {
       'paperProMove',
       'paperPro',
     ])
+    const expectedTableCells = [
+      {
+        text: 'Header',
+        rowSpan: 1,
+        columnSpan: 2,
+        tagName: 'th',
+        scope: 'col',
+      },
+      {
+        text: 'Body',
+        rowSpan: 1,
+        columnSpan: 1,
+        tagName: 'td',
+        scope: null,
+      },
+    ]
+    const tableBlockId = materialized.document.blocks.find(
+      ({ kind }) => kind === 'table',
+    )!.id
+    expect(
+      renders.map(
+        ({ blockFacts }) =>
+          blockFacts
+            .find(({ blockId }) => blockId === tableBlockId)
+            ?.cells.map(({ text, rowSpan, columnSpan, tagName, scope }) => ({
+              text,
+              rowSpan,
+              columnSpan,
+              tagName,
+              scope,
+            })) ?? [],
+      ),
+    ).toEqual([expectedTableCells, expectedTableCells, expectedTableCells])
     expect(
       renders.every(({ anchors }) =>
         anchors.includes(materialized.document.blocks[0]!.id),

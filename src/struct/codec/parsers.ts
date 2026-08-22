@@ -592,6 +592,25 @@ function parseTable(value: unknown, path: string): StructTable {
         'cell column and columnSpan must fit within table columns',
       )
   }
+  const occupied = new Set<string>()
+  for (const [index, cell] of cells.entries()) {
+    for (let row = cell.row; row < cell.row + cell.rowSpan; row += 1) {
+      for (
+        let column = cell.column;
+        column < cell.column + cell.columnSpan;
+        column += 1
+      ) {
+        const coordinate = `${row}:${column}`
+        if (occupied.has(coordinate))
+          fail(
+            'TABLE_OVERLAP',
+            `${path}.cells[${index}]`,
+            'table cells cannot overlap occupied coordinates',
+          )
+        occupied.add(coordinate)
+      }
+    }
+  }
   return {
     rows,
     columns,

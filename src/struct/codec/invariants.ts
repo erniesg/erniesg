@@ -6,6 +6,7 @@ import {
 } from '../types'
 import { legacyStructDigestMatches, structDigest } from '../ids'
 import { SAFE_ID } from '../model-consultation-receipt'
+import { emittedXhtmlIds } from '../emitted-ids'
 import { fail, type DataObject, unique } from './primitives'
 
 const MODEL_RECEIPT_BINDING =
@@ -314,6 +315,17 @@ function validateReferences(document: StructDocument) {
     document.blocks.flatMap((block) => block.sourceObservationAnchorIds ?? []),
     'blocks.sourceObservationAnchorIds',
   )
+  const emittedIds = new Map<string, string>()
+  for (const { id, path } of emittedXhtmlIds(document)) {
+    const previous = emittedIds.get(id)
+    if (previous)
+      fail(
+        'DUPLICATE_IDENTIFIER',
+        path,
+        `emitted XHTML identifier ${id} is also used by ${previous}`,
+      )
+    emittedIds.set(id, path)
+  }
   if (document.documentId && ids.has(document.documentId))
     fail(
       'DUPLICATE_IDENTIFIER',

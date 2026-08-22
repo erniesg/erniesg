@@ -4,6 +4,7 @@ import type {
   StructInline,
   StructTable,
 } from './types'
+import { emittedXhtmlIds, stableId, type EmittedXhtmlId } from './emitted-ids'
 
 export type StructXhtmlOptions = {
   embedStyles?: boolean
@@ -17,6 +18,26 @@ td, th { border: 1px solid currentColor; padding: 0.25rem; }
 figure { break-inside: avoid; margin: 1.5rem 0; }
 .visually-hidden, .additional-semantic-reference { clip: rect(0 0 0 0); clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }`
 
+type RelationshipTarget = {
+  id: string
+  href: string
+}
+
+function relationshipTarget(
+  document: StructDocument,
+  value: string,
+): RelationshipTarget {
+  const id = value.startsWith('#') ? value.slice(1) : value
+  if (/^(?:https?|mailto):/iu.test(value)) return { id: value, href: value }
+  const asset = document.assets.find((entry) => entry.id === id)
+  if (asset) return { id: asset.id, href: asset.href }
+  const block = document.blocks.find((entry) => entry.id === id)
+  if (block) return { id: block.id, href: `#${block.id}` }
+  throw new Error(
+    `STRUCT XHTML relationship target is not renderable: ${value}`,
+  )
+}
+
 function text(value: string) {
   return value
     .replace(/&/g, '&amp;')
@@ -26,11 +47,6 @@ function text(value: string) {
 
 function attribute(value: string) {
   return text(value).replace(/"/g, '&quot;')
-}
-
-function stableId(value: string) {
-  const cleaned = value.replace(/[^A-Za-z0-9_.:-]/g, '-')
-  return /^[A-Za-z_]/u.test(cleaned) ? cleaned : `n-${cleaned}`
 }
 
 const UNICODE_DECIMAL_ZERO_CODE_POINTS = [
@@ -83,7 +99,7 @@ function foldedCitationText(value: string) {
 function groupedCitationLinks(
   value: string,
   labels: readonly string[],
-  targets: readonly string[],
+  targets: readonly RelationshipTarget[],
   epubRole: string,
   sourceValue = value,
   sourceOffset = 0,
@@ -95,7 +111,7 @@ function groupedCitationLinks(
     return { html: text(value), linkedTargets: new Set<string>() }
   }
   const targetByLabel = new Map(
-    labels.map((label, index) => [label, targets[index]] as const),
+    labels.map((label, index) => [label, targets[index].id] as const),
   )
   const ranges = [...sourceValue.matchAll(/[\p{Nd}⁰¹²³⁴⁵⁶⁷⁸⁹]+/gu)].flatMap(
     (match) => {
@@ -119,8 +135,8 @@ function groupedCitationLinks(
       if (separator <= 0 || label.slice(separator + 1) !== year) return []
       const surname = foldedCitationText(label.slice(0, separator))
       const position = prefix.lastIndexOf(surname)
-      return position >= 0 && !linkedTargets.has(targets[index])
-        ? [{ target: targets[index], position }]
+      return position >= 0 && !linkedTargets.has(targets[index].id)
+        ? [{ target: targets[index].id, position }]
         : []
     })
     const nearest = Math.max(...candidates.map(({ position }) => position))
@@ -159,7 +175,9 @@ function groupedCitationLinks(
   let html = ''
   for (const range of segmentRanges) {
     html += text(value.slice(cursor, range.start))
-    html += `<a href="#${attribute(range.target)}"${epubRole}>${text(value.slice(range.start, range.end))}</a>`
+    const target = targets.find((entry) => entry.id === range.target)
+    if (!target) return { html: text(value), linkedTargets: new Set<string>() }
+    html += `<a href="${attribute(target.href)}"${epubRole}>${text(value.slice(range.start, range.end))}</a>`
     cursor = range.end
   }
   html += text(value.slice(cursor))
@@ -170,6 +188,7 @@ function renderInline(
   document: StructDocument,
   value: string,
   runs: readonly StructInline[],
+  emittedRelationshipIds: Set<string>,
 ) {
   const validRuns = runs
     .filter(
@@ -195,7 +214,6 @@ function renderInline(
       relationship,
     ]),
   )
-  const emittedRelationshipIds = new Set<string>()
   return positions
     .slice(0, -1)
     .map((start, index) => {
@@ -229,10 +247,15 @@ function renderInline(
         const id = firstSegment ? ` id="${attribute(relationshipId)}"` : ''
         const targets = relationship
           ? relationship.status === 'matched'
-            ? relationship.to.map(stableId)
+            ? relationship.to.map((target) =>
+                relationshipTarget(document, target),
+              )
             : []
-          : (semanticRun.targetIds ?? []).map(stableId)
-        const semanticAttributes = ` data-semantic-role="${attribute(semanticRun.semanticRole)}" data-relationship-id="${attribute(relationshipId)}"${targets.length > 0 ? ` data-target-ids="${attribute(targets.join(' '))}"` : ''}`
+          : (semanticRun.targetIds ?? []).map((target) => ({
+              id: target,
+              href: `#${target}`,
+            }))
+        const semanticAttributes = ` data-semantic-role="${attribute(semanticRun.semanticRole)}" data-relationship-id="${attribute(relationshipId)}"${targets.length > 0 ? ` data-target-ids="${attribute(targets.map((target) => target.id).join(' '))}"` : ''}`
         if (targets.length === 0) {
           rendered = `<span${id}${semanticAttributes}>${rendered}</span>`
         } else {
@@ -243,7 +266,7 @@ function renderInline(
                 ? ' epub:type="biblioref" role="doc-biblioref"'
                 : ''
           if (targets.length === 1) {
-            rendered = `<a${id} href="#${attribute(targets[0])}"${epubRole}${semanticAttributes}>${rendered}</a>`
+            rendered = `<a${id} href="${attribute(targets[0]!.href)}"${epubRole}${semanticAttributes}>${rendered}</a>`
           } else {
             const labels = (relationship?.label ?? '')
               .split(',')
@@ -271,13 +294,13 @@ function renderInline(
                 : new Set<string>()
             const additionalTargets = targets
               .map((target, targetIndex) => ({ target, targetIndex }))
-              .filter(({ target }) => !visibleTargets.has(target))
+              .filter(({ target }) => !visibleTargets.has(target.id))
               .map(
                 ({ target, targetIndex }) =>
-                  `<a href="#${attribute(target)}"${epubRole} class="additional-semantic-reference">Additional ${text(semanticRun.semanticRole!)} target ${text(labels[targetIndex] ?? String(targetIndex + 1))}</a>`,
+                  `<a href="${attribute(target.href)}"${epubRole} class="additional-semantic-reference">Additional ${text(semanticRun.semanticRole!)} target ${text(labels[targetIndex] ?? String(targetIndex + 1))}</a>`,
               )
               .join('')
-            rendered = `<span${id}${semanticAttributes}>${styled(grouped.html)}${firstSegment ? additionalTargets : ''}</span>`
+            rendered = `<span${id}${semanticAttributes}>${styled(grouped!.html)}${firstSegment ? additionalTargets : ''}</span>`
           }
         }
       } else {
@@ -301,6 +324,7 @@ function renderTable(
   document: StructDocument,
   table: StructTable,
   tableBlockId: string,
+  emittedRelationshipIds: Set<string>,
 ) {
   const rows = Array.from({ length: table.rows }, () => [] as string[])
   for (const cell of table.cells) {
@@ -311,7 +335,7 @@ function renderTable(
     const columnSpan =
       cell.columnSpan > 1 ? ` colspan="${cell.columnSpan}"` : ''
     rows[cell.row]?.push(
-      `<${tag} id="${attribute(`${tableBlockId}-${cell.id}`)}"${scope}${rowSpan}${columnSpan}>${renderInline(document, cell.text, cell.inline)}</${tag}>`,
+      `<${tag} id="${attribute(`${tableBlockId}-${cell.id}`)}"${scope}${rowSpan}${columnSpan}>${renderInline(document, cell.text, cell.inline, emittedRelationshipIds)}</${tag}>`,
     )
   }
   return `<table>${rows.map((row) => `<tr>${row.join('')}</tr>`).join('')}</table>`
@@ -373,12 +397,21 @@ function renderSourceObservationAnchors(block: StructBlock) {
     .join('')
 }
 
-function renderBlock(document: StructDocument, block: StructBlock) {
+function renderBlock(
+  document: StructDocument,
+  block: StructBlock,
+  emittedRelationshipIds: Set<string>,
+) {
   // Furniture remains queryable in STRUCT with its source evidence, but is
   // intentionally outside the publication reading flow.
   if (block.kind === 'furniture') return ''
   const id = attribute(block.id)
-  const content = renderInline(document, block.text, block.inline)
+  const content = renderInline(
+    document,
+    block.text,
+    block.inline,
+    emittedRelationshipIds,
+  )
   const sourceAnchors = renderSourceObservationAnchors(block)
   if (block.kind === 'heading') {
     const level = Math.max(1, Math.min(6, Number(block.attributes?.level ?? 2)))
@@ -388,7 +421,7 @@ function renderBlock(document: StructDocument, block: StructBlock) {
     return `<blockquote id="${id}" data-struct-id="${id}">${sourceAnchors}<p>${content}</p></blockquote>`
   }
   if (block.kind === 'table' && block.table) {
-    return `<figure id="${id}" data-struct-id="${id}">${sourceAnchors}${renderTable(document, block.table, block.id)}</figure>`
+    return `<figure id="${id}" data-struct-id="${id}">${sourceAnchors}${renderTable(document, block.table, block.id, emittedRelationshipIds)}</figure>`
   }
   if (
     block.kind === 'figure' ||
@@ -436,11 +469,21 @@ function renderBlock(document: StructDocument, block: StructBlock) {
   return `<p id="${id}" data-struct-id="${id}"${bibliographyEntry}>${sourceAnchors}${content}</p>`
 }
 
+function assertUniqueEmittedIds(entries: readonly EmittedXhtmlId[]) {
+  const seen = new Set<string>()
+  for (const { id } of entries) {
+    if (seen.has(id)) throw new Error(`STRUCT XHTML duplicate id ${id}`)
+    seen.add(id)
+  }
+}
+
 /** Render a source-agnostic STRUCT graph without consulting extractor state. */
 export function renderPublicationXhtml(
   document: StructDocument,
   options: StructXhtmlOptions = {},
 ) {
+  assertUniqueEmittedIds(emittedXhtmlIds(document))
+  const emittedRelationshipIds = new Set<string>()
   const language = document.metadata.language ?? 'und'
   const direction =
     document.metadata.baseDirection === 'ltr' ||
@@ -458,7 +501,7 @@ export function renderPublicationXhtml(
 </head>
 <body>
   <header><h1>${text(document.metadata.title)}</h1>${document.metadata.subtitle ? `<p>${text(document.metadata.subtitle)}</p>` : ''}${renderAuthors(document)}</header>
-  ${document.blocks.map((block) => renderBlock(document, block)).join('\n  ')}
+  ${document.blocks.map((block) => renderBlock(document, block, emittedRelationshipIds)).join('\n  ')}
 </body>
 </html>
 `

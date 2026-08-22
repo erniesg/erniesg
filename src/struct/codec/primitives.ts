@@ -126,6 +126,19 @@ export function stringValue(value: unknown, path: string): string {
   if (typeof value !== 'string') fail('TYPE', path, 'expected a string')
   if (CONTROL.test(value))
     fail('STRING', path, 'control characters are not permitted')
+  for (let index = 0; index < value.length; index += 1) {
+    const codePoint = value.codePointAt(index)!
+    if (codePoint > 0xffff) index += 1
+    const allowed =
+      codePoint === 0x9 ||
+      codePoint === 0xa ||
+      codePoint === 0xd ||
+      (codePoint >= 0x20 && codePoint <= 0xd7ff) ||
+      (codePoint >= 0xe000 && codePoint <= 0xfffd) ||
+      (codePoint >= 0x10000 && codePoint <= 0x10ffff)
+    if (!allowed)
+      fail('STRING', path, 'string contains a character forbidden by XML 1.0')
+  }
   return value
 }
 

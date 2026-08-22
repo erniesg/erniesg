@@ -6,6 +6,7 @@ const EPUB_RESERVED_IDS = new Set([
   'content',
   'styles',
   'struct',
+  'profile',
 ])
 
 export type StructTarget = {
@@ -26,8 +27,6 @@ export function resolveStructTarget(
   value: string,
 ): StructTarget {
   const id = value.startsWith('#') ? value.slice(1) : value
-  if (/^(?:https?|mailto):/iu.test(value))
-    return { id: value, href: value, kind: 'external' }
   const asset = document.assets.find((entry) => entry.id === id)
   if (asset) {
     if (!isPackagedAssetId(asset.id))
@@ -40,6 +39,8 @@ export function resolveStructTarget(
       throw new Error(`STRUCT target block is not rendered: ${block.id}`)
     return { id: block.id, href: `#${block.id}`, kind: 'block' }
   }
+  if (/^(?:https?|mailto):/iu.test(value))
+    return { id: value, href: value, kind: 'external' }
   throw new Error(`STRUCT target is not renderable: ${value}`)
 }
 
@@ -64,26 +65,84 @@ function validInline(run: StructInline, text: string) {
   )
 }
 
-function renderedInlineRuns(document: StructDocument) {
-  return document.blocks.flatMap((block, blockIndex) => {
-    if (block.kind === 'furniture') return []
-    if (block.kind === 'table' && block.table) {
-      return block.table.cells.flatMap((cell, cellIndex) =>
-        cell.inline
-          .filter((run) => validInline(run, cell.text))
-          .map((run, inlineIndex) => ({
-            run,
-            path: `$.blocks[${blockIndex}].table.cells[${cellIndex}].inline[${inlineIndex}]`,
-          })),
-      )
+type RenderedInlineSource = {
+  value: string
+  runs: readonly StructInline[]
+  paths: readonly string[]
+}
+
+export type RenderedInlineSegment = {
+  start: number
+  end: number
+  owners: readonly StructInline[]
+}
+
+/** Return exactly the inline sources that the publication renderer consumes. */
+function renderedInlineSources(document: StructDocument) {
+  return document.blocks.flatMap(
+    (block, blockIndex): RenderedInlineSource[] => {
+      if (block.kind === 'furniture') return []
+      if (block.kind === 'table' && block.table) {
+        return block.table.cells.map((cell, cellIndex) => ({
+          value: cell.text,
+          runs: cell.inline,
+          paths: cell.inline.map(
+            (_run, inlineIndex) =>
+              `$.blocks[${blockIndex}].table.cells[${cellIndex}].inline[${inlineIndex}]`,
+          ),
+        }))
+      }
+      return [
+        {
+          value: block.text,
+          runs: block.inline,
+          paths: block.inline.map(
+            (_run, inlineIndex) =>
+              `$.blocks[${blockIndex}].inline[${inlineIndex}]`,
+          ),
+        },
+      ]
+    },
+  )
+}
+
+/** Build the owner plan shared by XHTML rendering, emitted IDs, and backlinks. */
+export function renderedInlinePlan(
+  value: string,
+  runs: readonly StructInline[],
+): RenderedInlineSegment[] {
+  const validRuns = runs
+    .filter((run) => validInline(run, value))
+    .sort((left, right) => left.start - right.start || right.end - left.end)
+  if (validRuns.length === 0) return []
+  const boundaries = new Set([0, value.length])
+  for (const run of validRuns) {
+    boundaries.add(run.start)
+    boundaries.add(run.end)
+  }
+  const positions = [...boundaries].sort((left, right) => left - right)
+  return positions.slice(0, -1).map((start, index) => {
+    const end = positions[index + 1]!
+    return {
+      start,
+      end,
+      owners: validRuns.filter((run) => run.start <= start && run.end >= end),
     }
-    return block.inline
-      .filter((run) => validInline(run, block.text))
-      .map((run, inlineIndex) => ({
-        run,
-        path: `$.blocks[${blockIndex}].inline[${inlineIndex}]`,
-      }))
   })
+}
+
+/** Return relationship IDs that have an owner in the actual rendered plan. */
+export function renderedInlineRelationshipIds(document: StructDocument) {
+  const ids = new Set<string>()
+  for (const source of renderedInlineSources(document)) {
+    for (const segment of renderedInlinePlan(source.value, source.runs)) {
+      const semanticRun = segment.owners.find(
+        (run) => run.semanticRole && run.relationshipId,
+      )
+      if (semanticRun?.relationshipId) ids.add(semanticRun.relationshipId)
+    }
+  }
+  return ids
 }
 
 /**
@@ -120,14 +179,20 @@ export function emittedXhtmlIds(document: StructDocument): EmittedXhtmlId[] {
     })
 
   const relationshipIds = new Set<string>()
-  for (const { run, path } of renderedInlineRuns(document)) {
-    if (!run.relationshipId || !run.semanticRole) continue
-    if (relationshipIds.has(run.relationshipId)) continue
-    relationshipIds.add(run.relationshipId)
-    entries.push({
-      id: stableId(run.relationshipId),
-      path: `${path}.relationshipId`,
-    })
+  for (const source of renderedInlineSources(document)) {
+    for (const segment of renderedInlinePlan(source.value, source.runs)) {
+      const run = segment.owners.find(
+        (owner) => owner.relationshipId && owner.semanticRole,
+      )
+      if (!run?.relationshipId || relationshipIds.has(run.relationshipId))
+        continue
+      relationshipIds.add(run.relationshipId)
+      const index = source.runs.indexOf(run)
+      entries.push({
+        id: stableId(run.relationshipId),
+        path: `${source.paths[index]}.relationshipId`,
+      })
+    }
   }
   return entries
 }

@@ -6,6 +6,8 @@ import type {
 } from './types'
 import {
   emittedXhtmlIds,
+  renderedInlinePlan,
+  renderedInlineRelationshipIds,
   resolveStructTarget,
   stableId,
   type EmittedXhtmlId,
@@ -176,38 +178,17 @@ function renderInline(
   runs: readonly StructInline[],
   emittedRelationshipIds: Set<string>,
 ) {
-  const validRuns = runs
-    .filter(
-      (run) =>
-        Number.isInteger(run.start) &&
-        Number.isInteger(run.end) &&
-        run.start >= 0 &&
-        run.end > run.start &&
-        run.end <= value.length,
-    )
-    .sort((left, right) => left.start - right.start || right.end - left.end)
-  if (validRuns.length === 0) return text(value)
-
-  const boundaries = new Set([0, value.length])
-  for (const run of validRuns) {
-    boundaries.add(run.start)
-    boundaries.add(run.end)
-  }
-  const positions = [...boundaries].sort((left, right) => left - right)
+  const plan = renderedInlinePlan(value, runs)
+  if (plan.length === 0) return text(value)
   const relationships = new Map(
     document.relationships.map((relationship) => [
       relationship.id,
       relationship,
     ]),
   )
-  return positions
-    .slice(0, -1)
-    .map((start, index) => {
-      const end = positions[index + 1]
+  return plan
+    .map(({ start, end, owners }) => {
       const segmentValue = value.slice(start, end)
-      const owners = validRuns.filter(
-        (run) => run.start <= start && run.end >= end,
-      )
       const styled = (content: string) => {
         let rendered = content
         for (const run of owners) {
@@ -321,7 +302,9 @@ function renderTable(
   emittedRelationshipIds: Set<string>,
 ) {
   const rows = Array.from({ length: table.rows }, () => [] as string[])
-  for (const cell of table.cells) {
+  for (const cell of [...table.cells].sort(
+    (left, right) => left.row - right.row || left.column - right.column,
+  )) {
     const tag = cell.headerScope ? 'th' : 'td'
     const htmlScope = cell.headerScope === 'column' ? 'col' : cell.headerScope
     const scope = htmlScope ? ` scope="${htmlScope}"` : ''
@@ -333,36 +316,6 @@ function renderTable(
     )
   }
   return `<table>${rows.map((row) => `<tr>${row.join('')}</tr>`).join('')}</table>`
-}
-
-function renderedInlineRelationshipIds(document: StructDocument) {
-  return new Set([
-    ...(document.metadata.authorNotes ?? []).map((reference) => reference.id),
-    ...document.blocks.flatMap((block) => [
-      ...(block.kind !== 'furniture' && block.kind !== 'table'
-        ? block.inline.flatMap((run) =>
-            run.relationshipId &&
-            run.semanticRole === 'note-reference' &&
-            run.start >= 0 &&
-            run.start < run.end &&
-            run.end <= block.text.length
-              ? [run.relationshipId]
-              : [],
-          )
-        : []),
-      ...(block.table?.cells.flatMap((cell) =>
-        cell.inline.flatMap((run) =>
-          run.relationshipId &&
-          run.semanticRole === 'note-reference' &&
-          run.start >= 0 &&
-          run.start < run.end &&
-          run.end <= cell.text.length
-            ? [run.relationshipId]
-            : [],
-        ),
-      ) ?? []),
-    ]),
-  ])
 }
 
 function renderAuthors(document: StructDocument) {

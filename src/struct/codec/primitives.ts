@@ -251,6 +251,7 @@ export function reference(value: unknown, path: string): string {
     if (!['http:', 'https:', 'mailto:'].includes(url.protocol))
       throw new Error()
     if (url.username || url.password) throw new Error()
+    if (url.href !== parsed) throw new Error()
     return parsed
   } catch {
     fail(

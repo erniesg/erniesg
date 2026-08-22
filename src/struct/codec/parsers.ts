@@ -133,6 +133,9 @@ const DIAGNOSTIC_CATEGORIES = [
 ] as const
 const COLUMN_SIDES = ['single', 'left', 'right', 'span'] as const
 const RECOVERY_STATUSES = ['ready', 'review-required'] as const
+/** Keep table-derived work within the existing 100,000-node structural budget. */
+export const MAX_TABLE_DIMENSION = 100_000
+export const MAX_TABLE_AREA = 100_000
 
 function parseBox(value: unknown, path: string): StructBox {
   const parsed = object(value, path, [
@@ -287,6 +290,7 @@ function parseHref(value: unknown, path: string) {
       url.password
     )
       throw new Error()
+    if (url.href !== parsed) throw new Error()
     return parsed
   } catch {
     fail('URL', path, 'href must be a safe fragment or URL')
@@ -578,6 +582,16 @@ function parseTable(value: unknown, path: string): StructTable {
   )
   const rows = nonNegativeInteger(parsed.rows, `${path}.rows`)
   const columns = nonNegativeInteger(parsed.columns, `${path}.columns`)
+  if (
+    rows > MAX_TABLE_DIMENSION ||
+    columns > MAX_TABLE_DIMENSION ||
+    rows * columns > MAX_TABLE_AREA
+  )
+    fail(
+      'TABLE_BOUNDS',
+      path,
+      `table dimensions must fit within ${MAX_TABLE_DIMENSION} rows/columns and ${MAX_TABLE_AREA} cells`,
+    )
   for (const [index, cell] of cells.entries()) {
     if (cell.row >= rows || cell.row + cell.rowSpan > rows)
       fail(
@@ -635,9 +649,26 @@ function parseBlock(value: unknown, path: string): StructBlock {
     ],
   )
   const text = stringValue(parsed.text, `${path}.text`)
+  const kind = enumValue(parsed.kind, `${path}.kind`, BLOCK_KINDS)
+  const attributes = has(parsed, 'attributes')
+    ? parseAttributes(parsed.attributes, `${path}.attributes`)
+    : undefined
+  if (
+    kind === 'heading' &&
+    attributes?.level !== undefined &&
+    (typeof attributes.level !== 'number' ||
+      !Number.isInteger(attributes.level) ||
+      attributes.level < 1 ||
+      attributes.level > 6)
+  )
+    fail(
+      'ATTRIBUTE',
+      `${path}.attributes.level`,
+      'heading level must be an integer from 1 through 6',
+    )
   return {
     id: identifier(parsed.id, `${path}.id`),
-    kind: enumValue(parsed.kind, `${path}.kind`, BLOCK_KINDS),
+    kind,
     text,
     ...(has(parsed, 'label')
       ? { label: stringValue(parsed.label, `${path}.label`) }
@@ -687,9 +718,7 @@ function parseBlock(value: unknown, path: string): StructBlock {
           ),
         }
       : {}),
-    ...(has(parsed, 'attributes')
-      ? { attributes: parseAttributes(parsed.attributes, `${path}.attributes`) }
-      : {}),
+    ...(attributes ? { attributes } : {}),
   }
 }
 

@@ -1598,6 +1598,127 @@ describe('STRUCT runtime codec', () => {
     expect(() => renderPublicationXhtml(value)).not.toThrow()
   })
 
+  it('does not inspect later node ids before refusing external semantic output', () => {
+    const value = validDocument() as any
+    const targetIds = Array.from(
+      { length: 800 },
+      (_, index) => `https://example.test/external-${index}`,
+    )
+    value.metadata.authors = []
+    value.metadata.authorNotes = []
+    value.relationships[0] = {
+      ...value.relationships[0],
+      to: targetIds,
+      status: 'matched',
+    }
+    value.blocks[0].text = 'x'.repeat(800)
+    value.blocks[0].inline = [
+      {
+        start: 0,
+        end: 800,
+        relationshipId: value.relationships[0].id,
+        semanticRole: 'cross-reference',
+      },
+      ...Array.from({ length: 800 }, (_, index) => ({
+        start: index,
+        end: index + 1,
+        bold: true,
+      })),
+    ]
+    const later = new Proxy(
+      {
+        id: 'later-id-trap',
+        kind: 'paragraph',
+        text: 'later',
+        inline: [],
+      },
+      {
+        get(target, property) {
+          if (property === 'id' || property === 'kind')
+            throw new Error('LATE_ID_TRAP')
+          return Reflect.get(target, property)
+        },
+      },
+    )
+    value.blocks.push(later)
+    expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
+  })
+
+  it('refuses a target-list tail before reading beyond the output budget', () => {
+    const value = validDocument() as any
+    const targetIds = Array.from(
+      { length: 800 },
+      (_, index) => `https://example.test/${'x'.repeat(30_000)}-${index}`,
+    )
+    Object.defineProperty(targetIds, 700, {
+      get() {
+        throw new Error('TARGET_TAIL_TRAP')
+      },
+    })
+    value.metadata.authors = []
+    value.metadata.authorNotes = []
+    value.relationships[0] = {
+      ...value.relationships[0],
+      to: targetIds,
+      status: 'matched',
+    }
+    value.blocks[0].text = 'x'.repeat(800)
+    value.blocks[0].inline = [
+      {
+        start: 0,
+        end: 800,
+        relationshipId: value.relationships[0].id,
+        semanticRole: 'cross-reference',
+      },
+      ...Array.from({ length: 800 }, (_, index) => ({
+        start: index,
+        end: index + 1,
+        bold: true,
+      })),
+    ]
+    expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
+  })
+
+  it('charges citation matching work across selected owners and sources', () => {
+    const value = validDocument() as any
+    const ownerCount = 7
+    const occurrenceCount = 200
+    const labels = Array.from(
+      { length: occurrenceCount },
+      (_, index) => `Author${index}:2000`,
+    )
+    const targetIds = labels.map(
+      (_, index) => `https://example.test/aggregate-${index}`,
+    )
+    const citationText = labels
+      .map((label) => `${label.split(':')[0]} 2000`)
+      .join(' ')
+    value.metadata.authors = []
+    value.metadata.authorNotes = []
+    value.blocks = Array.from({ length: ownerCount }, (_, index) => ({
+      id: `citation-block-${index}`,
+      kind: 'paragraph',
+      text: citationText,
+      inline: [
+        {
+          start: 0,
+          end: citationText.length,
+          relationshipId: `citation-relationship-${index}`,
+          semanticRole: 'citation',
+        },
+      ],
+    }))
+    value.relationships = Array.from({ length: ownerCount }, (_, index) => ({
+      ...value.relationships[0],
+      id: `citation-relationship-${index}`,
+      to: targetIds,
+      label: labels.join(', '),
+      from: `citation-block-${index}`,
+      status: 'matched',
+    }))
+    expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
+  })
+
   it('rejects an early source budget before inspecting a later hostile source', () => {
     const value = validDocument() as any
     const runCount = 2_000

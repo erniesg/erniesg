@@ -1071,6 +1071,139 @@ describe('STRUCT runtime codec', () => {
     )
   })
 
+  it('renders an anonymous cell for a leading sparse table coordinate', async () => {
+    const value = validDocument() as any
+    value.blocks[0].kind = 'table'
+    value.blocks[0].text = ''
+    value.blocks[0].inline = []
+    value.blocks[0].table = {
+      rows: 1,
+      columns: 2,
+      cells: [
+        {
+          ...value.blocks[0].table.cells[0],
+          id: 'right',
+          text: 'RIGHT',
+          column: 1,
+        },
+      ],
+      semantic: 'verified',
+    }
+    value.receipt.textCharacterCount = 0
+    value.receipt.conservation.sourceTextCharacterCount = 0
+    value.receipt.conservation.structTextCharacterCount = 0
+    seal(value)
+    const decoded = decodeStructDocument(value)
+    const xhtml = renderPublicationXhtml(decoded)
+    expect(xhtml).toContain('<tr><td></td><td id="block-1-right">RIGHT</td></tr>')
+    await expect(buildStructEpub(decoded)).resolves.toMatchObject({
+      mediaType: 'application/epub+zip',
+    })
+  })
+
+  it('does not add a placeholder for a coordinate occupied by a row span', () => {
+    const value = validDocument() as any
+    value.blocks[0].kind = 'table'
+    value.blocks[0].text = ''
+    value.blocks[0].inline = []
+    value.blocks[0].table = {
+      rows: 2,
+      columns: 2,
+      cells: [
+        {
+          ...value.blocks[0].table.cells[0],
+          id: 'top',
+          text: 'TOP',
+          row: 0,
+          column: 0,
+          rowSpan: 2,
+        },
+        {
+          ...value.blocks[0].table.cells[0],
+          id: 'bottom',
+          text: 'BOTTOM',
+          row: 1,
+          column: 1,
+        },
+      ],
+      semantic: 'verified',
+    }
+    value.receipt.textCharacterCount = 0
+    value.receipt.conservation.sourceTextCharacterCount = 0
+    value.receipt.conservation.structTextCharacterCount = 0
+    seal(value)
+    const xhtml = renderPublicationXhtml(decodeStructDocument(value))
+    expect(xhtml).toContain(
+      '<tr><td id="block-1-top" rowspan="2">TOP</td></tr><tr><td id="block-1-bottom">BOTTOM</td></tr>',
+    )
+    expect(xhtml).not.toContain('<tr><td></td><td id="block-1-bottom">')
+  })
+
+  it('does not add a placeholder between cells separated by a column span', () => {
+    const value = validDocument() as any
+    value.blocks[0].kind = 'table'
+    value.blocks[0].text = ''
+    value.blocks[0].inline = []
+    value.blocks[0].table = {
+      rows: 1,
+      columns: 3,
+      cells: [
+        {
+          ...value.blocks[0].table.cells[0],
+          id: 'wide',
+          text: 'WIDE',
+          column: 0,
+          columnSpan: 2,
+        },
+        {
+          ...value.blocks[0].table.cells[0],
+          id: 'last',
+          text: 'LAST',
+          column: 2,
+        },
+      ],
+      semantic: 'verified',
+    }
+    value.receipt.textCharacterCount = 0
+    value.receipt.conservation.sourceTextCharacterCount = 0
+    value.receipt.conservation.structTextCharacterCount = 0
+    seal(value)
+    const xhtml = renderPublicationXhtml(decodeStructDocument(value))
+    expect(xhtml).toContain(
+      '<tr><td id="block-1-wide" colspan="2">WIDE</td><td id="block-1-last">LAST</td></tr>',
+    )
+  })
+
+  it('preserves multiple sparse table holes and EPUB table markup', async () => {
+    const value = validDocument() as any
+    value.blocks[0].kind = 'table'
+    value.blocks[0].text = ''
+    value.blocks[0].inline = []
+    value.blocks[0].table = {
+      rows: 2,
+      columns: 3,
+      cells: [
+        { ...value.blocks[0].table.cells[0], id: 'a', text: 'A', row: 0, column: 2 },
+        { ...value.blocks[0].table.cells[0], id: 'b', text: 'B', row: 1, column: 1 },
+      ],
+      semantic: 'verified',
+    }
+    value.receipt.textCharacterCount = 0
+    value.receipt.conservation.sourceTextCharacterCount = 0
+    value.receipt.conservation.structTextCharacterCount = 0
+    seal(value)
+    const decoded = decodeStructDocument(value)
+    const xhtml = renderPublicationXhtml(decoded)
+    const epub = await buildStructEpub(decoded)
+    const epubXhtml = strFromU8(unzipSync(epub.bytes)['EPUB/content.xhtml']!)
+    expect(xhtml).toContain(
+      '<tr><td></td><td></td><td id="block-1-a">A</td></tr><tr><td></td><td id="block-1-b">B</td><td></td></tr>',
+    )
+    expect(epubXhtml).toContain(
+      '<tr><td></td><td></td><td id="block-1-a">A</td></tr><tr><td></td><td id="block-1-b">B</td><td></td></tr>',
+    )
+  })
+
   it.each([
     [
       'rows',
@@ -1111,6 +1244,92 @@ describe('STRUCT runtime codec', () => {
     value.blocks[0].table.cells = []
     seal(value)
     expect(() => decodeStructDocument(value)).not.toThrow()
+  })
+
+  it('rejects table bounds before inspecting a cell array proxy', () => {
+    const value = validDocument() as any
+    const traps = { ownKeys: 0, descriptor: 0 }
+    value.blocks[0].table.rows = 100_001
+    value.blocks[0].table.cells = new Proxy([], {
+      ownKeys() {
+        traps.ownKeys += 1
+        throw new Error('cell array inspected')
+      },
+      getOwnPropertyDescriptor() {
+        traps.descriptor += 1
+        throw new Error('cell array inspected')
+      },
+    })
+    expect(() => decodeStructDocument(value)).toThrow(/table|bound/i)
+    expect(traps).toEqual({ ownKeys: 0, descriptor: 0 })
+  })
+
+  it('allows an author note to alias its matched relationship occurrence', async () => {
+    const value = validDocument() as any
+    const note = {
+      ...value.blocks[0],
+      id: 'note',
+      kind: 'footnote',
+      text: 'Note',
+      inline: [],
+      order: 1,
+    }
+    delete note.table
+    delete note.furniture
+    delete note.furnitureReview
+    delete note.fallbackAssetIds
+    delete note.sourceObservationAnchorIds
+    delete note.attributes
+    value.blocks.push(note)
+    value.metadata.authorNotes[0].id = 'author-note-1'
+    value.metadata.authorNotes[0].target = 'note'
+    value.blocks[0].inline[0] = {
+      start: 0,
+      end: 5,
+      relationshipId: 'author-note-1',
+      semanticRole: 'note-reference',
+    }
+    value.relationships[0] = {
+      ...value.relationships[0],
+      id: 'author-note-1',
+      kind: 'footnote',
+      from: 'block-1',
+      to: ['note'],
+      status: 'matched',
+    }
+    delete value.relationships[0].candidates
+    value.pages[0].blocks.push('note')
+    value.pages[0].columns[0].blockIds.push('note')
+    value.receipt.blockCount = 2
+    value.receipt.textCharacterCount = 9
+    value.receipt.relationshipCount = 1
+    value.receipt.conservation.structBlockCount = 2
+    value.receipt.conservation.structTextCharacterCount = 9
+    value.receipt.conservation.sourceTextCharacterCount = 9
+    value.receipt.conservation.structRelationshipCount = 1
+    seal(value)
+    const decoded = decodeStructDocument(value)
+    const xhtml = renderPublicationXhtml(decoded)
+    expect(xhtml.match(/id="author-note-1"/g)).toHaveLength(1)
+    expect(xhtml).toContain('href="#author-note-1" class="note-backlink"')
+    await expect(buildStructEpub(decoded)).resolves.toMatchObject({
+      mediaType: 'application/epub+zip',
+    })
+  })
+
+  it('rejects inline ownership work above the documented cap', () => {
+    const value = validDocument() as any
+    const runCount = 4_097
+    value.blocks[0].text = 'x'.repeat(runCount)
+    value.blocks[0].inline = Array.from({ length: runCount }, (_, index) => ({
+      start: index,
+      end: index + 1,
+    }))
+    value.receipt.textCharacterCount = runCount
+    value.receipt.conservation.sourceTextCharacterCount = runCount
+    value.receipt.conservation.structTextCharacterCount = runCount
+    seal(value)
+    expect(() => decodeStructDocument(value)).toThrow(/inline|bound|work/i)
   })
 
   it('does not create a footnote backlink for a non-table block table payload', async () => {

@@ -514,7 +514,6 @@ function semanticPlanForRun(
 function hyperlinkPlanForRun(
   document: StructDocument,
   run: StructInline,
-  nodeIds: ReadonlySet<string>,
   targetCache: Map<string, StructTarget[]>,
   targetIndex: PlanningTargetIndex,
 ): RenderedHyperlinkPlan | undefined {
@@ -522,7 +521,7 @@ function hyperlinkPlanForRun(
   const internalTarget = run.targetIds?.[0]
   const rawHref = run.href
   const href = rawHref?.startsWith('#')
-    ? internalTarget || nodeIds.has(rawHref.slice(1))
+    ? internalTarget || targetIndex.has(rawHref.slice(1))
       ? resolvePlanningTarget(targetIndex, internalTarget ?? rawHref).href
       : rawHref
     : rawHref
@@ -552,8 +551,7 @@ function draftInlinePlan(
   source: RenderedInlineSource,
   relationships: ReadonlyMap<string, StructDocument['relationships'][number]>,
   targetCache: Map<string, StructTarget[]>,
-  nodeIds: ReadonlySet<string>,
-  targetIndex: PlanningTargetIndex,
+  getTargetIndex: () => PlanningTargetIndex,
   seenSemanticIds: Set<string>,
   totals: PlanningTotals,
 ): InlineDraft {
@@ -654,7 +652,7 @@ function draftInlinePlan(
           semanticRun.path,
           relationships,
           targetCache,
-          targetIndex,
+          getTargetIndex(),
         )
         if (semantic) semanticByOwnerKey.set(semanticRun.key, semantic)
       }
@@ -678,9 +676,8 @@ function draftInlinePlan(
           hyperlink = hyperlinkPlanForRun(
             document,
             hyperlinkRun.run,
-            nodeIds,
             targetCache,
-            targetIndex,
+            getTargetIndex(),
           )
           if (hyperlink) hyperlinkByOwnerKey.set(hyperlinkRun.key, hyperlink)
         }
@@ -725,8 +722,7 @@ export function renderedInlinePlan(
     { key: 'direct', value, runs, pathPrefix: '$.blocks.inline' },
     relationships,
     new Map(),
-    new Set(),
-    new Map(),
+    () => new Map(),
     new Set(),
     {
       segmentCount: 0,
@@ -813,11 +809,9 @@ export function buildRenderedPublicationPlan(
       .map((note) => stableId(note.id)),
   )
   const targetCache = new Map<string, StructTarget[]>()
-  const targetIndex = buildPlanningTargetIndex(document)
-  const nodeIds = new Set([
-    ...document.blocks.map(({ id }) => id),
-    ...document.assets.map(({ id }) => id),
-  ])
+  let targetIndex: PlanningTargetIndex | undefined
+  const getTargetIndex = () =>
+    (targetIndex ??= buildPlanningTargetIndex(document))
   const drafts: InlineDraft[] = []
   const totals: PlanningTotals = {
     segmentCount: 0,
@@ -835,8 +829,7 @@ export function buildRenderedPublicationPlan(
       source,
       relationships,
       targetCache,
-      nodeIds,
-      targetIndex,
+      getTargetIndex,
       seenSemanticIds,
       totals,
     )

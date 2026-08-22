@@ -1407,18 +1407,10 @@ describe('STRUCT runtime codec', () => {
     const value = validDocument() as any
     const targetCount = 800
     const segmentCount = 800
-    const targetIds = Array.from({ length: targetCount }, (_, index) => `target-${index}`)
-    value.assets = [
-      ...value.assets,
-      ...targetIds.map((id) => ({
-        id,
-        kind: 'figure',
-        href: `assets/${id}.bin`,
-        mediaType: 'application/octet-stream',
-        byteLength: 0,
-        sha256: hash,
-      })),
-    ]
+    const targetIds = Array.from(
+      { length: targetCount },
+      (_, index) => `https://example.test/target-${index}`,
+    )
     value.relationships[0] = {
       ...value.relationships[0],
       to: targetIds,
@@ -1440,6 +1432,46 @@ describe('STRUCT runtime codec', () => {
       })),
     ]
     expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
+  })
+
+  it('reports semantic expansion as a path-bearing strict budget failure', async () => {
+    const value = validDocument() as any
+    const targetIds = Array.from(
+      { length: 800 },
+      (_, index) => `https://example.test/target-${index}`,
+    )
+    value.relationships[0] = {
+      ...value.relationships[0],
+      to: targetIds,
+      status: 'matched',
+    }
+    value.blocks[0].text = 'x'.repeat(800)
+    value.blocks[0].inline = [
+      {
+        start: 0,
+        end: 800,
+        relationshipId: value.relationships[0].id,
+        semanticRole: 'cross-reference',
+      },
+      ...Array.from({ length: 800 }, (_, index) => ({
+        start: index,
+        end: index + 1,
+        bold: true,
+      })),
+    ]
+    value.receipt.textCharacterCount = 800
+    value.receipt.conservation.sourceTextCharacterCount = 800
+    value.receipt.conservation.structTextCharacterCount = 800
+    seal(value)
+    expect(() => decodeStructDocument(value)).toThrow(StructCodecError)
+    try {
+      decodeStructDocument(value)
+    } catch (error) {
+      expect((error as StructCodecError).code).toBe('BUDGET')
+      expect((error as StructCodecError).path).toMatch(/blocks\[0\]\.inline/)
+    }
+    value.assets[0].bytes = new Uint8Array([0, 255, 128])
+    await expect(buildStructEpub(value as any)).rejects.toThrow(/budget/i)
   })
 
   it('rejects an early source budget before inspecting a later hostile source', () => {
@@ -1541,6 +1573,55 @@ describe('STRUCT runtime codec', () => {
     await expect(buildStructEpub(value as any)).rejects.toThrow(
       /duplicate|author/i,
     )
+  })
+
+  it('uses constant-time author membership for distinct author-note collections', () => {
+    const value = validDocument() as any
+    value.metadata.authors = ['Author', 'Second Author']
+    Object.defineProperty(value.metadata.authors, 'includes', {
+      value: () => {
+        throw new Error('authors.includes must not be used')
+      },
+    })
+    value.metadata.authorNotes = [
+      {
+        id: 'author-note-1',
+        author: 'Author',
+        label: '1',
+        target: 'block-1',
+      },
+      {
+        id: 'author-note-2',
+        author: 'Second Author',
+        label: '2',
+        target: 'block-1',
+      },
+    ]
+    expect(() => renderPublicationXhtml(value)).not.toThrow()
+  })
+
+  it('recovers semantic occurrence paths without searching the source run array', () => {
+    const value = validDocument() as any
+    value.relationships[0] = {
+      ...value.relationships[0],
+      id: 'semantic-relationship',
+      kind: 'reading-order',
+      to: ['block-1'],
+    }
+    value.blocks[0].inline = [
+      {
+        start: 0,
+        end: 5,
+        relationshipId: 'semantic-relationship',
+        semanticRole: 'cross-reference',
+      },
+    ]
+    Object.defineProperty(value.blocks[0].inline, 'indexOf', {
+      value: () => {
+        throw new Error('source.runs.indexOf must not be used')
+      },
+    })
+    expect(() => renderPublicationXhtml(value)).not.toThrow()
   })
 
   it('does not create a footnote backlink for a non-table block table payload', async () => {

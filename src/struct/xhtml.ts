@@ -7,6 +7,7 @@ import type {
 import {
   buildRenderedPublicationPlan,
   emittedXhtmlIds,
+  groupedCitationLinks,
   resolveStructTarget,
   stableId,
   type EmittedXhtmlId,
@@ -85,7 +86,7 @@ function foldedCitationText(value: string) {
     .toLocaleLowerCase()
 }
 
-function groupedCitationLinks(
+function legacyGroupedCitationLinks(
   value: string,
   labels: readonly string[],
   targets: readonly StructTarget[],
@@ -182,9 +183,9 @@ function renderInline(
   const { value } = source
   const plan = source.segments
   if (plan.length === 0) return text(value)
-  const relationships = publicationPlan.relationships
   return plan
-    .map(({ start, end, owners }) => {
+    .map((segment) => {
+      const { start, end, owners } = segment
       const segmentValue = value.slice(start, end)
       const styled = (content: string) => {
         let rendered = content
@@ -200,70 +201,42 @@ function renderInline(
         return rendered
       }
       let rendered = styled(text(segmentValue))
-      const semanticRun = owners.find(
+      const semanticOwnerIndex = owners.findIndex(
         (run) => run.semanticRole && run.relationshipId,
       )
-      if (semanticRun?.relationshipId && semanticRun.semanticRole) {
-        const relationship = relationships.get(semanticRun.relationshipId)
-        const relationshipId = stableId(semanticRun.relationshipId)
+      const semanticRun =
+        semanticOwnerIndex >= 0 ? owners[semanticOwnerIndex] : undefined
+      const semantic =
+        semanticOwnerIndex >= 0
+          ? publicationPlan.semanticByOwnerKey.get(
+              segment.ownerKeys[semanticOwnerIndex]!,
+            )
+          : undefined
+      if (semanticRun?.relationshipId && semanticRun.semanticRole && semantic) {
+        const relationshipId = semantic.relationshipIdStable
         const firstSegment = !emittedRelationshipIds.has(relationshipId)
         emittedRelationshipIds.add(relationshipId)
         const id = firstSegment ? ` id="${attribute(relationshipId)}"` : ''
-        const targets = relationship
-          ? relationship.status === 'matched'
-            ? relationship.to.map((target) =>
-                resolveStructTarget(document, target),
-              )
-            : []
-          : (semanticRun.targetIds ?? []).map((target) =>
-              resolveStructTarget(document, target),
-            )
-        const semanticAttributes = ` data-semantic-role="${attribute(semanticRun.semanticRole)}" data-relationship-id="${attribute(relationshipId)}"${targets.length > 0 ? ` data-target-ids="${attribute(targets.map((target) => target.id).join(' '))}"` : ''}`
+        const targets = semantic.targets
+        const semanticAttributes = semantic.semanticAttributes
         if (targets.length === 0) {
           rendered = `<span${id}${semanticAttributes}>${rendered}</span>`
         } else {
-          const epubRole =
-            semanticRun.semanticRole === 'note-reference'
-              ? ' epub:type="noteref" role="doc-noteref"'
-              : semanticRun.semanticRole === 'citation'
-                ? ' epub:type="biblioref" role="doc-biblioref"'
-                : ''
+          const epubRole = semantic.epubRole
           if (targets.length === 1) {
             rendered = `<a${id} href="${attribute(targets[0]!.href)}"${epubRole}${semanticAttributes}>${rendered}</a>`
           } else {
-            const labels = (relationship?.label ?? '')
-              .split(',')
-              .map((label) => label.trim())
-              .filter(Boolean)
             const grouped =
               semanticRun.semanticRole === 'citation'
                 ? groupedCitationLinks(
                     segmentValue,
-                    labels,
+                    semantic.citationRanges,
                     targets,
                     epubRole,
-                    value.slice(semanticRun.start, semanticRun.end),
-                    start - semanticRun.start,
+                    start - semanticRun.start!,
                   )
                 : { html: text(segmentValue), linkedTargets: new Set<string>() }
-            const visibleTargets =
-              semanticRun.semanticRole === 'citation'
-                ? groupedCitationLinks(
-                    value.slice(semanticRun.start, semanticRun.end),
-                    labels,
-                    targets,
-                    epubRole,
-                  ).linkedTargets
-                : new Set<string>()
-            const additionalTargets = targets
-              .map((target, targetIndex) => ({ target, targetIndex }))
-              .filter(({ target }) => !visibleTargets.has(target.id))
-              .map(
-                ({ target, targetIndex }) =>
-                  `<a href="${attribute(target.href)}"${epubRole} class="additional-semantic-reference">Additional ${text(semanticRun.semanticRole!)} target ${text(labels[targetIndex] ?? String(targetIndex + 1))}</a>`,
-              )
-              .join('')
-            rendered = `<span${id}${semanticAttributes}>${styled(grouped!.html)}${firstSegment ? additionalTargets : ''}</span>`
+            rendered = `<span${id}${semanticAttributes}>${styled(grouped!.html)}${firstSegment ? semantic.additionalTargets : ''}</span>`
           }
         }
       } else {

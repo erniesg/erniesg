@@ -289,6 +289,7 @@ function validateConservation(document: StructDocument) {
 
 function validateReferences(document: StructDocument) {
   const ids = new Map<string, string>()
+  const authors = new Set(document.metadata.authors)
   addCategoryIds(
     ids,
     document.blocks.map(({ id }) => id),
@@ -310,7 +311,7 @@ function validateReferences(document: StructDocument) {
     'diagnostics',
   )
   for (const [index, note] of (document.metadata.authorNotes ?? []).entries()) {
-    if (!document.metadata.authors.includes(note.author))
+    if (!authors.has(note.author))
       fail(
         'REFERENCE',
         `$.metadata.authorNotes[${index}].author`,

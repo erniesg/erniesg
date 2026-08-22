@@ -19,6 +19,7 @@ export const MAX_RENDERED_INLINE_SEGMENTS = 250_000
 export const MAX_RENDERED_INLINE_ACTIVE_OWNER_VISITS = 750_000
 export const MAX_RENDERED_INLINE_WRAPPER_BYTES = 16_000_000
 const ESTIMATED_WRAPPER_BYTES_PER_OWNER = 64
+const MAX_RENDERED_INLINE_EVENT_STORAGE = MAX_RENDERED_INLINE_SEGMENTS * 4
 
 export type StructTarget = {
   id: string
@@ -66,6 +67,157 @@ export function stableId(value: string) {
   return /^[A-Za-z_]/u.test(cleaned) ? cleaned : `n-${cleaned}`
 }
 
+function text(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+function attribute(value: string) {
+  return text(value).replace(/\"/g, '&quot;')
+}
+
+const UNICODE_DECIMAL_ZERO_CODE_POINTS = [
+  0x0030, 0x0660, 0x06f0, 0x07c0, 0x0966, 0x09e6, 0x0a66, 0x0ae6, 0x0b66,
+  0x0be6, 0x0c66, 0x0ce6, 0x0d66, 0x0de6, 0x0e50, 0x0ed0, 0x0f20, 0x1040,
+  0x1090, 0x17e0, 0x1810, 0x1946, 0x19d0, 0x1a80, 0x1a90, 0x1b50, 0x1bb0,
+  0x1c40, 0x1c50, 0xa620, 0xa8d0, 0xa900, 0xa9d0, 0xa9f0, 0xaa50, 0xabf0,
+  0xff10, 0x104a0, 0x10d30, 0x10d40, 0x11066, 0x110f0, 0x11136, 0x111d0,
+  0x112f0, 0x11450, 0x114d0, 0x11650, 0x116c0, 0x116d0, 0x116da, 0x11730,
+  0x118e0, 0x11950, 0x11bf0, 0x11c50, 0x11d50, 0x11da0, 0x11de0, 0x11f50,
+  0x16130, 0x16a60, 0x16ac0, 0x16b50, 0x16d70, 0x1ccf0, 0x1d7ce, 0x1d7d8,
+  0x1d7e2, 0x1d7ec, 0x1d7f6, 0x1e140, 0x1e2f0, 0x1e4f0, 0x1e5f1, 0x1e950,
+  0x1fbf0,
+] as const
+
+const SUPERSCRIPT_DIGITS: Record<string, string> = {
+  '⁰': '0',
+  '¹': '1',
+  '²': '2',
+  '³': '3',
+  '⁴': '4',
+  '⁵': '5',
+  '⁶': '6',
+  '⁷': '7',
+  '⁸': '8',
+  '⁹': '9',
+}
+
+function normalizedNumericToken(value: string) {
+  return [...value]
+    .map((character) => {
+      if (SUPERSCRIPT_DIGITS[character]) return SUPERSCRIPT_DIGITS[character]
+      const codePoint = character.codePointAt(0)!
+      const zero = UNICODE_DECIMAL_ZERO_CODE_POINTS.find(
+        (candidate) => codePoint >= candidate && codePoint <= candidate + 9,
+      )
+      return zero === undefined ? character : String(codePoint - zero)
+    })
+    .join('')
+}
+
+function foldedCitationText(value: string) {
+  return value
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .replace(/’/gu, "'")
+    .toLocaleLowerCase()
+}
+
+function citationRanges(
+  sourceValue: string,
+  labels: readonly string[],
+  targets: readonly StructTarget[],
+) {
+  if (
+    labels.length !== targets.length ||
+    new Set(labels).size !== labels.length
+  )
+    return null
+  const targetByLabel = new Map(
+    labels.map((label, index) => [label, targets[index]!.id] as const),
+  )
+  const ranges: Array<{ start: number; end: number; target: string }> = [
+    ...sourceValue.matchAll(/[\p{Nd}⁰¹²³⁴⁵⁶⁷⁸⁹]+/gu),
+  ].flatMap((match) => {
+    const target = targetByLabel.get(normalizedNumericToken(match[0]))
+    const start = match.index ?? -1
+    return target && start >= 0
+      ? [{ start, end: start + match[0].length, target }]
+      : []
+  })
+  const linkedTargets = new Set(ranges.map((range) => range.target))
+  for (const match of sourceValue.matchAll(/\b(?:18|19|20)\d{2}[a-z]?\b/giu)) {
+    const start = match.index ?? -1
+    if (start < 0) continue
+    const year = match[0].toLocaleLowerCase()
+    const prefix = foldedCitationText(
+      sourceValue.slice(Math.max(0, start - 96), start),
+    )
+    const candidates = labels.flatMap((label, index) => {
+      const separator = label.lastIndexOf(':')
+      if (separator <= 0 || label.slice(separator + 1) !== year) return []
+      const surname = foldedCitationText(label.slice(0, separator))
+      const position = prefix.lastIndexOf(surname)
+      return position >= 0 && !linkedTargets.has(targets[index]!.id)
+        ? [{ target: targets[index]!.id, position }]
+        : []
+    })
+    const nearest = Math.max(...candidates.map(({ position }) => position))
+    const selected = candidates.filter(({ position }) => position === nearest)
+    if (selected.length !== 1) continue
+    ranges.push({
+      start,
+      end: start + match[0].length,
+      target: selected[0]!.target,
+    })
+    linkedTargets.add(selected[0]!.target)
+  }
+  ranges.sort((left, right) => left.start - right.start || left.end - right.end)
+  return ranges.some(
+    (range, index) => index > 0 && range.start < ranges[index - 1]!.end,
+  )
+    ? null
+    : ranges
+}
+
+export function groupedCitationLinks(
+  value: string,
+  ranges: readonly { start: number; end: number; target: string }[] | null,
+  targets: readonly StructTarget[],
+  epubRole: string,
+  sourceOffset = 0,
+) {
+  if (!ranges) return { html: text(value), linkedTargets: new Set<string>() }
+  const linkedTargets = new Set(ranges.map((range) => range.target))
+  const segmentEnd = sourceOffset + value.length
+  const segmentRanges = ranges.flatMap((range) => {
+    const start = Math.max(range.start, sourceOffset)
+    const end = Math.min(range.end, segmentEnd)
+    return start < end
+      ? [
+          {
+            start: start - sourceOffset,
+            end: end - sourceOffset,
+            target: range.target,
+          },
+        ]
+      : []
+  })
+  let cursor = 0
+  let html = ''
+  for (const range of segmentRanges) {
+    html += text(value.slice(cursor, range.start))
+    const target = targets.find((entry) => entry.id === range.target)
+    if (!target) return { html: text(value), linkedTargets: new Set<string>() }
+    html += `<a href="${attribute(target.href)}"${epubRole}>${text(value.slice(range.start, range.end))}</a>`
+    cursor = range.end
+  }
+  html += text(value.slice(cursor))
+  return { html, linkedTargets }
+}
+
 function validInline(run: StructInline, text: string) {
   return (
     Number.isInteger(run.start) &&
@@ -80,17 +232,42 @@ type RenderedInlineSource = {
   key: string
   value: string
   runs: readonly StructInline[]
-  paths: readonly string[]
+  pathPrefix: string
 }
 
 export type RenderedInlineSegment = {
   start: number
   end: number
   owners: readonly StructInline[]
+  ownerPaths: readonly string[]
+  ownerKeys: readonly string[]
 }
 
 export type RenderedInlineSourcePlan = RenderedInlineSource & {
   segments: readonly RenderedInlineSegment[]
+}
+
+type CitationRange = { start: number; end: number; target: string }
+
+export type RenderedSemanticPlan = {
+  semanticRole: NonNullable<StructInline['semanticRole']>
+  relationshipId: string
+  relationshipIdStable: string
+  targets: readonly StructTarget[]
+  labels: readonly string[]
+  semanticAttributes: string
+  epubRole: string
+  additionalTargets: string
+  citationRanges: readonly CitationRange[] | null
+  estimatedBytesPerSegment: number
+}
+
+type DraftRun = {
+  run: StructInline
+  originalIndex: number
+  path: string
+  key: string
+  semantic?: RenderedSemanticPlan
 }
 
 export type RenderedPublicationPlan = {
@@ -106,6 +283,7 @@ export type RenderedPublicationPlan = {
     string,
     readonly NonNullable<StructDocument['metadata']['authorNotes']>[number][]
   >
+  semanticByOwnerKey: ReadonlyMap<string, RenderedSemanticPlan>
 }
 
 export class RenderedPublicationPlanError extends Error {
@@ -120,60 +298,160 @@ export class RenderedPublicationPlanError extends Error {
 }
 
 /** Return exactly the inline sources that the publication renderer consumes. */
-function renderedInlineSources(document: StructDocument) {
-  return document.blocks.flatMap(
-    (block, blockIndex): RenderedInlineSource[] => {
-      if (block.kind === 'furniture') return []
-      if (block.kind === 'table' && block.table) {
-        return block.table.cells.map((cell, cellIndex) => ({
+function* renderedInlineSources(
+  document: StructDocument,
+): Generator<RenderedInlineSource> {
+  for (const [blockIndex, block] of document.blocks.entries()) {
+    if (block.kind === 'furniture') continue
+    if (block.kind === 'table' && block.table) {
+      for (const [cellIndex, cell] of block.table.cells.entries())
+        yield {
           key: `table:${blockIndex}:${cellIndex}`,
           value: cell.text,
           runs: cell.inline,
-          paths: cell.inline.map(
-            (_run, inlineIndex) =>
-              `$.blocks[${blockIndex}].table.cells[${cellIndex}].inline[${inlineIndex}]`,
-          ),
-        }))
-      }
-      return [
-        {
-          key: `block:${blockIndex}`,
-          value: block.text,
-          runs: block.inline,
-          paths: block.inline.map(
-            (_run, inlineIndex) =>
-              `$.blocks[${blockIndex}].inline[${inlineIndex}]`,
-          ),
-        },
-      ]
-    },
-  )
+          pathPrefix: `$.blocks[${blockIndex}].table.cells[${cellIndex}].inline`,
+        }
+      continue
+    }
+    yield {
+      key: `block:${blockIndex}`,
+      value: block.text,
+      runs: block.inline,
+      pathPrefix: `$.blocks[${blockIndex}].inline`,
+    }
+  }
 }
 
 type InlineEvent = { position: number; runIndex: number; end: boolean }
 
 type InlineDraft = {
   source: RenderedInlineSource
-  runs: StructInline[]
+  runs: DraftRun[]
   events: InlineEvent[]
   positions: number[]
   segmentCount: number
   activeOwnerVisits: number
   wrapperBytes: number
+  semanticByOwnerKey: Map<string, RenderedSemanticPlan>
+  renderedRelationshipIds: Set<string>
 }
 
-function draftInlinePlan(source: RenderedInlineSource): InlineDraft {
-  const runs = source.runs.filter((run) => validInline(run, source.value))
-  if (runs.length * 2 > MAX_RENDERED_INLINE_SEGMENTS * 4)
+function semanticPlanForRun(
+  document: StructDocument,
+  source: RenderedInlineSource,
+  run: StructInline,
+  relationships: ReadonlyMap<string, StructDocument['relationships'][number]>,
+  targetCache: Map<string, StructTarget[]>,
+): RenderedSemanticPlan | undefined {
+  if (!run.semanticRole || !run.relationshipId) return undefined
+  const relationship = relationships.get(run.relationshipId)
+  const rawTargets =
+    relationship?.status === 'matched' ? relationship.to : (run.targetIds ?? [])
+  const targetKey = rawTargets.join('\u0000')
+  let targets = targetCache.get(targetKey)
+  if (!targets) {
+    targets = rawTargets.map((target) => resolveStructTarget(document, target))
+    targetCache.set(targetKey, targets)
+  }
+  const relationshipIdStable = stableId(run.relationshipId)
+  const labels = (relationship?.label ?? '')
+    .split(',')
+    .map((label) => label.trim())
+    .filter(Boolean)
+  const epubRole =
+    run.semanticRole === 'note-reference'
+      ? ' epub:type="noteref" role="doc-noteref"'
+      : run.semanticRole === 'citation'
+        ? ' epub:type="biblioref" role="doc-biblioref"'
+        : ''
+  const targetIds = targets.map((target) => target.id).join(' ')
+  const semanticAttributes = ` data-semantic-role="${attribute(run.semanticRole)}" data-relationship-id="${attribute(relationshipIdStable)}"${targets.length > 0 ? ` data-target-ids="${attribute(targetIds)}"` : ''}`
+  const ranges =
+    run.semanticRole === 'citation'
+      ? citationRanges(
+          source.value.slice(run.start!, run.end!),
+          labels,
+          targets,
+        )
+      : null
+  const visibleTargets = new Set((ranges ?? []).map((range) => range.target))
+  const additionalTargets =
+    targets.length > 1
+      ? targets
+          .map((target, targetIndex) => ({ target, targetIndex }))
+          .filter(({ target }) => !visibleTargets.has(target.id))
+          .map(
+            ({ target, targetIndex }) =>
+              `<a href="${attribute(target!.href)}"${epubRole} class="additional-semantic-reference">Additional ${text(run.semanticRole!)} target ${text(labels[targetIndex] ?? String(targetIndex + 1))}</a>`,
+          )
+          .join('')
+      : ''
+  const targetMarkupBytes = targets.reduce(
+    (total, target, targetIndex) =>
+      total +
+      `<a href="${attribute(target.href)}"${epubRole}>${text(labels[targetIndex] ?? String(targetIndex + 1))}</a>`
+        .length,
+    0,
+  )
+  const openingBytes =
+    targets.length === 0
+      ? `<span${semanticAttributes}>`.length + '</span>'.length
+      : targets.length === 1
+        ? `<a href="${attribute(targets[0]!.href)}"${epubRole}${semanticAttributes}>`
+            .length + '</a>'.length
+        : `<span${semanticAttributes}>`.length + '</span>'.length
+  return {
+    semanticRole: run.semanticRole,
+    relationshipId: run.relationshipId,
+    relationshipIdStable,
+    targets,
+    labels,
+    semanticAttributes,
+    epubRole,
+    additionalTargets,
+    citationRanges: ranges,
+    estimatedBytesPerSegment: openingBytes + targetMarkupBytes,
+  }
+}
+
+function draftInlinePlan(
+  document: StructDocument,
+  source: RenderedInlineSource,
+  relationships: ReadonlyMap<string, StructDocument['relationships'][number]>,
+  targetCache: Map<string, StructTarget[]>,
+  seenSemanticIds: Set<string>,
+): InlineDraft {
+  if (source.runs.length * 2 > MAX_RENDERED_INLINE_EVENT_STORAGE)
     throw new RenderedPublicationPlanError(
       'BUDGET',
-      source.paths[0] ?? `$.${source.key}`,
+      `${source.pathPrefix}[0]`,
       'inline event storage exceeds the publication planning budget',
     )
-  runs.sort((left, right) => left.start - right.start || right.end - left.end)
+  const runs: DraftRun[] = []
+  for (const [originalIndex, run] of source.runs.entries()) {
+    if (!validInline(run, source.value)) continue
+    const path = `${source.pathPrefix}[${originalIndex}]`
+    runs.push({
+      run,
+      originalIndex,
+      path,
+      key: `${source.key}:${originalIndex}`,
+      semantic: semanticPlanForRun(
+        document,
+        source,
+        run,
+        relationships,
+        targetCache,
+      ),
+    })
+  }
+  runs.sort(
+    (left, right) =>
+      left.run.start - right.run.start || right.run.end - left.run.end,
+  )
   const boundaries = new Set<number>([0, source.value.length])
   const events: InlineEvent[] = []
-  runs.forEach((run, runIndex) => {
+  runs.forEach(({ run }, runIndex) => {
     boundaries.add(run.start)
     boundaries.add(run.end)
     events.push(
@@ -188,6 +466,8 @@ function draftInlinePlan(source: RenderedInlineSource): InlineDraft {
   let segmentCount = 0
   let activeOwnerVisits = 0
   let wrapperBytes = 0
+  const semanticByOwnerKey = new Map<string, RenderedSemanticPlan>()
+  const renderedRelationshipIds = new Set<string>()
   for (
     let positionIndex = 0;
     positionIndex < positions.length - 1;
@@ -204,6 +484,26 @@ function draftInlinePlan(source: RenderedInlineSource): InlineDraft {
     segmentCount += 1
     activeOwnerVisits += active.size
     wrapperBytes += active.size * ESTIMATED_WRAPPER_BYTES_PER_OWNER
+    let semantic: RenderedSemanticPlan | undefined
+    let semanticIndex = -1
+    for (const runIndex of active) {
+      const candidate = runs[runIndex]!
+      if (candidate.semantic) {
+        semantic = candidate.semantic
+        semanticIndex = runIndex
+        break
+      }
+    }
+    if (semantic) {
+      wrapperBytes += semantic.estimatedBytesPerSegment
+      if (!seenSemanticIds.has(semantic.relationshipIdStable)) {
+        wrapperBytes += semantic.additionalTargets.length
+        seenSemanticIds.add(semantic.relationshipIdStable)
+      }
+      const semanticRun = runs[semanticIndex]!
+      semanticByOwnerKey.set(semanticRun.key, semantic)
+      renderedRelationshipIds.add(semantic.relationshipId)
+    }
   }
   return {
     source,
@@ -213,6 +513,8 @@ function draftInlinePlan(source: RenderedInlineSource): InlineDraft {
     segmentCount,
     activeOwnerVisits,
     wrapperBytes,
+    semanticByOwnerKey,
+    renderedRelationshipIds,
   }
 }
 
@@ -221,7 +523,17 @@ export function renderedInlinePlan(
   value: string,
   runs: readonly StructInline[],
 ): RenderedInlineSegment[] {
-  const draft = draftInlinePlan({ key: 'direct', value, runs, paths: [] })
+  const relationships = new Map<
+    string,
+    StructDocument['relationships'][number]
+  >()
+  const draft = draftInlinePlan(
+    {} as StructDocument,
+    { key: 'direct', value, runs, pathPrefix: '$.blocks.inline' },
+    relationships,
+    new Map(),
+    new Set(),
+  )
   if (
     draft.segmentCount > MAX_RENDERED_INLINE_SEGMENTS ||
     draft.activeOwnerVisits > MAX_RENDERED_INLINE_ACTIVE_OWNER_VISITS ||
@@ -252,12 +564,13 @@ function materializeInlinePlan(draft: InlineDraft): RenderedInlineSegment[] {
     }
     const end = draft.positions[positionIndex + 1]!
     if (end <= position) continue
+    const ownerIndexes = [...active].sort((left, right) => left - right)
     segments.push({
       start: position,
       end,
-      owners: [...active]
-        .sort((left, right) => left - right)
-        .map((index) => draft.runs[index]!),
+      owners: ownerIndexes.map((index) => draft.runs[index]!.run),
+      ownerPaths: ownerIndexes.map((index) => draft.runs[index]!.path),
+      ownerKeys: ownerIndexes.map((index) => draft.runs[index]!.key),
     })
   }
   return segments
@@ -279,55 +592,71 @@ export function buildRenderedPublicationPlan(
       )
     seenAuthors.add(author)
   }
-  const drafts = renderedInlineSources(document).map(draftInlinePlan)
-  let segmentCount = 0
-  let activeOwnerVisits = 0
-  let wrapperBytes = 0
-  for (const draft of drafts) {
-    segmentCount += draft.segmentCount
-    activeOwnerVisits += draft.activeOwnerVisits
-    wrapperBytes += draft.wrapperBytes
-    if (
-      segmentCount > MAX_RENDERED_INLINE_SEGMENTS ||
-      activeOwnerVisits > MAX_RENDERED_INLINE_ACTIVE_OWNER_VISITS ||
-      wrapperBytes > MAX_RENDERED_INLINE_WRAPPER_BYTES
-    )
-      throw new RenderedPublicationPlanError(
-        'BUDGET',
-        draft.source.paths[0] ?? `$.${draft.source.key}`,
-        `inline ownership work exceeds publication budgets (segments ${MAX_RENDERED_INLINE_SEGMENTS}, active-owner visits ${MAX_RENDERED_INLINE_ACTIVE_OWNER_VISITS}, wrapper bytes ${MAX_RENDERED_INLINE_WRAPPER_BYTES})`,
-      )
-  }
   const relationships = new Map(
     document.relationships.map((relationship) => [
       relationship.id,
       relationship,
     ]),
   )
+  const seenSemanticIds = new Set(
+    (authorNotes ?? [])
+      .filter((note) => {
+        const relationship = relationships.get(note.id)
+        return (
+          relationship?.status === 'matched' &&
+          (relationship.kind === 'footnote' ||
+            relationship.kind === 'endnote') &&
+          relationship.to.includes(note.target)
+        )
+      })
+      .map((note) => stableId(note.id)),
+  )
+  const targetCache = new Map<string, StructTarget[]>()
+  const drafts: InlineDraft[] = []
+  let segmentCount = 0
+  let activeOwnerVisits = 0
+  let wrapperBytes = 0
+  let eventStorage = 0
   const renderedRelationshipIds = new Set<string>()
-  for (const note of authorNotes) {
-    const relationship = relationships.get(note.id)
-    if (
-      authors.includes(note.author) &&
-      relationship?.status === 'matched' &&
-      (relationship.kind === 'footnote' || relationship.kind === 'endnote') &&
-      relationship.to.includes(note.target)
-    )
+  for (const note of authorNotes)
+    if (seenSemanticIds.has(stableId(note.id)))
       renderedRelationshipIds.add(note.id)
+  for (const source of renderedInlineSources(document)) {
+    const draft = draftInlinePlan(
+      document,
+      source,
+      relationships,
+      targetCache,
+      seenSemanticIds,
+    )
+    segmentCount += draft.segmentCount
+    activeOwnerVisits += draft.activeOwnerVisits
+    wrapperBytes += draft.wrapperBytes
+    eventStorage += draft.events.length
+    for (const relationshipId of draft.renderedRelationshipIds)
+      renderedRelationshipIds.add(relationshipId)
+    if (
+      segmentCount > MAX_RENDERED_INLINE_SEGMENTS ||
+      activeOwnerVisits > MAX_RENDERED_INLINE_ACTIVE_OWNER_VISITS ||
+      wrapperBytes > MAX_RENDERED_INLINE_WRAPPER_BYTES ||
+      eventStorage > MAX_RENDERED_INLINE_EVENT_STORAGE
+    )
+      throw new RenderedPublicationPlanError(
+        'BUDGET',
+        `${draft.source.pathPrefix}[0]`,
+        `inline ownership work exceeds publication budgets (segments ${MAX_RENDERED_INLINE_SEGMENTS}, active-owner visits ${MAX_RENDERED_INLINE_ACTIVE_OWNER_VISITS}, wrapper bytes ${MAX_RENDERED_INLINE_WRAPPER_BYTES}, events ${MAX_RENDERED_INLINE_EVENT_STORAGE})`,
+      )
+    drafts.push(draft)
   }
   const sources = drafts.map((draft) => ({
     ...draft.source,
     segments: materializeInlinePlan(draft),
   }))
   const sourceByKey = new Map(sources.map((source) => [source.key, source]))
-  for (const source of sources)
-    for (const segment of source.segments) {
-      const semanticRun = segment.owners.find(
-        (run) => run.semanticRole && run.relationshipId,
-      )
-      if (semanticRun?.relationshipId)
-        renderedRelationshipIds.add(semanticRun.relationshipId)
-    }
+  const semanticByOwnerKey = new Map<string, RenderedSemanticPlan>()
+  for (const draft of drafts)
+    for (const [key, semantic] of draft.semanticByOwnerKey)
+      semanticByOwnerKey.set(key, semantic)
   const backlinksByTarget = new Map<
     string,
     StructDocument['relationships'][number][]
@@ -358,6 +687,7 @@ export function buildRenderedPublicationPlan(
     renderedRelationshipIds,
     backlinksByTarget,
     authorNotesByAuthor,
+    semanticByOwnerKey,
   }
 }
 
@@ -417,9 +747,10 @@ export function emittedXhtmlIds(
     })
   for (const source of publicationPlan.sources) {
     for (const segment of source.segments) {
-      const run = segment.owners.find(
+      const ownerIndex = segment.owners.findIndex(
         (owner) => owner.relationshipId && owner.semanticRole,
       )
+      const run = ownerIndex >= 0 ? segment.owners[ownerIndex] : undefined
       if (
         !run?.relationshipId ||
         relationshipIds.has(run.relationshipId) ||
@@ -427,10 +758,9 @@ export function emittedXhtmlIds(
       )
         continue
       relationshipIds.add(run.relationshipId)
-      const index = source.runs.indexOf(run)
       entries.push({
         id: stableId(run.relationshipId),
-        path: `${source.paths[index]}.relationshipId`,
+        path: `${segment.ownerPaths[ownerIndex]}.relationshipId`,
       })
     }
   }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { strFromU8, unzipSync } from 'fflate'
 import { runInNewContext } from 'node:vm'
 import {
   decodeStructDocument,
@@ -8,6 +9,8 @@ import {
 } from './index'
 import { legacyStructDigest, structDigest } from './ids'
 import { sha256HexSync } from './sha256'
+import { buildStructEpub } from './epub'
+import { renderPublicationXhtml } from './xhtml'
 
 const hash = 'a'.repeat(64)
 const assetBytesHash = sha256HexSync(new Uint8Array([0, 255, 128]))
@@ -784,6 +787,166 @@ describe('STRUCT runtime codec', () => {
     expect(() => decodeStructDocument(value)).toThrow(/DUPLICATE_IDENTIFIER/i)
   })
 
+  it('rejects emitted XHTML ids that collide after stable normalization', () => {
+    const value = validDocument()
+    value.metadata.authorNotes![0].id = '1'
+    value.blocks[0].sourceObservationAnchorIds = ['n-1']
+    seal(value)
+    expect(() => decodeStructDocument(value)).toThrow(/duplicate|identifier/i)
+    expect(() => renderPublicationXhtml(value as any)).toThrow(
+      /duplicate|identifier/i,
+    )
+  })
+
+  it('rejects a normalized relationship id colliding with a block id', () => {
+    const value = validDocument() as any
+    value.blocks[0].id = 'n-1'
+    value.metadata.authorNotes[0].target = 'n-1'
+    value.blocks[0].inline[0].href = '#n-1'
+    value.blocks[0].inline[0].targetIds = ['n-1']
+    value.blocks[0].inline[0].relationshipId = '1'
+    value.relationships[0].id = '1'
+    value.relationships[0].from = 'n-1'
+    value.relationships[0].to = ['n-1']
+    value.relationships[0].candidates[0].target = 'n-1'
+    value.pages[0].blocks = ['n-1']
+    value.pages[0].columns[0].blockIds = ['n-1']
+    seal(value)
+    expect(() => decodeStructDocument(value)).toThrow(/duplicate|identifier/i)
+    expect(() => renderPublicationXhtml(value)).toThrow(/duplicate|identifier/i)
+  })
+
+  it('emits a relationship id only once when used in two blocks', async () => {
+    const value = validDocument() as any
+    const second = { ...value.blocks[0], id: 'block-2', order: 1, page: null }
+    delete second.table
+    delete second.furniture
+    delete second.furnitureReview
+    delete second.fallbackAssetIds
+    delete second.sourceObservationAnchorIds
+    second.inline = [{ ...value.blocks[0].inline[0] }]
+    value.blocks.push(second)
+    value.receipt.blockCount = 2
+    value.receipt.conservation.structBlockCount = 2
+    value.receipt.conservation.sourceTextCharacterCount = 10
+    value.receipt.conservation.structTextCharacterCount = 10
+    value.receipt.textCharacterCount = 10
+    value.blocks[0].text = 'Hello'
+    value.blocks[1].text = 'World'
+    seal(value)
+    const decoded = decodeStructDocument(value)
+    const xhtml = renderPublicationXhtml(decoded)
+    expect(xhtml.match(/<a id="relationship-1"/g)).toHaveLength(1)
+    await expect(buildStructEpub(decoded)).resolves.toMatchObject({
+      mediaType: 'application/epub+zip',
+    })
+  })
+
+  it('rejects a composed table-cell id colliding with a block id', () => {
+    const value = validDocument() as any
+    value.blocks[0].id = 'table'
+    value.blocks[0].kind = 'table'
+    value.blocks[0].table.cells[0].id = 'cell'
+    value.metadata.authorNotes[0].target = 'table'
+    value.blocks[0].inline[0].href = '#table'
+    value.blocks[0].inline[0].targetIds = ['table']
+    value.relationships[0].from = 'table'
+    value.relationships[0].to = ['table']
+    value.relationships[0].candidates[0].target = 'table'
+    value.pages[0].blocks = ['table']
+    value.pages[0].columns[0].blockIds = ['table']
+    const second = {
+      ...value.blocks[0],
+      id: 'table-cell',
+      order: 1,
+      page: null,
+    }
+    delete second.table
+    delete second.furniture
+    delete second.furnitureReview
+    delete second.fallbackAssetIds
+    delete second.sourceObservationAnchorIds
+    second.inline = []
+    second.text = ''
+    value.blocks.push(second)
+    value.receipt.blockCount = 2
+    value.receipt.conservation.structBlockCount = 2
+    seal(value)
+    expect(() => decodeStructDocument(value)).toThrow(/duplicate|identifier/i)
+    expect(() => renderPublicationXhtml(value)).toThrow(/duplicate|identifier/i)
+  })
+
+  it.each([
+    ['asset id', ['asset-1'], 'assets/asset-1.bin'],
+    [
+      'external URL',
+      ['https://example.test/reference'],
+      'https://example.test/reference',
+    ],
+  ])(
+    'renders a relationship %s using its target kind',
+    async (_label, targets, expectedHref) => {
+      const value = validDocument() as any
+      value.relationships[0].to = targets
+      seal(value)
+      const decoded = decodeStructDocument(value)
+      expect(renderPublicationXhtml(decoded)).toContain(
+        `href="${expectedHref}"`,
+      )
+      await expect(buildStructEpub(decoded)).resolves.toMatchObject({
+        mediaType: 'application/epub+zip',
+      })
+    },
+  )
+
+  it('rejects later-position source anchors through decode and migration', () => {
+    const value = validDocument() as any
+    value.blocks[0].sourceObservationAnchorIds = ['anchor-1', 'anchor-2']
+    value.metadata.authorNotes[0].id = 'anchor-2'
+    seal(value)
+    expect(() => decodeStructDocument(value)).toThrow(/duplicate|identifier/i)
+    expect(() => migrateStructDocument(value)).toThrow(/duplicate|identifier/i)
+  })
+
+  it('maps later-position anchors from every block into migration validation', () => {
+    const value = validDocument() as any
+    delete value.blocks[0].sourceObservationAnchorIds
+    const second = { ...value.blocks[0], id: 'block-2', order: 1, page: null }
+    delete second.table
+    delete second.furniture
+    delete second.furnitureReview
+    delete second.fallbackAssetIds
+    second.inline = []
+    second.text = ''
+    second.sourceObservationAnchorIds = ['anchor-1', 'anchor-2']
+    value.blocks.push(second)
+    value.metadata.authorNotes[0].id = 'anchor-2'
+    value.receipt.blockCount = 2
+    value.receipt.conservation.structBlockCount = 2
+    seal(value)
+    expect(() => migrateStructDocument(value)).toThrow(/duplicate|identifier/i)
+  })
+
+  it('rejects a forbidden XML 1.0 string before digest sealing', () => {
+    const value = validDocument() as any
+    value.metadata.title = 'bad-\uD800'
+    seal(value)
+    expect(() => decodeStructDocument(value)).toThrow(/string|unicode|xml/i)
+  })
+
+  it('preserves valid Unicode through decode, XHTML, and EPUB reopen', async () => {
+    const value = validDocument() as any
+    value.metadata.title = 'Valid 🌟 — текст'
+    seal(value)
+    const decoded = decodeStructDocument(value)
+    const xhtml = renderPublicationXhtml(decoded)
+    expect(xhtml).toContain('Valid 🌟 — текст')
+    const epub = await buildStructEpub(decoded)
+    expect(strFromU8(unzipSync(epub.bytes)['EPUB/content.xhtml']!)).toContain(
+      'Valid 🌟 — текст',
+    )
+  })
+
   it.each([
     [
       'box width',
@@ -957,6 +1120,49 @@ describe('STRUCT runtime codec', () => {
     const value = validDocument()
     mutate(value)
     expect(() => decodeStructDocument(value)).toThrow(/table|bound|span/i)
+  })
+
+  it.each([
+    [
+      'direct cell intersection',
+      (value: any) => {
+        value.blocks[0].table.cells.push({
+          ...value.blocks[0].table.cells[0],
+          id: 'cell-2',
+        })
+      },
+    ],
+    [
+      'row span intersection',
+      (value: any) => {
+        value.blocks[0].table.rows = 2
+        value.blocks[0].table.cells[0].rowSpan = 2
+        value.blocks[0].table.cells.push({
+          ...value.blocks[0].table.cells[0],
+          id: 'cell-2',
+          row: 1,
+          rowSpan: 1,
+        })
+      },
+    ],
+    [
+      'column span intersection',
+      (value: any) => {
+        value.blocks[0].table.columns = 2
+        value.blocks[0].table.cells[0].columnSpan = 2
+        value.blocks[0].table.cells.push({
+          ...value.blocks[0].table.cells[0],
+          id: 'cell-2',
+          column: 1,
+          columnSpan: 1,
+        })
+      },
+    ],
+  ])('rejects table %s', (_label, mutate) => {
+    const value = validDocument()
+    mutate(value)
+    seal(value)
+    expect(() => decodeStructDocument(value)).toThrow(/table|occup|overlap/i)
   })
 
   it.each([

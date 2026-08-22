@@ -1474,6 +1474,25 @@ describe('STRUCT runtime codec', () => {
     await expect(buildStructEpub(value as any)).rejects.toThrow(/budget/i)
   })
 
+  it('rejects repeated long hyperlink markup within the aggregate output budget', () => {
+    const value = validDocument() as any
+    const segmentCount = 800
+    value.blocks[0].text = 'x'.repeat(segmentCount)
+    value.blocks[0].inline = [
+      {
+        start: 0,
+        end: segmentCount,
+        href: `https://example.test/${'x'.repeat(30_000)}`,
+      },
+      ...Array.from({ length: segmentCount }, (_, index) => ({
+        start: index,
+        end: index + 1,
+        bold: true,
+      })),
+    ]
+    expect(() => renderPublicationXhtml(value)).toThrow(/budget/i)
+  })
+
   it('rejects an early source budget before inspecting a later hostile source', () => {
     const value = validDocument() as any
     const runCount = 2_000

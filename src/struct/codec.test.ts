@@ -949,6 +949,364 @@ describe('STRUCT runtime codec', () => {
     })
   })
 
+  it('resolves local scheme-looking ids before external URL classification', async () => {
+    const value = validDocument() as any
+    value.blocks[0].id = 'mailto:note'
+    value.metadata.authorNotes[0].target = 'mailto:note'
+    value.relationships[0].from = 'mailto:note'
+    value.relationships[0].to = ['mailto:note']
+    value.relationships[0].candidates[0].target = 'mailto:note'
+    value.blocks[0].inline[0] = {
+      start: 0,
+      end: 5,
+      href: 'mailto:note',
+      targetIds: ['mailto:note'],
+      relationshipId: 'relationship-1',
+      semanticRole: 'cross-reference',
+    }
+    value.pages[0].blocks = ['mailto:note']
+    value.pages[0].columns[0].blockIds = ['mailto:note']
+    seal(value)
+    const decoded = decodeStructDocument(value)
+    const xhtml = renderPublicationXhtml(decoded)
+    expect(xhtml).toContain('href="#mailto:note"')
+    expect(xhtml).not.toContain('href="mailto:note"')
+    await expect(buildStructEpub(decoded)).resolves.toMatchObject({
+      mediaType: 'application/epub+zip',
+    })
+  })
+
+  it('resolves a scheme-looking local id for a plain inline target', async () => {
+    const value = validDocument() as any
+    const target = {
+      ...value.blocks[0],
+      id: 'mailto:note',
+      text: 'Target',
+      inline: [],
+      order: 1,
+    }
+    delete target.table
+    delete target.furniture
+    delete target.furnitureReview
+    delete target.fallbackAssetIds
+    delete target.sourceObservationAnchorIds
+    delete target.attributes
+    value.blocks[0].inline = [{ start: 0, end: 5, href: 'mailto:note' }]
+    value.blocks.push(target)
+    value.pages[0].blocks.push('mailto:note')
+    value.pages[0].columns[0].blockIds.push('mailto:note')
+    value.receipt.blockCount = 2
+    value.receipt.textCharacterCount = 11
+    value.receipt.conservation.structBlockCount = 2
+    value.receipt.conservation.sourceTextCharacterCount = 11
+    value.receipt.conservation.structTextCharacterCount = 11
+    seal(value)
+    const decoded = decodeStructDocument(value)
+    const xhtml = renderPublicationXhtml(decoded)
+    expect(xhtml).toContain('href="#mailto:note"')
+    expect(xhtml).not.toContain('href="mailto:note"')
+    await expect(buildStructEpub(decoded)).resolves.toMatchObject({
+      mediaType: 'application/epub+zip',
+    })
+  })
+
+  it.each(['https://example.test/path ', ' https://example.test/path'])(
+    'rejects a non-canonical external URL before digest acceptance (%s)',
+    (href) => {
+      const value = validDocument() as any
+      value.relationships[0].to = [href]
+      seal(value)
+      expect(() => decodeStructDocument(value)).toThrow(
+        /reference|canonical|url/i,
+      )
+    },
+  )
+
+  it.each(['https://example.test/path ', ' https://example.test/path'])(
+    'rejects a non-canonical plain inline URL before digest acceptance (%s)',
+    (href) => {
+      const value = validDocument() as any
+      value.blocks[0].inline[0] = { start: 0, end: 5, href }
+      seal(value)
+      expect(() => decodeStructDocument(value)).toThrow(/url|canonical/i)
+    },
+  )
+
+  it('renders table cells in coordinate order without rewriting the document', () => {
+    const value = validDocument() as any
+    value.blocks[0].kind = 'table'
+    value.blocks[0].text = ''
+    value.blocks[0].inline = []
+    value.blocks[0].table = {
+      rows: 1,
+      columns: 2,
+      cells: [
+        {
+          ...value.blocks[0].table.cells[0],
+          id: 'right',
+          text: 'RIGHT',
+          column: 1,
+        },
+        {
+          ...value.blocks[0].table.cells[0],
+          id: 'left',
+          text: 'LEFT',
+          column: 0,
+        },
+      ],
+      semantic: 'verified',
+    }
+    value.receipt.textCharacterCount = 0
+    value.receipt.conservation.sourceTextCharacterCount = 0
+    value.receipt.conservation.structTextCharacterCount = 0
+    seal(value)
+    const decoded = decodeStructDocument(value)
+    expect(decoded.blocks[0]!.table!.cells.map((cell) => cell.id)).toEqual([
+      'right',
+      'left',
+    ])
+    const xhtml = renderPublicationXhtml(decoded)
+    expect(xhtml.indexOf('>LEFT</td>')).toBeLessThan(
+      xhtml.indexOf('>RIGHT</td>'),
+    )
+  })
+
+  it.each([
+    [
+      'rows',
+      (value: any) => {
+        value.blocks[0].table.rows = 100_001
+        value.blocks[0].table.cells = []
+      },
+    ],
+    [
+      'columns',
+      (value: any) => {
+        value.blocks[0].table.columns = 100_001
+        value.blocks[0].table.cells = []
+      },
+    ],
+    [
+      'area',
+      (value: any) => {
+        value.blocks[0].table.rows = 317
+        value.blocks[0].table.columns = 316
+        value.blocks[0].table.cells = []
+      },
+    ],
+  ])(
+    'rejects table dimensions beyond the bounded publication domain (%s)',
+    (_label, mutate) => {
+      const value = validDocument() as any
+      mutate(value)
+      seal(value)
+      expect(() => decodeStructDocument(value)).toThrow(/table|bound|area/i)
+    },
+  )
+
+  it('accepts the explicit maximum table area without allocating beyond it', () => {
+    const value = validDocument() as any
+    value.blocks[0].table.rows = 100_000
+    value.blocks[0].table.columns = 1
+    value.blocks[0].table.cells = []
+    seal(value)
+    expect(() => decodeStructDocument(value)).not.toThrow()
+  })
+
+  it('does not create a footnote backlink for a non-table block table payload', async () => {
+    const value = validDocument() as any
+    const note = {
+      ...value.blocks[0],
+      id: 'note',
+      kind: 'footnote',
+      text: 'Note',
+      inline: [],
+      order: 1,
+    } as any
+    delete note.table
+    delete note.furniture
+    delete note.furnitureReview
+    delete note.fallbackAssetIds
+    delete note.sourceObservationAnchorIds
+    delete note.attributes
+    value.blocks.push(note)
+    value.blocks[0].table.cells[0].inline = [
+      {
+        start: 0,
+        end: 4,
+        relationshipId: 'note-relationship',
+        semanticRole: 'note-reference',
+      },
+    ]
+    const noteRelationship = {
+      ...value.relationships[0],
+      id: 'note-relationship',
+      kind: 'footnote',
+      from: 'block-1',
+      to: ['note'],
+    }
+    delete noteRelationship.candidates
+    value.relationships.push(noteRelationship)
+    value.pages[0].blocks.push('note')
+    value.pages[0].columns[0].blockIds.push('note')
+    value.receipt.blockCount = 2
+    value.receipt.relationshipCount = 2
+    value.receipt.textCharacterCount = 9
+    value.receipt.conservation.structBlockCount = 2
+    value.receipt.conservation.structRelationshipCount = 2
+    value.receipt.conservation.sourceTextCharacterCount = 9
+    value.receipt.conservation.sourceRelationshipCount = 2
+    value.receipt.conservation.accountedSourceRelationshipCount = 2
+    value.receipt.conservation.structTextCharacterCount = 9
+    seal(value)
+    const decoded = decodeStructDocument(value)
+    const xhtml = renderPublicationXhtml(decoded)
+    expect(xhtml).not.toContain('note-backlink')
+    await expect(buildStructEpub(decoded)).resolves.toMatchObject({
+      mediaType: 'application/epub+zip',
+    })
+  })
+
+  it('does not create a footnote backlink for an overlapping unselected inline run', async () => {
+    const value = validDocument() as any
+    const note = {
+      ...value.blocks[0],
+      id: 'note',
+      kind: 'footnote',
+      text: 'Note',
+      inline: [],
+      order: 1,
+    } as any
+    delete note.table
+    delete note.furniture
+    delete note.furnitureReview
+    delete note.fallbackAssetIds
+    delete note.sourceObservationAnchorIds
+    delete note.attributes
+    value.blocks.push(note)
+    value.blocks[0].inline.push({
+      start: 0,
+      end: 5,
+      relationshipId: 'note-relationship',
+      semanticRole: 'note-reference',
+    })
+    const noteRelationship = {
+      ...value.relationships[0],
+      id: 'note-relationship',
+      kind: 'footnote',
+      from: 'block-1',
+      to: ['note'],
+    }
+    delete noteRelationship.candidates
+    value.relationships.push(noteRelationship)
+    value.pages[0].blocks.push('note')
+    value.pages[0].columns[0].blockIds.push('note')
+    value.receipt.blockCount = 2
+    value.receipt.relationshipCount = 2
+    value.receipt.textCharacterCount = 9
+    value.receipt.conservation.structBlockCount = 2
+    value.receipt.conservation.structRelationshipCount = 2
+    value.receipt.conservation.sourceTextCharacterCount = 9
+    value.receipt.conservation.sourceRelationshipCount = 2
+    value.receipt.conservation.accountedSourceRelationshipCount = 2
+    value.receipt.conservation.structTextCharacterCount = 9
+    seal(value)
+    const decoded = decodeStructDocument(value)
+    const xhtml = renderPublicationXhtml(decoded)
+    expect(xhtml).not.toContain('note-backlink')
+    await expect(buildStructEpub(decoded)).resolves.toMatchObject({
+      mediaType: 'application/epub+zip',
+    })
+  })
+
+  it('does not create a footnote backlink for a furniture table payload', async () => {
+    const value = validDocument() as any
+    value.blocks[0].kind = 'furniture'
+    value.metadata.authorNotes = []
+    value.blocks[0].table.cells[0].inline = [
+      {
+        start: 0,
+        end: 4,
+        relationshipId: 'note-relationship',
+        semanticRole: 'note-reference',
+      },
+    ]
+    const note = {
+      ...value.blocks[0],
+      id: 'note',
+      kind: 'footnote',
+      text: 'Note',
+      inline: [],
+      order: 1,
+    } as any
+    delete note.table
+    delete note.furniture
+    delete note.furnitureReview
+    delete note.fallbackAssetIds
+    delete note.sourceObservationAnchorIds
+    delete note.attributes
+    value.blocks.push(note)
+    const noteRelationship = {
+      ...value.relationships[0],
+      id: 'note-relationship',
+      kind: 'footnote',
+      from: 'block-1',
+      to: ['note'],
+    }
+    delete noteRelationship.candidates
+    value.relationships.push(noteRelationship)
+    value.pages[0].blocks.push('note')
+    value.pages[0].columns[0].blockIds.push('note')
+    value.receipt.blockCount = 2
+    value.receipt.relationshipCount = 2
+    value.receipt.textCharacterCount = 9
+    value.receipt.conservation.structBlockCount = 2
+    value.receipt.conservation.structRelationshipCount = 2
+    value.receipt.conservation.sourceTextCharacterCount = 9
+    value.receipt.conservation.sourceRelationshipCount = 2
+    value.receipt.conservation.accountedSourceRelationshipCount = 2
+    value.receipt.conservation.structTextCharacterCount = 9
+    value.receipt.conservation.sourceFurnitureBlockCount = 1
+    value.receipt.conservation.accountedFurnitureBlockCount = 1
+    value.receipt.conservation.structFurnitureBlockCount = 1
+    value.receipt.conservation.sourceFurnitureTextCharacterCount = 5
+    value.receipt.conservation.structFurnitureTextCharacterCount = 5
+    seal(value)
+    const decoded = decodeStructDocument(value)
+    const xhtml = renderPublicationXhtml(decoded)
+    expect(xhtml).not.toContain('note-backlink')
+    await expect(buildStructEpub(decoded)).resolves.toMatchObject({
+      mediaType: 'application/epub+zip',
+    })
+  })
+
+  it('renders a validated heading level as conforming XHTML through EPUB reopen', async () => {
+    const value = validDocument() as any
+    value.blocks[0].kind = 'heading'
+    value.blocks[0].inline = []
+    value.blocks[0].attributes.level = 6
+    seal(value)
+    const decoded = decodeStructDocument(value)
+    expect(renderPublicationXhtml(decoded)).toContain('<h6 id="block-1"')
+    const epub = await buildStructEpub(decoded)
+    expect(strFromU8(unzipSync(epub.bytes)['EPUB/content.xhtml']!)).toContain(
+      '<h6 id="block-1"',
+    )
+  })
+
+  it.each([1.5, 0, 7, '3', true])(
+    'rejects invalid heading renderer level %p at strict decode',
+    (level) => {
+      const value = validDocument() as any
+      value.blocks[0].kind = 'heading'
+      value.blocks[0].attributes.level = level
+      seal(value)
+      expect(() => decodeStructDocument(value)).toThrow(
+        /level|heading|attribute|number/i,
+      )
+    },
+  )
+
   it('rejects numeric asset ids before publication can diverge', () => {
     const value = validDocument() as any
     value.assets[0].id = '1'

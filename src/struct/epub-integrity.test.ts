@@ -2,6 +2,7 @@ import { strFromU8, unzipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
 import { buildStructEpub } from './epub'
 import { legacyStructDigest, structDigest } from './ids'
+import { sha256HexSync } from './sha256'
 import type { StructDocument } from './types'
 
 function refreshReceipt(document: StructDocument) {
@@ -191,6 +192,76 @@ describe('STRUCT EPUB href integrity', () => {
     )
   })
 
+  it('rejects a profile asset id collision while preserving unprofiled packaging', async () => {
+    const document = documentWithHref('#target')
+    const bytes = new Uint8Array([1, 2, 3])
+    document.assets.push({
+      id: 'profile',
+      kind: 'figure',
+      href: 'assets/profile.bin',
+      mediaType: 'application/octet-stream',
+      sha256: sha256HexSync(bytes),
+      width: 1,
+      height: 1,
+      bytes,
+      sourceObjectIds: ['profile-source'],
+      evidence: {
+        confidence: 1,
+        pages: [1],
+        boxes: [],
+        sourceIds: ['profile-source'],
+      },
+      fallback: 'asset',
+    })
+    refreshReceipt(document)
+    await expect(buildStructEpub(document)).rejects.toThrow(
+      /duplicate|reserved|asset id/i,
+    )
+    await expect(
+      buildStructEpub(document, {
+        profile: {
+          id: 'mobile',
+          version: '1.0.0',
+          fileName: 'publication-mobile.epub',
+          pageProgressionDirection: 'ltr',
+          renditionFlow: 'paginated',
+          configurationSha256: 'c'.repeat(64),
+          css: 'body {}',
+        },
+      }),
+    ).rejects.toThrow(/duplicate|reserved|asset id/i)
+  })
+
+  it('revalidates an asset snapshot at the EPUB boundary and reopens unchanged bytes', async () => {
+    const document = documentWithHref('#target')
+    const bytes = new Uint8Array([1, 2, 3])
+    document.assets.push({
+      id: 'binary',
+      kind: 'figure',
+      href: 'assets/binary.bin',
+      mediaType: 'application/octet-stream',
+      sha256: sha256HexSync(bytes),
+      width: 1,
+      height: 1,
+      bytes,
+      sourceObjectIds: ['binary-source'],
+      evidence: {
+        confidence: 1,
+        pages: [1],
+        boxes: [],
+        sourceIds: ['binary-source'],
+      },
+      fallback: 'asset',
+    })
+    refreshReceipt(document)
+    const epub = await buildStructEpub(document)
+    expect(unzipSync(epub.bytes)['EPUB/assets/binary.bin']).toEqual(bytes)
+    document.assets[0]!.bytes![0] = 9
+    await expect(buildStructEpub(document)).rejects.toThrow(
+      /bytes|SHA-256|digest/i,
+    )
+  })
+
   it('rejects a self-authored or malformed profile before packaging', async () => {
     await expect(
       buildStructEpub(documentWithHref('#target'), {
@@ -338,17 +409,18 @@ describe('STRUCT EPUB href integrity', () => {
     'does not alias a %s href to a different packaged document',
     async (_label, href, packagedHref) => {
       const document = documentWithHref(href)
+      const supplementBytes = new TextEncoder().encode(
+        '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Different exact path</p></body></html>',
+      )
       document.assets.push({
         id: `supplement-${document.assets.length}`,
         kind: 'figure',
         href: packagedHref,
         mediaType: 'application/xhtml+xml',
-        sha256: 'd'.repeat(64),
+        sha256: sha256HexSync(supplementBytes),
         width: 1,
         height: 1,
-        bytes: new TextEncoder().encode(
-          '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Different exact path</p></body></html>',
-        ),
+        bytes: supplementBytes,
         sourceObjectIds: ['fixture-supplement'],
         evidence: {
           confidence: 1,
@@ -377,15 +449,16 @@ describe('STRUCT EPUB href integrity', () => {
 
   it('rejects reserved asset href collisions before packaging', async () => {
     const document = documentWithHref('#target')
+    const assetBytes = new Uint8Array([0])
     document.assets.push({
       id: 'replacement-content',
       kind: 'figure',
       href: 'content.xhtml',
       mediaType: 'image/png',
-      sha256: 'c'.repeat(64),
+      sha256: sha256HexSync(assetBytes),
       width: 1,
       height: 1,
-      bytes: new Uint8Array([0]),
+      bytes: assetBytes,
       sourceObjectIds: ['fixture-asset'],
       evidence: {
         confidence: 1,
@@ -402,15 +475,18 @@ describe('STRUCT EPUB href integrity', () => {
 
   it('rejects malformed packaged XHTML assets', async () => {
     const document = documentWithHref('#target')
+    const assetBytes = new TextEncoder().encode(
+      '<html><body><a href="#missing"></body>',
+    )
     document.assets.push({
       id: 'supplement',
       kind: 'figure',
       href: 'supplement.xhtml',
       mediaType: 'application/xhtml+xml',
-      sha256: 'd'.repeat(64),
+      sha256: sha256HexSync(assetBytes),
       width: 1,
       height: 1,
-      bytes: new TextEncoder().encode('<html><body><a href="#missing"></body>'),
+      bytes: assetBytes,
       sourceObjectIds: ['fixture-supplement'],
       evidence: {
         confidence: 1,
@@ -427,17 +503,18 @@ describe('STRUCT EPUB href integrity', () => {
 
   it('rejects dangling namespaced hrefs in packaged XHTML assets', async () => {
     const document = documentWithHref('#target')
+    const assetBytes = new TextEncoder().encode(
+      '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:xlink="http://www.w3.org/1999/xlink"><body><a xlink:href="#missing">Missing</a></body></html>',
+    )
     document.assets.push({
       id: 'namespaced-supplement',
       kind: 'figure',
       href: 'namespaced-supplement.xhtml',
       mediaType: 'application/xhtml+xml',
-      sha256: 'e'.repeat(64),
+      sha256: sha256HexSync(assetBytes),
       width: 1,
       height: 1,
-      bytes: new TextEncoder().encode(
-        '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:xlink="http://www.w3.org/1999/xlink"><body><a xlink:href="#missing">Missing</a></body></html>',
-      ),
+      bytes: assetBytes,
       sourceObjectIds: ['fixture-namespaced-supplement'],
       evidence: {
         confidence: 1,

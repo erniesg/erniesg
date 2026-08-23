@@ -287,20 +287,56 @@ export function adaptStructDocument(
   const captionIdsByParent = new Map<string, string>()
   const captionParentsByCaption = new Map<string, string>()
   const graphBlockIds = new Set(baseGraphBlockIds)
-  for (const relationship of document.relationships) {
-    if (relationship.kind !== 'caption' || relationship.status !== 'matched')
-      continue
+  const knownAssetIds = new Set(document.assets.map((asset) => asset.id))
+  const captionEndpointsFor = (relationship: StructRelationship) => {
     const fromBlock = blocksById.get(relationship.from)
-    const toBlock =
-      relationship.to.length === 1
-        ? blocksById.get(relationship.to[0]!)
-        : undefined
-    if (!fromBlock || !toBlock) continue
-    const endpoints =
-      captionParentKinds.has(fromBlock.kind) && toBlock.kind === 'caption'
+    if (!fromBlock) return undefined
+    if (relationship.kind === 'caption') {
+      const toBlock =
+        relationship.to.length === 1
+          ? blocksById.get(relationship.to[0]!)
+          : undefined
+      return captionParentKinds.has(fromBlock.kind) &&
+        toBlock?.kind === 'caption'
         ? { captionId: toBlock.id, parentId: fromBlock.id }
         : undefined
+    }
+    if (
+      !['figure', 'table', 'equation'].includes(relationship.kind) ||
+      fromBlock.kind !== relationship.kind
+    )
+      return undefined
+    const captionTargets = relationship.to.filter(
+      (target) => blocksById.get(target)?.kind === 'caption',
+    )
+    const relatedAssets = relationship.to.filter((target) =>
+      knownAssetIds.has(target),
+    )
+    return captionTargets.length === 1 &&
+      relatedAssets.length > 0 &&
+      relationship.to.length === relatedAssets.length + 1
+      ? { captionId: captionTargets[0]!, parentId: fromBlock.id }
+      : undefined
+  }
+  for (const relationship of document.relationships) {
+    if (relationship.status !== 'matched') continue
+    const endpoints = captionEndpointsFor(relationship)
     if (!endpoints) {
+      if (
+        relationship.kind === 'caption' &&
+        (!blocksById.has(relationship.from) ||
+          relationship.to.length !== 1 ||
+          !blocksById.has(relationship.to[0]!))
+      )
+        continue
+      const mentionsCaption = relationship.to.some(
+        (target) => blocksById.get(target)?.kind === 'caption',
+      )
+      const isTypedCaptionRelation =
+        ['figure', 'table', 'equation'].includes(relationship.kind) &&
+        blocksById.get(relationship.from)?.kind === relationship.kind &&
+        mentionsCaption
+      if (relationship.kind !== 'caption' && !isTypedCaptionRelation) continue
       addDiagnostic(
         'warning',
         'invalid-caption-relationship',
@@ -379,11 +415,10 @@ export function adaptStructDocument(
 
   const captionParent = new Map<string, string>()
   for (const relationship of document.relationships) {
-    if (relationship.kind !== 'caption') continue
     if (relationship.status === 'matched') {
       const endpoints = captionLinks.get(relationship.id)
       if (endpoints) captionParent.set(endpoints.captionId, endpoints.parentId)
-    } else {
+    } else if (relationship.kind === 'caption') {
       addDiagnostic(
         'warning',
         'unresolved-caption',
@@ -756,7 +791,9 @@ export function adaptStructDocument(
               relationship.kind === 'figure' &&
               relationship.status === 'matched',
           )
-          .flatMap((relationship) => relationship.to)
+          .flatMap((relationship) =>
+            relationship.to.filter((target) => knownAssetIds.has(target)),
+          )
         const sourceAssetIds = block.fallbackAssetIds?.length
           ? block.fallbackAssetIds
           : relatedAssetIds
@@ -1055,9 +1092,11 @@ export function adaptStructDocument(
     const toAvailable =
       relationship.to.length > 0 &&
       relationship.to.every((target) =>
-        relationship.kind === 'figure'
-          ? assetIdsMap.has(target)
-          : Boolean(mappedNode(target)),
+        captionLinks.get(relationship.id)?.captionId === target
+          ? Boolean(mappedNode(target))
+          : relationship.kind === 'figure' || captionLinks.has(relationship.id)
+            ? assetIdsMap.has(target)
+            : Boolean(mappedNode(target)),
       )
     if (
       (!fromAvailable || !toAvailable) &&

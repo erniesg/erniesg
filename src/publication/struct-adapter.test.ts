@@ -384,6 +384,137 @@ describe('STRUCT publication adapter', () => {
     expect(adaptStructDocument(input).graph).toEqual(result.graph)
   })
 
+  it('maps the #212 mixed asset and caption endpoint shape without fallback assets or unresolved diagnostics', () => {
+    const input = document([
+      block({
+        id: 'figure',
+        kind: 'figure',
+        text: 'Figure source',
+        label: 'A figure',
+        order: 0,
+      }),
+      block({
+        id: 'figure-caption',
+        kind: 'caption',
+        text: 'Figure caption',
+        order: 1,
+      }),
+    ])
+    input.relationships = [
+      {
+        id: 'figure-relation',
+        kind: 'figure',
+        from: 'figure',
+        to: ['figure-asset', 'figure-caption'],
+        status: 'matched',
+        confidence: 1,
+        evidence,
+      },
+    ]
+
+    const result = adaptStructDocument(input)
+    const figure = result.graph.nodes.find((node) => node.id === 'figure')
+    const caption = result.graph.nodes.find(
+      (node) => node.id === 'figure-caption',
+    )
+
+    expect(figure).toMatchObject({
+      type: 'figure',
+      assetIds: ['figure-asset'],
+      captionId: 'figure-caption',
+    })
+    expect(caption).toMatchObject({
+      type: 'caption',
+      parentId: 'figure',
+      text: 'Figure caption',
+    })
+    expect(result.diagnostics.map(({ code }) => code)).not.toContain(
+      'unresolved-relationship-target',
+    )
+  })
+
+  it.each([
+    {
+      kind: 'table' as const,
+      parent: block({
+        id: 'table',
+        kind: 'table',
+        text: 'Table source',
+        order: 0,
+        table: {
+          rows: 1,
+          columns: 1,
+          semantic: 'verified',
+          cells: [
+            {
+              id: 'table-cell',
+              text: 'Cell',
+              row: 0,
+              column: 0,
+              rowSpan: 1,
+              columnSpan: 1,
+              headerScope: null,
+              inline: [],
+              evidence,
+            },
+          ],
+        },
+      }),
+    },
+    {
+      kind: 'equation' as const,
+      parent: block({
+        id: 'equation',
+        kind: 'equation',
+        text: 'x = y',
+        order: 0,
+      }),
+    },
+  ])(
+    'maps the #212 mixed asset and caption endpoint shape for $kind',
+    ({ kind, parent }) => {
+      const captionId = `${kind}-caption`
+      const input = document([
+        parent,
+        block({
+          id: captionId,
+          kind: 'caption',
+          text: `${kind} caption`,
+          order: 1,
+        }),
+      ])
+      input.relationships = [
+        {
+          id: `${kind}-relation`,
+          kind,
+          from: kind,
+          to: ['figure-asset', captionId],
+          status: 'matched',
+          confidence: 1,
+          evidence,
+        },
+      ]
+
+      const result = adaptStructDocument(input)
+
+      expect(result.graph.nodes.find((node) => node.id === kind)).toMatchObject(
+        {
+          type: kind,
+          captionId,
+        },
+      )
+      expect(
+        result.graph.nodes.find((node) => node.id === captionId),
+      ).toMatchObject({
+        type: 'caption',
+        parentId: kind,
+      })
+      expect(result.diagnostics.map(({ code }) => code)).not.toContain(
+        'unresolved-relationship-target',
+      )
+    },
+  )
+
   it('preserves unresolved/source-preserved meaning through deterministic diagnostics and excludes recovery/page/provider data', async () => {
     const input = document([
       block({

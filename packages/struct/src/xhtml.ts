@@ -63,6 +63,8 @@ function resolveRelationshipTarget(
   const id = value.startsWith('#') ? value.slice(1) : value
   const asset = document.assets.find((entry) => entry.id === id)
   if (asset) return { key: asset.id, href: asset.href }
+  const block = document.blocks.find((entry) => entry.id === id)
+  if (block) return { key: block.id, href: `#${xhtmlId(block.id)}` }
   if (/^(?:https?|mailto):/iu.test(value)) return { key: value, href: value }
   const key = xhtmlId(id)
   return { key, href: `#${key}` }
@@ -331,13 +333,16 @@ function renderInline(
           (run) => run.href || run.targetIds?.length,
         )
         const internalTarget = hyperlinkRun?.targetIds?.[0]
+        const rawHref = hyperlinkRun?.href
         const href =
-          hyperlinkRun?.href?.startsWith('#') && internalTarget
+          rawHref?.startsWith('#') && internalTarget
             ? resolveRelationshipTarget(document, internalTarget).href
-            : (hyperlinkRun?.href ??
-              (internalTarget
-                ? resolveRelationshipTarget(document, internalTarget).href
-                : undefined))
+            : rawHref && /^(?:https?|mailto):/iu.test(rawHref)
+              ? resolveRelationshipTarget(document, rawHref).href
+              : (rawHref ??
+                (internalTarget
+                  ? resolveRelationshipTarget(document, internalTarget).href
+                  : undefined))
         if (href)
           rendered = `<a href="${attribute(xhtmlHref(href))}">${rendered}</a>`
       }

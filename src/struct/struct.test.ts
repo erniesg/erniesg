@@ -86,6 +86,12 @@ async function resolvedVisualModelConsultation(candidateIndex = 0) {
 }
 
 describe('STRUCT canonical document graph', () => {
+  it('does not expose provider/model consultation policy from the public core', () => {
+    expect(structCore).not.toHaveProperty('validateModelConsultationReceipt')
+    expect(structCore).not.toHaveProperty('ModelFallbackReceipt')
+    expect(structCore).not.toHaveProperty('ModelConsultationClient')
+  })
+
   it('adapts a structured DOCX without exposing source-specific node types', async () => {
     const reconstruction = await structuredDocx()
     const graph = buildStructDocument(reconstruction)

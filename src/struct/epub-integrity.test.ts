@@ -131,6 +131,32 @@ function documentWithHref(href: string): StructDocument {
   })
 }
 
+function documentWithGenericReceipt(): StructDocument {
+  const document = documentWithHref('')
+  document.receipt.modelConsultations = {
+    schemaVersion: '1.0.0',
+    documentId: document.documentId,
+    sourceSha256: document.source.sha256,
+    consultations: [],
+    decisions: [],
+    metrics: {
+      totalDecisionCount: 0,
+      totalConsultationCount: 0,
+      consultationRate: 0,
+      byDecisionClass: {},
+    },
+  }
+  return refreshReceipt(document)
+}
+
+describe('source-neutral consultation receipts', () => {
+  it('packages a structurally closed receipt for a non-PDF source', async () => {
+    const document = documentWithGenericReceipt()
+    expect(document.source.format).toBe('unknown')
+    await expect(buildStructEpub(document)).resolves.toBeDefined()
+  })
+})
+
 function legacyDocumentWithHref(href: string, locale?: string): StructDocument {
   const current = documentWithHref(href)
   if (locale) {

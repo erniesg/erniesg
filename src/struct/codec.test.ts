@@ -649,6 +649,73 @@ describe('STRUCT runtime codec', () => {
     expect(() => decodeStructDocument(value)).toThrow()
   })
 
+  it.each([
+    { label: 'null', member: null },
+    { label: 'scalar', member: 'malformed' },
+    { label: 'number', member: 7 },
+    { label: 'array', member: [] },
+  ])(
+    'rejects a non-record consultation or decision member after resealing ($label)',
+    ({ member }) => {
+      for (const field of ['consultations', 'decisions'] as const) {
+        const value = validDocument() as any
+        value.schemaVersion = '0.2.0'
+        value.documentId = 'fixture-document'
+        value.receipt.schemaVersion = '0.2.0'
+        value.receipt.documentId = 'fixture-document'
+        value.receipt.modelConsultations = {
+          schemaVersion: '1.0.0',
+          documentId: 'fixture-document',
+          sourceSha256: hash,
+          consultations: [],
+          decisions: [],
+          metrics: {
+            totalDecisionCount: 0,
+            totalConsultationCount: 0,
+            consultationRate: 0,
+            byDecisionClass: {},
+          },
+        }
+        value.receipt.modelConsultations[field] = [member]
+        seal(value)
+
+        expect(() => decodeStructDocument(value)).toThrow(
+          /model|receipt|consultation|decision/i,
+        )
+      }
+    },
+  )
+
+  it('rejects a resealed consultation receipt with a noncanonical array prototype', () => {
+    const value = validDocument() as any
+    value.schemaVersion = '0.2.0'
+    value.documentId = 'fixture-document'
+    value.receipt.schemaVersion = '0.2.0'
+    value.receipt.documentId = 'fixture-document'
+    value.receipt.modelConsultations = {
+      schemaVersion: '1.0.0',
+      documentId: 'fixture-document',
+      sourceSha256: hash,
+      consultations: [],
+      decisions: [],
+      metrics: {
+        totalDecisionCount: 0,
+        totalConsultationCount: 0,
+        consultationRate: 0,
+        byDecisionClass: {},
+      },
+    }
+    const customPrototype = Object.create(Array.prototype, {
+      custom: { value: true, enumerable: false },
+    })
+    Object.setPrototypeOf(value.receipt.modelConsultations.consultations, customPrototype)
+    seal(value)
+
+    expect(() => decodeStructDocument(value)).toThrow(
+      /model|receipt|array|prototype/i,
+    )
+  })
+
   it.each(['0.3.0', '9.9.9', '', null, 1])(
     'fails closed on unknown schema version %s',
     (schemaVersion) => {

@@ -186,6 +186,19 @@ describe('source-neutral consultation receipts', () => {
       'MODEL_CONSULTATION_DOCUMENT_MISMATCH',
     )
   })
+
+  it.each(['consultations', 'decisions'] as const)(
+    'rejects a resealed non-PDF receipt with a scalar %s member before EPUB packaging',
+    async (field) => {
+      const document = documentWithGenericReceipt()
+      ;(document.receipt.modelConsultations as any)[field] = [null]
+      refreshReceipt(document)
+
+      await expect(buildStructEpub(document)).rejects.toThrow(
+        'INVALID_MODEL_CONSULTATION_RECEIPT',
+      )
+    },
+  )
 })
 
 function legacyDocumentWithHref(href: string, locale?: string): StructDocument {

@@ -156,6 +156,7 @@ function ownKeys(value: object) {
 /** Read array elements only through own data descriptors; never invoke getters. */
 function denseArrayValues(value: unknown[]): unknown[] | null {
   try {
+    if (Object.getPrototypeOf(value) !== Array.prototype) return null
     const keys = Reflect.ownKeys(value)
     if (keys.length !== value.length + 1 || !keys.includes('length')) return null
     const values: unknown[] = []
@@ -493,10 +494,15 @@ function validMetric(value: unknown): value is ModelConsultationMetric {
 }
 
 export function validateModelConsultationReceipt(
-  receipt: unknown,
+  receipt: any,
 ): receipt is ModelFallbackReceipt {
+  if (!record(receipt)) return false
+  const rootKeys = ownKeys(receipt)
+  if (!rootKeys) return false
+  receipt = Object.fromEntries(rootKeys.map((key) => [
+    key, Object.getOwnPropertyDescriptor(receipt, key)!.value,
+  ]))
   if (
-    !record(receipt) ||
     !Array.isArray(receipt.consultations) ||
     receipt.consultations.length > MAX_RECEIPT_HISTORY_ITEMS ||
     !Array.isArray(receipt.decisions) ||
@@ -531,14 +537,15 @@ export function validateModelConsultationReceipt(
     !record(receipt.metrics.byDecisionClass)
   )
     return false
+  receipt = receipt as ModelFallbackReceipt
   if (
     receipt.consultations.some(
-      (consultation) =>
+      (consultation: ModelConsultationRecord) =>
         consultation.documentId !== receipt.documentId ||
         consultation.sourceSha256 !== receipt.sourceSha256,
     ) ||
     receipt.decisions.some(
-      (decision) => decision.documentId !== receipt.documentId,
+      (decision: ModelDecisionMetricEvent) => decision.documentId !== receipt.documentId,
     ) ||
     (receipt.consultations.length > 0 && receipt.sourceSha256 === null)
   )
@@ -571,7 +578,7 @@ export function validateModelConsultationReceipt(
     return false
   const classNames = Object.keys(receipt.metrics.byDecisionClass).sort()
   const decisionClasses = [
-    ...new Set(receipt.decisions.map(({ decisionClass }) => decisionClass)),
+    ...new Set(receipt.decisions.map(({ decisionClass }: ModelDecisionMetricEvent) => decisionClass)),
   ].sort()
   if (JSON.stringify(classNames) !== JSON.stringify(decisionClasses))
     return false
@@ -580,13 +587,13 @@ export function validateModelConsultationReceipt(
   for (const decisionClass of classNames) {
     const metric = receipt.metrics.byDecisionClass[decisionClass]
     const events = receipt.decisions.filter(
-      ({ decisionClass: value }) => value === decisionClass,
+      ({ decisionClass: value }: ModelDecisionMetricEvent) => value === decisionClass,
     )
     if (
       !validMetric(metric) ||
       metric.decisionCount !== events.length ||
       metric.consultationCount !==
-        events.filter(({ consulted }) => consulted).length
+        events.filter(({ consulted }: ModelDecisionMetricEvent) => consulted).length
     )
       return false
     decisionTotal += metric.decisionCount

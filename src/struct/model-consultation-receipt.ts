@@ -171,6 +171,7 @@ function ownDataKeys(value: object) {
 /** Read array elements only through own data descriptors; never invoke getters. */
 function denseArrayValues(value: unknown[]): unknown[] | null {
   try {
+    if (Object.getPrototypeOf(value) !== Array.prototype) return null
     const keys = Reflect.ownKeys(value)
     if (keys.length !== value.length + 1 || !keys.includes('length')) return null
     const values: unknown[] = []
@@ -494,10 +495,15 @@ function validMetric(value: unknown): value is ModelConsultationMetric {
 
 /** Strict core validation for the closed, source-neutral receipt envelope. */
 export function validateModelConsultationReceipt(
-  receipt: unknown,
+  receipt: any,
 ): receipt is ModelFallbackReceipt {
+  if (!receiptRecord(receipt)) return false
+  const rootKeys = ownDataKeys(receipt)
+  if (!rootKeys) return false
+  receipt = Object.fromEntries(rootKeys.map((key) => [
+    key, Object.getOwnPropertyDescriptor(receipt, key)!.value,
+  ]))
   if (
-    !receiptRecord(receipt) ||
     !Array.isArray(receipt.consultations) ||
     receipt.consultations.length > MAX_RECEIPT_HISTORY_ITEMS ||
     !Array.isArray(receipt.decisions) ||
@@ -532,6 +538,8 @@ export function validateModelConsultationReceipt(
     !receiptRecord(receipt.metrics.byDecisionClass)
   )
     return false
+
+  receipt = receipt as ModelFallbackReceipt
 
   if (
     receipt.consultations.some(

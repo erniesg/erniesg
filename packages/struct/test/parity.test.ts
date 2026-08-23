@@ -117,9 +117,9 @@ const MAPPINGS: readonly Mapping[] = [
     canonicalPath: 'model-consultation-receipt.ts',
     rule: 'generic-receipt',
     canonicalSha256:
-      '9fd7afd6d09fbe86a7ad8a88a6c6569e3ae5293cfa65a52d5f3106b4ca63c7b8',
+      '4530cdf7f95c7d41e0a6591b0bc42f146148a0dfe05e9321583e29a1d58e67de',
     packageSha256:
-      '0471ff65c30cda8cc7698f6180c81be440dd6207721bcd5706117d2bd3d5f9e1',
+      '7226f4045b20244922ddd9ee1b3de984601764921d50a4849770469f6f33f58a',
   },
   {
     packagePath: 'reading-order.ts',

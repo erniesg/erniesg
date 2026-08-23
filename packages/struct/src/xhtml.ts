@@ -51,6 +51,23 @@ function xhtmlHref(value: string) {
   return value.startsWith('#') ? `#${xhtmlId(value.slice(1))}` : value
 }
 
+type ResolvedRelationshipTarget = {
+  key: string
+  href: string
+}
+
+function resolveRelationshipTarget(
+  document: StructDocument,
+  value: string,
+): ResolvedRelationshipTarget {
+  const id = value.startsWith('#') ? value.slice(1) : value
+  const asset = document.assets.find((entry) => entry.id === id)
+  if (asset) return { key: asset.id, href: asset.href }
+  if (/^(?:https?|mailto):/iu.test(value)) return { key: value, href: value }
+  const key = xhtmlId(id)
+  return { key, href: `#${key}` }
+}
+
 const UNICODE_DECIMAL_ZERO_CODE_POINTS = [
   0x0030, 0x0660, 0x06f0, 0x07c0, 0x0966, 0x09e6, 0x0a66, 0x0ae6, 0x0b66,
   0x0be6, 0x0c66, 0x0ce6, 0x0d66, 0x0de6, 0x0e50, 0x0ed0, 0x0f20, 0x1040,
@@ -105,6 +122,7 @@ function groupedCitationLinks(
   epubRole: string,
   sourceValue = value,
   sourceOffset = 0,
+  targetHrefs: ReadonlyMap<string, string> = new Map(),
 ) {
   if (
     labels.length !== targets.length ||
@@ -177,7 +195,8 @@ function groupedCitationLinks(
   let html = ''
   for (const range of segmentRanges) {
     html += text(value.slice(cursor, range.start))
-    html += `<a href="#${attribute(range.target)}"${epubRole}>${text(value.slice(range.start, range.end))}</a>`
+    const href = targetHrefs.get(range.target) ?? `#${range.target}`
+    html += `<a href="${attribute(href)}"${epubRole}>${text(value.slice(range.start, range.end))}</a>`
     cursor = range.end
   }
   html += text(value.slice(cursor))
@@ -245,11 +264,19 @@ function renderInline(
         const firstSegment = !emittedRelationshipIds.has(relationshipId)
         emittedRelationshipIds.add(relationshipId)
         const id = firstSegment ? ` id="${attribute(relationshipId)}"` : ''
-        const targets = relationship
+        const resolvedTargets = relationship
           ? relationship.status === 'matched'
-            ? relationship.to.map(xhtmlId)
+            ? relationship.to.map((target) =>
+                resolveRelationshipTarget(document, target),
+              )
             : []
-          : (semanticRun.targetIds ?? []).map(xhtmlId)
+          : (semanticRun.targetIds ?? []).map((target) =>
+              resolveRelationshipTarget(document, target),
+            )
+        const targets = resolvedTargets.map(({ key }) => key)
+        const targetHrefs = new Map(
+          resolvedTargets.map(({ key, href }) => [key, href]),
+        )
         const semanticAttributes = ` data-semantic-role="${attribute(semanticRun.semanticRole)}" data-relationship-id="${attribute(relationshipId)}"${targets.length > 0 ? ` data-target-ids="${attribute(targets.join(' '))}"` : ''}`
         if (targets.length === 0) {
           rendered = `<span${id}${semanticAttributes}>${rendered}</span>`
@@ -261,7 +288,7 @@ function renderInline(
                 ? ' epub:type="biblioref" role="doc-biblioref"'
                 : ''
           if (targets.length === 1) {
-            rendered = `<a${id} href="#${attribute(targets[0])}"${epubRole}${semanticAttributes}>${rendered}</a>`
+            rendered = `<a${id} href="${attribute(targetHrefs.get(targets[0])!)}"${epubRole}${semanticAttributes}>${rendered}</a>`
           } else {
             const labels = (relationship?.label ?? '')
               .split(',')
@@ -276,6 +303,7 @@ function renderInline(
                     epubRole,
                     value.slice(semanticRun.start, semanticRun.end),
                     start - semanticRun.start,
+                    targetHrefs,
                   )
                 : { html: text(segmentValue), linkedTargets: new Set<string>() }
             const visibleTargets =
@@ -292,7 +320,7 @@ function renderInline(
               .filter(({ target }) => !visibleTargets.has(target))
               .map(
                 ({ target, targetIndex }) =>
-                  `<a href="#${attribute(target)}"${epubRole} class="additional-semantic-reference">Additional ${text(semanticRun.semanticRole!)} target ${text(labels[targetIndex] ?? String(targetIndex + 1))}</a>`,
+                  `<a href="${attribute(targetHrefs.get(target)!)}"${epubRole} class="additional-semantic-reference">Additional ${text(semanticRun.semanticRole!)} target ${text(labels[targetIndex] ?? String(targetIndex + 1))}</a>`,
               )
               .join('')
             rendered = `<span${id}${semanticAttributes}>${styled(grouped.html)}${firstSegment ? additionalTargets : ''}</span>`
@@ -305,9 +333,11 @@ function renderInline(
         const internalTarget = hyperlinkRun?.targetIds?.[0]
         const href =
           hyperlinkRun?.href?.startsWith('#') && internalTarget
-            ? `#${xhtmlId(internalTarget)}`
+            ? resolveRelationshipTarget(document, internalTarget).href
             : (hyperlinkRun?.href ??
-              (internalTarget ? `#${xhtmlId(internalTarget)}` : undefined))
+              (internalTarget
+                ? resolveRelationshipTarget(document, internalTarget).href
+                : undefined))
         if (href)
           rendered = `<a href="${attribute(xhtmlHref(href))}">${rendered}</a>`
       }

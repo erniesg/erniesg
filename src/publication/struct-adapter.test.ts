@@ -182,6 +182,8 @@ describe('STRUCT publication adapter', () => {
   it.each([
     '/private/exports/customer-manuscript.pdf',
     'submission?credential=do-not-return.pdf',
+    'private%2Fexports%2Fcustomer-manuscript.pdf',
+    'private%5Cexports%5Ccustomer-manuscript.pdf',
   ])(
     'uses a deterministic safe source id for unsafe file names (%s)',
     async (fileName) => {

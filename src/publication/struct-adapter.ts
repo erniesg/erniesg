@@ -122,12 +122,20 @@ function basename(value: string) {
   return part && /^[^\u0000-\u001f\u007f/\\]+$/.test(part) ? part : undefined
 }
 
+function containsPathSeparator(value: string) {
+  try {
+    return /[\\/]/.test(decodeURIComponent(value))
+  } catch {
+    return true
+  }
+}
+
 function sourceIdFor(document: StructDocument) {
   const fallback = `struct-${document.source.sha256.slice(0, 16)}`
   const fileName = document.source.fileName
   const candidate = basename(fileName)
   return candidate &&
-    !/[\\/]/.test(fileName) &&
+    !containsPathSeparator(fileName) &&
     isSafePublicationSourceId(fileName) &&
     isSafePublicationSourceId(candidate)
     ? candidate

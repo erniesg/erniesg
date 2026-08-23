@@ -170,6 +170,37 @@ function refreshGeneratedDigest(document: any) {
 }
 
 describe('generic STRUCT model consultation receipt', () => {
+  it.each(['consultations', 'decisions'] as const)('rejects root %s accessors without reading them', async (field) => {
+    const document = sealedDocument()
+    const encoded = encodeStructDocument(document) as any
+    let reads = 0
+    for (const receipt of [document.receipt.modelConsultations, encoded.receipt.modelConsultations]) {
+      Object.defineProperty(receipt, field, { enumerable: true, get: () => { reads += 1; throw new Error('getter') } })
+    }
+    expect(validateModelConsultationReceipt(document.receipt.modelConsultations)).toBe(false)
+    expect(() => decodeStructDocument(encoded)).toThrow('STRUCT_CODEC_FIELD')
+    await expect(buildStructEpub(document)).rejects.toThrow('INVALID_MODEL_CONSULTATION_RECEIPT')
+    expect(reads).toBe(0)
+  })
+
+  it.each([
+    ['custom top-level', (receipt: any) => receipt.consultations],
+    ['null top-level', (receipt: any) => receipt.decisions],
+    ['custom nested', (receipt: any) => receipt.consultations[0].candidates],
+    ['null nested', (receipt: any) => receipt.consultations[0].inputs.values],
+  ])('rejects %s array prototypes', async (name, select) => {
+    const document = sealedDocument()
+    const encoded = encodeStructDocument(document) as any
+    for (const receipt of [document.receipt.modelConsultations, encoded.receipt.modelConsultations]) {
+      receipt.consultations[0].inputs.values = ['safe']
+      const target = select(receipt)
+      Object.setPrototypeOf(target, name.startsWith('custom') ? {} : null)
+    }
+    expect(validateModelConsultationReceipt(document.receipt.modelConsultations)).toBe(false)
+    expect(() => decodeStructDocument(encoded)).toThrow('STRUCT_CODEC_MODEL_RECEIPT')
+    await expect(buildStructEpub(document)).rejects.toThrow('INVALID_MODEL_CONSULTATION_RECEIPT')
+  })
+
   it.each([
     ['top-level consultations', (receipt: any) => receipt.consultations],
     ['top-level decisions', (receipt: any) => receipt.decisions],

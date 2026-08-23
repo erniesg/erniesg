@@ -315,7 +315,13 @@ export async function buildStructEpub(
     if (!asset.bytes) {
       throw new Error(`STRUCT asset ${asset.id} has no packaged bytes.`)
     }
-    return asset as typeof asset & { bytes: Uint8Array }
+    const bytes = new Uint8Array(asset.bytes)
+    if (sha256HexSync(bytes) !== asset.sha256) {
+      throw new Error(
+        `STRUCT asset ${asset.id} bytes do not match declared SHA-256.`,
+      )
+    }
+    return { ...asset, bytes }
   })
   const reservedIds = new Set([
     'publication-id',
@@ -323,6 +329,7 @@ export async function buildStructEpub(
     'content',
     'styles',
     'struct',
+    'profile',
   ])
   const reservedHrefs = new Set([
     'package.opf',

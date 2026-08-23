@@ -327,6 +327,7 @@ export async function buildStructEpub(
     'content',
     'styles',
     'struct',
+    'profile',
   ])
   const reservedHrefs = new Set([
     'package.opf',

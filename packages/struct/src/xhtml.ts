@@ -423,7 +423,7 @@ function renderAuthors(document: StructDocument) {
         .filter((reference) => reference.author === author)
         .map(
           (reference) =>
-            `<sup><a id="${attribute(xhtmlId(reference.id))}" href="#${attribute(xhtmlId(reference.target))}" epub:type="noteref" role="doc-noteref">${text(reference.label)}</a></sup>`,
+            `<sup><a id="${attribute(xhtmlId(reference.id))}" href="${attribute(resolveRelationshipTarget(document, reference.target).href)}" epub:type="noteref" role="doc-noteref">${text(reference.label)}</a></sup>`,
         )
         .join('')
       return `${text(author)}${references}`

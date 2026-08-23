@@ -543,12 +543,13 @@ export function validateModelConsultationReceipt(
 
   if (
     receipt.consultations.some(
-      (consultation) =>
+      (consultation: ModelConsultationRecord) =>
         consultation.documentId !== receipt.documentId ||
         consultation.sourceSha256 !== receipt.sourceSha256,
     ) ||
     receipt.decisions.some(
-      (decision) => decision.documentId !== receipt.documentId,
+      (decision: ModelDecisionMetricEvent) =>
+        decision.documentId !== receipt.documentId,
     ) ||
     (receipt.consultations.length > 0 && receipt.sourceSha256 === null)
   )
@@ -584,7 +585,11 @@ export function validateModelConsultationReceipt(
 
   const classNames = Object.keys(receipt.metrics.byDecisionClass).sort()
   const decisionClasses = [
-    ...new Set(receipt.decisions.map(({ decisionClass }) => decisionClass)),
+    ...new Set(
+      receipt.decisions.map(
+        ({ decisionClass }: ModelDecisionMetricEvent) => decisionClass,
+      ),
+    ),
   ].sort()
   if (JSON.stringify(classNames) !== JSON.stringify(decisionClasses))
     return false
@@ -593,13 +598,16 @@ export function validateModelConsultationReceipt(
   for (const decisionClass of classNames) {
     const metric = receipt.metrics.byDecisionClass[decisionClass]
     const events = receipt.decisions.filter(
-      ({ decisionClass: value }) => value === decisionClass,
+      ({ decisionClass: value }: ModelDecisionMetricEvent) =>
+        value === decisionClass,
     )
     if (
       !validMetric(metric) ||
       metric.decisionCount !== events.length ||
       metric.consultationCount !==
-        events.filter(({ consulted }) => consulted).length
+        events.filter(
+          ({ consulted }: ModelDecisionMetricEvent) => consulted,
+        ).length
     )
       return false
     decisionTotal += metric.decisionCount

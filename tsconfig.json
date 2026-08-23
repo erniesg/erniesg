@@ -4,6 +4,7 @@
     "strictNullChecks": true,
     "baseUrl": ".",
     "paths": {
+      "@erniesg/struct/schema": ["./packages/struct/src/schema.ts"],
       "@/*": ["./src/*"]
     },
     "jsx": "react-jsx",

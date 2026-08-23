@@ -253,11 +253,6 @@ function modelCredentialShapedValue(value: string) {
   return MODEL_CREDENTIAL_SHAPED_ID_PATTERNS.some((pattern) => pattern.test(value))
 }
 
-const MODEL_SAFE_ID = {
-  test(value: string) {
-    return CORE_SAFE_ID_FORMAT.test(value) && !coreCredentialShapedValue(value)
-  },
-}
 const SAFE_ID = CORE_SAFE_ID
 export const FORBIDDEN_MODEL_KEYS = new Set([
   'text',

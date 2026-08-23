@@ -1,11 +1,9 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import type {
-  StructDocument,
-  StructBlock,
-} from '../../packages/struct/src/types'
+import type { StructDocument, StructBlock } from '@erniesg/struct/schema'
+import { PublicationAdapterRegistry } from './adapter-registry'
 import { publicationGraphSchema } from './schema'
-import { adaptStructDocument } from './struct-adapter'
+import { adaptStructDocument, structPublicationAdapter } from './struct-adapter'
 
 const bytes = new Uint8Array([1, 2, 3])
 const assetSha256 = createHash('sha256').update(bytes).digest('hex')
@@ -181,6 +179,31 @@ function document(blocks: StructBlock[]): StructDocument {
 }
 
 describe('STRUCT publication adapter', () => {
+  it.each([
+    '/private/exports/customer-manuscript.pdf',
+    'submission?credential=do-not-return.pdf',
+  ])(
+    'uses a deterministic safe source id for unsafe file names (%s)',
+    async (fileName) => {
+      const input = document([
+        block({ id: 'paragraph', kind: 'paragraph', text: 'Body', order: 0 }),
+      ])
+      input.source.fileName = fileName
+      input.relationships = []
+      const expectedSourceId = `struct-${input.source.sha256.slice(0, 16)}`
+
+      const direct = adaptStructDocument(input)
+      expect(direct.provenance.sourceId).toBe(expectedSourceId)
+      expect(JSON.stringify(direct)).not.toContain(fileName)
+
+      const registry = new PublicationAdapterRegistry().register(
+        structPublicationAdapter,
+      )
+      const resolved = await registry.resolve('struct-document', input)
+      expect(resolved.provenance.sourceId).toBe(expectedSourceId)
+    },
+  )
+
   it('maps semantic blocks, lists, notes, backlinks, tables, equations, figures, and stable ids', async () => {
     const input = document([
       block({

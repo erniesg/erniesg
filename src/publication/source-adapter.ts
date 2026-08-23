@@ -64,7 +64,7 @@ export type PublicationContractReceipt = z.infer<
   typeof publicationContractReceiptSchema
 >
 
-function safeSourceId(value: string) {
+export function isSafePublicationSourceId(value: string) {
   let decoded = value
   try {
     decoded = decodeURIComponent(value)
@@ -90,7 +90,7 @@ const safeSourceIdSchema = z
   .min(1)
   .max(2_048)
   .refine(
-    safeSourceId,
+    isSafePublicationSourceId,
     'Source ids cannot contain local paths or secret material',
   )
 

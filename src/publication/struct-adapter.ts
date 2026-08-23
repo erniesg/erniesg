@@ -7,9 +7,11 @@ import {
 } from './schema'
 import {
   PUBLICATION_SOURCE_ADAPTER_VERSION,
+  isSafePublicationSourceId,
   type AdapterDiagnostic,
   type PublicationSourceAdapter,
   type PublicationSourceResult,
+  validatePublicationSourceResult,
 } from './source-adapter'
 import type {
   StructBlock,
@@ -17,7 +19,7 @@ import type {
   StructInline,
   StructRelationship,
   StructTableCell,
-} from '../../packages/struct/src/types'
+} from '@erniesg/struct/schema'
 
 export const STRUCT_PUBLICATION_ADAPTER_ID = 'struct-document' as const
 export const STRUCT_PUBLICATION_MAPPING_VERSION = '1.0.0' as const
@@ -120,6 +122,18 @@ function basename(value: string) {
   return part && /^[^\u0000-\u001f\u007f/\\]+$/.test(part) ? part : undefined
 }
 
+function sourceIdFor(document: StructDocument) {
+  const fallback = `struct-${document.source.sha256.slice(0, 16)}`
+  const fileName = document.source.fileName
+  const candidate = basename(fileName)
+  return candidate &&
+    !/[\\/]/.test(fileName) &&
+    isSafePublicationSourceId(fileName) &&
+    isSafePublicationSourceId(candidate)
+    ? candidate
+    : fallback
+}
+
 function isExternalHref(value: string) {
   try {
     const url = new URL(value)
@@ -167,9 +181,7 @@ export function adaptStructDocument(
   document: StructDocument,
 ): PublicationSourceResult {
   const diagnostics: AdapterDiagnostic[] = []
-  const sourceId =
-    basename(document.source.fileName) ??
-    `struct-${document.source.sha256.slice(0, 16)}`
+  const sourceId = sourceIdFor(document)
   const addDiagnostic = (
     severity: Severity,
     code: string,
@@ -1254,7 +1266,7 @@ export function adaptStructDocument(
     edition: { id: editionId, locale, direction: directionValue },
     nodes,
   })
-  return {
+  return validatePublicationSourceResult({
     graph,
     assetBundle: createAssetBundle(
       { version: '1.0.0', assets: assetDescriptors },
@@ -1274,7 +1286,7 @@ export function adaptStructDocument(
       sourceRevision: document.source.sha256,
       mappingVersion: STRUCT_PUBLICATION_MAPPING_VERSION,
     },
-  }
+  })
 }
 
 function inlineRunsFor(

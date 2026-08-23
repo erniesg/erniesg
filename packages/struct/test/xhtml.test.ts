@@ -179,6 +179,43 @@ function sharedRelationshipDocument(tableCells = false) {
 }
 
 describe('STRUCT XHTML ID mapping', () => {
+  it('resolves author note asset targets as asset hrefs', () => {
+    const document = characterizationDocument('0.2.0')
+    const evidence = document.blocks[0]!.evidence
+    document.assets = [
+      {
+        id: 'figure-asset',
+        kind: 'figure',
+        href: 'assets/figure.bin',
+        mediaType: 'application/octet-stream',
+        sha256: 'a'.repeat(64),
+        width: 1,
+        height: 1,
+        sourceObjectIds: ['source-asset'],
+        evidence,
+        fallback: 'asset',
+      },
+    ]
+    document.metadata.authorNotes = [
+      {
+        id: 'author-note-asset',
+        author: document.metadata.authors[0]!,
+        label: '1',
+        target: 'figure-asset',
+      },
+    ]
+    document.receipt.assetCount = 1
+    document.receipt.conservation.sourceAssetCount = 1
+    document.receipt.conservation.accountedSourceAssetCount = 1
+    document.receipt.conservation.structAssetCount = 1
+    resealDocument(document)
+
+    expect(() => decodeStructDocument(document)).not.toThrow()
+    const xhtml = renderPublicationXhtml(document)
+    expect(xhtml).toContain('href="assets/figure.bin"')
+    expect(xhtml).not.toContain('href="#figure-asset"')
+  })
+
   it('preserves asset and external relationship targets as navigable hrefs', () => {
     const document = characterizationDocument('0.2.0')
     const source = document.blocks[0]!

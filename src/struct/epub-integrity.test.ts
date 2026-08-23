@@ -150,6 +150,31 @@ function documentWithGenericReceipt(): StructDocument {
 }
 
 describe('source-neutral consultation receipts', () => {
+  it.each([
+    ['top-level consultations', (receipt: any) => receipt.consultations],
+    ['top-level decisions', (receipt: any) => receipt.decisions],
+    ['nested inputs', (receipt: any) => receipt.consultations[0].inputs.values],
+    ['nested candidates', (receipt: any) => receipt.consultations[0].candidates],
+  ])('rejects accessor-backed %s without invoking its getter', async (_name, select) => {
+    const document = documentWithGenericReceipt()
+    const receipt: any = document.receipt.modelConsultations
+    receipt.consultations = [{ inputs: { values: ['safe'] }, candidates: [{ id: 'candidate' }] }]
+    receipt.decisions = [{}]
+    const target = select(receipt)
+    let reads = 0
+    Object.defineProperty(target, '0', {
+      enumerable: true,
+      get: () => {
+        reads += 1
+        throw new Error('getter must not run')
+      },
+    })
+    await expect(buildStructEpub(document)).rejects.toThrow(
+      'INVALID_MODEL_CONSULTATION_RECEIPT',
+    )
+    expect(reads).toBe(0)
+  })
+
   it('packages a structurally closed receipt for a non-PDF source', async () => {
     const document = documentWithGenericReceipt()
     expect(document.source.format).toBe('unknown')

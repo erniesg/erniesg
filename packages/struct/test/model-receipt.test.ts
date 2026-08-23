@@ -170,6 +170,45 @@ function refreshGeneratedDigest(document: any) {
 }
 
 describe('generic STRUCT model consultation receipt', () => {
+  it.each([
+    ['top-level consultations', (receipt: any) => receipt.consultations],
+    ['top-level decisions', (receipt: any) => receipt.decisions],
+    ['nested inputs', (receipt: any) => receipt.consultations[0].inputs.values],
+    ['nested candidates', (receipt: any) => receipt.consultations[0].candidates],
+  ])('rejects accessor-backed %s without invoking its getter', async (_name, select) => {
+    const document = sealedDocument()
+    const encoded = encodeStructDocument(document) as any
+    document.receipt.modelConsultations.consultations[0].inputs.values = ['safe']
+    const target = select(document.receipt.modelConsultations)
+    let reads = 0
+    Object.defineProperty(target, '0', {
+      enumerable: true,
+      get: () => {
+        reads += 1
+        throw new Error('getter must not run')
+      },
+    })
+    expect(validateModelConsultationReceipt(document.receipt.modelConsultations)).toBe(false)
+    expect(reads).toBe(0)
+    encoded.receipt.modelConsultations.consultations[0].inputs.values = ['safe']
+    const encodedTarget = select(encoded.receipt.modelConsultations)
+    Object.defineProperty(encodedTarget, '0', {
+      enumerable: true,
+      get: () => {
+        reads += 1
+        throw new Error('getter must not run')
+      },
+    })
+    expect(() => decodeStructDocument(encoded)).toThrow(
+      'STRUCT_CODEC_MODEL_RECEIPT',
+    )
+    expect(reads).toBe(0)
+    await expect(buildStructEpub(document)).rejects.toThrow(
+      'INVALID_MODEL_CONSULTATION_RECEIPT',
+    )
+    expect(reads).toBe(0)
+  })
+
   it('round-trips a valid closed receipt without policy symbols', () => {
     const document = sealedDocument()
     expect(

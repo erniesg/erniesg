@@ -168,6 +168,24 @@ function ownDataKeys(value: object) {
   }
 }
 
+/** Read array elements only through own data descriptors; never invoke getters. */
+function denseArrayValues(value: unknown[]): unknown[] | null {
+  try {
+    const keys = Reflect.ownKeys(value)
+    if (keys.length !== value.length + 1 || !keys.includes('length')) return null
+    const values: unknown[] = []
+    for (let index = 0; index < value.length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
+      if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value'))
+        return null
+      values.push(descriptor.value)
+    }
+    return values
+  } catch {
+    return null
+  }
+}
+
 function canonicalJson(value: unknown, ancestors = new Set<object>()): boolean {
   if (value === null || typeof value === 'string' || typeof value === 'boolean')
     return true
@@ -176,20 +194,8 @@ function canonicalJson(value: unknown, ancestors = new Set<object>()): boolean {
   ancestors.add(value)
   try {
     if (Array.isArray(value)) {
-      const keys = Reflect.ownKeys(value)
-      return (
-        keys.length === value.length + 1 &&
-        keys.includes('length') &&
-        keys.every(
-          (key) =>
-            key === 'length' ||
-            (typeof key === 'string' &&
-              /^\d+$/u.test(key) &&
-              Object.hasOwn(value, key) &&
-              Object.getOwnPropertyDescriptor(value, key)?.enumerable &&
-              canonicalJson(value[Number(key)], ancestors)),
-        )
-      )
+      const values = denseArrayValues(value)
+      return values !== null && values.every((entry) => canonicalJson(entry, ancestors))
     }
     const keys = ownDataKeys(value)
     if (!keys) return false
@@ -206,7 +212,10 @@ function stableJson(value: unknown): string {
   if (typeof value === 'number' && !Number.isFinite(value)) return 'null'
   if (value instanceof Uint8Array)
     return JSON.stringify({ sha256: sha256HexSync(value) })
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (Array.isArray(value)) {
+    const values = denseArrayValues(value)
+    return values === null ? 'null' : `[${values.map(stableJson).join(',')}]`
+  }
   if (value && typeof value === 'object') {
     return `{${Object.keys(value as Record<string, unknown>)
       .sort()
@@ -238,7 +247,9 @@ function forbiddenField(value: unknown, path = ''): string | null {
   )
     return path || '$'
   if (Array.isArray(value)) {
-    for (const [index, child] of value.entries()) {
+    const values = denseArrayValues(value)
+    if (values === null) return path || '$'
+    for (const [index, child] of values.entries()) {
       const found = forbiddenField(child, `${path}[${index}]`)
       if (found) return found
     }

@@ -153,6 +153,24 @@ function ownKeys(value: object) {
   }
 }
 
+/** Read array elements only through own data descriptors; never invoke getters. */
+function denseArrayValues(value: unknown[]): unknown[] | null {
+  try {
+    const keys = Reflect.ownKeys(value)
+    if (keys.length !== value.length + 1 || !keys.includes('length')) return null
+    const values: unknown[] = []
+    for (let index = 0; index < value.length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
+      if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value'))
+        return null
+      values.push(descriptor.value)
+    }
+    return values
+  } catch {
+    return null
+  }
+}
+
 function canonical(value: unknown, ancestors = new Set<object>()): boolean {
   if (value === null || typeof value === 'string' || typeof value === 'boolean')
     return true
@@ -161,20 +179,8 @@ function canonical(value: unknown, ancestors = new Set<object>()): boolean {
   ancestors.add(value)
   try {
     if (Array.isArray(value)) {
-      const keys = Reflect.ownKeys(value)
-      return (
-        keys.length === value.length + 1 &&
-        keys.includes('length') &&
-        keys.every(
-          (key) =>
-            key === 'length' ||
-            (typeof key === 'string' &&
-              /^\d+$/u.test(key) &&
-              Object.hasOwn(value, key) &&
-              Object.getOwnPropertyDescriptor(value, key)?.enumerable &&
-              canonical(value[Number(key)], ancestors)),
-        )
-      )
+      const values = denseArrayValues(value)
+      return values !== null && values.every((entry) => canonical(entry, ancestors))
     }
     const keys = ownKeys(value)
     if (!keys) return false
@@ -191,7 +197,10 @@ export function stableJson(value: unknown): string {
   if (typeof value === 'number' && !Number.isFinite(value)) return 'null'
   if (value instanceof Uint8Array)
     return JSON.stringify({ sha256: sha256HexSync(value) })
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (Array.isArray(value)) {
+    const values = denseArrayValues(value)
+    return values === null ? 'null' : `[${values.map(stableJson).join(',')}]`
+  }
   if (value && typeof value === 'object')
     return `{${Object.keys(value as Record<string, unknown>)
       .sort()
@@ -231,7 +240,9 @@ function forbidden(value: unknown): string | null {
   )
     return '$'
   if (Array.isArray(value)) {
-    for (const child of value) {
+    const values = denseArrayValues(value)
+    if (values === null) return '$'
+    for (const child of values) {
       const found = forbidden(child)
       if (found) return found
     }
@@ -274,10 +285,14 @@ export function copyCanonicalJson(
     fail('MODEL_RECEIPT', path, 'cycles are not permitted in model receipts')
   active.add(value)
   try {
-    if (Array.isArray(value))
-      return value.map((entry, index) =>
+    if (Array.isArray(value)) {
+      const values = denseArrayValues(value)
+      if (values === null)
+        fail('MODEL_RECEIPT', path, 'model receipt arrays must be dense own data values')
+      return values.map((entry, index) =>
         copyCanonicalJson(entry, `${path}[${index}]`, active, depth + 1),
       )
+    }
     return Object.fromEntries(
       dataEntries(value, path)
         .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))

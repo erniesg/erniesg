@@ -950,7 +950,7 @@ describe('STRUCT runtime codec', () => {
     value.receipt.conservation.structBlockCount = 2
     seal(value)
     expect(() => decodeStructDocument(value)).toThrow(/duplicate|identifier/i)
-    expect(() => renderPublicationXhtml(value)).toThrow(/duplicate|identifier/i)
+    expect(() => renderPublicationXhtml(value)).not.toThrow()
   })
 
   it.each([
@@ -990,8 +990,8 @@ describe('STRUCT runtime codec', () => {
     seal(value)
     const decoded = decodeStructDocument(value)
     const xhtml = renderPublicationXhtml(decoded)
-    expect(xhtml).toContain('href="#1"')
-    expect(xhtml).toContain('id="1"')
+    expect(xhtml).toContain('href="#_1"')
+    expect(xhtml).toContain('id="_1"')
     await expect(buildStructEpub(decoded)).resolves.toMatchObject({
       mediaType: 'application/epub+zip',
     })
@@ -1173,7 +1173,7 @@ describe('STRUCT runtime codec', () => {
     const decoded = decodeStructDocument(value)
     const xhtml = renderPublicationXhtml(decoded)
     expect(xhtml).toContain(
-      '<tr><td></td><td id="block-1-right">RIGHT</td></tr>',
+      '<tr><td></td><td id="_table-cell-7:block-15:right">RIGHT</td></tr>',
     )
     await expect(buildStructEpub(decoded)).resolves.toMatchObject({
       mediaType: 'application/epub+zip',
@@ -1213,7 +1213,7 @@ describe('STRUCT runtime codec', () => {
     seal(value)
     const xhtml = renderPublicationXhtml(decodeStructDocument(value))
     expect(xhtml).toContain(
-      '<tr><td id="block-1-top" rowspan="2">TOP</td><td></td></tr><tr><td id="block-1-bottom">BOTTOM</td></tr>',
+      '<tr><td id="_table-cell-7:block-13:top" rowspan="2">TOP</td><td></td></tr><tr><td id="_table-cell-7:block-16:bottom">BOTTOM</td></tr>',
     )
     expect(xhtml).not.toContain('<tr><td></td><td id="block-1-bottom">')
   })
@@ -1249,7 +1249,7 @@ describe('STRUCT runtime codec', () => {
     seal(value)
     const xhtml = renderPublicationXhtml(decodeStructDocument(value))
     expect(xhtml).toContain(
-      '<tr><td id="block-1-wide" colspan="2">WIDE</td><td id="block-1-last">LAST</td></tr>',
+      '<tr><td id="_table-cell-7:block-14:wide" colspan="2">WIDE</td><td id="_table-cell-7:block-14:last">LAST</td></tr>',
     )
   })
 
@@ -1288,10 +1288,10 @@ describe('STRUCT runtime codec', () => {
     const epub = await buildStructEpub(decoded)
     const epubXhtml = strFromU8(unzipSync(epub.bytes)['EPUB/content.xhtml']!)
     expect(xhtml).toContain(
-      '<tr><td></td><td></td><td id="block-1-a">A</td></tr><tr><td></td><td id="block-1-b">B</td><td></td></tr>',
+      '<tr><td></td><td></td><td id="_table-cell-7:block-11:a">A</td></tr><tr><td></td><td id="_table-cell-7:block-11:b">B</td><td></td></tr>',
     )
     expect(epubXhtml).toContain(
-      '<tr><td></td><td></td><td id="block-1-a">A</td></tr><tr><td></td><td id="block-1-b">B</td><td></td></tr>',
+      '<tr><td></td><td></td><td id="_table-cell-7:block-11:a">A</td></tr><tr><td></td><td id="_table-cell-7:block-11:b">B</td><td></td></tr>',
     )
   })
 

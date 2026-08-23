@@ -335,6 +335,23 @@ function assertUniqueSourceObservationAnchorIds(document: StructDocument) {
   }
   for (const relationship of document.relationships)
     occupied.set(xhtmlId(relationship.id), `relationship ${relationship.id}`)
+  for (const reference of document.metadata.authorNotes ?? []) {
+    const relationship = document.relationships.find(
+      (entry) => entry.id === reference.id,
+    )
+    const validAlias =
+      relationship?.status === 'matched' &&
+      (relationship.kind === 'footnote' || relationship.kind === 'endnote') &&
+      relationship.to.includes(reference.target)
+    if (validAlias) continue
+    const renderedId = xhtmlId(reference.id)
+    const previous = occupied.get(renderedId)
+    if (previous)
+      throw new Error(
+        `DUPLICATE_XHTML_SOURCE_ANCHOR: ${reference.id} conflicts with ${previous}`,
+      )
+    occupied.set(renderedId, `author note ${reference.id}`)
+  }
   for (const relationshipId of renderedInlineRelationshipIds(document)) {
     if (declaredRelationshipIds.has(relationshipId)) continue
     const renderedId = xhtmlId(relationshipId)
@@ -437,13 +454,24 @@ export function renderPublicationXhtml(
   document: StructDocument,
   options: StructXhtmlOptions = {},
 ) {
-  assertUniqueSourceObservationAnchorIds(document)
   const publicationPlan = buildRenderedPublicationPlan(document)
+  assertUniqueSourceObservationAnchorIds(document)
   assertUniqueEmittedIds(
-    emittedXhtmlIds(document, publicationPlan).map(({ id, path }) => ({
-      id: xhtmlId(id),
-      path,
-    })),
+    emittedXhtmlIds(document, publicationPlan).map(({ id, path }) => {
+      const tableCell = path.match(
+        /^\$\.blocks\[(\d+)\]\.table\.cells\[(\d+)\]\.id$/u,
+      )
+      if (tableCell) {
+        const block = document.blocks[Number(tableCell[1])]
+        const cell = block?.table?.cells[Number(tableCell[2])]
+        if (block && cell)
+          return {
+            id: derivedXhtmlId('table-cell', [block.id, cell.id]),
+            path,
+          }
+      }
+      return { id: xhtmlId(id), path }
+    }),
   )
   const emittedRelationshipIds = new Set<string>()
   const language = document.metadata.language ?? 'und'

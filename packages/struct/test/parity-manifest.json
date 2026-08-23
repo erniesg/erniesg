@@ -9,16 +9,16 @@
     "codec/structure.ts": "esm-imports",
     "core.ts": "codec-facade",
     "epub.ts": "model-free-epub",
-    "ids.ts": "esm-imports",
+    "ids.ts": "safe-id-facade",
     "index.ts": "root-facade",
     "reading-order.ts": "esm-imports",
     "recovery.ts": "esm-imports",
     "renderers/epub.ts": "renderer-epub-facade",
-    "renderers/xhtml.ts": "renderer-xhtml-facade",
+    "renderers/xhtml.ts": "renderer-xhtml-facade-model-free",
     "schema.ts": "package-only-schema",
     "sha256.ts": "byte-identical",
     "types.ts": "model-free-types",
-    "xhtml.ts": "esm-imports"
+    "xhtml.ts": "model-free-xhtml"
   },
   "excludedCanonical": {
     "codec/model.ts": "PDF-coupled model receipt codec is forbidden from the package",
@@ -26,6 +26,8 @@
     "epub-integrity.test.ts": "canonical EPUB suite is app-coupled; package characterization suite is maintained locally",
     "from-reconstruction.ts": "extractor adapter is explicitly outside package core",
     "model-consultation-receipt.ts": "provider/model receipt contract is explicitly outside package core",
+    "consultation-receipt.ts": "generic app receipt binding remains an app compatibility surface; package core is source-neutral",
+    "emitted-ids.ts": "app publication planning and target admission remain outside package core",
     "struct.test.ts": "canonical integration suite imports app/PDF providers; package characterization suites are maintained locally"
   }
 }

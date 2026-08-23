@@ -42,7 +42,7 @@ const MAPPINGS: readonly Mapping[] = [
     canonicalPath: 'codec/invariants.ts',
     rule: 'model-free-invariants',
     canonicalSha256:
-      'ca6c3c6ea8cda1f887cfa155c2497bd75558e25fa375c4dd31c35182918a9ded',
+      'ebf1353be5c0012505e8ca41613396e53556d512720b962043c5232535e6b5d9',
     packageSha256:
       'e5f0e4aa5cb13afbf48529ae396a815aadfde8c4907a479763e16c5307ee7c0b',
   },
@@ -51,7 +51,7 @@ const MAPPINGS: readonly Mapping[] = [
     canonicalPath: 'codec/parsers.ts',
     rule: 'model-free-parser',
     canonicalSha256:
-      'a74555d7a139974babda0bf84c3587c77f7e791aaca7942b5a3a811e0f230c89',
+      'd5e8dcfcd6b5631b018ecc50b86bd4caa4f1921d417d72647f939c7f376d4164',
     packageSha256:
       '9ba8a268d23c1125d9e7ba7fa63cd24bf23c784da8a8cb725684872d9703edf1',
   },
@@ -60,7 +60,7 @@ const MAPPINGS: readonly Mapping[] = [
     canonicalPath: 'codec/primitives.ts',
     rule: 'safe-id-primitives',
     canonicalSha256:
-      '136fc31c551768d0bfb998ff3db7ff0e0667911811686ae5efad9a376812ccd1',
+      'e42bcb8ac2d2a3547eb24a8c1e3dc4203193814a9c58c7a060bdd89d69fc1407',
     packageSha256:
       'b276d35ddd215ce81e5cd06679342adea4e24ceb2175299c4abdfb565735a156',
   },
@@ -87,16 +87,18 @@ const MAPPINGS: readonly Mapping[] = [
     canonicalPath: 'epub.ts',
     rule: 'model-free-epub',
     canonicalSha256:
-      'be3b6f13b24a6a4e1c37bc75a819a1c8670fa82541a6d649403670d556b2ea0f',
+      'd717e2a79def4a901f4110f6bbed2f11c07f08da45b7e3d55ff055164bf75cbb',
     packageSha256:
       '72dc0e76a6634b6e4fa0ed0d69880bb0a355e05fdef6bbf7b191d8f5d9923537',
   },
   {
     packagePath: 'ids.ts',
     canonicalPath: 'ids.ts',
-    rule: 'esm-imports',
+    // The app facade owns SAFE_ID/credential filtering; package primitives
+    // provide the equivalent package-local validator.
+    rule: 'safe-id-facade',
     canonicalSha256:
-      'fefc2d2408acd7fc9c28167dc505af0933d153d73a58d16f5c14dcaa9a11b2d2',
+      '4b203de70f351fd6eef8ffb3566e932549c8ccf333d2a0586940f9ca51795de8',
     packageSha256:
       '556f86b46550760719984d392266f551e1b3a73b8dc25854f59f5e925e684202',
   },
@@ -105,7 +107,7 @@ const MAPPINGS: readonly Mapping[] = [
     canonicalPath: 'index.ts',
     rule: 'root-facade',
     canonicalSha256:
-      '94a8359eb2410c286981cca32515d29c228fa45fcb21b4fd9d0b5eea1920e69f',
+      'b8d388b88f776b0ed58d596f88ee54aeb02ca3c8b25778a0697eae0de10524bf',
     packageSha256:
       'c16a9ebc3250fb4bb62c364e079cfc05ea3a77563df301954215695d5efb42fd',
   },
@@ -132,16 +134,16 @@ const MAPPINGS: readonly Mapping[] = [
     canonicalPath: 'epub.ts',
     rule: 'renderer-epub-facade',
     canonicalSha256:
-      'be3b6f13b24a6a4e1c37bc75a819a1c8670fa82541a6d649403670d556b2ea0f',
+      'd717e2a79def4a901f4110f6bbed2f11c07f08da45b7e3d55ff055164bf75cbb',
     packageSha256:
       '77dfd2ce81a50ef6e5bcee424b04add78b979fa5f626fd504b8f8abaff535452',
   },
   {
     packagePath: 'renderers/xhtml.ts',
     canonicalPath: 'xhtml.ts',
-    rule: 'renderer-xhtml-facade',
+    rule: 'renderer-xhtml-facade-model-free',
     canonicalSha256:
-      '32fec45ad003755cfaeb61411ea241803937d174effb2ed0c36d0e876ed22e2f',
+      '3f1814a3c77c0c25b959e07602a1b294ab43c01b7422782f939da978781ada98',
     packageSha256:
       '6907f349531561be4247374af910145a132d0c240bde6e26a4a78d7f32b680d5',
   },
@@ -166,16 +168,16 @@ const MAPPINGS: readonly Mapping[] = [
     canonicalPath: 'types.ts',
     rule: 'model-free-types',
     canonicalSha256:
-      '01478f8f0277565d70bfdf9acdc07e97db796d03cb5b3db8d2aaeddbd1434df0',
+      'bc3650eee1b698a70394cae853bd7aca21681c6ad2ec876baf1a6c7c072e2516',
     packageSha256:
       '645e9853dd478d5b7d716ed94e844af41b8ee4b80de811337b3f6d5cc24de7e9',
   },
   {
     packagePath: 'xhtml.ts',
     canonicalPath: 'xhtml.ts',
-    rule: 'esm-imports',
+    rule: 'model-free-xhtml',
     canonicalSha256:
-      '32fec45ad003755cfaeb61411ea241803937d174effb2ed0c36d0e876ed22e2f',
+      '3f1814a3c77c0c25b959e07602a1b294ab43c01b7422782f939da978781ada98',
     packageSha256:
       '4014eb7be096e01508287c33060a64fb2a5abb66040f00bb36ed8677ca4692a3',
   },
@@ -192,12 +194,16 @@ const EXCLUDED_CANONICAL: Readonly<Record<string, string>> = {
     'extractor adapter is explicitly outside package core',
   'model-consultation-receipt.ts':
     'provider/model receipt contract is explicitly outside package core',
+  'consultation-receipt.ts':
+    'generic app receipt binding remains an app compatibility surface; package core is source-neutral',
+  'emitted-ids.ts':
+    'app publication planning and target admission remain outside package core',
   'struct.test.ts':
     'canonical integration suite imports app/PDF providers; package characterization suites are maintained locally',
 }
 
 const MANIFEST_SHA256 =
-  '1b40b3b943c6c5918d3bbcce84baa5274adf4b160d512349da0e47c1a2e6d63a'
+  '32aa25f69802c4e7d71e86edaa14aa99678422166aca6b5c1212bde4f2b14e72'
 
 async function sourceFiles(root: string, base = root): Promise<string[]> {
   const entries = await readdir(root, { withFileTypes: true })
@@ -287,6 +293,17 @@ describe('STRUCT package/canonical parity', () => {
         expect(packageSource).toContain("from './sha256.js'")
         expect(packageSource).toContain("from './ids.js'")
         expect(packageSource).toContain("from './xhtml.js'")
+      }
+      if (mapping.rule === 'model-free-xhtml') {
+        expect(packageSource).toContain('xhtmlId')
+        expect(packageSource).not.toMatch(/model-consultation|PublicationGraph/iu)
+      }
+      if (mapping.rule === 'renderer-xhtml-facade-model-free') {
+        expect(packageSource).toContain("from '../xhtml.js'")
+      }
+      if (mapping.rule === 'safe-id-facade') {
+        expect(packageSource).toContain("from './sha256.js'")
+        expect(packageSource).not.toMatch(/model-consultation|PublicationGraph/iu)
       }
     }
 

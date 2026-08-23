@@ -179,7 +179,7 @@ const MAPPINGS: readonly Mapping[] = [
     canonicalSha256:
       '3f1814a3c77c0c25b959e07602a1b294ab43c01b7422782f939da978781ada98',
     packageSha256:
-      '45d3de80410ecc7029f931af7b511d0b0ec18d6f79bad6f4b9f346b4f2c8e946',
+      '221cb22801c2fccb9ac2c08b9805c41fa1493c4d52e655edbc5fbcf72a6f7efb',
   },
 ]
 

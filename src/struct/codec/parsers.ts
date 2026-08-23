@@ -47,7 +47,7 @@ import {
   unitInterval,
 } from './primitives'
 import { bytesToBase64, parseBytes } from './bytes'
-import { copyCanonicalJson, validateModelReceipt } from './model'
+import { copyCanonicalJson, validateConsultationReceipt } from './model'
 import { validateStructDocument } from './invariants'
 import { sha256HexSync } from '../sha256'
 
@@ -1055,7 +1055,7 @@ function parseReceipt(value: unknown, path: string): StructReceipt {
       parsed.modelConsultations,
       `${path}.modelConsultations`,
     )
-    validateModelReceipt(copied, `${path}.modelConsultations`)
+    validateConsultationReceipt(copied, `${path}.modelConsultations`)
     modelConsultations = copied as StructReceipt['modelConsultations']
   }
   return {

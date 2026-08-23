@@ -6,7 +6,7 @@ import {
   finiteNumber,
   StructCodecError,
 } from './primitives'
-import { validateModelConsultationReceipt } from '../model-consultation-receipt'
+import { validateStructConsultationReceipt } from '../consultation-receipt'
 
 const MAX_CANONICAL_DEPTH = 128
 const MAX_CANONICAL_NODES = 100_000
@@ -17,9 +17,9 @@ type CopyState = {
 }
 
 /**
- * Snapshot the open JSON portions of a model receipt before validation. This
+ * Snapshot the open JSON portions of a consultation receipt before validation. This
  * rejects accessors/proxies, detects cycles, and bounds recursive input while
- * preserving the model receipt validator's intentionally closed subcontracts.
+ * preserving the adapter-owned receipt contents as intentionally closed JSON.
  */
 export function copyCanonicalJson(
   value: unknown,
@@ -36,9 +36,9 @@ export function copyCanonicalJson(
     return value
   if (typeof value === 'number') return finiteNumber(value, path)
   if (typeof value !== 'object')
-    fail('TYPE', path, 'model receipt must contain canonical JSON values')
+    fail('TYPE', path, 'consultation receipt must contain canonical JSON values')
   if (state.active.has(value))
-    fail('MODEL_RECEIPT', path, 'cycles are not permitted in model receipts')
+    fail('MODEL_RECEIPT', path, 'cycles are not permitted in consultation receipts')
   state.active.add(value)
   try {
     let isArray = false
@@ -69,10 +69,10 @@ export function copyCanonicalJson(
   }
 }
 
-export function validateModelReceipt(value: unknown, path: string) {
+export function validateConsultationReceipt(value: unknown, path: string) {
   try {
-    if (!validateModelConsultationReceipt(value))
-      fail('MODEL_RECEIPT', path, 'invalid model consultation receipt')
+    if (!validateStructConsultationReceipt(value))
+      fail('MODEL_RECEIPT', path, 'invalid closed consultation receipt')
   } catch (error) {
     if (error instanceof StructCodecError) throw error
     fail('MODEL_RECEIPT', path, 'invalid model consultation receipt')

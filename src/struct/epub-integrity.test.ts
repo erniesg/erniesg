@@ -135,7 +135,7 @@ function documentWithGenericReceipt(): StructDocument {
   const document = documentWithHref('')
   document.receipt.modelConsultations = {
     schemaVersion: '1.0.0',
-    documentId: document.documentId,
+    documentId: document.documentId!,
     sourceSha256: document.source.sha256,
     consultations: [],
     decisions: [],
@@ -154,6 +154,37 @@ describe('source-neutral consultation receipts', () => {
     const document = documentWithGenericReceipt()
     expect(document.source.format).toBe('unknown')
     await expect(buildStructEpub(document)).resolves.toBeDefined()
+  })
+
+  it.each([
+    ['unknown top-level fields', (receipt: any) => (receipt.extra = true)],
+    [
+      'credential-shaped values',
+      (receipt: any) =>
+        receipt.consultations.push({ providerId: 'sk-proj-FAKEFAKEFAKEFAKE' }),
+    ],
+    [
+      'accessor values',
+      (receipt: any) =>
+        Object.defineProperty(receipt.metrics, 'unsafe', {
+          enumerable: true,
+          get: () => 1,
+        }),
+    ],
+  ])('rejects %s at the generic receipt boundary', async (_label, mutate) => {
+    const document = documentWithGenericReceipt()
+    mutate(document.receipt.modelConsultations)
+    await expect(buildStructEpub(document)).rejects.toThrow(
+      'INVALID_MODEL_CONSULTATION_RECEIPT',
+    )
+  })
+
+  it('rejects an identity-mismatched generic receipt', async () => {
+    const document = documentWithGenericReceipt()
+    document.receipt.modelConsultations!.documentId = 'another-document'
+    await expect(buildStructEpub(document)).rejects.toThrow(
+      'MODEL_CONSULTATION_DOCUMENT_MISMATCH',
+    )
   })
 })
 

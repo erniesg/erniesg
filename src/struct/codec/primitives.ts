@@ -1,4 +1,4 @@
-import { SAFE_ID } from '../model-consultation-receipt'
+import { SAFE_ID } from '../ids'
 
 export type DataObject = Record<string, unknown>
 export type EnumValue<T extends readonly string[]> = T[number]

@@ -5,7 +5,7 @@ import {
   type StructReceipt,
 } from '../types'
 import { legacyStructDigestMatches, structDigest } from '../ids'
-import { SAFE_ID } from '../model-consultation-receipt'
+import { SAFE_ID } from '../ids'
 import {
   emittedXhtmlIds,
   isPackagedAssetId,
@@ -13,8 +13,8 @@ import {
 } from '../emitted-ids'
 import { fail, type DataObject, unique } from './primitives'
 
-const MODEL_RECEIPT_BINDING =
-  'model consultation receipt must match the enclosing document and source'
+const CONSULTATION_RECEIPT_BINDING =
+  'consultation receipt must match the enclosing document and source'
 
 function digestInput(document: StructDocument) {
   const { receipt: _receipt, ...withoutReceipt } = document
@@ -605,14 +605,14 @@ function validatePages(document: StructDocument) {
       checkPage(page, `$.recovery.issues[${index}].pages[${pageIndex}]`)
 }
 
-function validateModelBinding(document: StructDocument) {
-  const model = document.receipt.modelConsultations
-  if (!model) return
+function validateConsultationBinding(document: StructDocument) {
+  const receipt = document.receipt.modelConsultations
+  if (!receipt) return
   if (
-    model.documentId !== document.documentId ||
-    model.sourceSha256 !== document.source.sha256
+    receipt.documentId !== document.documentId ||
+    receipt.sourceSha256 !== document.source.sha256
   )
-    fail('BINDING', '$.receipt.modelConsultations', MODEL_RECEIPT_BINDING)
+    fail('BINDING', '$.receipt.modelConsultations', CONSULTATION_RECEIPT_BINDING)
 }
 
 export function validateStructDocument(
@@ -656,6 +656,6 @@ export function validateStructDocument(
   validateConservation(document)
   validateReferences(document)
   validatePages(document)
-  validateModelBinding(document)
+  validateConsultationBinding(document)
   validateDigest(document)
 }

@@ -262,7 +262,7 @@ describe('STRUCT canonical document graph', () => {
       documentId: 'another-document',
     }
     await expect(buildStructEpub(staleDigest)).rejects.toThrow(
-      'INVALID_MODEL_CONSULTATION_RECEIPT',
+      'MODEL_CONSULTATION_DOCUMENT_MISMATCH',
     )
 
     const wrongDocument = structuredClone(graph)
@@ -434,9 +434,14 @@ describe('STRUCT canonical document graph', () => {
     delete reconstruction.modelConsultations
     const graph = buildStructDocument(reconstruction)
     graph.receipt.modelConsultations = pendingReceipt
-    await expect(buildStructEpub(graph)).rejects.toThrow(
-      'PENDING_MODEL_CONSULTATION_RECEIPT',
-    )
+    const { receipt, ...withoutReceipt } = graph
+    receipt.generatedSha256 = structDigest({
+      ...withoutReceipt,
+      conservation: receipt.conservation,
+      modelConsultations: pendingReceipt,
+      assets: graph.assets.map(({ bytes: _bytes, ...asset }) => asset),
+    })
+    await expect(buildStructEpub(graph)).resolves.toBeDefined()
 
     finishConsultation!({ candidateId: point.candidates[0]!.id })
     await decision

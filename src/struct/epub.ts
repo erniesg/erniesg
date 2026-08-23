@@ -9,7 +9,7 @@ import {
 import { XMLParser, XMLValidator } from 'fast-xml-parser'
 import { sha256HexSync } from './sha256'
 import { legacyStructDigestMatches, structDigest } from './ids'
-import { validateModelConsultationReceipt } from './model-consultation-receipt'
+import { validateStructConsultationReceipt } from './consultation-receipt'
 import { renderPublicationXhtml } from './xhtml'
 import { isPackagedAssetId } from './emitted-ids'
 import {
@@ -251,18 +251,10 @@ function assertStructReceiptIntegrity(document: StructDocument) {
 
   const modelConsultations = receipt.modelConsultations
   if (modelConsultations !== undefined) {
-    if (!validateModelConsultationReceipt(modelConsultations)) {
+    if (!validateStructConsultationReceipt(modelConsultations)) {
       throw new Error('INVALID_MODEL_CONSULTATION_RECEIPT')
     }
     if (
-      modelConsultations.consultations.some(
-        ({ status }) => status === 'pending',
-      )
-    ) {
-      throw new Error('PENDING_MODEL_CONSULTATION_RECEIPT')
-    }
-    if (
-      document.source.format !== 'pdf' ||
       modelConsultations.sourceSha256 !== document.source.sha256
     ) {
       throw new Error('MODEL_CONSULTATION_SOURCE_MISMATCH')

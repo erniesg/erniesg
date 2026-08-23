@@ -10,7 +10,7 @@ import {
   serializeModelConsultationReceipt,
   validateModelConsultationReceipt,
 } from './model-fallback'
-import { validReceiptMetric } from '../struct/model-consultation-receipt'
+import { validReceiptMetric } from './model-consultation-receipt'
 
 const schema = JSON.parse(
   readFileSync(

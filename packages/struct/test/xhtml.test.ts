@@ -179,6 +179,69 @@ function sharedRelationshipDocument(tableCells = false) {
 }
 
 describe('STRUCT XHTML ID mapping', () => {
+  it('preserves asset and external relationship targets as navigable hrefs', () => {
+    const document = characterizationDocument('0.2.0')
+    const source = document.blocks[0]!
+    const evidence = source.evidence
+    source.text = 'Asset site'
+    source.inline = [
+      {
+        start: 0,
+        end: 5,
+        relationshipId: 'asset-reference',
+        semanticRole: 'cross-reference',
+      },
+      {
+        start: 6,
+        end: 10,
+        relationshipId: 'external-reference',
+        semanticRole: 'cross-reference',
+      },
+    ]
+    const bytes = new Uint8Array([1, 2, 3])
+    document.assets = [
+      {
+        id: 'figure-asset',
+        kind: 'figure',
+        href: 'assets/figure.bin',
+        mediaType: 'application/octet-stream',
+        sha256: 'unused-in-xhtml-test',
+        width: 1,
+        height: 1,
+        bytes,
+        sourceObjectIds: ['source-asset'],
+        evidence,
+        fallback: 'asset',
+      },
+    ]
+    document.relationships = [
+      {
+        id: 'asset-reference',
+        kind: 'cross-reference',
+        from: source.id,
+        to: ['figure-asset'],
+        status: 'matched',
+        confidence: 1,
+        evidence,
+      },
+      {
+        id: 'external-reference',
+        kind: 'cross-reference',
+        from: source.id,
+        to: ['https://example.com/source'],
+        status: 'matched',
+        confidence: 1,
+        evidence,
+      },
+    ]
+
+    const xhtml = renderPublicationXhtml(document)
+    expect(xhtml).toContain('href="assets/figure.bin"')
+    expect(xhtml).toContain('href="https://example.com/source"')
+    expect(xhtml).not.toContain('href="#figure-asset"')
+    expect(xhtml).not.toContain('href="#https-example.com-source"')
+  })
+
   it('maps numeric-leading matched references without colliding with canonical IDs', () => {
     const xhtml = renderPublicationXhtml(numericReferenceDocument())
     expect(xhtml).toContain('id="_1block" data-struct-id="_1block"')

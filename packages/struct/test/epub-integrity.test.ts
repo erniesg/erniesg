@@ -58,4 +58,33 @@ describe('STRUCT package EPUB integrity contract', () => {
 
     await expect(buildStructEpub(document)).rejects.toThrow(/unsafe/i)
   })
+
+  it('rejects asset bytes mutated after the document was sealed', async () => {
+    const document = characterizationDocument('0.2.0') as any
+    const bytes = new Uint8Array([1, 2, 3])
+    document.assets = [
+      {
+        id: 'fixture-asset',
+        kind: 'figure',
+        href: 'assets/fixture.bin',
+        mediaType: 'application/octet-stream',
+        sha256: sha256(bytes),
+        width: 1,
+        height: 1,
+        bytes,
+        sourceObjectIds: ['source-asset'],
+        evidence: document.blocks[0].evidence,
+        fallback: 'asset',
+      },
+    ]
+    document.receipt.assetCount = 1
+    document.receipt.conservation.sourceAssetCount = 1
+    document.receipt.conservation.accountedSourceAssetCount = 1
+    document.receipt.conservation.structAssetCount = 1
+    resealDocument(document)
+
+    bytes[0] = 9
+
+    await expect(buildStructEpub(document)).rejects.toThrow(/SHA-256/i)
+  })
 })

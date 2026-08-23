@@ -145,6 +145,16 @@ function validateStructConsultationReceiptUnsafe(
         !HASH.test(receipt.semanticStateSha256)))
   )
     return false
+  for (const member of [...receipt.consultations, ...receipt.decisions]) {
+    if (
+      !member ||
+      typeof member !== 'object' ||
+      Array.isArray(member) ||
+      (Object.getPrototypeOf(member) !== Object.prototype &&
+        Object.getPrototypeOf(member) !== null)
+    )
+      return false
+  }
   return true
 }
 

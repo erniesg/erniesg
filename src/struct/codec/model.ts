@@ -51,10 +51,27 @@ export function copyCanonicalJson(
         'model receipt object cannot be inspected safely',
       )
     }
-    if (isArray)
+    if (isArray) {
+      let prototype: object | null
+      try {
+        prototype = Object.getPrototypeOf(value)
+      } catch {
+        fail(
+          'MODEL_RECEIPT',
+          path,
+          'model receipt array cannot be inspected safely',
+        )
+      }
+      if (prototype !== Array.prototype)
+        fail(
+          'MODEL_RECEIPT',
+          path,
+          'model receipt arrays must use the canonical Array.prototype',
+        )
       return array(value, path).map((entry, index) =>
         copyCanonicalJson(entry, `${path}[${index}]`, state, depth + 1),
       )
+    }
     const entries = dataEntries(value, path).sort(([left], [right]) =>
       left < right ? -1 : left > right ? 1 : 0,
     )

@@ -161,7 +161,9 @@ describe('source-neutral consultation receipts', () => {
     [
       'credential-shaped values',
       (receipt: any) =>
-        receipt.consultations.push({ providerId: 'sk-proj-FAKEFAKEFAKEFAKE' }),
+        receipt.consultations.push({
+          providerId: ['sk', 'proj-FAKEFAKEFAKEFAKE'].join('-'),
+        }),
     ],
     [
       'accessor values',

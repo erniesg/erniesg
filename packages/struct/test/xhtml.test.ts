@@ -216,6 +216,65 @@ describe('STRUCT XHTML ID mapping', () => {
     expect(xhtml).not.toContain('href="#figure-asset"')
   })
 
+  it('resolves scheme-looking local IDs before external mailto classification', () => {
+    const document = characterizationDocument('0.2.0')
+    const source = document.blocks[0]!
+    const evidence = source.evidence
+    source.id = 'source'
+    source.text = 'Match plain external'
+    source.inline = [
+      {
+        start: 0,
+        end: 5,
+        relationshipId: 'mailto-reference',
+        semanticRole: 'cross-reference',
+      },
+      { start: 6, end: 11, href: 'mailto:note' },
+      { start: 12, end: 20, href: 'mailto:reader@example.test' },
+    ]
+    const target = {
+      ...source,
+      id: 'mailto:note',
+      text: 'Target',
+      order: 1,
+      inline: [],
+    }
+    document.blocks = [source, target]
+    document.pages[0]!.blocks = ['source', 'mailto:note']
+    document.pages[0]!.columns[0]!.blockIds = ['source', 'mailto:note']
+    document.relationships = [
+      {
+        id: 'mailto-reference',
+        kind: 'cross-reference',
+        from: source.id,
+        to: ['mailto:note'],
+        status: 'matched',
+        confidence: 1,
+        evidence,
+      },
+    ]
+    document.receipt.blockCount = 2
+    document.receipt.relationshipCount = 1
+    document.receipt.textCharacterCount = source.text.length + target.text.length
+    document.receipt.conservation.sourceNodeCount = 2
+    document.receipt.conservation.accountedSourceNodeCount = 2
+    document.receipt.conservation.sourceRelationshipCount = 1
+    document.receipt.conservation.accountedSourceRelationshipCount = 1
+    document.receipt.conservation.sourceTextCharacterCount =
+      document.receipt.textCharacterCount
+    document.receipt.conservation.structBlockCount = 2
+    document.receipt.conservation.structRelationshipCount = 1
+    document.receipt.conservation.structTextCharacterCount =
+      document.receipt.textCharacterCount
+    resealDocument(document)
+
+    expect(() => decodeStructDocument(document)).not.toThrow()
+    const xhtml = renderPublicationXhtml(document)
+    expect(xhtml.match(/href="#mailto:note"/gu)).toHaveLength(2)
+    expect(xhtml).toContain('href="mailto:reader@example.test"')
+    expect(xhtml).not.toContain('href="mailto:note"')
+  })
+
   it('preserves asset and external relationship targets as navigable hrefs', () => {
     const document = characterizationDocument('0.2.0')
     const source = document.blocks[0]!

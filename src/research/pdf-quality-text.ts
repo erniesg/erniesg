@@ -16,6 +16,115 @@ export function meaningPreservingText(value: string) {
     .trim()
 }
 
+function sourceSemanticFlowBoundaryKey(
+  fromRegionId: string,
+  toRegionId: string,
+) {
+  return `${fromRegionId}\u0000${toRegionId}`
+}
+
+export function sourceProvenBoundaryTokenText(
+  values: readonly string[],
+  hardHyphenLexicon: ReadonlySet<string>,
+  unhyphenatedLexicon: ReadonlySet<string>,
+  language: string | null,
+  regions: readonly PdfPageRegion[] = [],
+  sourceSemanticFlowBoundaryLedger?: SourceSemanticFlowBoundaryLedgerAudit,
+  requireCrossPageDecision = false,
+) {
+  let combined = values[0] ?? ''
+  for (const [offset, value] of values.slice(1).entries()) {
+    const boundaryIndex = offset + 1
+    const semanticFlowDecision =
+      regions[boundaryIndex - 1] && regions[boundaryIndex]
+        ? sourceSemanticFlowBoundaryLedger?.decisionsByBoundary.get(
+            sourceSemanticFlowBoundaryKey(
+              regions[boundaryIndex - 1].id,
+              regions[boundaryIndex].id,
+            ),
+          )
+        : null
+    if (
+      sourceSemanticFlowBoundaryLedger &&
+      requireCrossPageDecision &&
+      regions[boundaryIndex - 1]?.page !== regions[boundaryIndex]?.page &&
+      !semanticFlowDecision
+    ) {
+      sourceSemanticFlowBoundaryLedger.valid = false
+    }
+    if (semanticFlowDecision && sourceSemanticFlowBoundaryLedger) {
+      const consumed =
+        (sourceSemanticFlowBoundaryLedger.consumptionById.get(
+          semanticFlowDecision.id,
+        ) ?? 0) + 1
+      sourceSemanticFlowBoundaryLedger.consumptionById.set(
+        semanticFlowDecision.id,
+        consumed,
+      )
+      if (consumed > 1) sourceSemanticFlowBoundaryLedger.valid = false
+    }
+    if (semanticFlowDecision?.outcome === 'no-space') {
+      combined = `${combined.trimEnd()}${value.trimStart()}`
+      continue
+    }
+    if (
+      semanticFlowDecision?.outcome === 'discretionary-hyphen-delete' &&
+      /[-‐‑\u00ad]$/u.test(combined.trimEnd())
+    ) {
+      combined = `${combined.trimEnd().slice(0, -1)}${value.trimStart()}`
+      continue
+    }
+    if (
+      semanticFlowDecision?.outcome === 'hard-hyphen-retain' &&
+      /[-‐‑]$/u.test(combined.trimEnd())
+    ) {
+      combined = `${combined.trimEnd()}${value.trimStart()}`
+      continue
+    }
+    const suppliedBoundaryCandidates =
+      regions[boundaryIndex - 1] && regions[boundaryIndex]
+        ? sourceSemanticFlowBoundaryLedger?.decisionsByBoundary.has(
+            sourceSemanticFlowBoundaryKey(
+              regions[boundaryIndex - 1].id,
+              regions[boundaryIndex].id,
+            ),
+          )
+        : false
+    if (suppliedBoundaryCandidates) {
+      combined = `${combined.trimEnd()} ${value.trimStart()}`
+      continue
+    }
+    const urlContinuation =
+      /(?:https?:\/\/|www\.)[^\s<>"'`]*[./?=&_%+-]$/iu.test(
+        combined.trimEnd(),
+      ) && /^[^\s<>"'`]/u.test(value.trimStart())
+    if (urlContinuation) {
+      combined = `${combined.trimEnd()}${value.trimStart()}`
+      continue
+    }
+    const left = combined.match(/([\p{L}\p{N}]+)[-‐‑]\s*$/u)
+    const right = value.match(/^\s*([\p{L}\p{N}]+)/u)
+    if (!left || !right) {
+      combined = `${combined} ${value}`
+      continue
+    }
+    const proof = resolvePdfHyphenBoundary({
+      left: left[1],
+      right: right[1],
+      language,
+      sourceProven: true,
+      hardHyphenLexicon,
+      unhyphenatedLexicon,
+    })
+    if (proof.verdict === 'remove') {
+      combined = `${combined.trimEnd().slice(0, -1)}${value.trimStart()}`
+    } else {
+      combined = `${combined.trimEnd()}${value.trimStart()}`
+    }
+  }
+  return combined
+}
+
 export function characterCount(value: string) {
   return [...value].length
 }
@@ -131,4 +240,15 @@ export function occurrenceBoundedMatchedCharacters(
     matched += 1
   }
   return matched
+}
+import type {
+  PdfPageRegion,
+  PdfSourceSemanticFlowBoundaryDecision,
+} from './import-types'
+import { resolvePdfHyphenBoundary } from './pdf-hyphenation'
+
+export type SourceSemanticFlowBoundaryLedgerAudit = {
+  valid: boolean
+  decisionsByBoundary: Map<string, PdfSourceSemanticFlowBoundaryDecision>
+  consumptionById: Map<string, number>
 }

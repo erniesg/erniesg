@@ -1,6 +1,7 @@
 import {
   chmodSync,
   existsSync,
+  fstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -37,6 +38,7 @@ import {
 } from './pdf-private-fidelity.mjs'
 import * as privateFidelity from './pdf-private-fidelity.mjs'
 import {
+  privateJavaPathEntryIsProtected,
   requiredPrivateEpubCheckValidator,
   validatePrivateEpubWithEpubCheck,
 } from './pdf-private-fidelity-epubcheck.mjs'
@@ -3113,7 +3115,17 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, 'fake java executed\\n')
   it('executes exact bundled EPUBCheck bytes through anonymous descriptors', async () => {
     const calls = []
     const validator = await requiredPrivateEpubCheckValidator({
+      environment: {
+        ...process.env,
+        GITHUB_TOKEN: 'must-not-reach-java',
+        OPENAI_API_KEY: 'must-not-reach-java',
+        SRT_PRIVATE_TEST_PDF: '/private/source.pdf',
+        SRT_PRIVATE_TEST_DECISIONS: '/private/decisions.json',
+      },
       runner(command, arguments_, options) {
+        expect(
+          options.stdio.slice(3).every((fd) => fstatSync(fd).nlink === 0),
+        ).toBe(true)
         calls.push({ command, arguments_, options })
         return { status: 0 }
       },
@@ -3137,7 +3149,43 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, 'fake java executed\\n')
       expect.stringMatching(/\/fd\/43$/),
     ])
     expect(calls[0].options.stdio).toHaveLength(44)
+    expect(calls[0].options.env).toEqual({
+      LANG: 'C',
+      LC_ALL: 'C',
+      TZ: 'UTC',
+    })
+    expect(JSON.stringify(calls[0])).not.toContain('must-not-reach-java')
+    expect(JSON.stringify(calls[0])).not.toContain('/private/')
   }, 120_000)
+
+  it('rejects writable Java launcher metadata even under protected parents', () => {
+    const metadata = (mode, uid = 0) => ({
+      uid,
+      mode,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    })
+    expect(
+      privateJavaPathEntryIsProtected(metadata(0o100777), {
+        launcher: true,
+      }),
+    ).toBe(false)
+    expect(
+      privateJavaPathEntryIsProtected(metadata(0o100555, 501), {
+        launcher: true,
+      }),
+    ).toBe(false)
+    expect(
+      privateJavaPathEntryIsProtected(metadata(0o100755), {
+        launcher: true,
+      }),
+    ).toBe(true)
+    expect(
+      privateJavaPathEntryIsProtected(metadata(0o100755, 502), {
+        launcher: true,
+      }),
+    ).toBe(false)
+  })
 
   it('rejects configured writable or symlinked Java launchers', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'pdf-private-java-test-'))
@@ -3218,6 +3266,18 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, 'fake java executed\\n')
     } finally {
       writeFileSync(mainJarPath, original)
     }
+  }, 120_000)
+
+  it('rejects inherited descriptor mutation even when the runner returns zero', async () => {
+    const validator = await requiredPrivateEpubCheckValidator({
+      runner(_command, _arguments, options) {
+        writeFileSync(options.stdio[3], 'mutated inherited jar')
+        return { status: 0 }
+      },
+    })
+    await expect(
+      validatePrivateEpubWithEpubCheck(Buffer.from('private epub'), validator),
+    ).rejects.toThrow('EPUBCHECK_FAILED')
   }, 120_000)
 
   it('replays a hash-pinned empty decision set without exposing either local path', () => {

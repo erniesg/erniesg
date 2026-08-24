@@ -1,6 +1,14 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto'
-import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import {
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  writeFile,
+} from 'node:fs/promises'
+import { builtinModules, createRequire } from 'node:module'
 import { dirname, posix, relative, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import Ajv2020 from 'ajv/dist/2020.js'
@@ -17,9 +25,13 @@ const LEGACY_SCHEMA_PATH = resolve(
   REPOSITORY_ROOT,
   'docs/schemas/pdf-benchmark-readiness-registry.schema.json',
 )
-const DEFAULT_SCHEMA_PATH = resolve(
+const V2_SCHEMA_PATH = resolve(
   REPOSITORY_ROOT,
   'docs/schemas/pdf-benchmark-readiness-registry-v2.schema.json',
+)
+const DEFAULT_SCHEMA_PATH = resolve(
+  REPOSITORY_ROOT,
+  'docs/schemas/pdf-benchmark-readiness-registry-v3.schema.json',
 )
 const SCHEMA_BINDINGS = new Map([
   [
@@ -34,10 +46,19 @@ const SCHEMA_BINDINGS = new Map([
   [
     '2.0.0',
     {
-      path: DEFAULT_SCHEMA_PATH,
+      path: V2_SCHEMA_PATH,
       id: 'https://ernie.sg/schemas/pdf-benchmark-readiness-registry-2.0.0.json',
       fileSha256:
         'af358f8b3fce3cc1bbe90a38a11f31ac9904865bddd83e32d6c452e5c36ab4c7',
+    },
+  ],
+  [
+    '3.0.0',
+    {
+      path: DEFAULT_SCHEMA_PATH,
+      id: 'https://ernie.sg/schemas/pdf-benchmark-readiness-registry-3.0.0.json',
+      fileSha256:
+        '8d47305294d07f02956ff2eef953f35cb67e81c85f665a21ffef1badb7ca0d63',
     },
   ],
 ])
@@ -70,6 +91,9 @@ const REQUIRED_METRICS = [
   'review-gate-precision-recall',
   'package-integrity',
 ]
+const BUILTIN_MODULES = new Set(
+  builtinModules.flatMap((name) => [name, `node:${name}`]),
+)
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex')
@@ -224,21 +248,45 @@ async function verifyRepositoryFileBinding(
 }
 
 function metricImplementationCompositeSha256(metric) {
-  return sha256(
-    canonicalJson({
-      kind: 'pdf-benchmark-metric-implementation-v1',
-      entrypoint: metric.implementation,
-      components: metric.implementationComponents
-        .map((component) => ({
-          path: component.path,
-          fileSha256: component.fileSha256,
-        }))
-        .sort((left, right) => left.path.localeCompare(right.path)),
-    }),
-  )
+  const packageBinding = metric.implementationPackageLock
+    ? {
+        kind: 'pdf-benchmark-metric-implementation-v3',
+        entrypoint: metric.implementation,
+        components: metric.implementationComponents
+          .map((component) => ({
+            path: component.path,
+            fileSha256: component.fileSha256,
+          }))
+          .sort((left, right) => left.path.localeCompare(right.path)),
+        packageLock: metric.implementationPackageLock,
+        platforms: [...metric.implementationPlatforms].sort(),
+        packages: metric.implementationPackages
+          .map((package_) => ({
+            path: package_.path,
+            name: package_.name,
+            version: package_.version,
+            integrity: package_.integrity,
+            treeSha256: package_.treeSha256,
+            ...(package_.platforms
+              ? { platforms: [...package_.platforms].sort() }
+              : {}),
+          }))
+          .sort((left, right) => left.path.localeCompare(right.path)),
+      }
+    : {
+        kind: 'pdf-benchmark-metric-implementation-v1',
+        entrypoint: metric.implementation,
+        components: metric.implementationComponents
+          .map((component) => ({
+            path: component.path,
+            fileSha256: component.fileSha256,
+          }))
+          .sort((left, right) => left.path.localeCompare(right.path)),
+      }
+  return sha256(canonicalJson(packageBinding))
 }
 
-function localModuleSpecifiers(source, fileName) {
+function executableModuleSpecifiers(source, fileName) {
   const sourceFile = ts.createSourceFile(
     fileName,
     source,
@@ -269,6 +317,16 @@ function localModuleSpecifiers(source, fileName) {
       createRequireIdentifiers.has(node.initializer.expression.text)
     ) {
       requireIdentifiers.add(node.name.text)
+    } else if (
+      ts.isParameter(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      ts.isPropertyAccessExpression(node.initializer) &&
+      ts.isIdentifier(node.initializer.expression) &&
+      requireIdentifiers.has(node.initializer.expression.text) &&
+      node.initializer.name.text === 'resolve'
+    ) {
+      requireIdentifiers.add(node.name.text)
     }
     ts.forEachChild(node, collectRequireBindings)
   }
@@ -296,23 +354,35 @@ function localModuleSpecifiers(source, fileName) {
       if (node.arguments.length !== 1 || !ts.isStringLiteral(node.arguments[0]))
         invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
       specifiers.push(node.arguments[0].text)
+    } else if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      requireIdentifiers.has(node.expression.expression.text) &&
+      node.expression.name.text === 'resolve'
+    ) {
+      if (node.arguments.length !== 1 || !ts.isStringLiteral(node.arguments[0]))
+        invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      specifiers.push(node.arguments[0].text)
     }
     ts.forEachChild(node, visit)
   }
   visit(sourceFile)
   return specifiers
-    .filter((specifier) => specifier.startsWith('.'))
-    .map((specifier) => {
-      if (
-        specifier.includes('\\') ||
-        specifier.includes('//') ||
-        specifier.includes('/./') ||
-        specifier.endsWith('/.') ||
-        specifier.endsWith('/..')
-      )
-        invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
-      return specifier
-    })
+}
+
+function canonicalLocalModuleSpecifier(specifier) {
+  const segments = specifier.split('/')
+  if (
+    !specifier.startsWith('./') ||
+    specifier.includes('\\') ||
+    segments[0] !== '.' ||
+    segments
+      .slice(1)
+      .some((segment) => !segment || segment === '.' || segment === '..')
+  )
+    invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+  return specifier
 }
 
 async function canonicalRepositoryFile(repositoryPath, repositoryRoot, code) {
@@ -365,10 +435,11 @@ export async function deriveLocalExecutableImportClosure(
       invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
     pathsByRealPath.set(artifact.realPath, artifact.path)
     byPath.set(artifact.path, artifact)
-    for (const specifier of localModuleSpecifiers(
+    for (const specifier of executableModuleSpecifiers(
       artifact.bytes.toString('utf8'),
       artifact.path,
-    )) {
+    ).filter((candidate) => candidate.startsWith('.'))) {
+      canonicalLocalModuleSpecifier(specifier)
       const importedPath = posix.join(posix.dirname(artifact.path), specifier)
       canonicalRepositoryPath(importedPath)
       pending.push(importedPath)
@@ -379,9 +450,283 @@ export async function deriveLocalExecutableImportClosure(
   )
 }
 
+function barePackageName(specifier) {
+  if (
+    typeof specifier !== 'string' ||
+    !specifier ||
+    specifier.startsWith('.') ||
+    specifier.startsWith('/') ||
+    specifier.startsWith('#') ||
+    BUILTIN_MODULES.has(specifier)
+  )
+    return null
+  const segments = specifier.split('/')
+  const name = specifier.startsWith('@')
+    ? segments.slice(0, 2).join('/')
+    : segments[0]
+  if (!name || (specifier.startsWith('@') && segments.length < 2))
+    invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+  return name
+}
+
+async function findResolvedPackageRoot(
+  specifier,
+  expectedName,
+  importerRealPath,
+  repositoryRoot,
+) {
+  let resolvedPath
+  try {
+    resolvedPath = createRequire(pathToFileURL(importerRealPath)).resolve(
+      specifier,
+    )
+  } catch {
+    invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+  }
+  const repositoryRealPath = await realpath(repositoryRoot)
+  let current = dirname(resolvedPath)
+  while (
+    current !== repositoryRealPath &&
+    current.startsWith(`${repositoryRealPath}${sep}`)
+  ) {
+    try {
+      const packageJsonPath = resolve(current, 'package.json')
+      const details = await lstat(packageJsonPath)
+      if (details.isFile() && !details.isSymbolicLink()) {
+        const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8'))
+        if (packageJson.name === expectedName) return current
+      }
+    } catch {
+      // Continue toward the repository root until the owning package is found.
+    }
+    current = dirname(current)
+  }
+  invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+}
+
+function lockedDependencyPath(packagePath, dependencyName, lockPackages) {
+  let current = packagePath
+  while (current) {
+    const candidate = `${current}/node_modules/${dependencyName}`
+    if (lockPackages[candidate]) return candidate
+    const parentMarker = current.lastIndexOf('/node_modules/')
+    if (parentMarker < 0) break
+    current = current.slice(0, parentMarker)
+  }
+  const rootCandidate = `node_modules/${dependencyName}`
+  return lockPackages[rootCandidate] ? rootCandidate : null
+}
+
+function conditionMatches(values, actual) {
+  if (!Array.isArray(values) || values.length === 0) return true
+  if (values.includes(`!${actual}`)) return false
+  const positive = values.filter((value) => !value.startsWith('!'))
+  return positive.length === 0 || positive.includes(actual)
+}
+
+export function executablePackagePlatform() {
+  if (process.platform !== 'linux') return `${process.platform}-${process.arch}`
+  const glibc = process.report?.getReport?.().header?.glibcVersionRuntime
+  return `linux-${process.arch}-${glibc ? 'gnu' : 'musl'}`
+}
+
+function packageSupportsCurrentPlatform(locked) {
+  const libc = executablePackagePlatform().endsWith('-gnu') ? 'glibc' : 'musl'
+  return (
+    conditionMatches(locked.os, process.platform) &&
+    conditionMatches(locked.cpu, process.arch) &&
+    (process.platform !== 'linux' || conditionMatches(locked.libc, libc))
+  )
+}
+
+async function packageTreeSha256(packageRoot) {
+  const records = []
+  async function visit(directory) {
+    const entries = await readdir(directory, { withFileTypes: true })
+    entries.sort((left, right) =>
+      Buffer.from(left.name).compare(Buffer.from(right.name)),
+    )
+    for (const entry of entries) {
+      if (entry.name === 'node_modules' && entry.isDirectory()) continue
+      const path = resolve(directory, entry.name)
+      if (entry.isSymbolicLink())
+        invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      if (entry.isDirectory()) {
+        await visit(path)
+      } else if (entry.isFile()) {
+        const before = await lstat(path, { bigint: true })
+        const bytes = await readFile(path)
+        const after = await lstat(path, { bigint: true })
+        if (
+          !after.isFile() ||
+          after.isSymbolicLink() ||
+          before.dev !== after.dev ||
+          before.ino !== after.ino ||
+          before.size !== after.size ||
+          before.mtimeNs !== after.mtimeNs ||
+          BigInt(bytes.byteLength) !== after.size
+        )
+          invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+        records.push({
+          path: relative(packageRoot, path).split(sep).join('/'),
+          byteLength: bytes.byteLength,
+          fileSha256: sha256(bytes),
+        })
+      } else {
+        invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      }
+    }
+  }
+  await visit(packageRoot)
+  records.sort((left, right) =>
+    Buffer.from(left.path).compare(Buffer.from(right.path)),
+  )
+  return sha256(canonicalJson(records))
+}
+
+export async function deriveExecutablePackageClosure(
+  entrypoint,
+  {
+    repositoryRoot = REPOSITORY_ROOT,
+    packageLockPath = 'package-lock.json',
+  } = {},
+) {
+  const closure = await deriveLocalExecutableImportClosure(entrypoint, {
+    repositoryRoot,
+  })
+  const lockPath = canonicalRepositoryPath(packageLockPath)
+  if (lockPath !== 'package-lock.json')
+    invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+  let lockBytes
+  let lock
+  try {
+    lockBytes = await readFile(resolveRepositoryPath(lockPath, repositoryRoot))
+    lock = JSON.parse(lockBytes.toString('utf8'))
+  } catch {
+    invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+  }
+  if (!isRecord(lock.packages)) invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+
+  const directPackagePaths = new Set()
+  for (const artifact of closure) {
+    for (const specifier of executableModuleSpecifiers(
+      artifact.bytes.toString('utf8'),
+      artifact.path,
+    )) {
+      if (specifier.startsWith('.')) continue
+      const name = barePackageName(specifier)
+      if (!name) continue
+      const packageRoot = await findResolvedPackageRoot(
+        specifier,
+        name,
+        artifact.realPath,
+        repositoryRoot,
+      )
+      const packagePath = relative(await realpath(repositoryRoot), packageRoot)
+        .split(sep)
+        .join('/')
+      canonicalRepositoryPath(packagePath)
+      if (!packagePath.startsWith('node_modules/'))
+        invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      directPackagePaths.add(packagePath)
+    }
+  }
+
+  const pending = [...directPackagePaths].map((path) => ({
+    path,
+    conditional: false,
+  }))
+  const packagePaths = new Set()
+  const conditionalPackagePaths = new Set()
+  while (pending.length > 0) {
+    const { path: packagePath, conditional } = pending.pop()
+    if (packagePaths.has(packagePath)) {
+      if (!conditional) conditionalPackagePaths.delete(packagePath)
+      continue
+    }
+    const locked = lock.packages[packagePath]
+    if (!isRecord(locked)) invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    packagePaths.add(packagePath)
+    if (conditional) conditionalPackagePaths.add(packagePath)
+    for (const dependencyName of Object.keys(
+      locked.dependencies ?? {},
+    ).sort()) {
+      const dependencyPath = lockedDependencyPath(
+        packagePath,
+        dependencyName,
+        lock.packages,
+      )
+      if (!dependencyPath) invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      pending.push({ path: dependencyPath, conditional: false })
+    }
+    for (const dependencyName of Object.keys(
+      locked.optionalDependencies ?? {},
+    ).sort()) {
+      const dependencyPath = lockedDependencyPath(
+        packagePath,
+        dependencyName,
+        lock.packages,
+      )
+      if (!dependencyPath) invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      const dependency = lock.packages[dependencyPath]
+      if (packageSupportsCurrentPlatform(dependency))
+        pending.push({ path: dependencyPath, conditional: true })
+    }
+  }
+
+  const packages = await Promise.all(
+    [...packagePaths].sort().map(async (packagePath) => {
+      const packageRoot = resolveRepositoryPath(packagePath, repositoryRoot)
+      const [details, packageRealPath, repositoryRealPath] = await Promise.all([
+        lstat(packageRoot),
+        realpath(packageRoot),
+        realpath(repositoryRoot),
+      ])
+      if (
+        !details.isDirectory() ||
+        details.isSymbolicLink() ||
+        relative(repositoryRealPath, packageRealPath).split(sep).join('/') !==
+          packagePath
+      )
+        invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      const packageJson = JSON.parse(
+        await readFile(resolve(packageRealPath, 'package.json'), 'utf8'),
+      )
+      const locked = lock.packages[packagePath]
+      if (
+        typeof packageJson.name !== 'string' ||
+        typeof packageJson.version !== 'string' ||
+        packageJson.version !== locked.version ||
+        typeof locked.integrity !== 'string' ||
+        !locked.integrity.startsWith('sha512-')
+      )
+        invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      return {
+        path: packagePath,
+        name: packageJson.name,
+        version: locked.version,
+        integrity: locked.integrity,
+        treeSha256: await packageTreeSha256(packageRealPath),
+        ...(conditionalPackagePaths.has(packagePath)
+          ? { platforms: [executablePackagePlatform()] }
+          : {}),
+      }
+    }),
+  )
+  return {
+    platform: executablePackagePlatform(),
+    packageLock: { path: lockPath, fileSha256: sha256(lockBytes) },
+    packages,
+  }
+}
+
 export async function verifyMetricImplementationBinding(
   metric,
-  { repositoryRoot = REPOSITORY_ROOT, requireClosure = true } = {},
+  {
+    repositoryRoot = REPOSITORY_ROOT,
+    requireClosure = true,
+    requirePackages = false,
+  } = {},
 ) {
   if (!requireClosure) {
     await verifyRepositoryFileBinding(
@@ -419,11 +764,77 @@ export async function verifyMetricImplementationBinding(
       ),
     ),
   )
+  if (requirePackages) {
+    if (
+      !metric.implementationPackageLock ||
+      !Array.isArray(metric.implementationPackages) ||
+      !Array.isArray(metric.implementationPlatforms) ||
+      !unique(metric.implementationPlatforms) ||
+      metric.implementationPlatforms.length === 0
+    )
+      invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    await verifyRepositoryFileBinding(
+      metric.implementationPackageLock.path,
+      metric.implementationPackageLock.fileSha256,
+      'PDF_BENCHMARK_METRIC_BINDING_MISMATCH',
+      repositoryRoot,
+    )
+    const derivedPackages = await deriveExecutablePackageClosure(
+      metric.implementation,
+      {
+        repositoryRoot,
+        packageLockPath: metric.implementationPackageLock.path,
+      },
+    )
+    if (!metric.implementationPlatforms.includes(derivedPackages.platform))
+      invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    const expectedPackages = metric.implementationPackages.filter(
+      (package_) =>
+        !package_.platforms ||
+        package_.platforms.includes(derivedPackages.platform),
+    )
+    if (
+      canonicalJson(derivedPackages.packageLock) !==
+        canonicalJson(metric.implementationPackageLock) ||
+      canonicalJson(derivedPackages.packages) !==
+        canonicalJson(expectedPackages)
+    )
+      invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+  }
   if (
     metricImplementationCompositeSha256(metric) !== metric.implementationSha256
   ) {
     invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
   }
+}
+
+export async function verifyReconstructionEvaluatorImplementationBinding(
+  contract,
+  { repositoryRoot = REPOSITORY_ROOT } = {},
+) {
+  const candidates = Array.isArray(contract?.objectiveEvaluators)
+    ? contract.objectiveEvaluators.filter(
+        (evaluator) => evaluator?.id === 'profile-artifact-validity',
+      )
+    : []
+  if (candidates.length !== 1) invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+  const evaluator = candidates[0]
+  if (
+    !Array.isArray(evaluator.implementation) ||
+    evaluator.implementation.length !== 1
+  )
+    invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+  await verifyMetricImplementationBinding(
+    {
+      implementation: evaluator.implementation[0],
+      implementationSha256: evaluator.implementationSha256,
+      implementationComponents: evaluator.implementationComponents,
+      implementationPackageLock: evaluator.implementationPackageLock,
+      implementationPlatforms: evaluator.implementationPlatforms,
+      implementationPackages: evaluator.implementationPackages,
+    },
+    { repositoryRoot, requireClosure: true, requirePackages: true },
+  )
 }
 
 async function readBoundJson(binding, code) {
@@ -557,7 +968,8 @@ async function validateMetricImplementations(registry) {
     if (metric.status !== 'available') continue
     await Promise.all([
       verifyMetricImplementationBinding(metric, {
-        requireClosure: registry.schemaVersion === '2.0.0',
+        requireClosure: ['2.0.0', '3.0.0'].includes(registry.schemaVersion),
+        requirePackages: registry.schemaVersion === '3.0.0',
       }),
       verifyRepositoryFileBinding(metric.test, metric.testSha256),
     ])

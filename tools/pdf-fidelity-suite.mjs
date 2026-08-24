@@ -2,6 +2,7 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { verifyReconstructionEvaluatorImplementationBinding } from './pdf-benchmark-readiness.mjs'
 import {
   canonicalJson,
   sha256,
@@ -34,14 +35,14 @@ const STATIC_PATHS = {
 const FROZEN_ARTIFACT_SHA256 = {
   base: {
     contract:
-      '5aff39ea6be68f30d00fee206d404ade25e3e4b094e14822ae76dfcbe568fab3',
+      'e0b0fd6f9aaeabd0fd271b97120ca09c220cd8820a98aebad6ff97497857c12f',
     evalSet: '35d6d3f80eb646470afccaec9fd96b7e2a4c8405d33bcd5db62fcca425989002',
     observations:
       '65c147dfd19b6a62bd1b33c176e505e0f47e1fb963c5a0ad609296ca18dd9ce8',
   },
   additive: {
     contract:
-      '532a8201a970e5f8d5c39690fa0f805b3505c685fc5c7ffcf667e881a11f000a',
+      '4e971f847e6088ee56dd0d0b1688e1fdf73dc3d173b77892dec94e0ac07e3844',
     evalSet: '7420fc497895a058d24592b7c5164ded261846a5da4fed2f014c8a52cbafccf9',
     observations:
       '01f0a8022c06b18c79c8b7ab7258d72deff28b5dfeef9574425135a25ff1ed64',
@@ -253,7 +254,7 @@ function validateEvalBinding(binding, artifact, identity) {
   )
 }
 
-function normalizePart(raw, role) {
+async function normalizePart(raw, role) {
   const contractArtifact = parseJsonArtifact(
     raw.contractArtifact,
     'INVALID_PDF_FIDELITY_SUITE_CONTRACT',
@@ -295,6 +296,13 @@ function normalizePart(raw, role) {
     observationBinding.observationCount !== evalArtifact.value.cases.length
   ) {
     invalid('INVALID_PDF_FIDELITY_SUITE_CONTRACT')
+  }
+  if (role === 'base') {
+    try {
+      await verifyReconstructionEvaluatorImplementationBinding(contract)
+    } catch {
+      invalid('INVALID_PDF_FIDELITY_SUITE_CONTRACT')
+    }
   }
   validatePdfFidelityEvalReceipt(
     raw.baselineReceipt,
@@ -468,9 +476,11 @@ function aggregateFailureModes(cases) {
     })
 }
 
-export function buildPdfFidelitySuiteReceipt(input) {
-  const base = normalizePart(input.base, 'base')
-  const additive = normalizePart(input.additive, 'additive')
+export async function buildPdfFidelitySuiteReceipt(input) {
+  const [base, additive] = await Promise.all([
+    normalizePart(input.base, 'base'),
+    normalizePart(input.additive, 'additive'),
+  ])
   validateSuiteBindings(base, additive)
   const parts = [base, additive]
   const cases = buildCases(parts)
@@ -504,7 +514,7 @@ export function buildPdfFidelitySuiteReceipt(input) {
   return { ...receipt, receiptSha256: canonicalHash(receipt) }
 }
 
-export function validatePdfFidelitySuiteReceipt(receipt, input) {
+export async function validatePdfFidelitySuiteReceipt(receipt, input) {
   try {
     if (
       !isRecord(receipt) ||
@@ -518,7 +528,7 @@ export function validatePdfFidelitySuiteReceipt(receipt, input) {
     ) {
       invalid('INVALID_PDF_FIDELITY_SUITE_RECEIPT')
     }
-    const expected = buildPdfFidelitySuiteReceipt(input)
+    const expected = await buildPdfFidelitySuiteReceipt(input)
     if (!sameJson(receipt, expected)) {
       invalid('INVALID_PDF_FIDELITY_SUITE_RECEIPT')
     }
@@ -637,8 +647,8 @@ async function main() {
     ),
   })
   const input = { base, additive }
-  const receipt = buildPdfFidelitySuiteReceipt(input)
-  validatePdfFidelitySuiteReceipt(receipt, input)
+  const receipt = await buildPdfFidelitySuiteReceipt(input)
+  await validatePdfFidelitySuiteReceipt(receipt, input)
   await writeFile(paths.out, `${JSON.stringify(receipt, null, 2)}\n`)
   process.stdout.write(`${JSON.stringify(receipt)}\n`)
   if (!receipt.accuracyPassed || !receipt.nonRegressionPassed) {

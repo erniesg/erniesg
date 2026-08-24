@@ -4,6 +4,7 @@ import { lstat, open, readFile, realpath, writeFile } from 'node:fs/promises'
 import { resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import Ajv2020 from 'ajv/dist/2020.js'
+import { verifyReconstructionEvaluatorImplementationBinding } from './pdf-benchmark-readiness.mjs'
 import {
   canonicalJson,
   sha256,
@@ -303,6 +304,25 @@ async function assertContractBinding(
   const governanceSchemaArtifact = await readSchema(governanceSchemaPath)
   const validateGovernance = compileSchema(governanceSchemaArtifact.value)
   if (!validateGovernance(governanceArtifact.value)) invalid()
+
+  let evaluatorContract = governanceArtifact.value
+  if (evaluatorContract.schemaVersion === '2.0.0') {
+    const baseArtifact = parseJsonArtifact(
+      await readRepositoryArtifact(evaluatorContract.extends.path),
+    )
+    if (
+      baseArtifact.fileSha256 !== evaluatorContract.extends.fileSha256 ||
+      baseArtifact.value.id !== evaluatorContract.extends.id ||
+      baseArtifact.value.schemaVersion !== '1.0.0'
+    )
+      invalid()
+    evaluatorContract = baseArtifact.value
+  }
+  try {
+    await verifyReconstructionEvaluatorImplementationBinding(evaluatorContract)
+  } catch {
+    invalid()
+  }
 
   const binding = contractEvalBinding(governanceArtifact.value)
   if (

@@ -1,0 +1,724 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ernie.sg/schemas/pdf-benchmark-readiness-registry-3.0.0.json",
+  "title": "Scholarly PDF reconstruction benchmark readiness registry",
+  "description": "Machine-readable governance for separating exposed diagnostic probes from a future document-disjoint, target-free blind benchmark.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "privacy",
+    "protocol",
+    "tracks",
+    "sources",
+    "documentBindings",
+    "splits",
+    "candidateCommitment",
+    "discoveryOrder",
+    "reviewBundles",
+    "metricImplementations"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "3.0.0" },
+    "id": { "$ref": "#/$defs/id" },
+    "privacy": {
+      "const": "public-identities-hashes-governance-no-source-content-private-labels-or-local-paths"
+    },
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetTraceCount",
+        "requiredFinalNoNewClassWindow",
+        "minimumDistinctDocuments",
+        "minimumBlindDocuments",
+        "requiredIndependentReviewers",
+        "minimumJudgePositiveExamples",
+        "minimumJudgeNegativeExamples",
+        "minimumJudgeTruePositiveRate",
+        "minimumJudgeTrueNegativeRate",
+        "splitUnit",
+        "candidateInputs",
+        "forbiddenCandidateInputs",
+        "freezePolicy"
+      ],
+      "properties": {
+        "targetTraceCount": { "type": "integer", "minimum": 100 },
+        "requiredFinalNoNewClassWindow": {
+          "type": "integer",
+          "minimum": 20
+        },
+        "minimumDistinctDocuments": { "type": "integer", "minimum": 25 },
+        "minimumBlindDocuments": { "type": "integer", "minimum": 10 },
+        "requiredIndependentReviewers": {
+          "type": "integer",
+          "minimum": 2
+        },
+        "minimumJudgePositiveExamples": {
+          "type": "integer",
+          "minimum": 50
+        },
+        "minimumJudgeNegativeExamples": {
+          "type": "integer",
+          "minimum": 50
+        },
+        "minimumJudgeTruePositiveRate": {
+          "type": "number",
+          "minimum": 0.8,
+          "maximum": 1
+        },
+        "minimumJudgeTrueNegativeRate": {
+          "type": "number",
+          "minimum": 0.8,
+          "maximum": 1
+        },
+        "splitUnit": { "const": "document-and-template-family" },
+        "candidateInputs": {
+          "const": ["document-id", "hash-pinned-source-pdf-bytes"]
+        },
+        "forbiddenCandidateInputs": {
+          "const": [
+            "gold-label",
+            "stratum",
+            "target-id",
+            "target-box",
+            "target-page",
+            "reviewer-annotation"
+          ]
+        },
+        "freezePolicy": {
+          "const": "candidate-provider-model-adapter-prompt-config-seed-and-runtime-digests-committed-before-private-label-reveal"
+        }
+      }
+    },
+    "tracks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["localizedDiagnostic", "endToEndBlind"],
+      "properties": {
+        "localizedDiagnostic": { "$ref": "#/$defs/track" },
+        "endToEndBlind": { "$ref": "#/$defs/track" }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/source" }
+    },
+    "documentBindings": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/documentBinding" }
+    },
+    "splits": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/split" }
+    },
+    "candidateCommitment": {
+      "$ref": "#/$defs/candidateCommitment"
+    },
+    "discoveryOrder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "caseIds"],
+      "properties": {
+        "status": { "enum": ["not-recorded", "recorded"] },
+        "caseIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        }
+      }
+    },
+    "reviewBundles": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/reviewBundle" }
+    },
+    "metricImplementations": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/metricImplementation" }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$"
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "path": {
+      "type": "string",
+      "pattern": "^(benchmarks|docs|tools|tests)/[A-Za-z0-9._/+:-]+$"
+    },
+    "track": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "labelVisibility",
+        "oracleLocalized",
+        "promotionAuthority",
+        "networkIsolation",
+        "filesystemIsolation",
+        "isolationEvidence"
+      ],
+      "properties": {
+        "status": { "enum": ["available", "not-built", "frozen"] },
+        "labelVisibility": { "enum": ["public", "private"] },
+        "oracleLocalized": { "type": "boolean" },
+        "promotionAuthority": { "type": "boolean" },
+        "networkIsolation": {
+          "enum": [
+            "none",
+            "cooperative-offline-flags",
+            "independently-enforced"
+          ]
+        },
+        "filesystemIsolation": {
+          "enum": [
+            "none",
+            "minimized-environment-not-sandboxed",
+            "independently-enforced"
+          ]
+        },
+        "isolationEvidence": {
+          "oneOf": [{ "$ref": "#/$defs/isolationEvidence" }, { "type": "null" }]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              {
+                "required": ["status"],
+                "properties": { "status": { "const": "frozen" } }
+              },
+              {
+                "required": ["promotionAuthority"],
+                "properties": { "promotionAuthority": { "const": true } }
+              }
+            ]
+          },
+          "then": {
+            "properties": {
+              "networkIsolation": { "const": "independently-enforced" },
+              "filesystemIsolation": { "const": "independently-enforced" },
+              "isolationEvidence": { "$ref": "#/$defs/isolationEvidence" }
+            }
+          }
+        }
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "evalSet",
+        "observations",
+        "labelVisibility",
+        "oracleLocalized",
+        "selectionStatus"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "evalSet": { "$ref": "#/$defs/fileBinding" },
+        "observations": { "$ref": "#/$defs/observationBinding" },
+        "labelVisibility": { "enum": ["public", "private"] },
+        "oracleLocalized": { "type": "boolean" },
+        "selectionStatus": {
+          "enum": [
+            "source-only-candidate-output-not-consulted",
+            "complaint-driven-candidate-output-consulted"
+          ]
+        }
+      }
+    },
+    "fileBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "fileSha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/path" },
+        "fileSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "packageLockBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "fileSha256"],
+      "properties": {
+        "path": { "const": "package-lock.json" },
+        "fileSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "packageBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "name", "version", "integrity", "treeSha256"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^node_modules/(?:@?[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+$"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^(?:@[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+$"
+        },
+        "version": { "type": "string", "minLength": 1, "maxLength": 191 },
+        "integrity": {
+          "type": "string",
+          "pattern": "^sha512-[A-Za-z0-9+/]+={0,2}$"
+        },
+        "treeSha256": { "$ref": "#/$defs/sha256" },
+        "platforms": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+-[a-z0-9]+(?:-[a-z0-9]+)?$"
+          }
+        }
+      }
+    },
+    "observationBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "fileSha256", "schema"],
+      "properties": {
+        "path": { "$ref": "#/$defs/path" },
+        "fileSha256": { "$ref": "#/$defs/sha256" },
+        "schema": { "$ref": "#/$defs/fileBinding" }
+      }
+    },
+    "isolationEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attestorIdentity", "executionReceipt"],
+      "properties": {
+        "attestorIdentity": { "$ref": "#/$defs/fileBinding" },
+        "executionReceipt": { "$ref": "#/$defs/fileBinding" }
+      }
+    },
+    "documentBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "documentId",
+        "sourcePdfSha256",
+        "templateFamilyId",
+        "templateFamilyEvidence"
+      ],
+      "properties": {
+        "documentId": { "$ref": "#/$defs/id" },
+        "sourcePdfSha256": { "$ref": "#/$defs/sha256" },
+        "templateFamilyId": {
+          "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }]
+        },
+        "templateFamilyEvidence": {
+          "oneOf": [{ "$ref": "#/$defs/fileBinding" }, { "type": "null" }]
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "templateFamilyId": { "$ref": "#/$defs/id" },
+            "templateFamilyEvidence": { "$ref": "#/$defs/fileBinding" }
+          }
+        },
+        {
+          "properties": {
+            "templateFamilyId": { "type": "null" },
+            "templateFamilyEvidence": { "type": "null" }
+          }
+        }
+      ]
+    },
+    "candidateComponent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id", "version", "artifact"],
+      "properties": {
+        "kind": {
+          "enum": [
+            "provider",
+            "model",
+            "adapter",
+            "prompt",
+            "config",
+            "seed",
+            "runtime"
+          ]
+        },
+        "id": { "$ref": "#/$defs/id" },
+        "version": { "$ref": "#/$defs/id" },
+        "artifact": { "$ref": "#/$defs/fileBinding" }
+      }
+    },
+    "candidateCommitment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "components",
+        "authorityEvidence",
+        "commitmentReceipt",
+        "blindSplitIdentitySha256",
+        "committedBeforePrivateLabelReveal"
+      ],
+      "properties": {
+        "status": { "enum": ["not-built", "frozen"] },
+        "components": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/candidateComponent" }
+        },
+        "authorityEvidence": {
+          "oneOf": [{ "$ref": "#/$defs/fileBinding" }, { "type": "null" }]
+        },
+        "commitmentReceipt": {
+          "oneOf": [{ "$ref": "#/$defs/fileBinding" }, { "type": "null" }]
+        },
+        "blindSplitIdentitySha256": {
+          "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+        },
+        "committedBeforePrivateLabelReveal": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "not-built" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "components": { "maxItems": 0 },
+              "authorityEvidence": { "type": "null" },
+              "commitmentReceipt": { "type": "null" },
+              "blindSplitIdentitySha256": { "type": "null" },
+              "committedBeforePrivateLabelReveal": { "const": false }
+            }
+          },
+          "else": {
+            "properties": {
+              "components": { "minItems": 7, "maxItems": 7 },
+              "authorityEvidence": { "$ref": "#/$defs/fileBinding" },
+              "commitmentReceipt": { "$ref": "#/$defs/fileBinding" },
+              "blindSplitIdentitySha256": { "$ref": "#/$defs/sha256" },
+              "committedBeforePrivateLabelReveal": { "const": true }
+            }
+          }
+        }
+      ]
+    },
+    "split": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "role",
+        "status",
+        "labelVisibility",
+        "documentIds",
+        "templateFamilyIds",
+        "frozenIdentitySha256"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "role": {
+          "enum": ["public-calibration", "train", "development", "blind-test"]
+        },
+        "status": { "enum": ["not-built", "draft", "frozen"] },
+        "labelVisibility": { "enum": ["public", "private"] },
+        "documentIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "templateFamilyIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "frozenIdentitySha256": {
+          "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "not-built" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "documentIds": { "maxItems": 0 },
+              "templateFamilyIds": { "maxItems": 0 },
+              "frozenIdentitySha256": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "draft" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "frozenIdentitySha256": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "frozen" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "documentIds": { "minItems": 1 },
+              "templateFamilyIds": { "minItems": 1 },
+              "frozenIdentitySha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        }
+      ]
+    },
+    "reviewerEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reviewerId", "identityEvidence", "decisionEvidence"],
+      "properties": {
+        "reviewerId": { "$ref": "#/$defs/id" },
+        "identityEvidence": { "$ref": "#/$defs/fileBinding" },
+        "decisionEvidence": { "$ref": "#/$defs/fileBinding" }
+      }
+    },
+    "reviewBundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "caseId",
+        "protocolVersion",
+        "sourceOnly",
+        "candidateOutputConsultedForLabel",
+        "reviewers",
+        "disagreement",
+        "adjudication",
+        "uncertainty",
+        "selectionProvenance"
+      ],
+      "properties": {
+        "caseId": { "$ref": "#/$defs/id" },
+        "protocolVersion": { "$ref": "#/$defs/id" },
+        "sourceOnly": { "const": true },
+        "candidateOutputConsultedForLabel": { "const": false },
+        "reviewers": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/reviewerEvidence" }
+        },
+        "disagreement": { "type": "boolean" },
+        "adjudication": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "adjudicatorId",
+                "identityEvidence",
+                "decisionEvidence"
+              ],
+              "properties": {
+                "adjudicatorId": { "$ref": "#/$defs/id" },
+                "identityEvidence": { "$ref": "#/$defs/fileBinding" },
+                "decisionEvidence": { "$ref": "#/$defs/fileBinding" }
+              }
+            }
+          ]
+        },
+        "uncertainty": { "enum": ["none", "review", "abstain"] },
+        "selectionProvenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "motivatingCandidateIdentitySha256",
+            "selectedBeforeCandidateRun"
+          ],
+          "properties": {
+            "mode": {
+              "enum": [
+                "random",
+                "failure-stratified",
+                "outlier",
+                "complaint-driven"
+              ]
+            },
+            "motivatingCandidateIdentitySha256": {
+              "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+            },
+            "selectedBeforeCandidateRun": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "metricImplementation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status",
+        "kind",
+        "implementation",
+        "implementationSha256",
+        "test",
+        "testSha256",
+        "calibration"
+      ],
+      "properties": {
+        "id": {
+          "enum": [
+            "prose-transcript",
+            "inline-semantics",
+            "caption-completeness-and-ownership",
+            "table-content-and-header-topology",
+            "formula-content-and-layout",
+            "bibliography-cardinality-and-content",
+            "note-anchor-body-placement-and-content",
+            "whole-document-reading-order",
+            "profile-clipping-and-legibility",
+            "abstention-risk-coverage",
+            "review-gate-precision-recall",
+            "package-integrity"
+          ]
+        },
+        "status": { "enum": ["available", "not-built"] },
+        "kind": { "enum": ["code", "calibrated-judge"] },
+        "implementation": {
+          "oneOf": [{ "$ref": "#/$defs/path" }, { "type": "null" }]
+        },
+        "implementationSha256": {
+          "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+        },
+        "implementationComponents": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/fileBinding" }
+        },
+        "implementationPackageLock": {
+          "oneOf": [
+            { "$ref": "#/$defs/packageLockBinding" },
+            { "type": "null" }
+          ]
+        },
+        "implementationPlatforms": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+-[a-z0-9]+(?:-[a-z0-9]+)?$"
+          }
+        },
+        "implementationPackages": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/packageBinding" }
+        },
+        "test": {
+          "oneOf": [{ "$ref": "#/$defs/path" }, { "type": "null" }]
+        },
+        "testSha256": {
+          "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+        },
+        "calibration": {
+          "oneOf": [{ "$ref": "#/$defs/judgeCalibration" }, { "type": "null" }]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["status"],
+            "properties": { "status": { "const": "available" } }
+          },
+          "then": {
+            "required": [
+              "implementationComponents",
+              "implementationPackageLock",
+              "implementationPlatforms",
+              "implementationPackages"
+            ],
+            "properties": {
+              "implementation": { "$ref": "#/$defs/path" },
+              "implementationSha256": { "$ref": "#/$defs/sha256" },
+              "implementationComponents": { "minItems": 1 },
+              "implementationPackageLock": {
+                "$ref": "#/$defs/packageLockBinding"
+              },
+              "implementationPlatforms": { "minItems": 1 },
+              "implementationPackages": { "minItems": 1 },
+              "test": { "$ref": "#/$defs/path" },
+              "testSha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["status"],
+            "properties": { "status": { "const": "not-built" } }
+          },
+          "then": {
+            "properties": {
+              "implementation": { "type": "null" },
+              "implementationSha256": { "type": "null" },
+              "implementationComponents": { "maxItems": 0 },
+              "implementationPackageLock": { "type": "null" },
+              "implementationPlatforms": { "maxItems": 0 },
+              "implementationPackages": { "maxItems": 0 },
+              "test": { "type": "null" },
+              "testSha256": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": { "const": "calibrated-judge" },
+              "status": { "const": "available" }
+            },
+            "required": ["kind", "status"]
+          },
+          "then": {
+            "properties": {
+              "calibration": { "$ref": "#/$defs/judgeCalibration" }
+            }
+          },
+          "else": {
+            "properties": {
+              "calibration": { "type": "null" }
+            }
+          }
+        }
+      ]
+    },
+    "judgeCalibration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence", "executionReceipt"],
+      "properties": {
+        "evidence": { "$ref": "#/$defs/fileBinding" },
+        "executionReceipt": { "$ref": "#/$defs/fileBinding" }
+      }
+    }
+  }
+}

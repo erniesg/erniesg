@@ -1,8 +1,12 @@
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import Ajv2020 from 'ajv/dist/2020.js'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { validateCorpusContract } from '../tools/pdf-corpus-contract.mjs'
+import {
+  deriveExecutablePackageClosure,
+  verifyReconstructionEvaluatorImplementationBinding,
+} from '../tools/pdf-benchmark-readiness.mjs'
 import {
   canonicalJson,
   validatePdfFidelityEvalSet,
@@ -22,6 +26,8 @@ const paths = {
   comparatorSchema:
     'docs/schemas/pdf-fidelity-comparator-run-receipt.schema.json',
 }
+
+vi.setConfig({ testTimeout: 30_000 })
 
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex')
@@ -68,35 +74,58 @@ describe('PDF reconstruction evaluation governance contract', () => {
     expect(profileArtifactValidity.implementationComponents).toHaveLength(8)
     for (const component of profileArtifactValidity.implementationComponents)
       expect(component.fileSha256).toBe(await fileSha256(component.path))
+    const packageClosure = await deriveExecutablePackageClosure(
+      profileArtifactValidity.implementation[0],
+    )
+    expect(profileArtifactValidity.implementationPackageLock).toEqual(
+      packageClosure.packageLock,
+    )
+    expect(
+      profileArtifactValidity.implementationPackages.filter(
+        (package_) =>
+          !package_.platforms ||
+          package_.platforms.includes(packageClosure.platform),
+      ),
+    ).toEqual(packageClosure.packages)
+    expect(profileArtifactValidity.implementationPlatforms).toContain(
+      packageClosure.platform,
+    )
     expect(profileArtifactValidity.implementationSha256).toBe(
       sha256(
         canonicalJson({
-          kind: 'pdf-benchmark-metric-implementation-v1',
+          kind: 'pdf-benchmark-metric-implementation-v3',
           entrypoint: profileArtifactValidity.implementation[0],
           components: profileArtifactValidity.implementationComponents
             .map(({ path, fileSha256 }) => ({ path, fileSha256 }))
             .sort((left, right) => left.path.localeCompare(right.path)),
+          packageLock: profileArtifactValidity.implementationPackageLock,
+          platforms: [
+            ...profileArtifactValidity.implementationPlatforms,
+          ].sort(),
+          packages: profileArtifactValidity.implementationPackages,
         }),
       ),
     )
+    await expect(
+      verifyReconstructionEvaluatorImplementationBinding(contract),
+    ).resolves.toBeUndefined()
     const tampered = structuredClone(contract)
     tampered.objectiveEvaluators.find(
       (evaluator) => evaluator.id === 'profile-artifact-validity',
-    ).implementationComponents[0].fileSha256 = '0'.repeat(64)
+    ).implementationPackages[0].treeSha256 = '0'.repeat(64)
     expect(validateContract(tampered), validateContract.errors).toBe(true)
+    await expect(
+      verifyReconstructionEvaluatorImplementationBinding(tampered),
+    ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
     expect(
       tampered.objectiveEvaluators.find(
         (evaluator) => evaluator.id === 'profile-artifact-validity',
-      ).implementationComponents[0].fileSha256,
-    ).not.toBe(
-      await fileSha256(
-        profileArtifactValidity.implementationComponents[0].path,
-      ),
-    )
+      ).implementationPackages[0].treeSha256,
+    ).not.toBe(profileArtifactValidity.implementationPackages[0].treeSha256)
     expect(
       sha256(
         canonicalJson({
-          kind: 'pdf-benchmark-metric-implementation-v1',
+          kind: 'pdf-benchmark-metric-implementation-v3',
           entrypoint: profileArtifactValidity.implementation[0],
           components: tampered.objectiveEvaluators
             .find((evaluator) => evaluator.id === 'profile-artifact-validity')
@@ -105,6 +134,13 @@ describe('PDF reconstruction evaluation governance contract', () => {
               fileSha256,
             }))
             .sort((left, right) => left.path.localeCompare(right.path)),
+          packageLock: profileArtifactValidity.implementationPackageLock,
+          platforms: [
+            ...profileArtifactValidity.implementationPlatforms,
+          ].sort(),
+          packages: tampered.objectiveEvaluators.find(
+            (evaluator) => evaluator.id === 'profile-artifact-validity',
+          ).implementationPackages,
         }),
       ),
     ).not.toBe(profileArtifactValidity.implementationSha256)
@@ -213,7 +249,7 @@ describe('PDF reconstruction evaluation governance contract', () => {
       await fileSha256(contract.extends.path),
     )
     expect(contract.extends.fileSha256).toBe(
-      '532a8201a970e5f8d5c39690fa0f805b3505c685fc5c7ffcf667e881a11f000a',
+      '4e971f847e6088ee56dd0d0b1688e1fdf73dc3d173b77892dec94e0ac07e3844',
     )
     expect(contract.robustnessCorpus.artifact.fileSha256).toBe(
       await fileSha256(contract.robustnessCorpus.artifact.path),

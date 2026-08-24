@@ -58,6 +58,45 @@
         "fileSha256": { "$ref": "#/$defs/sha256" }
       }
     },
+    "packageLockBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "fileSha256"],
+      "properties": {
+        "path": { "const": "package-lock.json" },
+        "fileSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "packageBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "name", "version", "integrity", "treeSha256"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^node_modules/(?:@?[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+$"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^(?:@[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+$"
+        },
+        "version": { "type": "string", "minLength": 1, "maxLength": 191 },
+        "integrity": {
+          "type": "string",
+          "pattern": "^sha512-[A-Za-z0-9+/]+={0,2}$"
+        },
+        "treeSha256": { "$ref": "#/$defs/sha256" },
+        "platforms": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+-[a-z0-9]+(?:-[a-z0-9]+)?$"
+          }
+        }
+      }
+    },
     "corpusBinding": {
       "type": "object",
       "additionalProperties": false,
@@ -229,6 +268,24 @@
           "minItems": 1,
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/artifact" }
+        },
+        "implementationPackageLock": {
+          "$ref": "#/$defs/packageLockBinding"
+        },
+        "implementationPlatforms": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+-[a-z0-9]+(?:-[a-z0-9]+)?$"
+          }
+        },
+        "implementationPackages": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/packageBinding" }
         }
       },
       "allOf": [
@@ -238,7 +295,13 @@
             "properties": { "id": { "const": "profile-artifact-validity" } }
           },
           "then": {
-            "required": ["implementationSha256", "implementationComponents"]
+            "required": [
+              "implementationSha256",
+              "implementationComponents",
+              "implementationPackageLock",
+              "implementationPlatforms",
+              "implementationPackages"
+            ]
           }
         }
       ]

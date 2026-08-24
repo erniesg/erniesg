@@ -57,7 +57,7 @@
           "const": "benchmarks/pdf/reconstruction-eval-contract-v2.json"
         },
         "fileSha256": {
-          "const": "532a8201a970e5f8d5c39690fa0f805b3505c685fc5c7ffcf667e881a11f000a"
+          "const": "4e971f847e6088ee56dd0d0b1688e1fdf73dc3d173b77892dec94e0ac07e3844"
         }
       }
     },

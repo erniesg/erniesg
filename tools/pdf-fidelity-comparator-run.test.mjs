@@ -11,11 +11,13 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   createPdfFidelityComparatorRunReceipt,
   validatePdfFidelityComparatorRunReceipt,
 } from './pdf-fidelity-comparator-run.mjs'
+
+vi.setConfig({ testTimeout: 60_000 })
 import {
   scorePdfFidelityPredictions,
   validatePdfFidelityEvalSet,

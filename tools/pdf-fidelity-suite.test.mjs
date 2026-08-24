@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import Ajv2020 from 'ajv/dist/2020.js'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   canonicalJson,
   scorePdfFidelityPredictions,
@@ -15,6 +15,8 @@ import {
   buildPdfFidelitySuiteReceipt,
   validatePdfFidelitySuiteReceipt,
 } from './pdf-fidelity-suite.mjs'
+
+vi.setConfig({ testTimeout: 60_000 })
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const toolPath = fileURLToPath(
@@ -169,12 +171,14 @@ async function suiteInput(options = {}) {
 describe('aggregate PDF fidelity calibration suite', () => {
   it('binds both eval generations and reports binary outcomes by failure mode', async () => {
     const input = await suiteInput()
-    const receipt = buildPdfFidelitySuiteReceipt(input)
+    const receipt = await buildPdfFidelitySuiteReceipt(input)
     const schema = JSON.parse(await readFile(join(root, paths.schema), 'utf8'))
     const validateSchema = new Ajv2020({ strict: true }).compile(schema)
 
     expect(validateSchema(receipt), validateSchema.errors).toBe(true)
-    expect(validatePdfFidelitySuiteReceipt(receipt, input)).toEqual({
+    await expect(
+      validatePdfFidelitySuiteReceipt(receipt, input),
+    ).resolves.toEqual({
       valid: true,
     })
     expect(receipt).toMatchObject({
@@ -227,7 +231,7 @@ describe('aggregate PDF fidelity calibration suite', () => {
       baselineMode: 'perfect',
       candidateMode: 'missing-first',
     })
-    const receipt = buildPdfFidelitySuiteReceipt(input)
+    const receipt = await buildPdfFidelitySuiteReceipt(input)
 
     expect(receipt.accuracyPassed).toBe(false)
     expect(receipt.nonRegressionPassed).toBe(false)
@@ -240,7 +244,7 @@ describe('aggregate PDF fidelity calibration suite', () => {
 
   it('rejects receipt tampering even when the attacker recomputes the hash', async () => {
     const input = await suiteInput()
-    const receipt = buildPdfFidelitySuiteReceipt(input)
+    const receipt = await buildPdfFidelitySuiteReceipt(input)
     const scenarios = [
       (value) => {
         value.cases[0].failureMode = 'invented-failure-mode'
@@ -263,16 +267,16 @@ describe('aggregate PDF fidelity calibration suite', () => {
       const forged = structuredClone(receipt)
       mutate(forged)
       rehash(forged)
-      expect(() => validatePdfFidelitySuiteReceipt(forged, input)).toThrow(
-        'INVALID_PDF_FIDELITY_SUITE_RECEIPT',
-      )
+      await expect(
+        validatePdfFidelitySuiteReceipt(forged, input),
+      ).rejects.toThrow('INVALID_PDF_FIDELITY_SUITE_RECEIPT')
     }
 
     const staleHash = structuredClone(receipt)
     staleHash.receiptSha256 = 'f'.repeat(64)
-    expect(() => validatePdfFidelitySuiteReceipt(staleHash, input)).toThrow(
-      'INVALID_PDF_FIDELITY_SUITE_RECEIPT',
-    )
+    await expect(
+      validatePdfFidelitySuiteReceipt(staleHash, input),
+    ).rejects.toThrow('INVALID_PDF_FIDELITY_SUITE_RECEIPT')
   })
 
   it('rejects tampered static observations and mismatched cross-version runs', async () => {
@@ -284,9 +288,9 @@ describe('aggregate PDF fidelity calibration suite', () => {
     observationTamper.base.observationsArtifact = Buffer.from(
       `${JSON.stringify(observations)}\n`,
     )
-    expect(() => buildPdfFidelitySuiteReceipt(observationTamper)).toThrow(
-      'INVALID_PDF_FIDELITY_SUITE_FROZEN_ARTIFACT',
-    )
+    await expect(
+      buildPdfFidelitySuiteReceipt(observationTamper),
+    ).rejects.toThrow('INVALID_PDF_FIDELITY_SUITE_FROZEN_ARTIFACT')
 
     const runMismatch = await suiteInput()
     const evalSet = JSON.parse(runMismatch.additive.evalSetArtifact.toString())
@@ -299,7 +303,7 @@ describe('aggregate PDF fidelity calibration suite', () => {
       evalSet,
       predictions,
     )
-    expect(() => buildPdfFidelitySuiteReceipt(runMismatch)).toThrow(
+    await expect(buildPdfFidelitySuiteReceipt(runMismatch)).rejects.toThrow(
       'PDF_FIDELITY_SUITE_RUN_IDENTITY_MISMATCH',
     )
   })
@@ -332,7 +336,7 @@ describe('aggregate PDF fidelity calibration suite', () => {
       `${JSON.stringify(additiveContract)}\n`,
     )
 
-    expect(() => buildPdfFidelitySuiteReceipt(input)).toThrow(
+    await expect(buildPdfFidelitySuiteReceipt(input)).rejects.toThrow(
       'INVALID_PDF_FIDELITY_SUITE_FROZEN_ARTIFACT',
     )
   })
@@ -367,7 +371,9 @@ describe('aggregate PDF fidelity calibration suite', () => {
 
     expect(result.status, result.stderr).toBe(0)
     const receipt = JSON.parse(await readFile(output, 'utf8'))
-    expect(validatePdfFidelitySuiteReceipt(receipt, input)).toEqual({
+    await expect(
+      validatePdfFidelitySuiteReceipt(receipt, input),
+    ).resolves.toEqual({
       valid: true,
     })
     expect(receipt).toMatchObject({
@@ -379,7 +385,7 @@ describe('aggregate PDF fidelity calibration suite', () => {
 
   it('keeps the suite schema strict at nested boundaries', async () => {
     const input = await suiteInput()
-    const receipt = buildPdfFidelitySuiteReceipt(input)
+    const receipt = await buildPdfFidelitySuiteReceipt(input)
     const schema = JSON.parse(await readFile(join(root, paths.schema), 'utf8'))
     const validateSchema = new Ajv2020({ strict: true }).compile(schema)
     const nestedExtra = structuredClone(receipt)

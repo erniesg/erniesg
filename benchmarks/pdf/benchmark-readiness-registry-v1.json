@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "2.0.0",
+  "schemaVersion": "3.0.0",
   "id": "scholarly-pdf-reconstruction-benchmark-readiness-2026-07-v1",
   "privacy": "public-identities-hashes-governance-no-source-content-private-labels-or-local-paths",
   "protocol": {
@@ -280,7 +280,7 @@
       "status": "available",
       "kind": "code",
       "implementation": "tools/pdf-private-fidelity.mjs",
-      "implementationSha256": "114aab69469918f435b82d1202ee9ad9d35f7964097c59237f010d1027afdf67",
+      "implementationSha256": "65a696c9f4175323f9bbe5f61ab16d7d1c2f749a7246a28daaf1e38a4ab77223",
       "implementationComponents": [
         {
           "path": "tools/pdf-corpus-audit-lib.mjs",
@@ -308,15 +308,272 @@
         },
         {
           "path": "tools/pdf-private-fidelity-epubcheck.mjs",
-          "fileSha256": "75e99cffe772b2205522572d6f6977e96901137860d9c22eb9a01b569bdc2bca"
+          "fileSha256": "2a130ac10e391b19245803da76c0ec20e1fa8f3d56a74c282e48b144cbbeb7db"
         },
         {
           "path": "tools/pdf-private-fidelity.mjs",
           "fileSha256": "cf06f09a214c4a0e00710b2c1cd99c498a61954abe69ce5e520ca4a222d7ab3c"
         }
       ],
+      "implementationPackageLock": {
+        "path": "package-lock.json",
+        "fileSha256": "660d6365dd7c3ea6d619df09c08f9d14771ec6f60beebd2eb4f88c97363c896a"
+      },
+      "implementationPlatforms": ["darwin-arm64", "linux-x64-gnu"],
+      "implementationPackages": [
+        {
+          "path": "node_modules/@oxc-project/types",
+          "name": "@oxc-project/types",
+          "version": "0.139.0",
+          "integrity": "sha512-r9gHphtCs+1M7J0pw6Sn/hh/Wpa/iQrOOkrNAlVLF/gHq+/CJmHIWKKUUhdWjcD6CIa8idarspCsASiXCXvFUw==",
+          "treeSha256": "ddda348ab4d9a4a068e7650823f34a0511af6c51ba6e842bee1611bb1c6e3725"
+        },
+        {
+          "path": "node_modules/@rolldown/binding-darwin-arm64",
+          "name": "@rolldown/binding-darwin-arm64",
+          "version": "1.1.5",
+          "integrity": "sha512-51Bnx9pNiMRKSUNtBfySkNJ9vMU9Hh3I1ozDd6gyPPYzaXCfnptUcEZxXGYFn+ul2dtcMUiqGR1Yai2K10uoTw==",
+          "treeSha256": "339666b43f387b64b8e288464bb728a22ba26abec3304cc4ce8bf12cd4adbecf",
+          "platforms": ["darwin-arm64"]
+        },
+        {
+          "path": "node_modules/@rolldown/binding-linux-x64-gnu",
+          "name": "@rolldown/binding-linux-x64-gnu",
+          "version": "1.1.5",
+          "integrity": "sha512-FjcpEKUyJygHgs1o50VYNvkt5+7Le/VEdYt0AkRpkL33MnyQfwr8l5mXwMmfmTbyMPr5vJLC+8/Gd9gXnwU1QQ==",
+          "treeSha256": "7302b9884314387707b73c7a6b8da35a9ecc3b11687db6deac50f8cbef54cbf0",
+          "platforms": ["linux-x64-gnu"]
+        },
+        {
+          "path": "node_modules/@tesseract.js-data/eng",
+          "name": "@tesseract.js-data/eng",
+          "version": "1.0.0",
+          "integrity": "sha512-mbTumm6KQPUHyzTPQaF3ObXYnx0SqqfV2nabqFVQBwD6Kl7PhGSLSzOlfFTWy0P3BjghaSKA2W9GB19Jk+ZcTg==",
+          "treeSha256": "750f47d44886a0d187eda53cb9b52e408dcb2786e66abd297e7c1ca6e15ef440"
+        },
+        {
+          "path": "node_modules/bmp-js",
+          "name": "bmp-js",
+          "version": "0.1.0",
+          "integrity": "sha512-vHdS19CnY3hwiNdkaqk93DvjVLfbEcI8mys4UjuWrlX1haDmroo8o4xCzh4wD6DGV6HxRCyauwhHRqMTfERtjw==",
+          "treeSha256": "a9a605dcff81af2bda01e910385de74dbb4cbab014e31dd7774043893b7524aa"
+        },
+        {
+          "path": "node_modules/detect-libc",
+          "name": "detect-libc",
+          "version": "2.1.2",
+          "integrity": "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==",
+          "treeSha256": "a792c765965a9a829c94261d4adc5d9313acfe1b282cedb2a337928e13bb9a7b"
+        },
+        {
+          "path": "node_modules/epubcheck-static",
+          "name": "epubcheck-static",
+          "version": "4.0.0-v5.3.0",
+          "integrity": "sha512-A04DbjnLQ7z2j10x41LqA2yCocTw039wLJo9dWbIhphSe/wDuq8TG1DEy3xuLPPbaM2SZ6XzAEiRVhLfqTXdlw==",
+          "treeSha256": "b4458164ea592d4a56900d24bbac113de3efb37e77d48ae5d0451703f7fa4cc6"
+        },
+        {
+          "path": "node_modules/fdir",
+          "name": "fdir",
+          "version": "6.5.0",
+          "integrity": "sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==",
+          "treeSha256": "e86f46b8d8e523152f029eb343a0564028112ea179468f9349efc6a532d3a739"
+        },
+        {
+          "path": "node_modules/idb-keyval",
+          "name": "idb-keyval",
+          "version": "6.3.0",
+          "integrity": "sha512-um+2dgAWmYsu615EXpWVwSmapJhON0G43t3Ka/EVaohzPQXSMqKEqeDK/oIW3Ow+BXaF2PvSc+oBTFp793A5Ow==",
+          "treeSha256": "3f2792ed7d2d37ea27dbe94dbbe852413aad2882e629eb72cfea17d4547bd645"
+        },
+        {
+          "path": "node_modules/is-url",
+          "name": "is-url",
+          "version": "1.2.4",
+          "integrity": "sha512-ITvGim8FhRiYe4IQ5uHSkj7pVaPDrCTkNd3yq3cV7iZAcJdHTUMPMEHcqSOy9xZ9qFenQCvi+2wjH9a1nXqHww==",
+          "treeSha256": "f4fbb03e746daaec65a09e233fc77092b383d29779bd363640f2314fc2d9d5ad"
+        },
+        {
+          "path": "node_modules/lightningcss",
+          "name": "lightningcss",
+          "version": "1.32.0",
+          "integrity": "sha512-NXYBzinNrblfraPGyrbPoD19C1h9lfI/1mzgWYvXUTe414Gz/X1FD2XBZSZM7rRTrMA8JL3OtAaGifrIKhQ5yQ==",
+          "treeSha256": "2749f3ee37c075b760495ce031e061a2e39c573739a64ecae97dc052eeb1a632"
+        },
+        {
+          "path": "node_modules/lightningcss-darwin-arm64",
+          "name": "lightningcss-darwin-arm64",
+          "version": "1.32.0",
+          "integrity": "sha512-RzeG9Ju5bag2Bv1/lwlVJvBE3q6TtXskdZLLCyfg5pt+HLz9BqlICO7LZM7VHNTTn/5PRhHFBSjk5lc4cmscPQ==",
+          "treeSha256": "39a6983ce3078ba690c57ccb9f5139c92ceaa835ba56689954658efa06872c24",
+          "platforms": ["darwin-arm64"]
+        },
+        {
+          "path": "node_modules/lightningcss-linux-x64-gnu",
+          "name": "lightningcss-linux-x64-gnu",
+          "version": "1.32.0",
+          "integrity": "sha512-V7Qr52IhZmdKPVr+Vtw8o+WLsQJYCTd8loIfpDaMRWGUZfBOYEJeyJIkqGIDMZPwPx24pUMfwSxxI8phr/MbOA==",
+          "treeSha256": "18321a0b611db4ded3243a9404ac19591e567addd0b056d00ced4ed70e73b26a",
+          "platforms": ["linux-x64-gnu"]
+        },
+        {
+          "path": "node_modules/nanoid",
+          "name": "nanoid",
+          "version": "3.3.18",
+          "integrity": "sha512-DTg4MJbGMWkfi6VZFdNt2/caMbQy4Ou+Op/hJQvGEWcnVfoA1QA+xzRKAzw9jD6+GVOOeYr/mIcuDSdug6F6+w==",
+          "treeSha256": "4e7ad1cba35cdcb7c61d3df689b0c941d7294084c7211336b9c1fb8b30e9d224"
+        },
+        {
+          "path": "node_modules/node-fetch",
+          "name": "node-fetch",
+          "version": "2.7.0",
+          "integrity": "sha512-c4FRfUm/dbcWZ7U+1Wq0AwCyFL+3nt2bEw05wfxSz+DWpWsitgmSgYmy2dQdWyKC1694ELPqMs/YzUSNozLt8A==",
+          "treeSha256": "3bc3087410f28a2dfb23890157e6baac16d297ca94f895cb0ac0e94610b36762"
+        },
+        {
+          "path": "node_modules/opencollective-postinstall",
+          "name": "opencollective-postinstall",
+          "version": "2.0.3",
+          "integrity": "sha512-8AV/sCtuzUeTo8gQK5qDZzARrulB3egtLzFgteqB2tcT4Mw7B8Kt7JcDHmltjz6FOAHsvTevk70gZEbhM4ZS9Q==",
+          "treeSha256": "a862229dfab2c653b71116380f6eecf4b5b7895cb01815bded66702cd0eaaa33"
+        },
+        {
+          "path": "node_modules/parse5",
+          "name": "parse5",
+          "version": "8.0.1",
+          "integrity": "sha512-z1e/HMG90obSGeidlli3hj7cbocou0/wa5HacvI3ASx34PecNjNQeaHNo5WIZpWofN9kgkqV1q5YvXe3F0FoPw==",
+          "treeSha256": "45f4771cfaa3b92eb74107b76b52c5883c7ae3be763bb77b53d3aee2ce74d104"
+        },
+        {
+          "path": "node_modules/parse5/node_modules/entities",
+          "name": "entities",
+          "version": "8.0.0",
+          "integrity": "sha512-zwfzJecQ/Uej6tusMqwAqU/6KL2XaB2VZ2Jg54Je6ahNBGNH6Ek6g3jjNCF0fG9EWQKGZNddNjU5F1ZQn/sBnA==",
+          "treeSha256": "ea8883fb64463b6e145b5a0b8a97b8bc62c6453c69839f5fb0ce1e4f434ed8c6"
+        },
+        {
+          "path": "node_modules/picocolors",
+          "name": "picocolors",
+          "version": "1.1.1",
+          "integrity": "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==",
+          "treeSha256": "367937cb4caa7acd8a6e1f78aaa4fe8fb50657f78fd938c546ec016398d340cb"
+        },
+        {
+          "path": "node_modules/picomatch",
+          "name": "picomatch",
+          "version": "4.0.5",
+          "integrity": "sha512-RvwwcruNjI1ncT5xRakeyS9Lf8lcItv34KD+aif+VH9kduAyfYBipGh12274xtenIPZ119/R9BdTBa8gAwSh0A==",
+          "treeSha256": "576f0513057361cd2c2abbd5bd7176352ee0d7909697f22f2c5dee8732cc5c30"
+        },
+        {
+          "path": "node_modules/postcss",
+          "name": "postcss",
+          "version": "8.5.25",
+          "integrity": "sha512-DTPx3RWSSnWyzLxQnlH0rJP+EW5ekl16ZU4/psbIhA0e53kJfdgaN5vKM+xP7yJtXVu+nfdVFmlgFDEKAe4Pyw==",
+          "treeSha256": "86b56c46e1cae52cfb7e29576a62b8170067fd69c4094676babda24b52d759fb"
+        },
+        {
+          "path": "node_modules/regenerator-runtime",
+          "name": "regenerator-runtime",
+          "version": "0.13.11",
+          "integrity": "sha512-kY1AZVr2Ra+t+piVaJ4gxaFaReZVH40AKNo7UCX6W+dEwBo/2oZJzqfuN1qLq1oL45o56cPaTXELwrTh8Fpggg==",
+          "treeSha256": "4bc58cae6c7ddb53e0d67839ec9ccf8f54bf6742bcbcfdfa2f9ce60ef265e588"
+        },
+        {
+          "path": "node_modules/rolldown",
+          "name": "rolldown",
+          "version": "1.1.5",
+          "integrity": "sha512-t9z29cJjXf/vxQ8dyhCSpt6H6aSwHTk8cT5I3iy6SMXuFpk5mB6PL6XfC8PCwrPTx93udwKUm9HRteAlTGBLiA==",
+          "treeSha256": "9f1a83159a87835448cc3d40a3006c2081540421f519a4950d8c67abe0d82397"
+        },
+        {
+          "path": "node_modules/rolldown/node_modules/@rolldown/pluginutils",
+          "name": "@rolldown/pluginutils",
+          "version": "1.0.1",
+          "integrity": "sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==",
+          "treeSha256": "975b874bb19c00ac91cbf56c39f75bb9949007594f39e2dc0d4956cfd6c87fdf"
+        },
+        {
+          "path": "node_modules/source-map-js",
+          "name": "source-map-js",
+          "version": "1.2.1",
+          "integrity": "sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==",
+          "treeSha256": "657ab0506659f14ea0a575dbb2b39c1e431db08c8b962a132c94633bcd79ae76"
+        },
+        {
+          "path": "node_modules/tesseract.js",
+          "name": "tesseract.js",
+          "version": "6.0.1",
+          "integrity": "sha512-/sPvMvrCtgxnNRCjbTYbr7BRu0yfWDsMZQ2a/T5aN/L1t8wUQN6tTWv6p6FwzpoEBA0jrN2UD2SX4QQFRdoDbA==",
+          "treeSha256": "a280af5a8c8f74429ab62a335efb5219ee3ce155a5894815cdf1a95a0944f419"
+        },
+        {
+          "path": "node_modules/tesseract.js-core",
+          "name": "tesseract.js-core",
+          "version": "6.1.2",
+          "integrity": "sha512-pv4GjmramjdObhDyR1q85Td8X60Puu/lGQn7Kw2id05LLgHhAcWgnz6xSdMCSxBMWjQDmMyDXPTC2aqADdpiow==",
+          "treeSha256": "5b37c5ba83cab5f4bf4e0d2dcc4349ad75fb53729e4254cd42db9b3c98c51995"
+        },
+        {
+          "path": "node_modules/tinyglobby",
+          "name": "tinyglobby",
+          "version": "0.2.17",
+          "integrity": "sha512-wXR/dYpcqKmfWpEdZjiKJOwCNFndD0DMnrW/cYjVGttEkBfVgcLFHoNrlj47mjOVic9yyNu65alsgF4NQyTa2g==",
+          "treeSha256": "99b22d1e4765c500375edf35f7339b727fe823e23f355acfbb64a099725c5ca7"
+        },
+        {
+          "path": "node_modules/tr46",
+          "name": "tr46",
+          "version": "0.0.3",
+          "integrity": "sha512-N3WMsuqV66lT30CrXNbEjx4GEwlow3v6rr4mCcv6prnfwhS01rkgyFdjPNBYd9br7LpXV1+Emh01fHnq2Gdgrw==",
+          "treeSha256": "b8dd37ef8ddf3f33ddd5a1eb836e639dad1f9741ecd9b62b5d6fd353fa82c1f4"
+        },
+        {
+          "path": "node_modules/vite",
+          "name": "vite",
+          "version": "8.1.4",
+          "integrity": "sha512-bTT9PsdWO+MQMNG9ZXIP/qM9wGh37DFxTV/sPq9cFpHr3w4jkgef032PkAL9jAqhk3Nz8NQw3O8n6/xFkqO4QQ==",
+          "treeSha256": "82d83bb39eb2c49407a9c49939d6440b50a841c2f9b7ed00895a31b06c0289c5"
+        },
+        {
+          "path": "node_modules/vite/node_modules/fsevents",
+          "name": "fsevents",
+          "version": "2.3.3",
+          "integrity": "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==",
+          "treeSha256": "9375a82d30c302b375c73ae2b1140cb404b4f6b4a401db60447f81717464be59",
+          "platforms": ["darwin-arm64"]
+        },
+        {
+          "path": "node_modules/wasm-feature-detect",
+          "name": "wasm-feature-detect",
+          "version": "1.8.0",
+          "integrity": "sha512-zksaLKM2fVlnB5jQQDqKXXwYHLQUVH9es+5TOOHwGOVJOCeRBCiPjwSg+3tN2AdTCzjgli4jijCH290kXb/zWQ==",
+          "treeSha256": "cf475f53450f89572810934347a3db6dce30cf92a92c735d7fb1a492d28f19f1"
+        },
+        {
+          "path": "node_modules/webidl-conversions",
+          "name": "webidl-conversions",
+          "version": "3.0.1",
+          "integrity": "sha512-2JAn3z8AR6rjK8Sm8orRC0h/bcl/DqL7tRPdGZ4I1CjdF+EaMLmYxBHyXuKL849eucPFhvBoxMsflfOb8kxaeQ==",
+          "treeSha256": "b88a3bbb422d25735589d7bfb13d6e3de377c0aedc9b3e0a2a620bb8b500148c"
+        },
+        {
+          "path": "node_modules/whatwg-url",
+          "name": "whatwg-url",
+          "version": "5.0.0",
+          "integrity": "sha512-saE57nupxk6v3HY35+jzBwYa0rKSy0XR8JSxZPwgLr7ys0IBzhGviA1/TUGJLmSVqs8pb9AnvICXEuOHLprYTw==",
+          "treeSha256": "c3f071f0f1056f7efbda914d336410c42cafb6815762b2a903e9a9af421439e5"
+        },
+        {
+          "path": "node_modules/zlibjs",
+          "name": "zlibjs",
+          "version": "0.3.1",
+          "integrity": "sha512-+J9RrgTKOmlxFSDHo0pI1xM6BLVUv+o0ZT9ANtCxGkjIVCCUdx9alUF8Gm+dGLKbkkkidWIHFDZHDMpfITt4+w==",
+          "treeSha256": "ec8473e648cb5a40969bb7137ba0a4a7a2c7bda41d6adc72df2e2767c9cd9328"
+        }
+      ],
       "test": "tools/pdf-private-fidelity.test.mjs",
-      "testSha256": "84cf717999f148ff41814ca6e42ce42cbc10f8173726ade32bdacbe3949802bf",
+      "testSha256": "68f626df31dc607642aae07ace65b14c2aab21e9f779ea4813bf08ff0b17c399",
       "calibration": null
     }
   ]

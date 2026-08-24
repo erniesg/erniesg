@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { constants as fsConstants } from 'node:fs'
 import {
   lstat,
   mkdtemp,
@@ -8,9 +9,7 @@ import {
   readFile,
   realpath,
   rm,
-  stat,
   unlink,
-  writeFile,
 } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -44,6 +43,19 @@ function sameIdentity(left, right) {
     left.ino === right.ino &&
     left.size === right.size &&
     left.mtimeNs === right.mtimeNs
+  )
+}
+
+function inaccessible(code = 'EPUBCHECK_REQUIRED') {
+  throw new Error(code)
+}
+
+export function privateJavaPathEntryIsProtected(details, { launcher }) {
+  return (
+    !details.isSymbolicLink() &&
+    details.uid === 0 &&
+    (details.mode & 0o022) === 0 &&
+    (!launcher || (details.isFile() && (details.mode & 0o111) !== 0))
   )
 }
 
@@ -106,23 +118,38 @@ async function vendorFiles(vendorRoot) {
   records.sort((left, right) =>
     Buffer.from(left.path).compare(Buffer.from(right.path)),
   )
-  const identity = records.map(({ path, byteLength, fileSha256 }) => ({
+  assertCapturedDistribution(records)
+  return records
+}
+
+function capturedDistributionIdentity(records) {
+  return records.map(({ path, bytes }) => ({
     path,
-    byteLength,
-    sha256: fileSha256,
+    byteLength: bytes.byteLength,
+    sha256: sha256(bytes),
   }))
+}
+
+function assertCapturedDistribution(records) {
+  const identity = capturedDistributionIdentity(records)
   if (
     sha256(JSON.stringify(identity)) !== EPUBCHECK_VENDOR_SHA256 ||
-    records.find((record) => record.path === 'epubcheck.jar')?.fileSha256 !==
+    identity.find((record) => record.path === 'epubcheck.jar')?.sha256 !==
       EPUBCHECK_MAIN_JAR_SHA256
   )
     throw new Error('EPUBCHECK_REQUIRED')
-  return records
+  for (const [index, record] of records.entries()) {
+    if (
+      record.byteLength !== identity[index].byteLength ||
+      record.fileSha256 !== identity[index].sha256
+    )
+      throw new Error('EPUBCHECK_REQUIRED')
+  }
 }
 
 async function resolveEpubCheckDistribution() {
   try {
-    const packageJsonPath = require.resolve(`${EPUBCHECK_PACKAGE}/package.json`)
+    const packageJsonPath = require.resolve('epubcheck-static/package.json')
     const packageRoot = dirname(packageJsonPath)
     const packageJson = JSON.parse((await readFile(packageJsonPath)).toString())
     if (
@@ -144,15 +171,15 @@ async function resolveEpubCheckDistribution() {
 }
 
 async function assertProtectedJavaPath(path) {
-  let current = dirname(path)
+  let current = path
   while (true) {
-    const details = await stat(current)
-    const writableByCurrentUser =
-      typeof process.getuid === 'function' &&
-      details.uid === process.getuid() &&
-      (details.mode & 0o200) !== 0
-    if (writableByCurrentUser || (details.mode & 0o022) !== 0)
-      throw new Error('EPUBCHECK_REQUIRED')
+    const details = await lstat(current)
+    if (
+      !privateJavaPathEntryIsProtected(details, {
+        launcher: current === path,
+      })
+    )
+      inaccessible()
     const parent = dirname(current)
     if (parent === current) break
     current = parent
@@ -182,6 +209,7 @@ async function resolveJavaRuntime(environment = process.env) {
 }
 
 async function reverifyJavaRuntime(runtime) {
+  await assertProtectedJavaPath(runtime.path)
   const current = await stableRegularFile(runtime.path)
   if (
     !sameIdentity(current.identity, runtime.identity) ||
@@ -190,38 +218,110 @@ async function reverifyJavaRuntime(runtime) {
     throw new Error('EPUBCHECK_FAILED')
 }
 
-function sanitizedJavaEnvironment(environment = process.env) {
-  const blocked = new Set([
-    'JAVA_TOOL_OPTIONS',
-    '_JAVA_OPTIONS',
-    'JDK_JAVA_OPTIONS',
-    'CLASSPATH',
-    'LD_PRELOAD',
-    'DYLD_INSERT_LIBRARIES',
-    'DYLD_LIBRARY_PATH',
-  ])
-  return Object.fromEntries(
-    Object.entries(environment).filter(([name]) => !blocked.has(name)),
-  )
+function minimalJavaEnvironment() {
+  return { LANG: 'C', LC_ALL: 'C', TZ: 'UTC' }
 }
 
 export async function requiredPrivateEpubCheckValidator(options = {}) {
   const distribution = await resolveEpubCheckDistribution()
-  const java = options.java ?? (await resolveJavaRuntime(options.environment))
+  const java = await resolveJavaRuntime(options.environment)
   return {
     distribution,
     java,
     runner: options.runner ?? privateCommandResult,
-    environment: sanitizedJavaEnvironment(options.environment),
+    environment: minimalJavaEnvironment(),
   }
 }
 
 async function anonymousFile(directory, name, bytes) {
   const path = join(directory, name)
-  await writeFile(path, bytes, { flag: 'wx', mode: 0o600 })
-  const handle = await open(path, 'r')
-  await unlink(path)
-  return handle
+  if (!Number.isInteger(fsConstants.O_NOFOLLOW))
+    throw new Error('EPUBCHECK_FAILED')
+  const flags =
+    fsConstants.O_CREAT |
+    fsConstants.O_EXCL |
+    fsConstants.O_RDWR |
+    fsConstants.O_NOFOLLOW
+  const handle = await open(path, flags, 0o600)
+  try {
+    const [pathIdentity, handleIdentity] = await Promise.all([
+      lstat(path, { bigint: true }),
+      handle.stat({ bigint: true }),
+    ])
+    if (
+      pathIdentity.isSymbolicLink() ||
+      !pathIdentity.isFile() ||
+      pathIdentity.dev !== handleIdentity.dev ||
+      pathIdentity.ino !== handleIdentity.ino
+    )
+      throw new Error('EPUBCHECK_FAILED')
+    await unlink(path)
+    const unlinkedIdentity = await handle.stat({ bigint: true })
+    if (
+      unlinkedIdentity.dev !== handleIdentity.dev ||
+      unlinkedIdentity.ino !== handleIdentity.ino ||
+      unlinkedIdentity.nlink !== 0n
+    )
+      throw new Error('EPUBCHECK_FAILED')
+    let written = 0
+    while (written < bytes.byteLength) {
+      const result = await handle.write(
+        bytes,
+        written,
+        bytes.byteLength - written,
+        written,
+      )
+      if (result.bytesWritten <= 0) throw new Error('EPUBCHECK_FAILED')
+      written += result.bytesWritten
+    }
+    await handle.sync()
+    const writtenIdentity = await handle.stat({ bigint: true })
+    const binding = {
+      dev: handleIdentity.dev,
+      ino: handleIdentity.ino,
+      size: BigInt(bytes.byteLength),
+      mode: writtenIdentity.mode,
+      fileSha256: sha256(bytes),
+    }
+    await verifyAnonymousFile({ handle, binding })
+    return { handle, binding }
+  } catch (error) {
+    await handle.close()
+    try {
+      await unlink(path)
+    } catch {
+      // The normal secure path is already anonymous.
+    }
+    throw error
+  }
+}
+
+async function verifyAnonymousFile(snapshot) {
+  const details = await snapshot.handle.stat({ bigint: true })
+  if (
+    !details.isFile() ||
+    details.dev !== snapshot.binding.dev ||
+    details.ino !== snapshot.binding.ino ||
+    details.size !== snapshot.binding.size ||
+    details.mode !== snapshot.binding.mode ||
+    (details.mode & 0o077n) !== 0n ||
+    details.nlink !== 0n
+  )
+    throw new Error('EPUBCHECK_FAILED')
+  const bytes = Buffer.alloc(Number(details.size))
+  let read = 0
+  while (read < bytes.byteLength) {
+    const result = await snapshot.handle.read(
+      bytes,
+      read,
+      bytes.byteLength - read,
+      read,
+    )
+    if (result.bytesRead <= 0) throw new Error('EPUBCHECK_FAILED')
+    read += result.bytesRead
+  }
+  if (sha256(bytes) !== snapshot.binding.fileSha256)
+    throw new Error('EPUBCHECK_FAILED')
 }
 
 /** @returns {Promise<{ status: 'passed' }>} */
@@ -230,6 +330,7 @@ export async function validatePrivateEpubWithEpubCheck(bytes, validator) {
   const handles = []
   try {
     await vendorFiles(validator.distribution.vendorRoot)
+    assertCapturedDistribution(validator.distribution.records)
     await reverifyJavaRuntime(validator.java)
 
     const jars = validator.distribution.records.filter((record) =>
@@ -240,6 +341,7 @@ export async function validatePrivateEpubWithEpubCheck(bytes, validator) {
         await anonymousFile(directory, `runtime-${index}.jar`, jar.bytes),
       )
     handles.push(await anonymousFile(directory, 'publication.epub', bytes))
+    await Promise.all(handles.map(verifyAnonymousFile))
     const descriptorRoot =
       process.platform === 'linux' ? '/proc/self/fd' : '/dev/fd'
     const descriptorPaths = handles.map(
@@ -259,12 +361,13 @@ export async function validatePrivateEpubWithEpubCheck(bytes, validator) {
           'ignore',
           'ignore',
           'ignore',
-          ...handles.map((handle) => handle.fd),
+          ...handles.map((snapshot) => snapshot.handle.fd),
         ],
         timeout: 120_000,
         env: validator.environment,
       },
     )
+    await Promise.all(handles.map(verifyAnonymousFile))
     await reverifyJavaRuntime(validator.java)
     await vendorFiles(validator.distribution.vendorRoot)
     if (result.error || result.status !== 0) throw new Error('EPUBCHECK_FAILED')
@@ -272,7 +375,7 @@ export async function validatePrivateEpubWithEpubCheck(bytes, validator) {
   } catch {
     throw new Error('EPUBCHECK_FAILED')
   } finally {
-    await Promise.all(handles.map((handle) => handle.close()))
+    await Promise.all(handles.map((snapshot) => snapshot.handle.close()))
     await rm(directory, { recursive: true, force: true })
   }
 }

@@ -85,12 +85,16 @@ jobs:
           GITHUB_REF_NAME: ""
           RUCKSACK_EXPECTED_REPOSITORY: ${{ github.repository }}
           RUCKSACK_EXPECTED_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUCKSACK_TRUSTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          RUCKSACK_TRUSTED_WORKFLOW_PATH: .github/workflows/agent-evidence-publisher.yml
           RUCKSACK_TRUSTED_EVIDENCE_ROOT: ${{ runner.temp }}/rucksack-agent-evidence-trusted-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           PYTHONDONTWRITEBYTECODE: "1"
         run: |
           set -euo pipefail
           umask 077
-          trusted_producer="$GITHUB_WORKSPACE/trusted/scripts/agent-evidence"
+          trusted_checkout="$GITHUB_WORKSPACE/trusted"
+          trusted_checkout="$(realpath -e -- "$trusted_checkout")"
+          trusted_producer="$trusted_checkout/scripts/agent-evidence"
           if [ ! -f "$trusted_producer" ] || [ -L "$trusted_producer" ]; then
             echo "Trusted evidence producer must be one regular file." >&2
             exit 1
@@ -1682,16 +1686,974 @@ jobs:
           export RUCKSACK_CANDIDATE_HOME RUCKSACK_CANDIDATE_DEPENDENCY_ROOT
           "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_INSTALL"             -d -o "$RUCKSACK_CANDIDATE_UID" -g "$RUCKSACK_CANDIDATE_GID" -m 0700             "$RUCKSACK_CANDIDATE_HOME" "$RUCKSACK_CANDIDATE_HOME/tmp"
           "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_INSTALL"             -d -o "$trusted_owner_uid" -g "$RUCKSACK_CANDIDATE_GID" -m 1770             "$RUCKSACK_CANDIDATE_DEPENDENCY_ROOT"
+          if [[ ! "$RUCKSACK_TRUSTED_WORKFLOW_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "Trusted workflow SHA is not one full commit SHA." >&2
+            exit 1
+          fi
+          trusted_head="$("$RUCKSACK_PRODUCER_GIT" -C "$trusted_checkout" \
+            rev-parse --verify HEAD^{commit})"
+          trusted_head="$(printf '%s' "$trusted_head" | tr '[:upper:]' '[:lower:]')"
+          trusted_workflow_sha="$(printf '%s' "$RUCKSACK_TRUSTED_WORKFLOW_SHA" | tr '[:upper:]' '[:lower:]')"
+          if [ "$trusted_head" != "$trusted_workflow_sha" ]; then
+            echo "Trusted checkout does not match github.workflow_sha." >&2
+            exit 1
+          fi
+          if [ -n "$("$RUCKSACK_PRODUCER_GIT" -C "$trusted_checkout" \
+            status --porcelain=v1 --untracked-files=all)" ]; then
+            echo "Trusted default-branch checkout is not clean." >&2
+            exit 1
+          fi
+          trusted_origin="$("$RUCKSACK_PRODUCER_GIT" -C "$trusted_checkout" \
+            config --get remote.origin.url || true)"
+          case "$trusted_origin" in
+            "https://github.com/$RUCKSACK_EXPECTED_REPOSITORY"|\
+            "https://github.com/$RUCKSACK_EXPECTED_REPOSITORY.git"|\
+            "git@github.com:$RUCKSACK_EXPECTED_REPOSITORY"|\
+            "git@github.com:$RUCKSACK_EXPECTED_REPOSITORY.git") ;;
+            *)
+              echo "Trusted checkout origin does not match the expected repository." >&2
+              exit 1
+              ;;
+          esac
+          if ! "$RUCKSACK_PRODUCER_GIT" -C "$trusted_checkout" cat-file -e \
+            "$trusted_workflow_sha:$RUCKSACK_TRUSTED_WORKFLOW_PATH"; then
+            echo "Trusted checkout does not contain the expected publisher workflow path." >&2
+            exit 1
+          fi
           RUCKSACK_TRUSTED_PRODUCER_ROOT="$isolation_root/trusted-producer"
+          RUCKSACK_TRUSTED_PRODUCER_CLOSURE_MANIFEST="$trusted_control_root/trusted-producer-closure.json"
           staged_trusted_producer="$RUCKSACK_TRUSTED_PRODUCER_ROOT/scripts/agent-evidence"
-          "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_INSTALL"             -d -o 0 -g 0 -m 0555 --             "$RUCKSACK_TRUSTED_PRODUCER_ROOT"             "$RUCKSACK_TRUSTED_PRODUCER_ROOT/scripts"
-          "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_INSTALL"             -o 0 -g 0 -m 0444 -- "$trusted_producer" "$staged_trusted_producer"
-          if [ "$(realpath -e -- "$staged_trusted_producer")" !=                "$staged_trusted_producer" ] ||              [ "$("$RUCKSACK_TRUSTED_STAT" -c '%u:%g:%a:%h' --                "$staged_trusted_producer")" != "0:0:444:1" ] ||              [ "$("$RUCKSACK_TRUSTED_STAT" -c '%u:%g:%a' --                "$RUCKSACK_TRUSTED_PRODUCER_ROOT")" != "0:0:555" ] ||              [ "$("$RUCKSACK_TRUSTED_STAT" -c '%u:%g:%a' --                "$RUCKSACK_TRUSTED_PRODUCER_ROOT/scripts")" != "0:0:555" ] ||              ! "$RUCKSACK_TRUSTED_CMP" -s --                "$trusted_producer" "$staged_trusted_producer"; then
+          (
+          unset NODE_OPTIONS NODE_PATH LD_AUDIT LD_LIBRARY_PATH LD_PRELOAD
+          unset PYTHONHOME PYTHONPATH
+          "$RUCKSACK_TRUSTED_SUDO" -n -- "$producer_node" - \
+            "$trusted_checkout" "$trusted_producer" \
+            "$RUCKSACK_TRUSTED_PRODUCER_ROOT" \
+            "$RUCKSACK_TRUSTED_PRODUCER_CLOSURE_MANIFEST" <<'RUCKSACK_TRUSTED_PRODUCER_CLOSURE_STAGER'
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const { createHash } = require("node:crypto");
+          const { TextDecoder } = require("node:util");
+
+          const MAX_CLOSURE_FILES = 128;
+          const MAX_CLOSURE_DEPTH = 32;
+          const MAX_CLOSURE_FILE_BYTES = 1024 * 1024;
+          const MAX_CLOSURE_TOTAL_BYTES = 16 * 1024 * 1024;
+          const MAX_CLOSURE_RELATIVE_PATH_BYTES = 4096;
+          const COPY_BUFFER_BYTES = 1024 * 1024;
+          const SOURCE_FILE_FLAGS = fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW;
+          const DESTINATION_FILE_FLAGS =
+            fs.constants.O_RDWR |
+            fs.constants.O_CREAT |
+            fs.constants.O_EXCL |
+            fs.constants.O_NOFOLLOW;
+
+
+
+          const mode = String(process.argv[2] || "");
+          const discoveryOnly = mode === "--discover";
+          const sourceRootInput = discoveryOnly
+            ? String(process.argv[3] || "")
+            : String(process.argv[2] || "");
+          const producerInput = discoveryOnly
+            ? String(process.argv[4] || "")
+            : String(process.argv[3] || "");
+          const destinationInput = discoveryOnly
+            ? ""
+            : String(process.argv[4] || "");
+          const manifestInput = discoveryOnly
+            ? ""
+            : String(process.argv[5] || "");
+          let destinationCreated = false;
+          let destinationDescriptor = -1;
+          let destinationParentDescriptor = -1;
+          let destinationParentAnchor = "";
+          let destinationRootPin = null;
+          let destinationRootAnchor = "";
+          let destinationParentPin = null;
+          let manifestParentDescriptor = -1;
+          let manifestParentAnchor = "";
+          const destinationDirectoryPins = new Map();
+          const destinationFilePins = new Map();
+
+          function refuse(message) {
+            throw new Error(message);
+          }
+
+          function absoluteNormalized(value, label) {
+            if (!value || !value.startsWith("/") || value.includes("\0")) {
+              refuse(`${label} must be one absolute path`);
+            }
+            if (path.resolve(value) !== value) {
+              refuse(`${label} must already be normalized`);
+            }
+            return value;
+          }
+
+          function inside(root, target) {
+            return target === root || target.startsWith(`${root}${path.sep}`);
+          }
+
+          function metadata(stats) {
+            return {
+              dev: stats.dev.toString(),
+              ino: stats.ino.toString(),
+              mode: stats.mode.toString(),
+              uid: stats.uid.toString(),
+              gid: stats.gid.toString(),
+              nlink: stats.nlink.toString(),
+              size: stats.size.toString(),
+              mtimeNs: stats.mtimeNs.toString(),
+              ctimeNs: stats.ctimeNs.toString(),
+            };
+          }
+
+          function sameMetadata(left, right) {
+            return Object.keys(left).every((field) => left[field] === right[field]);
+          }
+
+          function sameDirectoryIdentity(left, right) {
+            return ["dev", "ino", "mode", "uid", "gid"]
+              .every((field) => left[field] === right[field]);
+          }
+
+          function sameAncestry(left, right) {
+            return JSON.stringify(left) === JSON.stringify(right);
+          }
+
+          function descriptorAnchor(descriptor, label) {
+            if (process.platform !== "linux") {
+              refuse(`${label} descriptor-relative operations are unavailable`);
+            }
+            const anchor = `/proc/self/fd/${descriptor}`;
+            try {
+              const descriptorStats = fs.fstatSync(descriptor, { bigint: true });
+              const anchorStats = fs.statSync(anchor, { bigint: true });
+              if (!sameDirectoryIdentity(metadata(descriptorStats), metadata(anchorStats))) {
+                refuse(`${label} descriptor identity changed`);
+              }
+            } catch (error) {
+              if (error && error.message && error.message.startsWith(label)) throw error;
+              refuse(`${label} descriptor-relative operations are unavailable: ${error.message}`);
+            }
+            return anchor;
+          }
+
+          function destinationPath(target) {
+            if (!destinationRootAnchor || !inside(destinationInput, target)) return target;
+            const relative = path.relative(destinationInput, target);
+            return relative ? path.join(destinationRootAnchor, ...relative.split(path.sep)) : destinationRootAnchor;
+          }
+
+          function manifestPath(target) {
+            if (!manifestParentAnchor || path.dirname(target) !== path.dirname(manifestInput)) return target;
+            return path.join(manifestParentAnchor, path.basename(target));
+          }
+
+          function cleanupDestination() {
+            // Node does not expose descriptor-relative recursive unlink. Leaving the
+            // owned root is safer than deleting a replacement inode after a race; the
+            // trusted isolation-root cleanup remains the final backstop.
+          }
+
+          function canonicalRelative(root, target, label) {
+            if (!inside(root, target)) refuse(`${label} escaped the trusted root`);
+            const relative = path.relative(root, target).split(path.sep).join("/");
+            if (
+              !relative ||
+              relative.startsWith("../") ||
+              relative === ".." ||
+              relative.includes("\\") ||
+              relative.includes("\0") ||
+              relative.split("/").some((part) => !part || part === "." || part === "..")
+            ) {
+              refuse(`${label} is not one canonical relative path`);
+            }
+            if (Buffer.byteLength(relative, "utf8") > MAX_CLOSURE_RELATIVE_PATH_BYTES) {
+              refuse(`${label} exceeds ${MAX_CLOSURE_RELATIVE_PATH_BYTES} UTF-8 bytes`);
+            }
+            if (!/^[\x20-\x7e]+$/.test(relative)) refuse(`${label} contains non-printable ASCII bytes`);
+            if (relative.split("/").includes("node_modules")) {
+              refuse(`${label} may not enter node_modules`);
+            }
+            return relative;
+          }
+
+          function sourceAncestry(root, target, label) {
+            const relative = canonicalRelative(root, target, label);
+            let rootStats;
+            try {
+              rootStats = fs.lstatSync(root, { bigint: true });
+            } catch (error) {
+              refuse(`${label} trusted root is unavailable: ${error.message}`);
+            }
+            if (
+              !rootStats.isDirectory() ||
+              rootStats.isSymbolicLink() ||
+              (rootStats.mode & 0o022n) !== 0n ||
+              fs.realpathSync(root) !== root
+            ) {
+              refuse(`${label} trusted root ancestry is unsafe`);
+            }
+            const entries = [{ path: "", metadata: metadata(rootStats) }];
+            let current = root;
+            const components = relative.split("/");
+            for (let index = 0; index < components.length; index += 1) {
+              current = path.join(current, components[index]);
+              let stats;
+              try {
+                stats = fs.lstatSync(current, { bigint: true });
+              } catch (error) {
+                refuse(`${label} ancestry is unavailable: ${error.message}`);
+              }
+              if (stats.isSymbolicLink()) refuse(`${label} ancestry contains a symlink`);
+              if (index < components.length - 1 && !stats.isDirectory()) {
+                refuse(`${label} ancestry contains a non-directory`);
+              }
+              if ((stats.mode & 0o022n) !== 0n) {
+                refuse(`${label} ancestry contains a group/world-writable directory`);
+              }
+              let resolved;
+              try {
+                resolved = fs.realpathSync(current);
+              } catch (error) {
+                refuse(`${label} ancestry cannot be resolved: ${error.message}`);
+              }
+              if (resolved !== current || !inside(root, resolved)) {
+                refuse(`${label} ancestry escaped its trusted root`);
+              }
+              entries.push({ path: relative.split("/").slice(0, index + 1).join("/"), metadata: metadata(stats) });
+            }
+            return entries;
+          }
+
+          function assertSourceRoot(root) {
+            let stats;
+            try {
+              stats = fs.lstatSync(root, { bigint: true });
+            } catch (error) {
+              refuse(`trusted source root is unavailable: ${error.message}`);
+            }
+            if (!stats.isDirectory() || stats.isSymbolicLink()) {
+              refuse("trusted source root must be one real directory");
+            }
+            if ((stats.mode & 0o022n) !== 0n) {
+              refuse("trusted source root must not be group/world writable");
+            }
+            if (fs.realpathSync(root) !== root) {
+              refuse("trusted source root must already be canonical");
+            }
+          }
+
+          function readUtf8File(target, expected, label) {
+            if (expected.size > BigInt(MAX_CLOSURE_FILE_BYTES)) {
+              refuse(`${label} exceeds ${MAX_CLOSURE_FILE_BYTES} bytes`);
+            }
+            let descriptor = -1;
+            const hash = createHash("sha256");
+            const chunks = [];
+            let total = 0;
+            try {
+              descriptor = fs.openSync(target, SOURCE_FILE_FLAGS);
+              const opened = fs.fstatSync(descriptor, { bigint: true });
+              if (!opened.isFile() || !sameMetadata(metadata(opened), metadata(expected))) {
+                refuse(`${label} changed before read`);
+              }
+              const buffer = Buffer.allocUnsafe(COPY_BUFFER_BYTES);
+              while (true) {
+                if (BigInt(total) === expected.size) break;
+                const remaining = Number(expected.size - BigInt(total));
+                const count = fs.readSync(
+                  descriptor,
+                  buffer,
+                  0,
+                  Math.min(buffer.length, remaining),
+                  null,
+                );
+                if (count === 0) refuse(`${label} changed during bounded read`);
+                total += count;
+                if (total > MAX_CLOSURE_FILE_BYTES || BigInt(total) > expected.size) {
+                  refuse(`${label} changed during bounded read`);
+                }
+                const chunk = Buffer.from(buffer.subarray(0, count));
+                chunks.push(chunk);
+                hash.update(chunk);
+              }
+              if (BigInt(total) !== expected.size) refuse(`${label} changed during bounded read`);
+              const after = fs.fstatSync(descriptor, { bigint: true });
+              if (!sameMetadata(metadata(after), metadata(expected))) {
+                refuse(`${label} changed during bounded read`);
+              }
+              const bytes = Buffer.concat(chunks);
+              let text;
+              try {
+                text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+              } catch (error) {
+                refuse(`${label} is not valid UTF-8: ${error.message}`);
+              }
+              if (!Buffer.from(text, "utf8").equals(bytes)) {
+                refuse(`${label} is not canonical UTF-8`);
+              }
+              return { bytes, text, sha256: hash.digest("hex") };
+            } catch (error) {
+              if (error && error.message && error.message.startsWith(label)) throw error;
+              refuse(`${label} cannot be read safely: ${error.message}`);
+            } finally {
+              if (descriptor >= 0) fs.closeSync(descriptor);
+            }
+          }
+
+          function assertSourceStable(root, target, record, label) {
+            const currentAncestry = sourceAncestry(root, target, label);
+            if (!sameAncestry(currentAncestry, record.ancestry)) {
+              refuse(`${label} ancestry changed`);
+            }
+            let named;
+            try {
+              named = fs.lstatSync(target, { bigint: true });
+            } catch (error) {
+              refuse(`${label} changed after read: ${error.message}`);
+            }
+            if (
+              named.isSymbolicLink() ||
+              !named.isFile() ||
+              named.nlink !== 1n ||
+              !sameMetadata(metadata(named), record.metadata) ||
+              fs.realpathSync(target) !== record.realpath
+            ) {
+              refuse(`${label} changed after read`);
+            }
+            return named;
+          }
+
+          function sourceRecord(root, relative, label, declaredBytes = null) {
+            const target = path.join(root, ...relative.split("/"));
+            const ancestry = sourceAncestry(root, target, label);
+            let named;
+            try {
+              named = fs.lstatSync(target, { bigint: true });
+            } catch (error) {
+              refuse(`${label} is unavailable: ${error.message}`);
+            }
+            if (named.isSymbolicLink() || !named.isFile()) {
+              refuse(`${label} must be one regular file`);
+            }
+            if (named.nlink !== 1n) refuse(`${label} must have link count one`);
+            if (named.size > BigInt(MAX_CLOSURE_FILE_BYTES)) {
+              refuse(`${label} exceeds ${MAX_CLOSURE_FILE_BYTES} bytes`);
+            }
+            if (declaredBytes !== null && named.size !== BigInt(declaredBytes)) {
+              refuse(`${label} declaration byte count does not match source`);
+            }
+            const realpath = fs.realpathSync(target);
+            if (realpath !== target || !inside(root, realpath)) {
+              refuse(`${label} resolved outside the trusted root`);
+            }
+            const content = readUtf8File(target, named, label);
+            const after = assertSourceStable(
+              root,
+              target,
+              { ancestry, metadata: metadata(named), realpath },
+              label,
+            );
+            return {
+              relative,
+              target,
+              realpath,
+              metadata: metadata(after),
+              ancestry,
+              size: after.size,
+              sha256: content.sha256,
+              text: content.text,
+            };
+          }
+
+          const TRUSTED_CLOSURE_DECLARATION = {"version":1,"entries":[{"path":"scripts/agent-evidence","bytes":7640,"sha256":"b503f04fa8573cd66975ace0fe40f597c5dddd2f265f4c063170b95c9c029a6f"}],"builtins":["node:child_process","node:crypto","node:fs","node:path"]};
+
+          function validateClosureDeclaration(declaration) {
+            if (!declaration || typeof declaration !== "object" || Array.isArray(declaration)) {
+              refuse("trusted closure declaration must be one object");
+            }
+            const keys = Object.keys(declaration).sort();
+            if (keys.join(",") !== "builtins,entries,version" || declaration.version !== 1) {
+              refuse("trusted closure declaration has an unsupported schema");
+            }
+            if (!Array.isArray(declaration.entries) || declaration.entries.length < 1 || declaration.entries.length > MAX_CLOSURE_FILES) {
+              refuse("trusted closure declaration has an invalid entry count");
+            }
+            if (!Array.isArray(declaration.builtins) || declaration.builtins.length > 16) {
+              refuse("trusted closure declaration has an invalid builtin list");
+            }
+            const adapters = new Set([
+              "node:child_process",
+              "node:crypto",
+              "node:fs",
+              "node:path",
+            ]);
+            let previous = "";
+            let producerCount = 0;
+            let declaredBytes = 0n;
+            const entries = [];
+            for (const entry of declaration.entries) {
+              if (!entry || Object.keys(entry).sort().join(",") !== "bytes,path,sha256") {
+                refuse("trusted closure declaration entry has an unsupported shape");
+              }
+              const relative = entry.path;
+              if (
+                typeof relative !== "string" ||
+                !relative ||
+                relative.startsWith("/") ||
+                relative.includes("\\") ||
+                relative.includes("\0") ||
+                !/^[\x20-\x7e]+$/.test(relative) ||
+                relative.split("/").some((part) => !part || part === "." || part === "..") ||
+                relative.split("/").includes("node_modules") ||
+                relative.split("/").length > MAX_CLOSURE_DEPTH ||
+                Buffer.byteLength(relative, "utf8") > MAX_CLOSURE_RELATIVE_PATH_BYTES ||
+                relative <= previous
+              ) {
+                refuse("trusted closure declaration entries are not canonical");
+              }
+              if (relative === "scripts/agent-evidence") {
+                producerCount += 1;
+              } else if (!/\.(?:cjs|js|json)$/.test(relative)) {
+                refuse("trusted closure declaration dependency extension is unsupported");
+              }
+              if (
+                !Number.isSafeInteger(entry.bytes) ||
+                entry.bytes < 0 ||
+                entry.bytes > MAX_CLOSURE_FILE_BYTES ||
+                typeof entry.sha256 !== "string" ||
+                !/^[0-9a-f]{64}$/.test(entry.sha256)
+              ) {
+                refuse("trusted closure declaration content pin is invalid");
+              }
+              declaredBytes += BigInt(entry.bytes);
+              if (declaredBytes > BigInt(MAX_CLOSURE_TOTAL_BYTES)) {
+                refuse(`trusted closure declaration exceeds ${MAX_CLOSURE_TOTAL_BYTES} aggregate bytes`);
+              }
+              entries.push({ path: relative, bytes: entry.bytes, sha256: entry.sha256 });
+              previous = relative;
+            }
+            if (producerCount !== 1) {
+              refuse("trusted closure declaration must contain one producer");
+            }
+            let previousBuiltin = "";
+            for (const builtin of declaration.builtins) {
+              if (
+                typeof builtin !== "string" ||
+                !adapters.has(builtin) ||
+                !builtin.startsWith("node:") ||
+                builtin <= previousBuiltin
+              ) {
+                refuse("trusted closure declaration builtin list is not canonical");
+              }
+              previousBuiltin = builtin;
+            }
+            return { entries, builtins: [...declaration.builtins] };
+          }
+
+          const trustedClosureDeclaration = validateClosureDeclaration(TRUSTED_CLOSURE_DECLARATION);
+
+          function declaredClosure(root, producer) {
+            const producerRelative = canonicalRelative(root, producer, "trusted producer");
+            if (producerRelative !== "scripts/agent-evidence") {
+              refuse("trusted producer must be scripts/agent-evidence");
+            }
+            const records = [];
+            let totalBytes = 0n;
+            for (const expected of trustedClosureDeclaration.entries) {
+              const record = sourceRecord(
+                root,
+                expected.path,
+                `trusted closure ${expected.path}`,
+                expected.bytes,
+              );
+              if (record.size !== BigInt(expected.bytes) || record.sha256 !== expected.sha256) {
+                refuse(`trusted closure ${expected.path} does not match its declaration`);
+              }
+              totalBytes += record.size;
+              if (totalBytes > BigInt(MAX_CLOSURE_TOTAL_BYTES)) {
+                refuse(`closure exceeds ${MAX_CLOSURE_TOTAL_BYTES} aggregate bytes`);
+              }
+              records.push(record);
+            }
+            return records;
+          }
+          function publicReceipt(records) {
+            return {
+              version: 1,
+              entries: records.map((record) => ({
+                path: record.relative,
+                bytes: Number(record.size),
+                sha256: record.sha256,
+              })),
+            };
+          }
+
+          function sameClosureRecords(left, right) {
+            if (left.length !== right.length) return false;
+            return left.every((record, index) => {
+              const other = right[index];
+              return (
+                record.relative === other.relative &&
+                record.realpath === other.realpath &&
+                record.sha256 === other.sha256 &&
+                record.size === other.size &&
+                sameMetadata(record.metadata, other.metadata) &&
+                sameAncestry(record.ancestry, other.ancestry)
+              );
+            });
+          }
+
+          function destinationAncestry(target, label) {
+            const parent = path.dirname(target);
+            let stats;
+            try {
+              stats = fs.lstatSync(parent, { bigint: true });
+            } catch (error) {
+              refuse(`${label} destination ancestry is unavailable: ${error.message}`);
+            }
+            if (!stats.isDirectory() || stats.isSymbolicLink()) {
+              refuse(`${label} destination ancestry is not a real directory`);
+            }
+            if ((stats.mode & 0o022n) !== 0n) {
+              refuse(`${label} destination ancestry is group/world writable`);
+            }
+            const resolved = fs.realpathSync(parent);
+            if (resolved !== parent) refuse(`${label} destination ancestry is not canonical`);
+            return { path: parent, metadata: metadata(stats), realpath: resolved };
+          }
+
+          function ensureDestinationDirectory(root, relative) {
+            const target = relative ? path.join(root, ...relative.split("/")) : root;
+            const anchoredTarget = destinationPath(target);
+            const isRoot = target === root && destinationDescriptor >= 0;
+            if (!inside(root, target) || path.resolve(target) !== target) {
+              refuse("staged closure directory escaped its root");
+            }
+            const parent = destinationAncestry(target, "staged closure directory");
+            const expectedParent = destinationDirectoryPins.get(parent.path);
+            if (expectedParent && !sameDirectoryIdentity(parent.metadata, expectedParent)) {
+              refuse("staged closure directory ancestry changed");
+            }
+            let expected = destinationDirectoryPins.get(target);
+            if (!expected) {
+              try {
+                fs.lstatSync(anchoredTarget, { bigint: true });
+                refuse("staged closure directory already exists");
+              } catch (error) {
+                if (error && error.message === "staged closure directory already exists") throw error;
+                if (!error || error.code !== "ENOENT") {
+                  refuse(`staged closure directory cannot be created: ${error.message}`);
+                }
+              }
+              try {
+                fs.mkdirSync(anchoredTarget, { mode: 0o700 });
+              } catch (error) {
+                if (error && error.code === "EEXIST") {
+                  refuse("staged closure directory was created by another actor");
+                }
+                refuse(`staged closure directory cannot be created: ${error.message}`);
+              }
+            }
+            let stats;
+            if (isRoot) {
+              const rootStats = fs.fstatSync(destinationDescriptor, { bigint: true });
+              stats = rootStats;
+            } else {
+              stats = fs.lstatSync(anchoredTarget, { bigint: true });
+            }
+            if (!stats.isDirectory() || stats.isSymbolicLink()) {
+              refuse("staged closure directory is not real");
+            }
+            if (expected && !sameDirectoryIdentity(metadata(stats), expected)) {
+              refuse("staged closure directory identity changed");
+            }
+            fs.chownSync(anchoredTarget, 0, 0);
+            fs.chmodSync(anchoredTarget, 0o555);
+            const after = isRoot
+              ? fs.fstatSync(destinationDescriptor, { bigint: true })
+              : fs.lstatSync(anchoredTarget, { bigint: true });
+            if (
+              after.uid !== 0n ||
+              after.gid !== 0n ||
+              (after.mode & 0o777n) !== 0o555n ||
+              after.nlink < 1n
+            ) {
+              refuse("staged closure directory metadata is unsafe");
+            }
+            expected = metadata(after);
+            destinationDirectoryPins.set(target, expected);
+            if (target === root && destinationDescriptor >= 0) {
+              const descriptorStats = fs.fstatSync(destinationDescriptor, { bigint: true });
+              if (!sameDirectoryIdentity(metadata(descriptorStats), expected)) {
+                refuse("staged producer destination root identity changed");
+              }
+              destinationRootPin = metadata(descriptorStats);
+            }
+            return target;
+          }
+
+          function assertNamedDestinationRoot(root) {
+            if (!destinationParentAnchor || !destinationRootPin) {
+              refuse("staged producer destination root identity is unavailable");
+            }
+            const namedRoot = path.join(destinationParentAnchor, path.basename(root));
+            let stats;
+            try {
+              stats = fs.lstatSync(namedRoot, { bigint: true });
+            } catch (error) {
+              refuse(`staged producer destination root named entry is unavailable: ${error.message}`);
+            }
+            if (
+              !stats.isDirectory() ||
+              stats.isSymbolicLink() ||
+              !sameDirectoryIdentity(metadata(stats), destinationRootPin) ||
+              fs.realpathSync(namedRoot) !== root
+            ) {
+              refuse("staged producer destination root named identity changed");
+            }
+          }
+
+          function digestDestination(
+            target,
+            expectedSize,
+            expectedDigest,
+            label,
+            expectedMetadata = null,
+            retainedDescriptor = -1,
+          ) {
+            let descriptor = retainedDescriptor;
+            const ownsDescriptor = descriptor < 0;
+            const hash = createHash("sha256");
+            let total = 0;
+            let openedMetadata = null;
+            try {
+              if (ownsDescriptor) descriptor = fs.openSync(destinationPath(target), SOURCE_FILE_FLAGS);
+              const opened = fs.fstatSync(descriptor, { bigint: true });
+              openedMetadata = metadata(opened);
+              if (expectedMetadata && !sameMetadata(openedMetadata, expectedMetadata)) {
+                refuse(`${label} destination identity changed`);
+              }
+              if (
+                !opened.isFile() ||
+                opened.uid !== 0n ||
+                opened.gid !== 0n ||
+                opened.nlink !== 1n ||
+                (opened.mode & 0o777n) !== 0o444n ||
+                opened.size !== expectedSize
+              ) {
+                refuse(`${label} metadata is unsafe`);
+              }
+              const buffer = Buffer.allocUnsafe(COPY_BUFFER_BYTES);
+              while (true) {
+                const count = fs.readSync(descriptor, buffer, 0, buffer.length, total);
+                if (count === 0) break;
+                total += count;
+                if (total > MAX_CLOSURE_FILE_BYTES || BigInt(total) > expectedSize) {
+                  refuse(`${label} changed while hashing`);
+                }
+                hash.update(buffer.subarray(0, count));
+              }
+              if (BigInt(total) !== expectedSize || hash.digest("hex") !== expectedDigest) {
+                refuse(`${label} bytes differ from the trusted source`);
+              }
+              const after = fs.fstatSync(descriptor, { bigint: true });
+              if (!sameMetadata(metadata(after), metadata(opened))) refuse(`${label} changed while hashing`);
+            } finally {
+              if (ownsDescriptor && descriptor >= 0) fs.closeSync(descriptor);
+            }
+            const named = fs.lstatSync(destinationPath(target), { bigint: true });
+            if (
+              !openedMetadata ||
+              !sameMetadata(metadata(named), openedMetadata) ||
+              (expectedMetadata && !sameMetadata(metadata(named), expectedMetadata))
+            ) {
+              refuse(`${label} changed while hashing`);
+            }
+          }
+
+          function copyRecord(root, destination, record) {
+            const source = path.join(root, ...record.relative.split("/"));
+            assertSourceStable(root, source, record, `trusted closure ${record.relative}`);
+            const parentRelative = path.posix.dirname(record.relative);
+            ensureDestinationDirectory(destination, parentRelative === "." ? "" : parentRelative);
+            const target = path.join(destination, ...record.relative.split("/"));
+            let sourceDescriptor = -1;
+            let destinationDescriptor = -1;
+            const hash = createHash("sha256");
+            let total = 0;
+            try {
+              sourceDescriptor = fs.openSync(source, SOURCE_FILE_FLAGS);
+              const opened = fs.fstatSync(sourceDescriptor, { bigint: true });
+              if (!sameMetadata(metadata(opened), record.metadata) || !opened.isFile()) {
+                refuse(`trusted closure ${record.relative} changed before copy`);
+              }
+              destinationDescriptor = fs.openSync(
+                destinationPath(target),
+                DESTINATION_FILE_FLAGS,
+                0o600,
+              );
+              const buffer = Buffer.allocUnsafe(COPY_BUFFER_BYTES);
+              while (true) {
+                const count = fs.readSync(sourceDescriptor, buffer, 0, buffer.length, null);
+                if (count === 0) break;
+                total += count;
+                if (total > MAX_CLOSURE_FILE_BYTES || BigInt(total) > opened.size) {
+                  refuse(`trusted closure ${record.relative} changed during copy`);
+                }
+                hash.update(buffer.subarray(0, count));
+                let offset = 0;
+                while (offset < count) {
+                  const written = fs.writeSync(destinationDescriptor, buffer, offset, count - offset, null);
+                  if (written <= 0) refuse("staged closure write made no progress");
+                  offset += written;
+                }
+              }
+              if (BigInt(total) !== opened.size || hash.digest("hex") !== record.sha256) {
+                refuse(`trusted closure ${record.relative} changed during copy`);
+              }
+              const sourceAfter = fs.fstatSync(sourceDescriptor, { bigint: true });
+              if (!sameMetadata(metadata(sourceAfter), record.metadata)) {
+                refuse(`trusted closure ${record.relative} changed after copy`);
+              }
+              assertSourceStable(root, source, record, `trusted closure ${record.relative}`);
+              fs.fchownSync(destinationDescriptor, 0, 0);
+              fs.fchmodSync(destinationDescriptor, 0o444);
+              fs.fsyncSync(destinationDescriptor);
+              const destinationPin = metadata(fs.fstatSync(destinationDescriptor, { bigint: true }));
+              destinationFilePins.set(record.relative, destinationPin);
+              digestDestination(
+                target,
+                record.size,
+                record.sha256,
+                `staged closure ${record.relative}`,
+                destinationPin,
+                destinationDescriptor,
+              );
+            } finally {
+              if (destinationDescriptor >= 0) fs.closeSync(destinationDescriptor);
+              if (sourceDescriptor >= 0) fs.closeSync(sourceDescriptor);
+            }
+          }
+
+          function verifyDestination(destination, records) {
+            const currentParent = destinationAncestry(destination, "staged producer root");
+            if (
+              !destinationParentPin ||
+              !sameDirectoryIdentity(currentParent.metadata, destinationParentPin)
+            ) {
+              refuse("staged producer destination ancestry changed");
+            }
+            const expected = new Map(records.map((record) => [record.relative, record]));
+            const actual = new Set();
+            function visit(directory, relative) {
+              const anchoredDirectory = destinationPath(directory);
+              let directoryStats;
+              if (directory === destination && destinationDescriptor >= 0) {
+                const rootStats = fs.fstatSync(destinationDescriptor, { bigint: true });
+                directoryStats = rootStats;
+              } else {
+                directoryStats = fs.lstatSync(anchoredDirectory, { bigint: true });
+              }
+              const directoryPin = destinationDirectoryPins.get(directory);
+              if (
+                !directoryStats.isDirectory() ||
+                directoryStats.isSymbolicLink() ||
+                directoryStats.uid !== 0n ||
+                directoryStats.gid !== 0n ||
+                (directoryStats.mode & 0o777n) !== 0o555n
+              ) {
+                refuse("staged closure contains unsafe directory metadata");
+              }
+              if (!directoryPin || !sameDirectoryIdentity(metadata(directoryStats), directoryPin)) {
+                refuse("staged closure directory identity changed");
+              }
+              for (const leaf of fs.readdirSync(anchoredDirectory, { encoding: "utf8" }).sort()) {
+                if (!leaf || leaf.includes("/") || leaf.includes("\\") || /[\u0000-\u001f\u007f]/.test(leaf)) {
+                  refuse("staged closure contains an unsafe filename");
+                }
+                const childRelative = relative ? `${relative}/${leaf}` : leaf;
+                const child = path.join(directory, leaf);
+                const stats = fs.lstatSync(destinationPath(child), { bigint: true });
+                if (stats.isDirectory() && !stats.isSymbolicLink()) {
+                  visit(child, childRelative);
+                } else if (stats.isFile() && !stats.isSymbolicLink()) {
+                  const record = expected.get(childRelative);
+                  if (!record) refuse("staged closure contains an unexpected file");
+                  const destinationPin = destinationFilePins.get(childRelative);
+                  if (!destinationPin) refuse("staged closure file identity is unpinned");
+                  digestDestination(
+                    child,
+                    record.size,
+                    record.sha256,
+                    `staged closure ${childRelative}`,
+                    destinationPin,
+                  );
+                  actual.add(childRelative);
+                } else {
+                  refuse("staged closure contains a symlink or unsupported entry");
+                }
+              }
+            }
+            visit(destination, "");
+            if (actual.size !== expected.size || [...expected.keys()].some((key) => !actual.has(key))) {
+              refuse("staged closure entry set differs from the trusted manifest");
+            }
+          }
+
+          function writeManifest(target, receipt) {
+            let descriptor = -1;
+            const bytes = Buffer.from(`${JSON.stringify(receipt)}\n`, "utf8");
+            try {
+              descriptor = fs.openSync(
+                manifestPath(target),
+                fs.constants.O_WRONLY |
+                  fs.constants.O_CREAT |
+                  fs.constants.O_EXCL |
+                  fs.constants.O_NOFOLLOW,
+                0o600,
+              );
+              fs.writeFileSync(descriptor, bytes);
+              fs.fchownSync(descriptor, 0, 0);
+              fs.fchmodSync(descriptor, 0o444);
+              fs.fsyncSync(descriptor);
+            } finally {
+              if (descriptor >= 0) fs.closeSync(descriptor);
+            }
+          }
+
+          let sourceRoot = "";
+          try {
+            if (!discoveryOnly && (process.getuid?.() !== 0 || process.geteuid?.() !== 0)) {
+              refuse("trusted closure stager must run as root");
+            }
+            sourceRoot = absoluteNormalized(sourceRootInput, "trusted source root");
+            const producer = absoluteNormalized(producerInput, "trusted producer");
+            assertSourceRoot(sourceRoot);
+            const canonicalRoot = fs.realpathSync(sourceRoot);
+            if (canonicalRoot !== sourceRoot) refuse("trusted source root is not canonical");
+            const records = declaredClosure(sourceRoot, producer);
+            const receipt = publicReceipt(records);
+            if (discoveryOnly) {
+              process.stdout.write(`${JSON.stringify(receipt)}\n`);
+            } else {
+              const destination = absoluteNormalized(destinationInput, "staged producer root");
+              const manifest = absoluteNormalized(manifestInput, "closure manifest");
+              destinationParentPin = destinationAncestry(destination, "staged producer root").metadata;
+              if (inside(destination, manifest)) {
+                refuse("closure manifest must stay outside the staged producer root");
+              }
+              destinationAncestry(manifest, "closure manifest");
+              const directoryFlags =
+                fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW;
+              try {
+                destinationParentDescriptor = fs.openSync(path.dirname(destination), directoryFlags);
+                destinationParentAnchor = descriptorAnchor(
+                  destinationParentDescriptor,
+                  "staged producer destination parent",
+                );
+                const parentDescriptorStats = fs.fstatSync(destinationParentDescriptor, { bigint: true });
+                if (!sameDirectoryIdentity(metadata(parentDescriptorStats), destinationParentPin)) {
+                  refuse("staged producer destination ancestry changed");
+                }
+                const manifestParent = path.dirname(manifest);
+                if (manifestParent === path.dirname(destination)) {
+                  manifestParentDescriptor = destinationParentDescriptor;
+                  manifestParentAnchor = destinationParentAnchor;
+                } else {
+                  manifestParentDescriptor = fs.openSync(manifestParent, directoryFlags);
+                  manifestParentAnchor = descriptorAnchor(
+                    manifestParentDescriptor,
+                    "closure manifest parent",
+                  );
+                }
+              } catch (error) {
+                if (error && error.message && error.message.startsWith("staged producer")) throw error;
+                if (error && error.message && error.message.startsWith("closure manifest")) throw error;
+                refuse(`staged producer destination ancestry cannot be pinned: ${error.message}`);
+              }
+              if (fs.existsSync(manifestPath(manifest))) {
+                refuse("staged producer destination or closure manifest already exists");
+              }
+              const anchoredDestination = path.join(
+                destinationParentAnchor,
+                path.basename(destination),
+              );
+              try {
+                fs.mkdirSync(anchoredDestination, { mode: 0o700 });
+              } catch (error) {
+                if (error && error.code === "EEXIST") {
+                  refuse("staged producer destination or closure manifest already exists");
+                }
+                refuse(`staged producer destination cannot be created: ${error.message}`);
+              }
+              destinationCreated = true;
+              try {
+                destinationDescriptor = fs.openSync(
+                  anchoredDestination,
+                  fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW,
+                );
+                const createdRoot = fs.fstatSync(destinationDescriptor, { bigint: true });
+                if (!createdRoot.isDirectory() || createdRoot.isSymbolicLink()) {
+                  refuse("staged producer destination root is not real");
+                }
+                destinationRootPin = metadata(createdRoot);
+                destinationRootAnchor = descriptorAnchor(
+                  destinationDescriptor,
+                  "staged producer destination root",
+                );
+                destinationDirectoryPins.set(destination, destinationRootPin);
+              } catch (error) {
+                if (error && error.message && error.message.startsWith("staged producer destination")) throw error;
+                refuse(`staged producer destination root cannot be pinned: ${error.message}`);
+              }
+              ensureDestinationDirectory(destination, "");
+              assertNamedDestinationRoot(destination);
+              for (const record of records) copyRecord(sourceRoot, destination, record);
+              const sourceAfter = declaredClosure(sourceRoot, producer);
+              if (!sameClosureRecords(records, sourceAfter)) {
+                refuse("trusted closure changed after copy");
+              }
+              verifyDestination(destination, records);
+              assertNamedDestinationRoot(destination);
+              writeManifest(manifest, receipt);
+              assertNamedDestinationRoot(destination);
+              process.stdout.write(`${JSON.stringify(receipt)}\n`);
+            }
+          } catch (error) {
+            if (destinationCreated) {
+              try {
+                cleanupDestination();
+              } catch (_cleanupError) {
+                // The workflow's trusted isolation-root cleanup is the final backstop.
+              }
+            }
+            console.error(`trusted producer closure refused: ${error && error.message ? error.message : error}`);
+            process.exitCode = 1;
+          } finally {
+            if (destinationDescriptor >= 0) fs.closeSync(destinationDescriptor);
+            if (manifestParentDescriptor >= 0 && manifestParentDescriptor !== destinationParentDescriptor) {
+              fs.closeSync(manifestParentDescriptor);
+            }
+            if (destinationParentDescriptor >= 0) fs.closeSync(destinationParentDescriptor);
+          }
+          RUCKSACK_TRUSTED_PRODUCER_CLOSURE_STAGER
+          )
+          if [ "$(realpath -e -- "$staged_trusted_producer")" != \
+               "$staged_trusted_producer" ] || \
+             [ "$("$RUCKSACK_TRUSTED_STAT" -c '%u:%g:%a:%h' --                "$staged_trusted_producer")" != "0:0:444:1" ] ||              [ "$("$RUCKSACK_TRUSTED_STAT" -c '%u:%g:%a' --                "$RUCKSACK_TRUSTED_PRODUCER_ROOT")" != "0:0:555" ] ||              [ "$("$RUCKSACK_TRUSTED_STAT" -c '%u:%g:%a' --                "$RUCKSACK_TRUSTED_PRODUCER_ROOT/scripts")" != "0:0:555" ] ||              ! "$RUCKSACK_TRUSTED_CMP" -s --                "$trusted_producer" "$staged_trusted_producer"; then
             echo "Staged trusted producer must be an exact immutable copy." >&2
             exit 1
           fi
-          readonly RUCKSACK_TRUSTED_PRODUCER_ROOT staged_trusted_producer
-          export RUCKSACK_TRUSTED_PRODUCER_ROOT
+          if [ ! -f "$RUCKSACK_TRUSTED_PRODUCER_CLOSURE_MANIFEST" ] ||              [ -L "$RUCKSACK_TRUSTED_PRODUCER_CLOSURE_MANIFEST" ] ||              [ "$($RUCKSACK_TRUSTED_STAT -c '%u:%g:%a:%h' -- \
+               "$RUCKSACK_TRUSTED_PRODUCER_CLOSURE_MANIFEST")" != "0:0:444:1" ]; then
+            echo "Trusted producer closure manifest must be root-owned and immutable." >&2
+            exit 1
+          fi
+          readonly RUCKSACK_TRUSTED_PRODUCER_ROOT             RUCKSACK_TRUSTED_PRODUCER_CLOSURE_MANIFEST staged_trusted_producer
+          export RUCKSACK_TRUSTED_PRODUCER_ROOT             RUCKSACK_TRUSTED_PRODUCER_CLOSURE_MANIFEST
           RUCKSACK_CANDIDATE_RUNNER="$isolation_root/run-candidate"
           export RUCKSACK_CANDIDATE_RUNNER
           candidate_runner_source="$(
@@ -1706,6 +2668,9 @@ jobs:
           import json
           import os
           import re
+          import resource
+          import selectors
+          import signal
           import stat
           import subprocess
           import sys
@@ -1716,13 +2681,111 @@ jobs:
 
           MAX_CONFIG_BYTES = 8 * 1024 * 1024
           MAX_TIMEOUT_MS = 900_000
+          MAX_OUTPUT_BYTES = 64 * 1024 * 1024
+          MAX_CONTROL_FRAME_BYTES = 16 * 1024
+          FRAME_MAGIC = b"RUCKSACK-RUNNER/1\n"
+          TERM_GRACE_SECONDS = 0.25
+          CLEANUP_TIMEOUT_SECONDS = 5.0
           SECRET_ENVIRONMENT_NAME = re.compile(
               r"TOKEN|SECRET|KEY|PASSWORD|COOKIE|SESSION|AUTH|WEBHOOK|CREDENTIAL",
               re.IGNORECASE,
           )
 
+          _frame_written = False
+          _child_status_descriptor: int | None = None
+
+
+          def bounded_message(value: object) -> str:
+              return re.sub(r"[\x00-\x1f\x7f]", " ", str(value))[:512]
+
+
+          def emit_frame(payload: dict[str, object]) -> None:
+              global _frame_written
+              if _frame_written or os.environ.get("RUCKSACK_RUNNER_FRAME_FD") != "3":
+                  return
+              try:
+                  encoded = json.dumps(
+                      payload,
+                      ensure_ascii=True,
+                      separators=(",", ":"),
+                      sort_keys=True,
+                  ).encode("ascii")
+                  frame = FRAME_MAGIC + encoded + b"\n"
+                  if len(frame) > MAX_CONTROL_FRAME_BYTES:
+                      frame = FRAME_MAGIC + json.dumps(
+                          {
+                              "version": 1,
+                              "kind": "refusal",
+                              "code": "RUNNER_INTERNAL",
+                              "message": "runner control frame exceeded its bound",
+                          },
+                          separators=(",", ":"),
+                      ).encode("ascii") + b"\n"
+                  offset = 0
+                  while offset < len(frame):
+                      written = os.write(3, frame[offset:])
+                      if written <= 0:
+                          break
+                      offset += written
+                  if offset == len(frame):
+                      _frame_written = True
+              except OSError:
+                  # The host treats a missing/partial frame as a fail-closed refusal.
+                  return
+
+
+          def write_child_status(payload: dict[str, object]) -> None:
+              global _child_status_descriptor
+              descriptor = _child_status_descriptor
+              if descriptor is None:
+                  return
+              try:
+                  encoded = json.dumps(payload, separators=(",", ":")).encode("ascii")
+                  os.ftruncate(descriptor, 0)
+                  os.lseek(descriptor, 0, os.SEEK_SET)
+                  offset = 0
+                  while offset < len(encoded):
+                      written = os.write(descriptor, encoded[offset:])
+                      if written <= 0:
+                          return
+                      offset += written
+                  os.fsync(descriptor)
+              except OSError:
+                  return
+
 
           def refuse(message: str) -> "NoReturn":
+              message = bounded_message(message)
+              emit_frame(
+                  {
+                      "version": 1,
+                      "kind": "refusal",
+                      "code": "RUNNER_POLICY",
+                      "message": message,
+                  }
+              )
+              if _child_status_descriptor is not None:
+                  write_child_status({"kind": "refusal", "message": message})
+              else:
+                  child_status_path = os.environ.get("RUCKSACK_EXEC_STATUS_PATH")
+                  if child_status_path and child_status_path.startswith("/"):
+                      try:
+                          descriptor = os.open(
+                              child_status_path,
+                              os.O_WRONLY | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0),
+                          )
+                          try:
+                              os.write(
+                                  descriptor,
+                                  json.dumps(
+                                      {"kind": "refusal", "message": message},
+                                      separators=(",", ":"),
+                                  ).encode("ascii"),
+                              )
+                          finally:
+                              os.close(descriptor)
+                      except OSError:
+                          pass
               print(f"trusted candidate runner refused: {message}", file=sys.stderr)
               raise SystemExit(125)
 
@@ -1761,7 +2824,9 @@ jobs:
               return decoded
 
 
-          def decode_request(value: str) -> tuple[list[str], int | None]:
+          def decode_request(
+              value: str,
+          ) -> tuple[list[str], int, str, str, str]:
               if not value or len(value) > 1024 * 1024:
                   refuse("command payload must be bounded")
               try:
@@ -1771,18 +2836,39 @@ jobs:
               except (UnicodeError, ValueError, json.JSONDecodeError) as error:
                   refuse(f"command payload is invalid: {error}")
               if isinstance(decoded, list):
-                  return validate_argv(decoded), None
-              if not isinstance(decoded, dict) or set(decoded) != {"argv", "timeout_ms"}:
+                  return validate_argv(decoded), MAX_TIMEOUT_MS, "SIGTERM", "pipe", "pipe"
+              if (
+                  not isinstance(decoded, dict)
+                  or (
+                      set(decoded) != {"argv", "timeout_ms"}
+                      and set(decoded) != {
+                          "argv",
+                          "timeout_ms",
+                          "kill_signal",
+                          "stdout_mode",
+                          "stderr_mode",
+                      }
+                  )
+              ):
                   refuse("command payload has an invalid shape")
               timeout_ms = decoded["timeout_ms"]
-              if timeout_ms is not None and (
-                  isinstance(timeout_ms, bool)
+              if (
+                  timeout_ms is None
+                  or isinstance(timeout_ms, bool)
                   or not isinstance(timeout_ms, int)
                   or timeout_ms <= 0
                   or timeout_ms > MAX_TIMEOUT_MS
               ):
                   refuse("command timeout must be between 1 and 900000 milliseconds")
-              return validate_argv(decoded["argv"]), timeout_ms
+              kill_signal = decoded.get("kill_signal", "SIGTERM")
+              if kill_signal is None:
+                  kill_signal = "SIGTERM"
+              if kill_signal != "SIGTERM":
+                  refuse("candidate kill signal must be SIGTERM")
+              modes = (decoded.get("stdout_mode", "pipe"), decoded.get("stderr_mode", "pipe"))
+              if any(mode not in {"pipe", "ignore"} for mode in modes):
+                  refuse("candidate stdio mode must be pipe or ignore")
+              return validate_argv(decoded["argv"]), timeout_ms, kill_signal, modes[0], modes[1]
 
 
           def candidate_environment(home: str, dependency_root: str) -> dict[str, str]:
@@ -1810,6 +2896,8 @@ jobs:
                           "RUCKSACK_CANDIDATE_RUNNER",
                           "RUCKSACK_CANDIDATE_TRUSTED_PATH",
                           "RUCKSACK_CANDIDATE_UID",
+                          "RUCKSACK_EXEC_STATUS_PATH",
+                          "RUCKSACK_RUNNER_FRAME_FD",
                           "RUCKSACK_PRODUCER_GIT",
                           "RUCKSACK_TRUSTED_EVIDENCE_ROOT",
                           "PYTHONHOME",
@@ -2464,8 +3552,22 @@ jobs:
 
 
           def run_candidate_child(path: str) -> "NoReturn":
-              argv, environment, cwd, uid, gid = read_command_config(path)
+              global _child_status_descriptor
+              exec_status_path = os.environ.get("RUCKSACK_EXEC_STATUS_PATH", "")
+              if exec_status_path.startswith("/"):
+                  try:
+                      _child_status_descriptor = os.open(
+                          exec_status_path,
+                          os.O_WRONLY
+                          | os.O_TRUNC
+                          | getattr(os, "O_CLOEXEC", 0)
+                          | getattr(os, "O_NOFOLLOW", 0),
+                      )
+                  except OSError:
+                      _child_status_descriptor = None
               try:
+                  argv, environment, cwd, uid, gid = read_command_config(path)
+                  apply_child_limits()
                   os.chdir(cwd)
                   os.setgroups([])
                   os.setresgid(gid, gid, gid)
@@ -2486,7 +3588,42 @@ jobs:
               try:
                   os.execvpe(argv[0], argv, environment)
               except OSError as error:
-                  refuse(f"cannot execute candidate command: {error}")
+                  write_child_status(
+                      {
+                          "kind": "exec",
+                          "code": getattr(error, "errno", None),
+                          "message": bounded_message(error),
+                      }
+                  )
+                  raise SystemExit(127)
+              finally:
+                  if _child_status_descriptor is not None:
+                      try:
+                          os.close(_child_status_descriptor)
+                      except OSError:
+                          pass
+                      _child_status_descriptor = None
+
+
+          def apply_child_limits() -> None:
+              if not sys.platform.startswith("linux"):
+                  return
+              try:
+                  requested = (
+                      (resource.RLIMIT_NOFILE, 256),
+                      (resource.RLIMIT_NPROC, 64),
+                      (resource.RLIMIT_CORE, 0),
+                      (resource.RLIMIT_FSIZE, 64 * 1024 * 1024),
+                  )
+                  for limit, value in requested:
+                      current = resource.getrlimit(limit)
+                      if current[1] != resource.RLIM_INFINITY and current[1] < value:
+                          refuse("candidate resource limit is below the required bound")
+                      resource.setrlimit(limit, (value, value))
+                      if resource.getrlimit(limit) != (value, value):
+                          refuse("candidate resource limit did not take effect")
+              except (AttributeError, OSError, ValueError) as error:
+                  refuse(f"cannot apply required candidate resource limits: {error}")
 
 
           def reap_orphans() -> None:
@@ -2500,21 +3637,32 @@ jobs:
 
 
           def kill_isolated_group(
-              *, sudo: str, pkill: str, process_group: int, required: bool
+              *,
+              sudo: str,
+              pkill: str,
+              process_group: int,
+              signal_name: str,
+              required: bool,
           ) -> None:
+              if signal_name not in {"SIGTERM", "SIGKILL"}:
+                  refuse("candidate process signal is unsupported")
+              signal_flag = "-TERM" if signal_name == "SIGTERM" else "-KILL"
               killed = subprocess.run(
-                  [sudo, "-n", "--", pkill, "-KILL", "-g", str(process_group)],
+                  [sudo, "-n", "--", pkill, signal_flag, "-g", str(process_group)],
                   check=False,
                   stdout=subprocess.DEVNULL,
                   stderr=subprocess.DEVNULL,
               )
-              allowed = {0} if required else {0, 1}
-              if killed.returncode not in allowed:
+              if killed.returncode not in {0, 1}:
                   refuse("cannot terminate the privileged candidate process group")
 
 
-          def reap_identity(*, sudo: str, pkill: str, pgrep: str, uid: int) -> None:
+          def reap_identity(
+              *, sudo: str, pkill: str, pgrep: str, uid: int, deadline: float | None = None
+          ) -> None:
               for _ in range(64):
+                  if deadline is not None and time.monotonic() >= deadline:
+                      refuse("candidate descendants survived forced cleanup")
                   subprocess.run(
                       [sudo, "-n", "--", pkill, "-KILL", "-u", str(uid)],
                       check=False,
@@ -2609,7 +3757,7 @@ jobs:
                   run_candidate_child(sys.argv[2])
               if len(sys.argv) != 2:
                   refuse("expected one encoded command payload")
-              argv, timeout_ms = decode_request(sys.argv[1])
+              argv, timeout_ms, kill_signal, stdout_mode, stderr_mode = decode_request(sys.argv[1])
               uid = required_identity("RUCKSACK_CANDIDATE_UID")
               gid = required_identity("RUCKSACK_CANDIDATE_GID")
               home = required_path("RUCKSACK_CANDIDATE_HOME")
@@ -2661,11 +3809,18 @@ jobs:
                   uid=uid,
                   gid=gid,
               )
+              status_descriptor, exec_status_path = tempfile.mkstemp(
+                  prefix=".candidate-status-",
+                  dir=os.path.dirname(config),
+              )
+              os.fchmod(status_descriptor, 0o600)
+              os.close(status_descriptor)
               isolated = [
                   sudo,
                   "-n",
                   "--",
                   trusted_env,
+                  f"RUCKSACK_EXEC_STATUS_PATH={exec_status_path}",
                   f"LD_LIBRARY_PATH={python_library_path}",
                   python,
                   "-I",
@@ -2674,68 +3829,254 @@ jobs:
                   "--child",
                   config,
               ]
-              with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
-                  timed_out = False
-                  returncode = 125
-                  try:
-                      child = subprocess.Popen(
-                          isolated,
-                          cwd=os.getcwd(),
-                          env={
-                              "HOME": "/root",
-                              "LANG": "C",
-                              "LC_ALL": "C",
-                              "PATH": "/usr/bin:/bin",
-                          },
-                          stdin=subprocess.DEVNULL,
-                          stdout=stdout,
-                          stderr=stderr,
-                          start_new_session=True,
-                      )
-                      try:
-                          returncode = child.wait(
-                              timeout=None if timeout_ms is None else timeout_ms / 1000
-                          )
-                      except subprocess.TimeoutExpired:
+              child = None
+              selector = selectors.DefaultSelector()
+              stdout_chunks: list[bytes] = []
+              stderr_chunks: list[bytes] = []
+              captured_bytes = 0
+              timed_out = False
+              output_limited = False
+              termination_reason: str | None = None
+              kill_sent = False
+              cleanup_deadline: float | None = None
+              returncode = 125
+              exec_status = b""
+
+              def begin_termination(reason: str) -> None:
+                  nonlocal termination_reason, cleanup_deadline
+                  if termination_reason is not None:
+                      return
+                  termination_reason = reason
+                  kill_isolated_group(
+                      sudo=sudo,
+                      pkill=pkill,
+                      process_group=child.pid,
+                      signal_name=kill_signal,
+                      required=True,
+                  )
+                  cleanup_deadline = time.monotonic() + TERM_GRACE_SECONDS
+
+              try:
+                  child_environment = {
+                      "HOME": "/root",
+                      "LANG": "C",
+                      "LC_ALL": "C",
+                      "PATH": "/usr/bin:/bin",
+                      "RUCKSACK_EXEC_STATUS_PATH": exec_status_path,
+                  }
+                  child = subprocess.Popen(
+                      isolated,
+                      cwd=os.getcwd(),
+                      env=child_environment,
+                      stdin=subprocess.DEVNULL,
+                      stdout=subprocess.PIPE,
+                      stderr=subprocess.PIPE,
+                      start_new_session=True,
+                      close_fds=True,
+                  )
+                  assert child.stdout is not None and child.stderr is not None
+                  for stream in (child.stdout, child.stderr):
+                      os.set_blocking(stream.fileno(), False)
+                      selector.register(stream, selectors.EVENT_READ)
+                  deadline = (
+                      None
+                      if timeout_ms is None
+                      else time.monotonic() + (timeout_ms / 1000)
+                  )
+                  while selector.get_map() or child.poll() is None:
+                      now = time.monotonic()
+                      if (
+                          deadline is not None
+                          and termination_reason is None
+                          and now >= deadline
+                      ):
                           timed_out = True
+                          begin_termination("timeout")
+                      if (
+                          termination_reason is not None
+                          and not kill_sent
+                          and cleanup_deadline is not None
+                          and now >= cleanup_deadline
+                      ):
                           kill_isolated_group(
                               sudo=sudo,
                               pkill=pkill,
                               process_group=child.pid,
+                              signal_name="SIGKILL",
                               required=True,
                           )
-                          try:
-                              returncode = child.wait(timeout=5)
-                          except subprocess.TimeoutExpired:
-                              refuse("privileged candidate process group survived forced cleanup")
-                  finally:
-                      if "child" in locals():
+                          kill_sent = True
+                          cleanup_deadline = now + CLEANUP_TIMEOUT_SECONDS
+                      elif (
+                          kill_sent
+                          and cleanup_deadline is not None
+                          and now >= cleanup_deadline
+                          and (child.poll() is None or selector.get_map())
+                      ):
+                          refuse("privileged candidate process group survived forced cleanup")
+
+                      if child.poll() is not None and termination_reason is None:
+                          # A candidate command can leave descendants holding the
+                          # pipes open.  Kill the complete group before waiting for EOF.
+                          termination_reason = "completed"
                           kill_isolated_group(
                               sudo=sudo,
                               pkill=pkill,
                               process_group=child.pid,
+                              signal_name="SIGKILL",
                               required=False,
                           )
+                          kill_sent = True
+                          cleanup_deadline = now + CLEANUP_TIMEOUT_SECONDS
+
+                      wait_for = 0.05
+                      if deadline is not None and termination_reason is None:
+                          wait_for = max(0.0, min(wait_for, deadline - now))
+                      if cleanup_deadline is not None:
+                          wait_for = max(0.0, min(wait_for, cleanup_deadline - now))
+                      events = selector.select(wait_for) if selector.get_map() else []
+                      for key, _ in events:
+                          stream = key.fileobj
+                          try:
+                              block = os.read(stream.fileno(), 65536)
+                          except BlockingIOError:
+                              continue
+                          if not block:
+                              selector.unregister(stream)
+                              stream.close()
+                              continue
+                          remaining = MAX_OUTPUT_BYTES - captured_bytes
+                          if remaining > 0 and not output_limited:
+                              retained = block[:remaining]
+                              if stream is child.stdout:
+                                  stdout_chunks.append(retained)
+                              else:
+                                  stderr_chunks.append(retained)
+                              captured_bytes += len(retained)
+                          if len(block) > remaining:
+                              if not output_limited:
+                                  output_limited = True
+                                  begin_termination("output")
+
+                  returncode = child.wait(timeout=1)
+              finally:
+                  if child is not None:
                       try:
-                          os.unlink(config)
-                          fsync_directory(os.path.dirname(config))
-                      except FileNotFoundError:
+                          if child.poll() is None:
+                              kill_isolated_group(
+                                  sudo=sudo,
+                                  pkill=pkill,
+                                  process_group=child.pid,
+                                  signal_name="SIGKILL",
+                                  required=False,
+                              )
+                          child.wait(timeout=CLEANUP_TIMEOUT_SECONDS)
+                      except subprocess.TimeoutExpired:
+                          refuse("privileged candidate process group survived forced cleanup")
+                      except OSError as error:
+                          refuse(f"cannot reap privileged candidate process group: {error}")
+                  for stream in tuple(selector.get_map().values()):
+                      try:
+                          selector.unregister(stream.fileobj)
+                      except Exception:
                           pass
-                      reap_orphans()
-                      reap_identity(sudo=sudo, pkill=pkill, pgrep=pgrep, uid=uid)
-                  stdout.seek(0)
-                  stderr.seek(0)
-                  sys.stdout.buffer.write(stdout.read())
-                  sys.stderr.buffer.write(stderr.read())
+                      try:
+                          stream.fileobj.close()
+                      except OSError:
+                          pass
+                  selector.close()
+                  try:
+                      with open(exec_status_path, "rb") as status_stream:
+                          exec_status = status_stream.read(4096)
+                  except FileNotFoundError:
+                      pass
+                  try:
+                      os.unlink(exec_status_path)
+                  except FileNotFoundError:
+                      pass
+                  try:
+                      os.unlink(config)
+                  except FileNotFoundError:
+                      pass
+                  fsync_directory(os.path.dirname(config))
+                  reap_orphans()
+                  reap_identity(
+                      sudo=sudo,
+                      pkill=pkill,
+                      pgrep=pgrep,
+                      uid=uid,
+                      deadline=time.monotonic() + CLEANUP_TIMEOUT_SECONDS,
+                  )
+
+              child_error = None
+              if exec_status:
+                  try:
+                      parsed_status = json.loads(exec_status.decode("ascii"))
+                  except (UnicodeError, ValueError, json.JSONDecodeError):
+                      refuse("candidate exec status channel was malformed")
+                  if not isinstance(parsed_status, dict) or parsed_status.get("kind") not in {
+                      "exec",
+                      "refusal",
+                  }:
+                      refuse("candidate exec status channel was invalid")
+                  if parsed_status["kind"] == "refusal":
+                      refuse(parsed_status.get("message", "candidate runner refused"))
+                  child_error = {
+                      "code": "CHILD_PROCESS",
+                      "message": bounded_message(parsed_status.get("message", "candidate command failed to start")),
+                  }
+
+              status: int | None
+              child_signal: str | None = None
+              error: dict[str, str] | None = child_error
               if timed_out:
-                  return 124
-              if returncode < 0:
-                  return min(255, 128 - returncode)
-              return min(255, returncode)
+                  status = None
+                  child_signal = kill_signal
+                  error = {"code": "ETIMEDOUT", "message": "candidate command timed out"}
+              elif output_limited:
+                  status = None
+                  child_signal = kill_signal
+                  error = {"code": "E2BIG", "message": "candidate command output exceeded 64 MiB"}
+              elif child_error is not None:
+                  status = None
+              elif returncode < 0:
+                  status = None
+                  try:
+                      child_signal = signal.Signals(-returncode).name
+                  except (ValueError, TypeError):
+                      refuse("candidate process returned an unknown signal")
+              else:
+                  status = min(255, returncode)
+              emit_frame(
+                  {
+                      "version": 1,
+                      "kind": "result",
+                      "status": status,
+                      "signal": child_signal,
+                      "error": error,
+                      "timed_out": timed_out,
+                      "output_limited": output_limited,
+                  }
+              )
+              sys.stdout.buffer.write(b"".join(stdout_chunks))
+              sys.stderr.buffer.write(b"".join(stderr_chunks))
+              sys.stdout.buffer.flush()
+              sys.stderr.buffer.flush()
+              if os.environ.get("RUCKSACK_RUNNER_FRAME_FD") != "3":
+                  if timed_out:
+                      return 124
+                  if output_limited:
+                      return 125
+              return status if status is not None else 0
 
 
           if __name__ == "__main__":
-              raise SystemExit(main())
+              try:
+                  raise SystemExit(main())
+              except SystemExit:
+                  raise
+              except BaseException as error:
+                  refuse(f"runner internal failure: {error}")
           RUCKSACK_CANDIDATE_RUNNER_PY
           "$RUCKSACK_TRUSTED_CHMOD" 0500 -- "$candidate_runner_source"
           "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_INSTALL"             -o "$trusted_owner_uid" -g "$trusted_owner_gid" -m 0500 --             "$candidate_runner_source" "$RUCKSACK_CANDIDATE_RUNNER"
@@ -2784,6 +4125,10 @@ jobs:
           const { spawnSync } = require("node:child_process");
           const { createHash } = require("node:crypto");
           const path = require("node:path");
+          const vm = require("node:vm");
+
+          const TRUSTED_CLOSURE_BUILTINS = ["node:child_process","node:crypto","node:fs","node:path"];
+          const TRUSTED_EVIDENCE_MATERIALIZER_SOURCE = "#!/usr/bin/env python3\nfrom __future__ import annotations\n\nimport base64\nimport hashlib\nimport json\nimport os\nimport stat\nimport sys\n\n\nMAX_FILES = 4096\nMAX_DIRECTORIES = 8192\nMAX_BYTES = 64 * 1024 * 1024\nNOFOLLOW = getattr(os, \"O_NOFOLLOW\", None)\nDIRECTORY = getattr(os, \"O_DIRECTORY\", None)\nPATH_DESCRIPTOR = getattr(os, \"O_PATH\", getattr(os, \"O_SEARCH\", None))\n\n\ndef refuse(message: object) -> \"NoReturn\":\n    text = str(message).replace(\"\\x00\", \" \")[:512]\n    print(f\"trusted evidence materializer refused: {text}\", file=sys.stderr)\n    raise SystemExit(1)\n\n\ndef validate_logical(value: object, label: str) -> str:\n    if (\n        not isinstance(value, str)\n        or not value.startswith(\".agent/evidence/\")\n        or \"\\x00\" in value\n        or \"\\\\\" in value\n        or any(part in {\"\", \".\", \"..\"} for part in value.split(\"/\"))\n        or len(value.encode(\"utf-8\")) > 4096\n    ):\n        refuse(f\"{label} is not one canonical logical evidence path\")\n    return value\n\n\ndef identity(details: os.stat_result) -> tuple[int, int, int, int, int, int, int]:\n    return (\n        details.st_dev,\n        details.st_ino,\n        details.st_mode,\n        details.st_uid,\n        details.st_gid,\n        details.st_nlink,\n        details.st_size,\n    )\n\n\ndef equal_identity(left: os.stat_result, right: os.stat_result) -> bool:\n    return identity(left) == identity(right)\n\n\ndef directory_identity(details: os.stat_result) -> tuple[int, int, int, int, int]:\n    return (\n        details.st_dev,\n        details.st_ino,\n        details.st_mode,\n        details.st_uid,\n        details.st_gid,\n    )\n\n\ndef open_root(\n    root: str,\n) -> tuple[list[int], list[tuple[int, int, int, int, int]], list[str], int, int, str]:\n    if (\n        not isinstance(root, str)\n        or not root.startswith(\"/\")\n        or \"\\x00\" in root\n        or os.path.normpath(root) != root\n    ):\n        refuse(\"trusted evidence root must be one normalized absolute path\")\n    components = root.split(\"/\")[1:]\n    if not components or any(not component or component in {\".\", \"..\"} for component in components):\n        refuse(\"trusted evidence root contains an unsafe component\")\n    descriptors: list[int] = []\n    ancestor_identities: list[tuple[int, int, int, int, int]] = []\n    ancestor_components = components[:-1]\n    path_flags = PATH_DESCRIPTOR | DIRECTORY | NOFOLLOW\n    try:\n        descriptors.append(os.open(\"/\", path_flags))\n        current = descriptors[0]\n        metadata = os.fstat(current)\n        if not stat.S_ISDIR(metadata.st_mode):\n            refuse(\"trusted evidence root ancestor is not a real directory\")\n        ancestor_identities.append(directory_identity(metadata))\n        for component in ancestor_components:\n            child = os.open(\n                component,\n                path_flags,\n                dir_fd=current,\n            )\n            descriptors.append(child)\n            metadata = os.fstat(child)\n            if not stat.S_ISDIR(metadata.st_mode):\n                refuse(\"trusted evidence root ancestor is not a real directory\")\n            ancestor_identities.append(directory_identity(metadata))\n            current = child\n        parent = current\n        root_fd = os.open(\n            components[-1],\n            os.O_RDONLY | DIRECTORY | NOFOLLOW,\n            dir_fd=parent,\n        )\n        descriptors.append(root_fd)\n        root_metadata = os.fstat(root_fd)\n        if not stat.S_ISDIR(root_metadata.st_mode):\n            refuse(\"trusted evidence root is not a real directory\")\n        return (\n            descriptors,\n            ancestor_identities,\n            ancestor_components,\n            parent,\n            root_fd,\n            components[-1],\n        )\n    except (OSError, ValueError) as error:\n        for descriptor in reversed(descriptors):\n            try:\n                os.close(descriptor)\n            except OSError:\n                pass\n        refuse(f\"trusted evidence root cannot be opened safely: {error}\")\n\n\ndef recheck_ancestors(\n    descriptors: list[int],\n    identities: list[tuple[int, int, int, int, int]],\n    components: list[str],\n) -> None:\n    for descriptor, expected in zip(descriptors, identities, strict=True):\n        metadata = os.fstat(descriptor)\n        if not stat.S_ISDIR(metadata.st_mode) or directory_identity(metadata) != expected:\n            refuse(\"trusted evidence root ancestor identity changed\")\n    reopened: list[int] = []\n    path_flags = PATH_DESCRIPTOR | DIRECTORY | NOFOLLOW\n    try:\n        current = os.open(\"/\", path_flags)\n        reopened.append(current)\n        metadata = os.fstat(current)\n        if (\n            not stat.S_ISDIR(metadata.st_mode)\n            or directory_identity(metadata) != identities[0]\n        ):\n            refuse(\"trusted evidence root ancestor path changed\")\n        for index, component in enumerate(components, start=1):\n            child = os.open(component, path_flags, dir_fd=current)\n            reopened.append(child)\n            current = child\n            metadata = os.fstat(child)\n            if (\n                not stat.S_ISDIR(metadata.st_mode)\n                or directory_identity(metadata) != identities[index]\n            ):\n                refuse(\"trusted evidence root ancestor path changed\")\n    except (OSError, ValueError) as error:\n        refuse(f\"trusted evidence root ancestor path changed: {error}\")\n    finally:\n        for descriptor in reversed(reopened):\n            try:\n                os.close(descriptor)\n            except OSError:\n                pass\n\n\ndef main() -> int:\n    if (\n        NOFOLLOW is None\n        or DIRECTORY is None\n        or PATH_DESCRIPTOR is None\n        or os.open not in os.supports_dir_fd\n        or os.mkdir not in os.supports_dir_fd\n        or os.stat not in os.supports_dir_fd\n        or os.listdir not in os.supports_fd\n    ):\n        refuse(\"descriptor-relative no-follow primitives are unavailable\")\n    try:\n        payload = json.load(sys.stdin)\n    except Exception as error:\n        refuse(f\"materializer request is invalid: {error}\")\n    if (\n        not isinstance(payload, dict)\n        or set(payload) != {\"root\", \"directories\", \"files\"}\n        or not isinstance(payload[\"directories\"], list)\n        or not isinstance(payload[\"files\"], list)\n        or len(payload[\"files\"]) > MAX_FILES\n    ):\n        refuse(\"materializer request has an invalid shape\")\n\n    expected_dirs: set[str] = set()\n    for raw_directory in payload[\"directories\"]:\n        if raw_directory == \".agent\" or raw_directory == \".agent/evidence\":\n            continue\n        directory = validate_logical(raw_directory, \"evidence directory\")\n        parts = directory.split(\"/\")[2:]\n        for index in range(1, len(parts) + 1):\n            expected_dirs.add(\"/\".join(parts[:index]))\n        if len(expected_dirs) > MAX_DIRECTORIES:\n            refuse(\"materializer directory count exceeds its bound\")\n    expected_files: dict[str, bytes] = {}\n    total_bytes = 0\n    for item in payload[\"files\"]:\n        if (\n            not isinstance(item, dict)\n            or set(item) != {\"path\", \"base64\", \"sha256\"}\n            or not isinstance(item[\"base64\"], str)\n            or not isinstance(item[\"sha256\"], str)\n            or len(item[\"sha256\"]) != 64\n        ):\n            refuse(\"materializer file entry is invalid\")\n        logical = validate_logical(item[\"path\"], \"evidence file\")\n        relative = \"/\".join(logical.split(\"/\")[2:])\n        if relative in expected_files:\n            refuse(\"materializer file entries are duplicated\")\n        try:\n            value = base64.b64decode(item[\"base64\"].encode(\"ascii\"), validate=True)\n        except (UnicodeError, ValueError) as error:\n            refuse(f\"materializer file bytes are invalid: {error}\")\n        if len(value) > MAX_BYTES or total_bytes + len(value) > MAX_BYTES:\n            refuse(\"materializer output exceeds 64 MiB\")\n        if hashlib.sha256(value).hexdigest() != item[\"sha256\"]:\n            refuse(\"materializer file digest does not match\")\n        expected_files[relative] = value\n        total_bytes += len(value)\n        parts = relative.split(\"/\")\n        for index in range(1, len(parts)):\n            expected_dirs.add(\"/\".join(parts[:index]))\n        if len(expected_dirs) > MAX_DIRECTORIES:\n            refuse(\"materializer directory count exceeds its bound\")\n\n    (\n        descriptors,\n        ancestor_identities,\n        ancestor_components,\n        parent_fd,\n        root_fd,\n        root_name,\n    ) = open_root(payload[\"root\"])\n    ancestor_descriptors = descriptors[:-1]\n    retained_dirs: dict[str, int] = {\"\": root_fd}\n    retained_files: dict[str, int] = {}\n    try:\n        root_before = os.fstat(root_fd)\n        owner_uid = os.getuid()\n        owner_gid = root_before.st_gid\n        if (\n            not stat.S_ISDIR(root_before.st_mode)\n            or root_before.st_uid != owner_uid\n            or root_before.st_gid != owner_gid\n            or stat.S_IMODE(root_before.st_mode) != 0o700\n            or root_before.st_nlink < 2\n            or os.listdir(root_fd)\n        ):\n            refuse(\"trusted evidence root must be one empty owner-only directory\")\n\n        for relative in sorted(expected_dirs, key=lambda value: (value.count(\"/\"), value)):\n            parts = relative.split(\"/\")\n            parent_key = \"/\".join(parts[:-1])\n            name = parts[-1]\n            parent_descriptor = retained_dirs.get(parent_key)\n            if parent_descriptor is None:\n                refuse(\"materializer directory parent is not retained\")\n            try:\n                os.mkdir(name, 0o700, dir_fd=parent_descriptor)\n            except OSError as error:\n                refuse(f\"materializer directory creation failed: {error}\")\n            descriptor = os.open(name, os.O_RDONLY | DIRECTORY | NOFOLLOW, dir_fd=parent_descriptor)\n            descriptors.append(descriptor)\n            os.fchown(descriptor, owner_uid, owner_gid)\n            os.fchmod(descriptor, 0o700)\n            opened = os.fstat(descriptor)\n            named = os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)\n            if (\n                not stat.S_ISDIR(opened.st_mode)\n                or opened.st_nlink < 2\n                or opened.st_uid != owner_uid\n                or opened.st_gid != owner_gid\n                or stat.S_IMODE(opened.st_mode) != 0o700\n                or not equal_identity(opened, named)\n            ):\n                refuse(\"materializer directory identity changed\")\n            retained_dirs[relative] = descriptor\n\n        for relative, value in sorted(expected_files.items()):\n            parts = relative.split(\"/\")\n            parent_key = \"/\".join(parts[:-1])\n            name = parts[-1]\n            parent_descriptor = retained_dirs.get(parent_key)\n            if parent_descriptor is None:\n                refuse(\"materializer file parent is not retained\")\n            descriptor = os.open(\n                name,\n                os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW,\n                0o600,\n                dir_fd=parent_descriptor,\n            )\n            descriptors.append(descriptor)\n            offset = 0\n            while offset < len(value):\n                written = os.write(descriptor, value[offset:])\n                if written <= 0:\n                    refuse(\"materializer file write made no progress\")\n                offset += written\n            os.fchown(descriptor, owner_uid, owner_gid)\n            os.fchmod(descriptor, 0o600)\n            os.fsync(descriptor)\n            opened = os.fstat(descriptor)\n            named = os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)\n            if (\n                not stat.S_ISREG(opened.st_mode)\n                or opened.st_nlink != 1\n                or opened.st_uid != owner_uid\n                or opened.st_gid != owner_gid\n                or stat.S_IMODE(opened.st_mode) != 0o600\n                or not equal_identity(opened, named)\n            ):\n                refuse(\"materializer file identity changed\")\n            retained_files[relative] = descriptor\n\n        expected_children: dict[str, set[str]] = {key: set() for key in [\"\", *expected_dirs]}\n        for relative in expected_dirs:\n            parent_key, name = relative.rsplit(\"/\", 1) if \"/\" in relative else (\"\", relative)\n            expected_children[parent_key].add(name)\n        for relative in expected_files:\n            parent_key, name = relative.rsplit(\"/\", 1) if \"/\" in relative else (\"\", relative)\n            expected_children[parent_key].add(name)\n        for relative, expected_names in expected_children.items():\n            descriptor = retained_dirs[relative]\n            actual_names = set(os.listdir(descriptor))\n            if actual_names != expected_names:\n                refuse(\"materializer exact tree contains an unexpected entry\")\n            for name in actual_names:\n                child_relative = f\"{relative}/{name}\" if relative else name\n                named = os.stat(name, dir_fd=descriptor, follow_symlinks=False)\n                if child_relative in retained_dirs:\n                    opened = os.fstat(retained_dirs[child_relative])\n                    if not stat.S_ISDIR(opened.st_mode) or not equal_identity(opened, named):\n                        refuse(\"materializer directory rewalk identity changed\")\n                elif child_relative in retained_files:\n                    opened = os.fstat(retained_files[child_relative])\n                    if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1 or not equal_identity(opened, named):\n                        refuse(\"materializer file rewalk identity changed\")\n                else:\n                    refuse(\"materializer exact tree contains an unknown entry\")\n        for relative in sorted(retained_dirs, key=lambda value: (value.count(\"/\"), value), reverse=True):\n            os.fsync(retained_dirs[relative])\n        root_after = os.fstat(root_fd)\n        recheck_ancestors(\n            ancestor_descriptors,\n            ancestor_identities,\n            ancestor_components,\n        )\n        named_root = os.stat(root_name, dir_fd=parent_fd, follow_symlinks=False)\n        if not equal_identity(root_after, named_root):\n            refuse(\"trusted evidence named root identity changed\")\n        print(json.dumps({\"ok\": True}, separators=(\",\", \":\")))\n        return 0\n    finally:\n        for descriptor in reversed(descriptors):\n            try:\n                os.close(descriptor)\n            except OSError:\n                pass\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n";
 
           function fail(message) {
             console.error(`trusted evidence launcher refused: ${message}`);
@@ -2811,6 +4156,39 @@ jobs:
               delete commandEnvironment[name];
             }
           }
+          function trustedProducerEnvironment(base) {
+            const environment = Object.create(null);
+            for (const name of [
+              "AGENT_PROVIDER",
+              "GITHUB_ACTIONS",
+              "GITHUB_HEAD_REF",
+              "GITHUB_HEAD_SHA",
+              "GITHUB_REF_NAME",
+              "GITHUB_REPOSITORY",
+              "npm_config_e2e",
+              "npm_config_only",
+            ]) {
+              if (Object.hasOwn(base, name)) {
+                environment[name] = String(base[name]);
+              }
+            }
+            const provider = environment.AGENT_PROVIDER;
+            if (
+              provider !== undefined &&
+              (Buffer.byteLength(provider, "utf8") > 128 || /[\u0000-\u001f\u007f]/.test(provider))
+            ) {
+              throw new Error("trusted producer metadata: AGENT_PROVIDER is invalid");
+            }
+            const repository = environment.GITHUB_REPOSITORY;
+            if (
+              repository !== undefined &&
+              (repository.length > 255 || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository))
+            ) {
+              throw new Error("trusted producer metadata: GITHUB_REPOSITORY is invalid");
+            }
+            environment.RUCKSACK_PRODUCER_NODE = process.execPath;
+            return environment;
+          }
 
           const candidateGit = String(process.env.RUCKSACK_PRODUCER_GIT || "");
           const candidateRunner = String(process.env.RUCKSACK_CANDIDATE_RUNNER || "");
@@ -2820,6 +4198,9 @@ jobs:
           );
           const trustedEvidenceRoot = String(process.env.RUCKSACK_TRUSTED_EVIDENCE_ROOT || "");
           const trustedProducerRootInput = String(process.env.RUCKSACK_TRUSTED_PRODUCER_ROOT || "");
+          const trustedProducerClosureManifestInput = String(
+            process.env.RUCKSACK_TRUSTED_PRODUCER_CLOSURE_MANIFEST || "",
+          );
           const candidateDependencyRoot = String(process.env.RUCKSACK_CANDIDATE_DEPENDENCY_ROOT || "");
           const trustedSudo = String(process.env.RUCKSACK_TRUSTED_SUDO || "");
           const trustedEnv = String(process.env.RUCKSACK_TRUSTED_ENV || "");
@@ -2838,17 +4219,24 @@ jobs:
           }
           if (!trustedEvidenceRoot.startsWith("/")) fail("trusted evidence root must be one absolute path");
           if (!trustedProducerRootInput.startsWith("/")) fail("trusted producer root must be one absolute path");
+          if (!trustedProducerClosureManifestInput.startsWith("/")) {
+            fail("trusted producer closure manifest must be one absolute path");
+          }
           if (!candidateDependencyRoot.startsWith("/")) fail("candidate dependency root must be one absolute path");
           if (!trustedSudo.startsWith("/")) fail("trusted sudo must be one absolute path");
           if (!trustedEnv.startsWith("/")) fail("trusted env executable must be one absolute path");
           if (!/^[0-9a-f]{40}$/.test(expectedHead)) fail("event head must be one full commit SHA");
-          if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(expectedRepository)) {
+          if (
+            expectedRepository.length > 255 ||
+            !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(expectedRepository)
+          ) {
             fail("expected repository must be one OWNER/REPO slug");
           }
           if (!Number.isSafeInteger(candidateUid) || candidateUid <= 0) fail("candidate uid must be positive");
           if (!Number.isSafeInteger(candidateGid) || candidateGid <= 0) fail("candidate gid must be positive");
 
           const MAX_PINNED_FILE_BYTES = 128 * 1024 * 1024;
+          const MAX_CLOSURE_TOTAL_BYTES = 16 * 1024 * 1024;
           const MAX_PYTHON_ENTRY_COUNT = 50000;
           const MAX_PYTHON_DEPTH = 64;
           const MAX_PYTHON_FILE_BYTES = 128 * 1024 * 1024;
@@ -2919,6 +4307,8 @@ jobs:
               gid: stats.gid,
               nlink: stats.nlink,
               size: stats.size,
+              mtimeMs: stats.mtimeMs,
+              ctimeMs: stats.ctimeMs,
               digest,
             };
           }
@@ -2939,10 +4329,243 @@ jobs:
               mode: stats.mode,
               uid: stats.uid,
               gid: stats.gid,
+              mtimeMs: stats.mtimeMs,
+              ctimeMs: stats.ctimeMs,
             };
           }
 
+          function samePin(actual, expected) {
+            return Object.keys(expected).every((field) => actual[field] === expected[field]);
+          }
+
           const pinnedGit = pinnedRegularFile(candidateGit, "trusted git executable");
+          function trustedClosureManifest() {
+            let descriptor = -1;
+            try {
+              descriptor = fs.openSync(
+                trustedProducerClosureManifestInput,
+                fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+              );
+              const opened = fs.fstatSync(descriptor);
+              if (!opened.isFile() || opened.nlink !== 1 || opened.size > 1024 * 1024) {
+                fail("trusted producer closure manifest is not one bounded regular file");
+              }
+              const chunks = [];
+              const buffer = Buffer.allocUnsafe(64 * 1024);
+              let total = 0;
+              for (;;) {
+                const count = fs.readSync(descriptor, buffer, 0, buffer.length, null);
+                if (count === 0) break;
+                total += count;
+                if (total > 1024 * 1024) fail("trusted producer closure manifest is oversized");
+                chunks.push(Buffer.from(buffer.subarray(0, count)));
+              }
+              if (total !== opened.size) fail("trusted producer closure manifest changed while reading");
+              const after = fs.fstatSync(descriptor);
+              if (!sameFileIdentity(after, opened)) {
+                fail("trusted producer closure manifest changed while reading");
+              }
+              let parsed;
+              try {
+                parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+              } catch (error) {
+                fail(`trusted producer closure manifest is invalid JSON: ${error.message}`);
+              }
+              if (
+                !parsed ||
+                typeof parsed !== "object" ||
+                Array.isArray(parsed) ||
+                Object.keys(parsed).sort().join(",") !== "entries,version" ||
+                parsed.version !== 1 ||
+                !Array.isArray(parsed.entries)
+              ) {
+                fail("trusted producer closure manifest has an unsupported shape");
+              }
+              if (parsed.entries.length === 0 || parsed.entries.length > 128) {
+                fail("trusted producer closure manifest has an invalid entry count");
+              }
+              let previous = "";
+              let producerCount = 0;
+              let declaredBytes = 0;
+              const entries = [];
+              for (const entry of parsed.entries) {
+                if (
+                  !entry ||
+                  typeof entry !== "object" ||
+                  Array.isArray(entry) ||
+                  Object.keys(entry).sort().join(",") !== "bytes,path,sha256" ||
+                  typeof entry.path !== "string" ||
+                  !entry.path ||
+                  entry.path.startsWith("/") ||
+                  entry.path.includes("\\") ||
+                  entry.path.includes("\0") ||
+                  !/^[\x20-\x7e]+$/.test(entry.path) ||
+                  entry.path.split("/").some((part) => !part || part === "." || part === "..") ||
+                  entry.path.split("/").includes("node_modules") ||
+                  entry.path.split("/").length > 32 ||
+                  (!/\.(?:cjs|js|json)$/.test(entry.path) && entry.path !== "scripts/agent-evidence") ||
+                  Buffer.byteLength(entry.path, "utf8") > 4096 ||
+                  entry.path <= previous ||
+                  !Number.isSafeInteger(entry.bytes) ||
+                  entry.bytes < 0 ||
+                  entry.bytes > 1024 * 1024 ||
+                  typeof entry.sha256 !== "string" ||
+                  !/^[0-9a-f]{64}$/.test(entry.sha256)
+                ) {
+                  fail("trusted producer closure manifest entries are not canonical");
+                }
+                declaredBytes += entry.bytes;
+                if (declaredBytes > MAX_CLOSURE_TOTAL_BYTES) {
+                  fail(`trusted producer closure manifest exceeds ${MAX_CLOSURE_TOTAL_BYTES} aggregate bytes`);
+                }
+                if (entry.path === "scripts/agent-evidence") producerCount += 1;
+                previous = entry.path;
+                entries.push(entry);
+              }
+              if (producerCount !== 1) {
+                fail("trusted producer closure manifest must contain one producer");
+              }
+              return entries;
+            } finally {
+              if (descriptor >= 0) fs.closeSync(descriptor);
+            }
+          }
+
+          function trustedClosureAncestry(root, target, relative, stage) {
+            const names = [root, ...relative.split("/").map((_, index, values) =>
+              path.join(root, ...values.slice(0, index + 1)),
+            )];
+            return names.map((entry, index) => {
+              const stats = fs.lstatSync(entry);
+              if (
+                stats.isSymbolicLink() ||
+                (index < names.length - 1 && !stats.isDirectory()) ||
+                (stats.mode & 0o022) !== 0 ||
+                fs.realpathSync(entry) !== entry
+              ) {
+                fail(`${stage}: trusted producer closure ancestry changed`);
+              }
+              return {
+                path: index === 0 ? "" : relative.split("/").slice(0, index).join("/"),
+                dev: stats.dev,
+                ino: stats.ino,
+                mode: stats.mode,
+                uid: stats.uid,
+                gid: stats.gid,
+                nlink: stats.nlink,
+                size: stats.size,
+                mtimeMs: stats.mtimeMs,
+                ctimeMs: stats.ctimeMs,
+              };
+            });
+          }
+
+          function sameTrustedClosureAncestry(left, right) {
+            if (left.length !== right.length) return false;
+            return left.every((entry, index) =>
+              [
+                "path", "dev", "ino", "mode", "uid", "gid", "nlink", "size",
+                "mtimeMs", "ctimeMs",
+              ]
+                .every((field) => entry[field] === right[index][field]),
+            );
+          }
+
+          function trustedClosureTree(stage, entries) {
+            const expected = new Map(entries.map((entry) => [entry.path, entry]));
+            const actualFiles = new Set();
+            const actualDirectories = new Map();
+            function visit(directory, relative) {
+              const stats = fs.lstatSync(directory);
+              if (
+                !stats.isDirectory() ||
+                stats.isSymbolicLink() ||
+                stats.uid !== 0 ||
+                stats.gid !== 0 ||
+                (stats.mode & 0o777) !== 0o555 ||
+                candidateCanWrite(stats)
+              ) {
+                fail(`${stage}: trusted producer closure directory is mutable`);
+              }
+              actualDirectories.set(relative, {
+                dev: stats.dev,
+                ino: stats.ino,
+                mode: stats.mode,
+                uid: stats.uid,
+                gid: stats.gid,
+                nlink: stats.nlink,
+                size: stats.size,
+                mtimeMs: stats.mtimeMs,
+                ctimeMs: stats.ctimeMs,
+              });
+              for (const leaf of fs.readdirSync(directory, { encoding: "utf8" }).sort()) {
+                if (!leaf || leaf.includes("/") || leaf.includes("\\") || /[\u0000-\u001f\u007f]/.test(leaf)) {
+                  fail(`${stage}: trusted producer closure contains an unsafe filename`);
+                }
+                const childRelative = relative ? `${relative}/${leaf}` : leaf;
+                const child = path.join(directory, leaf);
+                const childStats = fs.lstatSync(child);
+                if (childStats.isDirectory() && !childStats.isSymbolicLink()) {
+                  visit(child, childRelative);
+                  continue;
+                }
+                const entry = expected.get(childRelative);
+                if (!entry || !childStats.isFile() || childStats.isSymbolicLink()) {
+                  fail(`${stage}: trusted producer closure contains an unexpected entry`);
+                }
+                if (
+                  childStats.uid !== 0 ||
+                  childStats.gid !== 0 ||
+                  (childStats.mode & 0o777) !== 0o444 ||
+                  childStats.nlink !== 1
+                ) {
+                  fail(`${stage}: trusted producer closure file metadata is unsafe`);
+                }
+                if (candidateCanWrite(childStats)) {
+                  fail(`${stage}: candidate can write trusted producer closure file`);
+                }
+                const pin = pinnedRegularFile(child, `${stage}: trusted producer closure ${childRelative}`);
+                if (pin.size !== entry.bytes || pin.digest !== entry.sha256) {
+                  fail(`${stage}: trusted producer closure ${childRelative} changed`);
+                }
+                actualFiles.add(childRelative);
+              }
+            }
+            visit(trustedProducerRoot, "");
+            if (
+              actualFiles.size !== expected.size ||
+              [...expected.keys()].some((relative) => !actualFiles.has(relative))
+            ) {
+              fail(`${stage}: trusted producer closure entry set changed`);
+            }
+            return actualDirectories;
+          }
+
+          const trustedProducerClosureEntries = trustedClosureManifest();
+          const pinnedTrustedProducerClosureManifest = pinnedRegularFile(
+            trustedProducerClosureManifestInput,
+            "trusted producer closure manifest",
+          );
+          if ((pinnedTrustedProducerClosureManifest.mode & 0o222) !== 0) {
+            fail("trusted producer closure manifest must be immutable");
+          }
+          if (
+            pinnedTrustedProducerClosureManifest.uid !== 0 ||
+            pinnedTrustedProducerClosureManifest.gid !== 0 ||
+            pinnedTrustedProducerClosureManifest.nlink !== 1
+          ) {
+            fail("trusted producer closure manifest must be root-owned and unshared");
+          }
+          const trustedProducerClosureManifestParent = path.dirname(
+            trustedProducerClosureManifestInput,
+          );
+          const pinnedTrustedProducerClosureManifestAncestry = trustedClosureAncestry(
+            trustedProducerClosureManifestParent,
+            trustedProducerClosureManifestInput,
+            path.basename(trustedProducerClosureManifestInput),
+            "capture trusted producer closure manifest",
+          );
+
           const pinnedRunner = pinnedRegularFile(candidateRunner, "trusted candidate runner");
           const pinnedSudo = pinnedRegularFile(trustedSudo, "trusted sudo executable");
           const pinnedEnv = pinnedRegularFile(trustedEnv, "trusted env executable");
@@ -2997,14 +4620,17 @@ jobs:
 
           function assertPinnedRegularFile(target, expected, label, stage) {
             const actual = pinnedRegularFile(target, label);
-            for (const field of ["dev", "ino", "mode", "uid", "gid", "nlink", "size", "digest"]) {
+            for (const field of [
+              "dev", "ino", "mode", "uid", "gid", "nlink", "size",
+              "mtimeMs", "ctimeMs", "digest",
+            ]) {
               if (actual[field] !== expected[field]) fail(`${stage}: ${label} changed`);
             }
           }
 
           function assertPinnedDirectory(target, expected, label, stage) {
             const actual = pinnedDirectory(target, label);
-            for (const field of ["dev", "ino", "mode", "uid", "gid"]) {
+            for (const field of ["dev", "ino", "mode", "uid", "gid", "mtimeMs", "ctimeMs"]) {
               if (actual[field] !== expected[field]) fail(`${stage}: ${label} changed`);
             }
           }
@@ -3304,6 +4930,82 @@ jobs:
           if (producerSource !== trustedProducerSource) {
             fail("trusted evidence producer descriptor does not match the pinned default-branch file");
           }
+          const trustedProducerClosurePins = new Map();
+          const trustedProducerClosureDirectories = trustedClosureTree(
+            "capture trusted producer closure",
+            trustedProducerClosureEntries,
+          );
+          for (const entry of trustedProducerClosureEntries) {
+            const target = path.join(trustedProducerRoot, ...entry.path.split("/"));
+            const ancestry = trustedClosureAncestry(
+              trustedProducerRoot,
+              target,
+              entry.path,
+              "capture trusted producer closure",
+            );
+            const pin = pinnedRegularFile(
+              target,
+              `trusted producer closure ${entry.path}`,
+            );
+            if (pin.size !== entry.bytes || pin.digest !== entry.sha256) {
+              fail("trusted producer closure manifest does not match staged bytes");
+            }
+            trustedProducerClosurePins.set(entry.path, { pin, ancestry });
+          }
+
+          function assertTrustedProducerClosure(stage) {
+            assertPinnedRegularFile(
+              trustedProducerClosureManifestInput,
+              pinnedTrustedProducerClosureManifest,
+              "trusted producer closure manifest",
+              stage,
+            );
+            if (
+              !sameTrustedClosureAncestry(
+                trustedClosureAncestry(
+                  trustedProducerClosureManifestParent,
+                  trustedProducerClosureManifestInput,
+                  path.basename(trustedProducerClosureManifestInput),
+                  stage,
+                ),
+                pinnedTrustedProducerClosureManifestAncestry,
+              )
+            ) {
+              fail(`${stage}: trusted producer closure manifest ancestry changed`);
+            }
+            const directories = trustedClosureTree(stage, trustedProducerClosureEntries);
+            for (const [relative, expected] of trustedProducerClosureDirectories) {
+              const actual = directories.get(relative);
+              if (!actual || !samePin(actual, expected)) {
+                fail(`${stage}: trusted producer closure directory changed`);
+              }
+            }
+            if (directories.size !== trustedProducerClosureDirectories.size) {
+              fail(`${stage}: trusted producer closure directory set changed`);
+            }
+            for (const entry of trustedProducerClosureEntries) {
+              const target = path.join(trustedProducerRoot, ...entry.path.split("/"));
+              const expected = trustedProducerClosurePins.get(entry.path);
+              if (!expected) fail(`${stage}: trusted producer closure pin is missing`);
+              const actualAncestry = trustedClosureAncestry(
+                trustedProducerRoot,
+                target,
+                entry.path,
+                stage,
+              );
+              if (!sameTrustedClosureAncestry(actualAncestry, expected.ancestry)) {
+                fail(`${stage}: trusted producer closure ancestry changed`);
+              }
+              const actual = pinnedRegularFile(
+                target,
+                `${stage}: trusted producer closure ${entry.path}`,
+              );
+              if (!samePin(actual, expected.pin) || actual.size !== entry.bytes || actual.digest !== entry.sha256) {
+                fail(`${stage}: trusted producer closure ${entry.path} changed`);
+              }
+            }
+          }
+          assertTrustedProducerClosure("before dependency installation");
           commandEnvironment.RUCKSACK_PRODUCER_NODE = producerNode;
 
           function assertCandidateCannotWriteTree(target, stage) {
@@ -3326,16 +5028,20 @@ jobs:
             if (args.some((item) => typeof item !== "string" || !item || item.includes("\0"))) {
               fail("candidate arguments must be non-empty strings");
             }
-            const allowed = new Set(["encoding", "maxBuffer", "shell", "stdio", "timeout"]);
+            if (!options || typeof options !== "object" || Array.isArray(options) || Object.getPrototypeOf(options) !== Object.prototype) {
+              fail("candidate command options must be one scalar record");
+            }
+            const allowed = new Set(["encoding", "maxBuffer", "shell", "stdio", "timeout", "killSignal"]);
             for (const name of Object.keys(options)) {
               if (!allowed.has(name)) fail(`candidate command option ${name} is unsupported`);
             }
             let argv = [command, ...args];
             if (options.shell) {
               const shell = typeof options.shell === "string" ? options.shell : "/bin/sh";
+              if (shell !== "/bin/sh") fail("candidate shell path is unsupported");
               argv = [shell, "-c", command];
             }
-            let timeoutMs = null;
+            let timeoutMs = 900000;
             if (Object.hasOwn(options, "timeout")) {
               timeoutMs = options.timeout;
               if (
@@ -3347,11 +5053,130 @@ jobs:
                 fail("candidate command timeout must be between 1 and 900000 milliseconds");
               }
             }
-            return { argv, options, timeoutMs };
+            if (options.killSignal !== undefined && options.killSignal !== "SIGTERM") {
+              fail("candidate kill signal must be SIGTERM");
+            }
+            let stdoutMode = "pipe";
+            let stderrMode = "pipe";
+            if (options.stdio !== undefined) {
+              const allowedMode = (value) => value === null || value === "pipe" || value === "ignore";
+              if (typeof options.stdio === "string") {
+                if (!allowedMode(options.stdio) || options.stdio === null) fail("candidate stdio mode is unsupported");
+                stdoutMode = options.stdio;
+                stderrMode = options.stdio;
+              } else if (Array.isArray(options.stdio)) {
+                if (options.stdio.length > 4 || options.stdio.some((value) => !allowedMode(value))) {
+                  fail("candidate stdio mode is unsupported");
+                }
+                if (options.stdio[0] !== undefined && options.stdio[0] !== null && options.stdio[0] !== "ignore") {
+                  fail("candidate stdin mode is unsupported");
+                }
+                if (options.stdio[1] !== undefined && options.stdio[1] !== null) stdoutMode = options.stdio[1];
+                if (options.stdio[2] !== undefined && options.stdio[2] !== null) stderrMode = options.stdio[2];
+              } else {
+                fail("candidate stdio mode is unsupported");
+              }
+            }
+            return { argv, options, timeoutMs, killSignal: options.killSignal || "SIGTERM", stdoutMode, stderrMode };
+          }
+
+          const RUNNER_FRAME_MAGIC = Buffer.from("RUCKSACK-RUNNER/1\n", "ascii");
+          const RUNNER_REFUSAL_CODES = new Set([
+            "RUNNER_PROTOCOL",
+            "RUNNER_POLICY",
+            "RUNNER_TIMEOUT",
+            "RUNNER_OUTPUT_LIMIT",
+            "RUNNER_RESOURCE",
+            "RUNNER_REAP",
+            "RUNNER_INTERNAL",
+            "RUNNER_EXEC",
+          ]);
+
+          function parseCandidateRunnerFrame(value) {
+            if (!Buffer.isBuffer(value) || value.length === 0 || value.length > 16 * 1024) {
+              fail("trusted candidate runner returned no bounded sideband frame");
+            }
+            if (!value.subarray(0, RUNNER_FRAME_MAGIC.length).equals(RUNNER_FRAME_MAGIC)) {
+              fail("trusted candidate runner returned an invalid sideband magic");
+            }
+            const body = value.subarray(RUNNER_FRAME_MAGIC.length);
+            if (body.length < 2 || body[body.length - 1] !== 0x0a || body.subarray(0, body.length - 1).includes(0x0a)) {
+              fail("trusted candidate runner returned trailing or malformed sideband bytes");
+            }
+            let frame;
+            try {
+              frame = JSON.parse(body.subarray(0, body.length - 1).toString("utf8"));
+            } catch (_error) {
+              fail("trusted candidate runner returned malformed sideband JSON");
+            }
+            if (!frame || typeof frame !== "object" || Array.isArray(frame) || frame.version !== 1 || typeof frame.kind !== "string") {
+              fail("trusted candidate runner returned an invalid sideband envelope");
+            }
+            if (frame.kind === "refusal") {
+              if (
+                Object.keys(frame).sort().join(",") !== "code,kind,message,version" ||
+                !RUNNER_REFUSAL_CODES.has(frame.code) ||
+                typeof frame.message !== "string" ||
+                frame.message.length > 512
+              ) {
+                fail("trusted candidate runner returned an invalid refusal frame");
+              }
+              return frame;
+            }
+            if (frame.kind !== "result" || Object.keys(frame).sort().join(",") !== "error,kind,output_limited,signal,status,timed_out,version") {
+              fail("trusted candidate runner returned an invalid result frame");
+            }
+            if (
+              (frame.status !== null && (!Number.isInteger(frame.status) || frame.status < 0 || frame.status > 255)) ||
+              (frame.signal !== null && (typeof frame.signal !== "string" || !/^SIG[A-Z0-9]+$/.test(frame.signal) || frame.signal.length > 32)) ||
+              typeof frame.timed_out !== "boolean" ||
+              typeof frame.output_limited !== "boolean"
+            ) {
+              fail("trusted candidate runner returned contradictory result fields");
+            }
+            if (frame.error !== null && (
+              !frame.error || typeof frame.error !== "object" || Array.isArray(frame.error) ||
+              Object.keys(frame.error).sort().join(",") !== "code,message" ||
+              !["CHILD_PROCESS", "ETIMEDOUT", "E2BIG"].includes(frame.error.code) ||
+              typeof frame.error.message !== "string" || frame.error.message.length > 512
+            )) {
+              fail("trusted candidate runner returned an invalid result error");
+            }
+            const errorCode = frame.error === null ? null : frame.error.code;
+            if (frame.status !== null && (frame.signal !== null || frame.error !== null)) {
+              fail("trusted candidate runner returned contradictory status fields");
+            }
+            const expectedTerminationError =
+              (frame.timed_out && frame.signal === "SIGTERM" && errorCode === "ETIMEDOUT" && !frame.output_limited) ||
+              (frame.output_limited && frame.signal === "SIGTERM" && errorCode === "E2BIG" && !frame.timed_out);
+            if (frame.signal !== null && frame.error !== null && !expectedTerminationError) {
+              fail("trusted candidate runner returned contradictory signal fields");
+            }
+            if (frame.status === null && frame.signal === null && frame.error === null) {
+              fail("trusted candidate runner returned no child outcome");
+            }
+            if (frame.timed_out && (
+              frame.status !== null || frame.signal !== "SIGTERM" || errorCode !== "ETIMEDOUT" || frame.output_limited
+            )) {
+              fail("trusted candidate runner returned a contradictory timeout result");
+            }
+            if (frame.output_limited && (
+              frame.status !== null || frame.signal !== "SIGTERM" || errorCode !== "E2BIG" || frame.timed_out
+            )) {
+              fail("trusted candidate runner returned a contradictory output result");
+            }
+            if (!frame.timed_out && errorCode === "ETIMEDOUT") {
+              fail("trusted candidate runner returned an unmarked timeout error");
+            }
+            if (!frame.output_limited && errorCode === "E2BIG") {
+              fail("trusted candidate runner returned an unmarked output error");
+            }
+            // frame.status === 125 is ordinary candidate data, never a runner refusal.
+            return frame;
           }
 
           function candidateSpawnSync(command, argsOrOptions, maybeOptions, stage = "candidate command") {
-            const { argv, options, timeoutMs } = normalizedCandidateArgv(command, argsOrOptions, maybeOptions);
+            const { argv, options, timeoutMs, killSignal, stdoutMode, stderrMode } = normalizedCandidateArgv(command, argsOrOptions, maybeOptions);
             assertPinnedRegularFile(candidateGit, pinnedGit, "trusted git executable", stage);
             assertPinnedRegularFile(candidateRunner, pinnedRunner, "trusted candidate runner", stage);
             assertPinnedRegularFile(trustedSudo, pinnedSudo, "trusted sudo executable", stage);
@@ -3387,6 +5212,7 @@ jobs:
               "trusted evidence producer",
               stage,
             );
+            assertTrustedProducerClosure(`${stage}: before command`);
             if (!candidateGitLink || pinnedCandidateGitLink === null) {
               fail(`${stage}: candidate Git link is not initialized`);
             }
@@ -3398,14 +5224,23 @@ jobs:
             );
             assertExecutionBindings(stage);
             const payload = Buffer.from(
-              JSON.stringify({ argv, timeout_ms: timeoutMs }),
+              JSON.stringify({
+                argv,
+                timeout_ms: timeoutMs,
+                kill_signal: killSignal,
+                stdout_mode: stdoutMode,
+                stderr_mode: stderrMode,
+              }),
               "utf8",
             ).toString("base64url");
             const result = spawnSync(candidatePython, ["-I", "-B", candidateRunner, payload], {
-              env: pythonHelperEnvironment(commandEnvironment),
-              ...(options.encoding ? { encoding: options.encoding } : {}),
-              ...(options.stdio ? { stdio: options.stdio } : {}),
-              maxBuffer: Math.min(Number(options.maxBuffer) || 64 * 1024 * 1024, 64 * 1024 * 1024),
+              env: pythonHelperEnvironment({
+                ...commandEnvironment,
+                RUCKSACK_RUNNER_FRAME_FD: "3",
+              }),
+              stdio: ["ignore", "pipe", "pipe", "pipe"],
+              encoding: "buffer",
+              maxBuffer: 65 * 1024 * 1024 + 16 * 1024,
             });
             assertPinnedRegularFile(candidateRunner, pinnedRunner, "trusted candidate runner", stage);
             assertPinnedRegularFile(candidateGit, pinnedGit, "trusted git executable", stage);
@@ -3442,6 +5277,7 @@ jobs:
               "trusted evidence producer",
               stage,
             );
+            assertTrustedProducerClosure(`${stage}: after command`);
             assertPinnedRegularFile(
               candidateGitLink,
               pinnedCandidateGitLink,
@@ -3451,12 +5287,24 @@ jobs:
             assertExecutionBindings(stage);
             if (result.error) fail(`${stage}: trusted candidate runner failed to start: ${result.error.message}`);
             if (result.signal) fail(`${stage}: trusted candidate runner died from ${result.signal}`);
-            // Exit 125 is reserved by evidence_candidate_runner_py for trust-boundary
-            // refusal. Treat a candidate that deliberately returns it the same way: it
-            // may deny its own run, but a producer can never ignore the refusal and
-            // continue into trusted evidence handoff.
-            if (result.status === 125) fail(`trusted candidate runner refused ${stage}`);
-            return result;
+            const frame = parseCandidateRunnerFrame(result.output && result.output[3]);
+            if (frame.kind === "refusal") {
+              fail(`${stage}: trusted candidate runner refused: ${frame.message}`);
+            }
+            const stdoutBytes = Buffer.isBuffer(result.stdout) ? result.stdout : Buffer.from(result.stdout || "");
+            const stderrBytes = Buffer.isBuffer(result.stderr) ? result.stderr : Buffer.from(result.stderr || "");
+            const output = (bytes, mode) => mode === "ignore"
+              ? null
+              : options.encoding === "utf8"
+                ? bytes.toString("utf8")
+                : bytes;
+            return {
+              status: frame.status,
+              signal: frame.signal,
+              stdout: output(stdoutBytes, stdoutMode),
+              stderr: output(stderrBytes, stderrMode),
+              error: frame.error,
+            };
           }
 
           function runGit(args, stage, binary = false) {
@@ -4489,15 +6337,27 @@ jobs:
             "before dependency installation",
           );
 
+          function boundedCandidateDiagnostic(value) {
+            if (Buffer.isBuffer(value)) return value.subarray(0, 16 * 1024).toString("utf8");
+            return typeof value === "string" ? value.slice(0, 16 * 1024) : "";
+          }
+
           const installed = candidateSpawnSync(
             "/bin/bash",
             ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", installSource],
-            { stdio: "inherit" },
+            {
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "pipe", "ignore"],
+              timeout: 900000,
+            },
             "dependency installation",
           );
-          if (installed.error) fail(`dependency installation failed to start: ${installed.error.message}`);
+          const installDiagnostic = boundedCandidateDiagnostic(installed.stderr);
+          if (installed.error) {
+            fail(`dependency installation failed to start: ${installed.error.message}${installDiagnostic ? `: ${installDiagnostic}` : ""}`);
+          }
           if (installed.signal || installed.status !== 0) {
-            fail(`dependency installation failed with ${installed.signal || `exit ${installed.status}`}`);
+            fail(`dependency installation failed with ${installed.signal || `exit ${installed.status}`}${installDiagnostic ? `: ${installDiagnostic}` : ""}`);
           }
           assertCandidateState("after dependency installation");
 
@@ -4508,110 +6368,956 @@ jobs:
               if (error.code !== "ENOENT") fail(`cannot inspect ${candidate}: ${error.message}`);
             }
           }
-          fs.rmSync(".agent/evidence", { recursive: true, force: true });
-          fs.mkdirSync(".agent/evidence", { recursive: true, mode: 0o700 });
-          sealCandidateWritableDirectory(".agent/evidence", "candidate evidence directory");
+          // Evidence is a logical, trusted-producer-owned filesystem.  Deliberately do
+          // not create a candidate-writable .agent/evidence tree: child commands must
+          // not be able to turn the public evidence prefix into a pathname capability.
+          if (fs.existsSync(".agent/evidence")) {
+            fs.rmSync(".agent/evidence", { recursive: true, force: true });
+          }
 
-          function isolatedProducerMain() {
-            const fs = require("node:fs");
-            const { createRequire } = require("node:module");
-            const path = require("node:path");
-
-            function refuse(message) {
-              console.error(`isolated evidence producer refused: ${message}`);
-              process.exit(125);
-            }
-
-            const trustedProducerPath = String(process.argv[1] || "");
-            if (!trustedProducerPath.startsWith("/")) {
-              refuse("trusted producer path must be absolute");
-            }
-            let source;
+          function manifestOnlyProducerMain(trustedProducerPath) {
+            const trustedProducerEntry = trustedProducerClosureEntries.find(
+              (entry) => entry.path === "scripts/agent-evidence",
+            );
+            if (!trustedProducerEntry) throw new Error("trusted producer declaration is missing its producer");
+            let producerSource;
             try {
-              source = fs.readFileSync(trustedProducerPath, "utf8").replace(/\n$/, "");
+              producerSource = fs.readFileSync(trustedProducerPath, "utf8").replace(/\n$/, "");
             } catch (error) {
-              refuse(`trusted producer is unreadable: ${error.message}`);
+              throw new Error(`trusted producer is unreadable: ${error && error.message ? error.message : "unknown error"}`);
             }
             const opener = "<<'NODE'\n";
-            const openerIndex = source.indexOf(opener);
+            const openerIndex = producerSource.indexOf(opener);
             const terminator = "\nNODE";
-            if (openerIndex < 0 || !source.endsWith(terminator)) {
-              refuse("producer must contain one terminal NODE heredoc");
+            if (openerIndex < 0 || !producerSource.endsWith(terminator)) {
+              throw new Error("producer must contain one terminal NODE heredoc");
             }
-            const producerBody = source.slice(
+            const producerBody = producerSource.slice(
               openerIndex + opener.length,
-              source.length - terminator.length,
+              producerSource.length - terminator.length,
             );
-            process.env.RUCKSACK_PRODUCER_NODE = process.execPath;
-            process.argv = [process.execPath, "-"];
-            try {
-              const trustedProducerRoot = path.dirname(path.dirname(trustedProducerPath));
-              const execute = new Function(
-                "require",
-                "process",
-                "__filename",
-                "__dirname",
-                producerBody,
-              );
-              execute(
-                createRequire(path.join(trustedProducerRoot, "rucksack-trusted-producer.cjs")),
-                process,
-                trustedProducerPath,
-                trustedProducerRoot,
-              );
-            } catch (error) {
-              refuse(`producer failed: ${error && error.stack ? error.stack : error}`);
+            const trustedProducerRoot = path.dirname(path.dirname(trustedProducerPath));
+            const executionRoot = fs.realpathSync(".");
+            const virtualFiles = new Map();
+            const virtualDirectories = new Set([".agent/evidence"]);
+            let virtualBytes = 0;
+            const MAX_VIRTUAL_FILES = 4096;
+            const MAX_VIRTUAL_BYTES = 64 * 1024 * 1024;
+
+            function jsonResponse(value) {
+              try {
+                return JSON.stringify(value);
+              } catch (_error) {
+                return JSON.stringify({ ok: false, kind: "refusal", code: "BRIDGE", message: "bridge response is not serializable" });
+              }
             }
+
+            function boundedHostMessage(error) {
+              const message = error && typeof error.message === "string" ? error.message : "trusted capability failed";
+              return message.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 512);
+            }
+
+            function boundedHostText(value) {
+              return String(value || "trusted capability failed")
+                .replace(/[\u0000-\u001f\u007f]/g, " ")
+                .slice(0, 512);
+            }
+
+            const scalarErrorCodes = new Set([
+              "ENOENT",
+              "EISDIR",
+              "EIO",
+              "EACCES",
+              "ETIMEDOUT",
+              "E2BIG",
+              "CHILD_PROCESS",
+            ]);
+
+            function hostRefusal(message, code = "RUCKSACK_REFUSAL") {
+              return jsonResponse({ ok: false, kind: "refusal", code: code === "BRIDGE" ? "BRIDGE" : "RUCKSACK_REFUSAL", message: boundedHostText(message) });
+            }
+
+            function hostError(code, message) {
+              return jsonResponse({ ok: false, kind: "error", code: scalarErrorCodes.has(code) ? code : "EIO", message: boundedHostText(message) });
+            }
+
+            function hostSuccess(kind, value) {
+              return jsonResponse({ ok: true, kind, value });
+            }
+
+            function canonicalLogicalPath(value, label) {
+              if (
+                typeof value !== "string" ||
+                !value ||
+                value.startsWith("/") ||
+                value.includes("\\") ||
+                value.includes("\0") ||
+                /[\u0000-\u001f\u007f]/.test(value) ||
+                Buffer.byteLength(value, "utf8") > 4096 ||
+                Buffer.from(value, "utf8").toString("utf8") !== value
+              ) {
+                throw new Error(`${label} must be one canonical relative UTF-8 path`);
+              }
+              const parts = value.split("/");
+              if (parts.some((part) => !part || part === "." || part === "..")) {
+                throw new Error(`${label} must not contain traversal or empty components`);
+              }
+              return value;
+            }
+
+            function evidenceLogicalPath(value, label) {
+              const relative = canonicalLogicalPath(value, label);
+              if (relative !== ".agent/evidence" && !relative.startsWith(".agent/evidence/")) {
+                throw new Error(`${label} must stay under logical .agent/evidence`);
+              }
+              return relative;
+            }
+
+            function candidateReadViaBroker(relative, kind, encoding = null) {
+              const helper = String.raw`import base64
+          import json
+          import os
+          import stat
+          import sys
+
+          MAX_BYTES = 64 * 1024 * 1024
+
+          def emit(value):
+              sys.stdout.write(json.dumps(value, separators=(",", ":")))
+
+          def refusal(message):
+              emit({"kind": "refusal", "code": "RUCKSACK_REFUSAL", "message": str(message)[:512]})
+              raise SystemExit(125)
+
+          def safe_name(value):
+              if not isinstance(value, str) or not value or "\\x00" in value or "/" in value or value in {".", ".."}:
+                  refusal("candidate path contains an unsafe component")
+              return value
+
+          try:
+              padding = "=" * (-len(sys.argv[1]) % 4)
+              request = json.loads(base64.urlsafe_b64decode((sys.argv[1] + padding).encode("ascii")).decode("utf-8"))
+          except Exception as error:
+              refusal("candidate read request is malformed")
+          if not isinstance(request, dict) or set(request) != {"path", "kind"}:
+              refusal("candidate read request has an invalid shape")
+          relative = request["path"]
+          kind = request["kind"]
+          if not isinstance(relative, str) or not relative or relative.startswith("/") or "\\x00" in relative or "\\" in relative:
+              refusal("candidate read path is not canonical")
+          parts = relative.split("/")
+          if any(not part or part in {".", ".."} for part in parts):
+              refusal("candidate read path contains traversal")
+          if kind not in {"exists", "read", "stat"}:
+              refusal("candidate read operation is unsupported")
+          NOFOLLOW = getattr(os, "O_NOFOLLOW", None)
+          DIRECTORY = getattr(os, "O_DIRECTORY", None)
+          if NOFOLLOW is None or DIRECTORY is None:
+              refusal("candidate descriptor-relative flags are unavailable")
+          root = -1
+          parent = -1
+          leaf_fd = -1
+          try:
+              root = os.open(".", os.O_RDONLY | DIRECTORY | NOFOLLOW)
+              current = root
+              for component in parts[:-1]:
+                  safe_name(component)
+                  try:
+                      child = os.open(component, os.O_RDONLY | DIRECTORY | NOFOLLOW, dir_fd=current)
+                  except FileNotFoundError:
+                      emit({"kind": "missing"})
+                      raise SystemExit(0)
+                  except OSError as error:
+                      refusal("candidate read ancestry is unsafe")
+                  details = os.fstat(child)
+                  if not stat.S_ISDIR(details.st_mode) or stat.S_ISLNK(details.st_mode):
+                      refusal("candidate read ancestry is not a real directory")
+                  if current != root:
+                      os.close(current)
+                  current = child
+              parent = current
+              safe_name(parts[-1])
+              try:
+                  leaf_fd = os.open(parts[-1], os.O_RDONLY | NOFOLLOW, dir_fd=parent)
+              except FileNotFoundError:
+                  emit({"kind": "missing"})
+                  raise SystemExit(0)
+              except OSError as error:
+                  refusal("candidate read leaf is unsafe")
+              before = os.fstat(leaf_fd)
+              if stat.S_ISLNK(before.st_mode) or not (stat.S_ISREG(before.st_mode) or stat.S_ISDIR(before.st_mode)):
+                  refusal("candidate read leaf has an unsupported type")
+              if stat.S_ISREG(before.st_mode) and before.st_nlink != 1:
+                  refusal("candidate read leaf is hardlinked")
+              if kind == "exists":
+                  result = {"kind": "exists", "value": True}
+              elif kind == "stat":
+                  result = {"kind": "stat", "type": "file" if stat.S_ISREG(before.st_mode) else "directory", "size": before.st_size}
+              else:
+                  if not stat.S_ISREG(before.st_mode):
+                      result = {"kind": "error", "code": "EISDIR", "message": "path is a directory"}
+                      emit(result)
+                      raise SystemExit(0)
+                  elif before.st_size > MAX_BYTES:
+                      refusal("candidate read exceeds bounded size")
+                  chunks = []
+                  remaining = before.st_size
+                  while remaining:
+                      block = os.read(leaf_fd, min(1024 * 1024, remaining))
+                      if not block:
+                          refusal("candidate read ended before its pinned size")
+                      chunks.append(block)
+                      remaining -= len(block)
+                  after = os.fstat(leaf_fd)
+                  if (before.st_dev, before.st_ino, before.st_mode, before.st_nlink, before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_dev, after.st_ino, after.st_mode, after.st_nlink, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+                      refusal("candidate read identity changed")
+                  try:
+                      named = os.stat(parts[-1], dir_fd=parent, follow_symlinks=False)
+                  except FileNotFoundError:
+                      refusal("candidate read name changed")
+                  if (before.st_dev, before.st_ino, before.st_mode, before.st_nlink, before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (named.st_dev, named.st_ino, named.st_mode, named.st_nlink, named.st_size, named.st_mtime_ns, named.st_ctime_ns):
+                      refusal("candidate read name changed")
+                  value = b"".join(chunks)
+                  result = {"kind": "bytes", "base64": base64.b64encode(value).decode("ascii")}
+              emit(result)
+          except SystemExit:
+              raise
+          except FileNotFoundError:
+              emit({"kind": "missing"})
+          except Exception as error:
+              refusal("candidate descriptor read failed")
+          finally:
+              if leaf_fd >= 0:
+                  os.close(leaf_fd)
+              if parent >= 0 and parent != root:
+                  os.close(parent)
+              if root >= 0:
+                  os.close(root)
+          `;
+              const pythonExecutable = typeof candidatePython === "string" && candidatePython
+                ? candidatePython
+                : process.execPath;
+              const encoded = Buffer.from(JSON.stringify({ path: relative, kind }), "utf8").toString("base64url");
+              const result = candidateSpawnSync(
+                pythonExecutable,
+                ["-I", "-c", helper, encoded],
+                { encoding: "utf8", timeout: 900000 },
+                "trusted producer descriptor-relative candidate read",
+              );
+              if (result.error) return hostRefusal("candidate descriptor helper failed to start");
+              if (result.signal || result.status === 125) return hostRefusal("candidate descriptor helper refused");
+              if (result.status !== 0) return hostRefusal("candidate descriptor helper failed");
+              const stdout = Buffer.isBuffer(result.stdout) ? result.stdout.toString("utf8") : String(result.stdout || "");
+              let parsed;
+              try {
+                parsed = JSON.parse(stdout);
+              } catch (_error) {
+                return hostRefusal("candidate descriptor helper returned malformed JSON");
+              }
+              if (!parsed || typeof parsed !== "object" || typeof parsed.kind !== "string") {
+                return hostRefusal("candidate descriptor helper returned an invalid response");
+              }
+              if (parsed.kind === "refusal") return hostRefusal(parsed.message || "candidate read refused");
+              if (parsed.kind === "missing") return hostSuccess("missing", null);
+              if (parsed.kind === "exists") return hostSuccess("boolean", parsed.value === true);
+              if (parsed.kind === "error") return hostError(parsed.code || "EIO", parsed.message || "candidate read failed");
+              if (parsed.kind === "stat") {
+                if (!Number.isSafeInteger(parsed.size) || !["file", "directory"].includes(parsed.type)) {
+                  return hostRefusal("candidate descriptor helper returned invalid stat");
+                }
+                return hostSuccess("stat", { type: parsed.type, size: parsed.size });
+              }
+              if (parsed.kind === "bytes" && typeof parsed.base64 === "string") {
+                let bytes;
+                try { bytes = Buffer.from(parsed.base64, "base64"); } catch (_error) { return hostRefusal("candidate descriptor helper returned invalid bytes"); }
+                if (bytes.length > MAX_VIRTUAL_BYTES) return hostRefusal("candidate read is oversized");
+                if (encoding === "utf8") {
+                  const text = bytes.toString("utf8");
+                  if (!Buffer.from(text, "utf8").equals(bytes)) return hostRefusal("candidate read is not canonical UTF-8");
+                  return hostSuccess("text", text);
+                }
+                return hostSuccess("bytes", bytes.toString("base64"));
+              }
+              return hostRefusal("candidate descriptor helper returned an unsupported response");
+            }
+
+            function virtualEntry(relative) {
+              if (virtualFiles.has(relative)) return { type: "file", value: virtualFiles.get(relative) };
+              if (virtualDirectories.has(relative)) return { type: "directory", value: null };
+              return null;
+            }
+
+            function virtualParentDirectories(relative) {
+              const parts = relative.split("/");
+              const directories = [];
+              for (let index = 1; index < parts.length; index += 1) {
+                directories.push(parts.slice(0, index).join("/"));
+              }
+              return directories;
+            }
+
+            function dispatch(operationJson, requestJson) {
+              if (typeof operationJson !== "string" || typeof requestJson !== "string") {
+                return hostRefusal("scalar bridge requires string envelopes", "BRIDGE");
+              }
+              try {
+                const operation = JSON.parse(operationJson);
+                const request = JSON.parse(requestJson);
+                if (typeof operation !== "string" || !operation || !request || typeof request !== "object" || Array.isArray(request)) {
+                  return hostRefusal("scalar bridge envelope has an invalid shape", "BRIDGE");
+                }
+                if (operation === "fs.exists") {
+                  const relative = canonicalLogicalPath(request.path, "filesystem path");
+                  if (relative === ".agent/evidence" || relative.startsWith(".agent/evidence/")) {
+                    return hostSuccess("boolean", Boolean(virtualEntry(relative)));
+                  }
+                  return candidateReadViaBroker(relative, "exists");
+                }
+                if (operation === "fs.read") {
+                  const relative = canonicalLogicalPath(request.path, "filesystem path");
+                  const entry = virtualEntry(relative);
+                  if (entry) {
+                    if (entry.type !== "file") return hostError("EISDIR", "path is a directory");
+                    const bytes = entry.value;
+                    if (request.encoding === "utf8") return hostSuccess("text", bytes.toString("utf8"));
+                    if (request.encoding !== null && request.encoding !== undefined) return hostRefusal("filesystem encoding is unsupported");
+                    return hostSuccess("bytes", bytes.toString("base64"));
+                  }
+                  return candidateReadViaBroker(relative, "read", request.encoding || null);
+                }
+                if (operation === "fs.stat") {
+                  const relative = canonicalLogicalPath(request.path, "filesystem path");
+                  const entry = virtualEntry(relative);
+                  if (entry) return hostSuccess("stat", { type: entry.type, size: entry.type === "file" ? entry.value.length : 0 });
+                  return candidateReadViaBroker(relative, "stat");
+                }
+                if (operation === "fs.mkdir") {
+                  const relative = evidenceLogicalPath(request.path, "filesystem directory");
+                  if (request.recursive !== true) return hostRefusal("filesystem mkdir requires recursive true");
+                  for (const directory of [".agent/evidence", ...virtualParentDirectories(relative), relative]) {
+                    virtualDirectories.add(directory);
+                  }
+                  return hostSuccess("undefined", null);
+                }
+                if (operation === "fs.write") {
+                  const relative = evidenceLogicalPath(request.path, "filesystem output");
+                  if (virtualDirectories.has(relative)) return hostError("EISDIR", "path is a directory");
+                  let bytes;
+                  if (request.data_kind === "text") {
+                    if (typeof request.data !== "string") return hostRefusal("filesystem text data is invalid");
+                    bytes = Buffer.from(request.data, "utf8");
+                  } else if (request.data_kind === "bytes" && typeof request.data === "string") {
+                    bytes = Buffer.from(request.data, "base64");
+                  } else {
+                    return hostRefusal("filesystem output data is unsupported");
+                  }
+                  if (bytes.length > MAX_VIRTUAL_BYTES || virtualBytes - (virtualFiles.get(relative)?.length || 0) + bytes.length > MAX_VIRTUAL_BYTES) {
+                    return hostRefusal("logical evidence output exceeds its bound");
+                  }
+                  for (const directory of [".agent/evidence", ...virtualParentDirectories(relative)]) virtualDirectories.add(directory);
+                  virtualBytes = virtualBytes - (virtualFiles.get(relative)?.length || 0) + bytes.length;
+                  if (!virtualFiles.has(relative) && virtualFiles.size >= MAX_VIRTUAL_FILES) return hostRefusal("logical evidence file count exceeds its bound");
+                  virtualFiles.set(relative, bytes);
+                  return hostSuccess("undefined", null);
+                }
+                if (operation === "path.join") {
+                  if (!Array.isArray(request.parts) || request.parts.length === 0 || request.parts.length > 32 || request.parts.some((part) => typeof part !== "string")) {
+                    return hostRefusal("path.join accepts only bounded strings");
+                  }
+                  return hostSuccess("text", path.posix.join(...request.parts));
+                }
+                if (operation === "crypto.create") {
+                  if (request.algorithm !== "sha256") return hostRefusal("crypto capability only supports sha256");
+                  const handle = createHash("sha256");
+                  const id = `${hashHandles.size + 1}`;
+                  hashHandles.set(id, handle);
+                  return hostSuccess("handle", id);
+                }
+                if (operation === "crypto.update") {
+                  const hash = hashHandles.get(String(request.handle));
+                  if (!hash) return hostRefusal("crypto hash handle is closed");
+                  if (request.data_kind === "text" && typeof request.data === "string") hash.update(request.data, "utf8");
+                  else if (request.data_kind === "bytes" && typeof request.data === "string") hash.update(Buffer.from(request.data, "base64"));
+                  else return hostRefusal("crypto hash data is unsupported");
+                  return hostSuccess("undefined", null);
+                }
+                if (operation === "crypto.digest") {
+                  const key = String(request.handle);
+                  const hash = hashHandles.get(key);
+                  if (!hash) return hostRefusal("crypto hash handle is closed");
+                  hashHandles.delete(key);
+                  if (request.encoding === "hex") return hostSuccess("text", hash.digest("hex"));
+                  return hostRefusal("crypto digest encoding is unsupported");
+                }
+                if (operation === "spawn") {
+                  if (typeof request.command !== "string" || !request.command || request.command.length > 4096 || !Array.isArray(request.args) || request.args.length > 128 || request.args.some((item) => typeof item !== "string" || !item || item.length > 4096)) {
+                    return hostRefusal("spawn request is invalid");
+                  }
+                  const options = request.options === null ? undefined : request.options;
+                  let result;
+                  switch (request.overload) {
+                    case 1: result = candidateSpawnSync(request.command, undefined, undefined, "trusted producer candidate command"); break;
+                    case 2: result = request.args.length === 0 && options !== undefined
+                      ? candidateSpawnSync(request.command, options, undefined, "trusted producer candidate command")
+                      : candidateSpawnSync(request.command, request.args, undefined, "trusted producer candidate command"); break;
+                    case 3: result = candidateSpawnSync(request.command, request.args, options, "trusted producer candidate command"); break;
+                    default: return hostRefusal("spawn overload is unsupported");
+                  }
+                  const encodeOutput = (value) => {
+                    if (Buffer.isBuffer(value)) return { kind: "bytes", value: value.toString("base64") };
+                    if (typeof value === "string") return { kind: "text", value };
+                    if (value === null || value === undefined) return { kind: "null", value: null };
+                    return { kind: "text", value: String(value).slice(0, 64 * 1024) };
+                  };
+                  const safe = {
+                    status: Number.isInteger(result.status) ? result.status : null,
+                    signal: typeof result.signal === "string" ? result.signal : null,
+                    stdout: encodeOutput(result.stdout),
+                    stderr: encodeOutput(result.stderr),
+                    error: result.error ? { code: scalarErrorCodes.has(result.error.code) ? result.error.code : "CHILD_PROCESS", message: boundedHostMessage(result.error) } : null,
+                  };
+                  return hostSuccess("spawn", safe);
+                }
+                if (operation === "console.log" || operation === "console.error") {
+                  if (typeof request.text !== "string" || request.text.length > 64 * 1024 || /[\u0000]/.test(request.text)) return hostRefusal("console accepts only bounded text");
+                  (operation === "console.log" ? console.log : console.error)(request.text);
+                  return hostSuccess("undefined", null);
+                }
+                return hostRefusal(`unsupported scalar operation: ${operation}`);
+              } catch (error) {
+                if (error && error.code === "ENOENT") return hostError("ENOENT", "candidate path does not exist");
+                return hostRefusal(boundedHostMessage(error), "BRIDGE");
+              }
+            }
+
+            const hashHandles = new Map();
+            const context = vm.createContext(Object.create(null), {
+              codeGeneration: { strings: false, wasm: false },
+              microtaskMode: "afterEvaluate",
+            });
+            const runtimeFactory = new vm.Script(`
+              (function(rawDispatch, snapshotText) {
+                "use strict";
+                const snapshot = JSON.parse(snapshotText);
+                const state = { refused: false, failed: false, exitRequested: false, exitCode: 0, running: false, message: "" };
+                const bounded = (value) => String(value || "trusted capability failed").replace(/[\\u0000-\\u001f\\u007f]/g, " ").slice(0, 512);
+                const contextError = (code, message) => {
+                  const error = new Error(bounded(message));
+                  Object.defineProperty(error, "code", { value: String(code || "RUCKSACK"), enumerable: true, configurable: false, writable: false });
+                  return error;
+                };
+                const markRefusal = (message) => { state.refused = true; state.message = bounded(message); };
+                const markFailure = (message) => { state.failed = true; state.message = bounded(message); };
+                const rejectDynamic = () => Promise.reject(contextError("RUCKSACK_REFUSAL", "dynamic import is unavailable"));
+                const freezeRecord = (value) => Object.freeze(value);
+                const responseError = (response) => {
+                  const code = response && typeof response.code === "string" ? response.code : "RUCKSACK";
+                  const error = contextError(code, response && response.message);
+                  if (response && response.kind === "refusal") markRefusal(response.message);
+                  return error;
+                };
+                const base64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+                const base64Encode = (bytes) => {
+                  let output = "";
+                  for (let index = 0; index < bytes.length; index += 3) {
+                    const first = bytes[index];
+                    const second = index + 1 < bytes.length ? bytes[index + 1] : 0;
+                    const third = index + 2 < bytes.length ? bytes[index + 2] : 0;
+                    output += base64Alphabet[first >> 2];
+                    output += base64Alphabet[((first & 3) << 4) | (second >> 4)];
+                    output += index + 1 < bytes.length ? base64Alphabet[((second & 15) << 2) | (third >> 6)] : "=";
+                    output += index + 2 < bytes.length ? base64Alphabet[third & 63] : "=";
+                  }
+                  return output;
+                };
+                const bytesFromBase64 = (value) => {
+                  if (typeof value !== "string" || value.length % 4 !== 0) { markRefusal("bridge byte response is invalid"); throw contextError("RUCKSACK_REFUSAL", "bridge byte response is invalid"); }
+                  const output = [];
+                  for (let index = 0; index < value.length; index += 4) {
+                    const first = base64Alphabet.indexOf(value[index]);
+                    const second = base64Alphabet.indexOf(value[index + 1]);
+                    const third = value[index + 2] === "=" ? 0 : base64Alphabet.indexOf(value[index + 2]);
+                    const fourth = value[index + 3] === "=" ? 0 : base64Alphabet.indexOf(value[index + 3]);
+                    if (first < 0 || second < 0 || third < 0 || fourth < 0) { markRefusal("bridge byte response is invalid"); throw contextError("RUCKSACK_REFUSAL", "bridge byte response is invalid"); }
+                    output.push((first << 2) | (second >> 4));
+                    if (value[index + 2] !== "=") output.push(((second & 15) << 4) | (third >> 2));
+                    if (value[index + 3] !== "=") output.push(((third & 3) << 6) | fourth);
+                  }
+                  return new Uint8Array(output);
+                };
+                const decode = (responseText) => {
+                  if (typeof responseText !== "string") { markRefusal("scalar bridge returned a host value"); throw contextError("RUCKSACK_REFUSAL", "scalar bridge returned a host value"); }
+                  let response;
+                  try { response = JSON.parse(responseText); } catch (_error) { markRefusal("scalar bridge returned malformed JSON"); throw contextError("RUCKSACK_REFUSAL", "scalar bridge returned malformed JSON"); }
+                  if (!response || typeof response !== "object" || typeof response.ok !== "boolean") { markRefusal("scalar bridge returned an invalid envelope"); throw contextError("RUCKSACK_REFUSAL", "scalar bridge returned an invalid envelope"); }
+                  if (!response.ok) throw responseError(response);
+                  if (response.kind === "undefined") return undefined;
+                  if (response.kind === "null") return null;
+                  if (response.kind === "text" && typeof response.value === "string") return response.value;
+                  if (response.kind === "boolean" && typeof response.value === "boolean") return response.value;
+                  if (response.kind === "number" && typeof response.value === "number" && Number.isFinite(response.value)) return response.value;
+                  if (response.kind === "handle" && typeof response.value === "string" && response.value.length > 0 && response.value.length <= 128) return response.value;
+                  if (["text", "boolean", "number", "handle"].includes(response.kind)) { markRefusal("scalar bridge returned an invalid primitive"); throw contextError("RUCKSACK_REFUSAL", "scalar bridge returned an invalid primitive"); }
+                  if (response.kind === "bytes") return bytesFromBase64(response.value);
+                  if (response.kind === "missing") return Object.freeze({ missing: true });
+                  if (response.kind === "stat") {
+                    if (!response.value || typeof response.value !== "object" || Array.isArray(response.value) ||
+                        !["file", "directory"].includes(response.value.type) ||
+                        !Number.isSafeInteger(response.value.size) || response.value.size < 0) {
+                      markRefusal("scalar bridge returned an invalid stat");
+                      throw contextError("RUCKSACK_REFUSAL", "scalar bridge returned an invalid stat");
+                    }
+                    const result = Object.create(null);
+                    result.isFile = () => response.value.type === "file";
+                    result.isDirectory = () => response.value.type === "directory";
+                    result.size = response.value.size;
+                    return freezeRecord(result);
+                  }
+                  if (response.kind === "spawn") {
+                    if (!response.value || typeof response.value !== "object" || Array.isArray(response.value) ||
+                        (response.value.status !== null && !Number.isInteger(response.value.status)) ||
+                        (response.value.signal !== null && typeof response.value.signal !== "string")) {
+                      markRefusal("scalar bridge returned an invalid spawn result");
+                      throw contextError("RUCKSACK_REFUSAL", "scalar bridge returned an invalid spawn result");
+                    }
+                    const result = Object.create(null);
+                    result.status = response.value.status;
+                    result.signal = response.value.signal;
+                    const output = (value) => {
+                      if (!value || typeof value !== "object" || Array.isArray(value)) { markRefusal("scalar bridge returned an invalid spawn stream"); throw contextError("RUCKSACK_REFUSAL", "scalar bridge returned an invalid spawn stream"); }
+                      if (value.kind === "bytes") return bytesFromBase64(value.value);
+                      if (value.kind === "text" && typeof value.value === "string") return value.value;
+                      if (value.kind === "null" && value.value === null) return null;
+                      markRefusal("scalar bridge returned an invalid spawn stream");
+                      throw contextError("RUCKSACK_REFUSAL", "scalar bridge returned an invalid spawn stream");
+                    };
+                    result.stdout = output(response.value.stdout);
+                    result.stderr = output(response.value.stderr);
+                    if (response.value.error) {
+                      if (typeof response.value.error !== "object" || Array.isArray(response.value.error) ||
+                          typeof response.value.error.code !== "string" || typeof response.value.error.message !== "string") {
+                        markRefusal("scalar bridge returned an invalid spawn error");
+                        throw contextError("RUCKSACK_REFUSAL", "scalar bridge returned an invalid spawn error");
+                      }
+                      const error = Object.create(null);
+                      error.code = response.value.error.code;
+                      error.message = response.value.error.message;
+                      result.error = freezeRecord(error);
+                    }
+                    return freezeRecord(result);
+                  }
+                  markRefusal("scalar bridge returned an unsupported response kind");
+                  throw contextError("RUCKSACK_REFUSAL", "scalar bridge returned an unsupported response kind");
+                };
+                const call = (operation, request) => {
+                  if (state.exitRequested) { markRefusal("capability used after process.exit"); throw contextError("RUCKSACK_REFUSAL", "capability used after process.exit"); }
+                  let requestText;
+                  try { requestText = JSON.stringify(request); } catch (_error) { markRefusal("capability request is not scalar JSON"); throw contextError("RUCKSACK_REFUSAL", "capability request is not scalar JSON"); }
+                  let responseText;
+                  try { responseText = rawDispatch(JSON.stringify(String(operation)), requestText); } catch (_error) { markRefusal("scalar bridge threw a host error"); throw contextError("RUCKSACK_REFUSAL", "scalar bridge threw a host error"); }
+                  return decode(responseText);
+                };
+                const scalarPath = (value) => { if (typeof value !== "string") { markRefusal("filesystem path must be a string"); throw contextError("RUCKSACK_REFUSAL", "filesystem path must be a string"); } return value; };
+                const scalarText = (value) => { if (typeof value !== "string") { markRefusal("filesystem encoding must be a string"); throw contextError("RUCKSACK_REFUSAL", "filesystem encoding must be a string"); } return value; };
+                const dataRequest = (value) => {
+                  if (typeof value === "string") return { data_kind: "text", data: value };
+                  if (value instanceof Uint8Array) return { data_kind: "bytes", data: base64Encode(value) };
+                  markRefusal("capability data must be a string or Uint8Array");
+                  throw contextError("RUCKSACK_REFUSAL", "capability data must be a string or Uint8Array");
+                };
+                const pathCapability = Object.create(null);
+                Object.defineProperty(pathCapability, "join", { value: (...parts) => call("path.join", { parts }), enumerable: true, writable: false, configurable: false });
+                Object.freeze(pathCapability);
+                const fsCapability = Object.create(null);
+                fsCapability.existsSync = (value) => { const result = call("fs.exists", { path: scalarPath(value) }); return result === true; };
+                fsCapability.readFileSync = (value, encoding) => {
+                  const requested = encoding === undefined ? null : scalarText(encoding);
+                  if (requested !== null && requested !== "utf8") { markRefusal("filesystem read encoding is unsupported"); throw contextError("RUCKSACK_REFUSAL", "filesystem read encoding is unsupported"); }
+                  const result = call("fs.read", { path: scalarPath(value), encoding: requested });
+                  if (result && result.missing === true) throw contextError("ENOENT", "path does not exist");
+                  return result;
+                };
+                fsCapability.statSync = (value) => call("fs.stat", { path: scalarPath(value) });
+                fsCapability.mkdirSync = (value, options) => {
+                  if (!options || Object.getPrototypeOf(options) !== Object.prototype || options.recursive !== true) { markRefusal("filesystem mkdir requires recursive true"); throw contextError("RUCKSACK_REFUSAL", "filesystem mkdir requires recursive true"); }
+                  call("fs.mkdir", { path: scalarPath(value), recursive: true });
+                };
+                fsCapability.writeFileSync = (value, data, options) => {
+                  let encoding = null;
+                  if (typeof options === "string") encoding = options;
+                  else if (options !== undefined) {
+                    if (!options || Object.getPrototypeOf(options) !== Object.prototype || Object.keys(options).some((key) => key !== "encoding")) { markRefusal("filesystem write options are unsupported"); throw contextError("RUCKSACK_REFUSAL", "filesystem write options are unsupported"); }
+                    encoding = options.encoding;
+                  }
+                  if (encoding !== null && encoding !== "utf8") { markRefusal("filesystem write encoding is unsupported"); throw contextError("RUCKSACK_REFUSAL", "filesystem write encoding is unsupported"); }
+                  call("fs.write", Object.assign({ path: scalarPath(value) }, dataRequest(data)));
+                };
+                Object.freeze(fsCapability);
+                const cryptoCapability = Object.create(null);
+                cryptoCapability.createHash = (algorithm) => {
+                  const handle = call("crypto.create", { algorithm });
+                  const result = Object.create(null);
+                  result.update = (value) => { call("crypto.update", Object.assign({ handle }, dataRequest(value))); return result; };
+                  result.digest = (encoding) => {
+                    if (encoding !== "hex") { markRefusal("crypto digest requires hex encoding"); throw contextError("RUCKSACK_REFUSAL", "crypto digest requires hex encoding"); }
+                    return call("crypto.digest", { handle, encoding: "hex" });
+                  };
+                  return Object.freeze(result);
+                };
+                Object.freeze(cryptoCapability);
+                const childProcessCapability = Object.create(null);
+                childProcessCapability.spawnSync = function(command, argsOrOptions, maybeOptions) {
+                  const count = arguments.length;
+                  if (count < 1 || count > 3 || typeof command !== "string" || !command) { markRefusal("spawn overload is unsupported"); throw contextError("RUCKSACK_REFUSAL", "spawn overload is unsupported"); }
+                  let args = [];
+                  let options = null;
+                  let overload = count;
+                  if (count === 2) {
+                    if (Array.isArray(argsOrOptions)) args = Array.from(argsOrOptions);
+                    else options = argsOrOptions === undefined ? null : argsOrOptions;
+                  } else if (count === 3) {
+                    if (!Array.isArray(argsOrOptions)) { markRefusal("spawn arguments must be an array"); throw contextError("RUCKSACK_REFUSAL", "spawn arguments must be an array"); }
+                    args = Array.from(argsOrOptions);
+                    options = maybeOptions === undefined ? null : maybeOptions;
+                  }
+                  if (args.length > 128 || args.some((item) => typeof item !== "string" || !item || item.length > 4096)) { markRefusal("spawn arguments are unsupported"); throw contextError("RUCKSACK_REFUSAL", "spawn arguments are unsupported"); }
+                  if (options !== null && (!options || Object.getPrototypeOf(options) !== Object.prototype)) { markRefusal("spawn options are unsupported"); throw contextError("RUCKSACK_REFUSAL", "spawn options are unsupported"); }
+                  if (options && Object.keys(options).some((key) => !["encoding", "maxBuffer", "shell", "stdio", "timeout", "killSignal"].includes(key))) { markRefusal("spawn option is unsupported"); throw contextError("RUCKSACK_REFUSAL", "spawn option is unsupported"); }
+                  if (options && options.encoding !== undefined && options.encoding !== "utf8" && options.encoding !== "buffer") { markRefusal("spawn encoding is unsupported"); throw contextError("RUCKSACK_REFUSAL", "spawn encoding is unsupported"); }
+                  if (options && options.maxBuffer !== undefined && (!Number.isSafeInteger(options.maxBuffer) || options.maxBuffer <= 0 || options.maxBuffer > 64 * 1024 * 1024)) { markRefusal("spawn maxBuffer is unsupported"); throw contextError("RUCKSACK_REFUSAL", "spawn maxBuffer is unsupported"); }
+                  if (options && options.timeout !== undefined && (!Number.isSafeInteger(options.timeout) || options.timeout <= 0 || options.timeout > 900000)) { markRefusal("spawn timeout is unsupported"); throw contextError("RUCKSACK_REFUSAL", "spawn timeout is unsupported"); }
+                  if (options && options.shell !== undefined && typeof options.shell !== "boolean" && (typeof options.shell !== "string" || !options.shell || options.shell.length > 4096)) { markRefusal("spawn shell option is unsupported"); throw contextError("RUCKSACK_REFUSAL", "spawn shell option is unsupported"); }
+                  if (options && options.shell !== undefined && typeof options.shell === "string" && options.shell !== "/bin/sh") { markRefusal("spawn shell path is unsupported"); throw contextError("RUCKSACK_REFUSAL", "spawn shell path is unsupported"); }
+                  if (options && options.killSignal !== undefined && options.killSignal !== "SIGTERM") { markRefusal("spawn kill signal is unsupported"); throw contextError("RUCKSACK_REFUSAL", "spawn kill signal is unsupported"); }
+                  if (options && options.stdio !== undefined) {
+                    const allowedStdio = (value) => value === null || value === "pipe" || value === "ignore";
+                    if ((typeof options.stdio !== "string" && !Array.isArray(options.stdio)) || (typeof options.stdio === "string" && !["pipe", "ignore"].includes(options.stdio)) || (Array.isArray(options.stdio) && (options.stdio.length > 4 || options.stdio.some((value) => !allowedStdio(value))))) { markRefusal("spawn stdio option is unsupported"); throw contextError("RUCKSACK_REFUSAL", "spawn stdio option is unsupported"); }
+                    if (Array.isArray(options.stdio) && options.stdio[0] !== undefined && options.stdio[0] !== null && options.stdio[0] !== "ignore") { markRefusal("spawn stdin mode is unsupported"); throw contextError("RUCKSACK_REFUSAL", "spawn stdin mode is unsupported"); }
+                  }
+                  if (options && options.shell && Array.isArray(argsOrOptions)) { markRefusal("spawn shell with argv is unsupported"); throw contextError("RUCKSACK_REFUSAL", "spawn shell with argv is unsupported"); }
+                  return call("spawn", { command, args, options, overload });
+                };
+                Object.freeze(childProcessCapability);
+                const env = Object.create(null);
+                for (const key of Object.keys(snapshot.env || {})) env[key] = String(snapshot.env[key]);
+                const processFacade = Object.create(null);
+                processFacade.env = Object.freeze(env);
+                processFacade.argv = Object.freeze(Array.from(snapshot.argv || []));
+                processFacade.platform = String(snapshot.platform || "");
+                processFacade.version = String(snapshot.version || "");
+                processFacade.execPath = String(snapshot.execPath || "");
+                processFacade.cwd = () => String(snapshot.cwd || "");
+                processFacade.exit = (code = 0) => {
+                  state.exitRequested = true;
+                  state.exitCode = Number.isSafeInteger(code) && code >= 0 && code <= 255 ? code : 1;
+                  throw contextError("RUCKSACK_EXIT", "producer requested exit");
+                };
+                Object.freeze(processFacade);
+                const consoleFacade = Object.create(null);
+                consoleFacade.log = (text) => { if (typeof text !== "string" || text.length > 64 * 1024) { markRefusal("console accepts bounded text only"); throw contextError("RUCKSACK_REFUSAL", "console accepts bounded text only"); } call("console.log", { text }); };
+                consoleFacade.error = (text) => { if (typeof text !== "string" || text.length > 64 * 1024) { markRefusal("console accepts bounded text only"); throw contextError("RUCKSACK_REFUSAL", "console accepts bounded text only"); } call("console.error", { text }); };
+                Object.freeze(consoleFacade);
+                Object.defineProperty(globalThis, "process", { value: processFacade, writable: false, configurable: false, enumerable: false });
+                Object.defineProperty(globalThis, "console", { value: consoleFacade, writable: false, configurable: false, enumerable: false });
+                const registry = Object.create(null);
+                const moduleCache = new Map();
+                const builtins = new Set(Array.isArray(snapshot.builtins) ? snapshot.builtins : []);
+                const posixDirname = (value) => { const index = value.lastIndexOf("/"); return index < 0 ? "." : (index === 0 ? "/" : value.slice(0, index)); };
+                const posixJoin = (left, right) => { const pieces = (left ? left + "/" : "") + right; const output = []; for (const item of pieces.split("/")) { if (!item || item === ".") continue; if (item === "..") { if (!output.length) return null; output.pop(); } else output.push(item); } return output.join("/"); };
+                const resolveModule = (importer, requested) => {
+                  if (typeof requested !== "string" || !requested || requested.includes("\\\\") || requested.includes("\0") || /[\u0000-\u001f\u007f]/.test(requested)) { markRefusal("module request is not canonical"); throw contextError("RUCKSACK_REFUSAL", "module request is not canonical"); }
+                  if (requested.startsWith("node:")) { if (!builtins.has(requested)) { markRefusal("builtin capability is undeclared"); throw contextError("RUCKSACK_REFUSAL", "builtin capability is undeclared"); } return requested; }
+                  if (!requested.startsWith(".") || requested.startsWith("/")) { markRefusal("module request is not a declared relative entry"); throw contextError("RUCKSACK_REFUSAL", "module request is not a declared relative entry"); }
+                  const base = importer === "scripts/agent-evidence" ? "" : posixDirname(importer);
+                  const relative = posixJoin(base, requested);
+                  if (!relative || relative.startsWith("../") || relative === ".." || relative.split("/").some((part) => !part || part === "." || part === "..") || relative.split("/").includes("node_modules") || !/\.(?:cjs|js|json)$/.test(relative)) { markRefusal("module request is not canonical"); throw contextError("RUCKSACK_REFUSAL", "module request is not canonical"); }
+                  if (!Object.hasOwn(registry, relative)) { markRefusal("module entry is undeclared"); throw contextError("RUCKSACK_REFUSAL", "module entry is undeclared"); }
+                  return relative;
+                };
+                const capability = (requested) => {
+                  if (!builtins.has(requested)) { markRefusal("builtin capability is undeclared"); throw contextError("RUCKSACK_REFUSAL", "builtin capability is undeclared"); }
+                  if (requested === "node:fs") return fsCapability;
+                  if (requested === "node:path") return pathCapability;
+                  if (requested === "node:crypto") return cryptoCapability;
+                  if (requested === "node:child_process") return childProcessCapability;
+                  markRefusal("builtin capability is unsupported");
+                  throw contextError("RUCKSACK_REFUSAL", "builtin capability is unsupported");
+                };
+                const loadModule = (relative, override) => {
+                  if (relative.startsWith("node:")) return capability(relative);
+                  if (moduleCache.has(relative)) return moduleCache.get(relative).exports;
+                  const entry = override || registry[relative];
+                  if (!entry) { markRefusal("module entry is undeclared"); throw contextError("RUCKSACK_REFUSAL", "module entry is undeclared"); }
+                  const moduleRecord = Object.create(null);
+                  moduleRecord.exports = Object.create(null);
+                  moduleCache.set(relative, moduleRecord);
+                  if (entry.kind === "json") {
+                    let parsed;
+                    try { parsed = JSON.parse(entry.source); } catch (_error) { markRefusal("declared JSON is invalid"); throw contextError("RUCKSACK_REFUSAL", "declared JSON is invalid"); }
+                    const clone = (value, depth = 0) => { if (depth > 32) { markRefusal("declared JSON is too deep"); throw contextError("RUCKSACK_REFUSAL", "declared JSON is too deep"); } if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") return value; if (Array.isArray(value)) return Object.freeze(value.map((item) => clone(item, depth + 1))); const record = Object.create(null); for (const key of Object.keys(value)) record[key] = clone(value[key], depth + 1); return Object.freeze(record); };
+                    moduleRecord.exports = clone(parsed);
+                    return moduleRecord.exports;
+                  }
+                  const requested = (value) => loadModule(resolveModule(relative, value));
+                  const requireFacade = Object.freeze(requested);
+                  entry.fn(requireFacade, moduleRecord, moduleRecord.exports, relative, posixDirname(relative));
+                  return moduleRecord.exports;
+                };
+                const registerCode = (relative, fn) => { if (typeof relative !== "string" || typeof fn !== "function") { markRefusal("declared code registration is invalid"); throw contextError("RUCKSACK_REFUSAL", "declared code registration is invalid"); } registry[relative] = { kind: "code", fn }; };
+                const registerJson = (relative, source) => { if (typeof relative !== "string" || typeof source !== "string") { markRefusal("declared JSON registration is invalid"); throw contextError("RUCKSACK_REFUSAL", "declared JSON registration is invalid"); } registry[relative] = { kind: "json", source }; };
+                let rootEntry = null;
+                const invoke = () => {
+                  if (state.running) { markRefusal("producer execution is reentrant"); throw contextError("RUCKSACK_REFUSAL", "producer execution is reentrant"); }
+                  state.running = true;
+                  try { return loadModule("scripts/agent-evidence", rootEntry); }
+                  catch (error) { if (!state.exitRequested && !state.refused) markFailure(error); throw error; }
+                  finally { state.running = false; }
+                };
+                const setRoot = (fn) => { rootEntry = { kind: "code", fn }; };
+                // Keep the status boundary scalar as well.  The host may only receive
+                // the same JSON wire type that the producer sees from the dispatcher;
+                // it must not retain a context object (or a context Error) as an
+                // accidental second membrane.
+                const status = () => JSON.stringify({
+                  refused: state.refused,
+                  failed: state.failed,
+                  exitRequested: state.exitRequested,
+                  exitCode: state.exitCode,
+                  message: state.message,
+                });
+                return Object.freeze({ registerCode, registerJson, setRoot, invoke, markRefusal, rejectDynamic, status });
+              })
+            `).runInContext(context);
+            const runtimeSnapshot = JSON.stringify({
+              env: trustedProducerEnvironment(commandEnvironment),
+              argv: [process.execPath, "-"],
+              platform: process.platform,
+              version: process.version,
+              execPath: process.execPath,
+              cwd: executionRoot,
+              builtins: [...TRUSTED_CLOSURE_BUILTINS],
+            });
+            const runtime = runtimeFactory(dispatch, runtimeSnapshot);
+            function containsDynamicImport(source) {
+              let quote = "";
+              let escaped = false;
+              let lineComment = false;
+              let blockComment = false;
+              for (let index = 0; index < source.length; index += 1) {
+                const character = source[index];
+                const next = source[index + 1] || "";
+                if (lineComment) {
+                  if (character === "\n") lineComment = false;
+                  continue;
+                }
+                if (blockComment) {
+                  if (character === "*" && next === "/") {
+                    blockComment = false;
+                    index += 1;
+                  }
+                  continue;
+                }
+                if (quote) {
+                  if (escaped) {
+                    escaped = false;
+                  } else if (character === "\\") {
+                    escaped = true;
+                  } else if (character === quote) {
+                    quote = "";
+                  }
+                  continue;
+                }
+                if (character === "/" && next === "/") {
+                  lineComment = true;
+                  index += 1;
+                  continue;
+                }
+                if (character === "/" && next === "*") {
+                  blockComment = true;
+                  index += 1;
+                  continue;
+                }
+                // Treat template literals conservatively as executable source.  A
+                // backtick can contain a `${ ... }` expression, so treating the whole
+                // literal as inert would let `import()` evade the refusal check.  A
+                // false positive in a template's display text is safe: it refuses the
+                // producer before any evidence can be materialized.
+                if (character === "\"" || character === "'") {
+                  quote = character;
+                  escaped = false;
+                  continue;
+                }
+                if (source.slice(index, index + 6) === "import" &&
+                    !/[A-Za-z0-9_$]/.test(source[index - 1] || "") &&
+                    !/[A-Za-z0-9_$]/.test(source[index + 6] || "")) {
+                  let cursor = index + 6;
+                  while (/\s/.test(source[cursor] || "")) cursor += 1;
+                  if (source[cursor] === "(") return true;
+                }
+              }
+              return false;
+            }
+            const compileAndRegister = (relative, source, override = false) => {
+              if (containsDynamicImport(source)) {
+                runtime.markRefusal("dynamic import is unavailable in the trusted producer loader");
+                throw new Error("dynamic import is unavailable in the trusted producer loader");
+              }
+              if (relative.endsWith(".json")) {
+                try {
+                  JSON.parse(source);
+                } catch (_error) {
+                  runtime.markRefusal("declared JSON is invalid");
+                  throw new Error("declared JSON is invalid");
+                }
+                runtime.registerJson(relative, source);
+                return;
+              }
+              const wrapper = `(function(require,module,exports,__filename,__dirname){${source}\n})`;
+              let compiled;
+              try {
+                compiled = new vm.Script(wrapper, {
+                  filename: relative,
+                  importModuleDynamically: () => {
+                    runtime.markRefusal("dynamic import is unavailable in the trusted producer loader");
+                    return runtime.rejectDynamic();
+                  },
+                }).runInContext(context);
+              } catch (_error) {
+                runtime.markRefusal("declared producer code did not compile");
+                throw new Error("declared producer code did not compile");
+              }
+              if (override) runtime.setRoot(compiled);
+              else runtime.registerCode(relative, compiled);
+            };
+            try {
+              for (const entry of trustedProducerClosureEntries) {
+                if (entry.path === "scripts/agent-evidence") continue;
+                const source = fs.readFileSync(path.join(trustedProducerRoot, ...entry.path.split("/")), "utf8");
+                compileAndRegister(entry.path, source);
+              }
+              compileAndRegister("scripts/agent-evidence", producerBody, true);
+            } catch (error) {
+              throw error && error.code
+                ? error
+                : new Error(error && error.message ? error.message : "trusted producer closure could not be compiled");
+            }
+            try {
+              context.__rucksackInvocation = runtime.invoke;
+              new vm.Script(
+                "const invoke = globalThis.__rucksackInvocation; delete globalThis.__rucksackInvocation; invoke();",
+                { importModuleDynamically: () => runtime.rejectDynamic() },
+              ).runInContext(context);
+            } catch (_error) {
+              // The context owns the original error.  The host only asks for the
+              // bounded scalar status below; it never returns this error to producer code.
+            } finally {
+              try { delete context.__rucksackInvocation; } catch (_error) { /* immutable global is not relevant after the run */ }
+            }
+            let result;
+            try {
+              result = JSON.parse(runtime.status());
+            } catch (_error) {
+              throw new Error("trusted producer returned a malformed scalar status");
+            }
+            if (!result || typeof result !== "object" || Array.isArray(result) ||
+                typeof result.refused !== "boolean" || typeof result.failed !== "boolean" ||
+                typeof result.exitRequested !== "boolean" || !Number.isSafeInteger(result.exitCode) ||
+                typeof result.message !== "string") {
+              throw new Error("trusted producer returned an invalid scalar status");
+            }
+            if (result.refused || result.failed) {
+              throw new Error(result.message || "trusted producer refused");
+            }
+            const requestedExitCode = result.exitRequested ? result.exitCode : 0;
+
+            function materializeVirtualEvidence() {
+              if (typeof trustedEvidenceRoot !== "string" || !trustedEvidenceRoot.startsWith("/")) {
+                throw new Error("trusted evidence root must be one absolute path");
+              }
+              const payload = JSON.stringify({
+                root: trustedEvidenceRoot,
+                directories: [...virtualDirectories].sort(),
+                files: [...virtualFiles.entries()]
+                  .sort(([left], [right]) => left.localeCompare(right))
+                  .map(([relative, bytes]) => ({
+                    path: relative,
+                    base64: bytes.toString("base64"),
+                    sha256: createHash("sha256").update(bytes).digest("hex"),
+                  })),
+              });
+              const materialized = spawnSync(
+                candidatePython,
+                ["-I", "-B", "-c", TRUSTED_EVIDENCE_MATERIALIZER_SOURCE],
+                {
+                  input: payload,
+                  cwd: executionRoot,
+                  env: (typeof pythonHelperEnvironment === "function" ? pythonHelperEnvironment : (base) => base)({
+                    HOME: "/root",
+                    LANG: "C",
+                    LC_ALL: "C",
+                    PATH: "/usr/bin:/bin",
+                  }),
+                  stdio: ["pipe", "pipe", "pipe"],
+                  encoding: "utf8",
+                  maxBuffer: 1024 * 1024,
+                },
+              );
+              if (materialized.error || materialized.signal || materialized.status !== 0) {
+                throw new Error(
+                  `trusted evidence materializer refused: ${materialized.error?.message || materialized.stderr || materialized.signal || `exit ${materialized.status}`}`,
+                );
+              }
+              let receipt;
+              try {
+                receipt = JSON.parse(materialized.stdout);
+              } catch (_error) {
+                throw new Error("trusted evidence materializer returned malformed receipt");
+              }
+              if (!receipt || typeof receipt !== "object" || Array.isArray(receipt) ||
+                  Object.keys(receipt).sort().join(",") !== "ok" || receipt.ok !== true) {
+                throw new Error("trusted evidence materializer returned an invalid receipt");
+              }
+            }
+            if (requestedExitCode === 0) materializeVirtualEvidence();
+            return requestedExitCode;
           }
 
-          const isolatedProducerSource = `(${isolatedProducerMain.toString()})()`;
-          const produced = candidateSpawnSync(
-            producerNode,
-            ["-e", isolatedProducerSource, trustedProducerPath],
-            { stdio: "inherit", timeout: 900000 },
-            "trusted evidence producer",
-          );
-          if (!Number.isInteger(produced.status) || produced.status < 0 || produced.status > 255) {
+
+          assertTrustedProducerClosure("immediately before trusted producer");
+          let producerStatus = 125;
+          try {
+            producerStatus = manifestOnlyProducerMain(trustedProducerPath);
+          } catch (error) {
+            console.error(`isolated evidence producer refused: ${error && error.message ? error.message : "trusted producer refusal"}`);
+            producerStatus = 125;
+          }
+          assertTrustedProducerClosure("immediately after trusted producer");
+          if (!Number.isInteger(producerStatus) || producerStatus < 0 || producerStatus > 255) {
             fail("trusted evidence producer returned an invalid exit status");
           }
-          const producerStatus = produced.status;
           assertCandidateState("after producer execution");
 
-          function copyTrustedEvidence(source, target, budget = { remaining: 64 * 1024 * 1024 }) {
-            const sourceStats = fs.lstatSync(source);
-            if (sourceStats.isSymbolicLink()) fail("revalidation evidence must not contain symlinks");
-            if (sourceStats.isDirectory()) {
-              if (source !== ".agent/evidence") fs.mkdirSync(target, { mode: 0o700 });
-              for (const leaf of fs.readdirSync(source)) {
-                copyTrustedEvidence(`${source}/${leaf}`, `${target}/${leaf}`, budget);
-              }
-              return;
+          // The producer writes only to the host-private virtual map.  A non-zero or
+          // refused run must leave the externally supplied root empty; a successful run
+          // was materialized by manifestOnlyProducerMain after descriptor pinning.
+          const trustedEvidenceFinalDescriptor = fs.openSync(
+            trustedEvidenceRoot,
+            fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW,
+          );
+          try {
+            const evidenceRootStats = fs.fstatSync(trustedEvidenceFinalDescriptor);
+            if (
+              !evidenceRootStats.isDirectory() ||
+              evidenceRootStats.isSymbolicLink() ||
+              evidenceRootStats.uid !== process.getuid() ||
+              (evidenceRootStats.mode & 0o077) !== 0 ||
+              (producerStatus !== 0 && fs.readdirSync(trustedEvidenceRoot).length !== 0)
+            ) {
+              fail("trusted evidence root is not a safe final root");
             }
-            if (!sourceStats.isFile() || sourceStats.nlink !== 1) {
-              fail("revalidation evidence must contain only unshared regular files");
-            }
-            if (sourceStats.size > budget.remaining) fail("revalidation evidence exceeds 64 MiB");
-            budget.remaining -= sourceStats.size;
-            fs.copyFileSync(source, target, fs.constants.COPYFILE_EXCL);
-            fs.chmodSync(target, 0o600);
+          } finally {
+            fs.closeSync(trustedEvidenceFinalDescriptor);
           }
-
-          const evidenceRootStats = fs.lstatSync(trustedEvidenceRoot);
-          if (
-            !evidenceRootStats.isDirectory() ||
-            evidenceRootStats.isSymbolicLink() ||
-            evidenceRootStats.uid !== process.getuid() ||
-            (evidenceRootStats.mode & 0o077) !== 0 ||
-            fs.readdirSync(trustedEvidenceRoot).length !== 0
-          ) {
-            fail("trusted evidence root must be one empty owner-only directory");
-          }
-          const candidateRoot = fs.realpathSync(".");
-          const evidenceRoot = fs.realpathSync(trustedEvidenceRoot);
-          if (evidenceRoot === candidateRoot || evidenceRoot.startsWith(`${candidateRoot}/`)) {
-            fail("trusted evidence root must stay outside the candidate checkout");
-          }
-          copyTrustedEvidence(".agent/evidence", trustedEvidenceRoot);
           process.exit(producerStatus);
           RUCKSACK_TRUSTED_LAUNCHER
           )

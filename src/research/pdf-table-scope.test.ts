@@ -9,10 +9,7 @@ import type {
   PdfSourceRun,
 } from './import-types'
 import { reconstructPageRegions } from './pdf-regions'
-import {
-  compactTabularSlabMayFollowCaption,
-  resolvePdfTableScope,
-} from './pdf-table-scope'
+import { resolvePdfTableScope } from './pdf-table-scope'
 
 function box(
   x: number,

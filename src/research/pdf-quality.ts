@@ -24,11 +24,7 @@ import {
   type EquationTranscriptContext,
 } from './equation-transcript-adjudication'
 import { verifyRelationshipSourceGeometryScriptTranscript } from './equation-geometry-transcript'
-import {
-  groupRunsIntoLines,
-  inlineHardHyphenLexicon,
-  inlineUnhyphenatedLexicon,
-} from './pdf-lines'
+import { inlineHardHyphenLexicon, inlineUnhyphenatedLexicon } from './pdf-lines'
 import {
   PDF_HYPHEN_DERIVED_AFFIX_REMOVAL_REQUIRED_EVIDENCE,
   PDF_HYPHEN_REMOVAL_FORBIDDEN_EVIDENCE,
@@ -73,8 +69,19 @@ import {
   internalReferenceIntegrityIssues,
   validMatchedSemanticNoteRelationshipIds,
 } from './publication-integrity'
-import { parsePdfScholarlyVisualLabel } from './pdf-scholarly-label'
 import { isStrictSemanticTable } from './semantic-table'
+import { detectPdfSemanticSignals } from './pdf-quality-signals'
+export { detectPdfSemanticSignals } from './pdf-quality-signals'
+import { canonicalVisualOrderViolationRelationshipIds } from './pdf-quality-visual-order'
+export { canonicalVisualOrderViolationRelationshipIds } from './pdf-quality-visual-order'
+import {
+  characterCount,
+  meaningPreservingText,
+  normalizedText,
+  occurrenceBoundedMatchedCharacters,
+  orderedMatchedCharacters,
+  rounded,
+} from './pdf-quality-text'
 
 export const DEFAULT_PDF_COMPLETENESS_POLICY: PdfCompletenessPolicy = {
   minimumTextCoverage: 0.98,
@@ -615,24 +622,6 @@ export function hasValidCanonicalHyphenBoundaryLedger({
     boundaries.add(boundary)
   }
   return true
-}
-
-function rounded(value: number) {
-  return Math.round(value * 100_000) / 100_000
-}
-
-function normalizedText(value: string) {
-  return value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
-}
-
-function meaningPreservingText(value: string) {
-  return value
-    .normalize('NFC')
-    .replace(/\u00ad/gu, '')
-    .replace(/(?<=\p{N}[-–—])\s+(?=\p{N})/gu, '')
-    .replace(/\b((?:18|19|20)\d)\s+(?=\d(?:[.,;:)]|$))/gu, '$1')
-    .replace(/\s+/gu, ' ')
-    .trim()
 }
 
 function dominantSemanticFlowLineMetrics(line: PdfPageRegion['lines'][number]) {
@@ -1598,10 +1587,6 @@ function sourceProvenBoundaryTokenText(
   return combined
 }
 
-function characterCount(value: string) {
-  return [...value].length
-}
-
 function nodeText(node: ResearchNode, validatedVisualText = '') {
   if (node.type === 'footnote') {
     return `${node.markerText ?? node.label} ${node.text}`
@@ -1732,116 +1717,6 @@ function validatedVisualRepresentationByNode(
     ),
     lineageConnectorNodeIds,
   }
-}
-
-function smallLongestCommonSubsequence(source: string[], output: string[]) {
-  const previous = new Uint32Array(output.length + 1)
-  const current = new Uint32Array(output.length + 1)
-  for (const sourceCharacter of source) {
-    current[0] = 0
-    for (let outputIndex = 1; outputIndex <= output.length; outputIndex += 1) {
-      current[outputIndex] =
-        sourceCharacter === output[outputIndex - 1]
-          ? previous[outputIndex - 1] + 1
-          : Math.max(previous[outputIndex], current[outputIndex - 1])
-    }
-    previous.set(current)
-  }
-  return previous[output.length]
-}
-
-function isSubsequence(candidate: string[], value: string[]) {
-  let candidateIndex = 0
-  for (const character of value) {
-    if (character === candidate[candidateIndex]) candidateIndex += 1
-    if (candidateIndex === candidate.length) return true
-  }
-  return candidate.length === 0
-}
-
-function bigintPopulationCount(value: bigint) {
-  let remaining = value
-  let count = 0
-  const mask = 0xffff_ffffn
-  while (remaining > 0n) {
-    let chunk = Number(remaining & mask) >>> 0
-    chunk -= (chunk >>> 1) & 0x5555_5555
-    chunk = (chunk & 0x3333_3333) + ((chunk >>> 2) & 0x3333_3333)
-    count += (((chunk + (chunk >>> 4)) & 0x0f0f_0f0f) * 0x0101_0101) >>> 24
-    remaining >>= 32n
-  }
-  return count
-}
-
-function bitsetLongestCommonSubsequence(source: string[], output: string[]) {
-  const columns = source.length <= output.length ? source : output
-  const rows = source.length <= output.length ? output : source
-  const matchesByCharacter = new Map<string, bigint>()
-  for (const [index, character] of columns.entries()) {
-    matchesByCharacter.set(
-      character,
-      (matchesByCharacter.get(character) ?? 0n) | (1n << BigInt(index)),
-    )
-  }
-  let state = 0n
-  for (const character of rows) {
-    const matches = matchesByCharacter.get(character) ?? 0n
-    const available = matches | state
-    state = available & ~(available - ((state << 1n) | 1n))
-  }
-  return bigintPopulationCount(state)
-}
-
-function orderedMatchedCharacters(source: string, output: string) {
-  if (source === output) return characterCount(source)
-  const sourceCharacters = [...source]
-  const outputCharacters = [...output]
-  let prefixLength = 0
-  while (
-    prefixLength < sourceCharacters.length &&
-    prefixLength < outputCharacters.length &&
-    sourceCharacters[prefixLength] === outputCharacters[prefixLength]
-  ) {
-    prefixLength += 1
-  }
-  let sourceEnd = sourceCharacters.length
-  let outputEnd = outputCharacters.length
-  while (
-    sourceEnd > prefixLength &&
-    outputEnd > prefixLength &&
-    sourceCharacters[sourceEnd - 1] === outputCharacters[outputEnd - 1]
-  ) {
-    sourceEnd -= 1
-    outputEnd -= 1
-  }
-  const suffixLength = sourceCharacters.length - sourceEnd
-  const sourceMiddle = sourceCharacters.slice(prefixLength, sourceEnd)
-  const outputMiddle = outputCharacters.slice(prefixLength, outputEnd)
-  const shorter =
-    sourceMiddle.length <= outputMiddle.length ? sourceMiddle : outputMiddle
-  const longer =
-    sourceMiddle.length <= outputMiddle.length ? outputMiddle : sourceMiddle
-  const middleMatch = isSubsequence(shorter, longer)
-    ? shorter.length
-    : sourceMiddle.length * outputMiddle.length <= 1_000_000
-      ? smallLongestCommonSubsequence(sourceMiddle, outputMiddle)
-      : bitsetLongestCommonSubsequence(sourceMiddle, outputMiddle)
-  return prefixLength + middleMatch + suffixLength
-}
-
-function occurrenceBoundedMatchedCharacters(source: string, output: string) {
-  const remaining = new Map<string, number>()
-  for (const character of output) {
-    remaining.set(character, (remaining.get(character) ?? 0) + 1)
-  }
-  let matched = 0
-  for (const character of source) {
-    const count = remaining.get(character) ?? 0
-    if (count === 0) continue
-    remaining.set(character, count - 1)
-    matched += 1
-  }
-  return matched
 }
 
 function countOccurrences(value: string, candidate: string) {
@@ -1997,106 +1872,6 @@ function canonicalFlowOrderViolationNodeIds(
       }
     }
     intervals.push(interval)
-  }
-  return [...implicated]
-}
-
-export function canonicalVisualOrderViolationRelationshipIds(
-  paper: ResearchPaper,
-  relationships: readonly PdfVisualRelationship[],
-  readingOrder: PdfReadingOrderGraph | undefined,
-) {
-  if (!readingOrder || relationships.length < 2) return []
-  const nodeOrder = new Map(
-    paper.nodes.map((node, index) => [node.id, index] as const),
-  )
-  const regionOrder = new Map(
-    readingOrder.order.map((regionId, index) => [regionId, index] as const),
-  )
-  const positioned = relationships.flatMap((relationship) => {
-    if (
-      relationship.status !== 'matched' ||
-      relationship.canonicalNodeId === null ||
-      relationship.captionNodeId === null
-    ) {
-      return []
-    }
-    const visualIndex = nodeOrder.get(relationship.canonicalNodeId)
-    const captionIndex = nodeOrder.get(relationship.captionNodeId)
-    const sourceRanks = [
-      regionOrder.get(relationship.captionRegionId),
-      ...relationship.sourceRegionIds.map((regionId) =>
-        regionOrder.get(regionId),
-      ),
-    ].filter((rank): rank is number => rank !== undefined)
-    if (
-      visualIndex === undefined ||
-      captionIndex !== visualIndex + 1 ||
-      sourceRanks.length === 0
-    ) {
-      return []
-    }
-    return [
-      {
-        relationship,
-        sourceRank: Math.min(...sourceRanks),
-        visualIndex,
-        parsedLabel: parsePdfScholarlyVisualLabel(relationship.label, {
-          context: 'caption',
-        }),
-      },
-    ]
-  })
-  if (positioned.length < 2) return []
-
-  const implicated = new Set<string>()
-  const positionedByKind = new Map<
-    PdfVisualRelationship['kind'],
-    typeof positioned
-  >()
-  for (const candidate of positioned) {
-    const values = positionedByKind.get(candidate.relationship.kind) ?? []
-    values.push(candidate)
-    positionedByKind.set(candidate.relationship.kind, values)
-  }
-  for (const sameKind of positionedByKind.values()) {
-    sameKind.sort((left, right) => {
-      const leftOrdinal =
-        left.parsedLabel?.status === 'parsed' &&
-        /^\d+$/u.test(left.parsedLabel.identifier)
-          ? Number(left.parsedLabel.identifier)
-          : null
-      const rightOrdinal =
-        right.parsedLabel?.status === 'parsed' &&
-        /^\d+$/u.test(right.parsedLabel.identifier)
-          ? Number(right.parsedLabel.identifier)
-          : null
-      if (
-        leftOrdinal !== null &&
-        rightOrdinal !== null &&
-        leftOrdinal !== rightOrdinal
-      ) {
-        return leftOrdinal - rightOrdinal
-      }
-      return (
-        left.sourceRank - right.sourceRank ||
-        left.relationship.id.localeCompare(right.relationship.id)
-      )
-    })
-    let previous = sameKind[0]
-    for (const current of sameKind.slice(1)) {
-      // A shared source rank does not prove an ordering constraint.
-      if (current.sourceRank === previous.sourceRank) {
-        if (current.visualIndex > previous.visualIndex) previous = current
-        continue
-      }
-      if (current.visualIndex < previous.visualIndex) {
-        implicated.add(previous.relationship.id)
-        implicated.add(current.relationship.id)
-        continue
-      }
-      previous = current
-    }
   }
   return [...implicated]
 }
@@ -2774,72 +2549,6 @@ function validateLineBoundaryLedger(
     unresolved,
     structurallyConsumed,
   }
-}
-
-function pageLines(page: PdfPageAnalysis) {
-  return groupRunsIntoLines(page)
-}
-
-function scholarlyCaptionKind(value: string) {
-  return (
-    parsePdfScholarlyVisualLabel(value, { context: 'caption' })?.kind ?? null
-  )
-}
-
-export function detectPdfSemanticSignals(
-  pages: PdfPageAnalysis[],
-  suppliedRegions?: PdfPageRegion[],
-  suppliedLineBoundaryDecisions?: readonly PdfLineBoundaryDecision[],
-): PdfSemanticSignals {
-  const reconstructed = suppliedRegions ? null : reconstructPageRegions(pages)
-  const regions = suppliedRegions ?? reconstructed!.regions
-  const lineBoundaryDecisions =
-    suppliedLineBoundaryDecisions ?? reconstructed?.lineBoundaryDecisions ?? []
-  const markerResult = classifyPdfNoteMarkers(
-    regions,
-    undefined,
-    lineBoundaryDecisions,
-  )
-  const captionFigures = regions.filter(
-    (region) =>
-      region.kind === 'caption' &&
-      scholarlyCaptionKind(region.text) === 'figure',
-  ).length
-  const signals: PdfSemanticSignals = {
-    // Once region reconstruction is available, a figure obligation requires
-    // the same caption-region proof as tables. Counting raw PDF lines here
-    // double-counts a split caption (or incidental "Figure:" text) and makes
-    // an otherwise complete visual graph fail closed.
-    captions: suppliedRegions ? captionFigures : 0,
-    tables: regions.filter(
-      (region) =>
-        region.kind === 'caption' &&
-        scholarlyCaptionKind(region.text) === 'table',
-    ).length,
-    equations: 0,
-    citations: markerResult.classifications.filter(
-      (classification) => classification.disposition === 'citation',
-    ).length,
-    footnoteReferences: markerResult.classifications.filter(
-      (classification) => classification.disposition === 'note-reference',
-    ).length,
-    footnotes: markerResult.noteBodyRegionIds.length,
-  }
-  for (const page of pages) {
-    for (const line of pageLines(page)) {
-      if (!suppliedRegions && scholarlyCaptionKind(line.text) === 'figure') {
-        signals.captions += 1
-      }
-      if (/(?:^|\b)(?:equation|eq\.?)\s*\(?\d+\)?/i.test(line.text)) {
-        signals.equations += 1
-      }
-    }
-  }
-  signals.equations = Math.max(
-    signals.equations,
-    regions.filter(isProbableDisplayEquation).length,
-  )
-  return signals
 }
 
 function coverage(resolved: number, expected: number) {

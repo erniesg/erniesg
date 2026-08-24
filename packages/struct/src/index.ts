@@ -1,5 +1,6 @@
 export * from './core.js'
 export * from './ids.js'
+export { sha256HexSync } from './sha256.js'
 export * from './recovery.js'
 export * from './renderers/xhtml.js'
 export * from './renderers/epub.js'

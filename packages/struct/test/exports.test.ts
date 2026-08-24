@@ -11,6 +11,7 @@ const expected = {
     'legacyStructDigest',
     'legacyStructDigests',
     'legacyStructDigestMatches',
+    'sha256HexSync',
     'orderBlocksByLayout',
     'pageLayoutsFromBlocks',
     'diagnosticCopy',

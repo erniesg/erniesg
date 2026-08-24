@@ -70,7 +70,7 @@ export const PARITY_ENTRIES: readonly SourceParityEntry[] = [
     packagePath: "index.ts",
     rule: "root-facade",
     packageSha256:
-      "c16a9ebc3250fb4bb62c364e079cfc05ea3a77563df301954215695d5efb42fd",
+      "c11c52ee11d9104701bd9351466ac92d99e5f0f97136f20decf6cfd57b886a43",
   },
   {
     packagePath: "model-consultation-receipt.ts",

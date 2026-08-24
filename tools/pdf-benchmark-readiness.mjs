@@ -19,7 +19,7 @@ const DEFAULT_SCHEMA_PATH = resolve(
 const DEFAULT_SCHEMA_ID =
   'https://ernie.sg/schemas/pdf-benchmark-readiness-registry-1.0.0.json'
 const DEFAULT_SCHEMA_SHA256 =
-  '3dd77733e86da34b9810afeab607c1f325d4b70fa43c2c8116dd30d3cd5c4ff9'
+  '744180ea3c7ce184a1596cc3035d2ef82d039f6270b24c3e5063157177052031'
 const PUBLIC_ERROR_CODE = /^(?:INVALID|MISSING|PDF)_[A-Z0-9_]+$/
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/
 const SAFE_FAILURE_CLASS = /^[a-z][a-z0-9]*(?:-[a-z0-9]+){0,11}$/
@@ -180,6 +180,43 @@ async function verifyRepositoryFileBinding(
   }
 }
 
+function metricImplementationCompositeSha256(metric) {
+  return sha256(
+    canonicalJson({
+      kind: 'pdf-benchmark-metric-implementation-v1',
+      entrypoint: metric.implementation,
+      components: metric.implementationComponents
+        .map((component) => ({
+          path: component.path,
+          fileSha256: component.fileSha256,
+        }))
+        .sort((left, right) => left.path.localeCompare(right.path)),
+    }),
+  )
+}
+
+async function verifyMetricImplementationBinding(metric) {
+  const components = metric.implementationComponents
+  const componentPaths = components.map((component) => component.path)
+  if (
+    components.length === 0 ||
+    !unique(componentPaths) ||
+    !componentPaths.includes(metric.implementation)
+  ) {
+    invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+  }
+  await Promise.all(
+    components.map((component) =>
+      verifyRepositoryFileBinding(component.path, component.fileSha256),
+    ),
+  )
+  if (
+    metricImplementationCompositeSha256(metric) !== metric.implementationSha256
+  ) {
+    invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+  }
+}
+
 async function readBoundJson(binding, code) {
   try {
     const bytes = await verifyRepositoryFileBinding(
@@ -310,10 +347,7 @@ async function validateMetricImplementations(registry) {
   for (const metric of registry.metricImplementations) {
     if (metric.status !== 'available') continue
     await Promise.all([
-      verifyRepositoryFileBinding(
-        metric.implementation,
-        metric.implementationSha256,
-      ),
+      verifyMetricImplementationBinding(metric),
       verifyRepositoryFileBinding(metric.test, metric.testSha256),
     ])
     if (metric.kind === 'calibrated-judge') {

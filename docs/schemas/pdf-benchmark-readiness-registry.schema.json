@@ -572,6 +572,11 @@
         "implementationSha256": {
           "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
         },
+        "implementationComponents": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/fileBinding" }
+        },
         "test": {
           "oneOf": [{ "$ref": "#/$defs/path" }, { "type": "null" }]
         },
@@ -589,9 +594,11 @@
             "properties": { "status": { "const": "available" } }
           },
           "then": {
+            "required": ["implementationComponents"],
             "properties": {
               "implementation": { "$ref": "#/$defs/path" },
               "implementationSha256": { "$ref": "#/$defs/sha256" },
+              "implementationComponents": { "minItems": 1 },
               "test": { "$ref": "#/$defs/path" },
               "testSha256": { "$ref": "#/$defs/sha256" }
             }
@@ -606,6 +613,7 @@
             "properties": {
               "implementation": { "type": "null" },
               "implementationSha256": { "type": "null" },
+              "implementationComponents": { "maxItems": 0 },
               "test": { "type": "null" },
               "testSha256": { "type": "null" }
             }

@@ -417,6 +417,35 @@ describe('PDF benchmark readiness registry', () => {
     ).rejects.toThrow('PDF_BENCHMARK_JUDGE_CALIBRATION_MISMATCH')
   })
 
+  it('binds every package-integrity implementation component', async () => {
+    const registry = await readRegistry()
+    const metric = registry.metricImplementations.find(
+      (item) => item.id === 'package-integrity',
+    )
+    const receipt = await createPdfBenchmarkReadinessReceipt({ registryPath })
+    expect(
+      receipt.criteria.find((criterion) => criterion.id === 'metric-coverage')
+        .observed,
+    ).toContain('package-integrity')
+    expect(
+      metric.implementationComponents.map((component) => component.path),
+    ).toEqual([
+      'tools/pdf-private-fidelity.mjs',
+      'tools/pdf-private-fidelity-epubcheck.mjs',
+    ])
+
+    const adapter = metric.implementationComponents.find(
+      (component) =>
+        component.path === 'tools/pdf-private-fidelity-epubcheck.mjs',
+    )
+    adapter.fileSha256 = '0'.repeat(64)
+    await expect(
+      createPdfBenchmarkReadinessReceipt({
+        registryPath: await writeRegistry(registry),
+      }),
+    ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+  })
+
   it('binds judge calibration execution to a registered held-out split and confusion matrix', async () => {
     const registry = await readRegistry()
     const writeEvidence = await createEvidenceWriter()

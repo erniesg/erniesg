@@ -280,7 +280,17 @@
       "status": "available",
       "kind": "code",
       "implementation": "tools/pdf-private-fidelity.mjs",
-      "implementationSha256": "cf06f09a214c4a0e00710b2c1cd99c498a61954abe69ce5e520ca4a222d7ab3c",
+      "implementationSha256": "0228dec352328d3e7381f649c30ccfce9bb4e5d4d8f22c62df7214f104bceaa7",
+      "implementationComponents": [
+        {
+          "path": "tools/pdf-private-fidelity.mjs",
+          "fileSha256": "cf06f09a214c4a0e00710b2c1cd99c498a61954abe69ce5e520ca4a222d7ab3c"
+        },
+        {
+          "path": "tools/pdf-private-fidelity-epubcheck.mjs",
+          "fileSha256": "8d4083f8aef7ab19362b0b0b5089dd87b7dea51c3d1909ab0986420f16f717a5"
+        }
+      ],
       "test": "tools/pdf-private-fidelity.test.mjs",
       "testSha256": "2077bfd707b9566ae7ef32c1014586cce099e4e0310d5f9bb1dbd02983c7bc88",
       "calibration": null

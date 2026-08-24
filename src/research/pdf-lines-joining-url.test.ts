@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  groupRunsIntoLines,
-  joinPdfLineTexts,
-} from './pdf-lines'
+import { groupRunsIntoLines, joinPdfLineTexts } from './pdf-lines'
 import type {
   PdfPageAnalysis,
   PdfSourceRun,

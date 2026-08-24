@@ -1,7 +1,13 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readFile, rm, writeFile } from 'node:fs/promises'
-import { mkdtemp } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -11,10 +17,12 @@ import {
   assessPdfBenchmarkReadiness,
   createPdfBenchmarkSplitIdentitySha256,
   createPdfBenchmarkReadinessReceipt,
+  deriveLocalExecutableImportClosure,
   validateCandidateCommitment,
   validateIndependentIsolationEvidence,
   validateObservationBinding,
   validateSourcePdfDocumentIdentities,
+  verifyMetricImplementationBinding,
 } from './pdf-benchmark-readiness.mjs'
 
 const registryPath = 'benchmarks/pdf/benchmark-readiness-registry-v1.json'
@@ -49,6 +57,50 @@ async function fileBinding(path) {
       .update(await readFile(path))
       .digest('hex'),
   }
+}
+
+async function temporaryImplementationFixture() {
+  const repositoryRoot = await mkdtemp(
+    join(tmpdir(), 'pdf-benchmark-implementation-'),
+  )
+  await mkdir(join(repositoryRoot, 'tools'))
+  await writeFile(
+    join(repositoryRoot, 'tools/entry.mjs'),
+    "import './adapter.mjs'\n",
+  )
+  await writeFile(
+    join(repositoryRoot, 'tools/adapter.mjs'),
+    "export { value } from './transitive.mjs'\n",
+  )
+  await writeFile(
+    join(repositoryRoot, 'tools/transitive.mjs'),
+    'export const value = 1\n',
+  )
+  const paths = ['tools/entry.mjs', 'tools/adapter.mjs', 'tools/transitive.mjs']
+  const implementationComponents = await Promise.all(
+    paths.map(async (path) => ({
+      path,
+      fileSha256: createHash('sha256')
+        .update(await readFile(join(repositoryRoot, path)))
+        .digest('hex'),
+    })),
+  )
+  const metric = {
+    implementation: 'tools/entry.mjs',
+    implementationComponents,
+  }
+  metric.implementationSha256 = createHash('sha256')
+    .update(
+      canonicalJson({
+        kind: 'pdf-benchmark-metric-implementation-v1',
+        entrypoint: metric.implementation,
+        components: implementationComponents
+          .map(({ path, fileSha256 }) => ({ path, fileSha256 }))
+          .sort((left, right) => left.path.localeCompare(right.path)),
+      }),
+    )
+    .digest('hex')
+  return { repositoryRoot, metric }
 }
 
 async function createEvidenceWriter() {
@@ -430,8 +482,14 @@ describe('PDF benchmark readiness registry', () => {
     expect(
       metric.implementationComponents.map((component) => component.path),
     ).toEqual([
-      'tools/pdf-private-fidelity.mjs',
+      'tools/pdf-corpus-audit-lib.mjs',
+      'tools/pdf-corpus-audit-safety.mjs',
+      'tools/pdf-ocr-apple-vision.mjs',
+      'tools/pdf-ocr-engines.mjs',
+      'tools/pdf-ocr-node.mjs',
+      'tools/pdf-ocr-remote.mjs',
       'tools/pdf-private-fidelity-epubcheck.mjs',
+      'tools/pdf-private-fidelity.mjs',
     ])
 
     const adapter = metric.implementationComponents.find(
@@ -444,6 +502,134 @@ describe('PDF benchmark readiness registry', () => {
         registryPath: await writeRegistry(registry),
       }),
     ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+  })
+
+  it('retains pinned legacy validation and rejects unknown registry versions', async () => {
+    const legacy = await readRegistry()
+    legacy.schemaVersion = '1.0.0'
+    const metric = legacy.metricImplementations.find(
+      (item) => item.id === 'package-integrity',
+    )
+    delete metric.implementationComponents
+    metric.implementationSha256 = createHash('sha256')
+      .update(await readFile(metric.implementation))
+      .digest('hex')
+    await expect(
+      createPdfBenchmarkReadinessReceipt({
+        registryPath: await writeRegistry(legacy),
+      }),
+    ).resolves.toMatchObject({ ready: false })
+
+    const unknown = await readRegistry()
+    unknown.schemaVersion = '3.0.0'
+    await expect(
+      createPdfBenchmarkReadinessReceipt({
+        registryPath: await writeRegistry(unknown),
+      }),
+    ).rejects.toThrow('INVALID_PDF_BENCHMARK_REGISTRY_SCHEMA')
+  })
+
+  it('requires exact derived executable closure even after a manifest is recomputed', async () => {
+    const { repositoryRoot, metric } = await temporaryImplementationFixture()
+    try {
+      await expect(
+        verifyMetricImplementationBinding(metric, { repositoryRoot }),
+      ).resolves.toBeUndefined()
+      expect(
+        (
+          await deriveLocalExecutableImportClosure(metric.implementation, {
+            repositoryRoot,
+          })
+        ).map((artifact) => artifact.path),
+      ).toEqual([
+        'tools/adapter.mjs',
+        'tools/entry.mjs',
+        'tools/transitive.mjs',
+      ])
+
+      await writeFile(
+        join(repositoryRoot, 'tools/adapter.mjs'),
+        "import { createRequire } from 'node:module'\nconst load = createRequire(import.meta.url)\nload('./transitive.mjs')\n",
+      )
+      expect(
+        (
+          await deriveLocalExecutableImportClosure(metric.implementation, {
+            repositoryRoot,
+          })
+        ).map((artifact) => artifact.path),
+      ).toContain('tools/transitive.mjs')
+      await writeFile(
+        join(repositoryRoot, 'tools/adapter.mjs'),
+        "export { value } from './transitive.mjs'\n",
+      )
+
+      const omitted = structuredClone(metric)
+      omitted.implementationComponents =
+        omitted.implementationComponents.filter(
+          (component) => component.path !== 'tools/transitive.mjs',
+        )
+      omitted.implementationSha256 = createHash('sha256')
+        .update(
+          canonicalJson({
+            kind: 'pdf-benchmark-metric-implementation-v1',
+            entrypoint: omitted.implementation,
+            components: omitted.implementationComponents
+              .map(({ path, fileSha256 }) => ({ path, fileSha256 }))
+              .sort((left, right) => left.path.localeCompare(right.path)),
+          }),
+        )
+        .digest('hex')
+      await expect(
+        verifyMetricImplementationBinding(omitted, { repositoryRoot }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+
+      await writeFile(
+        join(repositoryRoot, 'tools/transitive.mjs'),
+        'export const value = 2\n',
+      )
+      await expect(
+        verifyMetricImplementationBinding(metric, { repositoryRoot }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    } finally {
+      await rm(repositoryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects noncanonical aliases and symlinked closure components', async () => {
+    const { repositoryRoot, metric } = await temporaryImplementationFixture()
+    try {
+      const repeatedSlash = structuredClone(metric)
+      repeatedSlash.implementationComponents[0].path = 'tools//entry.mjs'
+      await expect(
+        verifyMetricImplementationBinding(repeatedSlash, { repositoryRoot }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+
+      await writeFile(
+        join(repositoryRoot, 'tools/entry.mjs'),
+        "import './adapter//transitive.mjs'\n",
+      )
+      await expect(
+        deriveLocalExecutableImportClosure('tools/entry.mjs', {
+          repositoryRoot,
+        }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+
+      await writeFile(
+        join(repositoryRoot, 'tools/entry.mjs'),
+        "import './alias.mjs'\n",
+      )
+      await symlink(
+        join(repositoryRoot, 'tools/transitive.mjs'),
+        join(repositoryRoot, 'tools/alias.mjs'),
+      )
+      await expect(
+        deriveLocalExecutableImportClosure('tools/entry.mjs', {
+          repositoryRoot,
+        }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    } finally {
+      await rm(repositoryRoot, { recursive: true, force: true })
+    }
   })
 
   it('binds judge calibration execution to a registered held-out split and confusion matrix', async () => {

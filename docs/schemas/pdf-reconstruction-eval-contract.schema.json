@@ -222,8 +222,26 @@
           "minItems": 1,
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/path" }
+        },
+        "implementationSha256": { "$ref": "#/$defs/sha256" },
+        "implementationComponents": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/artifact" }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["id"],
+            "properties": { "id": { "const": "profile-artifact-validity" } }
+          },
+          "then": {
+            "required": ["implementationSha256", "implementationComponents"]
+          }
+        }
+      ]
     },
     "subjectiveJudgePolicy": {
       "type": "object",

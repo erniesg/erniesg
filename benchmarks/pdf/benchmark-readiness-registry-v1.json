@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.0.0",
+  "schemaVersion": "2.0.0",
   "id": "scholarly-pdf-reconstruction-benchmark-readiness-2026-07-v1",
   "privacy": "public-identities-hashes-governance-no-source-content-private-labels-or-local-paths",
   "protocol": {
@@ -280,19 +280,43 @@
       "status": "available",
       "kind": "code",
       "implementation": "tools/pdf-private-fidelity.mjs",
-      "implementationSha256": "0228dec352328d3e7381f649c30ccfce9bb4e5d4d8f22c62df7214f104bceaa7",
+      "implementationSha256": "114aab69469918f435b82d1202ee9ad9d35f7964097c59237f010d1027afdf67",
       "implementationComponents": [
         {
-          "path": "tools/pdf-private-fidelity.mjs",
-          "fileSha256": "cf06f09a214c4a0e00710b2c1cd99c498a61954abe69ce5e520ca4a222d7ab3c"
+          "path": "tools/pdf-corpus-audit-lib.mjs",
+          "fileSha256": "a2ee3f80ad7242c2663097abb0d6523c198cad7e1d9914bc42f8a97145c8f339"
+        },
+        {
+          "path": "tools/pdf-corpus-audit-safety.mjs",
+          "fileSha256": "7a251a5374cc64bad81add609c60f914f3cb1b736a2771d0af2ad1829fc7cfa5"
+        },
+        {
+          "path": "tools/pdf-ocr-apple-vision.mjs",
+          "fileSha256": "14af58e901afc0f1a38396f74f062ceeb7e97f4d5270db067bdd2b5304d9921f"
+        },
+        {
+          "path": "tools/pdf-ocr-engines.mjs",
+          "fileSha256": "49c8c0e9190954a29ce614d9d8520a85df01e5747c2aa81f9a94a94e6fe8503f"
+        },
+        {
+          "path": "tools/pdf-ocr-node.mjs",
+          "fileSha256": "6700b78b2325b1f3b2764f25764dec600253f0c2bf588bf0011a84eff401eef8"
+        },
+        {
+          "path": "tools/pdf-ocr-remote.mjs",
+          "fileSha256": "dc5e0998fd31e194ac27b7c9e117915f27438de2e078f0c09349f0a978d8ad1f"
         },
         {
           "path": "tools/pdf-private-fidelity-epubcheck.mjs",
-          "fileSha256": "8d4083f8aef7ab19362b0b0b5089dd87b7dea51c3d1909ab0986420f16f717a5"
+          "fileSha256": "75e99cffe772b2205522572d6f6977e96901137860d9c22eb9a01b569bdc2bca"
+        },
+        {
+          "path": "tools/pdf-private-fidelity.mjs",
+          "fileSha256": "cf06f09a214c4a0e00710b2c1cd99c498a61954abe69ce5e520ca4a222d7ab3c"
         }
       ],
       "test": "tools/pdf-private-fidelity.test.mjs",
-      "testSha256": "2077bfd707b9566ae7ef32c1014586cce099e4e0310d5f9bb1dbd02983c7bc88",
+      "testSha256": "84cf717999f148ff41814ca6e42ce42cbc10f8173726ade32bdacbe3949802bf",
       "calibration": null
     }
   ]

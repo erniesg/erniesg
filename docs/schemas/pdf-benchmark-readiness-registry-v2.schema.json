@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ernie.sg/schemas/pdf-benchmark-readiness-registry-1.0.0.json",
+  "$id": "https://ernie.sg/schemas/pdf-benchmark-readiness-registry-2.0.0.json",
   "title": "Scholarly PDF reconstruction benchmark readiness registry",
   "description": "Machine-readable governance for separating exposed diagnostic probes from a future document-disjoint, target-free blind benchmark.",
   "type": "object",
@@ -20,7 +20,7 @@
     "metricImplementations"
   ],
   "properties": {
-    "schemaVersion": { "const": "1.0.0" },
+    "schemaVersion": { "const": "2.0.0" },
     "id": { "$ref": "#/$defs/id" },
     "privacy": {
       "const": "public-identities-hashes-governance-no-source-content-private-labels-or-local-paths"
@@ -572,6 +572,11 @@
         "implementationSha256": {
           "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
         },
+        "implementationComponents": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/fileBinding" }
+        },
         "test": {
           "oneOf": [{ "$ref": "#/$defs/path" }, { "type": "null" }]
         },
@@ -589,9 +594,11 @@
             "properties": { "status": { "const": "available" } }
           },
           "then": {
+            "required": ["implementationComponents"],
             "properties": {
               "implementation": { "$ref": "#/$defs/path" },
               "implementationSha256": { "$ref": "#/$defs/sha256" },
+              "implementationComponents": { "minItems": 1 },
               "test": { "$ref": "#/$defs/path" },
               "testSha256": { "$ref": "#/$defs/sha256" }
             }
@@ -606,6 +613,7 @@
             "properties": {
               "implementation": { "type": "null" },
               "implementationSha256": { "type": "null" },
+              "implementationComponents": { "maxItems": 0 },
               "test": { "type": "null" },
               "testSha256": { "type": "null" }
             }

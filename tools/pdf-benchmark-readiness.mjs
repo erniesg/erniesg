@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto'
 import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
-import { dirname, resolve, sep } from 'node:path'
+import { dirname, posix, relative, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import Ajv2020 from 'ajv/dist/2020.js'
+import ts from 'typescript'
 import {
   canonicalJson,
   validatePdfFidelityEvalSet,
@@ -12,14 +13,34 @@ import {
 export const PDF_BENCHMARK_READINESS_SCHEMA_VERSION = '1.0.0'
 
 const REPOSITORY_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
-const DEFAULT_SCHEMA_PATH = resolve(
+const LEGACY_SCHEMA_PATH = resolve(
   REPOSITORY_ROOT,
   'docs/schemas/pdf-benchmark-readiness-registry.schema.json',
 )
-const DEFAULT_SCHEMA_ID =
-  'https://ernie.sg/schemas/pdf-benchmark-readiness-registry-1.0.0.json'
-const DEFAULT_SCHEMA_SHA256 =
-  '744180ea3c7ce184a1596cc3035d2ef82d039f6270b24c3e5063157177052031'
+const DEFAULT_SCHEMA_PATH = resolve(
+  REPOSITORY_ROOT,
+  'docs/schemas/pdf-benchmark-readiness-registry-v2.schema.json',
+)
+const SCHEMA_BINDINGS = new Map([
+  [
+    '1.0.0',
+    {
+      path: LEGACY_SCHEMA_PATH,
+      id: 'https://ernie.sg/schemas/pdf-benchmark-readiness-registry-1.0.0.json',
+      fileSha256:
+        '3dd77733e86da34b9810afeab607c1f325d4b70fa43c2c8116dd30d3cd5c4ff9',
+    },
+  ],
+  [
+    '2.0.0',
+    {
+      path: DEFAULT_SCHEMA_PATH,
+      id: 'https://ernie.sg/schemas/pdf-benchmark-readiness-registry-2.0.0.json',
+      fileSha256:
+        'af358f8b3fce3cc1bbe90a38a11f31ac9904865bddd83e32d6c452e5c36ab4c7',
+    },
+  ],
+])
 const PUBLIC_ERROR_CODE = /^(?:INVALID|MISSING|PDF)_[A-Z0-9_]+$/
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/
 const SAFE_FAILURE_CLASS = /^[a-z][a-z0-9]*(?:-[a-z0-9]+){0,11}$/
@@ -80,19 +101,31 @@ function sortedUnique(values) {
   return [...new Set(values)].sort()
 }
 
-function resolveRepositoryPath(repositoryPath) {
+function canonicalRepositoryPath(repositoryPath) {
   if (
     typeof repositoryPath !== 'string' ||
+    repositoryPath.length === 0 ||
     repositoryPath.startsWith('/') ||
     repositoryPath.includes('\\') ||
-    repositoryPath.split('/').includes('..')
+    repositoryPath
+      .split('/')
+      .some((segment) => !segment || segment === '.' || segment === '..') ||
+    posix.normalize(repositoryPath) !== repositoryPath
   ) {
     invalid('INVALID_PDF_BENCHMARK_REPOSITORY_PATH')
   }
-  const absolute = resolve(REPOSITORY_ROOT, repositoryPath)
+  return repositoryPath
+}
+
+function resolveRepositoryPath(
+  repositoryPath,
+  repositoryRoot = REPOSITORY_ROOT,
+) {
+  const canonical = canonicalRepositoryPath(repositoryPath)
+  const absolute = resolve(repositoryRoot, canonical)
   if (
-    absolute !== REPOSITORY_ROOT &&
-    !absolute.startsWith(`${REPOSITORY_ROOT}${sep}`)
+    absolute !== repositoryRoot &&
+    !absolute.startsWith(`${repositoryRoot}${sep}`)
   ) {
     invalid('INVALID_PDF_BENCHMARK_REPOSITORY_PATH')
   }
@@ -124,14 +157,18 @@ async function readJsonArtifact(path, code) {
 }
 
 async function validateSchema(registry, schemaPath) {
+  const binding = SCHEMA_BINDINGS.get(registry?.schemaVersion)
+  const selectedPath = schemaPath ? resolve(schemaPath) : binding?.path
+  if (!binding || selectedPath !== binding.path) {
+    invalid('INVALID_PDF_BENCHMARK_REGISTRY_SCHEMA')
+  }
   const schemaArtifact = await readJsonArtifact(
-    schemaPath,
+    selectedPath,
     'INVALID_PDF_BENCHMARK_REGISTRY_SCHEMA',
   )
   if (
-    schemaArtifact.value.$id !== DEFAULT_SCHEMA_ID ||
-    (resolve(schemaPath) === DEFAULT_SCHEMA_PATH &&
-      schemaArtifact.fileSha256 !== DEFAULT_SCHEMA_SHA256)
+    schemaArtifact.value.$id !== binding.id ||
+    schemaArtifact.fileSha256 !== binding.fileSha256
   ) {
     invalid('INVALID_PDF_BENCHMARK_REGISTRY_SCHEMA')
   }
@@ -154,12 +191,14 @@ async function verifyRepositoryFileBinding(
   repositoryPath,
   expectedSha256,
   code = 'PDF_BENCHMARK_METRIC_BINDING_MISMATCH',
+  repositoryRoot = REPOSITORY_ROOT,
 ) {
   try {
-    const absolute = resolveRepositoryPath(repositoryPath)
+    const canonical = canonicalRepositoryPath(repositoryPath)
+    const absolute = resolveRepositoryPath(canonical, repositoryRoot)
     const [details, repositoryRealPath, fileRealPath] = await Promise.all([
       lstat(absolute),
-      realpath(REPOSITORY_ROOT),
+      realpath(repositoryRoot),
       realpath(absolute),
     ])
     if (
@@ -170,6 +209,10 @@ async function verifyRepositoryFileBinding(
     ) {
       invalid(code)
     }
+    const actualPath = relative(repositoryRealPath, fileRealPath)
+      .split(sep)
+      .join('/')
+    if (actualPath !== canonical) invalid(code)
     const bytes = await readFile(fileRealPath)
     if (sha256(bytes) !== expectedSha256) {
       invalid(code)
@@ -195,7 +238,160 @@ function metricImplementationCompositeSha256(metric) {
   )
 }
 
-async function verifyMetricImplementationBinding(metric) {
+function localModuleSpecifiers(source, fileName) {
+  const sourceFile = ts.createSourceFile(
+    fileName,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.JS,
+  )
+  const specifiers = []
+  const createRequireIdentifiers = new Set()
+  const requireIdentifiers = new Set(['require'])
+  function collectRequireBindings(node) {
+    if (
+      ts.isImportDeclaration(node) &&
+      ts.isStringLiteral(node.moduleSpecifier) &&
+      ['node:module', 'module'].includes(node.moduleSpecifier.text) &&
+      node.importClause?.namedBindings &&
+      ts.isNamedImports(node.importClause.namedBindings)
+    ) {
+      for (const element of node.importClause.namedBindings.elements)
+        if ((element.propertyName ?? element.name).text === 'createRequire')
+          createRequireIdentifiers.add(element.name.text)
+    } else if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      ts.isCallExpression(node.initializer) &&
+      ts.isIdentifier(node.initializer.expression) &&
+      createRequireIdentifiers.has(node.initializer.expression.text)
+    ) {
+      requireIdentifiers.add(node.name.text)
+    }
+    ts.forEachChild(node, collectRequireBindings)
+  }
+  collectRequireBindings(sourceFile)
+  function visit(node) {
+    if (
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      node.moduleSpecifier
+    ) {
+      if (!ts.isStringLiteral(node.moduleSpecifier))
+        invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      specifiers.push(node.moduleSpecifier.text)
+    } else if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword
+    ) {
+      if (node.arguments.length !== 1 || !ts.isStringLiteral(node.arguments[0]))
+        invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      specifiers.push(node.arguments[0].text)
+    } else if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      requireIdentifiers.has(node.expression.text)
+    ) {
+      if (node.arguments.length !== 1 || !ts.isStringLiteral(node.arguments[0]))
+        invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      specifiers.push(node.arguments[0].text)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return specifiers
+    .filter((specifier) => specifier.startsWith('.'))
+    .map((specifier) => {
+      if (
+        specifier.includes('\\') ||
+        specifier.includes('//') ||
+        specifier.includes('/./') ||
+        specifier.endsWith('/.') ||
+        specifier.endsWith('/..')
+      )
+        invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      return specifier
+    })
+}
+
+async function canonicalRepositoryFile(repositoryPath, repositoryRoot, code) {
+  const canonical = canonicalRepositoryPath(repositoryPath)
+  const absolute = resolveRepositoryPath(canonical, repositoryRoot)
+  const [details, rootRealPath, fileRealPath] = await Promise.all([
+    lstat(absolute),
+    realpath(repositoryRoot),
+    realpath(absolute),
+  ])
+  if (
+    !details.isFile() ||
+    details.isSymbolicLink() ||
+    (fileRealPath !== rootRealPath &&
+      !fileRealPath.startsWith(`${rootRealPath}${sep}`))
+  ) {
+    invalid(code)
+  }
+  const actualPath = relative(rootRealPath, fileRealPath).split(sep).join('/')
+  if (actualPath !== canonical) invalid(code)
+  return {
+    path: canonical,
+    realPath: fileRealPath,
+    bytes: await readFile(fileRealPath),
+  }
+}
+
+export async function deriveLocalExecutableImportClosure(
+  entrypoint,
+  { repositoryRoot = REPOSITORY_ROOT } = {},
+) {
+  const pending = [canonicalRepositoryPath(entrypoint)]
+  const byPath = new Map()
+  const pathsByRealPath = new Map()
+  while (pending.length > 0) {
+    const current = pending.pop()
+    if (byPath.has(current)) continue
+    let artifact
+    try {
+      artifact = await canonicalRepositoryFile(
+        current,
+        repositoryRoot,
+        'PDF_BENCHMARK_METRIC_BINDING_MISMATCH',
+      )
+    } catch {
+      invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    }
+    const priorPath = pathsByRealPath.get(artifact.realPath)
+    if (priorPath && priorPath !== artifact.path)
+      invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    pathsByRealPath.set(artifact.realPath, artifact.path)
+    byPath.set(artifact.path, artifact)
+    for (const specifier of localModuleSpecifiers(
+      artifact.bytes.toString('utf8'),
+      artifact.path,
+    )) {
+      const importedPath = posix.join(posix.dirname(artifact.path), specifier)
+      canonicalRepositoryPath(importedPath)
+      pending.push(importedPath)
+    }
+  }
+  return [...byPath.values()].sort((left, right) =>
+    left.path.localeCompare(right.path),
+  )
+}
+
+export async function verifyMetricImplementationBinding(
+  metric,
+  { repositoryRoot = REPOSITORY_ROOT, requireClosure = true } = {},
+) {
+  if (!requireClosure) {
+    await verifyRepositoryFileBinding(
+      metric.implementation,
+      metric.implementationSha256,
+      'PDF_BENCHMARK_METRIC_BINDING_MISMATCH',
+      repositoryRoot,
+    )
+    return
+  }
   const components = metric.implementationComponents
   const componentPaths = components.map((component) => component.path)
   if (
@@ -205,9 +401,22 @@ async function verifyMetricImplementationBinding(metric) {
   ) {
     invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
   }
+  const closure = await deriveLocalExecutableImportClosure(
+    metric.implementation,
+    { repositoryRoot },
+  )
+  const closurePaths = closure.map((artifact) => artifact.path)
+  if ([...componentPaths].sort().join('\n') !== closurePaths.join('\n')) {
+    invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+  }
   await Promise.all(
     components.map((component) =>
-      verifyRepositoryFileBinding(component.path, component.fileSha256),
+      verifyRepositoryFileBinding(
+        component.path,
+        component.fileSha256,
+        'PDF_BENCHMARK_METRIC_BINDING_MISMATCH',
+        repositoryRoot,
+      ),
     ),
   )
   if (
@@ -347,7 +556,9 @@ async function validateMetricImplementations(registry) {
   for (const metric of registry.metricImplementations) {
     if (metric.status !== 'available') continue
     await Promise.all([
-      verifyMetricImplementationBinding(metric),
+      verifyMetricImplementationBinding(metric, {
+        requireClosure: registry.schemaVersion === '2.0.0',
+      }),
       verifyRepositoryFileBinding(metric.test, metric.testSha256),
     ])
     if (metric.kind === 'calibrated-judge') {
@@ -1575,7 +1786,7 @@ export function assessPdfBenchmarkReadiness(
 
 export async function createPdfBenchmarkReadinessReceipt({
   registryPath,
-  schemaPath = DEFAULT_SCHEMA_PATH,
+  schemaPath = null,
 }) {
   const absoluteRegistryPath = resolve(registryPath)
   const registryArtifact = await readJsonArtifact(
@@ -1583,7 +1794,7 @@ export async function createPdfBenchmarkReadinessReceipt({
     'PDF_BENCHMARK_READINESS_FAILED',
   )
   const registry = registryArtifact.value
-  const schema = await validateSchema(registry, resolve(schemaPath))
+  const schema = await validateSchema(registry, schemaPath)
   const verifiedMetricIds = await validateMetricImplementations(registry)
 
   const loadedSources = []
@@ -1711,7 +1922,7 @@ export async function createPdfBenchmarkReadinessReceipt({
 function parseArgs(argv) {
   const options = {
     registryPath: null,
-    schemaPath: DEFAULT_SCHEMA_PATH,
+    schemaPath: null,
     outPath: null,
     requireReady: false,
   }
@@ -1739,6 +1950,7 @@ async function main() {
   const options = parseArgs(process.argv.slice(2))
   if (
     options.requireReady &&
+    options.schemaPath &&
     resolve(options.schemaPath) !== DEFAULT_SCHEMA_PATH
   ) {
     invalid('PDF_BENCHMARK_NONCANONICAL_PROMOTION_SCHEMA')

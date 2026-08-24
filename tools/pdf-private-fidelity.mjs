@@ -1,19 +1,15 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto'
-import { spawnSync } from 'node:child_process'
 import {
-  access,
   lstat,
   mkdir,
-  mkdtemp,
   open,
   readFile,
   realpath,
   rm,
   stat,
-  writeFile,
 } from 'node:fs/promises'
-import { homedir, tmpdir } from 'node:os'
+import { homedir } from 'node:os'
 import {
   basename,
   dirname,
@@ -26,6 +22,10 @@ import {
 } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { parse as parseHtml } from 'parse5'
+import {
+  requiredPrivateEpubCheckValidator,
+  validatePrivateEpubWithEpubCheck,
+} from './pdf-private-fidelity-epubcheck.mjs'
 import {
   canonicalJsonHash,
   createPdfPipeline,
@@ -3147,66 +3147,6 @@ async function loadPinnedPrivateDecisionSet(parsed, pipeline) {
   return {
     decisionFile: modules.parseHumanDecisionFile(bytes.toString('utf8')),
     applyHumanDecisionFile: modules.applyHumanDecisionFile,
-  }
-}
-
-function privateCommandResult(command, arguments_, timeout = 10_000) {
-  return spawnSync(command, arguments_, {
-    stdio: 'ignore',
-    timeout,
-    windowsHide: true,
-  })
-}
-
-async function requiredPrivateEpubCheckValidator() {
-  const direct = privateCommandResult('epubcheck', ['--version'])
-  if (!direct.error && direct.status === 0) {
-    return {
-      command: 'epubcheck',
-      arguments: ['--failonwarnings'],
-    }
-  }
-
-  const java = privateCommandResult('java', ['-version'])
-  if (java.error || java.status !== 0) {
-    throw new Error('EPUBCHECK_REQUIRED')
-  }
-  const jarCandidates = [
-    process.env.EPUBCHECK_JAR,
-    resolve('tools/epubcheck/epubcheck.jar'),
-    '/usr/share/java/epubcheck.jar',
-    '/usr/local/share/java/epubcheck.jar',
-  ].filter(Boolean)
-  for (const jar of jarCandidates) {
-    try {
-      await access(jar)
-      return {
-        command: 'java',
-        arguments: ['-jar', jar, '--failonwarnings'],
-      }
-    } catch {
-      // Validator paths remain local and never enter the sanitized receipt.
-    }
-  }
-  throw new Error('EPUBCHECK_REQUIRED')
-}
-
-async function validatePrivateEpubWithEpubCheck(bytes, validator) {
-  const directory = await mkdtemp(join(tmpdir(), 'srt-private-epubcheck-'))
-  const path = join(directory, 'publication.epub')
-  try {
-    await writeFile(path, bytes, { mode: 0o600 })
-    const result = privateCommandResult(
-      validator.command,
-      [...validator.arguments, path],
-      120_000,
-    )
-    if (result.error || result.status !== 0) {
-      throw new Error('EPUBCHECK_FAILED')
-    }
-    return { status: 'passed' }
-  } finally {
-    await rm(directory, { recursive: true, force: true })
   }
 }
 

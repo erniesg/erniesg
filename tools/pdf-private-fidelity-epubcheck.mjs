@@ -36,6 +36,7 @@ export async function requiredPrivateEpubCheckValidator() {
   throw new Error('EPUBCHECK_REQUIRED')
 }
 
+/** @returns {Promise<{ status: 'passed' }>} */
 export async function validatePrivateEpubWithEpubCheck(bytes, validator) {
   const directory = await mkdtemp(join(tmpdir(), 'srt-private-epubcheck-'))
   const path = join(directory, 'publication.epub')

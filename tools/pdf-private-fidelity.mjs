@@ -1,20 +1,11 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto'
-import {
-  lstat,
-  mkdir,
-  open,
-  readFile,
-  realpath,
-  rm,
-  stat,
-} from 'node:fs/promises'
+import { lstat, mkdir, open, readFile, realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import {
   basename,
   dirname,
   isAbsolute,
-  join,
   parse,
   relative,
   resolve,

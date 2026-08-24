@@ -2068,7 +2068,7 @@ jobs:
             };
           }
 
-          const TRUSTED_CLOSURE_DECLARATION = {"version":1,"entries":[{"path":"scripts/agent-evidence","bytes":11357,"sha256":"de7e3fb933b81705a3e6d772efd92dbe844b6091012c3f0ac083d015ac1060d4"}],"builtins":["node:child_process","node:crypto","node:fs","node:path"]};
+          const TRUSTED_CLOSURE_DECLARATION = {"version":1,"entries":[{"path":"scripts/agent-evidence","bytes":11357,"sha256":"de7e3fb933b81705a3e6d772efd92dbe844b6091012c3f0ac083d015ac1060d4"},{"path":"tools/association-audit-receipt.cjs","bytes":7302,"sha256":"8b8d305955ecc8f99bd9971f1ec8ce82126009708cbbcf3cc257726c7fb0369b"},{"path":"tools/model-consultation-evidence-receipt.cjs","bytes":3154,"sha256":"1c3969d39784c9f011d170ba163ee2cae492086357f9399e6de861a910627f76"}],"builtins":["node:child_process","node:crypto","node:fs","node:path"]};
 
           function validateClosureDeclaration(declaration) {
             if (!declaration || typeof declaration !== "object" || Array.isArray(declaration)) {

@@ -2068,7 +2068,7 @@ jobs:
             };
           }
 
-          const TRUSTED_CLOSURE_DECLARATION = {"version":1,"entries":[{"path":"scripts/agent-evidence","bytes":7640,"sha256":"b503f04fa8573cd66975ace0fe40f597c5dddd2f265f4c063170b95c9c029a6f"}],"builtins":["node:child_process","node:crypto","node:fs","node:path"]};
+          const TRUSTED_CLOSURE_DECLARATION = {"version":1,"entries":[{"path":"scripts/agent-evidence","bytes":11357,"sha256":"de7e3fb933b81705a3e6d772efd92dbe844b6091012c3f0ac083d015ac1060d4"}],"builtins":["node:child_process","node:crypto","node:fs","node:path"]};
 
           function validateClosureDeclaration(declaration) {
             if (!declaration || typeof declaration !== "object" || Array.isArray(declaration)) {

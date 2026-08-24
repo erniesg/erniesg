@@ -16,6 +16,9 @@ import {
   renderPublicationXhtml,
 } from './epub'
 import {
+  projectReadableFallbackReconstruction as projectReadableFallbackDirect,
+} from './epub-readable-fallback'
+import {
   createSourceGeometryScriptTranscript,
   SOURCE_GEOMETRY_SCRIPT_TRANSCRIPT_EVIDENCE,
 } from './equation-geometry-transcript'
@@ -1466,6 +1469,19 @@ async function readyDerivedAffixHyphenDeletionFixture() {
 }
 
 describe('EPUB 3 export', () => {
+  it('keeps the EPUB facade bound to the readable fallback projection module', async () => {
+    const reconstruction = await reconstructPdf(
+      await fixtureFile('mixed-page.pdf'),
+    )
+
+    expect(projectReadableFallbackReconstruction).toBe(
+      projectReadableFallbackDirect,
+    )
+    expect(projectReadableFallbackReconstruction(reconstruction)).toEqual(
+      projectReadableFallbackDirect(reconstruction),
+    )
+  }, 120_000)
+
   it('renders emphasis, vertical alignment, and safe links as semantic XHTML', () => {
     const inlinePaper = structuredClone(paper)
     const value = 'emphasis raised lowered https://example.test/evidence'

@@ -34,6 +34,7 @@ import {
   identifier,
   identifierList,
   integer,
+  isStructCodecError,
   nonNegativeInteger,
   nullable,
   object,
@@ -618,7 +619,24 @@ export function validateStructTableBounds(value: unknown, path: string) {
       path,
       `table dimensions must fit within ${MAX_TABLE_DIMENSION} rows/columns and ${MAX_TABLE_AREA} cells`,
     )
-  return { rows, columns, cells: parsed.cells, semantic: parsed.semantic }
+  const cellsPath = `${path}.cells`
+  let cells: unknown[]
+  try {
+    cells = array(parsed.cells, cellsPath, rows * columns)
+  } catch (error) {
+    if (
+      isStructCodecError(error) &&
+      error.code === 'BUDGET' &&
+      error.path === cellsPath
+    )
+      fail(
+        'TABLE_BOUNDS',
+        cellsPath,
+        'table cell count cannot exceed the declared table area',
+      )
+    throw error
+  }
+  return { rows, columns, cells, semantic: parsed.semantic }
 }
 
 /** Enforce renderer allocation bounds on direct STRUCT documents. */
@@ -638,13 +656,7 @@ export function validateStructDocumentTableBounds(value: unknown) {
 function parseTable(value: unknown, path: string): StructTable {
   const parsed = validateStructTableBounds(value, path)
   const { rows, columns } = parsed
-  const rawCells = array(parsed.cells, `${path}.cells`)
-  if (rawCells.length > rows * columns)
-    fail(
-      'TABLE_BOUNDS',
-      `${path}.cells`,
-      'table cell count cannot exceed the declared table area',
-    )
+  const rawCells = parsed.cells
   const cells = rawCells.map((cell, index) =>
     parseTableCell(cell, `${path}.cells[${index}]`),
   )

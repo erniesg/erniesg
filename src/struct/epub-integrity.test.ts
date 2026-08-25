@@ -789,6 +789,45 @@ describe('STRUCT EPUB href integrity', () => {
     expect(payloadReads).toBe(0)
   })
 
+  it('rejects over-area direct table cells before reading cell payloads', async () => {
+    const document = documentWithHref('#target')
+    const cells = [{}, {}]
+    const table = {
+      rows: 1,
+      columns: 1,
+      cells,
+      semantic: 'verified' as const,
+    }
+    document.blocks[0]!.kind = 'table'
+    document.blocks[0]!.inline = []
+    document.blocks[0]!.table = table as any
+    refreshReceipt(document)
+
+    let payloadReads = 0
+    table.cells = cells.map(
+      (cell) =>
+        new Proxy(cell, {
+          get() {
+            payloadReads += 1
+            throw new Error('over-area table cell payload was read')
+          },
+          ownKeys() {
+            payloadReads += 1
+            throw new Error('over-area table cell payload was read')
+          },
+        }),
+    )
+
+    try {
+      await buildStructEpub(document)
+      throw new Error('expected table bounds failure')
+    } catch (error) {
+      expect(error).toBeInstanceOf(StructCodecError)
+      expect((error as StructCodecError).code).toBe('TABLE_BOUNDS')
+    }
+    expect(payloadReads).toBe(0)
+  })
+
   it.each([
     [
       'calendar-normalized timestamp',

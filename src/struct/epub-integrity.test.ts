@@ -356,6 +356,66 @@ describe('STRUCT EPUB href integrity', () => {
   })
 
   it.each([
+    [
+      'page progression direction',
+      'pageProgressionDirection',
+      'ltr\" /><meta name=\"injected\" content=\"true',
+    ],
+    [
+      'rendition flow',
+      'renditionFlow',
+      'paginated</meta><meta name="injected" content="true">',
+    ],
+  ] as const)('rejects an injectable profile %s', async (_label, field, value) => {
+    const profile = {
+      id: 'mobile',
+      version: '1.0.0',
+      fileName: 'publication-mobile.epub',
+      pageProgressionDirection: 'ltr',
+      renditionFlow: 'paginated',
+      configurationSha256: 'c'.repeat(64),
+      css: 'body {}',
+    }
+    profile[field] = value
+
+    await expect(
+      buildStructEpub(documentWithHref('#target'), { profile: profile as any }),
+    ).rejects.toThrow('STRUCT_EPUB_PROFILE_INVALID')
+  })
+
+  it('packages one bounded profile snapshot without late proxy reads', async () => {
+    const boundedCss = 'body { color: black; }'
+    const oversizedCss = 'x'.repeat(4 * 1024 * 1024 + 1)
+    let cssReads = 0
+    const profile = new Proxy(
+      {
+        id: 'mobile',
+        version: '1.0.0',
+        fileName: 'publication-mobile.epub',
+        pageProgressionDirection: 'ltr' as const,
+        renditionFlow: 'paginated' as const,
+        configurationSha256: 'c'.repeat(64),
+        css: boundedCss,
+      },
+      {
+        get(target, property, receiver) {
+          if (property === 'css') {
+            cssReads += 1
+            return cssReads >= 6 ? oversizedCss : boundedCss
+          }
+          return Reflect.get(target, property, receiver)
+        },
+      },
+    )
+
+    const epub = await buildStructEpub(documentWithHref('#target'), { profile })
+    expect(strFromU8(unzipSync(epub.bytes)['EPUB/styles.css']!)).toBe(
+      boundedCss,
+    )
+    expect(cssReads).toBe(0)
+  })
+
+  it.each([
     ['same-document fragment', '#target'],
     ['packaged XHTML fragment', 'content.xhtml#target'],
     ['packaged document', 'nav.xhtml'],
@@ -639,6 +699,19 @@ describe('STRUCT EPUB href integrity', () => {
     await expect(buildStructEpub(refreshReceipt(document))).rejects.toThrow(
       'STRUCT_EPUB_RECOVERY_REVIEW_REQUIRED',
     )
+  })
+
+  it('rejects an incomplete ready recovery snapshot before publication', async () => {
+    const document = documentWithHref('#target')
+    document.recovery = { status: 'ready' } as any
+
+    try {
+      await buildStructEpub(refreshReceipt(document))
+      throw new Error('expected recovery validation failure')
+    } catch (error) {
+      expect(error).toBeInstanceOf(StructCodecError)
+      expect((error as StructCodecError).path).toBe('$.recovery.title')
+    }
   })
 
   it('packages a canonical block snapshot without late proxy reads', async () => {

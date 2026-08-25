@@ -11,7 +11,7 @@ import {
   snapshotStructDocumentForEpub,
   validateStructDocumentTableBounds,
 } from './codec/parsers'
-import { isStructCodecError } from './codec/primitives'
+import { isStructCodecError, object } from './codec/primitives'
 import {
   bcp47Language,
   mediaType,
@@ -67,12 +67,52 @@ export type StructEpubExport = {
 
 export type UnprofiledStructEpubExport = Omit<StructEpubExport, 'profile'>
 
-function validProfile(profile: StructEpubProfile) {
+type StructEpubProfileSnapshot = Record<keyof StructEpubProfile, unknown>
+
+function snapshotProfile(
+  value: unknown,
+): StructEpubProfileSnapshot | undefined {
+  try {
+    const parsed = object(value, '$.profile', [
+      'id',
+      'version',
+      'fileName',
+      'pageProgressionDirection',
+      'renditionFlow',
+      'configurationSha256',
+      'css',
+    ])
+    return {
+      id: parsed.id,
+      version: parsed.version,
+      fileName: parsed.fileName,
+      pageProgressionDirection: parsed.pageProgressionDirection,
+      renditionFlow: parsed.renditionFlow,
+      configurationSha256: parsed.configurationSha256,
+      css: parsed.css,
+    }
+  } catch {
+    return undefined
+  }
+}
+
+function validProfile(
+  profile: StructEpubProfileSnapshot,
+): profile is StructEpubProfile {
   return (
+    typeof profile.id === 'string' &&
     /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(profile.id) &&
+    typeof profile.version === 'string' &&
     /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(profile.version) &&
+    typeof profile.fileName === 'string' &&
     /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.epub$/u.test(profile.fileName) &&
+    (profile.pageProgressionDirection === 'ltr' ||
+      profile.pageProgressionDirection === 'rtl') &&
+    (profile.renditionFlow === 'paginated' ||
+      profile.renditionFlow === 'scrolled-continuous') &&
+    typeof profile.configurationSha256 === 'string' &&
     /^[a-f0-9]{64}$/u.test(profile.configurationSha256) &&
+    typeof profile.css === 'string' &&
     profile.css.length > 0 &&
     utf8ByteLength(profile.css) <= MAX_STRUCT_EPUB_PROFILE_CSS_BYTES &&
     !/[\u0000]/u.test(profile.css)
@@ -401,9 +441,14 @@ export async function buildStructEpub(
   if (document.recovery.status !== 'ready')
     throw new Error('STRUCT_EPUB_RECOVERY_REVIEW_REQUIRED')
   assertNoNegativeZero(document)
-  const profile = options.profile
-  if (profile && !validProfile(profile)) {
-    throw new Error('STRUCT_EPUB_PROFILE_INVALID')
+  const requestedProfile = options.profile
+  let profile: StructEpubProfile | undefined
+  if (requestedProfile !== undefined) {
+    const snapshot = snapshotProfile(requestedProfile)
+    if (!snapshot || !validProfile(snapshot)) {
+      throw new Error('STRUCT_EPUB_PROFILE_INVALID')
+    }
+    profile = snapshot
   }
   const retainedProfile = profile ? profileReceipt(profile) : undefined
   const identifier = `urn:sha256:${document.receipt.generatedSha256}${retainedProfile ? `:${retainedProfile.id}:${retainedProfile.version}:${retainedProfile.configurationSha256.slice(0, 16)}` : ''}`

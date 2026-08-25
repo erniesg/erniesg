@@ -1389,7 +1389,9 @@ export function snapshotStructDocumentForEpub(value: unknown): StructDocument {
       key,
       key === 'assets'
         ? parseStructAssets(entry)
-        : snapshotPublicationValue(entry, `$.${key}`, state, 1),
+        : key === 'recovery'
+          ? parseRecovery(entry, '$.recovery')
+          : snapshotPublicationValue(entry, `$.${key}`, state, 1),
     ]),
   ) as StructDocument
 }

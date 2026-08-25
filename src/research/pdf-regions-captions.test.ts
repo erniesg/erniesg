@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { strFromU8 } from 'fflate'
 import { describe, expect, it } from 'vitest'
 import { buildReadableEpub, inspectEpub } from './epub'
@@ -76,6 +77,17 @@ async function reconstruct(pages: PdfPageAnalysis[], hash = '7') {
 }
 
 describe('deterministic scholarly page regions', () => {
+  it('owns caption font normalization behind the compatibility export', async () => {
+    const moduleUrl = new URL('./pdf-region-captions.ts', import.meta.url)
+    expect(existsSync(moduleUrl)).toBe(true)
+
+    const extracted = await import(moduleUrl.href)
+    expect(extracted.captionFontFamily('NimbusRomNo9L-Medi')).toBe(
+      'nimbusromno9l',
+    )
+    expect(captionFontFamily).toBe(extracted.captionFontFamily)
+  })
+
   it('reconstructs complete wrapped captions without swallowing following prose', async () => {
     const result = await reconstruct([
       page(1, [

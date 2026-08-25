@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto'
+import { constants as fsConstants } from 'node:fs'
 import {
   lstat,
   mkdir,
+  open,
   readdir,
   readFile,
   realpath,
@@ -89,6 +91,7 @@ const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/
 const SAFE_FAILURE_CLASS = /^[a-z][a-z0-9]*(?:-[a-z0-9]+){0,11}$/
 const SHA256 = /^[a-f0-9]{64}$/
 const MAX_GOVERNANCE_JSON_BYTES = 16 * 1024 * 1024
+const AUTHENTICATED_REGISTRY_SNAPSHOTS = new WeakSet()
 const PROMOTION_PROTOCOL_IMPLEMENTED = false
 const CANDIDATE_COMPONENT_KINDS = [
   'provider',
@@ -181,21 +184,40 @@ function resolveRepositoryPath(
 async function readJsonArtifact(path, code) {
   try {
     const absolute = resolve(path)
-    const details = await lstat(absolute)
-    if (
-      !details.isFile() ||
-      details.isSymbolicLink() ||
-      details.size <= 0 ||
-      details.size > MAX_GOVERNANCE_JSON_BYTES
-    ) {
-      invalid(code)
-    }
-    const bytes = await readFile(absolute)
-    if (bytes.byteLength !== details.size) invalid(code)
-    return {
-      value: JSON.parse(bytes.toString('utf8')),
-      bytes,
-      fileSha256: sha256(bytes),
+    const handle = await open(
+      absolute,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
+    )
+    try {
+      const before = await handle.stat({ bigint: true })
+      if (
+        !before.isFile() ||
+        before.size <= 0 ||
+        before.size > MAX_GOVERNANCE_JSON_BYTES
+      )
+        invalid(code)
+      const bytes = await handle.readFile()
+      const after = await handle.stat({ bigint: true })
+      const pathname = await lstat(absolute, { bigint: true })
+      if (
+        BigInt(bytes.byteLength) !== before.size ||
+        !after.isFile() ||
+        after.dev !== before.dev ||
+        after.ino !== before.ino ||
+        after.size !== before.size ||
+        after.mtimeNs !== before.mtimeNs ||
+        !pathname.isFile() ||
+        pathname.isSymbolicLink() ||
+        pathname.dev !== before.dev ||
+        pathname.ino !== before.ino
+      )
+        invalid(code)
+      return {
+        value: JSON.parse(bytes.toString('utf8')),
+        fileSha256: sha256(bytes),
+      }
+    } finally {
+      await handle.close()
     }
   } catch {
     invalid(code)
@@ -2703,13 +2725,15 @@ export async function readPdfBenchmarkReadinessRegistry(registryPath) {
     absoluteRegistryPath,
     'PDF_BENCHMARK_READINESS_FAILED',
   )
-  return Object.freeze({
+  const snapshot = Object.freeze({
     absoluteRegistryPath,
     registryArtifact: Object.freeze({
       value: deepFreeze(registryArtifact.value),
       fileSha256: registryArtifact.fileSha256,
     }),
   })
+  AUTHENTICATED_REGISTRY_SNAPSHOTS.add(snapshot)
+  return snapshot
 }
 
 export async function createPdfBenchmarkReadinessReceipt({
@@ -2721,7 +2745,10 @@ export async function createPdfBenchmarkReadinessReceipt({
   const snapshot =
     registrySnapshot ??
     (await readPdfBenchmarkReadinessRegistry(absoluteRegistryPath))
-  if (snapshot.absoluteRegistryPath !== absoluteRegistryPath) {
+  if (
+    !AUTHENTICATED_REGISTRY_SNAPSHOTS.has(snapshot) ||
+    snapshot.absoluteRegistryPath !== absoluteRegistryPath
+  ) {
     invalid('PDF_BENCHMARK_READINESS_FAILED')
   }
   const { registryArtifact } = snapshot

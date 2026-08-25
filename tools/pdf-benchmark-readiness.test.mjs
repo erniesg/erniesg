@@ -443,6 +443,24 @@ describe('PDF benchmark readiness registry', () => {
     expect(receipt.registry.id).not.toBe(swapped.id)
   })
 
+  it('rejects a caller-constructed registry snapshot', async () => {
+    const path = await writeRegistry(await readRegistry())
+    const snapshot = await readPdfBenchmarkReadinessRegistry(path)
+
+    await expect(
+      createPdfBenchmarkReadinessReceipt({
+        registryPath: path,
+        registrySnapshot: {
+          ...snapshot,
+          registryArtifact: {
+            ...snapshot.registryArtifact,
+            fileSha256: '0'.repeat(64),
+          },
+        },
+      }),
+    ).rejects.toThrow('PDF_BENCHMARK_READINESS_FAILED')
+  })
+
   it('keeps the pinned v3 registry schema nonempty and validates the v4 successor', async () => {
     const bytes = await readFile(
       new URL(

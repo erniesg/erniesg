@@ -776,6 +776,29 @@ function lockedDependencyPath(packagePath, dependencyName, lockPackages) {
   return lockPackages[rootCandidate] ? rootCandidate : null
 }
 
+function packageNameFromPath(packagePath) {
+  const segments = packagePath.split('/')
+  const marker = segments.lastIndexOf('node_modules')
+  const name = segments.slice(marker + 1)
+  if (
+    marker < 0 ||
+    name.length === 0 ||
+    (name[0].startsWith('@') ? name.length !== 2 : name.length !== 1)
+  )
+    invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+  return name.join('/')
+}
+
+function packageBindingMetadata(packages) {
+  return packages.map(({ path, name, version, integrity, platforms }) => ({
+    path,
+    name,
+    version,
+    integrity,
+    ...(platforms ? { platforms: [...platforms].sort() } : {}),
+  }))
+}
+
 function conditionMatches(values, actual) {
   if (!Array.isArray(values) || values.length === 0) return true
   if (values.includes(`!${actual}`)) return false
@@ -814,6 +837,14 @@ export function executablePackageSupportsPlatform(name, locked, platform) {
     (target.os !== 'linux' ||
       (conditionMatches(locked.libc, target.libc) &&
         (inferredLibc === null || inferredLibc === target.libc)))
+  )
+}
+
+function executablePackageHasPlatformRestriction(locked) {
+  return (
+    (Array.isArray(locked.os) && locked.os.length > 0) ||
+    (Array.isArray(locked.cpu) && locked.cpu.length > 0) ||
+    (Array.isArray(locked.libc) && locked.libc.length > 0)
   )
 }
 
@@ -868,6 +899,7 @@ export async function deriveExecutablePackageClosure(
     repositoryRoot = REPOSITORY_ROOT,
     packageLockPath = 'package-lock.json',
     platform = executablePackagePlatform(),
+    verifyPackageTrees = true,
   } = {},
 ) {
   parsedExecutablePackagePlatform(platform)
@@ -953,7 +985,11 @@ export async function deriveExecutablePackageClosure(
       if (
         executablePackageSupportsPlatform(dependencyName, dependency, platform)
       )
-        pending.push({ path: dependencyPath, conditional: true })
+        pending.push({
+          path: dependencyPath,
+          conditional:
+            conditional || executablePackageHasPlatformRestriction(dependency),
+        })
     }
     for (const dependencyName of Object.keys(
       locked.peerDependencies ?? {},
@@ -972,6 +1008,25 @@ export async function deriveExecutablePackageClosure(
 
   const packages = await Promise.all(
     [...packagePaths].sort().map(async (packagePath) => {
+      const locked = lock.packages[packagePath]
+      const name = packageNameFromPath(packagePath)
+      if (
+        !isRecord(locked) ||
+        typeof locked.version !== 'string' ||
+        typeof locked.integrity !== 'string' ||
+        !locked.integrity.startsWith('sha512-')
+      )
+        invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      const binding = {
+        path: packagePath,
+        name,
+        version: locked.version,
+        integrity: locked.integrity,
+        ...(conditionalPackagePaths.has(packagePath)
+          ? { platforms: [platform] }
+          : {}),
+      }
+      if (!verifyPackageTrees) return binding
       const packageRoot = resolveRepositoryPath(packagePath, repositoryRoot)
       const [details, packageRealPath, repositoryRealPath] = await Promise.all([
         lstat(packageRoot),
@@ -988,24 +1043,16 @@ export async function deriveExecutablePackageClosure(
       const packageJson = JSON.parse(
         await readFile(resolve(packageRealPath, 'package.json'), 'utf8'),
       )
-      const locked = lock.packages[packagePath]
       if (
-        typeof packageJson.name !== 'string' ||
+        packageJson.name !== name ||
         typeof packageJson.version !== 'string' ||
         packageJson.version !== locked.version ||
-        typeof locked.integrity !== 'string' ||
-        !locked.integrity.startsWith('sha512-')
+        typeof packageJson.name !== 'string'
       )
         invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
       return {
-        path: packagePath,
-        name: packageJson.name,
-        version: locked.version,
-        integrity: locked.integrity,
+        ...binding,
         treeSha256: await packageTreeSha256(packageRealPath),
-        ...(conditionalPackagePaths.has(packagePath)
-          ? { platforms: [platform] }
-          : {}),
       }
     }),
   )
@@ -1076,7 +1123,10 @@ export async function verifyMetricImplementationBinding(
       'PDF_BENCHMARK_METRIC_BINDING_MISMATCH',
       repositoryRoot,
     )
-    const verifyPackagesForPlatform = async (platform) => {
+    const hostPlatform = executablePackagePlatform()
+    if (!metric.implementationPlatforms.includes(hostPlatform))
+      invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    const verifyPackagesForPlatform = async (platform, verifyPackageTrees) => {
       parsedExecutablePackagePlatform(platform)
       const derivedPackages = await deriveExecutablePackageClosure(
         metric.implementation,
@@ -1084,6 +1134,7 @@ export async function verifyMetricImplementationBinding(
           repositoryRoot,
           packageLockPath: metric.implementationPackageLock.path,
           platform,
+          verifyPackageTrees,
         },
       )
       const expectedPackages = metric.implementationPackages
@@ -1099,14 +1150,30 @@ export async function verifyMetricImplementationBinding(
       if (
         canonicalJson(derivedPackages.packageLock) !==
           canonicalJson(metric.implementationPackageLock) ||
-        canonicalJson(derivedPackages.packages) !==
-          canonicalJson(expectedPackages)
+        canonicalJson(
+          verifyPackageTrees
+            ? derivedPackages.packages
+            : packageBindingMetadata(derivedPackages.packages),
+        ) !==
+          canonicalJson(
+            verifyPackageTrees
+              ? expectedPackages
+              : packageBindingMetadata(expectedPackages),
+          ) ||
+        (!verifyPackageTrees &&
+          !expectedPackages.every(({ treeSha256 }) => SHA256.test(treeSha256)))
       )
         invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
       return derivedPackages
     }
-    const packageSnapshots = await Promise.all(
-      metric.implementationPlatforms.map(verifyPackagesForPlatform),
+    const packageSnapshot = await verifyPackagesForPlatform(hostPlatform, true)
+    const foreignPlatforms = metric.implementationPlatforms.filter(
+      (platform) => platform !== hostPlatform,
+    )
+    const foreignPackageSnapshots = await Promise.all(
+      foreignPlatforms.map((platform) =>
+        verifyPackagesForPlatform(platform, false),
+      ),
     )
     const finalClosure = await deriveLocalExecutableImportClosure(
       metric.implementation,
@@ -1124,11 +1191,19 @@ export async function verifyMetricImplementationBinding(
       )
     )
       invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
-    const finalPackageSnapshots = await Promise.all(
-      metric.implementationPlatforms.map(verifyPackagesForPlatform),
+    const finalPackageSnapshot = await verifyPackagesForPlatform(
+      hostPlatform,
+      true,
+    )
+    const finalForeignPackageSnapshots = await Promise.all(
+      foreignPlatforms.map((platform) =>
+        verifyPackagesForPlatform(platform, false),
+      ),
     )
     if (
-      canonicalJson(packageSnapshots) !== canonicalJson(finalPackageSnapshots)
+      canonicalJson(packageSnapshot) !== canonicalJson(finalPackageSnapshot) ||
+      canonicalJson(foreignPackageSnapshots) !==
+        canonicalJson(finalForeignPackageSnapshots)
     )
       invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
   }

@@ -145,6 +145,7 @@ async function temporaryPackageImplementationFixture() {
   )
   for (const path of [
     'node_modules/fake-peer',
+    'node_modules/native-darwin-arm64',
     'node_modules/native-linux-x64-gnu',
     'node_modules/native-linux-x64-musl',
   ])
@@ -162,6 +163,7 @@ async function temporaryPackageImplementationFixture() {
       main: 'index.js',
       optionalDependencies: {
         'fake-optional': '1.0.0',
+        'native-darwin-arm64': '1.0.0',
         'native-linux-x64-gnu': '1.0.0',
         'native-linux-x64-musl': '1.0.0',
       },
@@ -188,6 +190,7 @@ async function temporaryPackageImplementationFixture() {
   )
   for (const name of [
     'fake-peer',
+    'native-darwin-arm64',
     'native-linux-x64-gnu',
     'native-linux-x64-musl',
   ]) {
@@ -210,6 +213,7 @@ async function temporaryPackageImplementationFixture() {
         integrity: `sha512-${'A'.repeat(86)}==`,
         optionalDependencies: {
           'fake-optional': '1.0.0',
+          'native-darwin-arm64': '1.0.0',
           'native-linux-x64-gnu': '1.0.0',
           'native-linux-x64-musl': '1.0.0',
         },
@@ -223,16 +227,23 @@ async function temporaryPackageImplementationFixture() {
         version: '1.0.0',
         integrity: `sha512-${'C'.repeat(86)}==`,
       },
-      'node_modules/native-linux-x64-gnu': {
+      'node_modules/native-darwin-arm64': {
         version: '1.0.0',
         integrity: `sha512-${'D'.repeat(86)}==`,
+        os: ['darwin'],
+        cpu: ['arm64'],
+        optional: true,
+      },
+      'node_modules/native-linux-x64-gnu': {
+        version: '1.0.0',
+        integrity: `sha512-${'E'.repeat(86)}==`,
         os: ['linux'],
         cpu: ['x64'],
         optional: true,
       },
       'node_modules/native-linux-x64-musl': {
         version: '1.0.0',
-        integrity: `sha512-${'E'.repeat(86)}==`,
+        integrity: `sha512-${'F'.repeat(86)}==`,
         os: ['linux'],
         cpu: ['x64'],
         optional: true,
@@ -1156,7 +1167,12 @@ describe('PDF benchmark readiness registry', () => {
     const { repositoryRoot, metric } =
       await temporaryPackageImplementationFixture()
     try {
-      metric.implementationPlatforms.push('darwin-x64')
+      const foreignPlatform = metric.implementationPlatforms[0].startsWith(
+        'darwin',
+      )
+        ? 'linux-x64-gnu'
+        : 'darwin-arm64'
+      metric.implementationPlatforms.push(foreignPlatform)
       metric.implementationSha256 = implementationCompositeSha256(metric)
 
       await expect(
@@ -1165,6 +1181,53 @@ describe('PDF benchmark readiness registry', () => {
           requirePackages: true,
         }),
       ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    } finally {
+      await rm(repositoryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('verifies foreign platform package metadata without requiring foreign package trees', async () => {
+    const { repositoryRoot, metric } =
+      await temporaryPackageImplementationFixture()
+    try {
+      const foreignPlatform = metric.implementationPlatforms[0].startsWith(
+        'darwin',
+      )
+        ? 'linux-x64-gnu'
+        : 'darwin-arm64'
+      const foreignClosure = await deriveExecutablePackageClosure(
+        metric.implementation,
+        { repositoryRoot, platform: foreignPlatform },
+      )
+      const knownPaths = new Set(
+        metric.implementationPackages.map(({ path }) => path),
+      )
+      metric.implementationPlatforms = [
+        ...metric.implementationPlatforms,
+        foreignPlatform,
+      ].sort()
+      metric.implementationPackages = [
+        ...metric.implementationPackages,
+        ...foreignClosure.packages.filter(
+          ({ path }) => !knownPaths.has(path),
+        ),
+      ].sort((left, right) => left.path.localeCompare(right.path))
+      metric.implementationSha256 = implementationCompositeSha256(metric)
+      await Promise.all(
+        foreignClosure.packages
+          .filter(
+            ({ path, platforms }) =>
+              platforms?.includes(foreignPlatform) && !knownPaths.has(path),
+          )
+          .map(({ path }) => rm(join(repositoryRoot, path), { recursive: true })),
+      )
+
+      await expect(
+        verifyMetricImplementationBinding(metric, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).resolves.toBeUndefined()
     } finally {
       await rm(repositoryRoot, { recursive: true, force: true })
     }

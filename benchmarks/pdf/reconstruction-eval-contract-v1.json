@@ -163,7 +163,7 @@
       "outcome": "binary-pass-fail",
       "criterion": "internal-epub-validation-and-epubcheck-both-pass",
       "implementation": ["tools/pdf-private-fidelity.mjs"],
-      "implementationSha256": "650134e83cf0f294239e0a7605625a739284b89a9cd8a01b36c7c6c2739be275",
+      "implementationSha256": "e3145212315610d2d5233cfc8a33dc9bfe0beae4f3146236848426d6b123bb22",
       "implementationComponents": [
         {
           "path": "src/research/composition.ts",
@@ -591,8 +591,7 @@
           "name": "node-readable-to-web-readable-stream",
           "version": "0.4.2",
           "integrity": "sha512-/cMZNI34v//jUTrI+UIo4ieHAB5EZRY/+7OmXZgBxaWBMcW2tGdceIw06RFxWxrKZ5Jp3sI2i5TsRo+CBhtVLQ==",
-          "treeSha256": "bbe327bc407f043d9d51987f06938c93f6b27644e72001d78ef76e2664825e97",
-          "platforms": ["darwin-arm64", "linux-x64-gnu"]
+          "treeSha256": "bbe327bc407f043d9d51987f06938c93f6b27644e72001d78ef76e2664825e97"
         },
         {
           "path": "node_modules/opencollective-postinstall",

@@ -2721,6 +2721,10 @@ function validatePrivateFidelityReceipt(receipt, requireAcceptedBaseline) {
       ['1.8.0', '1.9.0'].includes(receipt?.schemaVersion)
     const legacySchema =
       historicalSchema && hasHistoricalStatusOnlyEpubCheck(receipt)
+    const attestedHistoricalV19 =
+      historicalSchema &&
+      receipt?.schemaVersion === '1.9.0' &&
+      !legacySchema
     if (
       !hasExactKeys(receipt, [
         'schemaVersion',
@@ -2733,7 +2737,8 @@ function validatePrivateFidelityReceipt(receipt, requireAcceptedBaseline) {
         'passed',
       ]) ||
       (receipt.schemaVersion !== PDF_PRIVATE_FIDELITY_SCHEMA_VERSION &&
-        !legacySchema) ||
+        !legacySchema &&
+        !attestedHistoricalV19) ||
       receipt.privacy !== PDF_PRIVATE_FIDELITY_PRIVACY ||
       !hasExactKeys(receipt.source, ['paperId', 'sha256', 'byteLength']) ||
       !/^[A-Za-z0-9._-]+$/.test(receipt.source.paperId) ||

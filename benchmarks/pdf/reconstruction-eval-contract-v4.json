@@ -12,7 +12,7 @@
     "status": "available",
     "kind": "code",
     "implementation": "tools/pdf-private-fidelity.mjs",
-    "implementationSha256": "987e6a9cc1f215551d4af8dd0110f8f4a0f3dd223f52fb3816e03cdf427b877c",
+    "implementationSha256": "8adc98d72f784b439a01cca061cb5cee67f4144f1943b639378114453db1d0e3",
     "implementationComponents": [
       {
         "path": "src/research/composition.ts",
@@ -252,7 +252,7 @@
       },
       {
         "path": "tools/pdf-private-fidelity.mjs",
-        "fileSha256": "7d7730062900d7eddb0f23e6566c82aaf4011de0b1b286d5719b0c20d86a1b3a"
+        "fileSha256": "8afeeb93c75f44e0349718b54cdbbacb34c88b75634c97bce68e25c90e8104cc"
       }
     ],
     "implementationPackageLock": {
@@ -637,7 +637,7 @@
       }
     ],
     "test": "tools/pdf-private-fidelity.test.mjs",
-    "testSha256": "3c5554ea83b34b6c10da4a6a048067c692a5bf94b4fd41e1842b541f190e0f9e",
+    "testSha256": "93ef9002752f0744bbf66d8f2900788b9d9e7406e87ceba87505ac67458b1ed3",
     "calibration": null
   }
 }

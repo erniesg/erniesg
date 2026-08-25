@@ -2800,6 +2800,34 @@ describe('private PDF fidelity runner', () => {
     ).toMatchObject({ status: 'passed', passed: true })
   })
 
+  it('accepts an attested immutable schema v1.9 baseline', () => {
+    const historical = fidelityReceipt({
+      epubCheckRequired: true,
+      transformArtifact(value) {
+        return {
+          ...value,
+          epubCheck: {
+            status: 'passed',
+            javaSha256: 'a'.repeat(64),
+            jreReleaseSha256: 'b'.repeat(64),
+            jreTreeSha256: 'c'.repeat(64),
+          },
+        }
+      },
+    })
+    historical.schemaVersion = '1.9.0'
+    const candidate = structuredClone(historical)
+    candidate.schemaVersion = '2.0.0'
+
+    expect(
+      comparePrivateFidelityReceipts(
+        historical,
+        candidate,
+        acceptedBaselineSha256(historical),
+      ),
+    ).toMatchObject({ status: 'passed', passed: true })
+  })
+
   it('rejects a status-only v1.8 baseline when EPUBCheck is required', () => {
     const legacy = fidelityReceipt({
       epubCheckRequired: true,

@@ -2860,12 +2860,12 @@ async function main() {
   ) {
     invalid('PDF_BENCHMARK_NONCANONICAL_PROMOTION_SCHEMA')
   }
-  if (options.requireReady && !options.schemaPath) {
+  if (options.requireReady) {
     const registry = await readJsonArtifact(
       resolve(options.registryPath),
       'PDF_BENCHMARK_READINESS_FAILED',
     )
-    if (registry.value?.schemaVersion !== '4.0.0') {
+    if (!options.schemaPath && registry.value?.schemaVersion !== '4.0.0') {
       invalid('PDF_BENCHMARK_NONCANONICAL_PROMOTION_SCHEMA')
     }
     if (

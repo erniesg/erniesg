@@ -2156,4 +2156,25 @@ describe('PDF benchmark readiness registry', () => {
       'PDF_BENCHMARK_MULTI_PLATFORM_PROMOTION_UNATTESTED\n',
     )
   })
+
+  it('rejects unattested foreign platform trees with an explicit canonical v4 schema', () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        readinessToolPath,
+        '--registry',
+        registryPath,
+        '--schema',
+        'docs/schemas/pdf-benchmark-readiness-registry-v4.schema.json',
+        '--require-ready',
+      ],
+      { encoding: 'utf8' },
+    )
+
+    expect(result.status).toBe(1)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).toBe(
+      'PDF_BENCHMARK_MULTI_PLATFORM_PROMOTION_UNATTESTED\n',
+    )
+  })
 })

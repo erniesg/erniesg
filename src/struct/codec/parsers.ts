@@ -800,32 +800,44 @@ function snapshotAsset(value: unknown, path: string) {
   return copyRecord(dataEntries(value, path))
 }
 
-function assetObject(value: unknown, path: string) {
-  return object(
-    value,
-    path,
-    [
-      'id',
-      'kind',
-      'href',
-      'mediaType',
-      'sha256',
-      'width',
-      'height',
-      'sourceObjectIds',
-      'evidence',
-      'fallback',
-    ],
-    ['bytes'],
+const ASSET_REQUIRED_FIELDS = [
+  'id',
+  'kind',
+  'href',
+  'mediaType',
+  'sha256',
+  'width',
+  'height',
+  'sourceObjectIds',
+  'evidence',
+  'fallback',
+] as const
+const ASSET_OPTIONAL_FIELDS = ['bytes'] as const
+const ASSET_FIELDS = [...ASSET_REQUIRED_FIELDS, ...ASSET_OPTIONAL_FIELDS]
+const ASSET_FIELD_SET = new Set<string>(ASSET_FIELDS)
+
+function validateAssetSnapshot(value: DataObject, path: string) {
+  for (const key of ASSET_REQUIRED_FIELDS) {
+    if (!has(value, key))
+      fail('REQUIRED', `${path}.${key}`, 'field is required')
+  }
+  for (const key of Object.keys(value)) {
+    if (!ASSET_FIELD_SET.has(key))
+      fail('UNKNOWN_FIELD', `${path}.${key}`, 'unknown field is not declared')
+  }
+  return copyRecord(
+    ASSET_FIELDS.filter((key) => has(value, key)).map((key) => [
+      key,
+      value[key],
+    ]),
   )
 }
 
 function parseAsset(
-  value: unknown,
+  parsed: DataObject,
   path: string,
   maximumBytes: number,
 ): StructAsset {
-  const parsed = assetObject(value, path)
   const href = stringValue(parsed.href, `${path}.href`)
   if (URL_CONTROL.test(href))
     fail(
@@ -1306,20 +1318,22 @@ function parseDocument(value: unknown): StructDocument {
 /** Snapshot and validate bounded STRUCT assets before any consumer packages them. */
 export function parseStructAssets(value: unknown): StructAsset[] {
   const rawAssets = array(value, '$.assets', MAX_STRUCT_ASSETS)
-  const assetSnapshots = rawAssets.map((asset, index) =>
-    snapshotAsset(asset, `$.assets[${index}]`),
-  )
-  let preflightRemaining = MAX_STRUCT_ASSET_BYTES_TOTAL
-  for (const [index, asset] of assetSnapshots.entries()) {
-    if (!has(asset, 'bytes')) continue
-    const length = preflightBytes(
-      asset.bytes,
-      `$.assets[${index}].bytes`,
-      MAX_STRUCT_ASSET_BYTES,
-    )
-    if (length > preflightRemaining)
+  const assetSnapshots: DataObject[] = []
+  let remainingBytes = MAX_STRUCT_ASSET_BYTES_TOTAL
+  for (const [index, rawAsset] of rawAssets.entries()) {
+    const path = `$.assets[${index}]`
+    const snapshot = snapshotAsset(rawAsset, path)
+    const length = has(snapshot, 'bytes')
+      ? preflightBytes(
+          snapshot.bytes,
+          `${path}.bytes`,
+          MAX_STRUCT_ASSET_BYTES,
+        )
+      : 0
+    if (length > remainingBytes)
       fail('ASSET_BOUNDS', '$.assets', 'asset bytes exceed the resource bound')
-    preflightRemaining -= length
+    assetSnapshots.push(validateAssetSnapshot(snapshot, path))
+    remainingBytes -= length
   }
   let decodeRemaining = MAX_STRUCT_ASSET_BYTES_TOTAL
   return assetSnapshots.map((asset, index) => {

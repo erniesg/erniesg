@@ -821,6 +821,40 @@ describe('STRUCT EPUB href integrity', () => {
     )
   })
 
+  it('rejects an invalid direct asset before enumerating later assets', async () => {
+    const document = documentWithHref('#target')
+    let laterOwnKeys = 0
+    document.assets = [
+      {
+        id: 'first-asset',
+        kind: 'figure',
+        href: 'assets/first.png',
+        mediaType: 'image/png',
+        sha256: 'a'.repeat(64),
+        width: 1,
+        height: 1,
+        sourceObjectIds: [],
+        evidence: { confidence: 1, pages: [], boxes: [], sourceIds: [] },
+        fallback: 'asset',
+        unexpected: true,
+      } as StructDocument['assets'][number],
+      new Proxy(
+        {},
+        {
+          ownKeys() {
+            laterOwnKeys += 1
+            throw new Error('later asset was enumerated')
+          },
+        },
+      ) as StructDocument['assets'][number],
+    ]
+
+    await expect(buildStructEpub(document)).rejects.toThrow(
+      'STRUCT_CODEC_UNKNOWN_FIELD at $.assets[0].unexpected',
+    )
+    expect(laterOwnKeys).toBe(0)
+  })
+
   it('rejects a custom asset iterator without invoking it', async () => {
     const document = documentWithHref('#target')
     let iteratorCalls = 0

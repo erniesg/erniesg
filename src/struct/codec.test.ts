@@ -387,6 +387,7 @@ describe('STRUCT runtime codec', () => {
   it('rejects aggregate asset bytes before decoding or hashing an earlier payload', () => {
     const value = validDocument() as any
     const sparseMaximum = new Array(MAX_STRUCT_ASSET_BYTES)
+    let laterOwnKeys = 0
     value.assets = [
       { ...value.assets[0], bytes: sparseMaximum },
       {
@@ -395,6 +396,15 @@ describe('STRUCT runtime codec', () => {
         href: 'assets/asset-2.bin',
         bytes: [0],
       },
+      new Proxy(
+        {},
+        {
+          ownKeys() {
+            laterOwnKeys += 1
+            throw new Error('later asset was enumerated')
+          },
+        },
+      ),
     ]
 
     try {
@@ -405,6 +415,7 @@ describe('STRUCT runtime codec', () => {
       expect((error as StructCodecError).code).toBe('ASSET_BOUNDS')
       expect((error as StructCodecError).path).toBe('$.assets')
     }
+    expect(laterOwnKeys).toBe(0)
   })
 
   it.each([

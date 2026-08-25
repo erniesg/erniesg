@@ -11,6 +11,13 @@ import {
   MAX_STRUCT_ASSETS,
   MAX_STRUCT_ASSET_BYTES_TOTAL,
 } from './codec/parsers'
+import { MAX_STRUCT_ASSET_BYTES } from './codec/bytes'
+import {
+  bcp47Language,
+  mediaType,
+  rfc3339Date,
+  rfc3339DateTime,
+} from './codec/standards'
 import { sha256HexSync } from './sha256'
 import { legacyStructDigestMatches, structDigest } from './ids'
 import { validateStructConsultationReceipt } from './consultation-receipt'
@@ -123,31 +130,40 @@ function artifactFileName(value: string) {
   return value.split(/[\\/]/u).at(-1) || 'source'
 }
 
-function assertRfc3339Date(value: string, field: string) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value)
-  if (!match) throw new Error(`STRUCT EPUB ${field} must be an RFC-3339 date`)
-  const year = Number(match[1])
-  const month = Number(match[2])
-  const day = Number(match[3])
-  const date = new Date(0)
-  date.setUTCFullYear(year, month - 1, day)
-  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day)
-    throw new Error(`STRUCT EPUB ${field} must be a real calendar date`)
+function assertBuilderScalars(document: StructDocument) {
+  const { language, publicationDate, artifactModifiedAt, updated } =
+    document.metadata
+  if (language !== undefined) bcp47Language(language, '$.metadata.language')
+  if (publicationDate !== undefined)
+    rfc3339Date(publicationDate, '$.metadata.publicationDate')
+  if (updated !== undefined) rfc3339Date(updated, '$.metadata.updated')
+  if (artifactModifiedAt !== undefined)
+    rfc3339DateTime(artifactModifiedAt, '$.metadata.artifactModifiedAt')
+  for (const asset of document.assets) {
+    mediaType(asset.mediaType, '$.assets.mediaType')
+    if (asset.href.includes('%'))
+      throw new Error(`STRUCT EPUB asset ${asset.id} has an ambiguous href`)
+  }
 }
 
-function assertBuilderScalars(document: StructDocument) {
-  const { language, publicationDate, artifactModifiedAt, updated } = document.metadata
-  if (language !== undefined && !/^(?:(?:[A-Za-z]{2,3}(?:-[A-Za-z]{3}){0,3}|[A-Za-z]{4}|[A-Za-z]{5,8})(?:-[A-Za-z]{4})?(?:-(?:[A-Za-z]{2}|\d{3}))?(?:-(?:[A-Za-z0-9]{5,8}|\d[A-Za-z0-9]{3}))*(?:-[0-9A-WY-Za-wy-z](?:-[A-Za-z0-9]{2,8})+)*(?:-x(?:-[A-Za-z0-9]{1,8})+)?|x(?:-[A-Za-z0-9]{1,8})+)$/u.test(language))
-    throw new Error('STRUCT EPUB language must be a BCP-47 tag')
-  if (publicationDate !== undefined) assertRfc3339Date(publicationDate, 'publicationDate')
-  if (updated !== undefined) assertRfc3339Date(updated, 'updated')
-  if (artifactModifiedAt !== undefined && (!/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/u.test(artifactModifiedAt) || Number.isNaN(Date.parse(artifactModifiedAt))))
-    throw new Error('STRUCT EPUB artifactModifiedAt must be RFC-3339')
-  for (const asset of document.assets) {
-    if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u.test(asset.mediaType))
-      throw new Error(`STRUCT EPUB asset ${asset.id} has an invalid MIME type`)
-    if (asset.href.includes('%')) throw new Error(`STRUCT EPUB asset ${asset.id} has an ambiguous href`)
+function assertAssetResourceBounds(assets: StructDocument['assets']) {
+  if (assets.length > MAX_STRUCT_ASSETS)
+    throw new Error('STRUCT_EPUB_ASSET_RESOURCE_LIMIT')
+
+  let total = 0
+  for (const asset of assets) {
+    const bytes = asset.bytes
+    const byteLength = bytes?.byteLength
+    if (
+      !Number.isSafeInteger(byteLength) ||
+      byteLength < 0 ||
+      byteLength > MAX_STRUCT_ASSET_BYTES ||
+      total > MAX_STRUCT_ASSET_BYTES_TOTAL - byteLength
+    )
+      throw new Error('STRUCT_EPUB_ASSET_RESOURCE_LIMIT')
+    total += byteLength
   }
+  return total
 }
 
 function assertNoNegativeZero(value: unknown, seen = new WeakSet<object>()) {
@@ -378,6 +394,7 @@ export async function buildStructEpub(
   document: StructDocument,
   options: StructEpubOptions = {},
 ): Promise<StructEpubExport> {
+  const assetBytes = assertAssetResourceBounds(document.assets)
   assertBuilderScalars(document)
   assertNoSemanticZeroWidthRuns(document)
   assertStructReceiptIntegrity(document)
@@ -405,15 +422,6 @@ export async function buildStructEpub(
     }
     return { ...asset, bytes }
   })
-  const assetBytes = assets.reduce(
-    (total, asset) => total + asset.bytes.byteLength,
-    0,
-  )
-  if (
-    assets.length > MAX_STRUCT_ASSETS ||
-    assetBytes > MAX_STRUCT_ASSET_BYTES_TOTAL
-  )
-    throw new Error('STRUCT_EPUB_ASSET_RESOURCE_LIMIT')
   const reservedHrefs = new Set([
     'package.opf',
     'nav.xhtml',

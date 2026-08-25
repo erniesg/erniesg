@@ -300,6 +300,36 @@ describe('STRUCT runtime codec', () => {
     expect(() => decodeStructDocument(value)).not.toThrow()
   })
 
+  it.each([
+    [
+      'calendar-normalized timestamp',
+      (value: any) =>
+        (value.metadata.artifactModifiedAt = '2026-02-30T00:00:00Z'),
+    ],
+    [
+      'duplicate BCP-47 extension singleton',
+      (value: any) => (value.metadata.language = 'en-a-foo-a-bar'),
+    ],
+    ['MIME wildcard', (value: any) => (value.assets[0].mediaType = '*/*')],
+  ])('rejects an invalid %s', (_label, mutate) => {
+    const value = validDocument()
+    mutate(value)
+    seal(value)
+
+    expect(() => decodeStructDocument(value)).toThrow()
+  })
+
+  it.each(['i-klingon', 'en-US-u-ca-gregory'])(
+    'accepts the BCP-47 language tag %s',
+    (language) => {
+      const value = validDocument()
+      value.metadata.language = language
+      seal(value)
+
+      expect(() => decodeStructDocument(value)).not.toThrow()
+    },
+  )
+
   it('rejects an unpadded base64 payload exceeding the asset bound before allocation', () => {
     const encoded = 'AAAA'.repeat(
       Math.ceil((MAX_STRUCT_ASSET_BYTES + 1) / 3),

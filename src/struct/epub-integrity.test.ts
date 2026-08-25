@@ -1,5 +1,9 @@
 import { strFromU8, unzipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
+import {
+  MAX_STRUCT_ASSETS,
+  MAX_STRUCT_ASSET_BYTES_TOTAL,
+} from './codec/parsers'
 import { buildStructEpub } from './epub'
 import { legacyStructDigest, structDigest } from './ids'
 import { sha256HexSync } from './sha256'
@@ -622,7 +626,10 @@ describe('STRUCT EPUB href integrity', () => {
   })
 
   it.each([
-    ['language', (document: StructDocument) => (document.metadata.language = 'en_US')],
+    [
+      'language',
+      (document: StructDocument) => (document.metadata.language = 'en_US'),
+    ],
     [
       'timestamp',
       (document: StructDocument) =>
@@ -630,13 +637,17 @@ describe('STRUCT EPUB href integrity', () => {
     ],
     [
       'negative zero',
-      (document: StructDocument) => (document.blocks[0]!.evidence.confidence = -0),
+      (document: StructDocument) =>
+        (document.blocks[0]!.evidence.confidence = -0),
     ],
-  ])('applies strict codec validation to direct builder input (%s)', async (_label, mutate) => {
-    const document = documentWithHref('#target')
-    mutate(document)
-    await expect(buildStructEpub(refreshReceipt(document))).rejects.toThrow()
-  })
+  ])(
+    'applies strict codec validation to direct builder input (%s)',
+    async (_label, mutate) => {
+      const document = documentWithHref('#target')
+      mutate(document)
+      await expect(buildStructEpub(refreshReceipt(document))).rejects.toThrow()
+    },
+  )
 
   it('accepts direct builder input with BCP-47 extensions and year 0001 dates', async () => {
     const document = documentWithHref('#target')
@@ -644,6 +655,101 @@ describe('STRUCT EPUB href integrity', () => {
     document.metadata.publicationDate = '0001-01-01'
     document.metadata.updated = '0001-12-31'
 
-    await expect(buildStructEpub(refreshReceipt(document))).resolves.toBeDefined()
+    await expect(
+      buildStructEpub(refreshReceipt(document)),
+    ).resolves.toBeDefined()
+  })
+
+  it('rejects an oversized direct asset list before reading an asset', async () => {
+    const document = documentWithHref('#target')
+    let assetReads = 0
+    document.assets = new Proxy(new Array(MAX_STRUCT_ASSETS + 1), {
+      get(target, property, receiver) {
+        if (property !== 'length') assetReads += 1
+        return Reflect.get(target, property, receiver)
+      },
+    }) as StructDocument['assets']
+
+    await expect(buildStructEpub(document)).rejects.toThrow(
+      'STRUCT_EPUB_ASSET_RESOURCE_LIMIT',
+    )
+    expect(assetReads).toBe(0)
+  })
+
+  it('rejects oversized direct asset bytes before inspecting asset scalars', async () => {
+    const document = documentWithHref('#target')
+    document.assets = [
+      new Proxy(
+        {
+          bytes: new Proxy(new Uint8Array(), {
+            get(target, property, receiver) {
+              if (property === 'byteLength')
+                return MAX_STRUCT_ASSET_BYTES_TOTAL + 1
+              return Reflect.get(target, property, receiver)
+            },
+          }),
+        },
+        {
+          get(target, property, receiver) {
+            if (property === 'mediaType')
+              throw new Error('asset scalar was inspected')
+            return Reflect.get(target, property, receiver)
+          },
+        },
+      ) as StructDocument['assets'][number],
+    ]
+
+    await expect(buildStructEpub(document)).rejects.toThrow(
+      'STRUCT_EPUB_ASSET_RESOURCE_LIMIT',
+    )
+  })
+
+  it.each([
+    [
+      'calendar-normalized timestamp',
+      (document: StructDocument) =>
+        (document.metadata.artifactModifiedAt = '2026-02-30T00:00:00Z'),
+    ],
+    [
+      'duplicate BCP-47 extension singleton',
+      (document: StructDocument) =>
+        (document.metadata.language = 'en-a-foo-a-bar'),
+    ],
+    [
+      'MIME wildcard',
+      (document: StructDocument) => {
+        document.assets = [
+          {
+            id: 'asset-1',
+            kind: 'figure',
+            href: 'asset.png',
+            mediaType: '*/*',
+            sha256: sha256HexSync(new Uint8Array([1])),
+            width: 1,
+            height: 1,
+            bytes: new Uint8Array([1]),
+            sourceObjectIds: [],
+            evidence: { confidence: 1, pages: [1], boxes: [], sourceIds: [] },
+            fallback: 'asset',
+          },
+        ]
+      },
+    ],
+  ])('rejects invalid direct builder %s', async (_label, mutate) => {
+    const document = documentWithHref('#target')
+    mutate(document)
+
+    await expect(buildStructEpub(refreshReceipt(document))).rejects.toThrow()
+  })
+
+  it('accepts grandfathered and standard direct builder language tags', async () => {
+    for (const language of ['i-klingon', 'en-US-u-ca-gregory']) {
+      const document = documentWithHref('#target')
+      document.metadata.language = language
+
+      await expect(
+        buildStructEpub(refreshReceipt(document)),
+      ).resolves.toBeDefined()
+    }
   })
 })

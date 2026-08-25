@@ -600,4 +600,50 @@ describe('STRUCT EPUB href integrity', () => {
       /dangling internal reference/i,
     )
   })
+
+  it('rejects a resealed receipt with a pending consultation before packaging', async () => {
+    const document = documentWithGenericReceipt()
+    document.receipt.modelConsultations!.consultations.push({
+      status: 'pending',
+    })
+    await expect(buildStructEpub(refreshReceipt(document))).rejects.toThrow(
+      'EPUB_PENDING_MODEL_CONSULTATION_RECEIPT',
+    )
+  })
+
+  it('redacts source directory components from the packaged artifact', async () => {
+    const document = documentWithHref('#target')
+    document.source.fileName = '/private/intake/fixture.pdf'
+    const epub = await buildStructEpub(refreshReceipt(document))
+    const artifact = strFromU8(unzipSync(epub.bytes)['EPUB/struct.json']!)
+
+    expect(artifact).toContain('fixture.pdf')
+    expect(artifact).not.toContain('/private/intake')
+  })
+
+  it.each([
+    ['language', (document: StructDocument) => (document.metadata.language = 'en_US')],
+    [
+      'timestamp',
+      (document: StructDocument) =>
+        (document.metadata.artifactModifiedAt = '1970-01-01 00:00:00Z'),
+    ],
+    [
+      'negative zero',
+      (document: StructDocument) => (document.blocks[0]!.evidence.confidence = -0),
+    ],
+  ])('applies strict codec validation to direct builder input (%s)', async (_label, mutate) => {
+    const document = documentWithHref('#target')
+    mutate(document)
+    await expect(buildStructEpub(refreshReceipt(document))).rejects.toThrow()
+  })
+
+  it('accepts direct builder input with BCP-47 extensions and year 0001 dates', async () => {
+    const document = documentWithHref('#target')
+    document.metadata.language = 'en-US-u-ca-gregory'
+    document.metadata.publicationDate = '0001-01-01'
+    document.metadata.updated = '0001-12-31'
+
+    await expect(buildStructEpub(refreshReceipt(document))).resolves.toBeDefined()
+  })
 })

@@ -2,9 +2,13 @@ import {
   array,
   fail,
   integer,
+  isStructCodecError,
   stringValue,
-  StructCodecError,
 } from './primitives'
+
+/** Bound decoded binary data before allocating an output buffer. */
+export const MAX_STRUCT_ASSET_BYTES = 128 * 1024 * 1024
+const MAX_STRUCT_ASSET_BASE64_LENGTH = Math.ceil(MAX_STRUCT_ASSET_BYTES / 3) * 4
 
 const uint8ArrayPrototype = Uint8Array.prototype
 const typedArrayPrototype = Object.getPrototypeOf(uint8ArrayPrototype)
@@ -27,6 +31,7 @@ function copyCanonicalUint8Array(value: unknown): Uint8Array | undefined {
   )
     return undefined
   const length = Reflect.apply(typedArrayLengthGetter, bytes, [])
+  if (length > MAX_STRUCT_ASSET_BYTES) return undefined
   const ownKeys = Reflect.ownKeys(bytes)
   if (ownKeys.length !== length) return undefined
   if (
@@ -62,12 +67,19 @@ function copyCanonicalUint8Array(value: unknown): Uint8Array | undefined {
 export function parseBytes(value: unknown, path: string): Uint8Array {
   try {
     if (ArrayBuffer.isView(value)) {
+      if (
+        typedArrayLengthGetter !== undefined &&
+        Reflect.apply(typedArrayLengthGetter, value, []) > MAX_STRUCT_ASSET_BYTES
+      )
+        fail('BYTES', path, 'bytes exceed the per-asset resource bound')
       const bytes = copyCanonicalUint8Array(value)
       if (bytes === undefined)
         fail('BYTES', path, 'bytes must be a canonical Uint8Array')
       return bytes
     }
     if (Array.isArray(value)) {
+      if (value.length > MAX_STRUCT_ASSET_BYTES)
+        fail('BYTES', path, 'bytes exceed the per-asset resource bound')
       const bytes = array(value, path).map((entry, index) => {
         const byte = integer(entry, `${path}[${index}]`, 0)
         if (byte > 255)
@@ -77,6 +89,13 @@ export function parseBytes(value: unknown, path: string): Uint8Array {
       return new Uint8Array(bytes)
     }
     const encoded = stringValue(value, path)
+    if (encoded.length > MAX_STRUCT_ASSET_BASE64_LENGTH)
+      fail('BYTES', path, 'bytes exceed the per-asset resource bound')
+    const decodedLength =
+      (encoded.length / 4) * 3 -
+      (encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0)
+    if (decodedLength > MAX_STRUCT_ASSET_BYTES)
+      fail('BYTES', path, 'bytes exceed the per-asset resource bound')
     if (
       !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(
         encoded,
@@ -84,10 +103,7 @@ export function parseBytes(value: unknown, path: string): Uint8Array {
     )
       fail('BYTES', path, 'bytes must use canonical base64')
     if (encoded.length === 0) return new Uint8Array()
-    const output = new Uint8Array(
-      (encoded.length / 4) * 3 -
-        (encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0),
-    )
+    const output = new Uint8Array(decodedLength)
     const alphabet =
       'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
     let offset = 0
@@ -114,7 +130,7 @@ export function parseBytes(value: unknown, path: string): Uint8Array {
     }
     return output
   } catch (error) {
-    if (error instanceof StructCodecError) throw error
+    if (isStructCodecError(error)) throw error
     fail('BYTES', path, 'bytes cannot be inspected safely')
   }
 }

@@ -4,7 +4,7 @@ import {
   dataEntries,
   fail,
   finiteNumber,
-  StructCodecError,
+  isStructCodecError,
 } from './primitives'
 import { validateStructConsultationReceipt } from '../consultation-receipt'
 
@@ -91,7 +91,7 @@ export function validateConsultationReceipt(value: unknown, path: string) {
     if (!validateStructConsultationReceipt(value))
       fail('MODEL_RECEIPT', path, 'invalid closed consultation receipt')
   } catch (error) {
-    if (error instanceof StructCodecError) throw error
+    if (isStructCodecError(error)) throw error
     fail('MODEL_RECEIPT', path, 'invalid model consultation receipt')
   }
 }

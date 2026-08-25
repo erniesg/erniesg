@@ -9,6 +9,7 @@ const HASH = /^[a-f0-9]{64}$/u
 // controls and DEL without normalizing accepted whitespace.
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u
 const URL_CONTROL = /[\u0000-\u001f\u007f]/u
+const codecErrors = new WeakSet<object>()
 
 export class StructCodecError extends TypeError {
   readonly code: string
@@ -19,7 +20,13 @@ export class StructCodecError extends TypeError {
     this.name = 'StructCodecError'
     this.code = code
     this.path = path
+    codecErrors.add(this)
   }
+}
+
+/** Do not trust an attacker-controlled prototype chain to identify codec errors. */
+export function isStructCodecError(value: unknown): value is StructCodecError {
+  return typeof value === 'object' && value !== null && codecErrors.has(value)
 }
 
 export function fail(code: string, path: string, message: string): never {
@@ -51,7 +58,7 @@ function snapshotObject(value: unknown, path: string): Snapshot {
     }
     return { keys: entries.map(([key]) => key), values: copyRecord(entries) }
   } catch (error) {
-    if (error instanceof StructCodecError) throw error
+    if (isStructCodecError(error)) throw error
     fail('OBJECT', path, 'object cannot be inspected safely')
   }
 }
@@ -113,7 +120,7 @@ export function array(value: unknown, path: string): unknown[] {
     }
     return entries
   } catch (error) {
-    if (error instanceof StructCodecError) throw error
+    if (isStructCodecError(error)) throw error
     fail('ARRAY', path, 'array cannot be inspected safely')
   }
 }
@@ -146,6 +153,8 @@ export function finiteNumber(value: unknown, path: string): number {
   if (typeof value !== 'number') fail('TYPE', path, 'expected a number')
   if (!Number.isFinite(value))
     fail('NON_FINITE_NUMBER', path, 'number must be finite')
+  if (Object.is(value, -0))
+    fail('NUMBER', path, 'negative zero is not canonical')
   return value
 }
 

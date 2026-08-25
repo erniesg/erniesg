@@ -11,6 +11,7 @@ import { legacyStructDigest, structDigest } from './ids'
 import { sha256HexSync } from './sha256'
 import { buildStructEpub } from './epub'
 import { renderPublicationXhtml } from './xhtml'
+import { MAX_STRUCT_ASSET_BYTES, parseBytes } from './codec/bytes'
 
 const hash = 'a'.repeat(64)
 const assetBytesHash = sha256HexSync(new Uint8Array([0, 255, 128]))
@@ -287,6 +288,32 @@ describe('STRUCT runtime codec', () => {
     expect(decodeStructDocument(encoded).assets[0]?.bytes).toEqual(
       new Uint8Array([0, 255, 128]),
     )
+  })
+
+  it('accepts BCP-47 extension tags and the valid RFC-3339 year 0001', () => {
+    const value = validDocument()
+    value.metadata.language = 'en-US-u-ca-gregory'
+    value.metadata.publicationDate = '0001-01-01'
+    value.metadata.updated = '0001-12-31'
+    seal(value)
+
+    expect(() => decodeStructDocument(value)).not.toThrow()
+  })
+
+  it('rejects an unpadded base64 payload exceeding the asset bound before allocation', () => {
+    const encoded = 'AAAA'.repeat(
+      Math.ceil((MAX_STRUCT_ASSET_BYTES + 1) / 3),
+    )
+
+    expect(() => parseBytes(encoded, '$.asset.bytes')).toThrow(
+      /resource bound/i,
+    )
+  })
+
+  it('rejects an oversized Uint8Array asset before copying it', () => {
+    const bytes = new Uint8Array(MAX_STRUCT_ASSET_BYTES + 1)
+
+    expect(() => parseBytes(bytes, '$.asset.bytes')).toThrow(/resource bound/i)
   })
 
   it('preserves JSON text whitespace without coercion', () => {
@@ -2568,5 +2595,75 @@ describe('STRUCT runtime codec', () => {
       },
     }
     expect(() => decodeStructDocument(value)).toThrow(/model|document|source/i)
+  })
+
+  it.each([
+    ['BCP-47 language', (value: any) => (value.metadata.language = 'en_US')],
+    [
+      'RFC-3339 publication date',
+      (value: any) => (value.metadata.publicationDate = '2026-02-30'),
+    ],
+    [
+      'RFC-3339 artifact timestamp',
+      (value: any) =>
+        (value.metadata.artifactModifiedAt = '2026-08-20 00:00:00Z'),
+    ],
+    ['strict MIME type', (value: any) => (value.assets[0].mediaType = 'image')],
+    [
+      'percent-encoded asset traversal',
+      (value: any) => (value.assets[0].href = 'assets/%2e%2e/secret.bin'),
+    ],
+  ])('rejects invalid %s at the codec boundary', (_label, mutate) => {
+    const value = validDocument()
+    mutate(value)
+    expect(() => decodeStructDocument(value)).toThrow(StructCodecError)
+  })
+
+  it('rejects zero-width inline runs that carry semantics', () => {
+    const value = validDocument()
+    value.blocks[0].inline[0] = {
+      start: 0,
+      end: 0,
+      href: '#block-1',
+    }
+    expect(() => decodeStructDocument(value)).toThrow(/zero-width|inline/i)
+  })
+
+  it('rejects negative zero before it can alias a canonical digest value', () => {
+    const value = validDocument()
+    value.blocks[0].evidence.confidence = -0
+    expect(() => decodeStructDocument(value)).toThrow(/negative zero|number/i)
+  })
+
+  it('does not rethrow attacker-forged StructCodecError instances', () => {
+    const value = validDocument() as any
+    value.schemaVersion = '0.2.0'
+    value.documentId = 'fixture-document'
+    value.receipt.schemaVersion = '0.2.0'
+    value.receipt.documentId = 'fixture-document'
+    const forged = Object.create(StructCodecError.prototype)
+    Object.assign(forged, { code: 'FORGED', path: '$', message: 'forged' })
+    const receipt = {
+      schemaVersion: '1.0.0',
+      documentId: 'fixture-document',
+      sourceSha256: hash,
+      consultations: [],
+      decisions: [],
+      metrics: {},
+    }
+    value.receipt.modelConsultations = new Proxy(receipt, {
+      getPrototypeOf() {
+        throw forged
+      },
+    })
+
+    try {
+      decodeStructDocument(value)
+      throw new Error('expected codec rejection')
+    } catch (error) {
+      expect(error).toBeInstanceOf(StructCodecError)
+      expect(error).not.toBe(forged)
+      expect((error as StructCodecError).code).not.toBe('FORGED')
+    }
   })
 })

@@ -46,7 +46,11 @@ import {
   unique,
   unitInterval,
 } from './primitives'
-import { bytesToBase64, parseBytes } from './bytes'
+import {
+  bytesToBase64,
+  MAX_STRUCT_ASSET_BYTES,
+  parseBytes,
+} from './bytes'
 import { copyCanonicalJson, validateConsultationReceipt } from './model'
 import { validateStructDocument } from './invariants'
 import { sha256HexSync } from '../sha256'
@@ -59,6 +63,10 @@ export type StructDocumentJson = Omit<StructDocument, 'assets'> & {
 
 const SOURCE_FORMATS = ['pdf', 'docx', 'html', 'image', 'unknown'] as const
 const URL_CONTROL = /[\u0000-\u001f\u007f]/u
+const MEDIA_TYPE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u
+const BCP47_LANGUAGE = /^(?:(?:[A-Za-z]{2,3}(?:-[A-Za-z]{3}){0,3}|[A-Za-z]{4}|[A-Za-z]{5,8})(?:-[A-Za-z]{4})?(?:-(?:[A-Za-z]{2}|\d{3}))?(?:-(?:[A-Za-z0-9]{5,8}|\d[A-Za-z0-9]{3}))*(?:-[0-9A-WY-Za-wy-z](?:-[A-Za-z0-9]{2,8})+)*(?:-x(?:-[A-Za-z0-9]{1,8})+)?|x(?:-[A-Za-z0-9]{1,8})+)$/u
+const RFC3339_DATE = /^(\d{4})-(\d{2})-(\d{2})$/u
+const RFC3339_DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u
 const BLOCK_KINDS = [
   'heading',
   'paragraph',
@@ -136,6 +144,8 @@ const RECOVERY_STATUSES = ['ready', 'review-required'] as const
 /** Keep table-derived work within the existing 100,000-node structural budget. */
 export const MAX_TABLE_DIMENSION = 100_000
 export const MAX_TABLE_AREA = 100_000
+export const MAX_STRUCT_ASSETS = 512
+export const MAX_STRUCT_ASSET_BYTES_TOTAL = 128 * 1024 * 1024
 
 function parseBox(value: unknown, path: string): StructBox {
   const parsed = object(value, path, [
@@ -205,6 +215,25 @@ function parseInline(value: unknown, path: string): StructInline {
   const start = nonNegativeInteger(parsed.start, `${path}.start`)
   const end = nonNegativeInteger(parsed.end, `${path}.end`)
   if (end < start) fail('RANGE', path, 'inline end must not precede start')
+  if (
+    start === end &&
+    [
+      'href',
+      'annotationId',
+      'relationshipId',
+      'targetIds',
+      'bold',
+      'italic',
+      'verticalAlign',
+      'compactMathAtom',
+      'semanticRole',
+    ].some((key) => has(parsed, key))
+  )
+    fail(
+      'RANGE',
+      path,
+      'zero-width inline runs cannot carry formatting or semantic data',
+    )
   return {
     start,
     end,
@@ -297,6 +326,53 @@ function parseHref(value: unknown, path: string) {
   }
 }
 
+function bcp47Language(value: unknown, path: string) {
+  const parsed = stringValue(value, path)
+  if (!BCP47_LANGUAGE.test(parsed))
+    fail('LANGUAGE', path, 'language must be a valid BCP-47 tag')
+  return parsed
+}
+
+function rfc3339Date(value: unknown, path: string) {
+  const parsed = stringValue(value, path)
+  const match = RFC3339_DATE.exec(parsed)
+  if (!match) fail('DATE', path, 'date must be an RFC-3339 full-date')
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const date = new Date(0)
+  date.setUTCFullYear(year, month - 1, day)
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  )
+    fail('DATE', path, 'date must be a real calendar date')
+  return parsed
+}
+
+function rfc3339DateTime(value: unknown, path: string) {
+  const parsed = stringValue(value, path)
+  if (
+    !RFC3339_DATE_TIME.test(parsed) ||
+    !/T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/u.test(
+      parsed,
+    )
+  )
+    fail('DATE_TIME', path, 'timestamp must be an RFC-3339 date-time')
+  rfc3339Date(parsed.slice(0, 10), path)
+  if (Number.isNaN(Date.parse(parsed)))
+    fail('DATE_TIME', path, 'timestamp must be a real RFC-3339 date-time')
+  return parsed
+}
+
+function mediaType(value: unknown, path: string) {
+  const parsed = stringValue(value, path)
+  if (!MEDIA_TYPE.test(parsed))
+    fail('MIME', path, 'media type must be a strict type/subtype MIME value')
+  return parsed
+}
+
 function parseMetadata(value: unknown, path: string): StructMetadata {
   const parsed = object(
     value,
@@ -322,7 +398,7 @@ function parseMetadata(value: unknown, path: string): StructMetadata {
     authors,
     abstract: stringValue(parsed.abstract, `${path}.abstract`),
     ...(has(parsed, 'language')
-      ? { language: stringValue(parsed.language, `${path}.language`) }
+      ? { language: bcp47Language(parsed.language, `${path}.language`) }
       : {}),
     ...(has(parsed, 'baseDirection')
       ? {
@@ -335,7 +411,7 @@ function parseMetadata(value: unknown, path: string): StructMetadata {
       : {}),
     ...(has(parsed, 'publicationDate')
       ? {
-          publicationDate: stringValue(
+          publicationDate: rfc3339Date(
             parsed.publicationDate,
             `${path}.publicationDate`,
           ),
@@ -343,14 +419,14 @@ function parseMetadata(value: unknown, path: string): StructMetadata {
       : {}),
     ...(has(parsed, 'artifactModifiedAt')
       ? {
-          artifactModifiedAt: stringValue(
+          artifactModifiedAt: rfc3339DateTime(
             parsed.artifactModifiedAt,
             `${path}.artifactModifiedAt`,
           ),
         }
       : {}),
     ...(has(parsed, 'updated')
-      ? { updated: stringValue(parsed.updated, `${path}.updated`) }
+      ? { updated: rfc3339Date(parsed.updated, `${path}.updated`) }
       : {}),
     ...(has(parsed, 'affiliations')
       ? {
@@ -762,6 +838,7 @@ function parseAsset(value: unknown, path: string): StructAsset {
     href.includes('?') ||
     href.includes('#') ||
     href.includes(':') ||
+    href.includes('%') ||
     /\s/u.test(href) ||
     /(?:^|\/)\.(?:\.?)(?:\/|$)/u.test(href)
   )
@@ -797,7 +874,7 @@ function parseAsset(value: unknown, path: string): StructAsset {
     id: identifier(parsed.id, `${path}.id`),
     kind: enumValue(parsed.kind, `${path}.kind`, ASSET_KINDS),
     href,
-    mediaType: stringValue(parsed.mediaType, `${path}.mediaType`),
+    mediaType: mediaType(parsed.mediaType, `${path}.mediaType`),
     sha256,
     width: positiveNumber(parsed.width, `${path}.width`),
     height: positiveNumber(parsed.height, `${path}.height`),
@@ -1152,9 +1229,21 @@ function parseDocument(value: unknown): StructDocument {
   const blocks = array(parsed.blocks, '$.blocks').map((block, index) =>
     parseBlock(block, `$.blocks[${index}]`),
   )
-  const assets = array(parsed.assets, '$.assets').map((asset, index) =>
+  const rawAssets = array(parsed.assets, '$.assets')
+  if (rawAssets.length > MAX_STRUCT_ASSETS)
+    fail('ASSET_BOUNDS', '$.assets', 'asset count exceeds the resource bound')
+  const assets = rawAssets.map((asset, index) =>
     parseAsset(asset, `$.assets[${index}]`),
   )
+  const assetBytes = assets.reduce(
+    (total, asset) => total + (asset.bytes?.byteLength ?? 0),
+    0,
+  )
+  if (
+    assetBytes > MAX_STRUCT_ASSET_BYTES_TOTAL ||
+    assets.some((asset) => (asset.bytes?.byteLength ?? 0) > MAX_STRUCT_ASSET_BYTES)
+  )
+    fail('ASSET_BOUNDS', '$.assets', 'asset bytes exceed the resource bound')
   const relationships = array(parsed.relationships, '$.relationships').map(
     (relationship, index) =>
       parseRelationship(relationship, `$.relationships[${index}]`),

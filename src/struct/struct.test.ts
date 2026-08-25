@@ -207,6 +207,14 @@ describe('STRUCT canonical document graph', () => {
     const modelConsultations = withReceipt.modelConsultations!
 
     const graph = buildStructDocument(withReceipt)
+    graph.recovery = recoverySummary({ ready: true, diagnostics: [] })
+    const { receipt, ...withoutReceiptFields } = graph
+    receipt.generatedSha256 = structDigest({
+      ...withoutReceiptFields,
+      conservation: receipt.conservation,
+      modelConsultations,
+      assets: graph.assets.map(({ bytes: _bytes, ...asset }) => asset),
+    })
 
     expect(graph.receipt.modelConsultations).toEqual(modelConsultations)
     expect(graph.receipt.generatedSha256).not.toBe(
@@ -441,7 +449,9 @@ describe('STRUCT canonical document graph', () => {
       modelConsultations: pendingReceipt,
       assets: graph.assets.map(({ bytes: _bytes, ...asset }) => asset),
     })
-    await expect(buildStructEpub(graph)).resolves.toBeDefined()
+    await expect(buildStructEpub(graph)).rejects.toThrow(
+      'EPUB_PENDING_MODEL_CONSULTATION_RECEIPT',
+    )
 
     finishConsultation!({ candidateId: point.candidates[0]!.id })
     await decision

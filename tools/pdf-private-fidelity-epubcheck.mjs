@@ -38,6 +38,17 @@ function privateCommandResult(command, arguments_, options = {}) {
   })
 }
 
+export function javaHomeFromProbeOutput(probe) {
+  const streams = [probe?.stdout, probe?.stderr]
+  if (!streams.every((stream) => Buffer.isBuffer(stream))) return null
+  const output = Buffer.concat(streams)
+  if (output.byteLength > 64 * 1024 || output.includes(0)) return null
+  const javaHome = /^\s*java\.home\s*=\s*(.+)\s*$/mu
+    .exec(output.toString('utf8'))?.[1]
+    ?.trim()
+  return javaHome && isAbsolute(javaHome) ? javaHome : null
+}
+
 function sameIdentity(left, right) {
   return (
     left.dev === right.dev &&
@@ -83,10 +94,7 @@ async function stableRegularFile(path, code = 'EPUBCHECK_REQUIRED') {
   }
 }
 
-export async function javaRuntimeTreeSha256(
-  home,
-  code = 'EPUBCHECK_REQUIRED',
-) {
+export async function javaRuntimeTreeSha256(home, code = 'EPUBCHECK_REQUIRED') {
   try {
     const root = await realpath(home)
     const before = await lstat(root, { bigint: true })
@@ -123,7 +131,10 @@ export async function javaRuntimeTreeSha256(
     }
     await visit(root)
     const after = await lstat(root, { bigint: true })
-    if (!sameIdentity(before, after) || !records.some(({ path }) => path === 'lib/modules'))
+    if (
+      !sameIdentity(before, after) ||
+      !records.some(({ path }) => path === 'lib/modules')
+    )
       throw new Error(code)
     return sha256(JSON.stringify(records))
   } catch {
@@ -131,7 +142,10 @@ export async function javaRuntimeTreeSha256(
   }
 }
 
-async function attestedJavaRuntimeTreeSha256(home, code = 'EPUBCHECK_REQUIRED') {
+async function attestedJavaRuntimeTreeSha256(
+  home,
+  code = 'EPUBCHECK_REQUIRED',
+) {
   async function verifyProtectedTree(directory) {
     await assertProtectedJavaPath(directory)
     const entries = await readdir(directory, { withFileTypes: true })
@@ -261,8 +275,7 @@ async function resolveJavaRuntime(environment = process.env) {
   const candidate = configured || '/usr/bin/java'
   if (!isAbsolute(candidate)) throw new Error('EPUBCHECK_REQUIRED')
   const expectedSha256 = environment.SRT_EPUBCHECK_JAVA_SHA256
-  if (!SHA256.test(expectedSha256 ?? ''))
-    throw new Error('EPUBCHECK_REQUIRED')
+  if (!SHA256.test(expectedSha256 ?? '')) throw new Error('EPUBCHECK_REQUIRED')
   if (configured && (await lstat(candidate)).isSymbolicLink())
     throw new Error('EPUBCHECK_REQUIRED')
   const path = await realpath(candidate)
@@ -270,21 +283,23 @@ async function resolveJavaRuntime(environment = process.env) {
   const artifact = await stableRegularFile(path)
   if (artifact.identity.fileSha256 !== expectedSha256)
     throw new Error('EPUBCHECK_REQUIRED')
-  const probe = privateCommandResult(path, ['-XshowSettings:properties', '-version'], {
-    env: minimalJavaEnvironment(),
-    maxBuffer: 64 * 1024,
-  })
-  const output = Buffer.concat([
-    Buffer.isBuffer(probe.stdout) ? probe.stdout : Buffer.alloc(0),
-    Buffer.isBuffer(probe.stderr) ? probe.stderr : Buffer.alloc(0),
-  ]).toString('utf8')
-  const javaHome = /^\s*java\.home\s*=\s*(.+)\s*$/mu.exec(output)?.[1]
+  const probe = privateCommandResult(
+    path,
+    ['-XshowSettings:properties', '-version'],
+    {
+      env: minimalJavaEnvironment(),
+      maxBuffer: 64 * 1024,
+      stdio: 'pipe',
+    },
+  )
+  const javaHome = javaHomeFromProbeOutput(probe)
   if (probe.error || probe.status !== 0 || !javaHome || !isAbsolute(javaHome))
     throw new Error('EPUBCHECK_REQUIRED')
   const home = await realpath(javaHome)
   const releasePath = resolve(home, 'release')
   const release = await stableRegularFile(releasePath)
-  if (!releasePath.startsWith(`${home}${sep}`)) throw new Error('EPUBCHECK_REQUIRED')
+  if (!releasePath.startsWith(`${home}${sep}`))
+    throw new Error('EPUBCHECK_REQUIRED')
   await assertProtectedJavaPath(releasePath)
   const treeSha256 = await attestedJavaRuntimeTreeSha256(home)
   return {
@@ -301,7 +316,10 @@ async function reverifyJavaRuntime(runtime) {
   await assertProtectedJavaPath(runtime.release.path)
   const current = await stableRegularFile(runtime.path)
   const release = await stableRegularFile(runtime.release.path)
-  const treeSha256 = await attestedJavaRuntimeTreeSha256(runtime.home, 'EPUBCHECK_FAILED')
+  const treeSha256 = await attestedJavaRuntimeTreeSha256(
+    runtime.home,
+    'EPUBCHECK_FAILED',
+  )
   if (
     !sameIdentity(current.identity, runtime.identity) ||
     current.identity.fileSha256 !== runtime.identity.fileSha256

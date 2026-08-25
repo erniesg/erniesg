@@ -12,7 +12,7 @@
     "status": "available",
     "kind": "code",
     "implementation": "tools/pdf-private-fidelity.mjs",
-    "implementationSha256": "ab9c031c99048f70b62b25cde8d2ed3c01fa0a1d9c795f70efae44f0b51f230c",
+    "implementationSha256": "987e6a9cc1f215551d4af8dd0110f8f4a0f3dd223f52fb3816e03cdf427b877c",
     "implementationComponents": [
       {
         "path": "src/research/composition.ts",
@@ -248,11 +248,11 @@
       },
       {
         "path": "tools/pdf-private-fidelity-epubcheck.mjs",
-        "fileSha256": "41d4b462a09d17584811724a3587ae32d45c8a7adaf9b64508efa9b89905ca8f"
+        "fileSha256": "101ebaa7a563a5265d16c27187e35832dd592c7d7c1115f3a0147d9f2a79a5f8"
       },
       {
         "path": "tools/pdf-private-fidelity.mjs",
-        "fileSha256": "1a81e597e4979f538e9baa6bacf0fde8fc822e29ca710a7e314d1fe61d68df10"
+        "fileSha256": "7d7730062900d7eddb0f23e6566c82aaf4011de0b1b286d5719b0c20d86a1b3a"
       }
     ],
     "implementationPackageLock": {
@@ -637,7 +637,7 @@
       }
     ],
     "test": "tools/pdf-private-fidelity.test.mjs",
-    "testSha256": "206fd0a1909bf1280e9adb404999ab5d600502baba29ad47cce0cb6528fe33bb",
+    "testSha256": "3c5554ea83b34b6c10da4a6a048067c692a5bf94b4fd41e1842b541f190e0f9e",
     "calibration": null
   }
 }

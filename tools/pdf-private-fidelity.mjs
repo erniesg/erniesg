@@ -30,7 +30,9 @@ import {
   validPdfCitationRelationshipTargetState,
 } from './pdf-corpus-audit-lib.mjs'
 
-export const PDF_PRIVATE_FIDELITY_SCHEMA_VERSION = '1.9.0'
+// Schema 1.9.0 is frozen: historic receipts may contain a status-only
+// EPUBCheck result.  New runtime-attested receipts therefore use a successor.
+export const PDF_PRIVATE_FIDELITY_SCHEMA_VERSION = '2.0.0'
 const PDF_PRIVATE_FIDELITY_PRIVACY =
   'public-id-hash-aggregate-counters-artifact-hashes-only'
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
@@ -2731,7 +2733,7 @@ function validatePrivateFidelityReceipt(receipt, requireAcceptedBaseline) {
         'passed',
       ]) ||
       (receipt.schemaVersion !== PDF_PRIVATE_FIDELITY_SCHEMA_VERSION &&
-        receipt.schemaVersion !== '1.8.0') ||
+        !legacySchema) ||
       receipt.privacy !== PDF_PRIVATE_FIDELITY_PRIVACY ||
       !hasExactKeys(receipt.source, ['paperId', 'sha256', 'byteLength']) ||
       !/^[A-Za-z0-9._-]+$/.test(receipt.source.paperId) ||

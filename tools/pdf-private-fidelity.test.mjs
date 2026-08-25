@@ -40,6 +40,7 @@ import {
 } from './pdf-private-fidelity.mjs'
 import * as privateFidelity from './pdf-private-fidelity.mjs'
 import {
+  javaHomeFromProbeOutput,
   javaRuntimeTreeSha256,
   privateJavaPathEntryIsProtected,
   requiredPrivateEpubCheckValidator,
@@ -67,6 +68,31 @@ const defaultJavaRuntimeAvailable = (() => {
 })()
 
 const hash = 'a'.repeat(64)
+
+describe('Java runtime probe parsing', () => {
+  it('extracts java.home from captured probe stderr without accepting malformed output', () => {
+    expect(
+      javaHomeFromProbeOutput({
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.from(
+          'Property settings:\n    java.home = /usr/lib/jvm/openjdk\n',
+        ),
+      }),
+    ).toBe('/usr/lib/jvm/openjdk')
+    expect(
+      javaHomeFromProbeOutput({
+        stdout: null,
+        stderr: null,
+      }),
+    ).toBeNull()
+    expect(
+      javaHomeFromProbeOutput({
+        stdout: Buffer.from('java.home = relative/runtime\n'),
+        stderr: Buffer.alloc(0),
+      }),
+    ).toBeNull()
+  })
+})
 
 function successfulEpubCheckProof() {
   return {
@@ -682,7 +708,7 @@ describe('private PDF fidelity runner', () => {
       fidelityReceipt(),
       canonicalDerivedAffixHyphenDeletionRecord,
     )
-    expect(valid.schemaVersion).toBe('1.9.0')
+    expect(valid.schemaVersion).toBe('2.0.0')
     expect(
       comparePrivateFidelityReceipts(
         valid,
@@ -1803,7 +1829,7 @@ describe('private PDF fidelity runner', () => {
       epubCheckRequired: true,
     })
 
-    expect(checked.schemaVersion).toBe('1.9.0')
+    expect(checked.schemaVersion).toBe('2.0.0')
     expect(checked.execution).toMatchObject({
       epubCheckRequired: true,
       epubCheckPassedCount: 6,
@@ -2460,7 +2486,7 @@ describe('private PDF fidelity runner', () => {
       profiles,
     })
 
-    expect(receipt.schemaVersion).toBe('1.9.0')
+    expect(receipt.schemaVersion).toBe('2.0.0')
     expect(receipt.execution.localValidationPassed).toBe(true)
     expect(receipt.baselineComparison).toEqual({
       status: 'not-configured',

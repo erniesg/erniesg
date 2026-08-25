@@ -2868,6 +2868,16 @@ async function main() {
     if (registry.value?.schemaVersion !== '4.0.0') {
       invalid('PDF_BENCHMARK_NONCANONICAL_PROMOTION_SCHEMA')
     }
+    if (
+      registry.value.metricImplementations?.some(
+        (metric) =>
+          metric?.status === 'available' &&
+          Array.isArray(metric.implementationPlatforms) &&
+          metric.implementationPlatforms.length > 1,
+      )
+    ) {
+      invalid('PDF_BENCHMARK_MULTI_PLATFORM_PROMOTION_UNATTESTED')
+    }
   }
   const receipt = await createPdfBenchmarkReadinessReceipt(options)
   if (

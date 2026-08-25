@@ -2142,4 +2142,18 @@ describe('PDF benchmark readiness registry', () => {
     expect(result.stdout).toBe('')
     expect(result.stderr).toBe('PDF_BENCHMARK_NONCANONICAL_PROMOTION_SCHEMA\n')
   })
+
+  it('fails closed for promotion when package integrity declares unattested foreign platform trees', () => {
+    const result = spawnSync(
+      process.execPath,
+      [readinessToolPath, '--registry', registryPath, '--require-ready'],
+      { encoding: 'utf8' },
+    )
+
+    expect(result.status).toBe(1)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).toBe(
+      'PDF_BENCHMARK_MULTI_PLATFORM_PROMOTION_UNATTESTED\n',
+    )
+  })
 })

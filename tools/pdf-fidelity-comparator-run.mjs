@@ -310,7 +310,7 @@ async function assertContractBinding(
     schemaVersion: '4.0.0',
     path: 'benchmarks/pdf/reconstruction-eval-contract-v4.json',
     fileSha256:
-      '9b5c688d654c7f756b02628a58776e900076fee5445851a06c1383db7c039eee',
+      'da6e02f616d09c99938faafe39ff3d95ceecf5443a454e3b694808a323a1d857',
   }
   const runtimeArtifact = parseJsonArtifact(
     await readRepositoryArtifact(runtimeBinding.path),

@@ -33,6 +33,10 @@ const paths = {
     evalSet: 'benchmarks/pdf/fidelity-eval-v2.json',
     observations: 'benchmarks/pdf/fidelity-eval-observations-v2.json',
   },
+  comparatorContract: 'benchmarks/pdf/fidelity-comparator-contract-v2.json',
+  robustnessContract: 'benchmarks/pdf/reconstruction-eval-contract-v3.json',
+  robustnessContractSchema:
+    'docs/schemas/pdf-reconstruction-eval-contract-v3.schema.json',
   schema: 'docs/schemas/pdf-fidelity-suite-receipt.schema.json',
 }
 const temporaryDirectories = []
@@ -169,6 +173,50 @@ async function suiteInput(options = {}) {
 }
 
 describe('aggregate PDF fidelity calibration suite', () => {
+  it('keeps base-contract pins aligned across the suite and comparator', async () => {
+    const [
+      baseContract,
+      additiveContract,
+      comparatorContract,
+      robustnessContract,
+      robustnessContractSchema,
+    ] =
+      await Promise.all(
+        [
+          paths.base.contract,
+          paths.additive.contract,
+          paths.comparatorContract,
+          paths.robustnessContract,
+          paths.robustnessContractSchema,
+        ].map(async (path) => readFile(join(root, path))),
+      )
+    const baseContractSha256 = digest(baseContract)
+    const additive = JSON.parse(additiveContract.toString('utf8'))
+    const comparator = JSON.parse(comparatorContract.toString('utf8'))
+    const robustness = JSON.parse(robustnessContract.toString('utf8'))
+    const baseBinding = comparator.evaluationBindings.find(
+      (binding) => binding.id === 'public-calibration-v1',
+    )
+    const additiveBinding = comparator.evaluationBindings.find(
+      (binding) => binding.id === 'public-calibration-v2-additions',
+    )
+
+    expect(additive.extends.fileSha256).toBe(baseContractSha256)
+    expect(baseBinding.governance.fileSha256).toBe(baseContractSha256)
+    expect(additiveBinding.governance.fileSha256).toBe(
+      digest(additiveContract),
+    )
+    expect(robustness.extends.fileSha256).toBe(digest(additiveContract))
+    const validateRobustness = new Ajv2020({ strict: false }).compile(
+      JSON.parse(robustnessContractSchema.toString('utf8')),
+    )
+    expect(
+      validateRobustness(robustness),
+      validateRobustness.errors,
+    ).toBe(true)
+    await expect(buildPdfFidelitySuiteReceipt(await suiteInput())).resolves.toBeDefined()
+  })
+
   it('binds both eval generations and reports binary outcomes by failure mode', async () => {
     const input = await suiteInput()
     const receipt = await buildPdfFidelitySuiteReceipt(input)

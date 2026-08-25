@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import Ajv2020 from 'ajv/dist/2020.js'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { sha256HexSync } from './sha256-sync'
 import {
   MODEL_FALLBACK_DECISION_CLASSES,
@@ -13,6 +13,7 @@ import {
 } from './model-fallback'
 import { validReceiptMetric } from './model-fallback-receipt'
 import { validateModelConsultationReceipt as validateGenericReceipt } from '@erniesg/struct'
+import * as Struct from '@erniesg/struct'
 
 const schema = JSON.parse(
   readFileSync(
@@ -180,6 +181,67 @@ describe('model consultation receipt validation', () => {
       true,
     )
     expect(validateModelConsultationReceipt(receipt)).toBe(true)
+  })
+
+  it('propagates Struct receipt rejection before app policy acceptance', async () => {
+    const receipt = await validReceipt()
+    expect(validateGenericReceipt(receipt)).toBe(true)
+    expect(validateModelConsultationReceipt(receipt)).toBe(true)
+
+    const genericValidator = vi
+      .spyOn(Struct, 'validateModelConsultationReceipt')
+      .mockReturnValue(false)
+    try {
+      expect(validateModelConsultationReceipt(receipt)).toBe(false)
+      expect(genericValidator).toHaveBeenCalledOnce()
+      expect(genericValidator).toHaveBeenCalledWith(receipt)
+    } finally {
+      genericValidator.mockRestore()
+    }
+  })
+
+  it('short-circuits app policy inspection when Struct rejects first', async () => {
+    const receipt = await validReceipt()
+    expect(validateModelConsultationReceipt(receipt)).toBe(true)
+
+    const consultations = receipt.consultations
+    const consultationsDescriptor = Object.getOwnPropertyDescriptor(
+      receipt,
+      'consultations',
+    )
+    if (!consultationsDescriptor)
+      throw new Error('receipt consultations descriptor missing')
+
+    let consultationReads = 0
+    let result: boolean | undefined
+    let readsBeforeAssertions = -1
+    let packageCallCount = -1
+    let delegatedReceipt: unknown
+    const genericValidator = vi
+      .spyOn(Struct, 'validateModelConsultationReceipt')
+      .mockReturnValue(false)
+    try {
+      Object.defineProperty(receipt, 'consultations', {
+        configurable: true,
+        enumerable: true,
+        get() {
+          consultationReads += 1
+          return consultations
+        },
+      })
+      result = validateModelConsultationReceipt(receipt)
+      readsBeforeAssertions = consultationReads
+      packageCallCount = genericValidator.mock.calls.length
+      delegatedReceipt = genericValidator.mock.calls[0]?.[0]
+    } finally {
+      Object.defineProperty(receipt, 'consultations', consultationsDescriptor)
+      genericValidator.mockRestore()
+    }
+
+    expect(result).toBe(false)
+    expect(readsBeforeAssertions).toBe(0)
+    expect(packageCallCount).toBe(1)
+    expect(delegatedReceipt).toBe(receipt)
   })
 
   it('accepts receipts produced for bounded custom deterministic classes', async () => {

@@ -5,7 +5,6 @@ import type { NormalizedSourceBox, PdfReconstruction } from './import-types'
 import {
   applyHumanDecisionFile,
   createHumanDecisionFile,
-  createVisualMatchDecision,
   readingOrderCandidates,
   upsertHumanDecision,
 } from './decision-record'

@@ -68,13 +68,16 @@ export function copyCanonicalJson(
           path,
           'model receipt arrays must use the canonical Array.prototype',
         )
-      return array(value, path).map((entry, index) =>
-        copyCanonicalJson(entry, `${path}[${index}]`, state, depth + 1),
+      return array(value, path, MAX_CANONICAL_NODES - state.nodes).map(
+        (entry, index) =>
+          copyCanonicalJson(entry, `${path}[${index}]`, state, depth + 1),
       )
     }
-    const entries = dataEntries(value, path).sort(([left], [right]) =>
-      left < right ? -1 : left > right ? 1 : 0,
-    )
+    const entries = dataEntries(
+      value,
+      path,
+      MAX_CANONICAL_NODES - state.nodes,
+    ).sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
     return copyRecord(
       entries.map(([key, entry]) => [
         key,

@@ -34,8 +34,13 @@ export function fail(code: string, path: string, message: string): never {
 }
 
 type Snapshot = { keys: string[]; values: DataObject }
+const MAX_OBJECT_KEYS = 100_000
 
-function snapshotObject(value: unknown, path: string): Snapshot {
+function snapshotObject(
+  value: unknown,
+  path: string,
+  maximumKeys = MAX_OBJECT_KEYS,
+): Snapshot {
   try {
     if (!value || typeof value !== 'object' || Array.isArray(value))
       fail('TYPE', path, 'expected an object')
@@ -43,6 +48,12 @@ function snapshotObject(value: unknown, path: string): Snapshot {
     if (prototype !== Object.prototype && prototype !== null)
       fail('OBJECT', path, 'expected a plain object')
     const keys = Reflect.ownKeys(value)
+    if (maximumKeys !== undefined && keys.length > maximumKeys)
+      fail(
+        'BUDGET',
+        path,
+        `object field count exceeds the ${maximumKeys} field bound`,
+      )
     if (keys.some((key) => typeof key !== 'string'))
       fail('FIELD', path, 'symbol fields are not permitted')
     const entries: Array<[string, unknown]> = []
@@ -63,8 +74,12 @@ function snapshotObject(value: unknown, path: string): Snapshot {
   }
 }
 
-export function dataEntries(value: unknown, path: string) {
-  const snapshot = snapshotObject(value, path)
+export function dataEntries(
+  value: unknown,
+  path: string,
+  maximumKeys?: number,
+) {
+  const snapshot = snapshotObject(value, path, maximumKeys)
   return snapshot.keys.map(
     (key) => [key, snapshot.values[key]] as [string, unknown],
   )

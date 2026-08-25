@@ -8,7 +8,7 @@ import {
 } from 'fflate'
 import { XMLParser, XMLValidator } from 'fast-xml-parser'
 import {
-  parseStructAssets,
+  snapshotStructDocumentForEpub,
   validateStructDocumentTableBounds,
 } from './codec/parsers'
 import { isStructCodecError } from './codec/primitives'
@@ -375,24 +375,31 @@ export async function buildStructEpub(
   options: StructEpubOptions = {},
 ): Promise<StructEpubExport> {
   validateStructDocumentTableBounds(document)
-  let canonicalAssets: StructDocument['assets']
   try {
-    canonicalAssets = parseStructAssets(document.assets)
+    document = snapshotStructDocumentForEpub(document)
   } catch (error) {
     if (
       isStructCodecError(error) &&
-      (error.code === 'BUDGET' ||
+      ((error.code === 'BUDGET' && error.path === '$.assets') ||
         error.code === 'ASSET_BOUNDS' ||
-        (error.path.endsWith('.bytes') &&
+        (error.path.startsWith('$.assets[') &&
+          error.path.endsWith('.bytes') &&
           (error.code === 'BYTES' || error.code === 'TYPE')))
     )
       throw new Error('STRUCT_EPUB_ASSET_RESOURCE_LIMIT', { cause: error })
+    if (
+      isStructCodecError(error) &&
+      error.path.startsWith('$.receipt.modelConsultations')
+    )
+      throw new Error('INVALID_MODEL_CONSULTATION_RECEIPT', { cause: error })
     throw error
   }
-  document = { ...document, assets: canonicalAssets }
+  validateStructDocumentTableBounds(document)
   assertBuilderScalars(document)
   assertNoSemanticZeroWidthRuns(document)
   assertStructReceiptIntegrity(document)
+  if (document.recovery.status !== 'ready')
+    throw new Error('STRUCT_EPUB_RECOVERY_REVIEW_REQUIRED')
   assertNoNegativeZero(document)
   const profile = options.profile
   if (profile && !validProfile(profile)) {

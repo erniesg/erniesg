@@ -608,12 +608,55 @@ describe('STRUCT EPUB href integrity', () => {
 
   it('rejects a resealed receipt with a pending consultation before packaging', async () => {
     const document = documentWithGenericReceipt()
-    document.receipt.modelConsultations!.consultations.push({
-      status: 'pending',
-    })
+    const receipt = document.receipt.modelConsultations!
+    document.receipt.modelConsultations = {
+      ...receipt,
+      consultations: [...receipt.consultations, { status: 'pending' }],
+    }
     await expect(buildStructEpub(refreshReceipt(document))).rejects.toThrow(
       'EPUB_PENDING_MODEL_CONSULTATION_RECEIPT',
     )
+  })
+
+  it('rejects a resealed review-required document before publication', async () => {
+    const document = documentWithHref('#target')
+    document.recovery = {
+      status: 'review-required',
+      title: 'Review required',
+      summary: 'A human must review this reconstruction.',
+      issues: [
+        {
+          category: 'source',
+          title: 'Review source fidelity',
+          count: 1,
+          pages: [1],
+          action: 'Compare the publication with the source.',
+        },
+      ],
+      userAction: 'Review page 1 before publication.',
+    }
+
+    await expect(buildStructEpub(refreshReceipt(document))).rejects.toThrow(
+      'STRUCT_EPUB_RECOVERY_REVIEW_REQUIRED',
+    )
+  })
+
+  it('packages a canonical block snapshot without late proxy reads', async () => {
+    const document = documentWithHref('#target')
+    const block = document.blocks[0]!
+    let lateInlineReads = 0
+    document.blocks[0] = new Proxy(block, {
+      get(target, property, receiver) {
+        if (property === 'inline') {
+          lateInlineReads += 1
+          throw new Error('late attacker-controlled inline read')
+        }
+        return Reflect.get(target, property, receiver)
+      },
+    })
+
+    await expect(buildStructEpub(document)).resolves.toBeDefined()
+    expect(lateInlineReads).toBe(0)
   })
 
   it('redacts source directory components from the packaged artifact', async () => {

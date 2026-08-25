@@ -12,6 +12,7 @@ import { sha256HexSync } from './sha256'
 import { buildStructEpub } from './epub'
 import { renderPublicationXhtml } from './xhtml'
 import { MAX_STRUCT_ASSET_BYTES, parseBytes } from './codec/bytes'
+import { validateStructConsultationReceipt } from './consultation-receipt'
 
 const hash = 'a'.repeat(64)
 const assetBytesHash = sha256HexSync(new Uint8Array([0, 255, 128]))
@@ -2715,6 +2716,131 @@ describe('STRUCT runtime codec', () => {
     expect(() => decodeStructDocument(cycle)).toThrow(StructCodecError)
   })
 
+  it.each(['blocks', 'relationships', 'pages', 'diagnostics'] as const)(
+    'rejects an oversized top-level %s array before materializing its keys',
+    (field) => {
+      const value = validDocument() as any
+      let ownKeyReads = 0
+      value[field] = new Proxy(new Array(100_001), {
+        ownKeys() {
+          ownKeyReads += 1
+          throw new Error('oversized array keys were materialized')
+        },
+      })
+
+      try {
+        decodeStructDocument(value)
+        throw new Error('expected document collection budget failure')
+      } catch (error) {
+        expect(error).toBeInstanceOf(StructCodecError)
+        expect((error as StructCodecError).code).toBe('BUDGET')
+      }
+      expect(ownKeyReads).toBe(0)
+    },
+  )
+
+  it('rejects an oversized model receipt array before materializing its keys', () => {
+    const value = validDocument() as any
+    value.schemaVersion = '0.2.0'
+    value.documentId = 'fixture-document'
+    value.receipt.schemaVersion = '0.2.0'
+    value.receipt.documentId = 'fixture-document'
+    value.receipt.modelConsultations = {
+      schemaVersion: '1.0.0',
+      documentId: 'fixture-document',
+      sourceSha256: hash,
+      consultations: [],
+      decisions: [],
+      metrics: {
+        totalDecisionCount: 0,
+        totalConsultationCount: 0,
+        consultationRate: 0,
+        byDecisionClass: {},
+      },
+    }
+    seal(value)
+    let ownKeyReads = 0
+    value.receipt.modelConsultations.consultations = new Proxy(
+      new Array(100_001),
+      {
+        ownKeys() {
+          ownKeyReads += 1
+          throw new Error('oversized receipt keys were materialized')
+        },
+      },
+    )
+
+    try {
+      decodeStructDocument(value)
+      throw new Error('expected model receipt node budget failure')
+    } catch (error) {
+      expect(error).toBeInstanceOf(StructCodecError)
+      expect((error as StructCodecError).code).toBe('BUDGET')
+    }
+    expect(ownKeyReads).toBe(0)
+  })
+
+  it('rejects a wide model receipt object before reading its descriptors', () => {
+    const value = validDocument() as any
+    value.schemaVersion = '0.2.0'
+    value.documentId = 'fixture-document'
+    value.receipt.schemaVersion = '0.2.0'
+    value.receipt.documentId = 'fixture-document'
+    value.receipt.modelConsultations = {
+      schemaVersion: '1.0.0',
+      documentId: 'fixture-document',
+      sourceSha256: hash,
+      consultations: [],
+      decisions: [],
+      metrics: {},
+    }
+    seal(value)
+    const keys = Array.from({ length: 100_001 }, (_, index) => `field${index}`)
+    let descriptorReads = 0
+    value.receipt.modelConsultations.metrics = new Proxy(
+      {},
+      {
+        ownKeys() {
+          return keys
+        },
+        getOwnPropertyDescriptor() {
+          descriptorReads += 1
+          return { configurable: true, enumerable: true, value: 0 }
+        },
+      },
+    )
+
+    try {
+      decodeStructDocument(value)
+      throw new Error('expected model receipt field budget failure')
+    } catch (error) {
+      expect(error).toBeInstanceOf(StructCodecError)
+      expect((error as StructCodecError).code).toBe('BUDGET')
+    }
+    expect(descriptorReads).toBe(0)
+  })
+
+  it('bounds direct consultation receipt validation before array key reads', () => {
+    let ownKeyReads = 0
+    const consultations = new Proxy(new Array(100_001), {
+      ownKeys() {
+        ownKeyReads += 1
+        throw new Error('oversized receipt keys were materialized')
+      },
+    })
+    const receipt = {
+      schemaVersion: '1.0.0',
+      documentId: 'fixture-document',
+      sourceSha256: hash,
+      consultations,
+      decisions: [],
+      metrics: {},
+    }
+
+    expect(validateStructConsultationReceipt(receipt)).toBe(false)
+    expect(ownKeyReads).toBe(0)
+  })
+
   it('binds model consultation receipts to the enclosing document and source', () => {
     const value = validDocument() as any
     value.schemaVersion = '0.2.0'
@@ -2762,6 +2888,7 @@ describe('STRUCT runtime codec', () => {
   it('rejects zero-width inline runs that carry semantics', () => {
     const value = validDocument()
     value.blocks[0].inline[0] = {
+      ...value.blocks[0].inline[0],
       start: 0,
       end: 0,
       href: '#block-1',

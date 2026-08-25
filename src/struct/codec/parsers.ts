@@ -152,6 +152,7 @@ export const MAX_STRUCT_ASSETS = 512
 export const MAX_STRUCT_ASSET_BYTES_TOTAL = 128 * 1024 * 1024
 export const MAX_STRUCT_RECOVERY_ISSUES = 10_000
 export const MAX_STRUCT_RECOVERY_PAGES = 100_000
+export const MAX_STRUCT_DOCUMENT_ITEMS = 100_000
 
 function parseBox(value: unknown, path: string): StructBox {
   const parsed = object(value, path, [
@@ -644,7 +645,7 @@ export function validateStructDocumentTableBounds(value: unknown) {
   const document = copyRecord(dataEntries(value, '$'))
   if (!has(document, 'blocks'))
     fail('REQUIRED', '$.blocks', 'field is required')
-  const blocks = array(document.blocks, '$.blocks')
+  const blocks = array(document.blocks, '$.blocks', MAX_STRUCT_DOCUMENT_ITEMS)
   for (const [index, block] of blocks.entries()) {
     const path = `$.blocks[${index}]`
     const parsed = copyRecord(dataEntries(block, path))
@@ -1235,20 +1236,28 @@ function parseDocument(value: unknown): StructDocument {
     parsed.schemaVersion,
     '$.schemaVersion',
   )
-  const blocks = array(parsed.blocks, '$.blocks').map((block, index) =>
-    parseBlock(block, `$.blocks[${index}]`),
-  )
+  const blocks = array(
+    parsed.blocks,
+    '$.blocks',
+    MAX_STRUCT_DOCUMENT_ITEMS,
+  ).map((block, index) => parseBlock(block, `$.blocks[${index}]`))
   const assets = parseStructAssets(parsed.assets)
-  const relationships = array(parsed.relationships, '$.relationships').map(
-    (relationship, index) =>
-      parseRelationship(relationship, `$.relationships[${index}]`),
+  const relationships = array(
+    parsed.relationships,
+    '$.relationships',
+    MAX_STRUCT_DOCUMENT_ITEMS,
+  ).map((relationship, index) =>
+    parseRelationship(relationship, `$.relationships[${index}]`),
   )
-  const pages = array(parsed.pages, '$.pages').map((page, index) =>
-    parsePage(page, `$.pages[${index}]`),
+  const pages = array(parsed.pages, '$.pages', MAX_STRUCT_DOCUMENT_ITEMS).map(
+    (page, index) => parsePage(page, `$.pages[${index}]`),
   )
-  const diagnostics = array(parsed.diagnostics, '$.diagnostics').map(
-    (diagnostic, index) =>
-      parseDiagnostic(diagnostic, `$.diagnostics[${index}]`),
+  const diagnostics = array(
+    parsed.diagnostics,
+    '$.diagnostics',
+    MAX_STRUCT_DOCUMENT_ITEMS,
+  ).map((diagnostic, index) =>
+    parseDiagnostic(diagnostic, `$.diagnostics[${index}]`),
   )
   unique(
     blocks.map((block) => block.id),
@@ -1322,6 +1331,67 @@ export function parseStructAssets(value: unknown): StructAsset[] {
     decodeRemaining -= parsedAsset.bytes?.byteLength ?? 0
     return parsedAsset
   })
+}
+
+type PublicationSnapshotState = {
+  active: WeakSet<object>
+  nodes: number
+}
+
+function snapshotPublicationValue(
+  value: unknown,
+  path: string,
+  state: PublicationSnapshotState,
+  depth: number,
+): unknown {
+  if (depth > 128)
+    fail('BUDGET', path, 'publication input nesting exceeds the depth bound')
+  state.nodes += 1
+  if (state.nodes > MAX_STRUCT_DOCUMENT_ITEMS)
+    fail('BUDGET', path, 'publication input exceeds the structural node bound')
+  if (!value || typeof value !== 'object') return value
+  if (state.active.has(value))
+    fail('OBJECT', path, 'cycles are not permitted in publication input')
+  state.active.add(value)
+  try {
+    if (Array.isArray(value))
+      return array(value, path, MAX_STRUCT_DOCUMENT_ITEMS - state.nodes).map(
+        (entry, index) =>
+          snapshotPublicationValue(
+            entry,
+            `${path}[${index}]`,
+            state,
+            depth + 1,
+          ),
+      )
+    return copyRecord(
+      dataEntries(value, path, MAX_STRUCT_DOCUMENT_ITEMS - state.nodes).map(
+        ([key, entry]) => [
+          key,
+          snapshotPublicationValue(entry, `${path}.${key}`, state, depth + 1),
+        ],
+      ),
+    )
+  } finally {
+    state.active.delete(value)
+  }
+}
+
+/** Canonicalize every direct-publication field without retaining caller objects. */
+export function snapshotStructDocumentForEpub(value: unknown): StructDocument {
+  const root = dataEntries(value, '$')
+  const state: PublicationSnapshotState = {
+    active: new WeakSet<object>(),
+    nodes: 1,
+  }
+  return copyRecord(
+    root.map(([key, entry]) => [
+      key,
+      key === 'assets'
+        ? parseStructAssets(entry)
+        : snapshotPublicationValue(entry, `$.${key}`, state, 1),
+    ]),
+  ) as StructDocument
 }
 
 /** Decode a JSON-safe or in-memory STRUCT document without coercion. */

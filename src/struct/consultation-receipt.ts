@@ -72,9 +72,19 @@ function canonicalJson(
   try {
     if (Array.isArray(value)) {
       if (Object.getPrototypeOf(value) !== Array.prototype) return false
+      const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length')
+      const length = lengthDescriptor?.value
+      if (
+        !lengthDescriptor ||
+        !Object.hasOwn(lengthDescriptor, 'value') ||
+        !Number.isSafeInteger(length) ||
+        length < 0 ||
+        length > MAX_NODES - state.nodes
+      )
+        return false
       const keys = Reflect.ownKeys(value)
       if (
-        keys.length !== value.length + 1 ||
+        keys.length !== length + 1 ||
         !keys.includes('length') ||
         keys.some(
           (key) =>
@@ -83,7 +93,7 @@ function canonicalJson(
         )
       )
         return false
-      for (let index = 0; index < value.length; index += 1) {
+      for (let index = 0; index < length; index += 1) {
         const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
         if (
           !descriptor?.enumerable ||
@@ -96,7 +106,9 @@ function canonicalJson(
     }
     const prototype = Object.getPrototypeOf(value)
     if (prototype !== Object.prototype && prototype !== null) return false
-    for (const key of Reflect.ownKeys(value)) {
+    const keys = Reflect.ownKeys(value)
+    if (keys.length > MAX_NODES - state.nodes) return false
+    for (const key of keys) {
       if (typeof key !== 'string' || !SAFE_ID.test(key) || forbiddenKey(key))
         return false
       const descriptor = Object.getOwnPropertyDescriptor(value, key)

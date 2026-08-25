@@ -1753,7 +1753,11 @@ describe('private PDF fidelity runner', () => {
             artifact(profile)
           const checkedEvidence = {
             ...evidence,
-            epubCheck: { status: 'passed' },
+            epubCheck: {
+              status: 'passed',
+              javaSha256: 'a'.repeat(64),
+              jreReleaseSha256: 'b'.repeat(64),
+            },
           }
           return {
             ...checkedEvidence,
@@ -2681,6 +2685,35 @@ describe('private PDF fidelity runner', () => {
     ).toThrow('INVALID_PRIVATE_FIDELITY_BASELINE')
   })
 
+  it('accepts a schema v1.8 baseline with its historic status-only EPUBCheck receipt', () => {
+    const legacy = fidelityReceipt({
+      transformArtifact(value) {
+        return { ...value, epubCheck: { status: 'passed' } }
+      },
+    })
+    legacy.schemaVersion = '1.8.0'
+    const candidate = fidelityReceipt({
+      transformArtifact(value) {
+        return {
+          ...value,
+          epubCheck: {
+            status: 'passed',
+            javaSha256: 'a'.repeat(64),
+            jreReleaseSha256: 'b'.repeat(64),
+          },
+        }
+      },
+    })
+
+    expect(
+      comparePrivateFidelityReceipts(
+        legacy,
+        candidate,
+        acceptedBaselineSha256(legacy),
+      ),
+    ).toMatchObject({ status: 'passed', passed: true })
+  })
+
   it('rejects an invalid or locally unaccepted frozen receipt generically', () => {
     const invalidSchema = { ...fidelityReceipt(), schemaVersion: 'invalid' }
     const corruptHash = structuredClone(fidelityReceipt())
@@ -3122,7 +3155,7 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, 'fake java executed\\n')
     }
   }, 120_000)
 
-  it('requires a pinned default JRE and binds its digest into passed evidence', async () => {
+  it('fails closed when the default Java launcher has no attested JRE runtime', async () => {
     const environment = { ...process.env }
     delete environment.SRT_EPUBCHECK_JAVA_BIN
     delete environment.SRT_EPUBCHECK_JAVA_SHA256
@@ -3141,17 +3174,16 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, 'fake java executed\\n')
     const javaSha256 = createHash('sha256')
       .update(readFileSync('/usr/bin/java'))
       .digest('hex')
-    const validator = await requiredPrivateEpubCheckValidator({
-      environment: { ...environment, SRT_EPUBCHECK_JAVA_SHA256: javaSha256 },
-      runner(_command, arguments_) {
-        return arguments_.at(-1) === '--version'
-          ? successfulEpubCheckProof()
-          : { status: 0 }
-      },
-    })
     await expect(
-      validatePrivateEpubWithEpubCheck(Buffer.from('private epub'), validator),
-    ).resolves.toEqual({ status: 'passed', javaSha256 })
+      requiredPrivateEpubCheckValidator({
+        environment: { ...environment, SRT_EPUBCHECK_JAVA_SHA256: javaSha256 },
+        runner(_command, arguments_) {
+          return arguments_.at(-1) === '--version'
+            ? successfulEpubCheckProof()
+            : { status: 0 }
+        },
+      }),
+    ).rejects.toThrow('EPUBCHECK_REQUIRED')
   }, 120_000)
 
   it('executes exact bundled EPUBCheck bytes through anonymous descriptors', async () => {
@@ -3177,7 +3209,11 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, 'fake java executed\\n')
 
     await expect(
       validatePrivateEpubWithEpubCheck(Buffer.from('private epub'), validator),
-    ).resolves.toEqual({ status: 'passed' })
+    ).resolves.toEqual({
+      status: 'passed',
+      javaSha256: validator.java.identity.fileSha256,
+      jreReleaseSha256: validator.java.release.identity.fileSha256,
+    })
     expect(validator.distribution.records).toHaveLength(49)
     expect(
       validator.distribution.records.filter((record) =>
@@ -3340,7 +3376,11 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, 'fake java executed\\n')
           Buffer.from('private epub'),
           swappingValidator,
         ),
-      ).resolves.toEqual({ status: 'passed' })
+      ).resolves.toEqual({
+        status: 'passed',
+        javaSha256: swappingValidator.java.identity.fileSha256,
+        jreReleaseSha256: swappingValidator.java.release.identity.fileSha256,
+      })
 
       const mainJarPath = join(vendorRoot, 'epubcheck.jar')
       const tamperingValidator = {

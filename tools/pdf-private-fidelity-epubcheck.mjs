@@ -202,15 +202,38 @@ async function resolveJavaRuntime(environment = process.env) {
   const artifact = await stableRegularFile(path)
   if (artifact.identity.fileSha256 !== expectedSha256)
     throw new Error('EPUBCHECK_REQUIRED')
-  return { path, identity: artifact.identity }
+  const probe = privateCommandResult(path, ['-XshowSettings:properties', '-version'], {
+    env: minimalJavaEnvironment(),
+    maxBuffer: 64 * 1024,
+  })
+  const output = Buffer.concat([
+    Buffer.isBuffer(probe.stdout) ? probe.stdout : Buffer.alloc(0),
+    Buffer.isBuffer(probe.stderr) ? probe.stderr : Buffer.alloc(0),
+  ]).toString('utf8')
+  const javaHome = /^\s*java\.home\s*=\s*(.+)\s*$/mu.exec(output)?.[1]
+  if (probe.error || probe.status !== 0 || !javaHome || !isAbsolute(javaHome))
+    throw new Error('EPUBCHECK_REQUIRED')
+  const home = await realpath(javaHome)
+  const releasePath = resolve(home, 'release')
+  const release = await stableRegularFile(releasePath)
+  if (!releasePath.startsWith(`${home}${sep}`)) throw new Error('EPUBCHECK_REQUIRED')
+  await assertProtectedJavaPath(releasePath)
+  return { path, identity: artifact.identity, release: { path: releasePath, identity: release.identity } }
 }
 
 async function reverifyJavaRuntime(runtime) {
   await assertProtectedJavaPath(runtime.path)
+  await assertProtectedJavaPath(runtime.release.path)
   const current = await stableRegularFile(runtime.path)
+  const release = await stableRegularFile(runtime.release.path)
   if (
     !sameIdentity(current.identity, runtime.identity) ||
     current.identity.fileSha256 !== runtime.identity.fileSha256
+  )
+    throw new Error('EPUBCHECK_FAILED')
+  if (
+    !sameIdentity(release.identity, runtime.release.identity) ||
+    release.identity.fileSha256 !== runtime.release.identity.fileSha256
   )
     throw new Error('EPUBCHECK_FAILED')
 }
@@ -385,7 +408,7 @@ async function proveJavaRuntime(validator) {
   }
 }
 
-/** @returns {Promise<{ status: 'passed', javaSha256: string }>} */
+/** @returns {Promise<{ status: 'passed', javaSha256: string, jreReleaseSha256: string }>} */
 export async function validatePrivateEpubWithEpubCheck(bytes, validator) {
   const directory = await mkdtemp(join(tmpdir(), 'srt-private-epubcheck-'))
   const handles = []
@@ -435,6 +458,7 @@ export async function validatePrivateEpubWithEpubCheck(bytes, validator) {
     return {
       status: 'passed',
       javaSha256: validator.java.identity.fileSha256,
+      jreReleaseSha256: validator.java.release.identity.fileSha256,
     }
   } catch {
     throw new Error('EPUBCHECK_FAILED')

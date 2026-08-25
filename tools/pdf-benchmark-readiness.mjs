@@ -58,7 +58,7 @@ const SCHEMA_BINDINGS = new Map([
       path: DEFAULT_SCHEMA_PATH,
       id: 'https://ernie.sg/schemas/pdf-benchmark-readiness-registry-3.0.0.json',
       fileSha256:
-        '690923b50eb44d23f60956a8c2763ef27a37aa1c39e8f7bbfb218b4162319b58',
+        'fccf1727399b425f1f92a4ab339c96ecf759cd0ac673988cbf4db6ae5d514700',
     },
   ],
 ])
@@ -265,6 +265,9 @@ function metricImplementationCompositeSha256(metric) {
               platformTreeEvidence:
                 metric.implementationPlatformTreeEvidence,
             }
+          : {}),
+        ...(metric.test && metric.testSha256
+          ? { test: { path: metric.test, fileSha256: metric.testSha256 } }
           : {}),
         packages: metric.implementationPackages
           .map((package_) => ({
@@ -1184,6 +1187,18 @@ export async function verifyMetricImplementationBinding(
       ),
     ),
   )
+  if (
+    (metric.test === undefined) !== (metric.testSha256 === undefined) ||
+    (metric.test !== undefined &&
+      (!SHA256.test(metric.testSha256) ||
+        !(await verifyRepositoryFileBinding(
+          metric.test,
+          metric.testSha256,
+          'PDF_BENCHMARK_METRIC_BINDING_MISMATCH',
+          repositoryRoot,
+        ))))
+  )
+    invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
   if (requirePackages) {
     if (
       !metric.implementationPackageLock ||

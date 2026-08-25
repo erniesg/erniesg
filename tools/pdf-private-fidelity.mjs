@@ -1044,9 +1044,14 @@ function normalizedPrivateEpubCheck(value) {
   if (
     value?.status === 'passed' &&
     SHA256_PATTERN.test(value.javaSha256 ?? '') &&
-    Object.keys(value).length === 2
+    SHA256_PATTERN.test(value.jreReleaseSha256 ?? '') &&
+    Object.keys(value).length === 3
   ) {
-    return { status: 'passed', javaSha256: value.javaSha256 }
+    return {
+      status: 'passed',
+      javaSha256: value.javaSha256,
+      jreReleaseSha256: value.jreReleaseSha256,
+    }
   }
   if (
     value?.status === 'skipped' &&
@@ -1058,7 +1063,13 @@ function normalizedPrivateEpubCheck(value) {
   throw new Error('EPUBCHECK_RESULT_INVALID')
 }
 
-function validPrivateEpubCheck(value) {
+function validPrivateEpubCheck(value, allowLegacyEpubCheck = false) {
+  if (
+    allowLegacyEpubCheck &&
+    value?.status === 'passed' &&
+    Object.keys(value).length === 1
+  )
+    return true
   try {
     return (
       canonicalJsonHash(normalizedPrivateEpubCheck(value)) ===
@@ -2579,7 +2590,7 @@ function validReconstructionEvidence(value, allowHistoricalV14 = false) {
   )
 }
 
-function validArtifactEvidence(value) {
+function validArtifactEvidence(value, allowLegacyEpubCheck = false) {
   if (
     !hasExactKeys(value, [
       'target',
@@ -2623,7 +2634,7 @@ function validArtifactEvidence(value) {
     ].every((key) => SHA256_PATTERN.test(value[key])) ||
     !validInlineSemanticLedger(value.inlineSemanticLedger) ||
     value.structuralValidation !== 'passed' ||
-    !validPrivateEpubCheck(value.epubCheck) ||
+    !validPrivateEpubCheck(value.epubCheck, allowLegacyEpubCheck) ||
     !ARTIFACT_MODES.includes(value.mode)
   ) {
     return false
@@ -2634,7 +2645,11 @@ function validArtifactEvidence(value) {
   return value.receiptSha256 === canonicalJsonHash(evidence)
 }
 
-function validRunReceipt(value, allowHistoricalV14 = false) {
+function validRunReceipt(
+  value,
+  allowHistoricalV14 = false,
+  allowLegacyEpubCheck = false,
+) {
   return (
     hasExactKeys(value, [
       'ordinal',
@@ -2651,7 +2666,9 @@ function validRunReceipt(value, allowHistoricalV14 = false) {
         deterministicReconstructionProjection(value.reconstruction),
       ) &&
     Array.isArray(value.artifacts) &&
-    value.artifacts.every(validArtifactEvidence)
+    value.artifacts.every((artifact) =>
+      validArtifactEvidence(artifact, allowLegacyEpubCheck),
+    )
   )
 }
 
@@ -2756,13 +2773,15 @@ function validatePrivateFidelityReceipt(receipt, requireAcceptedBaseline) {
       !validBaselineComparison(receipt.baselineComparison) ||
       !Array.isArray(receipt.runs) ||
       receipt.runs.some(
-        (run) => !validRunReceipt(run, requireAcceptedBaseline),
+        (run) =>
+          !validRunReceipt(run, requireAcceptedBaseline, legacySchema),
       ) ||
       typeof receipt.passed !== 'boolean'
     ) {
       invalidPrivateFidelityBaseline()
     }
 
+    if (legacySchema) return
     const rebuilt = createPrivateFidelityReceipt({
       paperId: receipt.source.paperId,
       sourceSha256: receipt.source.sha256,
@@ -2817,7 +2836,7 @@ function deterministicReconstructionProjection(value) {
   }
 }
 
-function invariantRunProjection(run) {
+function invariantRunProjection(run, migrateLegacyEpubCheck = false) {
   const reconstruction = run.reconstruction
   return {
     reconstruction: {
@@ -2829,9 +2848,18 @@ function invariantRunProjection(run) {
       lineTransitionEvidence: reconstruction.lineTransitionEvidence,
       structure: reconstruction.structure,
     },
-    artifacts: [...run.artifacts].sort((left, right) =>
-      left.target.localeCompare(right.target),
-    ),
+    artifacts: [...run.artifacts]
+      .map((artifact) => {
+        if (!migrateLegacyEpubCheck || artifact.epubCheck?.status !== 'passed')
+          return artifact
+        const { receiptSha256: _receiptSha256, ...evidence } = artifact
+        const normalized = { ...evidence, epubCheck: { status: 'passed' } }
+        return {
+          ...normalized,
+          receiptSha256: canonicalJsonHash(normalized),
+        }
+      })
+      .sort((left, right) => left.target.localeCompare(right.target)),
   }
 }
 
@@ -2974,9 +3002,18 @@ export function comparePrivateFidelityReceipts(
       canonicalJsonHash(candidate.execution.profiles) &&
     baseline.execution.epubCheckRequired ===
       candidate.execution.epubCheckRequired
+  const migrateLegacyEpubCheck = baseline.schemaVersion === '1.8.0'
   const invariantRunsMatch =
-    canonicalJsonHash(baseline.runs.map(invariantRunProjection)) ===
-    canonicalJsonHash(candidate.runs.map(invariantRunProjection))
+    canonicalJsonHash(
+      baseline.runs.map((run) =>
+        invariantRunProjection(run, migrateLegacyEpubCheck),
+      ),
+    ) ===
+    canonicalJsonHash(
+      candidate.runs.map((run) =>
+        invariantRunProjection(run, migrateLegacyEpubCheck),
+      ),
+    )
   const runRegressed = baseline.runs.some((baselineRun, index) => {
     const candidateRun = candidate.runs[index]
     return (

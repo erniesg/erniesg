@@ -27,7 +27,7 @@ const COMPARATOR_SCHEMA_PATH =
 const COMPARATOR_CONTRACT_SCHEMA_PATH =
   'docs/schemas/pdf-fidelity-comparator-contract-v2.schema.json'
 const COMPARATOR_CONTRACT_SCHEMA_SHA256 =
-  '1291af0a8ef1db219025a129cee30e934bb8a19ab414185677468624d281f561'
+  'c1b31d5fa9e0fe174dca51a7945093d4d90b5cee0332d4955b7bfd019ae6f185'
 const REPOSITORY_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const GOVERNANCE_SCHEMA_PATHS = {
   '1.0.0': 'docs/schemas/pdf-reconstruction-eval-contract.schema.json',
@@ -305,15 +305,21 @@ async function assertContractBinding(
   const validateGovernance = compileSchema(governanceSchemaArtifact.value)
   if (!validateGovernance(governanceArtifact.value)) invalid()
 
+  const runtimeBinding = contractArtifact.value.runtimeBinding ?? {
+    id: 'scholarly-pdf-reconstruction-runtime-governance-2026-07-v4',
+    schemaVersion: '4.0.0',
+    path: 'benchmarks/pdf/reconstruction-eval-contract-v4.json',
+    fileSha256:
+      '96b0e147bd8418650e49142bb7d43afb26a857e7f93da17c2a3bf62b4c748719',
+  }
   const runtimeArtifact = parseJsonArtifact(
-    await readRepositoryArtifact(contractArtifact.value.runtimeBinding.path),
+    await readRepositoryArtifact(runtimeBinding.path),
   )
   if (
-    runtimeArtifact.fileSha256 !==
-      contractArtifact.value.runtimeBinding.fileSha256 ||
-    runtimeArtifact.value.id !== contractArtifact.value.runtimeBinding.id ||
+    runtimeArtifact.fileSha256 !== runtimeBinding.fileSha256 ||
+    runtimeArtifact.value.id !== runtimeBinding.id ||
     runtimeArtifact.value.schemaVersion !==
-      contractArtifact.value.runtimeBinding.schemaVersion
+      runtimeBinding.schemaVersion
   )
     invalid()
   const runtimeSchema = await readSchema(

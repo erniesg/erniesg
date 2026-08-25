@@ -255,7 +255,7 @@ describe('PDF reconstruction evaluation governance contract', () => {
       await fileSha256(contract.extends.path),
     )
     expect(contract.extends.fileSha256).toBe(
-      '5e0076b3f2e973af3af85ab867c4fadd1b9d26a0f24413f4e8d9327e0eb46144',
+    '0ee0826873f0b7349a5f4187746f9cc35a9acc1556fd7aa35e004b1a51a9a2dd',
     )
     expect(contract.robustnessCorpus.artifact.fileSha256).toBe(
       await fileSha256(contract.robustnessCorpus.artifact.path),

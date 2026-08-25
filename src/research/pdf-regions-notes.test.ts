@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { strFromU8 } from 'fflate'
 import { describe, expect, it } from 'vitest'
 import { buildEpub, inspectEpub } from './epub'
@@ -6,6 +7,7 @@ import { reconstructPageAnalyses } from './pdf-layout'
 import {
   digitValue,
   evaluateReadingOrder,
+  noteLabelFromText,
   reconstructPageRegions,
 } from './pdf-regions'
 
@@ -80,6 +82,18 @@ async function reconstruct(pages: PdfPageAnalysis[], hash = '7') {
 }
 
 describe('deterministic scholarly page regions', () => {
+  it('owns note-label classification behind the compatibility export', async () => {
+    const moduleUrl = new URL(
+      './pdf-region-note-classification.ts',
+      import.meta.url,
+    )
+    expect(existsSync(moduleUrl)).toBe(true)
+
+    const extracted = await import(moduleUrl.href)
+    expect(extracted.noteLabelFromText('Footnote †: Detail')).toBe('†')
+    expect(noteLabelFromText).toBe(extracted.noteLabelFromText)
+  })
+
   it('matches a page-wide symbolic footnote and emits EPUB note semantics and backlinks', async () => {
     const result = await reconstruct(
       [

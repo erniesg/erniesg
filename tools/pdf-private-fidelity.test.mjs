@@ -1,5 +1,6 @@
 import {
   chmodSync,
+  cpSync,
   existsSync,
   fstatSync,
   mkdirSync,
@@ -44,6 +45,15 @@ import {
 } from './pdf-private-fidelity-epubcheck.mjs'
 
 const hash = 'a'.repeat(64)
+
+function successfulEpubCheckProof() {
+  return {
+    status: 0,
+    stdout: Buffer.from('EPUBCheck v5.3.0\n'),
+    stderr: Buffer.alloc(0),
+  }
+}
+
 const privateCompletenessPolicy = {
   minimumTextCoverage: 0.98,
   minimumAssetCoverage: 1,
@@ -3101,11 +3111,11 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, 'fake java executed\\n')
       expect(result.status, result.stderr).toBe(2)
       expect(diagnostic).toMatchObject({
         errorClass: 'Error',
-        errorCode: 'EPUBCHECK_FAILED',
-        stage: 'epubcheck-validate',
+        errorCode: 'EPUBCHECK_REQUIRED',
+        stage: 'epubcheck-resolve',
       })
       expect(existsSync(argumentsLog)).toBe(false)
-      expect(readdirSync(outputDirectory)).toEqual([])
+      expect(existsSync(outputDirectory)).toBe(false)
       expect(`${result.stdout}\n${result.stderr}`).not.toContain(inputPath)
     } finally {
       rmSync(temporaryDirectory, { recursive: true, force: true })
@@ -3127,7 +3137,9 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, 'fake java executed\\n')
           options.stdio.slice(3).every((fd) => fstatSync(fd).nlink === 0),
         ).toBe(true)
         calls.push({ command, arguments_, options })
-        return { status: 0 }
+        return arguments_.at(-1) === '--version'
+          ? successfulEpubCheckProof()
+          : { status: 0 }
       },
     })
 
@@ -3140,16 +3152,23 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, 'fake java executed\\n')
         record.path.endsWith('.jar'),
       ),
     ).toHaveLength(40)
-    expect(calls).toHaveLength(1)
+    expect(calls).toHaveLength(2)
     expect(calls[0].arguments_).toEqual([
+      '-cp',
+      expect.stringContaining('/fd/3'),
+      'com.adobe.epubcheck.tool.Checker',
+      '--version',
+    ])
+    expect(calls[0].options.stdio).toHaveLength(43)
+    expect(calls[1].arguments_).toEqual([
       '-cp',
       expect.stringContaining('/fd/3'),
       'com.adobe.epubcheck.tool.Checker',
       '--failonwarnings',
       expect.stringMatching(/\/fd\/43$/),
     ])
-    expect(calls[0].options.stdio).toHaveLength(44)
-    expect(calls[0].options.env).toEqual({
+    expect(calls[1].options.stdio).toHaveLength(44)
+    expect(calls[1].options.env).toEqual({
       LANG: 'C',
       LC_ALL: 'C',
       TZ: 'UTC',
@@ -3214,11 +3233,49 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, 'fake java executed\\n')
     }
   })
 
+  it('rejects a protected hash-pinned non-Java executable and invalid Java proofs', async () => {
+    const truePath = '/usr/bin/true'
+    const trueSha256 = createHash('sha256')
+      .update(readFileSync(truePath))
+      .digest('hex')
+    await expect(
+      requiredPrivateEpubCheckValidator({
+        environment: {
+          ...process.env,
+          SRT_EPUBCHECK_JAVA_BIN: truePath,
+          SRT_EPUBCHECK_JAVA_SHA256: trueSha256,
+        },
+      }),
+    ).rejects.toThrow('EPUBCHECK_REQUIRED')
+
+    for (const result of [
+      { status: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) },
+      {
+        status: 0,
+        stdout: Buffer.from('EPUBCheck v5.2.0\n'),
+        stderr: Buffer.alloc(0),
+      },
+      {
+        status: 0,
+        stdout: Buffer.from('EPUBCheck v5.3.0\n'),
+        stderr: Buffer.from('unexpected output'),
+      },
+    ])
+      await expect(
+        requiredPrivateEpubCheckValidator({ runner: () => result }),
+      ).rejects.toThrow('EPUBCHECK_REQUIRED')
+  }, 120_000)
+
   it('isolates execution from source swaps and fails on persistent runtime tamper', async () => {
     const expectedJarSha256 =
       'f7f96617c929371821609b88c8484d6dc9f24fe916499863c46094c5fb778a65'
-    const swappingValidator = await requiredPrivateEpubCheckValidator({
-      runner(_command, _arguments, options) {
+    const privateDistribution = mkdtempSync(
+      join(tmpdir(), 'pdf-private-epubcheck-distribution-'),
+    )
+    let swappingValidator
+    swappingValidator = await requiredPrivateEpubCheckValidator({
+      runner(_command, arguments_, options) {
+        if (arguments_.at(-1) === '--version') return successfulEpubCheckProof()
         const mainJarPath = join(
           swappingValidator.distribution.vendorRoot,
           'epubcheck.jar',
@@ -3237,26 +3294,30 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, 'fake java executed\\n')
         return { status: 0 }
       },
     })
-    await expect(
-      validatePrivateEpubWithEpubCheck(
-        Buffer.from('private epub'),
-        swappingValidator,
-      ),
-    ).resolves.toEqual({ status: 'passed' })
-
-    const mainJarPath = join(
-      swappingValidator.distribution.vendorRoot,
-      'epubcheck.jar',
-    )
-    const original = readFileSync(mainJarPath)
-    const tamperingValidator = {
-      ...swappingValidator,
-      runner() {
-        writeFileSync(mainJarPath, 'persistent attacker bytes')
-        return { status: 0 }
-      },
-    }
     try {
+      const vendorRoot = join(privateDistribution, 'vendor')
+      cpSync(swappingValidator.distribution.vendorRoot, vendorRoot, {
+        recursive: true,
+      })
+      swappingValidator.distribution = {
+        ...swappingValidator.distribution,
+        vendorRoot,
+      }
+      await expect(
+        validatePrivateEpubWithEpubCheck(
+          Buffer.from('private epub'),
+          swappingValidator,
+        ),
+      ).resolves.toEqual({ status: 'passed' })
+
+      const mainJarPath = join(vendorRoot, 'epubcheck.jar')
+      const tamperingValidator = {
+        ...swappingValidator,
+        runner() {
+          writeFileSync(mainJarPath, 'persistent attacker bytes')
+          return { status: 0 }
+        },
+      }
       await expect(
         validatePrivateEpubWithEpubCheck(
           Buffer.from('private epub'),
@@ -3264,13 +3325,14 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, 'fake java executed\\n')
         ),
       ).rejects.toThrow('EPUBCHECK_FAILED')
     } finally {
-      writeFileSync(mainJarPath, original)
+      rmSync(privateDistribution, { recursive: true, force: true })
     }
   }, 120_000)
 
   it('rejects inherited descriptor mutation even when the runner returns zero', async () => {
     const validator = await requiredPrivateEpubCheckValidator({
-      runner(_command, _arguments, options) {
+      runner(_command, arguments_, options) {
+        if (arguments_.at(-1) === '--version') return successfulEpubCheckProof()
         writeFileSync(options.stdio[3], 'mutated inherited jar')
         return { status: 0 }
       },

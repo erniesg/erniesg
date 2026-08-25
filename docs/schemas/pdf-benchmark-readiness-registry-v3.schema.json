@@ -155,7 +155,7 @@
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "path": {
       "type": "string",
-      "pattern": "^(benchmarks|docs|tools|tests)/[A-Za-z0-9._/+:-]+$"
+      "pattern": "^(benchmarks|docs|src|tools|tests)/[A-Za-z0-9._/+:-]+$"
     },
     "track": {
       "type": "object",

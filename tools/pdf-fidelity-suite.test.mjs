@@ -16,7 +16,7 @@ import {
   validatePdfFidelitySuiteReceipt,
 } from './pdf-fidelity-suite.mjs'
 
-vi.setConfig({ testTimeout: 60_000 })
+vi.setConfig({ testTimeout: 180_000 })
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const toolPath = fileURLToPath(

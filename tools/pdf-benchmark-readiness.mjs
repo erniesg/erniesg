@@ -9,7 +9,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { builtinModules, createRequire } from 'node:module'
-import { dirname, posix, relative, resolve, sep } from 'node:path'
+import { dirname, extname, posix, relative, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import Ajv2020 from 'ajv/dist/2020.js'
 import ts from 'typescript'
@@ -58,7 +58,7 @@ const SCHEMA_BINDINGS = new Map([
       path: DEFAULT_SCHEMA_PATH,
       id: 'https://ernie.sg/schemas/pdf-benchmark-readiness-registry-3.0.0.json',
       fileSha256:
-        '8d47305294d07f02956ff2eef953f35cb67e81c85f665a21ffef1badb7ca0d63',
+        'fccf1727399b425f1f92a4ab339c96ecf759cd0ac673988cbf4db6ae5d514700',
     },
   ],
 ])
@@ -292,7 +292,11 @@ function executableModuleSpecifiers(source, fileName) {
     source,
     ts.ScriptTarget.Latest,
     true,
-    ts.ScriptKind.JS,
+    fileName.endsWith('.tsx')
+      ? ts.ScriptKind.TSX
+      : /\.(?:cts|mts|ts)$/u.test(fileName)
+        ? ts.ScriptKind.TS
+        : ts.ScriptKind.JS,
   )
   const specifiers = []
   const createRequireIdentifiers = new Set()
@@ -336,6 +340,7 @@ function executableModuleSpecifiers(source, fileName) {
       (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
       node.moduleSpecifier
     ) {
+      if (node.isTypeOnly || node.importClause?.isTypeOnly) return
       if (!ts.isStringLiteral(node.moduleSpecifier))
         invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
       specifiers.push(node.moduleSpecifier.text)
@@ -371,6 +376,40 @@ function executableModuleSpecifiers(source, fileName) {
   return specifiers
 }
 
+function viteSsrModuleSpecifiers(source, fileName) {
+  const sourceFile = ts.createSourceFile(
+    fileName,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    /\.(?:cts|mts|ts)$/u.test(fileName) ? ts.ScriptKind.TS : ts.ScriptKind.JS,
+  )
+  const specifiers = []
+  function visit(node) {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === 'ssrLoadModule'
+    ) {
+      if (node.arguments.length !== 1 || !ts.isStringLiteral(node.arguments[0]))
+        invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      specifiers.push(node.arguments[0].text)
+    }
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isPropertyAccessExpression(node.expression.expression) &&
+      ts.isMetaProperty(node.expression.expression.expression) &&
+      node.expression.expression.name.text === 'meta' &&
+      node.expression.name.text === 'glob'
+    )
+      invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return specifiers
+}
+
 function canonicalLocalModuleSpecifier(specifier) {
   const segments = specifier.split('/')
   if (
@@ -383,6 +422,102 @@ function canonicalLocalModuleSpecifier(specifier) {
   )
     invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
   return specifier
+}
+
+function executableSourcePath(path) {
+  return /\.(?:cjs|cts|js|jsx|mjs|mts|ts|tsx)$/u.test(path)
+}
+
+function splitExecutableModuleSpecifier(specifier) {
+  if (specifier.includes('#')) invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+  const query = specifier.indexOf('?')
+  if (query < 0) return { path: specifier, raw: false }
+  if (
+    specifier.slice(query) !== '?raw' ||
+    specifier.indexOf('?', query + 1) >= 0
+  )
+    invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+  return { path: specifier.slice(0, query), raw: true }
+}
+
+function canonicalViteRootSpecifier(specifier) {
+  const parsed = splitExecutableModuleSpecifier(specifier)
+  const segments = parsed.path.split('/')
+  if (
+    parsed.raw ||
+    !parsed.path.startsWith('/src/') ||
+    segments[0] !== '' ||
+    segments.some((segment, index) =>
+      index === 0 ? false : !segment || segment === '.' || segment === '..',
+    )
+  )
+    invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+  return parsed.path.slice(1)
+}
+
+function canonicalViteRelativeSpecifier(specifier, importerPath) {
+  const parsed = splitExecutableModuleSpecifier(specifier)
+  if (
+    parsed.path.includes('\\') ||
+    (!parsed.path.startsWith('./') && !parsed.path.startsWith('../'))
+  )
+    invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+  const resolved = posix.normalize(
+    posix.join(posix.dirname(importerPath), parsed.path),
+  )
+  canonicalRepositoryPath(resolved)
+  const relativeSpecifier = posix.relative(
+    posix.dirname(importerPath),
+    resolved,
+  )
+  const canonicalSpecifier = relativeSpecifier.startsWith('.')
+    ? relativeSpecifier
+    : `./${relativeSpecifier}`
+  if (canonicalSpecifier !== parsed.path)
+    invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+  return { path: resolved, raw: parsed.raw }
+}
+
+async function resolveRepositoryModulePath(
+  repositoryPath,
+  { repositoryRoot, raw = false },
+) {
+  const canonical = canonicalRepositoryPath(repositoryPath)
+  const candidates =
+    raw || extname(canonical)
+      ? [canonical]
+      : [
+          canonical,
+          ...['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'].map(
+            (extension) => `${canonical}${extension}`,
+          ),
+          ...['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'].map(
+            (extension) => `${canonical}/index${extension}`,
+          ),
+        ]
+  const matches = []
+  for (const candidate of candidates) {
+    try {
+      matches.push(
+        await canonicalRepositoryFile(
+          candidate,
+          repositoryRoot,
+          'PDF_BENCHMARK_METRIC_BINDING_MISMATCH',
+        ),
+      )
+    } catch (error) {
+      const absolute = resolveRepositoryPath(candidate, repositoryRoot)
+      try {
+        await lstat(absolute)
+      } catch (detailsError) {
+        if (detailsError?.code === 'ENOENT' || detailsError?.code === 'ENOTDIR')
+          continue
+      }
+      throw error
+    }
+  }
+  if (matches.length !== 1) invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+  return matches[0]
 }
 
 async function canonicalRepositoryFile(repositoryPath, repositoryRoot, code) {
@@ -412,18 +547,20 @@ async function canonicalRepositoryFile(repositoryPath, repositoryRoot, code) {
 
 export async function deriveLocalExecutableImportClosure(
   entrypoint,
-  { repositoryRoot = REPOSITORY_ROOT } = {},
+  { repositoryRoot = REPOSITORY_ROOT, includeViteGraph = true } = {},
 ) {
-  const pending = [canonicalRepositoryPath(entrypoint)]
+  const pending = [
+    { path: canonicalRepositoryPath(entrypoint), viteGraph: false },
+  ]
   const byPath = new Map()
   const pathsByRealPath = new Map()
   while (pending.length > 0) {
     const current = pending.pop()
-    if (byPath.has(current)) continue
+    if (byPath.has(current.path)) continue
     let artifact
     try {
       artifact = await canonicalRepositoryFile(
-        current,
+        current.path,
         repositoryRoot,
         'PDF_BENCHMARK_METRIC_BINDING_MISMATCH',
       )
@@ -435,15 +572,53 @@ export async function deriveLocalExecutableImportClosure(
       invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
     pathsByRealPath.set(artifact.realPath, artifact.path)
     byPath.set(artifact.path, artifact)
-    for (const specifier of executableModuleSpecifiers(
+    if (!executableSourcePath(artifact.path)) continue
+    const moduleSpecifiers = executableModuleSpecifiers(
       artifact.bytes.toString('utf8'),
       artifact.path,
-    ).filter((candidate) => candidate.startsWith('.'))) {
-      canonicalLocalModuleSpecifier(specifier)
-      const importedPath = posix.join(posix.dirname(artifact.path), specifier)
-      canonicalRepositoryPath(importedPath)
-      pending.push(importedPath)
+    )
+    if (
+      moduleSpecifiers.some(
+        (specifier) => specifier.startsWith('/') || specifier.startsWith('#'),
+      )
+    )
+      invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    for (const specifier of moduleSpecifiers.filter((candidate) =>
+      candidate.startsWith('.'),
+    )) {
+      if (current.viteGraph) {
+        const imported = canonicalViteRelativeSpecifier(
+          specifier,
+          artifact.path,
+        )
+        const dependency = await resolveRepositoryModulePath(imported.path, {
+          repositoryRoot,
+          raw: imported.raw,
+        })
+        pending.push({ path: dependency.path, viteGraph: true })
+      } else {
+        const parsed = splitExecutableModuleSpecifier(specifier)
+        if (parsed.raw) invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+        canonicalLocalModuleSpecifier(parsed.path)
+        const importedPath = posix.join(
+          posix.dirname(artifact.path),
+          parsed.path,
+        )
+        canonicalRepositoryPath(importedPath)
+        pending.push({ path: importedPath, viteGraph: false })
+      }
     }
+    if (includeViteGraph)
+      for (const specifier of viteSsrModuleSpecifiers(
+        artifact.bytes.toString('utf8'),
+        artifact.path,
+      )) {
+        const dependency = await resolveRepositoryModulePath(
+          canonicalViteRootSpecifier(specifier),
+          { repositoryRoot },
+        )
+        pending.push({ path: dependency.path, viteGraph: true })
+      }
   }
   return [...byPath.values()].sort((left, right) =>
     left.path.localeCompare(right.path),
@@ -455,11 +630,11 @@ function barePackageName(specifier) {
     typeof specifier !== 'string' ||
     !specifier ||
     specifier.startsWith('.') ||
-    specifier.startsWith('/') ||
-    specifier.startsWith('#') ||
     BUILTIN_MODULES.has(specifier)
   )
     return null
+  if (specifier.startsWith('/') || specifier.startsWith('#'))
+    invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
   const segments = specifier.split('/')
   const name = specifier.startsWith('@')
     ? segments.slice(0, 2).join('/')
@@ -530,12 +705,31 @@ export function executablePackagePlatform() {
   return `linux-${process.arch}-${glibc ? 'gnu' : 'musl'}`
 }
 
-function packageSupportsCurrentPlatform(locked) {
-  const libc = executablePackagePlatform().endsWith('-gnu') ? 'glibc' : 'musl'
+function parsedExecutablePackagePlatform(platform) {
+  const match =
+    /^(darwin|freebsd|linux|win32)-([a-z0-9]+)(?:-(gnu|musl))?$/.exec(platform)
+  if (!match || (match[1] === 'linux') !== Boolean(match[3]))
+    invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+  return {
+    os: match[1],
+    arch: match[2],
+    libc: match[3] === 'gnu' ? 'glibc' : match[3],
+  }
+}
+
+export function executablePackageSupportsPlatform(name, locked, platform) {
+  const target = parsedExecutablePackagePlatform(platform)
+  const declaresMusl = /(?:^|[-_])musl(?:$|[-_])/u.test(name)
+  const declaresGnu = /(?:^|[-_])(?:gnu|gnueabihf)(?:$|[-_])/u.test(name)
+  if (declaresMusl && declaresGnu)
+    invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+  const inferredLibc = declaresMusl ? 'musl' : declaresGnu ? 'glibc' : null
   return (
-    conditionMatches(locked.os, process.platform) &&
-    conditionMatches(locked.cpu, process.arch) &&
-    (process.platform !== 'linux' || conditionMatches(locked.libc, libc))
+    conditionMatches(locked.os, target.os) &&
+    conditionMatches(locked.cpu, target.arch) &&
+    (target.os !== 'linux' ||
+      (conditionMatches(locked.libc, target.libc) &&
+        (inferredLibc === null || inferredLibc === target.libc)))
   )
 }
 
@@ -589,8 +783,10 @@ export async function deriveExecutablePackageClosure(
   {
     repositoryRoot = REPOSITORY_ROOT,
     packageLockPath = 'package-lock.json',
+    platform = executablePackagePlatform(),
   } = {},
 ) {
+  parsedExecutablePackagePlatform(platform)
   const closure = await deriveLocalExecutableImportClosure(entrypoint, {
     repositoryRoot,
   })
@@ -613,11 +809,12 @@ export async function deriveExecutablePackageClosure(
       artifact.bytes.toString('utf8'),
       artifact.path,
     )) {
-      if (specifier.startsWith('.')) continue
-      const name = barePackageName(specifier)
+      const parsed = splitExecutableModuleSpecifier(specifier)
+      if (parsed.path.startsWith('.')) continue
+      const name = barePackageName(parsed.path)
       if (!name) continue
       const packageRoot = await findResolvedPackageRoot(
-        specifier,
+        parsed.path,
         name,
         artifact.realPath,
         repositoryRoot,
@@ -669,8 +866,23 @@ export async function deriveExecutablePackageClosure(
       )
       if (!dependencyPath) invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
       const dependency = lock.packages[dependencyPath]
-      if (packageSupportsCurrentPlatform(dependency))
+      if (
+        executablePackageSupportsPlatform(dependencyName, dependency, platform)
+      )
         pending.push({ path: dependencyPath, conditional: true })
+    }
+    for (const dependencyName of Object.keys(
+      locked.peerDependencies ?? {},
+    ).sort()) {
+      if (locked.peerDependenciesMeta?.[dependencyName]?.optional === true)
+        continue
+      const dependencyPath = lockedDependencyPath(
+        packagePath,
+        dependencyName,
+        lock.packages,
+      )
+      if (!dependencyPath) invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      pending.push({ path: dependencyPath, conditional: false })
     }
   }
 
@@ -708,13 +920,13 @@ export async function deriveExecutablePackageClosure(
         integrity: locked.integrity,
         treeSha256: await packageTreeSha256(packageRealPath),
         ...(conditionalPackagePaths.has(packagePath)
-          ? { platforms: [executablePackagePlatform()] }
+          ? { platforms: [platform] }
           : {}),
       }
     }),
   )
   return {
-    platform: executablePackagePlatform(),
+    platform,
     packageLock: { path: lockPath, fileSha256: sha256(lockBytes) },
     packages,
   }
@@ -726,6 +938,7 @@ export async function verifyMetricImplementationBinding(
     repositoryRoot = REPOSITORY_ROOT,
     requireClosure = true,
     requirePackages = false,
+    includeViteGraph = true,
   } = {},
 ) {
   if (!requireClosure) {
@@ -748,7 +961,7 @@ export async function verifyMetricImplementationBinding(
   }
   const closure = await deriveLocalExecutableImportClosure(
     metric.implementation,
-    { repositoryRoot },
+    { repositoryRoot, includeViteGraph },
   )
   const closurePaths = closure.map((artifact) => artifact.path)
   if ([...componentPaths].sort().join('\n') !== closurePaths.join('\n')) {
@@ -788,11 +1001,17 @@ export async function verifyMetricImplementationBinding(
     )
     if (!metric.implementationPlatforms.includes(derivedPackages.platform))
       invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
-    const expectedPackages = metric.implementationPackages.filter(
-      (package_) =>
-        !package_.platforms ||
-        package_.platforms.includes(derivedPackages.platform),
-    )
+    const expectedPackages = metric.implementationPackages
+      .filter(
+        (package_) =>
+          !package_.platforms ||
+          package_.platforms.includes(derivedPackages.platform),
+      )
+      .map((package_) =>
+        package_.platforms
+          ? { ...package_, platforms: [derivedPackages.platform] }
+          : package_,
+      )
     if (
       canonicalJson(derivedPackages.packageLock) !==
         canonicalJson(metric.implementationPackageLock) ||
@@ -970,6 +1189,7 @@ async function validateMetricImplementations(registry) {
       verifyMetricImplementationBinding(metric, {
         requireClosure: ['2.0.0', '3.0.0'].includes(registry.schemaVersion),
         requirePackages: registry.schemaVersion === '3.0.0',
+        includeViteGraph: registry.schemaVersion === '3.0.0',
       }),
       verifyRepositoryFileBinding(metric.test, metric.testSha256),
     ])

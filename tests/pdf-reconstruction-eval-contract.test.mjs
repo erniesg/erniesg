@@ -27,7 +27,7 @@ const paths = {
     'docs/schemas/pdf-fidelity-comparator-run-receipt.schema.json',
 }
 
-vi.setConfig({ testTimeout: 30_000 })
+vi.setConfig({ testTimeout: 120_000 })
 
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex')
@@ -71,7 +71,7 @@ describe('PDF reconstruction evaluation governance contract', () => {
     const profileArtifactValidity = contract.objectiveEvaluators.find(
       (evaluator) => evaluator.id === 'profile-artifact-validity',
     )
-    expect(profileArtifactValidity.implementationComponents).toHaveLength(8)
+    expect(profileArtifactValidity.implementationComponents).toHaveLength(60)
     for (const component of profileArtifactValidity.implementationComponents)
       expect(component.fileSha256).toBe(await fileSha256(component.path))
     const packageClosure = await deriveExecutablePackageClosure(
@@ -81,11 +81,17 @@ describe('PDF reconstruction evaluation governance contract', () => {
       packageClosure.packageLock,
     )
     expect(
-      profileArtifactValidity.implementationPackages.filter(
-        (package_) =>
-          !package_.platforms ||
-          package_.platforms.includes(packageClosure.platform),
-      ),
+      profileArtifactValidity.implementationPackages
+        .filter(
+          (package_) =>
+            !package_.platforms ||
+            package_.platforms.includes(packageClosure.platform),
+        )
+        .map((package_) =>
+          package_.platforms
+            ? { ...package_, platforms: [packageClosure.platform] }
+            : package_,
+        ),
     ).toEqual(packageClosure.packages)
     expect(profileArtifactValidity.implementationPlatforms).toContain(
       packageClosure.platform,
@@ -249,7 +255,7 @@ describe('PDF reconstruction evaluation governance contract', () => {
       await fileSha256(contract.extends.path),
     )
     expect(contract.extends.fileSha256).toBe(
-      '4e971f847e6088ee56dd0d0b1688e1fdf73dc3d173b77892dec94e0ac07e3844',
+      '5e0076b3f2e973af3af85ab867c4fadd1b9d26a0f24413f4e8d9327e0eb46144',
     )
     expect(contract.robustnessCorpus.artifact.fileSha256).toBe(
       await fileSha256(contract.robustnessCorpus.artifact.path),

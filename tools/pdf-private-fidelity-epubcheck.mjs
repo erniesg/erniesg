@@ -32,6 +32,7 @@ function privateCommandResult(command, arguments_, options = {}) {
   return spawnSync(command, arguments_, {
     stdio: options.stdio ?? 'ignore',
     timeout: options.timeout ?? 10_000,
+    maxBuffer: options.maxBuffer ?? 16 * 1024,
     windowsHide: true,
     env: options.env,
   })
@@ -225,12 +226,18 @@ function minimalJavaEnvironment() {
 export async function requiredPrivateEpubCheckValidator(options = {}) {
   const distribution = await resolveEpubCheckDistribution()
   const java = await resolveJavaRuntime(options.environment)
-  return {
+  const validator = {
     distribution,
     java,
     runner: options.runner ?? privateCommandResult,
     environment: minimalJavaEnvironment(),
   }
+  try {
+    await proveJavaRuntime(validator)
+  } catch {
+    throw new Error('EPUBCHECK_REQUIRED')
+  }
+  return validator
 }
 
 async function anonymousFile(directory, name, bytes) {
@@ -322,6 +329,64 @@ async function verifyAnonymousFile(snapshot) {
   }
   if (sha256(bytes) !== snapshot.binding.fileSha256)
     throw new Error('EPUBCHECK_FAILED')
+}
+
+async function proveJavaRuntime(validator) {
+  const directory = await mkdtemp(join(tmpdir(), 'srt-private-java-proof-'))
+  const handles = []
+  try {
+    await vendorFiles(validator.distribution.vendorRoot)
+    assertCapturedDistribution(validator.distribution.records)
+    await reverifyJavaRuntime(validator.java)
+    const jars = validator.distribution.records.filter((record) =>
+      record.path.endsWith('.jar'),
+    )
+    for (const [index, jar] of jars.entries())
+      handles.push(
+        await anonymousFile(directory, `runtime-${index}.jar`, jar.bytes),
+      )
+    await Promise.all(handles.map(verifyAnonymousFile))
+    const descriptorRoot =
+      process.platform === 'linux' ? '/proc/self/fd' : '/dev/fd'
+    const descriptorPaths = handles.map(
+      (_handle, index) => `${descriptorRoot}/${index + 3}`,
+    )
+    const result = validator.runner(
+      validator.java.path,
+      [
+        '-cp',
+        descriptorPaths.join(':'),
+        'com.adobe.epubcheck.tool.Checker',
+        '--version',
+      ],
+      {
+        stdio: [
+          'ignore',
+          'pipe',
+          'pipe',
+          ...handles.map((snapshot) => snapshot.handle.fd),
+        ],
+        timeout: 30_000,
+        maxBuffer: 16 * 1024,
+        env: validator.environment,
+      },
+    )
+    await Promise.all(handles.map(verifyAnonymousFile))
+    await reverifyJavaRuntime(validator.java)
+    await vendorFiles(validator.distribution.vendorRoot)
+    if (
+      result.error ||
+      result.status !== 0 ||
+      !Buffer.isBuffer(result.stdout) ||
+      !result.stdout.equals(Buffer.from('EPUBCheck v5.3.0\n')) ||
+      !Buffer.isBuffer(result.stderr) ||
+      result.stderr.byteLength !== 0
+    )
+      throw new Error('EPUBCHECK_REQUIRED')
+  } finally {
+    await Promise.all(handles.map((snapshot) => snapshot.handle.close()))
+    await rm(directory, { recursive: true, force: true })
+  }
 }
 
 /** @returns {Promise<{ status: 'passed' }>} */

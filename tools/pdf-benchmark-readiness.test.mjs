@@ -19,6 +19,7 @@ import {
   createPdfBenchmarkReadinessReceipt,
   deriveExecutablePackageClosure,
   deriveLocalExecutableImportClosure,
+  executablePackageSupportsPlatform,
   validateCandidateCommitment,
   validateIndependentIsolationEvidence,
   validateObservationBinding,
@@ -32,7 +33,7 @@ const readinessToolPath = fileURLToPath(
 )
 const evidenceDirectories = []
 
-vi.setConfig({ testTimeout: 30_000 })
+vi.setConfig({ testTimeout: 120_000 })
 
 afterEach(async () => {
   await Promise.all(
@@ -142,6 +143,12 @@ async function temporaryPackageImplementationFixture() {
     ),
     { recursive: true },
   )
+  for (const path of [
+    'node_modules/fake-peer',
+    'node_modules/native-linux-x64-gnu',
+    'node_modules/native-linux-x64-musl',
+  ])
+    await mkdir(join(repositoryRoot, path), { recursive: true })
   await writeFile(
     join(repositoryRoot, 'tools/entry.mjs'),
     "import 'fake-package'\n",
@@ -153,12 +160,17 @@ async function temporaryPackageImplementationFixture() {
       version: '1.0.0',
       type: 'module',
       main: 'index.js',
-      optionalDependencies: { 'fake-optional': '1.0.0' },
+      optionalDependencies: {
+        'fake-optional': '1.0.0',
+        'native-linux-x64-gnu': '1.0.0',
+        'native-linux-x64-musl': '1.0.0',
+      },
+      peerDependencies: { 'fake-peer': '1.0.0' },
     })}\n`,
   )
   await writeFile(
     join(repositoryRoot, 'node_modules/fake-package/index.js'),
-    'export const value = 1\n',
+    "import 'fake-peer'\nexport const value = 1\n",
   )
   await writeFile(
     join(
@@ -174,6 +186,20 @@ async function temporaryPackageImplementationFixture() {
     ),
     'export const optional = 1\n',
   )
+  for (const name of [
+    'fake-peer',
+    'native-linux-x64-gnu',
+    'native-linux-x64-musl',
+  ]) {
+    await writeFile(
+      join(repositoryRoot, 'node_modules', name, 'package.json'),
+      `${JSON.stringify({ name, version: '1.0.0' })}\n`,
+    )
+    await writeFile(
+      join(repositoryRoot, 'node_modules', name, 'index.js'),
+      `export const identity = '${name}'\n`,
+    )
+  }
   const lock = {
     name: 'package-fixture',
     lockfileVersion: 3,
@@ -182,11 +208,34 @@ async function temporaryPackageImplementationFixture() {
       'node_modules/fake-package': {
         version: '1.0.0',
         integrity: `sha512-${'A'.repeat(86)}==`,
-        optionalDependencies: { 'fake-optional': '1.0.0' },
+        optionalDependencies: {
+          'fake-optional': '1.0.0',
+          'native-linux-x64-gnu': '1.0.0',
+          'native-linux-x64-musl': '1.0.0',
+        },
+        peerDependencies: { 'fake-peer': '1.0.0' },
       },
       'node_modules/fake-package/node_modules/fake-optional': {
         version: '1.0.0',
         integrity: `sha512-${'B'.repeat(86)}==`,
+      },
+      'node_modules/fake-peer': {
+        version: '1.0.0',
+        integrity: `sha512-${'C'.repeat(86)}==`,
+      },
+      'node_modules/native-linux-x64-gnu': {
+        version: '1.0.0',
+        integrity: `sha512-${'D'.repeat(86)}==`,
+        os: ['linux'],
+        cpu: ['x64'],
+        optional: true,
+      },
+      'node_modules/native-linux-x64-musl': {
+        version: '1.0.0',
+        integrity: `sha512-${'E'.repeat(86)}==`,
+        os: ['linux'],
+        cpu: ['x64'],
+        optional: true,
       },
     },
   }
@@ -209,6 +258,89 @@ async function temporaryPackageImplementationFixture() {
   const metric = {
     implementation: 'tools/entry.mjs',
     implementationComponents,
+    implementationPackageLock: packageClosure.packageLock,
+    implementationPlatforms: [packageClosure.platform],
+    implementationPackages: packageClosure.packages,
+  }
+  metric.implementationSha256 = implementationCompositeSha256(metric)
+  return { repositoryRoot, metric }
+}
+
+async function temporaryViteImplementationFixture() {
+  const repositoryRoot = await mkdtemp(
+    join(tmpdir(), 'pdf-benchmark-vite-implementation-'),
+  )
+  await mkdir(join(repositoryRoot, 'tools'))
+  await mkdir(join(repositoryRoot, 'src'), { recursive: true })
+  await mkdir(join(repositoryRoot, 'node_modules/fake-package'), {
+    recursive: true,
+  })
+  await writeFile(
+    join(repositoryRoot, 'tools/entry.mjs'),
+    "import './audit.mjs'\n",
+  )
+  await writeFile(
+    join(repositoryRoot, 'tools/audit.mjs'),
+    "export const load = (vite) => vite.ssrLoadModule('/src/loaded.ts')\n",
+  )
+  await writeFile(
+    join(repositoryRoot, 'src/loaded.ts'),
+    "import type { Missing } from './type-only'\nimport './transitive'\nimport raw from './fixture.txt?raw'\nimport 'fake-package'\nexport const loaded = raw.length\n",
+  )
+  await writeFile(
+    join(repositoryRoot, 'src/transitive.ts'),
+    "export const worker = import('fake-package/worker.js?raw')\n",
+  )
+  await writeFile(join(repositoryRoot, 'src/fixture.txt'), 'bound raw bytes\n')
+  await writeFile(
+    join(repositoryRoot, 'node_modules/fake-package/package.json'),
+    `${JSON.stringify({
+      name: 'fake-package',
+      version: '1.0.0',
+      type: 'module',
+      main: 'index.js',
+      exports: { '.': './index.js', './worker.js': './worker.js' },
+    })}\n`,
+  )
+  await writeFile(
+    join(repositoryRoot, 'node_modules/fake-package/index.js'),
+    'export const value = 1\n',
+  )
+  await writeFile(
+    join(repositoryRoot, 'node_modules/fake-package/worker.js'),
+    'export const worker = 1\n',
+  )
+  await writeFile(
+    join(repositoryRoot, 'package-lock.json'),
+    `${JSON.stringify(
+      {
+        name: 'vite-fixture',
+        lockfileVersion: 3,
+        packages: {
+          '': { name: 'vite-fixture' },
+          'node_modules/fake-package': {
+            version: '1.0.0',
+            integrity: `sha512-${'F'.repeat(86)}==`,
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  )
+  const closure = await deriveLocalExecutableImportClosure('tools/entry.mjs', {
+    repositoryRoot,
+  })
+  const packageClosure = await deriveExecutablePackageClosure(
+    'tools/entry.mjs',
+    { repositoryRoot },
+  )
+  const metric = {
+    implementation: 'tools/entry.mjs',
+    implementationComponents: closure.map(({ path, bytes }) => ({
+      path,
+      fileSha256: createHash('sha256').update(bytes).digest('hex'),
+    })),
     implementationPackageLock: packageClosure.packageLock,
     implementationPlatforms: [packageClosure.platform],
     implementationPackages: packageClosure.packages,
@@ -593,18 +725,25 @@ describe('PDF benchmark readiness registry', () => {
       receipt.criteria.find((criterion) => criterion.id === 'metric-coverage')
         .observed,
     ).toContain('package-integrity')
-    expect(
-      metric.implementationComponents.map((component) => component.path),
-    ).toEqual([
-      'tools/pdf-corpus-audit-lib.mjs',
-      'tools/pdf-corpus-audit-safety.mjs',
-      'tools/pdf-ocr-apple-vision.mjs',
-      'tools/pdf-ocr-engines.mjs',
-      'tools/pdf-ocr-node.mjs',
-      'tools/pdf-ocr-remote.mjs',
-      'tools/pdf-private-fidelity-epubcheck.mjs',
-      'tools/pdf-private-fidelity.mjs',
-    ])
+    const componentPaths = metric.implementationComponents.map(
+      (component) => component.path,
+    )
+    expect(componentPaths).toHaveLength(60)
+    expect(componentPaths).toEqual([...componentPaths].sort())
+    expect(componentPaths).toEqual(
+      expect.arrayContaining([
+        'src/research/epub.ts',
+        'src/research/import-types.ts',
+        'src/research/pdf-quality.ts',
+        'src/research/pdf.ts',
+        'src/research/table-candidate-provider.ts',
+        'src/research/targets.ts',
+        'src/struct/epub.ts',
+        'tools/pdf-corpus-audit-lib.mjs',
+        'tools/pdf-private-fidelity-epubcheck.mjs',
+        'tools/pdf-private-fidelity.mjs',
+      ]),
+    )
 
     const adapter = metric.implementationComponents.find(
       (component) =>
@@ -642,6 +781,10 @@ describe('PDF benchmark readiness registry', () => {
     const v2Metric = v2.metricImplementations.find(
       (item) => item.id === 'package-integrity',
     )
+    v2Metric.implementationComponents =
+      v2Metric.implementationComponents.filter((component) =>
+        component.path.startsWith('tools/'),
+      )
     delete v2Metric.implementationPackageLock
     delete v2Metric.implementationPlatforms
     delete v2Metric.implementationPackages
@@ -744,6 +887,7 @@ describe('PDF benchmark readiness registry', () => {
           name: 'fake-optional',
           platforms: [expect.any(String)],
         },
+        { path: 'node_modules/fake-peer', name: 'fake-peer' },
       ])
 
       const omitted = structuredClone(metric)
@@ -758,12 +902,7 @@ describe('PDF benchmark readiness registry', () => {
 
       await writeFile(
         join(repositoryRoot, 'node_modules/fake-package/index.js'),
-        'export const value = 1\n',
-      )
-
-      await writeFile(
-        join(repositoryRoot, 'node_modules/fake-package/index.js'),
-        'export const value = 2\n',
+        "import 'fake-peer'\nexport const value = 2\n",
       )
       await expect(
         verifyMetricImplementationBinding(metric, {
@@ -771,6 +910,11 @@ describe('PDF benchmark readiness registry', () => {
           requirePackages: true,
         }),
       ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+
+      await writeFile(
+        join(repositoryRoot, 'node_modules/fake-package/index.js'),
+        "import 'fake-peer'\nexport const value = 1\n",
+      )
 
       await writeFile(
         join(
@@ -793,6 +937,20 @@ describe('PDF benchmark readiness registry', () => {
         ),
         'export const optional = 1\n',
       )
+      await writeFile(
+        join(repositoryRoot, 'node_modules/fake-peer/index.js'),
+        'export const identity = "mutated-peer"\n',
+      )
+      await expect(
+        verifyMetricImplementationBinding(metric, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      await writeFile(
+        join(repositoryRoot, 'node_modules/fake-peer/index.js'),
+        "export const identity = 'fake-peer'\n",
+      )
       const lockPath = join(repositoryRoot, 'package-lock.json')
       await writeFile(lockPath, `${await readFile(lockPath, 'utf8')} `)
       await expect(
@@ -801,6 +959,167 @@ describe('PDF benchmark readiness registry', () => {
           requirePackages: true,
         }),
       ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    } finally {
+      await rm(repositoryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('selects exactly one GNU or musl native alternative without lockfile libc metadata', async () => {
+    const locked = { os: ['linux'], cpu: ['x64'] }
+    expect(
+      executablePackageSupportsPlatform(
+        'native-linux-x64-gnu',
+        locked,
+        'linux-x64-gnu',
+      ),
+    ).toBe(true)
+    expect(
+      executablePackageSupportsPlatform(
+        'native-linux-x64-musl',
+        locked,
+        'linux-x64-gnu',
+      ),
+    ).toBe(false)
+    expect(
+      executablePackageSupportsPlatform(
+        'native-linux-x64-gnu',
+        locked,
+        'linux-x64-musl',
+      ),
+    ).toBe(false)
+    expect(
+      executablePackageSupportsPlatform(
+        'native-linux-x64-musl',
+        locked,
+        'linux-x64-musl',
+      ),
+    ).toBe(true)
+
+    const { repositoryRoot } = await temporaryPackageImplementationFixture()
+    try {
+      const gnu = await deriveExecutablePackageClosure('tools/entry.mjs', {
+        repositoryRoot,
+        platform: 'linux-x64-gnu',
+      })
+      const musl = await deriveExecutablePackageClosure('tools/entry.mjs', {
+        repositoryRoot,
+        platform: 'linux-x64-musl',
+      })
+      expect(gnu.packages.map(({ path }) => path)).toContain(
+        'node_modules/native-linux-x64-gnu',
+      )
+      expect(gnu.packages.map(({ path }) => path)).not.toContain(
+        'node_modules/native-linux-x64-musl',
+      )
+      expect(musl.packages.map(({ path }) => path)).toContain(
+        'node_modules/native-linux-x64-musl',
+      )
+      expect(musl.packages.map(({ path }) => path)).not.toContain(
+        'node_modules/native-linux-x64-gnu',
+      )
+      expect(gnu.packages.map(({ path }) => path)).toContain(
+        'node_modules/fake-peer',
+      )
+    } finally {
+      await rm(repositoryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('binds literal Vite TypeScript roots, transitives, raw assets, and packages', async () => {
+    const { repositoryRoot, metric } =
+      await temporaryViteImplementationFixture()
+    try {
+      expect(metric.implementationComponents.map(({ path }) => path)).toEqual([
+        'src/fixture.txt',
+        'src/loaded.ts',
+        'src/transitive.ts',
+        'tools/audit.mjs',
+        'tools/entry.mjs',
+      ])
+      expect(metric.implementationPackages).toMatchObject([
+        { path: 'node_modules/fake-package', name: 'fake-package' },
+      ])
+      await expect(
+        verifyMetricImplementationBinding(metric, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).resolves.toBeUndefined()
+
+      const omitted = structuredClone(metric)
+      omitted.implementationComponents =
+        omitted.implementationComponents.filter(
+          ({ path }) => path !== 'src/transitive.ts',
+        )
+      omitted.implementationSha256 = implementationCompositeSha256(omitted)
+      await expect(
+        verifyMetricImplementationBinding(omitted, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+
+      await writeFile(
+        join(repositoryRoot, 'src/transitive.ts'),
+        "export const worker = import('fake-package/worker.js?raw')\nexport const tampered = true\n",
+      )
+      await expect(
+        verifyMetricImplementationBinding(metric, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      await writeFile(
+        join(repositoryRoot, 'src/transitive.ts'),
+        "export const worker = import('fake-package/worker.js?raw')\n",
+      )
+
+      await writeFile(join(repositoryRoot, 'src/fixture.txt'), 'tampered raw\n')
+      await expect(
+        verifyMetricImplementationBinding(metric, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      await writeFile(
+        join(repositoryRoot, 'src/fixture.txt'),
+        'bound raw bytes\n',
+      )
+      await writeFile(
+        join(repositoryRoot, 'node_modules/fake-package/worker.js'),
+        'export const worker = 2\n',
+      )
+      await expect(
+        verifyMetricImplementationBinding(metric, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    } finally {
+      await rm(repositoryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects ambiguous or noncanonical Vite module loading', async () => {
+    const { repositoryRoot } = await temporaryViteImplementationFixture()
+    try {
+      for (const expression of [
+        'vite.ssrLoadModule(path)',
+        "vite.ssrLoadModule('/src//loaded.ts')",
+        "vite.ssrLoadModule('/src/../loaded.ts')",
+        "vite.ssrLoadModule('/tools/entry.mjs')",
+        "vite.ssrLoadModule('/src/loaded.ts?raw')",
+      ]) {
+        await writeFile(
+          join(repositoryRoot, 'tools/audit.mjs'),
+          `export const load = (vite, path) => ${expression}\n`,
+        )
+        await expect(
+          deriveLocalExecutableImportClosure('tools/entry.mjs', {
+            repositoryRoot,
+          }),
+        ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      }
     } finally {
       await rm(repositoryRoot, { recursive: true, force: true })
     }

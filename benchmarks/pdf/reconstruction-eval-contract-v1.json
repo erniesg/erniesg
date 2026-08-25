@@ -163,8 +163,216 @@
       "outcome": "binary-pass-fail",
       "criterion": "internal-epub-validation-and-epubcheck-both-pass",
       "implementation": ["tools/pdf-private-fidelity.mjs"],
-      "implementationSha256": "65a696c9f4175323f9bbe5f61ab16d7d1c2f749a7246a28daaf1e38a4ab77223",
+      "implementationSha256": "5fd5e46975ac2325ff53d97cb72583f6ac35442f4d12340cb0cbc19b2e6cb3c6",
       "implementationComponents": [
+        {
+          "path": "src/research/composition.ts",
+          "fileSha256": "86d0d8e34d78c0079ce82c9d22ec6889f537a705cd86e6b7926795f887aef69a"
+        },
+        {
+          "path": "src/research/decision-record.ts",
+          "fileSha256": "145f4ae76deb82d4f54b34d7bc2c8d61e973bca9529d79ae924481869c0ccbc3"
+        },
+        {
+          "path": "src/research/diagnostic-overlays.ts",
+          "fileSha256": "bfb46b9417d7405256ce5842f2ee244d04c5067163085aa79aa1189d4867496a"
+        },
+        {
+          "path": "src/research/epub.ts",
+          "fileSha256": "7fb5e2727073d06e84aa856d5d4710a1f6b92b8588edf92f3d2ca45c66c1db05"
+        },
+        {
+          "path": "src/research/equation-geometry-transcript.ts",
+          "fileSha256": "e75e5405a44d318745d600096760ba96e9d1fc62448f9adc1e4d0d906e1bcd67"
+        },
+        {
+          "path": "src/research/equation-render-only-ownership.ts",
+          "fileSha256": "484d4785061ec8b6b64ecd0c7790b5c4785386e8f8465948cf9a167a94417ede"
+        },
+        {
+          "path": "src/research/equation-transcript-adjudication.ts",
+          "fileSha256": "288b4f44c7be16a01ecfac98ec3002c9ed2489dcb826a5b1ca26459eafcc7872"
+        },
+        {
+          "path": "src/research/import-types.ts",
+          "fileSha256": "05af6dc3c35667ae690c3d56f1a5309ca02b08c7e36fce7f97867de4f44c7889"
+        },
+        {
+          "path": "src/research/lexicons/en-US/scowl-2020.12.07.aff",
+          "fileSha256": "70fe5778717d097ce2f3326baaa5c1e4d2206d81a5a81d3ea8e11c4770806dd5"
+        },
+        {
+          "path": "src/research/lexicons/en-US/scowl-2020.12.07.dic",
+          "fileSha256": "829a043cf078d1e80e886289a13823454977f442a239a859d2133ea61944aa60"
+        },
+        {
+          "path": "src/research/lexicons/en-US/ushyphmax-2005-05-30.tex",
+          "fileSha256": "f4ffcd96c5cbc886bdad23f95dcae8edc3cd3620eae62f7946eceda97c4e68f8"
+        },
+        {
+          "path": "src/research/model-consultation-binding.ts",
+          "fileSha256": "02db98e266299f7374c4c410d4f1976e63f73e07b42ff40fefaa01d426125809"
+        },
+        {
+          "path": "src/research/model-fallback-pipeline.ts",
+          "fileSha256": "42d64296aff060585b446f454874d33ee03d8d1b067f7af69ba0532ebbaf94a1"
+        },
+        {
+          "path": "src/research/model-fallback.ts",
+          "fileSha256": "a53803e109f38c762292fbcfaa7eac5270f62a3c4b66ff67a7b290c73e472deb"
+        },
+        {
+          "path": "src/research/note-label.ts",
+          "fileSha256": "dfb33653596c042bc6c738b89892fe6c242a671277571bbc6d2bd0d98273b697"
+        },
+        {
+          "path": "src/research/pdf-browser-runtime.ts",
+          "fileSha256": "e2917db1f3e4b04b1a1cacb08a4f8567c57ea2f4031851efb95649f8fa090211"
+        },
+        {
+          "path": "src/research/pdf-citation-surface.ts",
+          "fileSha256": "c6e355904146eacb85547da211c2a4a3b7d7c6c0ab354d059298f8b718c18566"
+        },
+        {
+          "path": "src/research/pdf-cross-references.ts",
+          "fileSha256": "1ef11c0f94ab68b44906c3e2d850b5d7c1a40fe146bee586cc168e8b387406fc"
+        },
+        {
+          "path": "src/research/pdf-font-text.ts",
+          "fileSha256": "d63d9558d6d0c727ca7067add70330248b281ed3b168559567301c6b66c5c678"
+        },
+        {
+          "path": "src/research/pdf-hyphenation.ts",
+          "fileSha256": "404b786fa9d2a664f9218ed935f6adf690808e20e49f23779c7956d1c5154ed5"
+        },
+        {
+          "path": "src/research/pdf-inline-script-integrity.ts",
+          "fileSha256": "4b579172f1e1d5ac4d26b6f800081ef6393854c46664cbaf45e4dcdb8cc755b6"
+        },
+        {
+          "path": "src/research/pdf-language.ts",
+          "fileSha256": "39a4963ba146e45f07353593861ff3828eed9f9f4519a4fabde6536e13b0eb51"
+        },
+        {
+          "path": "src/research/pdf-layout.ts",
+          "fileSha256": "c6d93ceda15592f679a5953d06571373fd2abf9b1716e80663a0d0b4fa72cc04"
+        },
+        {
+          "path": "src/research/pdf-lines.ts",
+          "fileSha256": "a1327a743c2f8218283a89d58222fd8f8aeca3436f5735e5ad097b66b65e3f80"
+        },
+        {
+          "path": "src/research/pdf-links.ts",
+          "fileSha256": "92f5493f0430ff2c766129c2e616dfae00d185ea2c411081c9ad6cff9a1c7d32"
+        },
+        {
+          "path": "src/research/pdf-note-classifier.ts",
+          "fileSha256": "4088b719905ce33152830174914ac904d71b9df78ef4fd737e7d4cbc0cc41871"
+        },
+        {
+          "path": "src/research/pdf-ocr.ts",
+          "fileSha256": "4059736af4289ed7f2f533017171712ad1a09c075efff860b49a147499685afa"
+        },
+        {
+          "path": "src/research/pdf-page-crop.ts",
+          "fileSha256": "61763b97ce7f99a0abcfb42680422712f027e8ddca6089d151d768c7a04d58d3"
+        },
+        {
+          "path": "src/research/pdf-quality.ts",
+          "fileSha256": "610dbc761c52a638e033164c1eeaa1c25a4fbe4e82461490e0402ddf7af5dcdf"
+        },
+        {
+          "path": "src/research/pdf-regions.ts",
+          "fileSha256": "230101d26fa23505c104758fe86e55246893739fe0dc4fcd83c0073c3094237a"
+        },
+        {
+          "path": "src/research/pdf-scholarly-label.ts",
+          "fileSha256": "e63075933b2b3d6bedbd37529303e8ae6b2395714fb313d7734ab826675b52ba"
+        },
+        {
+          "path": "src/research/pdf-table-detection.ts",
+          "fileSha256": "151b926412aadad1eef6c050e1efc88d079f5402a3cf4735eb47976d59c955e8"
+        },
+        {
+          "path": "src/research/pdf-table-scope.ts",
+          "fileSha256": "3614978bc6c2c94313901a0ef928455628b270b03e3004eae8a39b8e8346f490"
+        },
+        {
+          "path": "src/research/pdf-text-paint.ts",
+          "fileSha256": "8506ac8b23de1685ea4a6dffcfa40acf8dae7d398747015542e886aec5657585"
+        },
+        {
+          "path": "src/research/pdf-visual-order.ts",
+          "fileSha256": "409596ce176170ec555d176aa4f9ef5b1ba618fc57fc62a1651688e564253822"
+        },
+        {
+          "path": "src/research/pdf-visual-validation.ts",
+          "fileSha256": "e26a0f95d0a153b4c722b8e25875e92fab04cba880f7dcdb34cd1e020ef55504"
+        },
+        {
+          "path": "src/research/pdf-visuals.ts",
+          "fileSha256": "6795b8868e7dd46545e4a7f8461e4b6331e94f5f31c5fc46f32184b1147b4e6c"
+        },
+        {
+          "path": "src/research/pdf.ts",
+          "fileSha256": "10fe0941cfaeb9fe0c90ae887eec92ddf4a45ad8be31cc406f6bb917081db6eb"
+        },
+        {
+          "path": "src/research/publication-integrity.ts",
+          "fileSha256": "34e799a2649491c13bb4aac0f1cfca730398802342be7e5cc9435a7a0a821fd6"
+        },
+        {
+          "path": "src/research/publication-resource-limits.ts",
+          "fileSha256": "6678dbe5f0f76c7c3f25d5f793b0775cc60e250216deabdcb097df2047877788"
+        },
+        {
+          "path": "src/research/semantic-table.ts",
+          "fileSha256": "077cecbe518476b9f6aa4f4f45ef7780ec5ced665966b9a7328a883b48f86dfc"
+        },
+        {
+          "path": "src/research/sha256-sync.ts",
+          "fileSha256": "096873bf573fa87872c28837ed120ab5560c35ff12b5842b88ce987ca8e891c6"
+        },
+        {
+          "path": "src/research/table-candidate-provider.ts",
+          "fileSha256": "b77275b39c699e2a698da1f75b0f72c2531e98f95f801142cde603252bc6977b"
+        },
+        {
+          "path": "src/research/target-schema.ts",
+          "fileSha256": "ae501fef726d9f43e9315804e9f9abfaeaec1fd43dbdc04610f2002bdee34aab"
+        },
+        {
+          "path": "src/research/targets.ts",
+          "fileSha256": "6475c6c8b979bba1d8f2278fd1a8e62d05cb13ec07798d063fc33d3a3729a183"
+        },
+        {
+          "path": "src/research/visual-assets.ts",
+          "fileSha256": "d1c133e6e18ee7313816b3763cd983eb68a522405e09201448c18d5c9fb895b1"
+        },
+        {
+          "path": "src/struct/epub.ts",
+          "fileSha256": "cf7c335b45ff1ff7406a19ccab6daa5da7d166e43cd6844cd0febd0c16f56063"
+        },
+        {
+          "path": "src/struct/ids.ts",
+          "fileSha256": "fefc2d2408acd7fc9c28167dc505af0933d153d73a58d16f5c14dcaa9a11b2d2"
+        },
+        {
+          "path": "src/struct/model-consultation-receipt.ts",
+          "fileSha256": "f46469f8208c9c8e8e4d4d8246140b3c663e2caf6d5c022add8197ca4eed4877"
+        },
+        {
+          "path": "src/struct/sha256.ts",
+          "fileSha256": "7c240348df2f60ec53ee870346ab4d1ac2dfff16b8a32b1464b7b875c1c749f4"
+        },
+        {
+          "path": "src/struct/types.ts",
+          "fileSha256": "01478f8f0277565d70bfdf9acdc07e97db796d03cb5b3db8d2aaeddbd1434df0"
+        },
+        {
+          "path": "src/struct/xhtml.ts",
+          "fileSha256": "de5e69b610131c824cc632b388b0b244f278062ee36bc7f4ac4b8cd5a363cb2b"
+        },
         {
           "path": "tools/pdf-corpus-audit-lib.mjs",
           "fileSha256": "a2ee3f80ad7242c2663097abb0d6523c198cad7e1d9914bc42f8a97145c8f339"
@@ -191,7 +399,7 @@
         },
         {
           "path": "tools/pdf-private-fidelity-epubcheck.mjs",
-          "fileSha256": "2a130ac10e391b19245803da76c0ec20e1fa8f3d56a74c282e48b144cbbeb7db"
+          "fileSha256": "b280c9b6df49347e148bab51f48d6947159921c28a1341dcc339e87a157fdb45"
         },
         {
           "path": "tools/pdf-private-fidelity.mjs",
@@ -204,6 +412,36 @@
       },
       "implementationPlatforms": ["darwin-arm64", "linux-x64-gnu"],
       "implementationPackages": [
+        {
+          "path": "node_modules/@napi-rs/canvas",
+          "name": "@napi-rs/canvas",
+          "version": "0.1.100",
+          "integrity": "sha512-xglYA6q3XO5P3BNJYxVZ1IV7DLVjp1Py6nwag88YntrS+3vKHyYcMqXVS4ZztJmwz2uGvz1FWhI/4LgbR5uQDA==",
+          "treeSha256": "2cf00bacf979cb5269a6ff219788ce22f721b00f9479a48d901ab98c7d4ef534"
+        },
+        {
+          "path": "node_modules/@napi-rs/canvas-darwin-arm64",
+          "name": "@napi-rs/canvas-darwin-arm64",
+          "version": "0.1.100",
+          "integrity": "sha512-2PcswRaC7Ly645DGt88///zuFDhJxJYdKAs1uU3mfk1atYkXufgcgLfBpk6Tm12nCQBaNt1wpybuPZ4qOhTo8A==",
+          "treeSha256": "0aae764844cdedf8916c08aaff9e1e838d34934d5a496764fda9329539ce12d4",
+          "platforms": ["darwin-arm64"]
+        },
+        {
+          "path": "node_modules/@napi-rs/canvas-linux-x64-gnu",
+          "name": "@napi-rs/canvas-linux-x64-gnu",
+          "version": "0.1.100",
+          "integrity": "sha512-1eCvkDCazm7FFhsT7DfGOdSaHgZVK3bt/dSBl5EWHOWmnz+I7j8tPseJqqD81NF+MH21jKUK4wQSDjN0mdhnTg==",
+          "treeSha256": "25daeb86fcedabd34e28ef66f2d79e02e99816c69755ffb04e8cfe6b86ab1f19",
+          "platforms": ["linux-x64-gnu"]
+        },
+        {
+          "path": "node_modules/@nodable/entities",
+          "name": "@nodable/entities",
+          "version": "3.0.0",
+          "integrity": "sha512-8L9xFeTYKhm49xfIypoe2W5wV1m/3Z58kT+7kR9A8OyFxcPduI4VmxaUMQyKYrRjUoLLSXv6EKKID5Tvj9cUVw==",
+          "treeSha256": "42ed2ae02d8d02e220c3f8e8a3ea1216fe8df049d1296f0f323d19a7000b42ac"
+        },
         {
           "path": "node_modules/@oxc-project/types",
           "name": "@oxc-project/types",
@@ -235,6 +473,13 @@
           "treeSha256": "750f47d44886a0d187eda53cb9b52e408dcb2786e66abd297e7c1ca6e15ef440"
         },
         {
+          "path": "node_modules/anynum",
+          "name": "anynum",
+          "version": "1.0.1",
+          "integrity": "sha512-N6//FLET/tXYNM/F6ABca1oH6fWB+KlTt909Le28WMDBk8oaT4vY17DCrwg2MvmuqUKt3Ni4N5dGJ/EoBgcO6A==",
+          "treeSha256": "1a1310105ce795b60625052d6861e0ef6d3b1ef22740130cd1512087576885d5"
+        },
+        {
           "path": "node_modules/bmp-js",
           "name": "bmp-js",
           "version": "0.1.0",
@@ -256,6 +501,20 @@
           "treeSha256": "b4458164ea592d4a56900d24bbac113de3efb37e77d48ae5d0451703f7fa4cc6"
         },
         {
+          "path": "node_modules/fast-xml-builder",
+          "name": "fast-xml-builder",
+          "version": "1.3.0",
+          "integrity": "sha512-F74cZEdCvuw9P41GAC3rod4X04jjWGM1JPEv/GWSqFTWLsdyMSBMBMlm9Hk3GLBgLBbdBNY8yee0pQh2RBVESQ==",
+          "treeSha256": "34019548e7de491ff609c4124e85aca6312b88d01c5e65dc451191a848384c54"
+        },
+        {
+          "path": "node_modules/fast-xml-parser",
+          "name": "fast-xml-parser",
+          "version": "5.10.1",
+          "integrity": "sha512-IEMIf7298kXuZSRFoGfMYrl7is8LpavODgbNz1cwIudv7KwVFnuU+UsMporfq6PD6aXSlawZlARiA3UywCTfMw==",
+          "treeSha256": "d40a24eddb9d64f615f3e679ba2dd51eda3dbb7f003047c62365b89cca27de5c"
+        },
+        {
           "path": "node_modules/fdir",
           "name": "fdir",
           "version": "6.5.0",
@@ -263,11 +522,25 @@
           "treeSha256": "e86f46b8d8e523152f029eb343a0564028112ea179468f9349efc6a532d3a739"
         },
         {
+          "path": "node_modules/fflate",
+          "name": "fflate",
+          "version": "0.8.3",
+          "integrity": "sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA==",
+          "treeSha256": "68b20deef63ab4c81869e09014834c797df4a722c16c6df584da371055b2ea08"
+        },
+        {
           "path": "node_modules/idb-keyval",
           "name": "idb-keyval",
           "version": "6.3.0",
           "integrity": "sha512-um+2dgAWmYsu615EXpWVwSmapJhON0G43t3Ka/EVaohzPQXSMqKEqeDK/oIW3Ow+BXaF2PvSc+oBTFp793A5Ow==",
           "treeSha256": "3f2792ed7d2d37ea27dbe94dbbe852413aad2882e629eb72cfea17d4547bd645"
+        },
+        {
+          "path": "node_modules/is-unsafe",
+          "name": "is-unsafe",
+          "version": "2.0.0",
+          "integrity": "sha512-2LdV822R+wmI86unXA93WCFpL6g+av8ynWk0nrHyJqGop5VoocYsSLFgN8jrfalT6iGeLNM4KXuVSsULP53kEA==",
+          "treeSha256": "3f2da9c00c76463bcad09796cb4276e4db23263729bb34e35a4c4aafabf32258"
         },
         {
           "path": "node_modules/is-url",
@@ -314,6 +587,14 @@
           "treeSha256": "3bc3087410f28a2dfb23890157e6baac16d297ca94f895cb0ac0e94610b36762"
         },
         {
+          "path": "node_modules/node-readable-to-web-readable-stream",
+          "name": "node-readable-to-web-readable-stream",
+          "version": "0.4.2",
+          "integrity": "sha512-/cMZNI34v//jUTrI+UIo4ieHAB5EZRY/+7OmXZgBxaWBMcW2tGdceIw06RFxWxrKZ5Jp3sI2i5TsRo+CBhtVLQ==",
+          "treeSha256": "bbe327bc407f043d9d51987f06938c93f6b27644e72001d78ef76e2664825e97",
+          "platforms": ["darwin-arm64", "linux-x64-gnu"]
+        },
+        {
           "path": "node_modules/opencollective-postinstall",
           "name": "opencollective-postinstall",
           "version": "2.0.3",
@@ -333,6 +614,20 @@
           "version": "8.0.0",
           "integrity": "sha512-zwfzJecQ/Uej6tusMqwAqU/6KL2XaB2VZ2Jg54Je6ahNBGNH6Ek6g3jjNCF0fG9EWQKGZNddNjU5F1ZQn/sBnA==",
           "treeSha256": "ea8883fb64463b6e145b5a0b8a97b8bc62c6453c69839f5fb0ce1e4f434ed8c6"
+        },
+        {
+          "path": "node_modules/path-expression-matcher",
+          "name": "path-expression-matcher",
+          "version": "1.6.2",
+          "integrity": "sha512-enSlaiat05iasnzmgNxRj8reFdj3puY2QpNgP1aPIaVfT6nn9ICuPoFlKHk8EN22HcwewshO+mN2DGbkCEOtqQ==",
+          "treeSha256": "a3d5276357208eb601665327f88805a91042af4e14e1eef7164bff171b765ad4"
+        },
+        {
+          "path": "node_modules/pdfjs-dist",
+          "name": "pdfjs-dist",
+          "version": "5.4.624",
+          "integrity": "sha512-sm6TxKTtWv1Oh6n3C6J6a8odejb5uO4A4zo/2dgkHuC0iu8ZMAXOezEODkVaoVp8nX1Xzr+0WxFJJmUr45hQzg==",
+          "treeSha256": "e5fdeef5efd288ad64d2b12f9d24e6884049920c02c6e8733166ab4a9e465214"
         },
         {
           "path": "node_modules/picocolors",
@@ -382,6 +677,13 @@
           "version": "1.2.1",
           "integrity": "sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==",
           "treeSha256": "657ab0506659f14ea0a575dbb2b39c1e431db08c8b962a132c94633bcd79ae76"
+        },
+        {
+          "path": "node_modules/strnum",
+          "name": "strnum",
+          "version": "2.4.1",
+          "integrity": "sha512-M9eUSMT2dCB2cTNPG7UYj6KuK7RJR2SN2+yCV/fTW3xzTCS6EaGZ5pSMgDIjB7r8zSfTGk+dvvn9rTjpVS9Mwg==",
+          "treeSha256": "db93cb867777e61c09503f6b97d2e1974dd5b3453aefbdcb222248c195ac84bc"
         },
         {
           "path": "node_modules/tesseract.js",
@@ -448,11 +750,25 @@
           "treeSha256": "c3f071f0f1056f7efbda914d336410c42cafb6815762b2a903e9a9af421439e5"
         },
         {
+          "path": "node_modules/xml-naming",
+          "name": "xml-naming",
+          "version": "0.3.0",
+          "integrity": "sha512-ghig2TBE/H11aOVgmahA3MhimvkBr6JIYknH/Dhdk10nXwdbIqBJsbfMxpvFPG8bAw77gN29aQWvKpmVoPlvPQ==",
+          "treeSha256": "eb4729ea753278f68fdf804793c528402f9606543edd7c1ccb78cd2483c5481f"
+        },
+        {
           "path": "node_modules/zlibjs",
           "name": "zlibjs",
           "version": "0.3.1",
           "integrity": "sha512-+J9RrgTKOmlxFSDHo0pI1xM6BLVUv+o0ZT9ANtCxGkjIVCCUdx9alUF8Gm+dGLKbkkkidWIHFDZHDMpfITt4+w==",
           "treeSha256": "ec8473e648cb5a40969bb7137ba0a4a7a2c7bda41d6adc72df2e2767c9cd9328"
+        },
+        {
+          "path": "node_modules/zod",
+          "name": "zod",
+          "version": "3.25.76",
+          "integrity": "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==",
+          "treeSha256": "a400aec61ccc6580dbf66b0b55140ad9d0008a42e897ed0c2eabb319924d258d"
         }
       ]
     },

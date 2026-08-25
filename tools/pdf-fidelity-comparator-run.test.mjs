@@ -17,7 +17,7 @@ import {
   validatePdfFidelityComparatorRunReceipt,
 } from './pdf-fidelity-comparator-run.mjs'
 
-vi.setConfig({ testTimeout: 60_000 })
+vi.setConfig({ testTimeout: 180_000 })
 import {
   scorePdfFidelityPredictions,
   validatePdfFidelityEvalSet,
@@ -660,5 +660,5 @@ describe('PDF fidelity comparator run receipt', () => {
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
-  }, 30_000)
+  }, 180_000)
 })

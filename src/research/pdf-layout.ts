@@ -39,7 +39,6 @@ import {
   classifyPdfNoteMarkers,
   pdfAlternateAuthorYearKeyFromBoundary,
   pdfAuthorYearKey,
-  noteLabelsFromMarkerText,
   pdfBibliographyAuthorYearKey,
   pdfBibliographyFirstAuthorSurname,
   PDF_NOTE_MARKER_CLASSIFICATION_THRESHOLD,
@@ -74,6 +73,14 @@ import {
   splitLeadingStyledHeadingRegion,
 } from './pdf-region-fragments'
 import type { PdfResidualRegionFragment } from './pdf-region-fragments'
+import {
+  canonicalRangeForSource,
+  canonicalTableHyperlinkOccurrences,
+  canonicalTableWithApprovedHyperlinks,
+  canonicalTableWithSemanticInlineRuns,
+  exactCanonicalNoteReferenceAnchor,
+  exactCanonicalRangeForSource,
+} from './pdf-canonical-source-anchors'
 export {
   canonicalVisualSourceInlineMapping,
   canonicalVisualSourceTranscript,
@@ -84,6 +91,11 @@ export {
   residualPdfRegionFragmentsAfterLineConsumption,
 } from './pdf-region-fragments'
 export type { PdfResidualRegionFragment } from './pdf-region-fragments'
+export {
+  canonicalHyperlinkOccurrencesForTable,
+  canonicalTableWithApprovedHyperlinks,
+  canonicalTableWithSemanticInlineRuns,
+} from './pdf-canonical-source-anchors'
 export {
   retainUniqueMonotoneSourceRunAssignment,
   retainUniqueSourceRunAssignmentWithAliases,
@@ -139,8 +151,6 @@ import {
   noteLabelFromText,
   reconstructPageRegions,
 } from './pdf-regions'
-import type { CanonicalTable } from './visual-assets'
-
 export type { PdfDocumentMetadata } from './pdf-publication-metadata'
 
 type RegionBlock = {
@@ -7441,44 +7451,6 @@ type CanonicalInternalHyperlinkSurface = {
   sourceBoxes: NormalizedSourceBox[]
 }
 
-function canonicalRangeForSource(
-  block: RegionBlock,
-  regionId: string,
-  start: number,
-  end: number,
-) {
-  for (const segment of blockSourceSegments(block)) {
-    if (segment.region.id !== regionId) continue
-    const sourceEnd = segment.sourceStart + segment.text.length
-    const overlapStart = Math.max(start, segment.sourceStart)
-    const overlapEnd = Math.min(end, sourceEnd)
-    if (overlapStart >= overlapEnd) continue
-    return {
-      start: segment.canonicalStart + overlapStart - segment.sourceStart,
-      end: segment.canonicalStart + overlapEnd - segment.sourceStart,
-    }
-  }
-  return null
-}
-
-function exactCanonicalRangeForSource(
-  block: RegionBlock,
-  regionId: string,
-  start: number,
-  end: number,
-) {
-  if (start < 0 || start >= end) return null
-  const containsExactRange = blockSourceSegments(block).some(
-    (segment) =>
-      segment.region.id === regionId &&
-      segment.sourceStart <= start &&
-      segment.sourceStart + segment.text.length >= end,
-  )
-  if (!containsExactRange) return null
-  const range = canonicalRangeForSource(block, regionId, start, end)
-  return range && range.end - range.start === end - start ? range : null
-}
-
 function canonicalCitationHyperlinkSurfaces(
   relationships: readonly PdfCitationRelationship[],
   blocks: readonly RegionBlock[],
@@ -8455,310 +8427,6 @@ export function resolveCanonicalHyperlinkObligations({
       mapped: mappedAnnotationCount,
     } satisfies HyperlinkMappingLedger,
   }
-}
-
-export function canonicalHyperlinkOccurrencesForTable(table: CanonicalTable) {
-  return table.rows.flatMap((row) =>
-    row.cells.flatMap((cell) =>
-      (cell.inlineRuns ?? []).flatMap((run) =>
-        run.annotationId && run.href
-          ? [{ annotationId: run.annotationId, url: run.href }]
-          : [],
-      ),
-    ),
-  )
-}
-
-function canonicalTableHyperlinkOccurrences(
-  relationships: PdfVisualRelationship[],
-  drafts: ReadonlyMap<string, CanonicalVisualDraft>,
-  tablesByAssetId: ReadonlyMap<string, CanonicalTable>,
-) {
-  return relationships.flatMap((relationship) => {
-    if (!drafts.has(relationship.id)) return []
-    const table = relationship.assetIds
-      .map((assetId) => tablesByAssetId.get(assetId))
-      .find((candidate) => candidate !== undefined)
-    if (!table) return []
-    return canonicalHyperlinkOccurrencesForTable(table)
-  })
-}
-
-export function canonicalTableWithApprovedHyperlinks(
-  table: CanonicalTable,
-  approvedAnnotationIds: ReadonlySet<string>,
-): CanonicalTable {
-  return {
-    rows: table.rows.map((row) => ({
-      cells: row.cells.map((cell) => {
-        const removedAnnotationCount = (cell.inlineRuns ?? []).filter(
-          (run) =>
-            run.annotationId !== undefined &&
-            !approvedAnnotationIds.has(run.annotationId),
-        ).length
-        const inlineRuns = (cell.inlineRuns ?? []).flatMap((run) => {
-          if (
-            !run.annotationId ||
-            approvedAnnotationIds.has(run.annotationId)
-          ) {
-            return [run]
-          }
-          const { annotationId: _annotationId, href: _href, ...rest } = run
-          return rest.bold || rest.italic || rest.verticalAlign ? [rest] : []
-        })
-        return {
-          ...cell,
-          ...(inlineRuns.length > 0 ? { inlineRuns } : {}),
-          ...(cell.inlineMapping
-            ? {
-                inlineMapping: {
-                  expected: Math.max(
-                    0,
-                    cell.inlineMapping.expected - removedAnnotationCount,
-                  ),
-                  mapped: Math.max(
-                    0,
-                    cell.inlineMapping.mapped - removedAnnotationCount,
-                  ),
-                },
-              }
-            : {}),
-        }
-      }),
-    })),
-  }
-}
-
-/**
- * Project visual-transcript citations into their unique source-backed table
- * cells. Repeated marker text remains unresolved unless target-specific
- * source geometry selects exactly one cell.
- */
-export function canonicalTableWithSemanticInlineRuns({
-  table,
-  sourceText,
-  inlineRuns,
-  citationRelationships,
-  noteReferences = [],
-}: {
-  table: CanonicalTable
-  sourceText: string
-  inlineRuns: readonly CanonicalInlineRun[]
-  citationRelationships: readonly PdfCitationRelationship[]
-  noteReferences?: readonly {
-    id: string
-    label: string
-    target: string | null
-    start: number
-    end: number
-    confidence: number
-    status: PdfNoteRelationship['status']
-    referenceRegionId: string
-    sourceBoxes: readonly NormalizedSourceBox[]
-  }[]
-}): CanonicalTable {
-  const citationsById = new Map(
-    citationRelationships.map((relationship) => [
-      relationship.id,
-      relationship,
-    ]),
-  )
-  const projections = inlineRuns.flatMap((run) => {
-    if (
-      run.semanticRole !== 'citation' ||
-      !run.relationshipId ||
-      run.start < 0 ||
-      run.start >= run.end ||
-      run.end > sourceText.length
-    ) {
-      return []
-    }
-    const relationship = citationsById.get(run.relationshipId)
-    if (!relationship) return []
-    const marker = sourceText.slice(run.start, run.end)
-    if (!marker) return []
-    const targetBoxes =
-      relationship.targets?.flatMap((target) => target.sourceBoxes) ?? []
-    const proofBoxes =
-      targetBoxes.length > 0 ? targetBoxes : relationship.sourceBoxes
-    const candidates = table.rows.flatMap((row, rowIndex) =>
-      row.cells.flatMap((cell, cellIndex) => {
-        const start = cell.text.indexOf(marker)
-        if (
-          start < 0 ||
-          cell.text.indexOf(marker, start + 1) >= 0 ||
-          !cell.sourceRuns?.length ||
-          proofBoxes.length === 0 ||
-          !proofBoxes.every((box) =>
-            cell.sourceRuns!.some(
-              (sourceRun) =>
-                sourceRun.regionId === relationship.referenceRegionId &&
-                boxesOverlap(box, sourceRun.box),
-            ),
-          )
-        ) {
-          return []
-        }
-        return [{ rowIndex, cellIndex, start, end: start + marker.length }]
-      }),
-    )
-    return candidates.length === 1 ? [{ run, ...candidates[0] }] : []
-  })
-  const projectedNotes = noteReferences.flatMap((reference) => {
-    if (
-      reference.start < 0 ||
-      reference.start >= reference.end ||
-      reference.end > sourceText.length ||
-      reference.sourceBoxes.length === 0
-    ) {
-      return []
-    }
-    const marker = sourceText.slice(reference.start, reference.end)
-    if (!marker) return []
-    const candidates = table.rows.flatMap((row, rowIndex) =>
-      row.cells.flatMap((cell, cellIndex) => {
-        const start = cell.text.indexOf(marker)
-        if (
-          start < 0 ||
-          cell.text.indexOf(marker, start + 1) >= 0 ||
-          !cell.sourceRuns?.length ||
-          !reference.sourceBoxes.every((box) =>
-            cell.sourceRuns!.some(
-              (sourceRun) =>
-                sourceRun.regionId === reference.referenceRegionId &&
-                boxesOverlap(box, sourceRun.box),
-            ),
-          )
-        ) {
-          return []
-        }
-        return [{ rowIndex, cellIndex, start, end: start + marker.length }]
-      }),
-    )
-    return candidates.length === 1 ? [{ reference, ...candidates[0] }] : []
-  })
-  if (projections.length === 0 && projectedNotes.length === 0) return table
-  return {
-    rows: table.rows.map((row, rowIndex) => ({
-      cells: row.cells.map((cell, cellIndex) => {
-        const semanticRuns = projections
-          .filter(
-            (projection) =>
-              projection.rowIndex === rowIndex &&
-              projection.cellIndex === cellIndex,
-          )
-          .map(({ run, start, end }) => ({ ...run, start, end }))
-        const cellNotes = projectedNotes.filter(
-          (projection) =>
-            projection.rowIndex === rowIndex &&
-            projection.cellIndex === cellIndex,
-        )
-        if (semanticRuns.length === 0 && cellNotes.length === 0) return cell
-        const matchedNotes = cellNotes.flatMap(({ reference, start, end }) =>
-          reference.status === 'matched' && reference.target
-            ? [
-                {
-                  id: reference.id,
-                  label: reference.label,
-                  target: reference.target,
-                  start,
-                  end,
-                  confidence: reference.confidence,
-                },
-              ]
-            : [],
-        )
-        const unresolvedNoteRuns = cellNotes.flatMap(
-          ({ reference, start, end }) =>
-            reference.status !== 'matched'
-              ? [
-                  {
-                    start,
-                    end,
-                    relationshipId: reference.id,
-                    semanticRole: 'note-reference' as const,
-                  },
-                ]
-              : [],
-        )
-        return {
-          ...cell,
-          ...(matchedNotes.length > 0
-            ? {
-                noteReferences: [
-                  ...(cell.noteReferences ?? []),
-                  ...matchedNotes,
-                ],
-              }
-            : {}),
-          ...(semanticRuns.length > 0 || unresolvedNoteRuns.length > 0
-            ? {
-                inlineRuns: [
-                  ...(cell.inlineRuns ?? []),
-                  ...semanticRuns,
-                  ...unresolvedNoteRuns,
-                ].sort(
-                  (left, right) =>
-                    left.start - right.start ||
-                    left.end - right.end ||
-                    String(left.relationshipId ?? '').localeCompare(
-                      String(right.relationshipId ?? ''),
-                    ),
-                ),
-              }
-            : {}),
-        }
-      }),
-    })),
-  }
-}
-
-function exactCanonicalNoteReferenceAnchor(
-  reference: NoteReferenceDraft,
-  canonicalBlocks: RegionBlock[],
-  renderedAuthorReferenceIds: ReadonlySet<string>,
-): NoteReferenceDraft['canonicalAnchor'] {
-  if (
-    reference.start < 0 ||
-    reference.end <= reference.start ||
-    reference.end > reference.region.text.length
-  ) {
-    return null
-  }
-  const sourceMarker = reference.region.text.slice(
-    reference.start,
-    reference.end,
-  )
-  const sourceLabels =
-    noteLabelsFromMarkerText(sourceMarker).map(normalizedNoteLabel)
-  const expectedLabels = reference.label
-    .split(',')
-    .map(normalizedNoteLabel)
-    .filter(Boolean)
-  if (
-    sourceLabels.length !== expectedLabels.length ||
-    sourceLabels.some((label, index) => label !== expectedLabels[index])
-  ) {
-    return null
-  }
-  if (renderedAuthorReferenceIds.has(reference.id)) {
-    return 'author' in reference && typeof reference.author === 'string'
-      ? { kind: 'author', author: reference.author }
-      : null
-  }
-  const candidates = canonicalBlocks.flatMap((block) => {
-    if (!block.nodeId) return []
-    const range = exactCanonicalRangeForSource(
-      block,
-      reference.region.id,
-      reference.start,
-      reference.end,
-    )
-    return range && block.text.slice(range.start, range.end) === sourceMarker
-      ? [{ kind: 'node' as const, nodeId: block.nodeId, ...range }]
-      : []
-  })
-  return candidates.length === 1 ? candidates[0] : null
 }
 
 function sourceInlineRuns(

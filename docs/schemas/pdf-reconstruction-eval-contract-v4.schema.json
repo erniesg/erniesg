@@ -3,58 +3,126 @@
   "$id": "https://ernie.sg/schemas/pdf-reconstruction-eval-contract-4.0.0.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "id", "privacy", "extends", "runtimeBinding"],
+  "required": [
+    "schemaVersion",
+    "id",
+    "privacy",
+    "extends",
+    "runtimeBinding"
+  ],
   "properties": {
-    "schemaVersion": { "const": "4.0.0" },
-    "id": { "const": "scholarly-pdf-reconstruction-runtime-governance-2026-07-v4" },
-    "privacy": { "const": "public-identities-hashes-runtime-governance-no-source-content-or-local-paths" },
+    "schemaVersion": {
+      "const": "4.0.0"
+    },
+    "id": {
+      "const": "scholarly-pdf-reconstruction-runtime-governance-2026-07-v4"
+    },
+    "privacy": {
+      "const": "public-identities-hashes-runtime-governance-no-source-content-or-local-paths"
+    },
     "extends": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "path", "fileSha256"],
+      "required": [
+        "id",
+        "path",
+        "fileSha256"
+      ],
       "properties": {
-        "id": { "const": "scholarly-pdf-reconstruction-eval-governance-2026-07-v1" },
-        "path": { "const": "benchmarks/pdf/reconstruction-eval-contract-v1.json" },
-        "fileSha256": { "const": "a9710abfd82f9ae9e301ed04752e877b3425d98a3f6e8a02649bc0a150068e3f" }
+        "id": {
+          "const": "scholarly-pdf-reconstruction-eval-governance-2026-07-v1"
+        },
+        "path": {
+          "const": "benchmarks/pdf/reconstruction-eval-contract-v1.json"
+        },
+        "fileSha256": {
+          "const": "a9710abfd82f9ae9e301ed04752e877b3425d98a3f6e8a02649bc0a150068e3f"
+        }
       }
     },
     "runtimeBinding": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "status", "kind", "implementation", "implementationSha256", "implementationComponents", "implementationPackageLock", "implementationPlatforms", "implementationPackages", "implementationPlatformTreeEvidence", "test", "testSha256", "calibration"],
+      "required": [
+        "id",
+        "status",
+        "kind",
+        "implementation",
+        "implementationSha256",
+        "implementationComponents",
+        "implementationPackageLock",
+        "implementationPlatforms",
+        "implementationPackages",
+        "test",
+        "testSha256",
+        "calibration"
+      ],
       "properties": {
-        "id": { "const": "profile-artifact-validity" },
-        "status": { "const": "available" },
-        "kind": { "const": "code" },
-        "implementation": { "const": "tools/pdf-private-fidelity.mjs" },
-        "implementationSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "id": {
+          "const": "profile-artifact-validity"
+        },
+        "status": {
+          "const": "available"
+        },
+        "kind": {
+          "const": "code"
+        },
+        "implementation": {
+          "const": "tools/pdf-private-fidelity.mjs"
+        },
+        "implementationSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
         "implementationComponents": {
           "type": "array",
           "minItems": 1,
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["path", "fileSha256"],
+            "required": [
+              "path",
+              "fileSha256"
+            ],
             "properties": {
-              "path": { "type": "string", "pattern": "^(src|tools)/[A-Za-z0-9._/+:-]+$" },
-              "fileSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+              "path": {
+                "type": "string",
+                "pattern": "^(src|tools)/[A-Za-z0-9._/+:-]+$"
+              },
+              "fileSha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
             }
           }
         },
         "implementationPackageLock": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["path", "fileSha256"],
+          "required": [
+            "path",
+            "fileSha256"
+          ],
           "properties": {
-            "path": { "const": "package-lock.json" },
-            "fileSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+            "path": {
+              "const": "package-lock.json"
+            },
+            "fileSha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
           }
         },
         "implementationPlatforms": {
           "type": "array",
           "minItems": 2,
           "uniqueItems": true,
-          "items": { "enum": ["darwin-arm64", "linux-x64-gnu"] }
+          "items": {
+            "enum": [
+              "darwin-arm64",
+              "linux-x64-gnu"
+            ]
+          }
         },
         "implementationPackages": {
           "type": "array",
@@ -62,34 +130,58 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["path", "name", "version", "integrity", "treeSha256"],
+            "required": [
+              "path",
+              "name",
+              "version",
+              "integrity",
+              "treeSha256"
+            ],
             "properties": {
-              "path": { "type": "string", "pattern": "^node_modules/(?:@?[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+$" },
-              "name": { "type": "string", "pattern": "^(?:@[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+$" },
-              "version": { "type": "string", "minLength": 1 },
-              "integrity": { "type": "string", "pattern": "^sha512-[A-Za-z0-9+/]+={0,2}$" },
-              "treeSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+              "path": {
+                "type": "string",
+                "pattern": "^node_modules/(?:@?[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+$"
+              },
+              "name": {
+                "type": "string",
+                "pattern": "^(?:@[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+$"
+              },
+              "version": {
+                "type": "string",
+                "minLength": 1
+              },
+              "integrity": {
+                "type": "string",
+                "pattern": "^sha512-[A-Za-z0-9+/]+={0,2}$"
+              },
+              "treeSha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
               "platforms": {
                 "type": "array",
                 "minItems": 1,
                 "uniqueItems": true,
-                "items": { "enum": ["darwin-arm64", "linux-x64-gnu"] }
+                "items": {
+                  "enum": [
+                    "darwin-arm64",
+                    "linux-x64-gnu"
+                  ]
+                }
               }
             }
           }
         },
-        "implementationPlatformTreeEvidence": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["path", "fileSha256"],
-          "properties": {
-            "path": { "const": "benchmarks/pdf/reconstruction-runtime-package-trees-v4.json" },
-            "fileSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
-          }
+        "test": {
+          "const": "tools/pdf-private-fidelity.test.mjs"
         },
-        "test": { "const": "tools/pdf-private-fidelity.test.mjs" },
-        "testSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-        "calibration": { "type": "null" }
+        "testSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "calibration": {
+          "type": "null"
+        }
       }
     }
   }

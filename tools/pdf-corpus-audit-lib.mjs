@@ -259,10 +259,8 @@ export async function packageContentsIdentity(directory) {
 
 async function gitRawOutput(arguments_, repositoryRoot = REPOSITORY_ROOT) {
   const environment = { ...process.env }
-  if (resolve(repositoryRoot) !== resolve(REPOSITORY_ROOT)) {
-    for (const key of REPOSITORY_SCOPED_GIT_ENVIRONMENT_KEYS) {
-      delete environment[key]
-    }
+  for (const key of REPOSITORY_SCOPED_GIT_ENVIRONMENT_KEYS) {
+    delete environment[key]
   }
   const { stdout } = await execFileAsync(
     'git',
@@ -279,10 +277,8 @@ async function gitRawOutput(arguments_, repositoryRoot = REPOSITORY_ROOT) {
 
 async function gitRawBytes(arguments_, repositoryRoot = REPOSITORY_ROOT) {
   const environment = { ...process.env }
-  if (resolve(repositoryRoot) !== resolve(REPOSITORY_ROOT)) {
-    for (const key of REPOSITORY_SCOPED_GIT_ENVIRONMENT_KEYS) {
-      delete environment[key]
-    }
+  for (const key of REPOSITORY_SCOPED_GIT_ENVIRONMENT_KEYS) {
+    delete environment[key]
   }
   const { stdout } = await execFileAsync(
     'git',

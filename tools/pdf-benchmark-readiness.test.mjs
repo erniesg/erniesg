@@ -75,8 +75,7 @@ function implementationCompositeSha256(metric) {
         platforms: [...metric.implementationPlatforms].sort(),
         ...(metric.implementationPlatformTreeEvidence
           ? {
-              platformTreeEvidence:
-                metric.implementationPlatformTreeEvidence,
+              platformTreeEvidence: metric.implementationPlatformTreeEvidence,
             }
           : {}),
         packages: metric.implementationPackages
@@ -827,16 +826,19 @@ describe('PDF benchmark readiness registry', () => {
   it('retains pinned v1/v2 validation and rejects unknown registry versions', async () => {
     const legacy = await readRegistry()
     legacy.schemaVersion = '1.0.0'
-    const metric = legacy.metricImplementations.find(
-      (item) => item.id === 'package-integrity',
-    )
-    delete metric.implementationComponents
-    delete metric.implementationPackageLock
-    delete metric.implementationPlatforms
-    delete metric.implementationPackages
-    metric.implementationSha256 = createHash('sha256')
-      .update(await readFile(metric.implementation))
-      .digest('hex')
+    for (const metric of legacy.metricImplementations) {
+      if (metric.status !== 'available') continue
+      delete metric.implementationComponents
+      delete metric.implementationPackageLock
+      delete metric.implementationPlatforms
+      delete metric.implementationPackages
+      metric.implementationSha256 = createHash('sha256')
+        .update(await readFile(metric.implementation))
+        .digest('hex')
+      metric.testSha256 = createHash('sha256')
+        .update(await readFile(metric.test))
+        .digest('hex')
+    }
     await expect(
       createPdfBenchmarkReadinessReceipt({
         registryPath: await writeRegistry(legacy),
@@ -1284,7 +1286,7 @@ describe('PDF benchmark readiness registry', () => {
     }
   })
 
-  it('verifies every platform claimed by a package implementation binding', async () => {
+  it('requires the active native platform in a package implementation binding', async () => {
     const { repositoryRoot, metric } =
       await temporaryPackageImplementationFixture()
     try {
@@ -1293,7 +1295,7 @@ describe('PDF benchmark readiness registry', () => {
       )
         ? 'linux-x64-gnu'
         : 'darwin-arm64'
-      metric.implementationPlatforms.push(foreignPlatform)
+      metric.implementationPlatforms = [foreignPlatform]
       metric.implementationSha256 = implementationCompositeSha256(metric)
 
       await expect(
@@ -1307,7 +1309,7 @@ describe('PDF benchmark readiness registry', () => {
     }
   })
 
-  it('requires recorded per-platform tree evidence when foreign package trees are unavailable', async () => {
+  it('never accepts static foreign package-tree evidence as native verification', async () => {
     const { repositoryRoot, metric } =
       await temporaryPackageImplementationFixture()
     try {
@@ -1329,19 +1331,9 @@ describe('PDF benchmark readiness registry', () => {
       ].sort()
       metric.implementationPackages = [
         ...metric.implementationPackages,
-        ...foreignClosure.packages.filter(
-          ({ path }) => !knownPaths.has(path),
-        ),
+        ...foreignClosure.packages.filter(({ path }) => !knownPaths.has(path)),
       ].sort((left, right) => left.path.localeCompare(right.path))
-      const evidencePath = await writePackageTreeEvidence(metric, repositoryRoot)
-      await Promise.all(
-        foreignClosure.packages
-          .filter(
-            ({ path, platforms }) =>
-              platforms?.includes(foreignPlatform) && !knownPaths.has(path),
-          )
-          .map(({ path }) => rm(join(repositoryRoot, path), { recursive: true })),
-      )
+      metric.implementationSha256 = implementationCompositeSha256(metric)
 
       await expect(
         verifyMetricImplementationBinding(metric, {
@@ -1349,7 +1341,46 @@ describe('PDF benchmark readiness registry', () => {
           requirePackages: true,
         }),
       ).resolves.toBeUndefined()
-      await rm(evidencePath)
+      await writePackageTreeEvidence(metric, repositoryRoot)
+      await expect(
+        verifyMetricImplementationBinding(metric, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    } finally {
+      await rm(repositoryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects static foreign package-tree evidence as a native attestation', async () => {
+    const { repositoryRoot, metric } =
+      await temporaryPackageImplementationFixture()
+    try {
+      const foreignPlatform = metric.implementationPlatforms[0].startsWith(
+        'darwin',
+      )
+        ? 'linux-x64-gnu'
+        : 'darwin-arm64'
+      const foreignClosure = await deriveExecutablePackageClosure(
+        metric.implementation,
+        { repositoryRoot, platform: foreignPlatform },
+      )
+      metric.implementationPlatforms = [
+        ...metric.implementationPlatforms,
+        foreignPlatform,
+      ].sort()
+      metric.implementationPackages = [
+        ...metric.implementationPackages,
+        ...foreignClosure.packages.filter(
+          ({ path }) =>
+            !metric.implementationPackages.some(
+              ({ path: knownPath }) => path === knownPath,
+            ),
+        ),
+      ].sort((left, right) => left.path.localeCompare(right.path))
+      await writePackageTreeEvidence(metric, repositoryRoot)
+
       await expect(
         verifyMetricImplementationBinding(metric, {
           repositoryRoot,
@@ -2077,5 +2108,38 @@ describe('PDF benchmark readiness registry', () => {
     expect(result.stdout).toBe('')
     expect(result.stderr).toBe('PDF_BENCHMARK_READINESS_FAILED\n')
     expect(result.stderr).not.toContain('private-user')
+  })
+
+  it('fails closed for a weaker declared registry schema when --require-ready omits --schema', async () => {
+    const legacy = await readRegistry()
+    legacy.schemaVersion = '1.0.0'
+    for (const metric of legacy.metricImplementations) {
+      if (metric.status !== 'available') continue
+      delete metric.implementationComponents
+      delete metric.implementationPackageLock
+      delete metric.implementationPlatforms
+      delete metric.implementationPackages
+      metric.implementationSha256 = createHash('sha256')
+        .update(await readFile(metric.implementation))
+        .digest('hex')
+      metric.testSha256 = createHash('sha256')
+        .update(await readFile(metric.test))
+        .digest('hex')
+    }
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        readinessToolPath,
+        '--registry',
+        await writeRegistry(legacy),
+        '--require-ready',
+      ],
+      { encoding: 'utf8' },
+    )
+
+    expect(result.status).toBe(1)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).toBe('PDF_BENCHMARK_NONCANONICAL_PROMOTION_SCHEMA\n')
   })
 })

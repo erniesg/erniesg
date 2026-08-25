@@ -1040,9 +1040,6 @@
               "type": "null"
             }
           ]
-        },
-        "implementationPlatformTreeEvidence": {
-          "$ref": "#/$defs/fileBinding"
         }
       },
       "allOf": [
@@ -1062,8 +1059,7 @@
               "implementationComponents",
               "implementationPackageLock",
               "implementationPlatforms",
-              "implementationPackages",
-              "implementationPlatformTreeEvidence"
+              "implementationPackages"
             ],
             "properties": {
               "implementation": {
@@ -1089,9 +1085,6 @@
               },
               "testSha256": {
                 "$ref": "#/$defs/sha256"
-              },
-              "implementationPlatformTreeEvidence": {
-                "$ref": "#/$defs/fileBinding"
               }
             }
           }

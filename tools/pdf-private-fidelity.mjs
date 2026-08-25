@@ -1082,6 +1082,20 @@ function validPrivateEpubCheck(value, allowLegacyEpubCheck = false) {
   }
 }
 
+function statusOnlyPassedEpubCheck(value) {
+  return value?.status === 'passed' && Object.keys(value).length === 1
+}
+
+function hasHistoricalStatusOnlyEpubCheck(receipt) {
+  return Boolean(
+    receipt?.runs?.some((run) =>
+      run?.artifacts?.some((artifact) =>
+        statusOnlyPassedEpubCheck(artifact?.epubCheck),
+      ),
+    ),
+  )
+}
+
 export function createPrivateArtifactEvidence(
   epub,
   inspection,
@@ -2697,8 +2711,14 @@ function invalidPrivateFidelityBaseline() {
 
 function validatePrivateFidelityReceipt(receipt, requireAcceptedBaseline) {
   try {
+    // Schema 1.9.0 is frozen: before runtime attestation was introduced it
+    // permitted a status-only EPUBCheck result.  That historic record shape
+    // remains readable only as a baseline, never as newly created evidence.
+    const historicalSchema =
+      requireAcceptedBaseline &&
+      ['1.8.0', '1.9.0'].includes(receipt?.schemaVersion)
     const legacySchema =
-      requireAcceptedBaseline && receipt?.schemaVersion === '1.8.0'
+      historicalSchema && hasHistoricalStatusOnlyEpubCheck(receipt)
     if (
       !hasExactKeys(receipt, [
         'schemaVersion',
@@ -2711,7 +2731,7 @@ function validatePrivateFidelityReceipt(receipt, requireAcceptedBaseline) {
         'passed',
       ]) ||
       (receipt.schemaVersion !== PDF_PRIVATE_FIDELITY_SCHEMA_VERSION &&
-        !legacySchema) ||
+        receipt.schemaVersion !== '1.8.0') ||
       receipt.privacy !== PDF_PRIVATE_FIDELITY_PRIVACY ||
       !hasExactKeys(receipt.source, ['paperId', 'sha256', 'byteLength']) ||
       !/^[A-Za-z0-9._-]+$/.test(receipt.source.paperId) ||
@@ -2775,9 +2795,9 @@ function validatePrivateFidelityReceipt(receipt, requireAcceptedBaseline) {
       ) ||
       !validBaselineComparison(receipt.baselineComparison) ||
       !Array.isArray(receipt.runs) ||
+      (legacySchema && receipt.execution.epubCheckRequired) ||
       receipt.runs.some(
-        (run) =>
-          !validRunReceipt(run, requireAcceptedBaseline, legacySchema),
+        (run) => !validRunReceipt(run, requireAcceptedBaseline, legacySchema),
       ) ||
       typeof receipt.passed !== 'boolean'
     ) {
@@ -3005,7 +3025,7 @@ export function comparePrivateFidelityReceipts(
       canonicalJsonHash(candidate.execution.profiles) &&
     baseline.execution.epubCheckRequired ===
       candidate.execution.epubCheckRequired
-  const migrateLegacyEpubCheck = baseline.schemaVersion === '1.8.0'
+  const migrateLegacyEpubCheck = hasHistoricalStatusOnlyEpubCheck(baseline)
   const invariantRunsMatch =
     canonicalJsonHash(
       baseline.runs.map((run) =>

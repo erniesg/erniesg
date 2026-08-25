@@ -52,7 +52,7 @@ const FROZEN_ARTIFACT_SHA256 = {
   },
   runtime: {
     contract:
-      'e75533956434cda5bee7367da7e109fe2cb79b8d7dfbf03321d9c969865f8ecf',
+      '9b5c688d654c7f756b02628a58776e900076fee5445851a06c1383db7c039eee',
   },
 }
 

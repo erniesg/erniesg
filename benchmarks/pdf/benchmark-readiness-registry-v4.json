@@ -283,9 +283,9 @@
       "status": "available",
       "kind": "code",
       "implementation": "tools/pdf-private-fidelity.mjs",
-      "implementationSha256": "a06ef61f3160d85e0e16c3d0498396677870c0a9c5ca1b5cb4e8a8525cac3bca",
+      "implementationSha256": "ab9c031c99048f70b62b25cde8d2ed3c01fa0a1d9c795f70efae44f0b51f230c",
       "test": "tools/pdf-private-fidelity.test.mjs",
-      "testSha256": "f0391caeb7a9321d8a5fb600b44bea7a8ad987c1b2728b187047f79b2140db6c",
+      "testSha256": "206fd0a1909bf1280e9adb404999ab5d600502baba29ad47cce0cb6528fe33bb",
       "calibration": null,
       "implementationComponents": [
         {
@@ -498,7 +498,7 @@
         },
         {
           "path": "tools/pdf-corpus-audit-lib.mjs",
-          "fileSha256": "3ac86a0e2fd13f611640702efaa1d879088cab83a93c996e7eb814fedb54d411"
+          "fileSha256": "573fb87098318d1c56e17af0267174cdc961ce6fa42162fed2b76323eb457202"
         },
         {
           "path": "tools/pdf-corpus-audit-safety.mjs",
@@ -526,7 +526,7 @@
         },
         {
           "path": "tools/pdf-private-fidelity.mjs",
-          "fileSha256": "826c09a104739e05350cecb9923b9ea99032df688f22e71f9993ede3d6b2be88"
+          "fileSha256": "1a81e597e4979f538e9baa6bacf0fde8fc822e29ca710a7e314d1fe61d68df10"
         }
       ],
       "implementationPackageLock": {
@@ -909,11 +909,7 @@
           "integrity": "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==",
           "treeSha256": "a400aec61ccc6580dbf66b0b55140ad9d0008a42e897ed0c2eabb319924d258d"
         }
-      ],
-      "implementationPlatformTreeEvidence": {
-        "path": "benchmarks/pdf/reconstruction-runtime-package-trees-v4.json",
-        "fileSha256": "021ec94c0d3f118f63802813e256df7cc4d111cf3752b6da2c8911c6808ea7d7"
-      }
+      ]
     }
   ]
 }

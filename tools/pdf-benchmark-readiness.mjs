@@ -37,6 +37,7 @@ const V4_SCHEMA_PATH = resolve(
   REPOSITORY_ROOT,
   'docs/schemas/pdf-benchmark-readiness-registry-v4.schema.json',
 )
+const CURRENT_PROMOTION_SCHEMA_PATH = V4_SCHEMA_PATH
 const SCHEMA_BINDINGS = new Map([
   [
     '1.0.0',
@@ -71,7 +72,7 @@ const SCHEMA_BINDINGS = new Map([
       path: V4_SCHEMA_PATH,
       id: 'https://ernie.sg/schemas/pdf-benchmark-readiness-registry-4.0.0.json',
       fileSha256:
-        '1027fd48fdd347c758358fda480940df3fb43ae281430fd9ef4899c2de714e8a',
+        '8740ac7b147167b0b99c69df2e38b0598db7c7f4eff9b3626366d86522669f41',
     },
   ],
 ])
@@ -275,8 +276,7 @@ function metricImplementationCompositeSha256(metric) {
         platforms: [...metric.implementationPlatforms].sort(),
         ...(metric.implementationPlatformTreeEvidence
           ? {
-              platformTreeEvidence:
-                metric.implementationPlatformTreeEvidence,
+              platformTreeEvidence: metric.implementationPlatformTreeEvidence,
             }
           : {}),
         ...(metric.test && metric.testSha256
@@ -1032,7 +1032,9 @@ export async function deriveExecutablePackageClosure(
     if (!isRecord(locked)) invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
     packagePaths.add(packagePath)
     if (conditional) conditionalPackagePaths.add(packagePath)
-    for (const dependencyName of Object.keys(locked.dependencies ?? {}).sort()) {
+    for (const dependencyName of Object.keys(
+      locked.dependencies ?? {},
+    ).sort()) {
       const dependencyPath = lockedDependencyPath(
         packagePath,
         dependencyName,
@@ -1234,6 +1236,8 @@ export async function verifyMetricImplementationBinding(
     const hostPlatform = executablePackagePlatform()
     if (!metric.implementationPlatforms.includes(hostPlatform))
       invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    if (Object.hasOwn(metric, 'implementationPlatformTreeEvidence'))
+      invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
     const expectedPackagesForPlatform = (platform) =>
       metric.implementationPackages
         .filter(
@@ -1245,59 +1249,6 @@ export async function verifyMetricImplementationBinding(
             ? { ...package_, platforms: [platform] }
             : package_,
         )
-    let platformTreeEvidence = null
-    if (metric.implementationPlatforms.length > 1) {
-      const binding = metric.implementationPlatformTreeEvidence
-      if (!binding) invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
-      let evidence
-      try {
-        evidence = JSON.parse(
-          (
-            await verifyRepositoryFileBinding(
-              binding.path,
-              binding.fileSha256,
-              'PDF_BENCHMARK_METRIC_BINDING_MISMATCH',
-              repositoryRoot,
-            )
-          ).toString('utf8'),
-        )
-      } catch {
-        invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
-      }
-      if (
-        !exactKeys(evidence, [
-          'schemaVersion',
-          'kind',
-          'packageLock',
-          'platforms',
-        ]) ||
-        evidence.schemaVersion !== '1.0.0' ||
-        evidence.kind !== 'pdf-benchmark-package-tree-evidence' ||
-        canonicalJson(evidence.packageLock) !==
-          canonicalJson(metric.implementationPackageLock) ||
-        !Array.isArray(evidence.platforms) ||
-        evidence.platforms.length !== metric.implementationPlatforms.length ||
-        !evidence.platforms.every(isRecord) ||
-        !unique(evidence.platforms.map(({ platform }) => platform))
-      )
-        invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
-      platformTreeEvidence = new Map()
-      for (const item of evidence.platforms) {
-        if (
-          !exactKeys(item, ['platform', 'packages']) ||
-          !metric.implementationPlatforms.includes(item.platform) ||
-          !Array.isArray(item.packages) ||
-          canonicalJson(item.packages) !==
-            canonicalJson(
-              expectedPackagesForPlatform(item.platform).map(
-                ({ path, treeSha256 }) => ({ path, treeSha256 }),
-              ),
-            )
-        )
-          invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
-        platformTreeEvidence.set(item.platform, item.packages)
-      }
-    }
     const verifyPackagesForPlatform = async (platform, verifyPackageTrees) => {
       parsedExecutablePackagePlatform(platform)
       const derivedPackages = await deriveExecutablePackageClosure(
@@ -1327,22 +1278,9 @@ export async function verifyMetricImplementationBinding(
           !expectedPackages.every(({ treeSha256 }) => SHA256.test(treeSha256)))
       )
         invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
-      if (
-        platformTreeEvidence &&
-        !platformTreeEvidence.has(platform)
-      )
-        invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
       return derivedPackages
     }
     const packageSnapshot = await verifyPackagesForPlatform(hostPlatform, true)
-    const foreignPlatforms = metric.implementationPlatforms.filter(
-      (platform) => platform !== hostPlatform,
-    )
-    const foreignPackageSnapshots = await Promise.all(
-      foreignPlatforms.map((platform) =>
-        verifyPackagesForPlatform(platform, false),
-      ),
-    )
     const finalClosure = await deriveLocalExecutableImportClosure(
       metric.implementation,
       { repositoryRoot, includeViteGraph },
@@ -1363,16 +1301,7 @@ export async function verifyMetricImplementationBinding(
       hostPlatform,
       true,
     )
-    const finalForeignPackageSnapshots = await Promise.all(
-      foreignPlatforms.map((platform) =>
-        verifyPackagesForPlatform(platform, false),
-      ),
-    )
-    if (
-      canonicalJson(packageSnapshot) !== canonicalJson(finalPackageSnapshot) ||
-      canonicalJson(foreignPackageSnapshots) !==
-        canonicalJson(finalForeignPackageSnapshots)
-    )
+    if (canonicalJson(packageSnapshot) !== canonicalJson(finalPackageSnapshot))
       invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
   }
   if (
@@ -1391,10 +1320,11 @@ export async function verifyReconstructionEvaluatorImplementationBinding(
   const evaluator = contract.runtimeBinding
   if (!isRecord(evaluator) || evaluator.id !== 'profile-artifact-validity')
     invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
-  await verifyMetricImplementationBinding(
-    evaluator,
-    { repositoryRoot, requireClosure: true, requirePackages: true },
-  )
+  await verifyMetricImplementationBinding(evaluator, {
+    repositoryRoot,
+    requireClosure: true,
+    requirePackages: true,
+  })
 }
 
 async function readBoundJson(binding, code) {
@@ -1531,12 +1461,8 @@ async function validateMetricImplementations(registry) {
         requireClosure: ['2.0.0', '3.0.0', '4.0.0'].includes(
           registry.schemaVersion,
         ),
-        requirePackages: ['3.0.0', '4.0.0'].includes(
-          registry.schemaVersion,
-        ),
-        includeViteGraph: ['3.0.0', '4.0.0'].includes(
-          registry.schemaVersion,
-        ),
+        requirePackages: ['3.0.0', '4.0.0'].includes(registry.schemaVersion),
+        includeViteGraph: ['3.0.0', '4.0.0'].includes(registry.schemaVersion),
       }),
       verifyRepositoryFileBinding(metric.test, metric.testSha256),
     ])
@@ -2930,11 +2856,26 @@ async function main() {
   if (
     options.requireReady &&
     options.schemaPath &&
-    resolve(options.schemaPath) !== DEFAULT_SCHEMA_PATH
+    resolve(options.schemaPath) !== CURRENT_PROMOTION_SCHEMA_PATH
   ) {
     invalid('PDF_BENCHMARK_NONCANONICAL_PROMOTION_SCHEMA')
   }
+  if (options.requireReady && !options.schemaPath) {
+    const registry = await readJsonArtifact(
+      resolve(options.registryPath),
+      'PDF_BENCHMARK_READINESS_FAILED',
+    )
+    if (registry.value?.schemaVersion !== '4.0.0') {
+      invalid('PDF_BENCHMARK_NONCANONICAL_PROMOTION_SCHEMA')
+    }
+  }
   const receipt = await createPdfBenchmarkReadinessReceipt(options)
+  if (
+    options.requireReady &&
+    receipt.schema.fileSha256 !== SCHEMA_BINDINGS.get('4.0.0').fileSha256
+  ) {
+    invalid('PDF_BENCHMARK_NONCANONICAL_PROMOTION_SCHEMA')
+  }
   const output = `${JSON.stringify(receipt, null, 2)}\n`
   if (options.outPath) {
     await mkdir(dirname(resolve(options.outPath)), { recursive: true })

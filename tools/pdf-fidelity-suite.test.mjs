@@ -227,9 +227,12 @@ describe('aggregate PDF fidelity calibration suite', () => {
     const missingRuntimeTestHash = structuredClone(runtime)
     delete missingRuntimeTestHash.runtimeBinding.testSha256
     expect(validateRuntime(missingRuntimeTestHash)).toBe(false)
-    const missingPlatformEvidence = structuredClone(runtime)
-    delete missingPlatformEvidence.runtimeBinding.implementationPlatformTreeEvidence
-    expect(validateRuntime(missingPlatformEvidence)).toBe(false)
+    const staticForeignEvidence = structuredClone(runtime)
+    staticForeignEvidence.runtimeBinding.implementationPlatformTreeEvidence = {
+      path: 'benchmarks/pdf/reconstruction-runtime-package-trees-v4.json',
+      fileSha256: 'a'.repeat(64),
+    }
+    expect(validateRuntime(staticForeignEvidence)).toBe(false)
     expect(robustness.extends.fileSha256).toBe(digest(additiveContract))
     const validateRobustness = new Ajv2020({ strict: false }).compile(
       JSON.parse(robustnessContractSchema.toString('utf8')),

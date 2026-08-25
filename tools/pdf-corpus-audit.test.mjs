@@ -418,6 +418,32 @@ describe('local PDF corpus audit', () => {
     }
   }, 15_000)
 
+  it('ignores repository-scoped Git environment overrides for the primary repository', () => {
+    const moduleUrl = new URL('./pdf-corpus-audit-lib.mjs', import.meta.url)
+      .href
+    const result = rawSpawnSync(
+      process.execPath,
+      [
+        '--input-type=module',
+        '--eval',
+        `import { pdfCorpusWorktreeStateSnapshot } from ${JSON.stringify(moduleUrl)}; await pdfCorpusWorktreeStateSnapshot();`,
+      ],
+      {
+        cwd: process.cwd(),
+        encoding: 'utf8',
+        env: Object.fromEntries([
+          ...Object.entries(process.env),
+          ...REPOSITORY_SCOPED_GIT_ENVIRONMENT_KEYS.map((key) => [
+            key,
+            '/definitely-not-this-repository',
+          ]),
+        ]),
+      },
+    )
+
+    expect(result.status, result.stderr).toBe(0)
+  }, 15_000)
+
   it.each(['--assume-unchanged', '--skip-worktree'])(
     'rejects tracked files hidden from exact-head verification by %s',
     async (indexFlag) => {

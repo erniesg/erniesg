@@ -7,7 +7,10 @@ import {
   type ZipOptions,
 } from 'fflate'
 import { XMLParser, XMLValidator } from 'fast-xml-parser'
-import { parseStructAssets } from './codec/parsers'
+import {
+  parseStructAssets,
+  validateStructDocumentTableBounds,
+} from './codec/parsers'
 import { isStructCodecError } from './codec/primitives'
 import {
   bcp47Language,
@@ -371,6 +374,7 @@ export async function buildStructEpub(
   document: StructDocument,
   options: StructEpubOptions = {},
 ): Promise<StructEpubExport> {
+  validateStructDocumentTableBounds(document)
   let canonicalAssets: StructDocument['assets']
   try {
     canonicalAssets = parseStructAssets(document.assets)

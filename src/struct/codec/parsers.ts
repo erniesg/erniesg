@@ -604,7 +604,7 @@ function parseTableCell(value: unknown, path: string): StructTableCell {
   }
 }
 
-function parseTable(value: unknown, path: string): StructTable {
+export function validateStructTableBounds(value: unknown, path: string) {
   const parsed = object(value, path, ['rows', 'columns', 'cells', 'semantic'])
   const rows = nonNegativeInteger(parsed.rows, `${path}.rows`)
   const columns = nonNegativeInteger(parsed.columns, `${path}.columns`)
@@ -618,6 +618,26 @@ function parseTable(value: unknown, path: string): StructTable {
       path,
       `table dimensions must fit within ${MAX_TABLE_DIMENSION} rows/columns and ${MAX_TABLE_AREA} cells`,
     )
+  return { rows, columns, cells: parsed.cells, semantic: parsed.semantic }
+}
+
+/** Enforce renderer allocation bounds on direct STRUCT documents. */
+export function validateStructDocumentTableBounds(value: unknown) {
+  const document = copyRecord(dataEntries(value, '$'))
+  if (!has(document, 'blocks'))
+    fail('REQUIRED', '$.blocks', 'field is required')
+  const blocks = array(document.blocks, '$.blocks')
+  for (const [index, block] of blocks.entries()) {
+    const path = `$.blocks[${index}]`
+    const parsed = copyRecord(dataEntries(block, path))
+    if (parsed.kind === 'table' && has(parsed, 'table'))
+      validateStructTableBounds(parsed.table, `${path}.table`)
+  }
+}
+
+function parseTable(value: unknown, path: string): StructTable {
+  const parsed = validateStructTableBounds(value, path)
+  const { rows, columns } = parsed
   const rawCells = array(parsed.cells, `${path}.cells`)
   if (rawCells.length > rows * columns)
     fail(

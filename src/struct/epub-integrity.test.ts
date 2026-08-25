@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   MAX_STRUCT_ASSETS,
   MAX_STRUCT_ASSET_BYTES_TOTAL,
+  StructCodecError,
 } from './codec/parsers'
 import { buildStructEpub } from './epub'
 import { legacyStructDigest, structDigest } from './ids'
@@ -751,6 +752,41 @@ describe('STRUCT EPUB href integrity', () => {
 
     await expect(buildStructEpub(document)).rejects.toThrow(/asset|bytes/i)
     expect(iteratorCalls).toBe(0)
+  })
+
+  it('rejects oversized direct table dimensions before reading render payloads', async () => {
+    const document = documentWithHref('#target')
+    const table = {
+      rows: 100_001,
+      columns: 1,
+      cells: [],
+      semantic: 'verified' as const,
+    }
+    document.blocks[0]!.kind = 'table'
+    document.blocks[0]!.inline = []
+    document.blocks[0]!.table = table
+    refreshReceipt(document)
+
+    let payloadReads = 0
+    table.cells = new Proxy([], {
+      get() {
+        payloadReads += 1
+        throw new Error('oversized table render payload was read')
+      },
+      ownKeys() {
+        payloadReads += 1
+        throw new Error('oversized table render payload was read')
+      },
+    })
+
+    try {
+      await buildStructEpub(document)
+      throw new Error('expected table bounds failure')
+    } catch (error) {
+      expect(error).toBeInstanceOf(StructCodecError)
+      expect((error as StructCodecError).code).toBe('TABLE_BOUNDS')
+    }
+    expect(payloadReads).toBe(0)
   })
 
   it.each([

@@ -280,7 +280,7 @@
       "status": "available",
       "kind": "code",
       "implementation": "tools/pdf-private-fidelity.mjs",
-      "implementationSha256": "e3145212315610d2d5233cfc8a33dc9bfe0beae4f3146236848426d6b123bb22",
+      "implementationSha256": "ce80455b50510dff1bd8313f330d4c298b4c1f973cdb66f7989b7e635939b312",
       "implementationComponents": [
         {
           "path": "src/research/composition.ts",
@@ -516,11 +516,11 @@
         },
         {
           "path": "tools/pdf-private-fidelity-epubcheck.mjs",
-          "fileSha256": "b280c9b6df49347e148bab51f48d6947159921c28a1341dcc339e87a157fdb45"
+          "fileSha256": "4a9e42ed542dccb2ccf4fc80ea65bd27eb6fec17a225bc0a3039c6527ad03f3b"
         },
         {
           "path": "tools/pdf-private-fidelity.mjs",
-          "fileSha256": "cf06f09a214c4a0e00710b2c1cd99c498a61954abe69ce5e520ca4a222d7ab3c"
+          "fileSha256": "5aee1aeafbc24b57db731554ca36ada862ea6fd581a483cb4e2bf9483d97bfd5"
         }
       ],
       "implementationPackageLock": {
@@ -887,8 +887,12 @@
           "treeSha256": "a400aec61ccc6580dbf66b0b55140ad9d0008a42e897ed0c2eabb319924d258d"
         }
       ],
+      "implementationPlatformTreeEvidence": {
+        "path": "benchmarks/pdf/reconstruction-runtime-package-trees-v4.json",
+        "fileSha256": "021ec94c0d3f118f63802813e256df7cc4d111cf3752b6da2c8911c6808ea7d7"
+      },
       "test": "tools/pdf-private-fidelity.test.mjs",
-      "testSha256": "476cb99e75c2f47a54b693fc0039f8c315699d19e4372c69799d2c654f94af4d",
+      "testSha256": "c4fa45a36b6322146a30e89341fffede267b3a841eaabe28073734488c8625e0",
       "calibration": null
     }
   ]

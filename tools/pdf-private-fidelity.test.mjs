@@ -3122,6 +3122,38 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, 'fake java executed\\n')
     }
   }, 120_000)
 
+  it('requires a pinned default JRE and binds its digest into passed evidence', async () => {
+    const environment = { ...process.env }
+    delete environment.SRT_EPUBCHECK_JAVA_BIN
+    delete environment.SRT_EPUBCHECK_JAVA_SHA256
+
+    await expect(
+      requiredPrivateEpubCheckValidator({
+        environment,
+        runner(_command, arguments_) {
+          return arguments_.at(-1) === '--version'
+            ? successfulEpubCheckProof()
+            : { status: 0 }
+        },
+      }),
+    ).rejects.toThrow('EPUBCHECK_REQUIRED')
+
+    const javaSha256 = createHash('sha256')
+      .update(readFileSync('/usr/bin/java'))
+      .digest('hex')
+    const validator = await requiredPrivateEpubCheckValidator({
+      environment: { ...environment, SRT_EPUBCHECK_JAVA_SHA256: javaSha256 },
+      runner(_command, arguments_) {
+        return arguments_.at(-1) === '--version'
+          ? successfulEpubCheckProof()
+          : { status: 0 }
+      },
+    })
+    await expect(
+      validatePrivateEpubWithEpubCheck(Buffer.from('private epub'), validator),
+    ).resolves.toEqual({ status: 'passed', javaSha256 })
+  }, 120_000)
+
   it('executes exact bundled EPUBCheck bytes through anonymous descriptors', async () => {
     const calls = []
     const validator = await requiredPrivateEpubCheckValidator({

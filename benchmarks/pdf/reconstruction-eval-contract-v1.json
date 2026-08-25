@@ -163,7 +163,7 @@
       "outcome": "binary-pass-fail",
       "criterion": "internal-epub-validation-and-epubcheck-both-pass",
       "implementation": ["tools/pdf-private-fidelity.mjs"],
-      "implementationSha256": "e3145212315610d2d5233cfc8a33dc9bfe0beae4f3146236848426d6b123bb22",
+      "implementationSha256": "5fd5e46975ac2325ff53d97cb72583f6ac35442f4d12340cb0cbc19b2e6cb3c6",
       "implementationComponents": [
         {
           "path": "src/research/composition.ts",
@@ -375,7 +375,7 @@
         },
         {
           "path": "tools/pdf-corpus-audit-lib.mjs",
-          "fileSha256": "3ac86a0e2fd13f611640702efaa1d879088cab83a93c996e7eb814fedb54d411"
+          "fileSha256": "a2ee3f80ad7242c2663097abb0d6523c198cad7e1d9914bc42f8a97145c8f339"
         },
         {
           "path": "tools/pdf-corpus-audit-safety.mjs",
@@ -591,7 +591,8 @@
           "name": "node-readable-to-web-readable-stream",
           "version": "0.4.2",
           "integrity": "sha512-/cMZNI34v//jUTrI+UIo4ieHAB5EZRY/+7OmXZgBxaWBMcW2tGdceIw06RFxWxrKZ5Jp3sI2i5TsRo+CBhtVLQ==",
-          "treeSha256": "bbe327bc407f043d9d51987f06938c93f6b27644e72001d78ef76e2664825e97"
+          "treeSha256": "bbe327bc407f043d9d51987f06938c93f6b27644e72001d78ef76e2664825e97",
+          "platforms": ["darwin-arm64", "linux-x64-gnu"]
         },
         {
           "path": "node_modules/opencollective-postinstall",

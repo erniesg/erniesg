@@ -193,18 +193,14 @@ async function resolveJavaRuntime(environment = process.env) {
   const candidate = configured || '/usr/bin/java'
   if (!isAbsolute(candidate)) throw new Error('EPUBCHECK_REQUIRED')
   const expectedSha256 = environment.SRT_EPUBCHECK_JAVA_SHA256
-  if (Boolean(configured) !== Boolean(expectedSha256))
+  if (!SHA256.test(expectedSha256 ?? ''))
     throw new Error('EPUBCHECK_REQUIRED')
   if (configured && (await lstat(candidate)).isSymbolicLink())
     throw new Error('EPUBCHECK_REQUIRED')
   const path = await realpath(candidate)
   await assertProtectedJavaPath(path)
   const artifact = await stableRegularFile(path)
-  if (
-    expectedSha256 !== undefined &&
-    (!SHA256.test(expectedSha256) ||
-      artifact.identity.fileSha256 !== expectedSha256)
-  )
+  if (artifact.identity.fileSha256 !== expectedSha256)
     throw new Error('EPUBCHECK_REQUIRED')
   return { path, identity: artifact.identity }
 }
@@ -389,7 +385,7 @@ async function proveJavaRuntime(validator) {
   }
 }
 
-/** @returns {Promise<{ status: 'passed' }>} */
+/** @returns {Promise<{ status: 'passed', javaSha256: string }>} */
 export async function validatePrivateEpubWithEpubCheck(bytes, validator) {
   const directory = await mkdtemp(join(tmpdir(), 'srt-private-epubcheck-'))
   const handles = []
@@ -436,7 +432,10 @@ export async function validatePrivateEpubWithEpubCheck(bytes, validator) {
     await reverifyJavaRuntime(validator.java)
     await vendorFiles(validator.distribution.vendorRoot)
     if (result.error || result.status !== 0) throw new Error('EPUBCHECK_FAILED')
-    return { status: 'passed' }
+    return {
+      status: 'passed',
+      javaSha256: validator.java.identity.fileSha256,
+    }
   } catch {
     throw new Error('EPUBCHECK_FAILED')
   } finally {

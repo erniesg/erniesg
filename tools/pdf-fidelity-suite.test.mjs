@@ -34,6 +34,9 @@ const paths = {
     observations: 'benchmarks/pdf/fidelity-eval-observations-v2.json',
   },
   comparatorContract: 'benchmarks/pdf/fidelity-comparator-contract-v2.json',
+  runtimeContract: 'benchmarks/pdf/reconstruction-eval-contract-v4.json',
+  runtimeContractSchema:
+    'docs/schemas/pdf-reconstruction-eval-contract-v4.schema.json',
   robustnessContract: 'benchmarks/pdf/reconstruction-eval-contract-v3.json',
   robustnessContractSchema:
     'docs/schemas/pdf-reconstruction-eval-contract-v3.schema.json',
@@ -173,11 +176,13 @@ async function suiteInput(options = {}) {
 }
 
 describe('aggregate PDF fidelity calibration suite', () => {
-  it('keeps base-contract pins aligned across the suite and comparator', async () => {
+  it('keeps immutable governance separate from the current runtime binding', async () => {
     const [
       baseContract,
       additiveContract,
       comparatorContract,
+      runtimeContract,
+      runtimeContractSchema,
       robustnessContract,
       robustnessContractSchema,
     ] =
@@ -186,6 +191,8 @@ describe('aggregate PDF fidelity calibration suite', () => {
           paths.base.contract,
           paths.additive.contract,
           paths.comparatorContract,
+          paths.runtimeContract,
+          paths.runtimeContractSchema,
           paths.robustnessContract,
           paths.robustnessContractSchema,
         ].map(async (path) => readFile(join(root, path))),
@@ -193,6 +200,7 @@ describe('aggregate PDF fidelity calibration suite', () => {
     const baseContractSha256 = digest(baseContract)
     const additive = JSON.parse(additiveContract.toString('utf8'))
     const comparator = JSON.parse(comparatorContract.toString('utf8'))
+    const runtime = JSON.parse(runtimeContract.toString('utf8'))
     const robustness = JSON.parse(robustnessContract.toString('utf8'))
     const baseBinding = comparator.evaluationBindings.find(
       (binding) => binding.id === 'public-calibration-v1',
@@ -201,11 +209,21 @@ describe('aggregate PDF fidelity calibration suite', () => {
       (binding) => binding.id === 'public-calibration-v2-additions',
     )
 
-    expect(additive.extends.fileSha256).toBe(baseContractSha256)
-    expect(baseBinding.governance.fileSha256).toBe(baseContractSha256)
-    expect(additiveBinding.governance.fileSha256).toBe(
-      digest(additiveContract),
+    expect(baseContractSha256).toBe(
+      'ff0caa0976df9321e271d9069f316ce12dfb12e7eb27b984f41f54dfcd989c8c',
     )
+    expect(digest(additiveContract)).toBe(
+      '5e0076b3f2e973af3af85ab867c4fadd1b9d26a0f24413f4e8d9327e0eb46144',
+    )
+    expect(additive.extends.fileSha256).toBe(baseContractSha256)
+    expect(runtime.extends.fileSha256).toBe(baseContractSha256)
+    expect(baseBinding.governance.fileSha256).toBe(baseContractSha256)
+    expect(additiveBinding.governance.fileSha256).toBe(digest(additiveContract))
+    expect(comparator.runtimeBinding.fileSha256).toBe(digest(runtimeContract))
+    const validateRuntime = new Ajv2020({ strict: false }).compile(
+      JSON.parse(runtimeContractSchema.toString('utf8')),
+    )
+    expect(validateRuntime(runtime), validateRuntime.errors).toBe(true)
     expect(robustness.extends.fileSha256).toBe(digest(additiveContract))
     const validateRobustness = new Ajv2020({ strict: false }).compile(
       JSON.parse(robustnessContractSchema.toString('utf8')),

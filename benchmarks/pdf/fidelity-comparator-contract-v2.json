@@ -14,7 +14,7 @@
         "id": "scholarly-pdf-reconstruction-eval-governance-2026-07-v1",
         "schemaVersion": "1.0.0",
         "path": "benchmarks/pdf/reconstruction-eval-contract-v1.json",
-        "fileSha256": "c5c9c8e7558327dc3894919378d27cc46a4c9f15c4cd0ea81ae37a2315224043"
+        "fileSha256": "ff0caa0976df9321e271d9069f316ce12dfb12e7eb27b984f41f54dfcd989c8c"
       },
       "evalSet": {
         "id": "scholarly-pdf-fidelity-seed-2026-07-v1",
@@ -34,7 +34,7 @@
         "id": "scholarly-pdf-reconstruction-eval-governance-2026-07-v2",
         "schemaVersion": "2.0.0",
         "path": "benchmarks/pdf/reconstruction-eval-contract-v2.json",
-        "fileSha256": "e7d238375e0efa34d5b68e89e8613ed0fbfa057e6b43fbf9fa00af4f93825a91"
+        "fileSha256": "5e0076b3f2e973af3af85ab867c4fadd1b9d26a0f24413f4e8d9327e0eb46144"
       },
       "evalSet": {
         "id": "scholarly-pdf-fidelity-additions-2026-07-v2",
@@ -49,5 +49,11 @@
       }
     }
   ],
+  "runtimeBinding": {
+    "id": "scholarly-pdf-reconstruction-runtime-governance-2026-07-v4",
+    "schemaVersion": "4.0.0",
+    "path": "benchmarks/pdf/reconstruction-eval-contract-v4.json",
+    "fileSha256": "ec7c2a69254bed3c7ada3372d08aa1581bd87be37bcffcb14a3b5f7484895827"
+  },
   "authority": "performance-provenance-sidecar-never-promotion-authority"
 }

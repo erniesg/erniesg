@@ -31,21 +31,28 @@ const STATIC_PATHS = {
     evalSet: 'benchmarks/pdf/fidelity-eval-v2.json',
     observations: 'benchmarks/pdf/fidelity-eval-observations-v2.json',
   },
+  runtime: {
+    contract: 'benchmarks/pdf/reconstruction-eval-contract-v4.json',
+  },
 }
 const FROZEN_ARTIFACT_SHA256 = {
   base: {
     contract:
-      'c5c9c8e7558327dc3894919378d27cc46a4c9f15c4cd0ea81ae37a2315224043',
+      'ff0caa0976df9321e271d9069f316ce12dfb12e7eb27b984f41f54dfcd989c8c',
     evalSet: '35d6d3f80eb646470afccaec9fd96b7e2a4c8405d33bcd5db62fcca425989002',
     observations:
       '65c147dfd19b6a62bd1b33c176e505e0f47e1fb963c5a0ad609296ca18dd9ce8',
   },
   additive: {
     contract:
-      'e7d238375e0efa34d5b68e89e8613ed0fbfa057e6b43fbf9fa00af4f93825a91',
+      '5e0076b3f2e973af3af85ab867c4fadd1b9d26a0f24413f4e8d9327e0eb46144',
     evalSet: '7420fc497895a058d24592b7c5164ded261846a5da4fed2f014c8a52cbafccf9',
     observations:
       '01f0a8022c06b18c79c8b7ab7258d72deff28b5dfeef9574425135a25ff1ed64',
+  },
+  runtime: {
+    contract:
+      'ec7c2a69254bed3c7ada3372d08aa1581bd87be37bcffcb14a3b5f7484895827',
   },
 }
 
@@ -297,13 +304,6 @@ async function normalizePart(raw, role) {
   ) {
     invalid('INVALID_PDF_FIDELITY_SUITE_CONTRACT')
   }
-  if (role === 'base') {
-    try {
-      await verifyReconstructionEvaluatorImplementationBinding(contract)
-    } catch {
-      invalid('INVALID_PDF_FIDELITY_SUITE_CONTRACT')
-    }
-  }
   validatePdfFidelityEvalReceipt(
     raw.baselineReceipt,
     evalArtifact.value,
@@ -326,6 +326,20 @@ async function normalizePart(raw, role) {
     failureModes,
     baselineReceipt: raw.baselineReceipt,
     candidateReceipt: raw.candidateReceipt,
+  }
+}
+
+async function verifyRuntimeBinding() {
+  const runtimeArtifact = parseJsonArtifact(
+    await readFile(resolve(REPOSITORY_ROOT, STATIC_PATHS.runtime.contract)),
+    'INVALID_PDF_FIDELITY_SUITE_CONTRACT',
+  )
+  if (runtimeArtifact.fileSha256 !== FROZEN_ARTIFACT_SHA256.runtime.contract)
+    invalid('INVALID_PDF_FIDELITY_SUITE_FROZEN_ARTIFACT')
+  try {
+    await verifyReconstructionEvaluatorImplementationBinding(runtimeArtifact.value)
+  } catch {
+    invalid('INVALID_PDF_FIDELITY_SUITE_CONTRACT')
   }
 }
 
@@ -481,6 +495,7 @@ export async function buildPdfFidelitySuiteReceipt(input) {
     normalizePart(input.base, 'base'),
     normalizePart(input.additive, 'additive'),
   ])
+  await verifyRuntimeBinding()
   validateSuiteBindings(base, additive)
   const parts = [base, additive]
   const cases = buildCases(parts)

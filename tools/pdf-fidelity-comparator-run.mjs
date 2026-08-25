@@ -27,7 +27,7 @@ const COMPARATOR_SCHEMA_PATH =
 const COMPARATOR_CONTRACT_SCHEMA_PATH =
   'docs/schemas/pdf-fidelity-comparator-contract-v2.schema.json'
 const COMPARATOR_CONTRACT_SCHEMA_SHA256 =
-  'c1b31d5fa9e0fe174dca51a7945093d4d90b5cee0332d4955b7bfd019ae6f185'
+  '1291af0a8ef1db219025a129cee30e934bb8a19ab414185677468624d281f561'
 const REPOSITORY_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const GOVERNANCE_SCHEMA_PATHS = {
   '1.0.0': 'docs/schemas/pdf-reconstruction-eval-contract.schema.json',
@@ -305,21 +305,23 @@ async function assertContractBinding(
   const validateGovernance = compileSchema(governanceSchemaArtifact.value)
   if (!validateGovernance(governanceArtifact.value)) invalid()
 
-  let evaluatorContract = governanceArtifact.value
-  if (evaluatorContract.schemaVersion === '2.0.0') {
-    const baseArtifact = parseJsonArtifact(
-      await readRepositoryArtifact(evaluatorContract.extends.path),
-    )
-    if (
-      baseArtifact.fileSha256 !== evaluatorContract.extends.fileSha256 ||
-      baseArtifact.value.id !== evaluatorContract.extends.id ||
-      baseArtifact.value.schemaVersion !== '1.0.0'
-    )
-      invalid()
-    evaluatorContract = baseArtifact.value
-  }
+  const runtimeArtifact = parseJsonArtifact(
+    await readRepositoryArtifact(contractArtifact.value.runtimeBinding.path),
+  )
+  if (
+    runtimeArtifact.fileSha256 !==
+      contractArtifact.value.runtimeBinding.fileSha256 ||
+    runtimeArtifact.value.id !== contractArtifact.value.runtimeBinding.id ||
+    runtimeArtifact.value.schemaVersion !==
+      contractArtifact.value.runtimeBinding.schemaVersion
+  )
+    invalid()
+  const runtimeSchema = await readSchema(
+    'docs/schemas/pdf-reconstruction-eval-contract-v4.schema.json',
+  )
+  if (!compileSchema(runtimeSchema.value)(runtimeArtifact.value)) invalid()
   try {
-    await verifyReconstructionEvaluatorImplementationBinding(evaluatorContract)
+    await verifyReconstructionEvaluatorImplementationBinding(runtimeArtifact.value)
   } catch {
     invalid()
   }

@@ -58,7 +58,7 @@ const SCHEMA_BINDINGS = new Map([
       path: DEFAULT_SCHEMA_PATH,
       id: 'https://ernie.sg/schemas/pdf-benchmark-readiness-registry-3.0.0.json',
       fileSha256:
-        'fccf1727399b425f1f92a4ab339c96ecf759cd0ac673988cbf4db6ae5d514700',
+        '690923b50eb44d23f60956a8c2763ef27a37aa1c39e8f7bbfb218b4162319b58',
     },
   ],
 ])
@@ -260,6 +260,12 @@ function metricImplementationCompositeSha256(metric) {
           .sort((left, right) => left.path.localeCompare(right.path)),
         packageLock: metric.implementationPackageLock,
         platforms: [...metric.implementationPlatforms].sort(),
+        ...(metric.implementationPlatformTreeEvidence
+          ? {
+              platformTreeEvidence:
+                metric.implementationPlatformTreeEvidence,
+            }
+          : {}),
         packages: metric.implementationPackages
           .map((package_) => ({
             path: package_.path,
@@ -799,6 +805,51 @@ function packageBindingMetadata(packages) {
   }))
 }
 
+async function nestedNodeModulePackagePaths(packageRoot, repositoryRealPath) {
+  const nodeModules = resolve(packageRoot, 'node_modules')
+  let entries
+  try {
+    const details = await lstat(nodeModules)
+    if (!details.isDirectory() || details.isSymbolicLink())
+      invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    entries = await readdir(nodeModules, { withFileTypes: true })
+  } catch (error) {
+    if (error?.code === 'ENOENT') return []
+    invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+  }
+  const paths = []
+  for (const entry of entries.sort((left, right) =>
+    Buffer.from(left.name).compare(Buffer.from(right.name)),
+  )) {
+    if (!entry.isDirectory() || entry.isSymbolicLink())
+      invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    const directory = resolve(nodeModules, entry.name)
+    if (entry.name.startsWith('@')) {
+      const scoped = await readdir(directory, { withFileTypes: true })
+      for (const packageEntry of scoped.sort((left, right) =>
+        Buffer.from(left.name).compare(Buffer.from(right.name)),
+      )) {
+        if (!packageEntry.isDirectory() || packageEntry.isSymbolicLink())
+          invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+        paths.push(
+          canonicalRepositoryPath(
+            relative(repositoryRealPath, resolve(directory, packageEntry.name))
+              .split(sep)
+              .join('/'),
+          ),
+        )
+      }
+    } else {
+      paths.push(
+        canonicalRepositoryPath(
+          relative(repositoryRealPath, directory).split(sep).join('/'),
+        ),
+      )
+    }
+  }
+  return paths
+}
+
 function conditionMatches(values, actual) {
   if (!Array.isArray(values) || values.length === 0) return true
   if (values.includes(`!${actual}`)) return false
@@ -961,9 +1012,7 @@ export async function deriveExecutablePackageClosure(
     if (!isRecord(locked)) invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
     packagePaths.add(packagePath)
     if (conditional) conditionalPackagePaths.add(packagePath)
-    for (const dependencyName of Object.keys(
-      locked.dependencies ?? {},
-    ).sort()) {
+    for (const dependencyName of Object.keys(locked.dependencies ?? {}).sort()) {
       const dependencyPath = lockedDependencyPath(
         packagePath,
         dependencyName,
@@ -1040,6 +1089,12 @@ export async function deriveExecutablePackageClosure(
           packagePath
       )
         invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      const nestedPaths = await nestedNodeModulePackagePaths(
+        packageRealPath,
+        repositoryRealPath,
+      )
+      if (nestedPaths.some((path) => !packagePaths.has(path)))
+        invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
       const packageJson = JSON.parse(
         await readFile(resolve(packageRealPath, 'package.json'), 'utf8'),
       )
@@ -1050,6 +1105,27 @@ export async function deriveExecutablePackageClosure(
         typeof packageJson.name !== 'string'
       )
         invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      for (const nestedPath of nestedPaths) {
+        const dependencyName = packageNameFromPath(nestedPath)
+        const expectedPath = lockedDependencyPath(
+          packagePath,
+          dependencyName,
+          lock.packages,
+        )
+        if (!expectedPath || !packagePaths.has(expectedPath))
+          invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+        const resolvedRoot = await findResolvedPackageRoot(
+          dependencyName,
+          dependencyName,
+          resolve(packageRealPath, 'package.json'),
+          repositoryRoot,
+        )
+        const actualPath = canonicalRepositoryPath(
+          relative(repositoryRealPath, resolvedRoot).split(sep).join('/'),
+        )
+        if (actualPath !== expectedPath || actualPath !== nestedPath)
+          invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      }
       return {
         ...binding,
         treeSha256: await packageTreeSha256(packageRealPath),
@@ -1126,6 +1202,70 @@ export async function verifyMetricImplementationBinding(
     const hostPlatform = executablePackagePlatform()
     if (!metric.implementationPlatforms.includes(hostPlatform))
       invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    const expectedPackagesForPlatform = (platform) =>
+      metric.implementationPackages
+        .filter(
+          (package_) =>
+            !package_.platforms || package_.platforms.includes(platform),
+        )
+        .map((package_) =>
+          package_.platforms
+            ? { ...package_, platforms: [platform] }
+            : package_,
+        )
+    let platformTreeEvidence = null
+    if (metric.implementationPlatforms.length > 1) {
+      const binding = metric.implementationPlatformTreeEvidence
+      if (!binding) invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      let evidence
+      try {
+        evidence = JSON.parse(
+          (
+            await verifyRepositoryFileBinding(
+              binding.path,
+              binding.fileSha256,
+              'PDF_BENCHMARK_METRIC_BINDING_MISMATCH',
+              repositoryRoot,
+            )
+          ).toString('utf8'),
+        )
+      } catch {
+        invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      }
+      if (
+        !exactKeys(evidence, [
+          'schemaVersion',
+          'kind',
+          'packageLock',
+          'platforms',
+        ]) ||
+        evidence.schemaVersion !== '1.0.0' ||
+        evidence.kind !== 'pdf-benchmark-package-tree-evidence' ||
+        canonicalJson(evidence.packageLock) !==
+          canonicalJson(metric.implementationPackageLock) ||
+        !Array.isArray(evidence.platforms) ||
+        evidence.platforms.length !== metric.implementationPlatforms.length ||
+        !evidence.platforms.every(isRecord) ||
+        !unique(evidence.platforms.map(({ platform }) => platform))
+      )
+        invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      platformTreeEvidence = new Map()
+      for (const item of evidence.platforms) {
+        if (
+          !exactKeys(item, ['platform', 'packages']) ||
+          !metric.implementationPlatforms.includes(item.platform) ||
+          !Array.isArray(item.packages) ||
+          canonicalJson(item.packages) !==
+            canonicalJson(
+              expectedPackagesForPlatform(item.platform).map(
+                ({ path, treeSha256 }) => ({ path, treeSha256 }),
+              ),
+            )
+        )
+          invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+        platformTreeEvidence.set(item.platform, item.packages)
+      }
+    }
     const verifyPackagesForPlatform = async (platform, verifyPackageTrees) => {
       parsedExecutablePackagePlatform(platform)
       const derivedPackages = await deriveExecutablePackageClosure(
@@ -1137,16 +1277,7 @@ export async function verifyMetricImplementationBinding(
           verifyPackageTrees,
         },
       )
-      const expectedPackages = metric.implementationPackages
-        .filter(
-          (package_) =>
-            !package_.platforms || package_.platforms.includes(platform),
-        )
-        .map((package_) =>
-          package_.platforms
-            ? { ...package_, platforms: [platform] }
-            : package_,
-        )
+      const expectedPackages = expectedPackagesForPlatform(platform)
       if (
         canonicalJson(derivedPackages.packageLock) !==
           canonicalJson(metric.implementationPackageLock) ||
@@ -1162,6 +1293,11 @@ export async function verifyMetricImplementationBinding(
           ) ||
         (!verifyPackageTrees &&
           !expectedPackages.every(({ treeSha256 }) => SHA256.test(treeSha256)))
+      )
+        invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      if (
+        platformTreeEvidence &&
+        !platformTreeEvidence.has(platform)
       )
         invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
       return derivedPackages
@@ -1218,6 +1354,17 @@ export async function verifyReconstructionEvaluatorImplementationBinding(
   contract,
   { repositoryRoot = REPOSITORY_ROOT } = {},
 ) {
+  if (contract?.schemaVersion === '4.0.0') {
+    const evaluator = contract.runtimeBinding
+    if (!isRecord(evaluator) || evaluator.id !== 'profile-artifact-validity')
+      invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    await verifyMetricImplementationBinding(evaluator, {
+      repositoryRoot,
+      requireClosure: true,
+      requirePackages: true,
+    })
+    return
+  }
   const candidates = Array.isArray(contract?.objectiveEvaluators)
     ? contract.objectiveEvaluators.filter(
         (evaluator) => evaluator?.id === 'profile-artifact-validity',

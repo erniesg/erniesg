@@ -11,6 +11,7 @@
     "receiptSchema",
     "runSpecificationSchemaVersion",
     "evaluationBindings",
+    "runtimeBinding",
     "authority"
   ],
   "properties": {
@@ -69,6 +70,17 @@
             }
           }
         }
+      }
+    },
+    "runtimeBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "schemaVersion", "path", "fileSha256"],
+      "properties": {
+        "id": { "const": "scholarly-pdf-reconstruction-runtime-governance-2026-07-v4" },
+        "schemaVersion": { "const": "4.0.0" },
+        "path": { "const": "benchmarks/pdf/reconstruction-eval-contract-v4.json" },
+        "fileSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
       }
     },
     "authority": {

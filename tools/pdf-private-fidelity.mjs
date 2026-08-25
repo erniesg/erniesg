@@ -1041,8 +1041,12 @@ function createPrivateStructuralEvidence(reconstruction, artifactParity) {
 }
 
 function normalizedPrivateEpubCheck(value) {
-  if (value?.status === 'passed' && Object.keys(value).length === 1) {
-    return { status: 'passed' }
+  if (
+    value?.status === 'passed' &&
+    SHA256_PATTERN.test(value.javaSha256 ?? '') &&
+    Object.keys(value).length === 2
+  ) {
+    return { status: 'passed', javaSha256: value.javaSha256 }
   }
   if (
     value?.status === 'skipped' &&

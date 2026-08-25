@@ -635,6 +635,9 @@
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/packageBinding" }
         },
+        "implementationPlatformTreeEvidence": {
+          "oneOf": [{ "$ref": "#/$defs/fileBinding" }, { "type": "null" }]
+        },
         "test": {
           "oneOf": [{ "$ref": "#/$defs/path" }, { "type": "null" }]
         },
@@ -669,6 +672,21 @@
               "implementationPackages": { "minItems": 1 },
               "test": { "$ref": "#/$defs/path" },
               "testSha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "id": { "const": "package-integrity" },
+              "status": { "const": "available" }
+            },
+            "required": ["id", "status"]
+          },
+          "then": {
+            "required": ["implementationPlatformTreeEvidence"],
+            "properties": {
+              "implementationPlatformTreeEvidence": { "$ref": "#/$defs/fileBinding" }
             }
           }
         },

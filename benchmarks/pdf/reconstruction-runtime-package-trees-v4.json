@@ -1,0 +1,392 @@
+{
+  "schemaVersion": "1.0.0",
+  "kind": "pdf-benchmark-package-tree-evidence",
+  "packageLock": {
+    "path": "package-lock.json",
+    "fileSha256": "660d6365dd7c3ea6d619df09c08f9d14771ec6f60beebd2eb4f88c97363c896a"
+  },
+  "platforms": [
+    {
+      "platform": "darwin-arm64",
+      "packages": [
+        {
+          "path": "node_modules/@napi-rs/canvas",
+          "treeSha256": "2cf00bacf979cb5269a6ff219788ce22f721b00f9479a48d901ab98c7d4ef534"
+        },
+        {
+          "path": "node_modules/@napi-rs/canvas-darwin-arm64",
+          "treeSha256": "0aae764844cdedf8916c08aaff9e1e838d34934d5a496764fda9329539ce12d4"
+        },
+        {
+          "path": "node_modules/@nodable/entities",
+          "treeSha256": "42ed2ae02d8d02e220c3f8e8a3ea1216fe8df049d1296f0f323d19a7000b42ac"
+        },
+        {
+          "path": "node_modules/@oxc-project/types",
+          "treeSha256": "ddda348ab4d9a4a068e7650823f34a0511af6c51ba6e842bee1611bb1c6e3725"
+        },
+        {
+          "path": "node_modules/@rolldown/binding-darwin-arm64",
+          "treeSha256": "339666b43f387b64b8e288464bb728a22ba26abec3304cc4ce8bf12cd4adbecf"
+        },
+        {
+          "path": "node_modules/@tesseract.js-data/eng",
+          "treeSha256": "750f47d44886a0d187eda53cb9b52e408dcb2786e66abd297e7c1ca6e15ef440"
+        },
+        {
+          "path": "node_modules/anynum",
+          "treeSha256": "1a1310105ce795b60625052d6861e0ef6d3b1ef22740130cd1512087576885d5"
+        },
+        {
+          "path": "node_modules/bmp-js",
+          "treeSha256": "a9a605dcff81af2bda01e910385de74dbb4cbab014e31dd7774043893b7524aa"
+        },
+        {
+          "path": "node_modules/detect-libc",
+          "treeSha256": "a792c765965a9a829c94261d4adc5d9313acfe1b282cedb2a337928e13bb9a7b"
+        },
+        {
+          "path": "node_modules/epubcheck-static",
+          "treeSha256": "b4458164ea592d4a56900d24bbac113de3efb37e77d48ae5d0451703f7fa4cc6"
+        },
+        {
+          "path": "node_modules/fast-xml-builder",
+          "treeSha256": "34019548e7de491ff609c4124e85aca6312b88d01c5e65dc451191a848384c54"
+        },
+        {
+          "path": "node_modules/fast-xml-parser",
+          "treeSha256": "d40a24eddb9d64f615f3e679ba2dd51eda3dbb7f003047c62365b89cca27de5c"
+        },
+        {
+          "path": "node_modules/fdir",
+          "treeSha256": "e86f46b8d8e523152f029eb343a0564028112ea179468f9349efc6a532d3a739"
+        },
+        {
+          "path": "node_modules/fflate",
+          "treeSha256": "68b20deef63ab4c81869e09014834c797df4a722c16c6df584da371055b2ea08"
+        },
+        {
+          "path": "node_modules/idb-keyval",
+          "treeSha256": "3f2792ed7d2d37ea27dbe94dbbe852413aad2882e629eb72cfea17d4547bd645"
+        },
+        {
+          "path": "node_modules/is-unsafe",
+          "treeSha256": "3f2da9c00c76463bcad09796cb4276e4db23263729bb34e35a4c4aafabf32258"
+        },
+        {
+          "path": "node_modules/is-url",
+          "treeSha256": "f4fbb03e746daaec65a09e233fc77092b383d29779bd363640f2314fc2d9d5ad"
+        },
+        {
+          "path": "node_modules/lightningcss",
+          "treeSha256": "2749f3ee37c075b760495ce031e061a2e39c573739a64ecae97dc052eeb1a632"
+        },
+        {
+          "path": "node_modules/lightningcss-darwin-arm64",
+          "treeSha256": "39a6983ce3078ba690c57ccb9f5139c92ceaa835ba56689954658efa06872c24"
+        },
+        {
+          "path": "node_modules/nanoid",
+          "treeSha256": "4e7ad1cba35cdcb7c61d3df689b0c941d7294084c7211336b9c1fb8b30e9d224"
+        },
+        {
+          "path": "node_modules/node-fetch",
+          "treeSha256": "3bc3087410f28a2dfb23890157e6baac16d297ca94f895cb0ac0e94610b36762"
+        },
+        {
+          "path": "node_modules/node-readable-to-web-readable-stream",
+          "treeSha256": "bbe327bc407f043d9d51987f06938c93f6b27644e72001d78ef76e2664825e97"
+        },
+        {
+          "path": "node_modules/opencollective-postinstall",
+          "treeSha256": "a862229dfab2c653b71116380f6eecf4b5b7895cb01815bded66702cd0eaaa33"
+        },
+        {
+          "path": "node_modules/parse5",
+          "treeSha256": "45f4771cfaa3b92eb74107b76b52c5883c7ae3be763bb77b53d3aee2ce74d104"
+        },
+        {
+          "path": "node_modules/parse5/node_modules/entities",
+          "treeSha256": "ea8883fb64463b6e145b5a0b8a97b8bc62c6453c69839f5fb0ce1e4f434ed8c6"
+        },
+        {
+          "path": "node_modules/path-expression-matcher",
+          "treeSha256": "a3d5276357208eb601665327f88805a91042af4e14e1eef7164bff171b765ad4"
+        },
+        {
+          "path": "node_modules/pdfjs-dist",
+          "treeSha256": "e5fdeef5efd288ad64d2b12f9d24e6884049920c02c6e8733166ab4a9e465214"
+        },
+        {
+          "path": "node_modules/picocolors",
+          "treeSha256": "367937cb4caa7acd8a6e1f78aaa4fe8fb50657f78fd938c546ec016398d340cb"
+        },
+        {
+          "path": "node_modules/picomatch",
+          "treeSha256": "576f0513057361cd2c2abbd5bd7176352ee0d7909697f22f2c5dee8732cc5c30"
+        },
+        {
+          "path": "node_modules/postcss",
+          "treeSha256": "86b56c46e1cae52cfb7e29576a62b8170067fd69c4094676babda24b52d759fb"
+        },
+        {
+          "path": "node_modules/regenerator-runtime",
+          "treeSha256": "4bc58cae6c7ddb53e0d67839ec9ccf8f54bf6742bcbcfdfa2f9ce60ef265e588"
+        },
+        {
+          "path": "node_modules/rolldown",
+          "treeSha256": "9f1a83159a87835448cc3d40a3006c2081540421f519a4950d8c67abe0d82397"
+        },
+        {
+          "path": "node_modules/rolldown/node_modules/@rolldown/pluginutils",
+          "treeSha256": "975b874bb19c00ac91cbf56c39f75bb9949007594f39e2dc0d4956cfd6c87fdf"
+        },
+        {
+          "path": "node_modules/source-map-js",
+          "treeSha256": "657ab0506659f14ea0a575dbb2b39c1e431db08c8b962a132c94633bcd79ae76"
+        },
+        {
+          "path": "node_modules/strnum",
+          "treeSha256": "db93cb867777e61c09503f6b97d2e1974dd5b3453aefbdcb222248c195ac84bc"
+        },
+        {
+          "path": "node_modules/tesseract.js",
+          "treeSha256": "a280af5a8c8f74429ab62a335efb5219ee3ce155a5894815cdf1a95a0944f419"
+        },
+        {
+          "path": "node_modules/tesseract.js-core",
+          "treeSha256": "5b37c5ba83cab5f4bf4e0d2dcc4349ad75fb53729e4254cd42db9b3c98c51995"
+        },
+        {
+          "path": "node_modules/tinyglobby",
+          "treeSha256": "99b22d1e4765c500375edf35f7339b727fe823e23f355acfbb64a099725c5ca7"
+        },
+        {
+          "path": "node_modules/tr46",
+          "treeSha256": "b8dd37ef8ddf3f33ddd5a1eb836e639dad1f9741ecd9b62b5d6fd353fa82c1f4"
+        },
+        {
+          "path": "node_modules/vite",
+          "treeSha256": "82d83bb39eb2c49407a9c49939d6440b50a841c2f9b7ed00895a31b06c0289c5"
+        },
+        {
+          "path": "node_modules/vite/node_modules/fsevents",
+          "treeSha256": "9375a82d30c302b375c73ae2b1140cb404b4f6b4a401db60447f81717464be59"
+        },
+        {
+          "path": "node_modules/wasm-feature-detect",
+          "treeSha256": "cf475f53450f89572810934347a3db6dce30cf92a92c735d7fb1a492d28f19f1"
+        },
+        {
+          "path": "node_modules/webidl-conversions",
+          "treeSha256": "b88a3bbb422d25735589d7bfb13d6e3de377c0aedc9b3e0a2a620bb8b500148c"
+        },
+        {
+          "path": "node_modules/whatwg-url",
+          "treeSha256": "c3f071f0f1056f7efbda914d336410c42cafb6815762b2a903e9a9af421439e5"
+        },
+        {
+          "path": "node_modules/xml-naming",
+          "treeSha256": "eb4729ea753278f68fdf804793c528402f9606543edd7c1ccb78cd2483c5481f"
+        },
+        {
+          "path": "node_modules/zlibjs",
+          "treeSha256": "ec8473e648cb5a40969bb7137ba0a4a7a2c7bda41d6adc72df2e2767c9cd9328"
+        },
+        {
+          "path": "node_modules/zod",
+          "treeSha256": "a400aec61ccc6580dbf66b0b55140ad9d0008a42e897ed0c2eabb319924d258d"
+        }
+      ]
+    },
+    {
+      "platform": "linux-x64-gnu",
+      "packages": [
+        {
+          "path": "node_modules/@napi-rs/canvas",
+          "treeSha256": "2cf00bacf979cb5269a6ff219788ce22f721b00f9479a48d901ab98c7d4ef534"
+        },
+        {
+          "path": "node_modules/@napi-rs/canvas-linux-x64-gnu",
+          "treeSha256": "25daeb86fcedabd34e28ef66f2d79e02e99816c69755ffb04e8cfe6b86ab1f19"
+        },
+        {
+          "path": "node_modules/@nodable/entities",
+          "treeSha256": "42ed2ae02d8d02e220c3f8e8a3ea1216fe8df049d1296f0f323d19a7000b42ac"
+        },
+        {
+          "path": "node_modules/@oxc-project/types",
+          "treeSha256": "ddda348ab4d9a4a068e7650823f34a0511af6c51ba6e842bee1611bb1c6e3725"
+        },
+        {
+          "path": "node_modules/@rolldown/binding-linux-x64-gnu",
+          "treeSha256": "7302b9884314387707b73c7a6b8da35a9ecc3b11687db6deac50f8cbef54cbf0"
+        },
+        {
+          "path": "node_modules/@tesseract.js-data/eng",
+          "treeSha256": "750f47d44886a0d187eda53cb9b52e408dcb2786e66abd297e7c1ca6e15ef440"
+        },
+        {
+          "path": "node_modules/anynum",
+          "treeSha256": "1a1310105ce795b60625052d6861e0ef6d3b1ef22740130cd1512087576885d5"
+        },
+        {
+          "path": "node_modules/bmp-js",
+          "treeSha256": "a9a605dcff81af2bda01e910385de74dbb4cbab014e31dd7774043893b7524aa"
+        },
+        {
+          "path": "node_modules/detect-libc",
+          "treeSha256": "a792c765965a9a829c94261d4adc5d9313acfe1b282cedb2a337928e13bb9a7b"
+        },
+        {
+          "path": "node_modules/epubcheck-static",
+          "treeSha256": "b4458164ea592d4a56900d24bbac113de3efb37e77d48ae5d0451703f7fa4cc6"
+        },
+        {
+          "path": "node_modules/fast-xml-builder",
+          "treeSha256": "34019548e7de491ff609c4124e85aca6312b88d01c5e65dc451191a848384c54"
+        },
+        {
+          "path": "node_modules/fast-xml-parser",
+          "treeSha256": "d40a24eddb9d64f615f3e679ba2dd51eda3dbb7f003047c62365b89cca27de5c"
+        },
+        {
+          "path": "node_modules/fdir",
+          "treeSha256": "e86f46b8d8e523152f029eb343a0564028112ea179468f9349efc6a532d3a739"
+        },
+        {
+          "path": "node_modules/fflate",
+          "treeSha256": "68b20deef63ab4c81869e09014834c797df4a722c16c6df584da371055b2ea08"
+        },
+        {
+          "path": "node_modules/idb-keyval",
+          "treeSha256": "3f2792ed7d2d37ea27dbe94dbbe852413aad2882e629eb72cfea17d4547bd645"
+        },
+        {
+          "path": "node_modules/is-unsafe",
+          "treeSha256": "3f2da9c00c76463bcad09796cb4276e4db23263729bb34e35a4c4aafabf32258"
+        },
+        {
+          "path": "node_modules/is-url",
+          "treeSha256": "f4fbb03e746daaec65a09e233fc77092b383d29779bd363640f2314fc2d9d5ad"
+        },
+        {
+          "path": "node_modules/lightningcss",
+          "treeSha256": "2749f3ee37c075b760495ce031e061a2e39c573739a64ecae97dc052eeb1a632"
+        },
+        {
+          "path": "node_modules/lightningcss-linux-x64-gnu",
+          "treeSha256": "18321a0b611db4ded3243a9404ac19591e567addd0b056d00ced4ed70e73b26a"
+        },
+        {
+          "path": "node_modules/nanoid",
+          "treeSha256": "4e7ad1cba35cdcb7c61d3df689b0c941d7294084c7211336b9c1fb8b30e9d224"
+        },
+        {
+          "path": "node_modules/node-fetch",
+          "treeSha256": "3bc3087410f28a2dfb23890157e6baac16d297ca94f895cb0ac0e94610b36762"
+        },
+        {
+          "path": "node_modules/node-readable-to-web-readable-stream",
+          "treeSha256": "bbe327bc407f043d9d51987f06938c93f6b27644e72001d78ef76e2664825e97"
+        },
+        {
+          "path": "node_modules/opencollective-postinstall",
+          "treeSha256": "a862229dfab2c653b71116380f6eecf4b5b7895cb01815bded66702cd0eaaa33"
+        },
+        {
+          "path": "node_modules/parse5",
+          "treeSha256": "45f4771cfaa3b92eb74107b76b52c5883c7ae3be763bb77b53d3aee2ce74d104"
+        },
+        {
+          "path": "node_modules/parse5/node_modules/entities",
+          "treeSha256": "ea8883fb64463b6e145b5a0b8a97b8bc62c6453c69839f5fb0ce1e4f434ed8c6"
+        },
+        {
+          "path": "node_modules/path-expression-matcher",
+          "treeSha256": "a3d5276357208eb601665327f88805a91042af4e14e1eef7164bff171b765ad4"
+        },
+        {
+          "path": "node_modules/pdfjs-dist",
+          "treeSha256": "e5fdeef5efd288ad64d2b12f9d24e6884049920c02c6e8733166ab4a9e465214"
+        },
+        {
+          "path": "node_modules/picocolors",
+          "treeSha256": "367937cb4caa7acd8a6e1f78aaa4fe8fb50657f78fd938c546ec016398d340cb"
+        },
+        {
+          "path": "node_modules/picomatch",
+          "treeSha256": "576f0513057361cd2c2abbd5bd7176352ee0d7909697f22f2c5dee8732cc5c30"
+        },
+        {
+          "path": "node_modules/postcss",
+          "treeSha256": "86b56c46e1cae52cfb7e29576a62b8170067fd69c4094676babda24b52d759fb"
+        },
+        {
+          "path": "node_modules/regenerator-runtime",
+          "treeSha256": "4bc58cae6c7ddb53e0d67839ec9ccf8f54bf6742bcbcfdfa2f9ce60ef265e588"
+        },
+        {
+          "path": "node_modules/rolldown",
+          "treeSha256": "9f1a83159a87835448cc3d40a3006c2081540421f519a4950d8c67abe0d82397"
+        },
+        {
+          "path": "node_modules/rolldown/node_modules/@rolldown/pluginutils",
+          "treeSha256": "975b874bb19c00ac91cbf56c39f75bb9949007594f39e2dc0d4956cfd6c87fdf"
+        },
+        {
+          "path": "node_modules/source-map-js",
+          "treeSha256": "657ab0506659f14ea0a575dbb2b39c1e431db08c8b962a132c94633bcd79ae76"
+        },
+        {
+          "path": "node_modules/strnum",
+          "treeSha256": "db93cb867777e61c09503f6b97d2e1974dd5b3453aefbdcb222248c195ac84bc"
+        },
+        {
+          "path": "node_modules/tesseract.js",
+          "treeSha256": "a280af5a8c8f74429ab62a335efb5219ee3ce155a5894815cdf1a95a0944f419"
+        },
+        {
+          "path": "node_modules/tesseract.js-core",
+          "treeSha256": "5b37c5ba83cab5f4bf4e0d2dcc4349ad75fb53729e4254cd42db9b3c98c51995"
+        },
+        {
+          "path": "node_modules/tinyglobby",
+          "treeSha256": "99b22d1e4765c500375edf35f7339b727fe823e23f355acfbb64a099725c5ca7"
+        },
+        {
+          "path": "node_modules/tr46",
+          "treeSha256": "b8dd37ef8ddf3f33ddd5a1eb836e639dad1f9741ecd9b62b5d6fd353fa82c1f4"
+        },
+        {
+          "path": "node_modules/vite",
+          "treeSha256": "82d83bb39eb2c49407a9c49939d6440b50a841c2f9b7ed00895a31b06c0289c5"
+        },
+        {
+          "path": "node_modules/wasm-feature-detect",
+          "treeSha256": "cf475f53450f89572810934347a3db6dce30cf92a92c735d7fb1a492d28f19f1"
+        },
+        {
+          "path": "node_modules/webidl-conversions",
+          "treeSha256": "b88a3bbb422d25735589d7bfb13d6e3de377c0aedc9b3e0a2a620bb8b500148c"
+        },
+        {
+          "path": "node_modules/whatwg-url",
+          "treeSha256": "c3f071f0f1056f7efbda914d336410c42cafb6815762b2a903e9a9af421439e5"
+        },
+        {
+          "path": "node_modules/xml-naming",
+          "treeSha256": "eb4729ea753278f68fdf804793c528402f9606543edd7c1ccb78cd2483c5481f"
+        },
+        {
+          "path": "node_modules/zlibjs",
+          "treeSha256": "ec8473e648cb5a40969bb7137ba0a4a7a2c7bda41d6adc72df2e2767c9cd9328"
+        },
+        {
+          "path": "node_modules/zod",
+          "treeSha256": "a400aec61ccc6580dbf66b0b55140ad9d0008a42e897ed0c2eabb319924d258d"
+        }
+      ]
+    }
+  ]
+}

@@ -16,7 +16,7 @@ function structuralOrdinalHeadingText(text: string) {
 }
 
 function roundedSourceBoxCoordinate(value: number) {
-  return Math.round(value * 1_000_000) / 1_000_000
+  return Math.round(value * 100_000) / 100_000
 }
 
 function boxForRegionLines(lines: PdfPageRegion['lines']): NormalizedSourceBox {

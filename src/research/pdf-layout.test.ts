@@ -30,7 +30,6 @@ import {
   reconstructPageAnalyses,
   retainUniqueMonotoneSourceRunAssignment,
   retainUniqueSourceRunAssignmentWithAliases,
-  resolveCanonicalHyperlinkObligations,
   residualPdfRegionAfterLineConsumption,
   residualPdfRegionFragmentsAfterLineConsumption,
   sourceProvenRunFragmentToSpanBoundary,
@@ -671,65 +670,6 @@ function withExplicitEnglishLanguage(page: PdfPageAnalysis): PdfPageAnalysis {
       words: [],
       lines: [],
     },
-  }
-}
-
-function canonicalHyperlinkTestBlock(text = 'Open target') {
-  const sourceRun = run(1, text, 0.1, 0.2, 0.3)
-  const region = {
-    id: 'internal-link-source-region',
-    page: 1,
-    kind: 'body',
-    column: 'single',
-    text,
-    confidence: 1,
-    box: { ...sourceRun },
-    lines: [
-      {
-        id: 'internal-link-source-line',
-        text,
-        fontSize: sourceRun.fontSize,
-        box: { ...sourceRun },
-        runs: [sourceRun],
-      },
-    ],
-    nativeObjectIds: [],
-    includedInReadingOrder: true,
-  } satisfies PdfPageRegion
-  return {
-    block: {
-      type: 'paragraph' as const,
-      region,
-      text,
-      confidence: 1,
-      nodeId: 'internal-link-source-node',
-    },
-    box: {
-      page: 1,
-      x: sourceRun.x,
-      y: sourceRun.y,
-      width: sourceRun.width,
-      height: sourceRun.height,
-      rotation: 0,
-      method: 'pdf-link' as const,
-    },
-  }
-}
-
-function sourceSubstringBox(
-  sourceRun: PdfSourceRun,
-  start: number,
-  end: number,
-  method: NormalizedSourceBox['method'] = 'pdf-link',
-): NormalizedSourceBox {
-  return {
-    page: sourceRun.page,
-    x: sourceRun.x + sourceRun.width * (start / sourceRun.text.length),
-    y: sourceRun.y,
-    width: sourceRun.width * ((end - start) / sourceRun.text.length),
-    height: sourceRun.height,
-    rotation: sourceRun.rotation,
-    method,
   }
 }
 

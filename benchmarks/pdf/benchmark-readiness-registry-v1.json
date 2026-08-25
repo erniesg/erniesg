@@ -280,7 +280,7 @@
       "status": "available",
       "kind": "code",
       "implementation": "tools/pdf-private-fidelity.mjs",
-      "implementationSha256": "2f1038edd20b70da792dbbad350de885e9b4a38f3e4812241ebbecc2ee7b0dec",
+      "implementationSha256": "a23144fcc5ddde6b83ee83092e6cd72f7ffda65e5654e182ea174208c186ad10",
       "implementationComponents": [
         {
           "path": "src/research/composition.ts",
@@ -492,7 +492,7 @@
         },
         {
           "path": "tools/pdf-corpus-audit-lib.mjs",
-          "fileSha256": "59f804aac9827586206077caedd18150172d4b5612f3fd585f45b135c24db158"
+          "fileSha256": "3ac86a0e2fd13f611640702efaa1d879088cab83a93c996e7eb814fedb54d411"
         },
         {
           "path": "tools/pdf-corpus-audit-safety.mjs",

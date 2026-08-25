@@ -1125,6 +1125,87 @@ describe('PDF benchmark readiness registry', () => {
     }
   })
 
+  it('rejects indirect Vite module loaders that would leave executed roots unbound', async () => {
+    const { repositoryRoot } = await temporaryViteImplementationFixture()
+    try {
+      for (const source of [
+        "export const load = (vite) => { const { ssrLoadModule } = vite; return ssrLoadModule('/src/loaded.ts') }\n",
+        "export const load = ({ ssrLoadModule }) => ssrLoadModule('/src/loaded.ts')\n",
+        "export const load = (vite) => vite['ssrLoadModule']('/src/loaded.ts')\n",
+        "export const load = (vite, method) => vite[method]('/src/loaded.ts')\n",
+        "export const load = () => import.meta.glob('/src/*.ts')\n",
+        "export const load = () => import.meta['glob']('/src/*.ts')\n",
+      ]) {
+        await writeFile(join(repositoryRoot, 'tools/audit.mjs'), source)
+        await expect(
+          deriveLocalExecutableImportClosure('tools/entry.mjs', {
+            repositoryRoot,
+          }),
+        ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      }
+    } finally {
+      await rm(repositoryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('verifies every platform claimed by a package implementation binding', async () => {
+    const { repositoryRoot, metric } =
+      await temporaryPackageImplementationFixture()
+    try {
+      metric.implementationPlatforms.push('darwin-x64')
+      metric.implementationSha256 = implementationCompositeSha256(metric)
+
+      await expect(
+        verifyMetricImplementationBinding(metric, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    } finally {
+      await rm(repositoryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a component mutation that races package verification', async () => {
+    const { repositoryRoot, metric } =
+      await temporaryPackageImplementationFixture()
+    try {
+      const packageRoot = join(repositoryRoot, 'node_modules/fake-package')
+      await mkdir(join(packageRoot, 'snapshot-fixture'))
+      await Promise.all(
+        Array.from({ length: 64 }, (_, index) =>
+          writeFile(
+            join(packageRoot, 'snapshot-fixture', `${index}.bin`),
+            Buffer.alloc(1024 * 1024, index),
+          ),
+        ),
+      )
+      const packageClosure = await deriveExecutablePackageClosure(
+        metric.implementation,
+        { repositoryRoot },
+      )
+      metric.implementationPackageLock = packageClosure.packageLock
+      metric.implementationPackages = packageClosure.packages
+      metric.implementationPlatforms = [packageClosure.platform]
+      metric.implementationSha256 = implementationCompositeSha256(metric)
+
+      const verification = verifyMetricImplementationBinding(metric, {
+        repositoryRoot,
+        requirePackages: true,
+      })
+      await new Promise((resolve) => setTimeout(resolve, 25))
+      await writeFile(
+        join(repositoryRoot, 'tools/entry.mjs'),
+        "import 'fake-package'\nexport const mutated = true\n",
+      )
+      await expect(verification).rejects.toThrow(
+        'PDF_BENCHMARK_METRIC_BINDING_MISMATCH',
+      )
+    } finally {
+      await rm(repositoryRoot, { recursive: true, force: true })
+    }
+  })
+
   it('rejects noncanonical aliases and symlinked closure components', async () => {
     const { repositoryRoot, metric } = await temporaryImplementationFixture()
     try {

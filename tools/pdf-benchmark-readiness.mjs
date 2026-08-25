@@ -385,23 +385,77 @@ function viteSsrModuleSpecifiers(source, fileName) {
     /\.(?:cts|mts|ts)$/u.test(fileName) ? ts.ScriptKind.TS : ts.ScriptKind.JS,
   )
   const specifiers = []
+  function isSsrLoadModuleProperty(node) {
+    return (
+      ts.isPropertyAccessExpression(node) && node.name.text === 'ssrLoadModule'
+    )
+  }
+  function isImportMetaGlobProperty(node) {
+    return (
+      ts.isPropertyAccessExpression(node) &&
+      ts.isMetaProperty(node.expression) &&
+      node.expression.keywordToken === ts.SyntaxKind.ImportKeyword &&
+      node.expression.name.text === 'meta' &&
+      ['glob', 'globEager'].includes(node.name.text)
+    )
+  }
+  function isImportMetaGlobElement(node) {
+    return (
+      ts.isElementAccessExpression(node) &&
+      ts.isMetaProperty(node.expression) &&
+      node.expression.keywordToken === ts.SyntaxKind.ImportKeyword &&
+      node.expression.name.text === 'meta' &&
+      ts.isStringLiteral(node.argumentExpression) &&
+      ['glob', 'globEager'].includes(node.argumentExpression.text)
+    )
+  }
+  function bindingContainsSsrLoadModule(name) {
+    return (
+      ts.isObjectBindingPattern(name) &&
+      name.elements.some((element) => {
+        const propertyName = element.propertyName
+        const propertyText = propertyName?.getText(sourceFile)
+        return (
+          element.name.getText(sourceFile) === 'ssrLoadModule' ||
+          propertyText === 'ssrLoadModule' ||
+          propertyText === "'ssrLoadModule'" ||
+          propertyText === '"ssrLoadModule"' ||
+          propertyText === "['ssrLoadModule']" ||
+          propertyText === '["ssrLoadModule"]'
+        )
+      })
+    )
+  }
   function visit(node) {
     if (
-      ts.isCallExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      node.expression.name.text === 'ssrLoadModule'
-    ) {
-      if (node.arguments.length !== 1 || !ts.isStringLiteral(node.arguments[0]))
+      (ts.isVariableDeclaration(node) || ts.isParameter(node)) &&
+      bindingContainsSsrLoadModule(node.name)
+    )
+      invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    if (ts.isCallExpression(node) && isSsrLoadModuleProperty(node.expression)) {
+      if (
+        node.expression.questionDotToken ||
+        node.questionDotToken ||
+        node.arguments.length !== 1 ||
+        !ts.isStringLiteral(node.arguments[0])
+      )
         invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
       specifiers.push(node.arguments[0].text)
     }
+    if (ts.isCallExpression(node) && isImportMetaGlobProperty(node.expression))
+      invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
     if (
-      ts.isCallExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      ts.isPropertyAccessExpression(node.expression.expression) &&
-      ts.isMetaProperty(node.expression.expression.expression) &&
-      node.expression.expression.name.text === 'meta' &&
-      node.expression.name.text === 'glob'
+      ts.isElementAccessExpression(node) &&
+      (isImportMetaGlobElement(node) ||
+        node.argumentExpression === undefined ||
+        (ts.isStringLiteral(node.argumentExpression) &&
+          node.argumentExpression.text === 'ssrLoadModule') ||
+        (ts.isIdentifier(node.expression) && node.expression.text === 'vite'))
+    )
+      invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    if (
+      isSsrLoadModuleProperty(node) &&
+      (!ts.isCallExpression(node.parent) || node.parent.expression !== node)
     )
       invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
     ts.forEachChild(node, visit)
@@ -992,31 +1046,59 @@ export async function verifyMetricImplementationBinding(
       'PDF_BENCHMARK_METRIC_BINDING_MISMATCH',
       repositoryRoot,
     )
-    const derivedPackages = await deriveExecutablePackageClosure(
-      metric.implementation,
-      {
-        repositoryRoot,
-        packageLockPath: metric.implementationPackageLock.path,
-      },
+    const verifyPackagesForPlatform = async (platform) => {
+      parsedExecutablePackagePlatform(platform)
+      const derivedPackages = await deriveExecutablePackageClosure(
+        metric.implementation,
+        {
+          repositoryRoot,
+          packageLockPath: metric.implementationPackageLock.path,
+          platform,
+        },
+      )
+      const expectedPackages = metric.implementationPackages
+        .filter(
+          (package_) =>
+            !package_.platforms || package_.platforms.includes(platform),
+        )
+        .map((package_) =>
+          package_.platforms
+            ? { ...package_, platforms: [platform] }
+            : package_,
+        )
+      if (
+        canonicalJson(derivedPackages.packageLock) !==
+          canonicalJson(metric.implementationPackageLock) ||
+        canonicalJson(derivedPackages.packages) !==
+          canonicalJson(expectedPackages)
+      )
+        invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      return derivedPackages
+    }
+    const packageSnapshots = await Promise.all(
+      metric.implementationPlatforms.map(verifyPackagesForPlatform),
     )
-    if (!metric.implementationPlatforms.includes(derivedPackages.platform))
-      invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
-    const expectedPackages = metric.implementationPackages
-      .filter(
-        (package_) =>
-          !package_.platforms ||
-          package_.platforms.includes(derivedPackages.platform),
-      )
-      .map((package_) =>
-        package_.platforms
-          ? { ...package_, platforms: [derivedPackages.platform] }
-          : package_,
-      )
+    const finalClosure = await deriveLocalExecutableImportClosure(
+      metric.implementation,
+      { repositoryRoot, includeViteGraph },
+    )
     if (
-      canonicalJson(derivedPackages.packageLock) !==
-        canonicalJson(metric.implementationPackageLock) ||
-      canonicalJson(derivedPackages.packages) !==
-        canonicalJson(expectedPackages)
+      canonicalJson(
+        closure.map(({ path, bytes }) => ({ path, fileSha256: sha256(bytes) })),
+      ) !==
+      canonicalJson(
+        finalClosure.map(({ path, bytes }) => ({
+          path,
+          fileSha256: sha256(bytes),
+        })),
+      )
+    )
+      invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    const finalPackageSnapshots = await Promise.all(
+      metric.implementationPlatforms.map(verifyPackagesForPlatform),
+    )
+    if (
+      canonicalJson(packageSnapshots) !== canonicalJson(finalPackageSnapshots)
     )
       invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
   }

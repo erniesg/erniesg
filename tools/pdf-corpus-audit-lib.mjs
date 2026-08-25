@@ -1747,6 +1747,10 @@ export async function createPdfPipeline({
     vite = await createServer({
       appType: 'custom',
       cacheDir,
+      // The audit loads a fixed, hash-bound module graph. Never permit an
+      // unbound project Vite config or .env file to alter that runtime.
+      configFile: false,
+      envFile: false,
       logLevel: 'silent',
       // Module ids below are repository-root-relative. Pin Vite to the module's
       // repository instead of inheriting whichever CWD invoked the audit tool.

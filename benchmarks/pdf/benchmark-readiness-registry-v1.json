@@ -280,7 +280,7 @@
       "status": "available",
       "kind": "code",
       "implementation": "tools/pdf-private-fidelity.mjs",
-      "implementationSha256": "5fd5e46975ac2325ff53d97cb72583f6ac35442f4d12340cb0cbc19b2e6cb3c6",
+      "implementationSha256": "2f1038edd20b70da792dbbad350de885e9b4a38f3e4812241ebbecc2ee7b0dec",
       "implementationComponents": [
         {
           "path": "src/research/composition.ts",
@@ -492,7 +492,7 @@
         },
         {
           "path": "tools/pdf-corpus-audit-lib.mjs",
-          "fileSha256": "a2ee3f80ad7242c2663097abb0d6523c198cad7e1d9914bc42f8a97145c8f339"
+          "fileSha256": "59f804aac9827586206077caedd18150172d4b5612f3fd585f45b135c24db158"
         },
         {
           "path": "tools/pdf-corpus-audit-safety.mjs",
@@ -527,7 +527,7 @@
         "path": "package-lock.json",
         "fileSha256": "660d6365dd7c3ea6d619df09c08f9d14771ec6f60beebd2eb4f88c97363c896a"
       },
-      "implementationPlatforms": ["darwin-arm64", "linux-x64-gnu"],
+      "implementationPlatforms": ["darwin-arm64"],
       "implementationPackages": [
         {
           "path": "node_modules/@napi-rs/canvas",
@@ -543,14 +543,6 @@
           "integrity": "sha512-2PcswRaC7Ly645DGt88///zuFDhJxJYdKAs1uU3mfk1atYkXufgcgLfBpk6Tm12nCQBaNt1wpybuPZ4qOhTo8A==",
           "treeSha256": "0aae764844cdedf8916c08aaff9e1e838d34934d5a496764fda9329539ce12d4",
           "platforms": ["darwin-arm64"]
-        },
-        {
-          "path": "node_modules/@napi-rs/canvas-linux-x64-gnu",
-          "name": "@napi-rs/canvas-linux-x64-gnu",
-          "version": "0.1.100",
-          "integrity": "sha512-1eCvkDCazm7FFhsT7DfGOdSaHgZVK3bt/dSBl5EWHOWmnz+I7j8tPseJqqD81NF+MH21jKUK4wQSDjN0mdhnTg==",
-          "treeSha256": "25daeb86fcedabd34e28ef66f2d79e02e99816c69755ffb04e8cfe6b86ab1f19",
-          "platforms": ["linux-x64-gnu"]
         },
         {
           "path": "node_modules/@nodable/entities",
@@ -573,14 +565,6 @@
           "integrity": "sha512-51Bnx9pNiMRKSUNtBfySkNJ9vMU9Hh3I1ozDd6gyPPYzaXCfnptUcEZxXGYFn+ul2dtcMUiqGR1Yai2K10uoTw==",
           "treeSha256": "339666b43f387b64b8e288464bb728a22ba26abec3304cc4ce8bf12cd4adbecf",
           "platforms": ["darwin-arm64"]
-        },
-        {
-          "path": "node_modules/@rolldown/binding-linux-x64-gnu",
-          "name": "@rolldown/binding-linux-x64-gnu",
-          "version": "1.1.5",
-          "integrity": "sha512-FjcpEKUyJygHgs1o50VYNvkt5+7Le/VEdYt0AkRpkL33MnyQfwr8l5mXwMmfmTbyMPr5vJLC+8/Gd9gXnwU1QQ==",
-          "treeSha256": "7302b9884314387707b73c7a6b8da35a9ecc3b11687db6deac50f8cbef54cbf0",
-          "platforms": ["linux-x64-gnu"]
         },
         {
           "path": "node_modules/@tesseract.js-data/eng",
@@ -682,14 +666,6 @@
           "platforms": ["darwin-arm64"]
         },
         {
-          "path": "node_modules/lightningcss-linux-x64-gnu",
-          "name": "lightningcss-linux-x64-gnu",
-          "version": "1.32.0",
-          "integrity": "sha512-V7Qr52IhZmdKPVr+Vtw8o+WLsQJYCTd8loIfpDaMRWGUZfBOYEJeyJIkqGIDMZPwPx24pUMfwSxxI8phr/MbOA==",
-          "treeSha256": "18321a0b611db4ded3243a9404ac19591e567addd0b056d00ced4ed70e73b26a",
-          "platforms": ["linux-x64-gnu"]
-        },
-        {
           "path": "node_modules/nanoid",
           "name": "nanoid",
           "version": "3.3.18",
@@ -709,7 +685,7 @@
           "version": "0.4.2",
           "integrity": "sha512-/cMZNI34v//jUTrI+UIo4ieHAB5EZRY/+7OmXZgBxaWBMcW2tGdceIw06RFxWxrKZ5Jp3sI2i5TsRo+CBhtVLQ==",
           "treeSha256": "bbe327bc407f043d9d51987f06938c93f6b27644e72001d78ef76e2664825e97",
-          "platforms": ["darwin-arm64", "linux-x64-gnu"]
+          "platforms": ["darwin-arm64"]
         },
         {
           "path": "node_modules/opencollective-postinstall",

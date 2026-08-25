@@ -11,8 +11,38 @@ const RFC3339_DATE_TIME =
 
 export function bcp47Language(value: unknown, path: string) {
   const parsed = stringValue(value, path)
-  if (!BCP47_GRANDFATHERED.test(parsed) && !BCP47_LANGUAGE.test(parsed))
+  const grandfathered = BCP47_GRANDFATHERED.test(parsed)
+  if (!grandfathered && !BCP47_LANGUAGE.test(parsed))
     fail('LANGUAGE', path, 'language must be a valid BCP-47 tag')
+
+  if (!grandfathered && !/^x-/iu.test(parsed)) {
+    const subtags = parsed.split('-')
+    const languageLength = subtags[0]?.length ?? 0
+    let index = 1
+    if (languageLength >= 2 && languageLength <= 3) {
+      let extlangs = 0
+      while (
+        extlangs < 3 &&
+        index < subtags.length &&
+        /^[A-Za-z]{3}$/u.test(subtags[index]!)
+      ) {
+        extlangs += 1
+        index += 1
+      }
+    }
+    if (/^[A-Za-z]{4}$/u.test(subtags[index] ?? '')) index += 1
+    if (/^(?:[A-Za-z]{2}|\d{3})$/u.test(subtags[index] ?? '')) index += 1
+    const variants = new Set<string>()
+    while (
+      /^(?:[A-Za-z0-9]{5,8}|\d[A-Za-z0-9]{3})$/u.test(subtags[index] ?? '')
+    ) {
+      const variant = subtags[index]!.toLowerCase()
+      if (variants.has(variant))
+        fail('LANGUAGE', path, 'language must not repeat a BCP-47 variant')
+      variants.add(variant)
+      index += 1
+    }
+  }
 
   const extensionSingletons = new Set<string>()
   for (const subtag of parsed.split('-')) {

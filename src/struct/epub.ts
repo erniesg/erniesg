@@ -7,11 +7,8 @@ import {
   type ZipOptions,
 } from 'fflate'
 import { XMLParser, XMLValidator } from 'fast-xml-parser'
-import {
-  MAX_STRUCT_ASSETS,
-  MAX_STRUCT_ASSET_BYTES_TOTAL,
-} from './codec/parsers'
-import { MAX_STRUCT_ASSET_BYTES } from './codec/bytes'
+import { parseStructAssets } from './codec/parsers'
+import { isStructCodecError } from './codec/primitives'
 import {
   bcp47Language,
   mediaType,
@@ -144,26 +141,6 @@ function assertBuilderScalars(document: StructDocument) {
     if (asset.href.includes('%'))
       throw new Error(`STRUCT EPUB asset ${asset.id} has an ambiguous href`)
   }
-}
-
-function assertAssetResourceBounds(assets: StructDocument['assets']) {
-  if (assets.length > MAX_STRUCT_ASSETS)
-    throw new Error('STRUCT_EPUB_ASSET_RESOURCE_LIMIT')
-
-  let total = 0
-  for (const asset of assets) {
-    const bytes = asset.bytes
-    const byteLength = bytes?.byteLength
-    if (
-      !Number.isSafeInteger(byteLength) ||
-      byteLength < 0 ||
-      byteLength > MAX_STRUCT_ASSET_BYTES ||
-      total > MAX_STRUCT_ASSET_BYTES_TOTAL - byteLength
-    )
-      throw new Error('STRUCT_EPUB_ASSET_RESOURCE_LIMIT')
-    total += byteLength
-  }
-  return total
 }
 
 function assertNoNegativeZero(value: unknown, seen = new WeakSet<object>()) {
@@ -394,7 +371,21 @@ export async function buildStructEpub(
   document: StructDocument,
   options: StructEpubOptions = {},
 ): Promise<StructEpubExport> {
-  const assetBytes = assertAssetResourceBounds(document.assets)
+  let canonicalAssets: StructDocument['assets']
+  try {
+    canonicalAssets = parseStructAssets(document.assets)
+  } catch (error) {
+    if (
+      isStructCodecError(error) &&
+      (error.code === 'BUDGET' ||
+        error.code === 'ASSET_BOUNDS' ||
+        (error.path.endsWith('.bytes') &&
+          (error.code === 'BYTES' || error.code === 'TYPE')))
+    )
+      throw new Error('STRUCT_EPUB_ASSET_RESOURCE_LIMIT', { cause: error })
+    throw error
+  }
+  document = { ...document, assets: canonicalAssets }
   assertBuilderScalars(document)
   assertNoSemanticZeroWidthRuns(document)
   assertStructReceiptIntegrity(document)
@@ -414,14 +405,12 @@ export async function buildStructEpub(
     if (!asset.bytes) {
       throw new Error(`STRUCT asset ${asset.id} has no packaged bytes.`)
     }
-    const bytes = new Uint8Array(asset.bytes)
-    if (sha256HexSync(bytes) !== asset.sha256) {
-      throw new Error(
-        `STRUCT asset ${asset.id} bytes do not match declared SHA-256.`,
-      )
-    }
-    return { ...asset, bytes }
+    return asset as typeof asset & { bytes: Uint8Array }
   })
+  const assetBytes = assets.reduce(
+    (total, asset) => total + asset.bytes.byteLength,
+    0,
+  )
   const reservedHrefs = new Set([
     'package.opf',
     'nav.xhtml',

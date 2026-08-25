@@ -704,6 +704,55 @@ describe('STRUCT EPUB href integrity', () => {
     )
   })
 
+  it('rejects a custom asset iterator without invoking it', async () => {
+    const document = documentWithHref('#target')
+    let iteratorCalls = 0
+    Object.defineProperty(document.assets, Symbol.iterator, {
+      configurable: true,
+      value() {
+        iteratorCalls += 1
+        throw new Error('asset iterator invoked')
+      },
+    })
+
+    await expect(buildStructEpub(document)).rejects.toThrow()
+    expect(iteratorCalls).toBe(0)
+  })
+
+  it('rejects spoofed asset bytes without invoking their iterator', async () => {
+    const document = documentWithHref('#target')
+    let iteratorCalls = 0
+    const bytes = {
+      byteLength: 1,
+      [Symbol.iterator]() {
+        iteratorCalls += 1
+        return [1][Symbol.iterator]()
+      },
+    }
+    document.assets.push({
+      id: 'spoofed-bytes',
+      kind: 'figure',
+      href: 'assets/spoofed.bin',
+      mediaType: 'application/octet-stream',
+      sha256: sha256HexSync(new Uint8Array([1])),
+      width: 1,
+      height: 1,
+      bytes: bytes as unknown as Uint8Array,
+      sourceObjectIds: ['spoofed-source'],
+      evidence: {
+        confidence: 1,
+        pages: [1],
+        boxes: [],
+        sourceIds: ['spoofed-source'],
+      },
+      fallback: 'asset',
+    })
+    refreshReceipt(document)
+
+    await expect(buildStructEpub(document)).rejects.toThrow(/asset|bytes/i)
+    expect(iteratorCalls).toBe(0)
+  })
+
   it.each([
     [
       'calendar-normalized timestamp',
@@ -714,6 +763,11 @@ describe('STRUCT EPUB href integrity', () => {
       'duplicate BCP-47 extension singleton',
       (document: StructDocument) =>
         (document.metadata.language = 'en-a-foo-a-bar'),
+    ],
+    [
+      'duplicate BCP-47 variant',
+      (document: StructDocument) =>
+        (document.metadata.language = 'de-1901-1901'),
     ],
     [
       'MIME wildcard',
@@ -743,7 +797,12 @@ describe('STRUCT EPUB href integrity', () => {
   })
 
   it('accepts grandfathered and standard direct builder language tags', async () => {
-    for (const language of ['i-klingon', 'en-US-u-ca-gregory']) {
+    for (const language of [
+      'i-klingon',
+      'de-1901',
+      'sl-rozaj-biske-1994',
+      'en-US-u-ca-gregory',
+    ]) {
       const document = documentWithHref('#target')
       document.metadata.language = language
 

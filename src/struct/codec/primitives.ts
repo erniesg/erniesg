@@ -89,7 +89,11 @@ export function object(
   return snapshot.values
 }
 
-export function array(value: unknown, path: string): unknown[] {
+export function array(
+  value: unknown,
+  path: string,
+  maximumLength?: number,
+): unknown[] {
   try {
     if (!Array.isArray(value)) fail('TYPE', path, 'expected an array')
     const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length')
@@ -101,6 +105,12 @@ export function array(value: unknown, path: string): unknown[] {
       length < 0
     )
       fail('ARRAY', path, 'array length is not a safe integer')
+    if (maximumLength !== undefined && length > maximumLength)
+      fail(
+        'BUDGET',
+        path,
+        `array length exceeds the ${maximumLength} item bound`,
+      )
     const keys = Reflect.ownKeys(value)
     if (
       keys.length !== length + 1 ||

@@ -49,6 +49,7 @@ import {
 import {
   bytesToBase64,
   MAX_STRUCT_ASSET_BYTES,
+  preflightBytes,
   parseBytes,
 } from './bytes'
 import { copyCanonicalJson, validateConsultationReceipt } from './model'
@@ -148,6 +149,8 @@ export const MAX_TABLE_DIMENSION = 100_000
 export const MAX_TABLE_AREA = 100_000
 export const MAX_STRUCT_ASSETS = 512
 export const MAX_STRUCT_ASSET_BYTES_TOTAL = 128 * 1024 * 1024
+export const MAX_STRUCT_RECOVERY_ISSUES = 10_000
+export const MAX_STRUCT_RECOVERY_PAGES = 100_000
 
 function parseBox(value: unknown, path: string): StructBox {
   const parsed = object(value, path, [
@@ -760,8 +763,12 @@ function parseBlock(value: unknown, path: string): StructBlock {
   }
 }
 
-function parseAsset(value: unknown, path: string): StructAsset {
-  const parsed = object(
+function snapshotAsset(value: unknown, path: string) {
+  return copyRecord(dataEntries(value, path))
+}
+
+function assetObject(value: unknown, path: string) {
+  return object(
     value,
     path,
     [
@@ -778,6 +785,14 @@ function parseAsset(value: unknown, path: string): StructAsset {
     ],
     ['bytes'],
   )
+}
+
+function parseAsset(
+  value: unknown,
+  path: string,
+  maximumBytes: number,
+): StructAsset {
+  const parsed = assetObject(value, path)
   const href = stringValue(parsed.href, `${path}.href`)
   if (URL_CONTROL.test(href))
     fail(
@@ -817,7 +832,7 @@ function parseAsset(value: unknown, path: string): StructAsset {
     fail('HREF', `${path}.href`, 'asset href is reserved by the EPUB package')
   const sha256 = hash(parsed.sha256, `${path}.sha256`)
   const bytes = has(parsed, 'bytes')
-    ? parseBytes(parsed.bytes, `${path}.bytes`)
+    ? parseBytes(parsed.bytes, `${path}.bytes`, maximumBytes)
     : undefined
   if (bytes && sha256HexSync(bytes) !== sha256)
     fail(
@@ -973,44 +988,51 @@ function parseRecovery(value: unknown, path: string): StructRecovery {
     ['status', 'title', 'summary', 'issues'],
     ['userAction'],
   )
+  let remainingPages = MAX_STRUCT_RECOVERY_PAGES
+  const issues = array(
+    parsed.issues,
+    `${path}.issues`,
+    MAX_STRUCT_RECOVERY_ISSUES,
+  ).map((issue, index) => {
+    const entry = object(
+      issue,
+      `${path}.issues[${index}]`,
+      ['category', 'title', 'count', 'pages'],
+      ['action'],
+    )
+    const pages = array(
+      entry.pages,
+      `${path}.issues[${index}].pages`,
+      remainingPages,
+    ).map((page, pageIndex) =>
+      positiveInteger(page, `${path}.issues[${index}].pages[${pageIndex}]`),
+    )
+    remainingPages -= pages.length
+    unique(pages.map(String), `${path}.issues[${index}].pages`, 'page')
+    return {
+      category: enumValue(
+        entry.category,
+        `${path}.issues[${index}].category`,
+        DIAGNOSTIC_CATEGORIES,
+      ),
+      title: stringValue(entry.title, `${path}.issues[${index}].title`),
+      count: nonNegativeInteger(entry.count, `${path}.issues[${index}].count`),
+      pages,
+      ...(has(entry, 'action')
+        ? {
+            action: stringValue(
+              entry.action,
+              `${path}.issues[${index}].action`,
+            ),
+          }
+        : {}),
+    }
+  })
   return {
     status: enumValue(parsed.status, `${path}.status`, RECOVERY_STATUSES),
     title: stringValue(parsed.title, `${path}.title`),
     summary: stringValue(parsed.summary, `${path}.summary`),
-    issues: array(parsed.issues, `${path}.issues`).map((issue, index) => {
-      const entry = object(
-        issue,
-        `${path}.issues[${index}]`,
-        ['category', 'title', 'count', 'pages'],
-        ['action'],
-      )
-      const pages = array(entry.pages, `${path}.issues[${index}].pages`).map(
-        (page, pageIndex) =>
-          positiveInteger(page, `${path}.issues[${index}].pages[${pageIndex}]`),
-      )
-      unique(pages.map(String), `${path}.issues[${index}].pages`, 'page')
-      return {
-        category: enumValue(
-          entry.category,
-          `${path}.issues[${index}].category`,
-          DIAGNOSTIC_CATEGORIES,
-        ),
-        title: stringValue(entry.title, `${path}.issues[${index}].title`),
-        count: nonNegativeInteger(
-          entry.count,
-          `${path}.issues[${index}].count`,
-        ),
-        pages,
-        ...(has(entry, 'action')
-          ? {
-              action: stringValue(
-                entry.action,
-                `${path}.issues[${index}].action`,
-              ),
-            }
-          : {}),
-      }
-    }),
+    issues,
     ...(has(parsed, 'userAction')
       ? { userAction: stringValue(parsed.userAction, `${path}.userAction`) }
       : {}),
@@ -1184,21 +1206,7 @@ function parseDocument(value: unknown): StructDocument {
   const blocks = array(parsed.blocks, '$.blocks').map((block, index) =>
     parseBlock(block, `$.blocks[${index}]`),
   )
-  const rawAssets = array(parsed.assets, '$.assets')
-  if (rawAssets.length > MAX_STRUCT_ASSETS)
-    fail('ASSET_BOUNDS', '$.assets', 'asset count exceeds the resource bound')
-  const assets = rawAssets.map((asset, index) =>
-    parseAsset(asset, `$.assets[${index}]`),
-  )
-  const assetBytes = assets.reduce(
-    (total, asset) => total + (asset.bytes?.byteLength ?? 0),
-    0,
-  )
-  if (
-    assetBytes > MAX_STRUCT_ASSET_BYTES_TOTAL ||
-    assets.some((asset) => (asset.bytes?.byteLength ?? 0) > MAX_STRUCT_ASSET_BYTES)
-  )
-    fail('ASSET_BOUNDS', '$.assets', 'asset bytes exceed the resource bound')
+  const assets = parseStructAssets(parsed.assets)
   const relationships = array(parsed.relationships, '$.relationships').map(
     (relationship, index) =>
       parseRelationship(relationship, `$.relationships[${index}]`),
@@ -1252,6 +1260,36 @@ function parseDocument(value: unknown): StructDocument {
   }
   validateStructDocument(document, parsed)
   return document
+}
+
+/** Snapshot and validate bounded STRUCT assets before any consumer packages them. */
+export function parseStructAssets(value: unknown): StructAsset[] {
+  const rawAssets = array(value, '$.assets', MAX_STRUCT_ASSETS)
+  const assetSnapshots = rawAssets.map((asset, index) =>
+    snapshotAsset(asset, `$.assets[${index}]`),
+  )
+  let preflightRemaining = MAX_STRUCT_ASSET_BYTES_TOTAL
+  for (const [index, asset] of assetSnapshots.entries()) {
+    if (!has(asset, 'bytes')) continue
+    const length = preflightBytes(
+      asset.bytes,
+      `$.assets[${index}].bytes`,
+      MAX_STRUCT_ASSET_BYTES,
+    )
+    if (length > preflightRemaining)
+      fail('ASSET_BOUNDS', '$.assets', 'asset bytes exceed the resource bound')
+    preflightRemaining -= length
+  }
+  let decodeRemaining = MAX_STRUCT_ASSET_BYTES_TOTAL
+  return assetSnapshots.map((asset, index) => {
+    const parsedAsset = parseAsset(
+      asset,
+      `$.assets[${index}]`,
+      Math.min(MAX_STRUCT_ASSET_BYTES, decodeRemaining),
+    )
+    decodeRemaining -= parsedAsset.bytes?.byteLength ?? 0
+    return parsedAsset
+  })
 }
 
 /** Decode a JSON-safe or in-memory STRUCT document without coercion. */

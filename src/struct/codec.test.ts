@@ -310,6 +310,10 @@ describe('STRUCT runtime codec', () => {
       'duplicate BCP-47 extension singleton',
       (value: any) => (value.metadata.language = 'en-a-foo-a-bar'),
     ],
+    [
+      'duplicate BCP-47 variant',
+      (value: any) => (value.metadata.language = 'de-1901-1901'),
+    ],
     ['MIME wildcard', (value: any) => (value.assets[0].mediaType = '*/*')],
   ])('rejects an invalid %s', (_label, mutate) => {
     const value = validDocument()
@@ -319,7 +323,13 @@ describe('STRUCT runtime codec', () => {
     expect(() => decodeStructDocument(value)).toThrow()
   })
 
-  it.each(['i-klingon', 'en-US-u-ca-gregory'])(
+  it.each([
+    'i-klingon',
+    'de-1901',
+    'sl-rozaj-biske-1994',
+    'en-US-u-ca-gregory',
+    'x-private-private',
+  ])(
     'accepts the BCP-47 language tag %s',
     (language) => {
       const value = validDocument()
@@ -345,6 +355,92 @@ describe('STRUCT runtime codec', () => {
 
     expect(() => parseBytes(bytes, '$.asset.bytes')).toThrow(/resource bound/i)
   })
+
+  it('copies a large canonical Uint8Array without materializing numeric keys or descriptors', () => {
+    const bytes = new Uint8Array(1024 * 1024)
+    bytes[0] = 17
+    bytes[bytes.length - 1] = 29
+    const ownKeys = Reflect.ownKeys
+    const descriptor = Object.getOwnPropertyDescriptor
+    Reflect.ownKeys = ((value: object) => {
+      if (value === bytes) throw new Error('numeric keys were materialized')
+      return ownKeys(value)
+    }) as typeof Reflect.ownKeys
+    Object.getOwnPropertyDescriptor = ((value: object, key: PropertyKey) => {
+      if (value === bytes && /^(?:0|[1-9]\d*)$/u.test(String(key)))
+        throw new Error('numeric descriptor was inspected')
+      return descriptor(value, key)
+    }) as typeof Object.getOwnPropertyDescriptor
+
+    try {
+      const snapshot = parseBytes(bytes, '$.asset.bytes')
+      expect(snapshot).not.toBe(bytes)
+      expect(snapshot[0]).toBe(17)
+      expect(snapshot[snapshot.length - 1]).toBe(29)
+    } finally {
+      Reflect.ownKeys = ownKeys
+      Object.getOwnPropertyDescriptor = descriptor
+    }
+  })
+
+  it('rejects aggregate asset bytes before decoding or hashing an earlier payload', () => {
+    const value = validDocument() as any
+    const sparseMaximum = new Array(MAX_STRUCT_ASSET_BYTES)
+    value.assets = [
+      { ...value.assets[0], bytes: sparseMaximum },
+      {
+        ...value.assets[0],
+        id: 'asset-2',
+        href: 'assets/asset-2.bin',
+        bytes: [0],
+      },
+    ]
+
+    try {
+      decodeStructDocument(value)
+      throw new Error('expected aggregate asset bound failure')
+    } catch (error) {
+      expect(error).toBeInstanceOf(StructCodecError)
+      expect((error as StructCodecError).code).toBe('ASSET_BOUNDS')
+      expect((error as StructCodecError).path).toBe('$.assets')
+    }
+  })
+
+  it.each([
+    [
+      'issues',
+      10_001,
+      (value: any, entries: unknown[]) => (value.recovery.issues = entries),
+    ],
+    [
+      'pages',
+      100_001,
+      (value: any, entries: unknown[]) =>
+        (value.recovery.issues[0].pages = entries),
+    ],
+  ])(
+    'rejects oversized recovery %s before snapshotting its keys',
+    (_label, length, assign) => {
+      const value = validDocument() as any
+      let ownKeyReads = 0
+      const entries = new Proxy(new Array(length), {
+        ownKeys() {
+          ownKeyReads += 1
+          throw new Error('oversized recovery keys were snapshotted')
+        },
+      })
+      assign(value, entries)
+
+      try {
+        decodeStructDocument(value)
+        throw new Error('expected recovery bound failure')
+      } catch (error) {
+        expect(error).toBeInstanceOf(StructCodecError)
+        expect((error as StructCodecError).code).toBe('BUDGET')
+        expect(ownKeyReads).toBe(0)
+      }
+    },
+  )
 
   it('preserves JSON text whitespace without coercion', () => {
     const value = validDocument() as any
@@ -485,27 +581,35 @@ describe('STRUCT runtime codec', () => {
     expect(() => decodeStructDocument(jsonValue)).toThrow()
   })
 
-  it('rejects Uint8Array values with enumerable own string properties', () => {
+  it('copies only intrinsic bytes without invoking enumerable string expandos', () => {
     const value = validDocument()
     const bytes = new Uint8Array([0, 255, 128])
+    let getterCalls = 0
     Object.defineProperty(bytes, 'extra', {
-      value: 'must not be discarded',
       enumerable: true,
+      get() {
+        getterCalls += 1
+        throw new Error('expando getter invoked')
+      },
     })
     value.assets[0].bytes = bytes as any
 
-    expect(() => decodeStructDocument(value)).toThrow(/asset|bytes/i)
+    const snapshot = decodeStructDocument(value).assets[0]!.bytes!
+    expect(snapshot).toEqual(new Uint8Array([0, 255, 128]))
+    expect(Object.hasOwn(snapshot, 'extra')).toBe(false)
+    expect(getterCalls).toBe(0)
   })
 
-  it('rejects Uint8Array values with own symbol properties', () => {
+  it('copies only intrinsic bytes without reading symbol expandos', () => {
     const value = validDocument()
     const bytes = new Uint8Array([0, 255, 128])
-    Object.defineProperty(bytes, Symbol('extra'), {
-      value: 'must not be discarded',
-    })
+    const extra = Symbol('extra')
+    Object.defineProperty(bytes, extra, { value: 'not byte data' })
     value.assets[0].bytes = bytes as any
 
-    expect(() => decodeStructDocument(value)).toThrow(/asset|bytes/i)
+    const snapshot = decodeStructDocument(value).assets[0]!.bytes!
+    expect(snapshot).toEqual(new Uint8Array([0, 255, 128]))
+    expect(Object.hasOwn(snapshot, extra)).toBe(false)
   })
 
   it('rejects Uint8Array subclasses rather than discarding their prototype state', () => {
@@ -532,19 +636,25 @@ describe('STRUCT runtime codec', () => {
     expect(() => decodeStructDocument(value)).toThrow(/asset|bytes/i)
   })
 
-  it('rejects a self-deleting toStringTag accessor on a real Uint8Array', () => {
+  it('copies intrinsic bytes without invoking a toStringTag expando', () => {
     const value = validDocument()
     const bytes = new Uint8Array([0, 255, 128])
+    let getterCalls = 0
     Object.defineProperty(bytes, Symbol.toStringTag, {
       configurable: true,
       get() {
+        getterCalls += 1
         delete (bytes as any)[Symbol.toStringTag]
         return 'Uint8Array'
       },
     })
     value.assets[0].bytes = bytes as any
 
-    expect(() => decodeStructDocument(value)).toThrow(/asset|bytes/i)
+    expect(decodeStructDocument(value).assets[0]!.bytes).toEqual(
+      new Uint8Array([0, 255, 128]),
+    )
+    expect(getterCalls).toBe(0)
+    expect(Object.hasOwn(bytes, Symbol.toStringTag)).toBe(true)
   })
 
   it('rejects an own length accessor without invoking or mutating through it', () => {

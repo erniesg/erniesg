@@ -1135,6 +1135,10 @@ describe('PDF benchmark readiness registry', () => {
         "export const load = (vite, method) => vite[method]('/src/loaded.ts')\n",
         "export const load = () => import.meta.glob('/src/*.ts')\n",
         "export const load = () => import.meta['glob']('/src/*.ts')\n",
+        "export const load = () => { const meta = import.meta; return meta.glob('/src/*.ts') }\n",
+        "export const load = () => { const { glob } = import.meta; return glob('/src/*.ts') }\n",
+        "export const load = () => { let meta; meta = import.meta; return meta.glob('/src/*.ts') }\n",
+        "export const load = () => { let glob; glob = import.meta.glob; return glob('/src/*.ts') }\n",
       ]) {
         await writeFile(join(repositoryRoot, 'tools/audit.mjs'), source)
         await expect(

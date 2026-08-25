@@ -35,14 +35,14 @@ const STATIC_PATHS = {
 const FROZEN_ARTIFACT_SHA256 = {
   base: {
     contract:
-      'ff0caa0976df9321e271d9069f316ce12dfb12e7eb27b984f41f54dfcd989c8c',
+      '740fb0da021ef3371227f7b3c9362d1c8dcb815889aee285bb1ddd39cb8b6183',
     evalSet: '35d6d3f80eb646470afccaec9fd96b7e2a4c8405d33bcd5db62fcca425989002',
     observations:
       '65c147dfd19b6a62bd1b33c176e505e0f47e1fb963c5a0ad609296ca18dd9ce8',
   },
   additive: {
     contract:
-      '5e0076b3f2e973af3af85ab867c4fadd1b9d26a0f24413f4e8d9327e0eb46144',
+      '990f01528b628cc6103a16af319e9c9ec4216cfc4051e4b077f7f9b85188bf40',
     evalSet: '7420fc497895a058d24592b7c5164ded261846a5da4fed2f014c8a52cbafccf9',
     observations:
       '01f0a8022c06b18c79c8b7ab7258d72deff28b5dfeef9574425135a25ff1ed64',

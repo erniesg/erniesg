@@ -385,6 +385,13 @@ function viteSsrModuleSpecifiers(source, fileName) {
     /\.(?:cts|mts|ts)$/u.test(fileName) ? ts.ScriptKind.TS : ts.ScriptKind.JS,
   )
   const specifiers = []
+  function isImportMeta(node) {
+    return (
+      ts.isMetaProperty(node) &&
+      node.keywordToken === ts.SyntaxKind.ImportKeyword &&
+      node.name.text === 'meta'
+    )
+  }
   function isSsrLoadModuleProperty(node) {
     return (
       ts.isPropertyAccessExpression(node) && node.name.text === 'ssrLoadModule'
@@ -393,18 +400,14 @@ function viteSsrModuleSpecifiers(source, fileName) {
   function isImportMetaGlobProperty(node) {
     return (
       ts.isPropertyAccessExpression(node) &&
-      ts.isMetaProperty(node.expression) &&
-      node.expression.keywordToken === ts.SyntaxKind.ImportKeyword &&
-      node.expression.name.text === 'meta' &&
+      isImportMeta(node.expression) &&
       ['glob', 'globEager'].includes(node.name.text)
     )
   }
   function isImportMetaGlobElement(node) {
     return (
       ts.isElementAccessExpression(node) &&
-      ts.isMetaProperty(node.expression) &&
-      node.expression.keywordToken === ts.SyntaxKind.ImportKeyword &&
-      node.expression.name.text === 'meta' &&
+      isImportMeta(node.expression) &&
       ts.isStringLiteral(node.argumentExpression) &&
       ['glob', 'globEager'].includes(node.argumentExpression.text)
     )
@@ -426,10 +429,37 @@ function viteSsrModuleSpecifiers(source, fileName) {
       })
     )
   }
+  function bindingContainsImportMetaGlob(name) {
+    return (
+      ts.isObjectBindingPattern(name) &&
+      name.elements.some((element) => {
+        const propertyName = element.propertyName ?? element.name
+        return ['glob', 'globEager'].includes(propertyName.getText(sourceFile))
+      })
+    )
+  }
+  function isImportMetaGlobAccessor(node) {
+    return isImportMetaGlobProperty(node) || isImportMetaGlobElement(node)
+  }
   function visit(node) {
     if (
       (ts.isVariableDeclaration(node) || ts.isParameter(node)) &&
       bindingContainsSsrLoadModule(node.name)
+    )
+      invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    if (
+      (ts.isVariableDeclaration(node) || ts.isParameter(node)) &&
+      node.initializer &&
+      ((isImportMeta(node.initializer) &&
+        (!ts.isObjectBindingPattern(node.name) ||
+          bindingContainsImportMetaGlob(node.name))) ||
+        isImportMetaGlobAccessor(node.initializer))
+    )
+      invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      (isImportMeta(node.right) || isImportMetaGlobAccessor(node.right))
     )
       invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
     if (ts.isCallExpression(node) && isSsrLoadModuleProperty(node.expression)) {
@@ -442,7 +472,7 @@ function viteSsrModuleSpecifiers(source, fileName) {
         invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
       specifiers.push(node.arguments[0].text)
     }
-    if (ts.isCallExpression(node) && isImportMetaGlobProperty(node.expression))
+    if (ts.isCallExpression(node) && isImportMetaGlobAccessor(node.expression))
       invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
     if (
       ts.isElementAccessExpression(node) &&

@@ -14,7 +14,7 @@
         "id": "scholarly-pdf-reconstruction-eval-governance-2026-07-v1",
         "schemaVersion": "1.0.0",
         "path": "benchmarks/pdf/reconstruction-eval-contract-v1.json",
-        "fileSha256": "ff0caa0976df9321e271d9069f316ce12dfb12e7eb27b984f41f54dfcd989c8c"
+        "fileSha256": "740fb0da021ef3371227f7b3c9362d1c8dcb815889aee285bb1ddd39cb8b6183"
       },
       "evalSet": {
         "id": "scholarly-pdf-fidelity-seed-2026-07-v1",
@@ -34,7 +34,7 @@
         "id": "scholarly-pdf-reconstruction-eval-governance-2026-07-v2",
         "schemaVersion": "2.0.0",
         "path": "benchmarks/pdf/reconstruction-eval-contract-v2.json",
-        "fileSha256": "5e0076b3f2e973af3af85ab867c4fadd1b9d26a0f24413f4e8d9327e0eb46144"
+        "fileSha256": "990f01528b628cc6103a16af319e9c9ec4216cfc4051e4b077f7f9b85188bf40"
       },
       "evalSet": {
         "id": "scholarly-pdf-fidelity-additions-2026-07-v2",

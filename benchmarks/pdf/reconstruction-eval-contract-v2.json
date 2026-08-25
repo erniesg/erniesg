@@ -5,7 +5,7 @@
   "extends": {
     "id": "scholarly-pdf-reconstruction-eval-governance-2026-07-v1",
     "path": "benchmarks/pdf/reconstruction-eval-contract-v1.json",
-    "fileSha256": "ff0caa0976df9321e271d9069f316ce12dfb12e7eb27b984f41f54dfcd989c8c"
+    "fileSha256": "740fb0da021ef3371227f7b3c9362d1c8dcb815889aee285bb1ddd39cb8b6183"
   },
   "additiveFidelityEval": {
     "artifact": {

@@ -163,7 +163,7 @@
       "outcome": "binary-pass-fail",
       "criterion": "internal-epub-validation-and-epubcheck-both-pass",
       "implementation": ["tools/pdf-private-fidelity.mjs"],
-      "implementationSha256": "5fd5e46975ac2325ff53d97cb72583f6ac35442f4d12340cb0cbc19b2e6cb3c6",
+      "implementationSha256": "650134e83cf0f294239e0a7605625a739284b89a9cd8a01b36c7c6c2739be275",
       "implementationComponents": [
         {
           "path": "src/research/composition.ts",
@@ -375,7 +375,7 @@
         },
         {
           "path": "tools/pdf-corpus-audit-lib.mjs",
-          "fileSha256": "a2ee3f80ad7242c2663097abb0d6523c198cad7e1d9914bc42f8a97145c8f339"
+          "fileSha256": "3ac86a0e2fd13f611640702efaa1d879088cab83a93c996e7eb814fedb54d411"
         },
         {
           "path": "tools/pdf-corpus-audit-safety.mjs",

@@ -256,6 +256,7 @@ describe('local PDF corpus audit', () => {
     const envPath = join(repositoryRoot, '.env')
     const importTypesPath = join(repositoryRoot, 'src/research/import-types.ts')
     const originalImportTypes = await readFile(importTypesPath, 'utf8')
+    const inheritedViteInput = process.env.VITE_PDF_PIPELINE_ENV_INJECTION
     try {
       await writeFile(
         configPath,
@@ -270,8 +271,16 @@ describe('local PDF corpus audit', () => {
       )
       await writeFile(envPath, 'VITE_PDF_PIPELINE_ENV_INJECTION=enabled\n')
       await expect(createAndClosePdfPipeline()).resolves.toBeUndefined()
+
+      process.env.VITE_PDF_PIPELINE_ENV_INJECTION = 'enabled'
+      await expect(createAndClosePdfPipeline()).resolves.toBeUndefined()
     } finally {
       await writeFile(importTypesPath, originalImportTypes)
+      if (inheritedViteInput === undefined) {
+        delete process.env.VITE_PDF_PIPELINE_ENV_INJECTION
+      } else {
+        process.env.VITE_PDF_PIPELINE_ENV_INJECTION = inheritedViteInput
+      }
       await Promise.all([
         rm(configPath, { force: true }),
         rm(envPath, { force: true }),

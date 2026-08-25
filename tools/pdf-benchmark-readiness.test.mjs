@@ -18,6 +18,8 @@ import {
   createPdfBenchmarkSplitIdentitySha256,
   createPdfBenchmarkReadinessReceipt,
   readPdfBenchmarkReadinessRegistry,
+  secureJsonReadFlags,
+  sameStableFileIdentity,
   deriveExecutablePackageClosure,
   deriveLocalExecutableImportClosure,
   executablePackageSupportsPlatform,
@@ -424,6 +426,25 @@ function reviewerIdentityEvidence(reviewerId, subjectIdentitySha256) {
 }
 
 describe('PDF benchmark readiness registry', () => {
+  it('rejects a same-inode artifact rewrite when ctime changes', () => {
+    const before = {
+      dev: 1n,
+      ino: 2n,
+      size: 3n,
+      mtimeNs: 4n,
+      ctimeNs: 5n,
+      isFile: () => true,
+    }
+    expect(
+      sameStableFileIdentity(before, { ...before, ctimeNs: 6n }),
+    ).toBe(false)
+  })
+
+  it('fails closed when no-follow open support is unavailable', () => {
+    expect(() =>
+      secureJsonReadFlags({ O_RDONLY: 0, O_NOFOLLOW: undefined }),
+    ).toThrow('PDF_BENCHMARK_READINESS_FAILED')
+  })
   it('binds receipt construction to the prechecked registry snapshot after a pathname swap', async () => {
     const path = await writeRegistry(await readRegistry())
     const snapshot = await readPdfBenchmarkReadinessRegistry(path)

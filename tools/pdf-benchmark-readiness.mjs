@@ -181,12 +181,30 @@ function resolveRepositoryPath(
   return absolute
 }
 
+export function secureJsonReadFlags(constants = fsConstants) {
+  if (!Number.isInteger(constants.O_NOFOLLOW) || constants.O_NOFOLLOW <= 0) {
+    invalid('PDF_BENCHMARK_READINESS_FAILED')
+  }
+  return constants.O_RDONLY | constants.O_NOFOLLOW
+}
+
+export function sameStableFileIdentity(before, after) {
+  return (
+    after.isFile() &&
+    after.dev === before.dev &&
+    after.ino === before.ino &&
+    after.size === before.size &&
+    after.mtimeNs === before.mtimeNs &&
+    after.ctimeNs === before.ctimeNs
+  )
+}
+
 async function readJsonArtifact(path, code) {
   try {
     const absolute = resolve(path)
     const handle = await open(
       absolute,
-      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
+      secureJsonReadFlags(),
     )
     try {
       const before = await handle.stat({ bigint: true })
@@ -201,11 +219,7 @@ async function readJsonArtifact(path, code) {
       const pathname = await lstat(absolute, { bigint: true })
       if (
         BigInt(bytes.byteLength) !== before.size ||
-        !after.isFile() ||
-        after.dev !== before.dev ||
-        after.ino !== before.ino ||
-        after.size !== before.size ||
-        after.mtimeNs !== before.mtimeNs ||
+        !sameStableFileIdentity(before, after) ||
         !pathname.isFile() ||
         pathname.isSymbolicLink() ||
         pathname.dev !== before.dev ||

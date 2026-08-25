@@ -224,6 +224,12 @@ describe('aggregate PDF fidelity calibration suite', () => {
       JSON.parse(runtimeContractSchema.toString('utf8')),
     )
     expect(validateRuntime(runtime), validateRuntime.errors).toBe(true)
+    const missingRuntimeTestHash = structuredClone(runtime)
+    delete missingRuntimeTestHash.runtimeBinding.testSha256
+    expect(validateRuntime(missingRuntimeTestHash)).toBe(false)
+    const missingPlatformEvidence = structuredClone(runtime)
+    delete missingPlatformEvidence.runtimeBinding.implementationPlatformTreeEvidence
+    expect(validateRuntime(missingPlatformEvidence)).toBe(false)
     expect(robustness.extends.fileSha256).toBe(digest(additiveContract))
     const validateRobustness = new Ajv2020({ strict: false }).compile(
       JSON.parse(robustnessContractSchema.toString('utf8')),

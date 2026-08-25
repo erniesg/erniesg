@@ -33,6 +33,10 @@ const DEFAULT_SCHEMA_PATH = resolve(
   REPOSITORY_ROOT,
   'docs/schemas/pdf-benchmark-readiness-registry-v3.schema.json',
 )
+const V4_SCHEMA_PATH = resolve(
+  REPOSITORY_ROOT,
+  'docs/schemas/pdf-benchmark-readiness-registry-v4.schema.json',
+)
 const SCHEMA_BINDINGS = new Map([
   [
     '1.0.0',
@@ -59,6 +63,15 @@ const SCHEMA_BINDINGS = new Map([
       id: 'https://ernie.sg/schemas/pdf-benchmark-readiness-registry-3.0.0.json',
       fileSha256:
         'fccf1727399b425f1f92a4ab339c96ecf759cd0ac673988cbf4db6ae5d514700',
+    },
+  ],
+  [
+    '4.0.0',
+    {
+      path: V4_SCHEMA_PATH,
+      id: 'https://ernie.sg/schemas/pdf-benchmark-readiness-registry-4.0.0.json',
+      fileSha256:
+        '1027fd48fdd347c758358fda480940df3fb43ae281430fd9ef4899c2de714e8a',
     },
   ],
 ])
@@ -910,7 +923,11 @@ async function packageTreeSha256(packageRoot) {
       Buffer.from(left.name).compare(Buffer.from(right.name)),
     )
     for (const entry of entries) {
-      if (entry.name === 'node_modules' && entry.isDirectory()) continue
+      if (entry.name === 'node_modules' && entry.isDirectory()) {
+        if (directory !== packageRoot)
+          invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+        continue
+      }
       const path = resolve(directory, entry.name)
       if (entry.isSymbolicLink())
         invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
@@ -1369,38 +1386,13 @@ export async function verifyReconstructionEvaluatorImplementationBinding(
   contract,
   { repositoryRoot = REPOSITORY_ROOT } = {},
 ) {
-  if (contract?.schemaVersion === '4.0.0') {
-    const evaluator = contract.runtimeBinding
-    if (!isRecord(evaluator) || evaluator.id !== 'profile-artifact-validity')
-      invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
-    await verifyMetricImplementationBinding(evaluator, {
-      repositoryRoot,
-      requireClosure: true,
-      requirePackages: true,
-    })
-    return
-  }
-  const candidates = Array.isArray(contract?.objectiveEvaluators)
-    ? contract.objectiveEvaluators.filter(
-        (evaluator) => evaluator?.id === 'profile-artifact-validity',
-      )
-    : []
-  if (candidates.length !== 1) invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
-  const evaluator = candidates[0]
-  if (
-    !Array.isArray(evaluator.implementation) ||
-    evaluator.implementation.length !== 1
-  )
+  if (contract?.schemaVersion !== '4.0.0')
+    invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+  const evaluator = contract.runtimeBinding
+  if (!isRecord(evaluator) || evaluator.id !== 'profile-artifact-validity')
     invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
   await verifyMetricImplementationBinding(
-    {
-      implementation: evaluator.implementation[0],
-      implementationSha256: evaluator.implementationSha256,
-      implementationComponents: evaluator.implementationComponents,
-      implementationPackageLock: evaluator.implementationPackageLock,
-      implementationPlatforms: evaluator.implementationPlatforms,
-      implementationPackages: evaluator.implementationPackages,
-    },
+    evaluator,
     { repositoryRoot, requireClosure: true, requirePackages: true },
   )
 }
@@ -1536,9 +1528,15 @@ async function validateMetricImplementations(registry) {
     if (metric.status !== 'available') continue
     await Promise.all([
       verifyMetricImplementationBinding(metric, {
-        requireClosure: ['2.0.0', '3.0.0'].includes(registry.schemaVersion),
-        requirePackages: registry.schemaVersion === '3.0.0',
-        includeViteGraph: registry.schemaVersion === '3.0.0',
+        requireClosure: ['2.0.0', '3.0.0', '4.0.0'].includes(
+          registry.schemaVersion,
+        ),
+        requirePackages: ['3.0.0', '4.0.0'].includes(
+          registry.schemaVersion,
+        ),
+        includeViteGraph: ['3.0.0', '4.0.0'].includes(
+          registry.schemaVersion,
+        ),
       }),
       verifyRepositoryFileBinding(metric.test, metric.testSha256),
     ])

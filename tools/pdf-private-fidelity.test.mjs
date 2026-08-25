@@ -39,6 +39,7 @@ import {
 } from './pdf-private-fidelity.mjs'
 import * as privateFidelity from './pdf-private-fidelity.mjs'
 import {
+  javaRuntimeTreeSha256,
   privateJavaPathEntryIsProtected,
   requiredPrivateEpubCheckValidator,
   validatePrivateEpubWithEpubCheck,
@@ -453,6 +454,7 @@ function fidelityReceipt({
   ready = true,
   transformReconstruction = (value) => value,
   transformArtifact = (value) => value,
+  allowLegacyEpubCheck = false,
 } = {}) {
   const runs = Array.from({ length: repeat }, (_, index) => {
     const ordinal = index + 1
@@ -478,6 +480,7 @@ function fidelityReceipt({
     runs,
     repeat,
     profiles,
+    allowLegacyEpubCheck,
   })
 }
 
@@ -1757,6 +1760,7 @@ describe('private PDF fidelity runner', () => {
               status: 'passed',
               javaSha256: 'a'.repeat(64),
               jreReleaseSha256: 'b'.repeat(64),
+              jreTreeSha256: 'c'.repeat(64),
             },
           }
           return {
@@ -2687,6 +2691,7 @@ describe('private PDF fidelity runner', () => {
 
   it('accepts a schema v1.8 baseline with its historic status-only EPUBCheck receipt', () => {
     const legacy = fidelityReceipt({
+      allowLegacyEpubCheck: true,
       transformArtifact(value) {
         return { ...value, epubCheck: { status: 'passed' } }
       },
@@ -2700,6 +2705,7 @@ describe('private PDF fidelity runner', () => {
             status: 'passed',
             javaSha256: 'a'.repeat(64),
             jreReleaseSha256: 'b'.repeat(64),
+            jreTreeSha256: 'c'.repeat(64),
           },
         }
       },
@@ -2712,6 +2718,24 @@ describe('private PDF fidelity runner', () => {
         acceptedBaselineSha256(legacy),
       ),
     ).toMatchObject({ status: 'passed', passed: true })
+  })
+
+  it('rejects a forged schema v1.8 baseline with inconsistent execution state', () => {
+    const legacy = fidelityReceipt({
+      allowLegacyEpubCheck: true,
+      transformArtifact(value) {
+        return { ...value, epubCheck: { status: 'passed' } }
+      },
+    })
+    legacy.schemaVersion = '1.8.0'
+    legacy.execution.localValidationPassed = false
+    expect(() =>
+      comparePrivateFidelityReceipts(
+        legacy,
+        fidelityReceipt(),
+        acceptedBaselineSha256(legacy),
+      ),
+    ).toThrow('INVALID_PRIVATE_FIDELITY_BASELINE')
   })
 
   it('rejects an invalid or locally unaccepted frozen receipt generically', () => {
@@ -3186,6 +3210,23 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, 'fake java executed\\n')
     ).rejects.toThrow('EPUBCHECK_REQUIRED')
   }, 120_000)
 
+  it('seals Java lib/modules into the runtime identity', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'pdf-private-jre-tree-'))
+    try {
+      const modules = join(directory, 'lib', 'modules')
+      mkdirSync(join(directory, 'lib'), { recursive: true })
+      writeFileSync(join(directory, 'release'), 'JAVA_VERSION="test"\n')
+      writeFileSync(modules, 'original runtime modules')
+
+      const original = await javaRuntimeTreeSha256(directory)
+      writeFileSync(modules, 'tampered runtime modules')
+
+      await expect(javaRuntimeTreeSha256(directory)).resolves.not.toBe(original)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   it('executes exact bundled EPUBCheck bytes through anonymous descriptors', async () => {
     const calls = []
     const validator = await requiredPrivateEpubCheckValidator({
@@ -3213,6 +3254,7 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, 'fake java executed\\n')
       status: 'passed',
       javaSha256: validator.java.identity.fileSha256,
       jreReleaseSha256: validator.java.release.identity.fileSha256,
+      jreTreeSha256: validator.java.treeSha256,
     })
     expect(validator.distribution.records).toHaveLength(49)
     expect(
@@ -3380,6 +3422,7 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, 'fake java executed\\n')
         status: 'passed',
         javaSha256: swappingValidator.java.identity.fileSha256,
         jreReleaseSha256: swappingValidator.java.release.identity.fileSha256,
+        jreTreeSha256: swappingValidator.java.treeSha256,
       })
 
       const mainJarPath = join(vendorRoot, 'epubcheck.jar')

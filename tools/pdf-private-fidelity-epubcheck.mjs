@@ -83,6 +83,74 @@ async function stableRegularFile(path, code = 'EPUBCHECK_REQUIRED') {
   }
 }
 
+export async function javaRuntimeTreeSha256(
+  home,
+  code = 'EPUBCHECK_REQUIRED',
+) {
+  try {
+    const root = await realpath(home)
+    const before = await lstat(root, { bigint: true })
+    if (!before.isDirectory() || before.isSymbolicLink()) throw new Error(code)
+    const records = []
+    async function visit(directory) {
+      const entries = await readdir(directory, { withFileTypes: true })
+      entries.sort((left, right) =>
+        Buffer.from(left.name).compare(Buffer.from(right.name)),
+      )
+      for (const entry of entries) {
+        const path = join(directory, entry.name)
+        if (entry.isSymbolicLink()) throw new Error(code)
+        if (entry.isDirectory()) {
+          await visit(path)
+        } else if (entry.isFile()) {
+          const artifact = await stableRegularFile(path, code)
+          const relativePath = relative(root, path).split(sep).join('/')
+          if (
+            !relativePath ||
+            relativePath.startsWith('../') ||
+            relativePath.includes('\\\\')
+          )
+            throw new Error(code)
+          records.push({
+            path: relativePath,
+            byteLength: artifact.bytes.byteLength,
+            fileSha256: artifact.identity.fileSha256,
+          })
+        } else {
+          throw new Error(code)
+        }
+      }
+    }
+    await visit(root)
+    const after = await lstat(root, { bigint: true })
+    if (!sameIdentity(before, after) || !records.some(({ path }) => path === 'lib/modules'))
+      throw new Error(code)
+    return sha256(JSON.stringify(records))
+  } catch {
+    throw new Error(code)
+  }
+}
+
+async function attestedJavaRuntimeTreeSha256(home, code = 'EPUBCHECK_REQUIRED') {
+  async function verifyProtectedTree(directory) {
+    await assertProtectedJavaPath(directory)
+    const entries = await readdir(directory, { withFileTypes: true })
+    for (const entry of entries) {
+      const path = join(directory, entry.name)
+      if (entry.isSymbolicLink()) throw new Error(code)
+      if (entry.isDirectory()) await verifyProtectedTree(path)
+      else if (entry.isFile()) await assertProtectedJavaPath(path)
+      else throw new Error(code)
+    }
+  }
+  try {
+    await verifyProtectedTree(home)
+    return await javaRuntimeTreeSha256(home, code)
+  } catch {
+    throw new Error(code)
+  }
+}
+
 async function vendorFiles(vendorRoot) {
   const records = []
   async function visit(directory) {
@@ -218,7 +286,14 @@ async function resolveJavaRuntime(environment = process.env) {
   const release = await stableRegularFile(releasePath)
   if (!releasePath.startsWith(`${home}${sep}`)) throw new Error('EPUBCHECK_REQUIRED')
   await assertProtectedJavaPath(releasePath)
-  return { path, identity: artifact.identity, release: { path: releasePath, identity: release.identity } }
+  const treeSha256 = await attestedJavaRuntimeTreeSha256(home)
+  return {
+    path,
+    identity: artifact.identity,
+    release: { path: releasePath, identity: release.identity },
+    home,
+    treeSha256,
+  }
 }
 
 async function reverifyJavaRuntime(runtime) {
@@ -226,11 +301,13 @@ async function reverifyJavaRuntime(runtime) {
   await assertProtectedJavaPath(runtime.release.path)
   const current = await stableRegularFile(runtime.path)
   const release = await stableRegularFile(runtime.release.path)
+  const treeSha256 = await attestedJavaRuntimeTreeSha256(runtime.home, 'EPUBCHECK_FAILED')
   if (
     !sameIdentity(current.identity, runtime.identity) ||
     current.identity.fileSha256 !== runtime.identity.fileSha256
   )
     throw new Error('EPUBCHECK_FAILED')
+  if (treeSha256 !== runtime.treeSha256) throw new Error('EPUBCHECK_FAILED')
   if (
     !sameIdentity(release.identity, runtime.release.identity) ||
     release.identity.fileSha256 !== runtime.release.identity.fileSha256
@@ -408,7 +485,7 @@ async function proveJavaRuntime(validator) {
   }
 }
 
-/** @returns {Promise<{ status: 'passed', javaSha256: string, jreReleaseSha256: string }>} */
+/** @returns {Promise<{ status: 'passed', javaSha256: string, jreReleaseSha256: string, jreTreeSha256: string }>} */
 export async function validatePrivateEpubWithEpubCheck(bytes, validator) {
   const directory = await mkdtemp(join(tmpdir(), 'srt-private-epubcheck-'))
   const handles = []
@@ -459,6 +536,7 @@ export async function validatePrivateEpubWithEpubCheck(bytes, validator) {
       status: 'passed',
       javaSha256: validator.java.identity.fileSha256,
       jreReleaseSha256: validator.java.release.identity.fileSha256,
+      jreTreeSha256: validator.java.treeSha256,
     }
   } catch {
     throw new Error('EPUBCHECK_FAILED')

@@ -27,7 +27,7 @@ import {
   verifyMetricImplementationBinding,
 } from './pdf-benchmark-readiness.mjs'
 
-const registryPath = 'benchmarks/pdf/benchmark-readiness-registry-v1.json'
+const registryPath = 'benchmarks/pdf/benchmark-readiness-registry-v4.json'
 const readinessToolPath = fileURLToPath(
   new URL('./pdf-benchmark-readiness.mjs', import.meta.url),
 )
@@ -424,6 +424,21 @@ function reviewerIdentityEvidence(reviewerId, subjectIdentitySha256) {
 }
 
 describe('PDF benchmark readiness registry', () => {
+  it('keeps the pinned v3 registry schema nonempty and validates the v4 successor', async () => {
+    const bytes = await readFile(
+      new URL(
+        '../docs/schemas/pdf-benchmark-readiness-registry-v3.schema.json',
+        import.meta.url,
+      ),
+    )
+    expect(bytes.byteLength).toBeGreaterThan(0)
+    expect(createHash('sha256').update(bytes).digest('hex')).toBe(
+      'fccf1727399b425f1f92a4ab339c96ecf759cd0ac673988cbf4db6ae5d514700',
+    )
+    await expect(
+      createPdfBenchmarkReadinessReceipt({ registryPath }),
+    ).resolves.toMatchObject({ ready: false })
+  })
   it('reports the exposed 32-case calibration honestly as not ready', async () => {
     const receipt = await createPdfBenchmarkReadinessReceipt({ registryPath })
 
@@ -1039,6 +1054,35 @@ describe('PDF benchmark readiness registry', () => {
       await writeFile(
         join(shadowRoot, 'index.js'),
         'export const identity = "shadowed-peer"\n',
+      )
+
+      await expect(
+        verifyMetricImplementationBinding(metric, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    } finally {
+      await rm(repositoryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects an undeclared package nested below a package subdirectory', async () => {
+    const { repositoryRoot, metric } =
+      await temporaryPackageImplementationFixture()
+    try {
+      const shadowRoot = join(
+        repositoryRoot,
+        'node_modules/fake-package/lib/node_modules/fake-peer',
+      )
+      await mkdir(shadowRoot, { recursive: true })
+      await writeFile(
+        join(shadowRoot, 'package.json'),
+        `${JSON.stringify({ name: 'fake-peer', version: '9.9.9' })}\n`,
+      )
+      await writeFile(
+        join(shadowRoot, 'index.js'),
+        'export const identity = "deep-shadowed-peer"\n',
       )
 
       await expect(

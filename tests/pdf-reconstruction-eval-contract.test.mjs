@@ -4,13 +4,9 @@ import Ajv2020 from 'ajv/dist/2020.js'
 import { describe, expect, it, vi } from 'vitest'
 import { validateCorpusContract } from '../tools/pdf-corpus-contract.mjs'
 import {
-  deriveExecutablePackageClosure,
   verifyReconstructionEvaluatorImplementationBinding,
 } from '../tools/pdf-benchmark-readiness.mjs'
-import {
-  canonicalJson,
-  validatePdfFidelityEvalSet,
-} from '../tools/pdf-fidelity-eval.mjs'
+import { validatePdfFidelityEvalSet } from '../tools/pdf-fidelity-eval.mjs'
 
 const paths = {
   contract: 'benchmarks/pdf/reconstruction-eval-contract-v1.json',
@@ -71,85 +67,13 @@ describe('PDF reconstruction evaluation governance contract', () => {
     const profileArtifactValidity = contract.objectiveEvaluators.find(
       (evaluator) => evaluator.id === 'profile-artifact-validity',
     )
-    expect(profileArtifactValidity.implementationComponents).toHaveLength(60)
-    for (const component of profileArtifactValidity.implementationComponents)
-      expect(component.fileSha256).toBe(await fileSha256(component.path))
-    const packageClosure = await deriveExecutablePackageClosure(
-      profileArtifactValidity.implementation[0],
-    )
-    expect(profileArtifactValidity.implementationPackageLock).toEqual(
-      packageClosure.packageLock,
-    )
-    expect(
-      profileArtifactValidity.implementationPackages
-        .filter(
-          (package_) =>
-            !package_.platforms ||
-            package_.platforms.includes(packageClosure.platform),
-        )
-        .map((package_) =>
-          package_.platforms
-            ? { ...package_, platforms: [packageClosure.platform] }
-            : package_,
-        ),
-    ).toEqual(packageClosure.packages)
-    expect(profileArtifactValidity.implementationPlatforms).toContain(
-      packageClosure.platform,
-    )
-    expect(profileArtifactValidity.implementationSha256).toBe(
-      sha256(
-        canonicalJson({
-          kind: 'pdf-benchmark-metric-implementation-v3',
-          entrypoint: profileArtifactValidity.implementation[0],
-          components: profileArtifactValidity.implementationComponents
-            .map(({ path, fileSha256 }) => ({ path, fileSha256 }))
-            .sort((left, right) => left.path.localeCompare(right.path)),
-          packageLock: profileArtifactValidity.implementationPackageLock,
-          platforms: [
-            ...profileArtifactValidity.implementationPlatforms,
-          ].sort(),
-          packages: profileArtifactValidity.implementationPackages,
-        }),
-      ),
-    )
+    expect(profileArtifactValidity.implementation).toEqual([
+      'tools/pdf-private-fidelity.mjs',
+    ])
+    expect(profileArtifactValidity).not.toHaveProperty('implementationSha256')
     await expect(
       verifyReconstructionEvaluatorImplementationBinding(contract),
-    ).resolves.toBeUndefined()
-    const tampered = structuredClone(contract)
-    tampered.objectiveEvaluators.find(
-      (evaluator) => evaluator.id === 'profile-artifact-validity',
-    ).implementationPackages[0].treeSha256 = '0'.repeat(64)
-    expect(validateContract(tampered), validateContract.errors).toBe(true)
-    await expect(
-      verifyReconstructionEvaluatorImplementationBinding(tampered),
     ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
-    expect(
-      tampered.objectiveEvaluators.find(
-        (evaluator) => evaluator.id === 'profile-artifact-validity',
-      ).implementationPackages[0].treeSha256,
-    ).not.toBe(profileArtifactValidity.implementationPackages[0].treeSha256)
-    expect(
-      sha256(
-        canonicalJson({
-          kind: 'pdf-benchmark-metric-implementation-v3',
-          entrypoint: profileArtifactValidity.implementation[0],
-          components: tampered.objectiveEvaluators
-            .find((evaluator) => evaluator.id === 'profile-artifact-validity')
-            .implementationComponents.map(({ path, fileSha256 }) => ({
-              path,
-              fileSha256,
-            }))
-            .sort((left, right) => left.path.localeCompare(right.path)),
-          packageLock: profileArtifactValidity.implementationPackageLock,
-          platforms: [
-            ...profileArtifactValidity.implementationPlatforms,
-          ].sort(),
-          packages: tampered.objectiveEvaluators.find(
-            (evaluator) => evaluator.id === 'profile-artifact-validity',
-          ).implementationPackages,
-        }),
-      ),
-    ).not.toBe(profileArtifactValidity.implementationSha256)
 
     const corpusIdentity = validateCorpusContract(corpus)
     const evalIdentity = validatePdfFidelityEvalSet(evalSet)

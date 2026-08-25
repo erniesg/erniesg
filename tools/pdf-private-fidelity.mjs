@@ -1045,12 +1045,14 @@ function normalizedPrivateEpubCheck(value) {
     value?.status === 'passed' &&
     SHA256_PATTERN.test(value.javaSha256 ?? '') &&
     SHA256_PATTERN.test(value.jreReleaseSha256 ?? '') &&
-    Object.keys(value).length === 3
+    SHA256_PATTERN.test(value.jreTreeSha256 ?? '') &&
+    Object.keys(value).length === 4
   ) {
     return {
       status: 'passed',
       javaSha256: value.javaSha256,
       jreReleaseSha256: value.jreReleaseSha256,
+      jreTreeSha256: value.jreTreeSha256,
     }
   }
   if (
@@ -1263,6 +1265,7 @@ export function createPrivateFidelityReceipt({
   profiles,
   epubCheckRequired = false,
   baselineComparison,
+  allowLegacyEpubCheck = false,
 }) {
   const expectedOrdinals = Array.from(
     { length: repeat },
@@ -1315,7 +1318,7 @@ export function createPrivateFidelityReceipt({
             .filter((artifact) => artifact.target === profile)
             .every(
               (artifact) =>
-                validArtifactEvidence(artifact) &&
+                validArtifactEvidence(artifact, allowLegacyEpubCheck) &&
                 artifact.mode ===
                   (run.reconstruction.readiness.ready
                     ? 'publication'
@@ -2781,7 +2784,6 @@ function validatePrivateFidelityReceipt(receipt, requireAcceptedBaseline) {
       invalidPrivateFidelityBaseline()
     }
 
-    if (legacySchema) return
     const rebuilt = createPrivateFidelityReceipt({
       paperId: receipt.source.paperId,
       sourceSha256: receipt.source.sha256,
@@ -2792,6 +2794,7 @@ function validatePrivateFidelityReceipt(receipt, requireAcceptedBaseline) {
       profiles: receipt.execution.profiles,
       epubCheckRequired: receipt.execution.epubCheckRequired,
       baselineComparison: receipt.baselineComparison,
+      allowLegacyEpubCheck: legacySchema,
     })
     if (
       canonicalJsonHash(receipt.execution) !==

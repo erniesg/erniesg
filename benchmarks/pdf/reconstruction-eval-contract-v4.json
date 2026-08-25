@@ -12,7 +12,7 @@
     "status": "available",
     "kind": "code",
     "implementation": "tools/pdf-private-fidelity.mjs",
-    "implementationSha256": "6d5f22d3d85fbc717015010caa1a98897f1f1bc9ae12c3462d454215d5a9688e",
+    "implementationSha256": "a06ef61f3160d85e0e16c3d0498396677870c0a9c5ca1b5cb4e8a8525cac3bca",
     "implementationComponents": [
       {
         "path": "src/research/composition.ts",
@@ -248,11 +248,11 @@
       },
       {
         "path": "tools/pdf-private-fidelity-epubcheck.mjs",
-        "fileSha256": "2a56e7b09c90a6a1ea80dd9516aba6b2b9ba5a09ea9f420b66e3c909f524aa39"
+        "fileSha256": "41d4b462a09d17584811724a3587ae32d45c8a7adaf9b64508efa9b89905ca8f"
       },
       {
         "path": "tools/pdf-private-fidelity.mjs",
-        "fileSha256": "89982f5e1e9eaea63206f14623a06f5e937c2543e3fd72ad0923097b7ed7558e"
+        "fileSha256": "826c09a104739e05350cecb9923b9ea99032df688f22e71f9993ede3d6b2be88"
       }
     ],
     "implementationPackageLock": {
@@ -260,7 +260,8 @@
       "fileSha256": "660d6365dd7c3ea6d619df09c08f9d14771ec6f60beebd2eb4f88c97363c896a"
     },
     "implementationPlatforms": [
-      "darwin-arm64"
+      "darwin-arm64",
+      "linux-x64-gnu"
     ],
     "implementationPackages": [
       {
@@ -278,6 +279,16 @@
         "treeSha256": "0aae764844cdedf8916c08aaff9e1e838d34934d5a496764fda9329539ce12d4",
         "platforms": [
           "darwin-arm64"
+        ]
+      },
+      {
+        "path": "node_modules/@napi-rs/canvas-linux-x64-gnu",
+        "name": "@napi-rs/canvas-linux-x64-gnu",
+        "version": "0.1.100",
+        "integrity": "sha512-1eCvkDCazm7FFhsT7DfGOdSaHgZVK3bt/dSBl5EWHOWmnz+I7j8tPseJqqD81NF+MH21jKUK4wQSDjN0mdhnTg==",
+        "treeSha256": "25daeb86fcedabd34e28ef66f2d79e02e99816c69755ffb04e8cfe6b86ab1f19",
+        "platforms": [
+          "linux-x64-gnu"
         ]
       },
       {
@@ -302,6 +313,16 @@
         "treeSha256": "339666b43f387b64b8e288464bb728a22ba26abec3304cc4ce8bf12cd4adbecf",
         "platforms": [
           "darwin-arm64"
+        ]
+      },
+      {
+        "path": "node_modules/@rolldown/binding-linux-x64-gnu",
+        "name": "@rolldown/binding-linux-x64-gnu",
+        "version": "1.1.5",
+        "integrity": "sha512-FjcpEKUyJygHgs1o50VYNvkt5+7Le/VEdYt0AkRpkL33MnyQfwr8l5mXwMmfmTbyMPr5vJLC+8/Gd9gXnwU1QQ==",
+        "treeSha256": "7302b9884314387707b73c7a6b8da35a9ecc3b11687db6deac50f8cbef54cbf0",
+        "platforms": [
+          "linux-x64-gnu"
         ]
       },
       {
@@ -403,6 +424,16 @@
         "treeSha256": "39a6983ce3078ba690c57ccb9f5139c92ceaa835ba56689954658efa06872c24",
         "platforms": [
           "darwin-arm64"
+        ]
+      },
+      {
+        "path": "node_modules/lightningcss-linux-x64-gnu",
+        "name": "lightningcss-linux-x64-gnu",
+        "version": "1.32.0",
+        "integrity": "sha512-V7Qr52IhZmdKPVr+Vtw8o+WLsQJYCTd8loIfpDaMRWGUZfBOYEJeyJIkqGIDMZPwPx24pUMfwSxxI8phr/MbOA==",
+        "treeSha256": "18321a0b611db4ded3243a9404ac19591e567addd0b056d00ced4ed70e73b26a",
+        "platforms": [
+          "linux-x64-gnu"
         ]
       },
       {
@@ -606,7 +637,11 @@
       }
     ],
     "test": "tools/pdf-private-fidelity.test.mjs",
-    "testSha256": "1cae989f7373dd73b42465c9ea979126df98a702cbf5cc97a6e7a69327c0eb7a",
-    "calibration": null
+    "testSha256": "f0391caeb7a9321d8a5fb600b44bea7a8ad987c1b2728b187047f79b2140db6c",
+    "calibration": null,
+    "implementationPlatformTreeEvidence": {
+      "path": "benchmarks/pdf/reconstruction-runtime-package-trees-v4.json",
+      "fileSha256": "021ec94c0d3f118f63802813e256df7cc4d111cf3752b6da2c8911c6808ea7d7"
+    }
   }
 }

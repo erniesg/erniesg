@@ -20,6 +20,14 @@ import {
 
 export const PDF_BENCHMARK_READINESS_SCHEMA_VERSION = '1.0.0'
 
+function deepFreeze(value) {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) deepFreeze(child)
+    Object.freeze(value)
+  }
+  return value
+}
+
 const REPOSITORY_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const LEGACY_SCHEMA_PATH = resolve(
   REPOSITORY_ROOT,
@@ -2689,15 +2697,34 @@ export function assessPdfBenchmarkReadiness(
   }
 }
 
-export async function createPdfBenchmarkReadinessReceipt({
-  registryPath,
-  schemaPath = null,
-}) {
+export async function readPdfBenchmarkReadinessRegistry(registryPath) {
   const absoluteRegistryPath = resolve(registryPath)
   const registryArtifact = await readJsonArtifact(
     absoluteRegistryPath,
     'PDF_BENCHMARK_READINESS_FAILED',
   )
+  return Object.freeze({
+    absoluteRegistryPath,
+    registryArtifact: Object.freeze({
+      value: deepFreeze(registryArtifact.value),
+      fileSha256: registryArtifact.fileSha256,
+    }),
+  })
+}
+
+export async function createPdfBenchmarkReadinessReceipt({
+  registryPath,
+  schemaPath = null,
+  registrySnapshot = null,
+}) {
+  const absoluteRegistryPath = resolve(registryPath)
+  const snapshot =
+    registrySnapshot ??
+    (await readPdfBenchmarkReadinessRegistry(absoluteRegistryPath))
+  if (snapshot.absoluteRegistryPath !== absoluteRegistryPath) {
+    invalid('PDF_BENCHMARK_READINESS_FAILED')
+  }
+  const { registryArtifact } = snapshot
   const registry = registryArtifact.value
   const schema = await validateSchema(registry, schemaPath)
   const verifiedMetricIds = await validateMetricImplementations(registry)
@@ -2861,10 +2888,10 @@ async function main() {
     invalid('PDF_BENCHMARK_NONCANONICAL_PROMOTION_SCHEMA')
   }
   if (options.requireReady) {
-    const registry = await readJsonArtifact(
-      resolve(options.registryPath),
-      'PDF_BENCHMARK_READINESS_FAILED',
+    const registrySnapshot = await readPdfBenchmarkReadinessRegistry(
+      options.registryPath,
     )
+    const registry = registrySnapshot.registryArtifact
     if (!options.schemaPath && registry.value?.schemaVersion !== '4.0.0') {
       invalid('PDF_BENCHMARK_NONCANONICAL_PROMOTION_SCHEMA')
     }
@@ -2878,8 +2905,17 @@ async function main() {
     ) {
       invalid('PDF_BENCHMARK_MULTI_PLATFORM_PROMOTION_UNATTESTED')
     }
+    const receipt = await createPdfBenchmarkReadinessReceipt({
+      ...options,
+      registrySnapshot,
+    })
+    return writeReadinessOutput(options, receipt)
   }
   const receipt = await createPdfBenchmarkReadinessReceipt(options)
+  return writeReadinessOutput(options, receipt)
+}
+
+async function writeReadinessOutput(options, receipt) {
   if (
     options.requireReady &&
     receipt.schema.fileSha256 !== SCHEMA_BINDINGS.get('4.0.0').fileSha256

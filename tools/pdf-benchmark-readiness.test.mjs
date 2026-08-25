@@ -17,6 +17,7 @@ import {
   assessPdfBenchmarkReadiness,
   createPdfBenchmarkSplitIdentitySha256,
   createPdfBenchmarkReadinessReceipt,
+  readPdfBenchmarkReadinessRegistry,
   deriveExecutablePackageClosure,
   deriveLocalExecutableImportClosure,
   executablePackageSupportsPlatform,
@@ -423,6 +424,25 @@ function reviewerIdentityEvidence(reviewerId, subjectIdentitySha256) {
 }
 
 describe('PDF benchmark readiness registry', () => {
+  it('binds receipt construction to the prechecked registry snapshot after a pathname swap', async () => {
+    const path = await writeRegistry(await readRegistry())
+    const snapshot = await readPdfBenchmarkReadinessRegistry(path)
+    expect(Object.isFrozen(snapshot.registryArtifact.value)).toBe(true)
+    const swapped = await readRegistry()
+    swapped.id = 'swapped-registry-after-promotion-precheck'
+    await writeFile(path, `${JSON.stringify(swapped, null, 2)}\n`)
+
+    const receipt = await createPdfBenchmarkReadinessReceipt({
+      registryPath: path,
+      registrySnapshot: snapshot,
+    })
+
+    expect(receipt.registry.fileSha256).toBe(
+      snapshot.registryArtifact.fileSha256,
+    )
+    expect(receipt.registry.id).not.toBe(swapped.id)
+  })
+
   it('keeps the pinned v3 registry schema nonempty and validates the v4 successor', async () => {
     const bytes = await readFile(
       new URL(

@@ -1,7 +1,11 @@
+import { existsSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { PdfPageAnalysis, PdfSourceRun } from './import-types'
 import { reconstructPageAnalyses } from './pdf-layout'
-import { reconstructPageRegions } from './pdf-regions'
+import {
+  reconstructPageRegions,
+  splitRunBackedCrossGutterProse,
+} from './pdf-regions'
 
 function run(
   page: number,
@@ -55,6 +59,16 @@ async function reconstruct(pages: PdfPageAnalysis[], hash = '7') {
 }
 
 describe('deterministic scholarly page regions', () => {
+  it('keeps column-layout helpers behind a one-way module boundary', async () => {
+    expect(
+      existsSync(new URL('./pdf-region-column-layout.ts', import.meta.url)),
+    ).toBe(true)
+    const columnLayout = await import('./pdf-region-column-layout')
+    expect(columnLayout.splitRunBackedCrossGutterProse).toBe(
+      splitRunBackedCrossGutterProse,
+    )
+  })
+
   it('segments one-column flow without inventing a column boundary', async () => {
     const result = await reconstruct([
       page(1, [

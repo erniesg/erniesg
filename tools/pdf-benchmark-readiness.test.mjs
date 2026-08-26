@@ -74,6 +74,31 @@ function reviewerIdentityEvidence(reviewerId, subjectIdentitySha256) {
 }
 
 describe('PDF benchmark readiness registry', () => {
+  it('binds the current package-integrity source and rejects a one-byte mutation', async () => {
+    const sourcePath = 'tools/pdf-private-fidelity.mjs'
+    const originalSource = await readFile(sourcePath)
+
+    await expect(
+      createPdfBenchmarkReadinessReceipt({ registryPath }),
+    ).resolves.toMatchObject({
+      criteria: expect.arrayContaining([
+        expect.objectContaining({ id: 'metric-coverage' }),
+      ]),
+    })
+
+    await writeFile(
+      sourcePath,
+      Buffer.concat([originalSource, Buffer.from('\n')]),
+    )
+    try {
+      await expect(
+        createPdfBenchmarkReadinessReceipt({ registryPath }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    } finally {
+      await writeFile(sourcePath, originalSource)
+    }
+  })
+
   it('reports the exposed 32-case calibration honestly as not ready', async () => {
     const receipt = await createPdfBenchmarkReadinessReceipt({ registryPath })
 

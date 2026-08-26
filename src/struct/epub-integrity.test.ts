@@ -1,6 +1,6 @@
-import { strFromU8, unzipSync } from 'fflate'
+import { strFromU8, unzipSync, zipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
-import { buildStructEpub } from './epub'
+import { assertStructEpubArchiveByteLength, buildStructEpub } from './epub'
 import { legacyStructDigest, structDigest } from './ids'
 import { sha256HexSync } from './sha256'
 import type { StructDocument } from './types'
@@ -162,6 +162,39 @@ function legacyDocumentWithHref(href: string, locale?: string): StructDocument {
 }
 
 describe('STRUCT EPUB href integrity', () => {
+  it('enforces the post-compression boundary for an incompressible archive', () => {
+    const payload = new Uint8Array(16 * 1024)
+    for (let index = 0; index < payload.length; index += 1)
+      payload[index] = (index * 73 + 19) % 256
+    const archive = zipSync({ 'payload.bin': payload })
+
+    expect(() =>
+      assertStructEpubArchiveByteLength(archive, archive.byteLength - 1),
+    ).toThrow('STRUCT_EPUB_ARCHIVE_RESOURCE_LIMIT')
+    expect(() =>
+      assertStructEpubArchiveByteLength(archive, archive.byteLength),
+    ).not.toThrow()
+  })
+
+  it('packages a closed source-neutral consultation receipt without app receipt semantics', async () => {
+    const document = documentWithHref('#target')
+    document.receipt.modelConsultations = {
+      schemaVersion: '1.0.0',
+      documentId: document.documentId!,
+      sourceSha256: document.source.sha256,
+      consultations: [{ adapterDecision: 'defer', status: 'pending' }],
+      decisions: [],
+      metrics: { adapter: 'source-neutral', pendingCount: 1 },
+    }
+
+    await expect(
+      buildStructEpub(refreshReceipt(document)),
+    ).resolves.toMatchObject({
+      mediaType: 'application/epub+zip',
+      mode: 'publication',
+    })
+  })
+
   it('reopens an exact profiled stylesheet and immutable profile receipt', async () => {
     const profile = {
       id: 'mobile',

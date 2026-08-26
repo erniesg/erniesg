@@ -22,7 +22,6 @@ import { sha256HexSync } from './sha256'
 import { legacyStructDigestMatches, structDigest } from './ids'
 import { validateStructConsultationReceipt } from './consultation-receipt'
 import { isPackagedAssetId } from './emitted-ids'
-import { validateModelConsultationReceipt } from './model-consultation-receipt'
 import { renderPublicationXhtml } from './xhtml'
 import {
   LEGACY_STRUCT_SCHEMA_VERSION,
@@ -40,6 +39,20 @@ figure { break-inside: avoid; margin: 1.5rem 0; }
 .visually-hidden, .additional-semantic-reference { clip: rect(0 0 0 0); clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }`
 const MAX_STRUCT_EPUB_PROFILE_CSS_BYTES = 4 * 1024 * 1024
 const MAX_STRUCT_EPUB_ARCHIVE_BYTES = 256 * 1024 * 1024
+const ZIP_ARCHIVE_OVERHEAD_RESERVE = 64 * 1024
+
+/** Reject post-compression archives that exceed the package resource ceiling. */
+export function assertStructEpubArchiveByteLength(
+  bytes: Uint8Array,
+  maximumBytes = MAX_STRUCT_EPUB_ARCHIVE_BYTES,
+) {
+  if (
+    !Number.isSafeInteger(maximumBytes) ||
+    maximumBytes < 0 ||
+    bytes.byteLength > maximumBytes
+  )
+    throw new Error('STRUCT_EPUB_ARCHIVE_RESOURCE_LIMIT')
+}
 
 export type StructEpubProfile = {
   id: string
@@ -374,18 +387,8 @@ function assertStructReceiptIntegrity(document: StructDocument) {
 
   const modelConsultations = receipt.modelConsultations
   if (modelConsultations !== undefined) {
-    if (
-      !validateStructConsultationReceipt(modelConsultations) ||
-      !validateModelConsultationReceipt(modelConsultations)
-    ) {
+    if (!validateStructConsultationReceipt(modelConsultations)) {
       throw new Error('INVALID_MODEL_CONSULTATION_RECEIPT')
-    }
-    if (
-      modelConsultations.consultations.some(
-        ({ status }) => status === 'pending',
-      )
-    ) {
-      throw new Error('PENDING_MODEL_CONSULTATION_RECEIPT')
     }
     if (modelConsultations.sourceSha256 !== document.source.sha256) {
       throw new Error('MODEL_CONSULTATION_SOURCE_MISMATCH')
@@ -566,7 +569,10 @@ export async function buildStructEpub(
     utf8ByteLength(serializedStructArtifact) +
     (serializedProfile ? utf8ByteLength(serializedProfile) : 0) +
     assetBytes
-  if (archiveBytes > MAX_STRUCT_EPUB_ARCHIVE_BYTES)
+  if (
+    archiveBytes >
+    MAX_STRUCT_EPUB_ARCHIVE_BYTES - ZIP_ARCHIVE_OVERHEAD_RESERVE
+  )
     throw new Error('STRUCT_EPUB_ARCHIVE_RESOURCE_LIMIT')
   const archive: Zippable = {
     mimetype: entry(EPUB_MIMETYPE, 0),
@@ -603,6 +609,7 @@ export async function buildStructEpub(
     ),
   )
   const bytes = zipSync(archive)
+  assertStructEpubArchiveByteLength(bytes)
   if (retainedProfile) {
     const reopened = unzipSync(bytes)
     const reopenedProfile = reopened['EPUB/profile.json']

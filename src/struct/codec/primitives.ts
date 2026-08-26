@@ -11,6 +11,24 @@ const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u
 const URL_CONTROL = /[\u0000-\u001f\u007f]/u
 const codecErrors = new WeakSet<object>()
 
+/** Bound untrusted textual ingress before a renderer or digest copies it. */
+export const MAX_STRUCT_STRING_BYTES = 4 * 1024 * 1024
+
+export function utf8ByteLength(value: string) {
+  let length = 0
+  for (let index = 0; index < value.length; index += 1) {
+    const codePoint = value.codePointAt(index)!
+    if (codePoint <= 0x7f) length += 1
+    else if (codePoint <= 0x7ff) length += 2
+    else if (codePoint <= 0xffff) length += 3
+    else {
+      length += 4
+      index += 1
+    }
+  }
+  return length
+}
+
 export class StructCodecError extends TypeError {
   readonly code: string
   readonly path: string
@@ -156,6 +174,8 @@ export function has(value: DataObject, key: string) {
 
 export function stringValue(value: unknown, path: string): string {
   if (typeof value !== 'string') fail('TYPE', path, 'expected a string')
+  if (utf8ByteLength(value) > MAX_STRUCT_STRING_BYTES)
+    fail('BUDGET', path, 'string exceeds the textual resource bound')
   if (CONTROL.test(value))
     fail('STRING', path, 'control characters are not permitted')
   for (let index = 0; index < value.length; index += 1) {

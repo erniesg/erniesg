@@ -1,4 +1,5 @@
 import { credentialShapedValue, SAFE_ID } from './ids'
+import { utf8ByteLength } from './codec/primitives'
 
 /**
  * Source-neutral, serialized consultation receipt envelope.
@@ -21,6 +22,8 @@ const HASH = /^[a-f0-9]{64}$/u
 const STRUCT_CONSULTATION_RECEIPT_SCHEMA_VERSION = '1.0.0'
 const MAX_DEPTH = 128
 const MAX_NODES = 100_000
+const MAX_JSON_STRING_BYTES = 1024 * 1024
+const MAX_JSON_TOTAL_BYTES = 8 * 1024 * 1024
 const TOP_LEVEL_KEYS = [
   'schemaVersion',
   'documentId',
@@ -57,7 +60,7 @@ function forbiddenKey(key: string) {
 function canonicalJson(
   value: unknown,
   active: WeakSet<object>,
-  state: { nodes: number },
+  state: { nodes: number; stringBytes: number },
   depth: number,
 ): value is
   Record<string, unknown> | unknown[] | string | number | boolean | null {
@@ -65,7 +68,14 @@ function canonicalJson(
   state.nodes += 1
   if (state.nodes > MAX_NODES) return false
   if (value === null || typeof value === 'boolean') return true
-  if (typeof value === 'string') return !credentialShapedValue(value)
+  if (typeof value === 'string') {
+    const bytes = utf8ByteLength(value)
+    if (bytes > MAX_JSON_STRING_BYTES) return false
+    state.stringBytes += bytes
+    return (
+      state.stringBytes <= MAX_JSON_TOTAL_BYTES && !credentialShapedValue(value)
+    )
+  }
   if (typeof value === 'number') return Number.isFinite(value)
   if (typeof value !== 'object' || active.has(value)) return false
 
@@ -112,6 +122,10 @@ function canonicalJson(
     for (const key of keys) {
       if (typeof key !== 'string' || !SAFE_ID.test(key) || forbiddenKey(key))
         return false
+      const keyBytes = utf8ByteLength(key)
+      if (keyBytes > MAX_JSON_STRING_BYTES) return false
+      state.stringBytes += keyBytes
+      if (state.stringBytes > MAX_JSON_TOTAL_BYTES) return false
       const descriptor = Object.getOwnPropertyDescriptor(value, key)
       if (
         !descriptor?.enumerable ||
@@ -138,7 +152,14 @@ function exactTopLevelKeys(value: Record<string, unknown>) {
 function validateStructConsultationReceiptUnsafe(
   value: unknown,
 ): value is StructConsultationReceipt {
-  if (!canonicalJson(value, new WeakSet<object>(), { nodes: 0 }, 0))
+  if (
+    !canonicalJson(
+      value,
+      new WeakSet<object>(),
+      { nodes: 0, stringBytes: 0 },
+      0,
+    )
+  )
     return false
   if (!value || Array.isArray(value) || typeof value !== 'object') return false
   const receipt = value as Record<string, unknown>

@@ -13,6 +13,7 @@ import { buildStructEpub } from './epub'
 import { renderPublicationXhtml } from './xhtml'
 import { MAX_STRUCT_ASSET_BYTES, parseBytes } from './codec/bytes'
 import { validateStructConsultationReceipt } from './consultation-receipt'
+import { MAX_STRUCT_STRING_BYTES, stringValue } from './codec/primitives'
 
 const hash = 'a'.repeat(64)
 const assetBytesHash = sha256HexSync(new Uint8Array([0, 255, 128]))
@@ -261,6 +262,27 @@ function validDocument() {
 }
 
 describe('STRUCT runtime codec', () => {
+  it('rejects an oversized text field before copying it into the document', () => {
+    expect(() =>
+      stringValue('x'.repeat(MAX_STRUCT_STRING_BYTES + 1), '$.metadata.title'),
+    ).toThrow(/textual resource bound/i)
+  })
+
+  it('bounds aggregate source-neutral receipt JSON text', () => {
+    const receipt = {
+      schemaVersion: '1.0.0',
+      documentId: 'fixture-document',
+      sourceSha256: hash,
+      consultations: Array.from({ length: 9 }, (_, index) => ({
+        [`field-${index}`]: 'x'.repeat(1024 * 1024),
+      })),
+      decisions: [],
+      metrics: {},
+    }
+
+    expect(validateStructConsultationReceipt(receipt)).toBe(false)
+  })
+
   it('decodes a strict 0.1.0 document and restores JSON-safe asset bytes', () => {
     const decoded = decodeStructDocument(validDocument())
 

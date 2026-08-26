@@ -44,6 +44,7 @@ import {
   referenceList,
   rotation,
   stringValue,
+  utf8ByteLength,
   unique,
   unitInterval,
 } from './primitives'
@@ -153,6 +154,7 @@ export const MAX_STRUCT_ASSET_BYTES_TOTAL = 128 * 1024 * 1024
 export const MAX_STRUCT_RECOVERY_ISSUES = 10_000
 export const MAX_STRUCT_RECOVERY_PAGES = 100_000
 export const MAX_STRUCT_DOCUMENT_ITEMS = 100_000
+const MAX_STRUCT_PUBLICATION_TEXT_BYTES = 16 * 1024 * 1024
 
 function parseBox(value: unknown, path: string): StructBox {
   const parsed = object(value, path, [
@@ -1346,6 +1348,18 @@ export function parseStructAssets(value: unknown): StructAsset[] {
 type PublicationSnapshotState = {
   active: WeakSet<object>
   nodes: number
+  textBytes: number
+}
+
+function preflightPublicationReceipt(value: unknown, path: string) {
+  const modelConsultations = dataEntries(value, path).find(
+    ([key]) => key === 'modelConsultations',
+  )?.[1]
+  if (modelConsultations !== undefined)
+    validateConsultationReceipt(
+      modelConsultations,
+      `${path}.modelConsultations`,
+    )
 }
 
 function snapshotPublicationValue(
@@ -1359,6 +1373,17 @@ function snapshotPublicationValue(
   state.nodes += 1
   if (state.nodes > MAX_STRUCT_DOCUMENT_ITEMS)
     fail('BUDGET', path, 'publication input exceeds the structural node bound')
+  if (typeof value === 'string') {
+    const parsed = stringValue(value, path)
+    state.textBytes += utf8ByteLength(parsed)
+    if (state.textBytes > MAX_STRUCT_PUBLICATION_TEXT_BYTES)
+      fail(
+        'BUDGET',
+        path,
+        'publication text exceeds the aggregate resource bound',
+      )
+    return parsed
+  }
   if (!value || typeof value !== 'object') return value
   if (state.active.has(value))
     fail('OBJECT', path, 'cycles are not permitted in publication input')
@@ -1393,6 +1418,7 @@ export function snapshotStructDocumentForEpub(value: unknown): StructDocument {
   const state: PublicationSnapshotState = {
     active: new WeakSet<object>(),
     nodes: 1,
+    textBytes: 0,
   }
   return copyRecord(
     root.map(([key, entry]) => [
@@ -1401,7 +1427,10 @@ export function snapshotStructDocumentForEpub(value: unknown): StructDocument {
         ? parseStructAssets(entry)
         : key === 'recovery'
           ? parseRecovery(entry, '$.recovery')
-          : snapshotPublicationValue(entry, `$.${key}`, state, 1),
+          : key === 'receipt'
+            ? (preflightPublicationReceipt(entry, '$.receipt'),
+              snapshotPublicationValue(entry, '$.receipt', state, 1))
+            : snapshotPublicationValue(entry, `$.${key}`, state, 1),
     ]),
   ) as StructDocument
 }

@@ -1,6 +1,7 @@
 import { strFromU8, unzipSync, zipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
 import { assertStructEpubArchiveByteLength, buildStructEpub } from './epub'
+import { MAX_STRUCT_STRING_BYTES } from './codec/primitives'
 import { legacyStructDigest, structDigest } from './ids'
 import { sha256HexSync } from './sha256'
 import type { StructDocument } from './types'
@@ -162,6 +163,31 @@ function legacyDocumentWithHref(href: string, locale?: string): StructDocument {
 }
 
 describe('STRUCT EPUB href integrity', () => {
+  it('rejects an oversized title through the direct EPUB boundary', async () => {
+    const document = documentWithHref('#target')
+    document.metadata.title = 'x'.repeat(MAX_STRUCT_STRING_BYTES + 1)
+
+    await expect(buildStructEpub(document)).rejects.toThrow(
+      /textual resource bound/i,
+    )
+  })
+
+  it('rejects oversized generic receipt JSON before direct EPUB snapshotting', async () => {
+    const document = documentWithHref('#target')
+    document.receipt.modelConsultations = {
+      schemaVersion: '1.0.0',
+      documentId: document.documentId!,
+      sourceSha256: document.source.sha256,
+      consultations: [{ adapterNote: 'x'.repeat(1024 * 1024 + 1) }],
+      decisions: [],
+      metrics: {},
+    }
+
+    await expect(buildStructEpub(document)).rejects.toThrow(
+      'INVALID_MODEL_CONSULTATION_RECEIPT',
+    )
+  })
+
   it('enforces the post-compression boundary for an incompressible archive', () => {
     const payload = new Uint8Array(16 * 1024)
     for (let index = 0; index < payload.length; index += 1)

@@ -5,6 +5,7 @@ import {
   fail,
   finiteNumber,
   isStructCodecError,
+  stringValue,
 } from './primitives'
 import { validateStructConsultationReceipt } from '../consultation-receipt'
 
@@ -17,7 +18,7 @@ type CopyState = {
 }
 
 /**
- * Snapshot the open JSON portions of a consultation receipt before validation. This
+ * Snapshot a receipt only after its original object graph passes validation. This
  * rejects accessors/proxies, detects cycles, and bounds recursive input while
  * preserving the adapter-owned receipt contents as intentionally closed JSON.
  */
@@ -32,8 +33,8 @@ export function copyCanonicalJson(
   state.nodes += 1
   if (state.nodes > MAX_CANONICAL_NODES)
     fail('MODEL_RECEIPT', path, 'canonical JSON exceeds the node bound')
-  if (value === null || typeof value === 'string' || typeof value === 'boolean')
-    return value
+  if (value === null || typeof value === 'boolean') return value
+  if (typeof value === 'string') return stringValue(value, path)
   if (typeof value === 'number') return finiteNumber(value, path)
   if (typeof value !== 'object')
     fail(

@@ -188,6 +188,30 @@ describe('STRUCT EPUB href integrity', () => {
     )
   })
 
+  it('rejects aggregate recovery text before direct EPUB parsing', async () => {
+    const document = documentWithHref('#target')
+    const large = 'x'.repeat(4 * 1024 * 1024 - 1)
+    document.recovery = {
+      status: 'ready',
+      title: large,
+      summary: large,
+      issues: [
+        {
+          category: 'source',
+          title: large,
+          count: 1,
+          pages: [1],
+          action: large,
+        },
+      ],
+      userAction: large,
+    }
+
+    await expect(buildStructEpub(document)).rejects.toThrow(
+      /aggregate resource bound/i,
+    )
+  })
+
   it('enforces the post-compression boundary for an incompressible archive', () => {
     const payload = new Uint8Array(16 * 1024)
     for (let index = 0; index < payload.length; index += 1)

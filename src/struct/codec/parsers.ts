@@ -1362,6 +1362,64 @@ function preflightPublicationReceipt(value: unknown, path: string) {
     )
 }
 
+function chargePublicationString(
+  value: string,
+  path: string,
+  state: PublicationSnapshotState,
+) {
+  const parsed = stringValue(value, path)
+  state.textBytes += utf8ByteLength(parsed)
+  if (state.textBytes > MAX_STRUCT_PUBLICATION_TEXT_BYTES)
+    fail(
+      'BUDGET',
+      path,
+      'publication text exceeds the aggregate resource bound',
+    )
+  return parsed
+}
+
+function preflightPublicationText(
+  value: unknown,
+  path: string,
+  state: PublicationSnapshotState,
+  depth = 0,
+) {
+  if (depth > 128)
+    fail('BUDGET', path, 'publication input nesting exceeds the depth bound')
+  state.nodes += 1
+  if (state.nodes > MAX_STRUCT_DOCUMENT_ITEMS)
+    fail('BUDGET', path, 'publication input exceeds the structural node bound')
+  if (typeof value === 'string') {
+    chargePublicationString(value, path, state)
+    return
+  }
+  if (!value || typeof value !== 'object' || ArrayBuffer.isView(value)) return
+  if (state.active.has(value))
+    fail('OBJECT', path, 'cycles are not permitted in publication input')
+  state.active.add(value)
+  try {
+    if (Array.isArray(value)) {
+      for (const [index, entry] of array(
+        value,
+        path,
+        MAX_STRUCT_DOCUMENT_ITEMS - state.nodes,
+      ).entries())
+        preflightPublicationText(entry, `${path}[${index}]`, state, depth + 1)
+      return
+    }
+    for (const [key, entry] of dataEntries(
+      value,
+      path,
+      MAX_STRUCT_DOCUMENT_ITEMS - state.nodes,
+    )) {
+      if (key === 'bytes') continue
+      preflightPublicationText(entry, `${path}.${key}`, state, depth + 1)
+    }
+  } finally {
+    state.active.delete(value)
+  }
+}
+
 function snapshotPublicationValue(
   value: unknown,
   path: string,
@@ -1374,15 +1432,7 @@ function snapshotPublicationValue(
   if (state.nodes > MAX_STRUCT_DOCUMENT_ITEMS)
     fail('BUDGET', path, 'publication input exceeds the structural node bound')
   if (typeof value === 'string') {
-    const parsed = stringValue(value, path)
-    state.textBytes += utf8ByteLength(parsed)
-    if (state.textBytes > MAX_STRUCT_PUBLICATION_TEXT_BYTES)
-      fail(
-        'BUDGET',
-        path,
-        'publication text exceeds the aggregate resource bound',
-      )
-    return parsed
+    return chargePublicationString(value, path, state)
   }
   if (!value || typeof value !== 'object') return value
   if (state.active.has(value))
@@ -1424,9 +1474,11 @@ export function snapshotStructDocumentForEpub(value: unknown): StructDocument {
     root.map(([key, entry]) => [
       key,
       key === 'assets'
-        ? parseStructAssets(entry)
+        ? (preflightPublicationText(entry, '$.assets', state),
+          parseStructAssets(entry))
         : key === 'recovery'
-          ? parseRecovery(entry, '$.recovery')
+          ? (preflightPublicationText(entry, '$.recovery', state),
+            parseRecovery(entry, '$.recovery'))
           : key === 'receipt'
             ? (preflightPublicationReceipt(entry, '$.receipt'),
               snapshotPublicationValue(entry, '$.receipt', state, 1))

@@ -1,5 +1,5 @@
 import { credentialShapedValue, SAFE_ID } from './ids'
-import { utf8ByteLength } from './codec/primitives'
+import { fail, utf8ByteLength } from './codec/primitives'
 
 /**
  * Source-neutral, serialized consultation receipt envelope.
@@ -60,21 +60,32 @@ function forbiddenKey(key: string) {
 function canonicalJson(
   value: unknown,
   active: WeakSet<object>,
-  state: { nodes: number; stringBytes: number },
+  state: { nodes: number; stringBytes: number; budgetExceeded: boolean },
   depth: number,
 ): value is
   Record<string, unknown> | unknown[] | string | number | boolean | null {
-  if (depth > MAX_DEPTH) return false
+  if (depth > MAX_DEPTH) {
+    state.budgetExceeded = true
+    return false
+  }
   state.nodes += 1
-  if (state.nodes > MAX_NODES) return false
+  if (state.nodes > MAX_NODES) {
+    state.budgetExceeded = true
+    return false
+  }
   if (value === null || typeof value === 'boolean') return true
   if (typeof value === 'string') {
     const bytes = utf8ByteLength(value)
-    if (bytes > MAX_JSON_STRING_BYTES) return false
+    if (bytes > MAX_JSON_STRING_BYTES) {
+      state.budgetExceeded = true
+      return false
+    }
     state.stringBytes += bytes
-    return (
-      state.stringBytes <= MAX_JSON_TOTAL_BYTES && !credentialShapedValue(value)
-    )
+    if (state.stringBytes > MAX_JSON_TOTAL_BYTES) {
+      state.budgetExceeded = true
+      return false
+    }
+    return !credentialShapedValue(value)
   }
   if (typeof value === 'number') return Number.isFinite(value)
   if (typeof value !== 'object' || active.has(value)) return false
@@ -91,8 +102,11 @@ function canonicalJson(
         !Number.isSafeInteger(length) ||
         length < 0 ||
         length > MAX_NODES - state.nodes
-      )
+      ) {
+        if (Number.isSafeInteger(length) && length > MAX_NODES - state.nodes)
+          state.budgetExceeded = true
         return false
+      }
       const keys = Reflect.ownKeys(value)
       if (
         keys.length !== length + 1 ||
@@ -118,14 +132,23 @@ function canonicalJson(
     const prototype = Object.getPrototypeOf(value)
     if (prototype !== Object.prototype && prototype !== null) return false
     const keys = Reflect.ownKeys(value)
-    if (keys.length > MAX_NODES - state.nodes) return false
+    if (keys.length > MAX_NODES - state.nodes) {
+      state.budgetExceeded = true
+      return false
+    }
     for (const key of keys) {
       if (typeof key !== 'string' || !SAFE_ID.test(key) || forbiddenKey(key))
         return false
       const keyBytes = utf8ByteLength(key)
-      if (keyBytes > MAX_JSON_STRING_BYTES) return false
+      if (keyBytes > MAX_JSON_STRING_BYTES) {
+        state.budgetExceeded = true
+        return false
+      }
       state.stringBytes += keyBytes
-      if (state.stringBytes > MAX_JSON_TOTAL_BYTES) return false
+      if (state.stringBytes > MAX_JSON_TOTAL_BYTES) {
+        state.budgetExceeded = true
+        return false
+      }
       const descriptor = Object.getOwnPropertyDescriptor(value, key)
       if (
         !descriptor?.enumerable ||
@@ -156,7 +179,7 @@ function validateStructConsultationReceiptUnsafe(
     !canonicalJson(
       value,
       new WeakSet<object>(),
-      { nodes: 0, stringBytes: 0 },
+      { nodes: 0, stringBytes: 0, budgetExceeded: false },
       0,
     )
   )
@@ -193,6 +216,23 @@ function validateStructConsultationReceiptUnsafe(
       return false
   }
   return true
+}
+
+/** Reject bounded receipt ingress before a consumer snapshots its JSON tree. */
+export function preflightStructConsultationReceipt(
+  value: unknown,
+  path: string,
+) {
+  const state = { nodes: 0, stringBytes: 0, budgetExceeded: false }
+  let valid = false
+  try {
+    valid = canonicalJson(value, new WeakSet<object>(), state, 0)
+  } catch {
+    return false
+  }
+  if (state.budgetExceeded)
+    fail('BUDGET', path, 'consultation receipt exceeds the resource bound')
+  return valid && validateStructConsultationReceiptUnsafe(value)
 }
 
 export function validateStructConsultationReceipt(

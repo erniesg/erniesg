@@ -2851,6 +2851,50 @@ describe('STRUCT runtime codec', () => {
     expect(descriptorReads).toBe(0)
   })
 
+  it('rejects aggregate generic receipt text before canonical receipt copying', () => {
+    const value = validDocument() as any
+    value.schemaVersion = '0.2.0'
+    value.documentId = 'fixture-document'
+    value.receipt.schemaVersion = '0.2.0'
+    value.receipt.documentId = 'fixture-document'
+    const keys = Array.from({ length: 9 }, (_, index) => `field${index}`)
+    let descriptorReads = 0
+    value.receipt.modelConsultations = {
+      schemaVersion: '1.0.0',
+      documentId: 'fixture-document',
+      sourceSha256: hash,
+      consultations: [],
+      decisions: [],
+      metrics: new Proxy(
+        {},
+        {
+          ownKeys() {
+            return keys
+          },
+          getOwnPropertyDescriptor(_target, key) {
+            descriptorReads += 1
+            if (descriptorReads > keys.length)
+              throw new Error('receipt was copied after aggregate rejection')
+            return {
+              configurable: true,
+              enumerable: true,
+              value: 'x'.repeat(1024 * 1024),
+            }
+          },
+        },
+      ),
+    }
+
+    try {
+      decodeStructDocument(value)
+      throw new Error('expected generic receipt aggregate budget failure')
+    } catch (error) {
+      expect(error).toBeInstanceOf(StructCodecError)
+      expect((error as StructCodecError).code).toBe('BUDGET')
+    }
+    expect(descriptorReads).toBe(keys.length)
+  })
+
   it('bounds direct consultation receipt validation before array key reads', () => {
     let ownKeyReads = 0
     const consultations = new Proxy(new Array(100_001), {

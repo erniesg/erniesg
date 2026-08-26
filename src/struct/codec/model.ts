@@ -7,7 +7,7 @@ import {
   isStructCodecError,
   stringValue,
 } from './primitives'
-import { validateStructConsultationReceipt } from '../consultation-receipt'
+import { preflightStructConsultationReceipt } from '../consultation-receipt'
 
 const MAX_CANONICAL_DEPTH = 128
 const MAX_CANONICAL_NODES = 100_000
@@ -100,7 +100,7 @@ export function copyCanonicalJson(
 
 export function validateConsultationReceipt(value: unknown, path: string) {
   try {
-    if (!validateStructConsultationReceipt(value))
+    if (!preflightStructConsultationReceipt(value, path))
       fail('MODEL_RECEIPT', path, 'invalid closed consultation receipt')
   } catch (error) {
     if (isStructCodecError(error)) throw error

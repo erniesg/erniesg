@@ -7,8 +7,21 @@ import {
   type ZipOptions,
 } from 'fflate'
 import { XMLParser, XMLValidator } from 'fast-xml-parser'
+import {
+  snapshotStructDocumentForEpub,
+  validateStructDocumentTableBounds,
+} from './codec/parsers'
+import { isStructCodecError } from './codec/primitives'
+import {
+  bcp47Language,
+  mediaType,
+  rfc3339Date,
+  rfc3339DateTime,
+} from './codec/standards'
 import { sha256HexSync } from './sha256'
 import { legacyStructDigestMatches, structDigest } from './ids'
+import { validateStructConsultationReceipt } from './consultation-receipt'
+import { isPackagedAssetId } from './emitted-ids'
 import { validateModelConsultationReceipt } from './model-consultation-receipt'
 import { renderPublicationXhtml } from './xhtml'
 import {
@@ -25,6 +38,8 @@ table { border-collapse: collapse; width: 100%; }
 td, th { border: 1px solid currentColor; padding: 0.25rem; }
 figure { break-inside: avoid; margin: 1.5rem 0; }
 .visually-hidden, .additional-semantic-reference { clip: rect(0 0 0 0); clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }`
+const MAX_STRUCT_EPUB_PROFILE_CSS_BYTES = 4 * 1024 * 1024
+const MAX_STRUCT_EPUB_ARCHIVE_BYTES = 256 * 1024 * 1024
 
 export type StructEpubProfile = {
   id: string
@@ -53,13 +68,48 @@ export type StructEpubExport = {
 
 export type UnprofiledStructEpubExport = Omit<StructEpubExport, 'profile'>
 
-function validProfile(profile: StructEpubProfile) {
+type StructEpubProfileSnapshot = Record<keyof StructEpubProfile, unknown>
+
+function snapshotProfile(
+  value: unknown,
+): StructEpubProfileSnapshot | undefined {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+      return undefined
+    const record = value as Record<string, unknown>
+    return {
+      id: record.id,
+      version: record.version,
+      fileName: record.fileName,
+      pageProgressionDirection: record.pageProgressionDirection,
+      renditionFlow: record.renditionFlow,
+      configurationSha256: record.configurationSha256,
+      css: record.css,
+    }
+  } catch {
+    return undefined
+  }
+}
+
+function validProfile(
+  profile: StructEpubProfileSnapshot,
+): profile is StructEpubProfile {
   return (
+    typeof profile.id === 'string' &&
     /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(profile.id) &&
+    typeof profile.version === 'string' &&
     /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(profile.version) &&
+    typeof profile.fileName === 'string' &&
     /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.epub$/u.test(profile.fileName) &&
+    (profile.pageProgressionDirection === 'ltr' ||
+      profile.pageProgressionDirection === 'rtl') &&
+    (profile.renditionFlow === 'paginated' ||
+      profile.renditionFlow === 'scrolled-continuous') &&
+    typeof profile.configurationSha256 === 'string' &&
     /^[a-f0-9]{64}$/u.test(profile.configurationSha256) &&
+    typeof profile.css === 'string' &&
     profile.css.length > 0 &&
+    utf8ByteLength(profile.css) <= MAX_STRUCT_EPUB_PROFILE_CSS_BYTES &&
     !/[\u0000]/u.test(profile.css)
   )
 }
@@ -94,6 +144,80 @@ function entry(value: string, level: 0 | 6 = 6): [Uint8Array, ZipOptions] {
 
 function binaryEntry(value: Uint8Array): [Uint8Array, ZipOptions] {
   return [value, { level: 6, mtime: ZIP_MTIME }]
+}
+
+function utf8ByteLength(value: string) {
+  let length = 0
+  for (let index = 0; index < value.length; index += 1) {
+    const codePoint = value.codePointAt(index)!
+    if (codePoint <= 0x7f) length += 1
+    else if (codePoint <= 0x7ff) length += 2
+    else if (codePoint <= 0xffff) length += 3
+    else {
+      length += 4
+      index += 1
+    }
+  }
+  return length
+}
+
+function artifactFileName(value: string) {
+  return value.split(/[\\/]/u).at(-1) || 'source'
+}
+
+function assertBuilderScalars(document: StructDocument) {
+  const { language, publicationDate, artifactModifiedAt, updated } =
+    document.metadata
+  if (language !== undefined) bcp47Language(language, '$.metadata.language')
+  if (publicationDate !== undefined)
+    rfc3339Date(publicationDate, '$.metadata.publicationDate')
+  if (updated !== undefined) rfc3339Date(updated, '$.metadata.updated')
+  if (artifactModifiedAt !== undefined)
+    rfc3339DateTime(artifactModifiedAt, '$.metadata.artifactModifiedAt')
+  for (const asset of document.assets) {
+    mediaType(asset.mediaType, '$.assets.mediaType')
+    if (asset.href.includes('%'))
+      throw new Error(`STRUCT EPUB asset ${asset.id} has an ambiguous href`)
+  }
+}
+
+function assertNoNegativeZero(value: unknown, seen = new WeakSet<object>()) {
+  if (typeof value === 'number') {
+    if (Object.is(value, -0))
+      throw new Error('STRUCT EPUB input contains negative zero')
+    return
+  }
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    ArrayBuffer.isView(value) ||
+    seen.has(value)
+  )
+    return
+  seen.add(value)
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    if (!descriptor || !Object.hasOwn(descriptor, 'value'))
+      throw new Error('STRUCT EPUB input must contain data properties')
+    assertNoNegativeZero(descriptor.value, seen)
+  }
+}
+
+function assertNoSemanticZeroWidthRuns(document: StructDocument) {
+  for (const block of document.blocks) {
+    for (const runs of [
+      block.inline,
+      ...(block.table?.cells.map((cell) => cell.inline) ?? []),
+    ])
+      for (const run of runs)
+        if (
+          run.start === run.end &&
+          Object.keys(run).some((key) => key !== 'start' && key !== 'end')
+        )
+          throw new Error(
+            'STRUCT EPUB input contains a semantic zero-width inline run',
+          )
+  }
 }
 
 function slug(value: string) {
@@ -250,7 +374,10 @@ function assertStructReceiptIntegrity(document: StructDocument) {
 
   const modelConsultations = receipt.modelConsultations
   if (modelConsultations !== undefined) {
-    if (!validateModelConsultationReceipt(modelConsultations)) {
+    if (
+      !validateStructConsultationReceipt(modelConsultations) ||
+      !validateModelConsultationReceipt(modelConsultations)
+    ) {
       throw new Error('INVALID_MODEL_CONSULTATION_RECEIPT')
     }
     if (
@@ -260,10 +387,7 @@ function assertStructReceiptIntegrity(document: StructDocument) {
     ) {
       throw new Error('PENDING_MODEL_CONSULTATION_RECEIPT')
     }
-    if (
-      document.source.format !== 'pdf' ||
-      modelConsultations.sourceSha256 !== document.source.sha256
-    ) {
+    if (modelConsultations.sourceSha256 !== document.source.sha256) {
       throw new Error('MODEL_CONSULTATION_SOURCE_MISMATCH')
     }
     if (modelConsultations.documentId !== document.documentId) {
@@ -302,10 +426,41 @@ export async function buildStructEpub(
   document: StructDocument,
   options: StructEpubOptions = {},
 ): Promise<StructEpubExport> {
+  validateStructDocumentTableBounds(document)
+  try {
+    document = snapshotStructDocumentForEpub(document)
+  } catch (error) {
+    if (
+      isStructCodecError(error) &&
+      ((error.code === 'BUDGET' && error.path === '$.assets') ||
+        error.code === 'ASSET_BOUNDS' ||
+        (error.path.startsWith('$.assets[') &&
+          error.path.endsWith('.bytes') &&
+          (error.code === 'BYTES' || error.code === 'TYPE')))
+    )
+      throw new Error('STRUCT_EPUB_ASSET_RESOURCE_LIMIT', { cause: error })
+    if (
+      isStructCodecError(error) &&
+      error.path.startsWith('$.receipt.modelConsultations')
+    )
+      throw new Error('INVALID_MODEL_CONSULTATION_RECEIPT', { cause: error })
+    throw error
+  }
+  validateStructDocumentTableBounds(document)
+  assertBuilderScalars(document)
+  assertNoSemanticZeroWidthRuns(document)
   assertStructReceiptIntegrity(document)
-  const profile = options.profile
-  if (profile && !validProfile(profile)) {
-    throw new Error('STRUCT_EPUB_PROFILE_INVALID')
+  if (document.recovery.status !== 'ready')
+    throw new Error('STRUCT_EPUB_RECOVERY_REVIEW_REQUIRED')
+  assertNoNegativeZero(document)
+  const requestedProfile = options.profile
+  let profile: StructEpubProfile | undefined
+  if (requestedProfile !== undefined) {
+    const snapshot = snapshotProfile(requestedProfile)
+    if (!snapshot || !validProfile(snapshot)) {
+      throw new Error('STRUCT_EPUB_PROFILE_INVALID')
+    }
+    profile = snapshot
   }
   const retainedProfile = profile ? profileReceipt(profile) : undefined
   const identifier = `urn:sha256:${document.receipt.generatedSha256}${retainedProfile ? `:${retainedProfile.id}:${retainedProfile.version}:${retainedProfile.configurationSha256.slice(0, 16)}` : ''}`
@@ -320,13 +475,10 @@ export async function buildStructEpub(
     }
     return asset as typeof asset & { bytes: Uint8Array }
   })
-  const reservedIds = new Set([
-    'publication-id',
-    'nav',
-    'content',
-    'styles',
-    'struct',
-  ])
+  const assetBytes = assets.reduce(
+    (total, asset) => total + asset.bytes.byteLength,
+    0,
+  )
   const reservedHrefs = new Set([
     'package.opf',
     'nav.xhtml',
@@ -338,11 +490,7 @@ export async function buildStructEpub(
   const assetIds = new Set<string>()
   const assetHrefs = new Set<string>()
   for (const asset of assets) {
-    if (
-      reservedIds.has(asset.id) ||
-      assetIds.has(asset.id) ||
-      !/^[A-Za-z_][A-Za-z0-9_.-]*$/u.test(asset.id)
-    ) {
+    if (assetIds.has(asset.id) || !isPackagedAssetId(asset.id)) {
       throw new Error(
         `STRUCT EPUB asset id is duplicate or reserved: ${asset.id}`,
       )
@@ -394,25 +542,43 @@ export async function buildStructEpub(
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${attribute(language)}"><head><title>Contents</title></head><body><nav epub:type="toc"><h1>Contents</h1><ol><li><a href="content.xhtml">${text(document.metadata.title)}</a></li>${headings.map((block) => `<li><a href="content.xhtml#${attribute(block.id)}">${text(block.text)}</a></li>`).join('')}</ol></nav></body></html>
 `
   const content = renderPublicationXhtml(document)
+  const structArtifact = {
+    schemaVersion: document.schemaVersion,
+    source: {
+      ...document.source,
+      fileName: artifactFileName(document.source.fileName),
+    },
+    receipt: document.receipt,
+  }
+  const serializedStructArtifact = `${JSON.stringify(structArtifact)}\n`
+  const serializedProfile = retainedProfile
+    ? `${JSON.stringify(retainedProfile)}\n`
+    : undefined
+  const container =
+    '<?xml version="1.0" encoding="UTF-8"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="EPUB/package.opf" media-type="application/oebps-package+xml" /></rootfiles></container>'
+  const archiveBytes =
+    utf8ByteLength(EPUB_MIMETYPE) +
+    utf8ByteLength(container) +
+    utf8ByteLength(packageDocument) +
+    utf8ByteLength(nav) +
+    utf8ByteLength(content) +
+    utf8ByteLength(profile?.css ?? EPUB_CSS) +
+    utf8ByteLength(serializedStructArtifact) +
+    (serializedProfile ? utf8ByteLength(serializedProfile) : 0) +
+    assetBytes
+  if (archiveBytes > MAX_STRUCT_EPUB_ARCHIVE_BYTES)
+    throw new Error('STRUCT_EPUB_ARCHIVE_RESOURCE_LIMIT')
   const archive: Zippable = {
     mimetype: entry(EPUB_MIMETYPE, 0),
-    'META-INF/container.xml': entry(
-      '<?xml version="1.0" encoding="UTF-8"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="EPUB/package.opf" media-type="application/oebps-package+xml" /></rootfiles></container>',
-    ),
+    'META-INF/container.xml': entry(container),
     'EPUB/package.opf': entry(packageDocument),
     'EPUB/nav.xhtml': entry(nav),
     'EPUB/content.xhtml': entry(content),
     'EPUB/styles.css': entry(profile?.css ?? EPUB_CSS),
-    'EPUB/struct.json': entry(
-      `${JSON.stringify({
-        schemaVersion: document.schemaVersion,
-        source: document.source,
-        receipt: document.receipt,
-      })}\n`,
-    ),
+    'EPUB/struct.json': entry(serializedStructArtifact),
     ...(retainedProfile
       ? {
-          'EPUB/profile.json': entry(`${JSON.stringify(retainedProfile)}\n`),
+          'EPUB/profile.json': entry(serializedProfile!),
         }
       : {}),
     ...Object.fromEntries(
@@ -444,7 +610,7 @@ export async function buildStructEpub(
     if (
       !reopenedProfile ||
       !reopenedCss ||
-      strFromU8(reopenedProfile) !== `${JSON.stringify(retainedProfile)}\n` ||
+      strFromU8(reopenedProfile) !== serializedProfile ||
       sha256HexSync(reopenedCss) !== retainedProfile.cssSha256
     ) {
       throw new Error('STRUCT_EPUB_PROFILE_REOPEN_MISMATCH')

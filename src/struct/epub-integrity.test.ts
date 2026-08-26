@@ -2,6 +2,7 @@ import { strFromU8, unzipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
 import { buildStructEpub } from './epub'
 import { legacyStructDigest, structDigest } from './ids'
+import { sha256HexSync } from './sha256'
 import type { StructDocument } from './types'
 
 function refreshReceipt(document: StructDocument) {
@@ -207,6 +208,33 @@ describe('STRUCT EPUB href integrity', () => {
     ).rejects.toThrow('STRUCT_EPUB_PROFILE_INVALID')
   })
 
+  it('snapshots a valid profile before EPUB packaging reads it again', async () => {
+    const css = 'body { color: black; }'
+    let cssReads = 0
+    const profile = new Proxy(
+      {
+        id: 'mobile',
+        version: '1.0.0',
+        fileName: 'publication-mobile.epub',
+        pageProgressionDirection: 'ltr' as const,
+        renditionFlow: 'paginated' as const,
+        configurationSha256: 'c'.repeat(64),
+        css,
+      },
+      {
+        get(target, property, receiver) {
+          if (property === 'css') cssReads += 1
+          return Reflect.get(target, property, receiver)
+        },
+      },
+    )
+
+    const epub = await buildStructEpub(documentWithHref('#target'), { profile })
+
+    expect(strFromU8(unzipSync(epub.bytes)['EPUB/styles.css']!)).toBe(css)
+    expect(cssReads).toBe(1)
+  })
+
   it.each([
     ['same-document fragment', '#target'],
     ['packaged XHTML fragment', 'content.xhtml#target'],
@@ -338,17 +366,18 @@ describe('STRUCT EPUB href integrity', () => {
     'does not alias a %s href to a different packaged document',
     async (_label, href, packagedHref) => {
       const document = documentWithHref(href)
+      const assetBytes = new TextEncoder().encode(
+        '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Different exact path</p></body></html>',
+      )
       document.assets.push({
         id: `supplement-${document.assets.length}`,
         kind: 'figure',
         href: packagedHref,
         mediaType: 'application/xhtml+xml',
-        sha256: 'd'.repeat(64),
+        sha256: sha256HexSync(assetBytes),
         width: 1,
         height: 1,
-        bytes: new TextEncoder().encode(
-          '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Different exact path</p></body></html>',
-        ),
+        bytes: assetBytes,
         sourceObjectIds: ['fixture-supplement'],
         evidence: {
           confidence: 1,
@@ -402,15 +431,18 @@ describe('STRUCT EPUB href integrity', () => {
 
   it('rejects malformed packaged XHTML assets', async () => {
     const document = documentWithHref('#target')
+    const assetBytes = new TextEncoder().encode(
+      '<html><body><a href="#missing"></body>',
+    )
     document.assets.push({
       id: 'supplement',
       kind: 'figure',
       href: 'supplement.xhtml',
       mediaType: 'application/xhtml+xml',
-      sha256: 'd'.repeat(64),
+      sha256: sha256HexSync(assetBytes),
       width: 1,
       height: 1,
-      bytes: new TextEncoder().encode('<html><body><a href="#missing"></body>'),
+      bytes: assetBytes,
       sourceObjectIds: ['fixture-supplement'],
       evidence: {
         confidence: 1,
@@ -427,17 +459,18 @@ describe('STRUCT EPUB href integrity', () => {
 
   it('rejects dangling namespaced hrefs in packaged XHTML assets', async () => {
     const document = documentWithHref('#target')
+    const assetBytes = new TextEncoder().encode(
+      '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:xlink="http://www.w3.org/1999/xlink"><body><a xlink:href="#missing">Missing</a></body></html>',
+    )
     document.assets.push({
       id: 'namespaced-supplement',
       kind: 'figure',
       href: 'namespaced-supplement.xhtml',
       mediaType: 'application/xhtml+xml',
-      sha256: 'e'.repeat(64),
+      sha256: sha256HexSync(assetBytes),
       width: 1,
       height: 1,
-      bytes: new TextEncoder().encode(
-        '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:xlink="http://www.w3.org/1999/xlink"><body><a xlink:href="#missing">Missing</a></body></html>',
-      ),
+      bytes: assetBytes,
       sourceObjectIds: ['fixture-namespaced-supplement'],
       evidence: {
         confidence: 1,

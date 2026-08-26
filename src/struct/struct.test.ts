@@ -200,6 +200,14 @@ describe('STRUCT canonical document graph', () => {
     const modelConsultations = withReceipt.modelConsultations!
 
     const graph = buildStructDocument(withReceipt)
+    graph.recovery = recoverySummary({ ready: true, diagnostics: [] })
+    const { receipt, ...withoutReceiptFields } = graph
+    receipt.generatedSha256 = structDigest({
+      ...withoutReceiptFields,
+      conservation: receipt.conservation,
+      modelConsultations,
+      assets: graph.assets.map(({ bytes: _bytes, ...asset }) => asset),
+    })
 
     expect(graph.receipt.modelConsultations).toEqual(modelConsultations)
     expect(graph.receipt.generatedSha256).not.toBe(

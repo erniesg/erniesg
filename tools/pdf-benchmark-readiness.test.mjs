@@ -37,6 +37,7 @@ async function readRegistry() {
 
 async function writeRegistry(registry) {
   const directory = await mkdtemp(join(tmpdir(), 'pdf-benchmark-readiness-'))
+  evidenceDirectories.push(directory)
   const path = join(directory, 'registry.json')
   await writeFile(path, `${JSON.stringify(registry, null, 2)}\n`)
   return path

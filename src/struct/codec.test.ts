@@ -2892,7 +2892,7 @@ describe('STRUCT runtime codec', () => {
       expect(error).toBeInstanceOf(StructCodecError)
       expect((error as StructCodecError).code).toBe('BUDGET')
     }
-    expect(descriptorReads).toBe(keys.length)
+    expect(descriptorReads).toBe(keys.length - 1)
   })
 
   it('bounds direct consultation receipt validation before array key reads', () => {

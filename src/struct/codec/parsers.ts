@@ -1152,6 +1152,10 @@ function parseReceipt(value: unknown, path: string): StructReceipt {
   )
   let modelConsultations: StructReceipt['modelConsultations']
   if (has(parsed, 'modelConsultations')) {
+    validateConsultationReceipt(
+      parsed.modelConsultations,
+      `${path}.modelConsultations`,
+    )
     const copied = copyCanonicalJson(
       parsed.modelConsultations,
       `${path}.modelConsultations`,

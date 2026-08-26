@@ -2895,6 +2895,50 @@ describe('STRUCT runtime codec', () => {
     expect(descriptorReads).toBe(keys.length - 1)
   })
 
+  it('bounds a stateful receipt proxy during canonical copying', () => {
+    const value = validDocument() as any
+    value.schemaVersion = '0.2.0'
+    value.documentId = 'fixture-document'
+    value.receipt.schemaVersion = '0.2.0'
+    value.receipt.documentId = 'fixture-document'
+    let descriptorReads = 0
+    value.receipt.modelConsultations = {
+      schemaVersion: '1.0.0',
+      documentId: 'fixture-document',
+      sourceSha256: hash,
+      consultations: [],
+      decisions: [],
+      metrics: new Proxy(
+        {},
+        {
+          ownKeys() {
+            return ['field']
+          },
+          getOwnPropertyDescriptor() {
+            descriptorReads += 1
+            if (descriptorReads > 3)
+              throw new Error('receipt was traversed after copy rejection')
+            return {
+              configurable: true,
+              enumerable: true,
+              value:
+                descriptorReads < 3 ? 'small' : 'x'.repeat(1024 * 1024 + 1),
+            }
+          },
+        },
+      ),
+    }
+
+    try {
+      decodeStructDocument(value)
+      throw new Error('expected stateful receipt budget failure')
+    } catch (error) {
+      expect(error).toBeInstanceOf(StructCodecError)
+      expect((error as StructCodecError).code).toBe('BUDGET')
+    }
+    expect(descriptorReads).toBe(3)
+  })
+
   it('bounds direct consultation receipt validation before array key reads', () => {
     let ownKeyReads = 0
     const consultations = new Proxy(new Array(100_001), {

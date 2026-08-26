@@ -22,8 +22,9 @@ const HASH = /^[a-f0-9]{64}$/u
 const STRUCT_CONSULTATION_RECEIPT_SCHEMA_VERSION = '1.0.0'
 const MAX_DEPTH = 128
 const MAX_NODES = 100_000
-const MAX_JSON_STRING_BYTES = 1024 * 1024
-const MAX_JSON_TOTAL_BYTES = 8 * 1024 * 1024
+/** Bounds shared by generic receipt validation and its canonical snapshot. */
+export const MAX_STRUCT_RECEIPT_JSON_STRING_BYTES = 1024 * 1024
+export const MAX_STRUCT_RECEIPT_JSON_TOTAL_BYTES = 8 * 1024 * 1024
 const TOP_LEVEL_KEYS = [
   'schemaVersion',
   'documentId',
@@ -76,12 +77,12 @@ function canonicalJson(
   if (value === null || typeof value === 'boolean') return true
   if (typeof value === 'string') {
     const bytes = utf8ByteLength(value)
-    if (bytes > MAX_JSON_STRING_BYTES) {
+    if (bytes > MAX_STRUCT_RECEIPT_JSON_STRING_BYTES) {
       state.budgetExceeded = true
       return false
     }
     state.stringBytes += bytes
-    if (state.stringBytes > MAX_JSON_TOTAL_BYTES) {
+    if (state.stringBytes > MAX_STRUCT_RECEIPT_JSON_TOTAL_BYTES) {
       state.budgetExceeded = true
       return false
     }
@@ -140,12 +141,12 @@ function canonicalJson(
       if (typeof key !== 'string' || !SAFE_ID.test(key) || forbiddenKey(key))
         return false
       const keyBytes = utf8ByteLength(key)
-      if (keyBytes > MAX_JSON_STRING_BYTES) {
+      if (keyBytes > MAX_STRUCT_RECEIPT_JSON_STRING_BYTES) {
         state.budgetExceeded = true
         return false
       }
       state.stringBytes += keyBytes
-      if (state.stringBytes > MAX_JSON_TOTAL_BYTES) {
+      if (state.stringBytes > MAX_STRUCT_RECEIPT_JSON_TOTAL_BYTES) {
         state.budgetExceeded = true
         return false
       }

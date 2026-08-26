@@ -172,6 +172,18 @@ describe('STRUCT EPUB href integrity', () => {
     )
   })
 
+  it.each([NaN, Infinity, -Infinity, -0])(
+    'rejects non-canonical number %s through the direct EPUB boundary',
+    async (number) => {
+      const document = documentWithHref('#target')
+      document.blocks[0]!.evidence.confidence = number
+
+      await expect(buildStructEpub(document)).rejects.toThrow(
+        /number|finite|negative zero/i,
+      )
+    },
+  )
+
   it('rejects oversized generic receipt JSON before direct EPUB snapshotting', async () => {
     const document = documentWithHref('#target')
     document.receipt.modelConsultations = {

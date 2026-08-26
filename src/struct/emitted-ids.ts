@@ -217,15 +217,20 @@ function citationRanges(
     })
     labelsByYear.set(year, candidates)
   }
-  const ranges: Array<{ start: number; end: number; target: string }> = [
-    ...sourceValue.matchAll(/[\p{Nd}⁰¹²³⁴⁵⁶⁷⁸⁹]+/gu),
-  ].flatMap((match) => {
+  const ranges: Array<{ start: number; end: number; target: string }> = []
+  for (const match of sourceValue.matchAll(/[\p{Nd}⁰¹²³⁴⁵⁶⁷⁸⁹]+/gu)) {
+    if (totals.citationWork >= MAX_CITATION_MATCH_WORK)
+      throw new RenderedPublicationPlanError(
+        'BUDGET',
+        path,
+        'citation matching work exceeds the publication planning budget',
+      )
+    totals.citationWork += 1
     const target = targetByLabel.get(normalizedNumericToken(match[0]))
     const start = match.index ?? -1
-    return target && start >= 0
-      ? [{ start, end: start + match[0].length, target }]
-      : []
-  })
+    if (target && start >= 0)
+      ranges.push({ start, end: start + match[0].length, target })
+  }
   const linkedTargets = new Set(ranges.map((range) => range.target))
   for (const match of sourceValue.matchAll(/\b(?:18|19|20)\d{2}[a-z]?\b/giu)) {
     const start = match.index ?? -1

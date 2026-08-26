@@ -1455,6 +1455,12 @@ function snapshotPublicationValue(
   if (typeof value === 'string') {
     return chargePublicationString(value, path, state)
   }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) fail('NUMBER', path, 'number must be finite')
+    if (Object.is(value, -0))
+      fail('NUMBER', path, 'negative zero is not canonical')
+    return value
+  }
   if (!value || typeof value !== 'object') return value
   if (state.active.has(value))
     fail('OBJECT', path, 'cycles are not permitted in publication input')

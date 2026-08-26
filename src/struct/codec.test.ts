@@ -2116,6 +2116,34 @@ describe('STRUCT runtime codec', () => {
     )
   })
 
+  it('skips an oversized cross-reference label before tokenizing it', () => {
+    const value = validDocument() as any
+    value.metadata.authors = []
+    value.metadata.authorNotes = []
+    value.relationships[0] = {
+      ...value.relationships[0],
+      kind: 'cross-reference',
+      label: 'a,'.repeat(1_500_000),
+      to: [
+        'https://example.test/reference-1',
+        'https://example.test/reference-2',
+      ],
+      status: 'matched',
+    }
+    value.blocks[0].inline = [
+      {
+        start: 0,
+        end: value.blocks[0].text.length,
+        relationshipId: value.relationships[0].id,
+        semanticRole: 'cross-reference',
+      },
+    ]
+
+    expect(renderPublicationXhtml(value)).toContain(
+      'Additional cross-reference target 1',
+    )
+  })
+
   it('rejects an early source budget before inspecting a later hostile source', () => {
     const value = validDocument() as any
     const runCount = 2_000

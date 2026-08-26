@@ -440,12 +440,12 @@ type InlineDraft = {
   renderedRelationshipIds: Set<string>
 }
 
-function boundedCitationLabels(value: string) {
+function boundedRelationshipLabels(value: string) {
   let segments = 1
   for (let index = 0; index < value.length; index += 1)
     if (value[index] === ',' && ++segments > MAX_CITATION_MATCH_WORK)
-      // Preserve the existing no-range outcome without allocating an
-      // attacker-controlled token array.
+      // Preserve fallback labels without allocating an attacker-controlled
+      // token array for any semantic relationship role.
       return []
   return value
     .split(',')
@@ -469,13 +469,7 @@ function semanticPlanForRun(
   const rawTargets =
     relationship?.status === 'matched' ? relationship.to : (run.targetIds ?? [])
   const rawLabel = relationship?.label ?? ''
-  const labels =
-    run.semanticRole === 'citation'
-      ? boundedCitationLabels(rawLabel)
-      : rawLabel
-          .split(',')
-          .map((label) => label.trim())
-          .filter(Boolean)
+  const labels = boundedRelationshipLabels(rawLabel)
   let targets = targetCache.get(rawTargets)
   if (!targets) {
     targets = []

@@ -355,10 +355,6 @@ describe('STRUCT runtime codec', () => {
       'duplicate BCP-47 variant',
       (value: any) => (value.metadata.language = 'de-1901-1901'),
     ],
-    [
-      'repeated BCP-47 private-use singleton',
-      (value: any) => (value.metadata.language = 'en-x-private-x-again'),
-    ],
     ['MIME wildcard', (value: any) => (value.assets[0].mediaType = '*/*')],
   ])('rejects an invalid %s', (_label, mutate) => {
     const value = validDocument()
@@ -374,6 +370,9 @@ describe('STRUCT runtime codec', () => {
     'sl-rozaj-biske-1994',
     'en-US-u-ca-gregory',
     'x-private-private',
+    'en-x-a-a',
+    'en-a-foo-x-a-a',
+    'en-x-private-x-again',
   ])('accepts the BCP-47 language tag %s', (language) => {
     const value = validDocument()
     value.metadata.language = language

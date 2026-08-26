@@ -45,19 +45,10 @@ export function bcp47Language(value: unknown, path: string) {
   }
 
   const extensionSingletons = new Set<string>()
-  let privateUseSeen = false
   for (const subtag of parsed.split('-')) {
     if (subtag.length !== 1) continue
-    if (subtag.toLowerCase() === 'x') {
-      if (privateUseSeen)
-        fail(
-          'LANGUAGE',
-          path,
-          'language must not repeat the BCP-47 private-use singleton',
-        )
-      privateUseSeen = true
-      continue
-    }
+    // BCP-47 private-use subtags are opaque and consume the remainder.
+    if (subtag.toLowerCase() === 'x') break
     const singleton = subtag.toLowerCase()
     if (extensionSingletons.has(singleton))
       fail(

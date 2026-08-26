@@ -612,6 +612,24 @@
         },
         {
           "if": {
+            "required": ["id", "status"],
+            "properties": {
+              "id": { "const": "package-integrity" },
+              "status": { "const": "available" }
+            }
+          },
+          "then": {
+            "required": ["testDependencies"],
+            "properties": {
+              "testDependencies": {
+                "minItems": 4,
+                "uniqueItems": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
             "required": ["status"],
             "properties": { "status": { "const": "not-built" } }
           },

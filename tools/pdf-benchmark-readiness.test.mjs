@@ -145,6 +145,30 @@ describe('PDF benchmark readiness registry', () => {
       ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
       await writeFile(path, await readFile(sourceDependencies[index].path))
     }
+
+    for (const mutate of [
+      (metric) => delete metric.testDependencies,
+      (metric) => {
+        metric.testDependencies = []
+      },
+      (metric) => {
+        metric.testDependencies = metric.testDependencies.slice(1)
+      },
+      (metric) => {
+        metric.testDependencies[0].path = 'tools/unexpected-test-dependency.mjs'
+      },
+    ]) {
+      const invalidRegistry = structuredClone(fixtureRegistry)
+      mutate(
+        invalidRegistry.metricImplementations.find(
+          (metric) => metric.id === 'package-integrity',
+        ),
+      )
+      const invalidRegistryPath = await writeRegistry(invalidRegistry)
+      await expect(
+        createPdfBenchmarkReadinessReceipt({ registryPath: invalidRegistryPath }),
+      ).rejects.toThrow(/PDF_BENCHMARK_METRIC_BINDING_MISMATCH|INVALID_PDF_BENCHMARK_REGISTRY_SCHEMA|INVALID_PDF_BENCHMARK_REGISTRY/)
+    }
   })
 
   it('reports the exposed 32-case calibration honestly as not ready', async () => {

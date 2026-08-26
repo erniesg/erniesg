@@ -729,7 +729,7 @@ function selections(
 }
 
 describe('candidate-grounded STRUCT materialization', () => {
-  it('retains exact table spans into three reopened publication EPUBs', async () => {
+  it('accepts sparse table grids into three reopened publication EPUBs', async () => {
     const selected = selections()
     const materialized = materializeGroundedStruct({
       graph: selected.graph,
@@ -788,6 +788,11 @@ describe('candidate-grounded STRUCT materialization', () => {
     expect(
       renders.every(({ domBytes }) =>
         new TextDecoder().decode(domBytes).includes('scope="col"'),
+      ),
+    ).toBe(true)
+    expect(
+      renders.every(({ domBytes }) =>
+        new TextDecoder().decode(domBytes).includes('<td></td>'),
       ),
     ).toBe(true)
 

@@ -74,10 +74,7 @@ function reviewerIdentityEvidence(reviewerId, subjectIdentitySha256) {
 }
 
 describe('PDF benchmark readiness registry', () => {
-  it('binds the current package-integrity source and rejects a one-byte mutation', async () => {
-    const sourcePath = 'tools/pdf-private-fidelity.mjs'
-    const originalSource = await readFile(sourcePath)
-
+  it('binds the current package-integrity source and rejects a one-byte fixture mutation', async () => {
     await expect(
       createPdfBenchmarkReadinessReceipt({ registryPath }),
     ).resolves.toMatchObject({
@@ -86,17 +83,33 @@ describe('PDF benchmark readiness registry', () => {
       ]),
     })
 
-    await writeFile(
-      sourcePath,
-      Buffer.concat([originalSource, Buffer.from('\n')]),
+    const writeEvidence = await createEvidenceWriter()
+    const implementation = await writeEvidence('package-integrity.json', {
+      kind: 'package-integrity-fixture',
+    })
+    const fixtureRegistry = await readRegistry()
+    const packageIntegrity = fixtureRegistry.metricImplementations.find(
+      (metric) => metric.id === 'package-integrity',
     )
-    try {
-      await expect(
-        createPdfBenchmarkReadinessReceipt({ registryPath }),
-      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
-    } finally {
-      await writeFile(sourcePath, originalSource)
-    }
+    packageIntegrity.implementation = implementation.path
+    packageIntegrity.implementationSha256 = implementation.fileSha256
+    const fixtureRegistryPath = await writeRegistry(fixtureRegistry)
+
+    await expect(
+      createPdfBenchmarkReadinessReceipt({ registryPath: fixtureRegistryPath }),
+    ).resolves.toMatchObject({
+      criteria: expect.arrayContaining([
+        expect.objectContaining({ id: 'metric-coverage' }),
+      ]),
+    })
+
+    await writeFile(
+      implementation.path,
+      `${await readFile(implementation.path)}\n`,
+    )
+    await expect(
+      createPdfBenchmarkReadinessReceipt({ registryPath: fixtureRegistryPath }),
+    ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
   })
 
   it('reports the exposed 32-case calibration honestly as not ready', async () => {

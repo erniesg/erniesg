@@ -440,6 +440,19 @@ type InlineDraft = {
   renderedRelationshipIds: Set<string>
 }
 
+function citationLabelCountExceedsTargets(value: string, targetCount: number) {
+  let labels = 0
+  let start = 0
+  for (let index = 0; index <= value.length; index += 1) {
+    if (index !== value.length && value[index] !== ',') continue
+    let cursor = start
+    while (cursor < index && /\s/u.test(value[cursor]!)) cursor += 1
+    if (cursor < index && ++labels > targetCount) return true
+    start = index + 1
+  }
+  return false
+}
+
 function semanticPlanForRun(
   document: StructDocument,
   source: RenderedInlineSource,
@@ -455,7 +468,17 @@ function semanticPlanForRun(
   const relationship = relationships.get(run.relationshipId)
   const rawTargets =
     relationship?.status === 'matched' ? relationship.to : (run.targetIds ?? [])
-  const labels = (relationship?.label ?? '')
+  const rawLabel = relationship?.label ?? ''
+  if (
+    run.semanticRole === 'citation' &&
+    citationLabelCountExceedsTargets(rawLabel, rawTargets.length)
+  )
+    throw new RenderedPublicationPlanError(
+      'BUDGET',
+      path,
+      'citation label work exceeds the publication planning budget',
+    )
+  const labels = rawLabel
     .split(',')
     .map((label) => label.trim())
     .filter(Boolean)

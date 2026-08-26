@@ -282,7 +282,7 @@
       "implementation": "tools/pdf-private-fidelity.mjs",
       "implementationSha256": "d3ee1da7e9a153de650774f957d98a57942b2d2d42f54aa140f02a1c3abd684e",
       "test": "tools/pdf-private-fidelity.test.mjs",
-      "testSha256": "2077bfd707b9566ae7ef32c1014586cce099e4e0310d5f9bb1dbd02983c7bc88",
+      "testSha256": "18b6f9fd8654e7ab652de6c7f63964e15fcffb09cf6cc948724632c3ece3acfe",
       "calibration": null
     }
   ]

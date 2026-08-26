@@ -1,7 +1,9 @@
-import { strFromU8, unzipSync } from 'fflate'
+import { strFromU8, unzipSync, zipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
-import { buildStructEpub } from './epub'
+import { assertStructEpubArchiveByteLength, buildStructEpub } from './epub'
+import { MAX_STRUCT_STRING_BYTES } from './codec/primitives'
 import { legacyStructDigest, structDigest } from './ids'
+import { sha256HexSync } from './sha256'
 import type { StructDocument } from './types'
 
 function refreshReceipt(document: StructDocument) {
@@ -161,6 +163,136 @@ function legacyDocumentWithHref(href: string, locale?: string): StructDocument {
 }
 
 describe('STRUCT EPUB href integrity', () => {
+  it('rejects an oversized title through the direct EPUB boundary', async () => {
+    const document = documentWithHref('#target')
+    document.metadata.title = 'x'.repeat(MAX_STRUCT_STRING_BYTES + 1)
+
+    await expect(buildStructEpub(document)).rejects.toThrow(
+      /textual resource bound/i,
+    )
+  })
+
+  it.each([NaN, Infinity, -Infinity, -0])(
+    'rejects non-canonical number %s through the direct EPUB boundary',
+    async (number) => {
+      const document = documentWithHref('#target')
+      document.blocks[0]!.evidence.confidence = number
+
+      await expect(buildStructEpub(document)).rejects.toThrow(
+        /number|finite|negative zero/i,
+      )
+    },
+  )
+
+  it('rejects oversized generic receipt JSON before direct EPUB snapshotting', async () => {
+    const document = documentWithHref('#target')
+    document.receipt.modelConsultations = {
+      schemaVersion: '1.0.0',
+      documentId: document.documentId!,
+      sourceSha256: document.source.sha256,
+      consultations: [{ adapterNote: 'x'.repeat(1024 * 1024 + 1) }],
+      decisions: [],
+      metrics: {},
+    }
+
+    await expect(buildStructEpub(document)).rejects.toThrow(
+      'INVALID_MODEL_CONSULTATION_RECEIPT',
+    )
+  })
+
+  it('bounds a stateful generic receipt proxy during direct EPUB snapshotting', async () => {
+    const document = documentWithHref('#target')
+    let descriptorReads = 0
+    document.receipt.modelConsultations = {
+      schemaVersion: '1.0.0',
+      documentId: document.documentId!,
+      sourceSha256: document.source.sha256,
+      consultations: [],
+      decisions: [],
+      metrics: new Proxy(
+        {},
+        {
+          ownKeys() {
+            return ['field']
+          },
+          getOwnPropertyDescriptor() {
+            descriptorReads += 1
+            if (descriptorReads > 3)
+              throw new Error('receipt was traversed after copy rejection')
+            return {
+              configurable: true,
+              enumerable: true,
+              value:
+                descriptorReads < 3 ? 'small' : 'x'.repeat(10 * 1024 * 1024),
+            }
+          },
+        },
+      ),
+    }
+
+    await expect(buildStructEpub(document)).rejects.toThrow(
+      'INVALID_MODEL_CONSULTATION_RECEIPT',
+    )
+    expect(descriptorReads).toBe(3)
+  })
+
+  it('rejects aggregate recovery text before direct EPUB parsing', async () => {
+    const document = documentWithHref('#target')
+    const large = 'x'.repeat(4 * 1024 * 1024 - 1)
+    document.recovery = {
+      status: 'ready',
+      title: large,
+      summary: large,
+      issues: [
+        {
+          category: 'source',
+          title: large,
+          count: 1,
+          pages: [1],
+          action: large,
+        },
+      ],
+      userAction: large,
+    }
+
+    await expect(buildStructEpub(document)).rejects.toThrow(
+      /aggregate resource bound/i,
+    )
+  })
+
+  it('enforces the post-compression boundary for an incompressible archive', () => {
+    const payload = new Uint8Array(16 * 1024)
+    for (let index = 0; index < payload.length; index += 1)
+      payload[index] = (index * 73 + 19) % 256
+    const archive = zipSync({ 'payload.bin': payload })
+
+    expect(() =>
+      assertStructEpubArchiveByteLength(archive, archive.byteLength - 1),
+    ).toThrow('STRUCT_EPUB_ARCHIVE_RESOURCE_LIMIT')
+    expect(() =>
+      assertStructEpubArchiveByteLength(archive, archive.byteLength),
+    ).not.toThrow()
+  })
+
+  it('packages a closed source-neutral consultation receipt without app receipt semantics', async () => {
+    const document = documentWithHref('#target')
+    document.receipt.modelConsultations = {
+      schemaVersion: '1.0.0',
+      documentId: document.documentId!,
+      sourceSha256: document.source.sha256,
+      consultations: [{ adapterDecision: 'defer', status: 'pending' }],
+      decisions: [],
+      metrics: { adapter: 'source-neutral', pendingCount: 1 },
+    }
+
+    await expect(
+      buildStructEpub(refreshReceipt(document)),
+    ).resolves.toMatchObject({
+      mediaType: 'application/epub+zip',
+      mode: 'publication',
+    })
+  })
+
   it('reopens an exact profiled stylesheet and immutable profile receipt', async () => {
     const profile = {
       id: 'mobile',
@@ -205,6 +337,33 @@ describe('STRUCT EPUB href integrity', () => {
         },
       }),
     ).rejects.toThrow('STRUCT_EPUB_PROFILE_INVALID')
+  })
+
+  it('snapshots a valid profile before EPUB packaging reads it again', async () => {
+    const css = 'body { color: black; }'
+    let cssReads = 0
+    const profile = new Proxy(
+      {
+        id: 'mobile',
+        version: '1.0.0',
+        fileName: 'publication-mobile.epub',
+        pageProgressionDirection: 'ltr' as const,
+        renditionFlow: 'paginated' as const,
+        configurationSha256: 'c'.repeat(64),
+        css,
+      },
+      {
+        get(target, property, receiver) {
+          if (property === 'css') cssReads += 1
+          return Reflect.get(target, property, receiver)
+        },
+      },
+    )
+
+    const epub = await buildStructEpub(documentWithHref('#target'), { profile })
+
+    expect(strFromU8(unzipSync(epub.bytes)['EPUB/styles.css']!)).toBe(css)
+    expect(cssReads).toBe(1)
   })
 
   it.each([
@@ -338,17 +497,18 @@ describe('STRUCT EPUB href integrity', () => {
     'does not alias a %s href to a different packaged document',
     async (_label, href, packagedHref) => {
       const document = documentWithHref(href)
+      const assetBytes = new TextEncoder().encode(
+        '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Different exact path</p></body></html>',
+      )
       document.assets.push({
         id: `supplement-${document.assets.length}`,
         kind: 'figure',
         href: packagedHref,
         mediaType: 'application/xhtml+xml',
-        sha256: 'd'.repeat(64),
+        sha256: sha256HexSync(assetBytes),
         width: 1,
         height: 1,
-        bytes: new TextEncoder().encode(
-          '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Different exact path</p></body></html>',
-        ),
+        bytes: assetBytes,
         sourceObjectIds: ['fixture-supplement'],
         evidence: {
           confidence: 1,
@@ -402,15 +562,18 @@ describe('STRUCT EPUB href integrity', () => {
 
   it('rejects malformed packaged XHTML assets', async () => {
     const document = documentWithHref('#target')
+    const assetBytes = new TextEncoder().encode(
+      '<html><body><a href="#missing"></body>',
+    )
     document.assets.push({
       id: 'supplement',
       kind: 'figure',
       href: 'supplement.xhtml',
       mediaType: 'application/xhtml+xml',
-      sha256: 'd'.repeat(64),
+      sha256: sha256HexSync(assetBytes),
       width: 1,
       height: 1,
-      bytes: new TextEncoder().encode('<html><body><a href="#missing"></body>'),
+      bytes: assetBytes,
       sourceObjectIds: ['fixture-supplement'],
       evidence: {
         confidence: 1,
@@ -427,17 +590,18 @@ describe('STRUCT EPUB href integrity', () => {
 
   it('rejects dangling namespaced hrefs in packaged XHTML assets', async () => {
     const document = documentWithHref('#target')
+    const assetBytes = new TextEncoder().encode(
+      '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:xlink="http://www.w3.org/1999/xlink"><body><a xlink:href="#missing">Missing</a></body></html>',
+    )
     document.assets.push({
       id: 'namespaced-supplement',
       kind: 'figure',
       href: 'namespaced-supplement.xhtml',
       mediaType: 'application/xhtml+xml',
-      sha256: 'e'.repeat(64),
+      sha256: sha256HexSync(assetBytes),
       width: 1,
       height: 1,
-      bytes: new TextEncoder().encode(
-        '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:xlink="http://www.w3.org/1999/xlink"><body><a xlink:href="#missing">Missing</a></body></html>',
-      ),
+      bytes: assetBytes,
       sourceObjectIds: ['fixture-namespaced-supplement'],
       evidence: {
         confidence: 1,

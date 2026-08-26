@@ -29,6 +29,7 @@ import type {
   EpubCheckReceipt,
 } from './actual-profiled-epub'
 import {
+  isRendererGeneratedAnonymousTableCell,
   verifyActualProfiledEpubRender,
   verifyEpubCheckReceipt,
 } from './actual-profiled-epub'
@@ -89,15 +90,15 @@ function blockFact(render: ActualProfiledEpubRender, block: StructBlock) {
 }
 
 function exactTableCells(block: StructBlock, render: ActualProfiledEpubRender) {
-  const actual = blockFact(render, block).cells.map(
-    ({ text, rowSpan, columnSpan, tagName, scope }) => ({
+  const actual = blockFact(render, block)
+    .cells.filter((cell) => !isRendererGeneratedAnonymousTableCell(cell))
+    .map(({ text, rowSpan, columnSpan, tagName, scope }) => ({
       text: normalizedText(text),
       rowSpan,
       columnSpan,
       tagName,
       scope,
-    }),
-  )
+    }))
   const expected = (block.table?.cells ?? []).map((cell) => ({
     text: normalizedText(cell.text),
     rowSpan: cell.rowSpan,

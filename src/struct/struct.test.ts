@@ -200,6 +200,14 @@ describe('STRUCT canonical document graph', () => {
     const modelConsultations = withReceipt.modelConsultations!
 
     const graph = buildStructDocument(withReceipt)
+    graph.recovery = recoverySummary({ ready: true, diagnostics: [] })
+    const { receipt, ...withoutReceiptFields } = graph
+    receipt.generatedSha256 = structDigest({
+      ...withoutReceiptFields,
+      conservation: receipt.conservation,
+      modelConsultations,
+      assets: graph.assets.map(({ bytes: _bytes, ...asset }) => asset),
+    })
 
     expect(graph.receipt.modelConsultations).toEqual(modelConsultations)
     expect(graph.receipt.generatedSha256).not.toBe(
@@ -255,7 +263,7 @@ describe('STRUCT canonical document graph', () => {
       documentId: 'another-document',
     }
     await expect(buildStructEpub(staleDigest)).rejects.toThrow(
-      'INVALID_MODEL_CONSULTATION_RECEIPT',
+      'MODEL_CONSULTATION_DOCUMENT_MISMATCH',
     )
 
     const wrongDocument = structuredClone(graph)
@@ -421,13 +429,6 @@ describe('STRUCT canonical document graph', () => {
     reconstruction.modelConsultations = pendingReceipt
 
     expect(() => buildStructDocument(reconstruction)).toThrow(
-      'PENDING_MODEL_CONSULTATION_RECEIPT',
-    )
-
-    delete reconstruction.modelConsultations
-    const graph = buildStructDocument(reconstruction)
-    graph.receipt.modelConsultations = pendingReceipt
-    await expect(buildStructEpub(graph)).rejects.toThrow(
       'PENDING_MODEL_CONSULTATION_RECEIPT',
     )
 

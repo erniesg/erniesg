@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import Ajv2020 from 'ajv/dist/2020.js'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   canonicalJson,
   scorePdfFidelityPredictions,
@@ -15,6 +15,8 @@ import {
   buildPdfFidelitySuiteReceipt,
   validatePdfFidelitySuiteReceipt,
 } from './pdf-fidelity-suite.mjs'
+
+vi.setConfig({ testTimeout: 180_000 })
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const toolPath = fileURLToPath(
@@ -31,6 +33,13 @@ const paths = {
     evalSet: 'benchmarks/pdf/fidelity-eval-v2.json',
     observations: 'benchmarks/pdf/fidelity-eval-observations-v2.json',
   },
+  comparatorContract: 'benchmarks/pdf/fidelity-comparator-contract-v2.json',
+  runtimeContract: 'benchmarks/pdf/reconstruction-eval-contract-v4.json',
+  runtimeContractSchema:
+    'docs/schemas/pdf-reconstruction-eval-contract-v4.schema.json',
+  robustnessContract: 'benchmarks/pdf/reconstruction-eval-contract-v3.json',
+  robustnessContractSchema:
+    'docs/schemas/pdf-reconstruction-eval-contract-v3.schema.json',
   schema: 'docs/schemas/pdf-fidelity-suite-receipt.schema.json',
 }
 const temporaryDirectories = []
@@ -167,14 +176,84 @@ async function suiteInput(options = {}) {
 }
 
 describe('aggregate PDF fidelity calibration suite', () => {
+  it('keeps immutable governance separate from the current runtime binding', async () => {
+    const [
+      baseContract,
+      additiveContract,
+      comparatorContract,
+      runtimeContract,
+      runtimeContractSchema,
+      robustnessContract,
+      robustnessContractSchema,
+    ] =
+      await Promise.all(
+        [
+          paths.base.contract,
+          paths.additive.contract,
+          paths.comparatorContract,
+          paths.runtimeContract,
+          paths.runtimeContractSchema,
+          paths.robustnessContract,
+          paths.robustnessContractSchema,
+        ].map(async (path) => readFile(join(root, path))),
+      )
+    const baseContractSha256 = digest(baseContract)
+    const additive = JSON.parse(additiveContract.toString('utf8'))
+    const comparator = JSON.parse(comparatorContract.toString('utf8'))
+    const runtime = JSON.parse(runtimeContract.toString('utf8'))
+    const robustness = JSON.parse(robustnessContract.toString('utf8'))
+    const baseBinding = comparator.evaluationBindings.find(
+      (binding) => binding.id === 'public-calibration-v1',
+    )
+    const additiveBinding = comparator.evaluationBindings.find(
+      (binding) => binding.id === 'public-calibration-v2-additions',
+    )
+
+    expect(baseContractSha256).toBe(
+      'a9710abfd82f9ae9e301ed04752e877b3425d98a3f6e8a02649bc0a150068e3f',
+    )
+    expect(digest(additiveContract)).toBe(
+      '0ee0826873f0b7349a5f4187746f9cc35a9acc1556fd7aa35e004b1a51a9a2dd',
+    )
+    expect(additive.extends.fileSha256).toBe(baseContractSha256)
+    expect(runtime.extends.fileSha256).toBe(baseContractSha256)
+    expect(baseBinding.governance.fileSha256).toBe(baseContractSha256)
+    expect(additiveBinding.governance.fileSha256).toBe(digest(additiveContract))
+    expect(comparator.runtimeBinding).toBeUndefined()
+    const validateRuntime = new Ajv2020({ strict: false }).compile(
+      JSON.parse(runtimeContractSchema.toString('utf8')),
+    )
+    expect(validateRuntime(runtime), validateRuntime.errors).toBe(true)
+    const missingRuntimeTestHash = structuredClone(runtime)
+    delete missingRuntimeTestHash.runtimeBinding.testSha256
+    expect(validateRuntime(missingRuntimeTestHash)).toBe(false)
+    const staticForeignEvidence = structuredClone(runtime)
+    staticForeignEvidence.runtimeBinding.implementationPlatformTreeEvidence = {
+      path: 'benchmarks/pdf/reconstruction-runtime-package-trees-v4.json',
+      fileSha256: 'a'.repeat(64),
+    }
+    expect(validateRuntime(staticForeignEvidence)).toBe(false)
+    expect(robustness.extends.fileSha256).toBe(digest(additiveContract))
+    const validateRobustness = new Ajv2020({ strict: false }).compile(
+      JSON.parse(robustnessContractSchema.toString('utf8')),
+    )
+    expect(
+      validateRobustness(robustness),
+      validateRobustness.errors,
+    ).toBe(true)
+    await expect(buildPdfFidelitySuiteReceipt(await suiteInput())).resolves.toBeDefined()
+  })
+
   it('binds both eval generations and reports binary outcomes by failure mode', async () => {
     const input = await suiteInput()
-    const receipt = buildPdfFidelitySuiteReceipt(input)
+    const receipt = await buildPdfFidelitySuiteReceipt(input)
     const schema = JSON.parse(await readFile(join(root, paths.schema), 'utf8'))
     const validateSchema = new Ajv2020({ strict: true }).compile(schema)
 
     expect(validateSchema(receipt), validateSchema.errors).toBe(true)
-    expect(validatePdfFidelitySuiteReceipt(receipt, input)).toEqual({
+    await expect(
+      validatePdfFidelitySuiteReceipt(receipt, input),
+    ).resolves.toEqual({
       valid: true,
     })
     expect(receipt).toMatchObject({
@@ -227,7 +306,7 @@ describe('aggregate PDF fidelity calibration suite', () => {
       baselineMode: 'perfect',
       candidateMode: 'missing-first',
     })
-    const receipt = buildPdfFidelitySuiteReceipt(input)
+    const receipt = await buildPdfFidelitySuiteReceipt(input)
 
     expect(receipt.accuracyPassed).toBe(false)
     expect(receipt.nonRegressionPassed).toBe(false)
@@ -240,7 +319,7 @@ describe('aggregate PDF fidelity calibration suite', () => {
 
   it('rejects receipt tampering even when the attacker recomputes the hash', async () => {
     const input = await suiteInput()
-    const receipt = buildPdfFidelitySuiteReceipt(input)
+    const receipt = await buildPdfFidelitySuiteReceipt(input)
     const scenarios = [
       (value) => {
         value.cases[0].failureMode = 'invented-failure-mode'
@@ -263,16 +342,16 @@ describe('aggregate PDF fidelity calibration suite', () => {
       const forged = structuredClone(receipt)
       mutate(forged)
       rehash(forged)
-      expect(() => validatePdfFidelitySuiteReceipt(forged, input)).toThrow(
-        'INVALID_PDF_FIDELITY_SUITE_RECEIPT',
-      )
+      await expect(
+        validatePdfFidelitySuiteReceipt(forged, input),
+      ).rejects.toThrow('INVALID_PDF_FIDELITY_SUITE_RECEIPT')
     }
 
     const staleHash = structuredClone(receipt)
     staleHash.receiptSha256 = 'f'.repeat(64)
-    expect(() => validatePdfFidelitySuiteReceipt(staleHash, input)).toThrow(
-      'INVALID_PDF_FIDELITY_SUITE_RECEIPT',
-    )
+    await expect(
+      validatePdfFidelitySuiteReceipt(staleHash, input),
+    ).rejects.toThrow('INVALID_PDF_FIDELITY_SUITE_RECEIPT')
   })
 
   it('rejects tampered static observations and mismatched cross-version runs', async () => {
@@ -284,9 +363,9 @@ describe('aggregate PDF fidelity calibration suite', () => {
     observationTamper.base.observationsArtifact = Buffer.from(
       `${JSON.stringify(observations)}\n`,
     )
-    expect(() => buildPdfFidelitySuiteReceipt(observationTamper)).toThrow(
-      'INVALID_PDF_FIDELITY_SUITE_FROZEN_ARTIFACT',
-    )
+    await expect(
+      buildPdfFidelitySuiteReceipt(observationTamper),
+    ).rejects.toThrow('INVALID_PDF_FIDELITY_SUITE_FROZEN_ARTIFACT')
 
     const runMismatch = await suiteInput()
     const evalSet = JSON.parse(runMismatch.additive.evalSetArtifact.toString())
@@ -299,7 +378,7 @@ describe('aggregate PDF fidelity calibration suite', () => {
       evalSet,
       predictions,
     )
-    expect(() => buildPdfFidelitySuiteReceipt(runMismatch)).toThrow(
+    await expect(buildPdfFidelitySuiteReceipt(runMismatch)).rejects.toThrow(
       'PDF_FIDELITY_SUITE_RUN_IDENTITY_MISMATCH',
     )
   })
@@ -332,7 +411,7 @@ describe('aggregate PDF fidelity calibration suite', () => {
       `${JSON.stringify(additiveContract)}\n`,
     )
 
-    expect(() => buildPdfFidelitySuiteReceipt(input)).toThrow(
+    await expect(buildPdfFidelitySuiteReceipt(input)).rejects.toThrow(
       'INVALID_PDF_FIDELITY_SUITE_FROZEN_ARTIFACT',
     )
   })
@@ -367,7 +446,9 @@ describe('aggregate PDF fidelity calibration suite', () => {
 
     expect(result.status, result.stderr).toBe(0)
     const receipt = JSON.parse(await readFile(output, 'utf8'))
-    expect(validatePdfFidelitySuiteReceipt(receipt, input)).toEqual({
+    await expect(
+      validatePdfFidelitySuiteReceipt(receipt, input),
+    ).resolves.toEqual({
       valid: true,
     })
     expect(receipt).toMatchObject({
@@ -379,7 +460,7 @@ describe('aggregate PDF fidelity calibration suite', () => {
 
   it('keeps the suite schema strict at nested boundaries', async () => {
     const input = await suiteInput()
-    const receipt = buildPdfFidelitySuiteReceipt(input)
+    const receipt = await buildPdfFidelitySuiteReceipt(input)
     const schema = JSON.parse(await readFile(join(root, paths.schema), 'utf8'))
     const validateSchema = new Ajv2020({ strict: true }).compile(schema)
     const nestedExtra = structuredClone(receipt)

@@ -1,24 +1,11 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto'
-import { spawnSync } from 'node:child_process'
-import {
-  access,
-  lstat,
-  mkdir,
-  mkdtemp,
-  open,
-  readFile,
-  realpath,
-  rm,
-  stat,
-  writeFile,
-} from 'node:fs/promises'
-import { homedir, tmpdir } from 'node:os'
+import { lstat, mkdir, open, readFile, realpath, stat } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import {
   basename,
   dirname,
   isAbsolute,
-  join,
   parse,
   relative,
   resolve,
@@ -26,6 +13,10 @@ import {
 } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { parse as parseHtml } from 'parse5'
+import {
+  requiredPrivateEpubCheckValidator,
+  validatePrivateEpubWithEpubCheck,
+} from './pdf-private-fidelity-epubcheck.mjs'
 import {
   canonicalJsonHash,
   createPdfPipeline,
@@ -39,7 +30,9 @@ import {
   validPdfCitationRelationshipTargetState,
 } from './pdf-corpus-audit-lib.mjs'
 
-export const PDF_PRIVATE_FIDELITY_SCHEMA_VERSION = '1.9.0'
+// Schema 1.9.0 is frozen: historic receipts may contain a status-only
+// EPUBCheck result.  New runtime-attested receipts therefore use a successor.
+export const PDF_PRIVATE_FIDELITY_SCHEMA_VERSION = '2.0.0'
 const PDF_PRIVATE_FIDELITY_PRIVACY =
   'public-id-hash-aggregate-counters-artifact-hashes-only'
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
@@ -1050,8 +1043,19 @@ function createPrivateStructuralEvidence(reconstruction, artifactParity) {
 }
 
 function normalizedPrivateEpubCheck(value) {
-  if (value?.status === 'passed' && Object.keys(value).length === 1) {
-    return { status: 'passed' }
+  if (
+    value?.status === 'passed' &&
+    SHA256_PATTERN.test(value.javaSha256 ?? '') &&
+    SHA256_PATTERN.test(value.jreReleaseSha256 ?? '') &&
+    SHA256_PATTERN.test(value.jreTreeSha256 ?? '') &&
+    Object.keys(value).length === 4
+  ) {
+    return {
+      status: 'passed',
+      javaSha256: value.javaSha256,
+      jreReleaseSha256: value.jreReleaseSha256,
+      jreTreeSha256: value.jreTreeSha256,
+    }
   }
   if (
     value?.status === 'skipped' &&
@@ -1063,7 +1067,13 @@ function normalizedPrivateEpubCheck(value) {
   throw new Error('EPUBCHECK_RESULT_INVALID')
 }
 
-function validPrivateEpubCheck(value) {
+function validPrivateEpubCheck(value, allowLegacyEpubCheck = false) {
+  if (
+    allowLegacyEpubCheck &&
+    value?.status === 'passed' &&
+    Object.keys(value).length === 1
+  )
+    return true
   try {
     return (
       canonicalJsonHash(normalizedPrivateEpubCheck(value)) ===
@@ -1072,6 +1082,20 @@ function validPrivateEpubCheck(value) {
   } catch {
     return false
   }
+}
+
+function statusOnlyPassedEpubCheck(value) {
+  return value?.status === 'passed' && Object.keys(value).length === 1
+}
+
+function hasHistoricalStatusOnlyEpubCheck(receipt) {
+  return Boolean(
+    receipt?.runs?.some((run) =>
+      run?.artifacts?.some((artifact) =>
+        statusOnlyPassedEpubCheck(artifact?.epubCheck),
+      ),
+    ),
+  )
 }
 
 export function createPrivateArtifactEvidence(
@@ -1257,6 +1281,7 @@ export function createPrivateFidelityReceipt({
   profiles,
   epubCheckRequired = false,
   baselineComparison,
+  allowLegacyEpubCheck = false,
 }) {
   const expectedOrdinals = Array.from(
     { length: repeat },
@@ -1309,7 +1334,7 @@ export function createPrivateFidelityReceipt({
             .filter((artifact) => artifact.target === profile)
             .every(
               (artifact) =>
-                validArtifactEvidence(artifact) &&
+                validArtifactEvidence(artifact, allowLegacyEpubCheck) &&
                 artifact.mode ===
                   (run.reconstruction.readiness.ready
                     ? 'publication'
@@ -2584,7 +2609,7 @@ function validReconstructionEvidence(value, allowHistoricalV14 = false) {
   )
 }
 
-function validArtifactEvidence(value) {
+function validArtifactEvidence(value, allowLegacyEpubCheck = false) {
   if (
     !hasExactKeys(value, [
       'target',
@@ -2628,7 +2653,7 @@ function validArtifactEvidence(value) {
     ].every((key) => SHA256_PATTERN.test(value[key])) ||
     !validInlineSemanticLedger(value.inlineSemanticLedger) ||
     value.structuralValidation !== 'passed' ||
-    !validPrivateEpubCheck(value.epubCheck) ||
+    !validPrivateEpubCheck(value.epubCheck, allowLegacyEpubCheck) ||
     !ARTIFACT_MODES.includes(value.mode)
   ) {
     return false
@@ -2639,7 +2664,11 @@ function validArtifactEvidence(value) {
   return value.receiptSha256 === canonicalJsonHash(evidence)
 }
 
-function validRunReceipt(value, allowHistoricalV14 = false) {
+function validRunReceipt(
+  value,
+  allowHistoricalV14 = false,
+  allowLegacyEpubCheck = false,
+) {
   return (
     hasExactKeys(value, [
       'ordinal',
@@ -2656,7 +2685,9 @@ function validRunReceipt(value, allowHistoricalV14 = false) {
         deterministicReconstructionProjection(value.reconstruction),
       ) &&
     Array.isArray(value.artifacts) &&
-    value.artifacts.every(validArtifactEvidence)
+    value.artifacts.every((artifact) =>
+      validArtifactEvidence(artifact, allowLegacyEpubCheck),
+    )
   )
 }
 
@@ -2682,8 +2713,18 @@ function invalidPrivateFidelityBaseline() {
 
 function validatePrivateFidelityReceipt(receipt, requireAcceptedBaseline) {
   try {
+    // Schema 1.9.0 is frozen: before runtime attestation was introduced it
+    // permitted a status-only EPUBCheck result.  That historic record shape
+    // remains readable only as a baseline, never as newly created evidence.
+    const historicalSchema =
+      requireAcceptedBaseline &&
+      ['1.8.0', '1.9.0'].includes(receipt?.schemaVersion)
     const legacySchema =
-      requireAcceptedBaseline && receipt?.schemaVersion === '1.8.0'
+      historicalSchema && hasHistoricalStatusOnlyEpubCheck(receipt)
+    const attestedHistoricalV19 =
+      historicalSchema &&
+      receipt?.schemaVersion === '1.9.0' &&
+      !legacySchema
     if (
       !hasExactKeys(receipt, [
         'schemaVersion',
@@ -2696,7 +2737,8 @@ function validatePrivateFidelityReceipt(receipt, requireAcceptedBaseline) {
         'passed',
       ]) ||
       (receipt.schemaVersion !== PDF_PRIVATE_FIDELITY_SCHEMA_VERSION &&
-        !legacySchema) ||
+        !legacySchema &&
+        !attestedHistoricalV19) ||
       receipt.privacy !== PDF_PRIVATE_FIDELITY_PRIVACY ||
       !hasExactKeys(receipt.source, ['paperId', 'sha256', 'byteLength']) ||
       !/^[A-Za-z0-9._-]+$/.test(receipt.source.paperId) ||
@@ -2760,8 +2802,9 @@ function validatePrivateFidelityReceipt(receipt, requireAcceptedBaseline) {
       ) ||
       !validBaselineComparison(receipt.baselineComparison) ||
       !Array.isArray(receipt.runs) ||
+      (legacySchema && receipt.execution.epubCheckRequired) ||
       receipt.runs.some(
-        (run) => !validRunReceipt(run, requireAcceptedBaseline),
+        (run) => !validRunReceipt(run, requireAcceptedBaseline, legacySchema),
       ) ||
       typeof receipt.passed !== 'boolean'
     ) {
@@ -2778,6 +2821,7 @@ function validatePrivateFidelityReceipt(receipt, requireAcceptedBaseline) {
       profiles: receipt.execution.profiles,
       epubCheckRequired: receipt.execution.epubCheckRequired,
       baselineComparison: receipt.baselineComparison,
+      allowLegacyEpubCheck: legacySchema,
     })
     if (
       canonicalJsonHash(receipt.execution) !==
@@ -2822,7 +2866,7 @@ function deterministicReconstructionProjection(value) {
   }
 }
 
-function invariantRunProjection(run) {
+function invariantRunProjection(run, migrateLegacyEpubCheck = false) {
   const reconstruction = run.reconstruction
   return {
     reconstruction: {
@@ -2834,9 +2878,18 @@ function invariantRunProjection(run) {
       lineTransitionEvidence: reconstruction.lineTransitionEvidence,
       structure: reconstruction.structure,
     },
-    artifacts: [...run.artifacts].sort((left, right) =>
-      left.target.localeCompare(right.target),
-    ),
+    artifacts: [...run.artifacts]
+      .map((artifact) => {
+        if (!migrateLegacyEpubCheck || artifact.epubCheck?.status !== 'passed')
+          return artifact
+        const { receiptSha256: _receiptSha256, ...evidence } = artifact
+        const normalized = { ...evidence, epubCheck: { status: 'passed' } }
+        return {
+          ...normalized,
+          receiptSha256: canonicalJsonHash(normalized),
+        }
+      })
+      .sort((left, right) => left.target.localeCompare(right.target)),
   }
 }
 
@@ -2979,9 +3032,18 @@ export function comparePrivateFidelityReceipts(
       canonicalJsonHash(candidate.execution.profiles) &&
     baseline.execution.epubCheckRequired ===
       candidate.execution.epubCheckRequired
+  const migrateLegacyEpubCheck = hasHistoricalStatusOnlyEpubCheck(baseline)
   const invariantRunsMatch =
-    canonicalJsonHash(baseline.runs.map(invariantRunProjection)) ===
-    canonicalJsonHash(candidate.runs.map(invariantRunProjection))
+    canonicalJsonHash(
+      baseline.runs.map((run) =>
+        invariantRunProjection(run, migrateLegacyEpubCheck),
+      ),
+    ) ===
+    canonicalJsonHash(
+      candidate.runs.map((run) =>
+        invariantRunProjection(run, migrateLegacyEpubCheck),
+      ),
+    )
   const runRegressed = baseline.runs.some((baselineRun, index) => {
     const candidateRun = candidate.runs[index]
     return (
@@ -3147,66 +3209,6 @@ async function loadPinnedPrivateDecisionSet(parsed, pipeline) {
   return {
     decisionFile: modules.parseHumanDecisionFile(bytes.toString('utf8')),
     applyHumanDecisionFile: modules.applyHumanDecisionFile,
-  }
-}
-
-function privateCommandResult(command, arguments_, timeout = 10_000) {
-  return spawnSync(command, arguments_, {
-    stdio: 'ignore',
-    timeout,
-    windowsHide: true,
-  })
-}
-
-async function requiredPrivateEpubCheckValidator() {
-  const direct = privateCommandResult('epubcheck', ['--version'])
-  if (!direct.error && direct.status === 0) {
-    return {
-      command: 'epubcheck',
-      arguments: ['--failonwarnings'],
-    }
-  }
-
-  const java = privateCommandResult('java', ['-version'])
-  if (java.error || java.status !== 0) {
-    throw new Error('EPUBCHECK_REQUIRED')
-  }
-  const jarCandidates = [
-    process.env.EPUBCHECK_JAR,
-    resolve('tools/epubcheck/epubcheck.jar'),
-    '/usr/share/java/epubcheck.jar',
-    '/usr/local/share/java/epubcheck.jar',
-  ].filter(Boolean)
-  for (const jar of jarCandidates) {
-    try {
-      await access(jar)
-      return {
-        command: 'java',
-        arguments: ['-jar', jar, '--failonwarnings'],
-      }
-    } catch {
-      // Validator paths remain local and never enter the sanitized receipt.
-    }
-  }
-  throw new Error('EPUBCHECK_REQUIRED')
-}
-
-async function validatePrivateEpubWithEpubCheck(bytes, validator) {
-  const directory = await mkdtemp(join(tmpdir(), 'srt-private-epubcheck-'))
-  const path = join(directory, 'publication.epub')
-  try {
-    await writeFile(path, bytes, { mode: 0o600 })
-    const result = privateCommandResult(
-      validator.command,
-      [...validator.arguments, path],
-      120_000,
-    )
-    if (result.error || result.status !== 0) {
-      throw new Error('EPUBCHECK_FAILED')
-    }
-    return { status: 'passed' }
-  } finally {
-    await rm(directory, { recursive: true, force: true })
   }
 }
 

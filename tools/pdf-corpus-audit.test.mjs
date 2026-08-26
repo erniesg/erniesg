@@ -21,6 +21,7 @@ import {
   canonicalJson,
   canonicalJsonHash,
   capturePdfCorpusExecutionProvenance,
+  createPdfPipeline,
   createSafeAuditFailureDocument,
   createPdfStructuralReceipt as createRawPdfStructuralReceipt,
   finalizePdfCorpusExecutionProvenance,
@@ -73,6 +74,16 @@ function createPdfStructuralReceipt(reconstruction) {
     canonicalHyphenBoundaryDecisionCount: 0,
     ...reconstruction,
   })
+}
+
+async function createAndClosePdfPipeline() {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), 'pdf-pipeline-test-'))
+  try {
+    const pipeline = await createPdfPipeline({ temporaryRoot })
+    await pipeline.close()
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true })
+  }
 }
 
 function canonicalHyphenDeletionReconstruction() {
@@ -239,6 +250,44 @@ describe('local PDF corpus audit', () => {
     )
   })
 
+  it('isolates the audit Vite runtime from unbound project config and env files', async () => {
+    const repositoryRoot = process.cwd()
+    const configPath = join(repositoryRoot, 'vite.config.mjs')
+    const envPath = join(repositoryRoot, '.env')
+    const importTypesPath = join(repositoryRoot, 'src/research/import-types.ts')
+    const originalImportTypes = await readFile(importTypesPath, 'utf8')
+    const inheritedViteInput = process.env.VITE_PDF_PIPELINE_ENV_INJECTION
+    try {
+      await writeFile(
+        configPath,
+        "export default { plugins: [{ name: 'audit-config-injection', transform(_, id) { if (id.endsWith('/src/research/import-types.ts')) throw new Error('PDF_PIPELINE_CONFIG_INJECTION') } }] }\n",
+      )
+      await expect(createAndClosePdfPipeline()).resolves.toBeUndefined()
+      await unlink(configPath)
+
+      await writeFile(
+        importTypesPath,
+        `${originalImportTypes}\nif (import.meta.env.VITE_PDF_PIPELINE_ENV_INJECTION === 'enabled') throw new Error('PDF_PIPELINE_ENV_INJECTION')\n`,
+      )
+      await writeFile(envPath, 'VITE_PDF_PIPELINE_ENV_INJECTION=enabled\n')
+      await expect(createAndClosePdfPipeline()).resolves.toBeUndefined()
+
+      process.env.VITE_PDF_PIPELINE_ENV_INJECTION = 'enabled'
+      await expect(createAndClosePdfPipeline()).resolves.toBeUndefined()
+    } finally {
+      await writeFile(importTypesPath, originalImportTypes)
+      if (inheritedViteInput === undefined) {
+        delete process.env.VITE_PDF_PIPELINE_ENV_INJECTION
+      } else {
+        process.env.VITE_PDF_PIPELINE_ENV_INJECTION = inheritedViteInput
+      }
+      await Promise.all([
+        rm(configPath, { force: true }),
+        rm(envPath, { force: true }),
+      ])
+    }
+  }, 30_000)
+
   it('captures deterministic privacy-safe implementation provenance', async () => {
     const first = await finalizePdfCorpusExecutionProvenance(
       await capturePdfCorpusExecutionProvenance('pdf-corpus-audit'),
@@ -367,6 +416,32 @@ describe('local PDF corpus audit', () => {
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
+  }, 15_000)
+
+  it('ignores repository-scoped Git environment overrides for the primary repository', () => {
+    const moduleUrl = new URL('./pdf-corpus-audit-lib.mjs', import.meta.url)
+      .href
+    const result = rawSpawnSync(
+      process.execPath,
+      [
+        '--input-type=module',
+        '--eval',
+        `import { pdfCorpusWorktreeStateSnapshot } from ${JSON.stringify(moduleUrl)}; await pdfCorpusWorktreeStateSnapshot();`,
+      ],
+      {
+        cwd: process.cwd(),
+        encoding: 'utf8',
+        env: Object.fromEntries([
+          ...Object.entries(process.env),
+          ...REPOSITORY_SCOPED_GIT_ENVIRONMENT_KEYS.map((key) => [
+            key,
+            '/definitely-not-this-repository',
+          ]),
+        ]),
+      },
+    )
+
+    expect(result.status, result.stderr).toBe(0)
   }, 15_000)
 
   it.each(['--assume-unchanged', '--skip-worktree'])(

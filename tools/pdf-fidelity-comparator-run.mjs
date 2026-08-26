@@ -4,6 +4,7 @@ import { lstat, open, readFile, realpath, writeFile } from 'node:fs/promises'
 import { resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import Ajv2020 from 'ajv/dist/2020.js'
+import { verifyReconstructionEvaluatorImplementationBinding } from './pdf-benchmark-readiness.mjs'
 import {
   canonicalJson,
   sha256,
@@ -303,6 +304,33 @@ async function assertContractBinding(
   const governanceSchemaArtifact = await readSchema(governanceSchemaPath)
   const validateGovernance = compileSchema(governanceSchemaArtifact.value)
   if (!validateGovernance(governanceArtifact.value)) invalid()
+
+  const runtimeBinding = contractArtifact.value.runtimeBinding ?? {
+    id: 'scholarly-pdf-reconstruction-runtime-governance-2026-07-v4',
+    schemaVersion: '4.0.0',
+    path: 'benchmarks/pdf/reconstruction-eval-contract-v4.json',
+    fileSha256:
+      '4eba87ea607462cdf76d4fa419e8b3e607a1b5dc3f186bf3fffe7def566c9020',
+  }
+  const runtimeArtifact = parseJsonArtifact(
+    await readRepositoryArtifact(runtimeBinding.path),
+  )
+  if (
+    runtimeArtifact.fileSha256 !== runtimeBinding.fileSha256 ||
+    runtimeArtifact.value.id !== runtimeBinding.id ||
+    runtimeArtifact.value.schemaVersion !==
+      runtimeBinding.schemaVersion
+  )
+    invalid()
+  const runtimeSchema = await readSchema(
+    'docs/schemas/pdf-reconstruction-eval-contract-v4.schema.json',
+  )
+  if (!compileSchema(runtimeSchema.value)(runtimeArtifact.value)) invalid()
+  try {
+    await verifyReconstructionEvaluatorImplementationBinding(runtimeArtifact.value)
+  } catch {
+    invalid()
+  }
 
   const binding = contractEvalBinding(governanceArtifact.value)
   if (

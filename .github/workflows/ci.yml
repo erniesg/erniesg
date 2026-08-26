@@ -120,6 +120,13 @@ jobs:
           fi
           echo "$runner" > "$RUNNER_TEMP/rucksack-node-runner"
 
+      - name: Pin the Java runtime used by EPUBCheck tests
+        run: |
+          set -eu
+          java_path="$(readlink -f /usr/bin/java)"
+          test -f "$java_path"
+          printf 'SRT_EPUBCHECK_JAVA_SHA256=%s\n' "$(sha256sum "$java_path" | awk '{print $1}')" >> "$GITHUB_ENV"
+
       - name: Agent evidence
         id: agent_evidence
         continue-on-error: true

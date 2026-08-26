@@ -1,27 +1,42 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readFile, rm, writeFile } from 'node:fs/promises'
-import { mkdtemp } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { canonicalJson } from './pdf-fidelity-eval.mjs'
 import {
   assessPdfBenchmarkReadiness,
   createPdfBenchmarkSplitIdentitySha256,
   createPdfBenchmarkReadinessReceipt,
+  readPdfBenchmarkReadinessRegistry,
+  secureJsonReadFlags,
+  sameStableFileIdentity,
+  deriveExecutablePackageClosure,
+  deriveLocalExecutableImportClosure,
+  executablePackageSupportsPlatform,
   validateCandidateCommitment,
   validateIndependentIsolationEvidence,
   validateObservationBinding,
   validateSourcePdfDocumentIdentities,
+  verifyMetricImplementationBinding,
 } from './pdf-benchmark-readiness.mjs'
 
-const registryPath = 'benchmarks/pdf/benchmark-readiness-registry-v1.json'
+const registryPath = 'benchmarks/pdf/benchmark-readiness-registry-v4.json'
 const readinessToolPath = fileURLToPath(
   new URL('./pdf-benchmark-readiness.mjs', import.meta.url),
 )
 const evidenceDirectories = []
+
+vi.setConfig({ testTimeout: 120_000 })
 
 afterEach(async () => {
   await Promise.all(
@@ -51,6 +66,343 @@ async function fileBinding(path) {
   }
 }
 
+function implementationCompositeSha256(metric) {
+  const value = metric.implementationPackageLock
+    ? {
+        kind: 'pdf-benchmark-metric-implementation-v3',
+        entrypoint: metric.implementation,
+        components: metric.implementationComponents
+          .map(({ path, fileSha256 }) => ({ path, fileSha256 }))
+          .sort((left, right) => left.path.localeCompare(right.path)),
+        packageLock: metric.implementationPackageLock,
+        platforms: [...metric.implementationPlatforms].sort(),
+        ...(metric.implementationPlatformTreeEvidence
+          ? {
+              platformTreeEvidence: metric.implementationPlatformTreeEvidence,
+            }
+          : {}),
+        packages: metric.implementationPackages
+          .map(({ path, name, version, integrity, treeSha256, platforms }) => ({
+            path,
+            name,
+            version,
+            integrity,
+            treeSha256,
+            ...(platforms ? { platforms: [...platforms].sort() } : {}),
+          }))
+          .sort((left, right) => left.path.localeCompare(right.path)),
+      }
+    : {
+        kind: 'pdf-benchmark-metric-implementation-v1',
+        entrypoint: metric.implementation,
+        components: metric.implementationComponents
+          .map(({ path, fileSha256 }) => ({ path, fileSha256 }))
+          .sort((left, right) => left.path.localeCompare(right.path)),
+      }
+  return createHash('sha256').update(canonicalJson(value)).digest('hex')
+}
+
+async function temporaryImplementationFixture() {
+  const repositoryRoot = await mkdtemp(
+    join(tmpdir(), 'pdf-benchmark-implementation-'),
+  )
+  await mkdir(join(repositoryRoot, 'tools'))
+  await writeFile(
+    join(repositoryRoot, 'tools/entry.mjs'),
+    "import './adapter.mjs'\n",
+  )
+  await writeFile(
+    join(repositoryRoot, 'tools/adapter.mjs'),
+    "export { value } from './transitive.mjs'\n",
+  )
+  await writeFile(
+    join(repositoryRoot, 'tools/transitive.mjs'),
+    'export const value = 1\n',
+  )
+  const paths = ['tools/entry.mjs', 'tools/adapter.mjs', 'tools/transitive.mjs']
+  const implementationComponents = await Promise.all(
+    paths.map(async (path) => ({
+      path,
+      fileSha256: createHash('sha256')
+        .update(await readFile(join(repositoryRoot, path)))
+        .digest('hex'),
+    })),
+  )
+  const metric = {
+    implementation: 'tools/entry.mjs',
+    implementationComponents,
+  }
+  metric.implementationSha256 = implementationCompositeSha256(metric)
+  return { repositoryRoot, metric }
+}
+
+async function temporaryPackageImplementationFixture() {
+  const repositoryRoot = await mkdtemp(
+    join(tmpdir(), 'pdf-benchmark-package-implementation-'),
+  )
+  await mkdir(join(repositoryRoot, 'tools'))
+  await mkdir(join(repositoryRoot, 'node_modules/fake-package'), {
+    recursive: true,
+  })
+  await mkdir(
+    join(
+      repositoryRoot,
+      'node_modules/fake-package/node_modules/fake-optional',
+    ),
+    { recursive: true },
+  )
+  for (const path of [
+    'node_modules/fake-peer',
+    'node_modules/native-darwin-arm64',
+    'node_modules/native-linux-x64-gnu',
+    'node_modules/native-linux-x64-musl',
+  ])
+    await mkdir(join(repositoryRoot, path), { recursive: true })
+  await writeFile(
+    join(repositoryRoot, 'tools/entry.mjs'),
+    "import 'fake-package'\n",
+  )
+  await writeFile(
+    join(repositoryRoot, 'node_modules/fake-package/package.json'),
+    `${JSON.stringify({
+      name: 'fake-package',
+      version: '1.0.0',
+      type: 'module',
+      main: 'index.js',
+      optionalDependencies: {
+        'fake-optional': '1.0.0',
+        'native-darwin-arm64': '1.0.0',
+        'native-linux-x64-gnu': '1.0.0',
+        'native-linux-x64-musl': '1.0.0',
+      },
+      peerDependencies: { 'fake-peer': '1.0.0' },
+    })}\n`,
+  )
+  await writeFile(
+    join(repositoryRoot, 'node_modules/fake-package/index.js'),
+    "import 'fake-peer'\nexport const value = 1\n",
+  )
+  await writeFile(
+    join(
+      repositoryRoot,
+      'node_modules/fake-package/node_modules/fake-optional/package.json',
+    ),
+    `${JSON.stringify({ name: 'fake-optional', version: '1.0.0' })}\n`,
+  )
+  await writeFile(
+    join(
+      repositoryRoot,
+      'node_modules/fake-package/node_modules/fake-optional/index.js',
+    ),
+    'export const optional = 1\n',
+  )
+  for (const name of [
+    'fake-peer',
+    'native-darwin-arm64',
+    'native-linux-x64-gnu',
+    'native-linux-x64-musl',
+  ]) {
+    await writeFile(
+      join(repositoryRoot, 'node_modules', name, 'package.json'),
+      `${JSON.stringify({ name, version: '1.0.0' })}\n`,
+    )
+    await writeFile(
+      join(repositoryRoot, 'node_modules', name, 'index.js'),
+      `export const identity = '${name}'\n`,
+    )
+  }
+  const lock = {
+    name: 'package-fixture',
+    lockfileVersion: 3,
+    packages: {
+      '': { name: 'package-fixture' },
+      'node_modules/fake-package': {
+        version: '1.0.0',
+        integrity: `sha512-${'A'.repeat(86)}==`,
+        optionalDependencies: {
+          'fake-optional': '1.0.0',
+          'native-darwin-arm64': '1.0.0',
+          'native-linux-x64-gnu': '1.0.0',
+          'native-linux-x64-musl': '1.0.0',
+        },
+        peerDependencies: { 'fake-peer': '1.0.0' },
+      },
+      'node_modules/fake-package/node_modules/fake-optional': {
+        version: '1.0.0',
+        integrity: `sha512-${'B'.repeat(86)}==`,
+      },
+      'node_modules/fake-peer': {
+        version: '1.0.0',
+        integrity: `sha512-${'C'.repeat(86)}==`,
+      },
+      'node_modules/native-darwin-arm64': {
+        version: '1.0.0',
+        integrity: `sha512-${'D'.repeat(86)}==`,
+        os: ['darwin'],
+        cpu: ['arm64'],
+        optional: true,
+      },
+      'node_modules/native-linux-x64-gnu': {
+        version: '1.0.0',
+        integrity: `sha512-${'E'.repeat(86)}==`,
+        os: ['linux'],
+        cpu: ['x64'],
+        optional: true,
+      },
+      'node_modules/native-linux-x64-musl': {
+        version: '1.0.0',
+        integrity: `sha512-${'F'.repeat(86)}==`,
+        os: ['linux'],
+        cpu: ['x64'],
+        optional: true,
+      },
+    },
+  }
+  await writeFile(
+    join(repositoryRoot, 'package-lock.json'),
+    `${JSON.stringify(lock, null, 2)}\n`,
+  )
+  const implementationComponents = [
+    {
+      path: 'tools/entry.mjs',
+      fileSha256: createHash('sha256')
+        .update(await readFile(join(repositoryRoot, 'tools/entry.mjs')))
+        .digest('hex'),
+    },
+  ]
+  const packageClosure = await deriveExecutablePackageClosure(
+    'tools/entry.mjs',
+    { repositoryRoot },
+  )
+  const metric = {
+    implementation: 'tools/entry.mjs',
+    implementationComponents,
+    implementationPackageLock: packageClosure.packageLock,
+    implementationPlatforms: [packageClosure.platform],
+    implementationPackages: packageClosure.packages,
+  }
+  metric.implementationSha256 = implementationCompositeSha256(metric)
+  return { repositoryRoot, metric }
+}
+
+async function writePackageTreeEvidence(metric, repositoryRoot) {
+  const path = 'benchmarks/pdf/package-tree-evidence.json'
+  const evidence = {
+    schemaVersion: '1.0.0',
+    kind: 'pdf-benchmark-package-tree-evidence',
+    packageLock: metric.implementationPackageLock,
+    platforms: metric.implementationPlatforms
+      .slice()
+      .sort()
+      .map((platform) => ({
+        platform,
+        packages: metric.implementationPackages
+          .filter(
+            (package_) =>
+              !package_.platforms || package_.platforms.includes(platform),
+          )
+          .map(({ path: packagePath, treeSha256 }) => ({
+            path: packagePath,
+            treeSha256,
+          })),
+      })),
+  }
+  const absolutePath = join(repositoryRoot, path)
+  await mkdir(join(repositoryRoot, 'benchmarks/pdf'), { recursive: true })
+  await writeFile(absolutePath, `${JSON.stringify(evidence, null, 2)}\n`)
+  metric.implementationPlatformTreeEvidence = {
+    path,
+    fileSha256: createHash('sha256')
+      .update(await readFile(absolutePath))
+      .digest('hex'),
+  }
+  metric.implementationSha256 = implementationCompositeSha256(metric)
+  return absolutePath
+}
+
+async function temporaryViteImplementationFixture() {
+  const repositoryRoot = await mkdtemp(
+    join(tmpdir(), 'pdf-benchmark-vite-implementation-'),
+  )
+  await mkdir(join(repositoryRoot, 'tools'))
+  await mkdir(join(repositoryRoot, 'src'), { recursive: true })
+  await mkdir(join(repositoryRoot, 'node_modules/fake-package'), {
+    recursive: true,
+  })
+  await writeFile(
+    join(repositoryRoot, 'tools/entry.mjs'),
+    "import './audit.mjs'\n",
+  )
+  await writeFile(
+    join(repositoryRoot, 'tools/audit.mjs'),
+    "export const load = (vite) => vite.ssrLoadModule('/src/loaded.ts')\n",
+  )
+  await writeFile(
+    join(repositoryRoot, 'src/loaded.ts'),
+    "import type { Missing } from './type-only'\nimport './transitive'\nimport raw from './fixture.txt?raw'\nimport 'fake-package'\nexport const loaded = raw.length\n",
+  )
+  await writeFile(
+    join(repositoryRoot, 'src/transitive.ts'),
+    "export const worker = import('fake-package/worker.js?raw')\n",
+  )
+  await writeFile(join(repositoryRoot, 'src/fixture.txt'), 'bound raw bytes\n')
+  await writeFile(
+    join(repositoryRoot, 'node_modules/fake-package/package.json'),
+    `${JSON.stringify({
+      name: 'fake-package',
+      version: '1.0.0',
+      type: 'module',
+      main: 'index.js',
+      exports: { '.': './index.js', './worker.js': './worker.js' },
+    })}\n`,
+  )
+  await writeFile(
+    join(repositoryRoot, 'node_modules/fake-package/index.js'),
+    'export const value = 1\n',
+  )
+  await writeFile(
+    join(repositoryRoot, 'node_modules/fake-package/worker.js'),
+    'export const worker = 1\n',
+  )
+  await writeFile(
+    join(repositoryRoot, 'package-lock.json'),
+    `${JSON.stringify(
+      {
+        name: 'vite-fixture',
+        lockfileVersion: 3,
+        packages: {
+          '': { name: 'vite-fixture' },
+          'node_modules/fake-package': {
+            version: '1.0.0',
+            integrity: `sha512-${'F'.repeat(86)}==`,
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  )
+  const closure = await deriveLocalExecutableImportClosure('tools/entry.mjs', {
+    repositoryRoot,
+  })
+  const packageClosure = await deriveExecutablePackageClosure(
+    'tools/entry.mjs',
+    { repositoryRoot },
+  )
+  const metric = {
+    implementation: 'tools/entry.mjs',
+    implementationComponents: closure.map(({ path, bytes }) => ({
+      path,
+      fileSha256: createHash('sha256').update(bytes).digest('hex'),
+    })),
+    implementationPackageLock: packageClosure.packageLock,
+    implementationPlatforms: [packageClosure.platform],
+    implementationPackages: packageClosure.packages,
+  }
+  metric.implementationSha256 = implementationCompositeSha256(metric)
+  return { repositoryRoot, metric }
+}
+
 async function createEvidenceWriter() {
   const directory = await mkdtemp(
     join(process.cwd(), 'benchmarks/pdf/.readiness-evidence-'),
@@ -74,6 +426,77 @@ function reviewerIdentityEvidence(reviewerId, subjectIdentitySha256) {
 }
 
 describe('PDF benchmark readiness registry', () => {
+  it('rejects a same-inode artifact rewrite when ctime changes', () => {
+    const before = {
+      dev: 1n,
+      ino: 2n,
+      size: 3n,
+      mtimeNs: 4n,
+      ctimeNs: 5n,
+      isFile: () => true,
+    }
+    expect(
+      sameStableFileIdentity(before, { ...before, ctimeNs: 6n }),
+    ).toBe(false)
+  })
+
+  it('fails closed when no-follow open support is unavailable', () => {
+    expect(() =>
+      secureJsonReadFlags({ O_RDONLY: 0, O_NOFOLLOW: undefined }),
+    ).toThrow('PDF_BENCHMARK_READINESS_FAILED')
+  })
+  it('binds receipt construction to the prechecked registry snapshot after a pathname swap', async () => {
+    const path = await writeRegistry(await readRegistry())
+    const snapshot = await readPdfBenchmarkReadinessRegistry(path)
+    expect(Object.isFrozen(snapshot.registryArtifact.value)).toBe(true)
+    const swapped = await readRegistry()
+    swapped.id = 'swapped-registry-after-promotion-precheck'
+    await writeFile(path, `${JSON.stringify(swapped, null, 2)}\n`)
+
+    const receipt = await createPdfBenchmarkReadinessReceipt({
+      registryPath: path,
+      registrySnapshot: snapshot,
+    })
+
+    expect(receipt.registry.fileSha256).toBe(
+      snapshot.registryArtifact.fileSha256,
+    )
+    expect(receipt.registry.id).not.toBe(swapped.id)
+  })
+
+  it('rejects a caller-constructed registry snapshot', async () => {
+    const path = await writeRegistry(await readRegistry())
+    const snapshot = await readPdfBenchmarkReadinessRegistry(path)
+
+    await expect(
+      createPdfBenchmarkReadinessReceipt({
+        registryPath: path,
+        registrySnapshot: {
+          ...snapshot,
+          registryArtifact: {
+            ...snapshot.registryArtifact,
+            fileSha256: '0'.repeat(64),
+          },
+        },
+      }),
+    ).rejects.toThrow('PDF_BENCHMARK_READINESS_FAILED')
+  })
+
+  it('keeps the pinned v3 registry schema nonempty and validates the v4 successor', async () => {
+    const bytes = await readFile(
+      new URL(
+        '../docs/schemas/pdf-benchmark-readiness-registry-v3.schema.json',
+        import.meta.url,
+      ),
+    )
+    expect(bytes.byteLength).toBeGreaterThan(0)
+    expect(createHash('sha256').update(bytes).digest('hex')).toBe(
+      'fccf1727399b425f1f92a4ab339c96ecf759cd0ac673988cbf4db6ae5d514700',
+    )
+    await expect(
+      createPdfBenchmarkReadinessReceipt({ registryPath }),
+    ).resolves.toMatchObject({ ready: false })
+  })
   it('reports the exposed 32-case calibration honestly as not ready', async () => {
     const receipt = await createPdfBenchmarkReadinessReceipt({ registryPath })
 
@@ -362,7 +785,7 @@ describe('PDF benchmark readiness registry', () => {
         registryPath: path,
       }),
     ).rejects.toThrow('PDF_BENCHMARK_OBSERVATION_POLICY_MISMATCH')
-  })
+  }, 30_000)
 
   it('requires available metrics to have schema-valid, hash-bound files', async () => {
     const missingBinding = await readRegistry()
@@ -415,6 +838,713 @@ describe('PDF benchmark readiness registry', () => {
         registryPath: await writeRegistry(falseCalibration),
       }),
     ).rejects.toThrow('PDF_BENCHMARK_JUDGE_CALIBRATION_MISMATCH')
+  }, 30_000)
+
+  it('binds every package-integrity implementation component', async () => {
+    const registry = await readRegistry()
+    const metric = registry.metricImplementations.find(
+      (item) => item.id === 'package-integrity',
+    )
+    const receipt = await createPdfBenchmarkReadinessReceipt({ registryPath })
+    expect(
+      receipt.criteria.find((criterion) => criterion.id === 'metric-coverage')
+        .observed,
+    ).toContain('package-integrity')
+    const componentPaths = metric.implementationComponents.map(
+      (component) => component.path,
+    )
+    expect(componentPaths).toHaveLength(60)
+    expect(componentPaths).toEqual([...componentPaths].sort())
+    expect(componentPaths).toEqual(
+      expect.arrayContaining([
+        'src/research/epub.ts',
+        'src/research/import-types.ts',
+        'src/research/pdf-quality.ts',
+        'src/research/pdf.ts',
+        'src/research/table-candidate-provider.ts',
+        'src/research/targets.ts',
+        'src/struct/epub.ts',
+        'tools/pdf-corpus-audit-lib.mjs',
+        'tools/pdf-private-fidelity-epubcheck.mjs',
+        'tools/pdf-private-fidelity.mjs',
+      ]),
+    )
+
+    const adapter = metric.implementationComponents.find(
+      (component) =>
+        component.path === 'tools/pdf-private-fidelity-epubcheck.mjs',
+    )
+    adapter.fileSha256 = '0'.repeat(64)
+    await expect(
+      createPdfBenchmarkReadinessReceipt({
+        registryPath: await writeRegistry(registry),
+      }),
+    ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+  })
+
+  it('retains pinned v1/v2 validation and rejects unknown registry versions', async () => {
+    const legacy = await readRegistry()
+    legacy.schemaVersion = '1.0.0'
+    for (const metric of legacy.metricImplementations) {
+      if (metric.status !== 'available') continue
+      delete metric.implementationComponents
+      delete metric.implementationPackageLock
+      delete metric.implementationPlatforms
+      delete metric.implementationPackages
+      metric.implementationSha256 = createHash('sha256')
+        .update(await readFile(metric.implementation))
+        .digest('hex')
+      metric.testSha256 = createHash('sha256')
+        .update(await readFile(metric.test))
+        .digest('hex')
+    }
+    await expect(
+      createPdfBenchmarkReadinessReceipt({
+        registryPath: await writeRegistry(legacy),
+      }),
+    ).resolves.toMatchObject({ ready: false })
+
+    const v2 = await readRegistry()
+    v2.schemaVersion = '2.0.0'
+    const v2Metric = v2.metricImplementations.find(
+      (item) => item.id === 'package-integrity',
+    )
+    v2Metric.implementationComponents =
+      v2Metric.implementationComponents.filter((component) =>
+        component.path.startsWith('tools/'),
+      )
+    delete v2Metric.implementationPackageLock
+    delete v2Metric.implementationPlatforms
+    delete v2Metric.implementationPackages
+    v2Metric.implementationSha256 = implementationCompositeSha256(v2Metric)
+    await expect(
+      createPdfBenchmarkReadinessReceipt({
+        registryPath: await writeRegistry(v2),
+      }),
+    ).resolves.toMatchObject({ ready: false })
+
+    const unknown = await readRegistry()
+    unknown.schemaVersion = '4.0.0'
+    await expect(
+      createPdfBenchmarkReadinessReceipt({
+        registryPath: await writeRegistry(unknown),
+      }),
+    ).rejects.toThrow('INVALID_PDF_BENCHMARK_REGISTRY_SCHEMA')
+  })
+
+  it('requires exact derived executable closure even after a manifest is recomputed', async () => {
+    const { repositoryRoot, metric } = await temporaryImplementationFixture()
+    try {
+      await expect(
+        verifyMetricImplementationBinding(metric, { repositoryRoot }),
+      ).resolves.toBeUndefined()
+      expect(
+        (
+          await deriveLocalExecutableImportClosure(metric.implementation, {
+            repositoryRoot,
+          })
+        ).map((artifact) => artifact.path),
+      ).toEqual([
+        'tools/adapter.mjs',
+        'tools/entry.mjs',
+        'tools/transitive.mjs',
+      ])
+
+      await writeFile(
+        join(repositoryRoot, 'tools/adapter.mjs'),
+        "import { createRequire } from 'node:module'\nconst load = createRequire(import.meta.url)\nload('./transitive.mjs')\n",
+      )
+      expect(
+        (
+          await deriveLocalExecutableImportClosure(metric.implementation, {
+            repositoryRoot,
+          })
+        ).map((artifact) => artifact.path),
+      ).toContain('tools/transitive.mjs')
+      await writeFile(
+        join(repositoryRoot, 'tools/adapter.mjs'),
+        "export { value } from './transitive.mjs'\n",
+      )
+
+      const omitted = structuredClone(metric)
+      omitted.implementationComponents =
+        omitted.implementationComponents.filter(
+          (component) => component.path !== 'tools/transitive.mjs',
+        )
+      omitted.implementationSha256 = createHash('sha256')
+        .update(
+          canonicalJson({
+            kind: 'pdf-benchmark-metric-implementation-v1',
+            entrypoint: omitted.implementation,
+            components: omitted.implementationComponents
+              .map(({ path, fileSha256 }) => ({ path, fileSha256 }))
+              .sort((left, right) => left.path.localeCompare(right.path)),
+          }),
+        )
+        .digest('hex')
+      await expect(
+        verifyMetricImplementationBinding(omitted, { repositoryRoot }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+
+      await writeFile(
+        join(repositoryRoot, 'tools/transitive.mjs'),
+        'export const value = 2\n',
+      )
+      await expect(
+        verifyMetricImplementationBinding(metric, { repositoryRoot }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    } finally {
+      await rm(repositoryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('binds every resolved package tree and fails closed on omission or mutation', async () => {
+    const { repositoryRoot, metric } =
+      await temporaryPackageImplementationFixture()
+    try {
+      await expect(
+        verifyMetricImplementationBinding(metric, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).resolves.toBeUndefined()
+      expect(metric.implementationPackages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: 'node_modules/fake-package',
+            name: 'fake-package',
+          }),
+          expect.objectContaining({
+            path: 'node_modules/fake-package/node_modules/fake-optional',
+            name: 'fake-optional',
+          }),
+          expect.objectContaining({
+            path: 'node_modules/fake-peer',
+            name: 'fake-peer',
+          }),
+        ]),
+      )
+
+      const omitted = structuredClone(metric)
+      omitted.implementationPackages = []
+      omitted.implementationSha256 = implementationCompositeSha256(omitted)
+      await expect(
+        verifyMetricImplementationBinding(omitted, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+
+      await writeFile(
+        join(repositoryRoot, 'node_modules/fake-package/index.js'),
+        "import 'fake-peer'\nexport const value = 2\n",
+      )
+      await expect(
+        verifyMetricImplementationBinding(metric, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+
+      await writeFile(
+        join(repositoryRoot, 'node_modules/fake-package/index.js'),
+        "import 'fake-peer'\nexport const value = 1\n",
+      )
+
+      await writeFile(
+        join(
+          repositoryRoot,
+          'node_modules/fake-package/node_modules/fake-optional/index.js',
+        ),
+        'export const optional = 2\n',
+      )
+      await expect(
+        verifyMetricImplementationBinding(metric, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+
+      await writeFile(
+        join(
+          repositoryRoot,
+          'node_modules/fake-package/node_modules/fake-optional/index.js',
+        ),
+        'export const optional = 1\n',
+      )
+      await writeFile(
+        join(repositoryRoot, 'node_modules/fake-peer/index.js'),
+        'export const identity = "mutated-peer"\n',
+      )
+      await expect(
+        verifyMetricImplementationBinding(metric, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      await writeFile(
+        join(repositoryRoot, 'node_modules/fake-peer/index.js'),
+        "export const identity = 'fake-peer'\n",
+      )
+      const lockPath = join(repositoryRoot, 'package-lock.json')
+      await writeFile(lockPath, `${await readFile(lockPath, 'utf8')} `)
+      await expect(
+        verifyMetricImplementationBinding(metric, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    } finally {
+      await rm(repositoryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a nested package that shadows a locked dependency resolution', async () => {
+    const { repositoryRoot, metric } =
+      await temporaryPackageImplementationFixture()
+    try {
+      const shadowRoot = join(
+        repositoryRoot,
+        'node_modules/fake-package/node_modules/fake-peer',
+      )
+      await mkdir(shadowRoot, { recursive: true })
+      await writeFile(
+        join(shadowRoot, 'package.json'),
+        `${JSON.stringify({ name: 'fake-peer', version: '9.9.9' })}\n`,
+      )
+      await writeFile(
+        join(shadowRoot, 'index.js'),
+        'export const identity = "shadowed-peer"\n',
+      )
+
+      await expect(
+        verifyMetricImplementationBinding(metric, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    } finally {
+      await rm(repositoryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects an undeclared package nested below a package subdirectory', async () => {
+    const { repositoryRoot, metric } =
+      await temporaryPackageImplementationFixture()
+    try {
+      const shadowRoot = join(
+        repositoryRoot,
+        'node_modules/fake-package/lib/node_modules/fake-peer',
+      )
+      await mkdir(shadowRoot, { recursive: true })
+      await writeFile(
+        join(shadowRoot, 'package.json'),
+        `${JSON.stringify({ name: 'fake-peer', version: '9.9.9' })}\n`,
+      )
+      await writeFile(
+        join(shadowRoot, 'index.js'),
+        'export const identity = "deep-shadowed-peer"\n',
+      )
+
+      await expect(
+        verifyMetricImplementationBinding(metric, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    } finally {
+      await rm(repositoryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('selects exactly one GNU or musl native alternative without lockfile libc metadata', async () => {
+    const locked = { os: ['linux'], cpu: ['x64'] }
+    expect(
+      executablePackageSupportsPlatform(
+        'native-linux-x64-gnu',
+        locked,
+        'linux-x64-gnu',
+      ),
+    ).toBe(true)
+    expect(
+      executablePackageSupportsPlatform(
+        'native-linux-x64-musl',
+        locked,
+        'linux-x64-gnu',
+      ),
+    ).toBe(false)
+    expect(
+      executablePackageSupportsPlatform(
+        'native-linux-x64-gnu',
+        locked,
+        'linux-x64-musl',
+      ),
+    ).toBe(false)
+    expect(
+      executablePackageSupportsPlatform(
+        'native-linux-x64-musl',
+        locked,
+        'linux-x64-musl',
+      ),
+    ).toBe(true)
+
+    const { repositoryRoot } = await temporaryPackageImplementationFixture()
+    try {
+      const gnu = await deriveExecutablePackageClosure('tools/entry.mjs', {
+        repositoryRoot,
+        platform: 'linux-x64-gnu',
+      })
+      const musl = await deriveExecutablePackageClosure('tools/entry.mjs', {
+        repositoryRoot,
+        platform: 'linux-x64-musl',
+      })
+      expect(gnu.packages.map(({ path }) => path)).toContain(
+        'node_modules/native-linux-x64-gnu',
+      )
+      expect(gnu.packages.map(({ path }) => path)).not.toContain(
+        'node_modules/native-linux-x64-musl',
+      )
+      expect(musl.packages.map(({ path }) => path)).toContain(
+        'node_modules/native-linux-x64-musl',
+      )
+      expect(musl.packages.map(({ path }) => path)).not.toContain(
+        'node_modules/native-linux-x64-gnu',
+      )
+      expect(gnu.packages.map(({ path }) => path)).toContain(
+        'node_modules/fake-peer',
+      )
+    } finally {
+      await rm(repositoryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('binds literal Vite TypeScript roots, transitives, raw assets, and packages', async () => {
+    const { repositoryRoot, metric } =
+      await temporaryViteImplementationFixture()
+    try {
+      expect(metric.implementationComponents.map(({ path }) => path)).toEqual([
+        'src/fixture.txt',
+        'src/loaded.ts',
+        'src/transitive.ts',
+        'tools/audit.mjs',
+        'tools/entry.mjs',
+      ])
+      expect(metric.implementationPackages).toMatchObject([
+        { path: 'node_modules/fake-package', name: 'fake-package' },
+      ])
+      await expect(
+        verifyMetricImplementationBinding(metric, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).resolves.toBeUndefined()
+
+      const omitted = structuredClone(metric)
+      omitted.implementationComponents =
+        omitted.implementationComponents.filter(
+          ({ path }) => path !== 'src/transitive.ts',
+        )
+      omitted.implementationSha256 = implementationCompositeSha256(omitted)
+      await expect(
+        verifyMetricImplementationBinding(omitted, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+
+      await writeFile(
+        join(repositoryRoot, 'src/transitive.ts'),
+        "export const worker = import('fake-package/worker.js?raw')\nexport const tampered = true\n",
+      )
+      await expect(
+        verifyMetricImplementationBinding(metric, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      await writeFile(
+        join(repositoryRoot, 'src/transitive.ts'),
+        "export const worker = import('fake-package/worker.js?raw')\n",
+      )
+
+      await writeFile(join(repositoryRoot, 'src/fixture.txt'), 'tampered raw\n')
+      await expect(
+        verifyMetricImplementationBinding(metric, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      await writeFile(
+        join(repositoryRoot, 'src/fixture.txt'),
+        'bound raw bytes\n',
+      )
+      await writeFile(
+        join(repositoryRoot, 'node_modules/fake-package/worker.js'),
+        'export const worker = 2\n',
+      )
+      await expect(
+        verifyMetricImplementationBinding(metric, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    } finally {
+      await rm(repositoryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects ambiguous or noncanonical Vite module loading', async () => {
+    const { repositoryRoot } = await temporaryViteImplementationFixture()
+    try {
+      for (const expression of [
+        'vite.ssrLoadModule(path)',
+        "vite.ssrLoadModule('/src//loaded.ts')",
+        "vite.ssrLoadModule('/src/../loaded.ts')",
+        "vite.ssrLoadModule('/tools/entry.mjs')",
+        "vite.ssrLoadModule('/src/loaded.ts?raw')",
+      ]) {
+        await writeFile(
+          join(repositoryRoot, 'tools/audit.mjs'),
+          `export const load = (vite, path) => ${expression}\n`,
+        )
+        await expect(
+          deriveLocalExecutableImportClosure('tools/entry.mjs', {
+            repositoryRoot,
+          }),
+        ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      }
+    } finally {
+      await rm(repositoryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects indirect Vite module loaders that would leave executed roots unbound', async () => {
+    const { repositoryRoot } = await temporaryViteImplementationFixture()
+    try {
+      for (const source of [
+        "export const load = (vite) => { const { ssrLoadModule } = vite; return ssrLoadModule('/src/loaded.ts') }\n",
+        "export const load = ({ ssrLoadModule }) => ssrLoadModule('/src/loaded.ts')\n",
+        "export const load = (vite) => vite['ssrLoadModule']('/src/loaded.ts')\n",
+        "export const load = (vite, method) => vite[method]('/src/loaded.ts')\n",
+        "export const load = () => import.meta.glob('/src/*.ts')\n",
+        "export const load = () => import.meta['glob']('/src/*.ts')\n",
+        "export const load = () => { const meta = import.meta; return meta.glob('/src/*.ts') }\n",
+        "export const load = () => { const { glob } = import.meta; return glob('/src/*.ts') }\n",
+        "export const load = () => { let meta; meta = import.meta; return meta.glob('/src/*.ts') }\n",
+        "export const load = () => { let glob; glob = import.meta.glob; return glob('/src/*.ts') }\n",
+      ]) {
+        await writeFile(join(repositoryRoot, 'tools/audit.mjs'), source)
+        await expect(
+          deriveLocalExecutableImportClosure('tools/entry.mjs', {
+            repositoryRoot,
+          }),
+        ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      }
+    } finally {
+      await rm(repositoryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('requires the active native platform in a package implementation binding', async () => {
+    const { repositoryRoot, metric } =
+      await temporaryPackageImplementationFixture()
+    try {
+      const foreignPlatform = metric.implementationPlatforms[0].startsWith(
+        'darwin',
+      )
+        ? 'linux-x64-gnu'
+        : 'darwin-arm64'
+      metric.implementationPlatforms = [foreignPlatform]
+      metric.implementationSha256 = implementationCompositeSha256(metric)
+
+      await expect(
+        verifyMetricImplementationBinding(metric, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    } finally {
+      await rm(repositoryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('never accepts static foreign package-tree evidence as native verification', async () => {
+    const { repositoryRoot, metric } =
+      await temporaryPackageImplementationFixture()
+    try {
+      const foreignPlatform = metric.implementationPlatforms[0].startsWith(
+        'darwin',
+      )
+        ? 'linux-x64-gnu'
+        : 'darwin-arm64'
+      const foreignClosure = await deriveExecutablePackageClosure(
+        metric.implementation,
+        { repositoryRoot, platform: foreignPlatform },
+      )
+      const knownPaths = new Set(
+        metric.implementationPackages.map(({ path }) => path),
+      )
+      metric.implementationPlatforms = [
+        ...metric.implementationPlatforms,
+        foreignPlatform,
+      ].sort()
+      metric.implementationPackages = [
+        ...metric.implementationPackages,
+        ...foreignClosure.packages.filter(({ path }) => !knownPaths.has(path)),
+      ].sort((left, right) => left.path.localeCompare(right.path))
+      metric.implementationSha256 = implementationCompositeSha256(metric)
+
+      await expect(
+        verifyMetricImplementationBinding(metric, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).resolves.toBeUndefined()
+      await writePackageTreeEvidence(metric, repositoryRoot)
+      await expect(
+        verifyMetricImplementationBinding(metric, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    } finally {
+      await rm(repositoryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects static foreign package-tree evidence as a native attestation', async () => {
+    const { repositoryRoot, metric } =
+      await temporaryPackageImplementationFixture()
+    try {
+      const foreignPlatform = metric.implementationPlatforms[0].startsWith(
+        'darwin',
+      )
+        ? 'linux-x64-gnu'
+        : 'darwin-arm64'
+      const foreignClosure = await deriveExecutablePackageClosure(
+        metric.implementation,
+        { repositoryRoot, platform: foreignPlatform },
+      )
+      metric.implementationPlatforms = [
+        ...metric.implementationPlatforms,
+        foreignPlatform,
+      ].sort()
+      metric.implementationPackages = [
+        ...metric.implementationPackages,
+        ...foreignClosure.packages.filter(
+          ({ path }) =>
+            !metric.implementationPackages.some(
+              ({ path: knownPath }) => path === knownPath,
+            ),
+        ),
+      ].sort((left, right) => left.path.localeCompare(right.path))
+      await writePackageTreeEvidence(metric, repositoryRoot)
+
+      await expect(
+        verifyMetricImplementationBinding(metric, {
+          repositoryRoot,
+          requirePackages: true,
+        }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    } finally {
+      await rm(repositoryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a component mutation that races package verification', async () => {
+    const { repositoryRoot, metric } =
+      await temporaryPackageImplementationFixture()
+    try {
+      const packageRoot = join(repositoryRoot, 'node_modules/fake-package')
+      await mkdir(join(packageRoot, 'snapshot-fixture'))
+      await Promise.all(
+        Array.from({ length: 64 }, (_, index) =>
+          writeFile(
+            join(packageRoot, 'snapshot-fixture', `${index}.bin`),
+            Buffer.alloc(1024 * 1024, index),
+          ),
+        ),
+      )
+      const packageClosure = await deriveExecutablePackageClosure(
+        metric.implementation,
+        { repositoryRoot },
+      )
+      metric.implementationPackageLock = packageClosure.packageLock
+      metric.implementationPackages = packageClosure.packages
+      metric.implementationPlatforms = [packageClosure.platform]
+      metric.implementationSha256 = implementationCompositeSha256(metric)
+
+      const verification = verifyMetricImplementationBinding(metric, {
+        repositoryRoot,
+        requirePackages: true,
+      })
+      await new Promise((resolve) => setTimeout(resolve, 25))
+      await writeFile(
+        join(repositoryRoot, 'tools/entry.mjs'),
+        "import 'fake-package'\nexport const mutated = true\n",
+      )
+      await expect(verification).rejects.toThrow(
+        'PDF_BENCHMARK_METRIC_BINDING_MISMATCH',
+      )
+    } finally {
+      await rm(repositoryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects noncanonical aliases and symlinked closure components', async () => {
+    const { repositoryRoot, metric } = await temporaryImplementationFixture()
+    try {
+      const repeatedSlash = structuredClone(metric)
+      repeatedSlash.implementationComponents[0].path = 'tools//entry.mjs'
+      await expect(
+        verifyMetricImplementationBinding(repeatedSlash, { repositoryRoot }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+
+      await writeFile(
+        join(repositoryRoot, 'tools/entry.mjs'),
+        "import './adapter//transitive.mjs'\n",
+      )
+      await expect(
+        deriveLocalExecutableImportClosure('tools/entry.mjs', {
+          repositoryRoot,
+        }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+
+      await writeFile(join(repositoryRoot, 'adapter.mjs'), 'export default 1\n')
+      for (const specifier of [
+        '../adapter.mjs',
+        '.',
+        '..',
+        '././adapter.mjs',
+        './adapter/../transitive.mjs',
+      ]) {
+        await writeFile(
+          join(repositoryRoot, 'tools/entry.mjs'),
+          `import '${specifier}'\n`,
+        )
+        await expect(
+          deriveLocalExecutableImportClosure('tools/entry.mjs', {
+            repositoryRoot,
+          }),
+        ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      }
+
+      await writeFile(
+        join(repositoryRoot, 'tools/entry.mjs'),
+        "import './alias.mjs'\n",
+      )
+      await symlink(
+        join(repositoryRoot, 'tools/transitive.mjs'),
+        join(repositoryRoot, 'tools/alias.mjs'),
+      )
+      await expect(
+        deriveLocalExecutableImportClosure('tools/entry.mjs', {
+          repositoryRoot,
+        }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    } finally {
+      await rm(repositoryRoot, { recursive: true, force: true })
+    }
   })
 
   it('binds judge calibration execution to a registered held-out split and confusion matrix', async () => {
@@ -1037,5 +2167,73 @@ describe('PDF benchmark readiness registry', () => {
     expect(result.stdout).toBe('')
     expect(result.stderr).toBe('PDF_BENCHMARK_READINESS_FAILED\n')
     expect(result.stderr).not.toContain('private-user')
+  })
+
+  it('fails closed for a weaker declared registry schema when --require-ready omits --schema', async () => {
+    const legacy = await readRegistry()
+    legacy.schemaVersion = '1.0.0'
+    for (const metric of legacy.metricImplementations) {
+      if (metric.status !== 'available') continue
+      delete metric.implementationComponents
+      delete metric.implementationPackageLock
+      delete metric.implementationPlatforms
+      delete metric.implementationPackages
+      metric.implementationSha256 = createHash('sha256')
+        .update(await readFile(metric.implementation))
+        .digest('hex')
+      metric.testSha256 = createHash('sha256')
+        .update(await readFile(metric.test))
+        .digest('hex')
+    }
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        readinessToolPath,
+        '--registry',
+        await writeRegistry(legacy),
+        '--require-ready',
+      ],
+      { encoding: 'utf8' },
+    )
+
+    expect(result.status).toBe(1)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).toBe('PDF_BENCHMARK_NONCANONICAL_PROMOTION_SCHEMA\n')
+  })
+
+  it('fails closed for promotion when package integrity declares unattested foreign platform trees', () => {
+    const result = spawnSync(
+      process.execPath,
+      [readinessToolPath, '--registry', registryPath, '--require-ready'],
+      { encoding: 'utf8' },
+    )
+
+    expect(result.status).toBe(1)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).toBe(
+      'PDF_BENCHMARK_MULTI_PLATFORM_PROMOTION_UNATTESTED\n',
+    )
+  })
+
+  it('rejects unattested foreign platform trees with an explicit canonical v4 schema', () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        readinessToolPath,
+        '--registry',
+        registryPath,
+        '--schema',
+        'docs/schemas/pdf-benchmark-readiness-registry-v4.schema.json',
+        '--require-ready',
+      ],
+      { encoding: 'utf8' },
+    )
+
+    expect(result.status).toBe(1)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).toBe(
+      'PDF_BENCHMARK_MULTI_PLATFORM_PROMOTION_UNATTESTED\n',
+    )
   })
 })

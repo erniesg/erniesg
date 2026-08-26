@@ -1,8 +1,11 @@
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import Ajv2020 from 'ajv/dist/2020.js'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { validateCorpusContract } from '../tools/pdf-corpus-contract.mjs'
+import {
+  verifyReconstructionEvaluatorImplementationBinding,
+} from '../tools/pdf-benchmark-readiness.mjs'
 import { validatePdfFidelityEvalSet } from '../tools/pdf-fidelity-eval.mjs'
 
 const paths = {
@@ -19,6 +22,8 @@ const paths = {
   comparatorSchema:
     'docs/schemas/pdf-fidelity-comparator-run-receipt.schema.json',
 }
+
+vi.setConfig({ testTimeout: 120_000 })
 
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex')
@@ -58,6 +63,17 @@ describe('PDF reconstruction evaluation governance contract', () => {
       validateObservations(observations),
       validateObservations.errors,
     ).toBe(true)
+
+    const profileArtifactValidity = contract.objectiveEvaluators.find(
+      (evaluator) => evaluator.id === 'profile-artifact-validity',
+    )
+    expect(profileArtifactValidity.implementation).toEqual([
+      'tools/pdf-private-fidelity.mjs',
+    ])
+    expect(profileArtifactValidity).not.toHaveProperty('implementationSha256')
+    await expect(
+      verifyReconstructionEvaluatorImplementationBinding(contract),
+    ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
 
     const corpusIdentity = validateCorpusContract(corpus)
     const evalIdentity = validatePdfFidelityEvalSet(evalSet)
@@ -163,7 +179,7 @@ describe('PDF reconstruction evaluation governance contract', () => {
       await fileSha256(contract.extends.path),
     )
     expect(contract.extends.fileSha256).toBe(
-      '0ee0826873f0b7349a5f4187746f9cc35a9acc1556fd7aa35e004b1a51a9a2dd',
+    '0ee0826873f0b7349a5f4187746f9cc35a9acc1556fd7aa35e004b1a51a9a2dd',
     )
     expect(contract.robustnessCorpus.artifact.fileSha256).toBe(
       await fileSha256(contract.robustnessCorpus.artifact.path),

@@ -2068,14 +2068,14 @@ describe('STRUCT runtime codec', () => {
     expect(() => renderPublicationXhtml(value)).toThrow(/citation.*budget/i)
   })
 
-  it('rejects an oversized mismatched citation label before tokenizing it', () => {
+  it('skips an oversized comma-only citation label without tokenizing it', () => {
     const value = validDocument() as any
     value.metadata.authors = []
     value.metadata.authorNotes = []
     value.relationships[0] = {
       ...value.relationships[0],
       kind: 'citation',
-      label: 'a,'.repeat(1_500_000),
+      label: ','.repeat(3 * 1024 * 1024),
       to: [],
       status: 'matched',
     }
@@ -2088,7 +2088,32 @@ describe('STRUCT runtime codec', () => {
       },
     ]
 
-    expect(() => renderPublicationXhtml(value)).toThrow(/citation.*budget/i)
+    expect(() => renderPublicationXhtml(value)).not.toThrow()
+  })
+
+  it('preserves bounded mismatched citation labels', () => {
+    const value = validDocument() as any
+    value.metadata.authors = []
+    value.metadata.authorNotes = []
+    value.relationships[0] = {
+      ...value.relationships[0],
+      kind: 'citation',
+      label: 'Smith, 2020',
+      to: ['https://example.test/smith-2020'],
+      status: 'matched',
+    }
+    value.blocks[0].inline = [
+      {
+        start: 0,
+        end: value.blocks[0].text.length,
+        relationshipId: value.relationships[0].id,
+        semanticRole: 'citation',
+      },
+    ]
+
+    expect(renderPublicationXhtml(value)).toContain(
+      'href="https://example.test/smith-2020"',
+    )
   })
 
   it('rejects an early source budget before inspecting a later hostile source', () => {

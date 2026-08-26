@@ -440,17 +440,17 @@ type InlineDraft = {
   renderedRelationshipIds: Set<string>
 }
 
-function citationLabelCountExceedsTargets(value: string, targetCount: number) {
-  let labels = 0
-  let start = 0
-  for (let index = 0; index <= value.length; index += 1) {
-    if (index !== value.length && value[index] !== ',') continue
-    let cursor = start
-    while (cursor < index && /\s/u.test(value[cursor]!)) cursor += 1
-    if (cursor < index && ++labels > targetCount) return true
-    start = index + 1
-  }
-  return false
+function boundedCitationLabels(value: string) {
+  let segments = 1
+  for (let index = 0; index < value.length; index += 1)
+    if (value[index] === ',' && ++segments > MAX_CITATION_MATCH_WORK)
+      // Preserve the existing no-range outcome without allocating an
+      // attacker-controlled token array.
+      return []
+  return value
+    .split(',')
+    .map((label) => label.trim())
+    .filter(Boolean)
 }
 
 function semanticPlanForRun(
@@ -469,19 +469,13 @@ function semanticPlanForRun(
   const rawTargets =
     relationship?.status === 'matched' ? relationship.to : (run.targetIds ?? [])
   const rawLabel = relationship?.label ?? ''
-  if (
-    run.semanticRole === 'citation' &&
-    citationLabelCountExceedsTargets(rawLabel, rawTargets.length)
-  )
-    throw new RenderedPublicationPlanError(
-      'BUDGET',
-      path,
-      'citation label work exceeds the publication planning budget',
-    )
-  const labels = rawLabel
-    .split(',')
-    .map((label) => label.trim())
-    .filter(Boolean)
+  const labels =
+    run.semanticRole === 'citation'
+      ? boundedCitationLabels(rawLabel)
+      : rawLabel
+          .split(',')
+          .map((label) => label.trim())
+          .filter(Boolean)
   let targets = targetCache.get(rawTargets)
   if (!targets) {
     targets = []

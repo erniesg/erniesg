@@ -113,6 +113,40 @@ describe('PDF benchmark readiness registry', () => {
     ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
   })
 
+  it('binds every extracted package-integrity test dependency', async () => {
+    const fixtureRegistry = await readRegistry()
+    const packageIntegrity = fixtureRegistry.metricImplementations.find(
+      (metric) => metric.id === 'package-integrity',
+    )
+    const sourceDependencies = packageIntegrity.testDependencies
+    const directory = await mkdtemp(
+      join(process.cwd(), 'benchmarks/pdf/.readiness-dependencies-'),
+    )
+    evidenceDirectories.push(directory)
+    packageIntegrity.testDependencies = []
+    for (const [index, dependency] of sourceDependencies.entries()) {
+      const path = join(directory, `dependency-${index}.mjs`)
+      const bytes = await readFile(dependency.path)
+      await writeFile(path, bytes)
+      packageIntegrity.testDependencies.push({
+        path: relative(process.cwd(), path),
+        fileSha256: createHash('sha256').update(bytes).digest('hex'),
+      })
+    }
+    const fixtureRegistryPath = await writeRegistry(fixtureRegistry)
+
+    for (const [index, dependency] of packageIntegrity.testDependencies.entries()) {
+      const path = join(process.cwd(), dependency.path)
+      const bytes = await readFile(path)
+      bytes[0] ^= 1
+      await writeFile(path, bytes)
+      await expect(
+        createPdfBenchmarkReadinessReceipt({ registryPath: fixtureRegistryPath }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      await writeFile(path, await readFile(sourceDependencies[index].path))
+    }
+  })
+
   it('reports the exposed 32-case calibration honestly as not ready', async () => {
     const receipt = await createPdfBenchmarkReadinessReceipt({ registryPath })
 

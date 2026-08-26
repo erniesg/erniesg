@@ -19,7 +19,7 @@ const DEFAULT_SCHEMA_PATH = resolve(
 const DEFAULT_SCHEMA_ID =
   'https://ernie.sg/schemas/pdf-benchmark-readiness-registry-1.0.0.json'
 const DEFAULT_SCHEMA_SHA256 =
-  '3dd77733e86da34b9810afeab607c1f325d4b70fa43c2c8116dd30d3cd5c4ff9'
+  '6f283ef3a6621a53935dc5de7a9eada5d6ddaf06f0eb8da0f09d8824f68c291c'
 const PUBLIC_ERROR_CODE = /^(?:INVALID|MISSING|PDF)_[A-Z0-9_]+$/
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/
 const SAFE_FAILURE_CLASS = /^[a-z][a-z0-9]*(?:-[a-z0-9]+){0,11}$/
@@ -315,6 +315,9 @@ async function validateMetricImplementations(registry) {
         metric.implementationSha256,
       ),
       verifyRepositoryFileBinding(metric.test, metric.testSha256),
+      ...(metric.testDependencies ?? []).map((dependency) =>
+        verifyRepositoryFileBinding(dependency.path, dependency.fileSha256),
+      ),
     ])
     if (metric.kind === 'calibrated-judge') {
       const [calibrationEvidence, executionReceipt] = await Promise.all([

@@ -113,6 +113,59 @@ describe('PDF benchmark readiness registry', () => {
     ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
   })
 
+  it('binds every extracted package-integrity test dependency', async () => {
+    for (const mutate of [
+      (metric) => delete metric.testDependencies,
+      (metric) => {
+        metric.testDependencies = []
+      },
+      (metric) => {
+        metric.testDependencies = metric.testDependencies.slice(1)
+      },
+      (metric) => {
+        metric.testDependencies[0].path = 'tools/unexpected-test-dependency.mjs'
+      },
+      (metric) => {
+        metric.testDependencies[1] = {
+          ...metric.testDependencies[0],
+          path: metric.testDependencies[0].path,
+          fileSha256: '0'.repeat(64),
+        }
+      },
+    ]) {
+      const invalidRegistry = await readRegistry()
+      mutate(
+        invalidRegistry.metricImplementations.find(
+          (metric) => metric.id === 'package-integrity',
+        ),
+      )
+      const invalidRegistryPath = await writeRegistry(invalidRegistry)
+      await expect(
+        createPdfBenchmarkReadinessReceipt({ registryPath: invalidRegistryPath }),
+      ).rejects.toThrow(/PDF_BENCHMARK_METRIC_BINDING_MISMATCH|INVALID_PDF_BENCHMARK_REGISTRY_SCHEMA|INVALID_PDF_BENCHMARK_REGISTRY/)
+    }
+
+    await expect(
+      createPdfBenchmarkReadinessReceipt({ registryPath }),
+    ).resolves.toMatchObject({
+      criteria: expect.arrayContaining([
+        expect.objectContaining({ id: 'metric-coverage' }),
+      ]),
+    })
+
+    for (const index of [0, 1, 2, 3]) {
+      const invalidRegistry = await readRegistry()
+      const dependency = invalidRegistry.metricImplementations.find(
+        (metric) => metric.id === 'package-integrity',
+      ).testDependencies[index]
+      dependency.fileSha256 = '0'.repeat(64)
+      const invalidRegistryPath = await writeRegistry(invalidRegistry)
+      await expect(
+        createPdfBenchmarkReadinessReceipt({ registryPath: invalidRegistryPath }),
+      ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+    }
+  })
+
   it('reports the exposed 32-case calibration honestly as not ready', async () => {
     const receipt = await createPdfBenchmarkReadinessReceipt({ registryPath })
 

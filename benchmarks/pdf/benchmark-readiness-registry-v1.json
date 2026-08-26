@@ -282,7 +282,13 @@
       "implementation": "tools/pdf-private-fidelity.mjs",
       "implementationSha256": "d3ee1da7e9a153de650774f957d98a57942b2d2d42f54aa140f02a1c3abd684e",
       "test": "tools/pdf-private-fidelity.test.mjs",
-      "testSha256": "2077bfd707b9566ae7ef32c1014586cce099e4e0310d5f9bb1dbd02983c7bc88",
+      "testSha256": "18b6f9fd8654e7ab652de6c7f63964e15fcffb09cf6cc948724632c3ece3acfe",
+      "testDependencies": [
+        { "path": "tools/pdf-private-fidelity.cases-support.mjs", "fileSha256": "ad74ee51c59fd6d1308a016fc474788bca9c7b4a6eb6e6ce20674d30779cce45" },
+        { "path": "tools/pdf-private-fidelity-semantic.cases.mjs", "fileSha256": "525d6d1813aca7fc320d1fc75b338bb3e676f73ee7420ee4267e5dd083e7e755" },
+        { "path": "tools/pdf-private-fidelity-receipt.cases.mjs", "fileSha256": "86839b8991575d7d23ef04a23421996dafdff759d5039b87c14b2730727868a0" },
+        { "path": "tools/pdf-private-fidelity-boundary.cases.mjs", "fileSha256": "56afdbd4e3ad4114c95179caf3783ff002a7740b63f5871e4a75141a040308da" }
+      ],
       "calibration": null
     }
   ]

@@ -1366,6 +1366,23 @@ function preflightPublicationReceipt(value: unknown, path: string) {
     )
 }
 
+function snapshotPublicationReceipt(
+  value: unknown,
+  path: string,
+  state: PublicationSnapshotState,
+) {
+  return copyRecord(
+    dataEntries(value, path, MAX_STRUCT_DOCUMENT_ITEMS - state.nodes).map(
+      ([key, entry]) => [
+        key,
+        key === 'modelConsultations'
+          ? copyCanonicalJson(entry, `${path}.${key}`)
+          : snapshotPublicationValue(entry, `${path}.${key}`, state, 1),
+      ],
+    ),
+  )
+}
+
 function chargePublicationString(
   value: string,
   path: string,
@@ -1485,7 +1502,7 @@ export function snapshotStructDocumentForEpub(value: unknown): StructDocument {
             parseRecovery(entry, '$.recovery'))
           : key === 'receipt'
             ? (preflightPublicationReceipt(entry, '$.receipt'),
-              snapshotPublicationValue(entry, '$.receipt', state, 1))
+              snapshotPublicationReceipt(entry, '$.receipt', state))
             : snapshotPublicationValue(entry, `$.${key}`, state, 1),
     ]),
   ) as StructDocument

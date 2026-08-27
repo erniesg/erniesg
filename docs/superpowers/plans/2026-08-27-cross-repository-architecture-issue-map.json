@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_plan": "docs/superpowers/plans/2026-08-27-cross-repository-architecture-issue-plan.md",
-  "source_plan_sha256": "ece2d576ac20c382791cd88ab551faf4466e87a78e95d0e759bd94011adb335a",
+  "source_plan_sha256": "4a2502b2e288d23e22d421ead5f85d0b5050d7a7612612bb23bbfae1da9760d3",
   "coordinator_only_external_mutation": true,
   "issue_creation_authorized_by_user_go": true,
   "issue_creation_status": "completed",
@@ -11,7 +11,8 @@
     "The user explicitly authorized the sole coordinator to create and link the reviewed map.",
     "The coordinator created all 25 mapped issues; creation did not authorize implementation or any decision gate."
   ],
-  "github_creation_order_status": "completed historical record; execution follows depends_on and phase_zero_runtime_gate",
+  "github_creation_order_status": "completed historical record; execution follows depends_on, phase_zero_runtime_gate, decision_gates, and recommended_full_dag_order",
+  "recommended_full_dag_order_semantics": "topological projection only; inclusion never satisfies or self-authorizes a decision gate, and A-REQ/A-ACT remain optional unless their named external action is requested",
   "exact_defaults": {
     "erniesg/rucksack": "2513b7a76ad50e9751101454054bf1120cb1983e",
     "erniesg/erniesg": "c7a706ecbac1a527cad11a3246e602bd56636d6f",
@@ -20,6 +21,24 @@
   },
   "documentation_landing_order": ["S-01", "E-01", "A-01"],
   "phase_zero_runtime_gate": ["S-01", "E-01", "A-01"],
+  "required_external_reconciliations": [
+    {
+      "issue_key": "S-02",
+      "github_issue": {
+        "number": 5,
+        "url": "https://github.com/erniesg/struct/issues/5"
+      },
+      "status": "pending coordinator-only promotion edit",
+      "blocks_execution": true,
+      "required_dependency_to_add": {
+        "key": "A-01",
+        "url": "https://github.com/erniesg/aether/issues/182"
+      },
+      "replace_source_commit": "d277971422476ff7683392c1254267ceb63c6fe4",
+      "replacement_source_commit": "exact fresh-reviewed promoted repair head",
+      "exact_body_template_source": "docs/superpowers/plans/2026-08-27-cross-repository-architecture-issue-plan.md#already-created-issue-reconciliation-at-promotion"
+    }
+  ],
   "issues": [
     {
       "key": "S-01",
@@ -307,13 +326,43 @@
       "key": "E-ACT",
       "create_github_issue": false,
       "depends_on": ["E-05"],
-      "unlocks": ["E-06"]
+      "unlocks": ["E-06"],
+      "admission_condition": {
+        "required_receipt_type": "erniesg.writer-route-activation.v1",
+        "required_status": "accepted",
+        "binds": [
+          "exact_head",
+          "target",
+          "artifact_and_package_pins",
+          "authorized_actor",
+          "migration_and_backfill_evidence",
+          "rollout_and_observation_thresholds",
+          "rollback_or_forward_recovery",
+          "expiry"
+        ],
+        "must_be_current_and_unexpired": true,
+        "failure_mode": "deny E-06 admission"
+      }
     },
     {
       "key": "A-REQ",
       "create_github_issue": false,
       "depends_on": ["A-01"],
-      "unlocks": ["Printer requirements inquiry only"]
+      "unlocks": ["Printer requirements inquiry only"],
+      "admission_condition": {
+        "required_receipt_type": "aether.printer-requirements-inquiry.v1",
+        "required_status": "accepted",
+        "binds": [
+          "printer_and_contact",
+          "questions",
+          "disclosures",
+          "communication_authority",
+          "cost",
+          "expiry"
+        ],
+        "must_be_current_and_unexpired": true,
+        "failure_mode": "deny direct printer inquiry; user-supplied or public no-contact evidence remains allowed"
+      }
     },
     {
       "key": "A-ACT",
@@ -321,10 +370,27 @@
       "depends_on": ["A-02"],
       "unlocks": [
         "Exact authorized Aether route, deployment, or printer-submission action only"
-      ]
+      ],
+      "admission_condition": {
+        "required_receipt_type": "aether.external-action.v1",
+        "required_status": "accepted",
+        "binds": [
+          "exact_head_and_artifacts",
+          "route_or_environment",
+          "audience_and_authorization_policy",
+          "printer_contact_and_disclosed_data_when_applicable",
+          "renderer_and_profile",
+          "checks_and_health_thresholds",
+          "cost_when_applicable",
+          "recovery",
+          "expiry"
+        ],
+        "must_be_current_and_unexpired": true,
+        "failure_mode": "deny the named route, deployment, or submission action"
+      }
     }
   ],
-  "recommended_execution_dependency_order": [
+  "recommended_full_dag_order": [
     "S-01",
     "R-01",
     "E-01",
@@ -333,6 +399,7 @@
     "R-04",
     "E-WF",
     "A-01",
+    "A-REQ",
     "S-02",
     "S-03",
     "R-07",
@@ -346,9 +413,11 @@
     "E-04",
     "R-10",
     "E-05",
+    "E-ACT",
     "R-11",
     "E-06",
     "A-02",
+    "A-ACT",
     "E-07"
   ],
   "github_creation_order": [

@@ -4,6 +4,21 @@ Personal site and blog for [ernie.sg](https://ernie.sg), built with Astro, Tailw
 
 The site is based on `astro-erudite`, but this repo is now the production source for Ernie.SG rather than a generic template checkout.
 
+## Research publishing boundary
+
+`/research` is part of this owner-first Astro research-publishing application,
+not a journal-management system. Current routes use `/research` and
+`/research/[id]`; `/research/:slug` describes the documented target durable
+publication lifecycle, not a current dynamic publication record. The current
+browser importer accepts local PDF/DOCX and direct PDF URLs, but its
+browser/local-first review evidence and existing research artifacts do not yet
+establish durable editorial approval, release, or deployment.
+
+- [Product contract](PRODUCT.md) — owner scope, lifecycle, and boundaries.
+- [Research publishing architecture](docs/research/ARCHITECTURE.md) — current
+  capabilities, target evidence requirements, and the Struct/Aether/Rucksack
+  boundary.
+
 ## What This Site Does
 
 - Publishes essays, experiments, and field notes from `src/content/blog`.
@@ -69,7 +84,8 @@ npm run pdf:review-sink
 The trusted sink reads `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and
 optional `LANGFUSE_BASE_URL` from its process environment. Those secrets never
 enter the browser bundle. Langfuse is an analysis mirror; the exported
-hash-bound receipt remains the review authority used by Rucksack.
+hash-bound receipt remains browser/local-first review evidence used by
+Rucksack, not a durable approval or public-release record.
 
 ## Content Model
 

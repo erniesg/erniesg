@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_plan": "docs/superpowers/plans/2026-08-27-cross-repository-architecture-issue-plan.md",
-  "source_plan_sha256": "7fb71f8dd9b06157467fa16710b535d3d826ada844f31c85dd728a30f19321e7",
+  "source_plan_sha256": "6a7f9fdf66a06ae43df50a38625fbd2419b11d6dcf529ad8d963246f023363ff",
   "coordinator_only_external_mutation": true,
   "issue_creation_authorized_by_user_go": true,
   "issue_creation_status": "completed",

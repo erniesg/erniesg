@@ -1,0 +1,559 @@
+{
+  "schema_version": 1,
+  "source_plan": "docs/superpowers/plans/2026-08-27-cross-repository-architecture-issue-plan.md",
+  "source_plan_sha256": "6a7f9fdf66a06ae43df50a38625fbd2419b11d6dcf529ad8d963246f023363ff",
+  "coordinator_only_external_mutation": true,
+  "issue_creation_authorized_by_user_go": true,
+  "issue_creation_status": "completed",
+  "issue_creation_completed_on": "2026-08-27",
+  "issue_creation_completed_count": 25,
+  "issue_creation_history": [
+    "The user explicitly authorized the sole coordinator to create and link the reviewed map.",
+    "The coordinator created all 25 mapped issues; creation did not authorize implementation or any decision gate."
+  ],
+  "github_creation_order_status": "completed historical record; execution follows depends_on, phase_zero_runtime_gate, decision_gates, and recommended_full_dag_order",
+  "recommended_full_dag_order_semantics": "topological projection only; inclusion never satisfies or self-authorizes a decision gate, every gate requires freshly validated immutable explicit-user-authorization evidence, and A-REQ/A-ACT remain optional unless their named external action is requested",
+  "exact_defaults": {
+    "erniesg/rucksack": "2513b7a76ad50e9751101454054bf1120cb1983e",
+    "erniesg/erniesg": "c7a706ecbac1a527cad11a3246e602bd56636d6f",
+    "erniesg/struct": "6ecb78d1753b847ec7295bf45f43237225663728",
+    "erniesg/aether": "f8643bee4819afa465be3e32fdd63788566987e6"
+  },
+  "documentation_landing_order": ["S-01", "E-01", "A-01"],
+  "phase_zero_runtime_gate": ["S-01", "E-01", "A-01"],
+  "required_external_reconciliations": [
+    {
+      "issue_key": "S-02",
+      "github_issue": {
+        "number": 5,
+        "url": "https://github.com/erniesg/struct/issues/5"
+      },
+      "status": "pending coordinator-only promotion edit",
+      "blocks_execution": true,
+      "required_dependency_to_add": {
+        "key": "A-01",
+        "url": "https://github.com/erniesg/aether/issues/182"
+      },
+      "replace_source_commit": "d277971422476ff7683392c1254267ceb63c6fe4",
+      "replacement_source_commit": "exact fresh-reviewed promoted repair head",
+      "exact_body_template_source": "docs/superpowers/plans/2026-08-27-cross-repository-architecture-issue-plan.md#already-created-issue-reconciliation-at-promotion"
+    }
+  ],
+  "issues": [
+    {
+      "key": "S-01",
+      "repository": "erniesg/struct",
+      "title": "Land the Struct product contract and freeze the first-release API/release manifest",
+      "depends_on": [],
+      "github_issue": {
+        "number": 4,
+        "url": "https://github.com/erniesg/struct/issues/4",
+        "state_at_recording": "OPEN"
+      }
+    },
+    {
+      "key": "E-01",
+      "repository": "erniesg/erniesg",
+      "title": "Rebase the Ernie.SG product and research-architecture contract onto current default",
+      "depends_on": ["S-01"],
+      "github_issue": {
+        "number": 280,
+        "url": "https://github.com/erniesg/erniesg/issues/280",
+        "state_at_recording": "OPEN"
+      }
+    },
+    {
+      "key": "E-WF",
+      "repository": "erniesg/erniesg",
+      "title": "Register and reconcile Ernie.SG's generated publisher workflow",
+      "depends_on": ["E-01"],
+      "github_issue": {
+        "number": 281,
+        "url": "https://github.com/erniesg/erniesg/issues/281",
+        "state_at_recording": "OPEN"
+      }
+    },
+    {
+      "key": "A-01",
+      "repository": "erniesg/aether",
+      "title": "Manually reconcile Aether's current, target, and released-state product contract",
+      "depends_on": ["S-01", "E-01"],
+      "github_issue": {
+        "number": 182,
+        "url": "https://github.com/erniesg/aether/issues/182",
+        "state_at_recording": "OPEN"
+      }
+    },
+    {
+      "key": "S-02",
+      "repository": "erniesg/struct",
+      "title": "Correct Struct dependency direction and harden the public boundary",
+      "depends_on": ["S-01", "A-01"],
+      "github_issue": {
+        "number": 5,
+        "url": "https://github.com/erniesg/struct/issues/5",
+        "state_at_recording": "OPEN"
+      }
+    },
+    {
+      "key": "S-03",
+      "repository": "erniesg/struct",
+      "title": "Implement the normative fail-closed StructBundle contract",
+      "depends_on": ["S-02"],
+      "github_issue": {
+        "number": 6,
+        "url": "https://github.com/erniesg/struct/issues/6",
+        "state_at_recording": "OPEN"
+      }
+    },
+    {
+      "key": "S-04",
+      "repository": "erniesg/struct",
+      "title": "Prove the Struct package through a clean packed consumer and frozen goldens",
+      "depends_on": ["S-03"],
+      "github_issue": {
+        "number": 7,
+        "url": "https://github.com/erniesg/struct/issues/7",
+        "state_at_recording": "OPEN"
+      }
+    },
+    {
+      "key": "E-02",
+      "repository": "erniesg/erniesg",
+      "title": "Establish the app-owned Struct adapter and frozen cross-repository parity corpus",
+      "depends_on": ["E-01", "E-WF", "S-04"],
+      "github_issue": {
+        "number": 282,
+        "url": "https://github.com/erniesg/erniesg/issues/282",
+        "state_at_recording": "OPEN"
+      }
+    },
+    {
+      "key": "E-03",
+      "repository": "erniesg/erniesg",
+      "title": "Cut Ernie.SG core/codecs/IDs/ordering/recovery over to the exact Struct package",
+      "depends_on": ["E-02"],
+      "github_issue": {
+        "number": 283,
+        "url": "https://github.com/erniesg/erniesg/issues/283",
+        "state_at_recording": "OPEN"
+      }
+    },
+    {
+      "key": "E-04",
+      "repository": "erniesg/erniesg",
+      "title": "Cut XHTML/EPUB over to Struct and converge publication semantics",
+      "depends_on": ["E-03"],
+      "github_issue": {
+        "number": 284,
+        "url": "https://github.com/erniesg/erniesg/issues/284",
+        "state_at_recording": "OPEN"
+      }
+    },
+    {
+      "key": "E-05",
+      "repository": "erniesg/erniesg",
+      "title": "Design and implement durable editorial publication behind an inactive gate",
+      "depends_on": ["E-04"],
+      "github_issue": {
+        "number": 285,
+        "url": "https://github.com/erniesg/erniesg/issues/285",
+        "state_at_recording": "OPEN"
+      }
+    },
+    {
+      "key": "E-06",
+      "repository": "erniesg/erniesg",
+      "title": "Activate one governed writer/public route and rehearse recovery",
+      "depends_on": ["E-ACT"],
+      "github_issue": {
+        "number": 286,
+        "url": "https://github.com/erniesg/erniesg/issues/286",
+        "state_at_recording": "OPEN"
+      }
+    },
+    {
+      "key": "E-07",
+      "repository": "erniesg/erniesg",
+      "title": "Remove duplicate portable Struct sources and generic tests from Ernie.SG",
+      "depends_on": ["E-06"],
+      "github_issue": {
+        "number": 287,
+        "url": "https://github.com/erniesg/erniesg/issues/287",
+        "state_at_recording": "OPEN"
+      }
+    },
+    {
+      "key": "A-02",
+      "repository": "erniesg/aether",
+      "title": "Build an inactive authenticated Struct import and the selected local A5/social proof",
+      "depends_on": ["A-01", "S-04", "E-06"],
+      "github_issue": {
+        "number": 183,
+        "url": "https://github.com/erniesg/aether/issues/183",
+        "state_at_recording": "OPEN"
+      },
+      "conditional_prerequisites": [
+        "Completed versioned real-printer requirements",
+        "A-REQ when direct printer contact is required",
+        "Independent acceptance of A-02 checkpoint 0 renderer/profile proof"
+      ]
+    },
+    {
+      "key": "R-01",
+      "repository": "erniesg/rucksack",
+      "title": "Add a fail-closed authority-path registry and machine-enforced import/public-API contract",
+      "depends_on": [],
+      "github_issue": {
+        "number": 674,
+        "url": "https://github.com/erniesg/rucksack/issues/674",
+        "state_at_recording": "OPEN"
+      }
+    },
+    {
+      "key": "R-02",
+      "repository": "erniesg/rucksack",
+      "title": "Bind scaffold rollback and repository provisioning to explicit authority",
+      "depends_on": ["R-01"],
+      "github_issue": {
+        "number": 675,
+        "url": "https://github.com/erniesg/rucksack/issues/675",
+        "state_at_recording": "OPEN"
+      }
+    },
+    {
+      "key": "R-03",
+      "repository": "erniesg/rucksack",
+      "title": "Replace raw publisher credentials and caller-controlled identity with opaque capabilities",
+      "depends_on": ["R-01"],
+      "github_issue": {
+        "number": 676,
+        "url": "https://github.com/erniesg/rucksack/issues/676",
+        "state_at_recording": "OPEN"
+      }
+    },
+    {
+      "key": "R-04",
+      "repository": "erniesg/rucksack",
+      "title": "Bind VM lease generations and supervise complete process trees",
+      "depends_on": ["R-01"],
+      "github_issue": {
+        "number": 677,
+        "url": "https://github.com/erniesg/rucksack/issues/677",
+        "state_at_recording": "OPEN"
+      }
+    },
+    {
+      "key": "R-05",
+      "repository": "erniesg/rucksack",
+      "title": "Constrain VM sandbox credentials, host mounts, and network egress",
+      "depends_on": ["R-03", "R-04"],
+      "github_issue": {
+        "number": 679,
+        "url": "https://github.com/erniesg/rucksack/issues/679",
+        "state_at_recording": "OPEN"
+      }
+    },
+    {
+      "key": "R-07",
+      "repository": "erniesg/rucksack",
+      "title": "Make every filesystem receipt and store descriptor-rooted and race-safe",
+      "depends_on": ["R-02"],
+      "github_issue": {
+        "number": 678,
+        "url": "https://github.com/erniesg/rucksack/issues/678",
+        "state_at_recording": "OPEN"
+      }
+    },
+    {
+      "key": "R-06",
+      "repository": "erniesg/rucksack",
+      "title": "Revalidate and single-use every mutation capability at adapter invocation",
+      "depends_on": ["R-02", "R-03", "R-04", "R-05", "R-07"],
+      "github_issue": {
+        "number": 680,
+        "url": "https://github.com/erniesg/rucksack/issues/680",
+        "state_at_recording": "OPEN"
+      }
+    },
+    {
+      "key": "R-08",
+      "repository": "erniesg/rucksack",
+      "title": "Cut the autopilot/VM/notification cycle behind explicit ports and shrink the canonical SCC",
+      "depends_on": ["R-02", "R-03", "R-04", "R-05", "R-06", "R-07"],
+      "github_issue": {
+        "number": 681,
+        "url": "https://github.com/erniesg/rucksack/issues/681",
+        "state_at_recording": "OPEN"
+      }
+    },
+    {
+      "key": "R-09",
+      "repository": "erniesg/rucksack",
+      "title": "Cut merge/PR and GitHub/provenance cycles and shrink the canonical SCC",
+      "depends_on": ["R-08"],
+      "github_issue": {
+        "number": 682,
+        "url": "https://github.com/erniesg/rucksack/issues/682",
+        "state_at_recording": "OPEN"
+      }
+    },
+    {
+      "key": "R-10",
+      "repository": "erniesg/rucksack",
+      "title": "Invert scaffold/setup dependencies, shrink the canonical SCC, and preserve compatibility",
+      "depends_on": ["R-09"],
+      "github_issue": {
+        "number": 683,
+        "url": "https://github.com/erniesg/rucksack/issues/683",
+        "state_at_recording": "OPEN"
+      }
+    },
+    {
+      "key": "R-11",
+      "repository": "erniesg/rucksack",
+      "title": "Split product-server delivery and finalize explicit public facades with no nontrivial SCC",
+      "depends_on": ["R-10"],
+      "github_issue": {
+        "number": 684,
+        "url": "https://github.com/erniesg/rucksack/issues/684",
+        "state_at_recording": "OPEN"
+      }
+    }
+  ],
+  "decision_gates": [
+    {
+      "key": "E-ACT",
+      "create_github_issue": false,
+      "depends_on": ["E-05"],
+      "unlocks": ["E-06"],
+      "admission_condition": {
+        "required_receipt_type": "erniesg.writer-route-activation.v1",
+        "required_status": "accepted",
+        "required_user_authorization": {
+          "required_evidence_type": "erniesg.explicit-user-authorization.v1",
+          "immutable": true,
+          "authenticated_authorizing_user_required": true,
+          "exact_named_action": "activate Ernie.SG writer/public route",
+          "exact_target_required": true,
+          "authorized_execution_actor_required": true,
+          "issued_at_required": true,
+          "expiry_required": true,
+          "cost_and_billing_scope": {
+            "required": true,
+            "allowed_forms": [
+              "explicit_no_cost_no_billing",
+              "currency_hard_cap_billing_owner_and_permitted_charge_category"
+            ]
+          },
+          "must_be_validated_before_receipt_acceptance": true,
+          "receipt_must_bind_authorization_evidence_sha256": true,
+          "ineligible_evidence": [
+            "2026-08-27 ADR/context and issue-creation go"
+          ]
+        },
+        "validation_order": [
+          "authenticate_and_validate_immutable_explicit_user_authorization",
+          "validate_gate_specific_evidence",
+          "accept_receipt"
+        ],
+        "binds": [
+          "explicit_user_authorization_id",
+          "explicit_user_authorization_evidence_sha256",
+          "authenticated_authorizing_user_identity",
+          "exact_named_action",
+          "exact_target",
+          "authorized_execution_actor",
+          "authorization_issued_at",
+          "authorization_expiry",
+          "authorization_cost_and_billing_scope",
+          "exact_head",
+          "artifact_and_package_pins",
+          "migration_and_backfill_evidence",
+          "rollout_and_observation_thresholds",
+          "rollback_or_forward_recovery",
+          "abort_conditions"
+        ],
+        "must_be_current_and_unexpired": true,
+        "failure_mode": "deny E-06 admission"
+      }
+    },
+    {
+      "key": "A-REQ",
+      "create_github_issue": false,
+      "depends_on": ["A-01"],
+      "unlocks": ["Printer requirements inquiry only"],
+      "admission_condition": {
+        "required_receipt_type": "aether.printer-requirements-inquiry.v1",
+        "required_status": "accepted",
+        "required_user_authorization": {
+          "required_evidence_type": "aether.explicit-user-authorization.v1",
+          "immutable": true,
+          "authenticated_authorizing_user_required": true,
+          "exact_named_action": "send printer-requirements inquiry",
+          "exact_target_required": true,
+          "authorized_execution_actor_required": true,
+          "issued_at_required": true,
+          "expiry_required": true,
+          "cost_and_billing_scope": {
+            "required": true,
+            "allowed_forms": [
+              "explicit_no_cost_no_billing",
+              "currency_hard_cap_billing_owner_and_permitted_charge_category"
+            ]
+          },
+          "must_be_validated_before_receipt_acceptance": true,
+          "receipt_must_bind_authorization_evidence_sha256": true,
+          "ineligible_evidence": [
+            "2026-08-27 ADR/context and issue-creation go"
+          ]
+        },
+        "validation_order": [
+          "authenticate_and_validate_immutable_explicit_user_authorization",
+          "validate_gate_specific_evidence",
+          "accept_receipt"
+        ],
+        "binds": [
+          "explicit_user_authorization_id",
+          "explicit_user_authorization_evidence_sha256",
+          "authenticated_authorizing_user_identity",
+          "exact_named_action",
+          "exact_target",
+          "authorized_execution_actor",
+          "authorization_issued_at",
+          "authorization_expiry",
+          "authorization_cost_and_billing_scope",
+          "printer_and_contact",
+          "contact_channel",
+          "questions",
+          "disclosures",
+          "communication_authority",
+          "evidence_retention_location"
+        ],
+        "must_be_current_and_unexpired": true,
+        "failure_mode": "deny direct printer inquiry; user-supplied or public no-contact evidence remains allowed"
+      }
+    },
+    {
+      "key": "A-ACT",
+      "create_github_issue": false,
+      "depends_on": ["A-02"],
+      "unlocks": [
+        "Exact authorized Aether route, deployment, or printer-submission action only"
+      ],
+      "admission_condition": {
+        "required_receipt_type": "aether.external-action.v1",
+        "required_status": "accepted",
+        "required_user_authorization": {
+          "required_evidence_type": "aether.explicit-user-authorization.v1",
+          "immutable": true,
+          "authenticated_authorizing_user_required": true,
+          "allowed_exact_named_actions": [
+            "activate Aether route",
+            "deploy Aether",
+            "submit Aether printer proof"
+          ],
+          "exactly_one_named_action_required": true,
+          "exact_target_required": true,
+          "authorized_execution_actor_required": true,
+          "issued_at_required": true,
+          "expiry_required": true,
+          "cost_and_billing_scope": {
+            "required": true,
+            "allowed_forms": [
+              "explicit_no_cost_no_billing",
+              "currency_hard_cap_billing_owner_and_permitted_charge_category"
+            ]
+          },
+          "must_be_validated_before_receipt_acceptance": true,
+          "receipt_must_bind_authorization_evidence_sha256": true,
+          "ineligible_evidence": [
+            "2026-08-27 ADR/context and issue-creation go"
+          ]
+        },
+        "validation_order": [
+          "authenticate_and_validate_immutable_explicit_user_authorization",
+          "validate_gate_specific_evidence",
+          "accept_receipt"
+        ],
+        "binds": [
+          "explicit_user_authorization_id",
+          "explicit_user_authorization_evidence_sha256",
+          "authenticated_authorizing_user_identity",
+          "exact_named_action",
+          "exact_target",
+          "authorized_execution_actor",
+          "authorization_issued_at",
+          "authorization_expiry",
+          "authorization_cost_and_billing_scope",
+          "exact_head_and_artifacts",
+          "route_or_environment",
+          "audience_and_caller_authorization_policy",
+          "printer_contact_and_disclosed_data_when_applicable",
+          "renderer_and_profile",
+          "checks_and_health_thresholds",
+          "recovery"
+        ],
+        "must_be_current_and_unexpired": true,
+        "failure_mode": "deny the named route, deployment, or submission action"
+      }
+    }
+  ],
+  "recommended_full_dag_order": [
+    "S-01",
+    "R-01",
+    "E-01",
+    "R-02",
+    "R-03",
+    "R-04",
+    "E-WF",
+    "A-01",
+    "A-REQ",
+    "S-02",
+    "S-03",
+    "R-07",
+    "R-05",
+    "S-04",
+    "R-06",
+    "E-02",
+    "R-08",
+    "E-03",
+    "R-09",
+    "E-04",
+    "R-10",
+    "E-05",
+    "E-ACT",
+    "R-11",
+    "E-06",
+    "A-02",
+    "A-ACT",
+    "E-07"
+  ],
+  "github_creation_order": [
+    "S-01",
+    "R-01",
+    "E-01",
+    "S-02",
+    "R-02",
+    "R-03",
+    "R-04",
+    "E-WF",
+    "A-01",
+    "S-03",
+    "R-07",
+    "R-05",
+    "S-04",
+    "R-06",
+    "E-02",
+    "R-08",
+    "E-03",
+    "R-09",
+    "E-04",
+    "R-10",
+    "E-05",
+    "R-11",
+    "E-06",
+    "A-02",
+    "E-07"
+  ]
+}

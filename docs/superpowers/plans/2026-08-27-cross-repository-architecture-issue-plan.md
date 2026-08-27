@@ -1,20 +1,22 @@
 # Dependency-ordered issue plan for ADR-0001
 
-- Status: Proposed; these are issue specifications, not created GitHub issues
+- Status: User-approved and created; the sole coordinator created all 25 mapped GitHub issues, while implementation and downstream action gates remain separately controlled
 - Parent decision: `ADR-0001: Domain ownership and package boundaries for Struct, Ernie.SG, Rucksack, and Aether`
 - Date: 2026-08-27
 - External mutation owner: one coordinator only
 
-## Creation and execution gate
+## Creation record and execution gates
 
-Do not create these issues until all of the following are true:
+The issue-creation gate was satisfied on 2026-08-27:
 
-1. ADR-0001 and this issue plan have received independent architecture, security, and landability review at fresh exact default heads.
-2. Actionable review findings have been repaired and a fresh pass finds none in scope.
-3. The user explicitly approves GitHub issue creation.
-4. The coordinator rechecks current default heads and open work, reserves shared seams, and removes or rebases any item whose premise is stale.
+1. ADR-0001 and this issue plan received independent architecture, security, and landability review at fresh exact default heads.
+2. Actionable review findings were repaired and fresh passes found none in the then-reviewed scope.
+3. The user explicitly approved coordinator-owned GitHub issue creation.
+4. The coordinator rechecked current default heads/open work and created the 25 mapped issues. Their durable repository, number, URL, and recorded state are in the machine-readable issue map.
 
-Issue creation does not authorize implementation, package publication, deployment, pull-request mutation, issue transfer, visibility change, or outreach. The coordinator owns every external mutation unless it explicitly delegates one idempotent, target-scoped operation.
+Completed issue creation does not authorize implementation, package publication, deployment, pull-request mutation, issue transfer, visibility change, outreach, E-ACT, A-REQ, or A-ACT. Before any issue executes, its owner must recheck its exact base, dependency evidence, open work, and reserved seams. The coordinator owns every external mutation unless it explicitly delegates one idempotent, target-scoped operation.
+
+The map retains the completed GitHub creation order as history. It is not execution authority. `depends_on`, `phase_zero_runtime_gate`, and `recommended_execution_dependency_order` are the corrected execution contract; in particular, S-02 cannot start until A-01 lands.
 
 ## Planning baseline
 
@@ -30,7 +32,7 @@ Every issue begins by recording its actual base SHA. If a default moved, the own
 ## Dependency tree
 
 ```text
-ADR/plan accepted and issue creation explicitly approved
+ADR/plan reviewed, issue creation explicitly approved, and all 25 issues created
 |
 +-- Documentation spine (serialized across repositories)
 |   S-01 Struct contract and API/release manifest
@@ -38,8 +40,8 @@ ADR/plan accepted and issue creation explicitly approved
 |           `-- A-01 Aether manual current/target/released-state reconciliation
 |           `-- E-WF Register and reconcile Ernie.SG's generated publisher workflow
 |
-+-- Struct runtime spine
-|   S-01
++-- Struct runtime spine (starts only after the complete documentation spine)
+|   A-01
 |     `-- S-02 Correct Struct dependency direction and public boundary
 |           `-- S-03 Implement the fail-closed StructBundle contract
 |                 `-- S-04 Prove the packed package in a clean consumer
@@ -74,13 +76,13 @@ ADR/plan accepted and issue creation explicitly approved
                         `-- R-11 Split product-server delivery and finish with SCC <= 1
 ```
 
-The Struct -> Ernie.SG -> Aether documentation order is mandatory. Rucksack work is domain-independent, but its mutations must still be deconflicted with all active Rucksack lanes.
+The Struct -> Ernie.SG -> Aether documentation order is mandatory. S-02 and every Struct/Ernie.SG/Aether runtime descendant remain blocked until A-01 lands. Rucksack work is domain-independent, but its mutations must still be deconflicted with all active Rucksack lanes.
 
 ## Issue sizing rules
 
 Each issue below is one coherent, independently reviewable unit. Split an issue before implementation if its pilot diff exceeds a reviewer's ability to reason about one dependency cut, but do not create one-function-file or path-only fragments.
 
-The tree contains 25 proposed GitHub issues plus three non-issue action/activation decision gates. That is the maximum initial tree; implementation discoveries may split a node only before it starts and must retire the original bucket rather than creating an unbounded parallel backlog.
+The tree contains 25 coordinator-created GitHub issues plus three non-issue action/activation decision gates. That is the maximum initial tree; implementation discoveries may split a node only before it starts and must retire the original bucket rather than creating an unbounded parallel backlog.
 
 Every implementation issue must include:
 
@@ -196,7 +198,7 @@ Every implementation issue must include:
 
 **Repository:** `erniesg/struct`
 
-**Depends on:** S-01.
+**Depends on:** S-01 and A-01 landed. A-01 transitively proves the complete Struct -> Ernie.SG -> Aether phase-0 documentation sequence.
 
 **Purpose:** Make the package organization express semantic-versus-renderer ownership before Bundle implementation.
 
@@ -237,13 +239,13 @@ Every implementation issue must include:
 - Full-envelope canonical bytes define asset ordering, strict JSON/base64, noncanonical raw-input rejection, `bundleSha256`, and byte-preserving encode/decode round trips with cross-runtime vectors.
 - Existing document `href` remains a logical EPUB-relative path. External payload uses only `resourceId = "sha256:" + asset.sha256`; tests keep logical path and content address distinct, reject mismatch, and reject URLs, paths, storage keys, credentials, and attempts to relax `0.2.0` href rules.
 - Envelope assets are the only byte carriers and match the document asset set exactly.
-- External assets require the versioned isolated streaming resolver executor. Side-effect-free allocation returns supervisor control before the sole authority-granting `start()` call; startup is budgeted and revocable. Required logical href/content address, request/result/profile versions, transport-kind-discriminated non-secret receipts, trusted endpoint/root/store equality, synchronous authority revocation, out-of-realm termination/join on every outcome, package-monotonic total/cleanup budgets, abort -> revoke -> iterator return/cleanup -> terminate ordering, length caps, and residual work are normative and covered by the conformance harness.
+- External assets require the versioned isolated streaming resolver executor. Side-effect-free allocation returns supervisor control with idempotent cleanup before the sole authority-granting `start()` call; startup is budgeted, revocable, and cleanable even when it throws, rejects, or never settles. Required logical href/content address, request/result/profile versions, transport-kind-discriminated non-secret receipts, trusted endpoint/root/store equality, synchronous authority revocation, pre-start supervisor cleanup, optional iterator return only after a result exists, out-of-realm termination/join on every outcome, package-monotonic total/cleanup budgets, abort -> revoke -> conditional iterator return -> control cleanup -> terminate ordering, length caps, and residual work are normative and covered by the conformance harness.
 - Struct computes `policySha256` from the strict policy projection using the ADR's domain-separated RFC 8785 UTF-8 contract and exact ASCII identifier grammar before allocation; the request carries it, every transport receipt echoes it, and cross-runtime fixed vectors cover every policy kind and boundary value.
 - An optional expected `bundleSha256` is checked against size-capped raw envelope bytes before parsing or resolver execution; mismatch tests prove zero executor starts.
 - Resolver-capable untrusted ingress exists only on the bytes decoder. The value verifier accepts embedded-byte in-memory values only, exposes neither expected-raw-digest nor executor options, and makes no raw-wire/canonical-input claim; consumer tests forbid Ernie.SG/Aether wire ingress through it.
 - Every public acceptance API returns a genuine opaque package-created handle or a structured failure. Private canonical/document/asset storage is inaccessible; snapshots are deep-frozen copies, bytes are copy-on-read, and the encoder rejects forged handles.
 - Mutation/aliasing tests change every input and returned nested object, array, map-like view, and byte index after verification; verified encoding/digests/content remain unchanged or access fails closed.
-- Wrong media/bundle/schema versions, digest, receipt, base64, asset set, metadata, bytes, resource ID, transport-kind policy/receipt equality, execution/revocation/cleanup/terminal receipt, and resource limits fail closed. Never-settling startup and clean successful completion both prove revocation plus terminal join behavior; never-settling join is exercised in a sacrificial verification host whose parent proves bounded fail-stop, zero capacity reuse, and aggregate-pressure admission limits.
+- Wrong media/bundle/schema versions, digest, receipt, base64, asset set, metadata, bytes, resource ID, transport-kind policy/receipt equality, execution/revocation/cleanup/terminal receipt, and resource limits fail closed. Synchronous startup throw, rejected startup, never-settling startup, and clean successful completion all prove pre-start control cleanup, revocation, and terminal join behavior; never-settling cleanup/join is exercised in a sacrificial verification host whose parent proves bounded fail-stop, zero capacity reuse, and aggregate-pressure admission limits.
 - Independently valid but unequal envelope/document receipts are rejected.
 - Documentation and tests state that Struct verification proves integrity/conservation, not producer authenticity; no Struct digest or receipt is treated as a signature.
 - Fuzz/adversarial pilots cover hostile objects, nesting, cycles, lone surrogates, unsafe integers, raw-input/allocation pressure, duplicate keys, and limit boundaries before any broader corpus run.
@@ -465,7 +467,7 @@ Every implementation issue must include:
 - Fully rehashed forged, absent, stale, superseded, replayed, wrong-target/audience, revoked-key, mismatched, policy-rollback, expired-policy, unavailable-beyond-freshness, or improperly backdated-after-compromise producer evidence causes zero resolver-executor starts and fails Aether import. Pre-revocation records from a compromised key require trusted timestamp/log inclusion proof or fail.
 - Authentication plus atomic/recoverable content-addressed persistence of canonical full-envelope bytes, every resolved asset byte, and the immutable import record complete before editable composition is reachable.
 - Import record stores exact package/schema/bundle/document/receipt/asset hashes, canonical-bundle and asset object identities, producer-record identity/digest, and a separate Aether event receipt. Composition decodes/reads only that pinned import; re-resolution is recovery-only and repeats integrity+authenticity checks.
-- The Aether executor maps only the digest-derived non-secret resource ID through trusted endpoint/root configuration. Side-effect-free allocation returns control before authority-granting startup; never-settling startup remains revocable, and clean success also terminates/joins with a receipt. It passes the Struct conformance harness plus domain-separated policy-digest vectors, endpoint/path aliases, secret URL/path/matrix/percent-encoding non-retention, redirect, DNS/private-target, traversal/symlink, monotonic-budget/cancellation, deceptive-length, concurrency, synchronous authority revocation, out-of-realm hard termination/join, idempotent cleanup, transport-kind receipt equality, terminal-receipt, sacrificial-host fail-stop, repeated-failure admission, and residual-work tests.
+- The Aether executor maps only the digest-derived non-secret resource ID through trusted endpoint/root configuration. Side-effect-free allocation returns independently revocable supervisor control with idempotent cleanup before authority-granting startup; cleanup remains callable after synchronous throw, rejection, or never-settling startup, and clean success also terminates/joins with a receipt. It passes the Struct conformance harness plus domain-separated policy-digest vectors, endpoint/path aliases, secret URL/path/matrix/percent-encoding non-retention, redirect, DNS/private-target, traversal/symlink, monotonic-budget/cancellation, deceptive-length, concurrency, synchronous authority revocation, pre-start cleanup, conditional iterator return, out-of-realm hard termination/join, transport-kind receipt equality, terminal-receipt, sacrificial-host fail-stop, repeated-failure admission, and residual-work tests.
 - The inactive actor/session/workspace contract authorizes import, read, edit, release, and asset access separately; unauthorized and cross-workspace reads, writes, imports, ID enumeration, and direct Convex/API mutations fail before domain or storage access.
 - `CreativeGraph` references stable block/asset IDs and rejects missing or changed upstream references.
 - Semantic corrections require a newly verified upstream revision.
@@ -768,8 +770,10 @@ The coordinator should track evidence, not percentages:
 
 | Gate | Evidence required | Unlocks |
 |---|---|---|
-| ADR accepted | Reviewed exact artifact + user decision | Issue creation |
-| Struct docs current | Landed S-01 exact SHA | E-01, S-02 |
+| Issue creation completed | Reviewed exact ADR/map + user `go` + coordinator-created identities for all 25 issues | Planning backlog only; no implementation or downstream action authority |
+| Struct docs current | Landed S-01 exact SHA | E-01 |
+| Ernie.SG docs current | Landed E-01 exact SHA | E-WF and A-01 |
+| Phase-0 documentation complete | Landed A-01 exact SHA after S-01 and E-01 | S-02 and the Struct/Ernie.SG/Aether runtime spines |
 | Ernie generated workflow governed | E-WF pinned source/generator or frozen-legacy manifest + drift test | E-02 and publication-state work |
 | Struct boundary clean | Import graph + unchanged goldens | S-03 |
 | Bundle verified | Negative/mutation matrix + cross-runtime vectors + resolver conformance | S-04 |

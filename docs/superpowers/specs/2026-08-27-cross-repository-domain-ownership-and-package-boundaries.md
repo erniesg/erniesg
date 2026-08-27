@@ -1,16 +1,17 @@
 # ADR-0001: Domain ownership and package boundaries for Struct, Ernie.SG, Rucksack, and Aether
 
-- Status: Proposed; implementation and issue creation are not authorized
+- Status: Proposed for merge; the user authorized coordinator-owned issue creation and the coordinator created all 25 mapped issues; implementation and downstream action gates remain separately controlled
 - Date: 2026-08-27
 - Decision owners: Ernie.SG project owner and repository maintainers
 - Review scope: exact remote default heads and reviewed product-contract documentation listed below
 - Supersedes: no accepted ADR; it reconciles the currently planned cross-repository product contracts
+- Planning history: on 2026-08-27 the user approved the reviewed issue-creation map; the sole external-mutation coordinator then created the 25 mapped GitHub issues. That completed planning mutation did not authorize implementation, publication, deployment, merge, outreach, route activation, or either Aether action gate.
 
 ## Decision gate
 
-This ADR is the review artifact required before repository reorganization or GitHub issue creation. It records a target, not a claim that the target is implemented.
+This ADR was the review artifact required before the completed GitHub issue-creation step and remains the design gate before repository reorganization. It records a target, not a claim that the target is implemented.
 
-No repository, branch, pull request, issue, package registry, deployment, or visibility setting was changed while preparing it. Approval of this ADR and its issue plan is required before issues may be created. Publishing a package, deploying an application, or activating a writer requires a later, target-specific gate even after this ADR is accepted.
+No repository, branch, pull request, issue, package registry, deployment, or visibility setting was changed while initially preparing it. After independent review and the user's explicit approval, the sole coordinator pushed the planning branch, opened PR #279, and created exactly the 25 mapped issues. Publishing a package, implementing an issue, deploying an application, merging a change, contacting a printer, or activating a writer/route still requires its applicable later gate.
 
 ## Frozen evidence baseline
 
@@ -342,7 +343,6 @@ type StructAssetResolutionResult = {
         storeId: string
       }>
   declaredByteLength?: number
-  cleanup(): Promise<void>
 }
 
 type StructResolverRevocationReceipt = Readonly<{
@@ -359,6 +359,8 @@ type StructResolverTerminalReceipt = Readonly<{
 interface StructResolverExecutionControl {
   // Synchronously invalidates brokered credential, filesystem, and egress authority.
   revokeAndQuarantine(): StructResolverRevocationReceipt
+  // Idempotent supervisor cleanup is available before start and remains callable if start throws, rejects, or never settles.
+  cleanup(): Promise<void>
   // Controlled by the isolated worker/process supervisor, not adapter code.
   terminateAndJoin(): Promise<StructResolverTerminalReceipt>
 }
@@ -379,7 +381,7 @@ The required logical `href` and content-addressed `resourceId` are passed separa
 
 `expectedPolicySha256` is computed by Struct before allocation. It is lowercase hexadecimal SHA-256 over ASCII `erniesg.struct.resolver-policy.v1`, one zero byte, then UTF-8 RFC 8785 canonical bytes of the exact strict JSON policy projection. Policy identifiers (`profileId`, `profileVersion`, `endpointMapId`, endpoint IDs, `rootCapabilityId`, and `storeId`) are case-sensitive ASCII matching `^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`; there is no Unicode, percent-decoding, case folding, or other normalization. All policy arrays are duplicate-free and sorted by the same documented Unicode scalar comparison used for bundle assets before canonicalization. Unknown fields, unsafe JSON values, or identifiers outside that grammar fail before executor allocation. Every transport receipt must echo that exact digest as `policySha256`; Struct compares it byte-for-byte and validates the transport-kind-specific IDs. Cross-runtime fixed vectors cover every policy kind and N-1/N/N+1 values.
 
-The package measures the total budget with a monotonic clock and reserves `cleanupReserveMs` before allocation. `allocate()` may construct supervisor state but cannot start adapter code or grant credential/filesystem/network authority. Struct obtains the control handle first and only then invokes `start()`; startup is inside the total budget and a never-settling start remains revocable. It never runs adapter code synchronously in the caller's realm. At the streaming cutoff, or on success, startup/stream error, limit breach, or cancellation, Struct aborts, synchronously calls `revokeAndQuarantine()`, invokes and races iterator `return()` plus idempotent `cleanup()` inside the reserved cleanup budget, then always calls and awaits `terminateAndJoin()` inside that same reserved outer budget. Neither success nor structured failure settles without a matching terminal receipt. A missing or never-settling terminal join causes the separately supervised verification host to fail-stop; its parent confirms host/executor termination before reporting a bounded infrastructure failure, and no resolver capacity is reused. The package checks protocol/profile version, resource ID, expected policy SHA-256, and the transport-kind-specific equality rules: HTTPS endpoint-map/endpoint/redirect IDs, filesystem root-capability ID, or content-addressed store ID, plus terminal receipts. The consumer owns the isolated executor, endpoint map, actual transport authority, descriptor root, DNS/private-address policy, and concurrency, but conformance requires revocation and fail-stop supervision to be independent of adapter cooperation. S-03 supplies the versioned conformance harness; every Ernie.SG or Aether executor must pass side-effect-free allocation, never-settling startup, clean-success join, endpoint-map alias, secret URL/path/matrix/percent-encoding non-retention, DNS-rebinding, traversal/symlink, redirect-loop, deceptive-length, monotonic-budget, cancellation, resolved/rejected/never-settling cleanup, never-settling join in a sacrificial host, hard termination, residual-work, repeated-failure admission control, and aggregate-pressure tests. An executor that cannot return control before authority grant, revoke authority synchronously, and produce a bounded terminal receipt outside adapter control is not conforming.
+The package measures the total budget with a monotonic clock and reserves `cleanupReserveMs` before allocation. `allocate()` may construct supervisor state but cannot start adapter code or grant credential/filesystem/network authority. It returns supervisor-owned `control`, including idempotent `cleanup()`, before Struct invokes `start()`; startup is inside the total budget and a throwing, rejecting, or never-settling start remains revocable and cleanable without a result object. It never runs adapter code synchronously in the caller's realm. At the streaming cutoff, or on success, synchronous startup throw, startup rejection/timeout, stream error, limit breach, or cancellation, Struct aborts, synchronously calls `revokeAndQuarantine()`, races iterator `return()` when a result iterator exists, invokes and races pre-start `control.cleanup()` inside the reserved cleanup budget, and then calls and awaits `terminateAndJoin()` inside the reserved outer budget even when iterator return or cleanup rejects or times out. Neither success nor structured failure settles without a matching terminal receipt. A missing or never-settling terminal join causes the separately supervised verification host to fail-stop; its parent confirms host/executor termination before reporting a bounded infrastructure failure, and no resolver capacity is reused. The package checks protocol/profile version, resource ID, expected policy SHA-256, and the transport-kind-specific equality rules: HTTPS endpoint-map/endpoint/redirect IDs, filesystem root-capability ID, or content-addressed store ID, plus terminal receipts. The consumer owns the isolated executor, endpoint map, actual transport authority, descriptor root, DNS/private-address policy, and concurrency, but conformance requires revocation, cleanup, and fail-stop supervision to be independent of adapter cooperation and available before adapter startup. S-03 supplies the versioned conformance harness; every Ernie.SG or Aether executor must pass side-effect-free allocation, synchronous startup throw, rejected and never-settling startup, clean-success join, endpoint-map alias, secret URL/path/matrix/percent-encoding non-retention, DNS-rebinding, traversal/symlink, redirect-loop, deceptive-length, monotonic-budget, cancellation, pre-start cleanup after every startup outcome, iterator cleanup when available, never-settling cleanup, never-settling join in a sacrificial host, hard termination, residual-work, repeated-failure admission control, and aggregate-pressure tests. An executor that cannot return independently revocable and cleanable supervisor control before authority grant, or cannot produce a bounded terminal receipt outside adapter control, is not conforming.
 
 Package, document schema, bundle, renderer implementation, and renderer profile versions are independent. Ernie.SG and Aether records must store the exact package pin and relevant renderer/profile versions alongside artifact digests.
 
@@ -641,21 +643,21 @@ Source-neutral golden fixtures live in Struct: canonical documents, canonical JS
 Use expand, switch, and contract. Never combine a writer switch, duplicate deletion, and package rollback change in one unit.
 
 1. **Freeze.** Preserve legacy/current/recoverable/failure documents, receipts, IDs, renderer outputs, asset hashes, and app source fixtures.
-2. **Make Struct releasable without publishing.** Repair internal direction, define explicit exports, implement and adversarially test Bundle, build declarations, run `npm pack`, and install the tarball in a clean consumer with no source-path access.
-3. **Produce a publish decision packet.** Exact tarball digest, contents, export map, compatibility matrix, and checks are reviewed. Publishing an exact prerelease remains separately authorized.
-4. **Expand Ernie.SG readers.** Add an exact package pin, retain legacy `0.1.0` and current `0.2.0` reads, and compare package behavior against frozen local behavior.
-5. **Move consumer families without changing the writer.** Core types/codecs, then IDs/ordering/recovery, then XHTML/EPUB. Run parity after each seam.
-6. **Establish durable publication state behind an inactive gate.** Define immutable revisions, decisions, validation, approval, release records, concurrency, migration, and rollback while the current production writer/public route remains unchanged.
-7. **Obtain a target-specific activation decision, then switch one writer.** The decision records exact head/artifact/package/schema, target, authorized actor, migration and backfill evidence, validation, rollout/observation thresholds, rollback or forward-recovery constraints, and expiry. Only after it is accepted do new approved Struct revisions write one current schema and the governed public route activate. Existing source reconstruction data and old revisions remain immutable.
-8. **Contract.** Delete portable local Struct copies and duplicate generic tests only after static zero-import, packed-consumer, parity, and rollback gates pass.
-9. **Reconcile Aether documentation.** Apply one manual documentation commit to then-current default after Struct and Ernie.SG documentation land. Never cherry-pick its divergent branch history wholesale.
-10. **Optionally activate the selected Aether proof.** Only after the upstream approved bundle path is real and a real printer/profile/renderer decision has been accepted.
+2. **Complete phase-0 documentation.** Land the reviewed contracts in Struct, then Ernie.SG, then manually reconcile Aether on its then-current default. Never cherry-pick Aether's divergent branch history wholesale. No Struct or Ernie.SG runtime issue starts before all three documentation steps land.
+3. **Make Struct releasable without publishing.** Repair internal direction, define explicit exports, implement and adversarially test Bundle, build declarations, run `npm pack`, and install the tarball in a clean consumer with no source-path access.
+4. **Produce a publish decision packet.** Exact tarball digest, contents, export map, compatibility matrix, and checks are reviewed. Publishing an exact prerelease remains separately authorized.
+5. **Expand Ernie.SG readers.** Add an exact package pin, retain legacy `0.1.0` and current `0.2.0` reads, and compare package behavior against frozen local behavior.
+6. **Move consumer families without changing the writer.** Core types/codecs, then IDs/ordering/recovery, then XHTML/EPUB. Run parity after each seam.
+7. **Establish durable publication state behind an inactive gate.** Define immutable revisions, decisions, validation, approval, release records, concurrency, migration, and rollback while the current production writer/public route remains unchanged.
+8. **Obtain a target-specific activation decision, then switch one writer.** The decision records exact head/artifact/package/schema, target, authorized actor, migration and backfill evidence, validation, rollout/observation thresholds, rollback or forward-recovery constraints, and expiry. Only after it is accepted do new approved Struct revisions write one current schema and the governed public route activate. Existing source reconstruction data and old revisions remain immutable.
+9. **Contract.** Delete portable local Struct copies and duplicate generic tests only after static zero-import, packed-consumer, parity, and rollback gates pass.
+10. **Optionally implement the selected Aether proof.** Only after phase-0 Aether documentation is reconciled, the upstream approved bundle path is real, and a real printer/profile/renderer decision has been accepted.
 
 Rollback is valid only when the restored version reads every schema already written. Before writer activation, prove N-1 reads N or supply a tested forward-only recovery. If N-1 cannot read N records, downgrading the package is not a rollback plan.
 
 Documentation landing order is fixed: **Struct, then Ernie.SG, then manually reconciled Aether**. Runtime dependency order is Struct, then Ernie.SG, then optional Aether. Rucksack security and module-boundary work is separate and may proceed in parallel only through deconflicted repository lanes.
 
-No npm publication, deployment, issue creation, branch push, or merge is authorized by this sequence.
+The 25 mapped planning issues have already been created under the separately recorded user authorization. This sequence does not authorize implementation, npm publication, deployment, additional issue creation, branch push, merge, outreach, route activation, or printer submission.
 
 ## History-preserving moves and duplicate disposition
 
@@ -717,6 +719,7 @@ Broad Rucksack package moves must not precede containment tests for these seams.
 
 - Review and accept this ADR and its issue tree.
 - Land documentation only in Struct, then Ernie.SG, then manually reconciled Aether.
+- Do not start Struct, Ernie.SG, or Aether runtime work until the Aether documentation reconciliation lands; Rucksack's domain-independent safety lane remains separately deconflicted.
 - Add API/import manifests and exact-head architecture checks.
 - Repair the Ernie.SG plan file's trailing blank line during its documentation reconciliation.
 
@@ -777,9 +780,9 @@ Exit: no public release can bypass validation and authenticated approval; stale 
 
 Exit: zero production imports of removed modules, no duplicate semantic authority, and all deletion gates pass.
 
-### Phase 8: Optional Aether activation
+### Phase 8: Optional Aether runtime proof
 
-- Manually reconcile target-vs-current documentation on the then-current default.
+- Confirm the phase-0 Aether documentation reconciliation is still current; update it through the separately owned documentation seam before runtime work if the default has materially drifted.
 - Capture one real printer's requirements from user-supplied/public no-contact evidence or through a separately authorized A-REQ inquiry, then select the renderer/profile through a contract proof for the already selected A5 booklet plus three social cutdowns.
 - Size-cap and hash the raw envelope, authenticate the current Ernie.SG producer record before any resolver call, verify against that expected digest, then atomically persist canonical full-bundle bytes, verified content-addressed asset bytes, and the isolated import record before any authenticated editable composition path.
 
@@ -918,7 +921,7 @@ This ADR is implemented only when all applicable criteria below pass at fresh ex
 
 The decision trades short-term duplication tolerance for a controlled migration. Ernie.SG retains compatibility paths longer, Struct must become a genuine package before deletion pays off, and Aether remains optional. In return, semantic authority becomes singular, app authority remains app-owned, releases become independently reversible, and Rucksack automation cannot silently acquire domain or credential authority.
 
-The target is intentionally stricter than the current code. A proposed tree does not authorize bulk moves. Every move must establish or follow a tested dependency cut.
+The target is intentionally stricter than the current code. The created issue tree does not authorize bulk moves. Every move must establish or follow a tested dependency cut.
 
 ## Required review questions
 

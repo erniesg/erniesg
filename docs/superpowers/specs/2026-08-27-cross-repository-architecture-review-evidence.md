@@ -51,4 +51,16 @@ Exact-base setup evidence:
 - `npm ci`: exit 0; 1,384 packages audited; 0 vulnerabilities.
 - Baseline `npm run test`: 3,922 passed, 6 skipped, 1 failed. The sole failure is the known environment limitation that EPUBCheck cannot locate a Java runtime in `tools/publication-adapter-conformance.test.mjs`; no architecture files had been added when this baseline was run.
 
-Before handoff, the branch must additionally pass JSON parsing, `git diff --check`, documentation hash verification, repository evidence capture, and an independent exact-commit review. The coordinator must revalidate remote defaults and open work before push or issue creation.
+Architecture-package evidence:
+
+- Initial architecture commit: `a381e0a2d9cdcceb3aa869cee13b230bf2639637`, whose parent is the exact Ernie.SG default above.
+- JSON parsing and map checks: passed; 25 unique issue keys, three unique decision-gate keys, and all 25 issue keys occur once in a dependency-respecting creation order.
+- `git diff --check`: passed.
+- Promoted-document hash verification: passed at the exact hashes recorded above.
+- Commit-time secret scan: passed.
+- Repository evidence manifest: `.agent/evidence/20260827T031310363Z/manifest.json`, produced against the clean initial architecture commit.
+- Required association-audit and model-consultation lanes: passed.
+- Required build lane: failed after the Astro build completed 132 pages successfully, when `publication:check` could not run EPUBCheck because this host has no Java runtime.
+- Required test lane: 3,922 passed, 6 skipped, and the same one Java-dependent publication-adapter test failed as on the untouched base.
+
+The repository evidence command therefore returned its honest `failed` classification rather than masking the host limitation. The documentation-only diff introduces no executable path and reproduces the exact-base test result. An independent exact-commit review must cover the immutable branch head and accompany coordinator handoff. The coordinator must revalidate remote defaults and open work before push or issue creation.

@@ -1,0 +1,23 @@
+---
+import Container from '@/components/Container.astro'
+import PublicationImporter from '@/components/research/PublicationImporter'
+import Layout from '@/layouts/Layout.astro'
+---
+
+<Layout
+  title="PDF to EPUB"
+  description="Convert a PDF into a reflowable EPUB locally in your browser."
+  canonicalPath="/study/experiments/pdf-to-epub"
+  noindex
+>
+  <Container class="flex flex-col gap-y-8 pb-24">
+    <header class="flex flex-col gap-y-3 border-b pb-6">
+      <h1 class="text-3xl font-bold">PDF to EPUB</h1>
+      <p class="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+        Conversion stays in your browser, so your file remains on this device.
+      </p>
+    </header>
+
+    <PublicationImporter showIntro={false} client:load />
+  </Container>
+</Layout>

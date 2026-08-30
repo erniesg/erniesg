@@ -1,0 +1,84 @@
+{
+  "schemaVersion": "1.0.0",
+  "corpusId": "study-pdf-epub-heldout-v1",
+  "policy": "Fixed, synthetic, non-personal corpus. Version 1 entries and expectations are immutable; failures must be fixed, never hidden by changing this file.",
+  "license": "CC0-1.0",
+  "cases": [
+    {
+      "file": "born-digital.pdf",
+      "sha256": "50874645b2cec033726018c86974241db2048ac46291e02fcb25d3cb7fbaa907",
+      "expect": "epub",
+      "features": ["born-digital"]
+    },
+    {
+      "file": "structured-scientific.pdf",
+      "sha256": "7a75163906224b0dbf78e28975f6e16ec0e3b7485532995f9a1226b3f1928500",
+      "expect": "epub",
+      "features": ["structured", "tables-citations", "figures-captions"]
+    },
+    {
+      "file": "scanned-page.pdf",
+      "sha256": "2bb7049bf4c854d31a95eadc0d8462306708b36bc8a11eb7c885549e0c241c01",
+      "expect": "epub",
+      "features": ["scan"]
+    },
+    {
+      "file": "scan-digital-hybrid.pdf",
+      "sha256": "2a1e601ae24d4c4843d5af441cdbf42b347786f6c25df45fec44f69e91c5a058",
+      "expect": "epub",
+      "features": ["hybrid"]
+    },
+    {
+      "file": "rotated-scan.pdf",
+      "sha256": "ba96ba09d6860c9d0db88abfe35f802b9efba1f832f181470f2a8d46bb4f3169",
+      "expect": "epub",
+      "features": ["rotated"]
+    },
+    {
+      "file": "multilingual-scan.pdf",
+      "sha256": "514195c541dcf6aa28b5d41a439ac623ccaf9cca2f452e9b4c49411e1c559aec",
+      "expect": "epub",
+      "features": ["multilingual"]
+    },
+    {
+      "file": "sparse-embedded-text.pdf",
+      "sha256": "22b783900a53f2f66ae63ee58d4be1f1b7614cfa154426c839b0cee84a77c1bb",
+      "expect": "epub",
+      "features": ["sparse-text"]
+    },
+    {
+      "file": "internal-named-destination.pdf",
+      "sha256": "2bf82220bb559f9b39d388aa99c5a4011b6788da85a513a6edd62a42b365c56d",
+      "expect": "epub",
+      "features": ["internal-navigation"]
+    },
+    {
+      "file": "heldout-v1/holdout-encrypted.pdf",
+      "sha256": "cf7ea24682bdd59872d3ccf5e4ee1253392c62d763dfce20573f799cadc1798f",
+      "expect": "reject",
+      "code": "ENCRYPTED_PDF",
+      "features": ["encrypted"]
+    },
+    {
+      "file": "heldout-v1/holdout-invalid-not-pdf.pdf",
+      "sha256": "14c34d4310b7606caf7a133fe8f6ef3e614cce77790f02f6c7ee5306cd9d15e1",
+      "expect": "reject",
+      "code": "INVALID_PDF",
+      "features": ["unsupported-container"]
+    },
+    {
+      "file": "heldout-v1/holdout-invalid-truncated.pdf",
+      "sha256": "f0d305f5808ee92eacfbd8b0db76a36aa1fc5cb23022cd87086e9cdf9a50d66b",
+      "expect": "reject",
+      "code": "PDF_PARSE_FAILED",
+      "features": ["corrupt"]
+    },
+    {
+      "file": "heldout-v1/holdout-hostile-javascript.pdf",
+      "sha256": "a350f5c3a94b5324523bbb6311360b94dd8ad0fafbc9bceed4e4df3895f8eda3",
+      "expect": "reject",
+      "code": "UNSUPPORTED_PDF",
+      "features": ["hostile-active-content"]
+    }
+  ]
+}

@@ -1136,6 +1136,18 @@ export async function reconstructPdf(
   if (!isPdf(bytes)) {
     throw new PdfImportError('INVALID_PDF', 'The selected file is not a PDF.')
   }
+  // The importer never needs executable actions, launch instructions, forms,
+  // or embedded payloads. Reject these conservatively before PDF.js opens the
+  // document; accepted PDFs remain data-only inputs to the reconstruction lane.
+  const pdfSyntax = new TextDecoder('latin1').decode(bytes)
+  if (
+    /\/(?:JavaScript|JS|Launch|EmbeddedFile|RichMedia|XFA)\b/u.test(pdfSyntax)
+  ) {
+    throw new PdfImportError(
+      'UNSUPPORTED_PDF',
+      'This PDF contains active or embedded content that is not supported. Nothing was saved or uploaded.',
+    )
+  }
 
   const sourceHash = await sha256(bytes)
   const browserExecution =

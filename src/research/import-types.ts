@@ -1237,6 +1237,7 @@ export type DocumentImportProgress = PdfImportProgress
 export class PdfImportError extends Error {
   public readonly code:
     | 'INVALID_PDF'
+    | 'UNSUPPORTED_PDF'
     | 'ENCRYPTED_PDF'
     | 'OVERSIZED_PDF'
     | 'OCR_REQUIRED'

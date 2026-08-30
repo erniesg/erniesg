@@ -23,6 +23,7 @@
     "preview": "astro preview",
     "srt:evaluate": "node tools/srt/demo-evaluation.mjs",
     "pdf:corpus-audit": "node tools/pdf-corpus-audit.mjs",
+    "study:pdf-epub:holdout": "node --test tools/study-pdf-epub-heldout.test.mjs && node tools/study-pdf-epub-heldout.mjs",
     "pdf:corpus-regenerate": "node tools/pdf-corpus-orchestrator.mjs",
     "pdf:corpus-regenerate:test": "node --test --test-concurrency=1 tools/pdf-corpus-orchestrator.node-test.mjs tools/pdf-corpus-orchestrator-determinism.node-test.mjs",
     "pdf:association-audit:test": "node --test --test-concurrency=1 tools/pdf-association-fixture-audit.node-test.mjs",

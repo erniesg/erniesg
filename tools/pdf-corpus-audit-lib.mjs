@@ -133,6 +133,8 @@ const REPOSITORY_SCOPED_GIT_ENVIRONMENT_KEYS = [
 
 const SAFE_FAILURE_MESSAGES = Object.freeze({
   INVALID_PDF: 'The file is not a valid PDF.',
+  UNSUPPORTED_PDF:
+    'The PDF contains active or embedded content that this local converter does not support.',
   ENCRYPTED_PDF: 'The PDF is password-protected and was not opened.',
   OVERSIZED_PDF: 'The PDF exceeds the bounded local resource limit.',
   OCR_REQUIRED: 'The PDF requires local OCR before it can be audited.',

@@ -65,6 +65,7 @@ function jobId(prefix: string) {
 function workerError(code: string, message: string) {
   const pdfCodes = new Set<PdfImportError['code']>([
     'INVALID_PDF',
+    'UNSUPPORTED_PDF',
     'ENCRYPTED_PDF',
     'OVERSIZED_PDF',
     'OCR_REQUIRED',

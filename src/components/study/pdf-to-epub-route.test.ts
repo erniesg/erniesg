@@ -13,11 +13,11 @@ describe('the canonical Study PDF to EPUB route', () => {
     expect(source).toContain(
       "import PublicationImporter from '@/components/research/PublicationImporter'",
     )
-    expect(source).toContain(
-      'canonicalPath="/study/experiments/pdf-to-epub"',
-    )
+    expect(source).toContain('canonicalPath="/study/experiments/pdf-to-epub"')
     expect(source).toMatch(/<Layout[\s\S]*?noindex/)
     expect(source).toMatch(/conversion[^<]*browser/i)
+    expect(source).toMatch(/uses the Research converter/i)
+    expect(source).toMatch(/rejected without being saved/i)
     expect(source).toContain(
       '<PublicationImporter showIntro={false} client:load />',
     )

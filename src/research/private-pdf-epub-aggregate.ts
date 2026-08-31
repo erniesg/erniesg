@@ -1,10 +1,16 @@
 import { z } from 'zod'
+import { PDF_RECONSTRUCTION_INVARIANT_CODES } from './import-types'
 import {
   PRIVATE_PDF_EPUB_CATEGORIES,
   PRIVATE_PDF_EPUB_ERROR_CODES,
+  PRIVATE_PDF_EPUB_GENERIC_INTERNAL_ERROR_KINDS,
+  PRIVATE_PDF_EPUB_INTERNAL_ERROR_KINDS,
+  PRIVATE_PDF_EPUB_RECONSTRUCTION_CHECKPOINTS,
+  PRIVATE_PDF_EPUB_RECONSTRUCTION_PHASES,
   PRIVATE_PDF_EPUB_STRUCT_ARTIFACT,
   safePrivatePdfEpubError,
   type PrivatePdfEpubErrorCode,
+  type PrivatePdfEpubReconstructionDiagnostic,
 } from './private-pdf-epub-bridge'
 
 export { PRIVATE_PDF_EPUB_CATEGORIES, safePrivatePdfEpubError }
@@ -359,6 +365,139 @@ export class PrivatePdfEpubSanitizerError extends TypeError {
     super('Private PDF EPUB aggregate input was rejected.')
     this.name = 'PrivatePdfEpubSanitizerError'
   }
+}
+
+const reconstructionDiagnosticBaseSchema = {
+  phase: z.enum(PRIVATE_PDF_EPUB_RECONSTRUCTION_PHASES),
+  checkpoint: z.enum(PRIVATE_PDF_EPUB_RECONSTRUCTION_CHECKPOINTS),
+}
+
+const reconstructionDiagnosticSchema = z.discriminatedUnion('errorKind', [
+  z
+    .object({
+      ...reconstructionDiagnosticBaseSchema,
+      errorKind: z.enum(PRIVATE_PDF_EPUB_GENERIC_INTERNAL_ERROR_KINDS),
+    })
+    .strict(),
+  z
+    .object({
+      ...reconstructionDiagnosticBaseSchema,
+      errorKind: z.literal('reconstruction-invariant'),
+      invariantCode: z.enum(PDF_RECONSTRUCTION_INVARIANT_CODES),
+    })
+    .strict(),
+])
+
+const reconstructionDiagnosticSignatureSchema = z.discriminatedUnion(
+  'errorKind',
+  [
+    z
+      .object({
+        ...reconstructionDiagnosticBaseSchema,
+        errorKind: z.enum(PRIVATE_PDF_EPUB_GENERIC_INTERNAL_ERROR_KINDS),
+        count: positiveCount.max(MAXIMUM_PILOT_POPULATION),
+      })
+      .strict(),
+    z
+      .object({
+        ...reconstructionDiagnosticBaseSchema,
+        errorKind: z.literal('reconstruction-invariant'),
+        invariantCode: z.enum(PDF_RECONSTRUCTION_INVARIANT_CODES),
+        count: positiveCount.max(MAXIMUM_PILOT_POPULATION),
+      })
+      .strict(),
+  ],
+)
+
+const reconstructionDiagnosticAggregateSchema = z
+  .object({
+    schemaVersion: z.literal('1.0.0'),
+    population: positiveCount.max(MAXIMUM_PILOT_POPULATION),
+    signatures: z
+      .array(reconstructionDiagnosticSignatureSchema)
+      .min(1)
+      .max(MAXIMUM_PILOT_POPULATION),
+  })
+  .strict()
+  .superRefine((report, context) => {
+    const keys = report.signatures.map(({ count: _count, ...signature }) =>
+      JSON.stringify(signature),
+    )
+    const count = report.signatures.reduce(
+      (sum, signature) => sum + signature.count,
+      0,
+    )
+    const canonical = [...report.signatures].sort(compareDiagnosticSignatures)
+    if (
+      count !== report.population ||
+      new Set(keys).size !== keys.length ||
+      canonical.some(
+        (signature, index) => signature !== report.signatures[index],
+      )
+    )
+      context.addIssue({
+        code: 'custom',
+        message: 'RECONSTRUCTION_DIAGNOSTIC_BINDING',
+      })
+  })
+
+export type PrivatePdfEpubReconstructionDiagnosticAggregate = z.infer<
+  typeof reconstructionDiagnosticAggregateSchema
+>
+
+function compareDiagnosticSignatures(
+  left: PrivatePdfEpubReconstructionDiagnostic,
+  right: PrivatePdfEpubReconstructionDiagnostic,
+) {
+  return (
+    PRIVATE_PDF_EPUB_RECONSTRUCTION_PHASES.indexOf(left.phase) -
+      PRIVATE_PDF_EPUB_RECONSTRUCTION_PHASES.indexOf(right.phase) ||
+    PRIVATE_PDF_EPUB_RECONSTRUCTION_CHECKPOINTS.indexOf(left.checkpoint) -
+      PRIVATE_PDF_EPUB_RECONSTRUCTION_CHECKPOINTS.indexOf(right.checkpoint) ||
+    PRIVATE_PDF_EPUB_INTERNAL_ERROR_KINDS.indexOf(left.errorKind) -
+      PRIVATE_PDF_EPUB_INTERNAL_ERROR_KINDS.indexOf(right.errorKind) ||
+    (left.errorKind === 'reconstruction-invariant'
+      ? PDF_RECONSTRUCTION_INVARIANT_CODES.indexOf(left.invariantCode)
+      : -1) -
+      (right.errorKind === 'reconstruction-invariant'
+        ? PDF_RECONSTRUCTION_INVARIANT_CODES.indexOf(right.invariantCode)
+        : -1)
+  )
+}
+
+export function validatePrivatePdfEpubReconstructionDiagnosticAggregate(
+  input: unknown,
+): PrivatePdfEpubReconstructionDiagnosticAggregate {
+  return deepFreeze(
+    parseSanitized(reconstructionDiagnosticAggregateSchema, input),
+  )
+}
+
+export function buildPrivatePdfEpubReconstructionDiagnosticAggregate(
+  input: unknown,
+): PrivatePdfEpubReconstructionDiagnosticAggregate {
+  const diagnostics = parseSanitized(
+    z
+      .array(reconstructionDiagnosticSchema)
+      .min(1)
+      .max(MAXIMUM_PILOT_POPULATION),
+    input,
+  )
+  const grouped = new Map<
+    string,
+    PrivatePdfEpubReconstructionDiagnostic & { count: number }
+  >()
+  for (const diagnostic of diagnostics) {
+    const key = JSON.stringify(diagnostic)
+    const existing = grouped.get(key)
+    if (existing) existing.count += 1
+    else grouped.set(key, { ...diagnostic, count: 1 })
+  }
+  return validatePrivatePdfEpubReconstructionDiagnosticAggregate({
+    schemaVersion: '1.0.0',
+    population: diagnostics.length,
+    signatures: [...grouped.values()].sort(compareDiagnosticSignatures),
+  })
 }
 
 function parseSanitized<T>(schema: z.ZodType<T>, value: unknown): T {

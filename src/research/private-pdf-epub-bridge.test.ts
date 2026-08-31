@@ -3,7 +3,11 @@ import { readFile } from 'node:fs/promises'
 import { strFromU8, unzipSync } from 'fflate'
 import { describe, expect, it, vi } from 'vitest'
 import { fixtureFile } from '../../tests/fixtures/pdf-fixtures'
-import { MAX_LOCAL_PDF_BYTES, PdfImportError } from './import-types'
+import {
+  MAX_LOCAL_PDF_BYTES,
+  PdfImportError,
+  PdfReconstructionInvariantError,
+} from './import-types'
 import { reconstructPdf } from './pdf'
 import {
   PRIVATE_PDF_EPUB_FILE_NAME,
@@ -256,6 +260,87 @@ trailer
       'INTERNAL_FAILURE',
       marker,
     )
+  })
+
+  it('retains only a closed aggregate-safe reconstruction failure signature', async () => {
+    const marker = 'PRIVATE-RECONSTRUCTION-DIAGNOSTIC-MUST-NOT-ESCAPE'
+    const progress = vi.fn()
+    const error = await convertPrivatePdfToEpub(pdfFile('%PDF-1.7\n%%EOF'), {
+      onProgress: progress,
+      dependencies: {
+        reconstruct: async (_file, onProgress) => {
+          onProgress?.({
+            phase: 'semantic-promotion',
+            completed: 7,
+            total: 11,
+            message: marker,
+            checkpoint: 'block-materialization',
+          })
+          const failure = new TypeError(marker)
+          failure.stack = marker
+          throw failure
+        },
+      },
+    }).catch((reason: unknown) => reason)
+
+    expect(error).toBeInstanceOf(PrivatePdfEpubBridgeError)
+    expect(error).toMatchObject({
+      code: 'INTERNAL_FAILURE',
+      evaluation: {
+        stage: 'reconstruction',
+        reconstructionDiagnostic: {
+          phase: 'semantic-promotion',
+          checkpoint: 'block-materialization',
+          errorKind: 'type-error',
+        },
+      },
+    })
+    expect(progress).toHaveBeenCalledWith({
+      phase: 'semantic-promotion',
+      completed: 0,
+      total: 0,
+      message: 'Checking document semantics locally…',
+      checkpoint: 'block-materialization',
+    })
+    expect(
+      JSON.stringify((error as PrivatePdfEpubBridgeError).evaluation),
+    ).not.toContain(marker)
+    expect(JSON.stringify(progress.mock.calls)).not.toContain(marker)
+    expect(JSON.stringify(safePrivatePdfEpubError(error))).not.toContain(marker)
+  })
+
+  it('retains only the closed code for a reconstruction invariant failure', async () => {
+    const error = await convertPrivatePdfToEpub(pdfFile('%PDF-1.7\n%%EOF'), {
+      dependencies: {
+        reconstruct: async (_file, onProgress) => {
+          onProgress?.({
+            phase: 'reading-order',
+            completed: 1,
+            total: 1,
+            message: 'private progress detail',
+            checkpoint: 'region-fragments',
+          })
+          throw new PdfReconstructionInvariantError(
+            'PARTIAL_REGION_REPLAY_TEXT_MISMATCH',
+          )
+        },
+      },
+    }).catch((reason: unknown) => reason)
+
+    expect(error).toMatchObject({
+      code: 'INTERNAL_FAILURE',
+      evaluation: {
+        reconstructionDiagnostic: {
+          phase: 'reading-order',
+          checkpoint: 'region-fragments',
+          errorKind: 'reconstruction-invariant',
+          invariantCode: 'PARTIAL_REGION_REPLAY_TEXT_MISMATCH',
+        },
+      },
+    })
+    expect(
+      JSON.stringify((error as PrivatePdfEpubBridgeError).evaluation),
+    ).not.toContain('private progress detail')
   })
 
   it('anonymizes the browser File before reconstruction and never returns source identity', async () => {

@@ -22,7 +22,7 @@ import type {
   PdfVisualRelationship,
   ReconstructionDiagnostic,
 } from './import-types'
-import { PdfImportError } from './import-types'
+import { PdfImportError, PdfReconstructionInvariantError } from './import-types'
 import {
   resolvePdfScholarlyCrossReferences,
   type PdfCanonicalCrossReferenceTarget,
@@ -50,9 +50,11 @@ import {
 import {
   inlineHardHyphenLexicon,
   inlineUnhyphenatedLexicon,
+  inspectPdfRegionLineRanges,
   mergePdfRunText,
   positionedPdfPrefixAccentText,
   replayPdfRegionLineRanges,
+  type PdfRegionLineReplayFailure,
 } from './pdf-lines'
 import {
   PDF_HYPHEN_DERIVED_AFFIX_REMOVAL_REQUIRED_EVIDENCE,
@@ -5825,12 +5827,35 @@ export function residualPdfRegionFragmentsAfterLineConsumption(
       },
     ]
   }
-  const replay = replayPdfRegionLineRanges(region, lineBoundaryDecisions)
-  if (!replay || replay.text !== region.text) {
-    throw new Error(
-      `Cannot replay source line boundaries for partial PDF region ${region.id}.`,
+  const replayInspection = inspectPdfRegionLineRanges(
+    region,
+    lineBoundaryDecisions,
+  )
+  if (replayInspection.status === 'failed') {
+    const invariantCode = {
+      'duplicate-line-ids': 'PARTIAL_REGION_REPLAY_DUPLICATE_LINE_IDS',
+      'transition-count-mismatch':
+        'PARTIAL_REGION_REPLAY_TRANSITION_COUNT_MISMATCH',
+      'transition-identity-mismatch':
+        'PARTIAL_REGION_REPLAY_TRANSITION_IDENTITY_MISMATCH',
+      'hyphen-precondition-failed':
+        'PARTIAL_REGION_REPLAY_HYPHEN_PRECONDITION_FAILED',
+      'range-precondition-failed':
+        'PARTIAL_REGION_REPLAY_RANGE_PRECONDITION_FAILED',
+      'unsupported-outcome': 'PARTIAL_REGION_REPLAY_UNSUPPORTED_OUTCOME',
+    } as const satisfies Record<
+      PdfRegionLineReplayFailure,
+      import('./import-types').PdfReconstructionInvariantCode
+    >
+    throw new PdfReconstructionInvariantError(
+      invariantCode[replayInspection.reason],
     )
   }
+  const replay = replayInspection.replay
+  if (replay.text !== region.text)
+    throw new PdfReconstructionInvariantError(
+      'PARTIAL_REGION_REPLAY_TEXT_MISMATCH',
+    )
   const retainedRuns: PdfPageRegion['lines'][] = []
   for (const line of region.lines) {
     if (consumedLineIds.has(line.id)) continue
@@ -5842,8 +5867,8 @@ export function residualPdfRegionFragmentsAfterLineConsumption(
     const first = replay.ranges.get(lines[0].id)
     const last = replay.ranges.get(lines.at(-1)!.id)
     if (!first || !last || first.start > last.end) {
-      throw new Error(
-        `Cannot map retained source lines for partial PDF region ${region.id}.`,
+      throw new PdfReconstructionInvariantError(
+        'PARTIAL_REGION_RETAINED_RANGE_INVALID',
       )
     }
     const sourceStart = first.start
@@ -5883,6 +5908,27 @@ export function residualPdfRegionAfterLineConsumption(
 const PDF_RECONSTRUCTION_COOPERATIVE_BATCH_SIZE = 16
 const PDF_BROWSER_WORKER_COOPERATIVE_BATCH_SIZE = 2
 const PDF_BROWSER_WORKER_COOPERATIVE_DELAY_MS = 4
+
+export function pdfLineBoundaryDecisionLedgersForPreformattedSources(
+  decisions: readonly PdfLineBoundaryDecision[],
+  preformattedLineSets: readonly ReadonlySet<string>[],
+) {
+  const sourceReplayDecisions = Object.freeze([...decisions])
+  const canonicalDecisions = Object.freeze(
+    decisions.filter(
+      (decision) =>
+        !preformattedLineSets.some(
+          (lineIds) =>
+            lineIds.has(decision.fromLineId) && lineIds.has(decision.toLineId),
+        ),
+    ),
+  )
+  return Object.freeze({
+    sourceReplayDecisions,
+    canonicalDecisions,
+    conservationDecisions: sourceReplayDecisions,
+  })
+}
 
 function isPdfBrowserWorkerRuntime() {
   return (
@@ -5944,6 +5990,7 @@ async function blocksFromRegions(
   >(),
   consumedLineIds: ReadonlySet<string> = new Set<string>(),
   lineBoundaryDecisions: readonly PdfLineBoundaryDecision[] = [],
+  sourceReplayLineBoundaryDecisions: readonly PdfLineBoundaryDecision[] = lineBoundaryDecisions,
   language: string | null = null,
   diagnostics: ReconstructionDiagnostic[] = [],
   canonicalHyphenBoundaryDecisions: PdfCanonicalHyphenBoundaryDecision[] = [],
@@ -5952,6 +5999,13 @@ async function blocksFromRegions(
   onProgress?: (progress: PdfImportProgress) => void,
   signal?: AbortSignal,
 ) {
+  onProgress?.({
+    phase: 'reading-order',
+    completed: 0,
+    total: orderedRegions.length,
+    message: 'Retaining source-backed canonical region fragments…',
+    checkpoint: 'region-fragments',
+  })
   const residualFragments = new WeakMap<
     PdfPageRegion,
     PdfResidualRegionFragment
@@ -5973,7 +6027,7 @@ async function blocksFromRegions(
     const fragments = residualPdfRegionFragmentsAfterLineConsumption(
       region,
       consumedLineIds,
-      lineBoundaryDecisions,
+      sourceReplayLineBoundaryDecisions,
     )
     for (const fragment of fragments) {
       if (
@@ -6007,6 +6061,13 @@ async function blocksFromRegions(
       residualFragments.set(fragment.region, fragment)
     }
     return fragments.map((fragment) => fragment.region)
+  })
+  onProgress?.({
+    phase: 'reading-order',
+    completed: 0,
+    total: readingRegions.length,
+    message: 'Classifying source-backed heading candidates…',
+    checkpoint: 'heading-candidates',
   })
   const explicitSectionHierarchy = readingRegions.some(
     (region) =>
@@ -6187,6 +6248,13 @@ async function blocksFromRegions(
     PdfPageRegion,
     NonNullable<RegionBlock['sourceSegments']>[number]
   >()
+  onProgress?.({
+    phase: 'reading-order',
+    completed: 0,
+    total: readingRegions.length,
+    message: 'Expanding source-backed canonical region roles…',
+    checkpoint: 'region-expansion',
+  })
   const expandedReadingRegions = readingRegions.flatMap((region) => {
     if (bibliographyRegionIds.has(region.id) || residualFragments.has(region)) {
       return [region]
@@ -6231,6 +6299,13 @@ async function blocksFromRegions(
       }
       return derivedRegion
     })
+  })
+  onProgress?.({
+    phase: 'reading-order',
+    completed: 0,
+    total: expandedReadingRegions.length,
+    message: 'Materializing source-backed canonical blocks…',
+    checkpoint: 'block-materialization',
   })
   const initialBlocks = await mapPdfReconstructionInBatches<
     PdfPageRegion,
@@ -6489,10 +6564,18 @@ async function blocksFromRegions(
         completed,
         total,
         message: `Reconstructing logical prose and legal float boundaries across ${completed} of ${total} regions…`,
+        checkpoint: 'block-materialization',
       }),
     signal,
   )
   await yieldPdfReconstructionTask(signal)
+  onProgress?.({
+    phase: 'reading-order',
+    completed: 0,
+    total: initialBlocks.length,
+    message: 'Recovering source-backed bibliography blocks…',
+    checkpoint: 'bibliography-recovery',
+  })
   promoteAdjacentNumberedParentChildHeadings(initialBlocks, bodySize)
   const bibliographyScopeRegionIds = new Set(bibliographyRegionIds)
   extendBibliographyScopeFromStructuralHeading(
@@ -6511,6 +6594,13 @@ async function blocksFromRegions(
     diagnostics,
   )
   await yieldPdfReconstructionTask(signal)
+  onProgress?.({
+    phase: 'reading-order',
+    completed: 0,
+    total: blocks.length,
+    message: 'Recovering source-backed list boundaries…',
+    checkpoint: 'list-recovery',
+  })
   splitListItemTailParagraphs(blocks, lineBoundaryDecisions)
   splitLeadingOrdinalHeadings(blocks, lineBoundaryDecisions, bodySize)
   await yieldPdfReconstructionTask(signal)
@@ -6538,6 +6628,13 @@ async function blocksFromRegions(
       blockIndex > 0 &&
       blockIndex % PDF_RECONSTRUCTION_COOPERATIVE_BATCH_SIZE === 0
     ) {
+      onProgress?.({
+        phase: 'reading-order',
+        completed: blockIndex,
+        total: blocks.length,
+        message: `Recovering source-backed list boundaries across ${blockIndex} of ${blocks.length} blocks…`,
+        checkpoint: 'list-recovery',
+      })
       await yieldPdfReconstructionTask(signal)
     }
     const block = blocks[blockIndex]
@@ -6898,6 +6995,13 @@ async function blocksFromRegions(
     }
     lastListBlock = block
   }
+  onProgress?.({
+    phase: 'reading-order',
+    completed: blocks.length,
+    total: blocks.length,
+    message: 'Completed source-backed canonical block reconstruction.',
+    checkpoint: 'blocks-complete',
+  })
   return blocks.filter((block) => !mergedContinuationBlocks.has(block))
 }
 
@@ -11924,14 +12028,14 @@ export async function reconstructPageAnalyses({
         ? [new Set(relationship.sourceLineIds)]
         : [],
   )
-  regionResult.lineBoundaryDecisions =
-    regionResult.lineBoundaryDecisions.filter(
-      (decision) =>
-        !preformattedLineSets.some(
-          (lineIds) =>
-            lineIds.has(decision.fromLineId) && lineIds.has(decision.toLineId),
-        ),
+  const lineBoundaryDecisionLedgers =
+    pdfLineBoundaryDecisionLedgersForPreformattedSources(
+      regionResult.lineBoundaryDecisions,
+      preformattedLineSets,
     )
+  regionResult.lineBoundaryDecisions = [
+    ...lineBoundaryDecisionLedgers.canonicalDecisions,
+  ]
   throwIfPdfReconstructionAborted(signal)
   onProgress?.({
     phase: 'asset-packaging',
@@ -11956,6 +12060,7 @@ export async function reconstructPageAnalyses({
     completed: 0,
     total: 0,
     message: 'Reconstructing logical prose and legal float boundaries…',
+    checkpoint: 'canonical-blocks',
   })
   const canonicalHyphenBoundaryDecisions: PdfCanonicalHyphenBoundaryDecision[] =
     []
@@ -11989,6 +12094,7 @@ export async function reconstructPageAnalyses({
     ),
     visualResult.consumedLineIds,
     regionResult.lineBoundaryDecisions,
+    lineBoundaryDecisionLedgers.sourceReplayDecisions,
     publicationMetadata.language,
     diagnostics,
     canonicalHyphenBoundaryDecisions,
@@ -12002,6 +12108,7 @@ export async function reconstructPageAnalyses({
     completed: 0,
     total: 0,
     message: 'Resolving front matter and cross-page prose ownership…',
+    checkpoint: 'front-matter',
   })
   await yieldPdfReconstructionTask(signal)
   const markerClassifications = synthesizeRecoveredBibliographyClassifications(
@@ -12076,6 +12183,7 @@ export async function reconstructPageAnalyses({
     completed: 0,
     total: 0,
     message: 'Joining proven page and column continuations around floats…',
+    checkpoint: 'prose-continuations',
   })
   coalesceProvedInlineStackedParagraphs(
     canonicalBlocks,
@@ -12126,6 +12234,7 @@ export async function reconstructPageAnalyses({
     completed: 0,
     total: 0,
     message: 'Resolving citations, notes, and stable semantic targets…',
+    checkpoint: 'semantic-targets',
   })
   await yieldPdfReconstructionTask(signal)
   const authorNoteReferences = detectAuthorNoteReferences(
@@ -12248,6 +12357,7 @@ export async function reconstructPageAnalyses({
     completed: 0,
     total: 0,
     message: 'Validating every internal hyperlink against canonical targets…',
+    checkpoint: 'hyperlink-obligations',
   })
   const hyperlinkResolution = resolveCanonicalHyperlinkObligations({
     blocks: canonicalBlocks,
@@ -12415,6 +12525,7 @@ export async function reconstructPageAnalyses({
     completed: 0,
     total: 0,
     message: 'Resolving scholarly object references and exact inline anchors…',
+    checkpoint: 'cross-references',
   })
   await yieldPdfReconstructionTask(signal)
   for (const [
@@ -12579,6 +12690,13 @@ export async function reconstructPageAnalyses({
         (relationship) => relationship.canonicalAnchor !== null,
       ).length,
   }
+  onProgress?.({
+    phase: 'reading-order',
+    completed: 0,
+    total: canonicalBlocks.length,
+    message: 'Materializing accessible canonical nodes…',
+    checkpoint: 'canonical-nodes',
+  })
   let nodes = await mapPdfReconstructionInBatches<RegionBlock, ResearchNode>(
     canonicalBlocks,
     (block, index) => {
@@ -12742,6 +12860,7 @@ export async function reconstructPageAnalyses({
         completed,
         total,
         message: `Materializing accessible canonical nodes ${completed} of ${total}…`,
+        checkpoint: 'canonical-nodes',
       }),
     signal,
   )
@@ -12749,6 +12868,13 @@ export async function reconstructPageAnalyses({
   const visualNodeInsertions = new Map<string, ResearchNode[]>()
   const trailingVisualNodes: ResearchNode[] = []
   const canonicalNodeIds = new Set(nodes.map((node) => node.id))
+  onProgress?.({
+    phase: 'asset-packaging',
+    completed: 0,
+    total: visualResult.relationships.length,
+    message: 'Binding canonical visual assets…',
+    checkpoint: 'canonical-visuals',
+  })
   for (const [
     relationshipIndex,
     relationship,
@@ -12762,6 +12888,7 @@ export async function reconstructPageAnalyses({
         completed: relationshipIndex,
         total: visualResult.relationships.length,
         message: `Binding canonical visual assets ${relationshipIndex} of ${visualResult.relationships.length}…`,
+        checkpoint: 'canonical-visuals',
       })
       await yieldPdfReconstructionTask(signal)
     }
@@ -13072,6 +13199,7 @@ export async function reconstructPageAnalyses({
     completed: visualResult.relationships.length,
     total: visualResult.relationships.length,
     message: 'Placing atomic visual and note objects at legal boundaries…',
+    checkpoint: 'canonical-placement',
   })
   await yieldPdfReconstructionTask(signal)
   orderCanonicalVisualPairs(
@@ -13190,7 +13318,7 @@ export async function reconstructPageAnalyses({
   }
 
   const classifiedLineBoundaries = classifyStructuralLineBoundaryDecisions({
-    decisions: regionResult.lineBoundaryDecisions,
+    decisions: [...lineBoundaryDecisionLedgers.conservationDecisions],
     paper,
     provenance,
     visualRelationships: visualResult.relationships,

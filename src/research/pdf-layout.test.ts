@@ -26,6 +26,7 @@ import {
   canonicalVisualSourceTranscript,
   mergeProseContinuations,
   orderCanonicalVisualPairs,
+  pdfLineBoundaryDecisionLedgersForPreformattedSources,
   placeMatchedCanonicalNotes,
   reconstructPageAnalyses,
   retainUniqueMonotoneSourceRunAssignment,
@@ -4361,6 +4362,132 @@ describe('PDF semantic reconstruction', () => {
         sourceEnd: 21,
       },
     ])
+  })
+
+  it('classifies missing partial-region replay evidence without source detail', () => {
+    const lines = ['First source line', 'Second source line'].map(
+      (text, index) => ({
+        id: `missing-replay-line-${index + 1}`,
+        text,
+        fontSize: 10,
+        box: {
+          page: 1,
+          x: 0.1,
+          y: 0.2 + index * 0.02,
+          width: 0.7,
+          height: 0.018,
+          rotation: 0,
+          method: 'pdf-text' as const,
+        },
+        runs: [],
+      }),
+    )
+    const region = {
+      id: 'missing-replay-region',
+      page: 1,
+      kind: 'body',
+      column: 'single',
+      text: 'First source line Second source line',
+      confidence: 1,
+      box: {
+        page: 1,
+        x: 0.1,
+        y: 0.2,
+        width: 0.7,
+        height: 0.038,
+        rotation: 0,
+        method: 'pdf-text',
+      },
+      lines,
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    } satisfies import('./import-types').PdfPageRegion
+
+    let failure: unknown
+    try {
+      residualPdfRegionFragmentsAfterLineConsumption(
+        region,
+        new Set(['missing-replay-line-1']),
+        [],
+      )
+    } catch (error) {
+      failure = error
+    }
+
+    expect(failure).toMatchObject({
+      name: 'PdfReconstructionInvariantError',
+      code: 'PARTIAL_REGION_REPLAY_TRANSITION_COUNT_MISMATCH',
+      message: 'PARTIAL_REGION_REPLAY_TRANSITION_COUNT_MISMATCH',
+    })
+    expect(JSON.stringify(failure)).not.toContain(region.id)
+  })
+
+  it('preserves source replay evidence when preformatted joins leave the canonical ledger', () => {
+    const lines = ['console.log(', "  'source value',", ')', 'Tail prose'].map(
+      (text, index) => ({
+        id: `preformatted-ledger-line-${index + 1}`,
+        text,
+        fontSize: 10,
+        box: {
+          page: 1,
+          x: 0.1,
+          y: 0.2 + index * 0.02,
+          width: 0.7,
+          height: 0.018,
+          rotation: 0,
+          method: 'pdf-text' as const,
+        },
+        runs: [],
+      }),
+    )
+    const region = {
+      id: 'preformatted-ledger-region',
+      page: 1,
+      kind: 'body',
+      column: 'single',
+      text: "console.log( 'source value', ) Tail prose",
+      confidence: 1,
+      box: {
+        page: 1,
+        x: 0.1,
+        y: 0.2,
+        width: 0.7,
+        height: 0.078,
+        rotation: 0,
+        method: 'pdf-text',
+      },
+      lines,
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    } satisfies import('./import-types').PdfPageRegion
+    const decisions = lines.slice(1).map((line, index) => ({
+      id: `preformatted-ledger-boundary-${index + 1}`,
+      page: 1,
+      regionId: region.id,
+      fromLineId: lines[index].id,
+      toLineId: line.id,
+      outcome: 'space' as const,
+      evidence: ['ordinary-wrap'],
+    }))
+    const preformattedLineIds = new Set(lines.slice(0, 3).map(({ id }) => id))
+
+    const ledgers = pdfLineBoundaryDecisionLedgersForPreformattedSources(
+      decisions,
+      [preformattedLineIds],
+    )
+
+    expect(ledgers.canonicalDecisions.map(({ id }) => id)).toEqual([
+      'preformatted-ledger-boundary-3',
+    ])
+    expect(ledgers.sourceReplayDecisions).toEqual(decisions)
+    expect(ledgers.conservationDecisions).toEqual(decisions)
+    expect(
+      residualPdfRegionFragmentsAfterLineConsumption(
+        region,
+        preformattedLineIds,
+        ledgers.sourceReplayDecisions,
+      ).map(({ region: fragment }) => fragment.text),
+    ).toEqual(['Tail prose'])
   })
 
   it('separates title-page metadata and abstract from continuous body nodes', async () => {

@@ -6,10 +6,12 @@ import {
   PrivatePdfEpubSanitizerError,
   buildPrivatePdfEpubAggregate,
   buildPrivatePdfEpubPilotReceipt,
+  buildPrivatePdfEpubReconstructionDiagnosticAggregate,
   createPrivatePdfEpubObservation,
   safePrivatePdfEpubError,
   validatePrivatePdfEpubAggregate,
   validatePrivatePdfEpubPilotReceipt,
+  validatePrivatePdfEpubReconstructionDiagnosticAggregate,
 } from './private-pdf-epub-aggregate'
 import { PrivatePdfEpubBridgeError } from './private-pdf-epub-bridge'
 
@@ -100,6 +102,80 @@ function conformanceFailure(
 }
 
 describe('private Struct aggregate sanitizer', () => {
+  it('groups only closed reconstruction diagnostics without source detail', () => {
+    const marker = 'PRIVATE-DIAGNOSTIC-POISON'
+    const report = buildPrivatePdfEpubReconstructionDiagnosticAggregate([
+      {
+        phase: 'semantic-promotion',
+        checkpoint: 'visual-index',
+        errorKind: 'type-error',
+      },
+      {
+        phase: 'semantic-promotion',
+        checkpoint: 'visual-index',
+        errorKind: 'type-error',
+      },
+      {
+        phase: 'extracting',
+        checkpoint: 'none',
+        errorKind: 'range-error',
+      },
+      {
+        phase: 'reading-order',
+        checkpoint: 'region-fragments',
+        errorKind: 'reconstruction-invariant',
+        invariantCode: 'PARTIAL_REGION_REPLAY_UNAVAILABLE',
+      },
+    ])
+
+    expect(report).toEqual({
+      schemaVersion: '1.0.0',
+      population: 4,
+      signatures: [
+        {
+          phase: 'extracting',
+          checkpoint: 'none',
+          errorKind: 'range-error',
+          count: 1,
+        },
+        {
+          phase: 'reading-order',
+          checkpoint: 'region-fragments',
+          errorKind: 'reconstruction-invariant',
+          invariantCode: 'PARTIAL_REGION_REPLAY_UNAVAILABLE',
+          count: 1,
+        },
+        {
+          phase: 'semantic-promotion',
+          checkpoint: 'visual-index',
+          errorKind: 'type-error',
+          count: 2,
+        },
+      ],
+    })
+    expect(
+      validatePrivatePdfEpubReconstructionDiagnosticAggregate(report),
+    ).toEqual(report)
+    expect(JSON.stringify(report)).not.toContain(marker)
+
+    expect(() =>
+      buildPrivatePdfEpubReconstructionDiagnosticAggregate([
+        {
+          phase: 'extracting',
+          checkpoint: 'none',
+          errorKind: 'type-error',
+          sourceDetail: marker,
+        },
+      ]),
+    ).toThrow(PrivatePdfEpubSanitizerError)
+    expect(() =>
+      validatePrivatePdfEpubReconstructionDiagnosticAggregate({
+        ...report,
+        signatures: [{ ...report.signatures[0], count: 2 }],
+      }),
+    ).toThrow(PrivatePdfEpubSanitizerError)
+  })
+
   it('builds and validates the exact closed public aggregate shape', async () => {
     const report = buildPrivatePdfEpubAggregate(
       Array.from({ length: 5 }, () => renderedObservation()),

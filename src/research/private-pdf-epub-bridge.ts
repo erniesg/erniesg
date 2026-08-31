@@ -16,7 +16,12 @@ import type {
   DocumentImportProgress,
   DocumentReconstruction,
 } from './import-types'
-import { MAX_LOCAL_PDF_BYTES, PdfImportError } from './import-types'
+import {
+  MAX_LOCAL_PDF_BYTES,
+  PdfImportError,
+  PdfReconstructionInvariantError,
+  type PdfReconstructionInvariantCode,
+} from './import-types'
 import { sha256HexSync } from './sha256-sync'
 
 export const PRIVATE_PDF_EPUB_STRUCT_ARTIFACT = Object.freeze({
@@ -94,6 +99,7 @@ export type PrivatePdfEpubBridgeEvaluation = {
   readonly sourceToStruct: PrivatePdfEpubSourceToStructEvidence
   readonly checkedAssertions: readonly PrivatePdfEpubBridgeAssertionKey[]
   readonly failedAssertions: readonly PrivatePdfEpubBridgeAssertionKey[]
+  readonly reconstructionDiagnostic?: PrivatePdfEpubReconstructionDiagnostic
 }
 
 const PRIVATE_PDF_EPUB_ERROR_MESSAGES: Record<PrivatePdfEpubErrorCode, string> =
@@ -160,6 +166,7 @@ function createBridgeEvaluation(
   sourceToStruct: PrivatePdfEpubSourceToStructEvidence,
   checkedAssertions: readonly PrivatePdfEpubBridgeAssertionKey[] = [],
   failedAssertions: readonly PrivatePdfEpubBridgeAssertionKey[] = [],
+  reconstructionDiagnostic?: PrivatePdfEpubReconstructionDiagnostic,
 ): PrivatePdfEpubBridgeEvaluation {
   const checked = orderedAssertions([...checkedAssertions, ...failedAssertions])
   const failed = orderedAssertions(failedAssertions)
@@ -168,6 +175,13 @@ function createBridgeEvaluation(
     sourceToStruct: Object.freeze({ ...sourceToStruct }),
     checkedAssertions: checked,
     failedAssertions: failed,
+    ...(reconstructionDiagnostic
+      ? {
+          reconstructionDiagnostic: Object.freeze({
+            ...reconstructionDiagnostic,
+          }),
+        }
+      : {}),
   })
 }
 
@@ -177,6 +191,7 @@ function bridgeFailure(
   sourceToStruct: PrivatePdfEpubSourceToStructEvidence,
   checkedAssertions: readonly PrivatePdfEpubBridgeAssertionKey[] = [],
   failedAssertions: readonly PrivatePdfEpubBridgeAssertionKey[] = [],
+  reconstructionDiagnostic?: PrivatePdfEpubReconstructionDiagnostic,
 ) {
   return new PrivatePdfEpubBridgeError(
     code,
@@ -185,6 +200,7 @@ function bridgeFailure(
       sourceToStruct,
       checkedAssertions,
       failedAssertions,
+      reconstructionDiagnostic,
     ),
   )
 }
@@ -252,6 +268,144 @@ const PRIVATE_PDF_EPUB_PROGRESS_MESSAGES: Record<
   assembling: 'Assembling the document locally…',
   paginating: 'Paginating the document locally…',
   validating: 'Validating the document locally…',
+}
+
+export const PRIVATE_PDF_EPUB_RECONSTRUCTION_PHASES = [
+  'not-started',
+  'opening',
+  'extracting',
+  'ocr',
+  'segmenting',
+  'reading-order',
+  'semantic-promotion',
+  'asset-packaging',
+  'reconstructing',
+  'assembling',
+  'paginating',
+  'validating',
+] as const
+
+export const PRIVATE_PDF_EPUB_RECONSTRUCTION_CHECKPOINTS = [
+  'none',
+  'figure-grouping-envelopes',
+  'figure-grouping-filter',
+  'figure-grouping-connectivity',
+  'figure-heading-classification',
+  'figure-grouping-candidates',
+  'equation-component-discovery',
+  'equation-component-resolution',
+  'visual-index',
+  'visual-index-complete',
+  'figure-grouping',
+  'figure-grouping-complete',
+  'algorithm-block-discovery',
+  'canonical-blocks',
+  'region-fragments',
+  'heading-candidates',
+  'region-expansion',
+  'block-materialization',
+  'bibliography-recovery',
+  'list-recovery',
+  'blocks-complete',
+  'front-matter',
+  'prose-continuations',
+  'semantic-targets',
+  'hyperlink-obligations',
+  'cross-references',
+  'canonical-nodes',
+  'canonical-visuals',
+  'canonical-placement',
+  'quality-conservation',
+  'quality-complete',
+] as const
+
+export const PRIVATE_PDF_EPUB_GENERIC_INTERNAL_ERROR_KINDS = [
+  'type-error',
+  'range-error',
+  'dom-exception',
+  'error',
+  'non-error',
+  'uninspectable',
+] as const
+
+export const PRIVATE_PDF_EPUB_INTERNAL_ERROR_KINDS = [
+  ...PRIVATE_PDF_EPUB_GENERIC_INTERNAL_ERROR_KINDS,
+  'reconstruction-invariant',
+] as const
+
+type PrivatePdfEpubReconstructionDiagnosticBase = {
+  readonly phase: (typeof PRIVATE_PDF_EPUB_RECONSTRUCTION_PHASES)[number]
+  readonly checkpoint: (typeof PRIVATE_PDF_EPUB_RECONSTRUCTION_CHECKPOINTS)[number]
+}
+
+export type PrivatePdfEpubReconstructionDiagnostic =
+  PrivatePdfEpubReconstructionDiagnosticBase &
+    (
+      | {
+          readonly errorKind: 'reconstruction-invariant'
+          readonly invariantCode: PdfReconstructionInvariantCode
+        }
+      | {
+          readonly errorKind: (typeof PRIVATE_PDF_EPUB_GENERIC_INTERNAL_ERROR_KINDS)[number]
+          readonly invariantCode?: never
+        }
+    )
+
+type PrivatePdfEpubReconstructionProgress =
+  PrivatePdfEpubReconstructionDiagnosticBase
+
+const privateReconstructionPhases = new Set<string>(
+  PRIVATE_PDF_EPUB_RECONSTRUCTION_PHASES,
+)
+const privateReconstructionCheckpoints = new Set<string>(
+  PRIVATE_PDF_EPUB_RECONSTRUCTION_CHECKPOINTS,
+)
+
+function closedReconstructionProgress(
+  progress: DocumentImportProgress,
+  previous: PrivatePdfEpubReconstructionProgress,
+): PrivatePdfEpubReconstructionProgress {
+  const phase = privateReconstructionPhases.has(progress?.phase)
+    ? (progress.phase as PrivatePdfEpubReconstructionProgress['phase'])
+    : previous.phase
+  const checkpoint =
+    typeof progress?.checkpoint === 'string' &&
+    privateReconstructionCheckpoints.has(progress.checkpoint)
+      ? (progress.checkpoint as PrivatePdfEpubReconstructionProgress['checkpoint'])
+      : previous.checkpoint
+  return { phase, checkpoint }
+}
+
+function closedReconstructionErrorKind(
+  error: unknown,
+): (typeof PRIVATE_PDF_EPUB_GENERIC_INTERNAL_ERROR_KINDS)[number] {
+  try {
+    if (error instanceof TypeError) return 'type-error'
+    if (error instanceof RangeError) return 'range-error'
+    if (typeof DOMException !== 'undefined' && error instanceof DOMException)
+      return 'dom-exception'
+    if (error instanceof Error) return 'error'
+    return 'non-error'
+  } catch {
+    return 'uninspectable'
+  }
+}
+
+function closedReconstructionDiagnostic(
+  error: unknown,
+  progress: PrivatePdfEpubReconstructionProgress,
+): PrivatePdfEpubReconstructionDiagnostic {
+  try {
+    if (error instanceof PdfReconstructionInvariantError)
+      return {
+        ...progress,
+        errorKind: 'reconstruction-invariant',
+        invariantCode: error.code,
+      }
+  } catch {
+    return { ...progress, errorKind: 'uninspectable' }
+  }
+  return { ...progress, errorKind: closedReconstructionErrorKind(error) }
 }
 
 export function safePrivatePdfEpubProgress(progress: DocumentImportProgress) {
@@ -638,11 +792,21 @@ function sourceToStructFor(document: StructDocument) {
   }
 }
 
-function reconstructionFailure(error: unknown): PrivatePdfEpubBridgeError {
+function reconstructionFailure(
+  error: unknown,
+  progress: PrivatePdfEpubReconstructionProgress,
+): PrivatePdfEpubBridgeError {
   if (!(error instanceof PdfImportError))
-    return bridgeFailure('INTERNAL_FAILURE', 'reconstruction', {
-      status: 'not-observed',
-    })
+    return bridgeFailure(
+      'INTERNAL_FAILURE',
+      'reconstruction',
+      {
+        status: 'not-observed',
+      },
+      [],
+      [],
+      closedReconstructionDiagnostic(error, progress),
+    )
   switch (error.code) {
     case 'INVALID_PDF':
       return bridgeFailure('INVALID_PDF', 'reconstruction', {
@@ -731,14 +895,36 @@ export async function convertPrivatePdfToEpub(
   }
 
   let reconstruction: DocumentReconstruction
+  let reconstructionProgress: PrivatePdfEpubReconstructionProgress = {
+    phase: 'not-started',
+    checkpoint: 'none',
+  }
   try {
     reconstruction = await dependencies.reconstruct(
       anonymousFile,
-      options.onProgress,
+      (progress) => {
+        reconstructionProgress = closedReconstructionProgress(
+          progress,
+          reconstructionProgress,
+        )
+        const safeProgress: DocumentImportProgress = {
+          phase:
+            reconstructionProgress.phase === 'not-started'
+              ? 'opening'
+              : reconstructionProgress.phase,
+          completed: 0,
+          total: 0,
+          message: safePrivatePdfEpubProgress(progress),
+          ...(reconstructionProgress.checkpoint !== 'none'
+            ? { checkpoint: reconstructionProgress.checkpoint }
+            : {}),
+        }
+        options.onProgress?.(safeProgress)
+      },
       options.signal,
     )
   } catch (error) {
-    throw reconstructionFailure(error)
+    throw reconstructionFailure(error, reconstructionProgress)
   }
   if (!reconstruction.readiness.ready)
     throw bridgeFailure(

@@ -1234,6 +1234,28 @@ export type PdfImportProgress = {
 
 export type DocumentImportProgress = PdfImportProgress
 
+export const PDF_RECONSTRUCTION_INVARIANT_CODES = [
+  'PARTIAL_REGION_REPLAY_UNAVAILABLE',
+  'PARTIAL_REGION_REPLAY_DUPLICATE_LINE_IDS',
+  'PARTIAL_REGION_REPLAY_TRANSITION_COUNT_MISMATCH',
+  'PARTIAL_REGION_REPLAY_TRANSITION_IDENTITY_MISMATCH',
+  'PARTIAL_REGION_REPLAY_HYPHEN_PRECONDITION_FAILED',
+  'PARTIAL_REGION_REPLAY_RANGE_PRECONDITION_FAILED',
+  'PARTIAL_REGION_REPLAY_UNSUPPORTED_OUTCOME',
+  'PARTIAL_REGION_REPLAY_TEXT_MISMATCH',
+  'PARTIAL_REGION_RETAINED_RANGE_INVALID',
+] as const
+
+export type PdfReconstructionInvariantCode =
+  (typeof PDF_RECONSTRUCTION_INVARIANT_CODES)[number]
+
+export class PdfReconstructionInvariantError extends Error {
+  constructor(public readonly code: PdfReconstructionInvariantCode) {
+    super(code)
+    this.name = 'PdfReconstructionInvariantError'
+  }
+}
+
 export class PdfImportError extends Error {
   public readonly code:
     | 'INVALID_PDF'

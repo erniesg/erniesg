@@ -120,17 +120,33 @@ export type PdfRegionLineReplay = {
   ranges: Map<string, { start: number; end: number }>
 }
 
+export const PDF_REGION_LINE_REPLAY_FAILURES = [
+  'duplicate-line-ids',
+  'transition-count-mismatch',
+  'transition-identity-mismatch',
+  'hyphen-precondition-failed',
+  'range-precondition-failed',
+  'unsupported-outcome',
+] as const
+
+export type PdfRegionLineReplayFailure =
+  (typeof PDF_REGION_LINE_REPLAY_FAILURES)[number]
+
+export type PdfRegionLineReplayInspection =
+  | { status: 'replayed'; replay: PdfRegionLineReplay }
+  | { status: 'failed'; reason: PdfRegionLineReplayFailure }
+
 const SOURCE_LINE_SEPARATOR_PRESERVED =
   'source-line-separator-preserved' as const
 
-export function replayPdfRegionLineRanges(
+export function inspectPdfRegionLineRanges(
   region: PdfPageRegion,
   decisions: readonly PdfLineBoundaryDecision[],
-): PdfRegionLineReplay | null {
+): PdfRegionLineReplayInspection {
   if (
     new Set(region.lines.map((line) => line.id)).size !== region.lines.length
   ) {
-    return null
+    return { status: 'failed', reason: 'duplicate-line-ids' }
   }
   const byTransition = new Map(
     decisions
@@ -140,7 +156,8 @@ export function replayPdfRegionLineRanges(
         decision,
       ]),
   )
-  if (byTransition.size !== Math.max(region.lines.length - 1, 0)) return null
+  if (byTransition.size !== Math.max(region.lines.length - 1, 0))
+    return { status: 'failed', reason: 'transition-count-mismatch' }
 
   const normalizedLineText = (value: string) =>
     value.replace(/\s+/g, ' ').trim()
@@ -160,7 +177,7 @@ export function replayPdfRegionLineRanges(
       decision.fromLineId !== previous.id ||
       decision.toLineId !== current.id
     ) {
-      return null
+      return { status: 'failed', reason: 'transition-identity-mismatch' }
     }
     let start = text.length
     if (decision.outcome === 'space') {
@@ -169,21 +186,25 @@ export function replayPdfRegionLineRanges(
     } else if (decision.outcome === 'no-space') {
       text += next
     } else if (decision.outcome === 'removed-discretionary-hyphen') {
-      if (!/[-‐‑\u00ad]$/u.test(text)) return null
+      if (!/[-‐‑\u00ad]$/u.test(text))
+        return { status: 'failed', reason: 'hyphen-precondition-failed' }
       const previousRange = ranges.get(previous.id)
-      if (!previousRange || previousRange.end !== text.length) return null
+      if (!previousRange || previousRange.end !== text.length)
+        return { status: 'failed', reason: 'range-precondition-failed' }
       text = `${text.slice(0, -1)}${next}`
       previousRange.end -= 1
       start -= 1
     } else if (decision.outcome === 'preserved-lexical-hyphen') {
-      if (!/[-‐‑]$/u.test(text)) return null
+      if (!/[-‐‑]$/u.test(text))
+        return { status: 'failed', reason: 'hyphen-precondition-failed' }
       text += next
     } else if (
       decision.outcome === 'unresolved' ||
       decision.outcome === 'ambiguous' ||
       decision.outcome === 'structural-boundary'
     ) {
-      if (!/[-‐‑]$/u.test(text)) return null
+      if (!/[-‐‑]$/u.test(text))
+        return { status: 'failed', reason: 'hyphen-precondition-failed' }
       if (decision.evidence.includes(SOURCE_LINE_SEPARATOR_PRESERVED)) {
         start += 1
         text += ` ${next}`
@@ -191,11 +212,19 @@ export function replayPdfRegionLineRanges(
         text += next
       }
     } else {
-      return null
+      return { status: 'failed', reason: 'unsupported-outcome' }
     }
     ranges.set(current.id, { start, end: start + next.length })
   }
-  return { text, ranges }
+  return { status: 'replayed', replay: { text, ranges } }
+}
+
+export function replayPdfRegionLineRanges(
+  region: PdfPageRegion,
+  decisions: readonly PdfLineBoundaryDecision[],
+): PdfRegionLineReplay | null {
+  const inspection = inspectPdfRegionLineRanges(region, decisions)
+  return inspection.status === 'replayed' ? inspection.replay : null
 }
 
 export function replayPdfRegionLineText(

@@ -477,4 +477,137 @@ describe('private Struct aggregate sanitizer', () => {
       }),
     ).toThrow(PrivatePdfEpubSanitizerError)
   })
+
+  it('rejects public aggregates whose counters contradict their population', () => {
+    const report = buildPrivatePdfEpubAggregate([
+      renderedObservation(),
+      renderedObservation(),
+      renderedObservation(),
+      renderedObservation(),
+      conformanceFailure(),
+    ])
+    const zeroFailures = Object.fromEntries(
+      PRIVATE_PDF_EPUB_ZERO_TOLERANCE_KEYS.map((key) => [key, 0]),
+    )
+
+    expect(() =>
+      validatePrivatePdfEpubAggregate({
+        ...report,
+        zeroTolerance: zeroFailures,
+      }),
+    ).toThrow(PrivatePdfEpubSanitizerError)
+
+    const allReady = buildPrivatePdfEpubAggregate(
+      Array.from({ length: 5 }, () => renderedObservation()),
+    )
+    expect(() =>
+      validatePrivatePdfEpubAggregate({
+        ...allReady,
+        zeroTolerance: {
+          ...allReady.zeroTolerance,
+          manifestFailureCount: 1,
+        },
+      }),
+    ).toThrow(PrivatePdfEpubSanitizerError)
+
+    for (const [count, rateName] of [
+      ['publicationEligible', 'publicationReady'],
+      ['ambiguityEligible', 'ambiguitySafety'],
+      ['semanticEligible', 'semanticCoverage'],
+    ] as const)
+      expect(() =>
+        validatePrivatePdfEpubAggregate({
+          ...allReady,
+          counts: { ...allReady.counts, [count]: 10 },
+          rates: { ...allReady.rates, [rateName]: 0.5 },
+        }),
+      ).toThrow(PrivatePdfEpubSanitizerError)
+
+    expect(() =>
+      validatePrivatePdfEpubAggregate({
+        ...allReady,
+        categories: {
+          ...allReady.categories,
+          paragraph: {
+            status: 'reported',
+            numerator: 5,
+            denominator: 10,
+            rate: 0.5,
+          },
+        },
+      }),
+    ).toThrow(PrivatePdfEpubSanitizerError)
+
+    expect(() =>
+      validatePrivatePdfEpubAggregate({
+        ...report,
+        categories: {
+          ...report.categories,
+          paragraph: {
+            status: 'reported',
+            numerator: 5,
+            denominator: 5,
+            rate: 1,
+          },
+        },
+      }),
+    ).toThrow(PrivatePdfEpubSanitizerError)
+  })
+
+  it('rejects a pilot whose nested conformance counters are erased', () => {
+    const receipt = buildPrivatePdfEpubPilotReceipt(
+      [
+        renderedObservation(),
+        renderedObservation(),
+        renderedObservation(),
+        renderedObservation(),
+        conformanceFailure(),
+      ],
+      { holdoutRetained: 66 },
+    )
+    if (receipt.publicAggregate.status !== 'available')
+      throw new Error('Expected an available synthetic aggregate.')
+    const availableReport = receipt.publicAggregate.report
+
+    expect(() =>
+      validatePrivatePdfEpubPilotReceipt({
+        ...receipt,
+        publicAggregate: {
+          status: 'available',
+          report: {
+            ...availableReport,
+            zeroTolerance: Object.fromEntries(
+              PRIVATE_PDF_EPUB_ZERO_TOLERANCE_KEYS.map((key) => [key, 0]),
+            ),
+          },
+        },
+      }),
+    ).toThrow(PrivatePdfEpubSanitizerError)
+  })
+
+  it('rejects impossible category counters when a pilot aggregate is unavailable', () => {
+    const receipt = buildPrivatePdfEpubPilotReceipt(
+      [
+        renderedObservation(),
+        renderedObservation(),
+        renderedObservation(),
+        renderedObservation(),
+        rendererFailure(['paragraph']),
+      ],
+      { holdoutRetained: 66 },
+    )
+    expect(receipt.publicAggregate.status).toBe('unavailable')
+
+    for (const paragraph of [
+      { status: 'reported', numerator: 4, denominator: 10, rate: 0.4 },
+      { status: 'reported', numerator: 5, denominator: 5, rate: 1 },
+      { status: 'reported', numerator: 4, denominator: 5, rate: 1 },
+    ] as const)
+      expect(() =>
+        validatePrivatePdfEpubPilotReceipt({
+          ...receipt,
+          categories: { ...receipt.categories, paragraph },
+        }),
+      ).toThrow(PrivatePdfEpubSanitizerError)
+  })
 })

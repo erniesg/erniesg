@@ -509,6 +509,10 @@ const aggregateSchema = z
       (sum, count) => sum + count,
       0,
     )
+    const zeroToleranceFailureTotal = Object.values(
+      report.zeroTolerance,
+    ).reduce((sum, count) => sum + count, 0)
+    const conformanceFailureCount = report.outcomes['conformance-failure']
     const exactRates = {
       assignedCompletion: rate(report.counts.completed, report.counts.assigned),
       neutralConservation: rate(
@@ -539,6 +543,11 @@ const aggregateSchema = z
       report.counts.publicationReady > report.counts.publicationEligible ||
       report.counts.ambiguitySafe > report.counts.ambiguityEligible ||
       report.counts.renderedSemantically > report.counts.semanticEligible ||
+      report.counts.publicationEligible > report.counts.assigned ||
+      report.counts.ambiguityEligible > report.counts.assigned ||
+      report.counts.semanticEligible > report.counts.assigned ||
+      (zeroToleranceFailureTotal === 0) !== (conformanceFailureCount === 0) ||
+      zeroToleranceFailureTotal < conformanceFailureCount ||
       Object.entries(exactRates).some(
         ([key, value]) =>
           report.rates[key as keyof typeof report.rates] !== value,
@@ -550,6 +559,8 @@ const aggregateSchema = z
       if (
         category.status === 'reported' &&
         (category.numerator > category.denominator ||
+          category.denominator > report.counts.assigned ||
+          category.numerator > report.counts.publicationReady ||
           category.rate !== rate(category.numerator, category.denominator))
       )
         issue('CATEGORY_COUNTER_BINDING')
@@ -799,6 +810,15 @@ const pilotReceiptSchema = z
       ready + failures !== receipt.pilot.completed
     )
       issue('PILOT_COUNTER_BINDING')
+    for (const category of Object.values(receipt.categories))
+      if (
+        category.status === 'reported' &&
+        (category.numerator > category.denominator ||
+          category.denominator > receipt.pilot.assigned ||
+          category.numerator > ready ||
+          category.rate !== rate(category.numerator, category.denominator))
+      )
+        issue('PILOT_CATEGORY_BINDING')
 
     if (receipt.publicAggregate.status !== 'available') return
     const report = receipt.publicAggregate.report

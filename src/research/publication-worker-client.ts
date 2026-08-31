@@ -11,7 +11,10 @@ import {
   type PdfReconstruction,
 } from './import-types'
 import {
+  CONTENT_FREE_PUBLICATION_WORKER_BOUNDARY,
   PUBLICATION_WORKER_WATCHDOG_MS,
+  contentFreePublicationWorkerErrorCode,
+  contentFreePublicationWorkerProgress,
   type PublicationWorkerRequest,
   type PublicationWorkerResponse,
 } from './publication-worker-protocol'
@@ -109,6 +112,9 @@ async function runWorkerJob<Result>({
     )
   }
   const worker = createWorker()
+  const contentFreeBoundary =
+    request.type === 'convert-pdf' &&
+    request.privacyBoundary === CONTENT_FREE_PUBLICATION_WORKER_BOUNDARY
   let lastHeartbeat = Date.now()
   let lastProgress: DocumentImportProgress | undefined
   return await new Promise<Result>((resolve, reject) => {
@@ -138,12 +144,21 @@ async function runWorkerJob<Result>({
       lastHeartbeat = Date.now()
       if (response.type === 'heartbeat') return
       if (response.type === 'progress') {
-        lastProgress = response.progress
-        onProgress?.(response.progress)
+        const progress = contentFreeBoundary
+          ? contentFreePublicationWorkerProgress(response.progress)
+          : response.progress
+        lastProgress = progress
+        onProgress?.(progress)
         return
       }
       if (response.type === 'error') {
-        finish(() => reject(workerError(response.code, response.message)))
+        const code = contentFreeBoundary
+          ? contentFreePublicationWorkerErrorCode(response.code)
+          : response.code
+        const message = contentFreeBoundary
+          ? 'The local conversion stopped safely.'
+          : response.message
+        finish(() => reject(workerError(code, message)))
         return
       }
       if (response.type === expectedResult) {
@@ -204,6 +219,7 @@ export async function reconstructPdfInWorker(
     signal?: AbortSignal
     watchdogMs?: number
     createWorker?: WorkerFactory
+    privacyBoundary?: typeof CONTENT_FREE_PUBLICATION_WORKER_BOUNDARY
   } = {},
 ) {
   if (options.signal?.aborted) {
@@ -229,6 +245,9 @@ export async function reconstructPdfInWorker(
         lastModified: file.lastModified,
         bytes,
       },
+      ...(options.privacyBoundary
+        ? { privacyBoundary: options.privacyBoundary }
+        : {}),
     },
     expectedResult: 'pdf-result',
     transfer: [bytes],

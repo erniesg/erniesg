@@ -235,6 +235,54 @@ describe('publication worker client', () => {
     expect(worker.terminated).toBe(true)
   })
 
+  it('closes progress and errors before they cross the private worker boundary', async () => {
+    const marker = 'PRIVATE-WORKER-DETAIL-MUST-NOT-CROSS'
+    const worker = new RespondingWorker()
+    const progress = vi.fn()
+    const pending = reconstructPdfInWorker(inputFile(), progress, {
+      privacyBoundary: 'content-free',
+      createWorker: () => worker as never,
+    }).catch((error: unknown) => error)
+    await vi.waitFor(() => expect(worker.posted).toHaveLength(1))
+    const request = worker.posted[0].message as {
+      jobId: string
+      privacyBoundary?: string
+    }
+    expect(request.privacyBoundary).toBe('content-free')
+
+    worker.emit({
+      type: 'progress',
+      jobId: request.jobId,
+      progress: {
+        phase: 'reading-order',
+        completed: 1,
+        total: 2,
+        message: marker,
+        checkpoint: marker,
+      },
+    })
+    worker.emit({
+      type: 'error',
+      jobId: request.jobId,
+      code: marker,
+      message: marker,
+      stack: marker,
+    })
+
+    expect(progress).toHaveBeenCalledWith({
+      phase: 'reading-order',
+      completed: 0,
+      total: 0,
+      message: 'Resolving document reading order locally…',
+    })
+    expect(JSON.stringify(progress.mock.calls)).not.toContain(marker)
+    const error = await pending
+    expect(error).toBeInstanceOf(Error)
+    expect(String(error)).not.toContain(marker)
+    expect((error as Error).stack).not.toContain(marker)
+    expect(worker.terminated).toBe(true)
+  })
+
   it('attaches the worker-compiled preview payload to the unchanged EPUB', async () => {
     const worker = new RespondingWorker()
     const pending = buildEpubInWorker({} as never, {} as never, 'publication', {

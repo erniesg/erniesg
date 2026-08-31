@@ -1152,6 +1152,10 @@ export async function reconstructPdf(
     loadingTask = pdfjs.getDocument({
       data: bytes.slice(),
       isEvalSupported: false,
+      // Parser diagnostics can contain attacker-controlled PDF tokens. The
+      // importer maps failures to its own closed errors instead of logging
+      // PDF.js warnings from a browser-local private document.
+      verbosity: 0,
       useSystemFonts: true,
       ...(options.standardFontDataUrl
         ? { standardFontDataUrl: options.standardFontDataUrl }

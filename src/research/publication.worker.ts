@@ -9,7 +9,10 @@ import {
 } from './import-types'
 import { reconstructPdf } from './pdf'
 import {
+  CONTENT_FREE_PUBLICATION_WORKER_BOUNDARY,
   PUBLICATION_WORKER_HEARTBEAT_INTERVAL_MS,
+  contentFreePublicationWorkerError,
+  contentFreePublicationWorkerProgress,
   transferableEpubBuffers,
   transferableReconstructionBuffers,
   type PublicationWorkerRequest,
@@ -28,7 +31,15 @@ function post(
 function serializedError(
   jobId: string,
   error: unknown,
+  contentFree: boolean,
 ): Extract<PublicationWorkerResponse, { type: 'error' }> {
+  if (contentFree) {
+    return {
+      type: 'error',
+      jobId,
+      ...contentFreePublicationWorkerError(error),
+    }
+  }
   return {
     type: 'error',
     jobId,
@@ -47,12 +58,21 @@ function serializedError(
 }
 
 async function handleRequest(request: PublicationWorkerRequest) {
+  const contentFree =
+    request.type === 'convert-pdf' &&
+    request.privacyBoundary === CONTENT_FREE_PUBLICATION_WORKER_BOUNDARY
   let currentStage:
     PublicationWorkerRequest['type'] | DocumentImportProgress['phase'] =
     request.type
   const reportProgress = (progress: DocumentImportProgress) => {
     currentStage = progress.phase
-    post({ type: 'progress', jobId: request.jobId, progress })
+    post({
+      type: 'progress',
+      jobId: request.jobId,
+      progress: contentFree
+        ? contentFreePublicationWorkerProgress(progress)
+        : progress,
+    })
   }
   const heartbeat = workerScope.setInterval(
     () =>
@@ -124,7 +144,7 @@ async function handleRequest(request: PublicationWorkerRequest) {
       transferableEpubBuffers(result, preview),
     )
   } catch (error) {
-    post(serializedError(request.jobId, error))
+    post(serializedError(request.jobId, error, contentFree))
   } finally {
     workerScope.clearInterval(heartbeat)
   }

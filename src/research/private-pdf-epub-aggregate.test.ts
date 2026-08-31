@@ -9,6 +9,7 @@ import {
   createPrivatePdfEpubObservation,
   safePrivatePdfEpubError,
   validatePrivatePdfEpubAggregate,
+  validatePrivatePdfEpubPilotReceipt,
 } from './private-pdf-epub-aggregate'
 import { PrivatePdfEpubBridgeError } from './private-pdf-epub-bridge'
 
@@ -81,6 +82,23 @@ function rendererFailure(
   })
 }
 
+function conformanceFailure(
+  categories: readonly (typeof PRIVATE_PDF_EPUB_CATEGORIES)[number][] = [
+    'paragraph',
+  ],
+) {
+  return createPrivatePdfEpubObservation({
+    ...renderedObservation(categories),
+    terminalCode: 'EPUB_CONFORMANCE_FAILED',
+    outcome: 'conformance-failure',
+    semanticDisposition: 'not-rendered',
+    zeroTolerance: {
+      ...checkedZeroTolerance,
+      manifestFailureCount: { status: 'checked', failureCount: 1 },
+    },
+  })
+}
+
 describe('private Struct aggregate sanitizer', () => {
   it('builds and validates the exact closed public aggregate shape', async () => {
     const report = buildPrivatePdfEpubAggregate(
@@ -129,10 +147,10 @@ describe('private Struct aggregate sanitizer', () => {
       renderedObservation(['tables']),
       renderedObservation(['tables']),
       renderedObservation(['tables']),
-      rendererFailure(['tables']),
+      conformanceFailure(['tables']),
     ])
 
-    expect(report.outcomes['unexpected-renderer-refusal']).toBe(1)
+    expect(report.outcomes['conformance-failure']).toBe(1)
     expect(report.categories.tables).toEqual({
       status: 'reported',
       numerator: 4,
@@ -148,7 +166,7 @@ describe('private Struct aggregate sanitizer', () => {
       outcome: 'conformance-failure',
       semanticDisposition: 'not-rendered',
       zeroTolerance: {
-        ...notApplicableZeroTolerance,
+        ...checkedZeroTolerance,
         xhtmlByteMismatchCount: {
           status: 'checked',
           failureCount: 1,
@@ -186,16 +204,17 @@ describe('private Struct aggregate sanitizer', () => {
       semanticDisposition: 'not-applicable',
       zeroTolerance: notApplicableZeroTolerance,
     })
-    const report = buildPrivatePdfEpubAggregate([
-      refusal,
-      renderedObservation(['paragraph'], false),
-    ])
+    const receipt = buildPrivatePdfEpubPilotReceipt(
+      [refusal, renderedObservation(['paragraph'], false)],
+      { holdoutRetained: 66 },
+    )
 
-    expect(report.outcomes['expected-review-refusal']).toBe(1)
-    expect(report.counts.neutralObligations).toBe(12)
-    expect(report.counts.conservedNeutralObligations).toBe(12)
-    expect(report.counts.ambiguityEligible).toBe(1)
-    expect(report.counts.ambiguitySafe).toBe(1)
+    expect(receipt.failureClasses.REVIEW_REQUIRED).toBe(1)
+    expect(receipt.publicAggregate).toEqual({
+      status: 'unavailable',
+      reason: 'incomplete-transaction-evidence',
+    })
+    expect(JSON.stringify(receipt)).not.toContain('neutralConservation')
   })
 
   it('does not publish a generic conformance class as a manifest failure', () => {
@@ -204,17 +223,21 @@ describe('private Struct aggregate sanitizer', () => {
       terminalCode: 'EPUB_CONFORMANCE_FAILED',
       outcome: 'conformance-failure',
       semanticDisposition: 'not-rendered',
-      zeroTolerance: unobservedZeroTolerance,
+      zeroTolerance: {
+        ...unobservedZeroTolerance,
+        xhtmlByteMismatchCount: { status: 'checked', failureCount: 0 },
+        epubByteMismatchCount: { status: 'checked', failureCount: 0 },
+      },
     })
 
     expect(() => buildPrivatePdfEpubAggregate([generic])).toThrow(
       PrivatePdfEpubSanitizerError,
     )
     expect(
-      Object.values(generic.zeroTolerance).every(
+      Object.values(generic.zeroTolerance).filter(
         (assertion) => assertion.status === 'not-observed',
-      ),
-    ).toBe(true)
+      ).length,
+    ).toBe(PRIVATE_PDF_EPUB_ZERO_TOLERANCE_KEYS.length - 2)
   })
 
   it('keeps an internal pre-Struct failure out of every unobserved metric', () => {
@@ -269,6 +292,41 @@ describe('private Struct aggregate sanitizer', () => {
         outcome: 'conformance-failure',
       }),
     ).toThrow(PrivatePdfEpubSanitizerError)
+  })
+
+  it('rejects ready observations whose published assertions were not checked', () => {
+    expect(() =>
+      createPrivatePdfEpubObservation({
+        ...renderedObservation(),
+        zeroTolerance: notApplicableZeroTolerance,
+      }),
+    ).toThrow(PrivatePdfEpubSanitizerError)
+  })
+
+  it('requires measured conservation for source-preserved ready outcomes', () => {
+    const sourcePreserved = {
+      ...renderedObservation(),
+      outcome: 'source-preserved-ready',
+      semanticDisposition: 'source-preserved',
+    } as const
+
+    expect(() =>
+      createPrivatePdfEpubObservation({
+        ...sourcePreserved,
+        sourceToStruct: { status: 'source-preserved' },
+      }),
+    ).toThrow(PrivatePdfEpubSanitizerError)
+
+    const report = buildPrivatePdfEpubAggregate([
+      renderedObservation(),
+      renderedObservation(),
+      renderedObservation(),
+      renderedObservation(),
+      createPrivatePdfEpubObservation(sourcePreserved),
+    ])
+    expect(report.counts.neutralObligations).toBe(60)
+    expect(report.counts.conservedNeutralObligations).toBe(60)
+    expect(report.outcomes['source-preserved-ready']).toBe(1)
   })
 
   it('emits a closed pilot receipt instead of fabricated public metrics', () => {
@@ -373,5 +431,50 @@ describe('private Struct aggregate sanitizer', () => {
       message:
         'The local conversion stopped safely. Nothing was saved or uploaded.',
     })
+  })
+
+  it('binds every available pilot summary to its nested aggregate', () => {
+    const receipt = buildPrivatePdfEpubPilotReceipt(
+      [
+        renderedObservation(),
+        renderedObservation(),
+        renderedObservation(),
+        renderedObservation(),
+        conformanceFailure(),
+      ],
+      { holdoutRetained: 66 },
+    )
+    expect(receipt.publicAggregate.status).toBe('available')
+
+    expect(() =>
+      validatePrivatePdfEpubPilotReceipt({
+        ...receipt,
+        publicArtifact: {
+          ...receipt.publicArtifact,
+          gitCommit: 'b'.repeat(40),
+        },
+      }),
+    ).toThrow(PrivatePdfEpubSanitizerError)
+
+    expect(() =>
+      validatePrivatePdfEpubPilotReceipt({
+        ...receipt,
+        categories: {
+          ...receipt.categories,
+          paragraph: { status: 'suppressed' },
+        },
+      }),
+    ).toThrow(PrivatePdfEpubSanitizerError)
+
+    expect(() =>
+      validatePrivatePdfEpubPilotReceipt({
+        ...receipt,
+        failureClasses: {
+          ...receipt.failureClasses,
+          EPUB_CONFORMANCE_FAILED: 0,
+          INTERNAL_FAILURE: 1,
+        },
+      }),
+    ).toThrow(PrivatePdfEpubSanitizerError)
   })
 })

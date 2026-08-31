@@ -161,7 +161,6 @@ const measuredSourceToStructSchema = z
 const sourceToStructSchema = z.union([
   measuredSourceToStructSchema,
   z.object({ status: z.literal('review-refusal') }).strict(),
-  z.object({ status: z.literal('source-preserved') }).strict(),
   z.object({ status: z.literal('not-reached') }).strict(),
   z.object({ status: z.literal('not-observed') }).strict(),
 ])
@@ -245,6 +244,9 @@ const observationSchema = z
     )
       issue('SEMANTIC_DISPOSITION')
     const assertionValues = Object.values(value.zeroTolerance)
+    const allAssertionsHaveStatus = (
+      status: z.infer<typeof transactionAssertionSchema>['status'],
+    ) => assertionValues.every((assertion) => assertion.status === status)
     const observedFailureCount = assertionValues.reduce(
       (sum, assertion) =>
         sum + (assertion.status === 'checked' ? assertion.failureCount : 0),
@@ -286,18 +288,18 @@ const observationSchema = z
           value.sourceToStruct.status !== 'measured' ||
           value.semanticDisposition !== 'rendered' ||
           value.ambiguityDisposition === 'not-demonstrated' ||
-          observedFailureCount > 0
+          observedFailureCount > 0 ||
+          !allAssertionsHaveStatus('checked')
         )
           issue('RENDERED_READY_BINDING')
         break
       case 'source-preserved-ready':
         if (
-          !['measured', 'source-preserved'].includes(
-            value.sourceToStruct.status,
-          ) ||
+          value.sourceToStruct.status !== 'measured' ||
           value.semanticDisposition !== 'source-preserved' ||
           value.ambiguityDisposition === 'not-demonstrated' ||
-          observedFailureCount > 0
+          observedFailureCount > 0 ||
+          !allAssertionsHaveStatus('checked')
         )
           issue('SOURCE_PRESERVED_BINDING')
         break
@@ -307,24 +309,41 @@ const observationSchema = z
             value.sourceToStruct.status,
           ) ||
           (value.assignment.ambiguityEligibility === 'eligible' &&
-            value.ambiguityDisposition !== 'safe')
+            value.ambiguityDisposition !== 'safe') ||
+          !allAssertionsHaveStatus('not-applicable')
         )
           issue('REVIEW_REFUSAL_BINDING')
         break
       case 'invalid-bridge-document':
-        if (value.sourceToStruct.status !== 'not-reached')
+        if (
+          value.sourceToStruct.status !== 'not-reached' ||
+          !allAssertionsHaveStatus('not-applicable')
+        )
           issue('INVALID_BRIDGE_BINDING')
         break
       case 'unexpected-renderer-refusal':
+        if (
+          value.sourceToStruct.status !== 'measured' ||
+          !allAssertionsHaveStatus('not-applicable')
+        )
+          issue('RENDERER_REFUSAL_BINDING')
+        break
       case 'conformance-failure':
-        if (value.sourceToStruct.status !== 'measured')
+        if (
+          value.sourceToStruct.status !== 'measured' ||
+          assertionValues.some(
+            (assertion) => assertion.status === 'not-applicable',
+          ) ||
+          value.zeroTolerance.xhtmlByteMismatchCount.status !== 'checked' ||
+          value.zeroTolerance.epubByteMismatchCount.status !== 'checked'
+        )
           issue('STRUCT_STAGE_BINDING')
         break
       case 'internal-failure':
         if (
           value.sourceToStruct.status !== 'not-observed' ||
           observedFailureCount > 0 ||
-          !hasUnobservedAssertion
+          !allAssertionsHaveStatus('not-observed')
         )
           issue('INTERNAL_FAILURE_BINDING')
         break
@@ -572,7 +591,7 @@ function transactionEvidenceIsComplete(
       observation.ambiguityDisposition !== 'unavailable' &&
       observation.semanticDisposition !== 'unavailable' &&
       Object.values(observation.zeroTolerance).every(
-        (assertion) => assertion.status !== 'not-observed',
+        (assertion) => assertion.status === 'checked',
       )
     )
   })
@@ -763,6 +782,8 @@ const pilotReceiptSchema = z
   })
   .strict()
   .superRefine((receipt, context) => {
+    const issue = (message: string) =>
+      context.addIssue({ code: 'custom', message })
     const failures = Object.values(receipt.failureClasses).reduce(
       (sum, count) => sum + count,
       0,
@@ -774,12 +795,85 @@ const pilotReceiptSchema = z
         : receipt.pilot.completed - failures
     if (
       receipt.pilot.assigned !== receipt.pilot.completed ||
+      failures > receipt.pilot.completed ||
       ready + failures !== receipt.pilot.completed
     )
-      context.addIssue({ code: 'custom', message: 'PILOT_COUNTER_BINDING' })
+      issue('PILOT_COUNTER_BINDING')
+
+    if (receipt.publicAggregate.status !== 'available') return
+    const report = receipt.publicAggregate.report
+    if (
+      !closedValuesEqual(receipt.publicArtifact, report.publicArtifact) ||
+      !closedValuesEqual(receipt.evaluation, report.evaluation) ||
+      !closedValuesEqual(receipt.categories, report.categories) ||
+      receipt.pilot.assigned !== report.counts.assigned ||
+      receipt.pilot.completed !== report.counts.completed
+    )
+      issue('PILOT_AGGREGATE_BINDING')
+
+    const groupedFailures: Record<
+      Exclude<
+        (typeof PRIVATE_PDF_EPUB_OUTCOMES)[number],
+        'rendered-ready' | 'source-preserved-ready'
+      >,
+      number
+    > = {
+      'expected-review-refusal': 0,
+      'invalid-bridge-document': 0,
+      'unexpected-renderer-refusal': 0,
+      'conformance-failure': 0,
+    }
+    for (const code of PRIVATE_PDF_EPUB_ERROR_CODES) {
+      const outcome = privatePdfEpubOutcomeForTerminalCode(code)
+      if (outcome === 'internal-failure') {
+        if (receipt.failureClasses[code] !== 0)
+          issue('PILOT_FAILURE_CLASS_BINDING')
+        continue
+      }
+      if (
+        outcome === 'rendered-ready' ||
+        outcome === 'source-preserved-ready'
+      ) {
+        issue('PILOT_FAILURE_CLASS_BINDING')
+        continue
+      }
+      groupedFailures[outcome] += receipt.failureClasses[code]
+    }
+    for (const [outcome, count] of Object.entries(groupedFailures))
+      if (report.outcomes[outcome as keyof typeof groupedFailures] !== count)
+        issue('PILOT_FAILURE_CLASS_BINDING')
   })
 
 export type PrivatePdfEpubPilotReceipt = z.infer<typeof pilotReceiptSchema>
+
+function closedValuesEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true
+  if (
+    !left ||
+    !right ||
+    typeof left !== 'object' ||
+    typeof right !== 'object' ||
+    Array.isArray(left) !== Array.isArray(right)
+  )
+    return false
+  if (Array.isArray(left) && Array.isArray(right))
+    return (
+      left.length === right.length &&
+      left.every((value, index) => closedValuesEqual(value, right[index]))
+    )
+  const leftRecord = left as Record<string, unknown>
+  const rightRecord = right as Record<string, unknown>
+  const leftKeys = Object.keys(leftRecord).sort()
+  const rightKeys = Object.keys(rightRecord).sort()
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every(
+      (key, index) =>
+        key === rightKeys[index] &&
+        closedValuesEqual(leftRecord[key], rightRecord[key]),
+    )
+  )
+}
 
 export function validatePrivatePdfEpubPilotReceipt(
   input: unknown,

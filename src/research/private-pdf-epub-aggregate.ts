@@ -1,10 +1,10 @@
 import { z } from 'zod'
 import {
   PRIVATE_PDF_EPUB_CATEGORIES,
+  PRIVATE_PDF_EPUB_ERROR_CODES,
   PRIVATE_PDF_EPUB_STRUCT_ARTIFACT,
   safePrivatePdfEpubError,
-  type PrivatePdfEpubCategory,
-  type PrivatePdfEpubExport,
+  type PrivatePdfEpubErrorCode,
 } from './private-pdf-epub-bridge'
 
 export { PRIVATE_PDF_EPUB_CATEGORIES, safePrivatePdfEpubError }
@@ -16,6 +16,11 @@ export const PRIVATE_PDF_EPUB_OUTCOMES = [
   'invalid-bridge-document',
   'unexpected-renderer-refusal',
   'conformance-failure',
+] as const
+
+export const PRIVATE_PDF_EPUB_TRANSACTION_OUTCOMES = [
+  ...PRIVATE_PDF_EPUB_OUTCOMES,
+  'internal-failure',
 ] as const
 
 export const PRIVATE_PDF_EPUB_ZERO_TOLERANCE_KEYS = [
@@ -40,6 +45,7 @@ export const PRIVATE_PDF_EPUB_ZERO_TOLERANCE_KEYS = [
 ] as const
 
 const MAXIMUM_COUNT = 1_000_000
+const MAXIMUM_PILOT_POPULATION = 5
 const MINIMUM_REPORTING_POPULATION = 5
 const SEMANTIC_VERSION =
   /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u
@@ -47,6 +53,7 @@ const SEMANTIC_VERSION =
 const boundedCount = z.number().int().min(0).max(MAXIMUM_COUNT)
 const positiveCount = boundedCount.min(1)
 const boundedRate = z.number().min(0).max(1).multipleOf(0.000001)
+const eligibilitySchema = z.enum(['eligible', 'not-eligible', 'unavailable'])
 
 const zeroToleranceSchema = z
   .object({
@@ -71,29 +78,257 @@ const zeroToleranceSchema = z
   })
   .strict()
 
-const observationSchema = z
+const checkedAssertionSchema = z
   .object({
-    outcome: z.enum(PRIVATE_PDF_EPUB_OUTCOMES),
-    categories: z.array(z.enum(PRIVATE_PDF_EPUB_CATEGORIES)).max(14),
-    neutralObligations: positiveCount,
+    status: z.literal('checked'),
+    failureCount: boundedCount,
+  })
+  .strict()
+const notApplicableAssertionSchema = z
+  .object({ status: z.literal('not-applicable') })
+  .strict()
+const notObservedAssertionSchema = z
+  .object({ status: z.literal('not-observed') })
+  .strict()
+const transactionAssertionSchema = z.discriminatedUnion('status', [
+  checkedAssertionSchema,
+  notApplicableAssertionSchema,
+  notObservedAssertionSchema,
+])
+const transactionAssertionsSchema = z
+  .object({
+    privacySanitizerFailureCount: transactionAssertionSchema,
+    falseLinkCount: transactionAssertionSchema,
+    falseVerifiedTableCount: transactionAssertionSchema,
+    inventedVisibleTextCount: transactionAssertionSchema,
+    digestMismatchCount: transactionAssertionSchema,
+    danglingReferenceCount: transactionAssertionSchema,
+    unsafePathCount: transactionAssertionSchema,
+    xmlFailureCount: transactionAssertionSchema,
+    idFailureCount: transactionAssertionSchema,
+    linkFailureCount: transactionAssertionSchema,
+    manifestFailureCount: transactionAssertionSchema,
+    spineFailureCount: transactionAssertionSchema,
+    containerFailureCount: transactionAssertionSchema,
+    metadataFailureCount: transactionAssertionSchema,
+    accessibilityFailureCount: transactionAssertionSchema,
+    boundsFailureCount: transactionAssertionSchema,
+    xhtmlByteMismatchCount: transactionAssertionSchema,
+    epubByteMismatchCount: transactionAssertionSchema,
+  })
+  .strict()
+
+const categoryEligibilitySchema = z
+  .object({
+    paragraph: eligibilitySchema,
+    hierarchy: eligibilitySchema,
+    tables: eligibilitySchema,
+    figures: eligibilitySchema,
+    citations: eligibilitySchema,
+    notes: eligibilitySchema,
+    multicolumn: eligibilitySchema,
+    rtl: eligibilitySchema,
+    navigation: eligibilitySchema,
+    assets: eligibilitySchema,
+    metadata: eligibilitySchema,
+    malformed: eligibilitySchema,
+    bounds: eligibilitySchema,
+    ambiguity: eligibilitySchema,
+  })
+  .strict()
+
+const assignmentSchema = z
+  .object({
+    categoryEligibility: categoryEligibilitySchema,
+    publicationEligibility: eligibilitySchema,
+    ambiguityEligibility: eligibilitySchema,
+    semanticEligibility: eligibilitySchema,
+  })
+  .strict()
+
+const measuredSourceToStructSchema = z
+  .object({
+    status: z.literal('measured'),
+    neutralObligations: boundedCount,
     conservedNeutralObligations: boundedCount,
-    publicationEligible: z.boolean(),
-    publicationReady: z.boolean(),
-    ambiguityEligible: z.boolean(),
-    ambiguitySafe: z.boolean(),
-    semanticEligible: z.boolean(),
-    renderedSemantically: z.boolean(),
-    zeroTolerance: zeroToleranceSchema,
   })
   .strict()
   .superRefine((value, context) => {
     if (value.conservedNeutralObligations > value.neutralObligations)
-      context.addIssue({
-        code: 'custom',
-        message: 'CONSERVATION_COUNT',
-      })
-    if (new Set(value.categories).size !== value.categories.length)
-      context.addIssue({ code: 'custom', message: 'CATEGORY_DUPLICATE' })
+      context.addIssue({ code: 'custom', message: 'CONSERVATION_COUNT' })
+  })
+
+const sourceToStructSchema = z.union([
+  measuredSourceToStructSchema,
+  z.object({ status: z.literal('review-refusal') }).strict(),
+  z.object({ status: z.literal('source-preserved') }).strict(),
+  z.object({ status: z.literal('not-reached') }).strict(),
+  z.object({ status: z.literal('not-observed') }).strict(),
+])
+
+const terminalCodeSchema = z.enum(['READY', ...PRIVATE_PDF_EPUB_ERROR_CODES])
+
+const observationSchema = z
+  .object({
+    terminalCode: terminalCodeSchema,
+    outcome: z.enum(PRIVATE_PDF_EPUB_TRANSACTION_OUTCOMES),
+    assignment: assignmentSchema,
+    sourceToStruct: sourceToStructSchema,
+    ambiguityDisposition: z.enum([
+      'safe',
+      'not-demonstrated',
+      'not-applicable',
+      'unavailable',
+    ]),
+    semanticDisposition: z.enum([
+      'rendered',
+      'source-preserved',
+      'not-rendered',
+      'not-applicable',
+      'unavailable',
+    ]),
+    zeroTolerance: transactionAssertionsSchema,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const issue = (message: string) =>
+      context.addIssue({ code: 'custom', message })
+    const expectedOutcome = privatePdfEpubOutcomeForTerminalCode(
+      value.terminalCode,
+    )
+    if (
+      expectedOutcome !== value.outcome &&
+      !(
+        value.terminalCode === 'READY' &&
+        value.outcome === 'source-preserved-ready'
+      )
+    )
+      issue('TERMINAL_OUTCOME_BINDING')
+    if (
+      value.assignment.categoryEligibility.ambiguity !==
+      value.assignment.ambiguityEligibility
+    )
+      issue('AMBIGUITY_CATEGORY_BINDING')
+
+    const ready =
+      value.outcome === 'rendered-ready' ||
+      value.outcome === 'source-preserved-ready'
+    if (ready && value.assignment.publicationEligibility === 'not-eligible')
+      issue('PUBLICATION_ELIGIBILITY')
+
+    if (
+      value.assignment.ambiguityEligibility === 'eligible' &&
+      (value.ambiguityDisposition === 'not-applicable' ||
+        value.ambiguityDisposition === 'unavailable')
+    )
+      issue('AMBIGUITY_DISPOSITION')
+    if (
+      value.assignment.ambiguityEligibility === 'not-eligible' &&
+      value.ambiguityDisposition !== 'not-applicable'
+    )
+      issue('AMBIGUITY_DISPOSITION')
+    if (
+      value.assignment.ambiguityEligibility === 'unavailable' &&
+      value.ambiguityDisposition !== 'unavailable'
+    )
+      issue('AMBIGUITY_DISPOSITION')
+
+    if (
+      value.assignment.semanticEligibility === 'eligible' &&
+      (value.semanticDisposition === 'not-applicable' ||
+        value.semanticDisposition === 'unavailable')
+    )
+      issue('SEMANTIC_DISPOSITION')
+    if (
+      value.assignment.semanticEligibility === 'not-eligible' &&
+      value.semanticDisposition !== 'not-applicable'
+    )
+      issue('SEMANTIC_DISPOSITION')
+    const assertionValues = Object.values(value.zeroTolerance)
+    const observedFailureCount = assertionValues.reduce(
+      (sum, assertion) =>
+        sum + (assertion.status === 'checked' ? assertion.failureCount : 0),
+      0,
+    )
+    const hasUnobservedAssertion = assertionValues.some(
+      (assertion) => assertion.status === 'not-observed',
+    )
+    if (
+      value.outcome === 'conformance-failure' &&
+      observedFailureCount === 0 &&
+      !hasUnobservedAssertion
+    )
+      issue('CONFORMANCE_ASSERTION_REQUIRED')
+    if (value.outcome !== 'conformance-failure' && observedFailureCount > 0)
+      issue('CONFORMANCE_OUTCOME_REQUIRED')
+    if (value.terminalCode === 'NONDETERMINISTIC_OUTPUT') {
+      const mismatchFailures = [
+        value.zeroTolerance.xhtmlByteMismatchCount,
+        value.zeroTolerance.epubByteMismatchCount,
+      ].reduce(
+        (sum, assertion) =>
+          sum + (assertion.status === 'checked' ? assertion.failureCount : 0),
+        0,
+      )
+      if (mismatchFailures < 1 || observedFailureCount !== mismatchFailures)
+        issue('REPRODUCIBILITY_ASSERTION_BINDING')
+    }
+    if (
+      value.terminalCode === 'EPUB_CONFORMANCE_FAILED' &&
+      (assertionFailureCount(value.zeroTolerance.xhtmlByteMismatchCount) > 0 ||
+        assertionFailureCount(value.zeroTolerance.epubByteMismatchCount) > 0)
+    )
+      issue('EPUB_ASSERTION_BINDING')
+
+    switch (value.outcome) {
+      case 'rendered-ready':
+        if (
+          value.sourceToStruct.status !== 'measured' ||
+          value.semanticDisposition !== 'rendered' ||
+          value.ambiguityDisposition === 'not-demonstrated' ||
+          observedFailureCount > 0
+        )
+          issue('RENDERED_READY_BINDING')
+        break
+      case 'source-preserved-ready':
+        if (
+          !['measured', 'source-preserved'].includes(
+            value.sourceToStruct.status,
+          ) ||
+          value.semanticDisposition !== 'source-preserved' ||
+          value.ambiguityDisposition === 'not-demonstrated' ||
+          observedFailureCount > 0
+        )
+          issue('SOURCE_PRESERVED_BINDING')
+        break
+      case 'expected-review-refusal':
+        if (
+          !['measured', 'review-refusal'].includes(
+            value.sourceToStruct.status,
+          ) ||
+          (value.assignment.ambiguityEligibility === 'eligible' &&
+            value.ambiguityDisposition !== 'safe')
+        )
+          issue('REVIEW_REFUSAL_BINDING')
+        break
+      case 'invalid-bridge-document':
+        if (value.sourceToStruct.status !== 'not-reached')
+          issue('INVALID_BRIDGE_BINDING')
+        break
+      case 'unexpected-renderer-refusal':
+      case 'conformance-failure':
+        if (value.sourceToStruct.status !== 'measured')
+          issue('STRUCT_STAGE_BINDING')
+        break
+      case 'internal-failure':
+        if (
+          value.sourceToStruct.status !== 'not-observed' ||
+          observedFailureCount > 0 ||
+          !hasUnobservedAssertion
+        )
+          issue('INTERNAL_FAILURE_BINDING')
+        break
+    }
   })
 
 export type PrivatePdfEpubObservation = z.infer<typeof observationSchema>
@@ -113,92 +348,35 @@ function parseSanitized<T>(schema: z.ZodType<T>, value: unknown): T {
   return result.data
 }
 
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) deepFreeze(child)
+    Object.freeze(value)
+  }
+  return value
+}
+
+export function privatePdfEpubOutcomeForTerminalCode(
+  terminalCode: 'READY' | PrivatePdfEpubErrorCode,
+): (typeof PRIVATE_PDF_EPUB_TRANSACTION_OUTCOMES)[number] {
+  if (terminalCode === 'READY') return 'rendered-ready'
+  if (terminalCode === 'OCR_REQUIRED' || terminalCode === 'REVIEW_REQUIRED')
+    return 'expected-review-refusal'
+  if (terminalCode === 'STRUCT_RENDERER_REFUSED')
+    return 'unexpected-renderer-refusal'
+  if (
+    terminalCode === 'EPUB_CONFORMANCE_FAILED' ||
+    terminalCode === 'NONDETERMINISTIC_OUTPUT'
+  )
+    return 'conformance-failure'
+  if (terminalCode === 'INTERNAL_FAILURE') return 'internal-failure'
+  return 'invalid-bridge-document'
+}
+
 export function createPrivatePdfEpubObservation(
   input: unknown,
 ): PrivatePdfEpubObservation {
-  return parseSanitized(observationSchema, input)
-}
-
-function emptyZeroTolerance() {
-  return Object.fromEntries(
-    PRIVATE_PDF_EPUB_ZERO_TOLERANCE_KEYS.map((key) => [key, 0]),
-  ) as Record<(typeof PRIVATE_PDF_EPUB_ZERO_TOLERANCE_KEYS)[number], number>
-}
-
-export function createPrivatePdfEpubSuccessObservation(
-  result: PrivatePdfEpubExport,
-) {
-  return createPrivatePdfEpubObservation({
-    outcome: 'rendered-ready',
-    categories: [...result.categories],
-    neutralObligations: Math.max(1, result.conservation.neutralObligations),
-    conservedNeutralObligations:
-      result.conservation.neutralObligations === 0
-        ? 1
-        : result.conservation.conservedNeutralObligations,
-    publicationEligible: true,
-    publicationReady: true,
-    ambiguityEligible: true,
-    ambiguitySafe: true,
-    semanticEligible: true,
-    renderedSemantically: true,
-    zeroTolerance: emptyZeroTolerance(),
-  })
-}
-
-export function createPrivatePdfEpubFailureObservation(error: unknown) {
-  const safe = safePrivatePdfEpubError(error)
-  const zeroTolerance = emptyZeroTolerance()
-  if (safe.code === 'NONDETERMINISTIC_OUTPUT') {
-    zeroTolerance.xhtmlByteMismatchCount = 1
-    zeroTolerance.epubByteMismatchCount = 1
-  }
-  if (safe.code === 'EPUB_CONFORMANCE_FAILED')
-    zeroTolerance.manifestFailureCount = 1
-
-  const categories: PrivatePdfEpubCategory[] = []
-  if (
-    safe.code === 'INVALID_PDF' ||
-    safe.code === 'MALFORMED_PDF' ||
-    safe.code === 'ENCRYPTED_PDF' ||
-    safe.code === 'UNSAFE_PDF'
-  )
-    categories.push('malformed')
-  if (safe.code === 'OVERSIZED_PDF') categories.push('bounds')
-  if (safe.code === 'REVIEW_REQUIRED') categories.push('ambiguity')
-
-  const expectedRefusal =
-    safe.code === 'OCR_REQUIRED' || safe.code === 'REVIEW_REQUIRED'
-  const invalidBridge =
-    safe.code === 'INVALID_PDF' ||
-    safe.code === 'MALFORMED_PDF' ||
-    safe.code === 'ENCRYPTED_PDF' ||
-    safe.code === 'UNSAFE_PDF' ||
-    safe.code === 'OVERSIZED_PDF' ||
-    safe.code === 'STRUCT_ARTIFACT_MISMATCH' ||
-    safe.code === 'INVALID_BRIDGE_DOCUMENT' ||
-    safe.code === 'IMPORT_CANCELLED'
-  const rendererRefusal = safe.code === 'STRUCT_RENDERER_REFUSED'
-
-  return createPrivatePdfEpubObservation({
-    outcome: expectedRefusal
-      ? 'expected-review-refusal'
-      : invalidBridge
-        ? 'invalid-bridge-document'
-        : rendererRefusal
-          ? 'unexpected-renderer-refusal'
-          : 'conformance-failure',
-    categories,
-    neutralObligations: 1,
-    conservedNeutralObligations: 1,
-    publicationEligible: true,
-    publicationReady: false,
-    ambiguityEligible: true,
-    ambiguitySafe: expectedRefusal,
-    semanticEligible: true,
-    renderedSemantically: false,
-    zeroTolerance,
-  })
+  return deepFreeze(parseSanitized(observationSchema, input))
 }
 
 const semanticVersionSchema = z.string().min(5).max(64).regex(SEMANTIC_VERSION)
@@ -210,6 +388,15 @@ const versionsSchema = z
     profileVersion: semanticVersionSchema,
     bridgeVersion: semanticVersionSchema,
     cohortVersion: semanticVersionSchema,
+  })
+  .strict()
+
+const publicArtifactSchema = z
+  .object({
+    packageName: z.literal('@erniesg/struct'),
+    packageVersion: semanticVersionSchema,
+    gitCommit: z.string().regex(/^[0-9a-f]{40}$/u),
+    packedArtifactSha256: z.string().regex(/^[0-9a-f]{64}$/u),
   })
   .strict()
 
@@ -287,14 +474,7 @@ const aggregateSchema = z
   .object({
     schemaVersion: z.literal('2.0.0'),
     versions: versionsSchema,
-    publicArtifact: z
-      .object({
-        packageName: z.literal('@erniesg/struct'),
-        packageVersion: semanticVersionSchema,
-        gitCommit: z.string().regex(/^[0-9a-f]{40}$/u),
-        packedArtifactSha256: z.string().regex(/^[0-9a-f]{64}$/u),
-      })
-      .strict(),
+    publicArtifact: publicArtifactSchema,
     evaluation: z.object({ gate: z.literal('development') }).strict(),
     outcomes: outcomesSchema,
     counts: countsSchema,
@@ -304,6 +484,8 @@ const aggregateSchema = z
   })
   .strict()
   .superRefine((report, context) => {
+    const issue = (message: string) =>
+      context.addIssue({ code: 'custom', message })
     const outcomeTotal = Object.values(report.outcomes).reduce(
       (sum, count) => sum + count,
       0,
@@ -330,12 +512,20 @@ const aggregateSchema = z
     if (
       outcomeTotal !== report.counts.assigned ||
       report.counts.completed !== report.counts.assigned ||
+      report.outcomes['rendered-ready'] +
+        report.outcomes['source-preserved-ready'] !==
+        report.counts.publicationReady ||
+      report.counts.conservedNeutralObligations >
+        report.counts.neutralObligations ||
+      report.counts.publicationReady > report.counts.publicationEligible ||
+      report.counts.ambiguitySafe > report.counts.ambiguityEligible ||
+      report.counts.renderedSemantically > report.counts.semanticEligible ||
       Object.entries(exactRates).some(
         ([key, value]) =>
           report.rates[key as keyof typeof report.rates] !== value,
       )
     )
-      context.addIssue({ code: 'custom', message: 'AGGREGATE_COUNTER_BINDING' })
+      issue('AGGREGATE_COUNTER_BINDING')
 
     for (const category of Object.values(report.categories))
       if (
@@ -343,10 +533,7 @@ const aggregateSchema = z
         (category.numerator > category.denominator ||
           category.rate !== rate(category.numerator, category.denominator))
       )
-        context.addIssue({
-          code: 'custom',
-          message: 'CATEGORY_COUNTER_BINDING',
-        })
+        issue('CATEGORY_COUNTER_BINDING')
   })
 
 export type PrivatePdfEpubAggregate = z.infer<typeof aggregateSchema>
@@ -362,10 +549,39 @@ function checkedSum(values: readonly number[]) {
   return sum
 }
 
+function assertionFailureCount(
+  assertion: z.infer<typeof transactionAssertionSchema>,
+) {
+  return assertion.status === 'checked' ? assertion.failureCount : 0
+}
+
+function transactionEvidenceIsComplete(
+  observations: readonly PrivatePdfEpubObservation[],
+) {
+  return observations.every((observation) => {
+    const assignment = observation.assignment
+    return (
+      observation.outcome !== 'internal-failure' &&
+      assignment.publicationEligibility !== 'unavailable' &&
+      assignment.ambiguityEligibility !== 'unavailable' &&
+      assignment.semanticEligibility !== 'unavailable' &&
+      Object.values(assignment.categoryEligibility).every(
+        (eligibility) => eligibility !== 'unavailable',
+      ) &&
+      observation.sourceToStruct.status !== 'not-observed' &&
+      observation.ambiguityDisposition !== 'unavailable' &&
+      observation.semanticDisposition !== 'unavailable' &&
+      Object.values(observation.zeroTolerance).every(
+        (assertion) => assertion.status !== 'not-observed',
+      )
+    )
+  })
+}
+
 export function validatePrivatePdfEpubAggregate(
   input: unknown,
 ): PrivatePdfEpubAggregate {
-  return parseSanitized(aggregateSchema, input)
+  return deepFreeze(parseSanitized(aggregateSchema, input))
 }
 
 export function buildPrivatePdfEpubAggregate(
@@ -376,6 +592,9 @@ export function buildPrivatePdfEpubAggregate(
     z.array(observationSchema).min(1).max(MAXIMUM_COUNT),
     input,
   )
+  if (!transactionEvidenceIsComplete(observations))
+    throw new PrivatePdfEpubSanitizerError()
+
   const versions = parseSanitized(versionsSchema, {
     protocolVersion: '2.0.0',
     fixtureVersion: '2.0.0',
@@ -392,30 +611,49 @@ export function buildPrivatePdfEpubAggregate(
         .length,
     ]),
   ) as z.infer<typeof outcomesSchema>
+  const measured = observations.filter(
+    (observation) => observation.sourceToStruct.status === 'measured',
+  ) as Array<
+    PrivatePdfEpubObservation & {
+      sourceToStruct: z.infer<typeof measuredSourceToStructSchema>
+    }
+  >
   const counts = {
     assigned: observations.length,
     completed: observations.length,
     neutralObligations: checkedSum(
-      observations.map((value) => value.neutralObligations),
+      measured.map((value) => value.sourceToStruct.neutralObligations),
     ),
     conservedNeutralObligations: checkedSum(
-      observations.map((value) => value.conservedNeutralObligations),
+      measured.map((value) => value.sourceToStruct.conservedNeutralObligations),
     ),
     publicationEligible: observations.filter(
-      (value) => value.publicationEligible,
+      (value) => value.assignment.publicationEligibility === 'eligible',
     ).length,
-    publicationReady: observations.filter((value) => value.publicationReady)
-      .length,
-    ambiguityEligible: observations.filter((value) => value.ambiguityEligible)
-      .length,
-    ambiguitySafe: observations.filter((value) => value.ambiguitySafe).length,
-    semanticEligible: observations.filter((value) => value.semanticEligible)
-      .length,
+    publicationReady: observations.filter(
+      (value) =>
+        value.outcome === 'rendered-ready' ||
+        value.outcome === 'source-preserved-ready',
+    ).length,
+    ambiguityEligible: observations.filter(
+      (value) => value.assignment.ambiguityEligibility === 'eligible',
+    ).length,
+    ambiguitySafe: observations.filter(
+      (value) =>
+        value.assignment.ambiguityEligibility === 'eligible' &&
+        value.ambiguityDisposition === 'safe',
+    ).length,
+    semanticEligible: observations.filter(
+      (value) => value.assignment.semanticEligibility === 'eligible',
+    ).length,
     renderedSemantically: observations.filter(
-      (value) => value.renderedSemantically,
+      (value) =>
+        value.assignment.semanticEligibility === 'eligible' &&
+        value.semanticDisposition === 'rendered',
     ).length,
   }
   if (
+    counts.neutralObligations < 1 ||
     counts.publicationEligible < 1 ||
     counts.ambiguityEligible < 1 ||
     counts.semanticEligible < 1
@@ -438,18 +676,25 @@ export function buildPrivatePdfEpubAggregate(
   const zeroTolerance = Object.fromEntries(
     PRIVATE_PDF_EPUB_ZERO_TOLERANCE_KEYS.map((key) => [
       key,
-      checkedSum(observations.map((value) => value.zeroTolerance[key])),
+      checkedSum(
+        observations.map((value) =>
+          assertionFailureCount(value.zeroTolerance[key]),
+        ),
+      ),
     ]),
   ) as z.infer<typeof zeroToleranceSchema>
   const categories = Object.fromEntries(
     PRIVATE_PDF_EPUB_CATEGORIES.map((category) => {
-      const eligible = observations.filter((value) =>
-        value.categories.includes(category),
+      const eligible = observations.filter(
+        (value) =>
+          value.assignment.categoryEligibility[category] === 'eligible',
       )
       if (eligible.length < MINIMUM_REPORTING_POPULATION)
         return [category, { status: 'suppressed' }]
       const numerator = eligible.filter(
-        (value) => value.publicationReady,
+        (value) =>
+          value.outcome === 'rendered-ready' ||
+          value.outcome === 'source-preserved-ready',
       ).length
       return [
         category,
@@ -473,5 +718,164 @@ export function buildPrivatePdfEpubAggregate(
     rates,
     zeroTolerance,
     categories,
+  })
+}
+
+const failureClassesShape = Object.fromEntries(
+  PRIVATE_PDF_EPUB_ERROR_CODES.map((code) => [code, boundedCount]),
+) as Record<PrivatePdfEpubErrorCode, typeof boundedCount>
+const failureClassesSchema = z.object(failureClassesShape).strict()
+const unavailableAggregateSchema = z
+  .object({
+    status: z.literal('unavailable'),
+    reason: z.enum([
+      'incomplete-transaction-evidence',
+      'protocol-denominator-unavailable',
+    ]),
+  })
+  .strict()
+const availableAggregateSchema = z
+  .object({ status: z.literal('available'), report: aggregateSchema })
+  .strict()
+const pilotReceiptSchema = z
+  .object({
+    schemaVersion: z.literal('1.0.0'),
+    publicArtifact: publicArtifactSchema,
+    evaluation: z.object({ gate: z.literal('development') }).strict(),
+    pilot: z
+      .object({
+        maximumAllowed: z.literal(MAXIMUM_PILOT_POPULATION),
+        assigned: positiveCount.max(MAXIMUM_PILOT_POPULATION),
+        completed: positiveCount.max(MAXIMUM_PILOT_POPULATION),
+        holdoutRetained: positiveCount,
+        disjointHoldout: z.literal(true),
+        structArtifactVerified: z.literal(true),
+        durableUploadCount: z.literal(0),
+        persistedEpubCount: z.literal(0),
+      })
+      .strict(),
+    failureClasses: failureClassesSchema,
+    categories: categoriesSchema,
+    publicAggregate: z.discriminatedUnion('status', [
+      availableAggregateSchema,
+      unavailableAggregateSchema,
+    ]),
+  })
+  .strict()
+  .superRefine((receipt, context) => {
+    const failures = Object.values(receipt.failureClasses).reduce(
+      (sum, count) => sum + count,
+      0,
+    )
+    const ready =
+      receipt.publicAggregate.status === 'available'
+        ? receipt.publicAggregate.report.outcomes['rendered-ready'] +
+          receipt.publicAggregate.report.outcomes['source-preserved-ready']
+        : receipt.pilot.completed - failures
+    if (
+      receipt.pilot.assigned !== receipt.pilot.completed ||
+      ready + failures !== receipt.pilot.completed
+    )
+      context.addIssue({ code: 'custom', message: 'PILOT_COUNTER_BINDING' })
+  })
+
+export type PrivatePdfEpubPilotReceipt = z.infer<typeof pilotReceiptSchema>
+
+export function validatePrivatePdfEpubPilotReceipt(
+  input: unknown,
+): PrivatePdfEpubPilotReceipt {
+  return deepFreeze(parseSanitized(pilotReceiptSchema, input))
+}
+
+function pilotCategories(observations: readonly PrivatePdfEpubObservation[]) {
+  return Object.fromEntries(
+    PRIVATE_PDF_EPUB_CATEGORIES.map((category) => {
+      const eligibility = observations.map(
+        (observation) => observation.assignment.categoryEligibility[category],
+      )
+      if (eligibility.includes('unavailable'))
+        return [category, { status: 'suppressed' }]
+      const eligible = observations.filter(
+        (observation) =>
+          observation.assignment.categoryEligibility[category] === 'eligible',
+      )
+      if (eligible.length < MINIMUM_REPORTING_POPULATION)
+        return [category, { status: 'suppressed' }]
+      const numerator = eligible.filter(
+        (observation) =>
+          observation.outcome === 'rendered-ready' ||
+          observation.outcome === 'source-preserved-ready',
+      ).length
+      return [
+        category,
+        {
+          status: 'reported',
+          numerator,
+          denominator: eligible.length,
+          rate: rate(numerator, eligible.length),
+        },
+      ]
+    }),
+  ) as z.infer<typeof categoriesSchema>
+}
+
+export function buildPrivatePdfEpubPilotReceipt(
+  input: unknown,
+  options: { holdoutRetained: number; cohortVersion?: string },
+): PrivatePdfEpubPilotReceipt {
+  const observations = parseSanitized(
+    z.array(observationSchema).min(1).max(MAXIMUM_PILOT_POPULATION),
+    input,
+  )
+  const holdoutRetained = parseSanitized(positiveCount, options.holdoutRetained)
+  const failureClasses = Object.fromEntries(
+    PRIVATE_PDF_EPUB_ERROR_CODES.map((code) => [
+      code,
+      observations.filter((observation) => observation.terminalCode === code)
+        .length,
+    ]),
+  ) as z.infer<typeof failureClassesSchema>
+
+  let publicAggregate:
+    | z.infer<typeof availableAggregateSchema>
+    | z.infer<typeof unavailableAggregateSchema>
+  if (!transactionEvidenceIsComplete(observations)) {
+    publicAggregate = {
+      status: 'unavailable',
+      reason: 'incomplete-transaction-evidence',
+    }
+  } else {
+    try {
+      publicAggregate = {
+        status: 'available',
+        report: buildPrivatePdfEpubAggregate(observations, {
+          cohortVersion: options.cohortVersion,
+        }),
+      }
+    } catch {
+      publicAggregate = {
+        status: 'unavailable',
+        reason: 'protocol-denominator-unavailable',
+      }
+    }
+  }
+
+  return validatePrivatePdfEpubPilotReceipt({
+    schemaVersion: '1.0.0',
+    publicArtifact: PRIVATE_PDF_EPUB_STRUCT_ARTIFACT,
+    evaluation: { gate: 'development' },
+    pilot: {
+      maximumAllowed: MAXIMUM_PILOT_POPULATION,
+      assigned: observations.length,
+      completed: observations.length,
+      holdoutRetained,
+      disjointHoldout: true,
+      structArtifactVerified: true,
+      durableUploadCount: 0,
+      persistedEpubCount: 0,
+    },
+    failureClasses,
+    categories: pilotCategories(observations),
+    publicAggregate,
   })
 }

@@ -69,6 +69,28 @@ function pdfFile(value: string, name = 'synthetic-input.pdf') {
   })
 }
 
+function closedStructDocumentStub() {
+  return {
+    metadata: { baseDirection: 'ltr' },
+    receipt: {
+      conservation: {
+        sourceNodeCount: 1,
+        sourceRegionCount: 0,
+        sourceAnnotationCount: 0,
+        sourceAssetCount: 0,
+        sourceRelationshipCount: 0,
+        sourceDiagnosticCount: 0,
+        accountedSourceNodeCount: 1,
+        accountedSourceRegionCount: 0,
+        accountedSourceAnnotationCount: 0,
+        accountedSourceAssetCount: 0,
+        accountedSourceRelationshipCount: 0,
+        accountedSourceDiagnosticCount: 0,
+      },
+    },
+  }
+}
+
 async function expectSafeRejection(
   promise: Promise<unknown>,
   code: PrivatePdfEpubBridgeError['code'],
@@ -336,12 +358,13 @@ trailer
         mode: 'publication',
       })
     const marker = 'PRIVATE-RENDERED-CONTENT'
+    const document = closedStructDocumentStub()
 
     await expectSafeRejection(
       convertPrivatePdfToEpub(pdfFile('%PDF-1.7\n%%EOF'), {
         dependencies: {
           reconstruct: async () => ({ readiness: { ready: true } }) as never,
-          adapt: () => ({ marker, metadata: { baseDirection: 'ltr' } }),
+          adapt: () => ({ ...document, marker }),
           decode: (value) => value as never,
           render: () => '<html />',
           build,
@@ -352,5 +375,85 @@ trailer
       marker,
     )
     expect(build).toHaveBeenCalledTimes(2)
+  })
+
+  it('retains exact closed XHTML-versus-EPUB mismatch facts in memory only', async () => {
+    const document = closedStructDocumentStub()
+    const epub = {
+      bytes: new Uint8Array([1]),
+      fileName: PRIVATE_PDF_EPUB_FILE_NAME,
+      mediaType: 'application/epub+zip' as const,
+      sha256: 'a'.repeat(64),
+      identifier: 'urn:synthetic:stable',
+      entries: [] as string[],
+      mode: 'publication' as const,
+    }
+    const render = vi
+      .fn()
+      .mockReturnValueOnce('<html>first</html>')
+      .mockReturnValueOnce('<html>second</html>')
+
+    const error = await convertPrivatePdfToEpub(pdfFile('%PDF-1.7\n%%EOF'), {
+      dependencies: {
+        reconstruct: async () => ({ readiness: { ready: true } }) as never,
+        adapt: () => document,
+        decode: (value) => value as never,
+        render,
+        build: async () => ({ ...epub, bytes: epub.bytes.slice() }),
+        inspectEpub: () => undefined,
+      },
+    }).catch((reason: unknown) => reason)
+
+    expect(error).toBeInstanceOf(PrivatePdfEpubBridgeError)
+    expect(error).toMatchObject({
+      code: 'NONDETERMINISTIC_OUTPUT',
+      evaluation: {
+        stage: 'reproducibility',
+        sourceToStruct: {
+          status: 'measured',
+          neutralObligations: 1,
+          conservedNeutralObligations: 1,
+        },
+        checkedAssertions: ['xhtmlByteMismatchCount', 'epubByteMismatchCount'],
+        failedAssertions: ['xhtmlByteMismatchCount'],
+      },
+    })
+  })
+
+  it('does not label an unclassified EPUB exception as a manifest failure', async () => {
+    const marker = 'PRIVATE-UNCLASSIFIED-EPUB-DETAIL'
+    const document = closedStructDocumentStub()
+    const epub = {
+      bytes: new Uint8Array([1]),
+      fileName: PRIVATE_PDF_EPUB_FILE_NAME,
+      mediaType: 'application/epub+zip' as const,
+      sha256: 'a'.repeat(64),
+      identifier: 'urn:synthetic:stable',
+      entries: [] as string[],
+      mode: 'publication' as const,
+    }
+    const error = await convertPrivatePdfToEpub(pdfFile('%PDF-1.7\n%%EOF'), {
+      dependencies: {
+        reconstruct: async () => ({ readiness: { ready: true } }) as never,
+        adapt: () => document,
+        decode: (value) => value as never,
+        render: () => '<html />',
+        build: async () => ({ ...epub, bytes: epub.bytes.slice() }),
+        inspectEpub: () => {
+          throw new Error(marker)
+        },
+      },
+    }).catch((reason: unknown) => reason)
+
+    expect(error).toBeInstanceOf(PrivatePdfEpubBridgeError)
+    expect(error).toMatchObject({
+      code: 'EPUB_CONFORMANCE_FAILED',
+      evaluation: {
+        stage: 'epub-conformance',
+        checkedAssertions: ['xhtmlByteMismatchCount', 'epubByteMismatchCount'],
+        failedAssertions: [],
+      },
+    })
+    expect(JSON.stringify(safePrivatePdfEpubError(error))).not.toContain(marker)
   })
 })

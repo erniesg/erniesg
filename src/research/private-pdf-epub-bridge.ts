@@ -57,6 +57,45 @@ export const PRIVATE_PDF_EPUB_ERROR_CODES = [
 export type PrivatePdfEpubErrorCode =
   (typeof PRIVATE_PDF_EPUB_ERROR_CODES)[number]
 
+export const PRIVATE_PDF_EPUB_BRIDGE_ASSERTION_KEYS = [
+  'digestMismatchCount',
+  'xmlFailureCount',
+  'manifestFailureCount',
+  'spineFailureCount',
+  'containerFailureCount',
+  'accessibilityFailureCount',
+  'xhtmlByteMismatchCount',
+  'epubByteMismatchCount',
+] as const
+
+export type PrivatePdfEpubBridgeAssertionKey =
+  (typeof PRIVATE_PDF_EPUB_BRIDGE_ASSERTION_KEYS)[number]
+
+export type PrivatePdfEpubSourceToStructEvidence =
+  | {
+      readonly status: 'measured'
+      readonly neutralObligations: number
+      readonly conservedNeutralObligations: number
+    }
+  | { readonly status: 'review-refusal' }
+  | { readonly status: 'not-reached' }
+  | { readonly status: 'not-observed' }
+
+export type PrivatePdfEpubBridgeEvaluation = {
+  readonly stage:
+    | 'unknown'
+    | 'preflight'
+    | 'reconstruction'
+    | 'struct-boundary'
+    | 'renderer'
+    | 'reproducibility'
+    | 'epub-conformance'
+    | 'complete'
+  readonly sourceToStruct: PrivatePdfEpubSourceToStructEvidence
+  readonly checkedAssertions: readonly PrivatePdfEpubBridgeAssertionKey[]
+  readonly failedAssertions: readonly PrivatePdfEpubBridgeAssertionKey[]
+}
+
 const PRIVATE_PDF_EPUB_ERROR_MESSAGES: Record<PrivatePdfEpubErrorCode, string> =
   {
     INVALID_PDF:
@@ -91,12 +130,63 @@ const PRIVATE_PDF_EPUB_ERROR_MESSAGES: Record<PrivatePdfEpubErrorCode, string> =
 
 export class PrivatePdfEpubBridgeError extends Error {
   public readonly code: PrivatePdfEpubErrorCode
+  public readonly evaluation: PrivatePdfEpubBridgeEvaluation
 
-  constructor(code: PrivatePdfEpubErrorCode) {
+  constructor(
+    code: PrivatePdfEpubErrorCode,
+    evaluation: PrivatePdfEpubBridgeEvaluation = createBridgeEvaluation(
+      'unknown',
+      { status: 'not-observed' },
+    ),
+  ) {
     super(PRIVATE_PDF_EPUB_ERROR_MESSAGES[code])
     this.code = code
+    this.evaluation = evaluation
     this.name = 'PrivatePdfEpubBridgeError'
   }
+}
+
+function orderedAssertions(
+  values: readonly PrivatePdfEpubBridgeAssertionKey[],
+) {
+  const selected = new Set(values)
+  return Object.freeze(
+    PRIVATE_PDF_EPUB_BRIDGE_ASSERTION_KEYS.filter((key) => selected.has(key)),
+  )
+}
+
+function createBridgeEvaluation(
+  stage: PrivatePdfEpubBridgeEvaluation['stage'],
+  sourceToStruct: PrivatePdfEpubSourceToStructEvidence,
+  checkedAssertions: readonly PrivatePdfEpubBridgeAssertionKey[] = [],
+  failedAssertions: readonly PrivatePdfEpubBridgeAssertionKey[] = [],
+): PrivatePdfEpubBridgeEvaluation {
+  const checked = orderedAssertions([...checkedAssertions, ...failedAssertions])
+  const failed = orderedAssertions(failedAssertions)
+  return Object.freeze({
+    stage,
+    sourceToStruct: Object.freeze({ ...sourceToStruct }),
+    checkedAssertions: checked,
+    failedAssertions: failed,
+  })
+}
+
+function bridgeFailure(
+  code: PrivatePdfEpubErrorCode,
+  stage: PrivatePdfEpubBridgeEvaluation['stage'],
+  sourceToStruct: PrivatePdfEpubSourceToStructEvidence,
+  checkedAssertions: readonly PrivatePdfEpubBridgeAssertionKey[] = [],
+  failedAssertions: readonly PrivatePdfEpubBridgeAssertionKey[] = [],
+) {
+  return new PrivatePdfEpubBridgeError(
+    code,
+    createBridgeEvaluation(
+      stage,
+      sourceToStruct,
+      checkedAssertions,
+      failedAssertions,
+    ),
+  )
 }
 
 let bundledStructArtifactVerified = false
@@ -121,7 +211,9 @@ export function verifyBundledPrivatePdfEpubStructArtifact() {
     verifyPrivatePdfEpubStructArtifact(bytes)
     bundledStructArtifactVerified = true
   } catch {
-    throw new PrivatePdfEpubBridgeError('STRUCT_ARTIFACT_MISMATCH')
+    throw bridgeFailure('STRUCT_ARTIFACT_MISMATCH', 'preflight', {
+      status: 'not-reached',
+    })
   } finally {
     bytes?.fill(0)
   }
@@ -174,7 +266,9 @@ export function verifyPrivatePdfEpubStructArtifact(bytes: Uint8Array) {
     sha256HexSync(bytes) !==
     PRIVATE_PDF_EPUB_STRUCT_ARTIFACT.packedArtifactSha256
   )
-    throw new PrivatePdfEpubBridgeError('STRUCT_ARTIFACT_MISMATCH')
+    throw bridgeFailure('STRUCT_ARTIFACT_MISMATCH', 'preflight', {
+      status: 'not-reached',
+    })
 }
 
 export const PRIVATE_PDF_EPUB_CATEGORIES = [
@@ -204,12 +298,17 @@ export type PrivatePdfEpubExport = {
   sha256: string
   identifier: string
   entries: readonly string[]
-  categories: readonly PrivatePdfEpubCategory[]
-  conservation: {
-    neutralObligations: number
-    conservedNeutralObligations: number
-  }
+  observedOutputCategories: readonly PrivatePdfEpubCategory[]
+  sourceToStruct: Extract<
+    PrivatePdfEpubSourceToStructEvidence,
+    { status: 'measured' }
+  >
+  evaluation: PrivatePdfEpubBridgeEvaluation
   structArtifact: typeof PRIVATE_PDF_EPUB_STRUCT_ARTIFACT
+}
+
+type PrivatePdfEpubInspectionReceipt = {
+  readonly checkedAssertions: readonly PrivatePdfEpubBridgeAssertionKey[]
 }
 
 type PrivatePdfEpubDependencies = {
@@ -225,7 +324,9 @@ type PrivatePdfEpubDependencies = {
     document: StructDocument,
     options: { profile: StructEpubProfile },
   ) => Promise<StructEpubExport>
-  inspectEpub: (epub: StructEpubExport) => void
+  inspectEpub: (
+    epub: StructEpubExport,
+  ) => PrivatePdfEpubInspectionReceipt | void
 }
 
 export type PrivatePdfEpubBridgeOptions = {
@@ -298,7 +399,9 @@ function inspectPdfSyntax(bytes: Uint8Array) {
     bytes[3] !== 0x46 ||
     bytes[4] !== 0x2d
   ) {
-    throw new PrivatePdfEpubBridgeError('INVALID_PDF')
+    throw bridgeFailure('INVALID_PDF', 'preflight', {
+      status: 'not-reached',
+    })
   }
 
   let encrypted = false
@@ -310,8 +413,14 @@ function inspectPdfSyntax(bytes: Uint8Array) {
     if (token.name === 'encrypt') encrypted = true
     if (FORBIDDEN_PDF_NAMES.has(token.name)) unsafe = true
   }
-  if (encrypted) throw new PrivatePdfEpubBridgeError('ENCRYPTED_PDF')
-  if (unsafe) throw new PrivatePdfEpubBridgeError('UNSAFE_PDF')
+  if (encrypted)
+    throw bridgeFailure('ENCRYPTED_PDF', 'preflight', {
+      status: 'not-reached',
+    })
+  if (unsafe)
+    throw bridgeFailure('UNSAFE_PDF', 'preflight', {
+      status: 'not-reached',
+    })
 }
 
 function profileFor(document: StructDocument): StructEpubProfile {
@@ -365,28 +474,59 @@ function firstZipEntry(bytes: Uint8Array) {
   }
 }
 
-function inspectBuiltEpub(epub: StructEpubExport) {
+class PrivatePdfEpubInspectionError extends Error {
+  constructor(
+    public readonly checkedAssertions: readonly PrivatePdfEpubBridgeAssertionKey[],
+    public readonly failedAssertions: readonly PrivatePdfEpubBridgeAssertionKey[],
+  ) {
+    super('PRIVATE_PDF_EPUB_INSPECTION_FAILED')
+    this.name = 'PrivatePdfEpubInspectionError'
+  }
+}
+
+function failInspection(
+  checked: readonly PrivatePdfEpubBridgeAssertionKey[],
+  failed: PrivatePdfEpubBridgeAssertionKey,
+): never {
+  throw new PrivatePdfEpubInspectionError(
+    orderedAssertions([...checked, failed]),
+    orderedAssertions([failed]),
+  )
+}
+
+function inspectBuiltEpub(
+  epub: StructEpubExport,
+): PrivatePdfEpubInspectionReceipt {
+  const checked: PrivatePdfEpubBridgeAssertionKey[] = []
+  if (epub.sha256 !== sha256HexSync(epub.bytes))
+    failInspection(checked, 'digestMismatchCount')
+  checked.push('digestMismatchCount')
   if (
     epub.mediaType !== 'application/epub+zip' ||
-    epub.fileName !== PRIVATE_PDF_EPUB_FILE_NAME ||
-    epub.sha256 !== sha256HexSync(epub.bytes)
+    epub.fileName !== PRIVATE_PDF_EPUB_FILE_NAME
   )
-    throw new Error('EPUB_EXPORT_RECEIPT')
+    failInspection(checked, 'manifestFailureCount')
 
-  const first = firstZipEntry(epub.bytes)
+  let first: ReturnType<typeof firstZipEntry>
+  try {
+    first = firstZipEntry(epub.bytes)
+  } catch {
+    failInspection(checked, 'manifestFailureCount')
+  }
   if (first.name !== 'mimetype' || first.method !== 0)
-    throw new Error('EPUB_MIMETYPE_ORDER')
+    failInspection(checked, 'manifestFailureCount')
 
   let files: Record<string, Uint8Array>
   try {
     files = unzipSync(epub.bytes)
   } catch {
-    throw new Error('EPUB_REOPEN')
+    failInspection(checked, 'manifestFailureCount')
   }
-  if (!exactStrings(Object.keys(files), epub.entries))
-    throw new Error('EPUB_ENTRY_RECEIPT')
-  if (strFromU8(files.mimetype ?? new Uint8Array()) !== 'application/epub+zip')
-    throw new Error('EPUB_MIMETYPE')
+  if (
+    !exactStrings(Object.keys(files), epub.entries) ||
+    strFromU8(files.mimetype ?? new Uint8Array()) !== 'application/epub+zip'
+  )
+    failInspection(checked, 'manifestFailureCount')
 
   const requiredXml = [
     'META-INF/container.xml',
@@ -397,24 +537,37 @@ function inspectBuiltEpub(epub: StructEpubExport) {
   const xml = new Map<string, string>()
   for (const name of requiredXml) {
     const bytes = files[name]
-    if (!bytes) throw new Error('EPUB_REQUIRED_ENTRY')
+    if (!bytes) failInspection(checked, 'manifestFailureCount')
     const source = strFromU8(bytes)
-    if (XMLValidator.validate(source) !== true)
-      throw new Error('EPUB_XML_INVALID')
+    try {
+      if (XMLValidator.validate(source) !== true)
+        failInspection(checked, 'xmlFailureCount')
+    } catch (error) {
+      if (error instanceof PrivatePdfEpubInspectionError) throw error
+      failInspection(checked, 'xmlFailureCount')
+    }
     xml.set(name, source)
   }
-  if (!files['EPUB/styles.css']) throw new Error('EPUB_REQUIRED_ENTRY')
+  if (!files['EPUB/styles.css']) failInspection(checked, 'manifestFailureCount')
+  checked.push('manifestFailureCount', 'xmlFailureCount')
+
   if (!xml.get('META-INF/container.xml')!.includes('EPUB/package.opf'))
-    throw new Error('EPUB_CONTAINER_BINDING')
+    failInspection(checked, 'containerFailureCount')
+  checked.push('containerFailureCount')
   if (!/<spine\b[\s\S]*?<itemref\b/u.test(xml.get('EPUB/package.opf')!))
-    throw new Error('EPUB_SPINE')
-  if (!/<nav\b/u.test(xml.get('EPUB/nav.xhtml')!))
-    throw new Error('EPUB_NAVIGATION')
-  if (!/<body\b/u.test(xml.get('EPUB/content.xhtml')!))
-    throw new Error('EPUB_CONTENT')
+    failInspection(checked, 'spineFailureCount')
+  checked.push('spineFailureCount')
+  if (
+    !/<nav\b/u.test(xml.get('EPUB/nav.xhtml')!) ||
+    !/<body\b/u.test(xml.get('EPUB/content.xhtml')!)
+  )
+    failInspection(checked, 'accessibilityFailureCount')
+  checked.push('accessibilityFailureCount')
+
+  return Object.freeze({ checkedAssertions: orderedAssertions(checked) })
 }
 
-function categoriesFor(document: StructDocument) {
+function observedOutputCategoriesFor(document: StructDocument) {
   const categories = new Set<PrivatePdfEpubCategory>()
   if (
     document.blocks.some((block) =>
@@ -462,7 +615,7 @@ function categoriesFor(document: StructDocument) {
   )
 }
 
-function conservationFor(document: StructDocument) {
+function sourceToStructFor(document: StructDocument) {
   const source = document.receipt.conservation
   const neutralObligations =
     source.sourceNodeCount +
@@ -479,6 +632,7 @@ function conservationFor(document: StructDocument) {
     source.accountedSourceRelationshipCount +
     source.accountedSourceDiagnosticCount
   return {
+    status: 'measured' as const,
     neutralObligations,
     conservedNeutralObligations,
   }
@@ -486,28 +640,44 @@ function conservationFor(document: StructDocument) {
 
 function reconstructionFailure(error: unknown): PrivatePdfEpubBridgeError {
   if (!(error instanceof PdfImportError))
-    return new PrivatePdfEpubBridgeError('INTERNAL_FAILURE')
+    return bridgeFailure('INTERNAL_FAILURE', 'reconstruction', {
+      status: 'not-observed',
+    })
   switch (error.code) {
     case 'INVALID_PDF':
-      return new PrivatePdfEpubBridgeError('INVALID_PDF')
+      return bridgeFailure('INVALID_PDF', 'reconstruction', {
+        status: 'not-reached',
+      })
     case 'ENCRYPTED_PDF':
-      return new PrivatePdfEpubBridgeError('ENCRYPTED_PDF')
+      return bridgeFailure('ENCRYPTED_PDF', 'reconstruction', {
+        status: 'not-reached',
+      })
     case 'OVERSIZED_PDF':
-      return new PrivatePdfEpubBridgeError('OVERSIZED_PDF')
+      return bridgeFailure('OVERSIZED_PDF', 'reconstruction', {
+        status: 'not-reached',
+      })
     case 'OCR_REQUIRED':
     case 'OCR_LANGUAGE_UNAVAILABLE':
     case 'OCR_NETWORK_FORBIDDEN':
-      return new PrivatePdfEpubBridgeError('OCR_REQUIRED')
+      return bridgeFailure('OCR_REQUIRED', 'reconstruction', {
+        status: 'review-refusal',
+      })
     case 'INCOMPLETE_RECONSTRUCTION':
-      return new PrivatePdfEpubBridgeError('REVIEW_REQUIRED')
+      return bridgeFailure('REVIEW_REQUIRED', 'reconstruction', {
+        status: 'review-refusal',
+      })
     case 'IMPORT_CANCELLED':
-      return new PrivatePdfEpubBridgeError('IMPORT_CANCELLED')
+      return bridgeFailure('IMPORT_CANCELLED', 'reconstruction', {
+        status: 'not-reached',
+      })
     case 'EMPTY_PDF':
     case 'PDF_PARSE_FAILED':
     case 'CONVERSION_STALLED':
     case 'INVALID_PDF_URL':
     case 'PDF_DOWNLOAD_FAILED':
-      return new PrivatePdfEpubBridgeError('MALFORMED_PDF')
+      return bridgeFailure('MALFORMED_PDF', 'reconstruction', {
+        status: 'not-reached',
+      })
   }
 }
 
@@ -534,15 +704,21 @@ export async function convertPrivatePdfToEpub(
   // Verify the exact repository-owned pack before reading any private input.
   verifyBundledPrivatePdfEpubStructArtifact()
   if (options.signal?.aborted)
-    throw new PrivatePdfEpubBridgeError('IMPORT_CANCELLED')
+    throw bridgeFailure('IMPORT_CANCELLED', 'preflight', {
+      status: 'not-reached',
+    })
   if (file.size > MAX_LOCAL_PDF_BYTES)
-    throw new PrivatePdfEpubBridgeError('OVERSIZED_PDF')
+    throw bridgeFailure('OVERSIZED_PDF', 'preflight', {
+      status: 'not-reached',
+    })
 
   let bytes: Uint8Array
   try {
     bytes = new Uint8Array(await file.arrayBuffer())
   } catch {
-    throw new PrivatePdfEpubBridgeError('MALFORMED_PDF')
+    throw bridgeFailure('MALFORMED_PDF', 'preflight', {
+      status: 'not-reached',
+    })
   }
   inspectPdfSyntax(bytes)
   const anonymousFile = new File([bytes], PRIVATE_PDF_ANONYMOUS_FILE_NAME, {
@@ -565,17 +741,21 @@ export async function convertPrivatePdfToEpub(
     throw reconstructionFailure(error)
   }
   if (!reconstruction.readiness.ready)
-    throw new PrivatePdfEpubBridgeError(
+    throw bridgeFailure(
       reconstruction.completeness.ocrRequiredPages.length > 0
         ? 'OCR_REQUIRED'
         : 'REVIEW_REQUIRED',
+      'reconstruction',
+      { status: 'review-refusal' },
     )
 
   let bridgeDocument: unknown
   try {
     bridgeDocument = dependencies.adapt(reconstruction)
   } catch {
-    throw new PrivatePdfEpubBridgeError('INVALID_BRIDGE_DOCUMENT')
+    throw bridgeFailure('INVALID_BRIDGE_DOCUMENT', 'struct-boundary', {
+      status: 'not-reached',
+    })
   }
 
   let firstDocument: StructDocument
@@ -584,8 +764,12 @@ export async function convertPrivatePdfToEpub(
     firstDocument = dependencies.decode(bridgeDocument)
     secondDocument = dependencies.decode(bridgeDocument)
   } catch {
-    throw new PrivatePdfEpubBridgeError('INVALID_BRIDGE_DOCUMENT')
+    throw bridgeFailure('INVALID_BRIDGE_DOCUMENT', 'struct-boundary', {
+      status: 'not-reached',
+    })
   }
+
+  const sourceToStruct = sourceToStructFor(firstDocument)
 
   const firstProfile = profileFor(firstDocument)
   const secondProfile = profileFor(secondDocument)
@@ -607,25 +791,61 @@ export async function convertPrivatePdfToEpub(
       error instanceof Error &&
       error.message === 'STRUCT_EPUB_RECOVERY_REVIEW_REQUIRED'
     )
-      throw new PrivatePdfEpubBridgeError('REVIEW_REQUIRED')
-    throw new PrivatePdfEpubBridgeError('STRUCT_RENDERER_REFUSED')
+      throw bridgeFailure('REVIEW_REQUIRED', 'renderer', sourceToStruct)
+    throw bridgeFailure('STRUCT_RENDERER_REFUSED', 'renderer', sourceToStruct)
   }
 
-  if (
-    firstXhtml !== secondXhtml ||
+  const xhtmlMismatch = firstXhtml !== secondXhtml
+  const epubMismatch =
     !exactBytes(firstEpub.bytes, secondEpub.bytes) ||
     firstEpub.sha256 !== secondEpub.sha256 ||
     firstEpub.identifier !== secondEpub.identifier ||
     firstEpub.fileName !== secondEpub.fileName ||
     !exactStrings(firstEpub.entries, secondEpub.entries)
-  )
-    throw new PrivatePdfEpubBridgeError('NONDETERMINISTIC_OUTPUT')
+  const reproducibilityAssertions = [
+    'xhtmlByteMismatchCount',
+    'epubByteMismatchCount',
+  ] as const
+  if (xhtmlMismatch || epubMismatch)
+    throw bridgeFailure(
+      'NONDETERMINISTIC_OUTPUT',
+      'reproducibility',
+      sourceToStruct,
+      reproducibilityAssertions,
+      [
+        ...(xhtmlMismatch ? (['xhtmlByteMismatchCount'] as const) : []),
+        ...(epubMismatch ? (['epubByteMismatchCount'] as const) : []),
+      ],
+    )
 
+  let checkedAssertions: readonly PrivatePdfEpubBridgeAssertionKey[] =
+    reproducibilityAssertions
   try {
-    dependencies.inspectEpub(firstEpub)
-    dependencies.inspectEpub(secondEpub)
-  } catch {
-    throw new PrivatePdfEpubBridgeError('EPUB_CONFORMANCE_FAILED')
+    const firstInspection = dependencies.inspectEpub(firstEpub)
+    if (firstInspection)
+      checkedAssertions = orderedAssertions([
+        ...checkedAssertions,
+        ...firstInspection.checkedAssertions,
+      ])
+    const secondInspection = dependencies.inspectEpub(secondEpub)
+    if (secondInspection)
+      checkedAssertions = orderedAssertions([
+        ...checkedAssertions,
+        ...secondInspection.checkedAssertions,
+      ])
+  } catch (error) {
+    const inspected =
+      error instanceof PrivatePdfEpubInspectionError ? error : undefined
+    throw bridgeFailure(
+      'EPUB_CONFORMANCE_FAILED',
+      'epub-conformance',
+      sourceToStruct,
+      orderedAssertions([
+        ...checkedAssertions,
+        ...(inspected?.checkedAssertions ?? []),
+      ]),
+      inspected?.failedAssertions ?? [],
+    )
   }
 
   return {
@@ -635,8 +855,13 @@ export async function convertPrivatePdfToEpub(
     sha256: firstEpub.sha256,
     identifier: firstEpub.identifier,
     entries: [...firstEpub.entries],
-    categories: categoriesFor(firstDocument),
-    conservation: conservationFor(firstDocument),
+    observedOutputCategories: observedOutputCategoriesFor(firstDocument),
+    sourceToStruct,
+    evaluation: createBridgeEvaluation(
+      'complete',
+      sourceToStruct,
+      checkedAssertions,
+    ),
     structArtifact: PRIVATE_PDF_EPUB_STRUCT_ARTIFACT,
   }
 }

@@ -166,6 +166,57 @@ function corruptZipLocalEntryPayload(bytes, entryName) {
   throw new Error(`missing ZIP local entry: ${entryName}`)
 }
 
+function zipEndRecordOffset(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  for (let offset = bytes.byteLength - 22; offset >= 0; offset -= 1) {
+    if (view.getUint32(offset, true) === 0x06054b50) return offset
+  }
+  throw new Error('missing ZIP end record')
+}
+
+function prependUnindexedLocalEntry(bytes, entryName, value) {
+  const hiddenArchive = zipSync({ [entryName]: value })
+  const hiddenView = new DataView(
+    hiddenArchive.buffer,
+    hiddenArchive.byteOffset,
+    hiddenArchive.byteLength,
+  )
+  const hiddenLocalBytes = hiddenArchive.subarray(
+    0,
+    hiddenView.getUint32(zipEndRecordOffset(hiddenArchive) + 16, true),
+  )
+  const patched = new Uint8Array(hiddenLocalBytes.byteLength + bytes.byteLength)
+  patched.set(hiddenLocalBytes)
+  patched.set(bytes, hiddenLocalBytes.byteLength)
+  const view = new DataView(
+    patched.buffer,
+    patched.byteOffset,
+    patched.byteLength,
+  )
+  const endOffset = zipEndRecordOffset(patched)
+  const entryCount = view.getUint16(endOffset + 10, true)
+  const centralOffset = view.getUint32(endOffset + 16, true)
+  const shiftedCentralOffset = centralOffset + hiddenLocalBytes.byteLength
+  view.setUint32(endOffset + 16, shiftedCentralOffset, true)
+  let cursor = shiftedCentralOffset
+  for (let index = 0; index < entryCount; index += 1) {
+    if (view.getUint32(cursor, true) !== 0x02014b50) {
+      throw new Error('invalid ZIP central record')
+    }
+    view.setUint32(
+      cursor + 42,
+      view.getUint32(cursor + 42, true) + hiddenLocalBytes.byteLength,
+      true,
+    )
+    cursor +=
+      46 +
+      view.getUint16(cursor + 28, true) +
+      view.getUint16(cursor + 30, true) +
+      view.getUint16(cursor + 32, true)
+  }
+  return patched
+}
+
 function createValidEpub(extraEntries = {}) {
   return zipSync({
     mimetype: [strToU8('application/epub+zip'), { level: 0 }],
@@ -173,7 +224,7 @@ function createValidEpub(extraEntries = {}) {
       '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><rootfiles><rootfile full-path="EPUB/package.opf" media-type="application/oebps-package+xml" /></rootfiles></container>',
     ),
     'EPUB/package.opf': strToU8(
-      '<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata/><manifest/><spine/></package>',
+      '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id"><metadata><identifier id="pub-id">urn:fixture</identifier></metadata><manifest><item id="content" href="content.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="content"/></spine></package>',
     ),
     ...extraEntries,
   })
@@ -430,7 +481,7 @@ describe('PDF benchmark readiness registry', () => {
         '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><rootfiles><rootfile full-path="EPUB/package.opf" media-type="application/oebps-package+xml" /></rootfiles></container>',
       ),
       'EPUB/package.opf': strToU8(
-        '<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata/><manifest/><spine/></package>',
+        '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id"><metadata><identifier id="pub-id">urn:fixture</identifier></metadata><manifest><item id="content" href="content.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="content"/></spine></package>',
       ),
     })
     expect(validEpubPackage(compressedMimetype)).toBe(false)
@@ -452,6 +503,15 @@ describe('PDF benchmark readiness registry', () => {
         }),
       ),
     ).toBe(false)
+    expect(
+      validEpubPackage(
+        createValidEpub({
+          'EPUB/package.opf': strToU8(
+            '<opf:package xmlns:opf="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id"><opf:metadata><opf:identifier id="pub-id">urn:fixture</opf:identifier></opf:metadata><opf:manifest><opf:item id="content" href="content.xhtml" media-type="application/xhtml+xml"/></opf:manifest><opf:spine><opf:itemref idref="content"/></opf:spine></opf:package>',
+          ),
+        }),
+      ),
+    ).toBe(true)
     expect(
       validEpubPackage(
         createValidEpub({
@@ -490,6 +550,15 @@ describe('PDF benchmark readiness registry', () => {
     )
     expect(underdeclaredContainer.byteLength).toBeLessThan(32 * 1024)
     expect(validEpubPackage(underdeclaredContainer)).toBe(false)
+
+    const hiddenPackageRecord = prependUnindexedLocalEntry(
+      createValidEpub(),
+      'EPUB/package.opf',
+      strToU8(
+        '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="hidden"><metadata><identifier id="hidden">urn:hidden</identifier></metadata><manifest><item id="content" href="content.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="content"/></spine></package>',
+      ),
+    )
+    expect(validEpubPackage(hiddenPackageRecord)).toBe(false)
   })
 
   it('rejects oversized EPUB and governance bindings from lstat metadata', async () => {

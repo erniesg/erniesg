@@ -263,6 +263,17 @@ describe('publication importer OCR controls', () => {
     expect(markup).toContain('Codex is not consulted in this browser route.')
   })
 
+  it('keeps the deterministic no-Codex disclosure on compact converter routes', () => {
+    const markup = renderToStaticMarkup(
+      <PublicationImporter showIntro={false} />,
+    )
+
+    expect(markup).toContain(
+      'Uploaded PDFs are reconstructed deterministically on this device.',
+    )
+    expect(markup).toContain('Codex is not consulted in this browser route.')
+  })
+
   it('states the actual 50 MiB local upload limit', () => {
     const markup = renderToStaticMarkup(<PublicationImporter />)
 

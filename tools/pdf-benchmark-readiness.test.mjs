@@ -319,6 +319,32 @@ function zipEndRecordOffset(bytes) {
   throw new Error('missing ZIP end record')
 }
 
+function appendZipComment(bytes, comment) {
+  const original = new Uint8Array(bytes)
+  const commentBytes = Uint8Array.from(comment)
+  const endOffset = zipEndRecordOffset(original)
+  const patched = new Uint8Array(original.byteLength + commentBytes.byteLength)
+  patched.set(original)
+  patched.set(commentBytes, original.byteLength)
+  new DataView(patched.buffer).setUint16(
+    endOffset + 20,
+    commentBytes.byteLength,
+    true,
+  )
+  return patched
+}
+
+function patchZipEndRecordCommentLength(bytes, commentLength) {
+  const patched = new Uint8Array(bytes)
+  const view = new DataView(patched.buffer)
+  for (let offset = 0; offset <= patched.byteLength - 22; offset += 1) {
+    if (view.getUint32(offset, true) !== 0x06054b50) continue
+    view.setUint16(offset + 20, commentLength, true)
+    return patched
+  }
+  throw new Error('missing ZIP end record')
+}
+
 function prependUnindexedLocalEntry(bytes, entryName, value) {
   const hiddenArchive = zipSync({ [entryName]: value })
   const hiddenView = new DataView(
@@ -917,8 +943,34 @@ describe('PDF benchmark readiness registry', () => {
     const { validEpubPackage } = pdfBenchmarkReadiness
     const validFixture = createValidEpub({
       'EPUB/payload.bin': [strToU8('fixture'), { level: 0 }],
+      'EPUB/empty.bin': strToU8(''),
     })
     expect(validEpubPackage(validFixture)).toBe(true)
+
+    expect(
+      validEpubPackage(
+        createValidEpub({
+          'META-INF/container.xml': strToU8(
+            '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><rootfiles><rootfile full-path="EPUB/package.xml" media-type="application/oebps-package+xml" /></rootfiles></container>',
+          ),
+          'EPUB/package.xml': strToU8(
+            '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id"><metadata><identifier id="pub-id">urn:fixture</identifier></metadata><manifest><item id="content" href="content.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="content"/></spine></package>',
+          ),
+        }),
+      ),
+    ).toBe(true)
+
+    const eocdMagicComment = appendZipComment(validFixture, [
+      0x50,
+      0x4b,
+      0x05,
+      0x06,
+      ...Array(18).fill(0),
+    ])
+    expect(validEpubPackage(eocdMagicComment)).toBe(true)
+    expect(
+      validEpubPackage(patchZipEndRecordCommentLength(eocdMagicComment, 21)),
+    ).toBe(false)
 
     const descriptorPackage = addZipDataDescriptor(
       validFixture,

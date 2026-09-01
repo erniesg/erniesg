@@ -1624,6 +1624,13 @@ export default function PublicationImporter({
         </div>
       )}
 
+      {!showIntro && (
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          Uploaded PDFs are reconstructed deterministically on this device.
+          Codex is not consulted in this browser route.
+        </p>
+      )}
+
       {reviewMode && (
         <div className="publication-decision-file">
           <label htmlFor="publication-decisions">

@@ -1559,27 +1559,29 @@ function strictZipIndex(bytes) {
     offset >= Math.max(0, bytes.byteLength - 65_557);
     offset -= 1
   ) {
-    if (view.getUint32(offset, true) === 0x06054b50) {
-      endOffset = offset
-      break
+    if (view.getUint32(offset, true) !== 0x06054b50) continue
+    const entryCount = view.getUint16(offset + 10, true)
+    const centralSize = view.getUint32(offset + 12, true)
+    const centralOffset = view.getUint32(offset + 16, true)
+    const commentLength = view.getUint16(offset + 20, true)
+    if (
+      view.getUint16(offset + 4, true) !== 0 ||
+      view.getUint16(offset + 6, true) !== 0 ||
+      view.getUint16(offset + 8, true) !== entryCount ||
+      entryCount === 0 ||
+      entryCount > MAX_EPUB_ENTRIES ||
+      centralOffset + centralSize !== offset ||
+      offset + 22 + commentLength !== bytes.byteLength
+    ) {
+      continue
     }
+    endOffset = offset
+    break
   }
   if (endOffset < 0) throw new Error('missing ZIP end record')
   const entryCount = view.getUint16(endOffset + 10, true)
   const centralSize = view.getUint32(endOffset + 12, true)
   const centralOffset = view.getUint32(endOffset + 16, true)
-  const commentLength = view.getUint16(endOffset + 20, true)
-  if (
-    view.getUint16(endOffset + 4, true) !== 0 ||
-    view.getUint16(endOffset + 6, true) !== 0 ||
-    view.getUint16(endOffset + 8, true) !== entryCount ||
-    entryCount === 0 ||
-    entryCount > MAX_EPUB_ENTRIES ||
-    centralOffset + centralSize !== endOffset ||
-    endOffset + 22 + commentLength !== bytes.byteLength
-  ) {
-    throw new Error('invalid ZIP end record')
-  }
   const entries = []
   const names = new Set()
   let cursor = centralOffset
@@ -1725,7 +1727,7 @@ function extractZipEntryBounded(bytes, entry, maxBytes, collect = true) {
     entry.dataOffset + entry.size,
   )
   let output
-  if (entry.originalSize === 0) {
+  if (entry.originalSize === 0 && entry.compression === 0) {
     if (entry.size !== 0 || entry.checksum !== 0) {
       throw new Error('invalid empty ZIP entry')
     }
@@ -1820,7 +1822,6 @@ export function validEpubPackage(bytes) {
     const rootfileEntry = entries.get(rootfile)
     if (
       typeof rootfile !== 'string' ||
-      !rootfile.endsWith('.opf') ||
       !validEpubEntryName(rootfile) ||
       rootfileEntry === undefined ||
       rootfileEntry.originalSize <= 0 ||

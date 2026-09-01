@@ -166,6 +166,151 @@ function corruptZipLocalEntryPayload(bytes, entryName) {
   throw new Error(`missing ZIP local entry: ${entryName}`)
 }
 
+function appendZipCompressedPayloadByte(bytes, entryName, byte) {
+  const original = new Uint8Array(bytes)
+  const originalView = new DataView(
+    original.buffer,
+    original.byteOffset,
+    original.byteLength,
+  )
+  const endOffset = zipEndRecordOffset(original)
+  const centralOffset = originalView.getUint32(endOffset + 16, true)
+  let localOffset = null
+  let compressedSize = null
+  for (let cursor = centralOffset; cursor < endOffset;) {
+    const nameLength = originalView.getUint16(cursor + 28, true)
+    const extraLength = originalView.getUint16(cursor + 30, true)
+    const commentLength = originalView.getUint16(cursor + 32, true)
+    const name = Buffer.from(
+      original.subarray(cursor + 46, cursor + 46 + nameLength),
+    ).toString('utf8')
+    if (name === entryName) {
+      localOffset = originalView.getUint32(cursor + 42, true)
+      compressedSize = originalView.getUint32(cursor + 20, true)
+      break
+    }
+    cursor += 46 + nameLength + extraLength + commentLength
+  }
+  if (localOffset === null || compressedSize === null) {
+    throw new Error(`missing ZIP entry: ${entryName}`)
+  }
+  const nameLength = originalView.getUint16(localOffset + 26, true)
+  const extraLength = originalView.getUint16(localOffset + 28, true)
+  const payloadEnd =
+    localOffset + 30 + nameLength + extraLength + compressedSize
+  const patched = new Uint8Array(original.byteLength + 1)
+  patched.set(original.subarray(0, payloadEnd))
+  patched[payloadEnd] = byte
+  patched.set(original.subarray(payloadEnd), payloadEnd + 1)
+  const view = new DataView(
+    patched.buffer,
+    patched.byteOffset,
+    patched.byteLength,
+  )
+  const shiftedCentralOffset = centralOffset + 1
+  const shiftedEndOffset = endOffset + 1
+  view.setUint32(localOffset + 18, compressedSize + 1, true)
+  for (let cursor = shiftedCentralOffset; cursor < shiftedEndOffset;) {
+    const centralNameLength = view.getUint16(cursor + 28, true)
+    const centralExtraLength = view.getUint16(cursor + 30, true)
+    const commentLength = view.getUint16(cursor + 32, true)
+    const name = Buffer.from(
+      patched.subarray(cursor + 46, cursor + 46 + centralNameLength),
+    ).toString('utf8')
+    if (name === entryName) {
+      view.setUint32(cursor + 20, compressedSize + 1, true)
+    }
+    if (view.getUint32(cursor + 42, true) > localOffset) {
+      view.setUint32(cursor + 42, view.getUint32(cursor + 42, true) + 1, true)
+    }
+    cursor += 46 + centralNameLength + centralExtraLength + commentLength
+  }
+  view.setUint32(shiftedEndOffset + 16, shiftedCentralOffset, true)
+  return patched
+}
+
+function appendZipDescriptorPayloadByte(bytes, entryName, byte) {
+  const original = new Uint8Array(bytes)
+  const originalView = new DataView(
+    original.buffer,
+    original.byteOffset,
+    original.byteLength,
+  )
+  const endOffset = zipEndRecordOffset(original)
+  const centralOffset = originalView.getUint32(endOffset + 16, true)
+  let localOffset = null
+  let compressedSize = null
+  for (let cursor = centralOffset; cursor < endOffset;) {
+    const nameLength = originalView.getUint16(cursor + 28, true)
+    const extraLength = originalView.getUint16(cursor + 30, true)
+    const commentLength = originalView.getUint16(cursor + 32, true)
+    const name = Buffer.from(
+      original.subarray(cursor + 46, cursor + 46 + nameLength),
+    ).toString('utf8')
+    if (name === entryName) {
+      localOffset = originalView.getUint32(cursor + 42, true)
+      compressedSize = originalView.getUint32(cursor + 20, true)
+      break
+    }
+    cursor += 46 + nameLength + extraLength + commentLength
+  }
+  if (localOffset === null || compressedSize === null) {
+    throw new Error(`missing ZIP entry: ${entryName}`)
+  }
+  const nextLocalOffset = (() => {
+    let next = centralOffset
+    for (let cursor = centralOffset; cursor < endOffset;) {
+      const candidate = originalView.getUint32(cursor + 42, true)
+      if (candidate > localOffset && candidate < next) next = candidate
+      cursor +=
+        46 +
+        originalView.getUint16(cursor + 28, true) +
+        originalView.getUint16(cursor + 30, true) +
+        originalView.getUint16(cursor + 32, true)
+    }
+    return next
+  })()
+  const nameLength = originalView.getUint16(localOffset + 26, true)
+  const extraLength = originalView.getUint16(localOffset + 28, true)
+  const descriptorOffset =
+    localOffset + 30 + nameLength + extraLength + compressedSize
+  const descriptorSize = nextLocalOffset - descriptorOffset
+  if (descriptorSize !== 12 && descriptorSize !== 16) {
+    throw new Error(`missing ZIP data descriptor: ${entryName}`)
+  }
+  const patched = new Uint8Array(original.byteLength + 1)
+  patched.set(original.subarray(0, descriptorOffset))
+  patched[descriptorOffset] = byte
+  patched.set(original.subarray(descriptorOffset), descriptorOffset + 1)
+  const view = new DataView(
+    patched.buffer,
+    patched.byteOffset,
+    patched.byteLength,
+  )
+  const shiftedCentralOffset = centralOffset + 1
+  const shiftedEndOffset = endOffset + 1
+  const descriptorFieldsOffset =
+    descriptorOffset + 1 + (descriptorSize === 16 ? 4 : 0)
+  view.setUint32(descriptorFieldsOffset + 4, compressedSize + 1, true)
+  for (let cursor = shiftedCentralOffset; cursor < shiftedEndOffset;) {
+    const centralNameLength = view.getUint16(cursor + 28, true)
+    const centralExtraLength = view.getUint16(cursor + 30, true)
+    const commentLength = view.getUint16(cursor + 32, true)
+    const name = Buffer.from(
+      patched.subarray(cursor + 46, cursor + 46 + centralNameLength),
+    ).toString('utf8')
+    if (name === entryName) {
+      view.setUint32(cursor + 20, compressedSize + 1, true)
+    }
+    if (view.getUint32(cursor + 42, true) > localOffset) {
+      view.setUint32(cursor + 42, view.getUint32(cursor + 42, true) + 1, true)
+    }
+    cursor += 46 + centralNameLength + centralExtraLength + commentLength
+  }
+  view.setUint32(shiftedEndOffset + 16, shiftedCentralOffset, true)
+  return patched
+}
+
 function zipEndRecordOffset(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   for (let offset = bytes.byteLength - 22; offset >= 0; offset -= 1) {
@@ -782,6 +927,20 @@ describe('PDF benchmark readiness registry', () => {
     expect(validEpubPackage(descriptorPackage)).toBe(true)
     expect(
       validEpubPackage(
+        appendZipDescriptorPayloadByte(
+          descriptorPackage,
+          'EPUB/package.opf',
+          0xaa,
+        ),
+      ),
+    ).toBe(false)
+    expect(
+      validEpubPackage(
+        appendZipCompressedPayloadByte(validFixture, 'EPUB/package.opf', 0xaa),
+      ),
+    ).toBe(false)
+    expect(
+      validEpubPackage(
         addZipDataDescriptor(validFixture, 'EPUB/package.opf', {
           signature: false,
         }),
@@ -792,6 +951,24 @@ describe('PDF benchmark readiness registry', () => {
         corruptZipDataDescriptor(descriptorPackage, 'EPUB/package.opf'),
       ),
     ).toBe(false)
+
+    const unsignedDescriptorCrcAmbiguity = addZipDataDescriptor(
+      createValidEpub({
+        'EPUB/payload.bin': [
+          Uint8Array.from([
+            ...strToU8('zip-descriptor-ambiguity'),
+            0x56,
+            0x42,
+            0x90,
+            0x7e,
+          ]),
+          { level: 0 },
+        ],
+      }),
+      'EPUB/payload.bin',
+      { signature: false },
+    )
+    expect(validEpubPackage(unsignedDescriptorCrcAmbiguity)).toBe(true)
 
     expect(validEpubPackage(addZipMimetypeExtraFields(validFixture))).toBe(
       false,

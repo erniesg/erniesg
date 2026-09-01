@@ -1759,6 +1759,17 @@ function extractZipEntryBounded(bytes, entry, maxBytes, collect = true) {
     if (!completed || emittedBytes !== entry.originalSize) {
       throw new Error('ZIP entry size mismatch')
     }
+    // fflate retains the final partially consumed byte in `p` and its bit
+    // position in `s.p`. A raw DEFLATE member may end mid-byte, but it must
+    // not leave a complete declared byte unconsumed after the final block.
+    const trailingInputBytes = inflate.p.byteLength
+    const finalBitOffset = inflate.s.p
+    if (
+      trailingInputBytes !== 0 &&
+      (trailingInputBytes !== 1 || finalBitOffset === 0)
+    ) {
+      throw new Error('ZIP entry has trailing compressed input')
+    }
     if ((runningCrc ^ 0xffffffff) >>> 0 !== entry.checksum) {
       throw new Error('ZIP entry checksum mismatch')
     }

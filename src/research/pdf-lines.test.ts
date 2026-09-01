@@ -1109,6 +1109,54 @@ describe('PDF line joining', () => {
     )
   })
 
+  it('retains a full-word occurrence above an unrelated flattened hyphen line', () => {
+    const unrelatedLaterLine = {
+      ...line('An unrelated one-off label-'),
+      id: 'later-line',
+      y: 0.78,
+    }
+    const independentlyOwnedEarlierLine = {
+      ...line('General methods remain available.'),
+      id: 'earlier-line',
+      y: 0.12,
+    }
+    const unhyphenatedLexicon = inlineUnhyphenatedLexicon([
+      unrelatedLaterLine,
+      independentlyOwnedEarlierLine,
+    ])
+    const decisions: PdfLineBoundaryDecision[] = []
+
+    expect(unhyphenatedLexicon).toContain('general')
+    expect(
+      joinPdfLineTexts(wrappedLines('The method supports gen-', 'eral use.'), {
+        language: 'en',
+        unhyphenatedLexicon,
+        decisions,
+      }),
+    ).toBe('The method supports general use.')
+    expect(decisions).toEqual([
+      expect.objectContaining({
+        outcome: 'removed-discretionary-hyphen',
+        evidence: expect.arrayContaining([
+          'same-document-unhyphenated-word',
+          'hard-hyphen-form-not-proved',
+        ]),
+      }),
+    ])
+    expect(
+      inlineUnhyphenatedLexicon([
+        unrelatedLaterLine,
+        { ...independentlyOwnedEarlierLine, x: 0.45 },
+      ]),
+    ).not.toContain('general')
+    expect(
+      inlineUnhyphenatedLexicon([
+        unrelatedLaterLine,
+        { ...independentlyOwnedEarlierLine, column: 'right' },
+      ]),
+    ).not.toContain('general')
+  })
+
   it('preserves a literal hyphen in a source-adjacent wrapped URL', () => {
     const decisions: PdfLineBoundaryDecision[] = []
 

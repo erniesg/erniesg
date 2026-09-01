@@ -255,13 +255,43 @@ export function inlineHardHyphenLexicon(
   return words
 }
 
+function sourceLineMayContinueAtPrintedHyphen(
+  previous: Partial<
+    Pick<PdfTextLine, 'page' | 'column' | 'x' | 'y' | 'height'>
+  >,
+  current: Partial<Pick<PdfTextLine, 'page' | 'column' | 'x' | 'y' | 'height'>>,
+) {
+  if (
+    previous.page === undefined ||
+    previous.column === undefined ||
+    previous.x === undefined ||
+    previous.y === undefined ||
+    previous.height === undefined ||
+    current.page === undefined ||
+    current.column === undefined ||
+    current.x === undefined ||
+    current.y === undefined ||
+    current.height === undefined
+  ) {
+    return true
+  }
+  if (current.page !== previous.page) return true
+  if (current.column !== previous.column) return true
+  if (Math.abs(current.x - previous.x) > 0.025) return true
+  const verticalTolerance = Math.max(previous.height, current.height) * 0.35
+  return current.y >= previous.y - verticalTolerance
+}
+
 export function inlineUnhyphenatedLexicon(
-  lines: readonly Pick<PdfTextLine, 'text'>[],
+  lines: readonly (Pick<PdfTextLine, 'text'> &
+    Partial<Pick<PdfTextLine, 'page' | 'column' | 'x' | 'y' | 'height'>>)[],
 ) {
   const words = new Set<string>()
   for (const [lineIndex, line] of lines.entries()) {
     const previousEndsWithBoundaryHyphen =
-      lineIndex > 0 && /[\p{L}\p{N}][-‐‑]\s*$/u.test(lines[lineIndex - 1].text)
+      lineIndex > 0 &&
+      /[\p{L}\p{N}][-‐‑]\s*$/u.test(lines[lineIndex - 1].text) &&
+      sourceLineMayContinueAtPrintedHyphen(lines[lineIndex - 1], line)
     const currentEndsWithBoundaryHyphen = /[\p{L}\p{N}][-‐‑]\s*$/u.test(
       line.text,
     )

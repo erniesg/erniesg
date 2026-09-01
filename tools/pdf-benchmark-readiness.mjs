@@ -125,20 +125,76 @@ function resolveRepositoryPath(repositoryPath) {
   return absolute
 }
 
-async function readJsonArtifact(path, code) {
+async function readStableRegularFile(path, maxBytes, code) {
+  let handle
   try {
     const absolute = resolve(path)
-    const details = await lstat(absolute)
+    handle = await open(
+      absolute,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK,
+    )
+    const before = await handle.stat({ bigint: true })
+    const [pathDetails, stableRealPath] = await Promise.all([
+      lstat(absolute, { bigint: true }),
+      realpath(absolute),
+    ])
     if (
-      !details.isFile() ||
-      details.isSymbolicLink() ||
-      details.size <= 0 ||
-      details.size > MAX_GOVERNANCE_JSON_BYTES
+      !before.isFile() ||
+      !pathDetails.isFile() ||
+      pathDetails.isSymbolicLink() ||
+      before.dev !== pathDetails.dev ||
+      before.ino !== pathDetails.ino ||
+      before.size <= 0n ||
+      before.size > BigInt(maxBytes)
     ) {
       invalid(code)
     }
-    const bytes = await readFile(absolute)
-    if (bytes.byteLength !== details.size) invalid(code)
+    const expectedSize = Number(before.size)
+    const bytes = Buffer.allocUnsafe(expectedSize)
+    let offset = 0
+    while (offset < expectedSize) {
+      const { bytesRead } = await handle.read(
+        bytes,
+        offset,
+        expectedSize - offset,
+        offset,
+      )
+      if (bytesRead === 0) invalid(code)
+      offset += bytesRead
+    }
+    const probe = Buffer.allocUnsafe(1)
+    const { bytesRead: trailingBytes } = await handle.read(
+      probe,
+      0,
+      1,
+      expectedSize,
+    )
+    const after = await handle.stat({ bigint: true })
+    if (
+      trailingBytes !== 0 ||
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.size !== before.size ||
+      after.mtimeNs !== before.mtimeNs ||
+      after.ctimeNs !== before.ctimeNs
+    ) {
+      invalid(code)
+    }
+    return { bytes, realPath: stableRealPath }
+  } catch {
+    invalid(code)
+  } finally {
+    await handle?.close().catch(() => {})
+  }
+}
+
+export async function readJsonArtifact(path, code) {
+  try {
+    const { bytes } = await readStableRegularFile(
+      path,
+      MAX_GOVERNANCE_JSON_BYTES,
+      code,
+    )
     return {
       value: JSON.parse(bytes.toString('utf8')),
       bytes,
@@ -182,7 +238,6 @@ export async function verifyRepositoryFileBinding(
   code = 'PDF_BENCHMARK_METRIC_BINDING_MISMATCH',
   maxBytes = null,
 ) {
-  let handle
   try {
     const absolute = resolveRepositoryPath(repositoryPath)
     const [repositoryRealPath, fileRealPath] = await Promise.all([
@@ -195,58 +250,16 @@ export async function verifyRepositoryFileBinding(
     ) {
       invalid(code)
     }
-    handle = await open(
-      fileRealPath,
-      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
-    )
     const effectiveMaxBytes = maxBytes ?? MAX_EPUB_COMPRESSED_BYTES
-    const before = await handle.stat({ bigint: true })
-    const [pathDetails, stableRealPath] = await Promise.all([
-      lstat(fileRealPath, { bigint: true }),
-      realpath(fileRealPath),
-    ])
+    const { bytes, realPath: stableRealPath } = await readStableRegularFile(
+      fileRealPath,
+      effectiveMaxBytes,
+      code,
+    )
     if (
-      !before.isFile() ||
-      !pathDetails.isFile() ||
-      pathDetails.isSymbolicLink() ||
-      before.dev !== pathDetails.dev ||
-      before.ino !== pathDetails.ino ||
       stableRealPath !== fileRealPath ||
       (stableRealPath !== repositoryRealPath &&
-        !stableRealPath.startsWith(`${repositoryRealPath}${sep}`)) ||
-      before.size <= 0n ||
-      before.size > BigInt(effectiveMaxBytes)
-    ) {
-      invalid(code)
-    }
-    const expectedSize = Number(before.size)
-    const bytes = Buffer.allocUnsafe(expectedSize)
-    let offset = 0
-    while (offset < expectedSize) {
-      const { bytesRead } = await handle.read(
-        bytes,
-        offset,
-        expectedSize - offset,
-        offset,
-      )
-      if (bytesRead === 0) invalid(code)
-      offset += bytesRead
-    }
-    const probe = Buffer.allocUnsafe(1)
-    const { bytesRead: trailingBytes } = await handle.read(
-      probe,
-      0,
-      1,
-      expectedSize,
-    )
-    const after = await handle.stat({ bigint: true })
-    if (
-      trailingBytes !== 0 ||
-      after.dev !== before.dev ||
-      after.ino !== before.ino ||
-      after.size !== before.size ||
-      after.mtimeNs !== before.mtimeNs ||
-      after.ctimeNs !== before.ctimeNs
+        !stableRealPath.startsWith(`${repositoryRealPath}${sep}`))
     ) {
       invalid(code)
     }
@@ -256,8 +269,6 @@ export async function verifyRepositoryFileBinding(
     return bytes
   } catch {
     invalid(code)
-  } finally {
-    await handle?.close().catch(() => {})
   }
 }
 
@@ -1500,13 +1511,23 @@ export function validEpubPackage(bytes) {
     ).toString('utf8')
     const rootfile = epubRootfilePath(container)
     const rootfileEntry = entries.get(rootfile)
+    if (
+      typeof rootfile !== 'string' ||
+      !rootfile.endsWith('.opf') ||
+      !validEpubEntryName(rootfile) ||
+      rootfileEntry === undefined ||
+      rootfileEntry.originalSize <= 0 ||
+      rootfileEntry.originalSize > MAX_EPUB_PACKAGE_DOCUMENT_BYTES
+    ) {
+      return false
+    }
     return (
-      typeof rootfile === 'string' &&
-      rootfile.endsWith('.opf') &&
-      validEpubEntryName(rootfile) &&
-      rootfileEntry !== undefined &&
-      rootfileEntry.originalSize > 0 &&
-      rootfileEntry.originalSize <= MAX_EPUB_PACKAGE_DOCUMENT_BYTES
+      unzipSync(new Uint8Array(bytes), {
+        filter: ({ name, originalSize }) =>
+          name === rootfile &&
+          originalSize > 0 &&
+          originalSize <= MAX_EPUB_PACKAGE_DOCUMENT_BYTES,
+      })[rootfile] instanceof Uint8Array
     )
   } catch {
     return false

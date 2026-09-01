@@ -13,6 +13,7 @@ import {
   assessPdfBenchmarkReadiness,
   createPdfBenchmarkSplitIdentitySha256,
   createPdfBenchmarkReadinessReceipt,
+  readJsonArtifact,
   validateCandidateCommitment,
   validateIndependentIsolationEvidence,
   validateNativeReaderEvidence,
@@ -399,7 +400,7 @@ describe('PDF benchmark readiness registry', () => {
       }),
       'EPUB/package.opf',
     )
-    expect(validEpubPackage(corruptPackagePayload)).toBe(true)
+    expect(validEpubPackage(corruptPackagePayload)).toBe(false)
   })
 
   it('rejects oversized EPUB and governance bindings from lstat metadata', async () => {
@@ -486,6 +487,36 @@ describe('PDF benchmark readiness registry', () => {
       })
       await rm(repositoryBinding.path, { force: true })
       await writeFile(repositoryBinding.path, strToU8('inside'))
+    }
+  })
+
+  it('reads registry JSON from one bounded descriptor during replacement', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pdf-registry-race-'))
+    evidenceDirectories.push(directory)
+    const registryArtifact = join(directory, 'registry.json')
+    const outsideArtifact = join(directory, 'outside.json')
+    await writeFile(outsideArtifact, JSON.stringify({ outside: true }))
+
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      await writeFile(registryArtifact, JSON.stringify({ inside: true }))
+      const validation = readJsonArtifact(
+        registryArtifact,
+        'INVALID_PDF_BENCHMARK_REGISTRY_SCHEMA',
+      ).then(
+        (artifact) => ({ artifact, error: null }),
+        (error) => ({ artifact: null, error }),
+      )
+      await rm(registryArtifact, { force: true })
+      await symlink(outsideArtifact, registryArtifact)
+      const outcome = await validation
+      if (outcome.artifact !== null) {
+        expect(outcome.artifact.value).toEqual({ inside: true })
+      } else {
+        expect(outcome.error).toMatchObject({
+          message: 'INVALID_PDF_BENCHMARK_REGISTRY_SCHEMA',
+        })
+      }
+      await rm(registryArtifact, { force: true })
     }
   })
 

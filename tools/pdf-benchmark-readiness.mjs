@@ -1,9 +1,18 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto'
-import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { constants as fsConstants } from 'node:fs'
+import {
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  realpath,
+  writeFile,
+} from 'node:fs/promises'
 import { dirname, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import Ajv2020 from 'ajv/dist/2020.js'
+import { XMLParser } from 'fast-xml-parser'
 import { unzipSync } from 'fflate'
 import {
   canonicalJson,
@@ -29,6 +38,8 @@ const MAX_GOVERNANCE_JSON_BYTES = 16 * 1024 * 1024
 const MAX_EPUB_COMPRESSED_BYTES = 256 * 1024 * 1024
 const MAX_EPUB_INFLATED_BYTES = 512 * 1024 * 1024
 const MAX_EPUB_ENTRIES = 544
+const MAX_EPUB_CONTAINER_BYTES = 64 * 1024
+const MAX_EPUB_PACKAGE_DOCUMENT_BYTES = 16 * 1024 * 1024
 const PROMOTION_PROTOCOL_IMPLEMENTED = false
 const CANDIDATE_COMPONENT_KINDS = [
   'provider',
@@ -165,33 +176,77 @@ async function validateSchema(registry, schemaPath) {
   }
 }
 
-async function verifyRepositoryFileBinding(
+export async function verifyRepositoryFileBinding(
   repositoryPath,
   expectedSha256,
   code = 'PDF_BENCHMARK_METRIC_BINDING_MISMATCH',
   maxBytes = null,
 ) {
+  let handle
   try {
     const absolute = resolveRepositoryPath(repositoryPath)
-    const [details, repositoryRealPath, fileRealPath] = await Promise.all([
-      lstat(absolute),
+    const [repositoryRealPath, fileRealPath] = await Promise.all([
       realpath(REPOSITORY_ROOT),
       realpath(absolute),
     ])
     if (
-      !details.isFile() ||
-      details.isSymbolicLink() ||
-      (maxBytes !== null &&
-        (details.size <= 0 || details.size > maxBytes)) ||
-      (fileRealPath !== repositoryRealPath &&
-        !fileRealPath.startsWith(`${repositoryRealPath}${sep}`))
+      fileRealPath !== repositoryRealPath &&
+      !fileRealPath.startsWith(`${repositoryRealPath}${sep}`)
     ) {
       invalid(code)
     }
-    const bytes = await readFile(fileRealPath)
+    handle = await open(
+      fileRealPath,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
+    )
+    const effectiveMaxBytes = maxBytes ?? MAX_EPUB_COMPRESSED_BYTES
+    const before = await handle.stat({ bigint: true })
+    const [pathDetails, stableRealPath] = await Promise.all([
+      lstat(fileRealPath, { bigint: true }),
+      realpath(fileRealPath),
+    ])
     if (
-      bytes.byteLength !== details.size ||
-      (maxBytes !== null && bytes.byteLength > maxBytes)
+      !before.isFile() ||
+      !pathDetails.isFile() ||
+      pathDetails.isSymbolicLink() ||
+      before.dev !== pathDetails.dev ||
+      before.ino !== pathDetails.ino ||
+      stableRealPath !== fileRealPath ||
+      (stableRealPath !== repositoryRealPath &&
+        !stableRealPath.startsWith(`${repositoryRealPath}${sep}`)) ||
+      before.size <= 0n ||
+      before.size > BigInt(effectiveMaxBytes)
+    ) {
+      invalid(code)
+    }
+    const expectedSize = Number(before.size)
+    const bytes = Buffer.allocUnsafe(expectedSize)
+    let offset = 0
+    while (offset < expectedSize) {
+      const { bytesRead } = await handle.read(
+        bytes,
+        offset,
+        expectedSize - offset,
+        offset,
+      )
+      if (bytesRead === 0) invalid(code)
+      offset += bytesRead
+    }
+    const probe = Buffer.allocUnsafe(1)
+    const { bytesRead: trailingBytes } = await handle.read(
+      probe,
+      0,
+      1,
+      expectedSize,
+    )
+    const after = await handle.stat({ bigint: true })
+    if (
+      trailingBytes !== 0 ||
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.size !== before.size ||
+      after.mtimeNs !== before.mtimeNs ||
+      after.ctimeNs !== before.ctimeNs
     ) {
       invalid(code)
     }
@@ -201,6 +256,8 @@ async function verifyRepositoryFileBinding(
     return bytes
   } catch {
     invalid(code)
+  } finally {
+    await handle?.close().catch(() => {})
   }
 }
 
@@ -1350,6 +1407,34 @@ function validEpubEntryName(name) {
   )
 }
 
+function epubRootfilePath(containerXml) {
+  const parsed = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: '@_',
+    processEntities: false,
+  }).parse(containerXml)
+  let rootfile = null
+  const visit = (node) => {
+    if (rootfile !== null || node === null || typeof node !== 'object') return
+    if (Array.isArray(node)) {
+      node.forEach(visit)
+      return
+    }
+    for (const [key, child] of Object.entries(node)) {
+      if (key.split(':').at(-1) === 'rootfile' && isRecord(child)) {
+        const fullPath = child['@_full-path']
+        if (typeof fullPath === 'string') {
+          rootfile = fullPath
+          return
+        }
+      }
+      if (!key.startsWith('@_')) visit(child)
+    }
+  }
+  visit(parsed)
+  return rootfile
+}
+
 export function validEpubPackage(bytes) {
   try {
     if (
@@ -1367,6 +1452,7 @@ export function validEpubPackage(bytes) {
       return false
     }
     const names = new Set()
+    const entries = new Map()
     let entryCount = 0
     let inflatedBytes = 0
     const files = unzipSync(new Uint8Array(bytes), {
@@ -1387,6 +1473,19 @@ export function validEpubPackage(bytes) {
           throw new Error('invalid EPUB archive metadata')
         }
         names.add(name)
+        entries.set(name, { size, originalSize, compression })
+        if (
+          name === 'mimetype' &&
+          (compression !== 0 || size !== 20 || originalSize !== 20)
+        ) {
+          throw new Error('invalid EPUB mimetype entry')
+        }
+        if (
+          name === 'META-INF/container.xml' &&
+          originalSize > MAX_EPUB_CONTAINER_BYTES
+        ) {
+          throw new Error('oversized EPUB container')
+        }
         return name === 'mimetype' || name === 'META-INF/container.xml'
       },
     })
@@ -1399,16 +1498,15 @@ export function validEpubPackage(bytes) {
     const container = Buffer.from(
       files['META-INF/container.xml'] ?? [],
     ).toString('utf8')
-    const rootfile = container.match(
-      /<rootfile\b[^>]*\bfull-path=["']([^"']+)["'][^>]*>/u,
-    )?.[1]
+    const rootfile = epubRootfilePath(container)
+    const rootfileEntry = entries.get(rootfile)
     return (
       typeof rootfile === 'string' &&
       rootfile.endsWith('.opf') &&
       validEpubEntryName(rootfile) &&
-      unzipSync(new Uint8Array(bytes), {
-        filter: ({ name }) => name === rootfile,
-      })[rootfile] instanceof Uint8Array
+      rootfileEntry !== undefined &&
+      rootfileEntry.originalSize > 0 &&
+      rootfileEntry.originalSize <= MAX_EPUB_PACKAGE_DOCUMENT_BYTES
     )
   } catch {
     return false
@@ -1474,7 +1572,8 @@ async function validateExactEpubExportEvidence(exportEvidence) {
     exportReceipt.kind !== 'pdf-benchmark-exact-epub-export-receipt' ||
     exportReceipt.exactArtifactSha256 !== evidence.exactArtifactSha256 ||
     exportReceipt.status !== 'passed' ||
-    sha256(canonicalJson(exportReceipt)) !== evidence.exportReceiptIdentitySha256
+    sha256(canonicalJson(exportReceipt)) !==
+      evidence.exportReceiptIdentitySha256
   ) {
     invalid('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
   }
@@ -1484,7 +1583,8 @@ async function validateExactEpubExportEvidence(exportEvidence) {
   )
   if (
     !exactKeys(evidence.toolchainManifest, ['path', 'fileSha256']) ||
-    evidence.toolchainManifest.path !== 'src/publication/toolchain-manifest.json'
+    evidence.toolchainManifest.path !==
+      'src/publication/toolchain-manifest.json'
   ) {
     invalid('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
   }
@@ -1543,7 +1643,8 @@ async function validateExactEpubExportEvidence(exportEvidence) {
       'stderrSha256',
     ]) ||
     epubCheckTranscript.schemaVersion !== '1.0.0' ||
-    epubCheckTranscript.kind !== 'pdf-benchmark-epubcheck-execution-transcript' ||
+    epubCheckTranscript.kind !==
+      'pdf-benchmark-epubcheck-execution-transcript' ||
     epubCheckTranscript.command !== 'epubcheck' ||
     epubCheckTranscript.exactArtifactSha256 !== evidence.exactArtifactSha256 ||
     epubCheckTranscript.checkerIdentitySha256 !== epubcheck.sha256 ||
@@ -1552,7 +1653,8 @@ async function validateExactEpubExportEvidence(exportEvidence) {
     epubCheckTranscript.epubCheckStatus !== 'passed' ||
     !SHA256.test(epubCheckTranscript.stdoutSha256 ?? '') ||
     !SHA256.test(epubCheckTranscript.stderrSha256 ?? '') ||
-    epubCheckReceipt.outputIdentitySha256 !== sha256(canonicalJson(epubCheckTranscript)) ||
+    epubCheckReceipt.outputIdentitySha256 !==
+      sha256(canonicalJson(epubCheckTranscript)) ||
     epubCheckReceipt.status !== 'passed'
   ) {
     invalid('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
@@ -1564,7 +1666,8 @@ async function validateExactEpubExportEvidence(exportEvidence) {
     exportReceiptIdentitySha256: evidence.exportReceiptIdentitySha256,
     epubCheckReceiptEvidenceFileSha256: evidence.epubCheckReceipt.fileSha256,
     toolchainManifestFileSha256: evidence.toolchainManifest.fileSha256,
-    epubCheckTranscriptEvidenceFileSha256: evidence.epubCheckTranscript.fileSha256,
+    epubCheckTranscriptEvidenceFileSha256:
+      evidence.epubCheckTranscript.fileSha256,
   }
 }
 
@@ -1585,7 +1688,9 @@ export async function validateNativeReaderEvidence(nativeReaderEvidence) {
     REQUIRED_NATIVE_READER_TYPES,
   )) {
     const evidence = nativeReaderEvidence[readerId]
-    if (!exactKeys(evidence, ['status', 'readerIdentity', 'executionReceipt'])) {
+    if (
+      !exactKeys(evidence, ['status', 'readerIdentity', 'executionReceipt'])
+    ) {
       invalid('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
     }
     if (
@@ -1647,8 +1752,10 @@ export async function validateNativeReaderEvidence(nativeReaderEvidence) {
       receipt.kind !== 'pdf-benchmark-native-reader-execution-receipt' ||
       receipt.readerId !== readerId ||
       receipt.readerType !== readerType ||
-      receipt.readerIdentityEvidenceFileSha256 !== evidence.readerIdentity.fileSha256 ||
-      receipt.exportEvidenceFileSha256 !== exportArtifact?.exportEvidenceFileSha256 ||
+      receipt.readerIdentityEvidenceFileSha256 !==
+        evidence.readerIdentity.fileSha256 ||
+      receipt.exportEvidenceFileSha256 !==
+        exportArtifact?.exportEvidenceFileSha256 ||
       receipt.exportReceiptEvidenceFileSha256 !==
         exportArtifact?.exportReceiptEvidenceFileSha256 ||
       receipt.exportReceiptIdentitySha256 !==

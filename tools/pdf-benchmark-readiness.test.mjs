@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readFile, rm, truncate, writeFile } from 'node:fs/promises'
+import { readFile, rm, symlink, truncate, writeFile } from 'node:fs/promises'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
@@ -18,6 +18,7 @@ import {
   validateNativeReaderEvidence,
   validateObservationBinding,
   validateSourcePdfDocumentIdentities,
+  verifyRepositoryFileBinding,
 } from './pdf-benchmark-readiness.mjs'
 
 const registryPath = 'benchmarks/pdf/benchmark-readiness-registry-v1.json'
@@ -99,6 +100,32 @@ function patchZipCentralDirectoryEntry(bytes, entryName, changes) {
     offset += nameLength + extraLength + commentLength
   }
   throw new Error(`missing ZIP central-directory entry: ${entryName}`)
+}
+
+function corruptZipLocalEntryPayload(bytes, entryName) {
+  const patched = new Uint8Array(bytes)
+  const view = new DataView(
+    patched.buffer,
+    patched.byteOffset,
+    patched.byteLength,
+  )
+  for (let offset = 0; offset <= patched.byteLength - 30;) {
+    if (view.getUint32(offset, true) !== 0x04034b50) break
+    const compressedSize = view.getUint32(offset + 18, true)
+    const nameLength = view.getUint16(offset + 26, true)
+    const extraLength = view.getUint16(offset + 28, true)
+    const payloadOffset = offset + 30 + nameLength + extraLength
+    const name = Buffer.from(
+      patched.subarray(offset + 30, offset + 30 + nameLength),
+    ).toString('utf8')
+    if (name === entryName) {
+      if (compressedSize === 0) throw new Error(`empty ZIP entry: ${entryName}`)
+      patched[payloadOffset + Math.floor(compressedSize / 2)] ^= 0xff
+      return patched
+    }
+    offset = payloadOffset + compressedSize
+  }
+  throw new Error(`missing ZIP local entry: ${entryName}`)
 }
 
 function createValidEpub(extraEntries = {}) {
@@ -343,6 +370,36 @@ describe('PDF benchmark readiness registry', () => {
       ),
     )
     expect(validEpubPackage(tooManyEntries)).toBe(false)
+
+    const oversizedContainer = createValidEpub({
+      'META-INF/container.xml': strToU8('<rootfile'.repeat(64 * 1024)),
+    })
+    expect(oversizedContainer.byteLength).toBeLessThan(16 * 1024)
+    expect(validEpubPackage(oversizedContainer)).toBe(false)
+
+    const oversizedRootfile = patchZipCentralDirectoryEntry(
+      validFixture,
+      'EPUB/package.opf',
+      { originalSize: 16 * 1024 * 1024 + 1 },
+    )
+    expect(validEpubPackage(oversizedRootfile)).toBe(false)
+
+    const compressedMimetype = zipSync({
+      mimetype: strToU8('application/epub+zip'),
+      'META-INF/container.xml': strToU8(
+        '<container><rootfiles><rootfile full-path="EPUB/package.opf" /></rootfiles></container>',
+      ),
+      'EPUB/package.opf': strToU8('<package version="3.0" />'),
+    })
+    expect(validEpubPackage(compressedMimetype)).toBe(false)
+
+    const corruptPackagePayload = corruptZipLocalEntryPayload(
+      createValidEpub({
+        'EPUB/package.opf': strToU8('<package>'.repeat(4096)),
+      }),
+      'EPUB/package.opf',
+    )
+    expect(validEpubPackage(corruptPackagePayload)).toBe(true)
   })
 
   it('rejects oversized EPUB and governance bindings from lstat metadata', async () => {
@@ -393,6 +450,43 @@ describe('PDF benchmark readiness registry', () => {
         'target-eink-reader-device': unavailableReaders,
       }),
     ).rejects.toThrow('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
+  })
+
+  it('never accepts outside bytes while a repository binding is replaced', async () => {
+    const writeEvidence = await createEvidenceWriter()
+    const repositoryBinding = await writeEvidence(
+      'descriptor-race.json',
+      strToU8('inside'),
+    )
+    const outsideDirectory = await mkdtemp(
+      join(tmpdir(), 'pdf-binding-outside-'),
+    )
+    evidenceDirectories.push(outsideDirectory)
+    const outsidePath = join(outsideDirectory, 'outside.json')
+    const outsideBytes = strToU8('outside')
+    await writeFile(outsidePath, outsideBytes)
+    const outsideHash = createHash('sha256').update(outsideBytes).digest('hex')
+
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const validation = verifyRepositoryFileBinding(
+        repositoryBinding.path,
+        outsideHash,
+        'PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH',
+        64,
+      ).then(
+        () => ({ accepted: true, error: null }),
+        (error) => ({ accepted: false, error }),
+      )
+      await rm(repositoryBinding.path, { force: true })
+      await symlink(outsidePath, repositoryBinding.path)
+      const outcome = await validation
+      expect(outcome.accepted).toBe(false)
+      expect(outcome.error).toMatchObject({
+        message: 'PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH',
+      })
+      await rm(repositoryBinding.path, { force: true })
+      await writeFile(repositoryBinding.path, strToU8('inside'))
+    }
   })
 
   it('fails closed when a bound artifact hash changes', async () => {
@@ -1429,14 +1523,17 @@ describe('PDF benchmark readiness registry', () => {
         ['independent-desktop-epub-reader', 'independent-desktop-epub-reader'],
         ['target-eink-reader-device', 'target-eink-reader-device'],
       ].map(async ([readerId, readerType], index) => {
-        const readerIdentity = await writeEvidence(`${readerId}-identity.json`, {
-          schemaVersion: '1.0.0',
-          kind: 'pdf-benchmark-native-reader-identity-evidence',
-          readerId,
-          readerType,
-          readerIdentitySha256: (index + 4).toString(16).repeat(64),
-          status: 'passed',
-        })
+        const readerIdentity = await writeEvidence(
+          `${readerId}-identity.json`,
+          {
+            schemaVersion: '1.0.0',
+            kind: 'pdf-benchmark-native-reader-identity-evidence',
+            readerId,
+            readerType,
+            readerIdentitySha256: (index + 4).toString(16).repeat(64),
+            status: 'passed',
+          },
+        )
         return {
           readerId,
           readerType,
@@ -1590,9 +1687,9 @@ describe('PDF benchmark readiness registry', () => {
         readerIdentityEvidenceFileSha256: '0'.repeat(64),
       },
     )
-    await expect(
-      validateNativeReaderEvidence(unboundIdentity),
-    ).rejects.toThrow('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
+    await expect(validateNativeReaderEvidence(unboundIdentity)).rejects.toThrow(
+      'PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH',
+    )
 
     const renamedJsonArtifact = await writeEvidence('renamed-json.epub', {
       not: 'an epub archive',
@@ -1622,10 +1719,7 @@ describe('PDF benchmark readiness registry', () => {
     ).rejects.toThrow('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
 
     for (const [name, value] of [
-      [
-        'forged',
-        { ...epubCheckReceipt, outputIdentitySha256: '0'.repeat(64) },
-      ],
+      ['forged', { ...epubCheckReceipt, outputIdentitySha256: '0'.repeat(64) }],
       [
         'mismatched',
         { ...epubCheckReceipt, exactArtifactSha256: 'b'.repeat(64) },
@@ -1638,9 +1732,9 @@ describe('PDF benchmark readiness registry', () => {
         `epubcheck-${name}-export-evidence.json`,
         { epubCheckReceipt: receipt },
       )
-      await expect(
-        validateNativeReaderEvidence(rejected),
-      ).rejects.toThrow('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
+      await expect(validateNativeReaderEvidence(rejected)).rejects.toThrow(
+        'PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH',
+      )
     }
   })
 

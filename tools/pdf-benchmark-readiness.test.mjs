@@ -345,6 +345,29 @@ function patchZipEndRecordCommentLength(bytes, commentLength) {
   throw new Error('missing ZIP end record')
 }
 
+function appendPlausibleFakeZipEndRecordComment(bytes) {
+  const original = new Uint8Array(bytes)
+  const fake = new Uint8Array(22)
+  const view = new DataView(fake.buffer)
+  view.setUint32(0, 0x06054b50, true)
+  view.setUint16(8, 1, true)
+  view.setUint16(10, 1, true)
+  view.setUint32(12, 1, true)
+  view.setUint32(16, original.byteLength, true)
+  return appendZipComment(original, [0, ...fake])
+}
+
+function eraseFirstZipEndRecordSignature(bytes) {
+  const patched = new Uint8Array(bytes)
+  const view = new DataView(patched.buffer)
+  for (let offset = 0; offset <= patched.byteLength - 22; offset += 1) {
+    if (view.getUint32(offset, true) !== 0x06054b50) continue
+    view.setUint32(offset, 0, true)
+    return patched
+  }
+  throw new Error('missing ZIP end record')
+}
+
 function prependUnindexedLocalEntry(bytes, entryName, value) {
   const hiddenArchive = zipSync({ [entryName]: value })
   const hiddenView = new DataView(
@@ -971,6 +994,18 @@ describe('PDF benchmark readiness registry', () => {
     expect(
       validEpubPackage(patchZipEndRecordCommentLength(eocdMagicComment, 21)),
     ).toBe(false)
+
+    const plausibleFakeEocdComment =
+      appendPlausibleFakeZipEndRecordComment(validFixture)
+    expect(validEpubPackage(plausibleFakeEocdComment)).toBe(true)
+    expect(
+      validEpubPackage(
+        eraseFirstZipEndRecordSignature(plausibleFakeEocdComment),
+      ),
+    ).toBe(false)
+    expect(
+      validEpubPackage(appendZipComment(validFixture, Array(65_535).fill(0))),
+    ).toBe(true)
 
     const descriptorPackage = addZipDataDescriptor(
       validFixture,

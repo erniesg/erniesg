@@ -1553,7 +1553,6 @@ function crc32(bytes) {
 
 function strictZipIndex(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  let endOffset = -1
   for (
     let offset = bytes.byteLength - 22;
     offset >= Math.max(0, bytes.byteLength - 65_557);
@@ -1575,13 +1574,17 @@ function strictZipIndex(bytes) {
     ) {
       continue
     }
-    endOffset = offset
-    break
+    try {
+      return strictZipIndexAt(bytes, view, offset, entryCount, centralOffset)
+    } catch {
+      // A comment may contain a plausible EOCD header. Only a candidate whose
+      // bounded central and local records fully validate is authoritative.
+    }
   }
-  if (endOffset < 0) throw new Error('missing ZIP end record')
-  const entryCount = view.getUint16(endOffset + 10, true)
-  const centralSize = view.getUint32(endOffset + 12, true)
-  const centralOffset = view.getUint32(endOffset + 16, true)
+  throw new Error('missing ZIP end record')
+}
+
+function strictZipIndexAt(bytes, view, endOffset, entryCount, centralOffset) {
   const entries = []
   const names = new Set()
   let cursor = centralOffset

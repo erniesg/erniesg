@@ -1439,13 +1439,16 @@ export async function validateIndependentIsolationEvidence(
 }
 
 function validEpubEntryName(name) {
+  const parts = typeof name === 'string' ? name.split('/') : []
+  if (name?.endsWith('/')) parts.pop()
   return (
     typeof name === 'string' &&
     name.length > 0 &&
     !name.startsWith('/') &&
     !name.startsWith('\\') &&
     !name.includes('\\') &&
-    name.split('/').every((part) => part.length > 0 && part !== '..')
+    parts.length > 0 &&
+    parts.every((part) => part.length > 0 && part !== '.' && part !== '..')
   )
 }
 
@@ -1456,13 +1459,18 @@ function childElementInNamespace(
   namespaceScope = parent,
 ) {
   if (!isRecord(parent)) return null
-  const entry = Object.entries(parent).find(([name]) => {
+  const entry = Object.entries(parent).find(([name, child]) => {
     if (name.startsWith('@_') || name.split(':').at(-1) !== localName) {
       return false
     }
     const prefix = name.includes(':') ? name.split(':')[0] : null
     const namespaceAttribute = prefix === null ? '@_xmlns' : `@_xmlns:${prefix}`
-    return namespaceScope?.[namespaceAttribute] === namespace
+    const effectiveNamespace = [child, parent, namespaceScope]
+      .filter(isRecord)
+      .find((scope) => Object.hasOwn(scope, namespaceAttribute))?.[
+      namespaceAttribute
+    ]
+    return effectiveNamespace === namespace
   })
   return entry?.[1] ?? null
 }
@@ -1590,9 +1598,10 @@ function strictZipIndex(bytes) {
     const recordEnd =
       cursor + 46 + nameLength + extraLength + entryCommentLength
     if (recordEnd > endOffset) throw new Error('truncated ZIP central record')
-    const name = Buffer.from(
+    const nameBytes = Buffer.from(
       bytes.subarray(cursor + 46, cursor + 46 + nameLength),
-    ).toString('utf8')
+    )
+    const name = new TextDecoder('utf-8', { fatal: true }).decode(nameBytes)
     if (
       !validEpubEntryName(name) ||
       names.has(name) ||
@@ -1615,6 +1624,7 @@ function strictZipIndex(bytes) {
       size,
       originalSize,
       localOffset,
+      nameBytes,
     })
     cursor = recordEnd
   }
@@ -1633,14 +1643,14 @@ function strictZipIndex(bytes) {
     const nameLength = view.getUint16(entry.localOffset + 26, true)
     const extraLength = view.getUint16(entry.localOffset + 28, true)
     const dataOffset = entry.localOffset + 30 + nameLength + extraLength
-    const localName = Buffer.from(
+    const localNameBytes = Buffer.from(
       bytes.subarray(
         entry.localOffset + 30,
         entry.localOffset + 30 + nameLength,
       ),
-    ).toString('utf8')
+    )
     if (
-      localName !== entry.name ||
+      !localNameBytes.equals(entry.nameBytes) ||
       view.getUint16(entry.localOffset + 6, true) !== entry.flags ||
       view.getUint16(entry.localOffset + 8, true) !== entry.compression ||
       view.getUint32(entry.localOffset + 14, true) !== entry.checksum ||
@@ -1659,7 +1669,7 @@ function strictZipIndex(bytes) {
 }
 
 function extractZipEntryBounded(bytes, entry, maxBytes, collect = true) {
-  if (entry.originalSize <= 0 || entry.originalSize > maxBytes) {
+  if (entry.originalSize < 0 || entry.originalSize > maxBytes) {
     throw new Error('ZIP entry exceeds output limit')
   }
   const compressed = bytes.subarray(
@@ -1667,6 +1677,12 @@ function extractZipEntryBounded(bytes, entry, maxBytes, collect = true) {
     entry.dataOffset + entry.size,
   )
   let output
+  if (entry.originalSize === 0) {
+    if (entry.size !== 0 || entry.checksum !== 0) {
+      throw new Error('invalid empty ZIP entry')
+    }
+    return Buffer.alloc(0)
+  }
   if (entry.compression === 0) {
     output = collect ? Buffer.from(compressed) : compressed
   } else {

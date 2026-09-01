@@ -217,6 +217,46 @@ function prependUnindexedLocalEntry(bytes, entryName, value) {
   return patched
 }
 
+function patchZipMismatchedInvalidNameBytes(bytes, entryName) {
+  const patched = new Uint8Array(bytes)
+  const view = new DataView(
+    patched.buffer,
+    patched.byteOffset,
+    patched.byteLength,
+  )
+  let localPatched = false
+  for (let offset = 0; offset <= patched.byteLength - 30;) {
+    if (view.getUint32(offset, true) !== 0x04034b50) break
+    const compressedSize = view.getUint32(offset + 18, true)
+    const nameLength = view.getUint16(offset + 26, true)
+    const extraLength = view.getUint16(offset + 28, true)
+    const name = Buffer.from(
+      patched.subarray(offset + 30, offset + 30 + nameLength),
+    ).toString('utf8')
+    if (name === entryName) {
+      patched[offset + 30 + nameLength - 1] = 0xff
+      localPatched = true
+      break
+    }
+    offset += 30 + nameLength + extraLength + compressedSize
+  }
+  let centralPatched = false
+  for (let offset = 0; offset <= patched.byteLength - 46; offset += 1) {
+    if (view.getUint32(offset, true) !== 0x02014b50) continue
+    const nameLength = view.getUint16(offset + 28, true)
+    const name = Buffer.from(
+      patched.subarray(offset + 46, offset + 46 + nameLength),
+    ).toString('utf8')
+    if (name === entryName) {
+      patched[offset + 46 + nameLength - 1] = 0xfe
+      centralPatched = true
+      break
+    }
+  }
+  if (!localPatched || !centralPatched) throw new Error('missing ZIP entry')
+  return patched
+}
+
 function createValidEpub(extraEntries = {}) {
   return zipSync({
     mimetype: [strToU8('application/epub+zip'), { level: 0 }],
@@ -578,6 +618,31 @@ describe('PDF benchmark readiness registry', () => {
       'EPUB/content.xhtml',
     )
     expect(validEpubPackage(corruptContentPayload)).toBe(false)
+
+    const invalidNameBytes = patchZipMismatchedInvalidNameBytes(
+      createValidEpub({ 'EPUB/extra.txt': strToU8('extra') }),
+      'EPUB/extra.txt',
+    )
+    expect(validEpubPackage(invalidNameBytes)).toBe(false)
+
+    expect(
+      validEpubPackage(
+        createValidEpub({
+          'META-INF/container.xml': strToU8(
+            '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><rootfiles xmlns="urn:evil"><rootfile full-path="EPUB/package.opf" media-type="application/oebps-package+xml" /></rootfiles></container>',
+          ),
+        }),
+      ),
+    ).toBe(false)
+    expect(
+      validEpubPackage(
+        createValidEpub({
+          'EPUB/package.opf': strToU8(
+            '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id"><metadata xmlns="urn:evil"><identifier id="pub-id">urn:fixture</identifier></metadata><manifest><item id="content" href="content.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="content"/></spine></package>',
+          ),
+        }),
+      ),
+    ).toBe(false)
   })
 
   it('accepts the repository-published EPUB profile', async () => {
@@ -585,6 +650,14 @@ describe('PDF benchmark readiness registry', () => {
       'public/research/if-letters-home-could-sing/if-letters-home-could-sing.epub',
     )
     expect(pdfBenchmarkReadiness.validEpubPackage(published)).toBe(true)
+  })
+
+  it('accepts safe directory and empty resource entries', () => {
+    const fixture = createValidEpub({
+      'EPUB/': [new Uint8Array(), { level: 0 }],
+      'EPUB/empty.css': [new Uint8Array(), { level: 0 }],
+    })
+    expect(pdfBenchmarkReadiness.validEpubPackage(fixture)).toBe(true)
   })
 
   it('rejects oversized EPUB and governance bindings from lstat metadata', async () => {

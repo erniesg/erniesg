@@ -20,12 +20,15 @@ const DEFAULT_SCHEMA_PATH = resolve(
 const DEFAULT_SCHEMA_ID =
   'https://ernie.sg/schemas/pdf-benchmark-readiness-registry-1.0.0.json'
 const DEFAULT_SCHEMA_SHA256 =
-  '97a7a359e988f6a30dd8202fd28806df1c5e50b935999416c0304625e8e0bf4e'
+  '4b1f161abffadff696e022b074af6a91aacd75c6f9f02e9dc0ea7e85ceffe2df'
 const PUBLIC_ERROR_CODE = /^(?:INVALID|MISSING|PDF)_[A-Z0-9_]+$/
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/
 const SAFE_FAILURE_CLASS = /^[a-z][a-z0-9]*(?:-[a-z0-9]+){0,11}$/
 const SHA256 = /^[a-f0-9]{64}$/
 const MAX_GOVERNANCE_JSON_BYTES = 16 * 1024 * 1024
+const MAX_EPUB_COMPRESSED_BYTES = 256 * 1024 * 1024
+const MAX_EPUB_INFLATED_BYTES = 512 * 1024 * 1024
+const MAX_EPUB_ENTRIES = 544
 const PROMOTION_PROTOCOL_IMPLEMENTED = false
 const CANDIDATE_COMPONENT_KINDS = [
   'provider',
@@ -166,6 +169,7 @@ async function verifyRepositoryFileBinding(
   repositoryPath,
   expectedSha256,
   code = 'PDF_BENCHMARK_METRIC_BINDING_MISMATCH',
+  maxBytes = null,
 ) {
   try {
     const absolute = resolveRepositoryPath(repositoryPath)
@@ -177,12 +181,20 @@ async function verifyRepositoryFileBinding(
     if (
       !details.isFile() ||
       details.isSymbolicLink() ||
+      (maxBytes !== null &&
+        (details.size <= 0 || details.size > maxBytes)) ||
       (fileRealPath !== repositoryRealPath &&
         !fileRealPath.startsWith(`${repositoryRealPath}${sep}`))
     ) {
       invalid(code)
     }
     const bytes = await readFile(fileRealPath)
+    if (
+      bytes.byteLength !== details.size ||
+      (maxBytes !== null && bytes.byteLength > maxBytes)
+    ) {
+      invalid(code)
+    }
     if (sha256(bytes) !== expectedSha256) {
       invalid(code)
     }
@@ -197,6 +209,8 @@ async function readBoundJson(binding, code) {
     const bytes = await verifyRepositoryFileBinding(
       binding.path,
       binding.fileSha256,
+      'PDF_BENCHMARK_METRIC_BINDING_MISMATCH',
+      MAX_GOVERNANCE_JSON_BYTES,
     )
     return JSON.parse(bytes.toString('utf8'))
   } catch {
@@ -1325,7 +1339,18 @@ export async function validateIndependentIsolationEvidence(
   return true
 }
 
-function validEpubPackage(bytes) {
+function validEpubEntryName(name) {
+  return (
+    typeof name === 'string' &&
+    name.length > 0 &&
+    !name.startsWith('/') &&
+    !name.startsWith('\\') &&
+    !name.includes('\\') &&
+    name.split('/').every((part) => part.length > 0 && part !== '..')
+  )
+}
+
+export function validEpubPackage(bytes) {
   try {
     if (
       bytes.length < 30 ||
@@ -1341,25 +1366,49 @@ function validEpubPackage(bytes) {
     ) {
       return false
     }
-    const files = unzipSync(new Uint8Array(bytes))
+    const names = new Set()
+    let entryCount = 0
+    let inflatedBytes = 0
+    const files = unzipSync(new Uint8Array(bytes), {
+      filter: ({ name, size, originalSize, compression }) => {
+        if (
+          !validEpubEntryName(name) ||
+          names.has(name) ||
+          !Number.isSafeInteger(size) ||
+          !Number.isSafeInteger(originalSize) ||
+          size < 0 ||
+          originalSize < 0 ||
+          size > MAX_EPUB_COMPRESSED_BYTES ||
+          originalSize > MAX_EPUB_INFLATED_BYTES ||
+          (compression !== 0 && compression !== 8) ||
+          ++entryCount > MAX_EPUB_ENTRIES ||
+          (inflatedBytes += originalSize) > MAX_EPUB_INFLATED_BYTES
+        ) {
+          throw new Error('invalid EPUB archive metadata')
+        }
+        names.add(name)
+        return name === 'mimetype' || name === 'META-INF/container.xml'
+      },
+    })
     if (
       Buffer.from(files.mimetype ?? []).toString('utf8') !==
       'application/epub+zip'
     ) {
       return false
     }
-    const container = Buffer.from(files['META-INF/container.xml'] ?? []).toString(
-      'utf8',
-    )
+    const container = Buffer.from(
+      files['META-INF/container.xml'] ?? [],
+    ).toString('utf8')
     const rootfile = container.match(
       /<rootfile\b[^>]*\bfull-path=["']([^"']+)["'][^>]*>/u,
     )?.[1]
     return (
       typeof rootfile === 'string' &&
       rootfile.endsWith('.opf') &&
-      !rootfile.startsWith('/') &&
-      !rootfile.split('/').includes('..') &&
-      files[rootfile] instanceof Uint8Array
+      validEpubEntryName(rootfile) &&
+      unzipSync(new Uint8Array(bytes), {
+        filter: ({ name }) => name === rootfile,
+      })[rootfile] instanceof Uint8Array
     )
   } catch {
     return false
@@ -1402,6 +1451,7 @@ async function validateExactEpubExportEvidence(exportEvidence) {
     evidence.epubArtifact.path,
     evidence.epubArtifact.fileSha256,
     'PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH',
+    MAX_EPUB_COMPRESSED_BYTES,
   )
   if (evidence.exactArtifactSha256 !== evidence.epubArtifact.fileSha256) {
     invalid('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
@@ -1625,6 +1675,22 @@ export async function validateNativeReaderEvidence(nativeReaderEvidence) {
     trustedAttestationVerified: false,
     trustedAttestationReason: 'trusted-attestation-verifier-not-implemented',
     verifiedReaderIds: [],
+  }
+}
+
+function unavailableNativeReaderEvidence() {
+  return {
+    exportEvidence: null,
+    ...Object.fromEntries(
+      Object.keys(REQUIRED_NATIVE_READER_TYPES).map((readerId) => [
+        readerId,
+        {
+          status: 'unavailable-blocker',
+          readerIdentity: null,
+          executionReceipt: null,
+        },
+      ]),
+    ),
   }
 }
 
@@ -1962,7 +2028,7 @@ export async function createPdfBenchmarkReadinessReceipt({
   const independentIsolationEvidenceVerified =
     await validateIndependentIsolationEvidence(registry, candidateCommitment)
   const nativeReaderEvidence = await validateNativeReaderEvidence(
-    registry.nativeReaderEvidence,
+    registry.nativeReaderEvidence ?? unavailableNativeReaderEvidence(),
   )
   const blind = registry.splits.find((split) => split.role === 'blind-test')
   const verifiedBlindSourcePolicy = blindSourcePolicyVerified(

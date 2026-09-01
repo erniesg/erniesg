@@ -168,7 +168,27 @@
           "maximum": 1
         },
         "verification": { "$ref": "#/$defs/verification" }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "verification": {
+                "properties": {
+                  "status": { "const": "passed" }
+                },
+                "required": ["status"]
+              }
+            },
+            "required": ["verification"]
+          },
+          "then": {
+            "properties": {
+              "structureHash": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        }
+      ]
     },
     "document": {
       "type": "object",

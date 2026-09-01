@@ -268,6 +268,30 @@ describe('extraction bake-off CLI', () => {
     expect(JSON.stringify(validate.errors)).toContain('structureHash')
   })
 
+  it('rejects a passed case whose structure hash is null even after recomputing its report hash', () => {
+    const schema = JSON.parse(
+      readFileSync(
+        'docs/schemas/extraction-bakeoff-report.schema.json',
+        'utf8',
+      ),
+    )
+    const report = JSON.parse(
+      readFileSync('benchmarks/pdf/extraction-bakeoff-report-v1.json', 'utf8'),
+    )
+    const validate = new Ajv2020({ strict: false }).compile(schema)
+    const { reportSha256: _reportSha256, ...withoutHash } = report
+    const mutated = structuredClone(withoutHash)
+    mutated.arms['llm-grounded'].documents[0].caseScores[0].structureHash =
+      null
+    const forged = {
+      ...mutated,
+      reportSha256: structuredExtractionHash(mutated),
+    }
+
+    expect(validate(forged)).toBe(false)
+    expect(JSON.stringify(validate.errors)).toContain('structureHash')
+  })
+
   it('refuses to stamp an authority-absent report', () => {
     const directory = mkdtempSync(join(tmpdir(), 'extraction-bakeoff-'))
     const source = spawnSync(

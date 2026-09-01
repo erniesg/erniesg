@@ -42,6 +42,7 @@ import {
 import { getCompositionPolicy } from './composition'
 import { parsePdfCitationSurface } from './pdf-citation-surface'
 import {
+  canonicalPdfExplicitSectionHeadingIdentifier,
   canonicalPdfRomanSectionHeadingIdentifiers,
   resolvePdfScholarlyCrossReferences,
 } from './pdf-cross-references'
@@ -550,9 +551,14 @@ function canonicalHeadingCrossReferenceTargets(
         nestedLetteredParentLabels.has(plainLetteredMatch[1]))
         ? plainLetteredMatch
         : null
+    const explicitlyPrefixedSectionIdentifier =
+      canonicalPdfExplicitSectionHeadingIdentifier(value)
     const numbered = value.match(/^(\d+(?:\.\d+)*)\.?\s+\S/u)
     const romanSectionIdentifier = romanSectionIdentifiers.get(node.id)
-    const sectionIdentifier = numbered?.[1] ?? romanSectionIdentifier
+    const sectionIdentifier =
+      explicitlyPrefixedSectionIdentifier ??
+      numbered?.[1] ??
+      romanSectionIdentifier
     const appendixIdentifier = romanSectionIdentifier
       ? undefined
       : (explicitAppendix?.[1] ??

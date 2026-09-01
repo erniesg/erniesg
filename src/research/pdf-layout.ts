@@ -24,6 +24,7 @@ import type {
 } from './import-types'
 import { PdfImportError, PdfReconstructionInvariantError } from './import-types'
 import {
+  canonicalPdfExplicitSectionHeadingIdentifier,
   canonicalPdfRomanSectionHeadingIdentifiers,
   resolvePdfScholarlyCrossReferences,
   type PdfCanonicalCrossReferenceTarget,
@@ -364,17 +365,6 @@ function structuralOrdinalHeadingText(text: string) {
   )
 }
 
-function explicitlyPrefixedSectionHeadingIdentifier(value: string) {
-  const identifier = value
-    .trim()
-    .match(
-      /^(?:section|sec\.?)\s+((?:\d{1,4}(?:\.\d{1,4}){0,3}|[A-Z](?:\.\d{1,4}){1,3}))\.?(?:\s+\S|$)/iu,
-    )?.[1]
-  return identifier && /^[A-Za-z]/u.test(identifier)
-    ? `${identifier[0].toUpperCase()}${identifier.slice(1)}`
-    : (identifier ?? null)
-}
-
 function promoteAdjacentNumberedParentChildHeadings(
   blocks: RegionBlock[],
   bodySize: number,
@@ -489,7 +479,7 @@ export function canonicalHeadingCrossReferenceTargets(
         ? plainLetteredMatch
         : null
     const explicitlyPrefixedSectionIdentifier =
-      explicitlyPrefixedSectionHeadingIdentifier(text)
+      canonicalPdfExplicitSectionHeadingIdentifier(text)
     const numbered = text.match(/^(\d+(?:\.\d+)*)\.?\s+\S/u)
     const romanSectionIdentifier = romanSectionIdentifiers.get(block.nodeId)
     const sectionIdentifier =
@@ -5969,9 +5959,8 @@ function splitLeadingStyledHeadingRegion(
   const numberedMatch = firstLine.text
     .trim()
     .match(/^\d+(?:\.\d+){0,3}[.)]?\s+(\S.*)$/u)
-  const explicitlyPrefixedSection = explicitlyPrefixedSectionHeadingIdentifier(
-    firstLine.text,
-  )
+  const explicitlyPrefixedSection =
+    canonicalPdfExplicitSectionHeadingIdentifier(firstLine.text)
   const titleText = numberedMatch?.[1] ?? ''
   const multiLevelSmallCaps =
     /^\d+(?:\.\d+){2,3}[.)]?\s/u.test(firstLine.text.trim()) &&
@@ -6737,7 +6726,7 @@ async function blocksFromRegions(
           region.text.trim(),
         )
       const explicitlyPrefixedSectionHeading = Boolean(
-        explicitlyPrefixedSectionHeadingIdentifier(region.text),
+        canonicalPdfExplicitSectionHeadingIdentifier(region.text),
       )
       const sourceStyledExplicitlyPrefixedSectionHeading =
         explicitlyPrefixedSectionHeading &&

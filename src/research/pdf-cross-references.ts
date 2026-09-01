@@ -40,6 +40,17 @@ const PREFIX_SOURCE = String.raw`\b(fig(?:ure)?s?|tables?|sections?|secs?|append
 const MAX_EXPLICIT_LIST_TARGETS = 32
 const MAX_ROMAN_SECTION_IDENTIFIER_CHARACTERS = 12
 
+export function canonicalPdfExplicitSectionHeadingIdentifier(value: string) {
+  const identifier = value
+    .trim()
+    .match(
+      /^(?:section|sec\.?)\s+((?:\d{1,4}(?:\.\d{1,4}){0,3}|[A-Z](?:\.\d{1,4}){1,3}))\.?(?:\s+\S|$)/iu,
+    )?.[1]
+  return identifier && /^[A-Za-z]/u.test(identifier)
+    ? `${identifier[0].toUpperCase()}${identifier.slice(1)}`
+    : (identifier ?? null)
+}
+
 function canonicalRomanSectionIdentifier(value: string) {
   if (
     value.length < 1 ||

@@ -1260,7 +1260,7 @@ async function readyExternalHyperlinkFixture() {
   return reconstruction
 }
 
-async function readyCrossReferenceFixture() {
+async function readyCrossReferenceFixture(headingText = '4 Methods') {
   const page: PdfPageAnalysis = {
     page: 1,
     kind: 'born-digital',
@@ -1278,7 +1278,7 @@ async function readyCrossReferenceFixture() {
         0.25,
       ),
       exportBoundaryRun('See Section 4 for the source-backed method.', 0.38),
-      exportBoundaryRun('4 Methods', 0.56, 16),
+      exportBoundaryRun(headingText, 0.56, 16),
       exportBoundaryRun('The methods remain canonical prose.', 0.62),
     ],
   }
@@ -8211,6 +8211,14 @@ describe('EPUB 3 export', () => {
     await expect(buildEpub(stale.paper, stale)).rejects.toThrow(
       /PDF hyperlink evidence.*non-renderable canonical range/u,
     )
+  })
+
+  it('revalidates an explicitly prefixed canonical section target at export', async () => {
+    const reconstruction = await readyCrossReferenceFixture('Section 4 Methods')
+
+    await expect(
+      buildEpub(reconstruction.paper, reconstruction),
+    ).resolves.toMatchObject({ mode: 'publication' })
   })
 
   it('rejects a stale scholarly cross-reference target claim at publication export', async () => {

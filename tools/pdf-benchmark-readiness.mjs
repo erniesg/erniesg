@@ -15,7 +15,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import Ajv2020 from 'ajv/dist/2020.js'
 import { XMLParser, XMLValidator } from 'fast-xml-parser'
-import { unzipSync } from 'fflate'
+import { Unzip, UnzipInflate, unzipSync } from 'fflate'
 import {
   canonicalJson,
   validatePdfFidelityEvalSet,
@@ -1450,31 +1450,90 @@ function validEpubEntryName(name) {
 }
 
 function epubRootfilePath(containerXml) {
+  if (XMLValidator.validate(containerXml) !== true) return null
   const parsed = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: '@_',
     processEntities: false,
   }).parse(containerXml)
-  let rootfile = null
-  const visit = (node) => {
-    if (rootfile !== null || node === null || typeof node !== 'object') return
-    if (Array.isArray(node)) {
-      node.forEach(visit)
-      return
-    }
-    for (const [key, child] of Object.entries(node)) {
-      if (key.split(':').at(-1) === 'rootfile' && isRecord(child)) {
-        const fullPath = child['@_full-path']
-        if (typeof fullPath === 'string') {
-          rootfile = fullPath
-          return
-        }
-      }
-      if (!key.startsWith('@_')) visit(child)
-    }
+  const container = parsed?.container
+  if (
+    !isRecord(container) ||
+    container['@_xmlns'] !==
+      'urn:oasis:names:tc:opendocument:xmlns:container' ||
+    !isRecord(container.rootfiles)
+  ) {
+    return null
   }
-  visit(parsed)
-  return rootfile
+  const rootfiles = Array.isArray(container.rootfiles.rootfile)
+    ? container.rootfiles.rootfile
+    : [container.rootfiles.rootfile]
+  const packageRootfile = rootfiles.find(
+    (rootfile) =>
+      isRecord(rootfile) &&
+      rootfile['@_media-type'] === 'application/oebps-package+xml' &&
+      typeof rootfile['@_full-path'] === 'string',
+  )
+  return packageRootfile?.['@_full-path'] ?? null
+}
+
+function extractEpubEntriesBounded(bytes, specifications) {
+  const requested = new Map(
+    specifications.map((specification) => [specification.name, specification]),
+  )
+  const extracted = new Map()
+  const archive = new Unzip((file) => {
+    const specification = requested.get(file.name)
+    if (specification === undefined) return
+    if (
+      extracted.has(file.name) ||
+      file.compression !== specification.compression ||
+      (Number.isSafeInteger(file.size) && file.size !== specification.size) ||
+      (Number.isSafeInteger(file.originalSize) &&
+        file.originalSize !== specification.originalSize)
+    ) {
+      throw new Error('EPUB local and central metadata mismatch')
+    }
+    const chunks = []
+    let emittedBytes = 0
+    file.ondata = (error, chunk, final) => {
+      if (error) throw error
+      emittedBytes += chunk.byteLength
+      if (
+        emittedBytes > specification.maxBytes ||
+        emittedBytes > specification.originalSize
+      ) {
+        file.terminate()
+        throw new Error('EPUB entry exceeds actual output limit')
+      }
+      chunks.push(chunk)
+      if (final) {
+        if (emittedBytes !== specification.originalSize) {
+          throw new Error('EPUB entry size mismatch')
+        }
+        extracted.set(
+          file.name,
+          Buffer.concat(
+            chunks.map((value) => Buffer.from(value)),
+            emittedBytes,
+          ),
+        )
+      }
+    }
+    file.start()
+  })
+  archive.register(UnzipInflate)
+  for (let offset = 0; offset < bytes.byteLength; offset += 256) {
+    archive.push(
+      bytes.subarray(offset, Math.min(offset + 256, bytes.byteLength)),
+      offset + 256 >= bytes.byteLength,
+    )
+    if (extracted.size === requested.size) break
+  }
+  if (extracted.size !== requested.size) {
+    throw new Error('missing bounded EPUB entry')
+  }
+  return extracted
 }
 
 export function validEpubPackage(bytes) {
@@ -1497,7 +1556,7 @@ export function validEpubPackage(bytes) {
     const entries = new Map()
     let entryCount = 0
     let inflatedBytes = 0
-    const files = unzipSync(new Uint8Array(bytes), {
+    unzipSync(new Uint8Array(bytes), {
       filter: ({ name, size, originalSize, compression }) => {
         if (
           !validEpubEntryName(name) ||
@@ -1508,6 +1567,7 @@ export function validEpubPackage(bytes) {
           originalSize < 0 ||
           size > MAX_EPUB_COMPRESSED_BYTES ||
           originalSize > MAX_EPUB_INFLATED_BYTES ||
+          (compression === 0 && size !== originalSize) ||
           (compression !== 0 && compression !== 8) ||
           ++entryCount > MAX_EPUB_ENTRIES ||
           (inflatedBytes += originalSize) > MAX_EPUB_INFLATED_BYTES
@@ -1528,18 +1588,29 @@ export function validEpubPackage(bytes) {
         ) {
           throw new Error('oversized EPUB container')
         }
-        return name === 'mimetype' || name === 'META-INF/container.xml'
+        return false
       },
     })
+    const headerEntries = extractEpubEntriesBounded(bytes, [
+      {
+        name: 'mimetype',
+        ...entries.get('mimetype'),
+        maxBytes: 20,
+      },
+      {
+        name: 'META-INF/container.xml',
+        ...entries.get('META-INF/container.xml'),
+        maxBytes: MAX_EPUB_CONTAINER_BYTES,
+      },
+    ])
     if (
-      Buffer.from(files.mimetype ?? []).toString('utf8') !==
-      'application/epub+zip'
+      headerEntries.get('mimetype')?.toString('utf8') !== 'application/epub+zip'
     ) {
       return false
     }
-    const container = Buffer.from(
-      files['META-INF/container.xml'] ?? [],
-    ).toString('utf8')
+    const container = headerEntries
+      .get('META-INF/container.xml')
+      .toString('utf8')
     const rootfile = epubRootfilePath(container)
     const rootfileEntry = entries.get(rootfile)
     if (
@@ -1552,24 +1623,26 @@ export function validEpubPackage(bytes) {
     ) {
       return false
     }
-    const rootfileBytes = unzipSync(new Uint8Array(bytes), {
-      filter: ({ name, originalSize }) =>
-        name === rootfile &&
-        originalSize > 0 &&
-        originalSize <= MAX_EPUB_PACKAGE_DOCUMENT_BYTES,
-    })[rootfile]
-    if (!(rootfileBytes instanceof Uint8Array)) return false
+    const rootfileBytes = extractEpubEntriesBounded(bytes, [
+      {
+        name: rootfile,
+        ...rootfileEntry,
+        maxBytes: MAX_EPUB_PACKAGE_DOCUMENT_BYTES,
+      },
+    ]).get(rootfile)
     const packageXml = Buffer.from(rootfileBytes).toString('utf8')
     if (XMLValidator.validate(packageXml) !== true) return false
     const packageDocument = new XMLParser({
       ignoreAttributes: false,
       processEntities: false,
     }).parse(packageXml)
+    const packageRoot = packageDocument?.package
     return (
-      isRecord(packageDocument) &&
-      Object.keys(packageDocument).some(
-        (name) => name.split(':').at(-1) === 'package',
-      )
+      isRecord(packageRoot) &&
+      packageRoot['@_xmlns'] === 'http://www.idpf.org/2007/opf' &&
+      Object.hasOwn(packageRoot, 'metadata') &&
+      Object.hasOwn(packageRoot, 'manifest') &&
+      Object.hasOwn(packageRoot, 'spine')
     )
   } catch {
     return false

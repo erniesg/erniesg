@@ -103,6 +103,43 @@ function patchZipCentralDirectoryEntry(bytes, entryName, changes) {
   throw new Error(`missing ZIP central-directory entry: ${entryName}`)
 }
 
+function patchZipLocalHeaderEntry(bytes, entryName, changes) {
+  const patched = new Uint8Array(bytes)
+  const view = new DataView(
+    patched.buffer,
+    patched.byteOffset,
+    patched.byteLength,
+  )
+  for (let offset = 0; offset <= patched.byteLength - 30;) {
+    if (view.getUint32(offset, true) !== 0x04034b50) break
+    const compressedSize = view.getUint32(offset + 18, true)
+    const nameLength = view.getUint16(offset + 26, true)
+    const extraLength = view.getUint16(offset + 28, true)
+    const name = Buffer.from(
+      patched.subarray(offset + 30, offset + 30 + nameLength),
+    ).toString('utf8')
+    if (name === entryName) {
+      if (changes.compressedSize !== undefined) {
+        view.setUint32(offset + 18, changes.compressedSize, true)
+      }
+      if (changes.originalSize !== undefined) {
+        view.setUint32(offset + 22, changes.originalSize, true)
+      }
+      return patched
+    }
+    offset += 30 + nameLength + extraLength + compressedSize
+  }
+  throw new Error(`missing ZIP local entry: ${entryName}`)
+}
+
+function patchZipEntrySizes(bytes, entryName, changes) {
+  return patchZipCentralDirectoryEntry(
+    patchZipLocalHeaderEntry(bytes, entryName, changes),
+    entryName,
+    changes,
+  )
+}
+
 function corruptZipLocalEntryPayload(bytes, entryName) {
   const patched = new Uint8Array(bytes)
   const view = new DataView(
@@ -133,9 +170,11 @@ function createValidEpub(extraEntries = {}) {
   return zipSync({
     mimetype: [strToU8('application/epub+zip'), { level: 0 }],
     'META-INF/container.xml': strToU8(
-      '<container><rootfiles><rootfile full-path="EPUB/package.opf" /></rootfiles></container>',
+      '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><rootfiles><rootfile full-path="EPUB/package.opf" media-type="application/oebps-package+xml" /></rootfiles></container>',
     ),
-    'EPUB/package.opf': strToU8('<package version="3.0" />'),
+    'EPUB/package.opf': strToU8(
+      '<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata/><manifest/><spine/></package>',
+    ),
     ...extraEntries,
   })
 }
@@ -388,15 +427,19 @@ describe('PDF benchmark readiness registry', () => {
     const compressedMimetype = zipSync({
       mimetype: strToU8('application/epub+zip'),
       'META-INF/container.xml': strToU8(
-        '<container><rootfiles><rootfile full-path="EPUB/package.opf" /></rootfiles></container>',
+        '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><rootfiles><rootfile full-path="EPUB/package.opf" media-type="application/oebps-package+xml" /></rootfiles></container>',
       ),
-      'EPUB/package.opf': strToU8('<package version="3.0" />'),
+      'EPUB/package.opf': strToU8(
+        '<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata/><manifest/><spine/></package>',
+      ),
     })
     expect(validEpubPackage(compressedMimetype)).toBe(false)
 
     const corruptPackagePayload = corruptZipLocalEntryPayload(
       createValidEpub({
-        'EPUB/package.opf': strToU8('<package>'.repeat(4096)),
+        'EPUB/package.opf': strToU8(
+          `<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata><meta>${'x'.repeat(64 * 1024)}</meta></metadata><manifest/><spine/></package>`,
+        ),
       }),
       'EPUB/package.opf',
     )
@@ -416,6 +459,37 @@ describe('PDF benchmark readiness registry', () => {
         }),
       ),
     ).toBe(false)
+    expect(
+      validEpubPackage(
+        createValidEpub({
+          'EPUB/package.opf': strToU8(
+            '<x:package xmlns:x="urn:evil"><metadata/><manifest/><spine/></x:package>',
+          ),
+        }),
+      ),
+    ).toBe(false)
+
+    const underdeclaredPackage = patchZipEntrySizes(
+      createValidEpub({
+        'EPUB/package.opf': strToU8(
+          `<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata><meta>${'x'.repeat(8 * 1024 * 1024)}</meta></metadata><manifest/><spine/></package>`,
+        ),
+      }),
+      'EPUB/package.opf',
+      { originalSize: 25 },
+    )
+    expect(underdeclaredPackage.byteLength).toBeLessThan(64 * 1024)
+    expect(validEpubPackage(underdeclaredPackage)).toBe(false)
+
+    const underdeclaredContainer = patchZipEntrySizes(
+      createValidEpub({
+        'META-INF/container.xml': strToU8('<rootfile'.repeat(128 * 1024)),
+      }),
+      'META-INF/container.xml',
+      { originalSize: 80 },
+    )
+    expect(underdeclaredContainer.byteLength).toBeLessThan(32 * 1024)
+    expect(validEpubPackage(underdeclaredContainer)).toBe(false)
   })
 
   it('rejects oversized EPUB and governance bindings from lstat metadata', async () => {
@@ -1455,7 +1529,7 @@ describe('PDF benchmark readiness registry', () => {
       zipSync({
         mimetype: [strToU8('application/epub+zip'), { level: 0 }],
         'META-INF/container.xml': strToU8(
-          '<container><rootfiles><rootfile full-path="EPUB/package.opf" /></rootfiles></container>',
+          '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><rootfiles><rootfile full-path="EPUB/package.opf" media-type="application/oebps-package+xml" /></rootfiles></container>',
         ),
         'EPUB/package.opf': strToU8(
           '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="pub-id">urn:fixture</dc:identifier><dc:title>Fixture</dc:title><dc:language>en</dc:language></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="content" href="content.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="content"/></spine></package>',
@@ -1782,7 +1856,7 @@ describe('PDF benchmark readiness registry', () => {
         'PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH',
       )
     }
-  })
+  }, 30_000)
 
   it('emits only a stable error code when CLI inputs fail', () => {
     const result = spawnSync(

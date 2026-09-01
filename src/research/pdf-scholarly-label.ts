@@ -65,7 +65,7 @@ function identifierPattern(allowAsciiHyphenCompound: boolean) {
   const digitSegment = String.raw`\d{1,${MAX_IDENTIFIER_DIGITS_PER_SEGMENT}}`
   const trailingSegments = String.raw`(?:${separator}${digitSegment}){0,${MAX_IDENTIFIER_SEGMENTS - 1}}`
   return new RegExp(
-    String.raw`^(?:[A-Za-z](?:${digitSegment}|${separator}${digitSegment})${trailingSegments}|${digitSegment}${trailingSegments}[A-Za-z]?|${CANONICAL_UPPER_ROMAN_IDENTIFIER})(?![IVXLCDM])`,
+    String.raw`^(?:[A-Za-z](?:${digitSegment}|${separator}${digitSegment})${trailingSegments}[A-Za-z]?|${digitSegment}${trailingSegments}[A-Za-z]?|${CANONICAL_UPPER_ROMAN_IDENTIFIER})(?![IVXLCDM])`,
     'u',
   )
 }

@@ -19211,6 +19211,7 @@ describe('PDF semantic reconstruction', () => {
     ['Figure 1', 'Figure 1'],
     ['Figure A.1', 'Figure A.1'],
     ['Figure 1(a)', 'Figure 1a'],
+    ['Figure A.1(b)', 'Figure A.1b'],
   ])(
     'anchors %s only to its proved canonical visual',
     async (sourceFigureLabel, canonicalFigureLabel) => {

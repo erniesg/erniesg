@@ -36,17 +36,38 @@ describe('PDF scholarly visual labels', () => {
       '4.1c',
       'Equation 4.1c',
     ],
+    [
+      'Figure A.1(b). Parenthesized appendix panel.',
+      'figure',
+      'A.1b',
+      'Figure A.1b',
+    ],
+    [
+      'Table B-2(C): Parenthesized hyphenated panel.',
+      'table',
+      'B-2C',
+      'Table B-2C',
+    ],
   ] as const)(
     'parses the bounded caption label in %j',
     (text, kind, identifier, label) => {
+      const parsed = parsePdfScholarlyVisualLabel(text, { context: 'caption' })
+      expect(parsed).toMatchObject({
+        status: 'parsed',
+        kind,
+        identifier,
+        label,
+        plural: false,
+      })
       expect(
-        parsePdfScholarlyVisualLabel(text, { context: 'caption' }),
+        parsePdfScholarlyVisualLabel(label, { context: 'reference' }),
       ).toMatchObject({
         status: 'parsed',
         kind,
         identifier,
         label,
         plural: false,
+        consumedEnd: label.length,
       })
     },
   )

@@ -2220,6 +2220,71 @@ describe('PDF line joining', () => {
     ])
   })
 
+  it('rejoins two source lines owned by one exact URL annotation rectangle', () => {
+    const sourceRun = (
+      text: string,
+      y: number,
+      width: number,
+    ): PdfSourceRun => ({
+      page: 1,
+      text,
+      x: 0.1,
+      y,
+      width,
+      height: 0.012,
+      rotation: 0,
+      method: 'pdf-text',
+      fontName: 'Body',
+      fontSize: 9,
+      confidence: 1,
+    })
+    const prefix = sourceRun('https://pro', 0.2, 0.09)
+    const suffix = sourceRun('ject.test/path', 0.218, 0.12)
+    const page: PdfPageAnalysis = {
+      page: 1,
+      kind: 'born-digital',
+      width: 612,
+      height: 792,
+      rotation: 0,
+      textCharacters: prefix.text.length + suffix.text.length,
+      imageCount: 0,
+      objects: [],
+      runs: [prefix, suffix],
+      links: [
+        {
+          id: 'pdf-link-p001-a0001',
+          page: 1,
+          status: 'external',
+          url: 'https://project.test/path',
+          box: {
+            page: 1,
+            x: 0.095,
+            y: 0.195,
+            width: 0.13,
+            height: 0.04,
+            rotation: 0,
+            method: 'pdf-link',
+          },
+        },
+      ],
+    }
+    const decisions: PdfLineBoundaryDecision[] = []
+
+    expect(joinPdfLineTexts(groupRunsIntoLines(page), { decisions })).toBe(
+      'https://project.test/path',
+    )
+    expect(decisions).toEqual([
+      expect.objectContaining({
+        outcome: 'no-space',
+        evidence: [
+          'same-normalized-link-target',
+          'source-link-geometry',
+          'url-round-trip',
+        ],
+      }),
+    ])
+  })
+
   it('rejoins a link-backed URL when its final source line also contains bibliography prose', () => {
     const sourceRun = (
       text: string,

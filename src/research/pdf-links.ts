@@ -862,7 +862,7 @@ export function resolvePdfLinkedTokenContinuity(
   lines: readonly PdfLinkedTokenSourceLine[],
   annotations: readonly PdfEmbeddedLink[],
 ): PdfLinkedTokenBoundaryEvidence[] {
-  if (lines.length < 2 || annotations.length < 2) return []
+  if (lines.length < 2 || annotations.length === 0) return []
   const fragments = linkedTokenLineFragments(lines, annotations)
   const edges = Array.from({ length: lines.length - 1 }, (_, fromLineIndex) => {
     const left = fragments.filter(

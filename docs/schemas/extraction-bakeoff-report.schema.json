@@ -159,6 +159,11 @@
         "typeRecall": { "type": "number", "minimum": 0, "maximum": 1 },
         "sourceRecall": { "type": "number", "minimum": 0, "maximum": 1 },
         "assetRecall": { "type": "number", "minimum": 0, "maximum": 1 },
+        "headingLevelRecall": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
         "structureHash": {
           "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/sha256" }]
         },
@@ -225,7 +230,21 @@
           "type": "array",
           "items": { "$ref": "#/$defs/caseScore" }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "passed" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "outputHash": { "$ref": "#/$defs/sha256" },
+              "byteStable": { "const": true }
+            }
+          }
+        }
+      ]
     },
     "arm": {
       "type": "object",
@@ -262,11 +281,27 @@
         "layout": { "enum": ["one-column", "two-column"] },
         "scores": {
           "type": "object",
-          "additionalProperties": {
-            "oneOf": [
-              { "type": "null" },
-              { "type": "number", "minimum": 0, "maximum": 1 }
-            ]
+          "additionalProperties": false,
+          "required": ["geometric-baseline", "llm-authored", "llm-grounded"],
+          "properties": {
+            "geometric-baseline": {
+              "oneOf": [
+                { "type": "null" },
+                { "type": "number", "minimum": 0, "maximum": 1 }
+              ]
+            },
+            "llm-authored": {
+              "oneOf": [
+                { "type": "null" },
+                { "type": "number", "minimum": 0, "maximum": 1 }
+              ]
+            },
+            "llm-grounded": {
+              "oneOf": [
+                { "type": "null" },
+                { "type": "number", "minimum": 0, "maximum": 1 }
+              ]
+            }
           }
         },
         "winner": {

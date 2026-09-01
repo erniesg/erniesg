@@ -1,4 +1,6 @@
+import Ajv2020 from 'ajv/dist/2020.js'
 import { describe, expect, it } from 'vitest'
+import reportSchema from '../../docs/schemas/extraction-bakeoff-report.schema.json' with { type: 'json' }
 import {
   assertNoHeldOutContamination,
   createExtractionArchitectureDecision,
@@ -513,6 +515,8 @@ describe('extraction architecture bake-off', () => {
     expect(row.scores['llm-authored']).toBeLessThan(
       row.scores['geometric-baseline']!,
     )
+    const validate = new Ajv2020({ strict: false }).compile(reportSchema)
+    expect(validate(report), JSON.stringify(validate.errors)).toBe(true)
   })
 
   it('refuses to derive a decision from a report whose hash no longer binds it', () => {

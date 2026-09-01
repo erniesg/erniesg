@@ -224,7 +224,11 @@ describe('extraction bake-off CLI', () => {
     const validate = new Ajv2020({ strict: false }).compile(schema)
 
     expect(validate(report), JSON.stringify(validate.errors)).toBe(true)
-    const { authority: _authority, reportSha256: _reportSha256, ...raw } = report
+    const {
+      authority: _authority,
+      reportSha256: _reportSha256,
+      ...raw
+    } = report
     const rawReport = {
       ...raw,
       reportSha256: structuredExtractionHash(raw),
@@ -281,6 +285,107 @@ describe('extraction bake-off CLI', () => {
     ).toBe(false)
   })
 
+  it.each([
+    ['omits', (scores) => delete scores['llm-grounded']],
+    [
+      'adds',
+      (scores) => {
+        scores.untrusted = 1
+      },
+    ],
+  ])(
+    '%s a comparison score key even after recomputing the report hash',
+    (operation, mutateScores) => {
+      const directory = mkdtempSync(join(tmpdir(), 'extraction-bakeoff-'))
+      const report = structuredClone(
+        JSON.parse(
+          readFileSync(
+            'benchmarks/pdf/extraction-bakeoff-report-v1.json',
+            'utf8',
+          ),
+        ),
+      )
+      mutateScores(report.comparison[0].scores)
+      const { reportSha256: _reportSha256, ...withoutHash } = report
+      const reportPath = join(directory, 'forged-report.json')
+      writeFileSync(
+        reportPath,
+        `${JSON.stringify({
+          ...withoutHash,
+          reportSha256: structuredExtractionHash(withoutHash),
+        })}\n`,
+      )
+
+      const result = spawnSync(
+        process.execPath,
+        [
+          '--experimental-strip-types',
+          'tools/pdf-extraction-bakeoff.mjs',
+          '--validate-report',
+          reportPath,
+        ],
+        { encoding: 'utf8', timeout: 30_000 },
+      )
+
+      expect(result.status).toBe(1)
+      expect(result.stderr).toContain('INVALID_SYNTHETIC_BAKEOFF_REPORT_SCHEMA')
+      rmSync(directory, { recursive: true, force: true })
+    },
+  )
+
+  it.each([
+    [
+      'erases',
+      (document) => {
+        document.outputHash = null
+      },
+    ],
+    [
+      'destabilizes',
+      (document) => {
+        document.byteStable = false
+      },
+    ],
+  ])(
+    '%s a passed document output binding even after recomputing the report hash',
+    (operation, mutateDocument) => {
+      const directory = mkdtempSync(join(tmpdir(), 'extraction-bakeoff-'))
+      const report = structuredClone(
+        JSON.parse(
+          readFileSync(
+            'benchmarks/pdf/extraction-bakeoff-report-v1.json',
+            'utf8',
+          ),
+        ),
+      )
+      mutateDocument(report.arms['llm-grounded'].documents[0])
+      const { reportSha256: _reportSha256, ...withoutHash } = report
+      const reportPath = join(directory, 'forged-report.json')
+      writeFileSync(
+        reportPath,
+        `${JSON.stringify({
+          ...withoutHash,
+          reportSha256: structuredExtractionHash(withoutHash),
+        })}\n`,
+      )
+
+      const result = spawnSync(
+        process.execPath,
+        [
+          '--experimental-strip-types',
+          'tools/pdf-extraction-bakeoff.mjs',
+          '--validate-report',
+          reportPath,
+        ],
+        { encoding: 'utf8', timeout: 30_000 },
+      )
+
+      expect(result.status).toBe(1)
+      expect(result.stderr).toContain('INVALID_SYNTHETIC_BAKEOFF_REPORT_SCHEMA')
+      rmSync(directory, { recursive: true, force: true })
+    },
+  )
+
   it('rejects a report whose case structure hash was deleted even after recomputing its report hash', () => {
     const schema = JSON.parse(
       readFileSync(
@@ -318,8 +423,7 @@ describe('extraction bake-off CLI', () => {
     const validate = new Ajv2020({ strict: false }).compile(schema)
     const { reportSha256: _reportSha256, ...withoutHash } = report
     const mutated = structuredClone(withoutHash)
-    mutated.arms['llm-grounded'].documents[0].caseScores[0].structureHash =
-      null
+    mutated.arms['llm-grounded'].documents[0].caseScores[0].structureHash = null
     const forged = {
       ...mutated,
       reportSha256: structuredExtractionHash(mutated),

@@ -3080,65 +3080,73 @@ describe('scholarly note-marker taxonomy', () => {
     )
   })
 
-  it('projects every normalized superscript citation label to an exact canonical target', async () => {
-    const result = await reconstruct(decisiveNoteMarkerFixtures[1], '7')
+  it.each(['¹,²', '¹˒²'])(
+    'projects every normalized superscript citation label in %s to an exact canonical target',
+    async (marker) => {
+      const fixture = structuredClone(decisiveNoteMarkerFixtures[1])
+      fixture.pages[0].runs[2].text = fixture.pages[0].runs[2].text.replace(
+        '¹,²',
+        marker,
+      )
+      const result = await reconstruct(fixture, '7')
 
-    expect(result.citationRelationships).toEqual([
-      expect.objectContaining({
-        label: '1,2',
-        labels: ['1', '2'],
-        status: 'matched',
-        targetNodeIds: [
-          expect.stringMatching(/^p-/),
-          expect.stringMatching(/^p-/),
-        ],
-        targets: [
-          expect.objectContaining({
-            label: '1',
-            referenceStart: 'Prior evidence'.length,
-            referenceEnd: 'Prior evidence¹'.length,
-            sourceBoxes: [expect.objectContaining({ page: 1 })],
-          }),
-          expect.objectContaining({
-            label: '2',
-            referenceStart: 'Prior evidence¹,'.length,
-            referenceEnd: 'Prior evidence¹,²'.length,
-            sourceBoxes: [expect.objectContaining({ page: 1 })],
-          }),
-        ],
-        canonicalAnchor: {
-          nodeId: expect.stringMatching(/^p-/),
-          start: 'Prior evidence'.length,
-          end: 'Prior evidence¹,²'.length,
-        },
-      }),
-    ])
-    const citationRuns = result.paper.nodes.flatMap((node) =>
-      'inlineRuns' in node
-        ? (node.inlineRuns ?? []).filter(
-            (run) => run.semanticRole === 'citation',
-          )
-        : [],
-    )
-    expect(citationRuns).toEqual([
-      expect.objectContaining({ targetIds: expect.any(Array) }),
-    ])
-    expect(citationRuns[0].targetIds).toHaveLength(2)
-    expect(result.completeness).toMatchObject({
-      expectedInlineSpanCount: 1,
-      mappedInlineSpanCount: 1,
-      inlineSpanCoverage: 1,
-      expectedRelationshipCount: 1,
-      resolvedRelationshipCount: 1,
-      relationshipCoverage: 1,
-    })
-    expect(result.readiness.blockingDiagnosticCodes).not.toEqual(
-      expect.arrayContaining([
-        'UNRESOLVED_CITATION_REFERENCE',
-        'UNMAPPED_CITATION_ANCHOR',
-      ]),
-    )
-  })
+      expect(result.citationRelationships).toEqual([
+        expect.objectContaining({
+          label: '1,2',
+          labels: ['1', '2'],
+          status: 'matched',
+          targetNodeIds: [
+            expect.stringMatching(/^p-/),
+            expect.stringMatching(/^p-/),
+          ],
+          targets: [
+            expect.objectContaining({
+              label: '1',
+              referenceStart: 'Prior evidence'.length,
+              referenceEnd: 'Prior evidence'.length + 1,
+              sourceBoxes: [expect.objectContaining({ page: 1 })],
+            }),
+            expect.objectContaining({
+              label: '2',
+              referenceStart: 'Prior evidence'.length + 2,
+              referenceEnd: 'Prior evidence'.length + marker.length,
+              sourceBoxes: [expect.objectContaining({ page: 1 })],
+            }),
+          ],
+          canonicalAnchor: {
+            nodeId: expect.stringMatching(/^p-/),
+            start: 'Prior evidence'.length,
+            end: 'Prior evidence'.length + marker.length,
+          },
+        }),
+      ])
+      const citationRuns = result.paper.nodes.flatMap((node) =>
+        'inlineRuns' in node
+          ? (node.inlineRuns ?? []).filter(
+              (run) => run.semanticRole === 'citation',
+            )
+          : [],
+      )
+      expect(citationRuns).toEqual([
+        expect.objectContaining({ targetIds: expect.any(Array) }),
+      ])
+      expect(citationRuns[0].targetIds).toHaveLength(2)
+      expect(result.completeness).toMatchObject({
+        expectedInlineSpanCount: 1,
+        mappedInlineSpanCount: 1,
+        inlineSpanCoverage: 1,
+        expectedRelationshipCount: 1,
+        resolvedRelationshipCount: 1,
+        relationshipCoverage: 1,
+      })
+      expect(result.readiness.blockingDiagnosticCodes).not.toEqual(
+        expect.arrayContaining([
+          'UNRESOLVED_CITATION_REFERENCE',
+          'UNMAPPED_CITATION_ANCHOR',
+        ]),
+      )
+    },
+  )
 
   it('accepts true note relationships only at the documented threshold and retains node order', async () => {
     for (const [fixtureIndex, fixture] of decisiveNoteMarkerFixtures

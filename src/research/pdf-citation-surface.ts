@@ -11,7 +11,7 @@ export type PdfCitationSurface = {
 
 export const MAX_CITATION_TARGETS_PER_RELATIONSHIP = 32
 const CITATION_RANGE_CONNECTOR = /^\s*([-\u2013\u2014])\s*/u
-const CITATION_LIST_CONNECTOR = /^(?:\s*[,;]\s*|\s+(?:and|or)\s+)/iu
+const CITATION_LIST_CONNECTOR = /^(?:\s*[,;˒]\s*|\s+(?:and|or)\s+)/iu
 const SUPERSCRIPT_DECIMAL_DIGITS = '⁰¹²³⁴⁵⁶⁷⁸⁹'
 const CITATION_IDENTIFIER_PATTERN = new RegExp(
   String.raw`^((?:\p{Nd}{1,9}|[${SUPERSCRIPT_DECIMAL_DIGITS}]{1,9}))(?![\p{Nd}${SUPERSCRIPT_DECIMAL_DIGITS}])`,

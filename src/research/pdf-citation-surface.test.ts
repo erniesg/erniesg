@@ -46,6 +46,13 @@ describe('PDF citation surface parsing', () => {
       ],
     },
     {
+      value: '¹˒²',
+      links: [
+        { start: 0, end: 1, identityIndex: 0 },
+        { start: 2, end: 3, identityIndex: 1 },
+      ],
+    },
+    {
       value: `${String.fromCodePoint(0x1e951)},${String.fromCodePoint(0x1e952)}`,
       links: [
         { start: 0, end: 2, identityIndex: 0 },

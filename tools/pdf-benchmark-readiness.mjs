@@ -1659,6 +1659,13 @@ export function assessPdfBenchmarkReadiness(
     candidateCommitmentVerified = false,
     independentIsolationEvidenceVerified = false,
     nativeReaderEvidenceVerified = false,
+    nativeReaderEvidenceSummary = {
+      exactArtifactSha256: null,
+      structurallyValidatedReaderIds: [],
+      trustedAttestationVerified: false,
+      trustedAttestationReason: 'trusted-attestation-verifier-not-implemented',
+      verifiedReaderIds: [],
+    },
   } = {},
 ) {
   const blind = registry.splits.find((split) => split.role === 'blind-test')
@@ -1860,7 +1867,7 @@ export function assessPdfBenchmarkReadiness(
     criterion(
       'native-reader-exact-artifact-coverage',
       nativeReaderEvidenceVerified,
-      registry.nativeReaderEvidence,
+      nativeReaderEvidenceSummary,
       {
         'apple-books': 'hash-bound-passed-exact-artifact-receipt',
         'independent-desktop-epub-reader':
@@ -1996,6 +2003,7 @@ export async function createPdfBenchmarkReadinessReceipt({
       nativeReaderEvidence.trustedAttestationVerified &&
       nativeReaderEvidence.verifiedReaderIds.length ===
         Object.keys(REQUIRED_NATIVE_READER_TYPES).length,
+    nativeReaderEvidenceSummary: nativeReaderEvidence,
   })
   const unsigned = {
     schemaVersion: PDF_BENCHMARK_READINESS_SCHEMA_VERSION,

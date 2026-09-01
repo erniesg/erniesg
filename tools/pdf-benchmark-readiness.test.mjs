@@ -1338,6 +1338,35 @@ describe('PDF benchmark readiness registry', () => {
       verifiedReaderIds: [],
     })
 
+    const populatedRegistry = await readRegistry()
+    populatedRegistry.nativeReaderEvidence = nativeReaderEvidence
+    const populatedReceipt = await createPdfBenchmarkReadinessReceipt({
+      registryPath: await writeRegistry(populatedRegistry),
+    })
+    const nativeReaderSummary = {
+      exactArtifactSha256,
+      structurallyValidatedReaderIds: [
+        'apple-books',
+        'independent-desktop-epub-reader',
+        'target-eink-reader-device',
+      ],
+      trustedAttestationVerified: false,
+      trustedAttestationReason: 'trusted-attestation-verifier-not-implemented',
+      verifiedReaderIds: [],
+    }
+    expect(populatedReceipt.nativeReaderEvidence).toEqual(nativeReaderSummary)
+    expect(
+      populatedReceipt.criteria.find(
+        ({ id }) => id === 'native-reader-exact-artifact-coverage',
+      ).observed,
+    ).toEqual(nativeReaderSummary)
+    const serializedReceipt = JSON.stringify(populatedReceipt)
+    expect(serializedReceipt).not.toContain(exportEvidence.path)
+    for (const { readerIdentity, executionReceipt } of readerReceipts) {
+      expect(serializedReceipt).not.toContain(readerIdentity.path)
+      expect(serializedReceipt).not.toContain(executionReceipt.path)
+    }
+
     const unavailable = structuredClone(nativeReaderEvidence)
     unavailable['apple-books'] = {
       status: 'unavailable-blocker',

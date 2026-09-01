@@ -457,6 +457,29 @@ describe('PDF scholarly cross references', () => {
     expect(relationships).toEqual([])
   })
 
+  it.each([
+    'Figure 12(a)-(c)',
+    'Figure 12(a)–(c)',
+    'Figure 12(a), (b)',
+    'Figure 12(a) and (b)',
+    'Figure 12a and (b)',
+    'Figure 12(a) (b)',
+    'Figure 12(a) to (c)',
+    'Figure 12(a) & (b)',
+  ])('fails an abbreviated panel continuation closed in %j', (text) => {
+    const relationships = resolvePdfScholarlyCrossReferences({
+      regions: [region(`${text} compare the results.`)],
+      canonicalTargets: [
+        target('figure', 'Figure 12'),
+        target('figure', 'Figure 12a'),
+        target('figure', 'Figure 12b'),
+        target('figure', 'Figure 12c'),
+      ],
+    })
+
+    expect(relationships).toEqual([])
+  })
+
   it('keeps plural panel targets distinct by label while deduplicating their owning figure', () => {
     const [relationship] = resolvePdfScholarlyCrossReferences({
       regions: [region('Figures 12b and 12c isolate the compared panels.')],

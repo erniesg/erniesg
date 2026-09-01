@@ -1206,6 +1206,19 @@ describe('scholarly cross-reference integrity', () => {
   )
 
   it.each([
+    'Figure 12(a)-(c)',
+    'Figure 12(a)–(c)',
+    'Figure 12(a), (b)',
+    'Figure 12(a) and (b)',
+    'Figure 12a and (b)',
+    'Figure 12(a) (b)',
+    'Figure 12(a) to (c)',
+    'Figure 12(a) & (b)',
+  ])('rejects an abbreviated panel continuation %j', (value) => {
+    expect(isBoundedScholarlyReferenceText(value)).toBe(false)
+  })
+
+  it.each([
     'Table ii',
     'Table mix',
     'Table MCMC',

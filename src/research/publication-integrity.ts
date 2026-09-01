@@ -70,6 +70,10 @@ const SCHOLARLY_REFERENCE_BASE_ATOM = String.raw`(?:[A-Za-z]?\d+(?:\.\d+)*(?:[A-
 const SCHOLARLY_REFERENCE_PANEL_BASE_ATOM = String.raw`(?:[A-Za-z]?\d+(?:\.\d+)*|[A-Za-z]\.\d+(?:\.\d+)*)`
 const SCHOLARLY_REFERENCE_ATOM = String.raw`(?:${SCHOLARLY_REFERENCE_PANEL_BASE_ATOM}\([A-Za-z]\)|${SCHOLARLY_REFERENCE_BASE_ATOM})`
 const SCHOLARLY_REFERENCE_IDENTIFIER = String.raw`(?:\(${SCHOLARLY_REFERENCE_ATOM}(?:${SCHOLARLY_REFERENCE_CONNECTOR}${SCHOLARLY_REFERENCE_ATOM})*\)|${SCHOLARLY_REFERENCE_ATOM})`
+const ABBREVIATED_PANEL_CONTINUATION = new RegExp(
+  String.raw`(?:\d[A-Za-z]|\d\([A-Za-z]\))${SCHOLARLY_REFERENCE_CONNECTOR}\([A-Za-z]\)(?![\p{L}\p{N}(])`,
+  'u',
+)
 const BOUNDED_SCHOLARLY_REFERENCE_IDENTIFIERS = new RegExp(
   String.raw`^${SCHOLARLY_REFERENCE_IDENTIFIER}(?:${SCHOLARLY_REFERENCE_CONNECTOR}${SCHOLARLY_REFERENCE_IDENTIFIER})*$`,
   'u',
@@ -78,9 +82,11 @@ const BOUNDED_SCHOLARLY_REFERENCE_IDENTIFIERS = new RegExp(
 export function isBoundedScholarlyReferenceText(value: string) {
   const trimmed = value.trim()
   const prefix = trimmed.match(SCHOLARLY_REFERENCE_PREFIX)?.[0]
-  return Boolean(
-    prefix &&
-    BOUNDED_SCHOLARLY_REFERENCE_IDENTIFIERS.test(trimmed.slice(prefix.length)),
+  if (!prefix) return false
+  const identifiers = trimmed.slice(prefix.length)
+  return (
+    !ABBREVIATED_PANEL_CONTINUATION.test(identifiers) &&
+    BOUNDED_SCHOLARLY_REFERENCE_IDENTIFIERS.test(identifiers)
   )
 }
 

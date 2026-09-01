@@ -42,6 +42,8 @@ const CANONICAL_UPPER_ROMAN_IDENTIFIER = String.raw`(?=[IVXLCDM]{1,${MAX_ROMAN_I
 const PREFIX_PATTERN = /^(fig(?:ure)?|table|eq(?:uation)?)(s?)(?:\.\s*|\s+)/iu
 const EXPLICIT_UNNUMBERED_PREFIX_PATTERN =
   /^(fig(?:ure)?|table|eq(?:uation)?)\.?\s*:\s*/iu
+const ABBREVIATED_PANEL_CONTINUATION_PATTERN =
+  /^(?:\s+|\s*(?:[,;:&+]|\b(?:and|or|to|through)\b|[\u2013\u2014\/-])\s*)\([A-Za-z]\)(?![\p{L}\p{N}(])/u
 
 function kindForPrefix(value: string): PdfScholarlyVisualKind {
   if (/^fig/iu.test(value)) return 'figure'
@@ -106,6 +108,10 @@ export function parsePdfScholarlyVisualIdentifier(
     consumedEnd = identifierEnd
   }
   const next = value.slice(consumedEnd)
+  const explicitPanelIdentifier =
+    Boolean(panelSuffix) || /\d[A-Za-z]$/u.test(rawIdentifier)
+  const abbreviatedPanelContinuation =
+    explicitPanelIdentifier && ABBREVIATED_PANEL_CONTINUATION_PATTERN.test(next)
   const truncatedCompound =
     next.startsWith('.') && /^[.\-][\p{L}\p{N}]/u.test(next)
   const truncatedHyphenCompound =
@@ -114,6 +120,7 @@ export function parsePdfScholarlyVisualIdentifier(
     /^[.\-][\p{L}\p{N}]/u.test(next)
   if (
     next.startsWith('(') ||
+    abbreviatedPanelContinuation ||
     /^[\p{L}\p{N}]/u.test(next) ||
     truncatedCompound ||
     truncatedHyphenCompound

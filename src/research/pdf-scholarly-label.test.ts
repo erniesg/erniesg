@@ -176,6 +176,21 @@ describe('PDF scholarly visual labels', () => {
     },
   )
 
+  it.each([
+    'Figure 12(a)-(c)',
+    'Figure 12(a)–(c)',
+    'Figure 12(a), (b)',
+    'Figure 12(a) and (b)',
+    'Figure 12a and (b)',
+    'Figure 12(a) (b)',
+    'Figure 12(a) to (c)',
+    'Figure 12(a) & (b)',
+  ])('does not truncate an abbreviated panel continuation in %j', (value) => {
+    expect(
+      parsePdfScholarlyVisualLabel(value, { context: 'reference' }),
+    ).toBeNull()
+  })
+
   it('expands only same-stem bounded supplementary ranges', () => {
     expect(expandPdfScholarlyVisualIdentifierRange('S1', 'S3')).toEqual([
       'S1',

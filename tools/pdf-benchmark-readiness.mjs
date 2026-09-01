@@ -1610,7 +1610,7 @@ function strictZipIndex(bytes) {
     if (
       !validEpubEntryName(name) ||
       names.has(name) ||
-      (flags & ~0x0806) !== 0 ||
+      (flags & ~0x080e) !== 0 ||
       (compression !== 0 && compression !== 8) ||
       size > MAX_EPUB_COMPRESSED_BYTES ||
       originalSize > MAX_EPUB_INFLATED_BYTES ||
@@ -1630,14 +1630,16 @@ function strictZipIndex(bytes) {
       originalSize,
       localOffset,
       nameBytes,
+      extraLength,
     })
     cursor = recordEnd
   }
   if (cursor !== endOffset) throw new Error('unindexed ZIP central bytes')
   let localCursor = 0
-  for (const entry of [...entries].sort(
+  const localEntries = [...entries].sort(
     (left, right) => left.localOffset - right.localOffset,
-  )) {
+  )
+  for (const [index, entry] of localEntries.entries()) {
     if (
       entry.localOffset !== localCursor ||
       entry.localOffset + 30 > centralOffset ||
@@ -1648,25 +1650,66 @@ function strictZipIndex(bytes) {
     const nameLength = view.getUint16(entry.localOffset + 26, true)
     const extraLength = view.getUint16(entry.localOffset + 28, true)
     const dataOffset = entry.localOffset + 30 + nameLength + extraLength
+    const nextLocalOffset =
+      localEntries[index + 1]?.localOffset ?? centralOffset
     const localNameBytes = Buffer.from(
       bytes.subarray(
         entry.localOffset + 30,
         entry.localOffset + 30 + nameLength,
       ),
     )
+    const hasDataDescriptor = (entry.flags & 0x0008) !== 0
     if (
       !localNameBytes.equals(entry.nameBytes) ||
+      (entry.name === 'mimetype' &&
+        (extraLength !== 0 || entry.extraLength !== 0)) ||
       view.getUint16(entry.localOffset + 6, true) !== entry.flags ||
       view.getUint16(entry.localOffset + 8, true) !== entry.compression ||
-      view.getUint32(entry.localOffset + 14, true) !== entry.checksum ||
-      view.getUint32(entry.localOffset + 18, true) !== entry.size ||
-      view.getUint32(entry.localOffset + 22, true) !== entry.originalSize ||
-      dataOffset + entry.size > centralOffset
+      dataOffset + entry.size > nextLocalOffset
     ) {
       throw new Error('ZIP local and central record mismatch')
     }
+    const localChecksum = view.getUint32(entry.localOffset + 14, true)
+    const localSize = view.getUint32(entry.localOffset + 18, true)
+    const localOriginalSize = view.getUint32(entry.localOffset + 22, true)
+    if (
+      !hasDataDescriptor &&
+      (localChecksum !== entry.checksum ||
+        localSize !== entry.size ||
+        localOriginalSize !== entry.originalSize)
+    ) {
+      throw new Error('ZIP local and central record mismatch')
+    }
+    let recordEnd = dataOffset + entry.size
+    if (hasDataDescriptor) {
+      if (localChecksum !== 0 || localSize !== 0 || localOriginalSize !== 0) {
+        throw new Error('ZIP local and central record mismatch')
+      }
+      const descriptorOffset = recordEnd
+      const descriptorSize = nextLocalOffset - descriptorOffset
+      if (descriptorSize !== 12 && descriptorSize !== 16) {
+        throw new Error('truncated ZIP data descriptor')
+      }
+      const descriptorHasSignature = descriptorSize === 16
+      if (
+        descriptorHasSignature &&
+        view.getUint32(descriptorOffset, true) !== 0x08074b50
+      ) {
+        throw new Error('ZIP data descriptor mismatch')
+      }
+      const descriptorFieldsOffset =
+        descriptorOffset + (descriptorHasSignature ? 4 : 0)
+      if (
+        view.getUint32(descriptorFieldsOffset, true) !== entry.checksum ||
+        view.getUint32(descriptorFieldsOffset + 4, true) !== entry.size ||
+        view.getUint32(descriptorFieldsOffset + 8, true) !== entry.originalSize
+      ) {
+        throw new Error('ZIP data descriptor mismatch')
+      }
+      recordEnd = nextLocalOffset
+    }
     entry.dataOffset = dataOffset
-    localCursor = dataOffset + entry.size
+    localCursor = recordEnd
   }
   if (localCursor !== centralOffset)
     throw new Error('unindexed ZIP local bytes')

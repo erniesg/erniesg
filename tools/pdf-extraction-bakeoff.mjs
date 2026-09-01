@@ -8,6 +8,7 @@ import {
   unlink,
   writeFile,
 } from 'node:fs/promises'
+import { constants as fsConstants } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import Ajv2020 from 'ajv/dist/2020.js'
@@ -22,6 +23,7 @@ import { structuredExtractionHash } from '../src/research/structured-extraction.
 const SHA_A = 'a'.repeat(64)
 const SHA_B = 'b'.repeat(64)
 const SCORE_LEDGER_SCHEMA_VERSION = '1.0.0'
+const MAX_REPORT_BYTES = 16 * 1024 * 1024
 const validateReportSchema = new Ajv2020({ strict: false }).compile(
   reportSchema,
 )
@@ -84,6 +86,55 @@ function syntheticReport(report) {
   return {
     ...reportWithAuthority,
     reportSha256: structuredExtractionHash(reportWithAuthority),
+  }
+}
+
+async function readBoundedReport(path) {
+  let handle
+  try {
+    handle = await open(
+      resolve(path),
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK,
+    )
+    const before = await handle.stat({ bigint: true })
+    if (!before.isFile() || before.size > BigInt(MAX_REPORT_BYTES))
+      throw new Error('INVALID_SYNTHETIC_BAKEOFF_REPORT')
+    const expectedSize = Number(before.size)
+    const bytes = Buffer.allocUnsafe(expectedSize)
+    let offset = 0
+    while (offset < expectedSize) {
+      const { bytesRead } = await handle.read(
+        bytes,
+        offset,
+        expectedSize - offset,
+        offset,
+      )
+      if (bytesRead === 0) throw new Error('INVALID_SYNTHETIC_BAKEOFF_REPORT')
+      offset += bytesRead
+    }
+    const probe = Buffer.allocUnsafe(1)
+    const { bytesRead: trailingBytes } = await handle.read(
+      probe,
+      0,
+      1,
+      expectedSize,
+    )
+    const after = await handle.stat({ bigint: true })
+    if (
+      trailingBytes !== 0 ||
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.size !== before.size ||
+      after.mtimeNs !== before.mtimeNs ||
+      after.ctimeNs !== before.ctimeNs
+    ) {
+      throw new Error('INVALID_SYNTHETIC_BAKEOFF_REPORT')
+    }
+    return bytes.toString('utf8')
+  } catch {
+    throw new Error('INVALID_SYNTHETIC_BAKEOFF_REPORT')
+  } finally {
+    await handle?.close().catch(() => undefined)
   }
 }
 
@@ -292,7 +343,7 @@ async function main() {
     if (!reportPath) throw new Error('--validate-report requires a path')
     let report
     try {
-      report = JSON.parse(await readFile(reportPath, 'utf8'))
+      report = JSON.parse(await readBoundedReport(reportPath))
     } catch {
       throw new Error('INVALID_SYNTHETIC_BAKEOFF_REPORT')
     }
@@ -309,7 +360,7 @@ async function main() {
       throw new Error('--stamp-report requires --report-out <path>')
     let report
     try {
-      report = JSON.parse(await readFile(inputPath, 'utf8'))
+      report = JSON.parse(await readBoundedReport(inputPath))
     } catch {
       throw new Error('INVALID_SYNTHETIC_BAKEOFF_REPORT')
     }

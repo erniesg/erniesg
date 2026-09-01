@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  truncateSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -131,6 +132,42 @@ describe('extraction bake-off CLI', () => {
       { encoding: 'utf8', timeout: 30_000 },
     )
     expect(result.status, result.stderr).toBe(0)
+  })
+
+  it.each([
+    ['--validate-report', 'oversized'],
+    ['--stamp-report', 'oversized'],
+    ['--validate-report', 'FIFO'],
+    ['--stamp-report', 'FIFO'],
+  ])('rejects a %s input that is %s before parsing', (command, kind) => {
+    const directory = mkdtempSync(join(tmpdir(), 'extraction-bakeoff-'))
+    const inputPath = join(directory, 'untrusted-report.json')
+    const outputPath = join(directory, 'stamped-report.json')
+    if (kind === 'oversized') {
+      writeFileSync(inputPath, '{}')
+      truncateSync(inputPath, 16 * 1024 * 1024 + 1)
+    } else {
+      const fifo = spawnSync('mkfifo', [inputPath], { encoding: 'utf8' })
+      expect(fifo.status, fifo.stderr).toBe(0)
+    }
+
+    const args = [
+      '--experimental-strip-types',
+      'tools/pdf-extraction-bakeoff.mjs',
+      command,
+      inputPath,
+    ]
+    if (command === '--stamp-report') args.push('--report-out', outputPath)
+    const result = spawnSync(process.execPath, args, {
+      encoding: 'utf8',
+      timeout: 1_000,
+    })
+
+    expect(result.status, result.stderr).toBe(1)
+    expect(result.signal).toBeNull()
+    expect(result.stderr).toContain('INVALID_SYNTHETIC_BAKEOFF_REPORT')
+    expect(existsSync(outputPath)).toBe(false)
+    rmSync(directory, { recursive: true, force: true })
   })
 
   it('keeps the synthetic CLI validator closed to owner-local provider authority', () => {

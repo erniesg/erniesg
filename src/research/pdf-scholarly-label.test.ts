@@ -18,6 +18,24 @@ describe('PDF scholarly visual labels', () => {
       'Equation S2.3',
     ],
     ['Figure B-2. Hyphenated appendix figure.', 'figure', 'B-2', 'Figure B-2'],
+    [
+      'Figure 12(b). Parenthesized source panel.',
+      'figure',
+      '12b',
+      'Figure 12b',
+    ],
+    [
+      'Table S2(A): Parenthesized supplementary panel.',
+      'table',
+      'S2A',
+      'Table S2A',
+    ],
+    [
+      'Equation 4.1(c) — Parenthesized equation panel.',
+      'equation',
+      '4.1c',
+      'Equation 4.1c',
+    ],
   ] as const)(
     'parses the bounded caption label in %j',
     (text, kind, identifier, label) => {
@@ -97,6 +115,30 @@ describe('PDF scholarly visual labels', () => {
       identifier: 'S1',
       plural: true,
     })
+  })
+
+  it('accepts only one bounded ASCII panel letter in parentheses', () => {
+    expect(
+      parsePdfScholarlyVisualLabel('Fig. 12(b)', { context: 'reference' }),
+    ).toMatchObject({
+      status: 'parsed',
+      kind: 'figure',
+      identifier: '12b',
+      label: 'Figure 12b',
+      consumedEnd: 'Fig. 12(b)'.length,
+    })
+
+    for (const value of [
+      'Figure 12(ab)',
+      'Table S2(2)',
+      'Equation 4.1()',
+      'Figure 12(a-c)',
+      'Figure 12b(c)',
+    ]) {
+      expect(
+        parsePdfScholarlyVisualLabel(value, { context: 'reference' }),
+      ).toBeNull()
+    }
   })
 
   it('expands only same-stem bounded supplementary ranges', () => {

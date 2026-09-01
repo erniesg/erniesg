@@ -1181,6 +1181,23 @@ describe('scholarly cross-reference integrity', () => {
     },
   )
 
+  it.each(['Figure 12(b)', 'Table S2(A)', 'Equation 4.1(c)'])(
+    'accepts a bounded parenthesized panel reference %j',
+    (value) => {
+      expect(isBoundedScholarlyReferenceText(value)).toBe(true)
+    },
+  )
+
+  it.each([
+    'Figure 12(ab)',
+    'Table S2(2)',
+    'Equation 4.1()',
+    'Figure 12(a-c)',
+    'Figure 12b(c)',
+  ])('rejects a non-singleton parenthesized panel reference %j', (value) => {
+    expect(isBoundedScholarlyReferenceText(value)).toBe(false)
+  })
+
   it.each([
     'Table ii',
     'Table mix',

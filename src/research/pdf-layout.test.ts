@@ -19207,9 +19207,13 @@ describe('PDF semantic reconstruction', () => {
     expect(result.readiness.ready).toBe(false)
   })
 
-  it.each(['Figure 1', 'Figure A.1'])(
+  it.each([
+    ['Figure 1', 'Figure 1'],
+    ['Figure A.1', 'Figure A.1'],
+    ['Figure 1(a)', 'Figure 1a'],
+  ])(
     'anchors %s only to its proved canonical visual',
-    async (figureLabel) => {
+    async (sourceFigureLabel, canonicalFigureLabel) => {
       const figureBox: NormalizedSourceBox = {
         page: 1,
         x: 0.2,
@@ -19232,13 +19236,13 @@ describe('PDF semantic reconstruction', () => {
         ),
         run(
           1,
-          `${figureLabel}. Source-backed result; compare ${figureLabel}.`,
+          `${sourceFigureLabel}. Source-backed result; compare ${sourceFigureLabel}.`,
           0.18,
           0.55,
           0.64,
           8,
         ),
-        run(1, `See ${figureLabel} for the result.`, 0.1, 0.64, 0.72),
+        run(1, `See ${sourceFigureLabel} for the result.`, 0.1, 0.64, 0.72),
       ])
       sourcePage.imageCount = 1
       sourcePage.objects = [
@@ -19270,10 +19274,10 @@ describe('PDF semantic reconstruction', () => {
           }),
       })
       const visual = result.visualRelationships.find(
-        (relationship) => relationship.label === figureLabel,
+        (relationship) => relationship.label === canonicalFigureLabel,
       )
       const crossReferences = result.crossReferenceRelationships.filter(
-        (relationship) => relationship.text === figureLabel,
+        (relationship) => relationship.text === sourceFigureLabel,
       )
       const crossReference = crossReferences.find(
         (relationship) =>
@@ -19305,7 +19309,7 @@ describe('PDF semantic reconstruction', () => {
         canonicalAnchor: {
           nodeId: expect.any(String),
           start: 4,
-          end: 4 + figureLabel.length,
+          end: 4 + sourceFigureLabel.length,
         },
       })
       expect(captionCrossReference).toMatchObject({
@@ -19327,7 +19331,7 @@ describe('PDF semantic reconstruction', () => {
         expect.arrayContaining([
           expect.objectContaining({
             start: 4,
-            end: 4 + figureLabel.length,
+            end: 4 + sourceFigureLabel.length,
             semanticRole: 'cross-reference',
             relationshipId: crossReference?.id,
             targetIds: [visual?.canonicalNodeId],

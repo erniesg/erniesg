@@ -408,6 +408,38 @@ describe('PDF scholarly cross references', () => {
     })
   })
 
+  it('normalizes a parenthesized figure-panel surface before exact parent fallback', () => {
+    const [relationship] = resolvePdfScholarlyCrossReferences({
+      regions: [region('Figure 12(b) isolates the second panel.')],
+      canonicalTargets: [target('figure', 'Figure 12', 'figure-12')],
+    })
+
+    expect(relationship).toMatchObject({
+      text: 'Figure 12(b)',
+      labels: ['Figure 12b'],
+      status: 'matched',
+      targetNodeIds: ['figure-12'],
+      targets: [
+        expect.objectContaining({
+          label: 'Figure 12b',
+          status: 'matched',
+          targetNodeId: 'figure-12',
+          evidence: expect.arrayContaining([
+            'explicit-panel-suffix',
+            'canonical-parent-figure-fallback',
+            'canonical-parent-label-unique',
+          ]),
+        }),
+      ],
+    })
+    expect(
+      relationship.text.slice(
+        relationship.targets[0].referenceStart - relationship.referenceStart,
+        relationship.targets[0].referenceEnd - relationship.referenceStart,
+      ),
+    ).toBe('12(b)')
+  })
+
   it('keeps plural panel targets distinct by label while deduplicating their owning figure', () => {
     const [relationship] = resolvePdfScholarlyCrossReferences({
       regions: [region('Figures 12b and 12c isolate the compared panels.')],

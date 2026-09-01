@@ -87,10 +87,23 @@ export function parsePdfScholarlyVisualIdentifier(
     .match(identifierPattern(options.allowAsciiHyphenCompound))
   if (!match) return null
   const rawIdentifier = match[0]
-  const identifierEnd = offset + tokenOffset + rawIdentifier.length
-  const closingParenthesis = parenthesized && value[identifierEnd] === ')'
+  const baseIdentifierEnd = offset + tokenOffset + rawIdentifier.length
+  const closingParenthesis = parenthesized && value[baseIdentifierEnd] === ')'
   if (parenthesized && !closingParenthesis) return null
-  const consumedEnd = identifierEnd + Number(closingParenthesis)
+  let panelSuffix = ''
+  let identifierEnd = baseIdentifierEnd
+  let consumedEnd = baseIdentifierEnd + Number(closingParenthesis)
+  if (!parenthesized && value[baseIdentifierEnd] === '(') {
+    // A singleton panel suffix is source-equivalent to the already supported
+    // trailing-letter form ("12(b)" -> "12b"). Consume the complete printed
+    // token as one contiguous source interval; malformed or compound suffixes
+    // must not fall back to a different parent target.
+    const suffix = value.slice(baseIdentifierEnd).match(/^\(([A-Za-z])\)/u)
+    if (!suffix || /\d[A-Za-z]$/u.test(rawIdentifier)) return null
+    panelSuffix = suffix[1]
+    identifierEnd = baseIdentifierEnd + suffix[0].length
+    consumedEnd = identifierEnd
+  }
   const next = value.slice(consumedEnd)
   const truncatedCompound =
     next.startsWith('.') && /^[.\-][\p{L}\p{N}]/u.test(next)
@@ -99,6 +112,7 @@ export function parsePdfScholarlyVisualIdentifier(
     next.startsWith('-') &&
     /^[.\-][\p{L}\p{N}]/u.test(next)
   if (
+    next.startsWith('(') ||
     /^[\p{L}\p{N}]/u.test(next) ||
     truncatedCompound ||
     truncatedHyphenCompound
@@ -106,7 +120,7 @@ export function parsePdfScholarlyVisualIdentifier(
     return null
   }
   return {
-    identifier: normalizedIdentifier(rawIdentifier),
+    identifier: normalizedIdentifier(`${rawIdentifier}${panelSuffix}`),
     start: offset + tokenOffset,
     end: identifierEnd,
     consumedEnd,

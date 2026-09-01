@@ -546,6 +546,24 @@ describe('PDF benchmark readiness registry', () => {
     expect(
       validEpubPackage(
         createValidEpub({
+          'META-INF/container.xml': strToU8(
+            '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><rootfiles><rootfile full-path="EPUB/decoy.opf" media-type="text/plain"/><rootfile xmlns="urn:evil" full-path="EPUB/package.opf" media-type="application/oebps-package+xml"/></rootfiles></container>',
+          ),
+        }),
+      ),
+    ).toBe(false)
+    expect(
+      validEpubPackage(
+        createValidEpub({
+          'META-INF/container.xml': strToU8(
+            '<c:container xmlns:c="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><c:rootfiles><c:rootfile full-path="EPUB/decoy.opf" media-type="text/plain"/><c:rootfile xmlns:c="urn:evil" full-path="EPUB/package.opf" media-type="application/oebps-package+xml"/></c:rootfiles></c:container>',
+          ),
+        }),
+      ),
+    ).toBe(false)
+    expect(
+      validEpubPackage(
+        createValidEpub({
           'EPUB/package.opf': strToU8(
             '<package xmlns="http://www.idpf.org/2007/opf" xmlns:evil="urn:evil" version="3.0" unique-identifier="pub-id"><evil:metadata><evil:identifier id="pub-id">urn:fixture</evil:identifier></evil:metadata><evil:manifest><evil:item id="content" href="content.xhtml" media-type="application/xhtml+xml"/></evil:manifest><evil:spine><evil:itemref idref="content"/></evil:spine></package>',
           ),

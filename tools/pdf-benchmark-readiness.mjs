@@ -1459,12 +1459,17 @@ function childElementInNamespace(
   namespaceScope = parent,
 ) {
   if (!isRecord(parent)) return null
-  const entry = Object.entries(parent).find(([name, child]) => {
+  const entry = Object.entries(parent).find(([name]) => {
     if (name.startsWith('@_') || name.split(':').at(-1) !== localName) {
       return false
     }
-    const prefix = name.includes(':') ? name.split(':')[0] : null
-    const namespaceAttribute = prefix === null ? '@_xmlns' : `@_xmlns:${prefix}`
+    return true
+  })
+  if (entry === undefined) return null
+  const prefix = entry[0].includes(':') ? entry[0].split(':')[0] : null
+  const namespaceAttribute = prefix === null ? '@_xmlns' : `@_xmlns:${prefix}`
+  const children = Array.isArray(entry[1]) ? entry[1] : [entry[1]]
+  const matching = children.filter((child) => {
     const effectiveNamespace = [child, parent, namespaceScope]
       .filter(isRecord)
       .find((scope) => Object.hasOwn(scope, namespaceAttribute))?.[
@@ -1472,7 +1477,7 @@ function childElementInNamespace(
     ]
     return effectiveNamespace === namespace
   })
-  return entry?.[1] ?? null
+  return Array.isArray(entry[1]) ? matching : (matching[0] ?? null)
 }
 
 function namespacedRoot(document, localName, namespace) {

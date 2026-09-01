@@ -2571,6 +2571,50 @@ describe('EPUB 3 export', () => {
     )
   })
 
+  it('links normalized superscript citation labels without changing visible source glyphs', () => {
+    const citationPaper = structuredClone(paper)
+    citationPaper.nodes = [
+      {
+        id: 'claim',
+        type: 'paragraph',
+        text: 'Prior evidence¹,² supports the claim.',
+        inlineRuns: [
+          {
+            start: 'Prior evidence'.length,
+            end: 'Prior evidence¹,²'.length,
+            relationshipId: 'superscript-citation-list',
+            semanticRole: 'citation',
+            targetIds: ['reference-1', 'reference-2'],
+          },
+        ],
+        source: 'synthetic-normalized-superscript-citation',
+      },
+      ...[1, 2].map((ordinal) => ({
+        id: `reference-${ordinal}`,
+        type: 'paragraph' as const,
+        text: `Reference ${ordinal}.`,
+        list: {
+          level: 1,
+          ordered: true,
+          numberingId: 'references',
+          markerStyle: 'decimal' as const,
+          ordinal,
+          markerText: String(ordinal),
+        },
+        source: 'synthetic-normalized-superscript-citation',
+      })),
+    ]
+
+    const content = renderPublicationXhtml(citationPaper)
+
+    expect(content).toContain(
+      '<a href="#reference-1" epub:type="biblioref" role="doc-biblioref">¹</a>,<a href="#reference-2" epub:type="biblioref" role="doc-biblioref">²</a>',
+    )
+    expect(content.match(/>¹<|>²</gu)).toHaveLength(2)
+    expect(content).not.toContain('>1</a>')
+    expect(content).not.toContain('>2</a>')
+  })
+
   it('renders resolved scholarly cross references as semantic internal links', () => {
     const crossReferencePaper = structuredClone(paper)
     crossReferencePaper.nodes = [

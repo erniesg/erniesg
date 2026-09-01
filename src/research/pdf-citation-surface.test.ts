@@ -21,7 +21,46 @@ describe('PDF citation surface parsing', () => {
         { start: 3, end: 4, identityIndex: 2 },
       ],
     })
+    expect(parsePdfCitationSurface('[١–۳]')).toEqual({
+      identities: ['1', '2', '3'],
+      links: [
+        { start: 1, end: 2, identityIndex: 0 },
+        { start: 3, end: 4, identityIndex: 2 },
+      ],
+    })
   })
+
+  it.each([
+    {
+      value: '[١, ２]',
+      links: [
+        { start: 1, end: 2, identityIndex: 0 },
+        { start: 4, end: 5, identityIndex: 1 },
+      ],
+    },
+    {
+      value: '¹,²',
+      links: [
+        { start: 0, end: 1, identityIndex: 0 },
+        { start: 2, end: 3, identityIndex: 1 },
+      ],
+    },
+    {
+      value: `${String.fromCodePoint(0x1e951)},${String.fromCodePoint(0x1e952)}`,
+      links: [
+        { start: 0, end: 2, identityIndex: 0 },
+        { start: 3, end: 5, identityIndex: 1 },
+      ],
+    },
+  ])(
+    'normalizes classifier-supported citation digits while retaining exact source ranges in $value',
+    ({ value, links }) => {
+      expect(parsePdfCitationSurface(value)).toEqual({
+        identities: ['1', '2'],
+        links,
+      })
+    },
+  )
 
   it.each(['[1, 1]', '[1, missing]', '[3–1]', '[1, 2] trailing'])(
     'fails malformed or ambiguous citation surface %s closed',

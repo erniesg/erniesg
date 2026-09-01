@@ -1,3 +1,5 @@
+import { normalizedNoteLabel } from './note-label'
+
 export type PdfCitationSurface = {
   identities: string[]
   links: Array<{
@@ -10,6 +12,11 @@ export type PdfCitationSurface = {
 export const MAX_CITATION_TARGETS_PER_RELATIONSHIP = 32
 const CITATION_RANGE_CONNECTOR = /^\s*([-\u2013\u2014])\s*/u
 const CITATION_LIST_CONNECTOR = /^(?:\s*[,;]\s*|\s+(?:and|or)\s+)/iu
+const SUPERSCRIPT_DECIMAL_DIGITS = '⁰¹²³⁴⁵⁶⁷⁸⁹'
+const CITATION_IDENTIFIER_PATTERN = new RegExp(
+  String.raw`^((?:\p{Nd}{1,9}|[${SUPERSCRIPT_DECIMAL_DIGITS}]{1,9}))(?![\p{Nd}${SUPERSCRIPT_DECIMAL_DIGITS}])`,
+  'u',
+)
 
 function trimmedBounds(value: string, start = 0, end = value.length) {
   while (start < end && /\s/u.test(value[start])) start += 1
@@ -41,9 +48,11 @@ function innerPairedExpression(
 }
 
 function parsedCitationIdentifier(value: string, start: number, end: number) {
-  const match = value.slice(start, end).match(/^(\d{1,9})(?!\d)/u)
+  const match = value.slice(start, end).match(CITATION_IDENTIFIER_PATTERN)
   if (!match) return null
-  const parsed = Number(match[1])
+  const normalized = normalizedNoteLabel(match[1])
+  if (!/^\d{1,9}$/u.test(normalized)) return null
+  const parsed = Number(normalized)
   if (!Number.isSafeInteger(parsed) || parsed < 0) return null
   return {
     identifier: String(parsed),

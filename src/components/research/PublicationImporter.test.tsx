@@ -5,6 +5,7 @@ import {
   type EpubExport,
 } from '../../research/epub'
 import type {
+  DocumentReconstruction,
   PdfLineBoundaryDecision,
   PdfPageRegion,
 } from '../../research/import-types'
@@ -19,6 +20,7 @@ vi.mock('./EpubDownloadLink', () => ({ default: () => null }))
 
 import PublicationImporter, {
   EquationTranscriptAdjudicationCard,
+  browserEpubBuildMode,
   formatImportElapsed,
   importProgressIsIndeterminate,
   importErrorCode,
@@ -30,6 +32,24 @@ import PublicationImporter, {
 } from './PublicationImporter'
 
 describe('publication importer OCR controls', () => {
+  it('keeps a deterministically ready browser PDF in readable fallback mode', () => {
+    const readyPdf = {
+      source: { format: undefined },
+      readiness: { ready: true },
+    } as DocumentReconstruction
+
+    expect(browserEpubBuildMode(readyPdf)).toBe('readable-fallback')
+  })
+
+  it('preserves publication mode for a ready DOCX import', () => {
+    const readyDocx = {
+      source: { format: 'docx' },
+      readiness: { ready: true },
+    } as DocumentReconstruction
+
+    expect(browserEpubBuildMode(readyDocx)).toBe('publication')
+  })
+
   it('does not present final structural analysis as fake 100% progress', () => {
     expect(
       importProgressIsIndeterminate({
@@ -232,6 +252,15 @@ describe('publication importer OCR controls', () => {
     expect(markup).toContain('preserved as source-page images')
     expect(markup).toContain('does not start OCR')
     expect(markup).not.toContain('publication-ocr-language')
+  })
+
+  it('states that uploaded PDFs are reconstructed locally without Codex', () => {
+    const markup = renderToStaticMarkup(<PublicationImporter />)
+
+    expect(markup).toContain(
+      'Uploaded PDFs are reconstructed deterministically on this device.',
+    )
+    expect(markup).toContain('Codex is not consulted in this browser route.')
   })
 
   it('states the actual 50 MiB local upload limit', () => {

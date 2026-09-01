@@ -4,6 +4,7 @@ import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { dirname, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import Ajv2020 from 'ajv/dist/2020.js'
+import { unzipSync } from 'fflate'
 import {
   canonicalJson,
   validatePdfFidelityEvalSet,
@@ -19,7 +20,7 @@ const DEFAULT_SCHEMA_PATH = resolve(
 const DEFAULT_SCHEMA_ID =
   'https://ernie.sg/schemas/pdf-benchmark-readiness-registry-1.0.0.json'
 const DEFAULT_SCHEMA_SHA256 =
-  '3303e6f7041a8a72206c3be933e7d2f3c09026d2c686704e833be43fb981828a'
+  '97a7a359e988f6a30dd8202fd28806df1c5e50b935999416c0304625e8e0bf4e'
 const PUBLIC_ERROR_CODE = /^(?:INVALID|MISSING|PDF)_[A-Z0-9_]+$/
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/
 const SAFE_FAILURE_CLASS = /^[a-z][a-z0-9]*(?:-[a-z0-9]+){0,11}$/
@@ -55,6 +56,11 @@ const PACKAGE_INTEGRITY_TEST_DEPENDENCIES = [
   'tools/pdf-private-fidelity-receipt.cases.mjs',
   'tools/pdf-private-fidelity-boundary.cases.mjs',
 ]
+const REQUIRED_NATIVE_READER_TYPES = {
+  'apple-books': 'apple-books',
+  'independent-desktop-epub-reader': 'independent-desktop-epub-reader',
+  'target-eink-reader-device': 'target-eink-reader-device',
+}
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex')
@@ -1319,6 +1325,309 @@ export async function validateIndependentIsolationEvidence(
   return true
 }
 
+function validEpubPackage(bytes) {
+  try {
+    if (
+      bytes.length < 30 ||
+      bytes[0] !== 0x50 ||
+      bytes[1] !== 0x4b ||
+      bytes[2] !== 0x03 ||
+      bytes[3] !== 0x04 ||
+      bytes[8] !== 0 ||
+      bytes[9] !== 0 ||
+      bytes[26] !== 8 ||
+      bytes[27] !== 0 ||
+      Buffer.from(bytes.subarray(30, 38)).toString('ascii') !== 'mimetype'
+    ) {
+      return false
+    }
+    const files = unzipSync(new Uint8Array(bytes))
+    if (
+      Buffer.from(files.mimetype ?? []).toString('utf8') !==
+      'application/epub+zip'
+    ) {
+      return false
+    }
+    const container = Buffer.from(files['META-INF/container.xml'] ?? []).toString(
+      'utf8',
+    )
+    const rootfile = container.match(
+      /<rootfile\b[^>]*\bfull-path=["']([^"']+)["'][^>]*>/u,
+    )?.[1]
+    return (
+      typeof rootfile === 'string' &&
+      rootfile.endsWith('.opf') &&
+      !rootfile.startsWith('/') &&
+      !rootfile.split('/').includes('..') &&
+      files[rootfile] instanceof Uint8Array
+    )
+  } catch {
+    return false
+  }
+}
+
+async function validateExactEpubExportEvidence(exportEvidence) {
+  if (exportEvidence === null) return null
+  if (!exactKeys(exportEvidence, ['path', 'fileSha256'])) {
+    invalid('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
+  }
+  const evidence = await readBoundJson(
+    exportEvidence,
+    'PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH',
+  )
+  if (
+    !exactKeys(evidence, [
+      'schemaVersion',
+      'kind',
+      'epubArtifact',
+      'exactArtifactSha256',
+      'exportReceipt',
+      'exportReceiptIdentitySha256',
+      'toolchainManifest',
+      'epubCheckReceipt',
+      'epubCheckTranscript',
+      'status',
+    ]) ||
+    evidence.schemaVersion !== '1.0.0' ||
+    evidence.kind !== 'pdf-benchmark-exact-epub-export-evidence' ||
+    !exactKeys(evidence.epubArtifact, ['path', 'fileSha256']) ||
+    !evidence.epubArtifact.path.endsWith('.epub') ||
+    !SHA256.test(evidence.exactArtifactSha256 ?? '') ||
+    !SHA256.test(evidence.exportReceiptIdentitySha256 ?? '') ||
+    evidence.status !== 'passed'
+  ) {
+    invalid('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
+  }
+  const epubBytes = await verifyRepositoryFileBinding(
+    evidence.epubArtifact.path,
+    evidence.epubArtifact.fileSha256,
+    'PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH',
+  )
+  if (evidence.exactArtifactSha256 !== evidence.epubArtifact.fileSha256) {
+    invalid('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
+  }
+  if (!validEpubPackage(epubBytes)) {
+    invalid('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
+  }
+  const exportReceipt = await readBoundJson(
+    evidence.exportReceipt,
+    'PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH',
+  )
+  if (
+    !exactKeys(exportReceipt, [
+      'schemaVersion',
+      'kind',
+      'exactArtifactSha256',
+      'status',
+    ]) ||
+    exportReceipt.schemaVersion !== '1.0.0' ||
+    exportReceipt.kind !== 'pdf-benchmark-exact-epub-export-receipt' ||
+    exportReceipt.exactArtifactSha256 !== evidence.exactArtifactSha256 ||
+    exportReceipt.status !== 'passed' ||
+    sha256(canonicalJson(exportReceipt)) !== evidence.exportReceiptIdentitySha256
+  ) {
+    invalid('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
+  }
+  const epubCheckReceipt = await readBoundJson(
+    evidence.epubCheckReceipt,
+    'PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH',
+  )
+  if (
+    !exactKeys(evidence.toolchainManifest, ['path', 'fileSha256']) ||
+    evidence.toolchainManifest.path !== 'src/publication/toolchain-manifest.json'
+  ) {
+    invalid('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
+  }
+  const toolchainManifest = await readBoundJson(
+    evidence.toolchainManifest,
+    'PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH',
+  )
+  const epubcheck = toolchainManifest.epubcheck
+  const epubCheckTranscript = await readBoundJson(
+    evidence.epubCheckTranscript,
+    'PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH',
+  )
+  if (
+    !exactKeys(epubCheckReceipt, [
+      'schemaVersion',
+      'kind',
+      'exactArtifactSha256',
+      'toolchainManifestFileSha256',
+      'checkerIdentitySha256',
+      'checkerVersion',
+      'epubCheckTranscriptEvidenceFileSha256',
+      'inputIdentitySha256',
+      'outputIdentitySha256',
+      'status',
+    ]) ||
+    epubCheckReceipt.schemaVersion !== '1.0.0' ||
+    epubCheckReceipt.kind !== 'pdf-benchmark-epubcheck-execution-receipt' ||
+    epubCheckReceipt.exactArtifactSha256 !== evidence.exactArtifactSha256 ||
+    epubCheckReceipt.toolchainManifestFileSha256 !==
+      evidence.toolchainManifest.fileSha256 ||
+    !isRecord(epubcheck) ||
+    !exactKeys(epubcheck, ['package', 'packageVersion', 'version', 'sha256']) ||
+    epubCheckReceipt.checkerIdentitySha256 !== epubcheck.sha256 ||
+    epubCheckReceipt.checkerVersion !== epubcheck.version ||
+    epubCheckReceipt.epubCheckTranscriptEvidenceFileSha256 !==
+      evidence.epubCheckTranscript.fileSha256 ||
+    epubCheckReceipt.inputIdentitySha256 !==
+      sha256(
+        canonicalJson({
+          kind: 'pdf-benchmark-epubcheck-input-v1',
+          exactArtifactSha256: evidence.exactArtifactSha256,
+          checkerIdentitySha256: epubCheckReceipt.checkerIdentitySha256,
+          checkerVersion: epubCheckReceipt.checkerVersion,
+        }),
+      ) ||
+    !exactKeys(epubCheckTranscript, [
+      'schemaVersion',
+      'kind',
+      'command',
+      'exactArtifactSha256',
+      'checkerIdentitySha256',
+      'checkerVersion',
+      'exitCode',
+      'epubCheckStatus',
+      'stdoutSha256',
+      'stderrSha256',
+    ]) ||
+    epubCheckTranscript.schemaVersion !== '1.0.0' ||
+    epubCheckTranscript.kind !== 'pdf-benchmark-epubcheck-execution-transcript' ||
+    epubCheckTranscript.command !== 'epubcheck' ||
+    epubCheckTranscript.exactArtifactSha256 !== evidence.exactArtifactSha256 ||
+    epubCheckTranscript.checkerIdentitySha256 !== epubcheck.sha256 ||
+    epubCheckTranscript.checkerVersion !== epubcheck.version ||
+    epubCheckTranscript.exitCode !== 0 ||
+    epubCheckTranscript.epubCheckStatus !== 'passed' ||
+    !SHA256.test(epubCheckTranscript.stdoutSha256 ?? '') ||
+    !SHA256.test(epubCheckTranscript.stderrSha256 ?? '') ||
+    epubCheckReceipt.outputIdentitySha256 !== sha256(canonicalJson(epubCheckTranscript)) ||
+    epubCheckReceipt.status !== 'passed'
+  ) {
+    invalid('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
+  }
+  return {
+    exactArtifactSha256: evidence.exactArtifactSha256,
+    exportEvidenceFileSha256: exportEvidence.fileSha256,
+    exportReceiptEvidenceFileSha256: evidence.exportReceipt.fileSha256,
+    exportReceiptIdentitySha256: evidence.exportReceiptIdentitySha256,
+    epubCheckReceiptEvidenceFileSha256: evidence.epubCheckReceipt.fileSha256,
+    toolchainManifestFileSha256: evidence.toolchainManifest.fileSha256,
+    epubCheckTranscriptEvidenceFileSha256: evidence.epubCheckTranscript.fileSha256,
+  }
+}
+
+export async function validateNativeReaderEvidence(nativeReaderEvidence) {
+  if (
+    !exactKeys(nativeReaderEvidence, [
+      'exportEvidence',
+      ...Object.keys(REQUIRED_NATIVE_READER_TYPES),
+    ])
+  ) {
+    invalid('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
+  }
+  const exportArtifact = await validateExactEpubExportEvidence(
+    nativeReaderEvidence.exportEvidence,
+  )
+  const structurallyValidatedReaderIds = []
+  for (const [readerId, readerType] of Object.entries(
+    REQUIRED_NATIVE_READER_TYPES,
+  )) {
+    const evidence = nativeReaderEvidence[readerId]
+    if (!exactKeys(evidence, ['status', 'readerIdentity', 'executionReceipt'])) {
+      invalid('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
+    }
+    if (
+      evidence.status === 'unavailable-blocker' &&
+      evidence.readerIdentity === null &&
+      evidence.executionReceipt === null
+    ) {
+      continue
+    }
+    if (
+      evidence.status !== 'passed' ||
+      !isRecord(evidence.readerIdentity) ||
+      !isRecord(evidence.executionReceipt)
+    ) {
+      invalid('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
+    }
+    const [identity, receipt] = await Promise.all([
+      readBoundJson(
+        evidence.readerIdentity,
+        'PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH',
+      ),
+      readBoundJson(
+        evidence.executionReceipt,
+        'PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH',
+      ),
+    ])
+    if (
+      !exactKeys(identity, [
+        'schemaVersion',
+        'kind',
+        'readerId',
+        'readerType',
+        'readerIdentitySha256',
+        'status',
+      ]) ||
+      identity.schemaVersion !== '1.0.0' ||
+      identity.kind !== 'pdf-benchmark-native-reader-identity-evidence' ||
+      identity.readerId !== readerId ||
+      identity.readerType !== readerType ||
+      !SHA256.test(identity.readerIdentitySha256 ?? '') ||
+      identity.status !== 'passed' ||
+      !exactKeys(receipt, [
+        'schemaVersion',
+        'kind',
+        'readerId',
+        'readerType',
+        'readerIdentityEvidenceFileSha256',
+        'exportEvidenceFileSha256',
+        'exportReceiptEvidenceFileSha256',
+        'exportReceiptIdentitySha256',
+        'epubCheckReceiptEvidenceFileSha256',
+        'toolchainManifestFileSha256',
+        'epubCheckTranscriptEvidenceFileSha256',
+        'exactArtifactSha256',
+        'executionIdentitySha256',
+        'status',
+      ]) ||
+      receipt.schemaVersion !== '1.0.0' ||
+      receipt.kind !== 'pdf-benchmark-native-reader-execution-receipt' ||
+      receipt.readerId !== readerId ||
+      receipt.readerType !== readerType ||
+      receipt.readerIdentityEvidenceFileSha256 !== evidence.readerIdentity.fileSha256 ||
+      receipt.exportEvidenceFileSha256 !== exportArtifact?.exportEvidenceFileSha256 ||
+      receipt.exportReceiptEvidenceFileSha256 !==
+        exportArtifact?.exportReceiptEvidenceFileSha256 ||
+      receipt.exportReceiptIdentitySha256 !==
+        exportArtifact?.exportReceiptIdentitySha256 ||
+      receipt.epubCheckReceiptEvidenceFileSha256 !==
+        exportArtifact?.epubCheckReceiptEvidenceFileSha256 ||
+      receipt.toolchainManifestFileSha256 !==
+        exportArtifact?.toolchainManifestFileSha256 ||
+      receipt.epubCheckTranscriptEvidenceFileSha256 !==
+        exportArtifact?.epubCheckTranscriptEvidenceFileSha256 ||
+      !SHA256.test(receipt.exactArtifactSha256 ?? '') ||
+      !SHA256.test(receipt.executionIdentitySha256 ?? '') ||
+      receipt.status !== 'passed' ||
+      exportArtifact === null ||
+      receipt.exactArtifactSha256 !== exportArtifact.exactArtifactSha256
+    ) {
+      invalid('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
+    }
+    structurallyValidatedReaderIds.push(readerId)
+  }
+  return {
+    exactArtifactSha256: exportArtifact?.exactArtifactSha256 ?? null,
+    structurallyValidatedReaderIds,
+    trustedAttestationVerified: false,
+    trustedAttestationReason: 'trusted-attestation-verifier-not-implemented',
+    verifiedReaderIds: [],
+  }
+}
+
 function blindSourcePolicyVerified(blind, sourcePoliciesByDocument) {
   return (
     blind.documentIds.length > 0 &&
@@ -1349,6 +1658,7 @@ export function assessPdfBenchmarkReadiness(
     blindSourcePolicyVerified: blindPolicyVerified = false,
     candidateCommitmentVerified = false,
     independentIsolationEvidenceVerified = false,
+    nativeReaderEvidenceVerified = false,
   } = {},
 ) {
   const blind = registry.splits.find((split) => split.role === 'blind-test')
@@ -1548,6 +1858,17 @@ export function assessPdfBenchmarkReadiness(
       REQUIRED_METRICS,
     ),
     criterion(
+      'native-reader-exact-artifact-coverage',
+      nativeReaderEvidenceVerified,
+      registry.nativeReaderEvidence,
+      {
+        'apple-books': 'hash-bound-passed-exact-artifact-receipt',
+        'independent-desktop-epub-reader':
+          'hash-bound-passed-exact-artifact-receipt',
+        'target-eink-reader-device': 'hash-bound-passed-exact-artifact-receipt',
+      },
+    ),
+    criterion(
       'promotion-protocol-implementation',
       PROMOTION_PROTOCOL_IMPLEMENTED,
       'not-implemented-in-readiness-v1',
@@ -1633,6 +1954,9 @@ export async function createPdfBenchmarkReadinessReceipt({
   const candidateCommitment = await validateCandidateCommitment(registry)
   const independentIsolationEvidenceVerified =
     await validateIndependentIsolationEvidence(registry, candidateCommitment)
+  const nativeReaderEvidence = await validateNativeReaderEvidence(
+    registry.nativeReaderEvidence,
+  )
   const blind = registry.splits.find((split) => split.role === 'blind-test')
   const verifiedBlindSourcePolicy = blindSourcePolicyVerified(
     blind,
@@ -1668,6 +1992,10 @@ export async function createPdfBenchmarkReadinessReceipt({
     blindSourcePolicyVerified: verifiedBlindSourcePolicy,
     candidateCommitmentVerified: candidateCommitment.verified,
     independentIsolationEvidenceVerified,
+    nativeReaderEvidenceVerified:
+      nativeReaderEvidence.trustedAttestationVerified &&
+      nativeReaderEvidence.verifiedReaderIds.length ===
+        Object.keys(REQUIRED_NATIVE_READER_TYPES).length,
   })
   const unsigned = {
     schemaVersion: PDF_BENCHMARK_READINESS_SCHEMA_VERSION,

@@ -271,6 +271,43 @@ labels private through candidate freeze, execute independently of the candidate
 owner, and disclose results only after scoring. No such holdout is implemented
 by this repository today.
 
+## Native-reader promotion evidence
+
+Browser rendering is supplementary and never substitutes for native-reader
+promotion evidence. The readiness registry requires one hash-bound
+`pdf-benchmark-native-reader-execution-receipt` for the same exact EPUB
+artifact from each of Apple Books, an independent desktop EPUB reader, and the
+target e-ink reader or device. The registry first binds immutable export
+evidence: its own file hash, a retained repository EPUB artifact hash, and an
+repository-bound export receipt whose canonical identity is checked. Each
+reader has a separately hash-bound reader/device identity record and execution
+receipt; that receipt references the identity, export-evidence, and export-
+receipt file hashes plus the verified receipt identity and exact EPUB digest.
+Chromium and WebKit are not accepted reader types for these fields. A `.epub`
+suffix is insufficient: the retained bytes must be a ZIP EPUB with stored first
+`mimetype`, `META-INF/container.xml`, and an existing OPF rootfile.
+
+The export evidence also binds a successful repository-hash-bound EPUBCheck
+execution receipt for that exact digest. Its exact fields include checker
+identity and version, deterministic input/output identities, and passed status;
+missing, forged, mismatched, or failed receipt evidence blocks promotion.
+The checker identity/version must equal the repository-bound
+`src/publication/toolchain-manifest.json` EPUBCheck package/JAR pin, and its
+output identity is the canonical hash of a separate bound execution transcript
+recording the `epubcheck` command, exact artifact digest, exit code, status, and
+stdout/stderr digests.
+
+These repository-bound artifacts are structurally validated evidence only.
+They do not prove that a named native reader or EPUBCheck actually executed;
+until a separate trusted attestation verifier is implemented, readiness records
+`trustedAttestationVerified: false`, reports no promotion-authoritative reader
+verification, and remains blocked even for a complete structurally valid bundle.
+
+Until that external evidence exists, each registry entry remains
+`unavailable-blocker` with no receipt. That state is intentional and keeps
+promotion closed rather than turning browser fixture coverage into a false
+native-reader claim.
+
 Compare an imported or local baseline with a local candidate on the exact same
 frozen source and case identity:
 

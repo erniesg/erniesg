@@ -1,17 +1,17 @@
 {
   "schemaVersion": "1.0.0",
   "decisionId": "extraction-architecture-v1",
-  "owner": "llm-grounded",
-  "humanDecisionRequired": false,
+  "owner": "pending",
+  "humanDecisionRequired": true,
   "perStratum": {
-    "boilerplate-exclusion": "llm-grounded",
-    "code-listings": "llm-grounded",
-    "equations": "llm-grounded",
-    "figures-diagrams": "llm-grounded",
-    "footnotes-citations": "llm-grounded",
-    "prose-continuity": "llm-grounded",
-    "sectioning": "llm-grounded",
-    "tables": "llm-grounded"
+    "boilerplate-exclusion": "pending",
+    "code-listings": "pending",
+    "equations": "pending",
+    "figures-diagrams": "pending",
+    "footnotes-citations": "pending",
+    "prose-continuity": "pending",
+    "sectioning": "pending",
+    "tables": "pending"
   },
   "geometricRole": "Remain the source-run, asset-bound, and publication verifier in every arm; it may provide the fail-closed fallback.",
   "reversalCriteria": [
@@ -20,5 +20,5 @@
     "Any unverified span, model-authored alt text, or model-authored asset bounds disqualifies the candidate regardless of score."
   ],
   "heldOutIdentitySha256": "b95c199887b1a35bdae8558e660c0e6fddaf41b09c655d57dfd64ee29505c545",
-  "reportSha256": "e6c606e68fc42dde1778953bc8ca99ebcdcc3e24efe2064f6f24841ad3398269"
+  "reportSha256": "1659b5bb7fa7a67f592f80d289073331faba1b0a7ec5ab21aa8e62e92cace6cf"
 }

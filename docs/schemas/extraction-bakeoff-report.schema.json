@@ -14,6 +14,7 @@
     "arms",
     "comparison",
     "disagreements",
+    "authority",
     "reportSha256"
   ],
   "properties": {
@@ -49,6 +50,7 @@
       "type": "array",
       "items": { "$ref": "#/$defs/disagreement" }
     },
+    "authority": { "$ref": "#/$defs/syntheticAuthority" },
     "reportSha256": { "$ref": "#/$defs/sha256" }
   },
   "$defs": {
@@ -59,6 +61,22 @@
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
     },
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "syntheticAuthority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "realProviderCalls",
+        "realProviderAuthority",
+        "promotionEligible"
+      ],
+      "properties": {
+        "kind": { "const": "synthetic-contract-self-test" },
+        "realProviderCalls": { "const": 0 },
+        "realProviderAuthority": { "const": false },
+        "promotionEligible": { "const": false }
+      }
+    },
     "identity": {
       "type": "object",
       "additionalProperties": false,
@@ -117,6 +135,9 @@
         "typeRecall": { "type": "number", "minimum": 0, "maximum": 1 },
         "sourceRecall": { "type": "number", "minimum": 0, "maximum": 1 },
         "assetRecall": { "type": "number", "minimum": 0, "maximum": 1 },
+        "structureHash": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/sha256" }]
+        },
         "boilerplateContamination": {
           "type": "number",
           "minimum": 0,

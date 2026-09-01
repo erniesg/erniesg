@@ -995,6 +995,14 @@ function isPdfReconstruction(
   return result.source.format !== 'docx'
 }
 
+export function browserEpubBuildMode(
+  result: DocumentReconstruction,
+): EpubExport['mode'] {
+  return result.source.format === 'docx' && result.readiness.ready
+    ? 'publication'
+    : 'readable-fallback'
+}
+
 export default function PublicationImporter({
   showIntro = true,
   initialPaperUrl,
@@ -1412,7 +1420,7 @@ export default function PublicationImporter({
             ? await buildEpubInWorker(
                 result,
                 profile,
-                result.readiness.ready ? 'publication' : 'readable-fallback',
+                browserEpubBuildMode(result),
                 {
                   signal: controller.signal,
                   onProgress: (progress) => {
@@ -1609,7 +1617,9 @@ export default function PublicationImporter({
           <h2 id="studio-heading">Make an EPUB from a PDF or DOCX</h2>
           <p>
             Upload a paper or paste a direct PDF link. PDF reconstruction and
-            structured DOCX import run in your browser.
+            structured DOCX import run in your browser. Uploaded PDFs are
+            reconstructed deterministically on this device. Codex is not
+            consulted in this browser route.
           </p>
         </div>
       )}
@@ -1839,39 +1849,39 @@ export default function PublicationImporter({
           {!reviewMode &&
             state.status === 'review-required' &&
             hasActionableRecovery(userRecovery) && (
-            <div className="publication-ocr-gate" role="alert">
-              <span>Review summary</span>
-              <h3>
-                {userRecovery?.title ??
-                  'Your readable EPUB is ready for review.'}
-              </h3>
-              <p>{userRecovery?.summary}</p>
-              {userRecovery && userRecovery.issues.length > 0 && (
-                <ul
-                  className="publication-blocking-issues"
-                  aria-label="Review items"
-                >
-                  {userRecovery.issues.map((issue) => (
-                    <li
-                      key={`${issue.category}:${issue.title}:${issue.action ?? ''}:${issue.pages.join(',')}`}
-                    >
-                      <strong>{issue.title}</strong>
-                      <span>{issue.count}</span>
-                      {issue.pages.length > 0 && (
-                        <small>Pages {issue.pages.join(', ')}</small>
-                      )}
-                      {issue.action && <small>{issue.action}</small>}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {userRecovery?.userAction && (
-                <p>
-                  <strong>What to do:</strong> {userRecovery.userAction}
-                </p>
-              )}
-            </div>
-          )}
+              <div className="publication-ocr-gate" role="alert">
+                <span>Review summary</span>
+                <h3>
+                  {userRecovery?.title ??
+                    'Your readable EPUB is ready for review.'}
+                </h3>
+                <p>{userRecovery?.summary}</p>
+                {userRecovery && userRecovery.issues.length > 0 && (
+                  <ul
+                    className="publication-blocking-issues"
+                    aria-label="Review items"
+                  >
+                    {userRecovery.issues.map((issue) => (
+                      <li
+                        key={`${issue.category}:${issue.title}:${issue.action ?? ''}:${issue.pages.join(',')}`}
+                      >
+                        <strong>{issue.title}</strong>
+                        <span>{issue.count}</span>
+                        {issue.pages.length > 0 && (
+                          <small>Pages {issue.pages.join(', ')}</small>
+                        )}
+                        {issue.action && <small>{issue.action}</small>}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {userRecovery?.userAction && (
+                  <p>
+                    <strong>What to do:</strong> {userRecovery.userAction}
+                  </p>
+                )}
+              </div>
+            )}
 
           {state.epubs?.[0] && (
             <EpubRenditionPreview

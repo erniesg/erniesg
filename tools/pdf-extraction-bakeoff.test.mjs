@@ -1,8 +1,16 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import Ajv2020 from 'ajv/dist/2020.js'
 import { describe, expect, it } from 'vitest'
+import { structuredExtractionHash } from '../src/research/structured-extraction.ts'
 import { withScoreLedger } from './pdf-extraction-bakeoff.mjs'
 
 describe('extraction bake-off CLI', () => {
@@ -23,11 +31,260 @@ describe('extraction bake-off CLI', () => {
     const payload = JSON.parse(result.stdout)
     expect(payload.report.heldOutScoredOnce).toBe(true)
     expect(payload.report.comparison).toHaveLength(16)
+    expect(payload.report.authority).toEqual({
+      kind: 'synthetic-contract-self-test',
+      realProviderCalls: 0,
+      realProviderAuthority: false,
+      promotionEligible: false,
+    })
     expect(
       payload.report.candidateIdentities['llm-grounded'].promptHash,
     ).toMatch(/^[a-f0-9]{64}$/u)
-    expect(payload.decision.owner).toBe('llm-grounded')
+    expect(payload.decision.owner).toBe('pending')
+    expect(payload.decision.humanDecisionRequired).toBe(true)
     expect(payload.report).not.toHaveProperty('sourceText')
+    rmSync(directory, { recursive: true, force: true })
+  })
+
+  it('reproduces the committed synthetic report and pending decision', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'extraction-bakeoff-'))
+    const result = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        'tools/pdf-extraction-bakeoff.mjs',
+        '--self-test',
+        '--score-ledger',
+        join(directory, 'score-ledger.json'),
+      ],
+      { encoding: 'utf8', timeout: 30_000 },
+    )
+    expect(result.status, result.stderr).toBe(0)
+    const payload = JSON.parse(result.stdout)
+    expect(payload.report).toEqual(
+      JSON.parse(
+        readFileSync(
+          'benchmarks/pdf/extraction-bakeoff-report-v1.json',
+          'utf8',
+        ),
+      ),
+    )
+    expect(payload.decision).toEqual(
+      JSON.parse(
+        readFileSync(
+          'docs/research/semantic-responsive-typesetting/extraction-architecture-decision-v1.json',
+          'utf8',
+        ),
+      ),
+    )
+    rmSync(directory, { recursive: true, force: true })
+  })
+
+  it.each([
+    ['promotion eligibility', { promotionEligible: true }],
+    ['real-provider authority', { realProviderAuthority: true }],
+  ])('rejects a synthetic report claiming %s', (_claim, override) => {
+    const directory = mkdtempSync(join(tmpdir(), 'extraction-bakeoff-'))
+    const report = JSON.parse(
+      readFileSync('benchmarks/pdf/extraction-bakeoff-report-v1.json', 'utf8'),
+    )
+    const reportPath = join(directory, 'forged-report.json')
+    writeFileSync(
+      reportPath,
+      `${JSON.stringify({
+        ...report,
+        authority: {
+          kind: 'synthetic-contract-self-test',
+          realProviderCalls: 0,
+          realProviderAuthority: false,
+          promotionEligible: false,
+          ...override,
+        },
+      })}\n`,
+    )
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        'tools/pdf-extraction-bakeoff.mjs',
+        '--validate-report',
+        reportPath,
+      ],
+      { encoding: 'utf8', timeout: 30_000 },
+    )
+
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('INVALID_SYNTHETIC_BAKEOFF_AUTHORITY')
+    rmSync(directory, { recursive: true, force: true })
+  })
+
+  it('accepts the committed synthetic report only with its authority block', () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        'tools/pdf-extraction-bakeoff.mjs',
+        '--validate-report',
+        'benchmarks/pdf/extraction-bakeoff-report-v1.json',
+      ],
+      { encoding: 'utf8', timeout: 30_000 },
+    )
+    expect(result.status, result.stderr).toBe(0)
+  })
+
+  it('schemas the synthetic authority as non-promotable and provider-free', () => {
+    const schema = JSON.parse(
+      readFileSync(
+        'docs/schemas/extraction-bakeoff-report.schema.json',
+        'utf8',
+      ),
+    )
+    const report = JSON.parse(
+      readFileSync('benchmarks/pdf/extraction-bakeoff-report-v1.json', 'utf8'),
+    )
+    const validate = new Ajv2020({ strict: false }).compile(schema)
+
+    expect(validate(report), JSON.stringify(validate.errors)).toBe(true)
+    for (const authority of [
+      { ...report.authority, promotionEligible: true },
+      { ...report.authority, realProviderAuthority: true },
+      { ...report.authority, realProviderCalls: 1 },
+      { ...report.authority, unverifiedClaim: false },
+    ]) {
+      expect(validate({ ...report, authority })).toBe(false)
+    }
+    expect(
+      validate({
+        ...report,
+        authority: {
+          kind: 'real-provider-promotion-evidence',
+          realProviderCalls: 1,
+          realProviderAuthority: true,
+          promotionEligible: true,
+        },
+      }),
+    ).toBe(false)
+    expect(
+      validate({
+        ...report,
+        authority: {
+          kind: 'real-provider-promotion-evidence',
+          realProviderCalls: Number.MAX_SAFE_INTEGER + 1,
+          realProviderAuthority: true,
+          promotionEligible: true,
+        },
+      }),
+    ).toBe(false)
+  })
+
+  it('refuses to stamp an authority-absent report', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'extraction-bakeoff-'))
+    const source = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        'tools/pdf-extraction-bakeoff.mjs',
+        '--self-test',
+        '--score-ledger',
+        join(directory, 'score-ledger.json'),
+      ],
+      { encoding: 'utf8', timeout: 30_000 },
+    )
+    expect(source.status, source.stderr).toBe(0)
+    const markedReport = JSON.parse(source.stdout).report
+    const { authority: _authority, ...unmarkedReport } = markedReport
+    const inputPath = join(directory, 'unmarked-report.json')
+    const outputPath = join(directory, 'stamped-report.json')
+    writeFileSync(inputPath, `${JSON.stringify(unmarkedReport)}\n`)
+
+    const stamped = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        'tools/pdf-extraction-bakeoff.mjs',
+        '--stamp-report',
+        inputPath,
+        '--report-out',
+        outputPath,
+      ],
+      { encoding: 'utf8', timeout: 30_000 },
+    )
+    expect(stamped.status).toBe(1)
+    expect(stamped.stderr).toContain('INVALID_SYNTHETIC_BAKEOFF_AUTHORITY')
+    expect(existsSync(outputPath)).toBe(false)
+    rmSync(directory, { recursive: true, force: true })
+  })
+
+  it('refuses to stamp a report with a forged authority claim', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'extraction-bakeoff-'))
+    const report = JSON.parse(
+      readFileSync('benchmarks/pdf/extraction-bakeoff-report-v1.json', 'utf8'),
+    )
+    const inputPath = join(directory, 'forged-report.json')
+    const outputPath = join(directory, 'stamped-report.json')
+    writeFileSync(
+      inputPath,
+      `${JSON.stringify({
+        ...report,
+        authority: { ...report.authority, promotionEligible: true },
+      })}\n`,
+    )
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        'tools/pdf-extraction-bakeoff.mjs',
+        '--stamp-report',
+        inputPath,
+        '--report-out',
+        outputPath,
+      ],
+      { encoding: 'utf8', timeout: 30_000 },
+    )
+
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('INVALID_SYNTHETIC_BAKEOFF_AUTHORITY')
+    expect(existsSync(outputPath)).toBe(false)
+    rmSync(directory, { recursive: true, force: true })
+  })
+
+  it('refuses to stamp a schema-invalid report even when its hash matches', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'extraction-bakeoff-'))
+    const authority = {
+      kind: 'synthetic-contract-self-test',
+      realProviderCalls: 0,
+      realProviderAuthority: false,
+      promotionEligible: false,
+    }
+    const report = { authority }
+    const inputPath = join(directory, 'minimal-report.json')
+    const outputPath = join(directory, 'stamped-report.json')
+    writeFileSync(
+      inputPath,
+      `${JSON.stringify({
+        ...report,
+        reportSha256: structuredExtractionHash(report),
+      })}\n`,
+    )
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        'tools/pdf-extraction-bakeoff.mjs',
+        '--stamp-report',
+        inputPath,
+        '--report-out',
+        outputPath,
+      ],
+      { encoding: 'utf8', timeout: 30_000 },
+    )
+
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('INVALID_SYNTHETIC_BAKEOFF_REPORT_SCHEMA')
+    expect(existsSync(outputPath)).toBe(false)
     rmSync(directory, { recursive: true, force: true })
   })
 

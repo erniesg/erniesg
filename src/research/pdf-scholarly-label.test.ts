@@ -141,6 +141,20 @@ describe('PDF scholarly visual labels', () => {
     }
   })
 
+  it.each(['Figure I(V)', 'Table I(V)', 'Equation X(I)'])(
+    'does not concatenate a Roman identifier and parenthesized letter in %j',
+    (value) => {
+      expect(
+        parsePdfScholarlyVisualLabel(value, { context: 'reference' }),
+      ).toBeNull()
+      expect(
+        parsePdfScholarlyVisualLabel(`${value}. Ambiguous caption.`, {
+          context: 'caption',
+        }),
+      ).toBeNull()
+    },
+  )
+
   it('expands only same-stem bounded supplementary ranges', () => {
     expect(expandPdfScholarlyVisualIdentifierRange('S1', 'S3')).toEqual([
       'S1',

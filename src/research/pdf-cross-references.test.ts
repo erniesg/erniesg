@@ -440,6 +440,23 @@ describe('PDF scholarly cross references', () => {
     ).toBe('12(b)')
   })
 
+  it('does not resolve Roman identifiers plus parenthesized letters as concatenated targets', () => {
+    const relationships = resolvePdfScholarlyCrossReferences({
+      regions: [
+        region(
+          'Figure I(V), Table I(V), and Equation X(I) are ambiguous source labels.',
+        ),
+      ],
+      canonicalTargets: [
+        target('figure', 'Figure IV'),
+        target('table', 'Table IV'),
+        target('equation', 'Equation XI'),
+      ],
+    })
+
+    expect(relationships).toEqual([])
+  })
+
   it('keeps plural panel targets distinct by label while deduplicating their owning figure', () => {
     const [relationship] = resolvePdfScholarlyCrossReferences({
       regions: [region('Figures 12b and 12c isolate the compared panels.')],

@@ -94,12 +94,13 @@ export function parsePdfScholarlyVisualIdentifier(
   let identifierEnd = baseIdentifierEnd
   let consumedEnd = baseIdentifierEnd + Number(closingParenthesis)
   if (!parenthesized && value[baseIdentifierEnd] === '(') {
-    // A singleton panel suffix is source-equivalent to the already supported
-    // trailing-letter form ("12(b)" -> "12b"). Consume the complete printed
-    // token as one contiguous source interval; malformed or compound suffixes
-    // must not fall back to a different parent target.
+    // A singleton panel suffix after a digit-ending base is source-equivalent
+    // to the already supported trailing-letter form ("12(b)" -> "12b").
+    // Consume the complete printed token as one contiguous source interval;
+    // malformed, compound, and Roman-base suffixes must fail closed rather
+    // than falling back to a different target.
     const suffix = value.slice(baseIdentifierEnd).match(/^\(([A-Za-z])\)/u)
-    if (!suffix || /\d[A-Za-z]$/u.test(rawIdentifier)) return null
+    if (!suffix || !/\d$/u.test(rawIdentifier)) return null
     panelSuffix = suffix[1]
     identifierEnd = baseIdentifierEnd + suffix[0].length
     consumedEnd = identifierEnd

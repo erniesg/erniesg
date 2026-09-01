@@ -1198,6 +1198,13 @@ describe('scholarly cross-reference integrity', () => {
     expect(isBoundedScholarlyReferenceText(value)).toBe(false)
   })
 
+  it.each(['Figure I(V)', 'Table I(V)', 'Equation X(I)'])(
+    'rejects a Roman identifier plus parenthesized letter %j',
+    (value) => {
+      expect(isBoundedScholarlyReferenceText(value)).toBe(false)
+    },
+  )
+
   it.each([
     'Table ii',
     'Table mix',

@@ -1999,6 +1999,10 @@ export function noteLabelFromText(text: string) {
   const normalized = normalizedNoteLabel(text)
   const attachedSymbolic = normalized.match(/^([*†‡§])/u)
   if (attachedSymbolic) return attachedSymbolic[1]
+  const bracketed = normalized.match(
+    new RegExp(`^\\[\\s*(${NOTE_LABEL})\\s*\\](?=\\s|$)`),
+  )
+  if (bracketed) return bracketed[1]
   const explicit = normalized.match(
     new RegExp(`^(?:footnote|note)\\s+(${NOTE_LABEL})(?:\\s*[:.)-]|\\s+)`, 'i'),
   )

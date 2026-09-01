@@ -6347,6 +6347,82 @@ describe('deterministic scholarly page regions', () => {
     ).toContain('Left retained')
   })
 
+  it('matches an exact bracketed footnote definition without treating it as a bibliography entry', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(1, 'Bracketed Footnote Study', 0.2, 0.06, 0.6, 18, 0.03),
+        run(1, 'Ada Example', 0.4, 0.13, 0.2, 11),
+        run(1, 'Abstract', 0.08, 0.22, 0.18, 14),
+        run(
+          1,
+          'This abstract establishes a source-backed scholarly document.',
+          0.08,
+          0.27,
+          0.84,
+        ),
+        run(
+          1,
+          'The claim names its exact footnote marker [1].',
+          0.08,
+          0.5,
+          0.7,
+        ),
+        run(1, '[1] Source-backed implementation detail.', 0.08, 0.86, 0.7, 7),
+      ]),
+    ])
+
+    const relationship = result.noteRelationships.find(
+      (candidate) => candidate.label === '1',
+    )
+    const note = result.paper.nodes.find(
+      (node) => node.type === 'footnote' && node.label === '1',
+    )
+    const owner = result.paper.nodes.find(
+      (node) =>
+        node.type === 'paragraph' &&
+        node.text.includes('exact footnote marker'),
+    )
+    const reference =
+      owner?.type === 'paragraph'
+        ? owner.noteReferences?.find(
+            (candidate) => candidate.id === relationship?.id,
+          )
+        : undefined
+
+    expect(noteLabelFromText('[1] Source-backed implementation detail.')).toBe(
+      '1',
+    )
+    expect(note).toMatchObject({
+      markerText: '[1]',
+      text: 'Source-backed implementation detail.',
+    })
+    expect(relationship).toMatchObject({
+      status: 'matched',
+      targetNoteId: note?.id,
+      canonicalAnchor: {
+        kind: 'node',
+        nodeId: owner?.id,
+      },
+    })
+    expect(reference).toMatchObject({
+      target: note?.id,
+    })
+    expect(
+      owner?.type === 'paragraph' && reference
+        ? owner.text.slice(reference.start, reference.end)
+        : null,
+    ).toBe('[1]')
+    expect(
+      note?.type === 'footnote' ? note.relationships.backlinks : [],
+    ).toEqual([relationship?.id])
+    expect(result.diagnostics).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'UNRESOLVED_NOTE_REFERENCE' }),
+        expect.objectContaining({ code: 'UNREFERENCED_NOTE' }),
+      ]),
+    )
+  })
+
   it('matches a page-wide symbolic footnote and emits EPUB note semantics and backlinks', async () => {
     const result = await reconstruct(
       [

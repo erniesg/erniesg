@@ -1974,6 +1974,7 @@ function isIsolatedProseGlyph(block: RegionBlock) {
 
 function noteText(region: PdfPageRegion, label: string) {
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const marker = `(?:\\[\\s*${escaped}\\s*\\]|${escaped})`
   const independentlyRunBackedMarker =
     normalizedNoteLabel(
       region.lines[0]?.runs.find((run) => run.text.trim())?.text ?? '',
@@ -1988,7 +1989,7 @@ function noteText(region: PdfPageRegion, label: string) {
     normalizedNoteLabel(region.text)
       .replace(
         new RegExp(
-          `^(?:(?:footnote|note)\\s+)?${escaped}(?:\\s*[:.)\\]-]|\\s+)\\s*`,
+          `^(?:(?:footnote|note)\\s+)?${marker}(?:\\s*[:.)\\]-]|\\s+)\\s*`,
           'i',
         ),
         '',
@@ -2001,7 +2002,7 @@ function noteMarkerText(region: PdfPageRegion, label: string) {
   const marker = region.text
     .trim()
     .match(
-      /^(?:(?:footnote|note)\s+)?(?:\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*∗†‡§])(?:\s*[:.)\]-])?/iu,
+      /^(?:(?:footnote|note)\s+)?(?:\[\s*(?:\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*∗†‡§])\s*\]|(?:\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*∗†‡§])(?:\s*[:.)\]-])?)/iu,
     )?.[0]
     ?.trim()
   return marker && normalizedNoteLabel(marker).includes(label) ? marker : label

@@ -10,6 +10,7 @@ import type {
 } from './import-types'
 import { reconstructPageRegions } from './pdf-regions'
 import { resolvePdfTableScope } from './pdf-table-scope'
+import { tableLineEntryKey } from './pdf-table-scope-line-bands'
 
 function box(
   x: number,
@@ -108,6 +109,24 @@ function nativeObject(
     assetId: `asset-${id}`,
   }
 }
+
+describe('table line identities', () => {
+  const keyFor = (regionId: string, lineId: string, index: number) => {
+    const y = 0.1 + index * 0.03
+    const sourceLine = line(lineId, y, [0.1, 0.2])
+    const region = textRegion(regionId, box(0.1, y, 0.2, 0.016), [sourceLine])
+    return tableLineEntryKey({ region, line: sourceLine })
+  }
+
+  it('keeps delimiter-bearing source IDs as distinct tuple members', () => {
+    expect(keyFor('region/a', 'line', 0)).not.toBe(
+      keyFor('region', 'a/line', 1),
+    )
+    expect(keyFor('region:a', 'line', 2)).not.toBe(
+      keyFor('region', 'a:line', 3),
+    )
+  })
+})
 
 function objectRegion(
   id: string,

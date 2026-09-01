@@ -40,6 +40,10 @@ const MAX_GOVERNANCE_JSON_BYTES = 16 * 1024 * 1024
 const MAX_EPUB_COMPRESSED_BYTES = 256 * 1024 * 1024
 const MAX_EPUB_INFLATED_BYTES = 512 * 1024 * 1024
 const MAX_EPUB_ENTRIES = 544
+// A legal comment may contain EOCD magic, but each candidate triggers a
+// bounded full index parse. Allow normal nested comments without multiplying
+// the 544-entry parser across the whole 65,535-byte comment space.
+const MAX_EPUB_EOCD_CANDIDATES = 16
 const MAX_EPUB_CONTAINER_BYTES = 64 * 1024
 const MAX_EPUB_PACKAGE_DOCUMENT_BYTES = 4 * 1024 * 1024
 const PROMOTION_PROTOCOL_IMPLEMENTED = false
@@ -1553,6 +1557,7 @@ function crc32(bytes) {
 
 function strictZipIndex(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  let candidateAttempts = 0
   for (
     let offset = bytes.byteLength - 22;
     offset >= Math.max(0, bytes.byteLength - 65_557);
@@ -1573,6 +1578,10 @@ function strictZipIndex(bytes) {
       offset + 22 + commentLength !== bytes.byteLength
     ) {
       continue
+    }
+    candidateAttempts += 1
+    if (candidateAttempts > MAX_EPUB_EOCD_CANDIDATES) {
+      throw new Error('ZIP end record candidate limit exceeded')
     }
     try {
       return strictZipIndexAt(bytes, view, offset, entryCount, centralOffset)

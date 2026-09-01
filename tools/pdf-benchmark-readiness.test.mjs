@@ -357,6 +357,34 @@ function appendPlausibleFakeZipEndRecordComment(bytes) {
   return appendZipComment(original, [0, ...fake])
 }
 
+function appendPlausibleFakeZipEndRecordStorm(bytes, fakeCount) {
+  const original = new Uint8Array(bytes)
+  const originalView = new DataView(
+    original.buffer,
+    original.byteOffset,
+    original.byteLength,
+  )
+  const endOffset = zipEndRecordOffset(original)
+  const entryCount = originalView.getUint16(endOffset + 10, true)
+  const centralOffset = originalView.getUint32(endOffset + 16, true)
+  const comment = new Uint8Array(fakeCount * 22)
+  const view = new DataView(comment.buffer)
+  for (let index = 0; index < fakeCount; index += 1) {
+    const offset = index * 22
+    view.setUint32(offset, 0x06054b50, true)
+    view.setUint16(offset + 8, entryCount, true)
+    view.setUint16(offset + 10, entryCount, true)
+    view.setUint32(
+      offset + 12,
+      original.byteLength + offset - centralOffset,
+      true,
+    )
+    view.setUint32(offset + 16, centralOffset, true)
+    view.setUint16(offset + 20, comment.byteLength - offset - 22, true)
+  }
+  return appendZipComment(original, comment)
+}
+
 function eraseFirstZipEndRecordSignature(bytes) {
   const patched = new Uint8Array(bytes)
   const view = new DataView(patched.buffer)
@@ -1002,6 +1030,12 @@ describe('PDF benchmark readiness registry', () => {
       validEpubPackage(
         eraseFirstZipEndRecordSignature(plausibleFakeEocdComment),
       ),
+    ).toBe(false)
+    expect(
+      validEpubPackage(appendPlausibleFakeZipEndRecordStorm(validFixture, 2)),
+    ).toBe(true)
+    expect(
+      validEpubPackage(appendPlausibleFakeZipEndRecordStorm(validFixture, 16)),
     ).toBe(false)
     expect(
       validEpubPackage(appendZipComment(validFixture, Array(65_535).fill(0))),

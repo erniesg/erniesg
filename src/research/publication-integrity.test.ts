@@ -260,6 +260,69 @@ describe('exact semantic note-anchor integrity', () => {
     ).toEqual([])
   })
 
+  it('validates a note source box through a replayed discretionary-hyphen boundary', () => {
+    const { relationships, sourceEvidence } = sourceEvidenceFixture()
+    const lineBox = sourceBox(0.1, 0.2, 0.5)
+    const continuationBox = sourceBox(0.1, 0.22, 0.2)
+    const claimRegion = sourceEvidence.regions[0]
+    claimRegion.text = 'Claim 1 transition.'
+    claimRegion.box = sourceBox(0.1, 0.2, 0.5, 0.04)
+    claimRegion.lines = [
+      {
+        id: 'source-claim-line-1',
+        text: 'Claim 1 transi-',
+        fontSize: 10,
+        box: lineBox,
+        runs: [
+          {
+            ...lineBox,
+            text: 'Claim 1 transi-',
+            fontName: 'Body',
+            fontSize: 10,
+            confidence: 1,
+          },
+        ],
+      },
+      {
+        id: 'source-claim-line-2',
+        text: 'tion.',
+        fontSize: 10,
+        box: continuationBox,
+        runs: [
+          {
+            ...continuationBox,
+            text: 'tion.',
+            fontName: 'Body',
+            fontSize: 10,
+            confidence: 1,
+          },
+        ],
+      },
+    ]
+    relationships[0].referenceStart = 6
+    relationships[0].referenceEnd = 7
+    relationships[0].sourceBoxes = [sourceBox(0.2, 0.2, 0.01)]
+    sourceEvidence.provenance.claim.boxes = [claimRegion.box]
+    const evidence = {
+      ...sourceEvidence,
+      lineBoundaryDecisions: [
+        {
+          id: 'source-claim-boundary-1',
+          page: 1,
+          regionId: claimRegion.id,
+          fromLineId: claimRegion.lines[0].id,
+          toLineId: claimRegion.lines[1].id,
+          outcome: 'removed-discretionary-hyphen' as const,
+          evidence: ['same-document-unhyphenated-word'],
+        },
+      ],
+    }
+
+    expect(
+      internalReferenceIntegrityIssues(paperFixture(), relationships, evidence),
+    ).toEqual([])
+  })
+
   it.each([
     { marker: '[1; 2]', label: '1,2' },
     { marker: '[1–3]', label: '1,2,3' },

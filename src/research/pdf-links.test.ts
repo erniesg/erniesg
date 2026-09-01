@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   normalizedPdfExternalLinkTarget,
+  pdfVisibleUrlRoundTrip,
   resolvePdfExternalLinkSourceIntervalOwnership,
   safePdfExternalLinkTarget,
 } from './pdf-links'
@@ -54,6 +55,16 @@ describe('PDF external links', () => {
     expect(
       safePdfExternalLinkTarget('https://doi.org/10.1145/nnnnnnn.nnnnnnn'),
     ).toBe(false)
+  })
+
+  it('round-trips equivalent percent escapes without decoding reserved URL bytes', () => {
+    const visible = 'https://example.test/~user?q=A%2F'
+    const target = 'https://example.test/%7euser?q=%41%2f'
+
+    expect(pdfVisibleUrlRoundTrip(visible, target)).toEqual({
+      normalizedTarget: visible,
+      visibleToken: visible,
+    })
   })
 
   it.each(

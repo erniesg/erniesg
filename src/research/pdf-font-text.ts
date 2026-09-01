@@ -136,6 +136,45 @@ const CMEX10_UNICODE_BY_SLOT = new Map<number, string>([
   [0x7f, '⇓'],
 ])
 
+// Computer Modern's cmsy family likewise stores its first 32 mathematical
+// operators and relations in C0 slots. Without the font-bounded decoding,
+// those painted symbols survive PDF.js extraction as XML-forbidden controls
+// and make an otherwise exact canonical transcript unpublishable.
+const CMSY10_UNICODE_BY_SLOT = new Map<number, string>([
+  [0x00, '−'],
+  [0x01, '⋅'],
+  [0x02, '×'],
+  [0x03, '∗'],
+  [0x04, '÷'],
+  [0x05, '⋄'],
+  [0x06, '±'],
+  [0x07, '∓'],
+  [0x08, '⊕'],
+  [0x09, '⊖'],
+  [0x0a, '⊗'],
+  [0x0b, '⊘'],
+  [0x0c, '⊙'],
+  [0x0d, '◯'],
+  [0x0e, '∘'],
+  [0x0f, '∙'],
+  [0x10, '≍'],
+  [0x11, '≡'],
+  [0x12, '⊆'],
+  [0x13, '⊇'],
+  [0x14, '≤'],
+  [0x15, '≥'],
+  [0x16, '⪯'],
+  [0x17, '⪰'],
+  [0x18, '∼'],
+  [0x19, '≈'],
+  [0x1a, '⊂'],
+  [0x1b, '⊃'],
+  [0x1c, '≪'],
+  [0x1d, '≫'],
+  [0x1e, '≺'],
+  [0x1f, '≻'],
+])
+
 // AMS's msbm family stores blackboard-bold capitals in the ordinary ASCII
 // uppercase slots. PDF.js can therefore expose the source glyph for `\mathbb Q`
 // as plain `Q` even when the page paints ℚ. Decode only the proven MSBM family;
@@ -399,6 +438,16 @@ export function pdfFontTextRequiresStructuralReconstruction(
 }
 
 export function normalizePdfFontText(text: string, fontName: string) {
+  if (/(?:^|[+_-])CMSY\d*(?=$|[+_-])/iu.test(fontName)) {
+    return [...text]
+      .map((character) => {
+        const slot = character.codePointAt(0)
+        return slot === undefined
+          ? character
+          : (CMSY10_UNICODE_BY_SLOT.get(slot) ?? character)
+      })
+      .join('')
+  }
   if (/(?:^|[+_-])MSBM\d*(?=$|[+_-])/iu.test(fontName)) {
     return [...text]
       .map((character) => MSBM_UNICODE_BY_ASCII.get(character) ?? character)

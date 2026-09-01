@@ -11,6 +11,7 @@ import type {
 } from './import-types'
 import {
   canonicalVisualSourceInlineMapping,
+  pdfLineBoundaryDecisionLedgersForPreformattedSources,
   residualPdfRegionFragmentsAfterLineConsumption,
 } from './pdf-layout'
 import { reconstructPdfVisuals, type PdfFigureRasterizer } from './pdf-visuals'
@@ -299,7 +300,7 @@ describe('bounded table-scope visual fallback', () => {
         relationship,
         nodeId: 'canonical-table',
         regions: [sourceRegion],
-        lineBoundaryDecisions: [],
+        sourceReplayLineBoundaryDecisions: [],
       }),
     ).toEqual({
       runs: [
@@ -321,7 +322,7 @@ describe('bounded table-scope visual fallback', () => {
         },
         nodeId: 'canonical-table',
         regions: [sourceRegion],
-        lineBoundaryDecisions: [],
+        sourceReplayLineBoundaryDecisions: [],
       }),
     ).toEqual({
       runs: [],
@@ -336,7 +337,7 @@ describe('bounded table-scope visual fallback', () => {
         },
         nodeId: 'canonical-table',
         regions: [sourceRegion],
-        lineBoundaryDecisions: [],
+        sourceReplayLineBoundaryDecisions: [],
       }),
     ).toEqual({
       runs: [],
@@ -354,11 +355,97 @@ describe('bounded table-scope visual fallback', () => {
         },
         nodeId: 'canonical-table',
         regions: [sourceRegion],
-        lineBoundaryDecisions: [],
+        sourceReplayLineBoundaryDecisions: [],
       }),
     ).toEqual({
       runs: [],
       ledger: { expected: 3, mapped: 0 },
+    })
+  })
+
+  it('uses the complete source replay ledger for a styled table line after a consumed preformatted prefix', () => {
+    const preformattedLines = [
+      tabularLine('preformatted-command', 0.12, [0.12]),
+      tabularLine('preformatted-output', 0.14, [0.12]),
+      tabularLine('preformatted-exit', 0.16, [0.12]),
+    ]
+    for (const line of preformattedLines) {
+      line.runs[0].fontName = 'NimbusMonoPS-Regular'
+    }
+    const styledRun = {
+      ...box(0.12, 0.2, 0.18, 0.014, 'pdf-text'),
+      text: 'Method',
+      fontName: 'TableSerif-Bold',
+      fontSize: 8,
+      confidence: 0.99,
+      bold: true,
+    } satisfies PdfSourceRun
+    const valueRun = {
+      ...box(0.4, 0.2, 0.18, 0.014, 'pdf-text'),
+      text: 'Score',
+      fontName: 'TableSerif',
+      fontSize: 8,
+      confidence: 0.99,
+    } satisfies PdfSourceRun
+    const tableSourceLine = {
+      id: 'post-preformatted-table-line',
+      text: `${styledRun.text} ${valueRun.text}`,
+      fontSize: 8,
+      box: box(0.12, 0.2, 0.46, 0.014, 'pdf-text'),
+      runs: [styledRun, valueRun],
+    } satisfies PdfRegionLine
+    const lines = [...preformattedLines, tableSourceLine]
+    const sourceRegion = mixedParent(
+      'mixed-preformatted-table-region',
+      box(0.12, 0.12, 0.46, 0.094, 'pdf-text'),
+      lines,
+    )
+    const decisions = lines.slice(1).map((line, index) => ({
+      id: `mixed-preformatted-table-boundary-${index + 1}`,
+      page: 1,
+      regionId: sourceRegion.id,
+      fromLineId: lines[index].id,
+      toLineId: line.id,
+      outcome: 'space' as const,
+      evidence: ['ordinary-wrap'],
+    }))
+    const ledgers = pdfLineBoundaryDecisionLedgersForPreformattedSources(
+      decisions,
+      [new Set(preformattedLines.map((line) => line.id))],
+    )
+    const relationship = {
+      id: 'post-preformatted-table-relationship',
+      kind: 'table',
+      label: 'Table 1',
+      captionRegionId: 'post-preformatted-table-caption',
+      sourceRegionIds: [sourceRegion.id],
+      sourceLineIds: [tableSourceLine.id],
+      sourceObjectIds: [],
+      assetIds: ['post-preformatted-table-asset'],
+      status: 'matched',
+      confidence: 0.99,
+      evidence: ['bounded-table-scope', 'source-page-crop'],
+      candidates: [],
+      sourceBoxes: [tableSourceLine.box],
+      sourceText: tableSourceLine.text,
+      altText: 'Table 1. Source-backed metrics.',
+      altTextSource: 'caption',
+      canonicalNodeId: 'post-preformatted-canonical-table',
+      captionNodeId: 'post-preformatted-table-caption-node',
+    } satisfies PdfVisualRelationship
+
+    expect(ledgers.canonicalDecisions).toHaveLength(1)
+    expect(ledgers.sourceReplayDecisions).toHaveLength(3)
+    expect(
+      canonicalVisualSourceInlineMapping({
+        relationship,
+        nodeId: relationship.canonicalNodeId,
+        regions: [sourceRegion],
+        sourceReplayLineBoundaryDecisions: ledgers.sourceReplayDecisions,
+      }),
+    ).toEqual({
+      runs: [{ start: 0, end: styledRun.text.length, bold: true }],
+      ledger: { expected: 1, mapped: 1 },
     })
   })
 

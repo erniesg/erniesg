@@ -281,7 +281,15 @@ export function safePdfExternalLinkTarget(value: string) {
 export function normalizedPdfExternalLinkTarget(value: string) {
   if (!safePdfExternalLinkTarget(value)) return null
   try {
-    return new URL(value).href
+    return new URL(value).href.replace(
+      /%([0-9a-f]{2})/giu,
+      (encoded, hexadecimal: string) => {
+        const character = String.fromCharCode(Number.parseInt(hexadecimal, 16))
+        return /^[A-Za-z0-9._~-]$/u.test(character)
+          ? character
+          : encoded.toUpperCase()
+      },
+    )
   } catch {
     return null
   }
@@ -1206,6 +1214,14 @@ function destinationGeometryKind(
   return null
 }
 
+function boundedOpaqueNamedDestination(destination: string) {
+  return (
+    destination.length > 0 &&
+    destination.length <= MAX_INTERNAL_DESTINATION_CHARACTERS &&
+    !/[\u0000-\u0020\u007f]/u.test(destination)
+  )
+}
+
 function validTargetSourceBox(box: NormalizedSourceBox) {
   return (
     Number.isInteger(box.page) &&
@@ -1235,6 +1251,10 @@ function pointToTargetAnchorDistance(
   ) => (value === null ? 0 : Math.max(start - value, value - (start + size), 0))
   const edgeDistance = (value: number | null, edge: number) =>
     value === null ? 0 : Math.abs(value - edge)
+  const viewportEdgeCoordinate = (value: number | null) =>
+    value !== null &&
+    (value <= PDF_DESTINATION_EXACT_TOLERANCE ||
+      value >= 1 - PDF_DESTINATION_EXACT_TOLERANCE)
   const rotation = ((point.rotation % 360) + 360) % 360
 
   // An XYZ destination names the viewport's target-top edge, not an arbitrary
@@ -1247,13 +1267,17 @@ function pointToTargetAnchorDistance(
       ? edgeDistance(point.x, box.x + box.width)
       : rotation === 270
         ? edgeDistance(point.x, box.x)
-        : containmentDistance(point.x, box.x, box.width)
+        : viewportEdgeCoordinate(point.x)
+          ? 0
+          : containmentDistance(point.x, box.x, box.width)
   const verticalDistance =
     rotation === 0
       ? edgeDistance(point.y, box.y)
       : rotation === 180
         ? edgeDistance(point.y, box.y + box.height)
-        : containmentDistance(point.y, box.y, box.height)
+        : viewportEdgeCoordinate(point.y)
+          ? 0
+          : containmentDistance(point.y, box.y, box.height)
   return [0, 90, 180, 270].includes(rotation)
     ? Math.hypot(horizontalDistance, verticalDistance)
     : Number.POSITIVE_INFINITY
@@ -1331,10 +1355,12 @@ function geometryBackedInternalDestination(
   if (!point && !destinationBox) return null
   const parsed = parsedPdfInternalDestination(annotation.destination)
   const kind = destinationGeometryKind(annotation.destination, parsed)
-  if (!kind) return null
+  if (!kind && !boundedOpaqueNamedDestination(annotation.destination)) {
+    return null
+  }
   const compatibleTargets = canonicalTargets.filter(
     (target) =>
-      target.kind === kind &&
+      (kind === null || target.kind === kind) &&
       SAFE_CANONICAL_FRAGMENT_ID.test(target.nodeId) &&
       (target.sourceBoxes ?? []).some(validTargetSourceBox),
   )
@@ -1384,6 +1410,16 @@ function geometryBackedInternalDestination(
       status: 'ambiguous',
       targetNodeId: null,
       ...(parsed ? { parsed } : {}),
+    }
+  }
+  if (kind === null) {
+    // An opaque producer-specific name carries no semantic target type. Its
+    // exact named-destination geometry may still prove one canonical node,
+    // but the looser nearest-target fallback would guess across unrelated
+    // headings, notes, references, and visuals.
+    return {
+      status: 'missing',
+      targetNodeId: null,
     }
   }
   const near = ordered.filter(

@@ -1,6 +1,7 @@
 import type {
   NodeSourceEvidence,
   NormalizedSourceBox,
+  PdfLineBoundaryDecision,
   PdfNoteRelationship,
   PdfPageRegion,
 } from './import-types'
@@ -8,11 +9,13 @@ import {
   normalizedNoteLabel,
   noteLabelsFromBoundedMarkerText,
 } from './note-label'
+import { replayPdfRegionLineRanges } from './pdf-lines'
 import type { ResearchNode, ResearchPaper } from './schema'
 
 export type NoteRelationshipSourceEvidence = {
   regions: readonly PdfPageRegion[]
   provenance: Readonly<Record<string, NodeSourceEvidence>>
+  lineBoundaryDecisions?: readonly PdfLineBoundaryDecision[]
 }
 
 export type PublicationIntegrityRenderContext = {
@@ -333,7 +336,18 @@ function sourceLineBoxesForRange(
   region: PdfPageRegion,
   start: number,
   end: number,
+  lineBoundaryDecisions?: readonly PdfLineBoundaryDecision[],
 ) {
+  if (lineBoundaryDecisions !== undefined) {
+    const replay = replayPdfRegionLineRanges(region, lineBoundaryDecisions)
+    if (replay?.text !== region.text) return []
+    return region.lines.flatMap((line) => {
+      const range = replay.ranges.get(line.id)
+      return range && Math.max(start, range.start) < Math.min(end, range.end)
+        ? [line.box]
+        : []
+    })
+  }
   const boxes: NormalizedSourceBox[] = []
   let cursor = 0
   for (const line of region.lines) {
@@ -406,6 +420,7 @@ function hasValidNoteRelationshipSourceEvidence(
     region,
     relationship.referenceStart,
     relationship.referenceEnd,
+    sourceEvidence.lineBoundaryDecisions,
   )
   if (
     exactLineBoxes.length === 0 ||

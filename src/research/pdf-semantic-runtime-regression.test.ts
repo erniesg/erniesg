@@ -43,6 +43,19 @@ function page(number: number, runs: PdfSourceRun[]): PdfPageAnalysis {
   }
 }
 
+function sourceOrderedPage(
+  number: number,
+  runs: PdfSourceRun[],
+): PdfPageAnalysis {
+  return page(
+    number,
+    runs.map((run, sourceSequenceIndex) => ({
+      ...run,
+      sourceSequenceIndex,
+    })),
+  )
+}
+
 function reconstruct(
   pages: PdfPageAnalysis[],
   options: {
@@ -554,11 +567,11 @@ describe('PDF semantic runtime regressions', () => {
 
   it('merges an unmarked cross-page bibliography continuation into its marked item provenance', async () => {
     const result = await reconstruct([
-      page(1, [
+      sourceOrderedPage(1, [
         sourceRun(1, 'References', 0.1, 0.68, 0.3, 16, 'Heading'),
         sourceRun(1, '[1] A long reference begins on this page', 0.1, 0.76),
       ]),
-      page(2, [
+      sourceOrderedPage(2, [
         sourceRun(2, 'and continues without repeating its marker.', 0.1, 0.1),
       ]),
     ])
@@ -586,8 +599,12 @@ describe('PDF semantic runtime regressions', () => {
 
   it('merges an unmarked cross-page list continuation without inventing a new item', async () => {
     const result = await reconstruct([
-      page(1, [sourceRun(1, '• A list item begins on this page', 0.1, 0.76)]),
-      page(2, [sourceRun(2, 'and continues as the same item.', 0.1, 0.1)]),
+      sourceOrderedPage(1, [
+        sourceRun(1, '• A list item begins on this page', 0.1, 0.76),
+      ]),
+      sourceOrderedPage(2, [
+        sourceRun(2, 'and continues as the same item.', 0.1, 0.1),
+      ]),
     ])
     const listNodes = result.paper.nodes.filter(
       (node) => node.type === 'paragraph' && node.list,

@@ -2281,6 +2281,35 @@ describe('PDF semantic signal detection', () => {
     })
 
     expect(result.semanticTextViolationNodeIds).toEqual([])
+
+    const unowned = provenanceTextConservation({
+      allRegions: regions,
+      orderedRegions: regions,
+      paper,
+      provenance,
+      visualRelationships: [],
+      lineBoundaryDecisions: [],
+      sourceSemanticFlowBoundaryDecisions: decisions,
+    })
+    expect(unowned.semanticFlowBoundaryLedgerFailureReasons).toContain(
+      'inline-stacked-relationship-cardinality-invalid',
+    )
+
+    const staleBefore = structuredClone(regions)
+    staleBefore[0].lines[0].runs[0].sourceSequenceIndex = 99
+    staleBefore[0].lines[0].sourceFragmentLineage!.sourceSequenceIndexes = [99]
+    const staleBeforeResult = provenanceTextConservation({
+      allRegions: staleBefore,
+      orderedRegions: staleBefore,
+      paper,
+      provenance,
+      visualRelationships: [visualRelationship],
+      lineBoundaryDecisions: [],
+      sourceSemanticFlowBoundaryDecisions: decisions,
+    })
+    expect(
+      staleBeforeResult.semanticFlowBoundaryLedgerFailureReasons,
+    ).toContain('inline-stacked-before-formula-adjacency-invalid')
   })
 
   describe('cross-page-column ledger verification', () => {
@@ -2369,10 +2398,7 @@ describe('PDF semantic signal detection', () => {
         continuationRun,
         'left',
       )
-      const endpoint = (
-        target: PdfPageRegion,
-        sourceRun: PdfSourceRun,
-      ) => ({
+      const endpoint = (target: PdfPageRegion, sourceRun: PdfSourceRun) => ({
         regionId: target.id,
         lineId: target.lines[0].id,
         runIndex: 0,
@@ -2456,6 +2482,9 @@ describe('PDF semantic signal detection', () => {
       })
 
       expect(result.semanticFlowBoundaryLedgerValid).toBe(false)
+      expect(result.semanticFlowBoundaryLedgerFailureReasons).toContain(
+        'source-adjacency-invalid',
+      )
     })
 
     it('does not let an unvalidated matched visual hide intervening body source', () => {
@@ -2511,6 +2540,9 @@ describe('PDF semantic signal detection', () => {
       })
 
       expect(result.semanticFlowBoundaryLedgerValid).toBe(false)
+      expect(result.semanticFlowBoundaryLedgerFailureReasons).toEqual([
+        'missing-required-cross-page-decision',
+      ])
       expect(result.semanticTextViolationNodeIds).toContain('cross-page-node')
     })
   })

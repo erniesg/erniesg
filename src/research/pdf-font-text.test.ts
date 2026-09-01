@@ -39,6 +39,39 @@ describe('PDF font text normalization', () => {
     ]).toEqual(['⎩', '⎭', '⎧', '⎫'])
   })
 
+  it('decodes Computer Modern symbol control slots into semantic Unicode', () => {
+    const normalize = (slot: number) =>
+      normalizePdfFontText(String.fromCodePoint(slot), 'ABCDEF+CMSY10')
+
+    expect([0x00, 0x01, 0x02, 0x06, 0x07].map(normalize)).toEqual([
+      '−',
+      '⋅',
+      '×',
+      '±',
+      '∓',
+    ])
+    expect([0x08, 0x09, 0x0a, 0x0b, 0x0c].map(normalize)).toEqual([
+      '⊕',
+      '⊖',
+      '⊗',
+      '⊘',
+      '⊙',
+    ])
+    expect([0x14, 0x15, 0x18, 0x19].map(normalize)).toEqual([
+      '≤',
+      '≥',
+      '∼',
+      '≈',
+    ])
+
+    const normalizedControls = Array.from({ length: 32 }, (_, slot) =>
+      normalize(slot),
+    ).join('')
+    expect(normalizedControls).not.toMatch(
+      /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u,
+    )
+  })
+
   it('does not reinterpret control characters from an unrelated font', () => {
     expect(normalizePdfFontText('\u0000x\u0001', 'ABCDEF+BodySerif')).toBe(
       '\u0000x\u0001',

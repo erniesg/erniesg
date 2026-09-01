@@ -237,6 +237,9 @@ function noteRelationshipSourceEvidence(
   return {
     regions: Array.isArray(pdf.regions) ? pdf.regions : [],
     provenance: pdf.provenance ?? {},
+    ...(Array.isArray(pdf.lineBoundaryDecisions)
+      ? { lineBoundaryDecisions: pdf.lineBoundaryDecisions }
+      : {}),
   }
 }
 

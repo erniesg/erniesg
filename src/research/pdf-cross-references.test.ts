@@ -4,6 +4,7 @@ import type {
   PdfScholarlyCrossReferenceKind,
 } from './import-types'
 import {
+  canonicalPdfRomanSectionHeadingIdentifiers,
   resolvePdfScholarlyCrossReferences,
   type PdfCanonicalCrossReferenceTarget,
 } from './pdf-cross-references'
@@ -62,6 +63,27 @@ function target(
 }
 
 describe('PDF scholarly cross references', () => {
+  it('requires sequence proof before treating an isolated single Roman glyph as a section', () => {
+    expect(
+      canonicalPdfRomanSectionHeadingIdentifiers([
+        { id: 'isolated-i', text: 'I. Supplement' },
+        { id: 'invalid-iiv', text: 'IIV. Ambiguous numeral' },
+        { id: 'roman-looking-word', text: 'MIX Results' },
+      ]),
+    ).toEqual(new Map())
+    expect(
+      canonicalPdfRomanSectionHeadingIdentifiers([
+        { id: 'section-i', text: 'I. INTRODUCTION' },
+        { id: 'section-ii', text: 'II. METHOD' },
+      ]),
+    ).toEqual(
+      new Map([
+        ['section-i', 'I'],
+        ['section-ii', 'II'],
+      ]),
+    )
+  })
+
   it('resolves exact singular, plural, appendix, section, and equation spans', () => {
     const text =
       'Figures 4 and 5 compare Table 2 with Section 6.1, Appendix A and J.7.1, Equation (3), Eq. 4, and Section J.7.1.'
@@ -319,6 +341,61 @@ describe('PDF scholarly cross references', () => {
     ).toEqual([
       { text: 'Figure IV', status: 'matched' },
       { text: 'Table IX', status: 'matched' },
+    ])
+  })
+
+  it('resolves explicitly prefixed Roman section identifiers', () => {
+    const text =
+      'Sections II and III establish the method; Sec. iv reports the result.'
+    const relationships = resolvePdfScholarlyCrossReferences({
+      regions: [region(text)],
+      canonicalTargets: [
+        target('section', 'Section II'),
+        target('section', 'Section III'),
+        target('section', 'Section IV'),
+      ],
+    })
+
+    expect(
+      relationships.map(({ text: value, labels, status }) => ({
+        text: value,
+        labels,
+        status,
+      })),
+    ).toEqual([
+      {
+        text: 'Sections II and III',
+        labels: ['Section II', 'Section III'],
+        status: 'matched',
+      },
+      {
+        text: 'Sec. iv',
+        labels: ['Section IV'],
+        status: 'matched',
+      },
+    ])
+  })
+
+  it('does not detect a single Roman-or-letter section without a proved canonical section target', () => {
+    const source = region('Section I introduces the result.')
+
+    expect(
+      resolvePdfScholarlyCrossReferences({
+        regions: [source],
+        canonicalTargets: [],
+      }),
+    ).toEqual([])
+    expect(
+      resolvePdfScholarlyCrossReferences({
+        regions: [source],
+        canonicalTargets: [target('section', 'Section I')],
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        text: 'Section I',
+        labels: ['Section I'],
+        status: 'matched',
+      }),
     ])
   })
 

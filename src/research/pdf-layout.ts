@@ -24,6 +24,7 @@ import type {
 } from './import-types'
 import { PdfImportError, PdfReconstructionInvariantError } from './import-types'
 import {
+  canonicalPdfRomanSectionHeadingIdentifiers,
   resolvePdfScholarlyCrossReferences,
   type PdfCanonicalCrossReferenceTarget,
 } from './pdf-cross-references'
@@ -446,6 +447,13 @@ export function canonicalBlockTargetSourceBoxes(
 export function canonicalHeadingCrossReferenceTargets(
   blocks: readonly RegionBlock[],
 ): PdfCanonicalCrossReferenceTarget[] {
+  const romanSectionIdentifiers = canonicalPdfRomanSectionHeadingIdentifiers(
+    blocks.flatMap((block) =>
+      block.type === 'heading' && block.nodeId
+        ? [{ id: block.nodeId, text: block.text }]
+        : [],
+    ),
+  )
   const plainLetteredHeadings = blocks.flatMap((block) => {
     if (block.type !== 'heading') return []
     const match = block.text.trim().match(/^([A-Z])\s+\p{Lu}/u)
@@ -483,13 +491,17 @@ export function canonicalHeadingCrossReferenceTargets(
     const explicitlyPrefixedSectionIdentifier =
       explicitlyPrefixedSectionHeadingIdentifier(text)
     const numbered = text.match(/^(\d+(?:\.\d+)*)\.?\s+\S/u)
+    const romanSectionIdentifier = romanSectionIdentifiers.get(block.nodeId)
     const sectionIdentifier =
-      explicitlyPrefixedSectionIdentifier ?? numbered?.[1]
-    const identifier =
-      explicitAppendix?.[1] ??
-      lettered?.[1] ??
-      nestedLettered?.[1] ??
-      plainLettered?.[1]
+      explicitlyPrefixedSectionIdentifier ??
+      numbered?.[1] ??
+      romanSectionIdentifier
+    const identifier = romanSectionIdentifier
+      ? undefined
+      : (explicitAppendix?.[1] ??
+        lettered?.[1] ??
+        nestedLettered?.[1] ??
+        plainLettered?.[1])
     const targets: PdfCanonicalCrossReferenceTarget[] = []
     if (sectionIdentifier) {
       targets.push({

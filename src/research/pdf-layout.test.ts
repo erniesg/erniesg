@@ -5320,6 +5320,13 @@ describe('PDF semantic reconstruction', () => {
             0.22,
             0.72,
           ),
+          run(
+            1,
+            'Sections II and III define the system; Section IV reports the evaluation.',
+            0.1,
+            0.28,
+            0.76,
+          ),
         ]),
         page(2, [
           ...smallCapsHeading('II. COLLECTING AN EVALUATION SET', 0.12),
@@ -5363,6 +5370,43 @@ describe('PDF semantic reconstruction', () => {
       'II. COLLECTING AN EVALUATION SET',
       'III. AN AGENT-BASED REPAIR SYSTEM',
       'IV. EVALUATING GENERATED REPAIRS',
+    ])
+    expect(
+      result.crossReferenceRelationships.map(
+        ({ text, labels, status, targetNodeIds, canonicalAnchor }) => ({
+          text,
+          labels,
+          status,
+          targetNodeIds,
+          canonicalAnchor,
+        }),
+      ),
+    ).toEqual([
+      {
+        text: 'Sections II and III',
+        labels: ['Section II', 'Section III'],
+        status: 'matched',
+        targetNodeIds: [
+          expect.stringMatching(/^sec-/u),
+          expect.stringMatching(/^sec-/u),
+        ],
+        canonicalAnchor: {
+          nodeId: expect.stringMatching(/^p-/u),
+          start: 0,
+          end: 'Sections II and III'.length,
+        },
+      },
+      {
+        text: 'Section IV',
+        labels: ['Section IV'],
+        status: 'matched',
+        targetNodeIds: [expect.stringMatching(/^sec-/u)],
+        canonicalAnchor: {
+          nodeId: expect.stringMatching(/^p-/u),
+          start: 'Sections II and III define the system; '.length,
+          end: 'Sections II and III define the system; Section IV'.length,
+        },
+      },
     ])
   })
 

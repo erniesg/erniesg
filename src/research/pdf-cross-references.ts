@@ -38,6 +38,75 @@ type DetectedReference = {
 
 const PREFIX_SOURCE = String.raw`\b(fig(?:ure)?s?|tables?|sections?|secs?|appendix|appendices|eq(?:uation)?s?)\.?\s+`
 const MAX_EXPLICIT_LIST_TARGETS = 32
+const MAX_ROMAN_SECTION_IDENTIFIER_CHARACTERS = 12
+
+function canonicalRomanSectionIdentifier(value: string) {
+  if (
+    value.length < 1 ||
+    value.length > MAX_ROMAN_SECTION_IDENTIFIER_CHARACTERS ||
+    !/^(?:M{0,3})(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})$/iu.test(
+      value,
+    )
+  ) {
+    return null
+  }
+  return value.toUpperCase()
+}
+
+function romanSectionOrdinal(value: string) {
+  const digits: Record<string, number> = {
+    I: 1,
+    V: 5,
+    X: 10,
+    L: 50,
+    C: 100,
+    D: 500,
+    M: 1000,
+  }
+  let total = 0
+  for (let index = 0; index < value.length; index += 1) {
+    const current = digits[value[index]] ?? 0
+    const next = digits[value[index + 1]] ?? 0
+    total += current < next ? -current : current
+  }
+  return total
+}
+
+export function canonicalPdfRomanSectionHeadingIdentifiers(
+  headings: readonly { id: string; text: string }[],
+) {
+  const candidates = headings.flatMap((heading) => {
+    const match = heading.text
+      .trim()
+      .match(/^([IVXLCDMivxlcdm]{1,12})(\.)?\s+\S/u)
+    const raw = match?.[1]
+    const identifier = raw ? canonicalRomanSectionIdentifier(raw) : null
+    return identifier
+      ? [
+          {
+            id: heading.id,
+            identifier,
+            ordinal: romanSectionOrdinal(identifier),
+            punctuated: Boolean(match?.[2]),
+          },
+        ]
+      : []
+  })
+  const proved = new Map<string, string>()
+  for (const candidate of candidates) {
+    if (candidate.identifier.length > 1 && candidate.punctuated) {
+      proved.set(candidate.id, candidate.identifier)
+    }
+  }
+  for (let index = 0; index < candidates.length - 1; index += 1) {
+    const current = candidates[index]
+    const next = candidates[index + 1]
+    if (next.ordinal !== current.ordinal + 1) continue
+    proved.set(current.id, current.identifier)
+    proved.set(next.id, next.identifier)
+  }
+  return proved
+}
 
 function kindForPrefix(value: string): PdfScholarlyCrossReferenceKind {
   if (/^fig/iu.test(value)) return 'figure'
@@ -68,7 +137,10 @@ function identifierAt(
   value: string,
   offset: number,
   kind: PdfScholarlyCrossReferenceKind,
-  options: { allowAsciiHyphenCompound?: boolean } = {},
+  options: {
+    allowAsciiHyphenCompound?: boolean
+    allowedSingleRomanSectionIdentifiers?: ReadonlySet<string>
+  } = {},
 ) {
   if (isVisualKind(kind)) {
     const parsed = parsePdfScholarlyVisualIdentifier(value, offset, {
@@ -90,7 +162,7 @@ function identifierAt(
       return String.raw`[A-Z](?:\.\d+)*`
     }
     if (kind === 'section') {
-      return String.raw`(?:\d+(?:\.\d+)*|[A-Z](?:\.\d+)+)`
+      return String.raw`(?:\d+(?:\.\d+)*|[A-Z](?:\.\d+)+|[IVXLCDMivxlcdm]{1,12})`
     }
     return String.raw`(?:\d+(?:\.\d+)*(?:[A-Za-z])?|[IVXLCDM]+)`
   })()
@@ -104,8 +176,20 @@ function identifierAt(
   const match = source.match(pattern)
   if (!match) return null
   const tokenOffset = match[0].indexOf(match[1])
+  const identifier =
+    kind === 'section' && /^[IVXLCDMivxlcdm]+$/u.test(match[1])
+      ? canonicalRomanSectionIdentifier(match[1])
+      : match[1]
+  if (
+    !identifier ||
+    (kind === 'section' &&
+      identifier.length === 1 &&
+      /^[IVXLCDM]$/u.test(identifier) &&
+      !options.allowedSingleRomanSectionIdentifiers?.has(identifier))
+  )
+    return null
   return {
-    identifier: match[1],
+    identifier,
     start: offset + tokenOffset,
     end: offset + tokenOffset + match[1].length,
     consumedEnd: offset + match[0].length,
@@ -254,7 +338,10 @@ function sourceBoxesForRange(
   return boxes.length > 0 ? boxes : [{ ...region.box }]
 }
 
-function detectRegionReferences(region: PdfPageRegion) {
+function detectRegionReferences(
+  region: PdfPageRegion,
+  allowedSingleRomanSectionIdentifiers: ReadonlySet<string>,
+) {
   const found: DetectedReference[] = []
   for (const match of region.text.matchAll(new RegExp(PREFIX_SOURCE, 'giu'))) {
     const referenceStart = match.index ?? 0
@@ -285,6 +372,7 @@ function detectRegionReferences(region: PdfPageRegion) {
           }
         : identifierAt(region.text, identifierOffset, kind, {
             allowAsciiHyphenCompound: true,
+            allowedSingleRomanSectionIdentifiers,
           })
     if (!first) continue
     const targets: DetectedTarget[] = compactRange
@@ -313,7 +401,10 @@ function detectRegionReferences(region: PdfPageRegion) {
           region.text,
           cursor + rangeConnector[0].length,
           kind,
-          { allowAsciiHyphenCompound: true },
+          {
+            allowAsciiHyphenCompound: true,
+            allowedSingleRomanSectionIdentifiers,
+          },
         )
         if (last) {
           const identifiers = expandedRangeIdentifiers(
@@ -352,7 +443,10 @@ function detectRegionReferences(region: PdfPageRegion) {
         region.text,
         cursor + connector[0].length,
         kind,
-        { allowAsciiHyphenCompound: true },
+        {
+          allowAsciiHyphenCompound: true,
+          allowedSingleRomanSectionIdentifiers,
+        },
       )
       if (!next) break
       targets.push({
@@ -410,7 +504,17 @@ export function resolvePdfScholarlyCrossReferences({
     values.push(target)
     targetsByLabel.set(key, values)
   }
-  return regions.flatMap(detectRegionReferences).map((reference) => {
+  const allowedSingleRomanSectionIdentifiers = new Set(
+    canonicalTargets.flatMap((target) => {
+      if (target.kind !== 'section') return []
+      const identifier = target.label.match(/^Section ([IVXLCDM])$/u)?.[1]
+      return identifier ? [identifier] : []
+    }),
+  )
+  const detectedReferences = regions.flatMap((region) =>
+    detectRegionReferences(region, allowedSingleRomanSectionIdentifiers),
+  )
+  return detectedReferences.map((reference) => {
     const targets = reference.targets.map((target) => {
       const exactCandidates =
         targetsByLabel.get(targetKey(target.kind, target.label)) ?? []

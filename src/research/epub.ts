@@ -41,7 +41,10 @@ import {
 } from './equation-geometry-transcript'
 import { getCompositionPolicy } from './composition'
 import { parsePdfCitationSurface } from './pdf-citation-surface'
-import { resolvePdfScholarlyCrossReferences } from './pdf-cross-references'
+import {
+  canonicalPdfRomanSectionHeadingIdentifiers,
+  resolvePdfScholarlyCrossReferences,
+} from './pdf-cross-references'
 import {
   assessPdfCompleteness,
   hasValidCanonicalHyphenBoundaryLedger,
@@ -516,6 +519,8 @@ function canonicalHeadingCrossReferenceTargets(
     (node): node is Extract<ResearchNode, { type: 'heading' }> =>
       node.type === 'heading',
   )
+  const romanSectionIdentifiers =
+    canonicalPdfRomanSectionHeadingIdentifiers(headings)
   const plainLettered = headings.flatMap((node) => {
     const match = node.text.trim().match(/^([A-Z])\s+\p{Lu}/u)
     return match ? [{ node, ordinal: match[1].charCodeAt(0) }] : []
@@ -546,17 +551,20 @@ function canonicalHeadingCrossReferenceTargets(
         ? plainLetteredMatch
         : null
     const numbered = value.match(/^(\d+(?:\.\d+)*)\.?\s+\S/u)
-    const appendixIdentifier =
-      explicitAppendix?.[1] ??
-      lettered?.[1] ??
-      nestedLettered?.[1] ??
-      plainLettered?.[1]
+    const romanSectionIdentifier = romanSectionIdentifiers.get(node.id)
+    const sectionIdentifier = numbered?.[1] ?? romanSectionIdentifier
+    const appendixIdentifier = romanSectionIdentifier
+      ? undefined
+      : (explicitAppendix?.[1] ??
+        lettered?.[1] ??
+        nestedLettered?.[1] ??
+        plainLettered?.[1])
     return [
-      ...(numbered
+      ...(sectionIdentifier
         ? [
             {
               kind: 'section' as const,
-              label: `Section ${numbered[1]}`,
+              label: `Section ${sectionIdentifier}`,
               nodeId: node.id,
               evidence: [
                 'canonical-heading-label',

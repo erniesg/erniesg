@@ -623,7 +623,7 @@ export function tabularLineBandProof(rows: TableLineRow[]) {
 }
 
 export function tableLineEntryKey(entry: TableLineEntry) {
-  return `${entry.region.id}/${entry.line.id}`
+  return JSON.stringify([entry.region.id, entry.line.id])
 }
 
 export function normalizedTableFontName(value: string) {

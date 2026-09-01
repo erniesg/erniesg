@@ -1449,14 +1449,22 @@ function validEpubEntryName(name) {
   )
 }
 
-function childElementByLocalName(parent, localName) {
+function childElementInNamespace(
+  parent,
+  localName,
+  namespace,
+  namespaceScope = parent,
+) {
   if (!isRecord(parent)) return null
-  return (
-    Object.entries(parent).find(
-      ([name]) =>
-        !name.startsWith('@_') && name.split(':').at(-1) === localName,
-    )?.[1] ?? null
-  )
+  const entry = Object.entries(parent).find(([name]) => {
+    if (name.startsWith('@_') || name.split(':').at(-1) !== localName) {
+      return false
+    }
+    const prefix = name.includes(':') ? name.split(':')[0] : null
+    const namespaceAttribute = prefix === null ? '@_xmlns' : `@_xmlns:${prefix}`
+    return namespaceScope?.[namespaceAttribute] === namespace
+  })
+  return entry?.[1] ?? null
 }
 
 function namespacedRoot(document, localName, namespace) {
@@ -1482,7 +1490,12 @@ function epubRootfilePath(containerXml) {
     'container',
     'urn:oasis:names:tc:opendocument:xmlns:container',
   )
-  const rootfilesNode = childElementByLocalName(container, 'rootfiles')
+  const containerNamespace = 'urn:oasis:names:tc:opendocument:xmlns:container'
+  const rootfilesNode = childElementInNamespace(
+    container,
+    'rootfiles',
+    containerNamespace,
+  )
   if (
     !isRecord(container) ||
     container['@_version'] !== '1.0' ||
@@ -1490,7 +1503,12 @@ function epubRootfilePath(containerXml) {
   ) {
     return null
   }
-  const rootfileNode = childElementByLocalName(rootfilesNode, 'rootfile')
+  const rootfileNode = childElementInNamespace(
+    rootfilesNode,
+    'rootfile',
+    containerNamespace,
+    container,
+  )
   const rootfiles = Array.isArray(rootfileNode) ? rootfileNode : [rootfileNode]
   const packageRootfile = rootfiles.find(
     (rootfile) =>
@@ -1509,12 +1527,15 @@ const CRC32_TABLE = Uint32Array.from({ length: 256 }, (_, value) => {
   return crc >>> 0
 })
 
-function crc32(bytes) {
-  let crc = 0xffffffff
+function crc32Update(crc, bytes) {
   for (const value of bytes) {
     crc = CRC32_TABLE[(crc ^ value) & 0xff] ^ (crc >>> 8)
   }
-  return (crc ^ 0xffffffff) >>> 0
+  return crc >>> 0
+}
+
+function crc32(bytes) {
+  return (crc32Update(0xffffffff, bytes) ^ 0xffffffff) >>> 0
 }
 
 function strictZipIndex(bytes) {
@@ -1575,7 +1596,7 @@ function strictZipIndex(bytes) {
     if (
       !validEpubEntryName(name) ||
       names.has(name) ||
-      (flags & ~0x0800) !== 0 ||
+      (flags & ~0x0806) !== 0 ||
       (compression !== 0 && compression !== 8) ||
       size > MAX_EPUB_COMPRESSED_BYTES ||
       originalSize > MAX_EPUB_INFLATED_BYTES ||
@@ -1637,7 +1658,7 @@ function strictZipIndex(bytes) {
   return new Map(entries.map((entry) => [entry.name, entry]))
 }
 
-function extractZipEntryBounded(bytes, entry, maxBytes) {
+function extractZipEntryBounded(bytes, entry, maxBytes, collect = true) {
   if (entry.originalSize <= 0 || entry.originalSize > maxBytes) {
     throw new Error('ZIP entry exceeds output limit')
   }
@@ -1647,17 +1668,19 @@ function extractZipEntryBounded(bytes, entry, maxBytes) {
   )
   let output
   if (entry.compression === 0) {
-    output = Buffer.from(compressed)
+    output = collect ? Buffer.from(compressed) : compressed
   } else {
     const chunks = []
     let emittedBytes = 0
     let completed = false
+    let runningCrc = 0xffffffff
     const inflate = new Inflate((chunk, final) => {
       emittedBytes += chunk.byteLength
       if (emittedBytes > maxBytes || emittedBytes > entry.originalSize) {
         throw new Error('ZIP entry exceeds actual output limit')
       }
-      chunks.push(Buffer.from(chunk))
+      runningCrc = crc32Update(runningCrc, chunk)
+      if (collect) chunks.push(Buffer.from(chunk))
       if (final) completed = true
     })
     for (let offset = 0; offset < compressed.byteLength; offset += 256) {
@@ -1672,12 +1695,12 @@ function extractZipEntryBounded(bytes, entry, maxBytes) {
     if (!completed || emittedBytes !== entry.originalSize) {
       throw new Error('ZIP entry size mismatch')
     }
-    output = Buffer.concat(chunks, emittedBytes)
+    if ((runningCrc ^ 0xffffffff) >>> 0 !== entry.checksum) {
+      throw new Error('ZIP entry checksum mismatch')
+    }
+    output = collect ? Buffer.concat(chunks, emittedBytes) : null
   }
-  if (
-    output.byteLength !== entry.originalSize ||
-    crc32(output) !== entry.checksum
-  ) {
+  if (entry.compression === 0 && crc32(output) !== entry.checksum) {
     throw new Error('ZIP entry integrity mismatch')
   }
   return output
@@ -1746,15 +1769,43 @@ export function validEpubPackage(bytes) {
       'package',
       'http://www.idpf.org/2007/opf',
     )
-    return (
+    const structurallyValid =
       isRecord(packageRoot) &&
       /^3(?:\.\d+)+$/u.test(packageRoot['@_version'] ?? '') &&
       typeof packageRoot['@_unique-identifier'] === 'string' &&
       packageRoot['@_unique-identifier'].length > 0 &&
-      isRecord(childElementByLocalName(packageRoot, 'metadata')) &&
-      isRecord(childElementByLocalName(packageRoot, 'manifest')) &&
-      isRecord(childElementByLocalName(packageRoot, 'spine'))
-    )
+      isRecord(
+        childElementInNamespace(
+          packageRoot,
+          'metadata',
+          'http://www.idpf.org/2007/opf',
+        ),
+      ) &&
+      isRecord(
+        childElementInNamespace(
+          packageRoot,
+          'manifest',
+          'http://www.idpf.org/2007/opf',
+        ),
+      ) &&
+      isRecord(
+        childElementInNamespace(
+          packageRoot,
+          'spine',
+          'http://www.idpf.org/2007/opf',
+        ),
+      )
+    if (!structurallyValid) return false
+    for (const entry of entries.values()) {
+      if (
+        entry.name !== 'mimetype' &&
+        entry.name !== 'META-INF/container.xml' &&
+        entry.name !== rootfile
+      ) {
+        extractZipEntryBounded(bytes, entry, entry.originalSize, false)
+      }
+    }
+    return true
   } catch {
     return false
   }

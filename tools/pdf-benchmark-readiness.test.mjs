@@ -507,6 +507,15 @@ describe('PDF benchmark readiness registry', () => {
       validEpubPackage(
         createValidEpub({
           'EPUB/package.opf': strToU8(
+            '<package xmlns="http://www.idpf.org/2007/opf" xmlns:evil="urn:evil" version="3.0" unique-identifier="pub-id"><evil:metadata><evil:identifier id="pub-id">urn:fixture</evil:identifier></evil:metadata><evil:manifest><evil:item id="content" href="content.xhtml" media-type="application/xhtml+xml"/></evil:manifest><evil:spine><evil:itemref idref="content"/></evil:spine></package>',
+          ),
+        }),
+      ),
+    ).toBe(false)
+    expect(
+      validEpubPackage(
+        createValidEpub({
+          'EPUB/package.opf': strToU8(
             '<opf:package xmlns:opf="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id"><opf:metadata><opf:identifier id="pub-id">urn:fixture</opf:identifier></opf:metadata><opf:manifest><opf:item id="content" href="content.xhtml" media-type="application/xhtml+xml"/></opf:manifest><opf:spine><opf:itemref idref="content"/></opf:spine></opf:package>',
           ),
         }),
@@ -559,6 +568,23 @@ describe('PDF benchmark readiness registry', () => {
       ),
     )
     expect(validEpubPackage(hiddenPackageRecord)).toBe(false)
+
+    const corruptContentPayload = corruptZipLocalEntryPayload(
+      createValidEpub({
+        'EPUB/content.xhtml': strToU8(
+          `<html xmlns="http://www.w3.org/1999/xhtml"><body>${'content'.repeat(4096)}</body></html>`,
+        ),
+      }),
+      'EPUB/content.xhtml',
+    )
+    expect(validEpubPackage(corruptContentPayload)).toBe(false)
+  })
+
+  it('accepts the repository-published EPUB profile', async () => {
+    const published = await readFile(
+      'public/research/if-letters-home-could-sing/if-letters-home-could-sing.epub',
+    )
+    expect(pdfBenchmarkReadiness.validEpubPackage(published)).toBe(true)
   })
 
   it('rejects oversized EPUB and governance bindings from lstat metadata', async () => {

@@ -6423,6 +6423,34 @@ describe('deterministic scholarly page regions', () => {
     )
   })
 
+  it('does not promote an unscoped bracketed source-list item to a footnote', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(1, 'Unscoped Bracketed Item', 0.2, 0.06, 0.6, 18, 0.03),
+        run(1, 'Ada Example', 0.4, 0.13, 0.2, 11),
+        run(1, 'Abstract', 0.08, 0.22, 0.18, 14),
+        run(
+          1,
+          'This abstract establishes a source-backed scholarly document.',
+          0.08,
+          0.27,
+          0.84,
+        ),
+        run(1, 'Prior work [1] supports the claim.', 0.08, 0.5, 0.7),
+        run(1, '[1] Unscoped source-list item.', 0.08, 0.86, 0.7, 7),
+      ]),
+    ])
+
+    expect(
+      result.paper.nodes.filter((node) => node.type === 'footnote'),
+    ).toEqual([])
+    expect(
+      result.noteRelationships.some(
+        (relationship) => relationship.status === 'matched',
+      ),
+    ).toBe(false)
+  })
+
   it('matches a page-wide symbolic footnote and emits EPUB note semantics and backlinks', async () => {
     const result = await reconstruct(
       [

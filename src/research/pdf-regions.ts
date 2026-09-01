@@ -2248,6 +2248,23 @@ type NoteLineClassificationEvidence = {
   renderedFootnote: boolean
 }
 
+function hasExplicitBracketedNoteReference(
+  definition: PdfTextLine,
+  lines: readonly PdfTextLine[],
+  label: string,
+) {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const exactReference = new RegExp(
+    `\\b(?:footnote|note)(?:\\s+(?:reference|marker))?\\s*#?\\s*\\[\\s*${escaped}\\s*\\]`,
+    'iu',
+  )
+  return lines.some(
+    (candidate) =>
+      candidate !== definition &&
+      exactReference.test(normalizedNoteLabel(candidate.text)),
+  )
+}
+
 function hasCompactStandaloneNoteContinuation(
   marker: PdfTextLine,
   lines: readonly PdfTextLine[],
@@ -2296,6 +2313,13 @@ function noteLineClassificationEvidence(
   const label =
     noteLabelFromText(normalized) ??
     (standaloneNoteContinuation ? normalized : null)
+  const bracketedDefinition = new RegExp(
+    `^\\[\\s*${NOTE_LABEL}\\s*\\](?=\\s|$)`,
+  ).test(normalized)
+  const bracketedDefinitionOwned =
+    !bracketedDefinition ||
+    (label !== null &&
+      hasExplicitBracketedNoteReference(line, pageLines, label))
   const explicitFootnote = new RegExp(
     `^(?:footnote|note)\\s+${NOTE_LABEL}`,
     'i',
@@ -2325,6 +2349,7 @@ function noteLineClassificationEvidence(
     !standaloneNoteContinuation
   const renderedFootnote =
     label !== null &&
+    bracketedDefinitionOwned &&
     !decimalTabularContent &&
     !isolatedMarginFolio &&
     !monospacedNumberedContent &&

@@ -2015,6 +2015,7 @@ export async function createPdfBenchmarkReadinessReceipt({
         registry.candidateCommitment.committedBeforePrivateLabelReveal,
       componentCommitmentSha256: candidateCommitment.componentCommitmentSha256,
     },
+    nativeReaderEvidence,
     criteria: assessment.criteria,
     gaps: assessment.gaps,
     ready: assessment.ready,

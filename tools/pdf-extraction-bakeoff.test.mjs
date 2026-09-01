@@ -133,7 +133,48 @@ describe('extraction bake-off CLI', () => {
     expect(result.status, result.stderr).toBe(0)
   })
 
-  it('schemas the synthetic authority as non-promotable and provider-free', () => {
+  it('keeps the synthetic CLI validator closed to owner-local provider authority', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'extraction-bakeoff-'))
+    const report = JSON.parse(
+      readFileSync('benchmarks/pdf/extraction-bakeoff-report-v1.json', 'utf8'),
+    )
+    const { reportSha256: _reportSha256, ...withoutHash } = report
+    const realReport = {
+      ...withoutHash,
+      authority: {
+        kind: 'owner-local-real-provider-evidence',
+        realProviderCalls: 1,
+        realProviderAuthority: true,
+        promotionEligible: false,
+        providerExecutionReceiptSha256: 'c'.repeat(64),
+      },
+    }
+    const reportPath = join(directory, 'owner-local-real-report.json')
+    writeFileSync(
+      reportPath,
+      `${JSON.stringify({
+        ...realReport,
+        reportSha256: structuredExtractionHash(realReport),
+      })}\n`,
+    )
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        'tools/pdf-extraction-bakeoff.mjs',
+        '--validate-report',
+        reportPath,
+      ],
+      { encoding: 'utf8', timeout: 30_000 },
+    )
+
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('INVALID_SYNTHETIC_BAKEOFF_AUTHORITY')
+    rmSync(directory, { recursive: true, force: true })
+  })
+
+  it('accepts raw reports and a privacy-safe owner-local real-provider receipt', () => {
     const schema = JSON.parse(
       readFileSync(
         'docs/schemas/extraction-bakeoff-report.schema.json',
@@ -146,6 +187,42 @@ describe('extraction bake-off CLI', () => {
     const validate = new Ajv2020({ strict: false }).compile(schema)
 
     expect(validate(report), JSON.stringify(validate.errors)).toBe(true)
+    const { authority: _authority, reportSha256: _reportSha256, ...raw } = report
+    const rawReport = {
+      ...raw,
+      reportSha256: structuredExtractionHash(raw),
+    }
+    expect(validate(rawReport), JSON.stringify(validate.errors)).toBe(true)
+    const realAuthorityReport = {
+      ...raw,
+      authority: {
+        kind: 'owner-local-real-provider-evidence',
+        realProviderCalls: 1,
+        realProviderAuthority: true,
+        promotionEligible: false,
+        providerExecutionReceiptSha256: 'c'.repeat(64),
+      },
+    }
+    expect(
+      validate({
+        ...realAuthorityReport,
+        reportSha256: structuredExtractionHash(realAuthorityReport),
+      }),
+      JSON.stringify(validate.errors),
+    ).toBe(true)
+    const { providerExecutionReceiptSha256: _receipt, ...unboundAuthority } =
+      realAuthorityReport.authority
+    const unboundRealReport = {
+      ...raw,
+      authority: unboundAuthority,
+    }
+    expect(
+      validate({
+        ...unboundRealReport,
+        reportSha256: structuredExtractionHash(unboundRealReport),
+      }),
+    ).toBe(false)
+
     for (const authority of [
       { ...report.authority, promotionEligible: true },
       { ...report.authority, realProviderAuthority: true },
@@ -159,23 +236,36 @@ describe('extraction bake-off CLI', () => {
         ...report,
         authority: {
           kind: 'real-provider-promotion-evidence',
-          realProviderCalls: 1,
-          realProviderAuthority: true,
-          promotionEligible: true,
-        },
-      }),
-    ).toBe(false)
-    expect(
-      validate({
-        ...report,
-        authority: {
-          kind: 'real-provider-promotion-evidence',
           realProviderCalls: Number.MAX_SAFE_INTEGER + 1,
           realProviderAuthority: true,
           promotionEligible: true,
         },
       }),
     ).toBe(false)
+  })
+
+  it('rejects a report whose case structure hash was deleted even after recomputing its report hash', () => {
+    const schema = JSON.parse(
+      readFileSync(
+        'docs/schemas/extraction-bakeoff-report.schema.json',
+        'utf8',
+      ),
+    )
+    const report = JSON.parse(
+      readFileSync('benchmarks/pdf/extraction-bakeoff-report-v1.json', 'utf8'),
+    )
+    const validate = new Ajv2020({ strict: false }).compile(schema)
+    const { reportSha256: _reportSha256, ...withoutHash } = report
+    const mutated = structuredClone(withoutHash)
+    delete mutated.arms['geometric-baseline'].documents[0].caseScores[0]
+      .structureHash
+    const forged = {
+      ...mutated,
+      reportSha256: structuredExtractionHash(mutated),
+    }
+
+    expect(validate(forged)).toBe(false)
+    expect(JSON.stringify(validate.errors)).toContain('structureHash')
   })
 
   it('refuses to stamp an authority-absent report', () => {

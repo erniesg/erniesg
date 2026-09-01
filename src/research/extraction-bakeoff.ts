@@ -137,12 +137,29 @@ export type ExtractionBakeoffComparisonRow = {
   disagreementDocumentIds: string[]
 }
 
-export type ExtractionBakeoffAuthority = {
+export type SyntheticExtractionBakeoffAuthority = {
   kind: 'synthetic-contract-self-test'
   realProviderCalls: 0
   realProviderAuthority: false
   promotionEligible: false
 }
+
+/**
+ * A privacy-safe receipt emitted by an owner-local real-provider run. It is
+ * deliberately non-promotable: a report cannot substitute for the separate
+ * human architecture decision or prove the contents of the private run.
+ */
+export type OwnerLocalRealProviderExtractionBakeoffAuthority = {
+  kind: 'owner-local-real-provider-evidence'
+  realProviderCalls: number
+  realProviderAuthority: true
+  promotionEligible: false
+  providerExecutionReceiptSha256: string
+}
+
+export type ExtractionBakeoffAuthority =
+  | SyntheticExtractionBakeoffAuthority
+  | OwnerLocalRealProviderExtractionBakeoffAuthority
 
 export type ExtractionBakeoffReport = {
   schemaVersion: typeof EXTRACTION_BAKEOFF_SCHEMA_VERSION

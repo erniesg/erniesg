@@ -229,6 +229,22 @@ describe('PDF benchmark readiness registry', () => {
     expect(receipt.receiptSha256).toMatch(/^[a-f0-9]{64}$/)
   })
 
+  it('preserves the privacy-safe native reader validation summary in the hash-bound receipt', async () => {
+    const receipt = await createPdfBenchmarkReadinessReceipt({ registryPath })
+
+    expect(receipt.nativeReaderEvidence).toEqual({
+      exactArtifactSha256: null,
+      structurallyValidatedReaderIds: [],
+      trustedAttestationVerified: false,
+      trustedAttestationReason: 'trusted-attestation-verifier-not-implemented',
+      verifiedReaderIds: [],
+    })
+    const { receiptSha256, ...unsignedReceipt } = receipt
+    expect(receiptSha256).toBe(
+      createHash('sha256').update(canonicalJson(unsignedReceipt)).digest('hex'),
+    )
+  })
+
   it('fails closed when a bound artifact hash changes', async () => {
     const registry = await readRegistry()
     registry.sources[0].evalSet.fileSha256 = '0'.repeat(64)
@@ -1340,22 +1356,17 @@ describe('PDF benchmark readiness registry', () => {
     })
 
     const browserSubstitution = structuredClone(nativeReaderEvidence)
+    const appleBooksExecutionReceipt = JSON.parse(
+      await readFile(
+        nativeReaderEvidence['apple-books'].executionReceipt.path,
+        'utf8',
+      ),
+    )
     browserSubstitution['apple-books'].executionReceipt = await writeEvidence(
       'browser-substitution.json',
       {
-        schemaVersion: '1.0.0',
-        kind: 'pdf-benchmark-native-reader-execution-receipt',
-        readerId: 'apple-books',
+        ...appleBooksExecutionReceipt,
         readerType: 'chromium',
-        readerIdentityEvidenceFileSha256:
-          nativeReaderEvidence['apple-books'].readerIdentity.fileSha256,
-        exportEvidenceFileSha256: exportEvidence.fileSha256,
-        exportReceiptEvidenceFileSha256: exportReceiptEvidence.fileSha256,
-        exportReceiptIdentitySha256,
-        epubCheckReceiptEvidenceFileSha256: epubCheckReceiptEvidence.fileSha256,
-        exactArtifactSha256,
-        executionIdentitySha256: 'b'.repeat(64),
-        status: 'passed',
       },
     )
     await expect(
@@ -1368,23 +1379,17 @@ describe('PDF benchmark readiness registry', () => {
       'independent-desktop-epub-reader',
       'target-eink-reader-device',
     ]) {
+      const executionReceipt = JSON.parse(
+        await readFile(
+          nativeReaderEvidence[readerId].executionReceipt.path,
+          'utf8',
+        ),
+      )
       arbitrarySharedClaim[readerId].executionReceipt = await writeEvidence(
         `${readerId}-arbitrary-claim.json`,
         {
-          schemaVersion: '1.0.0',
-          kind: 'pdf-benchmark-native-reader-execution-receipt',
-          readerId,
-          readerType: readerId,
-          readerIdentityEvidenceFileSha256:
-            nativeReaderEvidence[readerId].readerIdentity.fileSha256,
-          exportEvidenceFileSha256: exportEvidence.fileSha256,
-          exportReceiptEvidenceFileSha256: exportReceiptEvidence.fileSha256,
-          exportReceiptIdentitySha256,
-          epubCheckReceiptEvidenceFileSha256:
-            epubCheckReceiptEvidence.fileSha256,
+          ...executionReceipt,
           exactArtifactSha256: 'e'.repeat(64),
-          executionIdentitySha256: 'c'.repeat(64),
-          status: 'passed',
         },
       )
     }
@@ -1393,21 +1398,17 @@ describe('PDF benchmark readiness registry', () => {
     ).rejects.toThrow('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
 
     const unboundIdentity = structuredClone(nativeReaderEvidence)
+    const unboundIdentityReceipt = JSON.parse(
+      await readFile(
+        nativeReaderEvidence['apple-books'].executionReceipt.path,
+        'utf8',
+      ),
+    )
     unboundIdentity['apple-books'].executionReceipt = await writeEvidence(
       'unbound-identity.json',
       {
-        schemaVersion: '1.0.0',
-        kind: 'pdf-benchmark-native-reader-execution-receipt',
-        readerId: 'apple-books',
-        readerType: 'apple-books',
+        ...unboundIdentityReceipt,
         readerIdentityEvidenceFileSha256: '0'.repeat(64),
-        exportEvidenceFileSha256: exportEvidence.fileSha256,
-        exportReceiptEvidenceFileSha256: exportReceiptEvidence.fileSha256,
-        exportReceiptIdentitySha256,
-        epubCheckReceiptEvidenceFileSha256: epubCheckReceiptEvidence.fileSha256,
-        exactArtifactSha256,
-        executionIdentitySha256: 'a'.repeat(64),
-        status: 'passed',
       },
     )
     await expect(

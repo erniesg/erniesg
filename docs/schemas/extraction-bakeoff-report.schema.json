@@ -14,7 +14,6 @@
     "arms",
     "comparison",
     "disagreements",
-    "authority",
     "reportSha256"
   ],
   "properties": {
@@ -50,7 +49,7 @@
       "type": "array",
       "items": { "$ref": "#/$defs/disagreement" }
     },
-    "authority": { "$ref": "#/$defs/syntheticAuthority" },
+    "authority": { "$ref": "#/$defs/authority" },
     "reportSha256": { "$ref": "#/$defs/sha256" }
   },
   "$defs": {
@@ -76,6 +75,30 @@
         "realProviderAuthority": { "const": false },
         "promotionEligible": { "const": false }
       }
+    },
+    "ownerLocalRealProviderAuthority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "realProviderCalls",
+        "realProviderAuthority",
+        "promotionEligible",
+        "providerExecutionReceiptSha256"
+      ],
+      "properties": {
+        "kind": { "const": "owner-local-real-provider-evidence" },
+        "realProviderCalls": { "type": "integer", "minimum": 1 },
+        "realProviderAuthority": { "const": true },
+        "promotionEligible": { "const": false },
+        "providerExecutionReceiptSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "authority": {
+      "oneOf": [
+        { "$ref": "#/$defs/syntheticAuthority" },
+        { "$ref": "#/$defs/ownerLocalRealProviderAuthority" }
+      ]
     },
     "identity": {
       "type": "object",
@@ -122,6 +145,7 @@
         "typeRecall",
         "sourceRecall",
         "assetRecall",
+        "structureHash",
         "boilerplateContamination",
         "verification"
       ],

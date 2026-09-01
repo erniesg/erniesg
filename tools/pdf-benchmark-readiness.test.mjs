@@ -381,7 +381,7 @@ describe('PDF benchmark readiness registry', () => {
     const oversizedRootfile = patchZipCentralDirectoryEntry(
       validFixture,
       'EPUB/package.opf',
-      { originalSize: 16 * 1024 * 1024 + 1 },
+      { originalSize: 4 * 1024 * 1024 + 1 },
     )
     expect(validEpubPackage(oversizedRootfile)).toBe(false)
 
@@ -401,6 +401,21 @@ describe('PDF benchmark readiness registry', () => {
       'EPUB/package.opf',
     )
     expect(validEpubPackage(corruptPackagePayload)).toBe(false)
+
+    expect(
+      validEpubPackage(
+        createValidEpub({
+          'EPUB/package.opf': strToU8('<package><metadata></package>'),
+        }),
+      ),
+    ).toBe(false)
+    expect(
+      validEpubPackage(
+        createValidEpub({
+          'EPUB/package.opf': strToU8('<not-a-package />'),
+        }),
+      ),
+    ).toBe(false)
   })
 
   it('rejects oversized EPUB and governance bindings from lstat metadata', async () => {

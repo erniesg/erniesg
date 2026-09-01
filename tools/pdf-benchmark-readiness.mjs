@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto'
+import { execFile } from 'node:child_process'
 import { constants as fsConstants } from 'node:fs'
 import {
   lstat,
@@ -11,8 +12,9 @@ import {
 } from 'node:fs/promises'
 import { dirname, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { promisify } from 'node:util'
 import Ajv2020 from 'ajv/dist/2020.js'
-import { XMLParser } from 'fast-xml-parser'
+import { XMLParser, XMLValidator } from 'fast-xml-parser'
 import { unzipSync } from 'fflate'
 import {
   canonicalJson,
@@ -39,7 +41,7 @@ const MAX_EPUB_COMPRESSED_BYTES = 256 * 1024 * 1024
 const MAX_EPUB_INFLATED_BYTES = 512 * 1024 * 1024
 const MAX_EPUB_ENTRIES = 544
 const MAX_EPUB_CONTAINER_BYTES = 64 * 1024
-const MAX_EPUB_PACKAGE_DOCUMENT_BYTES = 16 * 1024 * 1024
+const MAX_EPUB_PACKAGE_DOCUMENT_BYTES = 4 * 1024 * 1024
 const PROMOTION_PROTOCOL_IMPLEMENTED = false
 const CANDIDATE_COMPONENT_KINDS = [
   'provider',
@@ -75,6 +77,7 @@ const REQUIRED_NATIVE_READER_TYPES = {
   'independent-desktop-epub-reader': 'independent-desktop-epub-reader',
   'target-eink-reader-device': 'target-eink-reader-device',
 }
+const execFileAsync = promisify(execFile)
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex')
@@ -125,6 +128,32 @@ function resolveRepositoryPath(repositoryPath) {
   return absolute
 }
 
+async function descriptorRealPath(handle, code) {
+  if (process.platform === 'linux') {
+    return realpath(`/proc/self/fd/${handle.fd}`)
+  }
+  if (process.platform === 'darwin') {
+    const { stdout } = await execFileAsync(
+      '/usr/sbin/lsof',
+      ['-a', '-p', String(process.pid), '-d', String(handle.fd), '-Fn'],
+      { encoding: 'utf8', maxBuffer: 64 * 1024, timeout: 5_000 },
+    )
+    const names = stdout
+      .split('\n')
+      .filter((line) => line.startsWith('n'))
+      .map((line) => line.slice(1))
+    if (
+      names.length !== 1 ||
+      !names[0].startsWith('/') ||
+      names[0].endsWith(' (deleted)')
+    ) {
+      invalid(code)
+    }
+    return names[0]
+  }
+  invalid(code)
+}
+
 async function readStableRegularFile(path, maxBytes, code) {
   let handle
   try {
@@ -134,9 +163,10 @@ async function readStableRegularFile(path, maxBytes, code) {
       fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK,
     )
     const before = await handle.stat({ bigint: true })
-    const [pathDetails, stableRealPath] = await Promise.all([
+    const [pathDetails, stableRealPath, openedRealPath] = await Promise.all([
       lstat(absolute, { bigint: true }),
       realpath(absolute),
+      descriptorRealPath(handle, code),
     ])
     if (
       !before.isFile() ||
@@ -144,6 +174,7 @@ async function readStableRegularFile(path, maxBytes, code) {
       pathDetails.isSymbolicLink() ||
       before.dev !== pathDetails.dev ||
       before.ino !== pathDetails.ino ||
+      openedRealPath !== stableRealPath ||
       before.size <= 0n ||
       before.size > BigInt(maxBytes)
     ) {
@@ -1521,13 +1552,24 @@ export function validEpubPackage(bytes) {
     ) {
       return false
     }
+    const rootfileBytes = unzipSync(new Uint8Array(bytes), {
+      filter: ({ name, originalSize }) =>
+        name === rootfile &&
+        originalSize > 0 &&
+        originalSize <= MAX_EPUB_PACKAGE_DOCUMENT_BYTES,
+    })[rootfile]
+    if (!(rootfileBytes instanceof Uint8Array)) return false
+    const packageXml = Buffer.from(rootfileBytes).toString('utf8')
+    if (XMLValidator.validate(packageXml) !== true) return false
+    const packageDocument = new XMLParser({
+      ignoreAttributes: false,
+      processEntities: false,
+    }).parse(packageXml)
     return (
-      unzipSync(new Uint8Array(bytes), {
-        filter: ({ name, originalSize }) =>
-          name === rootfile &&
-          originalSize > 0 &&
-          originalSize <= MAX_EPUB_PACKAGE_DOCUMENT_BYTES,
-      })[rootfile] instanceof Uint8Array
+      isRecord(packageDocument) &&
+      Object.keys(packageDocument).some(
+        (name) => name.split(':').at(-1) === 'package',
+      )
     )
   } catch {
     return false

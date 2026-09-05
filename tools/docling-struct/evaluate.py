@@ -61,12 +61,14 @@ def _lowercase_starts(body_html: str) -> int:
     cut = REFERENCES_HEADING_RE.search(body_html)
     scope = body_html[: cut.start()] if cut else body_html
     count = 0
-    for match in re.finditer(r"(<figure[^>]*class=\"equation\"[^>]*>.*?</figure>\s*)?<p(?:\s[^>]*)?>(.*?)</p>", scope, re.S):
+    for match in re.finditer(r"(<figure[^>]*>(?:(?!</figure>).)*?(?:class=\"equation\"|alt=\"Equation)(?:(?!</figure>).)*?</figure>\s*)?<p(?:\s[^>]*)?>(.*?)</p>", scope, re.S):
         text = _strip(match.group(2)).strip()
         if len(text) <= 40 or not LOWER_START.match(text):
             continue
         if match.group(1) or text.startswith("where "):
             continue
+        if re.match(r"^[a-z](?:\s?[a-z0-9]){0,2}\s+(?:[a-z]|\d|[=<>≤≥∈∼∈])", text):
+            continue  # inline math symbol such as "s t represents" or "a = b"
         count += 1
     return count
 

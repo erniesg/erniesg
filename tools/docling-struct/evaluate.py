@@ -270,6 +270,8 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
         diagnostics["INCOMPLETE_SEMANTIC_TABLE_COVERAGE"] = tables_expected - tables_found
     if tables_fallback:
         diagnostics["BOUNDED_TABLE_FALLBACK"] = tables_fallback
+    if footnotes_markered:
+        diagnostics["CLASSIFIED_NOTE_MARKER"] = footnotes_markered  # applicability evidence for the notes criterion
     if footnotes_linked < footnotes_markered:
         diagnostics["UNRESOLVED_NOTE_REFERENCE"] = footnotes_markered - footnotes_linked
     if expected_uris and len(mapped_uris) < len(expected_uris):
@@ -291,7 +293,7 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
     if scanned and not build_report.get("epub_text_characters", len(body_text)):
         diagnostics["OCR_REQUIRED"] = 1
 
-    blocking = sorted(code for code in diagnostics if code not in {"REPEATED_MARGIN_TEXT", "BOUNDED_TABLE_FALLBACK"})
+    blocking = sorted(code for code in diagnostics if code not in {"REPEATED_MARGIN_TEXT", "BOUNDED_TABLE_FALLBACK", "CLASSIFIED_NOTE_MARKER"})
     ready = not blocking and build_report.get("epubcheck_errors", 0) == 0
 
     completeness = {

@@ -180,6 +180,7 @@ class AdapterReport:
     furniture_blocks: int = 0
     repeated_text_demoted: int = 0
     furniture_blocks_merged: int = 0
+    provenance_trimmed_for_budget: bool = False
     relationships_pruned: int = 0
     runs_pruned: int = 0
     pages_recovered_from_text_layer: int = 0
@@ -1049,6 +1050,20 @@ class StructAdapter:
                 block["evidence"]["boxes"] = union
             if len(block["evidence"]["sourceIds"]) > 8:
                 block["evidence"]["sourceIds"] = block["evidence"]["sourceIds"][:8]
+        # very large documents: drop optional provenance signals so the canonical
+        # node count stays inside struct's budget (100k nodes)
+        if len(self.blocks) + len(self.assets) > 1500:
+            for block in self.blocks:
+                block["evidence"].pop("signals", None)
+                block["evidence"]["boxes"] = block["evidence"]["boxes"][:1]
+                block["evidence"]["sourceIds"] = block["evidence"]["sourceIds"][:2]
+                if block.get("furniture"):
+                    block["furniture"]["boxes"] = block["furniture"]["boxes"][:1]
+                    block["furniture"]["evidence"] = block["furniture"]["evidence"][:1]
+            for asset in self.assets:
+                asset["evidence"].pop("signals", None)
+                asset["evidence"]["boxes"] = asset["evidence"]["boxes"][:1]
+            self.report.provenance_trimmed_for_budget = True
         merged: list[dict] = []
         furniture_by_page: dict[int, dict] = {}
         for block in self.blocks:

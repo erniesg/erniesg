@@ -35,7 +35,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from evaluate import epubcheck, evaluate  # noqa: E402
-from pdf_links import attach_words, extract_links, word_boxes  # noqa: E402
+from pdf_links import attach_words, extract_links, page_text_lines, word_boxes  # noqa: E402
 
 PROFILE_SUFFIX = {"paperPro": "paperpro", "paperProMove": "papermove", "mobile": "mobile"}
 
@@ -79,7 +79,7 @@ def process(pdf: Path, out_root: Path, profiles: list[str], formula: bool, reuse
     links, sizes = extract_links(pdf)
     boxes = word_boxes(pdf)
     attach_words(links, boxes, sizes)
-    draft, adapter = to_struct_draft(doc, pdf, sha, links, boxes)
+    draft, adapter = to_struct_draft(doc, pdf, sha, links, boxes, page_text_lines(pdf))
     draft_path = out_dir / f"{pdf.stem}.struct-draft.json"
     draft_path.write_text(json.dumps(draft, ensure_ascii=False))
     command = ["node", str(HERE / "render.mjs"), str(draft_path), "--out", str(out_dir), "--profiles", ",".join(profiles)]

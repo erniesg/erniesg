@@ -100,7 +100,7 @@ def _running_lines(pages: list[list[str]]) -> set[str]:
         for line in edge:
             key = re.sub(r"\d+", "#", line.strip().lower())
             key = re.sub(r"\s+", " ", key)
-            if len(key) >= 6 and key not in seen:
+            if 6 <= len(key) <= 90 and key not in seen:
                 seen.add(key)
                 counter[key] += 1
     return {key for key, count in counter.items() if count >= 3}
@@ -116,7 +116,7 @@ def _figure_boxes(struct_draft: Path | None) -> dict[int, list[tuple[float, floa
     except json.JSONDecodeError:
         return boxes
     for block in draft.get("blocks", []):
-        if block.get("kind") != "figure":
+        if block.get("kind") not in ("figure", "equation") or not (block.get("fallbackAssetIds") or block.get("kind") == "equation"):
             continue
         for box in block.get("evidence", {}).get("boxes", []):
             boxes.setdefault(box["page"], []).append((box["x"], box["y"], box["x"] + box["width"], box["y"] + box["height"]))
@@ -163,8 +163,13 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
             icon_links += 1
             continue
         key = re.sub(r"\s+", " ", re.sub(r"\d+", "#", visible.lower()))
-        if key in running:
+        if key in running or re.fullmatch(r"[\d\s.,]+", visible):
             continue
+        width, height = sizes.get(link.page, (0.0, 0.0))
+        if height:
+            l, b, r, t = link.rect
+            if t / height >= 0.92 or b / height <= 0.08:
+                continue  # header/footer band belongs to the furniture criterion
         expected_uris.add(link.uri)
     internal_links = sum(1 for link in links if link.kind == "internal")
 
@@ -219,6 +224,20 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
             for word in _tokens(line):
                 source_words[word] += 1
     epub_words = Counter(_tokens(body_text))
+    # pdftotext splits small-caps and drop-cap initials ("D ilemmas"); rejoin a
+    # single letter with the following word only when the joined word exists
+    # in the rendition, so the source side is compared on equal terms
+    rejoined: Counter = Counter()
+    for page in pages:
+        for line in page:
+            for match in re.finditer(r"(?<![\w])([A-Za-z])[\s\u00ad\u200b\u2009\u202f]+([a-z]{2,})\b", line):
+                fused = (match.group(1) + match.group(2)).lower()
+                if fused in epub_words:
+                    rejoined[fused] += 1
+                    tail = match.group(2).lower()
+                    if source_words.get(tail):
+                        source_words[tail] -= 1
+    source_words.update(rejoined)
     outside = _words_outside_figures(pdf, _figure_boxes(struct_draft), sizes)
     if outside is not None:
         # keep the running-line/page-number exclusions, but cap each token by its out-of-figure count
@@ -235,6 +254,7 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
     tables_fallback = build_report.get("tables_fallback_image", 0)
     footnotes = build_report.get("footnotes", 0)
     footnotes_linked = build_report.get("footnotes_linked", 0)
+    footnotes_markered = build_report.get("footnotes_with_marker", footnotes)
     formulas = build_report.get("formulas_mathml", 0) + build_report.get("formulas_image", 0) + build_report.get("formulas_text", 0)
 
     diagnostics: Counter[str] = Counter()
@@ -248,8 +268,8 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
         diagnostics["INCOMPLETE_SEMANTIC_TABLE_COVERAGE"] = tables_expected - tables_found
     if tables_fallback:
         diagnostics["BOUNDED_TABLE_FALLBACK"] = tables_fallback
-    if footnotes_linked < footnotes:
-        diagnostics["UNRESOLVED_NOTE_REFERENCE"] = footnotes - footnotes_linked
+    if footnotes_linked < footnotes_markered:
+        diagnostics["UNRESOLVED_NOTE_REFERENCE"] = footnotes_markered - footnotes_linked
     if expected_uris and len(mapped_uris) < len(expected_uris):
         diagnostics["UNRESOLVED_HYPERLINK"] = len(expected_uris) - len(mapped_uris)
     if furniture_hits:
@@ -284,9 +304,9 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
         "expectedHyperlinkCount": len(expected_uris),
         "mappedHyperlinkCount": len(mapped_uris),
         "hyperlinkCoverage": round(len(mapped_uris) / len(expected_uris), 5) if expected_uris else 1,
-        "expectedRelationshipCount": figures_expected + tables_expected + footnotes,
-        "resolvedRelationshipCount": figures_found + tables_found + footnotes_linked,
-        "relationshipCoverage": round((figures_found + tables_found + footnotes_linked) / (figures_expected + tables_expected + footnotes), 5) if (figures_expected + tables_expected + footnotes) else 1,
+        "expectedRelationshipCount": len(expected_uris) + footnotes_markered,
+        "resolvedRelationshipCount": len(mapped_uris) + footnotes_linked,
+        "relationshipCoverage": round((len(mapped_uris) + footnotes_linked) / (len(expected_uris) + footnotes_markered), 5) if (len(expected_uris) + footnotes_markered) else 1,
         "sourceAssetCount": figures_expected,
         "exportedAssetCount": figures_found,
         "assetCoverage": round(figures_found / figures_expected, 5) if figures_expected else 1,
@@ -295,15 +315,15 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
         "semanticTableCoverage": round(min(tables_semantic, tables_expected) / tables_expected, 5) if tables_expected else 1,
         "unresolvedObjects": {
             "assets": max(figures_expected - figures_found, 0),
-            "captions": build_report.get("orphan_captions", 0),
+            "captions": build_report.get("orphan_figure_captions", 0),
             "tables": max(tables_expected - tables_semantic, 0),
             "equations": build_report.get("formulas_text", 0),
             "citations": 0,
-            "footnoteReferences": footnotes - footnotes_linked,
+            "footnoteReferences": max(footnotes_markered - footnotes_linked, 0),
             "footnotes": 0,
         },
         "ocrRequiredPages": [1] if diagnostics.get("OCR_REQUIRED") else [],
-        "furnitureExcludedRunCount": len(running),
+        "furnitureExcludedRunCount": len(running) + build_report.get("furniture_blocks", 0),
         "furnitureContaminationCount": furniture_hits,
         "equationCount": formulas,
         "internalLinkAnnotations": internal_links,

@@ -97,6 +97,22 @@ PDF (producer string, layout gap share, text density), never from pipeline
 output. Source PDFs stay owner-local; the manifest and scorecard carry
 basenames, hashes, counts, and diagnostic codes only.
 
+## Extraction path under evaluation
+
+Two paths produce reports in the same document shape and are scored by the
+same tool:
+
+- the deterministic reconstruction in `src/research` (corpus audit), and
+- the Docling-based extraction adapter in `tools/docling-struct`, which emits
+  a StructDocument and renders only through `@erniesg/struct` (ADR-0001:
+  the app extracts, struct renders). Its evaluator derives expectations
+  from the source PDF (caption labels, link annotations, repeated margin
+  lines), never from its own output.
+
+Whichever path scores higher per criterion on the diverse corpus is the
+one to keep investing in; the scorecard is the arbiter, not the
+architecture.
+
 ## Acceptance tests
 
 - `node tools/pdf-success-scorecard.mjs <corpus-audit.json>... --strata <manifest> --markdown`

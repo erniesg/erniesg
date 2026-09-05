@@ -174,6 +174,10 @@ class AdapterReport:
     internal_links_skipped: int = 0
     lists: int = 0
     furniture_blocks: int = 0
+    repeated_text_demoted: int = 0
+    pages_recovered_from_text_layer: int = 0
+    footnotes_with_marker: int = 0
+    orphan_figure_captions: int = 0
     edge_page_numbers_dropped: int = 0
     invisible_items_dropped: int = 0
     tick_label_runs_dropped: int = 0
@@ -183,9 +187,10 @@ class AdapterReport:
 
 
 class StructAdapter:
-    def __init__(self, doc: DoclingDocument, pdf_path: Path, source_sha256: str, links: list[SourceLink], word_boxes: list | None = None) -> None:
+    def __init__(self, doc: DoclingDocument, pdf_path: Path, source_sha256: str, links: list[SourceLink], word_boxes: list | None = None, page_lines: list | None = None) -> None:
         self.doc = doc
         self.word_boxes = word_boxes or []
+        self.page_lines = page_lines or []
         self.pdf_path = pdf_path
         self.sha = source_sha256
         self.links = links
@@ -678,6 +683,8 @@ class StructAdapter:
         block = self._new_block("footnote", item, body, label=marker or str(self.report.footnotes))
         block["inline"] = self._runs_for(item, body)
         self.blocks.append(block)
+        if marker:
+            self.report.footnotes_with_marker += 1
         linked = self._link_marker(marker, block, item) if marker else False
         if linked:
             self.report.footnotes_linked += 1
@@ -819,6 +826,124 @@ class StructAdapter:
                 self.title = sanitize(item.text.strip()) or self.title
             else:
                 self._emit_paragraph(item)
+
+    def _recover_dropped_pages(self) -> None:
+        """When the layout model returns almost no body text for a page that
+        the PDF text layer fills, the page's text-layer lines become paragraphs
+        (blank-line separated) in pdftotext's own reading order, inserted after
+        the last block of the previous page. Marked as a fallback in evidence."""
+        if not self.page_lines:
+            return
+        body_chars: dict[int, int] = {}
+        for block in self.blocks:
+            if block["kind"] != "furniture" and block["page"] is not None:
+                body_chars[block["page"]] = body_chars.get(block["page"], 0) + len(block["text"])
+        # running lines: short text repeated near page edges on three or more pages
+        edge_counter: dict[str, set[int]] = {}
+        for page_index, lines in enumerate(self.page_lines, start=1):
+            for line in lines[:6] + lines[-6:]:
+                key = re.sub(r"\s+", " ", re.sub(r"\d+", "#", line.strip().lower()))
+                if 6 <= len(key) <= 160:
+                    edge_counter.setdefault(key, set()).add(page_index)
+        running = {key for key, pages in edge_counter.items() if len(pages) >= 3}
+        page_links = {}
+        for link in self.links:
+            if link.kind == "uri" and link.uri and SAFE_HREF_RE.match(link.uri):
+                page_links.setdefault(link.page, []).append(link)
+        for page_index, lines in enumerate(self.page_lines, start=1):
+            if page_index not in self.doc.pages:
+                continue
+            source_chars = sum(len(line.strip()) for line in lines)
+            if source_chars < 400 or body_chars.get(page_index, 0) >= 0.2 * source_chars:
+                continue
+            paragraphs: list[str] = []
+            current: list[str] = []
+            for line in lines:
+                key = re.sub(r"\s+", " ", re.sub(r"\d+", "#", line.strip().lower()))
+                if key in running or PAGE_NUMBER_TEXT_RE.match(line):
+                    continue
+                if line.strip():
+                    current.append(line.strip())
+                elif current:
+                    paragraphs.append(" ".join(current))
+                    current = []
+            if current:
+                paragraphs.append(" ".join(current))
+            insert_at = next((i for i, b in enumerate(self.blocks) if b["page"] is not None and b["page"] > page_index), len(self.blocks))
+            new_blocks = []
+            for text in paragraphs:
+                text = sanitize(text)
+                if len(text) < 3 or PAGE_NUMBER_TEXT_RE.match(text):
+                    continue
+                runs: list[dict] = []
+                spans: list[tuple[int, int]] = []
+                for link in page_links.get(page_index, []):
+                    for candidate in (link.uri, re.sub(r"^https?://", "", link.uri), link.text.rstrip(".,;") if link.text else ""):
+                        if not candidate or len(candidate) < 4:
+                            continue
+                        match = loose_pattern(candidate).search(text)
+                        if match and match.end() > match.start() and not any(not (match.end() <= a or match.start() >= b) for a, b in spans):
+                            spans.append((match.start(), match.end()))
+                            runs.append({"start": match.start(), "end": match.end(), "href": link.uri})
+                            self.report.links_mapped += 1
+                            self.report.links_unmapped = max(0, self.report.links_unmapped - 1)
+                            break
+                new_blocks.append(
+                    {
+                        "id": self._id(f"b-p{page_index}-fallback-{len(new_blocks) + 1}"),
+                        "kind": "paragraph",
+                        "text": text,
+                        "page": page_index,
+                        "order": 0,
+                        "column": "single",
+                        "inline": runs,
+                        "evidence": {"confidence": 0.5, "pages": [page_index], "boxes": [], "sourceIds": [f"pdftotext-page-{page_index}"], "signals": ["text-layer-fallback", "layout-model-dropped-page"]},
+                    }
+                )
+            if new_blocks:
+                self.blocks[insert_at:insert_at] = new_blocks
+                self.report.pages_recovered_from_text_layer += 1
+                self.report.paragraphs += len(new_blocks)
+                self._diagnostic("warning", "layout", "Page recovered from text layer", f"page {page_index}: layout model returned {body_chars.get(page_index, 0)} of {source_chars} characters", None, page_index)
+
+    def _demote_repeated_edge_text(self) -> None:
+        """Spec 042 rule: short text repeated on three or more pages inside the
+        top or bottom band is page furniture (running heads, journal lines,
+        ACM footers), decided by geometry and repetition, never by wording."""
+        keyed: dict[str, list[dict]] = {}
+        for block in self.blocks:
+            # furniture the layout model already separated counts as repetition evidence
+            if block["kind"] not in ("paragraph", "caption", "heading", "furniture") or not block["evidence"]["boxes"]:
+                continue
+            text = block["text"].strip()
+            if not text or len(text) > 160:
+                continue
+            box = block["evidence"]["boxes"][0]
+            if not (box["y"] <= 0.15 or box["y"] + box["height"] >= 0.84):
+                continue
+            key = re.sub(r"\s+", " ", re.sub(r"\d+", "#", text.lower()))
+            keyed.setdefault(key, []).append(block)
+        for key, group in keyed.items():
+            pages = {b["page"] for b in group}
+            if len(pages) < 3:
+                continue
+            for block in group:
+                if block["kind"] == "furniture":
+                    continue
+                box = block["evidence"]["boxes"][0]
+                block["kind"] = "furniture"
+                block.pop("attributes", None)
+                block["inline"] = []
+                block["furniture"] = {
+                    "classification": "repeated-text",
+                    "band": "top" if box["y"] <= 0.15 else "bottom",
+                    "pages": sorted(pages),
+                    "boxes": [box],
+                    "evidence": [f"repeated-on-{len(pages)}-pages", "edge-band"],
+                    "normalizedText": key,
+                }
+                self.report.furniture_blocks += 1
+                self.report.repeated_text_demoted += 1
 
     def _adopt_orphan_captions(self) -> None:
         """A caption-less figure adopts an adjacent orphan caption block on the
@@ -1050,7 +1175,9 @@ class StructAdapter:
                 self.report.accounted_items += 1
                 self._furniture_block(item, "explicit-paratext")
         self._flush()
+        self._recover_dropped_pages()
         self._drop_tick_label_runs()
+        self._demote_repeated_edge_text()
         self._adopt_orphan_captions()
         self._read_captions_inside_figures()
         self._recover_uncaptured_figures()
@@ -1132,8 +1259,11 @@ class StructAdapter:
             },
         }
         self.report.blocks = len(self.blocks)
+        self.report.orphan_figure_captions = sum(
+            1 for b in self.blocks if b["kind"] == "caption" and re.match(r"^(Figure|Fig\.?)\s*\d+\s*[.:|]", b["text"], re.IGNORECASE)
+        )
         return document, self.report
 
 
-def to_struct_draft(doc: DoclingDocument, pdf_path: Path, source_sha256: str, links: list[SourceLink], word_boxes: list | None = None) -> tuple[dict, AdapterReport]:
-    return StructAdapter(doc, pdf_path, source_sha256, links, word_boxes).build()
+def to_struct_draft(doc: DoclingDocument, pdf_path: Path, source_sha256: str, links: list[SourceLink], word_boxes: list | None = None, page_lines: list | None = None) -> tuple[dict, AdapterReport]:
+    return StructAdapter(doc, pdf_path, source_sha256, links, word_boxes, page_lines).build()

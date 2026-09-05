@@ -63,8 +63,7 @@ PAGE_NUMBER_TEXT_RE = re.compile(
 )
 REFERENCE_WORD_RE = re.compile(
     r"(figure|fig\.?|table|section|sec\.?|appendix|equation|eq\.?|chapter|page|step|algorithm|theorem|lemma|"
-    r"of|and|or|to|the|by|in|at|than|from|with|level|version|layer|model|gpt|llama|top|type|class|round|"
-    r"\d+[.,]?)$",
+    r"of|and|or|to|the|by|in|at|than|from|with|level|version|layer|model|gpt|llama|top|type|class|round)$",
     re.IGNORECASE,
 )
 XML_ILLEGAL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f￾￿]")
@@ -131,11 +130,14 @@ def marker_candidates(marker: str, text: str) -> list[tuple[int, int, bool]]:
         if match.group(1):
             prev_word = re.search(r"(\S+)$", before)
             word = prev_word.group(1) if prev_word else ""
-            if prev_char in ".,;:)]\"”’'" and not REFERENCE_WORD_RE.search(word):
+            reference_word = bool(REFERENCE_WORD_RE.search(word)) or bool(re.fullmatch(r"\d+[.,]?", word))
+            if prev_char in ".,;:)]\"”’'" and not reference_word:
                 results.append((start, match.end(2), True))
-            elif prev_word and not REFERENCE_WORD_RE.search(word) and prev_char.isalpha():
+            elif prev_word and not reference_word and prev_char.isalpha():
                 results.append((start, match.end(2), False))
-        elif prev_char.isalpha() or prev_char in ")]\"”’'":
+            elif prev_word and not marker.isdigit() and not prev_char.isspace():
+                results.append((start, match.end(2), False))
+        elif prev_char.isalpha() or prev_char in ")]\"”’'" or (not marker.isdigit() and not prev_char.isspace()):
             results.append((start, match.end(2), True))
     return results
 
@@ -682,6 +684,14 @@ class StructAdapter:
     def _emit_footnote(self, item: TextItem) -> None:
         self._flush()
         marker, body = footnote_parts(sanitize(item.text))
+        if marker and marker.isdigit() and re.match(r"^[.)]\s+\S", body):
+            # "1. Preserve the Core Inquiry": a numbered list item the layout model mislabelled
+            self._list_counter += 1
+            block = self._new_block("list-item", item, sanitize(item.text))
+            block["inline"] = self._runs_for(item, block["text"])
+            block["attributes"] = {"ordered": True, "listId": f"list-fn-{self._list_counter}"}
+            self.blocks.append(block)
+            return
         self.report.footnotes += 1
         block = self._new_block("footnote", item, body, label=marker or str(self.report.footnotes))
         block["inline"] = self._runs_for(item, body)

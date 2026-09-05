@@ -33,14 +33,16 @@
           "documentId": "heldout-one",
           "split": "held-out",
           "layout": "one-column",
-          "status": "passed",
+          "status": "failed",
           "verification": {
-            "status": "passed",
-            "issueCodes": [],
-            "issueCount": 0
+            "status": "failed",
+            "issueCodes": [
+              "missing-source-run"
+            ],
+            "issueCount": 1
           },
-          "outputHash": "f74fa39356ad082e442413559cacfecfe06a60969ff9145829cc3ba7dfb2f45d",
-          "byteStable": true,
+          "outputHash": null,
+          "byteStable": false,
           "latencyMsPerPage": 1,
           "costUsdPerPage": 0,
           "caseScores": [
@@ -49,16 +51,19 @@
               "documentId": "heldout-one",
               "stratum": "sectioning",
               "layout": "one-column",
-              "score": 0.8,
+              "score": 0,
               "typePrecision": 1,
-              "typeRecall": 0.5,
-              "sourceRecall": 0.5,
+              "typeRecall": 0,
+              "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
-                "status": "passed",
-                "issueCodes": [],
-                "issueCount": 0
+                "status": "failed",
+                "issueCodes": [
+                  "missing-source-run"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -66,16 +71,19 @@
               "documentId": "heldout-one",
               "stratum": "prose-continuity",
               "layout": "one-column",
-              "score": 0.8,
+              "score": 0,
               "typePrecision": 1,
-              "typeRecall": 0.5,
-              "sourceRecall": 0.5,
+              "typeRecall": 0,
+              "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
-                "status": "passed",
-                "issueCodes": [],
-                "issueCount": 0
+                "status": "failed",
+                "issueCodes": [
+                  "missing-source-run"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -83,16 +91,19 @@
               "documentId": "heldout-one",
               "stratum": "boilerplate-exclusion",
               "layout": "one-column",
-              "score": 0.8,
+              "score": 0,
               "typePrecision": 1,
-              "typeRecall": 0.5,
-              "sourceRecall": 0.5,
+              "typeRecall": 0,
+              "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
-                "status": "passed",
-                "issueCodes": [],
-                "issueCount": 0
+                "status": "failed",
+                "issueCodes": [
+                  "missing-source-run"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -100,16 +111,19 @@
               "documentId": "heldout-one",
               "stratum": "code-listings",
               "layout": "one-column",
-              "score": 0.8,
+              "score": 0,
               "typePrecision": 1,
-              "typeRecall": 0.5,
-              "sourceRecall": 0.5,
+              "typeRecall": 0,
+              "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
-                "status": "passed",
-                "issueCodes": [],
-                "issueCount": 0
+                "status": "failed",
+                "issueCodes": [
+                  "missing-source-run"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -117,16 +131,19 @@
               "documentId": "heldout-one",
               "stratum": "tables",
               "layout": "one-column",
-              "score": 0.8,
+              "score": 0,
               "typePrecision": 1,
-              "typeRecall": 0.5,
-              "sourceRecall": 0.5,
+              "typeRecall": 0,
+              "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
-                "status": "passed",
-                "issueCodes": [],
-                "issueCount": 0
+                "status": "failed",
+                "issueCodes": [
+                  "missing-source-run"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -134,16 +151,19 @@
               "documentId": "heldout-one",
               "stratum": "figures-diagrams",
               "layout": "one-column",
-              "score": 0.8,
+              "score": 0,
               "typePrecision": 1,
-              "typeRecall": 0.5,
-              "sourceRecall": 0.5,
+              "typeRecall": 0,
+              "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
-                "status": "passed",
-                "issueCodes": [],
-                "issueCount": 0
+                "status": "failed",
+                "issueCodes": [
+                  "missing-source-run"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -151,16 +171,19 @@
               "documentId": "heldout-one",
               "stratum": "equations",
               "layout": "one-column",
-              "score": 0.8,
+              "score": 0,
               "typePrecision": 1,
-              "typeRecall": 0.5,
-              "sourceRecall": 0.5,
+              "typeRecall": 0,
+              "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
-                "status": "passed",
-                "issueCodes": [],
-                "issueCount": 0
+                "status": "failed",
+                "issueCodes": [
+                  "missing-source-run"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -168,16 +191,19 @@
               "documentId": "heldout-one",
               "stratum": "footnotes-citations",
               "layout": "one-column",
-              "score": 0.8,
+              "score": 0,
               "typePrecision": 1,
-              "typeRecall": 0.5,
-              "sourceRecall": 0.5,
+              "typeRecall": 0,
+              "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
-                "status": "passed",
-                "issueCodes": [],
-                "issueCount": 0
+                "status": "failed",
+                "issueCodes": [
+                  "missing-source-run"
+                ],
+                "issueCount": 1
               }
             }
           ]
@@ -186,14 +212,16 @@
           "documentId": "heldout-two",
           "split": "held-out",
           "layout": "two-column",
-          "status": "passed",
+          "status": "failed",
           "verification": {
-            "status": "passed",
-            "issueCodes": [],
-            "issueCount": 0
+            "status": "failed",
+            "issueCodes": [
+              "missing-source-run"
+            ],
+            "issueCount": 1
           },
-          "outputHash": "56f0eca85a79cbdb5456b76202f99698141f0915981b881db2519d81163c3422",
-          "byteStable": true,
+          "outputHash": null,
+          "byteStable": false,
           "latencyMsPerPage": 1,
           "costUsdPerPage": 0,
           "caseScores": [
@@ -202,16 +230,19 @@
               "documentId": "heldout-two",
               "stratum": "sectioning",
               "layout": "two-column",
-              "score": 0.8,
+              "score": 0,
               "typePrecision": 1,
-              "typeRecall": 0.5,
-              "sourceRecall": 0.5,
+              "typeRecall": 0,
+              "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
-                "status": "passed",
-                "issueCodes": [],
-                "issueCount": 0
+                "status": "failed",
+                "issueCodes": [
+                  "missing-source-run"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -219,16 +250,19 @@
               "documentId": "heldout-two",
               "stratum": "prose-continuity",
               "layout": "two-column",
-              "score": 0.8,
+              "score": 0,
               "typePrecision": 1,
-              "typeRecall": 0.5,
-              "sourceRecall": 0.5,
+              "typeRecall": 0,
+              "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
-                "status": "passed",
-                "issueCodes": [],
-                "issueCount": 0
+                "status": "failed",
+                "issueCodes": [
+                  "missing-source-run"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -236,16 +270,19 @@
               "documentId": "heldout-two",
               "stratum": "boilerplate-exclusion",
               "layout": "two-column",
-              "score": 0.8,
+              "score": 0,
               "typePrecision": 1,
-              "typeRecall": 0.5,
-              "sourceRecall": 0.5,
+              "typeRecall": 0,
+              "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
-                "status": "passed",
-                "issueCodes": [],
-                "issueCount": 0
+                "status": "failed",
+                "issueCodes": [
+                  "missing-source-run"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -253,16 +290,19 @@
               "documentId": "heldout-two",
               "stratum": "code-listings",
               "layout": "two-column",
-              "score": 0.8,
+              "score": 0,
               "typePrecision": 1,
-              "typeRecall": 0.5,
-              "sourceRecall": 0.5,
+              "typeRecall": 0,
+              "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
-                "status": "passed",
-                "issueCodes": [],
-                "issueCount": 0
+                "status": "failed",
+                "issueCodes": [
+                  "missing-source-run"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -270,16 +310,19 @@
               "documentId": "heldout-two",
               "stratum": "tables",
               "layout": "two-column",
-              "score": 0.8,
+              "score": 0,
               "typePrecision": 1,
-              "typeRecall": 0.5,
-              "sourceRecall": 0.5,
+              "typeRecall": 0,
+              "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
-                "status": "passed",
-                "issueCodes": [],
-                "issueCount": 0
+                "status": "failed",
+                "issueCodes": [
+                  "missing-source-run"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -287,16 +330,19 @@
               "documentId": "heldout-two",
               "stratum": "figures-diagrams",
               "layout": "two-column",
-              "score": 0.8,
+              "score": 0,
               "typePrecision": 1,
-              "typeRecall": 0.5,
-              "sourceRecall": 0.5,
+              "typeRecall": 0,
+              "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
-                "status": "passed",
-                "issueCodes": [],
-                "issueCount": 0
+                "status": "failed",
+                "issueCodes": [
+                  "missing-source-run"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -304,16 +350,19 @@
               "documentId": "heldout-two",
               "stratum": "equations",
               "layout": "two-column",
-              "score": 0.8,
+              "score": 0,
               "typePrecision": 1,
-              "typeRecall": 0.5,
-              "sourceRecall": 0.5,
+              "typeRecall": 0,
+              "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
-                "status": "passed",
-                "issueCodes": [],
-                "issueCount": 0
+                "status": "failed",
+                "issueCodes": [
+                  "missing-source-run"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -321,38 +370,41 @@
               "documentId": "heldout-two",
               "stratum": "footnotes-citations",
               "layout": "two-column",
-              "score": 0.8,
+              "score": 0,
               "typePrecision": 1,
-              "typeRecall": 0.5,
-              "sourceRecall": 0.5,
+              "typeRecall": 0,
+              "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
-                "status": "passed",
-                "issueCodes": [],
-                "issueCount": 0
+                "status": "failed",
+                "issueCodes": [
+                  "missing-source-run"
+                ],
+                "issueCount": 1
               }
             }
           ]
         }
       ],
       "byStratumAndLayout": {
-        "boilerplate-exclusion/one-column": 0.8,
-        "boilerplate-exclusion/two-column": 0.8,
-        "code-listings/one-column": 0.8,
-        "code-listings/two-column": 0.8,
-        "equations/one-column": 0.8,
-        "equations/two-column": 0.8,
-        "figures-diagrams/one-column": 0.8,
-        "figures-diagrams/two-column": 0.8,
-        "footnotes-citations/one-column": 0.8,
-        "footnotes-citations/two-column": 0.8,
-        "prose-continuity/one-column": 0.8,
-        "prose-continuity/two-column": 0.8,
-        "sectioning/one-column": 0.8,
-        "sectioning/two-column": 0.8,
-        "tables/one-column": 0.8,
-        "tables/two-column": 0.8
+        "boilerplate-exclusion/one-column": 0,
+        "boilerplate-exclusion/two-column": 0,
+        "code-listings/one-column": 0,
+        "code-listings/two-column": 0,
+        "equations/one-column": 0,
+        "equations/two-column": 0,
+        "figures-diagrams/one-column": 0,
+        "figures-diagrams/two-column": 0,
+        "footnotes-citations/one-column": 0,
+        "footnotes-citations/two-column": 0,
+        "prose-continuity/one-column": 0,
+        "prose-continuity/two-column": 0,
+        "sectioning/one-column": 0,
+        "sectioning/two-column": 0,
+        "tables/one-column": 0,
+        "tables/two-column": 0
       },
       "disqualified": false
     },
@@ -386,6 +438,7 @@
               "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
                 "status": "failed",
                 "issueCodes": [
@@ -405,6 +458,7 @@
               "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
                 "status": "failed",
                 "issueCodes": [
@@ -424,6 +478,7 @@
               "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
                 "status": "failed",
                 "issueCodes": [
@@ -443,6 +498,7 @@
               "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
                 "status": "failed",
                 "issueCodes": [
@@ -462,6 +518,7 @@
               "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
                 "status": "failed",
                 "issueCodes": [
@@ -481,6 +538,7 @@
               "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
                 "status": "failed",
                 "issueCodes": [
@@ -500,6 +558,7 @@
               "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
                 "status": "failed",
                 "issueCodes": [
@@ -519,6 +578,7 @@
               "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
                 "status": "failed",
                 "issueCodes": [
@@ -557,6 +617,7 @@
               "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
                 "status": "failed",
                 "issueCodes": [
@@ -576,6 +637,7 @@
               "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
                 "status": "failed",
                 "issueCodes": [
@@ -595,6 +657,7 @@
               "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
                 "status": "failed",
                 "issueCodes": [
@@ -614,6 +677,7 @@
               "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
                 "status": "failed",
                 "issueCodes": [
@@ -633,6 +697,7 @@
               "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
                 "status": "failed",
                 "issueCodes": [
@@ -652,6 +717,7 @@
               "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
                 "status": "failed",
                 "issueCodes": [
@@ -671,6 +737,7 @@
               "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
                 "status": "failed",
                 "issueCodes": [
@@ -690,6 +757,7 @@
               "sourceRecall": 0,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": null,
               "verification": {
                 "status": "failed",
                 "issueCodes": [
@@ -733,7 +801,7 @@
             "issueCodes": [],
             "issueCount": 0
           },
-          "outputHash": "06ad4f63c333174d3d855db815ca91d05a46f47f043b9c914645995099d2635e",
+          "outputHash": "0155265d8a94a00f06cb4d060b9e2b47092789a4cbbc9a3f74fca4ded9218496",
           "byteStable": true,
           "latencyMsPerPage": 1,
           "costUsdPerPage": 0,
@@ -749,6 +817,7 @@
               "sourceRecall": 1,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": "c0569616a9ca78e1fcdf1273674c9c1af42c520fa6f31dbbc48d95454a3f2d2f",
               "verification": {
                 "status": "passed",
                 "issueCodes": [],
@@ -766,6 +835,7 @@
               "sourceRecall": 1,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": "c0569616a9ca78e1fcdf1273674c9c1af42c520fa6f31dbbc48d95454a3f2d2f",
               "verification": {
                 "status": "passed",
                 "issueCodes": [],
@@ -783,6 +853,7 @@
               "sourceRecall": 1,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": "c0569616a9ca78e1fcdf1273674c9c1af42c520fa6f31dbbc48d95454a3f2d2f",
               "verification": {
                 "status": "passed",
                 "issueCodes": [],
@@ -800,6 +871,7 @@
               "sourceRecall": 1,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": "c0569616a9ca78e1fcdf1273674c9c1af42c520fa6f31dbbc48d95454a3f2d2f",
               "verification": {
                 "status": "passed",
                 "issueCodes": [],
@@ -817,6 +889,7 @@
               "sourceRecall": 1,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": "c0569616a9ca78e1fcdf1273674c9c1af42c520fa6f31dbbc48d95454a3f2d2f",
               "verification": {
                 "status": "passed",
                 "issueCodes": [],
@@ -834,6 +907,7 @@
               "sourceRecall": 1,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": "c0569616a9ca78e1fcdf1273674c9c1af42c520fa6f31dbbc48d95454a3f2d2f",
               "verification": {
                 "status": "passed",
                 "issueCodes": [],
@@ -851,6 +925,7 @@
               "sourceRecall": 1,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": "c0569616a9ca78e1fcdf1273674c9c1af42c520fa6f31dbbc48d95454a3f2d2f",
               "verification": {
                 "status": "passed",
                 "issueCodes": [],
@@ -868,6 +943,7 @@
               "sourceRecall": 1,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": "c0569616a9ca78e1fcdf1273674c9c1af42c520fa6f31dbbc48d95454a3f2d2f",
               "verification": {
                 "status": "passed",
                 "issueCodes": [],
@@ -886,7 +962,7 @@
             "issueCodes": [],
             "issueCount": 0
           },
-          "outputHash": "36c1634902376d92e27c994b90865a517a1d1c95a58bd0189f147a4943257f6e",
+          "outputHash": "1f013555af8289b6b78462a43c615646317f86862538766dcb3fdfbaed13b463",
           "byteStable": true,
           "latencyMsPerPage": 1,
           "costUsdPerPage": 0,
@@ -902,6 +978,7 @@
               "sourceRecall": 1,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": "88f07c8948ad9e7227b2429f1d8e4623c33ab63309a790fb189df306710245cd",
               "verification": {
                 "status": "passed",
                 "issueCodes": [],
@@ -919,6 +996,7 @@
               "sourceRecall": 1,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": "88f07c8948ad9e7227b2429f1d8e4623c33ab63309a790fb189df306710245cd",
               "verification": {
                 "status": "passed",
                 "issueCodes": [],
@@ -936,6 +1014,7 @@
               "sourceRecall": 1,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": "88f07c8948ad9e7227b2429f1d8e4623c33ab63309a790fb189df306710245cd",
               "verification": {
                 "status": "passed",
                 "issueCodes": [],
@@ -953,6 +1032,7 @@
               "sourceRecall": 1,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": "88f07c8948ad9e7227b2429f1d8e4623c33ab63309a790fb189df306710245cd",
               "verification": {
                 "status": "passed",
                 "issueCodes": [],
@@ -970,6 +1050,7 @@
               "sourceRecall": 1,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": "88f07c8948ad9e7227b2429f1d8e4623c33ab63309a790fb189df306710245cd",
               "verification": {
                 "status": "passed",
                 "issueCodes": [],
@@ -987,6 +1068,7 @@
               "sourceRecall": 1,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": "88f07c8948ad9e7227b2429f1d8e4623c33ab63309a790fb189df306710245cd",
               "verification": {
                 "status": "passed",
                 "issueCodes": [],
@@ -1004,6 +1086,7 @@
               "sourceRecall": 1,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": "88f07c8948ad9e7227b2429f1d8e4623c33ab63309a790fb189df306710245cd",
               "verification": {
                 "status": "passed",
                 "issueCodes": [],
@@ -1021,6 +1104,7 @@
               "sourceRecall": 1,
               "assetRecall": 1,
               "boilerplateContamination": 0,
+              "structureHash": "88f07c8948ad9e7227b2429f1d8e4623c33ab63309a790fb189df306710245cd",
               "verification": {
                 "status": "passed",
                 "issueCodes": [],
@@ -1056,7 +1140,7 @@
       "stratum": "boilerplate-exclusion",
       "layout": "one-column",
       "scores": {
-        "geometric-baseline": 0.8,
+        "geometric-baseline": 0,
         "llm-authored": 0,
         "llm-grounded": 1
       },
@@ -1069,7 +1153,7 @@
       "stratum": "boilerplate-exclusion",
       "layout": "two-column",
       "scores": {
-        "geometric-baseline": 0.8,
+        "geometric-baseline": 0,
         "llm-authored": 0,
         "llm-grounded": 1
       },
@@ -1082,7 +1166,7 @@
       "stratum": "code-listings",
       "layout": "one-column",
       "scores": {
-        "geometric-baseline": 0.8,
+        "geometric-baseline": 0,
         "llm-authored": 0,
         "llm-grounded": 1
       },
@@ -1095,7 +1179,7 @@
       "stratum": "code-listings",
       "layout": "two-column",
       "scores": {
-        "geometric-baseline": 0.8,
+        "geometric-baseline": 0,
         "llm-authored": 0,
         "llm-grounded": 1
       },
@@ -1108,7 +1192,7 @@
       "stratum": "equations",
       "layout": "one-column",
       "scores": {
-        "geometric-baseline": 0.8,
+        "geometric-baseline": 0,
         "llm-authored": 0,
         "llm-grounded": 1
       },
@@ -1121,7 +1205,7 @@
       "stratum": "equations",
       "layout": "two-column",
       "scores": {
-        "geometric-baseline": 0.8,
+        "geometric-baseline": 0,
         "llm-authored": 0,
         "llm-grounded": 1
       },
@@ -1134,7 +1218,7 @@
       "stratum": "figures-diagrams",
       "layout": "one-column",
       "scores": {
-        "geometric-baseline": 0.8,
+        "geometric-baseline": 0,
         "llm-authored": 0,
         "llm-grounded": 1
       },
@@ -1147,7 +1231,7 @@
       "stratum": "figures-diagrams",
       "layout": "two-column",
       "scores": {
-        "geometric-baseline": 0.8,
+        "geometric-baseline": 0,
         "llm-authored": 0,
         "llm-grounded": 1
       },
@@ -1160,7 +1244,7 @@
       "stratum": "footnotes-citations",
       "layout": "one-column",
       "scores": {
-        "geometric-baseline": 0.8,
+        "geometric-baseline": 0,
         "llm-authored": 0,
         "llm-grounded": 1
       },
@@ -1173,7 +1257,7 @@
       "stratum": "footnotes-citations",
       "layout": "two-column",
       "scores": {
-        "geometric-baseline": 0.8,
+        "geometric-baseline": 0,
         "llm-authored": 0,
         "llm-grounded": 1
       },
@@ -1186,7 +1270,7 @@
       "stratum": "prose-continuity",
       "layout": "one-column",
       "scores": {
-        "geometric-baseline": 0.8,
+        "geometric-baseline": 0,
         "llm-authored": 0,
         "llm-grounded": 1
       },
@@ -1199,7 +1283,7 @@
       "stratum": "prose-continuity",
       "layout": "two-column",
       "scores": {
-        "geometric-baseline": 0.8,
+        "geometric-baseline": 0,
         "llm-authored": 0,
         "llm-grounded": 1
       },
@@ -1212,7 +1296,7 @@
       "stratum": "sectioning",
       "layout": "one-column",
       "scores": {
-        "geometric-baseline": 0.8,
+        "geometric-baseline": 0,
         "llm-authored": 0,
         "llm-grounded": 1
       },
@@ -1225,7 +1309,7 @@
       "stratum": "sectioning",
       "layout": "two-column",
       "scores": {
-        "geometric-baseline": 0.8,
+        "geometric-baseline": 0,
         "llm-authored": 0,
         "llm-grounded": 1
       },
@@ -1238,7 +1322,7 @@
       "stratum": "tables",
       "layout": "one-column",
       "scores": {
-        "geometric-baseline": 0.8,
+        "geometric-baseline": 0,
         "llm-authored": 0,
         "llm-grounded": 1
       },
@@ -1251,7 +1335,7 @@
       "stratum": "tables",
       "layout": "two-column",
       "scores": {
-        "geometric-baseline": 0.8,
+        "geometric-baseline": 0,
         "llm-authored": 0,
         "llm-grounded": 1
       },
@@ -1439,5 +1523,11 @@
       "reason": "verification"
     }
   ],
-  "reportSha256": "e6c606e68fc42dde1778953bc8ca99ebcdcc3e24efe2064f6f24841ad3398269"
+  "authority": {
+    "kind": "synthetic-contract-self-test",
+    "realProviderCalls": 0,
+    "realProviderAuthority": false,
+    "promotionEligible": false
+  },
+  "reportSha256": "1659b5bb7fa7a67f592f80d289073331faba1b0a7ec5ab21aa8e62e92cace6cf"
 }

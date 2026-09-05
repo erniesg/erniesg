@@ -14,6 +14,7 @@ import type {
   StructuredExtractionNodeType,
   StructuredExtractionProposal,
 } from './structured-extraction'
+import { structuredExtractionHash } from './structured-extraction'
 
 const hashA = 'a'.repeat(64)
 const hashB = 'b'.repeat(64)
@@ -169,9 +170,75 @@ describe('extraction architecture bake-off', () => {
       ]),
     )
     expect(report.reportSha256).toMatch(/^[a-f0-9]{64}$/u)
-    expect(createExtractionArchitectureDecision({ report }).reportSha256).toBe(
-      report.reportSha256,
-    )
+    const decision = createExtractionArchitectureDecision({ report })
+    expect(decision.reportSha256).toBe(report.reportSha256)
+    expect(decision.owner).toBe('pending')
+    expect(decision.humanDecisionRequired).toBe(true)
+  })
+
+  it('never promotes report-only authority claims', async () => {
+    const report = await runExtractionBakeoff({
+      corpus: corpus(),
+      arms: [
+        arm('geometric-baseline'),
+        arm('llm-authored'),
+        arm('llm-grounded'),
+      ],
+    })
+    const withAuthority = (authority: unknown) => {
+      const { reportSha256: _reportSha256, ...withoutHash } = report
+      const candidate = {
+        ...withoutHash,
+        comparison: withoutHash.comparison.map((row) => ({
+          ...row,
+          winner: 'llm-grounded' as const,
+        })),
+        authority,
+      }
+      return {
+        ...candidate,
+        reportSha256: structuredExtractionHash(candidate),
+      } as typeof report
+    }
+
+    for (const candidate of [
+      report,
+      withAuthority({
+        kind: 'real-provider-promotion-evidence',
+        realProviderCalls: 0,
+        realProviderAuthority: true,
+        promotionEligible: true,
+      }),
+      withAuthority({
+        kind: 'wrong-provider-authority',
+        realProviderCalls: 1,
+        realProviderAuthority: true,
+        promotionEligible: true,
+      }),
+      withAuthority({
+        kind: 'real-provider-promotion-evidence',
+        realProviderCalls: '1',
+        realProviderAuthority: true,
+        promotionEligible: true,
+      }),
+    ]) {
+      const decision = createExtractionArchitectureDecision({
+        report: candidate,
+      })
+      expect(decision.owner).toBe('pending')
+      expect(decision.humanDecisionRequired).toBe(true)
+    }
+
+    const forged = createExtractionArchitectureDecision({
+      report: withAuthority({
+        kind: 'real-provider-promotion-evidence',
+        realProviderCalls: 1,
+        realProviderAuthority: true,
+        promotionEligible: true,
+      }),
+    })
+    expect(forged.owner).toBe('pending')
+    expect(forged.humanDecisionRequired).toBe(true)
   })
 
   it('disqualifies a byte-unstable candidate rather than publishing the first result', async () => {

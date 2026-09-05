@@ -8,17 +8,135 @@ import {
   unlink,
   writeFile,
 } from 'node:fs/promises'
+import { constants as fsConstants } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import Ajv2020 from 'ajv/dist/2020.js'
+import reportSchema from '../docs/schemas/extraction-bakeoff-report.schema.json' with { type: 'json' }
 import {
   createExtractionArchitectureDecision,
   EXTRACTION_BAKEOFF_STRATA,
   runExtractionBakeoff,
 } from '../src/research/extraction-bakeoff.ts'
+import { structuredExtractionHash } from '../src/research/structured-extraction.ts'
 
 const SHA_A = 'a'.repeat(64)
 const SHA_B = 'b'.repeat(64)
 const SCORE_LEDGER_SCHEMA_VERSION = '1.0.0'
+const MAX_REPORT_BYTES = 16 * 1024 * 1024
+const validateReportSchema = new Ajv2020({ strict: false }).compile(
+  reportSchema,
+)
+const SYNTHETIC_AUTHORITY = Object.freeze({
+  kind: 'synthetic-contract-self-test',
+  realProviderCalls: 0,
+  realProviderAuthority: false,
+  promotionEligible: false,
+})
+
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function exactKeys(value, keys) {
+  return (
+    isRecord(value) &&
+    Object.keys(value).length === keys.length &&
+    keys.every((key) => Object.hasOwn(value, key))
+  )
+}
+
+function authorityIsSynthetic(authority) {
+  return (
+    exactKeys(authority, [
+      'kind',
+      'realProviderCalls',
+      'realProviderAuthority',
+      'promotionEligible',
+    ]) &&
+    authority.kind === SYNTHETIC_AUTHORITY.kind &&
+    authority.realProviderCalls === SYNTHETIC_AUTHORITY.realProviderCalls &&
+    authority.realProviderAuthority ===
+      SYNTHETIC_AUTHORITY.realProviderAuthority &&
+    authority.promotionEligible === SYNTHETIC_AUTHORITY.promotionEligible
+  )
+}
+
+export function validateSyntheticBakeoffReport(report) {
+  if (!isRecord(report) || !authorityIsSynthetic(report.authority))
+    throw new Error('INVALID_SYNTHETIC_BAKEOFF_AUTHORITY')
+  const { reportSha256, ...reportWithoutHash } = report
+  if (
+    typeof reportSha256 !== 'string' ||
+    structuredExtractionHash(reportWithoutHash) !== reportSha256
+  ) {
+    throw new Error('INVALID_SYNTHETIC_BAKEOFF_REPORT_HASH')
+  }
+  if (!validateReportSchema(report))
+    throw new Error('INVALID_SYNTHETIC_BAKEOFF_REPORT_SCHEMA')
+  return report
+}
+
+function syntheticReport(report) {
+  const { reportSha256: _priorReportSha256, ...reportWithoutHash } = report
+  const reportWithAuthority = {
+    ...reportWithoutHash,
+    authority: SYNTHETIC_AUTHORITY,
+  }
+  return {
+    ...reportWithAuthority,
+    reportSha256: structuredExtractionHash(reportWithAuthority),
+  }
+}
+
+async function readBoundedReport(path) {
+  let handle
+  try {
+    handle = await open(
+      resolve(path),
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK,
+    )
+    const before = await handle.stat({ bigint: true })
+    if (!before.isFile() || before.size > BigInt(MAX_REPORT_BYTES))
+      throw new Error('INVALID_SYNTHETIC_BAKEOFF_REPORT')
+    const expectedSize = Number(before.size)
+    const bytes = Buffer.allocUnsafe(expectedSize)
+    let offset = 0
+    while (offset < expectedSize) {
+      const { bytesRead } = await handle.read(
+        bytes,
+        offset,
+        expectedSize - offset,
+        offset,
+      )
+      if (bytesRead === 0) throw new Error('INVALID_SYNTHETIC_BAKEOFF_REPORT')
+      offset += bytesRead
+    }
+    const probe = Buffer.allocUnsafe(1)
+    const { bytesRead: trailingBytes } = await handle.read(
+      probe,
+      0,
+      1,
+      expectedSize,
+    )
+    const after = await handle.stat({ bigint: true })
+    if (
+      trailingBytes !== 0 ||
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.size !== before.size ||
+      after.mtimeNs !== before.mtimeNs ||
+      after.ctimeNs !== before.ctimeNs
+    ) {
+      throw new Error('INVALID_SYNTHETIC_BAKEOFF_REPORT')
+    }
+    return bytes.toString('utf8')
+  } catch {
+    throw new Error('INVALID_SYNTHETIC_BAKEOFF_REPORT')
+  } finally {
+    await handle?.close().catch(() => undefined)
+  }
+}
 
 async function loadScoreLedger(path) {
   let value
@@ -219,6 +337,41 @@ function arm(id) {
 
 async function main() {
   const args = process.argv.slice(2)
+  const validationIndex = args.indexOf('--validate-report')
+  if (validationIndex >= 0) {
+    const reportPath = args[validationIndex + 1]
+    if (!reportPath) throw new Error('--validate-report requires a path')
+    let report
+    try {
+      report = JSON.parse(await readBoundedReport(reportPath))
+    } catch {
+      throw new Error('INVALID_SYNTHETIC_BAKEOFF_REPORT')
+    }
+    validateSyntheticBakeoffReport(report)
+    return
+  }
+  const stampIndex = args.indexOf('--stamp-report')
+  if (stampIndex >= 0) {
+    const inputPath = args[stampIndex + 1]
+    if (!inputPath) throw new Error('--stamp-report requires a path')
+    const reportOutIndex = args.indexOf('--report-out')
+    const outputPath = args[reportOutIndex + 1]
+    if (reportOutIndex < 0 || !outputPath)
+      throw new Error('--stamp-report requires --report-out <path>')
+    let report
+    try {
+      report = JSON.parse(await readBoundedReport(inputPath))
+    } catch {
+      throw new Error('INVALID_SYNTHETIC_BAKEOFF_REPORT')
+    }
+    validateSyntheticBakeoffReport(report)
+    await writeFile(
+      outputPath,
+      `${JSON.stringify(syntheticReport(report), null, 2)}\n`,
+      'utf8',
+    )
+    return
+  }
   if (!args.includes('--self-test')) {
     process.stderr.write(
       'Usage: node --experimental-strip-types tools/pdf-extraction-bakeoff.mjs --self-test --score-ledger <path> [--out <path>]\n',
@@ -230,16 +383,18 @@ async function main() {
   const scoreLedgerPath = args[scoreLedgerIndex + 1]
   if (scoreLedgerIndex < 0 || !scoreLedgerPath)
     throw new Error('--score-ledger requires a path')
-  const report = await withScoreLedger(scoreLedgerPath, (scoredHeldOutKeys) =>
-    runExtractionBakeoff({
-      corpus: makeCorpus(),
-      arms: [
-        arm('geometric-baseline'),
-        arm('llm-authored'),
-        arm('llm-grounded'),
-      ],
-      scoredHeldOutKeys,
-    }),
+  const report = syntheticReport(
+    await withScoreLedger(scoreLedgerPath, (scoredHeldOutKeys) =>
+      runExtractionBakeoff({
+        corpus: makeCorpus(),
+        arms: [
+          arm('geometric-baseline'),
+          arm('llm-authored'),
+          arm('llm-grounded'),
+        ],
+        scoredHeldOutKeys,
+      }),
+    ),
   )
   const decision = createExtractionArchitectureDecision({ report })
   const payload = `${JSON.stringify({ report, decision }, null, 2)}\n`

@@ -1,20 +1,25 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readFile, rm, writeFile } from 'node:fs/promises'
+import { readFile, rm, symlink, truncate, writeFile } from 'node:fs/promises'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
+import { strToU8, zipSync } from 'fflate'
 import { canonicalJson } from './pdf-fidelity-eval.mjs'
+import * as pdfBenchmarkReadiness from './pdf-benchmark-readiness.mjs'
 import {
   assessPdfBenchmarkReadiness,
   createPdfBenchmarkSplitIdentitySha256,
   createPdfBenchmarkReadinessReceipt,
+  readJsonArtifact,
   validateCandidateCommitment,
   validateIndependentIsolationEvidence,
+  validateNativeReaderEvidence,
   validateObservationBinding,
   validateSourcePdfDocumentIdentities,
+  verifyRepositoryFileBinding,
 } from './pdf-benchmark-readiness.mjs'
 
 const registryPath = 'benchmarks/pdf/benchmark-readiness-registry-v1.json'
@@ -59,9 +64,729 @@ async function createEvidenceWriter() {
   evidenceDirectories.push(directory)
   return async (name, value) => {
     const absolutePath = join(directory, name)
-    await writeFile(absolutePath, `${JSON.stringify(value, null, 2)}\n`)
+    await writeFile(
+      absolutePath,
+      value instanceof Uint8Array
+        ? value
+        : `${JSON.stringify(value, null, 2)}\n`,
+    )
     return fileBinding(relative(process.cwd(), absolutePath))
   }
+}
+
+function patchZipCentralDirectoryEntry(bytes, entryName, changes) {
+  const patched = new Uint8Array(bytes)
+  const view = new DataView(
+    patched.buffer,
+    patched.byteOffset,
+    patched.byteLength,
+  )
+  for (let offset = 0; offset <= patched.byteLength - 46; offset += 1) {
+    if (view.getUint32(offset, true) !== 0x02014b50) continue
+    const nameLength = view.getUint16(offset + 28, true)
+    const extraLength = view.getUint16(offset + 30, true)
+    const commentLength = view.getUint16(offset + 32, true)
+    const name = Buffer.from(
+      patched.subarray(offset + 46, offset + 46 + nameLength),
+    ).toString('utf8')
+    if (name === entryName) {
+      if (changes.compressedSize !== undefined) {
+        view.setUint32(offset + 20, changes.compressedSize, true)
+      }
+      if (changes.originalSize !== undefined) {
+        view.setUint32(offset + 24, changes.originalSize, true)
+      }
+      return patched
+    }
+    offset += nameLength + extraLength + commentLength
+  }
+  throw new Error(`missing ZIP central-directory entry: ${entryName}`)
+}
+
+function patchZipLocalHeaderEntry(bytes, entryName, changes) {
+  const patched = new Uint8Array(bytes)
+  const view = new DataView(
+    patched.buffer,
+    patched.byteOffset,
+    patched.byteLength,
+  )
+  for (let offset = 0; offset <= patched.byteLength - 30;) {
+    if (view.getUint32(offset, true) !== 0x04034b50) break
+    const compressedSize = view.getUint32(offset + 18, true)
+    const nameLength = view.getUint16(offset + 26, true)
+    const extraLength = view.getUint16(offset + 28, true)
+    const name = Buffer.from(
+      patched.subarray(offset + 30, offset + 30 + nameLength),
+    ).toString('utf8')
+    if (name === entryName) {
+      if (changes.compressedSize !== undefined) {
+        view.setUint32(offset + 18, changes.compressedSize, true)
+      }
+      if (changes.originalSize !== undefined) {
+        view.setUint32(offset + 22, changes.originalSize, true)
+      }
+      return patched
+    }
+    offset += 30 + nameLength + extraLength + compressedSize
+  }
+  throw new Error(`missing ZIP local entry: ${entryName}`)
+}
+
+function patchZipEntrySizes(bytes, entryName, changes) {
+  return patchZipCentralDirectoryEntry(
+    patchZipLocalHeaderEntry(bytes, entryName, changes),
+    entryName,
+    changes,
+  )
+}
+
+function corruptZipLocalEntryPayload(bytes, entryName) {
+  const patched = new Uint8Array(bytes)
+  const view = new DataView(
+    patched.buffer,
+    patched.byteOffset,
+    patched.byteLength,
+  )
+  for (let offset = 0; offset <= patched.byteLength - 30;) {
+    if (view.getUint32(offset, true) !== 0x04034b50) break
+    const compressedSize = view.getUint32(offset + 18, true)
+    const nameLength = view.getUint16(offset + 26, true)
+    const extraLength = view.getUint16(offset + 28, true)
+    const payloadOffset = offset + 30 + nameLength + extraLength
+    const name = Buffer.from(
+      patched.subarray(offset + 30, offset + 30 + nameLength),
+    ).toString('utf8')
+    if (name === entryName) {
+      if (compressedSize === 0) throw new Error(`empty ZIP entry: ${entryName}`)
+      patched[payloadOffset + Math.floor(compressedSize / 2)] ^= 0xff
+      return patched
+    }
+    offset = payloadOffset + compressedSize
+  }
+  throw new Error(`missing ZIP local entry: ${entryName}`)
+}
+
+function appendZipCompressedPayloadByte(bytes, entryName, byte) {
+  const original = new Uint8Array(bytes)
+  const originalView = new DataView(
+    original.buffer,
+    original.byteOffset,
+    original.byteLength,
+  )
+  const endOffset = zipEndRecordOffset(original)
+  const centralOffset = originalView.getUint32(endOffset + 16, true)
+  let localOffset = null
+  let compressedSize = null
+  for (let cursor = centralOffset; cursor < endOffset;) {
+    const nameLength = originalView.getUint16(cursor + 28, true)
+    const extraLength = originalView.getUint16(cursor + 30, true)
+    const commentLength = originalView.getUint16(cursor + 32, true)
+    const name = Buffer.from(
+      original.subarray(cursor + 46, cursor + 46 + nameLength),
+    ).toString('utf8')
+    if (name === entryName) {
+      localOffset = originalView.getUint32(cursor + 42, true)
+      compressedSize = originalView.getUint32(cursor + 20, true)
+      break
+    }
+    cursor += 46 + nameLength + extraLength + commentLength
+  }
+  if (localOffset === null || compressedSize === null) {
+    throw new Error(`missing ZIP entry: ${entryName}`)
+  }
+  const nameLength = originalView.getUint16(localOffset + 26, true)
+  const extraLength = originalView.getUint16(localOffset + 28, true)
+  const payloadEnd =
+    localOffset + 30 + nameLength + extraLength + compressedSize
+  const patched = new Uint8Array(original.byteLength + 1)
+  patched.set(original.subarray(0, payloadEnd))
+  patched[payloadEnd] = byte
+  patched.set(original.subarray(payloadEnd), payloadEnd + 1)
+  const view = new DataView(
+    patched.buffer,
+    patched.byteOffset,
+    patched.byteLength,
+  )
+  const shiftedCentralOffset = centralOffset + 1
+  const shiftedEndOffset = endOffset + 1
+  view.setUint32(localOffset + 18, compressedSize + 1, true)
+  for (let cursor = shiftedCentralOffset; cursor < shiftedEndOffset;) {
+    const centralNameLength = view.getUint16(cursor + 28, true)
+    const centralExtraLength = view.getUint16(cursor + 30, true)
+    const commentLength = view.getUint16(cursor + 32, true)
+    const name = Buffer.from(
+      patched.subarray(cursor + 46, cursor + 46 + centralNameLength),
+    ).toString('utf8')
+    if (name === entryName) {
+      view.setUint32(cursor + 20, compressedSize + 1, true)
+    }
+    if (view.getUint32(cursor + 42, true) > localOffset) {
+      view.setUint32(cursor + 42, view.getUint32(cursor + 42, true) + 1, true)
+    }
+    cursor += 46 + centralNameLength + centralExtraLength + commentLength
+  }
+  view.setUint32(shiftedEndOffset + 16, shiftedCentralOffset, true)
+  return patched
+}
+
+function appendZipDescriptorPayloadByte(bytes, entryName, byte) {
+  const original = new Uint8Array(bytes)
+  const originalView = new DataView(
+    original.buffer,
+    original.byteOffset,
+    original.byteLength,
+  )
+  const endOffset = zipEndRecordOffset(original)
+  const centralOffset = originalView.getUint32(endOffset + 16, true)
+  let localOffset = null
+  let compressedSize = null
+  for (let cursor = centralOffset; cursor < endOffset;) {
+    const nameLength = originalView.getUint16(cursor + 28, true)
+    const extraLength = originalView.getUint16(cursor + 30, true)
+    const commentLength = originalView.getUint16(cursor + 32, true)
+    const name = Buffer.from(
+      original.subarray(cursor + 46, cursor + 46 + nameLength),
+    ).toString('utf8')
+    if (name === entryName) {
+      localOffset = originalView.getUint32(cursor + 42, true)
+      compressedSize = originalView.getUint32(cursor + 20, true)
+      break
+    }
+    cursor += 46 + nameLength + extraLength + commentLength
+  }
+  if (localOffset === null || compressedSize === null) {
+    throw new Error(`missing ZIP entry: ${entryName}`)
+  }
+  const nextLocalOffset = (() => {
+    let next = centralOffset
+    for (let cursor = centralOffset; cursor < endOffset;) {
+      const candidate = originalView.getUint32(cursor + 42, true)
+      if (candidate > localOffset && candidate < next) next = candidate
+      cursor +=
+        46 +
+        originalView.getUint16(cursor + 28, true) +
+        originalView.getUint16(cursor + 30, true) +
+        originalView.getUint16(cursor + 32, true)
+    }
+    return next
+  })()
+  const nameLength = originalView.getUint16(localOffset + 26, true)
+  const extraLength = originalView.getUint16(localOffset + 28, true)
+  const descriptorOffset =
+    localOffset + 30 + nameLength + extraLength + compressedSize
+  const descriptorSize = nextLocalOffset - descriptorOffset
+  if (descriptorSize !== 12 && descriptorSize !== 16) {
+    throw new Error(`missing ZIP data descriptor: ${entryName}`)
+  }
+  const patched = new Uint8Array(original.byteLength + 1)
+  patched.set(original.subarray(0, descriptorOffset))
+  patched[descriptorOffset] = byte
+  patched.set(original.subarray(descriptorOffset), descriptorOffset + 1)
+  const view = new DataView(
+    patched.buffer,
+    patched.byteOffset,
+    patched.byteLength,
+  )
+  const shiftedCentralOffset = centralOffset + 1
+  const shiftedEndOffset = endOffset + 1
+  const descriptorFieldsOffset =
+    descriptorOffset + 1 + (descriptorSize === 16 ? 4 : 0)
+  view.setUint32(descriptorFieldsOffset + 4, compressedSize + 1, true)
+  for (let cursor = shiftedCentralOffset; cursor < shiftedEndOffset;) {
+    const centralNameLength = view.getUint16(cursor + 28, true)
+    const centralExtraLength = view.getUint16(cursor + 30, true)
+    const commentLength = view.getUint16(cursor + 32, true)
+    const name = Buffer.from(
+      patched.subarray(cursor + 46, cursor + 46 + centralNameLength),
+    ).toString('utf8')
+    if (name === entryName) {
+      view.setUint32(cursor + 20, compressedSize + 1, true)
+    }
+    if (view.getUint32(cursor + 42, true) > localOffset) {
+      view.setUint32(cursor + 42, view.getUint32(cursor + 42, true) + 1, true)
+    }
+    cursor += 46 + centralNameLength + centralExtraLength + commentLength
+  }
+  view.setUint32(shiftedEndOffset + 16, shiftedCentralOffset, true)
+  return patched
+}
+
+function zipEndRecordOffset(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  for (let offset = bytes.byteLength - 22; offset >= 0; offset -= 1) {
+    if (view.getUint32(offset, true) === 0x06054b50) return offset
+  }
+  throw new Error('missing ZIP end record')
+}
+
+function appendZipComment(bytes, comment) {
+  const original = new Uint8Array(bytes)
+  const commentBytes = Uint8Array.from(comment)
+  const endOffset = zipEndRecordOffset(original)
+  const patched = new Uint8Array(original.byteLength + commentBytes.byteLength)
+  patched.set(original)
+  patched.set(commentBytes, original.byteLength)
+  new DataView(patched.buffer).setUint16(
+    endOffset + 20,
+    commentBytes.byteLength,
+    true,
+  )
+  return patched
+}
+
+function patchZipEndRecordCommentLength(bytes, commentLength) {
+  const patched = new Uint8Array(bytes)
+  const view = new DataView(patched.buffer)
+  for (let offset = 0; offset <= patched.byteLength - 22; offset += 1) {
+    if (view.getUint32(offset, true) !== 0x06054b50) continue
+    view.setUint16(offset + 20, commentLength, true)
+    return patched
+  }
+  throw new Error('missing ZIP end record')
+}
+
+function appendPlausibleFakeZipEndRecordComment(bytes) {
+  const original = new Uint8Array(bytes)
+  const fake = new Uint8Array(22)
+  const view = new DataView(fake.buffer)
+  view.setUint32(0, 0x06054b50, true)
+  view.setUint16(8, 1, true)
+  view.setUint16(10, 1, true)
+  view.setUint32(12, 1, true)
+  view.setUint32(16, original.byteLength, true)
+  return appendZipComment(original, [0, ...fake])
+}
+
+function appendPlausibleFakeZipEndRecordStorm(bytes, fakeCount) {
+  const original = new Uint8Array(bytes)
+  const originalView = new DataView(
+    original.buffer,
+    original.byteOffset,
+    original.byteLength,
+  )
+  const endOffset = zipEndRecordOffset(original)
+  const entryCount = originalView.getUint16(endOffset + 10, true)
+  const centralOffset = originalView.getUint32(endOffset + 16, true)
+  const comment = new Uint8Array(fakeCount * 22)
+  const view = new DataView(comment.buffer)
+  for (let index = 0; index < fakeCount; index += 1) {
+    const offset = index * 22
+    view.setUint32(offset, 0x06054b50, true)
+    view.setUint16(offset + 8, entryCount, true)
+    view.setUint16(offset + 10, entryCount, true)
+    view.setUint32(
+      offset + 12,
+      original.byteLength + offset - centralOffset,
+      true,
+    )
+    view.setUint32(offset + 16, centralOffset, true)
+    view.setUint16(offset + 20, comment.byteLength - offset - 22, true)
+  }
+  return appendZipComment(original, comment)
+}
+
+function eraseFirstZipEndRecordSignature(bytes) {
+  const patched = new Uint8Array(bytes)
+  const view = new DataView(patched.buffer)
+  for (let offset = 0; offset <= patched.byteLength - 22; offset += 1) {
+    if (view.getUint32(offset, true) !== 0x06054b50) continue
+    view.setUint32(offset, 0, true)
+    return patched
+  }
+  throw new Error('missing ZIP end record')
+}
+
+function prependUnindexedLocalEntry(bytes, entryName, value) {
+  const hiddenArchive = zipSync({ [entryName]: value })
+  const hiddenView = new DataView(
+    hiddenArchive.buffer,
+    hiddenArchive.byteOffset,
+    hiddenArchive.byteLength,
+  )
+  const hiddenLocalBytes = hiddenArchive.subarray(
+    0,
+    hiddenView.getUint32(zipEndRecordOffset(hiddenArchive) + 16, true),
+  )
+  const patched = new Uint8Array(hiddenLocalBytes.byteLength + bytes.byteLength)
+  patched.set(hiddenLocalBytes)
+  patched.set(bytes, hiddenLocalBytes.byteLength)
+  const view = new DataView(
+    patched.buffer,
+    patched.byteOffset,
+    patched.byteLength,
+  )
+  const endOffset = zipEndRecordOffset(patched)
+  const entryCount = view.getUint16(endOffset + 10, true)
+  const centralOffset = view.getUint32(endOffset + 16, true)
+  const shiftedCentralOffset = centralOffset + hiddenLocalBytes.byteLength
+  view.setUint32(endOffset + 16, shiftedCentralOffset, true)
+  let cursor = shiftedCentralOffset
+  for (let index = 0; index < entryCount; index += 1) {
+    if (view.getUint32(cursor, true) !== 0x02014b50) {
+      throw new Error('invalid ZIP central record')
+    }
+    view.setUint32(
+      cursor + 42,
+      view.getUint32(cursor + 42, true) + hiddenLocalBytes.byteLength,
+      true,
+    )
+    cursor +=
+      46 +
+      view.getUint16(cursor + 28, true) +
+      view.getUint16(cursor + 30, true) +
+      view.getUint16(cursor + 32, true)
+  }
+  return patched
+}
+
+function patchZipMismatchedInvalidNameBytes(bytes, entryName) {
+  const patched = new Uint8Array(bytes)
+  const view = new DataView(
+    patched.buffer,
+    patched.byteOffset,
+    patched.byteLength,
+  )
+  let localPatched = false
+  for (let offset = 0; offset <= patched.byteLength - 30;) {
+    if (view.getUint32(offset, true) !== 0x04034b50) break
+    const compressedSize = view.getUint32(offset + 18, true)
+    const nameLength = view.getUint16(offset + 26, true)
+    const extraLength = view.getUint16(offset + 28, true)
+    const name = Buffer.from(
+      patched.subarray(offset + 30, offset + 30 + nameLength),
+    ).toString('utf8')
+    if (name === entryName) {
+      patched[offset + 30 + nameLength - 1] = 0xff
+      localPatched = true
+      break
+    }
+    offset += 30 + nameLength + extraLength + compressedSize
+  }
+  let centralPatched = false
+  for (let offset = 0; offset <= patched.byteLength - 46; offset += 1) {
+    if (view.getUint32(offset, true) !== 0x02014b50) continue
+    const nameLength = view.getUint16(offset + 28, true)
+    const name = Buffer.from(
+      patched.subarray(offset + 46, offset + 46 + nameLength),
+    ).toString('utf8')
+    if (name === entryName) {
+      patched[offset + 46 + nameLength - 1] = 0xfe
+      centralPatched = true
+      break
+    }
+  }
+  if (!localPatched || !centralPatched) throw new Error('missing ZIP entry')
+  return patched
+}
+
+function createValidEpub(extraEntries = {}) {
+  return zipSync({
+    mimetype: [strToU8('application/epub+zip'), { level: 0 }],
+    'META-INF/container.xml': strToU8(
+      '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><rootfiles><rootfile full-path="EPUB/package.opf" media-type="application/oebps-package+xml" /></rootfiles></container>',
+    ),
+    'EPUB/package.opf': strToU8(
+      '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id"><metadata><identifier id="pub-id">urn:fixture</identifier></metadata><manifest><item id="content" href="content.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="content"/></spine></package>',
+    ),
+    ...extraEntries,
+  })
+}
+
+function addZipDataDescriptor(bytes, entryName, { signature = true } = {}) {
+  const original = new Uint8Array(bytes)
+  const originalView = new DataView(
+    original.buffer,
+    original.byteOffset,
+    original.byteLength,
+  )
+  const endOffset = zipEndRecordOffset(original)
+  const centralOffset = originalView.getUint32(endOffset + 16, true)
+  let centralEntryOffset = centralOffset
+  let localOffset = null
+  let checksum = null
+  let compressedSize = null
+  let originalSize = null
+  for (; centralEntryOffset < endOffset;) {
+    const nameLength = originalView.getUint16(centralEntryOffset + 28, true)
+    const extraLength = originalView.getUint16(centralEntryOffset + 30, true)
+    const commentLength = originalView.getUint16(centralEntryOffset + 32, true)
+    const name = Buffer.from(
+      original.subarray(
+        centralEntryOffset + 46,
+        centralEntryOffset + 46 + nameLength,
+      ),
+    ).toString('utf8')
+    if (name === entryName) {
+      checksum = originalView.getUint32(centralEntryOffset + 16, true)
+      compressedSize = originalView.getUint32(centralEntryOffset + 20, true)
+      originalSize = originalView.getUint32(centralEntryOffset + 24, true)
+      localOffset = originalView.getUint32(centralEntryOffset + 42, true)
+      break
+    }
+    centralEntryOffset += 46 + nameLength + extraLength + commentLength
+  }
+  if (localOffset === null) throw new Error(`missing ZIP entry: ${entryName}`)
+
+  const localNameLength = originalView.getUint16(localOffset + 26, true)
+  const localExtraLength = originalView.getUint16(localOffset + 28, true)
+  const descriptorOffset =
+    localOffset + 30 + localNameLength + localExtraLength + compressedSize
+  const descriptor = new Uint8Array(signature ? 16 : 12)
+  const descriptorView = new DataView(descriptor.buffer)
+  const fieldsOffset = signature ? 4 : 0
+  if (signature) descriptorView.setUint32(0, 0x08074b50, true)
+  descriptorView.setUint32(fieldsOffset, checksum, true)
+  descriptorView.setUint32(fieldsOffset + 4, compressedSize, true)
+  descriptorView.setUint32(fieldsOffset + 8, originalSize, true)
+  const patched = new Uint8Array(original.byteLength + descriptor.byteLength)
+  patched.set(original.subarray(0, descriptorOffset))
+  patched.set(descriptor, descriptorOffset)
+  patched.set(
+    original.subarray(descriptorOffset),
+    descriptorOffset + descriptor.byteLength,
+  )
+  const view = new DataView(
+    patched.buffer,
+    patched.byteOffset,
+    patched.byteLength,
+  )
+  const shiftedCentralOffset = centralOffset + descriptor.byteLength
+  const shiftedEndOffset = endOffset + descriptor.byteLength
+  view.setUint16(
+    localOffset + 6,
+    view.getUint16(localOffset + 6, true) | 0x0008,
+    true,
+  )
+  view.setUint32(localOffset + 14, 0, true)
+  view.setUint32(localOffset + 18, 0, true)
+  view.setUint32(localOffset + 22, 0, true)
+  let cursor = shiftedCentralOffset
+  while (cursor < shiftedEndOffset) {
+    const nameLength = view.getUint16(cursor + 28, true)
+    const extraLength = view.getUint16(cursor + 30, true)
+    const commentLength = view.getUint16(cursor + 32, true)
+    const name = Buffer.from(
+      patched.subarray(cursor + 46, cursor + 46 + nameLength),
+    ).toString('utf8')
+    if (name === entryName) {
+      view.setUint16(
+        cursor + 8,
+        view.getUint16(cursor + 8, true) | 0x0008,
+        true,
+      )
+    }
+    if (view.getUint32(cursor + 42, true) > localOffset) {
+      view.setUint32(
+        cursor + 42,
+        view.getUint32(cursor + 42, true) + descriptor.byteLength,
+        true,
+      )
+    }
+    cursor += 46 + nameLength + extraLength + commentLength
+  }
+  view.setUint32(shiftedEndOffset + 16, shiftedCentralOffset, true)
+  return patched
+}
+
+function corruptZipDataDescriptor(bytes, entryName) {
+  const patched = new Uint8Array(bytes)
+  const view = new DataView(
+    patched.buffer,
+    patched.byteOffset,
+    patched.byteLength,
+  )
+  const endOffset = zipEndRecordOffset(patched)
+  const centralOffset = view.getUint32(endOffset + 16, true)
+  for (let cursor = centralOffset; cursor < endOffset;) {
+    const nameLength = view.getUint16(cursor + 28, true)
+    const extraLength = view.getUint16(cursor + 30, true)
+    const commentLength = view.getUint16(cursor + 32, true)
+    const name = Buffer.from(
+      patched.subarray(cursor + 46, cursor + 46 + nameLength),
+    ).toString('utf8')
+    if (name === entryName) {
+      const localOffset = view.getUint32(cursor + 42, true)
+      const localNameLength = view.getUint16(localOffset + 26, true)
+      const localExtraLength = view.getUint16(localOffset + 28, true)
+      const descriptorOffset =
+        localOffset +
+        30 +
+        localNameLength +
+        localExtraLength +
+        view.getUint32(cursor + 20, true)
+      view.setUint32(descriptorOffset + 4, 0, true)
+      return patched
+    }
+    cursor += 46 + nameLength + extraLength + commentLength
+  }
+  throw new Error(`missing ZIP entry: ${entryName}`)
+}
+
+function addZipMimetypeExtraFields(bytes) {
+  const original = new Uint8Array(bytes)
+  const originalView = new DataView(
+    original.buffer,
+    original.byteOffset,
+    original.byteLength,
+  )
+  const endOffset = zipEndRecordOffset(original)
+  const centralOffset = originalView.getUint32(endOffset + 16, true)
+  const localNameLength = originalView.getUint16(26, true)
+  const localExtraLength = originalView.getUint16(28, true)
+  if (
+    Buffer.from(original.subarray(30, 30 + localNameLength)).toString(
+      'ascii',
+    ) !== 'mimetype'
+  ) {
+    throw new Error('expected mimetype local entry first')
+  }
+  const extra = Uint8Array.from([0xca, 0xfe])
+  const localExtraOffset = 30 + localNameLength + localExtraLength
+  const withLocalExtra = new Uint8Array(original.byteLength + extra.byteLength)
+  withLocalExtra.set(original.subarray(0, localExtraOffset))
+  withLocalExtra.set(extra, localExtraOffset)
+  withLocalExtra.set(
+    original.subarray(localExtraOffset),
+    localExtraOffset + extra.byteLength,
+  )
+  const localView = new DataView(
+    withLocalExtra.buffer,
+    withLocalExtra.byteOffset,
+    withLocalExtra.byteLength,
+  )
+  localView.setUint16(28, localExtraLength + extra.byteLength, true)
+  const shiftedCentralOffset = centralOffset + extra.byteLength
+  const shiftedEndOffset = endOffset + extra.byteLength
+  localView.setUint32(shiftedEndOffset + 16, shiftedCentralOffset, true)
+
+  let mimetypeCentralOffset = shiftedCentralOffset
+  const centralNameLength = localView.getUint16(
+    mimetypeCentralOffset + 28,
+    true,
+  )
+  const centralExtraLength = localView.getUint16(
+    mimetypeCentralOffset + 30,
+    true,
+  )
+  const centralExtraOffset =
+    mimetypeCentralOffset + 46 + centralNameLength + centralExtraLength
+  const patched = new Uint8Array(withLocalExtra.byteLength + extra.byteLength)
+  patched.set(withLocalExtra.subarray(0, centralExtraOffset))
+  patched.set(extra, centralExtraOffset)
+  patched.set(
+    withLocalExtra.subarray(centralExtraOffset),
+    centralExtraOffset + extra.byteLength,
+  )
+  const view = new DataView(
+    patched.buffer,
+    patched.byteOffset,
+    patched.byteLength,
+  )
+  view.setUint16(
+    mimetypeCentralOffset + 30,
+    centralExtraLength + extra.byteLength,
+    true,
+  )
+  const finalEndOffset = shiftedEndOffset + extra.byteLength
+  view.setUint32(
+    finalEndOffset + 12,
+    view.getUint32(finalEndOffset + 12, true) + extra.byteLength,
+    true,
+  )
+  for (let cursor = shiftedCentralOffset; cursor < finalEndOffset;) {
+    const nameLength = view.getUint16(cursor + 28, true)
+    const extraLength = view.getUint16(cursor + 30, true)
+    const commentLength = view.getUint16(cursor + 32, true)
+    if (view.getUint32(cursor + 42, true) !== 0) {
+      view.setUint32(
+        cursor + 42,
+        view.getUint32(cursor + 42, true) + extra.byteLength,
+        true,
+      )
+    }
+    cursor += 46 + nameLength + extraLength + commentLength
+  }
+  return patched
+}
+
+function addZipMimetypeLocalExtraField(bytes) {
+  const original = new Uint8Array(bytes)
+  const originalView = new DataView(
+    original.buffer,
+    original.byteOffset,
+    original.byteLength,
+  )
+  const endOffset = zipEndRecordOffset(original)
+  const centralOffset = originalView.getUint32(endOffset + 16, true)
+  const nameLength = originalView.getUint16(26, true)
+  const extraLength = originalView.getUint16(28, true)
+  const insertionOffset = 30 + nameLength + extraLength
+  const extra = Uint8Array.from([0xca, 0xfe])
+  const patched = new Uint8Array(original.byteLength + extra.byteLength)
+  patched.set(original.subarray(0, insertionOffset))
+  patched.set(extra, insertionOffset)
+  patched.set(
+    original.subarray(insertionOffset),
+    insertionOffset + extra.byteLength,
+  )
+  const view = new DataView(
+    patched.buffer,
+    patched.byteOffset,
+    patched.byteLength,
+  )
+  view.setUint16(28, extraLength + extra.byteLength, true)
+  const shiftedCentralOffset = centralOffset + extra.byteLength
+  const shiftedEndOffset = endOffset + extra.byteLength
+  view.setUint32(shiftedEndOffset + 16, shiftedCentralOffset, true)
+  for (let cursor = shiftedCentralOffset; cursor < shiftedEndOffset;) {
+    const centralNameLength = view.getUint16(cursor + 28, true)
+    const centralExtraLength = view.getUint16(cursor + 30, true)
+    const commentLength = view.getUint16(cursor + 32, true)
+    if (view.getUint32(cursor + 42, true) !== 0) {
+      view.setUint32(
+        cursor + 42,
+        view.getUint32(cursor + 42, true) + extra.byteLength,
+        true,
+      )
+    }
+    cursor += 46 + centralNameLength + centralExtraLength + commentLength
+  }
+  return patched
+}
+
+function addZipMimetypeCentralExtraField(bytes) {
+  const original = new Uint8Array(bytes)
+  const originalView = new DataView(
+    original.buffer,
+    original.byteOffset,
+    original.byteLength,
+  )
+  const endOffset = zipEndRecordOffset(original)
+  const centralOffset = originalView.getUint32(endOffset + 16, true)
+  const nameLength = originalView.getUint16(centralOffset + 28, true)
+  const extraLength = originalView.getUint16(centralOffset + 30, true)
+  const insertionOffset = centralOffset + 46 + nameLength + extraLength
+  const extra = Uint8Array.from([0xca, 0xfe])
+  const patched = new Uint8Array(original.byteLength + extra.byteLength)
+  patched.set(original.subarray(0, insertionOffset))
+  patched.set(extra, insertionOffset)
+  patched.set(
+    original.subarray(insertionOffset),
+    insertionOffset + extra.byteLength,
+  )
+  const view = new DataView(
+    patched.buffer,
+    patched.byteOffset,
+    patched.byteLength,
+  )
+  view.setUint16(centralOffset + 30, extraLength + extra.byteLength, true)
+  const shiftedEndOffset = endOffset + extra.byteLength
+  view.setUint32(
+    shiftedEndOffset + 12,
+    view.getUint32(shiftedEndOffset + 12, true) + extra.byteLength,
+    true,
+  )
+  return patched
 }
 
 function reviewerIdentityEvidence(reviewerId, subjectIdentitySha256) {
@@ -141,8 +866,12 @@ describe('PDF benchmark readiness registry', () => {
       )
       const invalidRegistryPath = await writeRegistry(invalidRegistry)
       await expect(
-        createPdfBenchmarkReadinessReceipt({ registryPath: invalidRegistryPath }),
-      ).rejects.toThrow(/PDF_BENCHMARK_METRIC_BINDING_MISMATCH|INVALID_PDF_BENCHMARK_REGISTRY_SCHEMA|INVALID_PDF_BENCHMARK_REGISTRY/)
+        createPdfBenchmarkReadinessReceipt({
+          registryPath: invalidRegistryPath,
+        }),
+      ).rejects.toThrow(
+        /PDF_BENCHMARK_METRIC_BINDING_MISMATCH|INVALID_PDF_BENCHMARK_REGISTRY_SCHEMA|INVALID_PDF_BENCHMARK_REGISTRY/,
+      )
     }
 
     await expect(
@@ -161,7 +890,9 @@ describe('PDF benchmark readiness registry', () => {
       dependency.fileSha256 = '0'.repeat(64)
       const invalidRegistryPath = await writeRegistry(invalidRegistry)
       await expect(
-        createPdfBenchmarkReadinessReceipt({ registryPath: invalidRegistryPath }),
+        createPdfBenchmarkReadinessReceipt({
+          registryPath: invalidRegistryPath,
+        }),
       ).rejects.toThrow('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
     }
   })
@@ -194,6 +925,7 @@ describe('PDF benchmark readiness registry', () => {
       'candidate-commitment-frozen-before-label-reveal',
       'target-free-end-to-end-track',
       'metric-coverage',
+      'native-reader-exact-artifact-coverage',
       'promotion-protocol-implementation',
     ])
     expect(receipt.sources).toHaveLength(2)
@@ -213,6 +945,477 @@ describe('PDF benchmark readiness registry', () => {
     expect(receipt.registry.fileSha256).toMatch(/^[a-f0-9]{64}$/)
     expect(receipt.registry.canonicalSha256).toMatch(/^[a-f0-9]{64}$/)
     expect(receipt.receiptSha256).toMatch(/^[a-f0-9]{64}$/)
+  })
+
+  it('preserves the privacy-safe native reader validation summary in the hash-bound receipt', async () => {
+    const receipt = await createPdfBenchmarkReadinessReceipt({ registryPath })
+
+    expect(receipt.nativeReaderEvidence).toEqual({
+      exactArtifactSha256: null,
+      structurallyValidatedReaderIds: [],
+      trustedAttestationVerified: false,
+      trustedAttestationReason: 'trusted-attestation-verifier-not-implemented',
+      verifiedReaderIds: [],
+    })
+    const { receiptSha256, ...unsignedReceipt } = receipt
+    expect(receiptSha256).toBe(
+      createHash('sha256').update(canonicalJson(unsignedReceipt)).digest('hex'),
+    )
+  })
+
+  it('accepts legacy v1 registries without native-reader evidence as canonical blockers', async () => {
+    const legacyRegistry = await readRegistry()
+    delete legacyRegistry.nativeReaderEvidence
+
+    const receipt = await createPdfBenchmarkReadinessReceipt({
+      registryPath: await writeRegistry(legacyRegistry),
+    })
+    expect(receipt.ready).toBe(false)
+    expect(receipt.gaps).toContain('native-reader-exact-artifact-coverage')
+    expect(receipt.nativeReaderEvidence).toEqual({
+      exactArtifactSha256: null,
+      structurallyValidatedReaderIds: [],
+      trustedAttestationVerified: false,
+      trustedAttestationReason: 'trusted-attestation-verifier-not-implemented',
+      verifiedReaderIds: [],
+    })
+
+    const malformedPresentRegistry = await readRegistry()
+    malformedPresentRegistry.nativeReaderEvidence = { malformed: true }
+    await expect(
+      createPdfBenchmarkReadinessReceipt({
+        registryPath: await writeRegistry(malformedPresentRegistry),
+      }),
+    ).rejects.toThrow(/INVALID_PDF_BENCHMARK_REGISTRY/)
+  })
+
+  it('bounds EPUB archive metadata before inflation', () => {
+    expect(typeof pdfBenchmarkReadiness.validEpubPackage).toBe('function')
+    const { validEpubPackage } = pdfBenchmarkReadiness
+    const validFixture = createValidEpub({
+      'EPUB/payload.bin': [strToU8('fixture'), { level: 0 }],
+      'EPUB/empty.bin': strToU8(''),
+    })
+    expect(validEpubPackage(validFixture)).toBe(true)
+
+    expect(
+      validEpubPackage(
+        createValidEpub({
+          'META-INF/container.xml': strToU8(
+            '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><rootfiles><rootfile full-path="EPUB/package.xml" media-type="application/oebps-package+xml" /></rootfiles></container>',
+          ),
+          'EPUB/package.xml': strToU8(
+            '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id"><metadata><identifier id="pub-id">urn:fixture</identifier></metadata><manifest><item id="content" href="content.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="content"/></spine></package>',
+          ),
+        }),
+      ),
+    ).toBe(true)
+
+    const eocdMagicComment = appendZipComment(validFixture, [
+      0x50,
+      0x4b,
+      0x05,
+      0x06,
+      ...Array(18).fill(0),
+    ])
+    expect(validEpubPackage(eocdMagicComment)).toBe(true)
+    expect(
+      validEpubPackage(patchZipEndRecordCommentLength(eocdMagicComment, 21)),
+    ).toBe(false)
+
+    const plausibleFakeEocdComment =
+      appendPlausibleFakeZipEndRecordComment(validFixture)
+    expect(validEpubPackage(plausibleFakeEocdComment)).toBe(true)
+    expect(
+      validEpubPackage(
+        eraseFirstZipEndRecordSignature(plausibleFakeEocdComment),
+      ),
+    ).toBe(false)
+    expect(
+      validEpubPackage(appendPlausibleFakeZipEndRecordStorm(validFixture, 2)),
+    ).toBe(true)
+    expect(
+      validEpubPackage(appendPlausibleFakeZipEndRecordStorm(validFixture, 16)),
+    ).toBe(false)
+    expect(
+      validEpubPackage(appendZipComment(validFixture, Array(65_535).fill(0))),
+    ).toBe(true)
+
+    const descriptorPackage = addZipDataDescriptor(
+      validFixture,
+      'EPUB/package.opf',
+    )
+    expect(validEpubPackage(descriptorPackage)).toBe(true)
+    expect(
+      validEpubPackage(
+        appendZipDescriptorPayloadByte(
+          descriptorPackage,
+          'EPUB/package.opf',
+          0xaa,
+        ),
+      ),
+    ).toBe(false)
+    expect(
+      validEpubPackage(
+        appendZipCompressedPayloadByte(validFixture, 'EPUB/package.opf', 0xaa),
+      ),
+    ).toBe(false)
+    expect(
+      validEpubPackage(
+        addZipDataDescriptor(validFixture, 'EPUB/package.opf', {
+          signature: false,
+        }),
+      ),
+    ).toBe(true)
+    expect(
+      validEpubPackage(
+        corruptZipDataDescriptor(descriptorPackage, 'EPUB/package.opf'),
+      ),
+    ).toBe(false)
+
+    const unsignedDescriptorCrcAmbiguity = addZipDataDescriptor(
+      createValidEpub({
+        'EPUB/payload.bin': [
+          Uint8Array.from([
+            ...strToU8('zip-descriptor-ambiguity'),
+            0x56,
+            0x42,
+            0x90,
+            0x7e,
+          ]),
+          { level: 0 },
+        ],
+      }),
+      'EPUB/payload.bin',
+      { signature: false },
+    )
+    expect(validEpubPackage(unsignedDescriptorCrcAmbiguity)).toBe(true)
+
+    expect(validEpubPackage(addZipMimetypeExtraFields(validFixture))).toBe(
+      false,
+    )
+    expect(validEpubPackage(addZipMimetypeLocalExtraField(validFixture))).toBe(
+      false,
+    )
+    expect(
+      validEpubPackage(addZipMimetypeCentralExtraField(validFixture)),
+    ).toBe(false)
+
+    const oversizedCompressed = patchZipCentralDirectoryEntry(
+      validFixture,
+      'EPUB/payload.bin',
+      { compressedSize: 256 * 1024 * 1024 + 1 },
+    )
+    expect(validEpubPackage(oversizedCompressed)).toBe(false)
+
+    const oversizedInflated = patchZipCentralDirectoryEntry(
+      validFixture,
+      'EPUB/payload.bin',
+      { originalSize: 512 * 1024 * 1024 + 1 },
+    )
+    expect(validEpubPackage(oversizedInflated)).toBe(false)
+
+    const tooManyEntries = createValidEpub(
+      Object.fromEntries(
+        Array.from({ length: 542 }, (_, index) => [
+          `EPUB/extra-${index}.txt`,
+          [strToU8('x'), { level: 0 }],
+        ]),
+      ),
+    )
+    expect(validEpubPackage(tooManyEntries)).toBe(false)
+
+    const oversizedContainer = createValidEpub({
+      'META-INF/container.xml': strToU8('<rootfile'.repeat(64 * 1024)),
+    })
+    expect(oversizedContainer.byteLength).toBeLessThan(16 * 1024)
+    expect(validEpubPackage(oversizedContainer)).toBe(false)
+
+    const oversizedRootfile = patchZipCentralDirectoryEntry(
+      validFixture,
+      'EPUB/package.opf',
+      { originalSize: 4 * 1024 * 1024 + 1 },
+    )
+    expect(validEpubPackage(oversizedRootfile)).toBe(false)
+
+    const compressedMimetype = zipSync({
+      mimetype: strToU8('application/epub+zip'),
+      'META-INF/container.xml': strToU8(
+        '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><rootfiles><rootfile full-path="EPUB/package.opf" media-type="application/oebps-package+xml" /></rootfiles></container>',
+      ),
+      'EPUB/package.opf': strToU8(
+        '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id"><metadata><identifier id="pub-id">urn:fixture</identifier></metadata><manifest><item id="content" href="content.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="content"/></spine></package>',
+      ),
+    })
+    expect(validEpubPackage(compressedMimetype)).toBe(false)
+
+    const corruptPackagePayload = corruptZipLocalEntryPayload(
+      createValidEpub({
+        'EPUB/package.opf': strToU8(
+          `<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata><meta>${'x'.repeat(64 * 1024)}</meta></metadata><manifest/><spine/></package>`,
+        ),
+      }),
+      'EPUB/package.opf',
+    )
+    expect(validEpubPackage(corruptPackagePayload)).toBe(false)
+
+    expect(
+      validEpubPackage(
+        createValidEpub({
+          'EPUB/package.opf': strToU8('<package><metadata></package>'),
+        }),
+      ),
+    ).toBe(false)
+    expect(
+      validEpubPackage(
+        createValidEpub({
+          'META-INF/container.xml': strToU8(
+            '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><rootfiles><rootfile full-path="EPUB/decoy.opf" media-type="text/plain"/><rootfile xmlns="urn:evil" full-path="EPUB/package.opf" media-type="application/oebps-package+xml"/></rootfiles></container>',
+          ),
+        }),
+      ),
+    ).toBe(false)
+    expect(
+      validEpubPackage(
+        createValidEpub({
+          'META-INF/container.xml': strToU8(
+            '<c:container xmlns:c="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><c:rootfiles><c:rootfile full-path="EPUB/decoy.opf" media-type="text/plain"/><c:rootfile xmlns:c="urn:evil" full-path="EPUB/package.opf" media-type="application/oebps-package+xml"/></c:rootfiles></c:container>',
+          ),
+        }),
+      ),
+    ).toBe(false)
+    expect(
+      validEpubPackage(
+        createValidEpub({
+          'EPUB/package.opf': strToU8(
+            '<package xmlns="http://www.idpf.org/2007/opf" xmlns:evil="urn:evil" version="3.0" unique-identifier="pub-id"><evil:metadata><evil:identifier id="pub-id">urn:fixture</evil:identifier></evil:metadata><evil:manifest><evil:item id="content" href="content.xhtml" media-type="application/xhtml+xml"/></evil:manifest><evil:spine><evil:itemref idref="content"/></evil:spine></package>',
+          ),
+        }),
+      ),
+    ).toBe(false)
+    expect(
+      validEpubPackage(
+        createValidEpub({
+          'EPUB/package.opf': strToU8(
+            '<opf:package xmlns:opf="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id"><opf:metadata><opf:identifier id="pub-id">urn:fixture</opf:identifier></opf:metadata><opf:manifest><opf:item id="content" href="content.xhtml" media-type="application/xhtml+xml"/></opf:manifest><opf:spine><opf:itemref idref="content"/></opf:spine></opf:package>',
+          ),
+        }),
+      ),
+    ).toBe(true)
+    expect(
+      validEpubPackage(
+        createValidEpub({
+          'EPUB/package.opf': strToU8('<not-a-package />'),
+        }),
+      ),
+    ).toBe(false)
+    expect(
+      validEpubPackage(
+        createValidEpub({
+          'EPUB/package.opf': strToU8(
+            '<x:package xmlns:x="urn:evil"><metadata/><manifest/><spine/></x:package>',
+          ),
+        }),
+      ),
+    ).toBe(false)
+
+    const underdeclaredPackage = patchZipEntrySizes(
+      createValidEpub({
+        'EPUB/package.opf': strToU8(
+          `<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata><meta>${'x'.repeat(8 * 1024 * 1024)}</meta></metadata><manifest/><spine/></package>`,
+        ),
+      }),
+      'EPUB/package.opf',
+      { originalSize: 25 },
+    )
+    expect(underdeclaredPackage.byteLength).toBeLessThan(64 * 1024)
+    expect(validEpubPackage(underdeclaredPackage)).toBe(false)
+
+    const underdeclaredContainer = patchZipEntrySizes(
+      createValidEpub({
+        'META-INF/container.xml': strToU8('<rootfile'.repeat(128 * 1024)),
+      }),
+      'META-INF/container.xml',
+      { originalSize: 80 },
+    )
+    expect(underdeclaredContainer.byteLength).toBeLessThan(32 * 1024)
+    expect(validEpubPackage(underdeclaredContainer)).toBe(false)
+
+    const hiddenPackageRecord = prependUnindexedLocalEntry(
+      createValidEpub(),
+      'EPUB/package.opf',
+      strToU8(
+        '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="hidden"><metadata><identifier id="hidden">urn:hidden</identifier></metadata><manifest><item id="content" href="content.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="content"/></spine></package>',
+      ),
+    )
+    expect(validEpubPackage(hiddenPackageRecord)).toBe(false)
+
+    const corruptContentPayload = corruptZipLocalEntryPayload(
+      createValidEpub({
+        'EPUB/content.xhtml': strToU8(
+          `<html xmlns="http://www.w3.org/1999/xhtml"><body>${'content'.repeat(4096)}</body></html>`,
+        ),
+      }),
+      'EPUB/content.xhtml',
+    )
+    expect(validEpubPackage(corruptContentPayload)).toBe(false)
+
+    const invalidNameBytes = patchZipMismatchedInvalidNameBytes(
+      createValidEpub({ 'EPUB/extra.txt': strToU8('extra') }),
+      'EPUB/extra.txt',
+    )
+    expect(validEpubPackage(invalidNameBytes)).toBe(false)
+
+    expect(
+      validEpubPackage(
+        createValidEpub({
+          'META-INF/container.xml': strToU8(
+            '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><rootfiles xmlns="urn:evil"><rootfile full-path="EPUB/package.opf" media-type="application/oebps-package+xml" /></rootfiles></container>',
+          ),
+        }),
+      ),
+    ).toBe(false)
+    expect(
+      validEpubPackage(
+        createValidEpub({
+          'EPUB/package.opf': strToU8(
+            '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id"><metadata xmlns="urn:evil"><identifier id="pub-id">urn:fixture</identifier></metadata><manifest><item id="content" href="content.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="content"/></spine></package>',
+          ),
+        }),
+      ),
+    ).toBe(false)
+  })
+
+  it('accepts the repository-published EPUB profile', async () => {
+    const published = await readFile(
+      'public/research/if-letters-home-could-sing/if-letters-home-could-sing.epub',
+    )
+    expect(pdfBenchmarkReadiness.validEpubPackage(published)).toBe(true)
+  })
+
+  it('accepts safe directory and empty resource entries', () => {
+    const fixture = createValidEpub({
+      'EPUB/': [new Uint8Array(), { level: 0 }],
+      'EPUB/empty.css': [new Uint8Array(), { level: 0 }],
+    })
+    expect(pdfBenchmarkReadiness.validEpubPackage(fixture)).toBe(true)
+  })
+
+  it('rejects oversized EPUB and governance bindings from lstat metadata', async () => {
+    const writeEvidence = await createEvidenceWriter()
+    const oversizedEpub = await writeEvidence(
+      'oversized-before-read.epub',
+      createValidEpub(),
+    )
+    await truncate(oversizedEpub.path, 256 * 1024 * 1024 + 1)
+    const exportEvidence = await writeEvidence(
+      'oversized-export-evidence.json',
+      {
+        schemaVersion: '1.0.0',
+        kind: 'pdf-benchmark-exact-epub-export-evidence',
+        epubArtifact: oversizedEpub,
+        exactArtifactSha256: oversizedEpub.fileSha256,
+        exportReceipt: oversizedEpub,
+        exportReceiptIdentitySha256: 'a'.repeat(64),
+        toolchainManifest: oversizedEpub,
+        epubCheckReceipt: oversizedEpub,
+        epubCheckTranscript: oversizedEpub,
+        status: 'passed',
+      },
+    )
+    const unavailableReaders = {
+      status: 'unavailable-blocker',
+      readerIdentity: null,
+      executionReceipt: null,
+    }
+    await expect(
+      validateNativeReaderEvidence({
+        exportEvidence,
+        'apple-books': unavailableReaders,
+        'independent-desktop-epub-reader': unavailableReaders,
+        'target-eink-reader-device': unavailableReaders,
+      }),
+    ).rejects.toThrow('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
+
+    const oversizedJson = await writeEvidence('oversized-governance.json', {
+      fixture: true,
+    })
+    await truncate(oversizedJson.path, 16 * 1024 * 1024 + 1)
+    await expect(
+      validateNativeReaderEvidence({
+        exportEvidence: oversizedJson,
+        'apple-books': unavailableReaders,
+        'independent-desktop-epub-reader': unavailableReaders,
+        'target-eink-reader-device': unavailableReaders,
+      }),
+    ).rejects.toThrow('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
+  })
+
+  it('never accepts outside bytes while a repository binding is replaced', async () => {
+    const writeEvidence = await createEvidenceWriter()
+    const repositoryBinding = await writeEvidence(
+      'descriptor-race.json',
+      strToU8('inside'),
+    )
+    const outsideDirectory = await mkdtemp(
+      join(tmpdir(), 'pdf-binding-outside-'),
+    )
+    evidenceDirectories.push(outsideDirectory)
+    const outsidePath = join(outsideDirectory, 'outside.json')
+    const outsideBytes = strToU8('outside')
+    await writeFile(outsidePath, outsideBytes)
+    const outsideHash = createHash('sha256').update(outsideBytes).digest('hex')
+
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const validation = verifyRepositoryFileBinding(
+        repositoryBinding.path,
+        outsideHash,
+        'PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH',
+        64,
+      ).then(
+        () => ({ accepted: true, error: null }),
+        (error) => ({ accepted: false, error }),
+      )
+      await rm(repositoryBinding.path, { force: true })
+      await symlink(outsidePath, repositoryBinding.path)
+      const outcome = await validation
+      expect(outcome.accepted).toBe(false)
+      expect(outcome.error).toMatchObject({
+        message: 'PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH',
+      })
+      await rm(repositoryBinding.path, { force: true })
+      await writeFile(repositoryBinding.path, strToU8('inside'))
+    }
+  })
+
+  it('reads registry JSON from one bounded descriptor during replacement', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pdf-registry-race-'))
+    evidenceDirectories.push(directory)
+    const registryArtifact = join(directory, 'registry.json')
+    const outsideArtifact = join(directory, 'outside.json')
+    await writeFile(outsideArtifact, JSON.stringify({ outside: true }))
+
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      await writeFile(registryArtifact, JSON.stringify({ inside: true }))
+      const validation = readJsonArtifact(
+        registryArtifact,
+        'INVALID_PDF_BENCHMARK_REGISTRY_SCHEMA',
+      ).then(
+        (artifact) => ({ artifact, error: null }),
+        (error) => ({ artifact: null, error }),
+      )
+      await rm(registryArtifact, { force: true })
+      await symlink(outsideArtifact, registryArtifact)
+      const outcome = await validation
+      if (outcome.artifact !== null) {
+        expect(outcome.artifact.value).toEqual({ inside: true })
+      } else {
+        expect(outcome.error).toMatchObject({
+          message: 'INVALID_PDF_BENCHMARK_REGISTRY_SCHEMA',
+        })
+      }
+      await rm(registryArtifact, { force: true })
+    }
   })
 
   it('fails closed when a bound artifact hash changes', async () => {
@@ -1074,10 +2277,17 @@ describe('PDF benchmark readiness registry', () => {
     )
 
     expect(assessment.ready).toBe(false)
-    expect(assessment.gaps).toEqual(['promotion-protocol-implementation'])
+    expect(assessment.gaps).toEqual([
+      'native-reader-exact-artifact-coverage',
+      'promotion-protocol-implementation',
+    ])
     expect(
       assessment.criteria
-        .filter((item) => item.id !== 'promotion-protocol-implementation')
+        .filter(
+          (item) =>
+            item.id !== 'native-reader-exact-artifact-coverage' &&
+            item.id !== 'promotion-protocol-implementation',
+        )
         .every((item) => item.passed),
     ).toBe(true)
 
@@ -1087,6 +2297,7 @@ describe('PDF benchmark readiness registry', () => {
     })
     expect(unverifiedMetrics.gaps).toEqual([
       'metric-coverage',
+      'native-reader-exact-artifact-coverage',
       'promotion-protocol-implementation',
     ])
 
@@ -1095,13 +2306,18 @@ describe('PDF benchmark readiness registry', () => {
         ...evidence,
         blindSourcePolicyVerified: false,
       }).gaps,
-    ).toEqual(['blind-split-frozen', 'promotion-protocol-implementation'])
+    ).toEqual([
+      'blind-split-frozen',
+      'native-reader-exact-artifact-coverage',
+      'promotion-protocol-implementation',
+    ])
 
     registry.tracks.endToEndBlind.promotionAuthority = false
     expect(
       assessPdfBenchmarkReadiness(registry, inventory, evidence).gaps,
     ).toEqual([
       'target-free-end-to-end-track',
+      'native-reader-exact-artifact-coverage',
       'promotion-protocol-implementation',
     ])
     registry.tracks.endToEndBlind.promotionAuthority = true
@@ -1110,9 +2326,346 @@ describe('PDF benchmark readiness registry', () => {
       assessPdfBenchmarkReadiness(registry, inventory, evidence).gaps,
     ).toEqual([
       'target-free-end-to-end-track',
+      'native-reader-exact-artifact-coverage',
       'promotion-protocol-implementation',
     ])
   })
+
+  it('requires hash-bound exact-artifact receipts from all required native readers', async () => {
+    const writeEvidence = await createEvidenceWriter()
+    const exactEpubArtifact = await writeEvidence(
+      'exact-artifact.epub',
+      zipSync({
+        mimetype: [strToU8('application/epub+zip'), { level: 0 }],
+        'META-INF/container.xml': strToU8(
+          '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><rootfiles><rootfile full-path="EPUB/package.opf" media-type="application/oebps-package+xml" /></rootfiles></container>',
+        ),
+        'EPUB/package.opf': strToU8(
+          '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="pub-id">urn:fixture</dc:identifier><dc:title>Fixture</dc:title><dc:language>en</dc:language></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="content" href="content.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="content"/></spine></package>',
+        ),
+        'EPUB/nav.xhtml': strToU8(
+          '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Fixture</title></head><body><nav epub:type="toc" xmlns:epub="http://www.idpf.org/2007/ops"><ol><li><a href="content.xhtml">Fixture</a></li></ol></nav></body></html>',
+        ),
+        'EPUB/content.xhtml': strToU8(
+          '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Fixture</title></head><body><p>Fixture</p></body></html>',
+        ),
+      }),
+    )
+    const exactArtifactSha256 = exactEpubArtifact.fileSha256
+    const exportReceipt = {
+      schemaVersion: '1.0.0',
+      kind: 'pdf-benchmark-exact-epub-export-receipt',
+      exactArtifactSha256,
+      status: 'passed',
+    }
+    const exportReceiptIdentitySha256 = createHash('sha256')
+      .update(canonicalJson(exportReceipt))
+      .digest('hex')
+    const exportReceiptEvidence = await writeEvidence(
+      'export-receipt.json',
+      exportReceipt,
+    )
+    const toolchainManifest = await fileBinding(
+      'src/publication/toolchain-manifest.json',
+    )
+    const toolchain = JSON.parse(
+      await readFile('src/publication/toolchain-manifest.json', 'utf8'),
+    )
+    const checkerIdentitySha256 = toolchain.epubcheck.sha256
+    const checkerVersion = toolchain.epubcheck.version
+    const epubCheckInputIdentitySha256 = createHash('sha256')
+      .update(
+        canonicalJson({
+          kind: 'pdf-benchmark-epubcheck-input-v1',
+          exactArtifactSha256,
+          checkerIdentitySha256,
+          checkerVersion,
+        }),
+      )
+      .digest('hex')
+    const epubCheckTranscript = {
+      schemaVersion: '1.0.0',
+      kind: 'pdf-benchmark-epubcheck-execution-transcript',
+      command: 'epubcheck',
+      exactArtifactSha256,
+      checkerIdentitySha256,
+      checkerVersion,
+      exitCode: 0,
+      epubCheckStatus: 'passed',
+      stdoutSha256: 'b'.repeat(64),
+      stderrSha256: 'c'.repeat(64),
+    }
+    const epubCheckOutputIdentitySha256 = createHash('sha256')
+      .update(canonicalJson(epubCheckTranscript))
+      .digest('hex')
+    const epubCheckReceipt = {
+      schemaVersion: '1.0.0',
+      kind: 'pdf-benchmark-epubcheck-execution-receipt',
+      exactArtifactSha256,
+      toolchainManifestFileSha256: toolchainManifest.fileSha256,
+      checkerIdentitySha256,
+      checkerVersion,
+      epubCheckTranscriptEvidenceFileSha256: null,
+      inputIdentitySha256: epubCheckInputIdentitySha256,
+      outputIdentitySha256: epubCheckOutputIdentitySha256,
+      status: 'passed',
+    }
+    const epubCheckTranscriptEvidence = await writeEvidence(
+      'epubcheck-transcript.json',
+      epubCheckTranscript,
+    )
+    epubCheckReceipt.epubCheckTranscriptEvidenceFileSha256 =
+      epubCheckTranscriptEvidence.fileSha256
+    const epubCheckReceiptEvidence = await writeEvidence(
+      'epubcheck-receipt.json',
+      epubCheckReceipt,
+    )
+    const exportEvidence = await writeEvidence('export-evidence.json', {
+      schemaVersion: '1.0.0',
+      kind: 'pdf-benchmark-exact-epub-export-evidence',
+      epubArtifact: exactEpubArtifact,
+      exactArtifactSha256,
+      exportReceipt: exportReceiptEvidence,
+      exportReceiptIdentitySha256,
+      toolchainManifest,
+      epubCheckReceipt: epubCheckReceiptEvidence,
+      epubCheckTranscript: epubCheckTranscriptEvidence,
+      status: 'passed',
+    })
+    const writeCompleteExportEvidence = (name, overrides = {}) =>
+      writeEvidence(name, {
+        schemaVersion: '1.0.0',
+        kind: 'pdf-benchmark-exact-epub-export-evidence',
+        epubArtifact: exactEpubArtifact,
+        exactArtifactSha256,
+        exportReceipt: exportReceiptEvidence,
+        exportReceiptIdentitySha256,
+        toolchainManifest,
+        epubCheckReceipt: epubCheckReceiptEvidence,
+        epubCheckTranscript: epubCheckTranscriptEvidence,
+        status: 'passed',
+        ...overrides,
+      })
+    const readerReceipts = await Promise.all(
+      [
+        ['apple-books', 'apple-books'],
+        ['independent-desktop-epub-reader', 'independent-desktop-epub-reader'],
+        ['target-eink-reader-device', 'target-eink-reader-device'],
+      ].map(async ([readerId, readerType], index) => {
+        const readerIdentity = await writeEvidence(
+          `${readerId}-identity.json`,
+          {
+            schemaVersion: '1.0.0',
+            kind: 'pdf-benchmark-native-reader-identity-evidence',
+            readerId,
+            readerType,
+            readerIdentitySha256: (index + 4).toString(16).repeat(64),
+            status: 'passed',
+          },
+        )
+        return {
+          readerId,
+          readerType,
+          readerIdentity,
+          executionReceipt: await writeEvidence(`${readerId}.json`, {
+            schemaVersion: '1.0.0',
+            kind: 'pdf-benchmark-native-reader-execution-receipt',
+            readerId,
+            readerType,
+            readerIdentityEvidenceFileSha256: readerIdentity.fileSha256,
+            exportEvidenceFileSha256: exportEvidence.fileSha256,
+            exportReceiptEvidenceFileSha256: exportReceiptEvidence.fileSha256,
+            exportReceiptIdentitySha256,
+            epubCheckReceiptEvidenceFileSha256:
+              epubCheckReceiptEvidence.fileSha256,
+            toolchainManifestFileSha256: toolchainManifest.fileSha256,
+            epubCheckTranscriptEvidenceFileSha256:
+              epubCheckTranscriptEvidence.fileSha256,
+            exactArtifactSha256,
+            executionIdentitySha256: (index + 1).toString(16).repeat(64),
+            status: 'passed',
+          }),
+        }
+      }),
+    )
+    const nativeReaderEvidence = Object.fromEntries(
+      readerReceipts.map(({ readerId, readerIdentity, executionReceipt }) => [
+        readerId,
+        {
+          status: 'passed',
+          readerIdentity,
+          executionReceipt,
+        },
+      ]),
+    )
+    nativeReaderEvidence.exportEvidence = exportEvidence
+
+    await expect(
+      validateNativeReaderEvidence(nativeReaderEvidence),
+    ).resolves.toEqual({
+      exactArtifactSha256,
+      structurallyValidatedReaderIds: [
+        'apple-books',
+        'independent-desktop-epub-reader',
+        'target-eink-reader-device',
+      ],
+      trustedAttestationVerified: false,
+      trustedAttestationReason: 'trusted-attestation-verifier-not-implemented',
+      verifiedReaderIds: [],
+    })
+
+    const populatedRegistry = await readRegistry()
+    populatedRegistry.nativeReaderEvidence = nativeReaderEvidence
+    const populatedReceipt = await createPdfBenchmarkReadinessReceipt({
+      registryPath: await writeRegistry(populatedRegistry),
+    })
+    const nativeReaderSummary = {
+      exactArtifactSha256,
+      structurallyValidatedReaderIds: [
+        'apple-books',
+        'independent-desktop-epub-reader',
+        'target-eink-reader-device',
+      ],
+      trustedAttestationVerified: false,
+      trustedAttestationReason: 'trusted-attestation-verifier-not-implemented',
+      verifiedReaderIds: [],
+    }
+    expect(populatedReceipt.nativeReaderEvidence).toEqual(nativeReaderSummary)
+    expect(
+      populatedReceipt.criteria.find(
+        ({ id }) => id === 'native-reader-exact-artifact-coverage',
+      ).observed,
+    ).toEqual(nativeReaderSummary)
+    const serializedReceipt = JSON.stringify(populatedReceipt)
+    expect(serializedReceipt).not.toContain(exportEvidence.path)
+    for (const { readerIdentity, executionReceipt } of readerReceipts) {
+      expect(serializedReceipt).not.toContain(readerIdentity.path)
+      expect(serializedReceipt).not.toContain(executionReceipt.path)
+    }
+
+    const unavailable = structuredClone(nativeReaderEvidence)
+    unavailable['apple-books'] = {
+      status: 'unavailable-blocker',
+      readerIdentity: null,
+      executionReceipt: null,
+    }
+    await expect(validateNativeReaderEvidence(unavailable)).resolves.toEqual({
+      exactArtifactSha256,
+      structurallyValidatedReaderIds: [
+        'independent-desktop-epub-reader',
+        'target-eink-reader-device',
+      ],
+      trustedAttestationVerified: false,
+      trustedAttestationReason: 'trusted-attestation-verifier-not-implemented',
+      verifiedReaderIds: [],
+    })
+
+    const browserSubstitution = structuredClone(nativeReaderEvidence)
+    const appleBooksExecutionReceipt = JSON.parse(
+      await readFile(
+        nativeReaderEvidence['apple-books'].executionReceipt.path,
+        'utf8',
+      ),
+    )
+    browserSubstitution['apple-books'].executionReceipt = await writeEvidence(
+      'browser-substitution.json',
+      {
+        ...appleBooksExecutionReceipt,
+        readerType: 'chromium',
+      },
+    )
+    await expect(
+      validateNativeReaderEvidence(browserSubstitution),
+    ).rejects.toThrow('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
+
+    const arbitrarySharedClaim = structuredClone(nativeReaderEvidence)
+    for (const readerId of [
+      'apple-books',
+      'independent-desktop-epub-reader',
+      'target-eink-reader-device',
+    ]) {
+      const executionReceipt = JSON.parse(
+        await readFile(
+          nativeReaderEvidence[readerId].executionReceipt.path,
+          'utf8',
+        ),
+      )
+      arbitrarySharedClaim[readerId].executionReceipt = await writeEvidence(
+        `${readerId}-arbitrary-claim.json`,
+        {
+          ...executionReceipt,
+          exactArtifactSha256: 'e'.repeat(64),
+        },
+      )
+    }
+    await expect(
+      validateNativeReaderEvidence(arbitrarySharedClaim),
+    ).rejects.toThrow('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
+
+    const unboundIdentity = structuredClone(nativeReaderEvidence)
+    const unboundIdentityReceipt = JSON.parse(
+      await readFile(
+        nativeReaderEvidence['apple-books'].executionReceipt.path,
+        'utf8',
+      ),
+    )
+    unboundIdentity['apple-books'].executionReceipt = await writeEvidence(
+      'unbound-identity.json',
+      {
+        ...unboundIdentityReceipt,
+        readerIdentityEvidenceFileSha256: '0'.repeat(64),
+      },
+    )
+    await expect(validateNativeReaderEvidence(unboundIdentity)).rejects.toThrow(
+      'PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH',
+    )
+
+    const renamedJsonArtifact = await writeEvidence('renamed-json.epub', {
+      not: 'an epub archive',
+    })
+    const malformedArtifactEvidence = await writeCompleteExportEvidence(
+      'malformed-artifact-export-evidence.json',
+      {
+        epubArtifact: renamedJsonArtifact,
+        exactArtifactSha256: renamedJsonArtifact.fileSha256,
+      },
+    )
+    const malformedArtifact = structuredClone(nativeReaderEvidence)
+    malformedArtifact.exportEvidence = malformedArtifactEvidence
+    await expect(
+      validateNativeReaderEvidence(malformedArtifact),
+    ).rejects.toThrow('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
+
+    const missingEpubCheck = structuredClone(nativeReaderEvidence)
+    missingEpubCheck.exportEvidence = await writeCompleteExportEvidence(
+      'missing-epubcheck-export-evidence.json',
+      {
+        epubCheckReceipt: null,
+      },
+    )
+    await expect(
+      validateNativeReaderEvidence(missingEpubCheck),
+    ).rejects.toThrow('PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH')
+
+    for (const [name, value] of [
+      ['forged', { ...epubCheckReceipt, outputIdentitySha256: '0'.repeat(64) }],
+      [
+        'mismatched',
+        { ...epubCheckReceipt, exactArtifactSha256: 'b'.repeat(64) },
+      ],
+      ['failed', { ...epubCheckReceipt, status: 'failed' }],
+    ]) {
+      const receipt = await writeEvidence(`epubcheck-${name}.json`, value)
+      const rejected = structuredClone(nativeReaderEvidence)
+      rejected.exportEvidence = await writeCompleteExportEvidence(
+        `epubcheck-${name}-export-evidence.json`,
+        { epubCheckReceipt: receipt },
+      )
+      await expect(validateNativeReaderEvidence(rejected)).rejects.toThrow(
+        'PDF_BENCHMARK_NATIVE_READER_EVIDENCE_MISMATCH',
+      )
+    }
+  }, 30_000)
 
   it('emits only a stable error code when CLI inputs fail', () => {
     const result = spawnSync(

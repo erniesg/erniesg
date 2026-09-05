@@ -170,9 +170,10 @@ def evaluate(pdf: Path, epub: Path, build_report: dict, struct_draft: Path | Non
 
     texts = _epub_texts(epub)
     body_html = "\n".join(html for name, html in sorted(texts.items()) if not name.endswith("nav.xhtml"))
-    # struct renders footnotes as <aside role="doc-footnote">; keep their text out of the prose-continuity sample
-    body_html = re.sub(r"<aside[^>]*>.*?</aside>", "", body_html, flags=re.S)
+    # struct renders footnotes as <aside role="doc-footnote">; their text counts
+    # for coverage but stays out of the prose-continuity sample
     body_text = _strip(body_html)
+    body_html = re.sub(r"<aside[^>]*>.*?</aside>", "", body_html, flags=re.S)
 
     out_labels = {"figure": set(), "table": set()}
     # a figure label counts only when its <figure> carries an image; a table

@@ -123,6 +123,7 @@ function canonicalizeHrefs(document) {
         try {
           const url = new URL(run.href)
           if (!['http:', 'https:', 'mailto:', 'ftp:'].includes(url.protocol)) throw new Error('scheme')
+          if (/[\s\\{}<>"|^`]/.test(run.href)) throw new Error('unsafe characters')
           run.href = url.href
         } catch {
           dropped += 1

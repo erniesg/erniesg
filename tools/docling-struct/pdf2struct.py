@@ -147,6 +147,8 @@ class AdapterReport:
     joins: int = 0
     joins_dehyphenated: int = 0
     float_resumptions: int = 0
+    post_pass_joins: int = 0
+    joins_fused_words: int = 0
     headings: int = 0
     figures: int = 0
     figures_with_caption: int = 0
@@ -455,7 +457,8 @@ class StructAdapter:
             box = self._box(item)
             if box:
                 pending["evidence"]["boxes"].append(box)
-            pending["evidence"]["sourceIds"].append(self._source_id(item))
+            if self._source_id(item) not in pending["evidence"]["sourceIds"]:
+                pending["evidence"]["sourceIds"].append(self._source_id(item))
             self.report.joins += 1
             if resumed:
                 self.report.float_resumptions += 1
@@ -906,6 +909,74 @@ class StructAdapter:
                 self.report.paragraphs += len(new_blocks)
                 self._diagnostic("warning", "layout", "Page recovered from text layer", f"page {page_index}: layout model returned {body_chars.get(page_index, 0)} of {source_chars} characters", None, page_index)
 
+    def _fuse_words(self, previous: str, following: str) -> str | None:
+        """`eval` + `uation` -> `evaluation` when the fused word is attested in
+        the paper; otherwise None."""
+        head = re.search(r"([A-Za-z]+)$", previous)
+        tail = re.match(r"([a-z]+)", following)
+        if not head or not tail:
+            return None
+        if self._corpus_words is None:
+            words: set[str] = set()
+            for item, _ in self.doc.iterate_items():
+                if isinstance(item, TextItem):
+                    words.update(w.lower() for w in re.findall(r"[A-Za-z]{3,}", item.text))
+            self._corpus_words = words
+        fused = (head.group(1) + tail.group(1)).lower()
+        if fused in self._corpus_words and fused != head.group(1).lower() and fused != tail.group(1):
+            return previous + following
+        return None
+
+    def _join_split_paragraphs(self) -> None:
+        """Post-pass join for paragraphs split by floats or furniture that were
+        only classified after the walk: the previous paragraph lacks terminal
+        punctuation and the continuation starts lowercase (or the two halves
+        fuse into an attested word)."""
+        skip = FLOAT_KINDS | {"furniture"}
+        index = 1
+        while index < len(self.blocks):
+            block = self.blocks[index]
+            if block["kind"] != "paragraph" or not LOWER_START_RE.match(block["text"].lstrip()):
+                index += 1
+                continue
+            back = index - 1
+            while back >= 0 and self.blocks[back]["kind"] in skip and index - back <= 5:
+                back -= 1
+            if back < 0 or index - back > 5 or self.blocks[back]["kind"] != "paragraph":
+                index += 1
+                continue
+            previous = self.blocks[back]
+            prev_text = previous["text"].rstrip()
+            if TERMINAL_RE.search(prev_text) or TRAILING_MARKER_RE.search(prev_text):
+                index += 1
+                continue
+            following = block["text"].lstrip()
+            shift = len(block["text"]) - len(following)
+            if prev_text.endswith("-"):
+                joined, dropped = self._dehyphenate(prev_text, following)
+                base = len(prev_text) - (1 if dropped else 0)
+            else:
+                fused = self._fuse_words(prev_text, following)
+                if fused is not None:
+                    joined, base = fused, len(prev_text)
+                    self.report.joins_fused_words += 1
+                else:
+                    joined, base = prev_text + " " + following, len(prev_text) + 1
+            previous["text"] = joined
+            for run in block["inline"]:
+                previous["inline"].append({**run, "start": run["start"] - shift + base, "end": run["end"] - shift + base})
+            previous["evidence"]["pages"] = sorted(set(previous["evidence"]["pages"] + block["evidence"]["pages"]))
+            previous["evidence"]["boxes"].extend(block["evidence"]["boxes"])
+            previous["evidence"]["sourceIds"] = list(dict.fromkeys(previous["evidence"]["sourceIds"] + block["evidence"]["sourceIds"]))
+            # relationships pointing at the absorbed block now point at the survivor
+            for relationship in self.relationships:
+                if relationship["from"] == block["id"]:
+                    relationship["from"] = previous["id"]
+                relationship["to"] = [previous["id"] if t == block["id"] else t for t in relationship["to"]]
+            del self.blocks[index]
+            self.report.joins += 1
+            self.report.post_pass_joins += 1
+
     def _demote_repeated_edge_text(self) -> None:
         """Spec 042 rule: short text repeated on three or more pages inside the
         top or bottom band is page furniture (running heads, journal lines,
@@ -1178,6 +1249,7 @@ class StructAdapter:
         self._recover_dropped_pages()
         self._drop_tick_label_runs()
         self._demote_repeated_edge_text()
+        self._join_split_paragraphs()
         self._adopt_orphan_captions()
         self._read_captions_inside_figures()
         self._recover_uncaptured_figures()

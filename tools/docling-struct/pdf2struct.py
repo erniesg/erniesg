@@ -54,6 +54,9 @@ TOP_LEVEL_HEADING_RE = re.compile(
     r"code availability\b.*|competing interests|conflicts? of interest|keywords|impact statement|broader impacts?)\b",
     re.IGNORECASE,
 )
+DATE_AFTER_RE = re.compile(
+    r"\s+(?:(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\b|\d{4}\b|of\s+\d|\(\d{4}\))"
+)
 FOOTNOTE_MARKER_RE = re.compile(r"^\s*(\d{1,3}|[*†‡§¶]{1,3})\s*")
 PAGE_NUMBER_TEXT_RE = re.compile(
     r"^\s*(?:page\s+)?(?:\d{1,4}|[ivxlcdm]{1,7})(?:\s*(?:of|/)\s*\d{1,4})?\s*$", re.IGNORECASE
@@ -123,6 +126,8 @@ def marker_candidates(marker: str, text: str) -> list[tuple[int, int, bool]]:
         prev_char = before[-1]
         if marker.isdigit() and not match.group(1) and prev_char in "0123456789.,:":
             continue  # part of a number such as 1.2 or 3,2
+        if marker.isdigit() and DATE_AFTER_RE.match(text, match.end(2)):
+            continue  # "2 December 2021", "3 of 10", "2 (2021)"
         if match.group(1):
             prev_word = re.search(r"(\S+)$", before)
             word = prev_word.group(1) if prev_word else ""
@@ -191,6 +196,7 @@ class StructAdapter:
         self.diagnostics: list[dict] = []
         self.title = sanitize(doc.name or pdf_path.stem)
         self.title_seen = False
+        self._title_candidate: tuple[str, TextItem] | None = None
         self.abstract_parts: list[str] = []
         self._in_abstract = False
         self._last_numbered_level: int | None = None
@@ -459,9 +465,27 @@ class StructAdapter:
         if not text:
             return
         if not self.title_seen and self._page_of(item) == 1 and not TOP_LEVEL_HEADING_RE.match(text):
+            candidate_words = len(text.split())
+            if self._title_candidate is None:
+                self._title_candidate = (text, item)
+                if candidate_words >= 3:
+                    self.title_seen = True
+                    self.title = text
+                    return
+                return  # a short banner such as "OPEN FORUM": wait for a real title
+            previous_text, previous_item = self._title_candidate
+            if candidate_words >= 3:
+                # the banner becomes an ordinary paragraph ahead of the title
+                banner = self._new_block("paragraph", previous_item, previous_text)
+                self.blocks.insert(0, banner)
+                self.report.paragraphs += 1
+                self.title_seen = True
+                self.title = text
+                return
+        if not self.title_seen and self._title_candidate is not None:
+            # no multi-word title on page 1: keep the first heading as the title
             self.title_seen = True
-            self.title = text
-            return  # metadata.title renders as the publication header
+            self.title = self._title_candidate[0]
         self._flush()
         self._in_abstract = bool(re.match(r"^abstract\b", text, re.IGNORECASE))
         level = heading_level(text, getattr(item, "level", None), self._last_numbered_level)

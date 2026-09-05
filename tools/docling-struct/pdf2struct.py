@@ -179,6 +179,9 @@ class AdapterReport:
     lists: int = 0
     furniture_blocks: int = 0
     repeated_text_demoted: int = 0
+    furniture_blocks_merged: int = 0
+    relationships_pruned: int = 0
+    runs_pruned: int = 0
     pages_recovered_from_text_layer: int = 0
     footnotes_with_marker: int = 0
     orphan_figure_captions: int = 0
@@ -1026,6 +1029,72 @@ class StructAdapter:
                 self.report.furniture_blocks += 1
                 self.report.repeated_text_demoted += 1
 
+    def _compact_graph(self) -> None:
+        """Keep the document inside struct's canonical node budget: joined
+        paragraphs keep one union box per page, and furniture on one page
+        collapses into a single accounted block."""
+        for block in self.blocks:
+            boxes = block["evidence"]["boxes"]
+            if len(boxes) > 2:
+                by_page: dict[int, list[dict]] = {}
+                for box in boxes:
+                    by_page.setdefault(box["page"], []).append(box)
+                union = []
+                for page, group in sorted(by_page.items()):
+                    x0 = min(b["x"] for b in group)
+                    y0 = min(b["y"] for b in group)
+                    x1 = max(b["x"] + b["width"] for b in group)
+                    y1 = max(b["y"] + b["height"] for b in group)
+                    union.append({"page": page, "x": round(x0, 5), "y": round(y0, 5), "width": round(x1 - x0, 5), "height": round(y1 - y0, 5), "rotation": 0})
+                block["evidence"]["boxes"] = union
+            if len(block["evidence"]["sourceIds"]) > 8:
+                block["evidence"]["sourceIds"] = block["evidence"]["sourceIds"][:8]
+        merged: list[dict] = []
+        furniture_by_page: dict[int, dict] = {}
+        for block in self.blocks:
+            if block["kind"] != "furniture" or block["page"] is None:
+                merged.append(block)
+                continue
+            existing = furniture_by_page.get(block["page"])
+            if existing is None:
+                furniture_by_page[block["page"]] = block
+                merged.append(block)
+                continue
+            existing["text"] = f"{existing['text']} {block['text']}".strip()
+            existing["evidence"]["boxes"] = (existing["evidence"]["boxes"] + block["evidence"]["boxes"])[:4]
+            existing["evidence"]["sourceIds"] = list(dict.fromkeys(existing["evidence"]["sourceIds"] + block["evidence"]["sourceIds"]))[:8]
+            furniture = existing.get("furniture")
+            if furniture:
+                furniture["boxes"] = (furniture["boxes"] + block.get("furniture", {}).get("boxes", []))[:4]
+                furniture["evidence"] = list(dict.fromkeys(furniture["evidence"] + block.get("furniture", {}).get("evidence", [])))[:6]
+                furniture["normalizedText"] = f"{furniture.get('normalizedText', '')} {block.get('furniture', {}).get('normalizedText', '')}".strip()[:300]
+            self.report.furniture_blocks_merged += 1
+        self.blocks = merged
+
+    def _prune_dangling_references(self) -> None:
+        """Post-passes may absorb or drop blocks; relationships and inline runs
+        that point at a vanished block are removed rather than left dangling."""
+        ids = {b["id"] for b in self.blocks} | {a["id"] for a in self.assets}
+        kept = []
+        for relationship in self.relationships:
+            if relationship["from"] in ids and all(t in ids for t in relationship["to"]):
+                kept.append(relationship)
+            else:
+                self.report.relationships_pruned += 1
+        self.relationships = kept
+        relationship_ids = {r["id"] for r in self.relationships}
+        for block in self.blocks:
+            runs = []
+            for run in block["inline"]:
+                if any(t not in ids for t in run.get("targetIds", [])) or (run.get("relationshipId") and run["relationshipId"] not in relationship_ids):
+                    self.report.runs_pruned += 1
+                    continue
+                runs.append(run)
+            block["inline"] = runs
+            for asset_id in list(block.get("fallbackAssetIds", [])):
+                if asset_id not in ids:
+                    block["fallbackAssetIds"].remove(asset_id)
+
     def _adopt_orphan_captions(self) -> None:
         """A caption-less figure adopts an adjacent orphan caption block on the
         same page (the layout model detected both but did not associate them)."""
@@ -1037,8 +1106,10 @@ class StructAdapter:
                 for neighbour_index in (index + 1, index - 1):
                     if 0 <= neighbour_index < len(self.blocks):
                         neighbour = self.blocks[neighbour_index]
+                        owned = {t for r in self.relationships for t in r["to"]}
                         if (
                             neighbour["kind"] in ("caption", "paragraph")
+                            and neighbour["id"] not in owned
                             and neighbour["page"] == block["page"]
                             and re.match(r"^(Figure|Fig\.?)\s*\d+\s*[.:|]", neighbour["text"], re.IGNORECASE)
                             and len(neighbour["text"]) < 1200
@@ -1263,6 +1334,8 @@ class StructAdapter:
         self._adopt_orphan_captions()
         self._read_captions_inside_figures()
         self._recover_uncaptured_figures()
+        self._compact_graph()
+        self._prune_dangling_references()
         for order, block in enumerate(self.blocks):
             block["order"] = order
         page_count = len(self.doc.pages) or 1

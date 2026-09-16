@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   assertNoHeldOutContamination,
   createExtractionArchitectureDecision,
+  EXTRACTION_BAKEOFF_SCHEMA_VERSION,
   EXTRACTION_BAKEOFF_STRATA,
   runExtractionBakeoff,
+  validateExtractionBakeoffCorpus,
   type ExtractionBakeoffArm,
   type ExtractionBakeoffCorpus,
 } from './extraction-bakeoff'
@@ -336,5 +338,231 @@ describe('extraction architecture bake-off', () => {
 
     expect(decision.owner).toBe('pending')
     expect(decision.humanDecisionRequired).toBe(true)
+  })
+
+  it('rejects a document whose split disagrees with the array holding it', () => {
+    // A development-tagged entry under `heldOut` still contributes to the
+    // held-out identity and layout checks but bypasses the contamination
+    // guards and drops out of held-out comparisons.
+    const mislabelled = corpus()
+    const stowaway = context('heldout-two', 'development', 'two-column')
+    mislabelled.heldOut[1] = {
+      id: 'heldout-two',
+      split: 'development',
+      layout: 'two-column',
+      context: stowaway,
+      cases: mislabelled.heldOut[1]!.cases,
+    }
+
+    expect(() => validateExtractionBakeoffCorpus(mislabelled)).toThrow(
+      'INVALID_EXTRACTION_BAKEOFF_DOCUMENT:heldout-two',
+    )
+  })
+
+  it('scores the expected heading levels a case declares', async () => {
+    // A candidate that emits every heading at the wrong depth publishes a
+    // broken hierarchy; without reading the labels it scores identically to
+    // one that gets the hierarchy right.
+    const levelled = corpus()
+    for (const document of levelled.heldOut) {
+      document.context.sourceRuns.push({
+        id: `${document.id}-heading`,
+        text: 'Section',
+        page: 1,
+        order: 3,
+      })
+      for (const caseInput of document.cases) {
+        caseInput.expectedNodeTypes = ['title', 'paragraph', 'heading']
+        caseInput.expectedHeadingLevels = [2]
+        caseInput.expectedSourceRunIds = [
+          `${document.id}-title`,
+          `${document.id}-body`,
+          `${document.id}-heading`,
+        ]
+      }
+    }
+    const withLevel = (level: number) => (input: StructuredExtractionContext) => {
+      const output = proposal(input)
+      output.nodes.push({
+        id: `${input.documentId}-heading`,
+        type: 'heading',
+        level,
+        sourceRunIds: [`${input.documentId}-heading`],
+        text: 'Section',
+      })
+      return output
+    }
+
+    const report = await runExtractionBakeoff({
+      corpus: levelled,
+      arms: [
+        arm('geometric-baseline', withLevel(2)),
+        arm('llm-authored', withLevel(5)),
+        arm('llm-grounded', withLevel(2)),
+      ],
+    })
+    const row = report.comparison.find(
+      ({ stratum, layout }) =>
+        stratum === 'sectioning' && layout === 'one-column',
+    )!
+
+    expect(row.scores['llm-authored']).toBeLessThan(
+      row.scores['geometric-baseline']!,
+    )
+  })
+
+  it('refuses to derive a decision from a report whose hash no longer binds it', () => {
+    const report = {
+      schemaVersion: EXTRACTION_BAKEOFF_SCHEMA_VERSION,
+      corpusId: 'synthetic-bakeoff',
+      heldOutIdentitySha256: hashA,
+      candidateIdentities: {},
+      heldOutScoredOnce: true,
+      arms: {},
+      comparison: [
+        {
+          stratum: 'sectioning',
+          layout: 'one-column',
+          scores: {
+            'geometric-baseline': 0.1,
+            'llm-authored': 1,
+            'llm-grounded': 0.1,
+          },
+          winner: 'llm-authored',
+          disagreementDocumentIds: [],
+        },
+      ],
+      disagreements: [],
+      reportSha256: hashB,
+    } as unknown as Parameters<
+      typeof createExtractionArchitectureDecision
+    >[0]['report']
+
+    expect(() => createExtractionArchitectureDecision({ report })).toThrow(
+      'EXTRACTION_BAKEOFF_REPORT_HASH_MISMATCH',
+    )
+  })
+
+  it('derives per-page metrics from the document, not from the arm', async () => {
+    // An arm that reports an enormous page count drives its own latency and
+    // cost per page toward zero and wins the operating-profile comparison.
+    const inflated = arm('llm-authored')
+    inflated.run = (input) => ({
+      proposal: proposal(input),
+      metrics: { latencyMs: 12, costUsd: 0.02, pageCount: 100_000 },
+    })
+
+    const report = await runExtractionBakeoff({
+      corpus: corpus(),
+      arms: [arm('geometric-baseline'), inflated, arm('llm-grounded')],
+    })
+
+    expect(report.arms['llm-authored'].documents[0]!.latencyMsPerPage).toBe(
+      report.arms['llm-grounded'].documents[0]!.latencyMsPerPage,
+    )
+  })
+
+  it('stops invoking a contaminated arm for the rest of the held-out split', async () => {
+    // Advancing only to the next document keeps handing held-out papers to an
+    // arm already known to be leaking, widening the leak it was disqualified
+    // for.
+    const seen: string[] = []
+    const leaking = arm('llm-authored', (input) => {
+      seen.push(input.documentId)
+      return { ...proposal(input), goldLabel: ['title'] } as never
+    })
+
+    const report = await runExtractionBakeoff({
+      corpus: corpus(),
+      arms: [arm('geometric-baseline'), leaking, arm('llm-grounded')],
+    })
+
+    expect(report.arms['llm-authored'].disqualified).toBe(true)
+    expect(new Set(seen).size).toBe(1)
+    expect(
+      report.arms['llm-authored'].documents.every(
+        ({ status, outputHash }) =>
+          status === 'disqualified' && outputHash === null,
+      ),
+    ).toBe(true)
+  })
+
+  it('records an adapter failure instead of aborting the whole bake-off', async () => {
+    // A provider error on one document currently rejects the entire run, so no
+    // side-by-side report exists even though the other arms are healthy.
+    const flaky = arm('llm-authored', (input) => {
+      if (input.documentId === 'heldout-one')
+        throw new Error('provider timed out')
+      return proposal(input)
+    })
+
+    const report = await runExtractionBakeoff({
+      corpus: corpus(),
+      arms: [arm('geometric-baseline'), flaky, arm('llm-grounded')],
+    })
+    const failed = report.arms['llm-authored'].documents.find(
+      ({ documentId }) => documentId === 'heldout-one',
+    )!
+
+    expect(failed.status).toBe('failed')
+    expect(failed.outputHash).toBeNull()
+    expect(failed.verification.issueCodes).toContain('adapter-failure')
+    expect(
+      report.arms['llm-grounded'].documents.every(
+        ({ status }) => status === 'passed',
+      ),
+    ).toBe(true)
+  })
+
+  it('scopes disagreement detection to the stratum the rows describe', async () => {
+    // Comparing whole-document output hashes marks a document as a
+    // disagreement for every stratum it appears in, so the report can no
+    // longer say where the architectures actually diverge.
+    const differentHeading = arm('llm-authored', (input) => {
+      const output = proposal(input)
+      output.nodes[1]!.type = 'abstract'
+      return output
+    })
+
+    const report = await runExtractionBakeoff({
+      corpus: corpus(),
+      arms: [
+        arm('geometric-baseline'),
+        differentHeading,
+        arm('llm-grounded'),
+      ],
+    })
+    const rows = report.comparison.filter(
+      ({ layout }) => layout === 'one-column',
+    )
+
+    expect(rows.some(({ disagreementDocumentIds }) => disagreementDocumentIds.length > 0)).toBe(true)
+    expect(rows.every(({ disagreementDocumentIds }) => disagreementDocumentIds.length > 0)).toBe(false)
+  })
+
+  it('does not certify score-once when the same identity is rerun', async () => {
+    // The guard lives in a function-local set, so a second call rescores every
+    // held-out document and still claims compliance.
+    const arms = () => [
+      arm('geometric-baseline'),
+      arm('llm-authored'),
+      arm('llm-grounded'),
+    ]
+    const ledger = new Set<string>()
+
+    const first = await runExtractionBakeoff({
+      corpus: corpus(),
+      arms: arms(),
+      scoredHeldOutKeys: ledger,
+    })
+    expect(first.heldOutScoredOnce).toBe(true)
+
+    await expect(
+      runExtractionBakeoff({
+        corpus: corpus(),
+        arms: arms(),
+        scoredHeldOutKeys: ledger,
+      }),
+    ).rejects.toThrow('HELD_OUT_SCORED_MORE_THAN_ONCE')
   })
 })

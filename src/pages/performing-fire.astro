@@ -1,0 +1,2123 @@
+---
+import Head from '@/components/Head.astro'
+import { SITE } from '@/consts'
+
+const title = 'Pεrforming Fire — A participatory performance installation'
+const description =
+  'A projection-mapped ritual that turns the unexplained error term in AI prediction into light, sound, glitch, and collective fire.'
+
+const inputTraces = [
+  'messages',
+  'voices',
+  'drawings',
+  'gestures',
+  'movements',
+  'hopes',
+  'fears',
+  'silences',
+]
+
+const totemForms = [
+  { name: 'Totem', className: 'totem' },
+  { name: 'Gate', className: 'gate' },
+  { name: 'Tunnel', className: 'tunnel' },
+  { name: 'Circle', className: 'circle' },
+]
+
+const clusterPoints = Array.from({ length: 74 }, (_, index) => {
+  const angle = index * 2.399963
+  const radius = 7 + ((index * 17) % 39)
+  return {
+    x: 50 + Math.cos(angle) * radius * (index % 3 === 0 ? 1.25 : 0.92),
+    y: 50 + Math.sin(angle) * radius * 0.68,
+    delay: (index % 12) * 0.11,
+    size: 2 + (index % 4),
+  }
+})
+
+const structuredData = {
+  '@context': 'https://schema.org',
+  '@type': 'VisualArtwork',
+  name: 'Pεrforming Fire',
+  artform: 'Participatory performance installation',
+  creator: {
+    '@type': 'Person',
+    name: SITE.AUTHOR,
+    url: SITE.SITEURL,
+  },
+  description,
+  image: `${SITE.SITEURL}/images/performing-fire/totem-gate.jpg`,
+}
+---
+
+<!doctype html>
+<html lang="en" class="pf-page">
+  <head>
+    <Head
+      title={title}
+      description={description}
+      image="/images/performing-fire/totem-gate.jpg"
+      canonicalPath="/performing-fire"
+    />
+    <meta name="theme-color" content="#0a0806" />
+    <script
+      is:inline
+      type="application/ld+json"
+      set:html={JSON.stringify(structuredData)}
+    />
+  </head>
+  <body class="pf-body">
+    <a class="skip-link" href="#main">Skip to the work</a>
+
+    <header class="site-header" data-header>
+      <a class="wordmark" href="#top" aria-label="Pεrforming Fire, back to top">
+        <span aria-hidden="true">Pε</span>
+        <span>Pεrforming Fire</span>
+      </a>
+
+      <nav class="equation-nav" aria-label="Project chapters">
+        <a href="#x" data-nav-token="x">X</a>
+        <span aria-hidden="true">→</span>
+        <a href="#prediction" data-nav-token="prediction">f(X)</a>
+        <span aria-hidden="true">→</span>
+        <a href="#epsilon" data-nav-token="epsilon">ε</a>
+      </nav>
+
+      <a class="header-cta" href="#contribute">Contribute <span>↘</span></a>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top" aria-labelledby="hero-title">
+        <div class="hero-image" data-hero-image>
+          <img
+            src="/images/performing-fire/totem-gate.jpg"
+            alt="A glowing projection-mapped fabric totem forming an open threshold in a dark performance space"
+            width="1024"
+            height="1536"
+            decoding="async"
+            fetchpriority="high"
+          />
+        </div>
+        <div class="hero-shade" aria-hidden="true"></div>
+        <div class="hero-grain" aria-hidden="true"></div>
+
+        <div class="hero-copy">
+          <p class="eyebrow hero-enter" style="--enter-order: 0">
+            Participatory performance installation · Proposal 2026
+          </p>
+          <h1 id="hero-title" class="hero-title">
+            <span class="hero-enter" style="--enter-order: 1"
+              >P<span class="epsilon-letter">ε</span>rforming</span
+            >
+            <span class="hero-enter fire-line" style="--enter-order: 2"
+              >Fire</span
+            >
+          </h1>
+          <div class="hero-bottom hero-enter" style="--enter-order: 3">
+            <p>
+              We perform what AI cannot explain — and turn uncertainty into a
+              fire shaped by many.
+            </p>
+            <a class="primary-cta" href="#contribute">
+              <span>Contribute a fragment of the future</span>
+              <span aria-hidden="true">↘</span>
+            </a>
+          </div>
+        </div>
+
+        <div class="hero-equation" aria-label="Y equals f of X plus epsilon">
+          <span>Y</span><span>=</span><span>f(X)</span><span>+</span><strong
+            >ε</strong
+          >
+        </div>
+        <p class="scroll-cue">
+          Scroll to enter <span aria-hidden="true">↓</span>
+        </p>
+      </section>
+
+      <section class="manifesto section-pad" aria-labelledby="manifesto-title">
+        <p class="section-index">00 · The proposition</p>
+        <div class="manifesto-grid">
+          <h2 id="manifesto-title" class="reveal">
+            The future is not<br />a target to predict.
+          </h2>
+          <div class="manifesto-copy reveal">
+            <p>
+              Most AI systems try to reduce <em>ε</em>. Pεrforming Fire begins
+              by refusing that ambition.
+            </p>
+            <p>
+              We symbolically burn down the temple of AI prediction so that,
+              from its ashes, communities of many can reclaim the right to
+              ignite their own futures.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <div class="equation-rail" aria-hidden="true">
+        <div class="equation-rail-inner">
+          <span>Y =</span>
+          <span data-formula-token="prediction">f(</span>
+          <span data-formula-token="x">X</span>
+          <span data-formula-token="prediction">)</span>
+          <span>+</span>
+          <span data-formula-token="epsilon">ε</span>
+        </div>
+      </div>
+
+      <section
+        class="chapter chapter-x section-pad"
+        id="x"
+        data-equation-section="x"
+        aria-labelledby="x-title"
+      >
+        <div class="chapter-heading reveal">
+          <p class="section-index">01 · Input / X</p>
+          <h2 id="x-title">You bring the<br />unfinished future.</h2>
+        </div>
+        <div class="x-layout">
+          <div class="giant-symbol reveal" aria-hidden="true">X</div>
+          <div class="chapter-copy reveal">
+            <p class="lead">
+              X is not a clean dataset. It is everything people carry into the
+              room.
+            </p>
+            <p>
+              Visitors contribute messages, voices, drawings, gestures,
+              movements, hopes, fears, or short videos. These traces become the
+              raw material of the work.
+            </p>
+          </div>
+        </div>
+        <div class="trace-marquee" aria-label="Types of audience contributions">
+          <div>
+            {
+              inputTraces.concat(inputTraces).map((trace) => (
+                <span>
+                  {trace} <i>×</i>
+                </span>
+              ))
+            }
+          </div>
+        </div>
+      </section>
+
+      <section
+        class="chapter chapter-prediction section-pad"
+        id="prediction"
+        data-equation-section="prediction"
+        aria-labelledby="prediction-title"
+      >
+        <div class="prediction-copy reveal">
+          <p class="section-index">02 · Prediction / f(X)</p>
+          <h2 id="prediction-title">The machine draws a map.</h2>
+          <p class="lead">
+            AI embeds, clusters, and maps every trace — attempting to make the
+            future legible, structured, manageable.
+          </p>
+          <p>
+            Techniques such as t-SNE or UMAP turn what people bring into a
+            prediction layer: <strong>f(X)</strong>.
+          </p>
+        </div>
+
+        <div
+          class="cluster-map reveal"
+          aria-label="Abstract clustering visualization"
+        >
+          <div class="cluster-axis x-axis">
+            <span>legible</span><span>unknown</span>
+          </div>
+          <div class="cluster-axis y-axis">
+            <span>fit</span><span>friction</span>
+          </div>
+          <div class="cluster-field" aria-hidden="true">
+            {
+              clusterPoints.map((point) => (
+                <i
+                  style={`--x:${point.x}%;--y:${point.y}%;--delay:${point.delay}s;--size:${point.size}px`}
+                />
+              ))
+            }
+            <div class="map-ring ring-one"></div>
+            <div class="map-ring ring-two"></div>
+            <span class="outlier outlier-one">?</span>
+            <span class="outlier outlier-two">…</span>
+            <span class="outlier outlier-three">ε</span>
+          </div>
+          <p>Every map leaves something outside.</p>
+        </div>
+      </section>
+
+      <section
+        class="chapter chapter-epsilon"
+        id="epsilon"
+        data-equation-section="epsilon"
+        aria-labelledby="epsilon-title"
+      >
+        <div class="epsilon-intro section-pad">
+          <div class="reveal">
+            <p class="section-index">03 · The remainder / ε</p>
+            <h2 id="epsilon-title">We perform what refuses the map.</h2>
+          </div>
+          <div class="epsilon-definition reveal">
+            <p class="epsilon-glyph" aria-hidden="true">ε</p>
+            <p>
+              Mistranslation. Contradiction. Silence. Strange gestures. Unclear
+              signals. Not failure — but the place where play, uncertainty,
+              imagination, and error remain.
+            </p>
+          </div>
+        </div>
+
+        <div class="playground" id="contribute">
+          <canvas id="epsilon-canvas" aria-hidden="true"></canvas>
+          <div class="playground-veil" aria-hidden="true"></div>
+          <div class="playground-content">
+            <p class="section-index">ε playground · live study</p>
+            <div class="playground-heading">
+              <h3>Release a fragment<br />into the fire.</h3>
+              <p>
+                Write a hope, fear, contradiction, or leave it blank. Nothing
+                here needs to be resolved.
+              </p>
+            </div>
+
+            <form id="fragment-form" class="fragment-form">
+              <label for="future-fragment">A fragment of the future</label>
+              <div class="input-line">
+                <textarea
+                  id="future-fragment"
+                  name="fragment"
+                  maxlength="240"
+                  rows="2"
+                  placeholder="In the future, I hope…"></textarea>
+                <button type="submit">
+                  <span>Perform ε</span><span aria-hidden="true">↗</span>
+                </button>
+              </div>
+              <p class="form-note">
+                Local study only · your fragment is not uploaded
+              </p>
+            </form>
+
+            <div class="performed-trace" aria-live="polite">
+              <span>Now performing</span>
+              <strong id="performed-fragment"
+                >a future no system can finish</strong
+              >
+            </div>
+          </div>
+          <p class="gesture-note">
+            Move through the field <span aria-hidden="true">↔</span>
+          </p>
+        </div>
+      </section>
+
+      <section class="fire-section section-pad" aria-labelledby="fire-title">
+        <div class="fire-heading reveal">
+          <p class="section-index">04 · Transformation / fire</p>
+          <h2 id="fire-title">ε becomes a living material.</h2>
+        </div>
+        <div class="fire-copy reveal">
+          <p>
+            A performer stands inside or around the fabric. Through gesture
+            recognition, they transform ε into light, particles, sound, glitch,
+            and symbolic fire.
+          </p>
+        </div>
+
+        <div class="totem-forms">
+          {
+            totemForms.map((form, index) => (
+              <div class="totem-form reveal">
+                <span>0{index + 1}</span>
+                <div class={`totem-shape ${form.className}`} aria-hidden="true">
+                  <i data-fabric="outer" />
+                  <i data-fabric="inner" />
+                </div>
+                <h3>{form.name}</h3>
+              </div>
+            ))
+          }
+        </div>
+        <p class="form-caption reveal">
+          Flexible rather than fixed. An object to witness; a space to enter,
+          affect, and transform.
+        </p>
+      </section>
+
+      <section class="impact-section" aria-labelledby="impact-title">
+        <div class="impact-statement section-pad">
+          <p class="section-index">05 · Impact</p>
+          <h2 id="impact-title" class="reveal">
+            AI is no longer<br />an <s>oracle</s>.
+          </h2>
+          <p class="material-line reveal">It becomes <em>material</em>.</p>
+        </div>
+        <ol class="journey">
+          <li class="reveal">
+            <span>01</span>
+            <h3>Approach</h3>
+            <p>
+              Technology first appears like fire: beautiful, dangerous, almost
+              godlike.
+            </p>
+          </li>
+          <li class="reveal">
+            <span>02</span>
+            <h3>Interrupt</h3>
+            <p>
+              People contribute traces and create friction with the system’s
+              map.
+            </p>
+          </li>
+          <li class="reveal">
+            <span>03</span>
+            <h3>Shape together</h3>
+            <p>
+              The unexplained becomes something a community can move, distort,
+              and handle.
+            </p>
+          </li>
+        </ol>
+      </section>
+
+      <section class="scale-section section-pad" aria-labelledby="scale-title">
+        <div class="scale-heading reveal">
+          <p class="section-index">06 · Scale</p>
+          <h2 id="scale-title">
+            One system.<br />A different fire every time.
+          </h2>
+        </div>
+        <div class="scale-detail reveal">
+          <p>
+            The installation is modular and technically lightweight. Each
+            community brings different traces; each performance creates a
+            different fire.
+          </p>
+          <ul>
+            <li><span>01</span> Flexible fabric totem</li>
+            <li><span>02</span> Projection mapping</li>
+            <li><span>03</span> Audience input</li>
+            <li><span>04</span> Gesture recognition</li>
+            <li><span>05</span> AI transformation</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="open-call" aria-labelledby="open-call-title">
+        <div class="open-call-noise" aria-hidden="true"></div>
+        <div class="open-call-inner">
+          <p class="section-index">Open call · enter the experiment</p>
+          <h2 id="open-call-title" class="reveal">
+            What future<br />would you ignite?
+          </h2>
+          <p class="open-call-copy reveal">
+            We invite communities, performers, artist-technologists, curators,
+            and festival partners to help shape the first fires.
+          </p>
+          <div class="open-call-actions reveal">
+            <a class="light-cta" href="#contribute">
+              <span>Contribute a fragment of the future</span>
+              <span aria-hidden="true">↑</span>
+            </a>
+            <a
+              class="text-link"
+              href={`mailto:${SITE.EMAIL}?subject=Pεrforming%20Fire`}
+            >
+              Collaborate on the installation ↗
+            </a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="pf-footer">
+      <a href="/">Ernie.SG</a>
+      <p>Pεrforming Fire · Proposal 2026</p>
+      <a href={`mailto:${SITE.EMAIL}`}>{SITE.EMAIL}</a>
+    </footer>
+
+    <script>
+      import {
+        createEmberField,
+        normalizeFragment,
+      } from '@/lib/performing-fire'
+
+      const reducedMotion = window.matchMedia(
+        '(prefers-reduced-motion: reduce)',
+      )
+      const revealItems = document.querySelectorAll<HTMLElement>('.reveal')
+
+      if (reducedMotion.matches) {
+        revealItems.forEach((item) => item.classList.add('is-visible'))
+      } else {
+        const revealObserver = new IntersectionObserver(
+          (entries) => {
+            for (const entry of entries) {
+              if (!entry.isIntersecting) continue
+              entry.target.classList.add('is-visible')
+              revealObserver.unobserve(entry.target)
+            }
+          },
+          { threshold: 0.12 },
+        )
+        revealItems.forEach((item) => revealObserver.observe(item))
+      }
+
+      const equationSections = document.querySelectorAll<HTMLElement>(
+        '[data-equation-section]',
+      )
+      const formulaTokens = document.querySelectorAll<HTMLElement>(
+        '[data-formula-token], [data-nav-token]',
+      )
+      const equationObserver = new IntersectionObserver(
+        (entries) => {
+          const active = entries
+            .filter((entry) => entry.isIntersecting)
+            .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0]
+          if (!active) return
+          const key = (active.target as HTMLElement).dataset.equationSection
+          formulaTokens.forEach((token) => {
+            token.classList.toggle(
+              'is-active',
+              token.dataset.formulaToken === key ||
+                token.dataset.navToken === key,
+            )
+          })
+        },
+        { rootMargin: '-30% 0px -45%', threshold: [0, 0.2, 0.6] },
+      )
+      equationSections.forEach((section) => equationObserver.observe(section))
+
+      const heroImage = document.querySelector<HTMLElement>('[data-hero-image]')
+      if (heroImage && !reducedMotion.matches) {
+        let frame = 0
+        const updateHeroDepth = () => {
+          frame = 0
+          const progress = Math.min(window.scrollY / window.innerHeight, 1)
+          heroImage.style.setProperty('--hero-drift', `${progress * 5}rem`)
+        }
+        window.addEventListener(
+          'scroll',
+          () => {
+            if (!frame) frame = requestAnimationFrame(updateHeroDepth)
+          },
+          { passive: true },
+        )
+      }
+
+      const canvas =
+        document.querySelector<HTMLCanvasElement>('#epsilon-canvas')
+      const form = document.querySelector<HTMLFormElement>('#fragment-form')
+      const textarea =
+        document.querySelector<HTMLTextAreaElement>('#future-fragment')
+      const output = document.querySelector<HTMLElement>('#performed-fragment')
+
+      if (canvas && form && textarea && output) {
+        const context = canvas.getContext('2d')
+        let width = 0
+        let height = 0
+        let field = createEmberField(output.textContent ?? 'future', 96)
+        let origin = performance.now()
+        let pointer = { x: 0.5, y: 0.55, active: false }
+
+        const resize = () => {
+          const rect = canvas.getBoundingClientRect()
+          const ratio = Math.min(window.devicePixelRatio || 1, 2)
+          width = rect.width
+          height = rect.height
+          canvas.width = Math.round(width * ratio)
+          canvas.height = Math.round(height * ratio)
+          context?.setTransform(ratio, 0, 0, ratio, 0, 0)
+        }
+
+        const draw = (now: number) => {
+          if (!context || !width || !height) {
+            requestAnimationFrame(draw)
+            return
+          }
+          context.clearRect(0, 0, width, height)
+          context.globalCompositeOperation = 'lighter'
+          const elapsed = (now - origin) / 1000
+
+          field.forEach((ember, index) => {
+            const cycle = (ember.y - elapsed * ember.speed * 0.075 + 1.2) % 1.2
+            let x =
+              ember.x * width +
+              Math.sin(elapsed * 0.8 + ember.phase) * ember.drift * 30
+            let y = cycle * height
+
+            if (pointer.active) {
+              const dx = x - pointer.x * width
+              const dy = y - pointer.y * height
+              const distance = Math.hypot(dx, dy)
+              if (distance < 150 && distance > 0) {
+                const force = (150 - distance) / 150
+                x += (dx / distance) * force * 48
+                y += (dy / distance) * force * 48
+              }
+            }
+
+            const pulse = 0.72 + Math.sin(elapsed * 2 + ember.phase) * 0.28
+            const alpha = ember.life * pulse
+            const radius = ember.radius * (index % 9 === 0 ? 2.2 : 1)
+            const glow = context.createRadialGradient(x, y, 0, x, y, radius * 5)
+            glow.addColorStop(0, `rgba(255, 232, 184, ${alpha})`)
+            glow.addColorStop(0.18, `rgba(255, 103, 43, ${alpha * 0.9})`)
+            glow.addColorStop(1, 'rgba(190, 22, 4, 0)')
+            context.fillStyle = glow
+            context.beginPath()
+            context.arc(x, y, radius * 5, 0, Math.PI * 2)
+            context.fill()
+          })
+
+          if (!reducedMotion.matches) requestAnimationFrame(draw)
+        }
+
+        const resetField = (fragment: string) => {
+          field = createEmberField(fragment, 96)
+          origin = performance.now()
+          if (reducedMotion.matches) draw(origin)
+        }
+
+        canvas.addEventListener('pointermove', (event) => {
+          const rect = canvas.getBoundingClientRect()
+          pointer = {
+            x: (event.clientX - rect.left) / rect.width,
+            y: (event.clientY - rect.top) / rect.height,
+            active: true,
+          }
+        })
+        canvas.addEventListener('pointerleave', () => {
+          pointer.active = false
+        })
+
+        form.addEventListener('submit', (event) => {
+          event.preventDefault()
+          const fragment = normalizeFragment(textarea.value)
+          output.textContent = fragment
+          output.parentElement?.classList.remove('has-ignited')
+          requestAnimationFrame(() =>
+            output.parentElement?.classList.add('has-ignited'),
+          )
+          resetField(fragment)
+          textarea.value = ''
+        })
+
+        new ResizeObserver(resize).observe(canvas)
+        resize()
+        requestAnimationFrame(draw)
+      }
+    </script>
+  </body>
+</html>
+
+<style is:global>
+  :root {
+    --pf-black: #0a0806;
+    --pf-ink: #19130f;
+    --pf-bone: #f0eadf;
+    --pf-ash: #9d9286;
+    --pf-ember: #e54416;
+    --pf-orange: #ff6428;
+    --pf-rule: rgba(25, 19, 15, 0.2);
+    --pf-pad: clamp(1.25rem, 4vw, 4.75rem);
+    --pf-serif: 'Iowan Old Style', 'Baskerville', 'Times New Roman', serif;
+    --pf-mono: 'Geist Mono', ui-monospace, monospace;
+  }
+
+  html.pf-page {
+    scroll-behavior: smooth;
+    scroll-padding-top: 5rem;
+    background: var(--pf-black);
+    color-scheme: dark;
+  }
+
+  body.pf-body {
+    margin: 0;
+    overflow-x: hidden;
+    background: var(--pf-bone);
+    color: var(--pf-ink);
+    font-family: var(--pf-serif);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .pf-body *,
+  .pf-body *::before,
+  .pf-body *::after {
+    box-sizing: border-box;
+  }
+
+  .pf-body ::selection {
+    background: var(--pf-ember);
+    color: var(--pf-bone);
+  }
+
+  .pf-body a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .skip-link {
+    position: fixed;
+    z-index: 100;
+    top: 0.75rem;
+    left: 0.75rem;
+    transform: translateY(-200%);
+    background: var(--pf-bone);
+    color: var(--pf-black);
+    padding: 0.75rem 1rem;
+    font: 600 0.75rem/1 var(--pf-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .skip-link:focus {
+    transform: none;
+  }
+
+  .site-header {
+    position: fixed;
+    z-index: 50;
+    top: 0;
+    left: 0;
+    display: grid;
+    width: 100%;
+    height: 4.5rem;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    padding: 0 var(--pf-pad);
+    border-bottom: 1px solid rgba(240, 234, 223, 0.16);
+    background: rgba(10, 8, 6, 0.68);
+    color: var(--pf-bone);
+    font-family: var(--pf-mono);
+    backdrop-filter: blur(14px);
+  }
+
+  .wordmark {
+    display: flex;
+    width: fit-content;
+    align-items: center;
+    gap: 0.7rem;
+    font-size: 0.7rem;
+    letter-spacing: 0.03em;
+  }
+
+  .wordmark > span:first-child {
+    display: grid;
+    width: 2rem;
+    height: 2rem;
+    place-items: center;
+    border: 1px solid rgba(240, 234, 223, 0.42);
+    border-radius: 50%;
+    font-family: var(--pf-serif);
+    font-size: 0.9rem;
+  }
+
+  .equation-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    color: rgba(240, 234, 223, 0.48);
+    font-size: 0.68rem;
+  }
+
+  .equation-nav a {
+    transition: color 180ms ease;
+  }
+
+  .equation-nav a:hover,
+  .equation-nav a.is-active {
+    color: var(--pf-orange);
+  }
+
+  .header-cta {
+    justify-self: end;
+    border-bottom: 1px solid currentColor;
+    padding-bottom: 0.22rem;
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .header-cta span {
+    display: inline-block;
+    margin-left: 0.3rem;
+    transition: transform 180ms ease;
+  }
+
+  .header-cta:hover span {
+    transform: translate(0.2rem, 0.2rem);
+  }
+
+  .hero {
+    position: relative;
+    min-height: 100svh;
+    overflow: hidden;
+    background: var(--pf-black);
+    color: var(--pf-bone);
+  }
+
+  .hero-image {
+    --hero-drift: 0rem;
+    position: absolute;
+    inset: -5rem -2rem -5rem 36%;
+    transform: translateY(var(--hero-drift)) scale(1.035);
+    transition: transform 100ms linear;
+  }
+
+  .hero-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: 52% 50%;
+    filter: saturate(0.92) contrast(1.08);
+  }
+
+  .hero-shade {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        90deg,
+        #0a0806 0%,
+        rgba(10, 8, 6, 0.92) 27%,
+        rgba(10, 8, 6, 0.16) 72%,
+        rgba(10, 8, 6, 0.36) 100%
+      ),
+      linear-gradient(0deg, rgba(10, 8, 6, 0.84) 0%, transparent 38%);
+  }
+
+  .hero-grain,
+  .open-call-noise {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.18;
+    background-image: radial-gradient(
+        circle at 20% 35%,
+        rgba(255, 255, 255, 0.2) 0 0.5px,
+        transparent 0.8px
+      ),
+      radial-gradient(
+        circle at 75% 60%,
+        rgba(255, 255, 255, 0.12) 0 0.5px,
+        transparent 0.9px
+      );
+    background-size:
+      13px 11px,
+      17px 19px;
+    mix-blend-mode: soft-light;
+  }
+
+  .hero-copy {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    min-height: 100svh;
+    flex-direction: column;
+    justify-content: center;
+    padding: 7rem var(--pf-pad) 6.5rem;
+  }
+
+  .eyebrow,
+  .section-index {
+    margin: 0;
+    font-family: var(--pf-mono);
+    font-size: 0.64rem;
+    font-weight: 500;
+    letter-spacing: 0.11em;
+    line-height: 1.4;
+    text-transform: uppercase;
+  }
+
+  .hero .eyebrow {
+    margin-bottom: clamp(1.2rem, 3vh, 2.5rem);
+    color: rgba(240, 234, 223, 0.68);
+  }
+
+  .hero-title {
+    max-width: 82rem;
+    margin: 0;
+    font-family: var(--pf-serif);
+    font-size: clamp(4rem, 11.5vw, 11.2rem);
+    font-weight: 400;
+    letter-spacing: -0.075em;
+    line-height: 0.73;
+  }
+
+  .hero-title > span {
+    display: block;
+  }
+
+  .hero-title .fire-line {
+    margin-left: 15.8vw;
+    color: var(--pf-orange);
+    font-style: italic;
+  }
+
+  .epsilon-letter {
+    position: relative;
+    color: var(--pf-orange);
+    font-style: italic;
+  }
+
+  .epsilon-letter::after {
+    position: absolute;
+    right: -0.08em;
+    bottom: -0.03em;
+    left: -0.02em;
+    height: 0.035em;
+    background: currentColor;
+    content: '';
+    transform: rotate(-4deg);
+  }
+
+  .hero-enter {
+    animation: hero-in 900ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation-delay: calc(180ms + var(--enter-order) * 110ms);
+  }
+
+  @keyframes hero-in {
+    from {
+      opacity: 0;
+      transform: translateY(2.5rem);
+    }
+  }
+
+  .hero-bottom {
+    display: grid;
+    width: min(47rem, 100%);
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 2rem;
+    margin-top: clamp(2.4rem, 7vh, 6rem);
+  }
+
+  .hero-bottom > p {
+    max-width: 26rem;
+    margin: 0;
+    color: rgba(240, 234, 223, 0.77);
+    font-size: clamp(1rem, 1.5vw, 1.25rem);
+    line-height: 1.45;
+  }
+
+  .primary-cta,
+  .light-cta {
+    display: flex;
+    min-width: 16rem;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+    border-bottom: 1px solid currentColor;
+    padding: 0.85rem 0;
+    font-family: var(--pf-mono);
+    font-size: 0.67rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+  }
+
+  .primary-cta > span:last-child,
+  .light-cta > span:last-child {
+    font-size: 1.05rem;
+    transition: transform 200ms ease;
+  }
+
+  .primary-cta:hover > span:last-child {
+    transform: translate(0.3rem, 0.3rem);
+  }
+
+  .hero-equation {
+    position: absolute;
+    z-index: 2;
+    right: var(--pf-pad);
+    bottom: 2rem;
+    display: flex;
+    gap: 0.55em;
+    color: rgba(240, 234, 223, 0.55);
+    font: 400 clamp(0.75rem, 1.2vw, 0.95rem) / 1 var(--pf-mono);
+  }
+
+  .hero-equation strong {
+    color: var(--pf-orange);
+    font-weight: 500;
+  }
+
+  .scroll-cue {
+    position: absolute;
+    z-index: 2;
+    bottom: 2rem;
+    left: var(--pf-pad);
+    margin: 0;
+    color: rgba(240, 234, 223, 0.52);
+    font: 500 0.6rem/1 var(--pf-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  .scroll-cue span {
+    display: inline-block;
+    margin-left: 0.4rem;
+    animation: cue 1.8s ease-in-out infinite;
+  }
+
+  @keyframes cue {
+    50% {
+      transform: translateY(0.35rem);
+    }
+  }
+
+  .section-pad {
+    padding: clamp(5rem, 10vw, 10rem) var(--pf-pad);
+  }
+
+  .section-index {
+    color: var(--pf-ash);
+  }
+
+  .manifesto {
+    background: var(--pf-bone);
+  }
+
+  .manifesto-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(18rem, 0.65fr);
+    gap: clamp(3rem, 8vw, 9rem);
+    margin-top: clamp(4rem, 9vw, 9rem);
+  }
+
+  .manifesto h2,
+  .chapter h2,
+  .fire-heading h2,
+  .impact-statement h2,
+  .scale-heading h2,
+  .open-call h2 {
+    margin: 0;
+    font-family: var(--pf-serif);
+    font-size: clamp(3.2rem, 7.4vw, 8.2rem);
+    font-weight: 400;
+    letter-spacing: -0.065em;
+    line-height: 0.92;
+  }
+
+  .manifesto-copy {
+    align-self: end;
+    padding-bottom: 0.7rem;
+  }
+
+  .manifesto-copy p {
+    margin: 0;
+    font-size: clamp(1.1rem, 1.6vw, 1.4rem);
+    line-height: 1.5;
+  }
+
+  .manifesto-copy p + p {
+    margin-top: 1.5rem;
+    color: #5f574e;
+  }
+
+  .manifesto-copy em {
+    color: var(--pf-ember);
+    font-size: 1.3em;
+  }
+
+  .equation-rail {
+    position: sticky;
+    z-index: 12;
+    top: 4.5rem;
+    height: 0;
+    color: var(--pf-ink);
+    font-family: var(--pf-mono);
+    pointer-events: none;
+  }
+
+  .equation-rail-inner {
+    position: absolute;
+    top: 1.2rem;
+    right: var(--pf-pad);
+    display: flex;
+    gap: 0.48em;
+    padding: 0.7rem 0.85rem;
+    border: 1px solid rgba(25, 19, 15, 0.17);
+    background: rgba(240, 234, 223, 0.78);
+    font-size: 0.66rem;
+    backdrop-filter: blur(9px);
+  }
+
+  .equation-rail [data-formula-token] {
+    transition:
+      color 200ms ease,
+      text-shadow 200ms ease;
+  }
+
+  .equation-rail [data-formula-token].is-active {
+    color: var(--pf-ember);
+    text-shadow: 0 0 14px rgba(229, 68, 22, 0.3);
+  }
+
+  .chapter-x {
+    overflow: hidden;
+    border-top: 1px solid var(--pf-rule);
+    background: #ded6c9;
+  }
+
+  .chapter-heading {
+    display: grid;
+    grid-template-columns: minmax(12rem, 0.46fr) minmax(0, 1.54fr);
+    gap: 2rem;
+  }
+
+  .x-layout {
+    display: grid;
+    grid-template-columns: minmax(18rem, 0.85fr) minmax(18rem, 1.15fr);
+    align-items: end;
+    gap: 4rem;
+    margin-top: clamp(4rem, 9vw, 9rem);
+  }
+
+  .giant-symbol {
+    font-size: clamp(13rem, 31vw, 33rem);
+    font-weight: 400;
+    letter-spacing: -0.12em;
+    line-height: 0.62;
+  }
+
+  .chapter-copy {
+    max-width: 38rem;
+    padding-bottom: 1rem;
+  }
+
+  .chapter-copy p,
+  .prediction-copy p,
+  .fire-copy p,
+  .scale-detail > p {
+    margin: 0;
+    color: #62594f;
+    font-size: clamp(1rem, 1.45vw, 1.25rem);
+    line-height: 1.56;
+  }
+
+  .chapter-copy .lead,
+  .prediction-copy .lead {
+    margin-bottom: 1.5rem;
+    color: var(--pf-ink);
+    font-size: clamp(1.65rem, 3vw, 3rem);
+    letter-spacing: -0.035em;
+    line-height: 1.1;
+  }
+
+  .trace-marquee {
+    width: calc(100% + var(--pf-pad) * 2);
+    margin-top: clamp(5rem, 10vw, 10rem);
+    margin-left: calc(var(--pf-pad) * -1);
+    overflow: hidden;
+    border-top: 1px solid var(--pf-rule);
+    border-bottom: 1px solid var(--pf-rule);
+    padding: 1.3rem 0;
+    font-family: var(--pf-mono);
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .trace-marquee > div {
+    display: flex;
+    width: max-content;
+    animation: marquee 28s linear infinite;
+  }
+
+  .trace-marquee span {
+    padding-right: 2rem;
+  }
+
+  .trace-marquee i {
+    margin-left: 2rem;
+    color: var(--pf-ember);
+    font-style: normal;
+  }
+
+  @keyframes marquee {
+    to {
+      transform: translateX(-50%);
+    }
+  }
+
+  .chapter-prediction {
+    display: grid;
+    min-height: 100svh;
+    grid-template-columns: minmax(18rem, 0.74fr) minmax(24rem, 1.26fr);
+    align-items: center;
+    gap: clamp(4rem, 8vw, 9rem);
+    border-top: 1px solid var(--pf-rule);
+    background: var(--pf-bone);
+  }
+
+  .prediction-copy h2 {
+    margin: 2.2rem 0 4rem;
+  }
+
+  .prediction-copy strong {
+    color: var(--pf-ember);
+    font-family: var(--pf-mono);
+    font-size: 0.9em;
+  }
+
+  .cluster-map {
+    position: relative;
+    aspect-ratio: 1.15;
+    border-right: 1px solid var(--pf-rule);
+    border-bottom: 1px solid var(--pf-rule);
+  }
+
+  .cluster-map::before,
+  .cluster-map::after {
+    position: absolute;
+    background: var(--pf-rule);
+    content: '';
+  }
+
+  .cluster-map::before {
+    top: 33%;
+    right: 0;
+    left: 0;
+    height: 1px;
+  }
+  .cluster-map::after {
+    top: 66%;
+    right: 0;
+    left: 0;
+    height: 1px;
+  }
+
+  .cluster-field {
+    position: absolute;
+    inset: 5% 7%;
+  }
+
+  .cluster-field > i {
+    position: absolute;
+    top: var(--y);
+    left: var(--x);
+    width: var(--size);
+    height: var(--size);
+    border-radius: 50%;
+    background: var(--pf-ink);
+    opacity: 0.38;
+    animation: cluster-breathe 3.6s ease-in-out infinite alternate;
+    animation-delay: var(--delay);
+  }
+
+  .cluster-field > i:nth-of-type(7n) {
+    background: var(--pf-ember);
+    opacity: 0.9;
+  }
+
+  @keyframes cluster-breathe {
+    to {
+      transform: translate(0.4rem, -0.25rem) scale(1.5);
+      opacity: 0.7;
+    }
+  }
+
+  .map-ring {
+    position: absolute;
+    border: 1px solid rgba(229, 68, 22, 0.35);
+    border-radius: 50%;
+  }
+
+  .ring-one {
+    top: 19%;
+    left: 15%;
+    width: 38%;
+    height: 31%;
+    transform: rotate(-11deg);
+  }
+  .ring-two {
+    right: 10%;
+    bottom: 13%;
+    width: 45%;
+    height: 34%;
+    transform: rotate(14deg);
+  }
+
+  .outlier {
+    position: absolute;
+    color: var(--pf-ember);
+    font: 400 1rem/1 var(--pf-mono);
+  }
+
+  .outlier-one {
+    top: 7%;
+    right: 9%;
+  }
+  .outlier-two {
+    bottom: 9%;
+    left: 2%;
+  }
+  .outlier-three {
+    top: 45%;
+    left: -1%;
+    font-family: var(--pf-serif);
+    font-size: 2.7rem;
+  }
+
+  .cluster-axis {
+    position: absolute;
+    z-index: 2;
+    display: flex;
+    justify-content: space-between;
+    color: #796f65;
+    font: 500 0.55rem/1 var(--pf-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+  }
+
+  .x-axis {
+    right: 0;
+    bottom: -1.4rem;
+    left: 0;
+  }
+  .y-axis {
+    top: 0;
+    bottom: 0;
+    left: -1.4rem;
+    flex-direction: column;
+  }
+
+  .cluster-map > p {
+    position: absolute;
+    right: 0;
+    bottom: 1.5rem;
+    z-index: 2;
+    margin: 0;
+    background: var(--pf-bone);
+    padding-left: 1rem;
+    color: #655b51;
+    font: 500 0.58rem/1.2 var(--pf-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .chapter-epsilon {
+    background: var(--pf-black);
+    color: var(--pf-bone);
+  }
+
+  .epsilon-intro {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(18rem, 0.85fr);
+    gap: clamp(4rem, 10vw, 11rem);
+  }
+
+  .epsilon-intro h2 {
+    max-width: 70rem;
+    margin-top: 2.3rem;
+  }
+
+  .epsilon-definition {
+    align-self: end;
+  }
+
+  .epsilon-definition .epsilon-glyph {
+    margin: 0;
+    color: var(--pf-orange);
+    font-size: clamp(8rem, 18vw, 18rem);
+    font-style: italic;
+    letter-spacing: -0.12em;
+    line-height: 0.68;
+  }
+
+  .epsilon-definition > p:last-child {
+    max-width: 34rem;
+    margin: 3rem 0 0;
+    color: rgba(240, 234, 223, 0.67);
+    font-size: clamp(1.05rem, 1.55vw, 1.3rem);
+    line-height: 1.55;
+  }
+
+  .playground {
+    position: relative;
+    min-height: min(58rem, 92svh);
+    overflow: hidden;
+    border-top: 1px solid rgba(240, 234, 223, 0.18);
+    background: #110a07;
+  }
+
+  #epsilon-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    touch-action: none;
+  }
+
+  .playground-veil {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(
+        circle at 70% 65%,
+        rgba(229, 68, 22, 0.14),
+        transparent 38%
+      ),
+      linear-gradient(90deg, rgba(10, 8, 6, 0.92), rgba(10, 8, 6, 0.24) 75%);
+    pointer-events: none;
+  }
+
+  .playground-content {
+    position: relative;
+    z-index: 2;
+    display: grid;
+    min-height: min(58rem, 92svh);
+    grid-template-rows: auto 1fr auto auto;
+    padding: clamp(4rem, 8vw, 8rem) var(--pf-pad) 4rem;
+    pointer-events: none;
+  }
+
+  .playground-heading {
+    align-self: center;
+  }
+
+  .playground-heading h3 {
+    max-width: 52rem;
+    margin: 0 0 2rem;
+    font-size: clamp(3.3rem, 7.7vw, 8rem);
+    font-weight: 400;
+    letter-spacing: -0.065em;
+    line-height: 0.9;
+  }
+
+  .playground-heading p {
+    max-width: 31rem;
+    margin: 0;
+    color: rgba(240, 234, 223, 0.62);
+    font-size: 1rem;
+    line-height: 1.5;
+  }
+
+  .fragment-form {
+    width: min(59rem, 78%);
+    margin-top: 3rem;
+    pointer-events: auto;
+  }
+
+  .fragment-form label,
+  .form-note,
+  .performed-trace > span,
+  .gesture-note {
+    font-family: var(--pf-mono);
+    font-size: 0.58rem;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+  }
+
+  .fragment-form label {
+    display: block;
+    margin-bottom: 0.6rem;
+    color: rgba(240, 234, 223, 0.55);
+  }
+
+  .input-line {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: stretch;
+    border-bottom: 1px solid rgba(240, 234, 223, 0.62);
+  }
+
+  .input-line textarea {
+    min-width: 0;
+    resize: none;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--pf-bone);
+    font: 400 clamp(1.2rem, 2vw, 1.7rem) / 1.35 var(--pf-serif);
+  }
+
+  .input-line textarea::placeholder {
+    color: rgba(240, 234, 223, 0.24);
+  }
+
+  .input-line button {
+    align-self: center;
+    border: 1px solid var(--pf-orange);
+    background: var(--pf-orange);
+    color: var(--pf-black);
+    padding: 1rem 1.25rem;
+    font: 650 0.62rem/1 var(--pf-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    cursor: pointer;
+    transition:
+      background 180ms ease,
+      color 180ms ease;
+  }
+
+  .input-line button span:last-child {
+    margin-left: 1.3rem;
+  }
+
+  .input-line button:hover,
+  .input-line button:focus-visible {
+    background: var(--pf-bone);
+    color: var(--pf-black);
+  }
+
+  .form-note {
+    margin: 0.75rem 0 0;
+    color: rgba(240, 234, 223, 0.4);
+  }
+
+  .performed-trace {
+    display: flex;
+    max-width: min(59rem, 78%);
+    align-items: baseline;
+    gap: 2rem;
+    margin-top: 2.6rem;
+    border-top: 1px solid rgba(240, 234, 223, 0.16);
+    padding-top: 1.2rem;
+  }
+
+  .performed-trace > span {
+    flex: 0 0 auto;
+    color: var(--pf-orange);
+  }
+
+  .performed-trace strong {
+    overflow: hidden;
+    font-size: clamp(1.1rem, 2.2vw, 2rem);
+    font-weight: 400;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .performed-trace.has-ignited strong {
+    animation: ignite-trace 650ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  @keyframes ignite-trace {
+    from {
+      opacity: 0;
+      transform: translateY(1rem);
+      filter: blur(8px);
+    }
+  }
+
+  .gesture-note {
+    position: absolute;
+    z-index: 2;
+    right: var(--pf-pad);
+    bottom: 4rem;
+    margin: 0;
+    color: rgba(240, 234, 223, 0.4);
+  }
+
+  .fire-section {
+    border-bottom: 1px solid var(--pf-rule);
+    background: var(--pf-bone);
+  }
+
+  .fire-heading {
+    display: grid;
+    grid-template-columns: minmax(12rem, 0.42fr) minmax(0, 1.58fr);
+    gap: 2rem;
+  }
+
+  .fire-copy {
+    max-width: 37rem;
+    margin: 4rem 0 0 auto;
+  }
+
+  .totem-forms {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin-top: clamp(5rem, 11vw, 10rem);
+    border-top: 1px solid var(--pf-rule);
+  }
+
+  .totem-form {
+    min-width: 0;
+    border-right: 1px solid var(--pf-rule);
+    padding: 1rem clamp(0.8rem, 2vw, 2rem) 1.5rem;
+  }
+
+  .totem-form:first-child {
+    border-left: 1px solid var(--pf-rule);
+  }
+
+  .totem-form > span {
+    color: var(--pf-ash);
+    font: 500 0.55rem/1 var(--pf-mono);
+  }
+
+  .totem-form h3 {
+    margin: 1.4rem 0 0;
+    font-size: clamp(1.3rem, 2.3vw, 2.4rem);
+    font-weight: 400;
+    letter-spacing: -0.04em;
+  }
+
+  .totem-shape {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 0.82;
+    margin-top: 2rem;
+  }
+
+  .totem-shape i {
+    position: absolute;
+    display: block;
+    border: 1px solid var(--pf-ember);
+  }
+
+  .totem-shape.totem i:first-child {
+    top: 5%;
+    right: 32%;
+    bottom: 5%;
+    left: 32%;
+    transform: skew(-3deg);
+  }
+  .totem-shape.totem i:last-child {
+    top: 28%;
+    right: 17%;
+    bottom: 22%;
+    left: 17%;
+    border-color: rgba(229, 68, 22, 0.32);
+    transform: rotate(7deg);
+  }
+  .totem-shape.gate i:first-child {
+    top: 10%;
+    right: 12%;
+    bottom: 8%;
+    left: 12%;
+    border-bottom: 0;
+    border-radius: 50% 50% 0 0;
+  }
+  .totem-shape.gate i:last-child {
+    top: 23%;
+    right: 30%;
+    bottom: 8%;
+    left: 30%;
+    border-bottom: 0;
+    border-radius: 50% 50% 0 0;
+  }
+  .totem-shape.tunnel i:first-child {
+    top: 20%;
+    right: 5%;
+    bottom: 20%;
+    left: 5%;
+    border-radius: 50%;
+  }
+  .totem-shape.tunnel i:last-child {
+    top: 32%;
+    right: 22%;
+    bottom: 32%;
+    left: 22%;
+    border-radius: 50%;
+  }
+  .totem-shape.circle i:first-child {
+    inset: 10%;
+    border-radius: 50%;
+  }
+  .totem-shape.circle i:last-child {
+    inset: 29%;
+    border-radius: 50%;
+    border-color: rgba(229, 68, 22, 0.35);
+  }
+
+  .form-caption {
+    max-width: 38rem;
+    margin: 4rem 0 0 auto;
+    color: #62594f;
+    font-size: 1.05rem;
+    line-height: 1.5;
+  }
+
+  .impact-section {
+    background: #d5cdc0;
+  }
+
+  .impact-statement h2 {
+    margin-top: 4rem;
+  }
+
+  .impact-statement s {
+    color: #6a6158;
+    text-decoration-color: var(--pf-ember);
+    text-decoration-thickness: 0.055em;
+  }
+
+  .material-line {
+    margin: 0.15em 0 0;
+    color: var(--pf-ember);
+    font-size: clamp(3rem, 7.4vw, 8rem);
+    letter-spacing: -0.065em;
+    line-height: 0.95;
+  }
+
+  .journey {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    margin: 0;
+    padding: 0;
+    border-top: 1px solid var(--pf-rule);
+    list-style: none;
+  }
+
+  .journey li {
+    min-height: 22rem;
+    padding: 2rem var(--pf-pad);
+    border-right: 1px solid var(--pf-rule);
+  }
+
+  .journey li:last-child {
+    border-right: 0;
+  }
+
+  .journey span {
+    color: #756b62;
+    font: 500 0.58rem/1 var(--pf-mono);
+  }
+
+  .journey h3 {
+    margin: 5rem 0 1rem;
+    font-size: clamp(2rem, 3.5vw, 3.8rem);
+    font-weight: 400;
+    letter-spacing: -0.05em;
+  }
+
+  .journey p {
+    max-width: 24rem;
+    margin: 0;
+    color: #5f574e;
+    font-size: 1rem;
+    line-height: 1.5;
+  }
+
+  .scale-section {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(19rem, 0.75fr);
+    gap: clamp(4rem, 10vw, 11rem);
+    background: var(--pf-bone);
+  }
+
+  .scale-heading h2 {
+    margin-top: 3rem;
+  }
+
+  .scale-detail {
+    align-self: end;
+  }
+
+  .scale-detail ul {
+    margin: 3.5rem 0 0;
+    padding: 0;
+    border-top: 1px solid var(--pf-rule);
+    list-style: none;
+  }
+
+  .scale-detail li {
+    display: flex;
+    align-items: center;
+    gap: 1.4rem;
+    border-bottom: 1px solid var(--pf-rule);
+    padding: 1rem 0;
+    font-size: 1rem;
+  }
+
+  .scale-detail li span {
+    color: var(--pf-ember);
+    font: 500 0.55rem/1 var(--pf-mono);
+  }
+
+  .open-call {
+    position: relative;
+    overflow: hidden;
+    background: var(--pf-ember);
+    color: var(--pf-black);
+  }
+
+  .open-call::before {
+    position: absolute;
+    top: -20%;
+    right: -13%;
+    width: 48vw;
+    aspect-ratio: 1;
+    border: 1px solid rgba(10, 8, 6, 0.27);
+    border-radius: 50%;
+    content: '';
+  }
+
+  .open-call-inner {
+    position: relative;
+    z-index: 2;
+    padding: clamp(6rem, 12vw, 12rem) var(--pf-pad);
+  }
+
+  .open-call .section-index {
+    color: rgba(10, 8, 6, 0.6);
+  }
+
+  .open-call h2 {
+    margin-top: 3.5rem;
+    font-size: clamp(4.3rem, 10.5vw, 12rem);
+    line-height: 0.8;
+  }
+
+  .open-call-copy {
+    max-width: 42rem;
+    margin: 4rem 0 0 auto;
+    font-size: clamp(1.2rem, 2.2vw, 2rem);
+    line-height: 1.35;
+  }
+
+  .open-call-actions {
+    display: flex;
+    max-width: 42rem;
+    align-items: center;
+    gap: 3rem;
+    margin: 3.5rem 0 0 auto;
+  }
+
+  .light-cta {
+    flex: 1;
+  }
+
+  .light-cta:hover > span:last-child {
+    transform: translateY(-0.35rem);
+  }
+
+  .text-link {
+    flex: 0 0 auto;
+    font: 550 0.64rem/1.4 var(--pf-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+  }
+
+  .pf-footer {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 2rem;
+    padding: 2rem var(--pf-pad);
+    background: var(--pf-black);
+    color: rgba(240, 234, 223, 0.65);
+    font: 500 0.58rem/1.4 var(--pf-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+  }
+
+  .pf-footer p {
+    margin: 0;
+    text-align: center;
+  }
+  .pf-footer a:last-child {
+    justify-self: end;
+  }
+
+  .reveal {
+    opacity: 0;
+    transform: translateY(2.5rem);
+    transition:
+      opacity 750ms ease,
+      transform 750ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .reveal.is-visible {
+    opacity: 1;
+    transform: none;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--pf-orange);
+    outline-offset: 4px;
+  }
+
+  @media (max-width: 900px) {
+    .site-header {
+      grid-template-columns: 1fr auto;
+    }
+
+    .equation-nav {
+      display: none;
+    }
+
+    .hero-image {
+      inset: 5% -45% -10% 15%;
+    }
+    .hero-shade {
+      background: linear-gradient(
+          90deg,
+          rgba(10, 8, 6, 0.9),
+          rgba(10, 8, 6, 0.1)
+        ),
+        linear-gradient(0deg, rgba(10, 8, 6, 0.9) 0%, transparent 55%);
+    }
+    .hero-title {
+      font-size: clamp(3.7rem, 15.8vw, 8rem);
+      line-height: 0.79;
+    }
+    .hero-title .fire-line {
+      margin-left: 9vw;
+    }
+    .hero-bottom {
+      grid-template-columns: 1fr;
+      width: min(30rem, 80%);
+    }
+    .hero-equation {
+      display: none;
+    }
+
+    .manifesto-grid,
+    .chapter-heading,
+    .x-layout,
+    .chapter-prediction,
+    .epsilon-intro,
+    .fire-heading,
+    .scale-section {
+      grid-template-columns: 1fr;
+    }
+
+    .manifesto-copy {
+      max-width: 36rem;
+      margin-left: auto;
+    }
+    .chapter-heading,
+    .fire-heading {
+      gap: 2.5rem;
+    }
+    .x-layout {
+      gap: 4rem;
+    }
+    .giant-symbol {
+      font-size: clamp(12rem, 58vw, 28rem);
+    }
+    .chapter-copy {
+      margin-left: auto;
+    }
+    .chapter-prediction {
+      gap: 7rem;
+    }
+    .cluster-map {
+      width: min(100%, 42rem);
+      justify-self: end;
+    }
+    .epsilon-definition {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      align-items: end;
+      gap: 3rem;
+    }
+    .epsilon-definition > p:last-child {
+      margin-bottom: 0.5rem;
+    }
+    .fragment-form,
+    .performed-trace {
+      width: 100%;
+      max-width: none;
+    }
+    .gesture-note {
+      display: none;
+    }
+    .totem-forms {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .totem-form {
+      border-bottom: 1px solid var(--pf-rule);
+    }
+    .journey {
+      grid-template-columns: 1fr;
+    }
+    .journey li {
+      min-height: 17rem;
+      border-right: 0;
+      border-bottom: 1px solid var(--pf-rule);
+    }
+    .journey h3 {
+      margin-top: 3rem;
+    }
+    .scale-detail {
+      max-width: 38rem;
+      margin-left: auto;
+    }
+  }
+
+  @media (max-width: 600px) {
+    .site-header {
+      height: 4rem;
+    }
+    .wordmark > span:last-child {
+      display: none;
+    }
+    .header-cta {
+      font-size: 0.58rem;
+    }
+    .hero-copy {
+      min-height: 100svh;
+      justify-content: flex-end;
+      padding-bottom: 8rem;
+    }
+    .hero-image {
+      inset: 0 -83% -6% -16%;
+      opacity: 0.88;
+    }
+    .hero-shade {
+      background: linear-gradient(
+          90deg,
+          rgba(10, 8, 6, 0.64),
+          rgba(10, 8, 6, 0.1)
+        ),
+        linear-gradient(
+          0deg,
+          #0a0806 5%,
+          rgba(10, 8, 6, 0.45) 70%,
+          rgba(10, 8, 6, 0.18)
+        );
+    }
+    .hero .eyebrow {
+      max-width: 15rem;
+    }
+    .hero-bottom {
+      width: 100%;
+      margin-top: 2.8rem;
+      gap: 1.8rem;
+    }
+    .hero-bottom > p {
+      max-width: 21rem;
+      font-size: 0.98rem;
+    }
+    .primary-cta {
+      min-width: 0;
+    }
+    .scroll-cue {
+      display: none;
+    }
+
+    .manifesto-grid {
+      margin-top: 3rem;
+      gap: 3rem;
+    }
+    .manifesto h2,
+    .chapter h2,
+    .fire-heading h2,
+    .impact-statement h2,
+    .scale-heading h2 {
+      font-size: clamp(3rem, 14vw, 5.2rem);
+    }
+    .equation-rail {
+      top: 4rem;
+    }
+    .equation-rail-inner {
+      top: 0.8rem;
+    }
+    .x-layout {
+      grid-template-columns: 1fr;
+      margin-top: 3.5rem;
+    }
+    .chapter-copy .lead,
+    .prediction-copy .lead {
+      font-size: 1.7rem;
+    }
+    .cluster-map {
+      width: calc(100% - 1.4rem);
+    }
+    .cluster-map > p {
+      max-width: 11rem;
+      text-align: right;
+    }
+    .epsilon-intro {
+      gap: 5rem;
+    }
+    .epsilon-definition {
+      display: block;
+    }
+    .epsilon-definition .epsilon-glyph {
+      font-size: 10rem;
+    }
+    .epsilon-definition > p:last-child {
+      margin-top: 2rem;
+    }
+    .playground {
+      min-height: 52rem;
+    }
+    .playground-content {
+      min-height: 52rem;
+      padding-top: 4rem;
+    }
+    .playground-heading h3 {
+      font-size: clamp(3rem, 14vw, 5rem);
+    }
+    .input-line {
+      grid-template-columns: 1fr;
+      gap: 1rem;
+      padding-bottom: 1rem;
+    }
+    .input-line button {
+      width: 100%;
+    }
+    .performed-trace {
+      display: block;
+    }
+    .performed-trace strong {
+      display: block;
+      margin-top: 0.7rem;
+      white-space: normal;
+    }
+    .totem-forms {
+      grid-template-columns: 1fr;
+    }
+    .totem-form {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      align-items: end;
+      gap: 1.5rem;
+    }
+    .totem-shape {
+      grid-column: 1 / -1;
+      width: min(72%, 15rem);
+      justify-self: center;
+    }
+    .open-call h2 {
+      font-size: clamp(4.1rem, 18vw, 7rem);
+    }
+    .open-call-copy {
+      margin-top: 3rem;
+    }
+    .open-call-actions {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 2.5rem;
+    }
+    .light-cta {
+      min-width: 0;
+    }
+    .pf-footer {
+      grid-template-columns: 1fr auto;
+    }
+    .pf-footer p {
+      display: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html.pf-page {
+      scroll-behavior: auto;
+    }
+    .hero-enter,
+    .scroll-cue span,
+    .trace-marquee > div,
+    .cluster-field > i,
+    .performed-trace.has-ignited strong {
+      animation: none !important;
+    }
+    .hero-image {
+      transform: none !important;
+    }
+    .reveal {
+      opacity: 1;
+      transform: none;
+      transition: none;
+    }
+  }
+</style>

@@ -47,6 +47,7 @@ function reconstruct(
   options: {
     title?: string
     fileName?: string
+    language?: string
     rasterizeFigure?: Parameters<
       typeof reconstructPageAnalyses
     >[0]['rasterizeFigure']
@@ -57,7 +58,10 @@ function reconstruct(
     sourceHash: '9'.repeat(64),
     fileName: options.fileName ?? 'semantic-runtime.pdf',
     byteLength: 4096,
-    metadata: options.title ? { title: options.title } : {},
+    metadata: {
+      ...(options.title ? { title: options.title } : {}),
+      ...(options.language ? { language: options.language } : {}),
+    },
     rasterizeFigure: options.rasterizeFigure,
   })
 }
@@ -211,6 +215,7 @@ describe('PDF semantic runtime regressions', () => {
         ]),
       ],
       {
+        language: 'en-US',
         rasterizeFigure: async (input) =>
           createSourcePageCropAsset({
             kind: input.kind === 'figure' ? 'raster' : input.kind,

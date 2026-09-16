@@ -60,6 +60,79 @@ describe('PDF source-page crops', () => {
     ).rejects.toThrow(/ink touching its edge/i)
   })
 
+  it('snapshots source geometry before rendering crosses an async boundary', async () => {
+    const sourceBox = {
+      page: 1,
+      x: 0.1,
+      y: 0.1,
+      width: 0.2,
+      height: 0.2,
+      rotation: 0,
+      method: 'pdf-object' as const,
+    }
+    let releaseRender!: () => void
+    const renderGate = new Promise<void>((resolve) => {
+      releaseRender = resolve
+    })
+    const transforms: number[][] = []
+    const operation = renderPdfPageCrop({
+      page: {
+        pageNumber: 1,
+        getViewport: ({ scale }) => ({
+          width: 100 * scale,
+          height: 100 * scale,
+          rotation: 0,
+        }),
+        render: ({ transform }) => {
+          transforms.push([...(transform ?? [])])
+          return { promise: renderGate }
+        },
+      },
+      canvasFactory: {
+        create: (width, height) => {
+          const pixels = new Uint8ClampedArray(width * height * 4).fill(255)
+          const center =
+            (Math.floor(height / 2) * width + Math.floor(width / 2)) * 4
+          pixels.set([0, 0, 0, 255], center)
+          return {
+            canvas: { width, height },
+            context: {
+              fillStyle: '',
+              fillRect: vi.fn(),
+              getImageData: vi.fn(() => ({ data: pixels })),
+            },
+          }
+        },
+        destroy: vi.fn(),
+      },
+      sourceBox,
+    })
+
+    sourceBox.x = 0.45
+    sourceBox.y = 0.35
+    sourceBox.width = 0.4
+    sourceBox.height = 0.3
+    releaseRender()
+    const raster = await operation
+
+    expect(transforms).toEqual([[1, 0, 0, 1, -30, -30]])
+    expect({ width: raster.width, height: raster.height }).toEqual({
+      width: 60,
+      height: 60,
+    })
+    expect(raster.sourceBox).toEqual({
+      page: 1,
+      x: 0.1,
+      y: 0.1,
+      width: 0.2,
+      height: 0.2,
+      rotation: 0,
+      method: 'pdf-object',
+    })
+    sourceBox.x = 0.7
+    expect(raster.sourceBox.x).toBe(0.1)
+  })
+
   it('tightens declared PDF geometry to padded rendered-ink bounds', async () => {
     const sourceBox = {
       page: 1,
@@ -118,6 +191,7 @@ describe('PDF source-page crops', () => {
       width: 328,
       height: 248,
     })
+    expect(raster.resolutionDpi).toBe(72)
     expect(
       hasSourceInkOnCropEdge(raster.pixels, raster.width, raster.height),
     ).toBe(false)
@@ -166,6 +240,7 @@ describe('PDF source-page crops', () => {
         }),
       )
       expect(secondHash).toBe(firstHash)
+      expect(first.resolutionDpi).toBe(216)
       expect(
         first.pixels.some((value, index) => index % 4 !== 3 && value < 240),
       ).toBe(true)
@@ -186,6 +261,7 @@ describe('PDF source-page crops', () => {
       })
       expect(secondAsset.sha256).toBe(firstAsset.sha256)
       expect(secondAsset.bytes).toEqual(firstAsset.bytes)
+      expect(firstAsset.resolutionDpi).toBe(216)
       expect([...firstAsset.bytes.subarray(0, 8)]).toEqual([
         137, 80, 78, 71, 13, 10, 26, 10,
       ])

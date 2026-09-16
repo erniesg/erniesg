@@ -1,16 +1,30 @@
 import type {
   NormalizedSourceBox,
+  PdfImportProgress,
   PdfPageAnalysis,
   PdfPageRegion,
   PdfPreformattedSource,
   PdfPreformattedSourceLine,
+  PdfSourceRun,
+  PdfTextOperationFilterPlan,
   PdfVisualAsset,
   PdfVisualMatchCandidate,
   PdfVisualRelationship,
   ReconstructionDiagnostic,
 } from './import-types'
+import { PdfImportError } from './import-types'
+import {
+  createSourceGeometryScriptTranscript,
+  SOURCE_GEOMETRY_SCRIPT_TRANSCRIPT_EVIDENCE,
+} from './equation-geometry-transcript'
+import {
+  equationRenderOnlySourceRunIdentity,
+  proveEquationRenderOnlySourceRunOwnerships,
+  RENDER_ONLY_EQUATION_OWNERSHIP_EVIDENCE,
+} from './equation-render-only-ownership'
 import { pdfFontTextRequiresStructuralReconstruction } from './pdf-font-text'
 import {
+  detectExplicitHeaderNumericTableWithinProvenScope,
   detectHierarchicalTableWithinProvenScope,
   detectTableNearCaption,
   detectTableWithinProvenScope,
@@ -24,8 +38,11 @@ import {
 } from './pdf-table-scope'
 import {
   parsePdfScholarlyVisualLabel,
+  type PdfScholarlyVisualLabel,
   type ParsedPdfScholarlyVisualLabel,
 } from './pdf-scholarly-label'
+import { proseDominantPdfMathSource } from './pdf-regions'
+import { isBoundedPdfPageCropBox } from './pdf-page-crop'
 import {
   canonicalTableFromLines,
   createHeadlessCompositePngAsset,
@@ -33,11 +50,14 @@ import {
   createTableAsset,
   createTextSvgAsset,
   isValidSourcePageCropPayload,
+  isCanonicalPdfSourceExclusionMask,
+  isTrustedPdfTextOperationFilterAsset,
   pdfSourceExclusionMaskIdentity,
   type CanonicalTable,
 } from './visual-assets'
 import { sanitizeXmlText } from './publication-integrity'
 import { sha256HexSync } from './sha256-sync'
+import { PDFJS_DISPLAY_OPERATOR_ADAPTER } from './pdf-text-paint'
 
 type VisualKind = PdfVisualRelationship['kind']
 type PdfNativeObject = NonNullable<PdfPageAnalysis['objects']>[number]
@@ -49,20 +69,66 @@ type CompleteSemanticTableScope = {
 }
 
 export const VISUAL_MATCH_DECISION_SCHEMA_VERSION = '1.3.0' as const
+// Version candidate identity independently from the human-decision file.
+// Existing v1.3 files still parse, but IDs produced by earlier algorithms
+// fail stale rather than replaying against a different ownership extent.
+const VISUAL_MATCH_CANDIDATE_IDENTITY_VERSION = '3.0.0' as const
+
+type PdfVisualMatchCandidateIdentityInput = Pick<
+  PdfVisualMatchCandidate,
+  | 'sourceRegionIds'
+  | 'sourceObjectIds'
+  | 'assetIds'
+  | 'sourceBoxes'
+  | 'renderOnlySourceRunOwnerships'
+> & {
+  sourceLineIds?: readonly string[]
+  sourceText?: string
+  ownershipExtentSha256?: string
+}
 
 export function pdfVisualMatchCandidateId(
   relationshipId: string,
-  candidate: Pick<
-    PdfVisualMatchCandidate,
-    'sourceRegionIds' | 'sourceObjectIds' | 'assetIds'
-  >,
+  candidate: PdfVisualMatchCandidateIdentityInput,
 ) {
-  const identity = JSON.stringify({
+  const sourceLineIds = [...(candidate.sourceLineIds ?? [])].sort()
+  const legacyIdentity = {
     schemaVersion: VISUAL_MATCH_DECISION_SCHEMA_VERSION,
     relationshipId,
     sourceRegionIds: [...candidate.sourceRegionIds].sort(),
-    sourceObjectIds: [...candidate.sourceObjectIds].sort(),
     assetIds: [...candidate.assetIds].sort(),
+  }
+  const identity = JSON.stringify({
+    ...legacyIdentity,
+    candidateIdentityVersion: VISUAL_MATCH_CANDIDATE_IDENTITY_VERSION,
+    sourceLineIds,
+    sourceLineage: Array.from(
+      {
+        length: Math.max(
+          candidate.sourceObjectIds.length,
+          candidate.sourceBoxes.length,
+        ),
+      },
+      (_unused, index) =>
+        JSON.stringify({
+          sourceObjectId: candidate.sourceObjectIds[index] ?? null,
+          sourceBox: candidate.sourceBoxes[index]
+            ? {
+                page: candidate.sourceBoxes[index].page,
+                x: candidate.sourceBoxes[index].x,
+                y: candidate.sourceBoxes[index].y,
+                width: candidate.sourceBoxes[index].width,
+                height: candidate.sourceBoxes[index].height,
+                rotation: candidate.sourceBoxes[index].rotation,
+                method: candidate.sourceBoxes[index].method,
+              }
+            : null,
+        }),
+    ).sort(),
+    ownershipExtentSha256: candidate.ownershipExtentSha256 ?? null,
+    sourceText: candidate.sourceText ?? '',
+    renderOnlySourceRunOwnerships:
+      candidate.renderOnlySourceRunOwnerships ?? [],
   })
   return `visual-candidate-${sha256HexSync(identity)}`
 }
@@ -75,6 +141,7 @@ export type PdfFigureRasterizer = (input: {
   sourceBoxes: NormalizedSourceBox[]
   ownedSourceBoxes?: NormalizedSourceBox[]
   excludedSourceBoxes?: NormalizedSourceBox[]
+  sourceTextOperationFilter?: PdfTextOperationFilterPlan
   tightenToSourceInk?: boolean
 }) => Promise<PdfVisualAsset | null>
 
@@ -87,6 +154,7 @@ export type PdfPartialRegionLineSelection = {
 const MIN_COMPOSITE_FIGURE_FRAGMENTS = 2
 const TEXT_OVERLAY_PREFIX = 'text-overlay:'
 const FIGURE_OVERLAY_BOX_TOLERANCE = 0.004
+const MIN_FIGURE_OVERLAY_RENDER_CONTAINMENT = 0.95
 const MIN_ADJACENT_PANEL_FIGURE_SPAN = 0.6
 // Diagram labels must remain outside canonical reading order and subordinate
 // to the established native render scope. The area cap is a secondary bound;
@@ -126,6 +194,23 @@ const MIN_CAPTION_ENVELOPE_GRID_ROW_COUNT = 3
 const MAX_CAPTION_ENVELOPE_TITLE_GAP = 0.04
 const MIN_CROSS_COLUMN_FIGURE_SPAN = 0.65
 const MAX_SINGLE_COLUMN_FIGURE_WIDTH = 0.55
+const MAX_ADJACENT_PANEL_GAP = 0.1
+const PDF_VISUAL_COOPERATIVE_BATCH_SIZE = 8
+const PDF_VISUAL_INDEX_COOPERATIVE_BATCH_SIZE = 64
+
+function throwIfPdfVisualWorkAborted(signal?: AbortSignal) {
+  if (!signal?.aborted) return
+  throw new PdfImportError(
+    'IMPORT_CANCELLED',
+    'The local PDF reconstruction was cancelled and its working data was released.',
+  )
+}
+
+async function yieldPdfVisualTask(signal?: AbortSignal) {
+  throwIfPdfVisualWorkAborted(signal)
+  await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0))
+  throwIfPdfVisualWorkAborted(signal)
+}
 const MAX_TABLE_HEADER_SCOPE_GAP = 0.025
 const MIN_TABLE_HEADER_HORIZONTAL_COVERAGE = 0.5
 const MAX_DISPLAY_EQUATION_WIDTH = 0.82
@@ -147,6 +232,8 @@ const EQUATION_SOURCE_CROP_RETRY_NEIGHBOR_GAP_FRACTIONS = [
 const EQUATION_EXCLUDED_TEXT_MASK_PIXELS = 2
 const EQUATION_EXCLUDED_TEXT_MAX_RENDER_SCALE = 3
 const MAX_EQUATION_EXCLUDED_SOURCE_BOXES = 32
+const MAX_EQUATION_OWNED_SOURCE_BOXES = 256
+const MAX_EQUATION_TEXT_LEDGER_SPANS = 256
 const TABLE_SOURCE_CROP_RETRY_PADDINGS = [
   0.006, 0.008, 0.01, 0.012, 0.014, 0.016, 0.02, 0.024, 0.028, 0.032,
 ] as const
@@ -164,6 +251,7 @@ type VisualCandidate = {
   page: number
   column: PdfPageRegion['column']
   renderBox?: NormalizedSourceBox
+  textOwnershipBox?: NormalizedSourceBox
   evidence?: string[]
   sourcePageCropBlockedByReadingOrderText?: boolean
   nativeEnvelopeIncomplete?: boolean
@@ -251,6 +339,34 @@ function compatibleCaptionLaneColumns(
   return left === right || left === 'span' || right === 'span'
 }
 
+function captionSourceLaneMatches(
+  caption: PdfPageRegion,
+  region: PdfPageRegion,
+) {
+  return captionSourceLaneMatchesBox(caption, region.box, region.column)
+}
+
+function captionSourceLaneMatchesBox(
+  caption: PdfPageRegion,
+  sourceBox: NormalizedSourceBox,
+  sourceColumn: PdfPageRegion['column'],
+) {
+  const lane = caption.sourceCaptionLane
+  if (!lane) {
+    return compatibleCaptionLaneColumns(sourceColumn, caption.column)
+  }
+  const left = sourceBox.x
+  const right = sourceBox.x + sourceBox.width
+  const tolerance = FIGURE_OVERLAY_BOX_TOLERANCE
+  if (left < lane.boundary - tolerance && right > lane.boundary + tolerance) {
+    return false
+  }
+  const center = left + sourceBox.width / 2
+  return lane.side === 'left'
+    ? center <= lane.boundary + tolerance
+    : center >= lane.boundary - tolerance
+}
+
 function narrowCaptionClaimsOneColumn(
   left: PdfPageRegion,
   right: PdfPageRegion,
@@ -317,17 +433,27 @@ function connected(
   captions: PdfPageRegion[],
 ) {
   if (left.page !== right.page) return false
+  const gap = boxGap(left.box, right.box)
+  const geometricallyConnected =
+    (gap.vertical === 0 && gap.horizontal <= FIGURE_CONNECTIVITY_GAP) ||
+    (gap.horizontal === 0 && gap.vertical <= FIGURE_CONNECTIVITY_GAP)
+  const verticalOverlap = Math.max(
+    0,
+    Math.min(left.box.y + left.box.height, right.box.y + right.box.height) -
+      Math.max(left.box.y, right.box.y),
+  )
+  const adjacentImagePanelCandidate =
+    gap.vertical === 0 &&
+    gap.horizontal <= MAX_ADJACENT_PANEL_GAP &&
+    verticalOverlap >= Math.min(left.box.height, right.box.height) * 0.7 &&
+    left.nativeObjectIds.some((id) => id.startsWith('image-')) &&
+    right.nativeObjectIds.some((id) => id.startsWith('image-'))
+  if (!geometricallyConnected && !adjacentImagePanelCandidate) return false
   if (captionSeparates(left, right, captions)) return false
   if (narrowCaptionClaimsOneColumn(left, right, captions)) return false
-  if (
-    adjacentPanelLabelOverlays([left, right], regions, captions).length === 2
-  ) {
-    return true
-  }
-  const gap = boxGap(left.box, right.box)
   return (
-    (gap.vertical === 0 && gap.horizontal <= 0.04) ||
-    (gap.horizontal === 0 && gap.vertical <= 0.04)
+    geometricallyConnected ||
+    adjacentPanelLabelOverlays([left, right], regions, captions).length === 2
   )
 }
 
@@ -437,7 +563,61 @@ function singleSolidRectangleFallbackAsset(asset: PdfVisualAsset | undefined) {
   })
 }
 
-function repeatedRectangleFallbackObjectIds(pages: PdfPageAnalysis[]) {
+export type PdfRectangleIndexEvidence = {
+  candidateComparisons: number
+}
+
+const REPEATED_RECTANGLE_GEOMETRY_TOLERANCE = 0.004
+const REPEATED_RECTANGLE_SPATIAL_CELL_SIZE = 0.05
+
+function rectangleGeometryCell(object: PdfNativeObject) {
+  return [object.box.x, object.box.y, object.box.width, object.box.height]
+    .map((value) => Math.floor(value / REPEATED_RECTANGLE_GEOMETRY_TOLERANCE))
+    .join(':')
+}
+
+function neighboringRectangleGeometryCells(object: PdfNativeObject) {
+  const base = [
+    object.box.x,
+    object.box.y,
+    object.box.width,
+    object.box.height,
+  ].map((value) => Math.floor(value / REPEATED_RECTANGLE_GEOMETRY_TOLERANCE))
+  const keys: string[] = []
+  for (let x = -1; x <= 1; x += 1) {
+    for (let y = -1; y <= 1; y += 1) {
+      for (let width = -1; width <= 1; width += 1) {
+        for (let height = -1; height <= 1; height += 1) {
+          keys.push(
+            `${base[0] + x}:${base[1] + y}:${base[2] + width}:${base[3] + height}`,
+          )
+        }
+      }
+    }
+  }
+  return keys
+}
+
+function rectangleSpatialCells(object: PdfNativeObject) {
+  const left = Math.floor(object.box.x / REPEATED_RECTANGLE_SPATIAL_CELL_SIZE)
+  const top = Math.floor(object.box.y / REPEATED_RECTANGLE_SPATIAL_CELL_SIZE)
+  const right = Math.floor(
+    (object.box.x + object.box.width) / REPEATED_RECTANGLE_SPATIAL_CELL_SIZE,
+  )
+  const bottom = Math.floor(
+    (object.box.y + object.box.height) / REPEATED_RECTANGLE_SPATIAL_CELL_SIZE,
+  )
+  const cells: string[] = []
+  for (let y = top; y <= bottom; y += 1) {
+    for (let x = left; x <= right; x += 1) cells.push(`${x}:${y}`)
+  }
+  return cells
+}
+
+export function repeatedRectangleFallbackObjectIds(
+  pages: PdfPageAnalysis[],
+  evidence?: PdfRectangleIndexEvidence,
+) {
   const assets = new Map(
     pages
       .flatMap((page) => page.assets ?? [])
@@ -456,29 +636,79 @@ function repeatedRectangleFallbackObjectIds(pages: PdfPageAnalysis[]) {
         Boolean(object.assetId) &&
         singleSolidRectangleFallbackAsset(assets.get(object.assetId!)),
     )
-  return new Set(
-    rectangles.flatMap((object, objectIndex) => {
-      const repeated = rectangles.some((candidate, candidateIndex) => {
-        if (candidateIndex === objectIndex) return false
-        const smallerArea = Math.min(
-          object.box.width * object.box.height,
-          candidate.box.width * candidate.box.height,
-        )
-        return (
-          candidate.assetId === object.assetId ||
-          sameRepeatedGeometry(object, candidate) ||
-          (object.page === candidate.page &&
-            smallerArea > 0 &&
-            intersectionArea(object.box, candidate.box) / smallerArea >=
-              MIN_REPEATED_RECTANGLE_OVERLAP)
-        )
-      })
-      return repeated ? [object.id] : []
-    }),
-  )
+  const repeated = new Set<string>()
+  const byAsset = new Map<string, typeof rectangles>()
+  for (const object of rectangles) {
+    const matches = byAsset.get(object.assetId) ?? []
+    matches.push(object)
+    byAsset.set(object.assetId, matches)
+  }
+  for (const matches of byAsset.values()) {
+    if (matches.length < 2) continue
+    for (const object of matches) repeated.add(object.id)
+  }
+
+  const geometryCells = new Map<string, typeof rectangles>()
+  for (const object of rectangles) {
+    const candidates = new Set(
+      neighboringRectangleGeometryCells(object).flatMap(
+        (key) => geometryCells.get(key) ?? [],
+      ),
+    )
+    for (const candidate of candidates) {
+      if (object.page === candidate.page) continue
+      if (repeated.has(object.id) && repeated.has(candidate.id)) continue
+      if (evidence) evidence.candidateComparisons += 1
+      if (!sameRepeatedGeometry(object, candidate)) continue
+      repeated.add(object.id)
+      repeated.add(candidate.id)
+    }
+    const key = rectangleGeometryCell(object)
+    const values = geometryCells.get(key) ?? []
+    values.push(object)
+    geometryCells.set(key, values)
+  }
+
+  const spatialCellsByPage = new Map<number, Map<string, typeof rectangles>>()
+  for (const object of rectangles) {
+    const cells =
+      spatialCellsByPage.get(object.page) ??
+      new Map<string, typeof rectangles>()
+    spatialCellsByPage.set(object.page, cells)
+    const objectCells = rectangleSpatialCells(object)
+    const candidates = new Set(
+      objectCells.flatMap((key) => cells.get(key) ?? []),
+    )
+    for (const candidate of candidates) {
+      if (repeated.has(object.id) && repeated.has(candidate.id)) continue
+      if (evidence) evidence.candidateComparisons += 1
+      const smallerArea = Math.min(
+        object.box.width * object.box.height,
+        candidate.box.width * candidate.box.height,
+      )
+      if (
+        smallerArea <= 0 ||
+        intersectionArea(object.box, candidate.box) / smallerArea <
+          MIN_REPEATED_RECTANGLE_OVERLAP
+      ) {
+        continue
+      }
+      repeated.add(object.id)
+      repeated.add(candidate.id)
+    }
+    for (const key of objectCells) {
+      const values = cells.get(key) ?? []
+      values.push(object)
+      cells.set(key, values)
+    }
+  }
+  return repeated
 }
 
-export function decorativeNativeObjectIds(pages: PdfPageAnalysis[]) {
+export function decorativeNativeObjectIds(
+  pages: PdfPageAnalysis[],
+  repeatedRectangleObjectIds = repeatedRectangleFallbackObjectIds(pages),
+) {
   const vectors = pages
     .flatMap((page) => page.objects ?? [])
     .filter((object) => object.kind === 'vector')
@@ -491,7 +721,6 @@ export function decorativeNativeObjectIds(pages: PdfPageAnalysis[]) {
       )
       .map((object) => object.id),
   )
-  const repeatedRectangleObjectIds = repeatedRectangleFallbackObjectIds(pages)
   for (const object of vectors) {
     if (
       isLargeVectorBox(object.box) &&
@@ -503,8 +732,10 @@ export function decorativeNativeObjectIds(pages: PdfPageAnalysis[]) {
   return decorative
 }
 
-function reusedPageBackdropObjectIds(pages: PdfPageAnalysis[]) {
-  const repeatedRectangleObjectIds = repeatedRectangleFallbackObjectIds(pages)
+function reusedPageBackdropObjectIds(
+  pages: PdfPageAnalysis[],
+  repeatedRectangleObjectIds: ReadonlySet<string>,
+) {
   const vectors = pages
     .flatMap((page) => page.objects ?? [])
     .filter(
@@ -541,8 +772,10 @@ function reusedPageBackdropObjectIds(pages: PdfPageAnalysis[]) {
   )
 }
 
-function reusedPanelClipObjectIds(pages: PdfPageAnalysis[]) {
-  const repeatedRectangleObjectIds = repeatedRectangleFallbackObjectIds(pages)
+function reusedPanelClipObjectIds(
+  pages: PdfPageAnalysis[],
+  repeatedRectangleObjectIds: ReadonlySet<string>,
+) {
   const vectors = pages
     .flatMap((page) => page.objects ?? [])
     .filter(
@@ -775,6 +1008,7 @@ function boundedTextOverlays(
   group: PdfPageRegion[],
   regions: PdfPageRegion[],
   captions: PdfPageRegion[],
+  strongHeadingRegionIds: ReadonlySet<string>,
 ) {
   const scope = {
     ...group[0],
@@ -791,7 +1025,7 @@ function boundedTextOverlays(
         region.nativeObjectIds.length === 0 &&
         region.lines.length > 0 &&
         region.text.trim().length > 0 &&
-        !strongHierarchicalSectionHeading(region.text) &&
+        !strongHeadingRegionIds.has(region.id) &&
         ![
           'caption',
           'header',
@@ -899,13 +1133,28 @@ function coextensiveNativeLayerPair(left: PdfPageRegion, right: PdfPageRegion) {
 
 function coextensiveNativeLayerCluster(group: PdfPageRegion[]) {
   const remaining = new Set(group)
+  const originalIndexes = new Map(
+    group.map((region, index) => [region, index] as const),
+  )
+  const spatialIndex = figureRegionSpatialIndex(group)
   const components: PdfPageRegion[][] = []
   while (remaining.size > 0) {
     const seed = remaining.values().next().value as PdfPageRegion
     remaining.delete(seed)
     const component = [seed]
-    for (let index = 0; index < component.length; index += 1) {
-      for (const candidate of [...remaining]) {
+    for (
+      let index = 0;
+      index < component.length && remaining.size > 0;
+      index += 1
+    ) {
+      const localCandidates = spatialIndex
+        .query(component[index].box)
+        .filter((candidate) => remaining.has(candidate))
+        .sort(
+          (left, right) =>
+            originalIndexes.get(left)! - originalIndexes.get(right)!,
+        )
+      for (const candidate of localCandidates) {
         if (!coextensiveNativeLayerPair(component[index], candidate)) continue
         remaining.delete(candidate)
         component.push(candidate)
@@ -950,12 +1199,12 @@ function provesCaptionBoundedNativeScaffold(
   const scope = unionObjectBox(group)
   if (scope.width * scope.height < MIN_NATIVE_SCAFFOLD_AREA) return false
   return (
+    group.length >= MIN_DENSE_NATIVE_SCAFFOLD_FRAGMENT_COUNT ||
     group.some((region) => isCompositeScaffold(region, figureRegions)) ||
     group.some((region) =>
       bindsDenseNativeFragmentSet(region, figureRegions),
     ) ||
-    coextensiveNativeLayers(group) ||
-    group.length >= MIN_DENSE_NATIVE_SCAFFOLD_FRAGMENT_COUNT
+    coextensiveNativeLayers(group)
   )
 }
 
@@ -1032,9 +1281,10 @@ function captionBoundedReadingOrderOverlays(
   figureRegions: PdfPageRegion[],
   regions: PdfPageRegion[],
   captions: PdfPageRegion[],
+  repeatedPageFurnitureIds: ReadonlySet<string>,
+  strongHeadingRegionIds: ReadonlySet<string>,
 ) {
   if (!provesCaptionBoundedNativeScaffold(group, figureRegions)) return []
-  const repeatedPageFurnitureIds = repeatedTopPageFurnitureRegionIds(regions)
   const nativeBox = unionObjectBox(group)
   const caption = owningCaptionForBox(nativeBox, captions)
   if (!caption) return []
@@ -1084,7 +1334,7 @@ function captionBoundedReadingOrderOverlays(
         region.lines.length > 0 &&
         region.text.trim().length > 0 &&
         ['body', 'spanning'].includes(region.kind) &&
-        !strongHierarchicalSectionHeading(region.text) &&
+        !strongHeadingRegionIds.has(region.id) &&
         !repeatedPageFurnitureIds.has(region.id) &&
         region.box.y + region.box.height <=
           caption.box.y + FIGURE_OVERLAY_BOX_TOLERANCE &&
@@ -1234,12 +1484,76 @@ function adjacentPanelLabelOverlays(
     : []
 }
 
-function captionBoundedSemanticEnvelopeCandidates(
+function probablePanelLabelOverlayRegion(region: PdfPageRegion) {
+  return (
+    region.includedInReadingOrder &&
+    region.nativeObjectIds.length === 0 &&
+    region.lines.length > 0 &&
+    ['body', 'spanning'].includes(region.kind) &&
+    /^\s*\([a-z0-9ivxlcdm]+\)\s+\p{L}/iu.test(region.text)
+  )
+}
+
+function denseGridNeighborRegions(regions: PdfPageRegion[]) {
+  const coordinate = (
+    region: PdfPageRegion,
+    axis: 'horizontal' | 'vertical',
+  ) =>
+    axis === 'horizontal'
+      ? region.box.x + region.box.width / 2
+      : region.box.y + region.box.height / 2
+  const bucketed = (axis: 'horizontal' | 'vertical', tolerance: number) => {
+    const buckets = new Map<number, PdfPageRegion[]>()
+    for (const region of regions) {
+      const key = Math.floor(coordinate(region, axis) / tolerance)
+      const values = buckets.get(key) ?? []
+      values.push(region)
+      buckets.set(key, values)
+    }
+    return {
+      hasNeighbors(region: PdfPageRegion, minimum: number) {
+        const center = coordinate(region, axis)
+        const key = Math.floor(center / tolerance)
+        let matches = 0
+        for (
+          let candidateKey = key - 1;
+          candidateKey <= key + 1;
+          candidateKey += 1
+        ) {
+          for (const candidate of buckets.get(candidateKey) ?? []) {
+            if (
+              candidate === region ||
+              Math.abs(coordinate(candidate, axis) - center) > tolerance
+            ) {
+              continue
+            }
+            matches += 1
+            if (matches >= minimum) return true
+          }
+        }
+        return false
+      },
+    }
+  }
+  const columns = bucketed('horizontal', 0.06)
+  const rows = bucketed('vertical', 0.035)
+  return regions.filter(
+    (region) =>
+      columns.hasNeighbors(region, MIN_CAPTION_ENVELOPE_GRID_ROW_COUNT - 1) &&
+      rows.hasNeighbors(region, MIN_CAPTION_ENVELOPE_GRID_COLUMN_COUNT - 1),
+  )
+}
+
+async function captionBoundedSemanticEnvelopeCandidates(
   figureRegions: PdfPageRegion[],
   regions: PdfPageRegion[],
   captions: PdfPageRegion[],
   pageBackdropObjectIds: ReadonlySet<string>,
   panelClipObjectIds: ReadonlySet<string>,
+  strongHeadingRegionIds: ReadonlySet<string>,
+  repeatedPageFurnitureRegionIds: ReadonlySet<string>,
+  onProgress?: (progress: PdfImportProgress) => void,
+  signal?: AbortSignal,
 ) {
   const orderedCaptions = [...captions].sort(
     (left, right) =>
@@ -1248,9 +1562,10 @@ function captionBoundedSemanticEnvelopeCandidates(
       left.box.x - right.box.x ||
       left.id.localeCompare(right.id),
   )
-  const repeatedPageFurnitureRegionIds =
-    repeatedTopPageFurnitureRegionIds(regions)
-  return orderedCaptions.flatMap<VisualCandidate>((caption, captionIndex) => {
+  const candidateForCaption = (
+    caption: PdfPageRegion,
+    captionIndex: number,
+  ): VisualCandidate[] => {
     const previousCaption = orderedCaptions
       .slice(0, captionIndex)
       .reverse()
@@ -1339,25 +1654,7 @@ function captionBoundedSemanticEnvelopeCandidates(
       backdropLaneNativeRegions.length > 0
         ? backdropLaneNativeRegions
         : laneNativeRegions
-    const denseGridRegions = denseGridPool.filter((region) => {
-      const centerX = region.box.x + region.box.width / 2
-      const centerY = region.box.y + region.box.height / 2
-      const sameColumnCount = denseGridPool.filter(
-        (candidate) =>
-          candidate !== region &&
-          Math.abs(candidate.box.x + candidate.box.width / 2 - centerX) <= 0.06,
-      ).length
-      const sameRowCount = denseGridPool.filter(
-        (candidate) =>
-          candidate !== region &&
-          Math.abs(candidate.box.y + candidate.box.height / 2 - centerY) <=
-            0.035,
-      ).length
-      return (
-        sameColumnCount >= MIN_CAPTION_ENVELOPE_GRID_ROW_COUNT - 1 &&
-        sameRowCount >= MIN_CAPTION_ENVELOPE_GRID_COLUMN_COUNT - 1
-      )
-    })
+    const denseGridRegions = denseGridNeighborRegions(denseGridPool)
     const usesDenseGridEnvelope =
       ruleEnvelopeBox === null &&
       denseGridRegions.flatMap((region) => region.nativeObjectIds).length >=
@@ -1483,9 +1780,9 @@ function captionBoundedSemanticEnvelopeCandidates(
         region.lines.length > 0 &&
         region.text.trim().length > 0 &&
         !region.includedInReadingOrder &&
-        compatibleCaptionLaneColumns(region.column, caption.column) &&
+        captionSourceLaneMatches(caption, region) &&
         !repeatedPageFurnitureRegionIds.has(region.id) &&
-        !strongHierarchicalSectionHeading(region.text) &&
+        !strongHeadingRegionIds.has(region.id) &&
         ![
           'caption',
           'header',
@@ -1528,7 +1825,7 @@ function captionBoundedSemanticEnvelopeCandidates(
           region.nativeObjectIds.length === 0 &&
           region.lines.length > 0 &&
           region.text.trim().length > 0 &&
-          !strongHierarchicalSectionHeading(region.text) &&
+          !strongHeadingRegionIds.has(region.id) &&
           ![
             'caption',
             'header',
@@ -1549,14 +1846,16 @@ function captionBoundedSemanticEnvelopeCandidates(
       const ordered = [...values].sort(
         (leftValue, rightValue) => leftValue - rightValue,
       )
-      return ordered.reduce(
-        (clusters, value) =>
-          clusters.length === 0 ||
-          value - clusters[clusters.length - 1] > tolerance
-            ? [...clusters, value]
-            : clusters,
-        [] as number[],
-      ).length
+      let clusterCount = 0
+      let previousClusterStart = -Infinity
+      for (const value of ordered) {
+        if (clusterCount > 0 && value - previousClusterStart <= tolerance) {
+          continue
+        }
+        clusterCount += 1
+        previousClusterStart = value
+      }
+      return clusterCount
     }
     const denseGridProof =
       denseFragmentProof &&
@@ -1620,6 +1919,7 @@ function captionBoundedSemanticEnvelopeCandidates(
         sourceText: overlays.map((region) => region.text).join(' '),
         page: caption.page,
         renderBox,
+        textOwnershipBox: renderBox,
         sourcePageCropBlockedByReadingOrderText: false,
         nativeEnvelopeIncomplete: false,
         evidence: [
@@ -1643,78 +1943,340 @@ function captionBoundedSemanticEnvelopeCandidates(
         column: 'span',
       },
     ]
-  })
+  }
+  const candidates: VisualCandidate[] = []
+  for (const [captionIndex, caption] of orderedCaptions.entries()) {
+    candidates.push(...candidateForCaption(caption, captionIndex))
+    onProgress?.({
+      phase: 'semantic-promotion',
+      completed: captionIndex + 1,
+      total: orderedCaptions.length,
+      message: `Resolving caption-bounded semantic figure envelopes ${captionIndex + 1} of ${orderedCaptions.length}…`,
+      checkpoint: 'figure-grouping-envelopes',
+    })
+    await yieldPdfVisualTask(signal)
+  }
+  return candidates
 }
 
-function figureCandidates(
+const FIGURE_CONNECTIVITY_CELL_SIZE = 0.08
+const FIGURE_CONNECTIVITY_GAP = 0.04
+
+function figureConnectivityCells(box: NormalizedSourceBox, expansion = 0) {
+  const left = Math.floor((box.x - expansion) / FIGURE_CONNECTIVITY_CELL_SIZE)
+  const top = Math.floor((box.y - expansion) / FIGURE_CONNECTIVITY_CELL_SIZE)
+  const right = Math.floor(
+    (box.x + box.width + expansion) / FIGURE_CONNECTIVITY_CELL_SIZE,
+  )
+  const bottom = Math.floor(
+    (box.y + box.height + expansion) / FIGURE_CONNECTIVITY_CELL_SIZE,
+  )
+  const cells: string[] = []
+  for (let y = top; y <= bottom; y += 1) {
+    for (let x = left; x <= right; x += 1) {
+      cells.push(`${box.page}:${x}:${y}`)
+    }
+  }
+  return cells
+}
+
+function figureRegionSpatialIndex(regions: readonly PdfPageRegion[]) {
+  const cells = new Map<string, PdfPageRegion[]>()
+  for (const region of regions) {
+    for (const key of figureConnectivityCells(region.box)) {
+      const values = cells.get(key) ?? []
+      values.push(region)
+      cells.set(key, values)
+    }
+  }
+  return {
+    query(box: NormalizedSourceBox, expansion = 0) {
+      return [
+        ...new Map(
+          figureConnectivityCells(box, expansion)
+            .flatMap((key) => cells.get(key) ?? [])
+            .map((region) => [region.id, region] as const),
+        ).values(),
+      ]
+    },
+    provesCompositeScaffold(region: PdfPageRegion) {
+      if (!isLargeVectorArtifact(region)) return false
+      const area = region.box.width * region.box.height
+      let containedCount = 0
+      let containsImage = false
+      const examined = new Set<string>()
+      for (const key of figureConnectivityCells(region.box)) {
+        for (const candidate of cells.get(key) ?? []) {
+          if (candidate.id === region.id || examined.has(candidate.id)) {
+            continue
+          }
+          examined.add(candidate.id)
+          if (
+            candidate.box.width * candidate.box.height >= area * 0.9 ||
+            !containsCenter(region, candidate)
+          ) {
+            continue
+          }
+          containedCount += 1
+          containsImage ||= candidate.nativeObjectIds.some((id) =>
+            id.startsWith('image-'),
+          )
+          if (containedCount >= 2 && (containsImage || containedCount >= 4)) {
+            return true
+          }
+        }
+      }
+      return false
+    },
+  }
+}
+
+function mutableFigureRegionSpatialIndex(regions: readonly PdfPageRegion[]) {
+  const cells = new Map<string, Set<number>>()
+  const regionCells = regions.map((region, index) => {
+    const keys = figureConnectivityCells(region.box)
+    for (const key of keys) {
+      const values = cells.get(key) ?? new Set<number>()
+      values.add(index)
+      cells.set(key, values)
+    }
+    return keys
+  })
+  return {
+    remove(index: number) {
+      for (const key of regionCells[index]) {
+        const values = cells.get(key)
+        values?.delete(index)
+        if (values?.size === 0) cells.delete(key)
+      }
+    },
+    query(box: NormalizedSourceBox, expansion: number) {
+      const indexes = new Set<number>()
+      for (const key of figureConnectivityCells(box, expansion)) {
+        for (const index of cells.get(key) ?? []) indexes.add(index)
+      }
+      return [...indexes].sort((left, right) => left - right)
+    },
+  }
+}
+
+type PdfFigureGroupingEvidence = {
+  figureRegionCount: number
+  retainedFigureRegionCount: number
+  connectivityComparisons: number
+  groupCount: number
+}
+
+async function connectedFigureRegionGroups({
+  figureRegions,
+  panelLabelRegionsByPage,
+  captionsByPage,
+  decorativeObjectIds,
+  pageBackdropObjectIds,
+  evidence,
+  onProgress,
+  signal,
+}: {
+  figureRegions: PdfPageRegion[]
+  panelLabelRegionsByPage: ReadonlyMap<number, PdfPageRegion[]>
+  captionsByPage: ReadonlyMap<number, PdfPageRegion[]>
+  decorativeObjectIds: Set<string>
+  pageBackdropObjectIds: Set<string>
+  evidence: PdfFigureGroupingEvidence
+  onProgress?: (progress: PdfImportProgress) => void
+  signal?: AbortSignal
+}) {
+  const allFigureIndex = figureRegionSpatialIndex(figureRegions)
+  const retained: PdfPageRegion[] = []
+  for (const [regionIndex, region] of figureRegions.entries()) {
+    if (
+      !region.nativeObjectIds.some((id) => pageBackdropObjectIds.has(id)) &&
+      (!isDecorativeVectorArtifact(region, decorativeObjectIds) ||
+        allFigureIndex.provesCompositeScaffold(region))
+    ) {
+      retained.push(region)
+    }
+    if ((regionIndex + 1) % PDF_VISUAL_INDEX_COOPERATIVE_BATCH_SIZE === 0) {
+      onProgress?.({
+        phase: 'semantic-promotion',
+        completed: regionIndex + 1,
+        total: figureRegions.length,
+        message: `Filtering bounded native figure regions ${regionIndex + 1} of ${figureRegions.length}…`,
+        checkpoint: 'figure-grouping-filter',
+      })
+      await yieldPdfVisualTask(signal)
+    }
+  }
+  evidence.retainedFigureRegionCount = retained.length
+  const retainedIndex = mutableFigureRegionSpatialIndex(retained)
+  const assigned = new Set<number>()
+  const groups: PdfPageRegion[][] = []
+  let cooperativeWork = 0
+  let lastYieldedCooperativeWork = 0
+  for (const seedIndex of retained.keys()) {
+    if (assigned.has(seedIndex)) continue
+    assigned.add(seedIndex)
+    retainedIndex.remove(seedIndex)
+    const memberIndexes: number[] = []
+    const frontier = [seedIndex]
+    for (
+      let frontierIndex = 0;
+      frontierIndex < frontier.length;
+      frontierIndex += 1
+    ) {
+      const leftIndex = frontier[frontierIndex]
+      const left = retained[leftIndex]
+      memberIndexes.push(leftIndex)
+      cooperativeWork += 1
+      const pagePanelLabelRegions = panelLabelRegionsByPage.get(left.page) ?? []
+      const pageCaptions = captionsByPage.get(left.page) ?? []
+      const expansion = left.nativeObjectIds.some((id) =>
+        id.startsWith('image-'),
+      )
+        ? MAX_ADJACENT_PANEL_GAP
+        : FIGURE_CONNECTIVITY_GAP
+      for (const rightIndex of retainedIndex.query(left.box, expansion)) {
+        const right = retained[rightIndex]
+        evidence.connectivityComparisons += 1
+        cooperativeWork += 1
+        if (!connected(left, right, pagePanelLabelRegions, pageCaptions)) {
+          if (
+            cooperativeWork - lastYieldedCooperativeWork >=
+            PDF_VISUAL_INDEX_COOPERATIVE_BATCH_SIZE
+          ) {
+            onProgress?.({
+              phase: 'semantic-promotion',
+              completed: assigned.size,
+              total: retained.length,
+              message: `Grouping ${assigned.size} of ${retained.length} retained native figure regions…`,
+              checkpoint: 'figure-grouping-connectivity',
+            })
+            await yieldPdfVisualTask(signal)
+            lastYieldedCooperativeWork = cooperativeWork
+          }
+          continue
+        }
+        assigned.add(rightIndex)
+        retainedIndex.remove(rightIndex)
+        frontier.push(rightIndex)
+        if (
+          cooperativeWork - lastYieldedCooperativeWork >=
+          PDF_VISUAL_INDEX_COOPERATIVE_BATCH_SIZE
+        ) {
+          onProgress?.({
+            phase: 'semantic-promotion',
+            completed: assigned.size,
+            total: retained.length,
+            message: `Grouping ${assigned.size} of ${retained.length} retained native figure regions…`,
+            checkpoint: 'figure-grouping-connectivity',
+          })
+          await yieldPdfVisualTask(signal)
+          lastYieldedCooperativeWork = cooperativeWork
+        }
+      }
+      if (
+        cooperativeWork - lastYieldedCooperativeWork >=
+        PDF_VISUAL_INDEX_COOPERATIVE_BATCH_SIZE
+      ) {
+        onProgress?.({
+          phase: 'semantic-promotion',
+          completed: assigned.size,
+          total: retained.length,
+          message: `Grouping ${assigned.size} of ${retained.length} retained native figure regions…`,
+          checkpoint: 'figure-grouping-connectivity',
+        })
+        await yieldPdfVisualTask(signal)
+        lastYieldedCooperativeWork = cooperativeWork
+      }
+    }
+    groups.push(
+      memberIndexes
+        .sort((left, right) => left - right)
+        .map((index) => retained[index]),
+    )
+  }
+  evidence.groupCount = groups.length
+  return groups
+}
+
+async function figureCandidates(
   regions: PdfPageRegion[],
   captions: PdfPageRegion[],
   decorativeObjectIds: Set<string>,
   pageBackdropObjectIds: Set<string>,
   panelClipObjectIds: Set<string>,
+  evidence: PdfFigureGroupingEvidence,
+  onProgress?: (progress: PdfImportProgress) => void,
+  signal?: AbortSignal,
 ) {
   const repeatedPageFurnitureIds = repeatedTopPageFurnitureRegionIds(regions)
   const topPageFurnitureSources = topPageFurnitureTextSources(regions)
+  const strongHeadingRegionIds = new Set<string>()
+  for (const [regionIndex, region] of regions.entries()) {
+    if (strongHierarchicalSectionHeading(region.text)) {
+      strongHeadingRegionIds.add(region.id)
+    }
+    if ((regionIndex + 1) % PDF_VISUAL_INDEX_COOPERATIVE_BATCH_SIZE === 0) {
+      onProgress?.({
+        phase: 'semantic-promotion',
+        completed: regionIndex + 1,
+        total: regions.length,
+        message: `Classifying structural headings for bounded figure ownership ${regionIndex + 1} of ${regions.length}…`,
+        checkpoint: 'figure-heading-classification',
+      })
+      await yieldPdfVisualTask(signal)
+    }
+  }
   const figureRegions = regions.filter(
     (region) => region.kind === 'figure' && region.nativeObjectIds.length > 0,
   )
-  const remaining = figureRegions.filter(
-    (region) =>
-      !region.nativeObjectIds.some((id) => pageBackdropObjectIds.has(id)) &&
-      (!isDecorativeVectorArtifact(region, decorativeObjectIds) ||
-        isCompositeScaffold(region, figureRegions)),
-  )
-  const groups: PdfPageRegion[][] = []
-  while (remaining.length > 0) {
-    const group = [remaining.shift()!]
-    for (let index = 0; index < remaining.length;) {
-      if (
-        group.some((region) =>
-          connected(region, remaining[index], regions, captions),
-        )
-      ) {
-        group.push(remaining.splice(index, 1)[0])
-        index = 0
-      } else {
-        index += 1
-      }
-    }
-    groups.push(group)
+  evidence.figureRegionCount = figureRegions.length
+  const regionsByPage = new Map<number, PdfPageRegion[]>()
+  for (const region of regions) {
+    const values = regionsByPage.get(region.page) ?? []
+    values.push(region)
+    regionsByPage.set(region.page, values)
+  }
+  const figureRegionsByPage = new Map<number, PdfPageRegion[]>()
+  for (const region of figureRegions) {
+    const values = figureRegionsByPage.get(region.page) ?? []
+    values.push(region)
+    figureRegionsByPage.set(region.page, values)
+  }
+  const captionsByPage = new Map<number, PdfPageRegion[]>()
+  for (const caption of captions) {
+    const values = captionsByPage.get(caption.page) ?? []
+    values.push(caption)
+    captionsByPage.set(caption.page, values)
+  }
+  const panelLabelRegionsByPage = new Map<number, PdfPageRegion[]>()
+  for (const region of regions.filter(probablePanelLabelOverlayRegion)) {
+    const values = panelLabelRegionsByPage.get(region.page) ?? []
+    values.push(region)
+    panelLabelRegionsByPage.set(region.page, values)
+  }
+  const groups = await connectedFigureRegionGroups({
+    figureRegions,
+    panelLabelRegionsByPage,
+    captionsByPage,
+    decorativeObjectIds,
+    pageBackdropObjectIds,
+    evidence,
+    onProgress,
+    signal,
+  })
+  const pageFurnitureSourcesByPage = new Map<number, PdfPageRegion[]>()
+  for (const region of topPageFurnitureSources) {
+    const values = pageFurnitureSourcesByPage.get(region.page) ?? []
+    values.push(region)
+    pageFurnitureSourcesByPage.set(region.page, values)
   }
   const connectedCandidates = groups
     .map<VisualCandidate>((group) => {
-      const panelLabelOverlays = adjacentPanelLabelOverlays(
-        group,
-        regions,
-        captions,
-      )
-      const flowOverlays = [
-        ...new Map(
-          [
-            ...captionBoundedReadingOrderOverlays(
-              group,
-              figureRegions,
-              regions,
-              captions,
-            ),
-            ...panelLabelOverlays,
-          ].map((region) => [region.id, region]),
-        ).values(),
-      ]
-      const claimedFlowOverlayIds = new Set(
-        flowOverlays.map((region) => region.id),
-      )
-      const unclaimedReadingOrderText = regions.filter(
-        (region) =>
-          region.page === group[0].page &&
-          region.includedInReadingOrder &&
-          !claimedFlowOverlayIds.has(region.id) &&
-          region.nativeObjectIds.length === 0 &&
-          region.lines.length > 0 &&
-          region.text.trim().length > 0 &&
-          ['body', 'spanning'].includes(region.kind),
-      )
-      const pageFurnitureText = regions.filter(
+      const pageRegions = regionsByPage.get(group[0].page) ?? []
+      const pageFigureRegions = figureRegionsByPage.get(group[0].page) ?? []
+      const pageCaptions = captionsByPage.get(group[0].page) ?? []
+      const pageFurnitureText = pageRegions.filter(
         (region) =>
           region.page === group[0].page &&
           region.nativeObjectIds.length === 0 &&
@@ -1724,9 +2286,42 @@ function figureCandidates(
             repeatedPageFurnitureIds.has(region.id)),
       )
       pageFurnitureText.push(
-        ...topPageFurnitureSources.filter(
-          (region) => region.page === group[0].page,
-        ),
+        ...(pageFurnitureSourcesByPage.get(group[0].page) ?? []),
+      )
+      const excludesPageFurniture = (region: PdfPageRegion) =>
+        !materiallyOverlapsSourceText(region, pageFurnitureText)
+      const panelLabelOverlays = adjacentPanelLabelOverlays(
+        group,
+        pageRegions,
+        pageCaptions,
+      ).filter(excludesPageFurniture)
+      const flowOverlays = [
+        ...new Map(
+          [
+            ...captionBoundedReadingOrderOverlays(
+              group,
+              pageFigureRegions,
+              pageRegions,
+              pageCaptions,
+              repeatedPageFurnitureIds,
+              strongHeadingRegionIds,
+            ),
+            ...panelLabelOverlays,
+          ].map((region) => [region.id, region]),
+        ).values(),
+      ].filter(excludesPageFurniture)
+      const claimedFlowOverlayIds = new Set(
+        flowOverlays.map((region) => region.id),
+      )
+      const unclaimedReadingOrderText = pageRegions.filter(
+        (region) =>
+          region.page === group[0].page &&
+          region.includedInReadingOrder &&
+          !claimedFlowOverlayIds.has(region.id) &&
+          region.nativeObjectIds.length === 0 &&
+          region.lines.length > 0 &&
+          region.text.trim().length > 0 &&
+          ['body', 'spanning'].includes(region.kind),
       )
       const uncontaminatedGroup = group.filter(
         (region) =>
@@ -1736,13 +2331,18 @@ function figureCandidates(
           ]),
       )
       const nativeGroup =
-        provesCaptionBoundedNativeScaffold(group, figureRegions) &&
+        provesCaptionBoundedNativeScaffold(group, pageFigureRegions) &&
         uncontaminatedGroup.length >= MIN_COMPOSITE_FIGURE_FRAGMENTS
           ? uncontaminatedGroup
           : group
-      const nativeRenderBox = renderBoxForGroup(nativeGroup, captions)
+      const nativeRenderBox = renderBoxForGroup(nativeGroup, pageCaptions)
       const overlays = [
-        ...boundedTextOverlays(nativeGroup, regions, captions),
+        ...boundedTextOverlays(
+          nativeGroup,
+          pageRegions,
+          pageCaptions,
+          strongHeadingRegionIds,
+        ).filter(excludesPageFurniture),
         ...flowOverlays,
       ].sort(
         (left, right) =>
@@ -1752,7 +2352,7 @@ function figureCandidates(
       )
       const provesNativeScaffold = provesCaptionBoundedNativeScaffold(
         group,
-        figureRegions,
+        pageFigureRegions,
       )
       const captionBoundedOverlayLineCount = overlays.reduce(
         (total, region) => total + region.lines.length,
@@ -1771,9 +2371,19 @@ function figureCandidates(
         flowOverlays.length === 1 && flowOverlays[0].lines.length === 1
       const renderBox = captionBoundedRenderBox(
         [...nativeGroup, ...overlays],
-        captions,
+        pageCaptions,
         useCaptionBounds,
       )
+      const nativeTextOwnershipBox = useCaptionBounds
+        ? captionBoundedRenderBox(group, pageCaptions, true)
+        : null
+      const textOwnershipBox = nativeTextOwnershipBox
+        ? {
+            ...nativeTextOwnershipBox,
+            x: renderBox.x,
+            width: renderBox.width,
+          }
+        : undefined
       const nativeGroupIds = new Set(nativeGroup.map((region) => region.id))
       const trimmedByReadingOrderText = group.some(
         (region) =>
@@ -1788,14 +2398,14 @@ function figureCandidates(
       const omittedNativeMaterial = group.filter(
         (region) =>
           !nativeGroupIds.has(region.id) &&
-          !isCompositeScaffold(region, figureRegions) &&
-          !bindsDenseNativeFragmentSet(region, figureRegions) &&
+          !isCompositeScaffold(region, pageFigureRegions) &&
+          !bindsDenseNativeFragmentSet(region, pageFigureRegions) &&
           intersectionArea(region.box, renderBox) > 0,
       )
       const sourcePageCropBlockedByReadingOrderText =
         scopeContainsReadingOrderText(
           paddedUnionBox([nativeRenderBox]),
-          regions,
+          pageRegions,
           new Set(flowOverlays.map((region) => region.id)),
         )
       const nativeLineage = nativeGroup.flatMap((region) =>
@@ -1821,6 +2431,7 @@ function figureCandidates(
         sourceText: overlays.map((region) => region.text).join(' '),
         page: group[0].page,
         renderBox,
+        textOwnershipBox,
         sourcePageCropBlockedByReadingOrderText,
         nativeEnvelopeIncomplete: omittedNativeMaterial.length > 0,
         evidence: [
@@ -1864,12 +2475,24 @@ function figureCandidates(
         Math.min(...left.sourceBoxes.map((box) => box.y)) -
           Math.min(...right.sourceBoxes.map((box) => box.y)),
     )
-  const semanticEnvelopes = captionBoundedSemanticEnvelopeCandidates(
+  onProgress?.({
+    phase: 'semantic-promotion',
+    completed: groups.length,
+    total: groups.length,
+    message: `Materialized ${groups.length} connected native figure groups…`,
+    checkpoint: 'figure-grouping-candidates',
+  })
+  await yieldPdfVisualTask(signal)
+  const semanticEnvelopes = await captionBoundedSemanticEnvelopeCandidates(
     figureRegions,
     regions,
     captions,
     pageBackdropObjectIds,
     panelClipObjectIds,
+    strongHeadingRegionIds,
+    repeatedPageFurnitureIds,
+    onProgress,
+    signal,
   )
   return [...connectedCandidates, ...semanticEnvelopes].sort(
     (left, right) =>
@@ -1891,9 +2514,7 @@ function nextSourceRegions(
       region.page === caption.page &&
       region.id !== caption.id &&
       region.lines.length > 0 &&
-      (region.column === caption.column ||
-        region.column === 'span' ||
-        caption.column === 'span') &&
+      captionSourceLaneMatches(caption, region) &&
       (kind === 'table'
         ? ['body', 'spanning', 'chart-label', 'side', 'footnote'].includes(
             region.kind,
@@ -1971,21 +2592,35 @@ function availableRegionsForTable(
   regions: PdfPageRegion[],
   consumedRegionIds: ReadonlySet<string>,
   consumedLineIds: ReadonlySet<string>,
+  reservedFigureLineIds: ReadonlySet<string>,
+  unavailableSourceObjectIds: ReadonlySet<string>,
 ) {
   return regions.flatMap((region) => {
     if (region.kind === 'caption') return [region]
     if (consumedRegionIds.has(region.id)) return []
     const retainedLines = region.lines.filter(
-      (line) => !consumedLineIds.has(line.id),
+      (line) =>
+        !consumedLineIds.has(line.id) && !reservedFigureLineIds.has(line.id),
     )
-    if (retainedLines.length === region.lines.length) return [region]
-    if (retainedLines.length === 0) return []
+    const retainedNativeObjectIds = region.nativeObjectIds.filter(
+      (sourceObjectId) => !unavailableSourceObjectIds.has(sourceObjectId),
+    )
+    if (
+      retainedLines.length === region.lines.length &&
+      retainedNativeObjectIds.length === region.nativeObjectIds.length
+    ) {
+      return [region]
+    }
+    if (retainedLines.length === 0 && retainedNativeObjectIds.length === 0) {
+      return []
+    }
     return [
       {
         ...region,
         text: retainedLines.map((line) => line.text).join(' '),
-        box: boxForLines(retainedLines),
+        box: retainedLines.length > 0 ? boxForLines(retainedLines) : region.box,
         lines: retainedLines,
+        nativeObjectIds: retainedNativeObjectIds,
       },
     ]
   })
@@ -2037,43 +2672,274 @@ function materiallyOverlappingSourceBoxes(
   )
 }
 
+function sourceBoxesIntersect(
+  left: NormalizedSourceBox,
+  right: NormalizedSourceBox,
+) {
+  return (
+    left.page === right.page &&
+    left.rotation === right.rotation &&
+    horizontalBoxOverlap(left, right) > 0 &&
+    verticalBoxOverlap(left, right) > 0
+  )
+}
+
+function textPaintInventoryRunIdentity(
+  run: PdfPageRegion['lines'][number]['runs'][number],
+) {
+  return JSON.stringify({
+    page: run.page,
+    sourceSequenceIndex: run.sourceSequenceIndex ?? null,
+    text: run.text,
+    sourceSemanticAdmission: run.sourceSemanticAdmission ?? null,
+    // Flow analysis and DISPLAY inventory derive their boxes independently.
+    // Bind ownership to the exact source item and complete paint provenance;
+    // the DISPLAY inventory's own box remains authoritative for crop masking.
+    sourceTextPaint: run.sourceTextPaint
+      ? {
+          algorithm: run.sourceTextPaint.algorithm,
+          textLedgerSha256: run.sourceTextPaint.textLedgerSha256,
+          normalizedTextStart: run.sourceTextPaint.normalizedTextStart,
+          normalizedTextEnd: run.sourceTextPaint.normalizedTextEnd,
+          operatorLedgerSha256: run.sourceTextPaint.operatorLedgerSha256,
+          operationIndexes: [...run.sourceTextPaint.operationIndexes],
+          filterableOperationIndexes: [
+            ...run.sourceTextPaint.filterableOperationIndexes,
+          ],
+        }
+      : null,
+  })
+}
+
+function sourceTextPaintInventoryForPage(
+  page: PdfPageAnalysis,
+  regions: readonly PdfPageRegion[],
+) {
+  return (
+    page.renderVisibleTextRuns ??
+    regions.flatMap((region) =>
+      region.page === page.page
+        ? region.lines.flatMap((line) => line.runs)
+        : [],
+    )
+  )
+}
+
+function ownedEquationTextPaintInventoryKeys(
+  sourceLineIds: ReadonlySet<string>,
+  regions: readonly PdfPageRegion[],
+) {
+  return new Set(
+    regions.flatMap((region) =>
+      region.lines.flatMap((line) =>
+        sourceLineIds.has(line.id)
+          ? line.runs.map(textPaintInventoryRunIdentity)
+          : [],
+      ),
+    ),
+  )
+}
+
 function unownedEquationSourceTextBoxes(
   sourceLineIds: ReadonlySet<string>,
   regions: readonly PdfPageRegion[],
   page: number,
+  renderVisibleTextRuns: readonly PdfSourceRun[],
+  renderOnlyOwnedRunKeys: ReadonlySet<string> = new Set(),
 ) {
-  const seenLineIds = new Set<string>()
-  return regions.flatMap((region) =>
+  const ownedRunKeys = ownedEquationTextPaintInventoryKeys(
+    sourceLineIds,
+    regions,
+  )
+  const inventoryBoxes = renderVisibleTextRuns.flatMap((run) =>
+    run.page === page &&
+    run.text.trim().length > 0 &&
+    !renderOnlyOwnedRunKeys.has(equationRenderOnlySourceRunIdentity(run)) &&
+    !ownedRunKeys.has(textPaintInventoryRunIdentity(run))
+      ? [
+          {
+            page: run.page,
+            x: run.x,
+            y: run.y,
+            width: run.width,
+            height: run.height,
+            rotation: run.rotation,
+            method: run.method,
+          },
+        ]
+      : [],
+  )
+  const runlessLineBoxes = regions.flatMap((region) =>
     region.page !== page
       ? []
-      : region.lines.flatMap((line) => {
-          if (sourceLineIds.has(line.id) || seenLineIds.has(line.id)) {
-            return []
-          }
-          seenLineIds.add(line.id)
-          return line.runs.length > 0
-            ? line.runs
-                .filter((run) => run.text.trim())
-                .map((run) => ({
-                  page: run.page,
-                  x: run.x,
-                  y: run.y,
-                  width: run.width,
-                  height: run.height,
-                  rotation: run.rotation,
-                  method: run.method,
-                }))
-            : line.text.trim()
-              ? [{ ...line.box }]
-              : []
-        }),
+      : region.lines.flatMap((line) =>
+          !sourceLineIds.has(line.id) &&
+          line.text.trim().length > 0 &&
+          line.runs.length === 0
+            ? [{ ...line.box }]
+            : [],
+        ),
   )
+  return [...inventoryBoxes, ...runlessLineBoxes]
+}
+
+function sourceTextOperationFilterPlanForEquationCrop(
+  sourceCropBox: NormalizedSourceBox,
+  sourceLineIds: ReadonlySet<string>,
+  regions: readonly PdfPageRegion[],
+  renderVisibleTextRuns: readonly PdfSourceRun[],
+  renderOnlyOwnedRunKeys: ReadonlySet<string> = new Set(),
+): PdfTextOperationFilterPlan | null {
+  if (
+    regions.some(
+      (region) =>
+        region.page === sourceCropBox.page &&
+        region.lines.some(
+          (line) =>
+            !sourceLineIds.has(line.id) &&
+            line.text.trim().length > 0 &&
+            line.runs.length === 0 &&
+            sourceBoxesIntersect(sourceCropBox, line.box),
+        ),
+    )
+  ) {
+    return null
+  }
+  const sourceOwnedRuns = regions.flatMap((region) =>
+    region.page !== sourceCropBox.page
+      ? []
+      : region.lines.flatMap((line) =>
+          !sourceLineIds.has(line.id)
+            ? []
+            : line.runs.filter(
+                (run) =>
+                  run.text.trim() && sourceBoxesIntersect(sourceCropBox, run),
+              ),
+        ),
+  )
+  const inventoryByIdentity = new Map(
+    renderVisibleTextRuns.map((run) => [
+      textPaintInventoryRunIdentity(run),
+      run,
+    ]),
+  )
+  const ownedRuns = sourceOwnedRuns.flatMap((run) => {
+    const inventoryRun = inventoryByIdentity.get(
+      textPaintInventoryRunIdentity(run),
+    )
+    return inventoryRun ? [inventoryRun] : []
+  })
+  const ownedRunKeys = new Set(ownedRuns.map(textPaintInventoryRunIdentity))
+  const excludedRuns = renderVisibleTextRuns.filter(
+    (run) =>
+      run.page === sourceCropBox.page &&
+      run.text.trim().length > 0 &&
+      sourceBoxesIntersect(sourceCropBox, run) &&
+      !renderOnlyOwnedRunKeys.has(equationRenderOnlySourceRunIdentity(run)) &&
+      !ownedRunKeys.has(textPaintInventoryRunIdentity(run)),
+  )
+  if (
+    sourceOwnedRuns.length === 0 ||
+    sourceOwnedRuns.length > MAX_EQUATION_TEXT_LEDGER_SPANS ||
+    ownedRuns.length !== sourceOwnedRuns.length ||
+    excludedRuns.length === 0 ||
+    excludedRuns.length > MAX_EQUATION_TEXT_LEDGER_SPANS ||
+    [...ownedRuns, ...excludedRuns].some((run) => !run.sourceTextPaint)
+  ) {
+    return null
+  }
+  const provedExcludedRuns = excludedRuns
+  const textLedgerIds = new Set(
+    [...ownedRuns, ...provedExcludedRuns].map(
+      (run) => run.sourceTextPaint!.textLedgerSha256,
+    ),
+  )
+  const spanForRun = (run: (typeof ownedRuns)[number]) => ({
+    start: run.sourceTextPaint!.normalizedTextStart,
+    end: run.sourceTextPaint!.normalizedTextEnd,
+  })
+  const spanOrder = (
+    left: ReturnType<typeof spanForRun>,
+    right: ReturnType<typeof spanForRun>,
+  ) => left.start - right.start || left.end - right.end
+  const ownedTextLedgerSpans = ownedRuns.map(spanForRun).sort(spanOrder)
+  const excludedTextLedgerSpans = provedExcludedRuns
+    .map(spanForRun)
+    .sort(spanOrder)
+  if (
+    textLedgerIds.size !== 1 ||
+    [...ownedTextLedgerSpans, ...excludedTextLedgerSpans].some(
+      ({ start, end }) =>
+        !Number.isInteger(start) ||
+        !Number.isInteger(end) ||
+        start < 0 ||
+        end <= start,
+    ) ||
+    excludedTextLedgerSpans.some((excluded) =>
+      ownedTextLedgerSpans.some(
+        (owned) =>
+          Math.min(excluded.end, owned.end) >
+          Math.max(excluded.start, owned.start),
+      ),
+    )
+  ) {
+    return null
+  }
+  const sourceBoxForRun = (
+    run: (typeof ownedRuns)[number],
+  ): NormalizedSourceBox => ({
+    page: run.page,
+    x: run.x,
+    y: run.y,
+    width: run.width,
+    height: run.height,
+    rotation: run.rotation,
+    method: run.method,
+  })
+  const ownedSourceBoxes = ownedRuns.map(sourceBoxForRun)
+  const excludedSourceBoxes = provedExcludedRuns.map(sourceBoxForRun)
+  const distinctSourceBoxCount = (boxes: readonly NormalizedSourceBox[]) =>
+    new Set(
+      boxes.map((box) =>
+        [
+          box.page,
+          box.x,
+          box.y,
+          box.width,
+          box.height,
+          box.rotation,
+          box.method,
+        ].join('\u001f'),
+      ),
+    ).size
+  if (
+    distinctSourceBoxCount(ownedSourceBoxes) >
+      MAX_EQUATION_OWNED_SOURCE_BOXES ||
+    distinctSourceBoxCount(excludedSourceBoxes) >
+      MAX_EQUATION_EXCLUDED_SOURCE_BOXES
+  ) {
+    return null
+  }
+  return {
+    algorithm: 'pdfjs-display-text-operation-filter-v2',
+    expansionPixels: 0,
+    displayOperatorAdapter: PDFJS_DISPLAY_OPERATOR_ADAPTER,
+    renderIntent: 'display',
+    annotationMode: 'enable',
+    sourceTextLedgerSha256: [...textLedgerIds][0],
+    ownedTextLedgerSpans,
+    excludedTextLedgerSpans,
+    ownedSourceBoxes,
+    excludedSourceBoxes,
+  }
 }
 
 function hasOverlappingUnownedEquationText(
   ownedSourceBoxes: readonly NormalizedSourceBox[],
   sourceLineIds: ReadonlySet<string>,
   regions: PdfPageRegion[],
+  renderVisibleTextRuns: readonly PdfSourceRun[],
+  renderOnlyOwnedRunKeys: ReadonlySet<string> = new Set(),
 ) {
   if (ownedSourceBoxes.length === 0) return false
   const sourcePage = ownedSourceBoxes[0].page
@@ -2081,6 +2947,8 @@ function hasOverlappingUnownedEquationText(
     sourceLineIds,
     regions,
     sourcePage,
+    renderVisibleTextRuns,
+    renderOnlyOwnedRunKeys,
   ).some((unowned) =>
     ownedSourceBoxes.some((owned) =>
       materiallyOverlappingSourceBoxes(owned, unowned),
@@ -2092,14 +2960,16 @@ function unownedSourceTextBoxesInEquationCrop(
   sourceCropBox: NormalizedSourceBox,
   sourceLineIds: ReadonlySet<string>,
   regions: PdfPageRegion[],
+  renderVisibleTextRuns: readonly PdfSourceRun[],
+  renderOnlyOwnedRunKeys: ReadonlySet<string> = new Set(),
 ) {
   return unownedEquationSourceTextBoxes(
     sourceLineIds,
     regions,
     sourceCropBox.page,
-  ).filter((unowned) =>
-    materiallyOverlappingSourceBoxes(sourceCropBox, unowned),
-  )
+    renderVisibleTextRuns,
+    renderOnlyOwnedRunKeys,
+  ).filter((unowned) => sourceBoxesIntersect(sourceCropBox, unowned))
 }
 
 function excludedEquationSourceBoxesForCrop(
@@ -2290,6 +3160,25 @@ function excludedEquationSourceBoxesForCrop(
   return canonical.length <= MAX_EQUATION_EXCLUDED_SOURCE_BOXES ? canonical : []
 }
 
+function paddedEquationCropBox(
+  sourceBox: NormalizedSourceBox,
+  desiredPadding: number,
+) {
+  const left = Math.max(0, sourceBox.x - desiredPadding)
+  const top = Math.max(0, sourceBox.y - desiredPadding)
+  const right = Math.min(1, sourceBox.x + sourceBox.width + desiredPadding)
+  const bottom = Math.min(1, sourceBox.y + sourceBox.height + desiredPadding)
+  return {
+    page: sourceBox.page,
+    x: rounded(left),
+    y: rounded(top),
+    width: rounded(right - left),
+    height: rounded(bottom - top),
+    rotation: sourceBox.rotation,
+    method: 'pdf-object' as const,
+  }
+}
+
 function neighborBoundedCropBoxes(
   sourceBox: NormalizedSourceBox,
   sourceLineIds: ReadonlySet<string>,
@@ -2297,11 +3186,12 @@ function neighborBoundedCropBoxes(
   desiredPadding: number,
   neighborGapFraction = 0.25,
 ) {
+  const padded = paddedEquationCropBox(sourceBox, desiredPadding)
   const desired = {
-    left: Math.max(0, sourceBox.x - desiredPadding),
-    top: Math.max(0, sourceBox.y - desiredPadding),
-    right: Math.min(1, sourceBox.x + sourceBox.width + desiredPadding),
-    bottom: Math.min(1, sourceBox.y + sourceBox.height + desiredPadding),
+    left: padded.x,
+    top: padded.y,
+    right: padded.x + padded.width,
+    bottom: padded.y + padded.height,
   }
   const seenLineIds = new Set<string>()
   const neighboringLines = regions.flatMap((region) =>
@@ -2315,6 +3205,24 @@ function neighborBoundedCropBoxes(
           return true
         }),
   )
+  // A single logical line can have runs on both sides of a stacked glyph.
+  // Bound horizontal padding from the physical run edges so the crop does
+  // not take a sliver of either neighboring glyph merely because their
+  // enclosing line box spans across the owned source box.
+  const neighboringHorizontalBoxes = neighboringLines.flatMap((line) => {
+    const visibleRuns = line.runs.filter((run) => run.text.trim())
+    return visibleRuns.length > 0
+      ? visibleRuns.map((run) => ({
+          page: run.page,
+          x: run.x,
+          y: run.y,
+          width: run.width,
+          height: run.height,
+          rotation: run.rotation,
+          method: run.method,
+        }))
+      : [{ ...line.box }]
+  })
   const nearestAbove = Math.max(
     ...neighboringLines
       .filter(
@@ -2336,23 +3244,23 @@ function neighborBoundedCropBoxes(
     1,
   )
   const nearestLeft = Math.max(
-    ...neighboringLines
+    ...neighboringHorizontalBoxes
       .filter(
-        (line) =>
-          line.box.x + line.box.width <= sourceBox.x &&
-          verticalBoxOverlap(line.box, sourceBox) > 0,
+        (box) =>
+          box.x + box.width <= sourceBox.x &&
+          verticalBoxOverlap(box, sourceBox) > 0,
       )
-      .map((line) => line.box.x + line.box.width),
+      .map((box) => box.x + box.width),
     0,
   )
   const nearestRight = Math.min(
-    ...neighboringLines
+    ...neighboringHorizontalBoxes
       .filter(
-        (line) =>
-          line.box.x >= sourceBox.x + sourceBox.width &&
-          verticalBoxOverlap(line.box, sourceBox) > 0,
+        (box) =>
+          box.x >= sourceBox.x + sourceBox.width &&
+          verticalBoxOverlap(box, sourceBox) > 0,
       )
-      .map((line) => line.box.x),
+      .map((box) => box.x),
     1,
   )
   const bounds = {
@@ -3312,10 +4220,360 @@ function nativeOnlyFigureCandidate(
     }),
     sourceObjectIds: nativeLineage.map((item) => item.sourceObjectId),
     sourceBoxes: nativeLineage.map((item) => item.sourceBox),
+    sourceLineIds: [],
     assetIds: nativeLineage
       .map((item) => objectAssetIds.get(item.sourceObjectId))
       .filter((assetId): assetId is string => Boolean(assetId)),
     sourceText: '',
+  }
+}
+
+type ContainedFigureOverlay = {
+  regionId: string
+  lineIds: string[]
+  sourceObjectId: string
+  sourceBox: NormalizedSourceBox
+  sourceText: string
+}
+
+function explicitFigureOverlayLineage(
+  candidate: VisualCandidate,
+  regions: readonly PdfPageRegion[],
+  options: {
+    containmentBox?: NormalizedSourceBox
+    excludedLineIds?: ReadonlySet<string>
+  } = {},
+) {
+  if (candidate.kind !== 'figure' || !candidate.renderBox) {
+    return []
+  }
+  const containmentBox =
+    options.containmentBox ?? candidate.textOwnershipBox ?? candidate.renderBox
+  const regionsById = new Map(regions.map((region) => [region.id, region]))
+  const overlays = new Map<string, ContainedFigureOverlay>()
+  for (const sourceObjectId of candidate.sourceObjectIds) {
+    if (!sourceObjectId.startsWith(TEXT_OVERLAY_PREFIX)) continue
+    const regionId = sourceObjectId.slice(TEXT_OVERLAY_PREFIX.length)
+    const region = regionsById.get(regionId)
+    if (!region || region.lines.length === 0 || !region.text.trim()) continue
+    const containedLines = region.lines
+      .filter((line) => {
+        const area = line.box.width * line.box.height
+        return (
+          line.text.trim().length > 0 &&
+          !options.excludedLineIds?.has(line.id) &&
+          area > 0 &&
+          intersectionArea(line.box, containmentBox) / area >=
+            MIN_FIGURE_OVERLAY_RENDER_CONTAINMENT
+        )
+      })
+      .sort(
+        (left, right) =>
+          left.box.page - right.box.page ||
+          left.box.y - right.box.y ||
+          left.box.x - right.box.x ||
+          left.id.localeCompare(right.id),
+      )
+    if (containedLines.length === 0) continue
+    const sourceBox = boxForLines(containedLines)
+    overlays.set(regionId, {
+      regionId,
+      lineIds: containedLines.map((line) => line.id),
+      sourceObjectId,
+      sourceBox,
+      sourceText: containedLines.map((line) => line.text).join(' '),
+    })
+  }
+  return [...overlays.values()].sort(
+    (left, right) =>
+      left.sourceBox.page - right.sourceBox.page ||
+      left.sourceBox.y - right.sourceBox.y ||
+      left.sourceBox.x - right.sourceBox.x ||
+      left.regionId.localeCompare(right.regionId),
+  )
+}
+
+function containedFigureOverlayLineage(
+  candidate: VisualCandidate,
+  regions: readonly PdfPageRegion[],
+  options: {
+    containmentBox?: NormalizedSourceBox
+    excludedLineIds?: ReadonlySet<string>
+  } = {},
+) {
+  return candidate.evidence?.includes('caption-bounded-native-scaffold')
+    ? explicitFigureOverlayLineage(candidate, regions, options)
+    : []
+}
+
+type ConnectedFigureReservationLineage = {
+  nativeSourceObjectIds: string[]
+  overlays: ContainedFigureOverlay[]
+}
+
+function connectedFigureReservationLineage(
+  candidate: VisualCandidate,
+  regions: readonly PdfPageRegion[],
+): ConnectedFigureReservationLineage | null {
+  if (
+    candidate.kind !== 'figure' ||
+    !candidate.renderBox ||
+    !candidate.evidence?.includes('connected-native-scaffold') ||
+    candidate.evidence.includes('caption-bounded-native-scaffold') ||
+    candidate.sourceObjectIds.length !== candidate.sourceBoxes.length
+  ) {
+    return null
+  }
+  const nativeSourceObjectIds = candidate.sourceObjectIds.filter(
+    (sourceObjectId) => !sourceObjectId.startsWith(TEXT_OVERLAY_PREFIX),
+  )
+  const explicitOverlayObjectIds = candidate.sourceObjectIds.filter(
+    (sourceObjectId) => sourceObjectId.startsWith(TEXT_OVERLAY_PREFIX),
+  )
+  if (
+    nativeSourceObjectIds.length === 0 ||
+    explicitOverlayObjectIds.length === 0 ||
+    candidate.sourceBoxes.some(
+      (sourceBox) =>
+        !fullyContainsBox(
+          candidate.renderBox!,
+          sourceBox,
+          SOURCE_CROP_CONTAINMENT_TOLERANCE,
+        ),
+    )
+  ) {
+    return null
+  }
+
+  const overlays = explicitFigureOverlayLineage(candidate, regions, {
+    containmentBox: candidate.renderBox,
+  })
+  const overlaysByObjectId = new Map(
+    overlays.map((overlay) => [overlay.sourceObjectId, overlay]),
+  )
+  const regionsById = new Map(regions.map((region) => [region.id, region]))
+  const completeExplicitOverlayLineage = explicitOverlayObjectIds.every(
+    (sourceObjectId) => {
+      const region = regionsById.get(
+        sourceObjectId.slice(TEXT_OVERLAY_PREFIX.length),
+      )
+      const overlay = overlaysByObjectId.get(sourceObjectId)
+      const visibleLineIds =
+        region?.lines
+          .filter((line) => line.text.trim())
+          .map((line) => line.id)
+          .sort() ?? []
+      return (
+        overlay !== undefined &&
+        visibleLineIds.length > 0 &&
+        overlay.lineIds.length === visibleLineIds.length &&
+        [...overlay.lineIds]
+          .sort()
+          .every((lineId, index) => lineId === visibleLineIds[index])
+      )
+    },
+  )
+  return completeExplicitOverlayLineage &&
+    overlays.length === explicitOverlayObjectIds.length
+    ? { nativeSourceObjectIds, overlays }
+    : null
+}
+
+function captionToSourceBoxGap(
+  caption: PdfPageRegion,
+  sourceBox: NormalizedSourceBox,
+) {
+  const captionBottom = caption.box.y + caption.box.height
+  const sourceBottom = sourceBox.y + sourceBox.height
+  const gap =
+    sourceBottom < caption.box.y
+      ? caption.box.y - sourceBottom
+      : captionBottom < sourceBox.y
+        ? sourceBox.y - captionBottom
+        : 0
+  return gap <= FIGURE_OVERLAY_BOX_TOLERANCE ? 0 : gap
+}
+
+function connectedFigureReservationContestedByTableCaption(
+  candidate: VisualCandidate,
+  ownerCaption: PdfPageRegion,
+  captions: readonly PdfPageRegion[],
+  regions: readonly PdfPageRegion[],
+  captionLabels: ReadonlyMap<PdfPageRegion, PdfScholarlyVisualLabel>,
+) {
+  if (
+    !candidate.renderBox ||
+    !connectedFigureReservationLineage(candidate, regions)
+  ) {
+    return false
+  }
+  const ownerGap = captionToSourceBoxGap(ownerCaption, candidate.renderBox)
+  if (ownerGap > 0.28) return true
+  return captions.some((caption) => {
+    const label = captionLabels.get(caption)
+    if (
+      caption.id === ownerCaption.id ||
+      caption.page !== candidate.page ||
+      label?.status !== 'parsed' ||
+      label.kind !== 'table' ||
+      !captionSourceLaneMatchesBox(
+        caption,
+        candidate.renderBox!,
+        candidate.column,
+      ) ||
+      horizontalOverlapRatio(caption.box, candidate.renderBox!) < 0.35
+    ) {
+      return false
+    }
+    const tableGap = captionToSourceBoxGap(caption, candidate.renderBox!)
+    return (
+      tableGap <= 0.28 && tableGap <= ownerGap + FIGURE_OVERLAY_BOX_TOLERANCE
+    )
+  })
+}
+
+function nativeContainedFigureOverlayLineage(
+  candidate: VisualCandidate,
+  regions: readonly PdfPageRegion[],
+) {
+  const nativeSourceBoxes = candidate.sourceObjectIds.flatMap(
+    (sourceObjectId, index) =>
+      sourceObjectId.startsWith(TEXT_OVERLAY_PREFIX)
+        ? []
+        : [candidate.sourceBoxes[index]],
+  )
+  return nativeSourceBoxes.length > 0
+    ? containedFigureOverlayLineage(candidate, regions, {
+        containmentBox: paddedUnionBox(nativeSourceBoxes),
+      })
+    : []
+}
+
+function strongFigureOwnershipKeys(
+  candidate: VisualCandidate,
+  regions: readonly PdfPageRegion[],
+) {
+  const connectedLineage = connectedFigureReservationLineage(candidate, regions)
+  if (connectedLineage) {
+    return [
+      ...connectedLineage.nativeSourceObjectIds.map(
+        (sourceObjectId) => `native\u0000${sourceObjectId}`,
+      ),
+      ...connectedLineage.overlays.flatMap((overlay) =>
+        overlay.lineIds.map((lineId) => `line\u0000${lineId}`),
+      ),
+    ].sort()
+  }
+  return [
+    ...candidate.sourceObjectIds.flatMap((sourceObjectId) =>
+      sourceObjectId.startsWith(TEXT_OVERLAY_PREFIX)
+        ? []
+        : [`native\u0000${sourceObjectId}`],
+    ),
+    ...containedFigureOverlayLineage(candidate, regions).flatMap((overlay) =>
+      overlay.lineIds.map((lineId) => `line\u0000${lineId}`),
+    ),
+  ].sort()
+}
+
+function preTableFigureReservationOverlayLineage(
+  candidate: VisualCandidate,
+  regions: readonly PdfPageRegion[],
+) {
+  return (
+    connectedFigureReservationLineage(candidate, regions)?.overlays ??
+    nativeContainedFigureOverlayLineage(candidate, regions)
+  )
+}
+
+function retainConnectedFigureReservationLineage(
+  candidate: VisualCandidate,
+  regions: readonly PdfPageRegion[],
+) {
+  const connectedLineage = connectedFigureReservationLineage(candidate, regions)
+  return connectedLineage
+    ? {
+        ...candidate,
+        sourceLineIds: connectedLineage.overlays.flatMap(
+          (overlay) => overlay.lineIds,
+        ),
+        sourceText: connectedLineage.overlays
+          .map((overlay) => overlay.sourceText)
+          .join(' '),
+      }
+    : candidate
+}
+
+function trimStrongFigureCandidateOverlays(
+  candidate: VisualCandidate,
+  regions: readonly PdfPageRegion[],
+) {
+  const contained = containedFigureOverlayLineage(candidate, regions)
+  const retainedOverlayObjectIds = new Set(
+    contained.map((overlay) => overlay.sourceObjectId),
+  )
+  const containedByObjectId = new Map(
+    contained.map((overlay) => [overlay.sourceObjectId, overlay]),
+  )
+  const allOverlayObjectIds = candidate.sourceObjectIds.filter(
+    (sourceObjectId) => sourceObjectId.startsWith(TEXT_OVERLAY_PREFIX),
+  )
+  const allOverlayLinesRetained = allOverlayObjectIds.every(
+    (sourceObjectId) => {
+      const region = regions.find(
+        (candidateRegion) =>
+          candidateRegion.id ===
+          sourceObjectId.slice(TEXT_OVERLAY_PREFIX.length),
+      )
+      const retained = containedByObjectId.get(sourceObjectId)
+      const visibleLineIds =
+        region?.lines
+          .filter((line) => line.text.trim())
+          .map((line) => line.id) ?? []
+      return (
+        retained !== undefined &&
+        retained.lineIds.length === visibleLineIds.length &&
+        visibleLineIds.every((lineId) => retained.lineIds.includes(lineId))
+      )
+    },
+  )
+  if (allOverlayObjectIds.length === 0) {
+    return candidate
+  }
+  const lineageTrimmed =
+    retainedOverlayObjectIds.size !== allOverlayObjectIds.length ||
+    !allOverlayLinesRetained
+  const removedOverlayRegionIds = new Set(
+    allOverlayObjectIds
+      .filter((sourceObjectId) => !retainedOverlayObjectIds.has(sourceObjectId))
+      .map((sourceObjectId) =>
+        sourceObjectId.slice(TEXT_OVERLAY_PREFIX.length),
+      ),
+  )
+  const retainedLineage = candidate.sourceObjectIds.flatMap(
+    (sourceObjectId, index) => {
+      if (!sourceObjectId.startsWith(TEXT_OVERLAY_PREFIX)) {
+        return [{ sourceObjectId, sourceBox: candidate.sourceBoxes[index] }]
+      }
+      const retained = containedByObjectId.get(sourceObjectId)
+      return retained ? [{ sourceObjectId, sourceBox: retained.sourceBox }] : []
+    },
+  )
+  return {
+    ...candidate,
+    sourceRegionIds: candidate.sourceRegionIds.filter(
+      (sourceRegionId) => !removedOverlayRegionIds.has(sourceRegionId),
+    ),
+    sourceLineIds: contained.flatMap((overlay) => overlay.lineIds),
+    sourceObjectIds: retainedLineage.map((item) => item.sourceObjectId),
+    sourceBoxes: retainedLineage.map((item) => item.sourceBox),
+    sourceText: contained.map((overlay) => overlay.sourceText).join(' '),
+    evidence: lineageTrimmed
+      ? [
+          ...(candidate.evidence ?? []),
+          'caption-bounded-overlay-lineage-trimmed',
+        ]
+      : candidate.evidence,
   }
 }
 
@@ -3846,12 +5104,43 @@ function completeSourcePageCropAsset(
   sourceCropBox: NormalizedSourceBox,
   expectedOwnedSourceBoxes: readonly NormalizedSourceBox[] = [],
   expectedExcludedSourceBoxes: readonly NormalizedSourceBox[] = [],
+  expectedTextOperationFilter: PdfTextOperationFilterPlan | null = null,
 ) {
   const actualMaskIdentity = pdfSourceExclusionMaskIdentity(
     visualAsset.sourceExclusionMask,
     sourceCropBox,
   )
+  const textOperationFilterMatches =
+    expectedTextOperationFilter !== null &&
+    visualAsset.sourceExclusionMask?.algorithm ===
+      'pdfjs-display-text-operation-filter-v2' &&
+    visualAsset.sourceExclusionMask.displayOperatorAdapter ===
+      expectedTextOperationFilter.displayOperatorAdapter &&
+    visualAsset.sourceExclusionMask.sourceTextLedgerSha256 ===
+      expectedTextOperationFilter.sourceTextLedgerSha256 &&
+    JSON.stringify(visualAsset.sourceExclusionMask.ownedTextLedgerSpans) ===
+      JSON.stringify(expectedTextOperationFilter.ownedTextLedgerSpans) &&
+    JSON.stringify(visualAsset.sourceExclusionMask.excludedTextLedgerSpans) ===
+      JSON.stringify(expectedTextOperationFilter.excludedTextLedgerSpans) &&
+    visualAsset.sourceExclusionMask.ownedSourceBoxes.length ===
+      expectedTextOperationFilter.ownedSourceBoxes.length &&
+    visualAsset.sourceExclusionMask.excludedSourceBoxes.length ===
+      expectedTextOperationFilter.excludedSourceBoxes.length &&
+    expectedTextOperationFilter.ownedSourceBoxes.every((expected) =>
+      visualAsset.sourceExclusionMask!.ownedSourceBoxes.some((actual) =>
+        sameSourceBox(actual, expected),
+      ),
+    ) &&
+    expectedTextOperationFilter.excludedSourceBoxes.every((expected) =>
+      visualAsset.sourceExclusionMask!.excludedSourceBoxes.some((actual) =>
+        sameSourceBox(actual, expected),
+      ),
+    )
+  const trustedTextOperationFilter =
+    expectedTextOperationFilter === null ||
+    isTrustedPdfTextOperationFilterAsset(visualAsset)
   const expectedMaskIdentity =
+    !expectedTextOperationFilter &&
     expectedOwnedSourceBoxes.length > 0 &&
     expectedExcludedSourceBoxes.length > 0
       ? pdfSourceExclusionMaskIdentity(
@@ -3865,9 +5154,16 @@ function completeSourcePageCropAsset(
         )
       : null
   return (
-    (!visualAsset.sourceExclusionMask || actualMaskIdentity !== null) &&
-    JSON.stringify(actualMaskIdentity) ===
-      JSON.stringify(expectedMaskIdentity) &&
+    (!visualAsset.sourceExclusionMask ||
+      (actualMaskIdentity !== null &&
+        isCanonicalPdfSourceExclusionMask(
+          visualAsset.sourceExclusionMask,
+          sourceCropBox,
+        ))) &&
+    (expectedTextOperationFilter
+      ? textOperationFilterMatches && trustedTextOperationFilter
+      : JSON.stringify(actualMaskIdentity) ===
+        JSON.stringify(expectedMaskIdentity)) &&
     sourcePageCropValidationFailure(
       visualAsset,
       kind,
@@ -4627,17 +5923,41 @@ function matchTableScopeResolution(
   }
 }
 
+type PdfVisualMatchCandidateWithOwnershipExtent = PdfVisualMatchCandidate & {
+  sourceLineIds: string[]
+  sourceText: string
+  ownershipExtentSha256: string
+}
+
 function matchRecord(
   scored: ReturnType<typeof matchCandidate>['scored'][number],
-): PdfVisualMatchCandidate {
+  regions: readonly PdfPageRegion[],
+): PdfVisualMatchCandidateWithOwnershipExtent {
   return {
     sourceRegionIds: scored.candidate.sourceRegionIds,
+    sourceLineIds: [...(scored.candidate.sourceLineIds ?? [])],
     sourceObjectIds: scored.candidate.sourceObjectIds,
     assetIds: scored.candidate.assetIds,
     score: scored.score,
     evidence: scored.evidence,
     sourceBoxes: scored.candidate.sourceBoxes,
+    sourceText: scored.candidate.sourceText,
+    ownershipExtentSha256: pdfVisualOwnershipExtentSha256(
+      regions,
+      scored.candidate.sourceRegionIds,
+      scored.candidate.sourceLineIds,
+    ),
   }
+}
+
+function displayEquationProseCue(text: string) {
+  const proseWords = text.match(/[A-Za-z]{2,}/g) ?? []
+  return (
+    proseWords.length >= 2 &&
+    /\b(?:the|this|that|these|those|we|our|for|with|from|where|which|using|use|used|each|value|model|models|result|results|example|examples|figure|table|equation|performance|activating|because|namely|allowing|represents|output|number|sharp|discontinuity|simple|optimizer|epochs|trained|gains|point|moving)\b/iu.test(
+      text,
+    )
+  )
 }
 
 function probableDisplayEquationText(sourceText: string) {
@@ -4672,11 +5992,7 @@ function probableDisplayEquationText(sourceText: string) {
   }
   if (/^[\s=+\-−×÷≤≥≈∼⊙→←]+$/u.test(text)) return false
   const proseWords = text.match(/[A-Za-z]{2,}/g) ?? []
-  const proseCue =
-    /\b(?:the|this|that|these|those|we|our|for|with|from|where|which|using|use|used|each|value|model|models|result|results|example|examples|figure|table|equation|performance|activating|because|namely|allowing|represents|output|number|sharp|discontinuity|simple|optimizer|epochs|trained|gains|point|moving)\b/iu.test(
-      text,
-    )
-  if (proseCue && proseWords.length >= 2) return false
+  if (displayEquationProseCue(text)) return false
   const operators = text.match(/[=+\-−×÷∫∑√≤≥≈∼⊙∂∞∏∈∉→←]/gu)?.length ?? 0
   const compactLength = text.replace(/\s+/g, '').length
   const operatorDensity = compactLength > 0 ? operators / compactLength : 0
@@ -4703,13 +6019,15 @@ function hasMathExtensionFontProvenance(region: PdfPageRegion) {
 }
 
 export function isProbableDisplayEquation(region: PdfPageRegion) {
+  const fontOrGeometryEvidence =
+    hasMathExtensionFontProvenance(region) ||
+    unresolvedMathExtensionRegion(region) ||
+    hasAmbiguousStackedEquationGeometry([region])
   return (
     region.kind === 'equation' &&
     region.lines.length > 0 &&
     (probableDisplayEquationText(region.text) ||
-      hasMathExtensionFontProvenance(region) ||
-      unresolvedMathExtensionRegion(region) ||
-      hasAmbiguousStackedEquationGeometry([region]))
+      (fontOrGeometryEvidence && sourceMathFragment(region)))
   )
 }
 
@@ -4753,6 +6071,16 @@ function alignedPrintedEquationNumber(
   candidate: PdfPageRegion,
 ) {
   if (!printedEquationNumberFragment(candidate)) return false
+  const sameEquationLane =
+    source.column === candidate.column ||
+    source.column === 'span' ||
+    candidate.column === 'span'
+  // A printed number in the adjacent column can be vertically aligned with a
+  // display by coincidence. Treating it as that display's label corrupts the
+  // equation cardinality check and can make a complete fraction fallback
+  // disappear. Spanning displays may legitimately own a margin label; all
+  // other displays must keep labels inside their detected column lane.
+  if (!sameEquationLane) return false
   const gap = boxGap(source.box, candidate.box)
   const sourceCenter = source.box.y + source.box.height / 2
   const candidateCenter = candidate.box.y + candidate.box.height / 2
@@ -4821,6 +6149,18 @@ function hasDisplayEquationEvidence(
   source: PdfPageRegion,
   regions: readonly PdfPageRegion[],
 ) {
+  const sourceLineIds = new Set(source.lines.map((line) => line.id))
+  if (
+    source.lines.some((line) => {
+      const provenance = detachedMathHostProvenance(line.id)
+      return (
+        provenance?.kind === 'linked' &&
+        !sourceLineIds.has(provenance.hostLineId)
+      )
+    })
+  ) {
+    return false
+  }
   return (
     isProbableDisplayEquation(source) ||
     (source.kind === 'equation' &&
@@ -4881,6 +6221,192 @@ function adjacentDisplayEquationRegion(
     // on slightly staggered baselines. Keep this diagonal bridge narrow so it
     // joins split formula runs without swallowing a separate display line.
     (gap.horizontal <= 0.025 && gap.vertical <= 0.012)
+  )
+}
+
+function hasInterstitialEquationProseBoundary(
+  source: PdfPageRegion,
+  candidate: PdfPageRegion,
+  regions: readonly PdfPageRegion[],
+) {
+  const sourceCenterY = source.box.y + source.box.height / 2
+  const candidateCenterY = candidate.box.y + candidate.box.height / 2
+  const upperCenterY = Math.min(sourceCenterY, candidateCenterY)
+  const lowerCenterY = Math.max(sourceCenterY, candidateCenterY)
+  if (lowerCenterY - upperCenterY <= 0.002) return false
+  const corridorLeft = Math.min(source.box.x, candidate.box.x) - 0.01
+  const corridorRight =
+    Math.max(
+      source.box.x + source.box.width,
+      candidate.box.x + candidate.box.width,
+    ) + 0.01
+  return regions.some((region) => {
+    if (
+      region.id === source.id ||
+      region.id === candidate.id ||
+      region.page !== source.page ||
+      !['body', 'spanning'].includes(region.kind)
+    ) {
+      return false
+    }
+    const centerY = region.box.y + region.box.height / 2
+    const centerX = region.box.x + region.box.width / 2
+    if (
+      centerY <= upperCenterY + 0.001 ||
+      centerY >= lowerCenterY - 0.001 ||
+      centerX < corridorLeft ||
+      centerX > corridorRight
+    ) {
+      return false
+    }
+    return (
+      region.includedInReadingOrder &&
+      region.text.trim().length > 0 &&
+      !sourceMathFragment(region) &&
+      !sourceMathFontOnlyContinuation(region) &&
+      !numericListAssignmentFragment(region) &&
+      !bareNumericMathFragment(region) &&
+      !printedEquationNumberFragment(region)
+    )
+  })
+}
+
+function inlineStackedFormulaBaseId(lineId: string) {
+  return /^(.*-inline-stacked-\d+)-formula$/u.exec(lineId)?.[1] ?? null
+}
+
+function inlineStackedSiblingBaseId(lineId: string) {
+  return /^(.*-inline-stacked-\d+)-(?:before|after)$/u.exec(lineId)?.[1] ?? null
+}
+
+type DetachedMathHostProvenance =
+  | { kind: 'linked'; hostLineId: string }
+  | { kind: 'ambiguous' }
+  | { kind: 'malformed' }
+
+function detachedMathHostProvenance(
+  lineId: string,
+): DetachedMathHostProvenance | null {
+  if (!lineId.includes('-detached-math-')) return null
+  const match = /-detached-math-\d+-host-(.+)$/u.exec(lineId)
+  if (!match) return { kind: 'malformed' }
+  if (match[1] === 'ambiguous') return { kind: 'ambiguous' }
+  try {
+    const hostLineId = decodeURIComponent(match[1])
+    return hostLineId && encodeURIComponent(hostLineId) === match[1]
+      ? { kind: 'linked', hostLineId }
+      : { kind: 'malformed' }
+  } catch {
+    return { kind: 'malformed' }
+  }
+}
+
+function detachedMathHostLineId(lineId: string) {
+  const provenance = detachedMathHostProvenance(lineId)
+  return provenance?.kind === 'linked' ? provenance.hostLineId : null
+}
+
+function unresolvedDetachedMathHost(region: PdfPageRegion) {
+  return region.lines.some((line) => {
+    const provenance = detachedMathHostProvenance(line.id)
+    return provenance?.kind === 'ambiguous' || provenance?.kind === 'malformed'
+  })
+}
+
+function inlineStackedFormulaBaseIds(region: PdfPageRegion) {
+  return new Set(
+    region.lines.flatMap((line) => {
+      const baseId = inlineStackedFormulaBaseId(line.id)
+      return baseId ? [baseId] : []
+    }),
+  )
+}
+
+interface InlineStackedSiblingEvidence {
+  regionId: string
+  lineId: string
+}
+
+function provedProseSplitInlineStackedFormulaBaseIds(
+  regions: readonly PdfPageRegion[],
+) {
+  const ambiguousFormulaBaseIds = new Set<string>()
+  const proseSiblingEvidence = new Map<string, InlineStackedSiblingEvidence[]>()
+  const mathSiblingEvidence = new Map<string, InlineStackedSiblingEvidence[]>()
+
+  for (const region of regions) {
+    if (hasAmbiguousStackedEquationGeometry([region])) {
+      for (const baseId of inlineStackedFormulaBaseIds(region)) {
+        ambiguousFormulaBaseIds.add(baseId)
+      }
+    }
+    for (const line of region.lines) {
+      const formulaBaseId = inlineStackedFormulaBaseId(line.id)
+      const siblingBaseId = inlineStackedSiblingBaseId(line.id)
+      const baseId = formulaBaseId ?? siblingBaseId
+      if (!baseId) continue
+      const lineFragment = {
+        ...region,
+        text: line.text,
+        box: line.box,
+        lines: [line],
+      }
+      const proseDominantSibling = proseDominantPdfMathSource({
+        text: line.text,
+        width: line.box.width,
+        runs: line.runs,
+      })
+      const unsupportedProseToken = (line.text.match(/\p{L}{2,}/gu) ?? []).some(
+        (token) =>
+          !/\p{Script=Greek}/u.test(token) &&
+          !/^\p{Ll}\p{Lu}$/u.test(token) &&
+          !/^d(?:\p{Ll}|\p{Script=Greek}){1,2}$/u.test(token) &&
+          !/^(?:arg|cosh?|det|diag|dim|exp|gcd|lim|log|max|min|mod|sinh?|sqrt|tanh?|var)$/iu.test(
+            token,
+          ),
+      )
+      const formulaMathEvidence =
+        formulaBaseId !== null &&
+        ambiguousFormulaBaseIds.has(formulaBaseId) &&
+        region.kind !== 'body' &&
+        !proseDominantSibling &&
+        sourceMathFragment(lineFragment)
+      const siblingMathEvidence =
+        siblingBaseId !== null &&
+        region.kind !== 'body' &&
+        !proseDominantSibling &&
+        !unsupportedProseToken &&
+        (sourceMathFragment(lineFragment) ||
+          sourceMathFontOnlyContinuation(lineFragment) ||
+          sourceMathOperatorFragment(lineFragment) ||
+          numericListAssignmentFragment(lineFragment) ||
+          bareNumericMathFragment(lineFragment))
+      const evidence = { regionId: region.id, lineId: line.id }
+      if (formulaMathEvidence || siblingMathEvidence) {
+        const existing = mathSiblingEvidence.get(baseId) ?? []
+        existing.push(evidence)
+        mathSiblingEvidence.set(baseId, existing)
+      } else if (
+        siblingBaseId &&
+        region.kind === 'body' &&
+        (proseDominantSibling || unsupportedProseToken)
+      ) {
+        const existing = proseSiblingEvidence.get(baseId) ?? []
+        existing.push(evidence)
+        proseSiblingEvidence.set(baseId, existing)
+      }
+    }
+  }
+
+  return new Set(
+    [...ambiguousFormulaBaseIds].filter((baseId) =>
+      (proseSiblingEvidence.get(baseId) ?? []).some((prose) =>
+        (mathSiblingEvidence.get(baseId) ?? []).some(
+          (math) =>
+            math.regionId !== prose.regionId && math.lineId !== prose.lineId,
+        ),
+      ),
+    ),
   )
 }
 
@@ -4950,6 +6476,54 @@ function computerModernMathFont(fontName: string) {
   return /(?:^|[+_-])(?:CMMI|CMR|CMSY)\d*(?:$|[+_-])/iu.test(fontName)
 }
 
+function computerModernRomanFont(fontName: string) {
+  return /(?:^|[+_-])CMR\d*(?:$|[+_-])/iu.test(fontName)
+}
+
+function justifiedUprightSourceMathToken(value: string) {
+  return /^(?:arg|cosh?|det|diag|dim|exp|gcd|im|lim|log|max|min|mod|pr|re|sinh?|sqrt|tanh?|var|d[p-z])$/iu.test(
+    value,
+  )
+}
+
+function hasUnsupportedComputerModernRomanWord(
+  runs: readonly PdfPageRegion['lines'][number]['runs'][number][],
+) {
+  let token = ''
+  const flush = () => {
+    const unsupported =
+      Array.from(token).length >= 2 && !justifiedUprightSourceMathToken(token)
+    token = ''
+    return unsupported
+  }
+  for (const run of runs) {
+    if (!computerModernRomanFont(run.fontName)) {
+      if (flush()) return true
+      continue
+    }
+    for (const character of run.text) {
+      if (/\p{L}/u.test(character)) {
+        token += character
+      } else if (flush()) {
+        return true
+      }
+    }
+  }
+  return flush()
+}
+
+function stixMathFont(fontName: string) {
+  return /(?:^|[+_-])STIXMath(?:[A-Za-z]*)?(?:$|[+_-])/iu.test(fontName)
+}
+
+function knownSourceMathFont(fontName: string) {
+  return (
+    computerModernMathFont(fontName) ||
+    computerModernMathGlyphFont(fontName) ||
+    stixMathFont(fontName)
+  )
+}
+
 function lineHasSourceScriptGeometry(line: PdfPageRegion['lines'][number]) {
   const runs = line.runs.filter((run) => run.text.trim())
   if (runs.length < 2) return false
@@ -4967,10 +6541,27 @@ function lineHasSourceScriptGeometry(line: PdfPageRegion['lines'][number]) {
   const threshold = Math.max(0.0015, baselineHeight * 0.12)
   return runs.some(
     (run) =>
-      computerModernMathFont(run.fontName) &&
+      knownSourceMathFont(run.fontName) &&
       run.fontSize <= maximumFontSize * 0.82 &&
       Math.abs(run.y + run.height / 2 - baselineCenter) > threshold,
   )
+}
+
+function lineHasCompactSourceScriptIdentifier(
+  line: PdfPageRegion['lines'][number],
+) {
+  const text = line.text.replace(/\s+/gu, '')
+  const runs = line.runs.filter((run) => run.text.trim())
+  if (
+    runs.length < 2 ||
+    !/^[\p{L}\p{N}]{2,8}$/u.test(text) ||
+    !runs.every((run) => knownSourceMathFont(run.fontName))
+  ) {
+    return false
+  }
+  const maximumFontSize = Math.max(...runs.map((run) => run.fontSize))
+  const minimumFontSize = Math.min(...runs.map((run) => run.fontSize))
+  return maximumFontSize > 0 && minimumFontSize <= maximumFontSize * 0.82
 }
 
 function lineHasUnencodedSourceScriptGeometry(
@@ -5015,6 +6606,10 @@ function computerModernMathGlyphFont(fontName: string) {
   )
 }
 
+function knownSourceMathGlyphFont(fontName: string) {
+  return computerModernMathGlyphFont(fontName) || stixMathFont(fontName)
+}
+
 function numericListAssignmentFragment(region: PdfPageRegion) {
   const text = region.text.replace(/\s+/gu, ' ').trim()
   if (
@@ -5035,12 +6630,7 @@ function numericListAssignmentFragment(region: PdfPageRegion) {
   }
   const runs = region.lines[0].runs.filter((run) => run.text.trim())
   return (
-    runs.length > 0 &&
-    runs.every(
-      (run) =>
-        computerModernMathFont(run.fontName) ||
-        computerModernMathGlyphFont(run.fontName),
-    )
+    runs.length > 0 && runs.every((run) => knownSourceMathFont(run.fontName))
   )
 }
 
@@ -5048,7 +6638,7 @@ function bareNumericMathFragment(region: PdfPageRegion) {
   // A display-equation fraction part (for example the bare denominator
   // `1000`) can reach line assembly as a line of the neighboring paragraph.
   // Reclaim it for the display scope only when every glyph run uses a
-  // Computer Modern math-family font and the text is one short unparenthesized
+  // known source math-family font and the text is one short unparenthesized
   // number, so prose, printed equation numbers, and operator expressions can
   // never join an equation through this path.
   if (!['body', 'spanning', 'equation'].includes(region.kind)) return false
@@ -5065,12 +6655,7 @@ function bareNumericMathFragment(region: PdfPageRegion) {
   if (!/^[\p{N}][\p{N}.,]{0,11}$/u.test(text)) return false
   const runs = region.lines[0].runs.filter((run) => run.text.trim())
   return (
-    runs.length > 0 &&
-    runs.every(
-      (run) =>
-        computerModernMathFont(run.fontName) ||
-        computerModernMathGlyphFont(run.fontName),
-    )
+    runs.length > 0 && runs.every((run) => knownSourceMathFont(run.fontName))
   )
 }
 
@@ -5081,38 +6666,83 @@ function sourceMathFragment(region: PdfPageRegion) {
     Array.from(text).length > 40 ||
     region.lines.length === 0 ||
     region.lines.length > 2 ||
-    region.box.width > 0.28 ||
+    region.box.width > 0.35 ||
     region.box.height > 0.06
-  ) {
-    return false
-  }
-  const proseWords = text.match(/[A-Za-z]{4,}/gu) ?? []
-  if (
-    proseWords.some(
-      (word) =>
-        !/^(?:arg|cosh?|diag|exp|log|max|min|sinh?|sqrt|tanh?|var)$/iu.test(
-          word,
-        ),
-    )
   ) {
     return false
   }
   const runs = region.lines
     .flatMap((line) => line.runs)
     .filter((run) => run.text.trim())
+  if (
+    unpublishableEquationTranscriptText(text) &&
+    proseDominantPdfMathSource({
+      text,
+      width: region.box.width,
+      runs,
+    })
+  ) {
+    return false
+  }
+  // Brackets alone are not mathematical evidence: OCR/font extraction can
+  // label ordinary bracketed prose as CMMI and append one unresolved CMEX
+  // glyph. Treat operators, numbers, and Greek letters as strong context, but
+  // keep every other multi-letter word visible to the prose guard.
+  const mathContextCharacter =
+    /[\p{Script=Greek}\p{N}∆_=+*/<>^−×÷≤≥≈∼⊙∂∞∏∈∉→←∫∑√]/u
+  const strongMathSignal = mathContextCharacter.test(text)
+  const proseBoundary = /[\s\p{Ps}\p{Pe}\p{Pi}\p{Pf},.;:!?'"“”‘’]/u
+  const unsupportedAlphabeticTokens = [...text.matchAll(/\p{L}{2,}/gu)]
+    .map((match) => {
+      const word = match[0]
+      const start = match.index
+      const end = start + word.length
+      return {
+        word,
+        before: text[start - 1] ?? '',
+        after: text[end] ?? '',
+      }
+    })
+    .filter(
+      ({ word, before, after }) =>
+        !/^\p{Ll}\p{Lu}$/u.test(word) &&
+        !/^d(?:\p{Ll}|\p{Script=Greek}){1,2}$/u.test(word) &&
+        !/^(?:arg|cosh?|det|diag|dim|exp|gcd|lim|log|max|min|mod|sinh?|sqrt|tanh?|var)$/iu.test(
+          word,
+        ) &&
+        after !== '(' &&
+        !mathContextCharacter.test(before) &&
+        !mathContextCharacter.test(after),
+    )
+  const standaloneUnsupportedTokenCount = unsupportedAlphabeticTokens.filter(
+    ({ before, after }) =>
+      (!before || proseBoundary.test(before)) &&
+      (!after || proseBoundary.test(after)),
+  ).length
+  if (
+    unsupportedAlphabeticTokens.length >= 2 &&
+    (!strongMathSignal || standaloneUnsupportedTokenCount >= 2)
+  ) {
+    return false
+  }
   const sourceCharacterCount = runs.reduce(
     (total, run) => total + Array.from(run.text.replace(/\s+/gu, '')).length,
     0,
   )
   if (sourceCharacterCount === 0) return false
   const mathCharacterCount = runs
-    .filter((run) => computerModernMathGlyphFont(run.fontName))
+    .filter((run) => knownSourceMathGlyphFont(run.fontName))
     .reduce(
       (total, run) => total + Array.from(run.text.replace(/\s+/gu, '')).length,
       0,
     )
   const mathFontRatio = mathCharacterCount / sourceCharacterCount
-  const sourceScriptGeometry = region.lines.some(lineHasSourceScriptGeometry)
+  const sourceScriptGeometry =
+    region.lines.some(
+      (line) =>
+        lineHasSourceScriptGeometry(line) ||
+        lineHasCompactSourceScriptIdentifier(line),
+    ) || hasAmbiguousStackedEquationGeometry([region])
   const hasMathToken =
     /[\p{Script=Greek}\p{N}_′″=+\-−×÷≤≥≈∼⊙∂∞∏∈∉→←]/u.test(text) ||
     /(?:^|[^\p{L}])(?:arg|cosh?|diag|exp|log|max|min|sinh?|sqrt|tanh?|var)\s*\(/iu.test(
@@ -5128,7 +6758,94 @@ function sourceMathFragment(region: PdfPageRegion) {
     (hasMathToken ||
       hasMathFunctionToken ||
       sourceScriptGeometry ||
-      mathFontRatio >= 0.8)
+      (mathFontRatio >= 0.8 && unsupportedAlphabeticTokens.length === 0))
+  )
+}
+
+function sourceMathFontOnlyContinuation(region: PdfPageRegion) {
+  // PDF line assembly can detach the integrand to the right of a large
+  // operator even though every glyph still carries source math-font
+  // provenance. Keep this recovery narrower than sourceMathFragment: it is
+  // only a short, single-line continuation with structural math punctuation,
+  // at least one math-glyph run, and no ordinary prose token.
+  const text = region.text.replace(/\s+/gu, ' ').trim()
+  if (
+    !text ||
+    Array.from(text).length > 40 ||
+    region.lines.length !== 1 ||
+    region.box.width > 0.18 ||
+    region.box.height > 0.04
+  ) {
+    return false
+  }
+  const proseWords = text.match(/[A-Za-z]{3,}/gu) ?? []
+  if (
+    proseWords.some(
+      (word) =>
+        !/^(?:arg|cosh?|det|diag|dim|exp|gcd|lim|log|max|min|mod|sinh?|sqrt|tanh?|var)$/iu.test(
+          word,
+        ),
+    )
+  ) {
+    return false
+  }
+  // Commas and semicolons alone are not structural math evidence: short
+  // Computer Modern prose can use CMMI for its variables while keeping the
+  // surrounding words in CMR (for example, “if x is y,”).
+  if (!/[()[\]{}:=+\-−×÷≤≥≈∼˜⊙∂∞∏∈∉→←]/u.test(text)) {
+    return false
+  }
+  const runs = region.lines[0].runs.filter((run) => run.text.trim())
+  if (hasUnsupportedComputerModernRomanWord(runs)) {
+    return false
+  }
+  return (
+    runs.length > 0 &&
+    runs.every((run) => knownSourceMathFont(run.fontName)) &&
+    runs.some((run) => knownSourceMathGlyphFont(run.fontName))
+  )
+}
+
+function contextualStixMathOperatorFragment(region: PdfPageRegion) {
+  const text = region.text.replace(/\s+/gu, ' ').trim()
+  if (
+    region.lines.length !== 1 ||
+    region.box.width > 0.08 ||
+    region.box.height > 0.04 ||
+    !/^(?:arg|cosh?|diag|exp|log|max|min|sinh?|sqrt|tanh?|var)$/iu.test(text)
+  ) {
+    return false
+  }
+  const runs = region.lines[0].runs.filter((run) => run.text.trim())
+  return (
+    runs.length > 0 &&
+    runs.every((run) =>
+      /(?:^|[+_-])STIXGeneral(?:[A-Za-z]*)?(?:$|[+_-])/iu.test(run.fontName),
+    )
+  )
+}
+
+function sourceMathOperatorFragment(region: PdfPageRegion) {
+  const text = region.text.replace(/\s+/gu, '').trim()
+  if (
+    !text ||
+    Array.from(text).length > 8 ||
+    region.lines.length !== 1 ||
+    region.box.width > 0.08 ||
+    region.box.height > 0.04 ||
+    !/^[()[\]{}.,;:|=+*/<>_\-−×÷≤≥≈∼˜⊙∂∞∑∏∈∉→←]+$/u.test(text) ||
+    !/[=+\-−×÷≤≥≈∼˜⊙∂∞∑∏∈∉→←]/u.test(text)
+  ) {
+    return false
+  }
+  const runs = region.lines[0].runs.filter((run) => run.text.trim())
+  return (
+    runs.length > 0 &&
+    runs.every(
+      (run) =>
+        knownSourceMathFont(run.fontName) ||
+        /(?:^|[+_-])STIXGeneral(?:[A-Za-z]*)?(?:$|[+_-])/iu.test(run.fontName),
+    )
   )
 }
 
@@ -5429,17 +7146,41 @@ function attachedEquationRegions(
   source: PdfPageRegion,
   regions: PdfPageRegion[],
   consumedRegionIds: ReadonlySet<string>,
+  reservedLineIds: ReadonlySet<string> = new Set(),
+  proseSplitInlineFormulaBaseIds: ReadonlySet<string> = provedProseSplitInlineStackedFormulaBaseIds(
+    regions,
+  ),
 ) {
   const displayRegions = [source]
   let foundAdjacent = true
   while (foundAdjacent) {
     foundAdjacent = false
     for (const candidate of regions) {
+      const ownedInlineFormulaBaseIds = new Set(
+        displayRegions.flatMap((region) =>
+          [...inlineStackedFormulaBaseIds(region)].filter((baseId) =>
+            proseSplitInlineFormulaBaseIds.has(baseId),
+          ),
+        ),
+      )
+      const candidateInlineFormulaBaseIds = new Set(
+        [...inlineStackedFormulaBaseIds(candidate)].filter((baseId) =>
+          proseSplitInlineFormulaBaseIds.has(baseId),
+        ),
+      )
+      const crossesInlineFormulaBoundary =
+        (ownedInlineFormulaBaseIds.size > 0 ||
+          candidateInlineFormulaBaseIds.size > 0) &&
+        ![...candidateInlineFormulaBaseIds].some((baseId) =>
+          ownedInlineFormulaBaseIds.has(baseId),
+        )
       if (
         candidate.id === source.id ||
         candidate.page !== source.page ||
         consumedRegionIds.has(candidate.id) ||
+        candidate.lines.some((line) => reservedLineIds.has(line.id)) ||
         displayRegions.some((region) => region.id === candidate.id) ||
+        crossesInlineFormulaBoundary ||
         candidate.kind !== 'equation' ||
         unresolvedMathExtensionGlyphFragment(candidate) ||
         !hasDisplayEquationEvidence(candidate, regions) ||
@@ -5448,8 +7189,10 @@ function attachedEquationRegions(
           candidate,
           regions,
         ) ||
-        !displayRegions.some((region) =>
-          adjacentDisplayEquationRegion(region, candidate),
+        !displayRegions.some(
+          (region) =>
+            adjacentDisplayEquationRegion(region, candidate) &&
+            !hasInterstitialEquationProseBoundary(region, candidate, regions),
         )
       ) {
         continue
@@ -5522,28 +7265,76 @@ function attachedEquationRegions(
     for (const candidate of regions) {
       const mathExtensionFragment = mathExtensionGlyphFragment(candidate)
       const sourceMathGlyphFragment = sourceMathFragment(candidate)
+      const sourceMathFontContinuation =
+        sourceMathFontOnlyContinuation(candidate)
       const numericAssignmentFragment = numericListAssignmentFragment(candidate)
+      const contextualMathOperatorFragment =
+        contextualStixMathOperatorFragment(candidate)
+      const sourceMathOperator = sourceMathOperatorFragment(candidate)
       const attachableFragmentKind =
         ['body', 'spanning', 'side', 'chart-label', 'page-number'].includes(
           candidate.kind,
         ) || candidate.kind === 'equation'
+      const wholeFragmentAvailable = candidate.lines.every(
+        (line) => !reservedLineIds.has(line.id),
+      )
+      const ownedInlineFormulaBaseIds = new Set(
+        displayRegions.flatMap((region) =>
+          [...inlineStackedFormulaBaseIds(region)].filter((baseId) =>
+            proseSplitInlineFormulaBaseIds.has(baseId),
+          ),
+        ),
+      )
+      const candidateInlineFormulaBaseIds = new Set(
+        [...inlineStackedFormulaBaseIds(candidate)].filter((baseId) =>
+          proseSplitInlineFormulaBaseIds.has(baseId),
+        ),
+      )
+      const belongsToAnotherInlineFormula =
+        candidateInlineFormulaBaseIds.size > 0 &&
+        ![...candidateInlineFormulaBaseIds].some((baseId) =>
+          ownedInlineFormulaBaseIds.has(baseId),
+        )
+      const detachedHostLineIds = new Set(
+        candidate.lines.flatMap((line) => {
+          const hostLineId = detachedMathHostLineId(line.id)
+          return hostLineId ? [hostLineId] : []
+        }),
+      )
+      const unresolvedDetachedHost = unresolvedDetachedMathHost(candidate)
+      const ownedLineIds = new Set(
+        [...displayRegions, ...attachedFragments].flatMap((region) =>
+          region.lines.map((line) => line.id),
+        ),
+      )
+      const belongsToAnotherDetachedHost =
+        detachedHostLineIds.size > 0 &&
+        ![...detachedHostLineIds].every((lineId) => ownedLineIds.has(lineId))
       if (
         attachedRegionIds.has(candidate.id) ||
         candidate.page !== source.page ||
         consumedRegionIds.has(candidate.id) ||
+        belongsToAnotherInlineFormula ||
+        belongsToAnotherDetachedHost ||
+        unresolvedDetachedHost ||
         !attachableFragmentKind
       ) {
         continue
       }
       let fragment: PdfPageRegion | null = null
       if (
-        mathExtensionFragment ||
-        sourceMathGlyphFragment ||
-        numericAssignmentFragment
+        wholeFragmentAvailable &&
+        (mathExtensionFragment ||
+          sourceMathGlyphFragment ||
+          sourceMathFontContinuation ||
+          numericAssignmentFragment ||
+          contextualMathOperatorFragment ||
+          sourceMathOperator)
       ) {
         fragment = candidate
       } else {
         const selectedMathLines = candidate.lines.filter((line) => {
+          if (reservedLineIds.has(line.id)) return false
           const lineFragment = {
             ...candidate,
             text: line.text,
@@ -5553,6 +7344,8 @@ function attachedEquationRegions(
           return (
             mathExtensionGlyphFragment(lineFragment) ||
             sourceMathFragment(lineFragment) ||
+            sourceMathFontOnlyContinuation(lineFragment) ||
+            sourceMathOperatorFragment(lineFragment) ||
             numericListAssignmentFragment(lineFragment) ||
             bareNumericMathFragment(lineFragment)
           )
@@ -5567,6 +7360,17 @@ function attachedEquationRegions(
         }
       }
       const ownedRegions = [...displayRegions, ...attachedFragments]
+      const linkedInlineMathSibling =
+        fragment !== null &&
+        fragment.lines.length > 0 &&
+        fragment.lines.every((line) => {
+          const baseId = inlineStackedSiblingBaseId(line.id)
+          return baseId !== null && ownedInlineFormulaBaseIds.has(baseId)
+        })
+      const linkedDetachedMathHost =
+        fragment !== null &&
+        detachedHostLineIds.size > 0 &&
+        [...detachedHostLineIds].every((lineId) => ownedLineIds.has(lineId))
       const displayScope = {
         ...source,
         box: unionBox(ownedRegions),
@@ -5575,23 +7379,50 @@ function attachedEquationRegions(
         fragment !== null &&
         insideDisplayEnvelope(fragment, ownedRegions) &&
         uniquelyOwnedByDisplay(fragment)
-      const compactFragment = compactEquationFragment(candidate)
+      const compactFragment =
+        wholeFragmentAvailable && compactEquationFragment(candidate)
       const gap = boxGap(displayScope.box, candidate.box)
       const adjacentCompactFragment =
         compactFragment &&
         (alignedPrintedEquationNumber(displayScope, candidate) ||
+          ownedRegions.some((region) =>
+            alignedPrintedEquationNumber(region, candidate),
+          ) ||
           ownedRegions.some((region) => {
             const regionGap = boxGap(region.box, candidate.box)
             return regionGap.horizontal <= 0.01 && regionGap.vertical <= 0.012
           }) ||
           (gap.horizontal <= 0.01 && gap.vertical <= 0.012))
-      const selected = sourceOwnedFragment
+      const adjacentSourceMathFontContinuation =
+        fragment !== null &&
+        sourceMathFontContinuation &&
+        uniquelyOwnedByDisplay(fragment) &&
+        ownedRegions.some((region) => {
+          const regionGap = boxGap(region.box, fragment!.box)
+          return regionGap.horizontal <= 0.02 && regionGap.vertical <= 0.012
+        })
+      const selected = linkedDetachedMathHost
         ? fragment
-        : adjacentCompactFragment
-          ? candidate
-          : null
+        : linkedInlineMathSibling
+          ? fragment
+          : sourceOwnedFragment
+            ? fragment
+            : adjacentSourceMathFontContinuation
+              ? fragment
+              : adjacentCompactFragment
+                ? candidate
+                : null
+      const bypassesDisplayAdjacencyGuards =
+        selected !== null &&
+        !linkedDetachedMathHost &&
+        !linkedInlineMathSibling &&
+        hasDisplayEquationEvidence(selected, regions) &&
+        displayRegions.some((display) =>
+          hasInterstitialEquationProseBoundary(display, selected, regions),
+        )
       if (
         !selected ||
+        bypassesDisplayAdjacencyGuards ||
         !preservesPrintedEquationCardinality(displayRegions, selected, regions)
       ) {
         continue
@@ -5616,6 +7447,246 @@ function attachedEquationRegions(
   )
 }
 
+interface DisplayEquationComponent {
+  source: PdfPageRegion
+  regions: PdfPageRegion[]
+}
+
+interface EquationComponentOwnership {
+  sourceRegionIds: string[]
+  sourceLineIds: string[]
+}
+
+export function equationSourceRunOwnershipKey(
+  run: PdfPageRegion['lines'][number]['runs'][number],
+) {
+  return JSON.stringify({
+    page: run.page,
+    x: run.x,
+    y: run.y,
+    width: run.width,
+    height: run.height,
+    rotation: run.rotation,
+    method: run.method,
+    text: run.text,
+    fontName: run.fontName,
+    fontSize: run.fontSize,
+    confidence: run.confidence,
+    bold: run.bold ?? null,
+    italic: run.italic ?? null,
+    sourceSequenceIndex: run.sourceSequenceIndex ?? null,
+    sourceSemanticAdmission: run.sourceSemanticAdmission ?? null,
+    sourceWhitespaceBefore: run.sourceWhitespaceBefore ?? null,
+    sourceWhitespacePredecessorIndex:
+      run.sourceWhitespacePredecessorIndex ?? null,
+    sourceTextPaint: run.sourceTextPaint
+      ? {
+          algorithm: run.sourceTextPaint.algorithm,
+          textLedgerSha256: run.sourceTextPaint.textLedgerSha256,
+          normalizedTextStart: run.sourceTextPaint.normalizedTextStart,
+          normalizedTextEnd: run.sourceTextPaint.normalizedTextEnd,
+          // The full-page operator ledger remains crop attestation evidence;
+          // local ownership binds only the exact run span and its operations.
+          operationIndexes: [...run.sourceTextPaint.operationIndexes],
+          filterableOperationIndexes: [
+            ...run.sourceTextPaint.filterableOperationIndexes,
+          ],
+        }
+      : null,
+  })
+}
+
+export function pdfVisualOwnershipExtentSha256(
+  regions: readonly PdfPageRegion[],
+  sourceRegionIds: readonly string[],
+  sourceLineIds?: readonly string[],
+) {
+  const sourceRegionIdSet = new Set(sourceRegionIds)
+  const explicitSourceLineIds = new Set(sourceLineIds ?? [])
+  const ownershipTuples = regions
+    .filter((region) => sourceRegionIdSet.has(region.id))
+    .map((region) => ({
+      regionId: region.id,
+      lines: region.lines
+        .filter(
+          (line) =>
+            explicitSourceLineIds.size === 0 ||
+            explicitSourceLineIds.has(line.id),
+        )
+        .map((line) => ({
+          lineId: line.id,
+          sourceRunKeys: line.runs.map(equationSourceRunOwnershipKey).sort(),
+        }))
+        .sort((left, right) => left.lineId.localeCompare(right.lineId)),
+    }))
+    .sort((left, right) => left.regionId.localeCompare(right.regionId))
+  return sha256HexSync(
+    JSON.stringify({
+      algorithm: 'pdf-visual-ownership-extent-v1',
+      sourceRegionIds: [...sourceRegionIds].sort(),
+      ownershipTuples,
+    }),
+  )
+}
+
+function proveEquationComponentOwnership(
+  sources: readonly PdfPageRegion[],
+  allRegions: readonly PdfPageRegion[],
+): EquationComponentOwnership | null {
+  const sourceRegionIds = sources.map((source) => source.id)
+  const sourceLineIds = sources.flatMap((source) =>
+    source.lines.map((line) => line.id),
+  )
+  if (
+    sourceRegionIds.length === 0 ||
+    sourceLineIds.length === 0 ||
+    new Set(sourceRegionIds).size !== sourceRegionIds.length ||
+    new Set(sourceLineIds).size !== sourceLineIds.length
+  ) {
+    return null
+  }
+  const sourceLineIdSet = new Set(sourceLineIds)
+  const inlineFormulaBaseIds = new Set(
+    sourceLineIds.flatMap((lineId) => {
+      const match = /^(.*-inline-stacked-\d+)-formula$/u.exec(lineId)
+      return match ? [match[1]] : []
+    }),
+  )
+  const unsafeInlineSibling = allRegions.some(
+    (region) =>
+      region.kind !== 'body' &&
+      region.lines.some((line) => {
+        if (sourceLineIdSet.has(line.id)) return false
+        const match = /^(.*-inline-stacked-\d+)-(before|after)$/u.exec(line.id)
+        return Boolean(match && inlineFormulaBaseIds.has(match[1]))
+      }),
+  )
+  if (unsafeInlineSibling) return null
+  const sourceRunOwnershipKeys = sources.flatMap((source) =>
+    source.lines.flatMap((line) =>
+      line.runs
+        .filter((run) => run.text.trim())
+        .map(equationSourceRunOwnershipKey),
+    ),
+  )
+  if (
+    sourceRunOwnershipKeys.length === 0 ||
+    new Set(sourceRunOwnershipKeys).size !== sourceRunOwnershipKeys.length
+  ) {
+    return null
+  }
+
+  const regionOccurrenceCount = new Map<string, number>()
+  const lineOccurrenceCount = new Map<string, number>()
+  const regionLineOccurrenceCount = new Map<string, number>()
+  const runOccurrenceCount = new Map<string, number>()
+  for (const region of allRegions) {
+    regionOccurrenceCount.set(
+      region.id,
+      (regionOccurrenceCount.get(region.id) ?? 0) + 1,
+    )
+    for (const line of region.lines) {
+      lineOccurrenceCount.set(
+        line.id,
+        (lineOccurrenceCount.get(line.id) ?? 0) + 1,
+      )
+      const regionLineKey = `${region.id}\u001f${line.id}`
+      regionLineOccurrenceCount.set(
+        regionLineKey,
+        (regionLineOccurrenceCount.get(regionLineKey) ?? 0) + 1,
+      )
+      for (const run of line.runs.filter((candidate) =>
+        candidate.text.trim(),
+      )) {
+        const key = equationSourceRunOwnershipKey(run)
+        runOccurrenceCount.set(key, (runOccurrenceCount.get(key) ?? 0) + 1)
+      }
+    }
+  }
+  if (
+    sourceRegionIds.some(
+      (regionId) => regionOccurrenceCount.get(regionId) !== 1,
+    ) ||
+    sources.some((source) =>
+      source.lines.some(
+        (line) =>
+          lineOccurrenceCount.get(line.id) !== 1 ||
+          regionLineOccurrenceCount.get(`${source.id}\u001f${line.id}`) !== 1,
+      ),
+    ) ||
+    sourceRunOwnershipKeys.some((key) => runOccurrenceCount.get(key) !== 1)
+  ) {
+    return null
+  }
+  return { sourceRegionIds, sourceLineIds }
+}
+
+function displayEquationComponents(
+  regions: PdfPageRegion[],
+  consumedRegionIds: ReadonlySet<string>,
+) {
+  const sourceOrder = (left: PdfPageRegion, right: PdfPageRegion) =>
+    left.page - right.page ||
+    left.box.y - right.box.y ||
+    left.box.x - right.box.x ||
+    left.id.localeCompare(right.id)
+  const orderedRegions = [...regions].sort(sourceOrder)
+  const proseSplitInlineFormulaBaseIds =
+    provedProseSplitInlineStackedFormulaBaseIds(orderedRegions)
+  const displaySources = orderedRegions.filter(
+    (region) =>
+      !consumedRegionIds.has(region.id) &&
+      hasDisplayEquationEvidence(region, orderedRegions),
+  )
+  const ownedLineIds = new Set<string>()
+  const components: DisplayEquationComponent[] = []
+
+  for (const source of displaySources) {
+    if (source.lines.some((line) => ownedLineIds.has(line.id))) continue
+    const componentRegions = attachedEquationRegions(
+      source,
+      orderedRegions,
+      consumedRegionIds,
+      ownedLineIds,
+      proseSplitInlineFormulaBaseIds,
+    )
+    // Only a region with display-level evidence can seed a component. Source
+    // math fragments, operators, scripts, and printed numbers may extend that
+    // component, but can never promote themselves as singleton displays.
+    if (
+      !componentRegions.some(
+        (region) =>
+          region.id === source.id &&
+          hasDisplayEquationEvidence(region, orderedRegions),
+      )
+    ) {
+      continue
+    }
+    for (const region of componentRegions) {
+      for (const line of region.lines) ownedLineIds.add(line.id)
+    }
+    const primarySource =
+      componentRegions.find(
+        (region) =>
+          region.kind === 'equation' &&
+          hasDisplayEquationEvidence(region, orderedRegions) &&
+          !unresolvedMathExtensionGlyphFragment(region),
+      ) ?? source
+    components.push({ source: primarySource, regions: componentRegions })
+  }
+
+  return components.sort((left, right) => {
+    const leftBox = unionBox(left.regions)
+    const rightBox = unionBox(right.regions)
+    return (
+      leftBox.page - rightBox.page ||
+      leftBox.y - rightBox.y ||
+      leftBox.x - rightBox.x ||
+      left.source.id.localeCompare(right.source.id)
+    )
+  })
+}
+
 function completeEquationSourceScope(
   sources: readonly PdfPageRegion[],
   regions: readonly PdfPageRegion[],
@@ -5626,7 +7697,6 @@ function completeEquationSourceScope(
     source.lines.map((line) => line.id),
   )
   const sourceLineIdSet = new Set(sourceLineIds)
-  if (sourceLineIdSet.size !== sourceLineIds.length) return false
   const inlineFormulaBaseIds = new Set(
     sourceLineIds.flatMap((lineId) => {
       const match = /^(.*-inline-stacked-\d+)-formula$/u.exec(lineId)
@@ -5643,8 +7713,7 @@ function completeEquationSourceScope(
   if (
     inlineFormulaBaseIds.size > 0 &&
     inlineSiblingRegions.length > 0 &&
-    (!hasAmbiguousStackedEquationGeometry([...sources]) ||
-      inlineSiblingRegions.some((region) => region.kind !== 'body'))
+    !hasAmbiguousStackedEquationGeometry([...sources])
   ) {
     return false
   }
@@ -5654,60 +7723,6 @@ function completeEquationSourceScope(
       const match = /^(.*-inline-stacked-\d+)-(before|after)$/u.exec(line.id)
       return Boolean(match && inlineFormulaBaseIds.has(match[1]))
     })
-  const sourceRunOwnershipKeys = sources.flatMap((source) =>
-    source.lines.flatMap((line) =>
-      line.runs
-        .filter((run) => run.text.trim())
-        .map((run) =>
-          [
-            run.page,
-            rounded(run.x),
-            rounded(run.y),
-            rounded(run.width),
-            rounded(run.height),
-            run.rotation,
-            run.text,
-            run.fontName,
-            rounded(run.fontSize),
-          ].join('\u001f'),
-        ),
-    ),
-  )
-  if (new Set(sourceRunOwnershipKeys).size !== sourceRunOwnershipKeys.length) {
-    return false
-  }
-  const lineOccurrenceCount = new Map<string, number>()
-  const runOccurrenceCount = new Map<string, number>()
-  for (const region of regions) {
-    for (const line of region.lines) {
-      lineOccurrenceCount.set(
-        line.id,
-        (lineOccurrenceCount.get(line.id) ?? 0) + 1,
-      )
-      for (const run of line.runs.filter((candidate) =>
-        candidate.text.trim(),
-      )) {
-        const key = [
-          run.page,
-          rounded(run.x),
-          rounded(run.y),
-          rounded(run.width),
-          rounded(run.height),
-          run.rotation,
-          run.text,
-          run.fontName,
-          rounded(run.fontSize),
-        ].join('\u001f')
-        runOccurrenceCount.set(key, (runOccurrenceCount.get(key) ?? 0) + 1)
-      }
-    }
-  }
-  if (
-    sourceLineIds.some((lineId) => lineOccurrenceCount.get(lineId) !== 1) ||
-    sourceRunOwnershipKeys.some((key) => runOccurrenceCount.get(key) !== 1)
-  ) {
-    return false
-  }
   const sourceIds = new Set(sources.map((source) => source.id))
   const printedNumbers = new Set(
     sources.flatMap((source) => {
@@ -5802,12 +7817,15 @@ function completeEquationSourceScope(
     }
     const mathExtensionFragment = mathExtensionGlyphFragment(candidate)
     const sourceMathGlyphFragment = sourceMathFragment(candidate)
+    const sourceMathFontContinuation = sourceMathFontOnlyContinuation(candidate)
     const numericAssignmentFragment = numericListAssignmentFragment(candidate)
     const formulaFragment =
       (candidate.kind === 'equation' &&
         hasDisplayEquationEvidence(candidate, regions)) ||
       mathExtensionFragment ||
       sourceMathGlyphFragment ||
+      sourceMathFontContinuation ||
+      sourceMathOperatorFragment(candidate) ||
       numericAssignmentFragment ||
       compactEquationFragment(candidate) ||
       printedEquationNumberFragment(candidate)
@@ -5941,12 +7959,41 @@ export async function reconstructPdfVisuals({
   pages,
   regions,
   rasterizeFigure,
+  onProgress,
+  signal,
 }: {
   pages: PdfPageAnalysis[]
   regions: PdfPageRegion[]
   rasterizeFigure?: PdfFigureRasterizer
+  onProgress?: (progress: PdfImportProgress) => void
+  signal?: AbortSignal
 }) {
+  throwIfPdfVisualWorkAborted(signal)
   const diagnostics: ReconstructionDiagnostic[] = []
+  const unresolvedExtensionTextItemKeys = new Set<string>()
+  const unresolvedExtensionTextItems: PdfSourceRun[] = []
+  for (const page of pages) {
+    for (const run of page.renderVisibleTextRuns ?? []) {
+      if (
+        run.text !== '\ufffd' ||
+        !/CMEX\d*/iu.test(run.fontName) ||
+        run.sourceTextPaint
+      ) {
+        continue
+      }
+      const key = [
+        run.page,
+        run.sourceSequenceIndex ?? 'unsequenced',
+        run.x,
+        run.y,
+        run.width,
+        run.height,
+      ].join(':')
+      if (unresolvedExtensionTextItemKeys.has(key)) continue
+      unresolvedExtensionTextItemKeys.add(key)
+      unresolvedExtensionTextItems.push(run)
+    }
+  }
   const assetStore = new Map<string, PdfVisualAsset>()
   const canonicalTablesByAssetId = new Map<string, CanonicalTable>()
   const scanSourceObjectIds = new Set(
@@ -5985,9 +8032,43 @@ export async function reconstructPdfVisuals({
       .filter((region) => region.lines.length > 0 && region.text.trim())
       .map((region) => [textOverlayId(region), region.box] as const),
   ])
-  const decorativeObjectIds = decorativeNativeObjectIds(pages)
-  const pageBackdropObjectIds = reusedPageBackdropObjectIds(pages)
-  const panelClipObjectIds = reusedPanelClipObjectIds(pages)
+  const nativeObjectCount = pages.reduce(
+    (total, page) => total + (page.objects?.length ?? 0),
+    0,
+  )
+  onProgress?.({
+    phase: 'semantic-promotion',
+    completed: 0,
+    total: 4,
+    message: `Indexing ${nativeObjectCount} native visual objects for bounded classification…`,
+    checkpoint: 'visual-index',
+  })
+  const rectangleIndexEvidence: PdfRectangleIndexEvidence = {
+    candidateComparisons: 0,
+  }
+  const repeatedRectangleObjectIds = repeatedRectangleFallbackObjectIds(
+    pages,
+    rectangleIndexEvidence,
+  )
+  const decorativeObjectIds = decorativeNativeObjectIds(
+    pages,
+    repeatedRectangleObjectIds,
+  )
+  const pageBackdropObjectIds = reusedPageBackdropObjectIds(
+    pages,
+    repeatedRectangleObjectIds,
+  )
+  const panelClipObjectIds = reusedPanelClipObjectIds(
+    pages,
+    repeatedRectangleObjectIds,
+  )
+  onProgress?.({
+    phase: 'semantic-promotion',
+    completed: 1,
+    total: 4,
+    message: `Indexed native visuals with ${rectangleIndexEvidence.candidateComparisons} bounded rectangle comparisons…`,
+    checkpoint: 'visual-index-complete',
+  })
   // Region classification is part of the caption evidence. Looking only at the
   // leading text turns sentences such as "Table 5 shows ..." into invented
   // visual relationships when they occur at the start of a paragraph.
@@ -6027,27 +8108,192 @@ export async function reconstructPdfVisuals({
       !unstyledProseTableReference(region)
     )
   })
-  for (const caption of captions) caption.kind = 'caption'
+  for (const caption of captions) {
+    caption.kind = 'caption'
+    // A caption can initially be classified as chart/side text because it
+    // touches the visual envelope. Once the caption detector has proved its
+    // semantic label and dedicated caption role, it must re-enter canonical
+    // reading order so the atomic visual can retain a real caption node.
+    caption.includedInReadingOrder = true
+  }
   const figureCaptions = captions.filter(
     (caption) => captionLabels.get(caption)?.kind === 'figure',
   )
-  const figures = figureCandidates(
-    regions,
-    figureCaptions,
-    decorativeObjectIds,
-    pageBackdropObjectIds,
-    panelClipObjectIds,
+  onProgress?.({
+    phase: 'semantic-promotion',
+    completed: 2,
+    total: 4,
+    message: `Grouping bounded figure candidates across ${regions.length} regions and ${captions.length} typed captions…`,
+    checkpoint: 'figure-grouping',
+  })
+  await yieldPdfVisualTask(signal)
+  const figureGroupingEvidence: PdfFigureGroupingEvidence = {
+    figureRegionCount: 0,
+    retainedFigureRegionCount: 0,
+    connectivityComparisons: 0,
+    groupCount: 0,
+  }
+  const rawFigures = (
+    await figureCandidates(
+      regions,
+      figureCaptions,
+      decorativeObjectIds,
+      pageBackdropObjectIds,
+      panelClipObjectIds,
+      figureGroupingEvidence,
+      onProgress,
+      signal,
+    )
   ).map((candidate) => ({
     ...candidate,
     assetIds: candidate.sourceObjectIds
       .map((id) => objectAssetIds.get(id))
       .filter((id): id is string => Boolean(id)),
   }))
+  const matchedStrongFigures = new Set<VisualCandidate>()
+  const strongFigureOwnerClaims = new Map<VisualCandidate, Set<string>>()
+  const strongFigureSourceOwnerClaims = new Map<string, Set<string>>()
+  for (const caption of figureCaptions) {
+    const captionLabel = captionLabels.get(caption)
+    if (
+      !captionLabel ||
+      captionLabel.status === 'unparseable' ||
+      captionLabel.kind !== 'figure'
+    ) {
+      continue
+    }
+    const label: ParsedPdfScholarlyVisualLabel & { sequence: string } = {
+      ...captionLabel,
+      sequence: captionLabel.identifier,
+    }
+    const result = matchCandidate(caption, label, rawFigures, regions)
+    for (const scored of result.scored) {
+      if (
+        scored.score < 0.72 ||
+        (!scored.candidate.evidence?.includes(
+          'caption-bounded-native-scaffold',
+        ) &&
+          !connectedFigureReservationLineage(scored.candidate, regions))
+      ) {
+        continue
+      }
+      const owners =
+        strongFigureOwnerClaims.get(scored.candidate) ?? new Set<string>()
+      owners.add(caption.id)
+      strongFigureOwnerClaims.set(scored.candidate, owners)
+      for (const sourceKey of strongFigureOwnershipKeys(
+        scored.candidate,
+        regions,
+      )) {
+        const sourceOwners =
+          strongFigureSourceOwnerClaims.get(sourceKey) ?? new Set<string>()
+        sourceOwners.add(caption.id)
+        strongFigureSourceOwnerClaims.set(sourceKey, sourceOwners)
+      }
+    }
+    const candidate = result.best?.candidate
+    if (
+      !result.matched ||
+      !candidate ||
+      (!candidate.evidence?.includes('caption-bounded-native-scaffold') &&
+        !connectedFigureReservationLineage(candidate, regions))
+    ) {
+      continue
+    }
+    matchedStrongFigures.add(candidate)
+  }
+  const uniqueStrongFigureOwnerByRawCandidate = new Map<
+    VisualCandidate,
+    string
+  >()
+  for (const candidate of matchedStrongFigures) {
+    const owners = strongFigureOwnerClaims.get(candidate)
+    const owner = owners?.size === 1 ? [...owners][0] : undefined
+    const sourceKeys = strongFigureOwnershipKeys(candidate, regions)
+    if (
+      !owner ||
+      sourceKeys.some((sourceKey) => {
+        const sourceOwners = strongFigureSourceOwnerClaims.get(sourceKey)
+        return sourceOwners?.size !== 1 || !sourceOwners.has(owner)
+      })
+    ) {
+      continue
+    }
+    const ownerCaption = figureCaptions.find((caption) => caption.id === owner)
+    if (
+      ownerCaption &&
+      connectedFigureReservationContestedByTableCaption(
+        candidate,
+        ownerCaption,
+        captions,
+        regions,
+        captionLabels,
+      )
+    ) {
+      continue
+    }
+    uniqueStrongFigureOwnerByRawCandidate.set(candidate, owner)
+  }
+  const figures = rawFigures.map((candidate) => {
+    if (!uniqueStrongFigureOwnerByRawCandidate.has(candidate)) return candidate
+    return candidate.evidence?.includes('caption-bounded-native-scaffold')
+      ? trimStrongFigureCandidateOverlays(candidate, regions)
+      : retainConnectedFigureReservationLineage(candidate, regions)
+  })
+  const uniqueStrongFigureOwnerByCandidate = new Map<VisualCandidate, string>()
+  for (const [index, candidate] of figures.entries()) {
+    const owner = uniqueStrongFigureOwnerByRawCandidate.get(rawFigures[index])
+    if (owner) uniqueStrongFigureOwnerByCandidate.set(candidate, owner)
+  }
+  const reservedFigureLineIds = new Set(
+    figures
+      .filter((_, index) =>
+        uniqueStrongFigureOwnerByRawCandidate.has(rawFigures[index]),
+      )
+      .flatMap((candidate) =>
+        preTableFigureReservationOverlayLineage(candidate, regions).flatMap(
+          (overlay) => overlay.lineIds,
+        ),
+      ),
+  )
+  const reservedFigureSourceObjectIds = new Set(
+    figures
+      .filter((_, index) =>
+        uniqueStrongFigureOwnerByRawCandidate.has(rawFigures[index]),
+      )
+      .flatMap((candidate) =>
+        candidate.sourceObjectIds.filter(
+          (sourceObjectId) => !sourceObjectId.startsWith(TEXT_OVERLAY_PREFIX),
+        ),
+      ),
+  )
+  throwIfPdfVisualWorkAborted(signal)
+  onProgress?.({
+    phase: 'semantic-promotion',
+    completed: 3,
+    total: 4,
+    message: `Validating ${figures.length} bounded figure candidates from ${figureGroupingEvidence.groupCount} groups after retaining ${figureGroupingEvidence.retainedFigureRegionCount} of ${figureGroupingEvidence.figureRegionCount} visual regions and ${figureGroupingEvidence.connectivityComparisons} local comparisons…`,
+    checkpoint: 'figure-grouping-complete',
+  })
+  await yieldPdfVisualTask(signal)
   const consumedRegionIds = new Set<string>()
   const consumedLineIds = new Set<string>()
+  const consumedSourceObjectIds = new Set<string>()
   const relationships: PdfVisualRelationship[] = []
 
   for (const [captionIndex, caption] of captions.entries()) {
+    if (
+      captionIndex > 0 &&
+      captionIndex % PDF_VISUAL_COOPERATIVE_BATCH_SIZE === 0
+    ) {
+      onProgress?.({
+        phase: 'semantic-promotion',
+        completed: captionIndex,
+        total: captions.length,
+        message: `Resolving typed visual captions ${captionIndex} of ${captions.length}…`,
+      })
+      await yieldPdfVisualTask(signal)
+    }
     const captionLabel = captionLabels.get(caption)!
     if (captionLabel.status === 'unparseable') {
       const evidence = ['unparseable-scholarly-label']
@@ -6095,10 +8341,16 @@ export async function reconstructPdfVisuals({
       (candidate) => candidate.kind === label.kind,
     )
     if (label.kind === 'table' || label.kind === 'equation') {
+      const unavailableSourceObjectIds = new Set([
+        ...reservedFigureSourceObjectIds,
+        ...consumedSourceObjectIds,
+      ])
       const availableTableRegions = availableRegionsForTable(
         regions,
         consumedRegionIds,
         consumedLineIds,
+        reservedFigureLineIds,
+        unavailableSourceObjectIds,
       )
       let detectedTable =
         label.kind === 'table'
@@ -6109,7 +8361,12 @@ export async function reconstructPdfVisuals({
           caption,
           pageRegions: availableTableRegions,
           nativeObjects:
-            pages.find((page) => page.page === caption.page)?.objects ?? [],
+            pages
+              .find((page) => page.page === caption.page)
+              ?.objects?.filter(
+                (sourceObject) =>
+                  !unavailableSourceObjectIds.has(sourceObject.id),
+              ) ?? [],
         })
         if (!detectedTable && boundedScope.scope) {
           detectedTable = detectTableWithinProvenScope(
@@ -6131,7 +8388,38 @@ export async function reconstructPdfVisuals({
             detectHierarchicalTableWithinProvenScope(
               availableTableRegions,
               boundedScope.scope,
+            ) ??
+            detectExplicitHeaderNumericTableWithinProvenScope(
+              availableTableRegions,
+              boundedScope.scope,
             )
+          const provenSemanticTable = semanticTableGrid
+            ? canonicalTableFromLines(semanticTableGrid.lines, {
+                sourceHeaderLineIds: [],
+                detectedRectangularGeometry: true,
+                detectedGrid: semanticTableGrid,
+                sourceRegions: semanticTableGrid.sourceRegions,
+                links:
+                  pages.find((page) => page.page === caption.page)?.links ?? [],
+              })
+            : null
+          const semanticTableAnnotationIds = (
+            provenSemanticTable?.rows ?? []
+          ).flatMap((row) =>
+            row.cells.flatMap((cell) =>
+              (cell.inlineRuns ?? []).flatMap((run) =>
+                run.annotationId ? [run.annotationId] : [],
+              ),
+            ),
+          )
+          if (
+            semanticTableGrid &&
+            (!provenSemanticTable ||
+              new Set(semanticTableAnnotationIds).size !==
+                semanticTableAnnotationIds.length)
+          ) {
+            semanticTableGrid = null
+          }
         }
         // A proved bounded text/native scope outranks the legacy geometric
         // detector. The latter may join a neighbouring chart that shares row
@@ -6146,7 +8434,11 @@ export async function reconstructPdfVisuals({
               ? boundedScope
               : null
       }
-      const nearbySources = nextSourceRegions(caption, regions, label.kind)
+      const nearbySources = nextSourceRegions(
+        caption,
+        availableTableRegions,
+        label.kind,
+      )
       const selectedSources =
         label.kind === 'table'
           ? (semanticTableGrid?.sourceRegions ??
@@ -6155,8 +8447,12 @@ export async function reconstructPdfVisuals({
           : nearbySources[0]
             ? attachedEquationRegions(
                 nearbySources[0],
-                regions,
+                availableTableRegions,
                 consumedRegionIds,
+                new Set(),
+                provedProseSplitInlineStackedFormulaBaseIds(
+                  availableTableRegions,
+                ),
               )
             : nearbySources
       const sources =
@@ -6185,7 +8481,7 @@ export async function reconstructPdfVisuals({
             ? sourceEquationRendition(
                 caption,
                 sources,
-                regions,
+                availableTableRegions,
                 objectAssetIds,
                 objectBoxes,
                 assetStore,
@@ -6297,7 +8593,9 @@ export async function reconstructPdfVisuals({
           objectAssetIds,
         )
       : matchCandidate(caption, label, candidates, regions)
-    const scoredCandidateRecords = result.scored.map(matchRecord)
+    const scoredCandidateRecords = result.scored.map((scored) =>
+      matchRecord(scored, regions),
+    )
     const matchedCandidate = result.best?.candidate
     const sourcePageCropVetoed = Boolean(
       matchedCandidate?.sourcePageCropBlockedByReadingOrderText,
@@ -6305,6 +8603,21 @@ export async function reconstructPdfVisuals({
     const best = matchedCandidate
       ? nativeOnlyFigureCandidate(matchedCandidate, regions, objectAssetIds)
       : undefined
+    const figureLineageConflictsPriorOwnership =
+      best?.kind === 'figure' &&
+      (best.sourceObjectIds.some((sourceObjectId) =>
+        consumedSourceObjectIds.has(sourceObjectId),
+      ) ||
+        containedFigureOverlayLineage(best, regions).some((overlay) =>
+          overlay.lineIds.some((lineId) => consumedLineIds.has(lineId)),
+        ))
+    if (
+      figureLineageConflictsPriorOwnership &&
+      result.best &&
+      !result.best.evidence.includes('cross-type-source-lineage-conflict')
+    ) {
+      result.best.evidence.push('cross-type-source-lineage-conflict')
+    }
     const boundedCropBaseBox =
       best?.renderBox ??
       (best?.kind === 'table' && best.sourceBoxes.length === 1
@@ -6353,6 +8666,7 @@ export async function reconstructPdfVisuals({
         scopedSourceLineage.sourceBoxes.length &&
       compositeSourceBox &&
       rasterizeFigure &&
+      !figureLineageConflictsPriorOwnership &&
       !best.nativeEnvelopeIncomplete &&
       !sourcePageCropVetoed &&
       (scopedSourceLineage.sourceObjectIds.length > 1 ||
@@ -6671,6 +8985,78 @@ export async function reconstructPdfVisuals({
           }
         }
       }
+      const tightenedSourceCropFailure =
+        sourceCrop?.sourceCropBox &&
+        !sameSourceBox(sourceCrop.sourceCropBox, compositeSourceBox!)
+          ? sourcePageCropValidationFailure(
+              sourceCrop,
+              best.kind,
+              scopedSourceLineage.sourceObjectIds,
+              scopedSourceLineage.sourceBoxes,
+              compositeSourceBox!,
+            )
+          : null
+      if (
+        sourceCrop &&
+        best.kind === 'figure' &&
+        !result.best?.evidence.includes('caption-bounded-native-scaffold') &&
+        [
+          'source-page-crop-lineage-rejected',
+          'source-page-crop-lineage-geometry-rejected',
+          'source-page-crop-containment-rejected',
+        ].includes(tightenedSourceCropFailure ?? '') &&
+        renderScopeContainsCompleteFigureLineage(
+          best,
+          compositeSourceBox!,
+          regions,
+        )
+      ) {
+        const completeSourceObjectIds = [...best.sourceObjectIds]
+        const completeSourceBoxes = best.sourceBoxes.map((sourceBox) => ({
+          ...sourceBox,
+        }))
+        const untrimmedCrop = await rasterizeFigure({
+          kind: best.kind,
+          page: best.page,
+          sourceBox: compositeSourceBox!,
+          sourceObjectIds: completeSourceObjectIds,
+          sourceBoxes: completeSourceBoxes,
+          tightenToSourceInk: false,
+        }).catch((error: unknown) => {
+          pageCropFailureEvidence = sourcePageCropFailureEvidence(error)
+          return null
+        })
+        sourceCrop = untrimmedCrop
+        if (
+          untrimmedCrop &&
+          completeSourcePageCropAsset(
+            untrimmedCrop,
+            best.kind,
+            completeSourceObjectIds,
+            completeSourceBoxes,
+            compositeSourceBox!,
+          )
+        ) {
+          scopedSourceLineage = {
+            sourceObjectIds: completeSourceObjectIds,
+            sourceBoxes: completeSourceBoxes,
+            clipped: false,
+          }
+          pageCropFailureEvidence = undefined
+          result.best!.evidence.push(
+            'source-page-crop-complete-lineage-preserved',
+          )
+        } else if (untrimmedCrop) {
+          pageCropFailureEvidence =
+            sourcePageCropValidationFailure(
+              untrimmedCrop,
+              best.kind,
+              completeSourceObjectIds,
+              completeSourceBoxes,
+              compositeSourceBox!,
+            ) ?? undefined
+        }
+      }
       if (
         sourceCrop &&
         completeSourcePageCropAsset(
@@ -6732,6 +9118,7 @@ export async function reconstructPdfVisuals({
       result.matched &&
       best?.kind === 'figure' &&
       rasterizeFigure &&
+      !figureLineageConflictsPriorOwnership &&
       !retainedPageCrop &&
       !sourcePageCropVetoed
     ) {
@@ -6824,6 +9211,7 @@ export async function reconstructPdfVisuals({
       result.matched &&
       best &&
       compositeSourceBox &&
+      !figureLineageConflictsPriorOwnership &&
       best.sourceObjectIds.length >= MIN_COMPOSITE_FIGURE_FRAGMENTS &&
       sourceObjectBoxes.length === best.sourceObjectIds.length &&
       !best.nativeEnvelopeIncomplete &&
@@ -6886,6 +9274,7 @@ export async function reconstructPdfVisuals({
     }
     const payloadComplete =
       Boolean(best) &&
+      !figureLineageConflictsPriorOwnership &&
       !best!.nativeEnvelopeIncomplete &&
       best!.sourceObjectIds.length > 0 &&
       (Boolean(
@@ -6927,6 +9316,11 @@ export async function reconstructPdfVisuals({
       matchedCandidate!.tableRegionLineage!.every(
         (lineage) => lineage.lineIds.length > 0,
       )
+    const unresolvedBoundedTableLineageIsWholeRegion =
+      ownsUnresolvedBoundedTableText &&
+      matchedCandidate!.tableRegionLineage!.every(
+        (lineage) => lineage.selection === 'whole',
+      )
     const unresolvedBoundedTableRegionIds = ownsUnresolvedBoundedTableText
       ? [
           ...new Set(
@@ -6959,32 +9353,24 @@ export async function reconstructPdfVisuals({
           )
           .map((line) => line.id)
       : []
-    const unresolvedOverlayRegionIds =
+    const unresolvedFigureOverlays =
       status === 'unresolved' &&
       label.kind === 'figure' &&
       result.matched &&
       matchedCandidate?.renderBox &&
-      matchedCandidate.sourceText.trim() &&
+      uniqueStrongFigureOwnerByCandidate.get(matchedCandidate) === caption.id &&
       result.best?.evidence.includes('caption-bounded-native-scaffold')
-        ? matchedCandidate.sourceObjectIds.flatMap((sourceObjectId, index) => {
-            if (!sourceObjectId.startsWith(TEXT_OVERLAY_PREFIX)) return []
-            const sourceBox = matchedCandidate.sourceBoxes[index]
-            const area = sourceBox.width * sourceBox.height
-            const covered = intersectionArea(
-              sourceBox,
-              matchedCandidate.renderBox!,
-            )
-            return area > 0 && covered / area >= 0.95
-              ? [sourceObjectId.slice(TEXT_OVERLAY_PREFIX.length)]
-              : []
+        ? containedFigureOverlayLineage(matchedCandidate, regions, {
+            excludedLineIds: consumedLineIds,
           })
         : []
-    const ownsUnresolvedFigureText =
-      unresolvedOverlayRegionIds.length > 0 &&
-      unresolvedOverlayRegionIds.length ===
-        matchedCandidate!.sourceObjectIds.filter((sourceObjectId) =>
-          sourceObjectId.startsWith(TEXT_OVERLAY_PREFIX),
-        ).length
+    const unresolvedOverlayRegionIds = unresolvedFigureOverlays.map(
+      (overlay) => overlay.regionId,
+    )
+    const unresolvedFigureLineIds = unresolvedFigureOverlays.flatMap(
+      (overlay) => overlay.lineIds,
+    )
+    const ownsUnresolvedFigureText = unresolvedFigureOverlays.length > 0
     if (
       ownsUnresolvedFigureText &&
       result.best &&
@@ -7000,6 +9386,9 @@ export async function reconstructPdfVisuals({
       result.best.evidence.push('unresolved-bounded-table-text-owned')
     }
     if (status === 'matched') {
+      for (const sourceObjectId of best!.sourceObjectIds) {
+        consumedSourceObjectIds.add(sourceObjectId)
+      }
       if (label.kind === 'table' || label.kind === 'equation') {
         if (
           label.kind === 'table' &&
@@ -7044,6 +9433,26 @@ export async function reconstructPdfVisuals({
           'source-page-crop-caption-bounded-panel-recovery',
         )
         const retainedSourceRegionIds = new Set(best!.sourceRegionIds)
+        const selectedFigureLineIds = new Set(best!.sourceLineIds ?? [])
+        const consumeMatchedFigureTextRegion = (sourceRegionId: string) => {
+          if (selectedFigureLineIds.size === 0) {
+            consumedRegionIds.add(sourceRegionId)
+            return
+          }
+          const regionLineIds =
+            regions
+              .find((region) => region.id === sourceRegionId)
+              ?.lines.map((line) => line.id)
+              .filter((lineId) => selectedFigureLineIds.has(lineId)) ?? []
+          if (regionLineIds.length === 0) return
+          consumeRegionLineSelection(
+            sourceRegionId,
+            regionLineIds,
+            regions,
+            consumedRegionIds,
+            consumedLineIds,
+          )
+        }
         if (captionBoundedPanelRecovery) {
           for (const sourceRegionId of retainedSourceRegionIds) {
             const sourceRegion = regions.find(
@@ -7055,7 +9464,7 @@ export async function reconstructPdfVisuals({
               sourceRegion.lines.length > 0 &&
               sourceRegion.text.trim().length > 0
             ) {
-              consumedRegionIds.add(sourceRegionId)
+              consumeMatchedFigureTextRegion(sourceRegionId)
             }
           }
         }
@@ -7065,14 +9474,14 @@ export async function reconstructPdfVisuals({
             TEXT_OVERLAY_PREFIX.length,
           )
           if (retainedSourceRegionIds.has(sourceRegionId)) {
-            consumedRegionIds.add(sourceRegionId)
+            consumeMatchedFigureTextRegion(sourceRegionId)
           }
         }
       }
-    } else if (ownsUnresolvedBoundedTableText) {
-      // A complete bounded source scope remains review-required when no
-      // publication-safe rendition can be produced. Its cell stream still
-      // belongs to that unresolved table, not to the surrounding prose.
+    } else if (unresolvedBoundedTableLineageIsWholeRegion) {
+      // Whole-region source scopes remain owned by the unresolved table.
+      // Partial-parent scopes stay in canonical flow because consuming only
+      // their selected lines would drop the sole recoverable table text.
       for (const lineage of matchedCandidate!.tableRegionLineage!) {
         consumeRegionLineSelection(
           lineage.regionId,
@@ -7087,8 +9496,14 @@ export async function reconstructPdfVisuals({
       // text is unambiguously enclosed by the single caption-bounded figure
       // candidate. Keep that text with the unresolved visual transcript; do
       // not splice it into the surrounding scholarly prose.
-      for (const sourceRegionId of unresolvedOverlayRegionIds) {
-        consumedRegionIds.add(sourceRegionId)
+      for (const overlay of unresolvedFigureOverlays) {
+        consumeRegionLineSelection(
+          overlay.regionId,
+          overlay.lineIds,
+          regions,
+          consumedRegionIds,
+          consumedLineIds,
+        )
       }
     }
     if (status !== 'matched') {
@@ -7135,11 +9550,15 @@ export async function reconstructPdfVisuals({
       sourceRegionIds:
         status === 'matched'
           ? best!.sourceRegionIds
-          : unresolvedBoundedTableRegionIds,
+          : ownsUnresolvedBoundedTableText
+            ? unresolvedBoundedTableRegionIds
+            : unresolvedOverlayRegionIds,
       sourceLineIds:
         status === 'matched'
           ? [...(best!.sourceLineIds ?? [])]
-          : unresolvedBoundedTableLineIds,
+          : ownsUnresolvedBoundedTableText
+            ? unresolvedBoundedTableLineIds
+            : unresolvedFigureLineIds,
       sourceObjectIds: status === 'matched' ? best!.sourceObjectIds : [],
       assetIds: status === 'matched' ? best!.assetIds : [],
       status,
@@ -7154,14 +9573,23 @@ export async function reconstructPdfVisuals({
           ? [caption.box, ...best!.sourceBoxes]
           : ownsUnresolvedBoundedTableText
             ? [caption.box, ...matchedCandidate!.sourceBoxes]
-            : [caption.box],
+            : ownsUnresolvedFigureText
+              ? [
+                  caption.box,
+                  ...unresolvedFigureOverlays.map(
+                    (overlay) => overlay.sourceBox,
+                  ),
+                ]
+              : [caption.box],
       sourceText:
         status === 'matched'
           ? best!.sourceText
           : ownsUnresolvedBoundedTableText
             ? matchedCandidate!.sourceText
             : ownsUnresolvedFigureText
-              ? matchedCandidate!.sourceText
+              ? unresolvedFigureOverlays
+                  .map((overlay) => overlay.sourceText)
+                  .join(' ')
               : '',
       altText: caption.text,
       altTextSource: 'caption',
@@ -7169,9 +9597,28 @@ export async function reconstructPdfVisuals({
       captionNodeId: null,
     })
   }
+  onProgress?.({
+    phase: 'semantic-promotion',
+    completed: captions.length,
+    total: captions.length,
+    message: `Resolved ${captions.length} typed visual captions…`,
+  })
+  await yieldPdfVisualTask(signal)
 
   const preformattedCountByPage = new Map<number, number>()
-  for (const block of preformattedBlocks) {
+  for (const [blockIndex, block] of preformattedBlocks.entries()) {
+    if (
+      blockIndex > 0 &&
+      blockIndex % PDF_VISUAL_COOPERATIVE_BATCH_SIZE === 0
+    ) {
+      onProgress?.({
+        phase: 'semantic-promotion',
+        completed: blockIndex,
+        total: preformattedBlocks.length,
+        message: `Resolving bounded preformatted blocks ${blockIndex} of ${preformattedBlocks.length}…`,
+      })
+      await yieldPdfVisualTask(signal)
+    }
     const pageSequence =
       (preformattedCountByPage.get(block.caption.page) ?? 0) + 1
     preformattedCountByPage.set(block.caption.page, pageSequence)
@@ -7422,7 +9869,20 @@ export async function reconstructPdfVisuals({
   }
 
   const algorithmCountByPage = new Map<number, number>()
-  for (const algorithm of boundedAlgorithmBlocks(regions, consumedRegionIds)) {
+  const algorithms = boundedAlgorithmBlocks(regions, consumedRegionIds)
+  for (const [algorithmIndex, algorithm] of algorithms.entries()) {
+    if (
+      algorithmIndex > 0 &&
+      algorithmIndex % PDF_VISUAL_COOPERATIVE_BATCH_SIZE === 0
+    ) {
+      onProgress?.({
+        phase: 'semantic-promotion',
+        completed: algorithmIndex,
+        total: algorithms.length,
+        message: `Resolving bounded algorithm blocks ${algorithmIndex} of ${algorithms.length}…`,
+      })
+      await yieldPdfVisualTask(signal)
+    }
     const pageSequence =
       (algorithmCountByPage.get(algorithm.caption.page) ?? 0) + 1
     algorithmCountByPage.set(algorithm.caption.page, pageSequence)
@@ -7571,42 +10031,67 @@ export async function reconstructPdfVisuals({
   }
 
   const equationCountByPage = new Map<number, number>()
-  const examinedEquationRegionIds = new Set<string>()
-  for (const source of regions.filter(
-    (region) =>
-      !consumedRegionIds.has(region.id) &&
-      hasDisplayEquationEvidence(region, regions),
-  )) {
-    if (
-      consumedRegionIds.has(source.id) ||
-      examinedEquationRegionIds.has(source.id)
-    ) {
-      continue
+  const equationComponents = displayEquationComponents(
+    regions,
+    consumedRegionIds,
+  )
+  const equationComponentScopes = equationComponents.map((component, index) => {
+    const id = `${component.source.id}\u001f${index}`
+    return {
+      id,
+      component,
+      ownership: proveEquationComponentOwnership(component.regions, regions),
     }
+  })
+  const equationComponentOwnershipByScopeId = new Map(
+    equationComponentScopes.map((scope) => [scope.id, scope.ownership]),
+  )
+  const renderOnlyOwnershipByScopeId =
+    proveEquationRenderOnlySourceRunOwnerships({
+      pages,
+      regions,
+      scopes: equationComponentScopes.flatMap((scope) =>
+        scope.ownership
+          ? [
+              {
+                id: scope.id,
+                page: scope.component.source.page,
+                sourceRegionIds: scope.ownership.sourceRegionIds,
+                sourceLineIds: scope.ownership.sourceLineIds,
+              },
+            ]
+          : [],
+      ),
+    })
+  const resolvedRenderOnlySourceRunKeys = new Set<string>()
+  const componentEquationRegionIds = new Set(
+    equationComponents.flatMap((component) =>
+      component.regions
+        .filter((region) => region.kind === 'equation')
+        .map((region) => region.id),
+    ),
+  )
+  for (const [
+    equationIndex,
+    { source, regions: sources },
+  ] of equationComponents.entries()) {
+    const equationComponentScopeId = `${source.id}\u001f${equationIndex}`
     if (
-      unresolvedMathExtensionGlyphFragment(source) &&
-      regions.some(
-        (candidate) =>
-          candidate.id !== source.id &&
-          candidate.page === source.page &&
-          !consumedRegionIds.has(candidate.id) &&
-          candidate.kind === 'equation' &&
-          probableDisplayEquationText(candidate.text) &&
-          attachedEquationRegions(candidate, regions, consumedRegionIds).some(
-            (attached) => attached.id === source.id,
-          ),
-      )
+      equationIndex > 0 &&
+      equationIndex % PDF_VISUAL_COOPERATIVE_BATCH_SIZE === 0
     ) {
-      continue
+      onProgress?.({
+        phase: 'semantic-promotion',
+        completed: equationIndex,
+        total: equationComponents.length,
+        message: `Resolving atomic display equations ${equationIndex} of ${equationComponents.length}…`,
+      })
+      await yieldPdfVisualTask(signal)
     }
+    if (consumedRegionIds.has(source.id)) continue
     const page = pages.find((item) => item.page === source.page)
     if (!page) continue
-    const sources = attachedEquationRegions(source, regions, consumedRegionIds)
-    for (const attached of sources) {
-      if (attached.kind === 'equation') {
-        examinedEquationRegionIds.add(attached.id)
-      }
-    }
+    const renderVisibleTextRuns = sourceTextPaintInventoryForPage(page, regions)
     const sourceText = equationSourceText(sources)
     if (
       !probableDisplayEquationText(sourceText) &&
@@ -7618,11 +10103,24 @@ export async function reconstructPdfVisuals({
     ) {
       continue
     }
-    const sourceScopeComplete = completeEquationSourceScope(
-      sources,
-      regions,
-      consumedRegionIds,
-      examinedEquationRegionIds,
+    const ownership =
+      equationComponentOwnershipByScopeId.get(equationComponentScopeId) ?? null
+    const renderOnlyOwnershipProjection =
+      renderOnlyOwnershipByScopeId.get(equationComponentScopeId) ?? null
+    const sourceScopeComplete =
+      ownership !== null &&
+      !sources.some(unresolvedDetachedMathHost) &&
+      completeEquationSourceScope(
+        sources,
+        regions,
+        consumedRegionIds,
+        componentEquationRegionIds,
+      )
+    const renderOnlyOwnedSourceRuns = sourceScopeComplete
+      ? (renderOnlyOwnershipProjection?.sourceRuns ?? [])
+      : []
+    const renderOnlyOwnedRunKeys = new Set(
+      renderOnlyOwnedSourceRuns.map(equationRenderOnlySourceRunIdentity),
     )
     const transcript = sourceScopeComplete
       ? sourceEquationTranscript(sources)
@@ -7650,33 +10148,51 @@ export async function reconstructPdfVisuals({
     const approximationEvidence = [
       'source-equation-region',
       'bounded-source-geometry',
+      ...(ownership ? ['source-proved-atomic-equation-component'] : []),
       ...transcriptEvidence,
       ...(!sourceScopeComplete ? ['incomplete-equation-source-scope'] : []),
+      ...(sources.some(unresolvedDetachedMathHost)
+        ? ['unresolved-detached-math-host']
+        : []),
       ...(visualAsset ? ['readable-text-svg-approximation'] : []),
     ]
     const unboundedInitialCropBox = paddedUnionBox([sourceBox])
-    const sourceEquationLineIds = new Set(
-      sources.flatMap((region) => region.lines.map((line) => line.id)),
-    )
-    const ownedSourceBoxes = sources.flatMap((region) =>
-      region.lines.flatMap((line) =>
-        line.runs
-          .filter((run) => run.text.trim())
-          .map((run) => ({
-            page: run.page,
-            x: run.x,
-            y: run.y,
-            width: run.width,
-            height: run.height,
-            rotation: run.rotation,
-            method: run.method,
-          })),
+    const projectedSourceLineIds =
+      ownership?.sourceLineIds ??
+      sources.flatMap((region) => region.lines.map((line) => line.id))
+    const sourceEquationLineIds = new Set(projectedSourceLineIds)
+    const ownedSourceBoxes = [
+      ...sources.flatMap((region) =>
+        region.lines.flatMap((line) =>
+          line.runs
+            .filter((run) => run.text.trim())
+            .map((run) => ({
+              page: run.page,
+              x: run.x,
+              y: run.y,
+              width: run.width,
+              height: run.height,
+              rotation: run.rotation,
+              method: run.method,
+            })),
+        ),
       ),
-    )
+      ...renderOnlyOwnedSourceRuns.map((run) => ({
+        page: run.page,
+        x: run.x,
+        y: run.y,
+        width: run.width,
+        height: run.height,
+        rotation: run.rotation,
+        method: run.method,
+      })),
+    ]
     const overlappingUnownedSourceText = hasOverlappingUnownedEquationText(
       ownedSourceBoxes,
       sourceEquationLineIds,
       regions,
+      renderVisibleTextRuns,
+      renderOnlyOwnedRunKeys,
     )
     if (overlappingUnownedSourceText) {
       approximationEvidence.push('overlapping-unowned-source-text')
@@ -7691,20 +10207,19 @@ export async function reconstructPdfVisuals({
     let cropTouchedEdge = false
     let cropVetoedUnownedText = false
     let adaptivePaddingRetry = false
+    let postExhaustionV2Retry = false
     let requestedExcludedSourceBoxes: NormalizedSourceBox[] = []
+    let requestedTextOperationFilter: PdfTextOperationFilterPlan | null = null
     let retainedExcludedSourceBoxes: NormalizedSourceBox[] = []
     let neighborBoundedCrop = !sameSourceBox(
       sourceCropBox,
       unboundedInitialCropBox,
     )
-    if (
-      rasterizeFigure &&
-      sourceScopeComplete &&
-      !overlappingUnownedSourceText
-    ) {
+    if (rasterizeFigure && sourceScopeComplete) {
       const rasterizeEquationCrop = async (
         cropBox: NormalizedSourceBox,
         excludedSourceBoxes: readonly NormalizedSourceBox[],
+        sourceTextOperationFilter: PdfTextOperationFilterPlan | null,
       ) => {
         const attempt = async (
           requestedExcludedSourceBoxes: readonly NormalizedSourceBox[],
@@ -7716,8 +10231,11 @@ export async function reconstructPdfVisuals({
             sourceBox: cropBox,
             sourceObjectIds: [sourceObjectId],
             sourceBoxes: [sourceBox],
-            ownedSourceBoxes,
-            ...(requestedExcludedSourceBoxes.length > 0
+            ...(sourceTextOperationFilter
+              ? { sourceTextOperationFilter }
+              : { ownedSourceBoxes }),
+            ...(!sourceTextOperationFilter &&
+            requestedExcludedSourceBoxes.length > 0
               ? {
                   excludedSourceBoxes: [...requestedExcludedSourceBoxes],
                 }
@@ -7731,6 +10249,7 @@ export async function reconstructPdfVisuals({
         const maskedAttempt = await attempt(excludedSourceBoxes)
         if (
           maskedAttempt.asset &&
+          !sourceTextOperationFilter &&
           excludedSourceBoxes.length > 0 &&
           !maskedAttempt.asset.sourceExclusionMask
         ) {
@@ -7756,6 +10275,8 @@ export async function reconstructPdfVisuals({
         sourceCropBox,
         sourceEquationLineIds,
         regions,
+        renderVisibleTextRuns,
+        renderOnlyOwnedRunKeys,
       )
       const initialHasUnownedText = initialUnownedSourceBoxes.length > 0
       const initialExcludedSourceBoxes = excludedEquationSourceBoxesForCrop(
@@ -7772,21 +10293,46 @@ export async function reconstructPdfVisuals({
             sameSourceBox(unowned, excluded),
           ),
       )
-      cropVetoedUnownedText =
-        initialHasUnownedText && !initialExclusionsComplete
+      const initialV1Unsafe =
+        initialHasUnownedText &&
+        (!initialExclusionsComplete ||
+          initialUnownedSourceBoxes.some((unowned) =>
+            ownedSourceBoxes.some((owned) =>
+              sourceBoxesIntersect(owned, unowned),
+            ),
+          ))
+      const initialTextOperationFilter = initialV1Unsafe
+        ? sourceTextOperationFilterPlanForEquationCrop(
+            sourceCropBox,
+            sourceEquationLineIds,
+            regions,
+            renderVisibleTextRuns,
+            renderOnlyOwnedRunKeys,
+          )
+        : null
+      cropVetoedUnownedText = initialV1Unsafe && !initialTextOperationFilter
       const initialCropResult = cropVetoedUnownedText
         ? null
-        : await rasterizeEquationCrop(sourceCropBox, initialExcludedSourceBoxes)
+        : await rasterizeEquationCrop(
+            sourceCropBox,
+            initialTextOperationFilter ? [] : initialExcludedSourceBoxes,
+            initialTextOperationFilter,
+          )
       sourceCrop = initialCropResult?.crop ?? null
       cropTouchedEdge = initialCropResult?.touchedEdge ?? false
       if (sourceCrop) {
+        requestedTextOperationFilter = initialTextOperationFilter
         requestedExcludedSourceBoxes =
           initialCropResult!.requestedExcludedSourceBoxes
         retainedExcludedSourceBoxes =
           sourceCrop.sourceExclusionMask?.excludedSourceBoxes.map((box) => ({
             ...box,
           })) ?? []
-      } else if (initialHasUnownedText && !initialExclusionsComplete) {
+      } else if (
+        initialHasUnownedText &&
+        !initialExclusionsComplete &&
+        !initialTextOperationFilter
+      ) {
         cropTouchedEdge = false
       }
       const attemptedBoxes = [sourceCropBox]
@@ -7827,6 +10373,8 @@ export async function reconstructPdfVisuals({
             retryBox,
             sourceEquationLineIds,
             regions,
+            renderVisibleTextRuns,
+            renderOnlyOwnedRunKeys,
           )
           const retryHasUnownedText = retryUnownedSourceBoxes.length > 0
           const retryExcludedSourceBoxes = excludedEquationSourceBoxesForCrop(
@@ -7843,19 +10391,38 @@ export async function reconstructPdfVisuals({
                 sameSourceBox(unowned, excluded),
               ),
           )
-          if (retryHasUnownedText && !retryExclusionsComplete) {
+          const retryV1Unsafe =
+            retryHasUnownedText &&
+            (!retryExclusionsComplete ||
+              retryUnownedSourceBoxes.some((unowned) =>
+                ownedSourceBoxes.some((owned) =>
+                  sourceBoxesIntersect(owned, unowned),
+                ),
+              ))
+          const retryTextOperationFilter = retryV1Unsafe
+            ? sourceTextOperationFilterPlanForEquationCrop(
+                retryBox,
+                sourceEquationLineIds,
+                regions,
+                renderVisibleTextRuns,
+                renderOnlyOwnedRunKeys,
+              )
+            : null
+          if (retryV1Unsafe && !retryTextOperationFilter) {
             cropVetoedUnownedText = true
             continue
           }
           const retryResult = await rasterizeEquationCrop(
             retryBox,
-            retryExcludedSourceBoxes,
+            retryTextOperationFilter ? [] : retryExcludedSourceBoxes,
+            retryTextOperationFilter,
           )
           const retryCrop = retryResult.crop
           cropTouchedEdge = retryResult.touchedEdge
           if (retryCrop) {
             sourceCropBox = retryBox
             sourceCrop = retryCrop
+            requestedTextOperationFilter = retryTextOperationFilter
             requestedExcludedSourceBoxes =
               retryResult.requestedExcludedSourceBoxes
             retainedExcludedSourceBoxes =
@@ -7867,6 +10434,68 @@ export async function reconstructPdfVisuals({
             break retryEquationCrop
           }
           if (!cropTouchedEdge) break retryEquationCrop
+        }
+      }
+      if (!sourceCrop && cropTouchedEdge) {
+        for (const padding of EQUATION_SOURCE_CROP_RETRY_PADDINGS) {
+          const postExhaustionBox = paddedEquationCropBox(sourceBox, padding)
+          if (
+            attemptedBoxes.some((attempted) =>
+              sameSourceBox(attempted, postExhaustionBox),
+            ) ||
+            !isBoundedPdfPageCropBox(postExhaustionBox) ||
+            !fullyContainsBox(
+              postExhaustionBox,
+              sourceBox,
+              SOURCE_CROP_CONTAINMENT_TOLERANCE,
+            )
+          ) {
+            continue
+          }
+          const postExhaustionTextOperationFilter =
+            sourceTextOperationFilterPlanForEquationCrop(
+              postExhaustionBox,
+              sourceEquationLineIds,
+              regions,
+              renderVisibleTextRuns,
+              renderOnlyOwnedRunKeys,
+            )
+          if (
+            !postExhaustionTextOperationFilter ||
+            postExhaustionTextOperationFilter.algorithm !==
+              'pdfjs-display-text-operation-filter-v2' ||
+            !postExhaustionTextOperationFilter.ownedSourceBoxes.every((box) =>
+              fullyContainsBox(
+                postExhaustionBox,
+                box,
+                SOURCE_CROP_CONTAINMENT_TOLERANCE,
+              ),
+            )
+          ) {
+            continue
+          }
+          attemptedBoxes.push(postExhaustionBox)
+          const postExhaustionResult = await rasterizeEquationCrop(
+            postExhaustionBox,
+            [],
+            postExhaustionTextOperationFilter,
+          )
+          cropTouchedEdge = postExhaustionResult.touchedEdge
+          if (postExhaustionResult.crop) {
+            sourceCropBox = postExhaustionBox
+            sourceCrop = postExhaustionResult.crop
+            requestedTextOperationFilter = postExhaustionTextOperationFilter
+            requestedExcludedSourceBoxes = []
+            retainedExcludedSourceBoxes =
+              sourceCrop.sourceExclusionMask?.excludedSourceBoxes.map(
+                (box) => ({ ...box }),
+              ) ?? []
+            adaptivePaddingRetry = true
+            postExhaustionV2Retry = true
+            neighborBoundedCrop = false
+            break
+          }
+          if (!cropTouchedEdge) break
         }
       }
     }
@@ -7883,24 +10512,64 @@ export async function reconstructPdfVisuals({
         sourceCropBox,
         ownedSourceBoxes,
         requestedExcludedSourceBoxes,
+        requestedTextOperationFilter,
       ),
     )
+    const appliedRenderOnlyOwnerships = cropMatched
+      ? (renderOnlyOwnershipProjection?.ownerships ?? [])
+      : []
+    if (cropMatched) {
+      for (const run of renderOnlyOwnedSourceRuns) {
+        resolvedRenderOnlySourceRunKeys.add(
+          equationRenderOnlySourceRunIdentity(run),
+        )
+      }
+    }
     if (sourceCrop && cropMatched) mergeAsset(assetStore, sourceCrop)
+    const equationGeometryTranscript =
+      cropMatched && sourceCrop && transcript === null
+        ? createSourceGeometryScriptTranscript({
+            sourceRegionIds: ownership!.sourceRegionIds,
+            sourceLineIds: ownership!.sourceLineIds,
+            sourceObjectIds: [sourceObjectId],
+            regions,
+            sourceCropAsset: sourceCrop,
+          })
+        : null
+    const resolvedTranscriptEvidence = equationGeometryTranscript
+      ? [SOURCE_GEOMETRY_SCRIPT_TRANSCRIPT_EVIDENCE]
+      : transcriptEvidence
     const evidence = cropMatched
       ? [
           'source-equation-region',
           'bounded-source-geometry',
-          ...transcriptEvidence,
+          'source-proved-atomic-equation-component',
+          ...resolvedTranscriptEvidence,
           ...(adaptivePaddingRetry
             ? ['source-page-crop-adaptive-padding']
             : []),
+          ...(postExhaustionV2Retry
+            ? ['source-page-crop-post-exhaustion-v2']
+            : []),
           ...(neighborBoundedCrop ? ['source-page-crop-neighbor-bounded'] : []),
-          ...(retainedExcludedSourceBoxes.length > 0
+          ...(retainedExcludedSourceBoxes.length > 0 &&
+          sourceCrop?.sourceExclusionMask?.algorithm === 'nearest-source-box-v1'
             ? ['source-page-crop-unowned-text-masked']
+            : []),
+          ...(requestedTextOperationFilter
+            ? ['source-page-crop-text-operation-filter-attested']
+            : []),
+          ...(appliedRenderOnlyOwnerships.length > 0
+            ? [RENDER_ONLY_EQUATION_OWNERSHIP_EVIDENCE]
             : []),
           'source-page-crop',
         ]
       : approximationEvidence
+    // Exact source identity proves which regions form this equation, but it
+    // does not prove that their text has a canonical replacement. Preserve
+    // every source line when the rendition is unresolved; otherwise an
+    // unavailable crop can silently turn source equations (and adjacent
+    // inline obligations) into missing content.
     if (cropMatched) {
       for (const attached of sources) {
         if (attached.id === source.id) continue
@@ -7913,27 +10582,44 @@ export async function reconstructPdfVisuals({
         )
       }
     }
+    const relationshipEvidence = cropMatched
+      ? evidence
+      : [...evidence, 'source-rendition-unavailable']
     relationships.push({
       id: '',
       kind: 'equation',
       label,
       // Keep the primary equation region in reading order so layout can turn
-      // its source text into the accessible caption for a matched crop.
+      // its source text into the typed caption for this atomic obligation.
       captionRegionId: source.id,
-      sourceRegionIds: cropMatched ? sources.map((region) => region.id) : [],
-      sourceLineIds: cropMatched
-        ? sources.flatMap((region) => region.lines.map((line) => line.id))
-        : [],
+      sourceRegionIds: ownership?.sourceRegionIds ?? [],
+      sourceLineIds: ownership?.sourceLineIds ?? [],
       sourceObjectIds: cropMatched ? [sourceObjectId] : [],
       assetIds: cropMatched ? [sourceCrop!.id] : [],
       status: cropMatched ? 'matched' : 'unresolved',
       confidence: source.confidence,
-      evidence: cropMatched
-        ? evidence
-        : [...evidence, 'source-rendition-unavailable'],
+      evidence: relationshipEvidence,
       candidates: [
         {
-          sourceRegionIds: sources.map((region) => region.id),
+          sourceRegionIds:
+            ownership?.sourceRegionIds ?? sources.map((region) => region.id),
+          ...(ownership
+            ? {
+                sourceLineIds: ownership.sourceLineIds,
+                sourceText,
+                ownershipExtentSha256: pdfVisualOwnershipExtentSha256(
+                  regions,
+                  ownership.sourceRegionIds,
+                  ownership.sourceLineIds,
+                ),
+                ...(appliedRenderOnlyOwnerships.length > 0
+                  ? {
+                      renderOnlySourceRunOwnerships:
+                        appliedRenderOnlyOwnerships,
+                    }
+                  : {}),
+              }
+            : {}),
           sourceObjectIds: [sourceObjectId],
           assetIds: cropMatched
             ? [sourceCrop!.id]
@@ -7941,11 +10627,15 @@ export async function reconstructPdfVisuals({
               ? [visualAsset.id]
               : [],
           score: source.confidence,
-          evidence,
+          evidence: relationshipEvidence,
           sourceBoxes: [sourceBox],
         },
       ],
       sourceBoxes: sources.map((region) => region.box),
+      ...(equationGeometryTranscript ? { equationGeometryTranscript } : {}),
+      ...(appliedRenderOnlyOwnerships.length > 0
+        ? { renderOnlySourceRunOwnerships: appliedRenderOnlyOwnerships }
+        : {}),
       sourceText: transcript?.text ?? '',
       altText: transcript?.text ?? label,
       altTextSource: transcriptResolved ? 'source-text' : 'caption',
@@ -7971,6 +10661,46 @@ export async function reconstructPdfVisuals({
         },
       })
     }
+  }
+
+  for (const run of unresolvedExtensionTextItems) {
+    if (
+      resolvedRenderOnlySourceRunKeys.has(
+        equationRenderOnlySourceRunIdentity(run),
+      )
+    ) {
+      continue
+    }
+    const regionIds = regions
+      .filter(
+        (region) =>
+          region.page === run.page &&
+          Math.min(region.box.x + region.box.width, run.x + run.width) >
+            Math.max(region.box.x, run.x) &&
+          Math.min(region.box.y + region.box.height, run.y + run.height) >
+            Math.max(region.box.y, run.y),
+      )
+      .map((region) => region.id)
+      .sort()
+    diagnostics.push({
+      code: 'UNRESOLVED_VISUAL_OBJECT',
+      severity: 'error',
+      page: run.page,
+      message:
+        'An extension-font PDF text item decoded from unattested whitespace has no publishable semantic transcript; its exact source box remains a visual review obligation.',
+      sourceBoxes: [
+        {
+          page: run.page,
+          x: run.x,
+          y: run.y,
+          width: run.width,
+          height: run.height,
+          rotation: run.rotation,
+          method: run.method,
+        },
+      ],
+      target: { regionIds, markerId: null },
+    })
   }
 
   const visualColumnSplits = visualOnlyColumnSplits(relationships)

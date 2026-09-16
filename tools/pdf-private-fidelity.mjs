@@ -30,17 +30,20 @@ import {
   canonicalJsonHash,
   createPdfPipeline,
   createPdfStructuralReceipt,
+  PDF_HYPHEN_DERIVED_AFFIX_REMOVAL_REQUIRED_EVIDENCE_SHA256S,
+  PDF_HYPHEN_LEXICAL_MODEL_RECEIPT,
+  PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE_RECEIPT,
+  PDF_HYPHEN_REMOVAL_FORBIDDEN_EVIDENCE_SHA256S,
+  PDF_HYPHEN_REMOVAL_REQUIRED_EVIDENCE_SHA256S,
   PDF_STRUCTURAL_RECEIPT_SCHEMA_VERSION,
 } from './pdf-corpus-audit-lib.mjs'
 
-export const PDF_PRIVATE_FIDELITY_SCHEMA_VERSION = '1.7.0'
+export const PDF_PRIVATE_FIDELITY_SCHEMA_VERSION = '1.8.0'
 const PDF_PRIVATE_FIDELITY_PRIVACY =
   'public-id-hash-aggregate-counters-artifact-hashes-only'
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const MAX_BASELINE_RECEIPT_BYTES = 16 * 1024 * 1024
-const MAX_READABLE_FALLBACK_ASSETS_PER_VISUAL = 16
-const MAX_READABLE_FALLBACK_ASSETS_PER_BOOK = 64
 const ARTIFACT_MODES = ['publication', 'readable-fallback']
 const INLINE_SEMANTIC_LEDGER_SCHEMA_VERSION = '1.0.0'
 const PRIVATE_FAILURE_CODES = new Set([
@@ -721,6 +724,13 @@ function equationTranscriptAdjudicationSha256(relationship) {
     : null
 }
 
+function equationGeometryTranscriptSha256(relationship) {
+  return relationship.kind === 'equation' &&
+    relationship.equationGeometryTranscript
+    ? canonicalJsonHash(relationship.equationGeometryTranscript)
+    : null
+}
+
 function normalizedRelationshipParity(
   relationships,
   sourceAssetIdFor,
@@ -744,12 +754,15 @@ function normalizedRelationshipParity(
     ...(relationship.kind === 'equation' &&
     ((typeof relationship.sourceText === 'string' &&
       relationship.sourceText.length > 0) ||
-      relationship.equationTranscriptAdjudication)
+      relationship.equationTranscriptAdjudication ||
+      relationship.equationGeometryTranscript)
       ? {
           equationTranscriptSourceSha256:
             equationTranscriptSourceSha256(relationship),
           equationTranscriptAdjudicationSha256:
             equationTranscriptAdjudicationSha256(relationship),
+          equationGeometryTranscriptSha256:
+            equationGeometryTranscriptSha256(relationship),
         }
       : {}),
     selectedCandidateSha256: selectedVisualCandidateSha256(relationship),
@@ -761,98 +774,16 @@ function normalizedRelationshipParity(
   }))
 }
 
-function isSolidFillVectorFragment(asset) {
-  if (
-    asset.mediaType !== 'image/svg+xml' ||
-    !(asset.bytes instanceof Uint8Array) ||
-    asset.bytes.length > 1024 ||
-    !(asset.sourceBoxes ?? []).some(
-      (box) => box.width >= 0.2 && box.height >= 0.1,
-    )
-  ) {
-    return false
-  }
-  const svg = new TextDecoder().decode(asset.bytes)
-  if (
-    (svg.match(/<(?:path|rect)\b/gu) ?? []).length !== 1 ||
-    !/fill=["']#000(?:000)?["']/iu.test(svg) ||
-    !/stroke=["']none["']/iu.test(svg)
-  ) {
-    return false
-  }
-  const viewBox = svg
-    .match(/viewBox=["']([^"']+)["']/iu)?.[1]
-    ?.trim()
-    .split(/\s+/u)
-    .map(Number)
-  const path = svg.match(/<path\b[^>]*\bd=["']([^"']+)["']/iu)?.[1]
-  const coordinates = path?.match(/-?\d+(?:\.\d+)?/gu)?.map(Number)
-  if (
-    !viewBox ||
-    viewBox.length !== 4 ||
-    !coordinates ||
-    coordinates.length !== 8 ||
-    !/^(?:\s*[ML]\s*-?\d+(?:\.\d+)?\s+-?\d+(?:\.\d+)?){4}\s*Z\s*$/iu.test(path)
-  ) {
-    return false
-  }
-  const [x, y, width, height] = viewBox
-  const xs = coordinates.filter((_, index) => index % 2 === 0)
-  const ys = coordinates.filter((_, index) => index % 2 === 1)
-  const tolerance = Math.max(width, height) * 0.0001
-  return (
-    Math.abs(Math.min(...xs) - x) <= tolerance &&
-    Math.abs(Math.max(...xs) - (x + width)) <= tolerance &&
-    Math.abs(Math.min(...ys) - y) <= tolerance &&
-    Math.abs(Math.max(...ys) - (y + height)) <= tolerance
-  )
-}
-
-function reconstructionForArtifactMode(reconstruction, mode) {
-  if (mode === 'publication') return reconstruction
-  const availableAssetIds = new Set(
-    (reconstruction.assets ?? [])
-      .filter((asset) => !isSolidFillVectorFragment(asset))
-      .map((asset) => asset.id),
-  )
-  let selectedAssetCount = 0
-  const visualRelationships = (
-    reconstruction.visualRelationships ?? []
-  ).flatMap((relationship) => {
-    const assetIds = (relationship.assetIds ?? []).filter((assetId) =>
-      availableAssetIds.has(assetId),
-    )
-    const nextAssetCount = selectedAssetCount + assetIds.length
-    const accepted =
-      relationship.status === 'matched' &&
-      Boolean(relationship.canonicalNodeId) &&
-      assetIds.length > 0 &&
-      assetIds.length <= MAX_READABLE_FALLBACK_ASSETS_PER_VISUAL &&
-      nextAssetCount <= MAX_READABLE_FALLBACK_ASSETS_PER_BOOK &&
-      assetIds.every((assetId) => availableAssetIds.has(assetId))
-    if (accepted) selectedAssetCount = nextAssetCount
-    return accepted ? [{ ...relationship, assetIds }] : []
-  })
-  const selectedAssetIds = new Set(
-    visualRelationships.flatMap((relationship) => relationship.assetIds),
-  )
-  return {
-    ...reconstruction,
-    visualRelationships,
-    assets: (reconstruction.assets ?? []).filter((asset) =>
-      selectedAssetIds.has(asset.id),
-    ),
-  }
-}
-
 function artifactParityFromReconstruction(
   reconstruction,
   inlineSemanticLedger,
   mode,
   projectionOverride,
 ) {
-  const projection =
-    projectionOverride ?? reconstructionForArtifactMode(reconstruction, mode)
+  if (mode === 'readable-fallback' && !projectionOverride) {
+    throw new Error('READABLE_FALLBACK_PROJECTION_REQUIRED')
+  }
+  const projection = projectionOverride ?? reconstruction
   const nodes = projection.paper?.nodes ?? []
   const relationships = projection.visualRelationships ?? []
   const assets = projection.assets ?? []
@@ -1628,6 +1559,7 @@ function validLineTransitionEvidence(
         'no-space',
         'preserved-lexical-hyphen',
         'removed-discretionary-hyphen',
+        'ambiguous',
         'structural-boundary',
         'unresolved',
       ].includes(decision.outcome)
@@ -1642,7 +1574,9 @@ function validLineTransitionEvidence(
     })
     if (actualTransitions.has(transition)) return false
     actualTransitions.add(transition)
-    if (decision.outcome === 'unresolved') unresolvedCount += 1
+    if (decision.outcome === 'unresolved' || decision.outcome === 'ambiguous') {
+      unresolvedCount += 1
+    }
     if (decision.outcome === 'structural-boundary') {
       structurallyConsumedCount += 1
     }
@@ -2168,7 +2102,316 @@ function privateCrossReferenceStatusCounts(graph) {
   return counts
 }
 
-function validStructure(value) {
+function validCanonicalHyphenDeletionSourceBox(value) {
+  return (
+    hasExactKeys(value, [
+      'page',
+      'x',
+      'y',
+      'width',
+      'height',
+      'rotation',
+      'method',
+    ]) &&
+    Number.isSafeInteger(value.page) &&
+    value.page >= 1 &&
+    ['x', 'y', 'width', 'height', 'rotation'].every((field) =>
+      isFiniteNumber(value[field]),
+    ) &&
+    value.width >= 0 &&
+    value.height >= 0 &&
+    ['pdf-text', 'pdf-object', 'pdf-link', 'ocr'].includes(value.method)
+  )
+}
+
+function validLegacyCanonicalHyphenDeletionRecord(record) {
+  const evidenceSha256s = record?.proof?.evidenceSha256s
+  return (
+    hasExactKeys(record, [
+      'id',
+      'context',
+      'outcome',
+      'fromRegionId',
+      'fromLineId',
+      'toRegionId',
+      'toLineId',
+      'geometry',
+      'proof',
+    ]) &&
+    [
+      record.id,
+      record.fromRegionId,
+      record.fromLineId,
+      record.toRegionId,
+      record.toLineId,
+    ].every((value) => SHA256_PATTERN.test(String(value ?? ''))) &&
+    ['bibliography-continuation', 'canonical-flow-continuation'].includes(
+      record.context,
+    ) &&
+    record.outcome === 'removed-discretionary-hyphen' &&
+    hasExactKeys(record.geometry, ['from', 'to']) &&
+    validCanonicalHyphenDeletionSourceBox(record.geometry.from) &&
+    validCanonicalHyphenDeletionSourceBox(record.geometry.to) &&
+    hasExactKeys(record.proof, [
+      'sourceBoundaryProven',
+      'pinnedWordSha256',
+      'pinnedJoinedFormValid',
+      'pinnedSplit',
+      'splitPointValid',
+      'exactSameDocumentJoinedFormSha256',
+      'sameDocumentJoinedFormValid',
+      'hardHyphenFormSha256',
+      'hardHyphenCounterproof',
+      'model',
+      'evidenceSha256s',
+    ]) &&
+    record.proof.sourceBoundaryProven === true &&
+    SHA256_PATTERN.test(String(record.proof.pinnedWordSha256 ?? '')) &&
+    record.proof.pinnedJoinedFormValid === true &&
+    hasExactKeys(record.proof.pinnedSplit, [
+      'leftSha256',
+      'rightSha256',
+      'index',
+    ]) &&
+    SHA256_PATTERN.test(String(record.proof.pinnedSplit.leftSha256 ?? '')) &&
+    SHA256_PATTERN.test(String(record.proof.pinnedSplit.rightSha256 ?? '')) &&
+    Number.isSafeInteger(record.proof.pinnedSplit.index) &&
+    record.proof.pinnedSplit.index > 0 &&
+    record.proof.splitPointValid === true &&
+    SHA256_PATTERN.test(
+      String(record.proof.exactSameDocumentJoinedFormSha256 ?? ''),
+    ) &&
+    record.proof.exactSameDocumentJoinedFormSha256 ===
+      record.proof.pinnedWordSha256 &&
+    record.proof.sameDocumentJoinedFormValid === true &&
+    SHA256_PATTERN.test(String(record.proof.hardHyphenFormSha256 ?? '')) &&
+    record.proof.hardHyphenFormSha256 !== record.proof.pinnedWordSha256 &&
+    record.proof.hardHyphenCounterproof === null &&
+    hasExactKeys(record.proof.model, [
+      'id',
+      'language',
+      'dictionarySha256',
+      'affixSha256',
+      'hyphenationSha256',
+    ]) &&
+    canonicalJsonHash(record.proof.model) ===
+      canonicalJsonHash(PDF_HYPHEN_LEXICAL_MODEL_RECEIPT) &&
+    validPrivateHashArray(evidenceSha256s, true) &&
+    evidenceSha256s.every(
+      (value, index) =>
+        index === 0 || evidenceSha256s[index - 1].localeCompare(value) < 0,
+    ) &&
+    PDF_HYPHEN_REMOVAL_REQUIRED_EVIDENCE_SHA256S.every((evidenceSha256) =>
+      evidenceSha256s.includes(evidenceSha256),
+    ) &&
+    PDF_HYPHEN_REMOVAL_FORBIDDEN_EVIDENCE_SHA256S.every(
+      (evidenceSha256) => !evidenceSha256s.includes(evidenceSha256),
+    )
+  )
+}
+
+function validCanonicalHyphenDeletionRecord(record) {
+  const evidenceSha256s = record?.proof?.evidenceSha256s
+  if (
+    !hasExactKeys(record, [
+      'id',
+      'context',
+      'outcome',
+      'fromRegionId',
+      'fromLineId',
+      'toRegionId',
+      'toLineId',
+      'geometry',
+      'proof',
+    ]) ||
+    [
+      record.id,
+      record.fromRegionId,
+      record.fromLineId,
+      record.toRegionId,
+      record.toLineId,
+    ].some((value) => !SHA256_PATTERN.test(String(value ?? ''))) ||
+    !['bibliography-continuation', 'canonical-flow-continuation'].includes(
+      record.context,
+    ) ||
+    record.outcome !== 'removed-discretionary-hyphen' ||
+    !hasExactKeys(record.geometry, ['from', 'to']) ||
+    !validCanonicalHyphenDeletionSourceBox(record.geometry.from) ||
+    !validCanonicalHyphenDeletionSourceBox(record.geometry.to) ||
+    record.proof?.sourceBoundaryProven !== true ||
+    !hasExactKeys(record.proof?.pinnedSplit, [
+      'leftSha256',
+      'rightSha256',
+      'index',
+    ]) ||
+    !SHA256_PATTERN.test(String(record.proof.pinnedSplit.leftSha256 ?? '')) ||
+    !SHA256_PATTERN.test(String(record.proof.pinnedSplit.rightSha256 ?? '')) ||
+    !Number.isSafeInteger(record.proof.pinnedSplit.index) ||
+    record.proof.pinnedSplit.index < 1 ||
+    record.proof.splitPointValid !== true ||
+    !SHA256_PATTERN.test(String(record.proof.hardHyphenFormSha256 ?? '')) ||
+    record.proof.hardHyphenCounterproof !== null ||
+    !hasExactKeys(record.proof.model, [
+      'id',
+      'language',
+      'dictionarySha256',
+      'affixSha256',
+      'hyphenationSha256',
+    ]) ||
+    canonicalJsonHash(record.proof.model) !==
+      canonicalJsonHash(PDF_HYPHEN_LEXICAL_MODEL_RECEIPT) ||
+    !validPrivateHashArray(evidenceSha256s, true) ||
+    evidenceSha256s.some(
+      (value, index) =>
+        index > 0 && evidenceSha256s[index - 1].localeCompare(value) >= 0,
+    ) ||
+    PDF_HYPHEN_REMOVAL_FORBIDDEN_EVIDENCE_SHA256S.some((evidenceSha256) =>
+      evidenceSha256s.includes(evidenceSha256),
+    )
+  ) {
+    return false
+  }
+  if (record.proof.tier === 'exact-same-document') {
+    return (
+      hasExactKeys(record.proof, [
+        'tier',
+        'sourceBoundaryProven',
+        'pinnedWordSha256',
+        'pinnedJoinedFormValid',
+        'pinnedSplit',
+        'splitPointValid',
+        'exactSameDocumentJoinedFormSha256',
+        'sameDocumentJoinedFormValid',
+        'hardHyphenFormSha256',
+        'hardHyphenCounterproof',
+        'model',
+        'evidenceSha256s',
+      ]) &&
+      SHA256_PATTERN.test(String(record.proof.pinnedWordSha256 ?? '')) &&
+      record.proof.pinnedJoinedFormValid === true &&
+      SHA256_PATTERN.test(
+        String(record.proof.exactSameDocumentJoinedFormSha256 ?? ''),
+      ) &&
+      record.proof.exactSameDocumentJoinedFormSha256 ===
+        record.proof.pinnedWordSha256 &&
+      record.proof.sameDocumentJoinedFormValid === true &&
+      record.proof.hardHyphenFormSha256 !== record.proof.pinnedWordSha256 &&
+      PDF_HYPHEN_REMOVAL_REQUIRED_EVIDENCE_SHA256S.every((evidenceSha256) =>
+        evidenceSha256s.includes(evidenceSha256),
+      )
+    )
+  }
+  if (record.proof.tier !== 'same-document-derived-affix') return false
+  return (
+    hasExactKeys(record.proof, [
+      'tier',
+      'sourceBoundaryProven',
+      'derivedWordSha256',
+      'productivePrefix',
+      'baseWordSha256',
+      'derivationBindingSha256',
+      'pinnedBaseWordValid',
+      'pinnedSplit',
+      'splitPointValid',
+      'exactSameDocumentBaseWordSha256',
+      'sameDocumentBaseWordValid',
+      'hardHyphenFormSha256',
+      'hardHyphenCounterproof',
+      'model',
+      'evidenceSha256s',
+    ]) &&
+    SHA256_PATTERN.test(String(record.proof.derivedWordSha256 ?? '')) &&
+    hasExactKeys(record.proof.productivePrefix, [
+      'kind',
+      'value',
+      'affixClass',
+      'flag',
+      'crossProduct',
+      'affixSha256',
+    ]) &&
+    canonicalJsonHash(record.proof.productivePrefix) ===
+      canonicalJsonHash(PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE_RECEIPT) &&
+    SHA256_PATTERN.test(String(record.proof.baseWordSha256 ?? '')) &&
+    SHA256_PATTERN.test(String(record.proof.derivationBindingSha256 ?? '')) &&
+    record.proof.derivationBindingSha256 ===
+      canonicalJsonHash({
+        derivedWordSha256: record.proof.derivedWordSha256,
+        productivePrefix: record.proof.productivePrefix,
+        baseWordSha256: record.proof.baseWordSha256,
+      }) &&
+    record.proof.pinnedBaseWordValid === true &&
+    SHA256_PATTERN.test(
+      String(record.proof.exactSameDocumentBaseWordSha256 ?? ''),
+    ) &&
+    record.proof.exactSameDocumentBaseWordSha256 ===
+      record.proof.baseWordSha256 &&
+    record.proof.sameDocumentBaseWordValid === true &&
+    record.proof.derivedWordSha256 !== record.proof.baseWordSha256 &&
+    record.proof.hardHyphenFormSha256 !== record.proof.derivedWordSha256 &&
+    record.proof.pinnedSplit.index >
+      PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE_RECEIPT.value.length &&
+    PDF_HYPHEN_DERIVED_AFFIX_REMOVAL_REQUIRED_EVIDENCE_SHA256S.every(
+      (evidenceSha256) => evidenceSha256s.includes(evidenceSha256),
+    )
+  )
+}
+
+function canonicalHyphenDeletionContextCounts(records) {
+  const counts = {}
+  for (const record of records) {
+    counts[record.context] = (counts[record.context] ?? 0) + 1
+  }
+  return counts
+}
+
+function validCanonicalHyphenDeletionLedger(structure, legacy = false) {
+  const records = structure.canonicalHyphenDeletionLedger
+  return (
+    structure.canonicalHyphenDeletionLedgerAvailable === true &&
+    isNonNegativeInteger(structure.canonicalHyphenDeletionCount) &&
+    Array.isArray(records) &&
+    records.length === structure.canonicalHyphenDeletionCount &&
+    records.every(
+      legacy
+        ? validLegacyCanonicalHyphenDeletionRecord
+        : validCanonicalHyphenDeletionRecord,
+    ) &&
+    records.every(
+      (record, index) =>
+        index === 0 || records[index - 1].id.localeCompare(record.id) < 0,
+    ) &&
+    new Set(records.map((record) => record.id)).size === records.length &&
+    new Set(
+      records.map((record) =>
+        [
+          record.fromRegionId,
+          record.fromLineId,
+          record.toRegionId,
+          record.toLineId,
+        ].join('\0'),
+      ),
+    ).size === records.length &&
+    validCountMap(structure.canonicalHyphenDeletionContextCounts) &&
+    canonicalJsonHash(structure.canonicalHyphenDeletionContextCounts) ===
+      canonicalJsonHash(canonicalHyphenDeletionContextCounts(records)) &&
+    SHA256_PATTERN.test(
+      String(structure.canonicalHyphenDeletionLedgerSha256 ?? ''),
+    ) &&
+    structure.canonicalHyphenDeletionLedgerSha256 === canonicalJsonHash(records)
+  )
+}
+
+function validStructure(value, allowHistoricalV14 = false) {
+  const current = value?.schemaVersion === PDF_STRUCTURAL_RECEIPT_SCHEMA_VERSION
+  const legacyV15 = allowHistoricalV14 && value?.schemaVersion === '1.5.0'
+  const historical = allowHistoricalV14 && value?.schemaVersion === '1.4.0'
+  const canonicalHyphenDeletionFields = [
+    'canonicalHyphenDeletionLedgerAvailable',
+    'canonicalHyphenDeletionCount',
+    'canonicalHyphenDeletionContextCounts',
+    'canonicalHyphenDeletionLedger',
+    'canonicalHyphenDeletionLedgerSha256',
+  ]
   if (
     !hasExactKeys(value, [
       'schemaVersion',
@@ -2204,8 +2447,9 @@ function validStructure(value) {
       'lineTransitionLedgerSha256',
       'unresolvedCorruptingJoinCount',
       'structurallyConsumedLineBoundaryCount',
+      ...(current || legacyV15 ? canonicalHyphenDeletionFields : []),
     ]) ||
-    value.schemaVersion !== PDF_STRUCTURAL_RECEIPT_SCHEMA_VERSION ||
+    (!current && !legacyV15 && !historical) ||
     [
       'canonicalNodeCount',
       'visualRelationshipCount',
@@ -2261,7 +2505,9 @@ function validStructure(value) {
           value.crossReferenceRelationshipGraph,
         ),
       ) ||
-    typeof value.lineTransitionLedgerAvailable !== 'boolean'
+    typeof value.lineTransitionLedgerAvailable !== 'boolean' ||
+    (current && !validCanonicalHyphenDeletionLedger(value)) ||
+    (legacyV15 && !validCanonicalHyphenDeletionLedger(value, true))
   ) {
     return false
   }
@@ -2278,7 +2524,7 @@ function validStructure(value) {
         value.structurallyConsumedLineBoundaryCount === null
 }
 
-function validReconstructionEvidence(value) {
+function validReconstructionEvidence(value, allowHistoricalV14 = false) {
   return (
     hasExactKeys(value, [
       'pageCount',
@@ -2304,7 +2550,7 @@ function validReconstructionEvidence(value) {
     validInlineSemanticLedger(value.inlineSemanticLedger) &&
     validCountMap(value.relationshipCounts) &&
     validCountMap(value.diagnosticCounts) &&
-    validStructure(value.structure) &&
+    validStructure(value.structure, allowHistoricalV14) &&
     validArtifactParity(value.artifactParity) &&
     artifactParityMatchesStructuralEvidence(value) &&
     validLineTransitionEvidence(
@@ -2372,7 +2618,7 @@ function validArtifactEvidence(value) {
   return value.receiptSha256 === canonicalJsonHash(evidence)
 }
 
-function validRunReceipt(value) {
+function validRunReceipt(value, allowHistoricalV14 = false) {
   return (
     hasExactKeys(value, [
       'ordinal',
@@ -2383,7 +2629,7 @@ function validRunReceipt(value) {
     Number.isSafeInteger(value.ordinal) &&
     value.ordinal > 0 &&
     SHA256_PATTERN.test(value.reconstructionReceiptSha256) &&
-    validReconstructionEvidence(value.reconstruction) &&
+    validReconstructionEvidence(value.reconstruction, allowHistoricalV14) &&
     value.reconstructionReceiptSha256 ===
       canonicalJsonHash(
         deterministicReconstructionProjection(value.reconstruction),
@@ -2415,6 +2661,8 @@ function invalidPrivateFidelityBaseline() {
 
 function validatePrivateFidelityReceipt(receipt, requireAcceptedBaseline) {
   try {
+    const legacySchema =
+      requireAcceptedBaseline && receipt?.schemaVersion === '1.7.0'
     if (
       !hasExactKeys(receipt, [
         'schemaVersion',
@@ -2426,7 +2674,8 @@ function validatePrivateFidelityReceipt(receipt, requireAcceptedBaseline) {
         'runs',
         'passed',
       ]) ||
-      receipt.schemaVersion !== PDF_PRIVATE_FIDELITY_SCHEMA_VERSION ||
+      (receipt.schemaVersion !== PDF_PRIVATE_FIDELITY_SCHEMA_VERSION &&
+        !legacySchema) ||
       receipt.privacy !== PDF_PRIVATE_FIDELITY_PRIVACY ||
       !hasExactKeys(receipt.source, ['paperId', 'sha256', 'byteLength']) ||
       !/^[A-Za-z0-9._-]+$/.test(receipt.source.paperId) ||
@@ -2490,7 +2739,9 @@ function validatePrivateFidelityReceipt(receipt, requireAcceptedBaseline) {
       ) ||
       !validBaselineComparison(receipt.baselineComparison) ||
       !Array.isArray(receipt.runs) ||
-      receipt.runs.some((run) => !validRunReceipt(run)) ||
+      receipt.runs.some(
+        (run) => !validRunReceipt(run, requireAcceptedBaseline),
+      ) ||
       typeof receipt.passed !== 'boolean'
     ) {
       invalidPrivateFidelityBaseline()
@@ -3014,12 +3265,10 @@ async function main() {
           )
         : reconstructed
       privateFailureStage = 'artifact-projection'
-      const artifactProjections = reconstruction.readiness.ready
-        ? undefined
-        : {
-            'readable-fallback':
-              modules.projectReadableFallbackReconstruction(reconstruction),
-          }
+      const artifactProjections = {
+        'readable-fallback':
+          modules.projectReadableFallbackReconstruction(reconstruction),
+      }
       const artifacts = []
       for (const profileId of parsed.profiles) {
         privateFailureStage = 'artifact-build'

@@ -1,5 +1,5 @@
 import { strFromU8 } from 'fflate'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { NormalizedSourceBox, PdfRegionLine } from './import-types'
 import {
   canonicalTableFromLines,
@@ -10,7 +10,16 @@ import {
   createTextSvgAsset,
   createVectorSvgAsset,
   downscalePngAsset,
+  isCanonicalPdfSourceExclusionMask,
+  pdfSourceExclusionMaskIdentity,
 } from './visual-assets'
+import { sha256HexSync } from './sha256-sync'
+import { pdfTextOperationRunPaintEnvelopes } from './pdf-page-crop'
+import {
+  PDFJS_DISPLAY_OPERATOR_ADAPTER,
+  PDFJS_DISPLAY_OPERATOR_ADAPTER_BUILD,
+  PDFJS_DISPLAY_OPERATOR_ADAPTER_VERSION,
+} from './pdf-text-paint'
 
 const sourceBox: NormalizedSourceBox = {
   page: 1,
@@ -219,6 +228,79 @@ describe('PDF visual asset primitives', () => {
     await expect(downscalePngAsset(source, 8, 264)).resolves.toBe(source)
   })
 
+  it('snapshots the complete downscale source before its first asynchronous yield', async () => {
+    const source = await createSourcePageCropAsset({
+      kind: 'equation',
+      cropBox: sourceBox,
+      sourceObjectIds: ['equation-source'],
+      sourceBoxes: [{ ...sourceBox }],
+      width: 4,
+      height: 2,
+      pixels: new Uint8Array(4 * 2 * 4).fill(127),
+    })
+    const expected = await downscalePngAsset(source, 2, 264)
+    const pending = downscalePngAsset(source, 2, 264)
+    const original = {
+      id: source.id,
+      kind: source.kind,
+      width: source.width,
+      firstByte: source.bytes[0],
+      sourceObjectId: source.sourceObjectIds[0],
+      sourceBoxX: source.sourceBoxes[0].x,
+      sourceCropBoxX: source.sourceCropBox!.x,
+    }
+    source.id = 'mutated-after-call'
+    source.kind = 'table'
+    source.width = 40
+    source.bytes[0] ^= 1
+    source.sourceObjectIds[0] = 'mutated-after-call'
+    source.sourceBoxes[0].x += 0.01
+    source.sourceCropBox!.x += 0.01
+    try {
+      await expect(pending).resolves.toEqual(expected)
+    } finally {
+      source.id = original.id
+      source.kind = original.kind
+      source.width = original.width
+      source.bytes[0] = original.firstByte
+      source.sourceObjectIds[0] = original.sourceObjectId
+      source.sourceBoxes[0].x = original.sourceBoxX
+      source.sourceCropBox!.x = original.sourceCropBoxX
+    }
+  })
+
+  it.each([16, 17, 33, 65])(
+    'yields after every complete 16-row batch while downscaling to $outputHeight rows',
+    async (outputHeight) => {
+      const source = await createPngAsset({
+        sourceObjectId: `image-p001-cooperative-${outputHeight}`,
+        sourceBox,
+        width: 4,
+        height: outputHeight * 2,
+        colorSpace: 'rgba',
+        pixels: new Uint8Array(4 * outputHeight * 2 * 4).fill(127),
+      })
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+      try {
+        const downscaled = await downscalePngAsset(source, 2, 264)
+
+        expect(setTimeoutSpy).toHaveBeenCalledTimes(
+          4 + Math.floor((outputHeight - 1) / 16),
+        )
+        expect(setTimeoutSpy.mock.calls.every(([, delay]) => delay === 0)).toBe(
+          true,
+        )
+        expect(downscaled).toMatchObject({
+          width: 2,
+          height: outputHeight,
+          rendition: 'profile-downscaled',
+        })
+      } finally {
+        setTimeoutSpy.mockRestore()
+      }
+    },
+  )
+
   it('binds the exact exclusion-mask decision into crop and profile identities', async () => {
     const cropBox = {
       ...sourceBox,
@@ -297,6 +379,159 @@ describe('PDF visual asset primitives', () => {
         },
       }),
     ).rejects.toThrow(/source region/i)
+  })
+
+  it('rejects a canonical-looking text-operation filter without a trusted renderer receipt', async () => {
+    const cropBox = {
+      ...sourceBox,
+      x: 0.1,
+      y: 0.1,
+      width: 0.4,
+      height: 0.3,
+    }
+    const pixels = new Uint8Array(8 * 8 * 4).fill(48)
+    const ownedSourceBox = {
+      ...cropBox,
+      x: 0.18,
+      y: 0.16,
+      width: 0.12,
+      height: 0.06,
+      method: 'pdf-text' as const,
+    }
+    const excludedSourceBox = {
+      ...cropBox,
+      x: 0.16,
+      y: 0.15,
+      width: 0.08,
+      height: 0.03,
+      method: 'pdf-text' as const,
+    }
+    const sourceExclusionMask = {
+      algorithm: 'pdfjs-display-text-operation-filter-v2' as const,
+      expansionPixels: 0 as const,
+      pdfjsVersion: PDFJS_DISPLAY_OPERATOR_ADAPTER_VERSION,
+      pdfjsBuild: PDFJS_DISPLAY_OPERATOR_ADAPTER_BUILD,
+      displayOperatorAdapter: PDFJS_DISPLAY_OPERATOR_ADAPTER,
+      renderIntent: 'display' as const,
+      annotationMode: 'enable' as const,
+      sourceTextLedgerSha256: 'c'.repeat(64),
+      displayTextLedgerSha256: 'c'.repeat(64),
+      ownedTextLedgerSpans: [{ start: 3, end: 4 }],
+      excludedTextLedgerSpans: [{ start: 0, end: 3 }],
+      operatorLedgerSha256: 'a'.repeat(64),
+      ownedOperationIndexes: [9],
+      excludedOperationIndexes: [7],
+      ownedOnlyExcludedOperationIndexes: [7],
+      ownedSourceBoxes: [ownedSourceBox],
+      excludedSourceBoxes: [excludedSourceBox],
+      baselineRgbaSha256: 'b'.repeat(64),
+      filteredRgbaSha256: sha256HexSync(pixels),
+      ownedOnlyRgbaSha256: sha256HexSync(pixels),
+      changedPixelCount: 1,
+      normalizedDiffBox: {
+        ...excludedSourceBox,
+        x: 0.17,
+        y: 0.155,
+        width: 0.03,
+        height: 0.01,
+      },
+      excludedRunPaintEnvelopes: pdfTextOperationRunPaintEnvelopes({
+        sourceBox: cropBox,
+        excludedSourceBoxes: [excludedSourceBox],
+        width: 8,
+        height: 8,
+      }),
+    }
+    expect(
+      isCanonicalPdfSourceExclusionMask(sourceExclusionMask, cropBox),
+    ).toBe(true)
+    expect(
+      pdfSourceExclusionMaskIdentity(sourceExclusionMask, cropBox),
+    ).toMatchObject({
+      algorithm: 'pdfjs-display-text-operation-filter-v2',
+      ownedOperationIndexes: [9],
+      excludedOperationIndexes: [7],
+      ownedOnlyExcludedOperationIndexes: [7],
+      ownedOnlyRgbaSha256: sha256HexSync(pixels),
+      changedPixelCount: 1,
+    })
+    expect(
+      isCanonicalPdfSourceExclusionMask(
+        {
+          ...sourceExclusionMask,
+          pdfjsVersion: 42 as never,
+        },
+        cropBox,
+      ),
+    ).toBe(false)
+    expect(
+      isCanonicalPdfSourceExclusionMask(
+        {
+          ...sourceExclusionMask,
+          pdfjsVersion: '5.4.625',
+        },
+        cropBox,
+      ),
+    ).toBe(false)
+    expect(
+      isCanonicalPdfSourceExclusionMask(
+        {
+          ...sourceExclusionMask,
+          pdfjsBuild: 'stale-build',
+        },
+        cropBox,
+      ),
+    ).toBe(false)
+    expect(
+      isCanonicalPdfSourceExclusionMask(
+        {
+          ...sourceExclusionMask,
+          ownedOnlyRgbaSha256: 'd'.repeat(64),
+        },
+        cropBox,
+      ),
+    ).toBe(false)
+    expect(
+      isCanonicalPdfSourceExclusionMask(
+        {
+          ...sourceExclusionMask,
+          ownedOnlyExcludedOperationIndexes: [7, 9],
+        },
+        cropBox,
+      ),
+    ).toBe(false)
+    expect(
+      isCanonicalPdfSourceExclusionMask(
+        {
+          ...sourceExclusionMask,
+          ownedSourceBoxes: [
+            { ...ownedSourceBox, method: 'pdf-object' as const },
+          ],
+        },
+        cropBox,
+      ),
+    ).toBe(false)
+    expect(
+      isCanonicalPdfSourceExclusionMask(
+        {
+          ...sourceExclusionMask,
+          unexpected: true,
+        } as typeof sourceExclusionMask,
+        cropBox,
+      ),
+    ).toBe(false)
+    await expect(
+      createSourcePageCropAsset({
+        kind: 'equation',
+        cropBox,
+        sourceObjectIds: ['equation-operation-filter-source'],
+        sourceBoxes: [ownedSourceBox],
+        width: 8,
+        height: 8,
+        pixels,
+        sourceExclusionMask,
+      }),
+    ).rejects.toThrow(/text operation proof/i)
   })
 
   it('uses exact source text in an SVG equation fallback', async () => {

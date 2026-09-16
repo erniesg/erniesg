@@ -60,10 +60,12 @@ type BrowserOcrDependencies = {
   createWorker?: BrowserWorkerFactory
 }
 
+function runtimeOrigin() {
+  return globalThis.location?.origin || 'http://localhost'
+}
+
 export function localBrowserOcrAssets(
-  origin = typeof window === 'undefined'
-    ? 'http://localhost'
-    : window.location.origin,
+  origin = runtimeOrigin(),
 ): BrowserOcrAssets {
   const asset = (name: string) =>
     new URL(`/assets/ocr/${name}`, new URL(origin).origin).href
@@ -177,11 +179,7 @@ export async function createBrowserOcrSession(
     )
   }
 
-  const origin =
-    dependencies.origin ??
-    (typeof window === 'undefined'
-      ? 'http://localhost'
-      : window.location.origin)
+  const origin = dependencies.origin ?? runtimeOrigin()
   const assets = dependencies.assets ?? localBrowserOcrAssets(origin)
   validateLocalOcrAssets(assets, origin)
   const worker = await (dependencies.createWorker ?? defaultWorkerFactory)(

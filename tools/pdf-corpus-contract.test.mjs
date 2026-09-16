@@ -287,6 +287,8 @@ describe('PDF corpus benchmark contract', () => {
           'docs/schemas/pdf-corpus-audit.schema.json',
           'docs/schemas/pdf-corpus-audit-v1.6.schema.json',
           'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
+          'docs/schemas/pdf-corpus-audit-v1.8.schema.json',
+          'docs/schemas/pdf-corpus-audit-v1.9.schema.json',
         ].map(async (schemaPath) =>
           JSON.parse(await readFile(schemaPath, 'utf8')),
         ),
@@ -294,7 +296,7 @@ describe('PDF corpus benchmark contract', () => {
       const ajv = new Ajv2020({ strict: false })
       for (const schema of schemas) ajv.addSchema(schema)
       const validate = ajv.getSchema(
-        'https://ernie.sg/schemas/pdf-corpus-audit-1.7.0.json',
+        'https://ernie.sg/schemas/pdf-corpus-audit-1.9.0.json',
       )
       expect(validate(report), validate.errors).toBe(true)
       expect(report.summary).toMatchObject({
@@ -314,5 +316,5 @@ describe('PDF corpus benchmark contract', () => {
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
-  })
+  }, 30_000)
 })

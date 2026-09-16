@@ -7,7 +7,9 @@ import type {
   PdfPageRegion,
   PdfRegionLine,
   PdfSourceRun,
+  PdfVisualRelationship,
 } from './import-types'
+import { canonicalVisualSourceInlineMapping } from './pdf-layout'
 import { reconstructPdfVisuals, type PdfFigureRasterizer } from './pdf-visuals'
 import { isSourceVerifiedSemanticTable } from './semantic-table'
 import { createPngAsset, createSourcePageCropAsset } from './visual-assets'
@@ -228,6 +230,135 @@ function cropRasterizer() {
 }
 
 describe('bounded table-scope visual fallback', () => {
+  it('maps source inline styles into the accessible atomic-table transcript and fails closed when the transcript drifts', () => {
+    const labelRun = {
+      ...box(0.12, 0.2, 0.16, 0.014, 'pdf-text'),
+      text: 'Question:',
+      fontName: 'TableSerif-BoldItalic',
+      fontSize: 8,
+      confidence: 0.99,
+      bold: true,
+      italic: true,
+    } satisfies PdfSourceRun
+    const valueRun = {
+      ...box(0.29, 0.2, 0.34, 0.014, 'pdf-text'),
+      text: 'How should we respond?',
+      fontName: 'TableSerif',
+      fontSize: 8,
+      confidence: 0.99,
+    } satisfies PdfSourceRun
+    const sourceLine = {
+      id: 'table-source-line',
+      text: `${labelRun.text} ${valueRun.text}`,
+      fontSize: 8,
+      box: box(0.12, 0.2, 0.51, 0.014, 'pdf-text'),
+      runs: [labelRun, valueRun],
+    } satisfies PdfRegionLine
+    const sourceRegion = {
+      id: 'table-source-region',
+      page: 1,
+      kind: 'body',
+      column: 'single',
+      text: sourceLine.text,
+      confidence: 0.99,
+      box: sourceLine.box,
+      lines: [sourceLine],
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    } satisfies PdfPageRegion
+    const relationship = {
+      id: 'table-relationship',
+      kind: 'table',
+      label: 'Table 1',
+      captionRegionId: 'table-caption',
+      sourceRegionIds: [sourceRegion.id],
+      sourceLineIds: [sourceLine.id],
+      sourceObjectIds: [],
+      assetIds: ['table-asset'],
+      status: 'matched',
+      confidence: 0.99,
+      evidence: [
+        'bounded-table-scope',
+        'non-semantic-source-scope',
+        'source-page-crop',
+      ],
+      candidates: [],
+      sourceBoxes: [sourceRegion.box],
+      sourceText: sourceRegion.text,
+      altText: 'Table 1. Source-backed response.',
+      altTextSource: 'caption',
+      canonicalNodeId: 'canonical-table',
+      captionNodeId: 'table-caption-node',
+    } satisfies PdfVisualRelationship
+
+    expect(
+      canonicalVisualSourceInlineMapping({
+        relationship,
+        nodeId: 'canonical-table',
+        regions: [sourceRegion],
+        lineBoundaryDecisions: [],
+      }),
+    ).toEqual({
+      runs: [
+        {
+          start: 0,
+          end: labelRun.text.length,
+          bold: true,
+          italic: true,
+        },
+      ],
+      ledger: { expected: 2, mapped: 2 },
+    })
+
+    expect(
+      canonicalVisualSourceInlineMapping({
+        relationship: {
+          ...relationship,
+          sourceText: `${relationship.sourceText} drift`,
+        },
+        nodeId: 'canonical-table',
+        regions: [sourceRegion],
+        lineBoundaryDecisions: [],
+      }),
+    ).toEqual({
+      runs: [],
+      ledger: { expected: 2, mapped: 0 },
+    })
+
+    expect(
+      canonicalVisualSourceInlineMapping({
+        relationship: {
+          ...relationship,
+          sourceLineIds: [...relationship.sourceLineIds, 'missing-line'],
+        },
+        nodeId: 'canonical-table',
+        regions: [sourceRegion],
+        lineBoundaryDecisions: [],
+      }),
+    ).toEqual({
+      runs: [],
+      ledger: { expected: 3, mapped: 0 },
+    })
+
+    expect(
+      canonicalVisualSourceInlineMapping({
+        relationship: {
+          ...relationship,
+          sourceLineIds: [
+            relationship.sourceLineIds[0],
+            relationship.sourceLineIds[0],
+          ],
+        },
+        nodeId: 'canonical-table',
+        regions: [sourceRegion],
+        lineBoundaryDecisions: [],
+      }),
+    ).toEqual({
+      runs: [],
+      ledger: { expected: 3, mapped: 0 },
+    })
+  })
+
   it('reuses one exact native raster without claiming semantic HTML', async () => {
     const sourceBox = box(0.16, 0.18, 0.61, 0.15)
     const sourceObjectId = 'image-p001-001'
@@ -611,6 +742,69 @@ describe('bounded table-scope visual fallback', () => {
     })
     expect(result.relationships[0].evidence).not.toContain('semantic-table')
     expect(result.canonicalTablesByAssetId.size).toBe(0)
+  })
+
+  it('retains unresolved partial-parent table lineage in canonical flow when its crop fails', async () => {
+    const prose = [proseLine('prose-1', 0.27), proseLine('prose-2', 0.31)]
+    const tableLines = [
+      tabularLine('table-header', 0.52, [0.12, 0.4, 0.67]),
+      tabularLine('table-row-1', 0.56, [0.12, 0.3, 0.5, 0.7]),
+      tabularLine('table-row-2', 0.6, [0.12, 0.25, 0.38, 0.53, 0.7]),
+      tabularLine('table-row-3', 0.64, [0.12, 0.23, 0.34, 0.46, 0.58, 0.7]),
+    ]
+    const parent = mixedParent(
+      'mixed-parent',
+      box(0.12, 0.25, 0.66, 0.404, 'pdf-text'),
+      [...prose, ...tableLines],
+    )
+    const tableCaption = caption(
+      'partial-table-caption',
+      'Table 7. Exact partial-parent results.',
+      box(0.12, 0.678, 0.68, 0.02, 'pdf-text'),
+    )
+    const rasterizeFigure = vi.fn(async () => {
+      throw new Error('PDF page crop has source ink touching its edge')
+    })
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [parent, tableCaption],
+      rasterizeFigure,
+    })
+
+    const cropBox = box(0.12, 0.52, 0.655, 0.134, 'pdf-text')
+    const relationship = result.relationships[0]
+    expect(rasterizeFigure).toHaveBeenCalled()
+    expect(relationship).toMatchObject({
+      kind: 'table',
+      status: 'unresolved',
+      sourceRegionIds: [parent.id],
+      sourceLineIds: tableLines.map((line) => line.id),
+      sourceObjectIds: [],
+      assetIds: [],
+      sourceBoxes: [tableCaption.box, cropBox],
+      sourceText: tableLines.map((line) => line.text).join(' '),
+      evidence: expect.arrayContaining([
+        'bounded-table-scope',
+        'multi-run-tabular-line-band',
+        'partial-parent-line-selection',
+        'source-page-crop-edge-contact',
+        'unresolved-bounded-table-text-owned',
+        'source-rendition-unavailable',
+      ]),
+      candidates: [
+        expect.objectContaining({
+          sourceRegionIds: [parent.id],
+          sourceLineIds: tableLines.map((line) => line.id),
+          sourceBoxes: [cropBox],
+          sourceText: tableLines.map((line) => line.text).join(' '),
+        }),
+      ],
+    })
+    expect(relationship.sourceText).not.toContain('prose')
+    expect(result.consumedRegionIds.size).toBe(0)
+    expect(result.consumedLineIds.size).toBe(0)
+    expect(result.partialRegionLineSelections).toEqual([])
   })
 
   it('crops an exact partial-parent line band while retaining parent prose', async () => {

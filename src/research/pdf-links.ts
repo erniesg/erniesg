@@ -372,6 +372,247 @@ function sourceBoxesOverlap(
   return overlapWidth > 0 && overlapHeight > 0
 }
 
+export type PdfExternalLinkSourceIntervalCandidate = {
+  ownerId: string
+  sourceStart: number
+  sourceEnd: number
+  text: string
+  sourceBox: NormalizedSourceBox
+}
+
+export type PdfExternalLinkSourceIntervalOwnership = {
+  ownerId: string
+  sourceStart: number
+  sourceEnd: number
+  text: string
+  sourceBox: NormalizedSourceBox
+  evidence: 'single-pdf-text-run-character-interval-v1'
+}
+
+const PDF_EXTERNAL_LINK_SUBRUN_INLINE_COVERAGE = 0.9
+const PDF_EXTERNAL_LINK_SUBRUN_CROSS_COVERAGE = 0.8
+
+function validExternalLinkOwnershipBox(box: NormalizedSourceBox) {
+  return (
+    Number.isInteger(box.page) &&
+    box.page > 0 &&
+    finite(box.x) &&
+    finite(box.y) &&
+    finite(box.width) &&
+    finite(box.height) &&
+    finite(box.rotation) &&
+    box.x >= 0 &&
+    box.y >= 0 &&
+    box.width > 0 &&
+    box.height > 0 &&
+    box.x + box.width <= 1.00002 &&
+    box.y + box.height <= 1.00002
+  )
+}
+
+function normalizedRightAngle(rotation: number) {
+  const normalized = ((rotation % 360) + 360) % 360
+  return [0, 90, 180, 270].includes(normalized) ? normalized : null
+}
+
+function sourceCharacterOffsets(value: string) {
+  const offsets = [0]
+  let cursor = 0
+  for (const character of value) {
+    cursor += character.length
+    offsets.push(cursor)
+  }
+  return offsets
+}
+
+function sourceTokenBoundaries(value: string) {
+  const boundaries = new Set([0, value.length])
+  for (const match of value.matchAll(/\s+/gu)) {
+    if (match.index === undefined) continue
+    boundaries.add(match.index)
+    boundaries.add(match.index + match[0].length)
+  }
+  for (const match of value.matchAll(/[\p{L}\p{M}\p{N}]+/gu)) {
+    if (match.index === undefined) continue
+    boundaries.add(match.index)
+    boundaries.add(match.index + match[0].length)
+  }
+  for (const match of value.matchAll(/[^\s\p{L}\p{M}\p{N}]+/gu)) {
+    if (match.index === undefined) continue
+    boundaries.add(match.index)
+    boundaries.add(match.index + match[0].length)
+  }
+  return [...boundaries].sort((left, right) => left - right)
+}
+
+function axisMutualCoverage(
+  leftStart: number,
+  leftSize: number,
+  rightStart: number,
+  rightSize: number,
+) {
+  const overlap =
+    Math.min(leftStart + leftSize, rightStart + rightSize) -
+    Math.max(leftStart, rightStart)
+  return overlap > 0 ? overlap / Math.max(leftSize, rightSize) : 0
+}
+
+function projectedSourceCharacterIntervalBox({
+  sourceBox,
+  startFraction,
+  sizeFraction,
+  reverse,
+}: {
+  sourceBox: NormalizedSourceBox
+  startFraction: number
+  sizeFraction: number
+  reverse: boolean
+}): NormalizedSourceBox {
+  const inlineStartFraction = reverse
+    ? 1 - startFraction - sizeFraction
+    : startFraction
+  return {
+    page: sourceBox.page,
+    x: sourceBox.x + sourceBox.width * inlineStartFraction,
+    y: sourceBox.y,
+    width: sourceBox.width * sizeFraction,
+    height: sourceBox.height,
+    rotation: sourceBox.rotation,
+    method: sourceBox.method,
+  }
+}
+
+/**
+ * Recovers a descriptive external-link label only when the PDF annotation has
+ * one born-digital source-run owner and its geometry identifies exactly one
+ * token-bounded character interval in that run. PDF.js exposes the run box,
+ * not individual glyph boxes, so competing intervals and weak proportional
+ * projections deliberately remain unresolved.
+ */
+export function resolvePdfExternalLinkSourceIntervalOwnership({
+  annotation,
+  candidates,
+}: {
+  annotation: PdfExternalLinkAnnotation
+  candidates: readonly PdfExternalLinkSourceIntervalCandidate[]
+}): PdfExternalLinkSourceIntervalOwnership | null {
+  if (
+    !safePdfExternalLinkTarget(annotation.url) ||
+    annotation.box.method !== 'pdf-link' ||
+    annotation.box.page !== annotation.page ||
+    !validExternalLinkOwnershipBox(annotation.box)
+  ) {
+    return null
+  }
+  const annotationRotation = normalizedRightAngle(annotation.box.rotation)
+  if (annotationRotation === null) return null
+
+  const overlappingCandidates = [
+    ...new Map(
+      candidates
+        .filter(({ sourceBox, sourceStart, sourceEnd, text }) => {
+          return (
+            sourceBox.method === 'pdf-text' &&
+            validExternalLinkOwnershipBox(sourceBox) &&
+            normalizedRightAngle(sourceBox.rotation) === annotationRotation &&
+            sourceStart >= 0 &&
+            sourceStart < sourceEnd &&
+            sourceEnd - sourceStart === text.length &&
+            text.length <= 4_096 &&
+            text.trim().length > 0 &&
+            sourceBoxesOverlap(annotation.box, sourceBox) &&
+            axisMutualCoverage(
+              annotation.box.y,
+              annotation.box.height,
+              sourceBox.y,
+              sourceBox.height,
+            ) >= PDF_EXTERNAL_LINK_SUBRUN_CROSS_COVERAGE
+          )
+        })
+        .map(
+          (candidate) =>
+            [
+              `${candidate.ownerId}\0${candidate.sourceStart}\0${candidate.sourceEnd}\0${candidate.text}\0${candidate.sourceBox.x}\0${candidate.sourceBox.y}\0${candidate.sourceBox.width}\0${candidate.sourceBox.height}`,
+              candidate,
+            ] as const,
+        ),
+    ).values(),
+  ]
+  if (overlappingCandidates.length !== 1) return null
+
+  const candidate = overlappingCandidates[0]
+  const characterOffsets = sourceCharacterOffsets(candidate.text)
+  const characterIndexByOffset = new Map(
+    characterOffsets.map((offset, index) => [offset, index] as const),
+  )
+  const boundaries = sourceTokenBoundaries(candidate.text).filter((offset) =>
+    characterIndexByOffset.has(offset),
+  )
+  if (boundaries.length > 256) return null
+  const intervals = boundaries.flatMap((start, startIndex) =>
+    boundaries.slice(startIndex + 1).flatMap((end) => {
+      const text = candidate.text.slice(start, end)
+      if (!text || text.trim() !== text) return []
+      const characterStart = characterIndexByOffset.get(start)
+      const characterEnd = characterIndexByOffset.get(end)
+      if (
+        characterStart === undefined ||
+        characterEnd === undefined ||
+        characterStart >= characterEnd
+      ) {
+        return []
+      }
+      const startFraction = characterStart / (characterOffsets.length - 1)
+      const sizeFraction =
+        (characterEnd - characterStart) / (characterOffsets.length - 1)
+      // PDF.js exposes only the run rectangle here. Rotated source matrices
+      // that survive extraction are flow-aligned on the viewport x-axis, but
+      // their advance sign is not retained. Prove the interval against both
+      // projections and fail closed if geometry cannot distinguish one.
+      return [false, true].flatMap((reverse) => {
+        const sourceBox = projectedSourceCharacterIntervalBox({
+          sourceBox: candidate.sourceBox,
+          startFraction,
+          sizeFraction,
+          reverse,
+        })
+        return axisMutualCoverage(
+          annotation.box.x,
+          annotation.box.width,
+          sourceBox.x,
+          sourceBox.width,
+        ) >= PDF_EXTERNAL_LINK_SUBRUN_INLINE_COVERAGE
+          ? [
+              {
+                sourceStart: candidate.sourceStart + start,
+                sourceEnd: candidate.sourceStart + end,
+                text,
+                sourceBox,
+              },
+            ]
+          : []
+      })
+    }),
+  )
+  const uniqueIntervals = [
+    ...new Map(
+      intervals.map(
+        (interval) =>
+          [
+            `${interval.sourceStart}\0${interval.sourceEnd}\0${interval.sourceBox.x}\0${interval.sourceBox.y}\0${interval.sourceBox.width}\0${interval.sourceBox.height}`,
+            interval,
+          ] as const,
+      ),
+    ).values(),
+  ]
+  if (uniqueIntervals.length !== 1) return null
+  return {
+    ownerId: candidate.ownerId,
+    ...uniqueIntervals[0],
+    evidence: 'single-pdf-text-run-character-interval-v1',
+  }
+}
+
 function lineRunRanges(line: PdfLinkedTokenSourceLine) {
   const ranges = new Map<PdfSourceRun, { start: number; end: number }>()
   let cursor = 0
@@ -862,19 +1103,39 @@ function validTargetSourceBox(box: NormalizedSourceBox) {
   )
 }
 
-function axisDistance(value: number | null, start: number, size: number) {
-  if (value === null) return 0
-  return Math.max(start - value, value - (start + size), 0)
-}
-
-function pointToBoxDistance(
+function pointToTargetAnchorDistance(
   point: NonNullable<PdfInternalDestinationEvidence['point']>,
   box: NormalizedSourceBox,
 ) {
-  return Math.hypot(
-    axisDistance(point.x, box.x, box.width),
-    axisDistance(point.y, box.y, box.height),
-  )
+  const containmentDistance = (
+    value: number | null,
+    start: number,
+    size: number,
+  ) => (value === null ? 0 : Math.max(start - value, value - (start + size), 0))
+  const edgeDistance = (value: number | null, edge: number) =>
+    value === null ? 0 : Math.abs(value - edge)
+  const rotation = ((point.rotation % 360) + 360) % 360
+
+  // An XYZ destination names the viewport's target-top edge, not an arbitrary
+  // point contained by the target block. In normalized rotated viewport
+  // coordinates that edge is top/right/bottom/left at 0/90/180/270 degrees.
+  // The orthogonal coordinate may legitimately fall anywhere across a wrapped
+  // target box, so it retains containment distance.
+  const horizontalDistance =
+    rotation === 90
+      ? edgeDistance(point.x, box.x + box.width)
+      : rotation === 270
+        ? edgeDistance(point.x, box.x)
+        : containmentDistance(point.x, box.x, box.width)
+  const verticalDistance =
+    rotation === 0
+      ? edgeDistance(point.y, box.y)
+      : rotation === 180
+        ? edgeDistance(point.y, box.y + box.height)
+        : containmentDistance(point.y, box.y, box.height)
+  return [0, 90, 180, 270].includes(rotation)
+    ? Math.hypot(horizontalDistance, verticalDistance)
+    : Number.POSITIVE_INFINITY
 }
 
 function boxToBoxDistance(
@@ -972,7 +1233,7 @@ function geometryBackedInternalDestination(
       const distance = destinationBox
         ? boxToBoxDistance(destinationBox, box)
         : point
-          ? pointToBoxDistance(point, box)
+          ? pointToTargetAnchorDistance(point, box)
           : Number.POSITIVE_INFINITY
       const prior = distancesByNodeId.get(target.nodeId)
       if (prior === undefined || distance < prior) {

@@ -1068,6 +1068,76 @@ function tableLineRows(entries: TableLineEntry[]) {
   })
 }
 
+function captionOwnedTableRows(
+  captionRows: TableLineRow[],
+  candidateRows: TableLineRow[],
+): TableLineRow[] | null {
+  const captionEntryKeys = new Set(
+    captionRows.flatMap((row) =>
+      row.entries.map((entry) => tableLineEntryKey(entry)),
+    ),
+  )
+  const recoveredCaptionEntryKeys = new Set<string>()
+  const ownerLanes = new Set<TableColumnLane>()
+  for (const row of candidateRows) {
+    let ownsCaptionEntry = false
+    for (const entry of row.entries) {
+      const key = tableLineEntryKey(entry)
+      if (!captionEntryKeys.has(key)) continue
+      recoveredCaptionEntryKeys.add(key)
+      ownsCaptionEntry = true
+    }
+    if (ownsCaptionEntry) ownerLanes.add(row.lane)
+  }
+  if (
+    captionEntryKeys.size === 0 ||
+    recoveredCaptionEntryKeys.size !== captionEntryKeys.size ||
+    ownerLanes.size !== 1
+  ) {
+    return candidateRows.some((row) => row.lane !== 'full')
+      ? null
+      : candidateRows
+  }
+  const [ownerLane] = ownerLanes
+  return candidateRows.filter((row) => row.lane === ownerLane)
+}
+
+function captionOwnedTableEntries(
+  caption: PdfPageRegion,
+  captionRows: TableLineRow[],
+  candidateEntries: TableLineEntry[],
+  supplementalEntries: TableLineEntry[],
+) {
+  if (caption.sourceCaptionLane) {
+    const supplementalEntryKeys = new Set(
+      supplementalEntries.map((entry) => tableLineEntryKey(entry)),
+    )
+    return candidateEntries.filter(
+      (entry) =>
+        captionOwnsTableLine(caption, entry) ||
+        supplementalEntryKeys.has(tableLineEntryKey(entry)),
+    )
+  }
+  const seedEntries = captionRows.flatMap((row) => row.entries)
+  const seedColumn =
+    seedEntries.length > 0 &&
+    seedEntries.every((entry) => entry.region.column === 'left')
+      ? 'left'
+      : seedEntries.length > 0 &&
+          seedEntries.every((entry) => entry.region.column === 'right')
+        ? 'right'
+        : null
+  if (seedColumn === null) return candidateEntries
+  const supplementalEntryKeys = new Set(
+    supplementalEntries.map((entry) => tableLineEntryKey(entry)),
+  )
+  return candidateEntries.filter(
+    (entry) =>
+      entry.region.column === seedColumn ||
+      supplementalEntryKeys.has(tableLineEntryKey(entry)),
+  )
+}
+
 function repeatedTabularAnchorCount(rows: TableLineRow[]) {
   const anchors: Array<{ x: number; rowIndexes: Set<number> }> = []
   for (const [rowIndex, row] of rows.entries()) {
@@ -1212,6 +1282,130 @@ function lineHeightMatchesBand(
   return (
     ratio >= MIN_ROW_BAND_LINE_HEIGHT_RATIO &&
     ratio <= MAX_ROW_BAND_LINE_HEIGHT_RATIO
+  )
+}
+
+function rowHeightMatchesBand(
+  row: TableLineRow,
+  referenceRows: TableLineRow[],
+) {
+  const referenceHeight = median(
+    referenceRows.flatMap((candidate) =>
+      candidate.entries.map((entry) => entry.line.box.height),
+    ),
+  )
+  const rowHeight = median(row.entries.map((entry) => entry.line.box.height))
+  if (referenceHeight <= 0 || rowHeight <= 0) return false
+  const ratio = rowHeight / referenceHeight
+  return (
+    ratio >= MIN_ROW_BAND_LINE_HEIGHT_RATIO &&
+    ratio <= MAX_ROW_BAND_LINE_HEIGHT_RATIO
+  )
+}
+
+function rowTypographyMatchesBand(
+  row: TableLineRow,
+  referenceRows: TableLineRow[],
+) {
+  const referenceFontNames = new Set(
+    referenceRows.flatMap((candidate) =>
+      candidate.entries.flatMap((entry) =>
+        entry.line.runs
+          .filter((run) => run.text.trim())
+          .map((run) => normalizedTableFontName(run.fontName)),
+      ),
+    ),
+  )
+  const rowFontNames = new Set(
+    row.entries.flatMap((entry) =>
+      entry.line.runs
+        .filter((run) => run.text.trim())
+        .map((run) => normalizedTableFontName(run.fontName)),
+    ),
+  )
+  return (
+    referenceFontNames.size > 0 &&
+    rowFontNames.size > 0 &&
+    [...rowFontNames].every((fontName) => referenceFontNames.has(fontName))
+  )
+}
+
+function explicitlyStyledTableRow(row: TableLineRow) {
+  const visibleRuns = row.entries.flatMap((entry) =>
+    entry.line.runs.filter((run) => run.text.trim()),
+  )
+  return visibleRuns.length > 0 && visibleRuns.every(explicitTableStyle)
+}
+
+function provedTableHeaderBodyTransition(
+  row: TableLineRow,
+  header: TableLineRow,
+) {
+  if (
+    !explicitTableHeaderRow(header) ||
+    row.anchors.length < MIN_TABULAR_ROW_ANCHORS
+  ) {
+    return false
+  }
+  const claimedHeaderAnchors = new Set<number>()
+  return row.anchors.every((anchor) => {
+    const candidates = header.anchors
+      .map((headerAnchor, index) => ({
+        index,
+        distance: Math.abs(headerAnchor - anchor),
+      }))
+      .filter(
+        (candidate) =>
+          candidate.distance <= COLUMN_ANCHOR_TOLERANCE &&
+          !claimedHeaderAnchors.has(candidate.index),
+      )
+      .sort(
+        (left, right) =>
+          left.distance - right.distance || left.index - right.index,
+      )
+    const selected = candidates[0]
+    if (!selected) return false
+    claimedHeaderAnchors.add(selected.index)
+    return true
+  })
+}
+
+function weakSlabTypographyBoundaryMatches(
+  row: TableLineRow,
+  referenceRows: TableLineRow[],
+  allowLeadingSourceHeading: boolean,
+) {
+  const labeledRecordAnchors = (candidate: TableLineRow) =>
+    candidate.entries.flatMap((entry) => {
+      if (!labeledRecordLine(entry.line)) return []
+      const labelRun = entry.line.runs.find((run) => run.text.trim())
+      return labelRun
+        ? [
+            {
+              fontName: normalizedTableFontName(labelRun.fontName),
+              x: labelRun.x,
+            },
+          ]
+        : []
+    })
+  const incomingRecordAnchors = labeledRecordAnchors(row)
+  const establishedRecordAnchors = referenceRows.flatMap(labeledRecordAnchors)
+  const crossesLabeledRecordBoundary =
+    incomingRecordAnchors.length > 0 && establishedRecordAnchors.length > 0
+  const labeledRecordTransition = incomingRecordAnchors.some((incoming) =>
+    establishedRecordAnchors.some(
+      (established) =>
+        incoming.fontName === established.fontName &&
+        Math.abs(incoming.x - established.x) <= COLUMN_ANCHOR_TOLERANCE,
+    ),
+  )
+  return (
+    (rowTypographyMatchesBand(row, referenceRows) &&
+      !crossesLabeledRecordBoundary) ||
+    labeledRecordTransition ||
+    (allowLeadingSourceHeading && explicitlyStyledTableRow(row)) ||
+    (referenceRows.length === 1 &&
+      provedTableHeaderBodyTransition(row, referenceRows[0]))
   )
 }
 
@@ -1955,7 +2149,10 @@ function closeProvenTableLineBand(
         .map((line) => ({ region, line }))
         .filter(
           (entry) =>
-            validTableLineEntry(entry) && boxWithinLane(entry.line.box, lane),
+            validTableLineEntry(entry) &&
+            boxWithinLane(entry.line.box, lane) &&
+            (!caption.sourceCaptionLane ||
+              captionOwnsTableLine(caption, entry)),
         ),
     )
   let changed = true
@@ -2038,7 +2235,29 @@ function normalizedTableFontName(value: string) {
     )
 }
 
+function sourceCaptionLaneOwnsBox(
+  caption: PdfPageRegion,
+  sourceBox: NormalizedSourceBox,
+) {
+  const lane = caption.sourceCaptionLane
+  if (!lane) return null
+  const left = sourceBox.x
+  const right = sourceBox.x + sourceBox.width
+  if (
+    left < lane.boundary - BOX_TOLERANCE &&
+    right > lane.boundary + BOX_TOLERANCE
+  ) {
+    return false
+  }
+  const center = left + sourceBox.width / 2
+  return lane.side === 'left'
+    ? center <= lane.boundary + BOX_TOLERANCE
+    : center >= lane.boundary - BOX_TOLERANCE
+}
+
 function captionOwnsTableLine(caption: PdfPageRegion, entry: TableLineEntry) {
+  const localLaneOwnership = sourceCaptionLaneOwnsBox(caption, entry.line.box)
+  if (localLaneOwnership !== null) return localLaneOwnership
   if (caption.column === 'left' || caption.column === 'right') {
     return entry.region.column === caption.column
   }
@@ -2047,6 +2266,30 @@ function captionOwnsTableLine(caption: PdfPageRegion, entry: TableLineEntry) {
     center >= caption.box.x - MAX_LINE_BAND_CAPTION_GAP &&
     center <= caption.box.x + caption.box.width + MAX_LINE_BAND_CAPTION_GAP
   )
+}
+
+function captionOwnsTextSlabLine(
+  caption: PdfPageRegion,
+  entry: TableLineEntry,
+) {
+  const localLaneOwnership = sourceCaptionLaneOwnsBox(caption, entry.line.box)
+  if (localLaneOwnership !== null) return localLaneOwnership
+  if (
+    (caption.column === 'left' && entry.region.column === 'right') ||
+    (caption.column === 'right' && entry.region.column === 'left')
+  ) {
+    return false
+  }
+  if (caption.column === 'span') return true
+  if (caption.column === 'single') {
+    return entry.region.column === 'single' || entry.region.column === 'span'
+  }
+  const center = entry.line.box.x + entry.line.box.width / 2
+  const laneTolerance =
+    MAX_LINE_BAND_CAPTION_GAP + MAX_TEXT_SLAB_CAPTION_GAP + BOX_TOLERANCE
+  return caption.column === 'left'
+    ? center <= caption.box.x + caption.box.width + laneTolerance
+    : center >= caption.box.x - laneTolerance
 }
 
 function lineMatchesTableTypography(
@@ -2151,6 +2394,10 @@ function completeTextScopeWithinCaptionLane(
     scope.direction === 'above'
       ? completeAboveCaptionLane(caption, pageRegions)
       : completeBelowCaptionLane(caption, pageRegions)
+  const captionOwnsCandidateLine = (entry: TableLineEntry) =>
+    scope.proof === 'caption-bounded-text-slab' && scope.direction === 'below'
+      ? captionOwnsTextSlabLine(caption, entry)
+      : captionOwnsTableLine(caption, entry)
   const candidates = pageRegions
     .filter(
       (region) =>
@@ -2171,7 +2418,7 @@ function completeTextScopeWithinCaptionLane(
             !selected.has(tableLineEntryKey(entry)) &&
             validTableLineEntry(entry) &&
             boxWithinLane(entry.line.box, lane) &&
-            captionOwnsTableLine(caption, entry),
+            captionOwnsCandidateLine(entry),
         ),
     )
   if (candidates.length === 0) return none
@@ -2207,7 +2454,10 @@ function completeTextScopeWithinCaptionLane(
 
   // Complete contiguous tabular rows between the proved body and its caption.
   // Encountering non-tabular source flow in that corridor invalidates this
-  // candidate instead of silently cropping through the prose.
+  // candidate instead of silently cropping through the prose. Cross-type
+  // figure ownership is removed from the available source-line set before
+  // this completion pass; font-family changes within a real table are not
+  // reliable ownership boundaries.
   let unsafe = false
   while (true) {
     const crop = unionBoxes(
@@ -2230,6 +2480,18 @@ function completeTextScopeWithinCaptionLane(
           )[0]
     if (!next) break
     if (gapBetween(crop, next.box).vertical > MAX_ATOMIC_ROW_GAP) break
+    if (
+      scope.proof === 'caption-bounded-text-slab' &&
+      scope.direction === 'below' &&
+      (!rowHeightMatchesBand(next, tableLineRows(currentEntries())) ||
+        !weakSlabTypographyBoundaryMatches(
+          next,
+          tableLineRows(currentEntries()),
+          false,
+        ))
+    ) {
+      break
+    }
     const tableTypography = next.entries.every((entry) =>
       lineMatchesTableTypography(entry, selectedFontNames),
     )
@@ -2536,15 +2798,30 @@ function tabularLineBandCandidates(
       // overlapping lines, then close only that already-proven vertical span
       // across the page. This recovers atomized left/right cells without
       // extending into adjacent prose rows or another caption lane.
-      const rows = tableLineRows(
-        scopedLaneEntries.filter(
-          (entry) =>
-            entry.line.box.y >= bandTop - BOX_TOLERANCE &&
-            entry.line.box.y + entry.line.box.height <=
-              bandBottom + BOX_TOLERANCE &&
-            lineHeightMatchesBand(entry.line, captionLineHeights),
+      const boundedBandEntries = scopedLaneEntries.filter(
+        (entry) =>
+          entry.line.box.y >= bandTop - BOX_TOLERANCE &&
+          entry.line.box.y + entry.line.box.height <=
+            bandBottom + BOX_TOLERANCE &&
+          lineHeightMatchesBand(entry.line, captionLineHeights),
+      )
+      const candidateRows = tableLineRows(
+        captionOwnedTableEntries(
+          caption,
+          captionRows,
+          boundedBandEntries,
+          supplementalEquationCells.entries,
         ),
       )
+      // Re-evaluate the page gutter after collecting the full vertical band.
+      // The caption-overlapping seed may contain only one column and therefore
+      // cannot prove a gutter by itself. Once the complete band proves two
+      // lanes, retain only the lane containing every exact seed entry. This
+      // prevents an adjacent figure or prose column at the same y coordinates
+      // from becoming table source while preserving full-width tables when no
+      // source-backed gutter exists.
+      const rows = captionOwnedTableRows(captionRows, candidateRows)
+      if (!rows) continue
       const proof = tabularLineBandProof(rows)
       if (!proof) continue
       const selectedEntries = closeProvenTableLineBand(
@@ -2707,7 +2984,10 @@ function captionBoundedTextSlabCandidates(
           .map((line) => ({ region, line }))
           .filter(
             (entry) =>
-              validTableLineEntry(entry) && boxWithinLane(entry.line.box, lane),
+              validTableLineEntry(entry) &&
+              boxWithinLane(entry.line.box, lane) &&
+              (lane.direction === 'above' ||
+                captionOwnsTextSlabLine(caption, entry)),
           ),
       )
     const rows = tableLineRows(entries)
@@ -2730,7 +3010,11 @@ function captionBoundedTextSlabCandidates(
       const current =
         lane.direction === 'above' ? selectedRows[0] : selectedRows.at(-1)!
       if (
-        gapBetween(candidate.box, current.box).vertical > MAX_TEXT_SLAB_ROW_GAP
+        gapBetween(candidate.box, current.box).vertical >
+          MAX_TEXT_SLAB_ROW_GAP ||
+        (lane.direction === 'below' &&
+          (!rowHeightMatchesBand(candidate, selectedRows) ||
+            !weakSlabTypographyBoundaryMatches(candidate, selectedRows, false)))
       ) {
         break
       }

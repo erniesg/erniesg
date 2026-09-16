@@ -328,10 +328,29 @@ it('does not promote a stacked inline shard when the same prose line continues t
     expect.objectContaining({
       kind: 'equation',
       status: 'unresolved',
-      sourceRegionIds: [],
-      evidence: expect.arrayContaining(['incomplete-equation-source-scope']),
+      sourceRegionIds: [shard.id],
+      sourceLineIds: ['inline-script-shard-line'],
+      sourceObjectIds: [],
+      assetIds: [],
+      canonicalNodeId: null,
+      evidence: expect.arrayContaining([
+        'source-proved-atomic-equation-component',
+        'incomplete-equation-source-scope',
+        'source-rendition-unavailable',
+      ]),
+      candidates: [
+        expect.objectContaining({
+          id: 'visual-candidate-9b1c9982baeed3ea9287d4d406a5f59112bfe686b13ec5c91df9a98fe0498f38',
+          sourceRegionIds: [shard.id],
+          sourceLineIds: ['inline-script-shard-line'],
+          sourceText: 'hl=',
+          sourceObjectIds: ['equation-source-p001-001'],
+          assetIds: [],
+        }),
+      ],
     }),
   ])
+  expect(result.consumedRegionIds.has(shard.id)).toBe(false)
   expect(result.consumedRegionIds.has(continuation.id)).toBe(false)
 })
 

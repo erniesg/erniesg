@@ -2,10 +2,21 @@ import type {
   NodeSourceEvidence,
   NormalizedSourceBox,
   PdfNativeObject,
+  PdfPageAnalysis,
   PdfPageRegion,
   PdfVisualAsset,
   PdfVisualRelationship,
 } from './import-types'
+import {
+  auditEquationRenderOnlySourceRunOwnerships,
+  isPotentialEquationRenderOnlySourceRun,
+  RENDER_ONLY_EQUATION_OWNERSHIP_EVIDENCE,
+  type PdfEquationRenderOnlyOwnershipAudit,
+} from './equation-render-only-ownership'
+import {
+  SOURCE_GEOMETRY_SCRIPT_TRANSCRIPT_EVIDENCE,
+  verifyRelationshipSourceGeometryScriptTranscript,
+} from './equation-geometry-transcript'
 import type { ResearchPaper } from './schema'
 import { isSourceVerifiedSemanticTable } from './semantic-table'
 import {
@@ -155,6 +166,18 @@ function subtractBoxes(
 
 function roundedSourceCoordinate(value: number) {
   return Math.round(value * 100_000) / 100_000
+}
+
+function roundedSourceBoxKey(box: NormalizedSourceBox) {
+  return boxKey({
+    page: box.page,
+    x: roundedSourceCoordinate(box.x),
+    y: roundedSourceCoordinate(box.y),
+    width: roundedSourceCoordinate(box.width),
+    height: roundedSourceCoordinate(box.height),
+    rotation: box.rotation,
+    method: box.method,
+  })
 }
 
 function boundingSourceBox(boxes: NormalizedSourceBox[]) {
@@ -391,6 +414,9 @@ function validSharedEquationLineScope({
   const selectedLines = relationship.sourceLineIds.flatMap(
     (lineId) => lineOccurrences.get(lineId) ?? [],
   )
+  const selectedRuns = selectedLines.flatMap(({ line }) =>
+    line.runs.filter((run) => run.text.trim()),
+  )
   if (
     selectedLines.length !== relationship.sourceLineIds.length ||
     relationship.sourceLineIds.some(
@@ -401,9 +427,17 @@ function validSharedEquationLineScope({
       (regionId) =>
         !selectedLines.some((selected) => selected.regionId === regionId),
     ) ||
+    selectedLines.some(
+      ({ line }) => !line.runs.some((run) => run.text.trim()),
+    ) ||
     selectedLines.some(({ line }) =>
       canonicalEvidence.boxes.every(
         (sourceBox) => !sourceCropContainsBox(sourceBox, line.box),
+      ),
+    ) ||
+    selectedRuns.some((run) =>
+      canonicalEvidence.boxes.every(
+        (sourceBox) => !sourceCropContainsBox(sourceBox, run),
       ),
     )
   ) {
@@ -414,8 +448,8 @@ function validSharedEquationLineScope({
     const ownerEvidence = provenance[ownerId]
     if (!ownerEvidence || ownerEvidence.boxes.length === 0) return false
     if (
-      selectedLines.some(({ line }) =>
-        ownerEvidence.boxes.some((box) => sourceBoxesOverlap(box, line.box)),
+      selectedRuns.some((run) =>
+        ownerEvidence.boxes.some((box) => sourceBoxesOverlap(box, run)),
       )
     ) {
       return false
@@ -560,28 +594,286 @@ function uniqueAssetsById(assets: PdfVisualAsset[]) {
   )
 }
 
+function validSourceExclusionMaskEvidence(
+  relationship: PdfVisualRelationship,
+  renderedAssets: readonly PdfVisualAsset[],
+  regions: readonly PdfPageRegion[] | undefined,
+) {
+  const nearestSourceBoxClaimCount = relationship.evidence.filter(
+    (evidence) => evidence === 'source-page-crop-unowned-text-masked',
+  ).length
+  const textOperationFilterClaimCount = relationship.evidence.filter(
+    (evidence) =>
+      evidence === 'source-page-crop-text-operation-filter-attested',
+  ).length
+  if (nearestSourceBoxClaimCount > 1 || textOperationFilterClaimCount > 1) {
+    return false
+  }
+  const maskedAssets = renderedAssets.filter(
+    (asset) => asset.sourceExclusionMask !== undefined,
+  )
+  if (maskedAssets.length === 0) {
+    return (
+      nearestSourceBoxClaimCount === 0 && textOperationFilterClaimCount === 0
+    )
+  }
+  if (
+    relationship.kind !== 'equation' ||
+    maskedAssets.length !== 1 ||
+    maskedAssets[0].rendition !== 'source-page-crop'
+  ) {
+    return false
+  }
+  const maskedAsset = maskedAssets[0]
+  return maskedAsset.sourceExclusionMask!.algorithm === 'nearest-source-box-v1'
+    ? nearestSourceBoxClaimCount === 1 && textOperationFilterClaimCount === 0
+    : nearestSourceBoxClaimCount === 0 &&
+        textOperationFilterClaimCount === 1 &&
+        validTextOperationFilterSourceBinding(
+          relationship,
+          maskedAsset,
+          regions,
+        )
+}
+
+function validTextOperationFilterSourceBinding(
+  relationship: PdfVisualRelationship,
+  asset: PdfVisualAsset,
+  regions: readonly PdfPageRegion[] | undefined,
+) {
+  const mask = asset.sourceExclusionMask
+  if (
+    relationship.kind !== 'equation' ||
+    mask?.algorithm !== 'pdfjs-display-text-operation-filter-v2' ||
+    !regions ||
+    !relationship.sourceLineIds?.length
+  ) {
+    return false
+  }
+  const sourceRegionIds = new Set(relationship.sourceRegionIds)
+  const selectedLines = relationship.sourceLineIds.flatMap((lineId) =>
+    regions.flatMap((region) =>
+      sourceRegionIds.has(region.id)
+        ? region.lines.filter((line) => line.id === lineId)
+        : [],
+    ),
+  )
+  if (
+    selectedLines.length !== relationship.sourceLineIds.length ||
+    relationship.sourceLineIds.some(
+      (lineId) =>
+        regions.reduce(
+          (count, region) =>
+            count + region.lines.filter((line) => line.id === lineId).length,
+          0,
+        ) !== 1,
+    )
+  ) {
+    return false
+  }
+  const ownedRuns = selectedLines.flatMap((line) =>
+    line.runs.filter((run) => run.text.trim().length > 0),
+  )
+  if (
+    ownedRuns.length === 0 ||
+    ownedRuns.some(
+      (run) => run.sourceTextPaint?.algorithm !== 'pdfjs-text-paint-run-v1',
+    )
+  ) {
+    return false
+  }
+  const paint = ownedRuns.map((run) => run.sourceTextPaint!)
+  const canonicalSpans = paint
+    .map((item) => ({
+      start: item.normalizedTextStart,
+      end: item.normalizedTextEnd,
+    }))
+    .sort((left, right) => left.start - right.start || left.end - right.end)
+  const operationIndexes = [
+    ...new Set(paint.flatMap((item) => item.filterableOperationIndexes)),
+  ].sort((left, right) => left - right)
+  const canonicalBoxKeys = [
+    ...new Set(ownedRuns.map(roundedSourceBoxKey)),
+  ].sort()
+  return (
+    paint.every(
+      (item) =>
+        item.textLedgerSha256 === mask.sourceTextLedgerSha256 &&
+        item.operatorLedgerSha256 === mask.operatorLedgerSha256,
+    ) &&
+    JSON.stringify(canonicalSpans) ===
+      JSON.stringify(mask.ownedTextLedgerSpans) &&
+    JSON.stringify(operationIndexes) ===
+      JSON.stringify(mask.ownedOperationIndexes) &&
+    sameStrings(
+      canonicalBoxKeys,
+      mask.ownedSourceBoxes.map(roundedSourceBoxKey).sort(),
+    )
+  )
+}
+
+function validRenderOnlyEquationSourceOwnership(
+  relationship: PdfVisualRelationship,
+  audit: PdfEquationRenderOnlyOwnershipAudit | null,
+  pages: readonly PdfPageAnalysis[] | undefined,
+  regions: readonly PdfPageRegion[] | undefined,
+  requiresCompleteReplay: boolean,
+) {
+  const claimCount = relationship.evidence.filter(
+    (evidence) => evidence === RENDER_ONLY_EQUATION_OWNERSHIP_EVIDENCE,
+  ).length
+  const ownerships = relationship.renderOnlySourceRunOwnerships ?? []
+  if (relationship.kind !== 'equation') {
+    return ownerships.length === 0 && claimCount === 0
+  }
+  if (
+    requiresCompleteReplay &&
+    (!pages ||
+      !regions ||
+      !audit?.structurallyValid ||
+      !relationship.sourceLineIds?.length ||
+      relationship.sourceBoxes.length === 0 ||
+      relationship.sourceRegionIds.some(
+        (regionId) =>
+          regions.filter((region) => region.id === regionId).length !== 1,
+      ) ||
+      relationship.sourceLineIds.some(
+        (lineId) =>
+          regions.reduce(
+            (count, region) =>
+              count + region.lines.filter((line) => line.id === lineId).length,
+            0,
+          ) !== 1,
+      ) ||
+      [...new Set(relationship.sourceBoxes.map((box) => box.page))].some(
+        (pageNumber) => {
+          const matches = pages.filter((page) => page.page === pageNumber)
+          return (
+            matches.length !== 1 ||
+            !Array.isArray(matches[0].runs) ||
+            matches[0].runs.length === 0
+          )
+        },
+      ))
+  ) {
+    return false
+  }
+  if (!pages || !regions || !audit) {
+    return ownerships.length === 0 && claimCount === 0
+  }
+  const hasPotentialSourceMarker = pages.some((page) =>
+    (page.renderVisibleTextRuns ?? []).some(
+      (run) =>
+        isPotentialEquationRenderOnlySourceRun(run) &&
+        relationship.sourceBoxes.some((box) => sourceBoxesOverlap(run, box)),
+    ),
+  )
+  if (!audit.structurallyValid) {
+    return (
+      ownerships.length === 0 && claimCount === 0 && !hasPotentialSourceMarker
+    )
+  }
+  const expected = audit.projections.get(relationship.id)?.ownerships ?? []
+  const expectedClaimCount = expected.length > 0 ? 1 : 0
+  if (
+    claimCount !== expectedClaimCount ||
+    JSON.stringify(expected) !== JSON.stringify(ownerships) ||
+    ((hasPotentialSourceMarker ||
+      audit.obligationScopeIds.has(relationship.id)) &&
+      expected.length === 0) ||
+    (ownerships.length > 0 && !relationship.sourceLineIds?.length) ||
+    ownerships.some(
+      (ownership) =>
+        ownership.algorithm !==
+          'equation-bracketed-render-only-extension-glyph-v1' ||
+        !Number.isSafeInteger(ownership.page) ||
+        ownership.page < 1 ||
+        !Number.isSafeInteger(ownership.sourceSequenceIndex) ||
+        !Number.isSafeInteger(ownership.precedingSourceSequenceIndex) ||
+        !Number.isSafeInteger(ownership.followingSourceSequenceIndex) ||
+        ownership.precedingSourceSequenceIndex !==
+          ownership.sourceSequenceIndex - 1 ||
+        ownership.followingSourceSequenceIndex !==
+          ownership.sourceSequenceIndex + 1 ||
+        !SHA256_PATTERN.test(ownership.sourceRunSha256) ||
+        !SHA256_PATTERN.test(ownership.precedingSourceRunSha256) ||
+        !SHA256_PATTERN.test(ownership.followingSourceRunSha256),
+    ) ||
+    new Set(
+      ownerships.map(
+        (ownership) => `${ownership.page}:${ownership.sourceSequenceIndex}`,
+      ),
+    ).size !== ownerships.length
+  ) {
+    return false
+  }
+  return true
+}
+
 export function validatedPdfVisualRelationships({
   paper,
   provenance,
   relationships,
   assets,
   regions,
+  pages,
 }: {
   paper: ResearchPaper
   provenance?: Record<string, NodeSourceEvidence>
   relationships?: PdfVisualRelationship[]
   assets?: PdfVisualAsset[]
   regions?: readonly PdfPageRegion[]
+  pages?: readonly PdfPageAnalysis[]
 }) {
   if (!provenance) return []
   const assetsById = uniqueAssetsById(assets ?? [])
   const relationshipCounts = new Map<string, number>()
+  const canonicalNodeOwnerCounts = new Map<string, number>()
+  const captionNodeOwnerCounts = new Map<string, number>()
   for (const relationship of relationships ?? []) {
     relationshipCounts.set(
       relationship.id,
       (relationshipCounts.get(relationship.id) ?? 0) + 1,
     )
+    if (relationship.canonicalNodeId) {
+      canonicalNodeOwnerCounts.set(
+        relationship.canonicalNodeId,
+        (canonicalNodeOwnerCounts.get(relationship.canonicalNodeId) ?? 0) + 1,
+      )
+    }
+    if (relationship.captionNodeId) {
+      captionNodeOwnerCounts.set(
+        relationship.captionNodeId,
+        (captionNodeOwnerCounts.get(relationship.captionNodeId) ?? 0) + 1,
+      )
+    }
   }
+  const renderOnlyOwnershipAudit =
+    pages && regions
+      ? auditEquationRenderOnlySourceRunOwnerships({
+          pages,
+          regions,
+          scopes: (relationships ?? []).flatMap((relationship) => {
+            const sourcePages = [
+              ...new Set(relationship.sourceBoxes.map((box) => box.page)),
+            ]
+            return relationship.kind === 'equation' &&
+              relationshipCounts.get(relationship.id) === 1 &&
+              relationship.sourceRegionIds.length > 0 &&
+              relationship.sourceLineIds?.length &&
+              sourcePages.length === 1
+              ? [
+                  {
+                    id: relationship.id,
+                    page: sourcePages[0],
+                    sourceRegionIds: relationship.sourceRegionIds,
+                    sourceLineIds: relationship.sourceLineIds,
+                  },
+                ]
+              : []
+          }),
+        })
+      : null
   const nodesById = new Map(paper.nodes.map((node) => [node.id, node]))
   const sourceRegionOwners = new Map<string, Set<string>>()
   for (const node of paper.nodes) {
@@ -592,6 +884,11 @@ export function validatedPdfVisualRelationships({
     }
   }
   return (relationships ?? []).filter((relationship) => {
+    const geometryTranscriptClaimCount = relationship.evidence.filter(
+      (evidence) => evidence === SOURCE_GEOMETRY_SCRIPT_TRANSCRIPT_EVIDENCE,
+    ).length
+    const hasGeometryTranscript =
+      relationship.equationGeometryTranscript !== undefined
     const hasExplicitTableLineScope = Boolean(
       relationship.kind === 'table' &&
       relationship.sourceLineIds?.length &&
@@ -604,11 +901,25 @@ export function validatedPdfVisualRelationships({
       relationship.status !== 'matched' ||
       relationship.canonicalNodeId === null ||
       relationship.captionNodeId === null ||
+      canonicalNodeOwnerCounts.get(relationship.canonicalNodeId) !== 1 ||
+      captionNodeOwnerCounts.get(relationship.captionNodeId) !== 1 ||
       relationship.sourceObjectIds.length === 0 ||
       (relationship.kind !== 'figure' &&
         relationship.sourceRegionIds.length === 0) ||
       relationship.assetIds.length === 0 ||
       relationship.sourceBoxes.length === 0 ||
+      geometryTranscriptClaimCount !== (hasGeometryTranscript ? 1 : 0) ||
+      !validRenderOnlyEquationSourceOwnership(
+        relationship,
+        renderOnlyOwnershipAudit,
+        pages,
+        regions,
+        relationship.kind === 'equation' &&
+          relationship.assetIds.some(
+            (assetId) =>
+              assetsById.get(assetId)?.rendition === 'source-page-crop',
+          ),
+      ) ||
       hasIncompleteInlineStackedEquationScope(relationship, regions) ||
       new Set(relationship.sourceObjectIds).size !==
         relationship.sourceObjectIds.length ||
@@ -685,18 +996,18 @@ export function validatedPdfVisualRelationships({
     const renderedAssets = relationship.assetIds
       .map((assetId) => assetsById.get(assetId))
       .filter((asset): asset is PdfVisualAsset => Boolean(asset))
-    const maskedAssetCount = renderedAssets.filter(
-      (asset) => asset.sourceExclusionMask !== undefined,
-    ).length
-    const relationshipClaimsSourceExclusionMask =
-      relationship.evidence.includes('source-page-crop-unowned-text-masked')
     if (
       renderedAssets.length !== relationship.assetIds.length ||
-      (maskedAssetCount > 0 && relationship.kind !== 'equation') ||
-      relationshipClaimsSourceExclusionMask !== maskedAssetCount > 0 ||
+      !validSourceExclusionMaskEvidence(
+        relationship,
+        renderedAssets,
+        regions,
+      ) ||
       renderedAssets.some(
         (asset) =>
           !validAssetContent(asset) ||
+          (asset.rendition === 'source-page-crop' &&
+            !isValidSourcePageCropPayload(asset)) ||
           !validAssetShape(asset, relationship.kind),
       ) ||
       !sameStrings(
@@ -719,6 +1030,16 @@ export function validatedPdfVisualRelationships({
         hasExplicitLineScope: hasExplicitTableLineScope,
         regions,
         canonicalEvidence,
+      })
+    ) {
+      return false
+    }
+    if (
+      relationship.equationGeometryTranscript &&
+      !verifyRelationshipSourceGeometryScriptTranscript({
+        relationship,
+        regions: regions ?? [],
+        assets: assets ?? [],
       })
     ) {
       return false

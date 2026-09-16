@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   normalizePdfFontText,
   normalizePdfTextSequence,
+  pdfFontStyle,
   pdfOperatorListDependencyIds,
   pdfFontTextRequiresStructuralReconstruction,
   resolvePdfFontMetadata,
@@ -42,6 +43,72 @@ describe('PDF font text normalization', () => {
     expect(normalizePdfFontText('\u0000x\u0001', 'ABCDEF+BodySerif')).toBe(
       '\u0000x\u0001',
     )
+  })
+
+  it('classifies subset-prefixed Computer Modern and Latin Modern emphasis', () => {
+    expect(pdfFontStyle({ fontName: 'QNPGDC+CMBX12', text: '70.281' })).toEqual(
+      {
+        bold: true,
+        italic: false,
+      },
+    )
+    expect(
+      pdfFontStyle({ fontName: 'ABCDEF+CMBXTI10', text: 'Result' }),
+    ).toEqual({
+      bold: true,
+      italic: true,
+    })
+    expect(pdfFontStyle({ fontName: 'YKELUW+CMMI10', text: 's' })).toEqual({
+      bold: false,
+      italic: true,
+    })
+    expect(
+      pdfFontStyle({ fontName: 'ABCDEF+LMBXTI10', text: 'Result' }),
+    ).toEqual({
+      bold: true,
+      italic: true,
+    })
+    expect(pdfFontStyle({ fontName: 'ABCDEF+LMMI10', text: 'σ' })).toEqual({
+      bold: false,
+      italic: true,
+    })
+    expect(
+      pdfFontStyle({
+        fontName: 'ABCDEF+LMRoman10-BoldItalic',
+        text: 'Result',
+      }),
+    ).toEqual({ bold: true, italic: true })
+  })
+
+  it('does not infer emphasis from regular roman, symbol, or extension faces', () => {
+    for (const fontName of [
+      'ABCDEF+CMR12',
+      'ABCDEF+CMSY10',
+      'ABCDEF+CMEX10',
+      'ABCDEF+LMRoman10-Regular',
+      'NimbusRomNo9L-Regu',
+    ]) {
+      expect(pdfFontStyle({ fontName, text: 'Text' })).toEqual({
+        bold: false,
+        italic: false,
+      })
+    }
+    expect(pdfFontStyle({ fontName: 'ABCDEF+CMMI12', text: '.' })).toEqual({
+      bold: false,
+      italic: false,
+    })
+    expect(pdfFontStyle({ fontName: 'ABCDEF+CMMI12', text: '10' })).toEqual({
+      bold: false,
+      italic: false,
+    })
+    expect(
+      pdfFontStyle({
+        fontName: 'ABCDEF+CMBXTI10',
+        text: 'Result',
+        bold: false,
+        italic: false,
+      }),
+    ).toEqual({ bold: false, italic: false })
   })
 
   it('decodes every XML-forbidden CMEX control slot into publishable text', () => {

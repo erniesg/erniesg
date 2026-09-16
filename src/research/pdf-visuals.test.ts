@@ -4,11 +4,15 @@ import type {
   NormalizedSourceBox,
   PdfPageAnalysis,
   PdfPageRegion,
+  PdfSourceRun,
   PdfVisualAsset,
 } from './import-types'
 import {
+  equationSourceRunOwnershipKey,
   isProbableDisplayEquation,
   pdfVisualMatchCandidateId,
+  pdfVisualOwnershipExtentSha256,
+  repeatedRectangleFallbackObjectIds,
   reconstructPdfVisuals,
   type PdfFigureRasterizer,
 } from './pdf-visuals'
@@ -18,6 +22,12 @@ import {
   createSourcePageCropAsset,
   createVectorSvgAsset,
 } from './visual-assets'
+import { renderPdfPageCrop } from './pdf-page-crop'
+import {
+  pdfTextLedgerSha256,
+  PDFJS_DISPLAY_OPERATOR_ADAPTER_BUILD,
+  PDFJS_DISPLAY_OPERATOR_ADAPTER_VERSION,
+} from './pdf-text-paint'
 
 function box(x: number, y: number, width = 0.2, height = 0.1, page = 1) {
   return {
@@ -173,6 +183,239 @@ function page(
   }
 }
 
+async function attestedTextOperationCrop(
+  input: Parameters<PdfFigureRasterizer>[0],
+  excludedText: string,
+  ownedText: string,
+) {
+  const glyphs = (text: string) => [[...text].map((unicode) => ({ unicode }))]
+  let resolveDisplay!: (value: unknown) => void
+  let rejectDisplay!: (reason: unknown) => void
+  const displayPromise = new Promise<unknown>((resolve, reject) => {
+    resolveDisplay = resolve
+    rejectDisplay = reject
+  })
+  resolveDisplay(false)
+  const displayIntentState = Object.assign(Object.create(null), {
+    displayReadyCapability: {
+      promise: displayPromise,
+      resolve: resolveDisplay,
+      reject: rejectDisplay,
+    },
+    operatorList: {
+      fnArray: [31, 44, 40, 44, 32],
+      argsArray: [[], glyphs(excludedText), [0, 10], glyphs(ownedText), []],
+      lastChunk: true,
+      separateAnnots: null,
+    },
+    renderTasks: new Set(),
+    streamReader: null,
+  })
+  const raster = await renderPdfPageCrop({
+    page: {
+      pageNumber: input.page,
+      _intentStates: new Map([['2__', displayIntentState]]),
+      getViewport: ({ scale }) => ({
+        width: 1000 * scale,
+        height: 1000 * scale,
+        rotation: 0,
+      }),
+      render: (options) => {
+        const context =
+          options.canvasContext as typeof options.canvasContext & {
+            pixels: Uint8ClampedArray
+            width: number
+            height: number
+          }
+        const paint = (source: NormalizedSourceBox) => {
+          const x = Math.max(
+            2,
+            Math.min(
+              context.width - 3,
+              Math.floor(
+                ((source.x + source.width / 2 - input.sourceBox.x) /
+                  input.sourceBox.width) *
+                  context.width,
+              ),
+            ),
+          )
+          const y = Math.max(
+            2,
+            Math.min(
+              context.height - 3,
+              Math.floor(
+                ((source.y + source.height / 2 - input.sourceBox.y) /
+                  input.sourceBox.height) *
+                  context.height,
+              ),
+            ),
+          )
+          for (let offsetY = 0; offsetY < 2; offsetY += 1) {
+            for (let offsetX = 0; offsetX < 2; offsetX += 1) {
+              context.pixels[
+                ((y + offsetY) * context.width + x + offsetX) * 4
+              ] = 0
+            }
+          }
+        }
+        paint(input.sourceTextOperationFilter!.ownedSourceBoxes[0])
+        if (!options.operationsFilter) {
+          paint(input.sourceTextOperationFilter!.excludedSourceBoxes[0])
+        } else {
+          const decisions = [0, 1, 1, 2, 3, 4].map((index) =>
+            options.operationsFilter!(index),
+          )
+          if (decisions[1]) {
+            paint(input.sourceTextOperationFilter!.excludedSourceBoxes[0])
+          }
+        }
+        return { promise: Promise.resolve() }
+      },
+    },
+    canvasFactory: {
+      create: (width, height) => {
+        const pixels = new Uint8ClampedArray(width * height * 4).fill(255)
+        return {
+          canvas: { width, height },
+          context: {
+            pixels,
+            width,
+            height,
+            fillStyle: '',
+            fillRect: vi.fn(),
+            getImageData: vi.fn(() => ({ data: pixels })),
+          },
+        }
+      },
+      destroy: vi.fn(),
+    },
+    sourceBox: input.sourceBox,
+    sourceTextOperationFilter: {
+      ...input.sourceTextOperationFilter!,
+      pdfjsVersion: PDFJS_DISPLAY_OPERATOR_ADAPTER_VERSION,
+      pdfjsBuild: PDFJS_DISPLAY_OPERATOR_ADAPTER_BUILD,
+    },
+    maximumPixels: 32_000,
+  })
+  return createSourcePageCropAsset(
+    {
+      kind: 'equation',
+      cropBox: raster.sourceBox,
+      sourceObjectIds: input.sourceObjectIds,
+      sourceBoxes: input.sourceBoxes,
+      width: raster.width,
+      height: raster.height,
+      pixels: raster.pixels,
+      resolutionDpi: raster.resolutionDpi,
+      sourceExclusionMask: raster.sourceExclusionMask,
+    },
+    raster,
+  )
+}
+
+function postExhaustionOperationFixture({
+  ownedRunCount,
+  excludedRunCount,
+  excludedProof = 'current-v2',
+}: {
+  ownedRunCount: number
+  excludedRunCount: number
+  excludedProof?: 'current-v2' | 'stale-ledger' | 'v1-only' | 'runless' | 'none'
+}) {
+  const equation = equationRegion(
+    `post-exhaustion-equation-${ownedRunCount}-${excludedRunCount}-${excludedProof}`,
+    'x + y = z',
+    box(0.2, 0.3, 0.4, 0.1),
+  )
+  const cue = textRegion(
+    `post-exhaustion-cue-${ownedRunCount}-${excludedRunCount}-${excludedProof}`,
+    excludedProof === 'none' ? ' ' : 'p'.repeat(Math.max(1, excludedRunCount)),
+    box(0.2, 0.289, 0.4, 0.009),
+  )
+  const ownedCharacters = Array.from(
+    { length: ownedRunCount },
+    (_unused, index) =>
+      index === 1 ? '=' : index % 32 === 1 || index % 2 === 0 ? '1' : '+',
+  )
+  const ledgerText = 'p'.repeat(excludedRunCount) + ownedCharacters.join('')
+  const textLedgerSha256 = pdfTextLedgerSha256(ledgerText)
+  const paint = (
+    start: number,
+    end: number,
+    operationIndex: number,
+    ledgerSha256 = textLedgerSha256,
+  ) => ({
+    algorithm: 'pdfjs-text-paint-run-v1' as const,
+    textLedgerSha256: ledgerSha256,
+    normalizedTextStart: start,
+    normalizedTextEnd: end,
+    operatorLedgerSha256: 'a'.repeat(64),
+    operationIndexes: [operationIndex],
+    filterableOperationIndexes: [operationIndex],
+  })
+  const ownedRuns = Array.from({ length: ownedRunCount }, (_unused, index) => ({
+    ...equation.lines[0].runs[0],
+    text: ownedCharacters[index],
+    x: 0.205 + (index % 32) * 0.011,
+    y: 0.305 + Math.floor(index / 32) * 0.009,
+    width: 0.007,
+    height: 0.006,
+    fontName:
+      ownedRunCount > 256 && index >= 3
+        ? 'Synthetic-CMEX10'
+        : equation.lines[0].runs[0].fontName,
+    sourceSequenceIndex: excludedRunCount + index,
+    sourceTextPaint: paint(
+      excludedRunCount + index,
+      excludedRunCount + index + 1,
+      3,
+    ),
+  }))
+  const excludedRuns =
+    excludedProof === 'runless' || excludedProof === 'none'
+      ? []
+      : Array.from({ length: excludedRunCount }, (_unused, index) => ({
+          ...cue.lines[0].runs[0],
+          text: 'p',
+          x: 0.205 + index * 0.01,
+          y: 0.294,
+          width: 0.007,
+          height: 0.003,
+          sourceSequenceIndex: index,
+          sourceTextPaint:
+            excludedProof === 'v1-only'
+              ? undefined
+              : paint(
+                  index,
+                  index + 1,
+                  1,
+                  excludedProof === 'stale-ledger'
+                    ? 'b'.repeat(64)
+                    : textLedgerSha256,
+                ),
+        }))
+  equation.lines[0].runs = ownedRuns
+  equation.lines[0].text = ownedRuns.map((run) => run.text).join('')
+  equation.text = 'x + y = z'
+  cue.lines[0].runs = excludedRuns
+  if (excludedProof === 'runless') {
+    cue.lines[0].text = 'adjacent prose'
+    cue.text = 'adjacent prose'
+  }
+  const sourcePage = page([])
+  sourcePage.renderVisibleTextRuns = [
+    ...excludedRuns.map((run) => ({ ...run })),
+    ...ownedRuns.map((run) => ({ ...run })),
+  ]
+  return {
+    cue,
+    equation,
+    sourcePage,
+    excludedText: 'p'.repeat(excludedRunCount),
+    ownedText: ownedCharacters.join(''),
+  }
+}
+
 function sourcePreservedSvgAsset(
   sourceObjectId: string,
   sourceBox: NormalizedSourceBox,
@@ -209,23 +452,375 @@ async function solidRectangleFallbackAsset(
 }
 
 describe('PDF visual association graph', () => {
+  it('binds exact raw-run and text-paint provenance into equation ownership', () => {
+    const ownershipRegion = textRegion(
+      'exact-equation-run-identity',
+      '√x = y',
+      box(0.2, 0.2, 0.2, 0.02),
+      'equation',
+    )
+    const base = ownershipRegion.lines[0].runs[0]
+    const proved = {
+      ...base,
+      sourceSequenceIndex: 17,
+      sourceTextPaint: {
+        algorithm: 'pdfjs-text-paint-run-v1' as const,
+        textLedgerSha256: 'b'.repeat(64),
+        normalizedTextStart: 0,
+        normalizedTextEnd: 4,
+        operatorLedgerSha256: 'a'.repeat(64),
+        operationIndexes: [41, 44],
+        filterableOperationIndexes: [41, 44],
+      },
+    }
+    const identity = equationSourceRunOwnershipKey(proved)
+    ownershipRegion.lines[0].runs[0] = proved
+    const ownershipExtentSha256 = pdfVisualOwnershipExtentSha256(
+      [ownershipRegion],
+      [ownershipRegion.id],
+      [ownershipRegion.lines[0].id],
+    )
+
+    expect(
+      equationSourceRunOwnershipKey({
+        ...proved,
+        sourceSequenceIndex: 18,
+      }),
+    ).not.toBe(identity)
+    proved.sourceTextPaint.normalizedTextStart = 1
+    expect(
+      pdfVisualOwnershipExtentSha256(
+        [ownershipRegion],
+        [ownershipRegion.id],
+        [ownershipRegion.lines[0].id],
+      ),
+    ).not.toBe(ownershipExtentSha256)
+    proved.sourceTextPaint.normalizedTextStart = 0
+    const secondRun = {
+      ...proved,
+      text: 'z',
+      x: proved.x + 0.05,
+      sourceSequenceIndex: 18,
+      sourceTextPaint: {
+        ...proved.sourceTextPaint,
+        normalizedTextStart: 4,
+        normalizedTextEnd: 5,
+        operationIndexes: [45],
+        filterableOperationIndexes: [45],
+      },
+    }
+    ownershipRegion.lines.push({
+      ...ownershipRegion.lines[0],
+      id: `${ownershipRegion.lines[0].id}-second`,
+      text: secondRun.text,
+      runs: [secondRun],
+    })
+    const pairedLineOwnership = pdfVisualOwnershipExtentSha256(
+      [ownershipRegion],
+      [ownershipRegion.id],
+      ownershipRegion.lines.map((line) => line.id),
+    )
+    const firstLineRun = ownershipRegion.lines[0].runs[0]
+    ownershipRegion.lines[0].runs[0] = secondRun
+    ownershipRegion.lines[1].runs[0] = firstLineRun
+    expect(
+      pdfVisualOwnershipExtentSha256(
+        [ownershipRegion],
+        [ownershipRegion.id],
+        ownershipRegion.lines.map((line) => line.id),
+      ),
+    ).not.toBe(pairedLineOwnership)
+    expect(
+      equationSourceRunOwnershipKey({
+        ...proved,
+        method: 'ocr',
+      }),
+    ).not.toBe(identity)
+    expect(
+      equationSourceRunOwnershipKey({
+        ...proved,
+        x: proved.x + 0.000001,
+      }),
+    ).not.toBe(identity)
+    expect(
+      equationSourceRunOwnershipKey({
+        ...proved,
+        sourceTextPaint: {
+          ...proved.sourceTextPaint,
+          operationIndexes: [41, 45],
+          filterableOperationIndexes: [41, 45],
+        },
+      }),
+    ).not.toBe(identity)
+  })
+
+  it('keeps candidate-local ownership stable across page-global operator ledger attestations', () => {
+    const ownershipRegion = textRegion(
+      'stable-local-ownership',
+      'x = y',
+      box(0.2, 0.2, 0.2, 0.02),
+      'equation',
+    )
+    const run = ownershipRegion.lines[0].runs[0] as PdfSourceRun
+    run.sourceTextPaint = {
+      algorithm: 'pdfjs-text-paint-run-v1',
+      textLedgerSha256: 'b'.repeat(64),
+      normalizedTextStart: 0,
+      normalizedTextEnd: 3,
+      operatorLedgerSha256: 'a'.repeat(64),
+      operationIndexes: [41, 44],
+      filterableOperationIndexes: [41, 44],
+    }
+    const ownershipExtentSha256 = pdfVisualOwnershipExtentSha256(
+      [ownershipRegion],
+      [ownershipRegion.id],
+      [ownershipRegion.lines[0].id],
+    )
+
+    run.sourceTextPaint.operatorLedgerSha256 = 'c'.repeat(64)
+
+    expect(
+      pdfVisualOwnershipExtentSha256(
+        [ownershipRegion],
+        [ownershipRegion.id],
+        [ownershipRegion.lines[0].id],
+      ),
+    ).toBe(ownershipExtentSha256)
+  })
+
+  it('keeps the event loop cooperative while classifying a vector-heavy figure set', async () => {
+    const count = 130
+    const objects = Array.from({ length: count }, (_, index) => {
+      const sourceBox = box(
+        (index % 13) * 0.075,
+        Math.floor(index / 13) * 0.075,
+        0.01,
+        0.01,
+      )
+      return {
+        id: `cooperative-vector-${index}`,
+        page: 1,
+        kind: 'vector' as const,
+        box: sourceBox,
+        confidence: 1,
+        assetId: null,
+      }
+    })
+    const regions = objects.map((object, index) =>
+      objectRegion(`cooperative-region-${index}`, object.id, object.box),
+    )
+    let timerScheduled = false
+    let timerFired = false
+    let observedTimerAfterInternalYield = false
+
+    await reconstructPdfVisuals({
+      pages: [page(objects)],
+      regions,
+      onProgress(progress) {
+        if (progress.checkpoint !== 'figure-heading-classification') return
+        if (!timerScheduled) {
+          timerScheduled = true
+          globalThis.setTimeout(() => {
+            timerFired = true
+          }, 0)
+          return
+        }
+        observedTimerAfterInternalYield ||= timerFired
+      },
+    })
+
+    expect(timerScheduled).toBe(true)
+    expect(timerFired).toBe(true)
+    expect(observedTimerAfterInternalYield).toBe(true)
+  })
+
+  it('yields between caption-bounded semantic envelope candidates', async () => {
+    const captions = [
+      {
+        ...captionRegion(
+          'Figure 1. First semantic envelope.',
+          box(0.2, 0.35, 0.5, 0.02),
+        ),
+        id: 'semantic-envelope-caption-1',
+      },
+      {
+        ...captionRegion(
+          'Figure 2. Second semantic envelope.',
+          box(0.2, 0.7, 0.5, 0.02),
+        ),
+        id: 'semantic-envelope-caption-2',
+      },
+    ]
+    let timerScheduled = false
+    let timerFired = false
+    let observedTimerAfterInternalYield = false
+
+    await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: captions,
+      onProgress(progress) {
+        if (progress.checkpoint !== 'figure-grouping-envelopes') return
+        if (!timerScheduled) {
+          timerScheduled = true
+          globalThis.setTimeout(() => {
+            timerFired = true
+          }, 0)
+          return
+        }
+        observedTimerAfterInternalYield ||= timerFired
+      },
+    })
+
+    expect(timerScheduled).toBe(true)
+    expect(timerFired).toBe(true)
+    expect(observedTimerAfterInternalYield).toBe(true)
+  })
+
+  it('indexes vector-heavy non-overlapping rectangle fallbacks with bounded comparisons', () => {
+    const count = 1_000
+    const svg = new TextEncoder().encode(
+      '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0L1 0L1 1L0 1Z" fill="#000" stroke="none"/></svg>',
+    )
+    const assets = Array.from({ length: count }, (_, index) => {
+      const sourceObjectId = `vector-${index}`
+      const sourceBox = box(
+        (index % 40) * 0.024,
+        Math.floor(index / 40) * 0.024,
+        0.006,
+        0.006,
+      )
+      return {
+        id: `asset-${index}`,
+        href: `assets/asset-${index}.svg`,
+        mediaType: 'image/svg+xml',
+        kind: 'vector',
+        rendition: 'bounded-svg-fallback',
+        sha256: index.toString(16).padStart(64, '0'),
+        bytes: svg,
+        width: 1,
+        height: 1,
+        resolutionDpi: null,
+        sourceObjectIds: [sourceObjectId],
+        sourceBoxes: [sourceBox],
+      } satisfies PdfVisualAsset
+    })
+    const objects = assets.map((asset) => ({
+      id: asset.sourceObjectIds[0],
+      page: 1,
+      kind: 'vector' as const,
+      box: asset.sourceBoxes[0],
+      confidence: 1,
+      assetId: asset.id,
+    }))
+    const evidence = { candidateComparisons: 0 }
+
+    expect(
+      repeatedRectangleFallbackObjectIds([page(objects, 1, assets)], evidence),
+    ).toEqual(new Set())
+    expect(evidence.candidateComparisons).toBeLessThan(count * 100)
+  })
+
   it('derives candidate identity from stable relationship content, not UI order', () => {
     const candidate = {
       sourceRegionIds: ['region-b', 'region-a'],
+      sourceLineIds: ['line-b', 'line-a'],
       sourceObjectIds: ['object-b', 'object-a'],
       assetIds: ['asset-b', 'asset-a'],
+      sourceBoxes: [box(0.3, 0.2, 0.1, 0.04), box(0.1, 0.2, 0.1, 0.04)],
+      sourceText: 'alpha beta',
+      ownershipExtentSha256: 'a'.repeat(64),
     }
     const reordered = {
+      ...candidate,
       sourceRegionIds: [...candidate.sourceRegionIds].reverse(),
+      sourceLineIds: [...candidate.sourceLineIds].reverse(),
       sourceObjectIds: [...candidate.sourceObjectIds].reverse(),
       assetIds: [...candidate.assetIds].reverse(),
+      sourceBoxes: [...candidate.sourceBoxes].reverse(),
     }
-    expect(
-      pdfVisualMatchCandidateId('visual-relationship-0001', candidate),
-    ).toBe(pdfVisualMatchCandidateId('visual-relationship-0001', reordered))
+    const candidateId = pdfVisualMatchCandidateId(
+      'visual-relationship-0001',
+      candidate,
+    )
+    expect(candidateId).toBe(
+      pdfVisualMatchCandidateId('visual-relationship-0001', reordered),
+    )
     expect(
       pdfVisualMatchCandidateId('visual-relationship-0002', candidate),
-    ).not.toBe(pdfVisualMatchCandidateId('visual-relationship-0001', candidate))
+    ).not.toBe(candidateId)
+    expect(
+      pdfVisualMatchCandidateId('visual-relationship-0001', {
+        ...candidate,
+        sourceLineIds: ['line-a'],
+      }),
+    ).not.toBe(candidateId)
+    expect(
+      pdfVisualMatchCandidateId('visual-relationship-0001', {
+        ...candidate,
+        sourceBoxes: [candidate.sourceBoxes[0]],
+      }),
+    ).not.toBe(candidateId)
+    expect(
+      pdfVisualMatchCandidateId('visual-relationship-0001', {
+        ...candidate,
+        sourceBoxes: [...candidate.sourceBoxes].reverse(),
+      }),
+    ).not.toBe(candidateId)
+    expect(
+      pdfVisualMatchCandidateId('visual-relationship-0001', {
+        ...candidate,
+        ownershipExtentSha256: 'b'.repeat(64),
+      }),
+    ).not.toBe(candidateId)
+    const staleCandidate = { ...candidate, ownershipExtentSha256: undefined }
+    expect(
+      pdfVisualMatchCandidateId('visual-relationship-0001', staleCandidate),
+    ).not.toBe(candidateId)
+    expect(
+      pdfVisualMatchCandidateId('visual-relationship-0001', {
+        ...candidate,
+        sourceText: 'alpha gamma',
+      }),
+    ).not.toBe(candidateId)
+    const renderOnlyOwnership = {
+      algorithm: 'equation-bracketed-render-only-extension-glyph-v1' as const,
+      page: 1,
+      sourceLineId: 'line-a',
+      sourceSequenceIndex: 14,
+      precedingSourceSequenceIndex: 13,
+      followingSourceSequenceIndex: 15,
+      sourceRunSha256: '1'.repeat(64),
+      precedingSourceRunSha256: '2'.repeat(64),
+      followingSourceRunSha256: '3'.repeat(64),
+    }
+    const renderOwnedCandidateId = pdfVisualMatchCandidateId(
+      'visual-relationship-0001',
+      {
+        ...candidate,
+        renderOnlySourceRunOwnerships: [renderOnlyOwnership],
+      },
+    )
+    expect(renderOwnedCandidateId).not.toBe(candidateId)
+    expect(
+      pdfVisualMatchCandidateId('visual-relationship-0001', {
+        ...candidate,
+        renderOnlySourceRunOwnerships: [
+          {
+            ...renderOnlyOwnership,
+            sourceRunSha256: '4'.repeat(64),
+          },
+        ],
+      }),
+    ).not.toBe(renderOwnedCandidateId)
+    const withoutLines = { ...candidate, sourceLineIds: undefined }
+    expect(
+      pdfVisualMatchCandidateId('visual-relationship-0001', {
+        ...withoutLines,
+        sourceBoxes: [box(0.31, 0.2, 0.1, 0.04)],
+      }),
+    ).not.toBe(
+      pdfVisualMatchCandidateId('visual-relationship-0001', withoutLines),
+    )
   })
   it('matches a source-backed figure with a compound scholarly label', async () => {
     const sourceBox = box(0.2, 0.08, 0.6, 0.2)
@@ -593,82 +1188,201 @@ describe('PDF visual association graph', () => {
     ])
   })
 
-  it('source-crops an unresolved CMEX line without a lexical equation cue', async () => {
-    const equation = equationRegion(
-      'unresolved-cmex-equation',
-      'where N(a,b) \ufffd cdefghijklmnop',
-      box(0.25, 0.37798, 0.256, 0.0257),
-    )
-    equation.lines[0].runs = [
-      {
-        ...equation.lines[0].box,
-        text: 'where N(a,b)',
-        x: 0.25,
-        y: 0.38948,
-        width: 0.06,
-        height: 0.0142,
-        fontName: 'Synthetic-CMMI10',
-        fontSize: 11,
-        confidence: 1,
-      },
-      {
-        ...equation.lines[0].box,
-        text: '\ufffd',
-        x: 0.312,
-        y: 0.37798,
-        width: 0.012,
-        height: 0.0142,
-        fontName: 'Synthetic-CMEX99',
-        fontSize: 11,
-        confidence: 1,
-      },
-      {
-        ...equation.lines[0].box,
-        text: 'cdefghijklmnop',
-        x: 0.326,
-        y: 0.38948,
-        width: 0.18,
-        height: 0.0142,
-        fontName: 'Synthetic-CMMI10',
-        fontSize: 11,
-        confidence: 1,
-      },
-    ]
-    const rasterizeFigure = vi.fn(
-      async (input: Parameters<PdfFigureRasterizer>[0]) =>
-        createSourcePageCropAsset({
-          kind: 'equation',
-          cropBox: input.sourceBox,
-          sourceObjectIds: input.sourceObjectIds,
-          sourceBoxes: input.sourceBoxes,
-          width: 32,
-          height: 8,
-          pixels: new Uint8Array(32 * 8 * 4).fill(72),
-        }),
-    )
+  it.each([
+    {
+      name: 'ordinary-font held-out prose',
+      prefix: 'Sensitivity analysis demonstrates robustness',
+      suffix: 'across conditions.',
+      fontName: 'Synthetic-Serif',
+    },
+    {
+      name: 'math-font-mislabeled held-out prose',
+      prefix: 'Sensitivity analysis demonstrates robustness',
+      suffix: 'across conditions.',
+      fontName: 'Synthetic-CMMI10',
+    },
+    {
+      name: 'lexically obvious prose',
+      prefix: 'where N(a,b)',
+      suffix: 'cdefghijklmnop',
+      fontName: 'Synthetic-CMMI10',
+    },
+    {
+      name: 'short-word math-font-mislabeled prose',
+      prefix: 'Ask us if x is in y',
+      suffix: 'now.',
+      fontName: 'Synthetic-CMMI10',
+    },
+    {
+      name: 'punctuation-attached math-font-mislabeled prose',
+      prefix: 'Go, do; it.',
+      suffix: '',
+      fontName: 'Synthetic-CMMI10',
+    },
+    {
+      name: 'em-dash-joined math-font-mislabeled prose',
+      prefix: 'Go—do—it.',
+      suffix: '',
+      fontName: 'Synthetic-CMMI10',
+    },
+    {
+      name: 'parenthesized math-font-mislabeled prose with a digit',
+      prefix: '(Read) (this) (now) 1',
+      suffix: '',
+      fontName: 'Synthetic-CMMI10',
+    },
+    {
+      name: 'square-bracketed math-font-mislabeled prose with an operator',
+      prefix: '[Read] [this] [now] +',
+      suffix: '',
+      fontName: 'Synthetic-CMMI10',
+    },
+    {
+      name: 'brace-wrapped math-font-mislabeled prose with Greek text',
+      prefix: '{Read} {this} {now} α',
+      suffix: '',
+      fontName: 'Synthetic-CMMI10',
+    },
+    {
+      name: 'angle-bracketed math-font-mislabeled prose with a summation',
+      prefix: '⟨Read⟩ ⟨this⟩ ⟨now⟩ ∑',
+      suffix: '',
+      fontName: 'Synthetic-CMMI10',
+    },
+    {
+      name: 'guillemet-delimited math-font-mislabeled prose with a digit',
+      prefix: '«Read» «this» «now» 1',
+      suffix: '',
+      fontName: 'Synthetic-CMMI10',
+    },
+    {
+      name: 'fullwidth-bracketed math-font-mislabeled prose with internal digits',
+      prefix: '（Read1） （this1） （now1）',
+      suffix: '',
+      fontName: 'Synthetic-CMMI10',
+    },
+    {
+      name: 'parenthesized math-font-mislabeled prose with internal operators',
+      prefix: '(Read+) (this+) (now+)',
+      suffix: '',
+      fontName: 'Synthetic-CMMI10',
+    },
+    {
+      name: 'one parenthesized prose segment with internal digits',
+      prefix: '(Read1 this2 now)',
+      suffix: '',
+      fontName: 'Synthetic-CMMI10',
+    },
+    {
+      name: 'one black-bracketed prose segment with internal operators',
+      prefix: '【Read+ this+ now】',
+      suffix: '',
+      fontName: 'Synthetic-CMMI10',
+    },
+    {
+      name: 'nested bracketed prose with internal digits',
+      prefix: '(Read1 [this2] now)',
+      suffix: '',
+      fontName: 'Synthetic-CMMI10',
+    },
+    {
+      name: 'guillemet-delimited short prose with internal operators',
+      prefix: '«Can+ we+ go»',
+      suffix: '',
+      fontName: 'Synthetic-CMMI10',
+    },
+    {
+      name: 'black-bracketed short prose with internal operators',
+      prefix: '【Ask+ us+ now】',
+      suffix: '',
+      fontName: 'Synthetic-CMMI10',
+    },
+    {
+      name: 'separately delimited short prose with suffix operators',
+      prefix: '«Can+» «we+» «go»',
+      suffix: '',
+      fontName: 'Synthetic-CMMI10',
+    },
+    {
+      name: 'separately delimited short prose with prefix operators',
+      prefix: '【+Ask】 【+us】 【now】',
+      suffix: '',
+      fontName: 'Synthetic-CMMI10',
+    },
+    {
+      name: 'one punctuated prose token inside parentheses',
+      prefix: '(Read!) 1',
+      suffix: '',
+      fontName: 'Synthetic-CMMI10',
+    },
+  ])(
+    'does not let an unresolved CMEX glyph promote $name',
+    async ({ prefix, suffix, fontName }) => {
+      const equation = equationRegion(
+        'unresolved-cmex-equation',
+        `${prefix} \ufffd ${suffix}`,
+        box(0.15, 0.37798, 0.7, 0.0257),
+      )
+      equation.lines[0].runs = [
+        {
+          ...equation.lines[0].box,
+          text: prefix,
+          x: 0.15,
+          y: 0.38948,
+          width: 0.39,
+          height: 0.0142,
+          fontName,
+          fontSize: 11,
+          confidence: 1,
+        },
+        {
+          ...equation.lines[0].box,
+          text: '\ufffd',
+          x: 0.55,
+          y: 0.37798,
+          width: 0.012,
+          height: 0.0142,
+          fontName: 'Synthetic-CMEX99',
+          fontSize: 11,
+          confidence: 1,
+        },
+        {
+          ...equation.lines[0].box,
+          text: suffix,
+          x: 0.57,
+          y: 0.38948,
+          width: 0.18,
+          height: 0.0142,
+          fontName,
+          fontSize: 11,
+          confidence: 1,
+        },
+      ]
+      const rasterizeFigure = vi.fn(
+        async (input: Parameters<PdfFigureRasterizer>[0]) =>
+          createSourcePageCropAsset({
+            kind: 'equation',
+            cropBox: input.sourceBox,
+            sourceObjectIds: input.sourceObjectIds,
+            sourceBoxes: input.sourceBoxes,
+            width: 32,
+            height: 8,
+            pixels: new Uint8Array(32 * 8 * 4).fill(72),
+          }),
+      )
 
-    expect(isProbableDisplayEquation(equation)).toBe(true)
-    const result = await reconstructPdfVisuals({
-      pages: [page([])],
-      regions: [equation],
-      rasterizeFigure,
-    })
+      expect(isProbableDisplayEquation(equation)).toBe(false)
+      const result = await reconstructPdfVisuals({
+        pages: [page([])],
+        regions: [equation],
+        rasterizeFigure,
+      })
 
-    expect(rasterizeFigure).toHaveBeenCalledOnce()
-    expect(result.relationships).toEqual([
-      expect.objectContaining({
-        kind: 'equation',
-        status: 'matched',
-        sourceRegionIds: [equation.id],
-        sourceText: '',
-        altTextSource: 'caption',
-        evidence: expect.arrayContaining([
-          'source-page-crop',
-          'source-text-transcript-unresolved',
-        ]),
-      }),
-    ])
-  })
+      expect(rasterizeFigure).not.toHaveBeenCalled()
+      expect(result.relationships).toEqual([])
+      expect(result.consumedRegionIds.has(equation.id)).toBe(false)
+    },
+  )
 
   it('source-crops CMEX assembly pieces under a generic equation label', async () => {
     const equation = equationRegion(
@@ -768,16 +1482,31 @@ describe('PDF visual association graph', () => {
       kind: 'equation',
       status: 'unresolved',
       captionRegionId: formula.id,
-      sourceRegionIds: [],
+      sourceRegionIds: [formula.id, loweredPi.id],
+      sourceLineIds: [formula.lines[0].id, loweredPi.lines[0].id],
       sourceObjectIds: [],
       assetIds: [],
       sourceText: `${formula.text} π`,
       altText: `${formula.text} π`,
       altTextSource: 'source-text',
-      evidence: expect.arrayContaining(['readable-text-svg-approximation']),
+      evidence: expect.arrayContaining([
+        'source-proved-atomic-equation-component',
+        'readable-text-svg-approximation',
+        'source-rendition-unavailable',
+      ]),
+      candidates: [
+        expect.objectContaining({
+          sourceRegionIds: [formula.id, loweredPi.id],
+          sourceLineIds: [formula.lines[0].id, loweredPi.lines[0].id],
+          sourceText: `${formula.text} π`,
+        }),
+      ],
     })
     expect(result.consumedRegionIds.has(formula.id)).toBe(false)
     expect(result.consumedRegionIds.has(loweredPi.id)).toBe(false)
+    expect(result.relationships[0].evidence).not.toContain(
+      'unresolved-visual-text-owned',
+    )
     const asset = result.assets.find(
       (candidate) => candidate.kind === 'equation',
     )!
@@ -888,11 +1617,14 @@ describe('PDF visual association graph', () => {
       label: 'Equation 1',
       status: 'unresolved',
       sourceRegionIds: [],
+      sourceLineIds: [],
       sourceObjectIds: [],
       assetIds: [],
       candidates: [
         expect.objectContaining({
           sourceRegionIds: [formula.id, printedNumber.id],
+          sourceLineIds: [formula.lines[0].id, printedNumber.lines[0].id],
+          sourceText: 'E1 = m c2 (1)',
           assetIds: [expect.stringMatching(/^asset-/)],
           evidence: expect.arrayContaining(['readable-text-svg-approximation']),
         }),
@@ -1046,6 +1778,23 @@ describe('PDF visual association graph', () => {
 
     expect(result.relationships).toEqual([])
     expect(result.assets).toEqual([])
+  })
+
+  it('restores a proved visual caption to canonical reading order', async () => {
+    const caption = {
+      ...captionRegion('Figure 1. A complete source visual.'),
+      includedInReadingOrder: false,
+    }
+
+    await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [caption],
+    })
+
+    expect(caption).toMatchObject({
+      kind: 'caption',
+      includedInReadingOrder: true,
+    })
   })
 
   it('rejects prose beneath a table caption instead of synthesizing a table', async () => {
@@ -2413,6 +3162,1114 @@ describe('PDF visual association graph', () => {
     })
   })
 
+  it.each(['Multiply by 2:', 'Hence:', 'or:'])(
+    'does not merge adjacent display equations across the interstitial prose cue %s',
+    async (cueText) => {
+      const first = equationRegion(
+        'derivation-equation-before-cue',
+        '(1-t)/(2 cos θ) + √3t/(2 sin θ) = 1',
+        box(0.09, 0.2, 0.3, 0.025),
+      )
+      const cue: PdfPageRegion = textRegion(
+        'derivation-prose-cue',
+        cueText,
+        box(0.09, 0.225, 0.1, 0.018),
+      )
+      const second = equationRegion(
+        'derivation-equation-after-cue',
+        '(1-t) sin θ + √3t cos θ = 2 sin θ cos θ',
+        box(0.09, 0.245, 0.4, 0.025),
+      )
+      const rasterizeFigure = vi.fn(
+        async (input: Parameters<PdfFigureRasterizer>[0]) =>
+          createSourcePageCropAsset({
+            kind: 'equation',
+            cropBox: input.sourceBox,
+            sourceObjectIds: input.sourceObjectIds,
+            sourceBoxes: input.sourceBoxes,
+            width: 80,
+            height: 20,
+            pixels: new Uint8Array(80 * 20 * 4).fill(72),
+          }),
+      )
+
+      const result = await reconstructPdfVisuals({
+        pages: [page([])],
+        regions: [first, cue, second],
+        rasterizeFigure,
+      })
+
+      expect(rasterizeFigure.mock.calls.length).toBeGreaterThanOrEqual(2)
+      expect(result.relationships).toHaveLength(2)
+      expect(
+        result.relationships.map((relationship) => relationship.sourceLineIds),
+      ).toEqual([[first.lines[0].id], [second.lines[0].id]])
+      expect(
+        result.relationships.every(
+          (relationship) => !relationship.sourceRegionIds.includes(cue.id),
+        ),
+      ).toBe(true)
+    },
+  )
+
+  it('does not let a math-font display bypass an interstitial prose boundary through fragment recovery', async () => {
+    const first = equationRegion(
+      'math-fragment-bypass-before-cue',
+      '(1-t)/(2 cos θ) + √3t/(2 sin θ) = 1',
+      box(0.09, 0.2, 0.3, 0.05),
+    )
+    const cue = textRegion(
+      'math-fragment-bypass-cue',
+      'Multiply by 2:',
+      box(0.09, 0.247, 0.1, 0.018),
+    )
+    const second = equationRegion(
+      'math-fragment-bypass-after-cue',
+      '(1-t) sin θ + √3t cos θ = 2 sin θ cos θ',
+      box(0.09, 0.263, 0.3, 0.02),
+    )
+    second.lines[0].runs[0].fontName = 'Synthetic-STIXMath-Regular'
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [first, cue, second],
+    })
+
+    expect(result.relationships).toHaveLength(2)
+    expect(
+      result.relationships.map((relationship) => relationship.sourceLineIds),
+    ).toEqual([[first.lines[0].id], [second.lines[0].id]])
+    expect(
+      result.relationships.every(
+        (relationship) => !relationship.sourceRegionIds.includes(cue.id),
+      ),
+    ).toBe(true)
+  })
+
+  it('keeps a legitimate multi-line display joined when body text is outside its corridor', async () => {
+    const first = equationRegion(
+      'aligned-equation-with-side-body-first',
+      'a + b = c',
+      box(0.09, 0.2, 0.3, 0.025),
+    )
+    const second = equationRegion(
+      'aligned-equation-with-side-body-second',
+      'd + e = f',
+      box(0.09, 0.235, 0.3, 0.025),
+    )
+    const sideBody = textRegion(
+      'body-outside-equation-corridor',
+      'Hence:',
+      box(0.75, 0.225, 0.08, 0.018),
+    )
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) =>
+        createSourcePageCropAsset({
+          kind: 'equation',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 80,
+          height: 20,
+          pixels: new Uint8Array(80 * 20 * 4).fill(72),
+        }),
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [first, sideBody, second],
+      rasterizeFigure,
+    })
+
+    expect(result.relationships).toHaveLength(1)
+    expect(result.relationships[0]).toMatchObject({
+      status: 'matched',
+      sourceRegionIds: [first.id, second.id],
+    })
+    expect(result.relationships[0].sourceRegionIds).not.toContain(sideBody.id)
+  })
+
+  it('attaches a detached math-extension run only to its source-proved host line', async () => {
+    const host = equationRegion(
+      'source-proved-detached-host',
+      '(1-t)/(2 cos θ) + √3t/(2 sin θ) = 1',
+      box(0.09, 0.22, 0.3, 0.025),
+    )
+    host.lines[0].id = 'page-001-inline-stacked-0042-formula'
+    const detached = textRegion(
+      'source-proved-detached-root',
+      '√',
+      box(0.15, 0.205, 0.012, 0.009),
+      'equation',
+    )
+    detached.lines[0].id = `page-001-source-line-0041-detached-math-001-host-${encodeURIComponent(host.lines[0].id)}`
+    detached.lines[0].runs[0].fontName = 'Synthetic-CMEX10'
+    detached.lines[0].runs[0].fontSize = 7
+    const cue = textRegion(
+      'source-proved-detached-cue',
+      'Hence:',
+      box(0.09, 0.18, 0.06, 0.014),
+    )
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) =>
+        createSourcePageCropAsset({
+          kind: 'equation',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 80,
+          height: 20,
+          pixels: new Uint8Array(80 * 20 * 4).fill(72),
+        }),
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [cue, detached, host],
+      rasterizeFigure,
+    })
+
+    expect(result.relationships).toHaveLength(1)
+    expect(result.relationships[0]).toMatchObject({
+      status: 'matched',
+      captionRegionId: host.id,
+    })
+    expect(new Set(result.relationships[0].sourceRegionIds)).toEqual(
+      new Set([host.id, detached.id]),
+    )
+    expect(new Set(result.relationships[0].sourceLineIds)).toEqual(
+      new Set([host.lines[0].id, detached.lines[0].id]),
+    )
+    expect(result.relationships[0].sourceRegionIds).not.toContain(cue.id)
+  })
+
+  it('allows a display region whose detached math-extension host is internal to the same region', async () => {
+    const display = equationRegion(
+      'self-contained-detached-display',
+      '√ x = y',
+      box(0.09, 0.22, 0.3, 0.035),
+    )
+    const hostLine = display.lines[0]
+    hostLine.id = 'page-001-source-line-0042'
+    hostLine.text = 'x = y'
+    hostLine.box = {
+      ...hostLine.box,
+      x: 0.11,
+      y: 0.235,
+      width: 0.12,
+      height: 0.015,
+    }
+    hostLine.runs[0] = {
+      ...hostLine.runs[0],
+      ...hostLine.box,
+      text: 'x = y',
+      fontName: 'Synthetic-STIXMath-Regular',
+    }
+    const detachedLine = {
+      id: `page-001-source-line-0041-detached-math-001-host-${encodeURIComponent(hostLine.id)}`,
+      text: '√',
+      fontSize: 8,
+      box: {
+        ...hostLine.box,
+        x: 0.095,
+        y: 0.22,
+        width: 0.012,
+        height: 0.01,
+      },
+      runs: [
+        {
+          ...hostLine.runs[0],
+          x: 0.095,
+          y: 0.22,
+          width: 0.012,
+          height: 0.01,
+          text: '√',
+          fontName: 'Synthetic-STIXMathExtensions-Regular',
+          fontSize: 8,
+        },
+      ],
+    }
+    display.lines = [detachedLine, hostLine]
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [display],
+    })
+
+    expect(result.relationships).toHaveLength(1)
+    expect(result.relationships[0]).toMatchObject({
+      kind: 'equation',
+      captionRegionId: display.id,
+      sourceRegionIds: [display.id],
+      sourceLineIds: [detachedLine.id, hostLine.id],
+    })
+  })
+
+  it('does not seed a display when its detached math-extension host is external', async () => {
+    const display = equationRegion(
+      'external-detached-display',
+      '√ x = y',
+      box(0.09, 0.22, 0.3, 0.035),
+    )
+    const hostLine = display.lines[0]
+    hostLine.id = 'page-001-source-line-0042'
+    hostLine.text = 'x = y'
+    hostLine.runs[0].text = 'x = y'
+    hostLine.runs[0].fontName = 'Synthetic-STIXMath-Regular'
+    const detachedLine = {
+      id: `page-001-source-line-0041-detached-math-001-host-${encodeURIComponent('page-001-source-line-9999')}`,
+      text: '√',
+      fontSize: 8,
+      box: {
+        ...hostLine.box,
+        x: 0.095,
+        y: 0.22,
+        width: 0.012,
+        height: 0.01,
+      },
+      runs: [
+        {
+          ...hostLine.runs[0],
+          x: 0.095,
+          y: 0.22,
+          width: 0.012,
+          height: 0.01,
+          text: '√',
+          fontName: 'Synthetic-STIXMathExtensions-Regular',
+          fontSize: 8,
+        },
+      ],
+    }
+    display.lines = [detachedLine, hostLine]
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [display],
+    })
+
+    expect(result.relationships).toHaveLength(0)
+  })
+
+  it('uses an attested text-operation filter across flow/DISPLAY box drift and whitespace inventory items', async () => {
+    const textLedgerSha256 = pdfTextLedgerSha256('Multiplyby2:√x=y')
+    const cue: PdfPageRegion = textRegion(
+      'sub-threshold-overlap-cue',
+      'Multiply by 2:',
+      box(0.1, 0.195, 0.08, 0.014),
+    )
+    const equation: PdfPageRegion = textRegion(
+      'sub-threshold-overlap-equation',
+      '√x = y',
+      box(0.13, 0.205, 0.27, 0.02),
+      'equation',
+    )
+    const sourcePaint = (
+      normalizedTextStart: number,
+      normalizedTextEnd: number,
+      operationIndex: number,
+    ) => ({
+      algorithm: 'pdfjs-text-paint-run-v1' as const,
+      textLedgerSha256,
+      normalizedTextStart,
+      normalizedTextEnd,
+      operatorLedgerSha256: 'a'.repeat(64),
+      operationIndexes: [operationIndex],
+      filterableOperationIndexes: [operationIndex],
+    })
+    const cueEarly = {
+      ...cue.lines[0].runs[0],
+      text: 'Multiply',
+      x: 0.1,
+      width: 0.045,
+      sourceSequenceIndex: 1,
+      sourceTextPaint: sourcePaint(0, 8, 7),
+    }
+    const cueLate = {
+      ...cue.lines[0].runs[0],
+      text: 'by 2:',
+      x: 0.145,
+      width: 0.035,
+      sourceSequenceIndex: 2,
+      sourceTextPaint: sourcePaint(8, 12, 7),
+    }
+    const equationEarly = {
+      ...equation.lines[0].runs[0],
+      text: '√x',
+      x: 0.13,
+      width: 0.06,
+      sourceSequenceIndex: 3,
+      sourceTextPaint: sourcePaint(12, 14, 9),
+    }
+    const equationLate = {
+      ...equation.lines[0].runs[0],
+      text: ' = y',
+      x: 0.19,
+      width: 0.06,
+      sourceSequenceIndex: 4,
+      sourceTextPaint: sourcePaint(14, 16, 9),
+    }
+    // Region and DISPLAY inventory order are independently shuffled. The
+    // operation-filter contract is a canonical source-ledger set, not an
+    // incidental reconstruction traversal order.
+    cue.lines[0].runs = [cueLate, cueEarly]
+    equation.lines[0].runs = [equationLate, equationEarly]
+    const sourcePage = page([])
+    sourcePage.renderVisibleTextRuns = [
+      {
+        ...cueLate,
+        width: cueLate.width + 1e-15,
+      },
+      {
+        ...cueEarly,
+        height: cueEarly.height + 1e-15,
+      },
+      {
+        ...equationLate,
+        width: equationLate.width + 1e-15,
+      },
+      {
+        ...equationEarly,
+        height: equationEarly.height + 1e-15,
+      },
+      {
+        ...equationEarly,
+        text: ' ',
+        sourceSequenceIndex: 5,
+        sourceTextPaint: undefined,
+      },
+    ]
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) => {
+        expect(input.sourceTextOperationFilter).toMatchObject({
+          excludedTextLedgerSpans: [
+            { start: 0, end: 8 },
+            { start: 8, end: 12 },
+          ],
+          ownedTextLedgerSpans: [
+            { start: 12, end: 14 },
+            { start: 14, end: 16 },
+          ],
+        })
+        return attestedTextOperationCrop(input, 'Multiplyby2:', '√x=y')
+      },
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [sourcePage],
+      regions: [cue, equation],
+      rasterizeFigure,
+    })
+
+    expect(
+      rasterizeFigure.mock.calls[0]?.[0].sourceTextOperationFilter,
+    ).toMatchObject({
+      excludedTextLedgerSpans: [
+        { start: 0, end: 8 },
+        { start: 8, end: 12 },
+      ],
+      ownedTextLedgerSpans: [
+        { start: 12, end: 14 },
+        { start: 14, end: 16 },
+      ],
+    })
+    expect(result.relationships).toHaveLength(1)
+    expect(result.relationships[0]).toMatchObject({
+      status: 'matched',
+      sourceRegionIds: [equation.id],
+    })
+    expect(result.relationships[0].evidence).toContain(
+      'source-page-crop-text-operation-filter-attested',
+    )
+    expect(result.relationships[0].sourceRegionIds).not.toContain(cue.id)
+  })
+
+  it('retries an edge-touching equation crop when a V2 text-operation filter proves overlapping prose ownership', async () => {
+    const textLedgerSha256 = pdfTextLedgerSha256('Cueq=r')
+    const cue = textRegion(
+      'operation-filter-retry-cue',
+      'Cue',
+      box(0.1, 0.195, 0.08, 0.014),
+    )
+    const equation = equationRegion(
+      'operation-filter-retry-equation',
+      'q = r',
+      box(0.13, 0.205, 0.27, 0.02),
+    )
+    const paint = (
+      normalizedTextStart: number,
+      normalizedTextEnd: number,
+      operationIndex: number,
+    ) => ({
+      algorithm: 'pdfjs-text-paint-run-v1' as const,
+      textLedgerSha256,
+      normalizedTextStart,
+      normalizedTextEnd,
+      operatorLedgerSha256: 'a'.repeat(64),
+      operationIndexes: [operationIndex],
+      filterableOperationIndexes: [operationIndex],
+    })
+    const cueRun = {
+      ...cue.lines[0].runs[0],
+      method: 'pdf-text' as const,
+      sourceSequenceIndex: 1,
+      sourceTextPaint: paint(0, 3, 7),
+    } satisfies PdfSourceRun
+    const equationRun = {
+      ...equation.lines[0].runs[0],
+      method: 'pdf-text' as const,
+      sourceSequenceIndex: 2,
+      sourceTextPaint: paint(3, 6, 9),
+    } satisfies PdfSourceRun
+    cue.lines[0].runs[0] = cueRun
+    equation.lines[0].runs[0] = equationRun
+    const sourcePage = page([])
+    sourcePage.renderVisibleTextRuns = [{ ...cueRun }, { ...equationRun }]
+    let attempt = 0
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) => {
+        expect(input.sourceTextOperationFilter).toMatchObject({
+          excludedTextLedgerSpans: [{ start: 0, end: 3 }],
+          ownedTextLedgerSpans: [{ start: 3, end: 6 }],
+        })
+        attempt += 1
+        if (attempt === 1) {
+          throw new Error('PDF page crop has source ink touching its edge')
+        }
+        return attestedTextOperationCrop(input, 'Cue', 'q=r')
+      },
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [sourcePage],
+      regions: [cue, equation],
+      rasterizeFigure,
+    })
+
+    expect(rasterizeFigure).toHaveBeenCalledTimes(2)
+    expect(rasterizeFigure.mock.calls[1][0].sourceBox).not.toEqual(
+      rasterizeFigure.mock.calls[0][0].sourceBox,
+    )
+    expect(result.relationships).toEqual([
+      expect.objectContaining({
+        status: 'matched',
+        sourceRegionIds: [equation.id],
+        evidence: expect.arrayContaining([
+          'source-page-crop',
+          'source-page-crop-adaptive-padding',
+          'source-page-crop-text-operation-filter-attested',
+        ]),
+      }),
+    ])
+    expect(result.relationships[0].sourceRegionIds).not.toContain(cue.id)
+  })
+
+  it.each([
+    { ownedRunCount: 71, excludedRunCount: 9 },
+    { ownedRunCount: 24, excludedRunCount: 1 },
+  ])(
+    'uses only an attested V2 crop beyond exhausted neighbor bounds for a $ownedRunCount/$excludedRunCount operation scope',
+    async ({ ownedRunCount, excludedRunCount }) => {
+      const fixture = postExhaustionOperationFixture({
+        ownedRunCount,
+        excludedRunCount,
+      })
+      const acceptedAssets: PdfVisualAsset[] = []
+      let rasterizationError: unknown = null
+      const rasterizeFigure = vi.fn(
+        async (input: Parameters<PdfFigureRasterizer>[0]) => {
+          if (!input.sourceTextOperationFilter) {
+            throw new Error('PDF page crop has source ink touching its edge')
+          }
+          expect(input.ownedSourceBoxes).toBeUndefined()
+          expect(input.excludedSourceBoxes).toBeUndefined()
+          expect(input.sourceTextOperationFilter).toMatchObject({
+            algorithm: 'pdfjs-display-text-operation-filter-v2',
+            expansionPixels: 0,
+            ownedTextLedgerSpans: expect.arrayContaining([
+              { start: excludedRunCount, end: excludedRunCount + 1 },
+            ]),
+            excludedTextLedgerSpans: expect.arrayContaining([
+              { start: 0, end: 1 },
+            ]),
+          })
+          expect(
+            input.sourceTextOperationFilter.ownedTextLedgerSpans,
+          ).toHaveLength(ownedRunCount)
+          expect(
+            input.sourceTextOperationFilter.excludedTextLedgerSpans,
+          ).toHaveLength(excludedRunCount)
+          try {
+            const acceptedAsset = await attestedTextOperationCrop(
+              input,
+              fixture.excludedText,
+              fixture.ownedText,
+            )
+            acceptedAssets.push(acceptedAsset)
+            return acceptedAsset
+          } catch (error) {
+            rasterizationError = error
+            throw error
+          }
+        },
+      )
+
+      const result = await reconstructPdfVisuals({
+        pages: [fixture.sourcePage],
+        regions: [fixture.cue, fixture.equation],
+        rasterizeFigure,
+      })
+
+      const filterCallIndex = rasterizeFigure.mock.calls.findIndex(
+        ([input]) => input.sourceTextOperationFilter !== undefined,
+      )
+      expect(filterCallIndex).toBe(11)
+      expect(rasterizationError).toBeNull()
+      expect(
+        rasterizeFigure.mock.calls
+          .slice(0, filterCallIndex)
+          .every(([input]) => input.sourceBox.y >= 0.298),
+      ).toBe(true)
+      expect(
+        rasterizeFigure.mock.calls[filterCallIndex][0].sourceBox.y,
+      ).toBeLessThan(0.295)
+      expect(result.relationships).toEqual([
+        expect.objectContaining({
+          status: 'matched',
+          sourceRegionIds: [fixture.equation.id],
+          evidence: expect.arrayContaining([
+            'source-page-crop',
+            'source-page-crop-post-exhaustion-v2',
+            'source-page-crop-text-operation-filter-attested',
+          ]),
+        }),
+      ])
+      expect(result.consumedRegionIds.has(fixture.cue.id)).toBe(false)
+      expect(acceptedAssets).toHaveLength(1)
+      const acceptedAsset = acceptedAssets[0]
+      if (!acceptedAsset) {
+        throw new Error('expected one accepted post-exhaustion V2 asset')
+      }
+      const acceptedMask = acceptedAsset.sourceExclusionMask
+      expect(acceptedMask).toMatchObject({
+        algorithm: 'pdfjs-display-text-operation-filter-v2',
+      })
+      if (
+        !acceptedMask ||
+        acceptedMask.algorithm !== 'pdfjs-display-text-operation-filter-v2'
+      ) {
+        throw new Error('expected an attested V2 source-exclusion mask')
+      }
+      expect(acceptedMask.baselineRgbaSha256).not.toBe(
+        acceptedMask.filteredRgbaSha256,
+      )
+      expect(acceptedMask.ownedOnlyRgbaSha256).toBe(
+        acceptedMask.filteredRgbaSha256,
+      )
+    },
+  )
+
+  it('does not let earlier edge contact override a later bounded attestation failure', async () => {
+    const fixture = postExhaustionOperationFixture({
+      ownedRunCount: 24,
+      excludedRunCount: 1,
+    })
+    let attempt = 0
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) => {
+        if (input.sourceBox.y < 0.295) {
+          throw new Error('unsafe post-exhaustion crop was attempted')
+        }
+        attempt += 1
+        if (attempt === 1) {
+          throw new Error('PDF page crop has source ink touching its edge')
+        }
+        throw new Error(
+          'PDF page crop contains unowned DISPLAY text paint outside the selected exclusion filter',
+        )
+      },
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [fixture.sourcePage],
+      regions: [fixture.cue, fixture.equation],
+      rasterizeFigure,
+    })
+
+    expect(rasterizeFigure).toHaveBeenCalledTimes(2)
+    expect(result.relationships).toEqual([
+      expect.objectContaining({
+        status: 'unresolved',
+        evidence: expect.not.arrayContaining([
+          'source-page-crop-post-exhaustion-v2',
+        ]),
+      }),
+    ])
+  })
+
+  it.each([
+    {
+      label: 'absent',
+      ownedRunCount: 24,
+      excludedRunCount: 0,
+      excludedProof: 'none' as const,
+    },
+    {
+      label: 'stale-ledger',
+      ownedRunCount: 24,
+      excludedRunCount: 1,
+      excludedProof: 'stale-ledger' as const,
+    },
+    {
+      label: 'V1-only',
+      ownedRunCount: 24,
+      excludedRunCount: 1,
+      excludedProof: 'v1-only' as const,
+    },
+    {
+      label: 'runless',
+      ownedRunCount: 24,
+      excludedRunCount: 1,
+      excludedProof: 'runless' as const,
+    },
+    {
+      label: 'over-owned-cap',
+      ownedRunCount: 257,
+      excludedRunCount: 1,
+      excludedProof: 'current-v2' as const,
+    },
+    {
+      label: 'over-excluded-cap',
+      ownedRunCount: 24,
+      excludedRunCount: 33,
+      excludedProof: 'current-v2' as const,
+    },
+  ])(
+    'does not cross exhausted neighbor bounds with a $label operation plan',
+    async ({ ownedRunCount, excludedRunCount, excludedProof }) => {
+      const fixture = postExhaustionOperationFixture({
+        ownedRunCount,
+        excludedRunCount,
+        excludedProof,
+      })
+      const rasterizeFigure = vi.fn(
+        async (input: Parameters<PdfFigureRasterizer>[0]) => {
+          if (input.sourceBox.y < 0.295) {
+            throw new Error('unsafe post-exhaustion crop was attempted')
+          }
+          throw new Error('PDF page crop has source ink touching its edge')
+        },
+      )
+
+      const result = await reconstructPdfVisuals({
+        pages: [fixture.sourcePage],
+        regions: [fixture.cue, fixture.equation],
+        rasterizeFigure,
+      })
+
+      expect(
+        rasterizeFigure.mock.calls.every(
+          ([input]) => input.sourceBox.y >= 0.298,
+        ),
+      ).toBe(true)
+      expect(rasterizeFigure.mock.calls.length).toBeGreaterThan(0)
+      expect(
+        rasterizeFigure.mock.calls.every(
+          ([input]) => input.sourceTextOperationFilter === undefined,
+        ),
+      ).toBe(true)
+      expect(
+        result.relationships.some(
+          (relationship) =>
+            relationship.status === 'matched' ||
+            relationship.evidence.includes(
+              'source-page-crop-post-exhaustion-v2',
+            ),
+        ),
+      ).toBe(false)
+    },
+  )
+
+  it('vetoes an equation crop intersected by unproved non-flow text paint', async () => {
+    const equation: PdfPageRegion = textRegion(
+      'inventory-veto-equation',
+      '√x=y',
+      box(0.2, 0.2, 0.2, 0.02),
+      'equation',
+    )
+    const equationRun: PdfSourceRun = {
+      ...equation.lines[0].runs[0],
+      method: 'pdf-text',
+      sourceSequenceIndex: 0,
+      sourceTextPaint: {
+        algorithm: 'pdfjs-text-paint-run-v1',
+        textLedgerSha256: pdfTextLedgerSha256('√x=ySTAMP'),
+        normalizedTextStart: 0,
+        normalizedTextEnd: 4,
+        operatorLedgerSha256: 'a'.repeat(64),
+        operationIndexes: [1],
+        filterableOperationIndexes: [1],
+      },
+    }
+    equation.lines[0].runs[0] = equationRun
+    const sourcePage = page([])
+    sourcePage.renderVisibleTextRuns = [
+      { ...equationRun },
+      {
+        ...equationRun,
+        text: 'STAMP',
+        x: equation.box.x + 0.01,
+        y: equation.box.y,
+        width: 0.03,
+        sourceSequenceIndex: 1,
+        sourceTextPaint: undefined,
+      },
+    ]
+    const rasterizeFigure = vi.fn(async () => {
+      throw new Error('unproved render-visible paint must veto rasterization')
+    })
+
+    const result = await reconstructPdfVisuals({
+      pages: [sourcePage],
+      regions: [equation],
+      rasterizeFigure,
+    })
+
+    expect(rasterizeFigure).not.toHaveBeenCalled()
+    expect(result.relationships[0]).toMatchObject({
+      status: 'unresolved',
+      evidence: expect.arrayContaining([
+        'overlapping-unowned-source-text',
+        'source-rendition-unavailable',
+      ]),
+    })
+  })
+
+  it('keeps a split inline fraction atomic without absorbing its prose sibling or a nearby display', async () => {
+    const nearbyDisplay = equationRegion(
+      'nearby-display-before-inline-fraction',
+      'F(x) = x + 1',
+      box(0.3, 0.23, 0.4, 0.025),
+    )
+    const proseBefore = textRegion(
+      'inline-fraction-prose-before',
+      'The geometric ratio therefore gives G =',
+      box(0.1, 0.282, 0.53, 0.018),
+    )
+    proseBefore.lines[0].id = 'page-001-inline-stacked-0042-before'
+    const formula = equationRegion(
+      'inline-fraction-formula',
+      '1−1.',
+      box(0.64, 0.27, 0.065, 0.04),
+    )
+    formula.lines[0].id = 'page-001-inline-stacked-0042-formula'
+    formula.lines[0].runs = [
+      {
+        ...formula.lines[0].box,
+        text: '1',
+        x: 0.67,
+        y: 0.277,
+        width: 0.01,
+        height: 0.009,
+        fontName: 'Synthetic-CMR8',
+        fontSize: 8,
+        confidence: 1,
+      },
+      {
+        ...formula.lines[0].box,
+        text: '−',
+        x: 0.655,
+        y: 0.282,
+        width: 0.012,
+        height: 0.016,
+        fontName: 'Synthetic-CMSY12',
+        fontSize: 12,
+        confidence: 1,
+      },
+      {
+        ...formula.lines[0].box,
+        text: '1',
+        x: 0.67,
+        y: 0.287,
+        width: 0.01,
+        height: 0.009,
+        fontName: 'Synthetic-CMR8',
+        fontSize: 8,
+        confidence: 1,
+      },
+      {
+        ...formula.lines[0].box,
+        text: '.',
+        x: 0.692,
+        y: 0.282,
+        width: 0.006,
+        height: 0.016,
+        fontName: 'Synthetic-CMR12',
+        fontSize: 12,
+        confidence: 1,
+      },
+    ]
+    const denominatorTail = textRegion(
+      'inline-fraction-denominator-tail',
+      'r',
+      box(0.681, 0.287, 0.008, 0.009),
+      'side',
+    )
+    denominatorTail.lines[0].id = 'page-001-inline-stacked-0042-after'
+    denominatorTail.lines[0].runs[0].fontName = 'Synthetic-CMMI8'
+    denominatorTail.lines[0].runs[0].fontSize = 8
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) =>
+        createSourcePageCropAsset({
+          kind: 'equation',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 62,
+          height: 24,
+          pixels: new Uint8Array(62 * 24 * 4).fill(72),
+        }),
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [nearbyDisplay, proseBefore, formula, denominatorTail],
+      rasterizeFigure,
+    })
+
+    expect(result.relationships).toHaveLength(2)
+    const fraction = result.relationships.find((relationship) =>
+      relationship.sourceRegionIds.includes(formula.id),
+    )
+    expect(fraction).toMatchObject({
+      kind: 'equation',
+      status: 'matched',
+      captionRegionId: formula.id,
+      sourceRegionIds: [formula.id, denominatorTail.id],
+      sourceLineIds: [formula.lines[0].id, denominatorTail.lines[0].id],
+      sourceText: '',
+      altTextSource: 'caption',
+      evidence: expect.arrayContaining([
+        'source-proved-atomic-equation-component',
+        'source-page-crop',
+      ]),
+    })
+    expect(fraction?.sourceRegionIds).not.toContain(proseBefore.id)
+    expect(fraction?.sourceRegionIds).not.toContain(nearbyDisplay.id)
+    expect(result.consumedRegionIds.has(proseBefore.id)).toBe(false)
+    expect(result.consumedRegionIds.has(denominatorTail.id)).toBe(true)
+    const fractionCrop = rasterizeFigure.mock.calls.find(([input]) =>
+      input.sourceBoxes.some((sourceBox) =>
+        containsSourceBox(sourceBox, denominatorTail.box),
+      ),
+    )?.[0].sourceBox
+    expect(fractionCrop).toBeDefined()
+    expect(containsSourceBox(fractionCrop!, formula.box)).toBe(true)
+    expect(containsSourceBox(fractionCrop!, denominatorTail.box)).toBe(true)
+    expect(containsSourceBox(fractionCrop!, proseBefore.box)).toBe(false)
+  })
+
+  it('does not attach a two-dimensional inline formula from following prose to a numbered display', async () => {
+    const display = equationRegion(
+      'numbered-display-before-inline-definition',
+      'Cov(dp_i, dp_j) = D + J, (4)',
+      box(0.2, 0.76, 0.68, 0.035),
+    )
+    const baseId = 'page-001-inline-stacked-0050'
+    const before = textRegion(
+      'inline-definition-before',
+      'where',
+      box(0.12, 0.8, 0.05, 0.014),
+    )
+    before.lines[0].id = `${baseId}-before`
+    const formula = equationRegion(
+      'inline-definition-formula',
+      'Sk′ = S′(xkt',
+      box(0.176, 0.798, 0.1, 0.02),
+    )
+    formula.lines[0].id = `${baseId}-formula`
+    formula.lines[0].runs = [
+      {
+        ...formula.lines[0].box,
+        text: 'S′(x',
+        x: 0.176,
+        y: 0.8,
+        width: 0.05,
+        height: 0.014,
+        fontName: 'Synthetic-CMMI12',
+        fontSize: 12,
+        confidence: 1,
+      },
+      {
+        ...formula.lines[0].box,
+        text: 'k',
+        x: 0.226,
+        y: 0.798,
+        width: 0.008,
+        height: 0.009,
+        fontName: 'Synthetic-CMMI8',
+        fontSize: 8,
+        confidence: 1,
+      },
+      {
+        ...formula.lines[0].box,
+        text: 't',
+        x: 0.226,
+        y: 0.809,
+        width: 0.008,
+        height: 0.009,
+        fontName: 'Synthetic-CMMI8',
+        fontSize: 8,
+        confidence: 1,
+      },
+      {
+        ...formula.lines[0].box,
+        text: ')',
+        x: 0.236,
+        y: 0.8,
+        width: 0.008,
+        height: 0.014,
+        fontName: 'Synthetic-CMR12',
+        fontSize: 12,
+        confidence: 1,
+      },
+    ]
+    const after = textRegion(
+      'inline-definition-after',
+      '. The first term is the diffusive covariation.',
+      box(0.28, 0.8, 0.5, 0.014),
+      'spanning',
+    )
+    after.lines[0].id = `${baseId}-after`
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) =>
+        createSourcePageCropAsset({
+          kind: 'equation',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 96,
+          height: 24,
+          pixels: new Uint8Array(96 * 24 * 4).fill(72),
+        }),
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [display, before, formula, after],
+      rasterizeFigure,
+    })
+
+    const displayRelationship = result.relationships.find(
+      (relationship) => relationship.label === 'Equation 4',
+    )
+    expect(displayRelationship).toMatchObject({
+      status: 'matched',
+      sourceRegionIds: [display.id],
+    })
+    expect(displayRelationship?.sourceRegionIds).not.toContain(formula.id)
+    expect(result.consumedRegionIds.has(before.id)).toBe(false)
+    expect(result.consumedRegionIds.has(after.id)).toBe(false)
+  })
+
+  it('does not let one math-only body sibling prove both sides of an inline split', async () => {
+    const nearbyDisplay = equationRegion(
+      'nearby-display-before-unproved-inline-split',
+      'F(x) = x + 1',
+      box(0.3, 0.23, 0.4, 0.025),
+    )
+    const formula = equationRegion(
+      'unproved-inline-split-formula',
+      '1−1.',
+      box(0.64, 0.27, 0.065, 0.04),
+    )
+    formula.lines[0].id = 'page-001-inline-stacked-0043-formula'
+    formula.lines[0].runs = [
+      {
+        ...formula.lines[0].box,
+        text: '1',
+        x: 0.67,
+        y: 0.277,
+        width: 0.01,
+        height: 0.009,
+        fontName: 'Synthetic-CMR8',
+        fontSize: 8,
+        confidence: 1,
+      },
+      {
+        ...formula.lines[0].box,
+        text: '−',
+        x: 0.655,
+        y: 0.282,
+        width: 0.012,
+        height: 0.016,
+        fontName: 'Synthetic-CMSY12',
+        fontSize: 12,
+        confidence: 1,
+      },
+      {
+        ...formula.lines[0].box,
+        text: '1',
+        x: 0.67,
+        y: 0.287,
+        width: 0.01,
+        height: 0.009,
+        fontName: 'Synthetic-CMR8',
+        fontSize: 8,
+        confidence: 1,
+      },
+      {
+        ...formula.lines[0].box,
+        text: '.',
+        x: 0.692,
+        y: 0.282,
+        width: 0.006,
+        height: 0.016,
+        fontName: 'Synthetic-CMR12',
+        fontSize: 12,
+        confidence: 1,
+      },
+    ]
+    const onlySibling = textRegion(
+      'unproved-inline-split-only-sibling',
+      'r',
+      box(0.681, 0.287, 0.008, 0.009),
+    )
+    onlySibling.lines[0].id = 'page-001-inline-stacked-0043-after'
+    onlySibling.lines[0].runs[0].fontName = 'Synthetic-CMMI8'
+    onlySibling.lines[0].runs[0].fontSize = 8
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) =>
+        createSourcePageCropAsset({
+          kind: 'equation',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 62,
+          height: 24,
+          pixels: new Uint8Array(62 * 24 * 4).fill(72),
+        }),
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [nearbyDisplay, formula, onlySibling],
+      rasterizeFigure,
+    })
+
+    expect(
+      result.relationships.some(
+        (relationship) => relationship.captionRegionId === formula.id,
+      ),
+    ).toBe(false)
+    expect(
+      rasterizeFigure.mock.calls.some(
+        ([input]) =>
+          containsSourceBox(input.sourceBox, formula.box) &&
+          !containsSourceBox(input.sourceBox, nearbyDisplay.box),
+      ),
+    ).toBe(false)
+  })
+
   it('keeps adjacent displays with distinct printed equation numbers separate', async () => {
     const equationEight = equationRegion(
       'numbered-equation-eight',
@@ -2639,33 +4496,32 @@ describe('PDF visual association graph', () => {
     )
   })
 
-  it('does not linearize a denominator centered beneath an aggregate numerator envelope', async () => {
-    const upperLeft = equationRegion(
-      'aggregate-fraction-upper-left',
-      '1/2 S′′(x) σb²(t, x) +',
-      box(0.31, 0.292, 0.175, 0.038),
+  it('does not let a right-column equation number detach a left-column denominator', async () => {
+    const numerator: PdfPageRegion = equationRegion(
+      'left-fraction-numerator',
+      '⟨f_X(x_a), f_X(x_b)⟩ ≈ log P(pos | x_a, x_b) + c̃_X(x_a) (3)',
+      box(0.1037, 0.64, 0.3703, 0.023),
     )
-    const upperRight = equationRegion(
-      'aggregate-fraction-upper-right',
-      '∫ (S(x + z) − S(x) − S′(x)χ(z))νt(dz)',
-      box(0.485, 0.3, 0.312, 0.028),
+    numerator.column = 'left'
+    const denominator: PdfPageRegion = textRegion(
+      'left-fraction-denominator',
+      'P(neg | x_a, x_b)',
+      box(0.27, 0.6571, 0.1069, 0.0145),
     )
-    const lowerLeft = equationRegion(
-      'aggregate-fraction-lower-left',
-      'μ(t, x) = −',
-      box(0.195, 0.33, 0.107, 0.014),
+    denominator.column = 'left'
+    denominator.lines[0].runs[0].fontName = 'Synthetic-CMMI10'
+    const rightColumnEquation: PdfPageRegion = equationRegion(
+      'right-column-equation',
+      'K_PMI(z_a, z_b) = ⟨f_X(x_a), f_X(x_b)⟩ − c_X',
+      box(0.5607, 0.6523, 0.264, 0.0145),
     )
-    const denominator = textRegion(
-      'aggregate-fraction-denominator',
-      'S′(x)',
-      box(0.53, 0.34, 0.045, 0.014),
+    rightColumnEquation.column = 'right'
+    const rightColumnNumber: PdfPageRegion = textRegion(
+      'right-column-equation-number',
+      '(7)',
+      box(0.8668, 0.6523, 0.019, 0.0126),
     )
-    denominator.lines[0].runs[0].fontName = 'Synthetic-CMMI12'
-    const printedNumber = textRegion(
-      'aggregate-fraction-number',
-      '(3)',
-      box(0.854, 0.33, 0.025, 0.014),
-    )
+    rightColumnNumber.column = 'right'
     const rasterizeFigure = vi.fn(
       async (input: Parameters<PdfFigureRasterizer>[0]) =>
         createSourcePageCropAsset({
@@ -2681,7 +4537,102 @@ describe('PDF visual association graph', () => {
 
     const result = await reconstructPdfVisuals({
       pages: [page([])],
-      regions: [upperLeft, upperRight, lowerLeft, printedNumber, denominator],
+      regions: [numerator, denominator, rightColumnEquation, rightColumnNumber],
+      rasterizeFigure,
+    })
+
+    const equationThree = result.relationships.find(
+      (relationship) => relationship.label === 'Equation 3',
+    )
+    expect(equationThree).toMatchObject({
+      status: 'matched',
+      sourceRegionIds: expect.arrayContaining([numerator.id, denominator.id]),
+      sourceText: '',
+      altText: 'Equation 3',
+      evidence: expect.arrayContaining([
+        'source-page-crop',
+        'source-text-transcript-unresolved',
+      ]),
+    })
+    expect(equationThree?.sourceRegionIds).not.toContain(rightColumnNumber.id)
+    const equationThreeCrop = rasterizeFigure.mock.calls.find((call) =>
+      containsSourceBox(call[0].sourceBox, denominator.box),
+    )?.[0].sourceBox
+    expect(equationThreeCrop).toBeDefined()
+    expect(containsSourceBox(equationThreeCrop!, denominator.box)).toBe(true)
+  })
+
+  it('does not linearize a denominator centered beneath an aggregate numerator envelope', async () => {
+    const upperLeft: PdfPageRegion = equationRegion(
+      'aggregate-fraction-upper-left',
+      '∫ (1/2 S′′(x) σb²(t, x) +',
+      box(0.31, 0.292, 0.175, 0.038),
+    )
+    upperLeft.column = 'left'
+    upperLeft.lines[0].runs[0].fontName = 'Synthetic-CMEX10'
+    const upperRight: PdfPageRegion = equationRegion(
+      'aggregate-fraction-upper-right',
+      '∫ (S(x + z) − S(x) − S′(x)χ(z))νt(dz)',
+      box(0.485, 0.3, 0.312, 0.028),
+    )
+    upperRight.column = 'span'
+    const domain: PdfPageRegion = textRegion(
+      'aggregate-fraction-domain',
+      'R',
+      box(0.382, 0.322, 0.012, 0.012),
+    )
+    domain.column = 'left'
+    domain.lines[0].runs[0].fontName = 'Synthetic-MSBM10'
+    const lowerLeft: PdfPageRegion = equationRegion(
+      'aggregate-fraction-lower-left',
+      'μ(t, x) = −',
+      box(0.195, 0.33, 0.107, 0.014),
+    )
+    lowerLeft.column = 'left'
+    const punctuation: PdfPageRegion = textRegion(
+      'aggregate-fraction-punctuation',
+      '.',
+      box(0.799, 0.33, 0.0055, 0.014),
+    )
+    punctuation.column = 'right'
+    punctuation.lines[0].runs[0].fontName = 'Synthetic-CMMI12'
+    const denominator: PdfPageRegion = textRegion(
+      'aggregate-fraction-denominator',
+      'S′(x)',
+      box(0.53, 0.34, 0.045, 0.014),
+    )
+    denominator.column = 'right'
+    denominator.lines[0].runs[0].fontName = 'Synthetic-CMMI12'
+    const printedNumber: PdfPageRegion = textRegion(
+      'aggregate-fraction-number',
+      '(3)',
+      box(0.854, 0.33, 0.025, 0.014),
+    )
+    printedNumber.column = 'right'
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) =>
+        createSourcePageCropAsset({
+          kind: 'equation',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 96,
+          height: 20,
+          pixels: new Uint8Array(96 * 20 * 4).fill(72),
+        }),
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [
+        upperLeft,
+        upperRight,
+        domain,
+        lowerLeft,
+        punctuation,
+        printedNumber,
+        denominator,
+      ],
       rasterizeFigure,
     })
 
@@ -2693,7 +4644,9 @@ describe('PDF visual association graph', () => {
       sourceRegionIds: expect.arrayContaining([
         upperLeft.id,
         upperRight.id,
+        domain.id,
         lowerLeft.id,
+        punctuation.id,
         denominator.id,
         printedNumber.id,
       ]),
@@ -2705,6 +4658,263 @@ describe('PDF visual association graph', () => {
         'source-text-transcript-unresolved',
       ]),
     })
+  })
+
+  it('owns stacked STIXMath fragments and only a contextual upright operator', async () => {
+    const formula: PdfPageRegion = equationRegion(
+      'stix-control-formula',
+      'Control = 1 ∑ 𝕀(𝑎 ≤ 𝑎 ≤ 𝑎)',
+      box(0.56803, 0.1028, 0.251, 0.02405),
+    )
+    formula.column = 'right'
+    const printedNumber: PdfPageRegion = textRegion(
+      'stix-control-number',
+      '(1)',
+      box(0.86682, 0.11427, 0.01898, 0.01258),
+    )
+    printedNumber.column = 'right'
+    const denominator: PdfPageRegion = textRegion(
+      'stix-control-denominator',
+      '|A| a∈A min',
+      box(0.63983, 0.12056, 0.09439, 0.02054),
+    )
+    denominator.column = 'right'
+    denominator.lines[0].runs = [
+      {
+        ...denominator.lines[0].box,
+        text: '|A|',
+        x: 0.63983,
+        y: 0.12308,
+        width: 0.02429,
+        height: 0.01258,
+        fontName: 'Synthetic-STIXMathExtensions-Regular',
+        fontSize: 10,
+        confidence: 1,
+      },
+      {
+        ...denominator.lines[0].box,
+        text: 'a',
+        x: 0.66878,
+        y: 0.13167,
+        width: 0.00613,
+        height: 0.00943,
+        fontName: 'Synthetic-STIXMath-Italic',
+        fontSize: 7.5,
+        confidence: 1,
+      },
+      {
+        ...denominator.lines[0].box,
+        text: '∈',
+        x: 0.67491,
+        y: 0.13167,
+        width: 0.00836,
+        height: 0.00943,
+        fontName: 'Synthetic-STIXMath-Regular',
+        fontSize: 7.5,
+        confidence: 1,
+      },
+      {
+        ...denominator.lines[0].box,
+        text: 'A',
+        x: 0.68328,
+        y: 0.13167,
+        width: 0.0104,
+        height: 0.00943,
+        fontName: 'Synthetic-STIXMathCalligraphy-Regular',
+        fontSize: 7.5,
+        confidence: 1,
+      },
+      {
+        ...denominator.lines[0].box,
+        text: 'min',
+        x: 0.71523,
+        y: 0.12056,
+        width: 0.019,
+        height: 0.00943,
+        fontName: 'Synthetic-STIXGeneral-Regular',
+        fontSize: 7.5,
+        confidence: 1,
+      },
+    ]
+    const contextualMaximum: PdfPageRegion = textRegion(
+      'stix-control-contextual-maximum',
+      'max',
+      box(0.79177, 0.12056, 0.02102, 0.00943),
+      'chart-label',
+    )
+    contextualMaximum.column = 'right'
+    contextualMaximum.lines[0].runs[0].fontName =
+      'Synthetic-STIXGeneral-Regular'
+    const unrelatedMaximum: PdfPageRegion = textRegion(
+      'stix-control-unrelated-maximum',
+      'max',
+      box(0.18, 0.12056, 0.02102, 0.00943),
+      'chart-label',
+    )
+    unrelatedMaximum.column = 'left'
+    unrelatedMaximum.lines[0].runs[0].fontName = 'Synthetic-STIXGeneral-Regular'
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) =>
+        createSourcePageCropAsset({
+          kind: 'equation',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 96,
+          height: 24,
+          pixels: new Uint8Array(96 * 24 * 4).fill(72),
+        }),
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [
+        formula,
+        printedNumber,
+        denominator,
+        contextualMaximum,
+        unrelatedMaximum,
+      ],
+      rasterizeFigure,
+    })
+
+    expect(result.relationships).toHaveLength(1)
+    expect(result.relationships[0]).toMatchObject({
+      label: 'Equation 1',
+      status: 'matched',
+      sourceRegionIds: expect.arrayContaining([
+        formula.id,
+        printedNumber.id,
+        denominator.id,
+        contextualMaximum.id,
+      ]),
+      sourceText: '',
+      altText: 'Equation 1',
+      altTextSource: 'caption',
+      evidence: expect.arrayContaining([
+        'source-page-crop',
+        'source-text-transcript-unresolved',
+      ]),
+    })
+    expect(result.relationships[0].sourceRegionIds).not.toContain(
+      unrelatedMaximum.id,
+    )
+    const crop = rasterizeFigure.mock.calls[0]![0].sourceBox
+    for (const source of [
+      formula,
+      printedNumber,
+      denominator,
+      contextualMaximum,
+    ]) {
+      expect(containsSourceBox(crop, source.box)).toBe(true)
+    }
+    expect(result.consumedRegionIds.has(printedNumber.id)).toBe(true)
+    expect(result.consumedRegionIds.has(denominator.id)).toBe(true)
+    expect(result.consumedRegionIds.has(contextualMaximum.id)).toBe(true)
+    expect(result.consumedRegionIds.has(unrelatedMaximum.id)).toBe(false)
+  })
+
+  it('owns a complete multi-row STIXMath fraction and side condition', async () => {
+    const formula: PdfPageRegion = equationRegion(
+      'stix-scaling-formula',
+      'Scaling = 1 ∑ 𝑓(𝑏) − 𝑓(𝑎)',
+      box(0.57989, 0.26459, 0.22532, 0.02405),
+    )
+    formula.column = 'right'
+    const printedNumber: PdfPageRegion = textRegion(
+      'stix-scaling-number',
+      '(2)',
+      box(0.86682, 0.27605, 0.01898, 0.01258),
+    )
+    printedNumber.column = 'right'
+    const denominator: PdfPageRegion = textRegion(
+      'stix-scaling-denominator',
+      '(|A|)',
+      box(0.65088, 0.27831, 0.03345, 0.0166),
+    )
+    denominator.column = 'right'
+    denominator.lines[0].runs[0].fontName =
+      'Synthetic-STIXMathExtensions-Regular'
+    const difference: PdfPageRegion = equationRegion(
+      'stix-scaling-difference',
+      '𝑏 − 𝑎',
+      box(0.74918, 0.28486, 0.03421, 0.01258),
+    )
+    difference.column = 'right'
+    difference.lines[0].runs[0].fontName = 'Synthetic-STIXMath-Italic'
+    const membership: PdfPageRegion = textRegion(
+      'stix-scaling-membership',
+      '2 𝑎,𝑏∈A',
+      box(0.66455, 0.29345, 0.05813, 0.01353),
+    )
+    membership.column = 'right'
+    membership.lines[0].runs[0].fontName = 'Synthetic-STIXMath-Regular'
+    const condition: PdfPageRegion = textRegion(
+      'stix-scaling-condition',
+      '𝑏>𝑎',
+      box(0.69572, 0.30301, 0.02023, 0.00943),
+      'side',
+    )
+    condition.column = 'right'
+    condition.lines[0].runs[0].fontName = 'Synthetic-STIXMath-Italic'
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) =>
+        createSourcePageCropAsset({
+          kind: 'equation',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 96,
+          height: 24,
+          pixels: new Uint8Array(96 * 24 * 4).fill(72),
+        }),
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [
+        formula,
+        printedNumber,
+        denominator,
+        difference,
+        membership,
+        condition,
+      ],
+      rasterizeFigure,
+    })
+
+    expect(result.relationships).toHaveLength(1)
+    expect(result.relationships[0]).toMatchObject({
+      label: 'Equation 2',
+      status: 'matched',
+      sourceRegionIds: expect.arrayContaining([
+        formula.id,
+        printedNumber.id,
+        denominator.id,
+        difference.id,
+        membership.id,
+        condition.id,
+      ]),
+      sourceText: '',
+      altText: 'Equation 2',
+      altTextSource: 'caption',
+      evidence: expect.arrayContaining([
+        'source-page-crop',
+        'source-text-transcript-unresolved',
+      ]),
+    })
+    expect(rasterizeFigure).toHaveBeenCalledOnce()
+    const crop = rasterizeFigure.mock.calls[0]![0].sourceBox
+    for (const source of [
+      formula,
+      printedNumber,
+      denominator,
+      difference,
+      membership,
+      condition,
+    ]) {
+      expect(containsSourceBox(crop, source.box)).toBe(true)
+    }
   })
 
   it('absorbs a bare Computer Modern numeric fraction part into the display crop scope', async () => {
@@ -2834,6 +5044,297 @@ describe('PDF visual association graph', () => {
     expect(result.relationships[0].sourceLineIds).not.toContain(
       prose.lines[0].id,
     )
+  })
+
+  it('does not treat punctuation-only mixed Computer Modern prose as a detached integrand', async () => {
+    const formula = equationRegion(
+      'short-prose-neighbor-formula',
+      'f(x) = x',
+      box(0.42, 0.42, 0.18, 0.018),
+    )
+    formula.lines[0].runs[0].fontName = 'Synthetic-CMMI12'
+    const prose = textRegion(
+      'short-prose-neighbor',
+      'if x is y,',
+      box(0.605, 0.42, 0.075, 0.014),
+    )
+    prose.lines[0].runs = [
+      {
+        ...prose.lines[0].box,
+        text: 'if ',
+        width: 0.018,
+        fontName: 'Synthetic-CMR12',
+        fontSize: 12,
+        confidence: 1,
+      },
+      {
+        ...prose.lines[0].box,
+        text: 'x',
+        x: 0.623,
+        width: 0.008,
+        fontName: 'Synthetic-CMMI12',
+        fontSize: 12,
+        confidence: 1,
+      },
+      {
+        ...prose.lines[0].box,
+        text: ' is ',
+        x: 0.631,
+        width: 0.024,
+        fontName: 'Synthetic-CMR12',
+        fontSize: 12,
+        confidence: 1,
+      },
+      {
+        ...prose.lines[0].box,
+        text: 'y',
+        x: 0.655,
+        width: 0.008,
+        fontName: 'Synthetic-CMMI12',
+        fontSize: 12,
+        confidence: 1,
+      },
+      {
+        ...prose.lines[0].box,
+        text: ',',
+        x: 0.663,
+        width: 0.004,
+        fontName: 'Synthetic-CMR12',
+        fontSize: 12,
+        confidence: 1,
+      },
+    ]
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) =>
+        createSourcePageCropAsset({
+          kind: 'equation',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 96,
+          height: 20,
+          pixels: new Uint8Array(96 * 20 * 4).fill(72),
+        }),
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [formula, prose],
+      rasterizeFigure,
+    })
+
+    expect(result.relationships).toHaveLength(1)
+    expect(result.relationships[0].sourceRegionIds).not.toContain(prose.id)
+    expect(result.relationships[0].sourceLineIds).not.toContain(
+      prose.lines[0].id,
+    )
+    expect(result.consumedRegionIds.has(prose.id)).toBe(false)
+  })
+
+  it.each([
+    {
+      name: 'one upright prose run with an equals sign',
+      text: 'if x=y',
+      segments: [
+        { text: 'if ', width: 0.018, fontName: 'Synthetic-CMR12' },
+        { text: 'x', width: 0.008, fontName: 'Synthetic-CMMI12' },
+        { text: '=', width: 0.008, fontName: 'Synthetic-CMR12' },
+        { text: 'y', width: 0.008, fontName: 'Synthetic-CMMI12' },
+      ],
+    },
+    {
+      name: 'one upright prose run with parentheses',
+      text: 'if (x)',
+      segments: [
+        { text: 'if (', width: 0.026, fontName: 'Synthetic-CMR12' },
+        { text: 'x', width: 0.008, fontName: 'Synthetic-CMMI12' },
+        { text: ')', width: 0.006, fontName: 'Synthetic-CMR12' },
+      ],
+    },
+    {
+      name: 'an upright prose word split across source runs',
+      text: 'if x=y',
+      segments: [
+        { text: 'i', width: 0.008, fontName: 'Synthetic-CMR12' },
+        { text: 'f ', width: 0.01, fontName: 'Synthetic-CMR12' },
+        { text: 'x', width: 0.008, fontName: 'Synthetic-CMMI12' },
+        { text: '=', width: 0.008, fontName: 'Synthetic-CMR12' },
+        { text: 'y', width: 0.008, fontName: 'Synthetic-CMMI12' },
+      ],
+    },
+  ])(
+    'rejects short Computer Modern prose with structural math punctuation: $name',
+    async ({ name, text, segments }) => {
+      const formula = equationRegion(
+        `short-structural-prose-formula-${name}`,
+        'f(x) = x',
+        box(0.42, 0.47, 0.18, 0.018),
+      )
+      formula.lines[0].runs[0].fontName = 'Synthetic-CMMI12'
+      const prose = textRegion(
+        `short-structural-prose-${name}`,
+        text,
+        box(0.605, 0.47, 0.075, 0.014),
+      )
+      let runX = prose.box.x
+      prose.lines[0].runs = segments.map((segment) => {
+        const run = {
+          ...prose.lines[0].box,
+          text: segment.text,
+          x: runX,
+          width: segment.width,
+          fontName: segment.fontName,
+          fontSize: 12,
+          confidence: 1,
+        }
+        runX += segment.width
+        return run
+      })
+      const rasterizeFigure = vi.fn(
+        async (input: Parameters<PdfFigureRasterizer>[0]) =>
+          createSourcePageCropAsset({
+            kind: 'equation',
+            cropBox: input.sourceBox,
+            sourceObjectIds: input.sourceObjectIds,
+            sourceBoxes: input.sourceBoxes,
+            width: 96,
+            height: 20,
+            pixels: new Uint8Array(96 * 20 * 4).fill(72),
+          }),
+      )
+
+      const result = await reconstructPdfVisuals({
+        pages: [page([])],
+        regions: [formula, prose],
+        rasterizeFigure,
+      })
+
+      expect(result.relationships).toHaveLength(1)
+      expect(result.relationships[0].sourceRegionIds).not.toContain(prose.id)
+      expect(result.relationships[0].sourceLineIds).not.toContain(
+        prose.lines[0].id,
+      )
+      expect(result.consumedRegionIds.has(prose.id)).toBe(false)
+    },
+  )
+
+  it('owns a detached Computer Modern integrand beside its large operator', async () => {
+    const integral = equationRegion(
+      'jump-integral-large-operator',
+      '∫',
+      box(0.59889, 0.8615, 0.01116, 0.0142),
+    )
+    integral.lines[0].runs[0].fontName = 'Synthetic-CMEX10'
+    const formula = equationRegion(
+      'jump-integral-formula',
+      'dxt = μ(t, xt) dt + σb(t, xt) dWt +',
+      box(0.27774, 0.88083, 0.3111, 0.01633),
+    )
+    formula.lines[0].runs[0].fontName = 'Synthetic-CMMI12'
+    const integrand = textRegion(
+      'jump-integral-integrand',
+      'z N˜ (dt, dz),',
+      box(0.6239, 0.87724, 0.09837, 0.01779),
+    )
+    integrand.lines[0].runs = [
+      {
+        ...integrand.lines[0].box,
+        text: 'z N',
+        width: 0.02912,
+        fontName: 'Synthetic-CMMI12',
+        fontSize: 12,
+        confidence: 1,
+      },
+      {
+        ...integrand.lines[0].box,
+        text: '˜ (',
+        x: 0.65302,
+        width: 0.01774,
+        fontName: 'Synthetic-CMR12',
+        fontSize: 12,
+        confidence: 1,
+      },
+      {
+        ...integrand.lines[0].box,
+        text: 'dt, dz',
+        x: 0.67076,
+        width: 0.04549,
+        fontName: 'Synthetic-CMMI12',
+        fontSize: 12,
+        confidence: 1,
+      },
+      {
+        ...integrand.lines[0].box,
+        text: '),',
+        x: 0.71625,
+        width: 0.00602,
+        fontName: 'Synthetic-CMR12',
+        fontSize: 12,
+        confidence: 1,
+      },
+    ]
+    const domain = textRegion(
+      'jump-integral-domain',
+      'R',
+      box(0.61004, 0.89838, 0.00967, 0.00947),
+    )
+    domain.lines[0].runs[0].fontName = 'Synthetic-MSBM10'
+    const printedNumber = textRegion(
+      'jump-integral-number',
+      '(1)',
+      box(0.85391, 0.88083, 0.02513, 0.0142),
+    )
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) =>
+        createSourcePageCropAsset({
+          kind: 'equation',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 120,
+          height: 24,
+          pixels: new Uint8Array(120 * 24 * 4).fill(72),
+        }),
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [integral, integrand, formula, printedNumber, domain],
+      rasterizeFigure,
+    })
+
+    expect(rasterizeFigure).toHaveBeenCalledOnce()
+    expect(result.relationships).toHaveLength(1)
+    expect(result.relationships[0]).toMatchObject({
+      label: 'Equation 1',
+      status: 'matched',
+      sourceRegionIds: expect.arrayContaining([
+        integral.id,
+        integrand.id,
+        formula.id,
+        domain.id,
+        printedNumber.id,
+      ]),
+      sourceText: '',
+      altText: 'Equation 1',
+      evidence: expect.arrayContaining([
+        'source-page-crop',
+        'source-text-transcript-unresolved',
+      ]),
+    })
+    const crop = rasterizeFigure.mock.calls[0]![0].sourceBox
+    for (const source of [
+      integral,
+      integrand,
+      formula,
+      domain,
+      printedNumber,
+    ]) {
+      expect(containsSourceBox(crop, source.box)).toBe(true)
+    }
+    expect(result.consumedRegionIds.has(integrand.id)).toBe(true)
+    expect(result.consumedRegionIds.has(domain.id)).toBe(true)
+    expect(result.consumedRegionIds.has(printedNumber.id)).toBe(true)
   })
 
   it('uses an aligned printed number to crop a formula whose transcript is unsafe to publish', async () => {
@@ -3279,6 +5780,295 @@ describe('PDF visual association graph', () => {
     expect(result.consumedRegionIds.has(delimiter.id)).toBe(true)
   })
 
+  it('builds one deterministic owned component from fragmented math glyphs', async () => {
+    const displayBase = equationRegion(
+      'component-display-base',
+      'F =',
+      box(0.3, 0.3, 0.06, 0.02),
+    )
+    const largeOperator = textRegion(
+      'component-large-operator',
+      '∑',
+      box(0.365, 0.3, 0.018, 0.02),
+    )
+    largeOperator.lines[0].runs[0].fontName = 'Synthetic-STIXGeneral-Regular'
+    const operand = textRegion(
+      'component-operand',
+      'x',
+      box(0.388, 0.3, 0.015, 0.016),
+    )
+    operand.lines[0].runs[0].fontName = 'Synthetic-CMMI10'
+    const subscript = textRegion(
+      'component-subscript',
+      'i',
+      box(0.403, 0.313, 0.008, 0.009),
+    )
+    subscript.lines[0].runs[0].fontName = 'Synthetic-CMMI7'
+    subscript.lines[0].runs[0].fontSize = 7
+    const superscript = textRegion(
+      'component-superscript',
+      '2',
+      box(0.403, 0.289, 0.008, 0.009),
+    )
+    superscript.lines[0].runs[0].fontName = 'Synthetic-CMR7'
+    superscript.lines[0].runs[0].fontSize = 7
+    const printedNumber = textRegion(
+      'component-printed-number',
+      '(4)',
+      box(0.86, 0.3, 0.025, 0.014),
+    )
+    const neighboringProse = textRegion(
+      'component-neighboring-prose',
+      'where the estimate converges',
+      box(0.3, 0.342, 0.2, 0.014),
+    )
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) =>
+        createSourcePageCropAsset({
+          kind: 'equation',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 96,
+          height: 20,
+          pixels: new Uint8Array(96 * 20 * 4).fill(72),
+        }),
+    )
+    const componentRegions = [
+      displayBase,
+      largeOperator,
+      operand,
+      subscript,
+      superscript,
+      printedNumber,
+    ]
+
+    const first = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [neighboringProse, ...componentRegions],
+      rasterizeFigure,
+    })
+    const shuffled = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [
+        superscript,
+        neighboringProse,
+        printedNumber,
+        operand,
+        displayBase,
+        subscript,
+        largeOperator,
+      ],
+      rasterizeFigure,
+    })
+
+    for (const result of [first, shuffled]) {
+      expect(result.relationships).toHaveLength(1)
+      expect(result.relationships[0]).toMatchObject({
+        label: 'Equation 4',
+        status: 'matched',
+        sourceRegionIds: expect.arrayContaining(
+          componentRegions.map((region) => region.id),
+        ),
+        evidence: expect.arrayContaining(['source-page-crop']),
+      })
+      expect(result.relationships[0].sourceRegionIds).not.toContain(
+        neighboringProse.id,
+      )
+    }
+    expect(shuffled.relationships[0].sourceRegionIds).toEqual(
+      first.relationships[0].sourceRegionIds,
+    )
+    for (const region of componentRegions) {
+      expect(
+        containsSourceBox(
+          rasterizeFigure.mock.calls[0]![0].sourceBox,
+          region.box,
+        ),
+      ).toBe(true)
+    }
+  })
+
+  it('keeps two close numbered equation components separate', async () => {
+    const firstBase = equationRegion(
+      'close-component-first-base',
+      'a =',
+      box(0.3, 0.4, 0.08, 0.018),
+    )
+    const firstTerm = textRegion(
+      'close-component-first-term',
+      'x',
+      box(0.385, 0.4, 0.012, 0.014),
+    )
+    firstTerm.lines[0].runs[0].fontName = 'Synthetic-CMMI10'
+    const firstNumber = textRegion(
+      'close-component-first-number',
+      '(1)',
+      box(0.86, 0.4, 0.025, 0.014),
+    )
+    const secondBase = equationRegion(
+      'close-component-second-base',
+      'b =',
+      box(0.3, 0.436, 0.08, 0.018),
+    )
+    const secondTerm = textRegion(
+      'close-component-second-term',
+      'y',
+      box(0.385, 0.436, 0.012, 0.014),
+    )
+    secondTerm.lines[0].runs[0].fontName = 'Synthetic-CMMI10'
+    const secondNumber = textRegion(
+      'close-component-second-number',
+      '(2)',
+      box(0.86, 0.436, 0.025, 0.014),
+    )
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) =>
+        createSourcePageCropAsset({
+          kind: 'equation',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 64,
+          height: 16,
+          pixels: new Uint8Array(64 * 16 * 4).fill(72),
+        }),
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [
+        secondNumber,
+        firstTerm,
+        secondBase,
+        firstNumber,
+        secondTerm,
+        firstBase,
+      ],
+      rasterizeFigure,
+    })
+
+    expect(result.relationships).toEqual([
+      expect.objectContaining({
+        label: 'Equation 1',
+        status: 'matched',
+        sourceRegionIds: expect.arrayContaining([
+          firstBase.id,
+          firstTerm.id,
+          firstNumber.id,
+        ]),
+      }),
+      expect.objectContaining({
+        label: 'Equation 2',
+        status: 'matched',
+        sourceRegionIds: expect.arrayContaining([
+          secondBase.id,
+          secondTerm.id,
+          secondNumber.id,
+        ]),
+      }),
+    ])
+    expect(result.relationships[0].sourceRegionIds).not.toContain(secondTerm.id)
+    expect(result.relationships[1].sourceRegionIds).not.toContain(firstTerm.id)
+  })
+
+  it('suppresses singleton math fragments and inline math without display evidence', async () => {
+    const singletonOperator = textRegion(
+      'singleton-math-operator',
+      '∑',
+      box(0.3, 0.2, 0.018, 0.02),
+    )
+    singletonOperator.lines[0].runs[0].fontName =
+      'Synthetic-STIXGeneral-Regular'
+    const inlineMath = textRegion(
+      'inline-math-prose',
+      'The value x = 2 remains bounded.',
+      box(0.2, 0.3, 0.4, 0.018),
+    )
+    inlineMath.lines[0].runs = [
+      {
+        ...inlineMath.lines[0].box,
+        text: 'The value ',
+        width: 0.08,
+        fontName: 'Synthetic-CMR10',
+        fontSize: 10,
+        confidence: 1,
+      },
+      {
+        ...inlineMath.lines[0].box,
+        x: 0.28,
+        width: 0.04,
+        text: 'x = 2',
+        fontName: 'Synthetic-CMMI10',
+        fontSize: 10,
+        confidence: 1,
+      },
+      {
+        ...inlineMath.lines[0].box,
+        x: 0.32,
+        width: 0.14,
+        text: ' remains bounded.',
+        fontName: 'Synthetic-CMR10',
+        fontSize: 10,
+        confidence: 1,
+      },
+    ]
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [inlineMath, singletonOperator],
+    })
+
+    expect(result.relationships).toEqual([])
+  })
+
+  it('fails closed when prose is inseparable from an owned equation component', async () => {
+    const display = equationRegion(
+      'inseparable-component-display',
+      'h = x + y',
+      box(0.3, 0.5, 0.2, 0.02),
+    )
+    const overlappingProse = textRegion(
+      'inseparable-component-prose',
+      'where the bound holds',
+      box(0.38, 0.5, 0.16, 0.018),
+    )
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) =>
+        createSourcePageCropAsset({
+          kind: 'equation',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 64,
+          height: 16,
+          pixels: new Uint8Array(64 * 16 * 4).fill(72),
+        }),
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [overlappingProse, display],
+      rasterizeFigure,
+    })
+
+    expect(rasterizeFigure).not.toHaveBeenCalled()
+    expect(result.relationships).toEqual([
+      expect.objectContaining({
+        kind: 'equation',
+        status: 'unresolved',
+        sourceRegionIds: [display.id],
+        sourceLineIds: [display.lines[0].id],
+        evidence: expect.arrayContaining([
+          'source-proved-atomic-equation-component',
+          'overlapping-unowned-source-text',
+          'source-rendition-unavailable',
+        ]),
+      }),
+    ])
+    expect(result.consumedRegionIds.has(overlappingProse.id)).toBe(false)
+  })
+
   it('groups a source-verified display equation wider than sixty percent', async () => {
     const right = equationRegion(
       'equation-wide-right',
@@ -3447,6 +6237,61 @@ describe('PDF visual association graph', () => {
     }
     expect(result.relationships[0].captionRegionId).toBe(opening.id)
     expect(result.consumedRegionIds.has(followingProse.id)).toBe(false)
+  })
+
+  it('retains exact multi-region equation ownership when its source crop is unavailable', async () => {
+    const primary = equationRegion(
+      'proved-unrendered-equation-primary',
+      'x = y +',
+      box(0.3, 0.3, 0.22, 0.02),
+    )
+    const continuation = equationRegion(
+      'proved-unrendered-equation-continuation',
+      'z',
+      box(0.515, 0.3, 0.02, 0.02),
+    )
+    continuation.lines[0].runs[0].fontName = 'Synthetic-CMMI10'
+    const rasterizeFigure = vi.fn(async () => {
+      throw new Error('source crop unavailable')
+    })
+    const reconstruct = (regions: PdfPageRegion[]) =>
+      reconstructPdfVisuals({
+        pages: [page([])],
+        regions,
+        rasterizeFigure,
+      })
+
+    const result = await reconstruct([primary, continuation])
+    const reordered = await reconstruct([continuation, primary])
+    const relationship = result.relationships[0]
+    const candidate = relationship.candidates[0]
+    const exactSourceLineIds = [primary.lines[0].id, continuation.lines[0].id]
+
+    expect(relationship).toMatchObject({
+      kind: 'equation',
+      status: 'unresolved',
+      captionRegionId: primary.id,
+      sourceRegionIds: [primary.id, continuation.id],
+      sourceLineIds: exactSourceLineIds,
+      sourceObjectIds: [],
+      assetIds: [],
+      evidence: expect.arrayContaining([
+        'source-proved-atomic-equation-component',
+        'source-rendition-unavailable',
+      ]),
+    })
+    expect(candidate).toMatchObject({
+      sourceRegionIds: [primary.id, continuation.id],
+      sourceLineIds: exactSourceLineIds,
+      sourceText: 'x = y + z',
+    })
+    expect(candidate.id).toBe(
+      pdfVisualMatchCandidateId(relationship.id, candidate),
+    )
+    expect(reordered.relationships[0].candidates[0].id).toBe(candidate.id)
+    expect(result.consumedRegionIds.has(primary.id)).toBe(false)
+    expect(result.consumedRegionIds.has(continuation.id)).toBe(false)
+    expect(relationship.evidence).not.toContain('unresolved-visual-text-owned')
   })
 
   it('transitively owns every source run in a bounded multiline numbered equation', async () => {
@@ -3655,9 +6500,11 @@ describe('PDF visual association graph', () => {
       rasterizeFigure,
     })
 
-    expect(rasterizeFigure).toHaveBeenCalledOnce()
-    const relationship = result.relationships[0]
     expect(result.relationships).toHaveLength(1)
+    const relationship = result.relationships[0]
+    expect(relationship.evidence).not.toContain(
+      'incomplete-equation-source-scope',
+    )
     expect(relationship).toMatchObject({
       kind: 'equation',
       label: 'Equation 2',
@@ -3675,6 +6522,7 @@ describe('PDF visual association graph', () => {
         'source-text-transcript-unresolved',
       ]),
     })
+    expect(rasterizeFigure).toHaveBeenCalledOnce()
     expect(new Set(relationship.sourceRegionIds).size).toBe(
       2 + fragments.length,
     )
@@ -3776,6 +6624,114 @@ describe('PDF visual association graph', () => {
         ]),
       }),
     ])
+  })
+
+  it('promotes one unambiguous math-font superscript from exact source geometry', async () => {
+    const formula = equationRegion(
+      'exact-script-only-equation',
+      'x2=y',
+      box(0.4, 0.42, 0.2, 0.04),
+    )
+    formula.lines[0].runs = [
+      {
+        ...formula.lines[0].box,
+        text: 'x',
+        x: 0.42,
+        y: 0.43,
+        width: 0.01,
+        height: 0.014,
+        fontName: 'Synthetic-CMMI10',
+        fontSize: 10,
+        confidence: 1,
+      },
+      {
+        ...formula.lines[0].box,
+        text: '2',
+        x: 0.431,
+        y: 0.421,
+        width: 0.006,
+        height: 0.007,
+        fontName: 'Synthetic-CMMI8',
+        fontSize: 7,
+        confidence: 1,
+      },
+      {
+        ...formula.lines[0].box,
+        text: '=',
+        x: 0.442,
+        y: 0.43,
+        width: 0.008,
+        height: 0.014,
+        fontName: 'Synthetic-CMSY10',
+        fontSize: 10,
+        confidence: 1,
+      },
+      {
+        ...formula.lines[0].box,
+        text: 'y',
+        x: 0.456,
+        y: 0.43,
+        width: 0.01,
+        height: 0.014,
+        fontName: 'Synthetic-CMMI10',
+        fontSize: 10,
+        confidence: 1,
+      },
+    ]
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) =>
+        createSourcePageCropAsset({
+          kind: 'equation',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 48,
+          height: 16,
+          pixels: new Uint8Array(48 * 16 * 4).fill(72),
+        }),
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [formula],
+      rasterizeFigure,
+    })
+
+    expect(result.relationships).toEqual([
+      expect.objectContaining({
+        kind: 'equation',
+        status: 'matched',
+        sourceRegionIds: [formula.id],
+        sourceLineIds: [formula.lines[0].id],
+        sourceText: '',
+        altTextSource: 'caption',
+        evidence: expect.arrayContaining([
+          'source-page-crop',
+          'source-geometry-script-transcript-v1',
+        ]),
+        equationGeometryTranscript: expect.objectContaining({
+          source: 'source-geometry-script-transcript-v1',
+          plainText: 'x^(2) = y',
+          spokenText: 'x superscript 2 equals y',
+          mathml: {
+            type: 'math',
+            display: 'block',
+            children: [
+              {
+                type: 'msup',
+                base: { type: 'mi', text: 'x' },
+                superscript: { type: 'mn', text: '2' },
+              },
+              { type: 'mo', text: '=' },
+              { type: 'mi', text: 'y' },
+            ],
+          },
+        }),
+      }),
+    ])
+    expect(result.relationships[0].evidence).not.toContain(
+      'source-text-transcript-unresolved',
+    )
   })
 
   it('preserves non-CM stacked fraction geometry without certifying numerator-denominator order', async () => {
@@ -4019,11 +6975,22 @@ describe('PDF visual association graph', () => {
           kind: 'equation',
           status: 'unresolved',
           sourceRegionIds: [],
+          sourceLineIds: [],
           evidence: expect.arrayContaining([
             'incomplete-equation-source-scope',
           ]),
+          candidates: [
+            expect.objectContaining({
+              sourceRegionIds: expect.arrayContaining([
+                primary.id,
+                duplicate.id,
+              ]),
+            }),
+          ],
         }),
       ])
+      expect(result.consumedRegionIds.has(primary.id)).toBe(false)
+      expect(result.consumedRegionIds.has(duplicate.id)).toBe(false)
     },
   )
 
@@ -4214,7 +7181,7 @@ describe('PDF visual association graph', () => {
   it('does not let transitive math fragments bridge distinct numbered equations', async () => {
     const equationTwo = equationRegion(
       'transitive-equation-two',
-      'B(a) = [a, cos',
+      'Control = Σ',
       box(0.55, 0.31, 0.18, 0.02),
     )
     const equationTwoNumber = textRegion(
@@ -4224,13 +7191,13 @@ describe('PDF visual association graph', () => {
     )
     const bridge = textRegion(
       'transitive-equation-math-bridge',
-      '2π a',
+      '∫₀¹ f(x) dx / |A|',
       box(0.7, 0.35, 0.06, 0.014),
     )
     bridge.lines[0].runs[0].fontName = 'Synthetic-CMMI10'
     const equationThree = equationRegion(
       'transitive-equation-three',
-      'q(x) = r(x)',
+      'Loss = ∫₀∞ q(x) dx',
       box(0.55, 0.39, 0.18, 0.02),
     )
     const equationThreeNumber = textRegion(
@@ -4271,6 +7238,46 @@ describe('PDF visual association graph', () => {
         relationship.sourceRegionIds.includes(bridge.id),
       ),
     ).toEqual([true, false])
+    expect(result.relationships).toEqual([
+      expect.objectContaining({
+        label: 'Equation 2',
+        status: 'matched',
+        assetIds: [expect.any(String)],
+        sourceRegionIds: expect.arrayContaining([
+          equationTwo.id,
+          equationTwoNumber.id,
+          bridge.id,
+        ]),
+      }),
+      expect.objectContaining({
+        label: 'Equation 3',
+        status: 'matched',
+        assetIds: [expect.any(String)],
+        sourceRegionIds: expect.arrayContaining([
+          equationThree.id,
+          equationThreeNumber.id,
+        ]),
+      }),
+    ])
+    const cropInputs = rasterizeFigure.mock.calls.map(([input]) => input)
+    expect(cropInputs).toHaveLength(2)
+    expect(containsSourceBox(cropInputs[0].sourceBox, equationTwo.box)).toBe(
+      true,
+    )
+    expect(
+      containsSourceBox(cropInputs[0].sourceBox, equationTwoNumber.box),
+    ).toBe(true)
+    expect(containsSourceBox(cropInputs[0].sourceBox, bridge.box)).toBe(true)
+    expect(containsSourceBox(cropInputs[0].sourceBox, equationThree.box)).toBe(
+      false,
+    )
+    expect(containsSourceBox(cropInputs[1].sourceBox, equationThree.box)).toBe(
+      true,
+    )
+    expect(
+      containsSourceBox(cropInputs[1].sourceBox, equationThreeNumber.box),
+    ).toBe(true)
+    expect(containsSourceBox(cropInputs[1].sourceBox, bridge.box)).toBe(false)
     expect(result.consumedRegionIds.has(bridge.id)).toBe(true)
   })
 
@@ -4291,6 +7298,11 @@ describe('PDF visual association graph', () => {
       box(0.3, 0.123, 0.012, 0.008),
     )
     ambiguousDomain.lines[0].runs[0].fontName = 'Synthetic-MSBM10'
+    const whereBody = textRegion(
+      'ambiguous-scope-where-body',
+      'where t is the observation time',
+      box(0.47, 0.123, 0.24, 0.012),
+    )
     const rasterizeFigure = vi.fn(
       async (input: Parameters<PdfFigureRasterizer>[0]) =>
         createSourcePageCropAsset({
@@ -4306,7 +7318,7 @@ describe('PDF visual association graph', () => {
 
     const result = await reconstructPdfVisuals({
       pages: [page([])],
-      regions: [first, ambiguousDomain, second],
+      regions: [first, ambiguousDomain, whereBody, second],
       rasterizeFigure,
     })
 
@@ -4318,6 +7330,14 @@ describe('PDF visual association graph', () => {
       ),
     ).toBe(true)
     expect(result.consumedRegionIds.has(ambiguousDomain.id)).toBe(false)
+    expect(result.consumedRegionIds.has(whereBody.id)).toBe(false)
+    expect(
+      result.relationships.every(
+        (relationship) =>
+          !relationship.sourceRegionIds.includes(ambiguousDomain.id) &&
+          !relationship.sourceRegionIds.includes(whereBody.id),
+      ),
+    ).toBe(true)
   })
 
   it('keeps aligned equations in opposite columns as separate displays', async () => {
@@ -5241,6 +8261,1338 @@ describe('PDF visual association graph', () => {
     ).toBe(true)
   })
 
+  it('owns only render-contained overlays when a strong figure rendition remains unresolved', async () => {
+    const sourceBox = box(0.2, 0.18, 0.5, 0.12)
+    const firstAsset = sourcePreservedSvgAsset(
+      'vector-p001-contained-overlay-a',
+      sourceBox,
+    )
+    const secondAsset = sourcePreservedSvgAsset(
+      'vector-p001-contained-overlay-b',
+      sourceBox,
+    )
+    const containedOverlays = [
+      textRegion('contained-overlay-a', 'alpha', box(0.3, 0.205, 0.06, 0.012)),
+      textRegion('contained-overlay-b', 'beta', box(0.3, 0.22, 0.08, 0.012)),
+      textRegion('contained-overlay-c', 'gamma', box(0.3, 0.235, 0.09, 0.012)),
+    ]
+    const outsideRenderOverlay = textRegion(
+      'outside-render-overlay',
+      'neighboring table row',
+      box(0.3, 0.177, 0.12, 0.012),
+    )
+    const figureCaption = {
+      ...captionRegion(
+        'Figure 1. Contained overlay ownership.',
+        box(0.2, 0.32, 0.5, 0.025),
+      ),
+      id: 'contained-overlay-caption',
+    }
+
+    const result = await reconstructPdfVisuals({
+      pages: [
+        page(
+          [
+            {
+              id: 'vector-p001-contained-overlay-a',
+              page: 1,
+              kind: 'vector',
+              box: sourceBox,
+              confidence: 0.98,
+              assetId: firstAsset.id,
+            },
+            {
+              id: 'vector-p001-contained-overlay-b',
+              page: 1,
+              kind: 'vector',
+              box: sourceBox,
+              confidence: 0.98,
+              assetId: secondAsset.id,
+            },
+          ],
+          1,
+          [firstAsset, secondAsset],
+        ),
+      ],
+      regions: [
+        objectRegion(
+          'contained-overlay-vector-a',
+          'vector-p001-contained-overlay-a',
+          sourceBox,
+        ),
+        objectRegion(
+          'contained-overlay-vector-b',
+          'vector-p001-contained-overlay-b',
+          sourceBox,
+        ),
+        outsideRenderOverlay,
+        ...containedOverlays,
+        figureCaption,
+      ],
+      rasterizeFigure: async () => {
+        throw new Error('Source page crop contains no nontrivial source ink')
+      },
+    })
+
+    expect(result.relationships).toEqual([
+      expect.objectContaining({
+        kind: 'figure',
+        status: 'unresolved',
+        sourceRegionIds: containedOverlays.map((region) => region.id),
+        sourceLineIds: containedOverlays.map((region) => region.lines[0].id),
+        sourceText: 'alpha beta gamma',
+        sourceBoxes: [
+          figureCaption.box,
+          ...containedOverlays.map((region) => region.box),
+        ],
+        evidence: expect.arrayContaining([
+          'caption-bounded-overlay-lineage-trimmed',
+          'unresolved-visual-text-owned',
+          'source-rendition-unavailable',
+        ]),
+      }),
+    ])
+    expect(result.consumedRegionIds.has(outsideRenderOverlay.id)).toBe(false)
+    expect(
+      containedOverlays.every((region) =>
+        result.consumedRegionIds.has(region.id),
+      ),
+    ).toBe(true)
+  })
+
+  it('retains only contained lines from a partially enclosed figure overlay region', async () => {
+    const layerBoxes = [
+      box(0.2, 0.18, 0.5, 0.12),
+      box(0.205, 0.185, 0.49, 0.11),
+      box(0.21, 0.19, 0.48, 0.1),
+    ]
+    const sourceObjectIds = [
+      'vector-p001-partial-overlay-a',
+      'vector-p001-partial-overlay-b',
+      'vector-p001-partial-overlay-c',
+    ]
+    const assets = sourceObjectIds.map((sourceObjectId, index) =>
+      sourcePreservedSvgAsset(sourceObjectId, layerBoxes[index]),
+    )
+    const partialOverlay = textRegion(
+      'partial-overlay-region',
+      'outside label inside alpha inside beta',
+      box(0.3, 0.1772, 0.12, 0.06),
+    )
+    const overlayLine = (
+      id: string,
+      text: string,
+      sourceLineBox: NormalizedSourceBox,
+    ) => {
+      const textBox = { ...sourceLineBox, method: 'pdf-text' as const }
+      return {
+        id,
+        text,
+        fontSize: 9,
+        box: textBox,
+        runs: [
+          {
+            ...textBox,
+            text,
+            fontName: 'DiagramSans',
+            fontSize: 9,
+            confidence: 0.99,
+          },
+        ],
+      }
+    }
+    const outsideLine = overlayLine(
+      'partial-overlay-outside-line',
+      'outside label',
+      box(0.3, 0.1772, 0.12, 0.004),
+    )
+    const containedLines = [
+      overlayLine(
+        'partial-overlay-inside-line-a',
+        'inside alpha',
+        box(0.3, 0.205, 0.12, 0.012),
+      ),
+      overlayLine(
+        'partial-overlay-inside-line-b',
+        'inside beta',
+        box(0.3, 0.225, 0.12, 0.012),
+      ),
+    ]
+    partialOverlay.lines = [outsideLine, ...containedLines]
+    const figureCaption = {
+      ...captionRegion(
+        'Figure 1. Partial overlay ownership.',
+        box(0.2, 0.32, 0.5, 0.025),
+      ),
+      id: 'partial-overlay-caption',
+    }
+    const retainedOverlayBox = {
+      ...box(0.3, 0.205, 0.12, 0.032),
+      method: 'pdf-text' as const,
+    }
+
+    const result = await reconstructPdfVisuals({
+      pages: [
+        page(
+          sourceObjectIds.map((id, index) => ({
+            id,
+            page: 1,
+            kind: 'vector' as const,
+            box: layerBoxes[index],
+            confidence: 0.98,
+            assetId: assets[index].id,
+          })),
+          1,
+          assets,
+        ),
+      ],
+      regions: [
+        ...sourceObjectIds.map((id, index) =>
+          objectRegion(
+            `partial-overlay-vector-${index + 1}`,
+            id,
+            layerBoxes[index],
+          ),
+        ),
+        partialOverlay,
+        figureCaption,
+      ],
+      rasterizeFigure: async () => {
+        throw new Error('Source page crop contains no nontrivial source ink')
+      },
+    })
+
+    expect(result.relationships).toEqual([
+      expect.objectContaining({
+        kind: 'figure',
+        status: 'unresolved',
+        sourceRegionIds: [partialOverlay.id],
+        sourceLineIds: containedLines.map((line) => line.id),
+        sourceText: 'inside alpha inside beta',
+        sourceBoxes: [figureCaption.box, retainedOverlayBox],
+        evidence: expect.arrayContaining([
+          'caption-bounded-overlay-lineage-trimmed',
+          'unresolved-visual-text-owned',
+          'source-rendition-unavailable',
+        ]),
+      }),
+    ])
+    expect(result.consumedRegionIds.has(partialOverlay.id)).toBe(false)
+    expect(result.consumedLineIds.has(outsideLine.id)).toBe(false)
+    expect(
+      containedLines.every((line) => result.consumedLineIds.has(line.id)),
+    ).toBe(true)
+  })
+
+  it('consumes only retained lines from a partially enclosed matched figure overlay', async () => {
+    const layerBoxes = [
+      box(0.2, 0.18, 0.5, 0.12),
+      box(0.205, 0.185, 0.49, 0.11),
+      box(0.21, 0.19, 0.48, 0.1),
+    ]
+    const sourceObjectIds = [
+      'vector-p001-matched-partial-overlay-a',
+      'vector-p001-matched-partial-overlay-b',
+      'vector-p001-matched-partial-overlay-c',
+    ]
+    const assets = sourceObjectIds.map((sourceObjectId, index) =>
+      sourcePreservedSvgAsset(sourceObjectId, layerBoxes[index]),
+    )
+    const partialOverlay = textRegion(
+      'matched-partial-overlay-region',
+      'outside label inside alpha inside beta',
+      box(0.3, 0.1772, 0.12, 0.06),
+    )
+    const overlayLine = (
+      id: string,
+      text: string,
+      sourceLineBox: NormalizedSourceBox,
+    ) => {
+      const textBox = { ...sourceLineBox, method: 'pdf-text' as const }
+      return {
+        id,
+        text,
+        fontSize: 9,
+        box: textBox,
+        runs: [
+          {
+            ...textBox,
+            text,
+            fontName: 'DiagramSans',
+            fontSize: 9,
+            confidence: 0.99,
+          },
+        ],
+      }
+    }
+    const outsideLine = overlayLine(
+      'matched-partial-overlay-outside-line',
+      'outside label',
+      box(0.3, 0.1772, 0.12, 0.004),
+    )
+    const containedLines = [
+      overlayLine(
+        'matched-partial-overlay-inside-line-a',
+        'inside alpha',
+        box(0.3, 0.205, 0.12, 0.012),
+      ),
+      overlayLine(
+        'matched-partial-overlay-inside-line-b',
+        'inside beta',
+        box(0.3, 0.225, 0.12, 0.012),
+      ),
+    ]
+    partialOverlay.lines = [outsideLine, ...containedLines]
+    const figureCaption = {
+      ...captionRegion(
+        'Figure 1. Matched partial overlay ownership.',
+        box(0.2, 0.32, 0.5, 0.025),
+      ),
+      id: 'matched-partial-overlay-caption',
+    }
+
+    const result = await reconstructPdfVisuals({
+      pages: [
+        page(
+          sourceObjectIds.map((id, index) => ({
+            id,
+            page: 1,
+            kind: 'vector' as const,
+            box: layerBoxes[index],
+            confidence: 0.98,
+            assetId: assets[index].id,
+          })),
+          1,
+          assets,
+        ),
+      ],
+      regions: [
+        ...sourceObjectIds.map((id, index) =>
+          objectRegion(
+            `matched-partial-overlay-vector-${index + 1}`,
+            id,
+            layerBoxes[index],
+          ),
+        ),
+        partialOverlay,
+        figureCaption,
+      ],
+      rasterizeFigure: async (input) =>
+        createSourcePageCropAsset({
+          kind: 'raster',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 80,
+          height: 40,
+          pixels: new Uint8Array(80 * 40 * 4).fill(96),
+        }),
+    })
+
+    expect(result.relationships).toEqual([
+      expect.objectContaining({
+        kind: 'figure',
+        status: 'matched',
+        sourceRegionIds: expect.arrayContaining([partialOverlay.id]),
+        sourceLineIds: containedLines.map((line) => line.id),
+        sourceText: 'inside alpha inside beta',
+        evidence: expect.arrayContaining([
+          'caption-bounded-overlay-lineage-trimmed',
+          'source-page-crop',
+        ]),
+      }),
+    ])
+    expect(result.consumedRegionIds.has(partialOverlay.id)).toBe(false)
+    expect(result.consumedLineIds.has(outsideLine.id)).toBe(false)
+    expect(
+      containedLines.every((line) => result.consumedLineIds.has(line.id)),
+    ).toBe(true)
+  })
+
+  it('records exact line atoms when every matched figure overlay is retained', async () => {
+    const layerBoxes = [
+      box(0.2, 0.18, 0.5, 0.12),
+      box(0.205, 0.185, 0.49, 0.11),
+      box(0.21, 0.19, 0.48, 0.1),
+    ]
+    const sourceObjectIds = [
+      'vector-p001-complete-overlay-a',
+      'vector-p001-complete-overlay-b',
+      'vector-p001-complete-overlay-c',
+    ]
+    const assets = sourceObjectIds.map((sourceObjectId, index) =>
+      sourcePreservedSvgAsset(sourceObjectId, layerBoxes[index]),
+    )
+    const overlays = [
+      textRegion(
+        'complete-overlay-a',
+        'inside alpha',
+        box(0.3, 0.205, 0.12, 0.012),
+      ),
+      textRegion(
+        'complete-overlay-b',
+        'inside beta',
+        box(0.3, 0.225, 0.12, 0.012),
+      ),
+    ]
+    const figureCaption = {
+      ...captionRegion(
+        'Figure 1. Complete overlay ownership.',
+        box(0.2, 0.32, 0.5, 0.025),
+      ),
+      id: 'complete-overlay-caption',
+    }
+
+    const result = await reconstructPdfVisuals({
+      pages: [
+        page(
+          sourceObjectIds.map((id, index) => ({
+            id,
+            page: 1,
+            kind: 'vector' as const,
+            box: layerBoxes[index],
+            confidence: 0.98,
+            assetId: assets[index].id,
+          })),
+          1,
+          assets,
+        ),
+      ],
+      regions: [
+        ...sourceObjectIds.map((id, index) =>
+          objectRegion(
+            `complete-overlay-vector-${index + 1}`,
+            id,
+            layerBoxes[index],
+          ),
+        ),
+        ...overlays,
+        figureCaption,
+      ],
+      rasterizeFigure: async (input) =>
+        createSourcePageCropAsset({
+          kind: 'raster',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 80,
+          height: 40,
+          pixels: new Uint8Array(80 * 40 * 4).fill(96),
+        }),
+    })
+
+    const expectedLineIds = overlays.map((region) => region.lines[0].id)
+    expect(result.relationships).toEqual([
+      expect.objectContaining({
+        kind: 'figure',
+        status: 'matched',
+        sourceLineIds: expectedLineIds,
+        sourceText: 'inside alpha inside beta',
+        evidence: expect.not.arrayContaining([
+          'caption-bounded-overlay-lineage-trimmed',
+        ]),
+        candidates: [
+          expect.objectContaining({
+            sourceLineIds: expectedLineIds,
+            sourceText: 'inside alpha inside beta',
+          }),
+        ],
+      }),
+    ])
+    expect(
+      overlays.every((region) => result.consumedRegionIds.has(region.id)),
+    ).toBe(true)
+  })
+
+  it('does not give contested unresolved figure overlays to either caption', async () => {
+    const sourceBox = box(0.2, 0.18, 0.36, 0.12)
+    const sourceObjectIds = [
+      'vector-p001-contested-overlay-a',
+      'vector-p001-contested-overlay-b',
+    ]
+    const assets = sourceObjectIds.map((sourceObjectId) =>
+      sourcePreservedSvgAsset(sourceObjectId, sourceBox),
+    )
+    const overlays = [
+      textRegion(
+        'contested-overlay-a',
+        'shared alpha',
+        box(0.27, 0.21, 0.09, 0.012),
+      ),
+      textRegion(
+        'contested-overlay-b',
+        'shared beta',
+        box(0.39, 0.24, 0.09, 0.012),
+      ),
+    ]
+    const captions = [
+      {
+        ...captionRegion(
+          'Figure 1. First possible owner.',
+          box(0.2, 0.32, 0.36, 0.02),
+        ),
+        id: 'contested-overlay-caption-a',
+      },
+      {
+        ...captionRegion(
+          'Figure 2. Second possible owner.',
+          box(0.2, 0.355, 0.36, 0.02),
+        ),
+        id: 'contested-overlay-caption-b',
+      },
+    ]
+
+    const result = await reconstructPdfVisuals({
+      pages: [
+        page(
+          sourceObjectIds.map((id, index) => ({
+            id,
+            page: 1,
+            kind: 'vector' as const,
+            box: sourceBox,
+            confidence: 0.98,
+            assetId: assets[index].id,
+          })),
+          1,
+          assets,
+        ),
+      ],
+      regions: [
+        ...sourceObjectIds.map((id, index) =>
+          objectRegion(`contested-overlay-vector-${index + 1}`, id, sourceBox),
+        ),
+        ...overlays,
+        ...captions,
+      ],
+      rasterizeFigure: async () => {
+        throw new Error('Source page crop contains no nontrivial source ink')
+      },
+    })
+
+    expect(result.relationships).toHaveLength(2)
+    for (const [index, relationship] of result.relationships.entries()) {
+      expect(relationship).toMatchObject({
+        kind: 'figure',
+        captionRegionId: captions[index].id,
+        status: 'unresolved',
+        sourceRegionIds: [],
+        sourceLineIds: [],
+        sourceText: '',
+        sourceBoxes: [captions[index].box],
+      })
+      expect(relationship.evidence).not.toContain(
+        'unresolved-visual-text-owned',
+      )
+    }
+    expect(
+      overlays.every(
+        (region) =>
+          !result.consumedRegionIds.has(region.id) &&
+          !result.consumedLineIds.has(region.lines[0].id),
+      ),
+    ).toBe(true)
+  })
+
+  it('does not split duplicate overlay lineage between semantic and connected candidates', async () => {
+    const layerBoxes = [
+      box(0.2, 0.18, 0.5, 0.12),
+      box(0.205, 0.185, 0.49, 0.11),
+      box(0.21, 0.19, 0.48, 0.1),
+    ]
+    const sourceObjectIds = [
+      'vector-p001-cross-candidate-overlay-a',
+      'vector-p001-cross-candidate-overlay-b',
+      'vector-p001-cross-candidate-overlay-c',
+    ]
+    const assets = sourceObjectIds.map((sourceObjectId, index) =>
+      sourcePreservedSvgAsset(sourceObjectId, layerBoxes[index]),
+    )
+    const overlays = [
+      textRegion(
+        'cross-candidate-overlay-a',
+        'shared alpha',
+        box(0.26, 0.205, 0.09, 0.012),
+      ),
+      textRegion(
+        'cross-candidate-overlay-b',
+        'shared beta',
+        box(0.38, 0.22, 0.09, 0.012),
+      ),
+      textRegion(
+        'cross-candidate-overlay-c',
+        'shared gamma',
+        box(0.5, 0.235, 0.09, 0.012),
+      ),
+      textRegion(
+        'cross-candidate-overlay-d',
+        'shared delta',
+        box(0.32, 0.255, 0.12, 0.012),
+      ),
+    ]
+    const captions = [
+      {
+        ...captionRegion(
+          'Figure 1. Semantic-envelope owner.',
+          box(0.2, 0.32, 0.5, 0.02),
+        ),
+        id: 'cross-candidate-overlay-caption-a',
+      },
+      {
+        ...captionRegion(
+          'Figure 2. Connected-scaffold owner.',
+          box(0.2, 0.355, 0.5, 0.02),
+        ),
+        id: 'cross-candidate-overlay-caption-b',
+      },
+    ]
+
+    const result = await reconstructPdfVisuals({
+      pages: [
+        page(
+          sourceObjectIds.map((id, index) => ({
+            id,
+            page: 1,
+            kind: 'vector' as const,
+            box: layerBoxes[index],
+            confidence: 0.98,
+            assetId: assets[index].id,
+          })),
+          1,
+          assets,
+        ),
+      ],
+      regions: [
+        ...sourceObjectIds.map((id, index) =>
+          objectRegion(
+            `cross-candidate-overlay-vector-${index + 1}`,
+            id,
+            layerBoxes[index],
+          ),
+        ),
+        ...overlays,
+        ...captions,
+      ],
+      rasterizeFigure: async () => {
+        throw new Error('Source page crop contains no nontrivial source ink')
+      },
+    })
+
+    expect(result.relationships).toHaveLength(2)
+    expect(result.relationships[0].candidates[0].evidence).toContain(
+      'caption-bounded-semantic-envelope',
+    )
+    expect(result.relationships[1].candidates[0].evidence).toContain(
+      'connected-native-scaffold',
+    )
+    for (const [index, relationship] of result.relationships.entries()) {
+      expect(relationship).toMatchObject({
+        kind: 'figure',
+        captionRegionId: captions[index].id,
+        status: 'unresolved',
+        sourceRegionIds: [],
+        sourceLineIds: [],
+        sourceText: '',
+        sourceBoxes: [captions[index].box],
+      })
+      expect(relationship.evidence).not.toContain(
+        'unresolved-visual-text-owned',
+      )
+    }
+    expect(
+      overlays.every(
+        (region) =>
+          !result.consumedRegionIds.has(region.id) &&
+          !result.consumedLineIds.has(region.lines[0].id),
+      ),
+    ).toBe(true)
+  })
+
+  it('does not split disjoint overlay text across candidates sharing native sources', async () => {
+    const panelBoxes = [box(0.2, 0.08, 0.5, 0.12), box(0.2, 0.4, 0.5, 0.12)]
+    const sharedSourceObjectId = 'vector-p001-shared-native-layer'
+    const objectGroups = panelBoxes.map((panelBox, panelIndex) =>
+      Array.from({ length: 3 }, (_, layerIndex) => {
+        const inset = layerIndex * 0.005
+        return {
+          id:
+            layerIndex === 0
+              ? sharedSourceObjectId
+              : `vector-p001-shared-native-panel-${panelIndex + 1}-layer-${layerIndex + 1}`,
+          page: 1,
+          kind: 'vector' as const,
+          box: box(
+            panelBox.x + inset,
+            panelBox.y + inset,
+            panelBox.width - inset * 2,
+            panelBox.height - inset * 2,
+          ),
+          confidence: 0.99,
+          assetId: null,
+        }
+      }),
+    )
+    const panelOverlays = panelBoxes.map((panelBox, panelIndex) =>
+      ['alpha', 'beta', 'gamma', 'delta'].map((text, lineIndex) =>
+        textRegion(
+          `shared-native-panel-${panelIndex + 1}-overlay-${lineIndex + 1}`,
+          `${text} ${panelIndex + 1}`,
+          box(
+            0.27 + (lineIndex % 2) * 0.2,
+            panelBox.y + 0.025 + Math.floor(lineIndex / 2) * 0.045,
+            0.12,
+            0.012,
+          ),
+          'chart-label',
+        ),
+      ),
+    )
+    const captions = [
+      {
+        ...captionRegion(
+          'Figure 1. First shared-source panel.',
+          box(0.2, 0.24, 0.5, 0.02),
+        ),
+        id: 'shared-native-caption-a',
+      },
+      {
+        ...captionRegion(
+          'Figure 2. Second shared-source panel.',
+          box(0.2, 0.56, 0.5, 0.02),
+        ),
+        id: 'shared-native-caption-b',
+      },
+    ]
+    const regionObjects = objectGroups.flat()
+    const pageObjects = [
+      ...new Map(regionObjects.map((object) => [object.id, object])).values(),
+    ]
+
+    const result = await reconstructPdfVisuals({
+      pages: [page(pageObjects)],
+      regions: [
+        ...regionObjects.map((object, index) =>
+          objectRegion(
+            `shared-native-vector-region-${index + 1}`,
+            object.id,
+            object.box,
+          ),
+        ),
+        ...panelOverlays.flat(),
+        ...captions,
+      ],
+      rasterizeFigure: async () => {
+        throw new Error('Source page crop contains no nontrivial source ink')
+      },
+    })
+
+    expect(result.relationships).toHaveLength(2)
+    const firstNativeIds =
+      result.relationships[0].candidates[0].sourceObjectIds.filter(
+        (sourceObjectId) => !sourceObjectId.startsWith('text-overlay:'),
+      )
+    const secondNativeIds =
+      result.relationships[1].candidates[0].sourceObjectIds.filter(
+        (sourceObjectId) => !sourceObjectId.startsWith('text-overlay:'),
+      )
+    expect(firstNativeIds).toContain(sharedSourceObjectId)
+    expect(secondNativeIds).toContain(sharedSourceObjectId)
+    expect(panelOverlays[0].map((region) => region.lines[0].id)).not.toEqual(
+      panelOverlays[1].map((region) => region.lines[0].id),
+    )
+    for (const relationship of result.relationships) {
+      expect(relationship).toMatchObject({
+        status: 'unresolved',
+        sourceRegionIds: [],
+        sourceLineIds: [],
+        sourceText: '',
+      })
+    }
+    expect(
+      panelOverlays
+        .flat()
+        .every(
+          (region) =>
+            !result.consumedRegionIds.has(region.id) &&
+            !result.consumedLineIds.has(region.lines[0].id),
+        ),
+    ).toBe(true)
+  })
+
+  it('treats a shared overlay line as contested across different region aliases', async () => {
+    const panelBoxes = [box(0.2, 0.08, 0.5, 0.12), box(0.2, 0.4, 0.5, 0.12)]
+    const objectGroups = panelBoxes.map((panelBox, panelIndex) =>
+      Array.from({ length: 3 }, (_, layerIndex) => {
+        const inset = layerIndex * 0.005
+        return {
+          id: `vector-p001-aliased-line-panel-${panelIndex + 1}-layer-${layerIndex + 1}`,
+          page: 1,
+          kind: 'vector' as const,
+          box: box(
+            panelBox.x + inset,
+            panelBox.y + inset,
+            panelBox.width - inset * 2,
+            panelBox.height - inset * 2,
+          ),
+          confidence: 0.99,
+          assetId: null,
+        }
+      }),
+    )
+    const panelOverlays = panelBoxes.map((panelBox, panelIndex) =>
+      ['alpha', 'beta', 'gamma', 'delta'].map((text, lineIndex) => {
+        const region = textRegion(
+          `aliased-line-panel-${panelIndex + 1}-overlay-${lineIndex + 1}`,
+          `${text} ${panelIndex + 1}`,
+          box(
+            0.27 + (lineIndex % 2) * 0.2,
+            panelBox.y + 0.025 + Math.floor(lineIndex / 2) * 0.045,
+            0.12,
+            0.012,
+          ),
+          'chart-label',
+        )
+        region.lines[0].id = `shared-aliased-overlay-line-${lineIndex + 1}`
+        return region
+      }),
+    )
+    const captions = [
+      {
+        ...captionRegion(
+          'Figure 1. First independent layered panel.',
+          box(0.2, 0.24, 0.5, 0.02),
+        ),
+        id: 'aliased-line-caption-a',
+      },
+      {
+        ...captionRegion(
+          'Figure 2. Second independent layered panel.',
+          box(0.2, 0.56, 0.5, 0.02),
+        ),
+        id: 'aliased-line-caption-b',
+      },
+    ]
+    const objects = objectGroups.flat()
+
+    const result = await reconstructPdfVisuals({
+      pages: [page(objects)],
+      regions: [
+        ...objects.map((object, index) =>
+          objectRegion(
+            `aliased-line-vector-region-${index + 1}`,
+            object.id,
+            object.box,
+          ),
+        ),
+        ...panelOverlays.flat(),
+        ...captions,
+      ],
+      rasterizeFigure: async () => {
+        throw new Error('Source page crop contains no nontrivial source ink')
+      },
+    })
+
+    expect(result.relationships).toHaveLength(2)
+    const firstNativeIds =
+      result.relationships[0].candidates[0].sourceObjectIds.filter(
+        (sourceObjectId) => !sourceObjectId.startsWith('text-overlay:'),
+      )
+    const secondNativeIds =
+      result.relationships[1].candidates[0].sourceObjectIds.filter(
+        (sourceObjectId) => !sourceObjectId.startsWith('text-overlay:'),
+      )
+    expect(
+      firstNativeIds.some((sourceObjectId) =>
+        secondNativeIds.includes(sourceObjectId),
+      ),
+    ).toBe(false)
+    expect(panelOverlays[0].map((region) => region.lines[0].id)).toEqual(
+      panelOverlays[1].map((region) => region.lines[0].id),
+    )
+    for (const relationship of result.relationships) {
+      expect(relationship).toMatchObject({
+        status: 'unresolved',
+        sourceRegionIds: [],
+        sourceLineIds: [],
+        sourceText: '',
+      })
+    }
+    expect(
+      panelOverlays
+        .flat()
+        .every(
+          (region) =>
+            !result.consumedRegionIds.has(region.id) &&
+            !result.consumedLineIds.has(region.lines[0].id),
+        ),
+    ).toBe(true)
+  })
+
+  it('reserves uniquely owned figure overlay lines before resolving an earlier table', async () => {
+    const tableCaption = {
+      ...captionRegion(
+        'Table 1. Bounded metric records.',
+        box(0.12, 0.1, 0.68, 0.02),
+      ),
+      id: 'reserved-overlay-table-caption',
+    }
+    const tableRows = [0.124, 0.142, 0.16, 0.178, 0.196, 0.214, 0.232].map(
+      (y, index) => {
+        const region = textRegion(
+          `reserved-overlay-table-row-${index + 1}`,
+          `Metric ${index + 1}: source bounded value`,
+          box(0.12, y, 0.68, 0.012),
+        )
+        region.lines[0].fontSize = 8
+        region.lines[0].runs[0] = {
+          ...region.lines[0].runs[0],
+          fontName: 'TableSerif-Bold',
+          fontSize: 8,
+        }
+        if (index >= 5) {
+          region.kind = 'chart-label'
+          region.includedInReadingOrder = false
+        }
+        return region
+      },
+    )
+    const figureBox = box(0.12, 0.25, 0.68, 0.08)
+    const figureObjectIds = [
+      'vector-p001-reserved-overlay-a',
+      'vector-p001-reserved-overlay-b',
+    ]
+    const figureAssets = figureObjectIds.map((id) =>
+      sourcePreservedSvgAsset(id, figureBox),
+    )
+    const figureObjects = figureObjectIds.map((id, index) => ({
+      id,
+      page: 1,
+      kind: 'vector' as const,
+      box: figureBox,
+      confidence: 0.99,
+      assetId: figureAssets[index].id,
+    }))
+    const figureRegions = figureObjects.map((object, index) =>
+      objectRegion(
+        `reserved-overlay-figure-region-${index + 1}`,
+        object.id,
+        figureBox,
+      ),
+    )
+    const plotOverlays = [0.262, 0.28, 0.298].map((y, index) => {
+      const region = textRegion(
+        `reserved-plot-overlay-${index + 1}`,
+        `series ${index + 1}`,
+        box(0.2 + index * 0.14, y, 0.1, 0.012),
+        'chart-label',
+      )
+      region.lines[0].fontSize = 8
+      region.lines[0].runs[0] = {
+        ...region.lines[0].runs[0],
+        fontName: 'TableSerif-Bold',
+        fontSize: 8,
+      }
+      return region
+    })
+    const figureCaption = {
+      ...captionRegion(
+        'Figure 1. Multi-panel metric plot.',
+        box(0.12, 0.35, 0.68, 0.02),
+      ),
+      id: 'reserved-overlay-figure-caption',
+    }
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) =>
+        createSourcePageCropAsset({
+          kind:
+            input.kind === 'table'
+              ? 'table'
+              : input.kind === 'equation'
+                ? 'equation'
+                : 'raster',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 120,
+          height: 80,
+          pixels: new Uint8Array(120 * 80 * 4).fill(96),
+        }),
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [page(figureObjects, 1, figureAssets)],
+      regions: [
+        tableCaption,
+        ...tableRows,
+        ...figureRegions,
+        ...plotOverlays,
+        figureCaption,
+      ],
+      rasterizeFigure,
+    })
+
+    const tableRelationship = result.relationships.find(
+      (relationship) => relationship.kind === 'table',
+    )
+    const figureRelationship = result.relationships.find(
+      (relationship) => relationship.kind === 'figure',
+    )
+    expect(tableRelationship).toMatchObject({
+      status: 'matched',
+      sourceRegionIds: tableRows.map((region) => region.id),
+      sourceLineIds: tableRows.map((region) => region.lines[0].id),
+      sourceText: tableRows.map((region) => region.text).join(' '),
+      assetIds: [expect.stringMatching(/^asset-/)],
+    })
+    expect(tableRelationship?.sourceRegionIds).not.toEqual(
+      expect.arrayContaining(plotOverlays.map((region) => region.id)),
+    )
+    expect(tableRelationship?.sourceLineIds).not.toEqual(
+      expect.arrayContaining(plotOverlays.map((region) => region.lines[0].id)),
+    )
+    expect(
+      tableRelationship!.sourceBoxes
+        .slice(1)
+        .every(
+          (sourceBox) =>
+            sourceBox.y + sourceBox.height <= figureBox.y + 0.00001,
+        ),
+    ).toBe(true)
+    expect(figureRelationship).toMatchObject({
+      status: 'matched',
+      sourceRegionIds: expect.arrayContaining([
+        ...figureRegions.map((region) => region.id),
+        ...plotOverlays.map((region) => region.id),
+      ]),
+      sourceLineIds: plotOverlays.map((region) => region.lines[0].id),
+      sourceText: plotOverlays.map((region) => region.text).join(' '),
+      assetIds: [expect.stringMatching(/^asset-/)],
+      candidates: [
+        expect.objectContaining({
+          sourceObjectIds: expect.arrayContaining([
+            ...figureObjectIds,
+            ...plotOverlays.map((region) => `text-overlay:${region.id}`),
+          ]),
+          evidence: expect.arrayContaining(['connected-native-scaffold']),
+        }),
+      ],
+    })
+    expect(figureRelationship?.candidates[0].evidence).not.toContain(
+      'caption-bounded-native-scaffold',
+    )
+    expect(figureRelationship?.sourceRegionIds).not.toEqual(
+      expect.arrayContaining(tableRows.map((region) => region.id)),
+    )
+    expect(
+      tableRelationship?.assetIds[0] === figureRelationship?.assetIds[0],
+    ).toBe(false)
+    expect(rasterizeFigure.mock.calls.map(([input]) => input.kind)).toEqual(
+      expect.arrayContaining(['table', 'figure']),
+    )
+  })
+
+  it('reserves uniquely owned native figure atoms before an earlier table', async () => {
+    const sourceBox = box(0.2, 0.18, 0.5, 0.12)
+    const sourceObjectIds = [
+      'image-p001-reserved-native-layer',
+      'vector-p001-reserved-native-layer',
+    ]
+    const assets = sourceObjectIds.map((sourceObjectId) =>
+      sourcePreservedSvgAsset(sourceObjectId, sourceBox),
+    )
+    const tableCaption = {
+      ...captionRegion(
+        'Table 1. Possible native raster.',
+        box(0.2, 0.1, 0.5, 0.02),
+      ),
+      id: 'reserved-native-table-caption',
+    }
+    const overlays = [
+      textRegion(
+        'reserved-native-overlay-a',
+        'series alpha',
+        box(0.28, 0.21, 0.12, 0.012),
+      ),
+      textRegion(
+        'reserved-native-overlay-b',
+        'series beta',
+        box(0.45, 0.24, 0.12, 0.012),
+      ),
+    ]
+    const figureCaption = {
+      ...captionRegion(
+        'Figure 1. Proven layered panel.',
+        box(0.2, 0.32, 0.5, 0.02),
+      ),
+      id: 'reserved-native-figure-caption',
+    }
+
+    const result = await reconstructPdfVisuals({
+      pages: [
+        page(
+          sourceObjectIds.map((id, index) => ({
+            id,
+            page: 1,
+            kind: index === 0 ? ('image' as const) : ('vector' as const),
+            box: sourceBox,
+            confidence: 0.99,
+            assetId: assets[index].id,
+          })),
+          1,
+          assets,
+        ),
+      ],
+      regions: [
+        tableCaption,
+        ...sourceObjectIds.map((id, index) =>
+          objectRegion(`reserved-native-region-${index + 1}`, id, sourceBox),
+        ),
+        ...overlays,
+        figureCaption,
+      ],
+      rasterizeFigure: async (input) =>
+        createSourcePageCropAsset({
+          kind:
+            input.kind === 'table'
+              ? 'table'
+              : input.kind === 'equation'
+                ? 'equation'
+                : 'raster',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 100,
+          height: 60,
+          pixels: new Uint8Array(100 * 60 * 4).fill(96),
+        }),
+    })
+
+    const tableRelationship = result.relationships.find(
+      (relationship) => relationship.kind === 'table',
+    )
+    const figureRelationship = result.relationships.find(
+      (relationship) => relationship.kind === 'figure',
+    )
+    expect(tableRelationship).toMatchObject({
+      status: 'unresolved',
+      sourceObjectIds: [],
+      assetIds: [],
+    })
+    expect(
+      tableRelationship?.candidates.every((candidate) =>
+        candidate.sourceObjectIds.every(
+          (sourceObjectId) => !sourceObjectIds.includes(sourceObjectId),
+        ),
+      ),
+    ).toBe(true)
+    expect(figureRelationship).toMatchObject({
+      status: 'matched',
+      sourceObjectIds: expect.arrayContaining(sourceObjectIds),
+      sourceLineIds: overlays.map((region) => region.lines[0].id),
+    })
+  })
+
+  it.each([
+    ['nearer', 0.155],
+    ['tied', 0.14],
+  ])(
+    'withholds connected figure reservation when a %s table caption contests the candidate envelope',
+    async (_case, tableCaptionY) => {
+      const sourceBox = box(0.2, 0.18, 0.5, 0.12)
+      const sourceObjectIds = [
+        'image-p001-contested-envelope-layer',
+        'vector-p001-contested-envelope-layer',
+      ]
+      const assets = sourceObjectIds.map((sourceObjectId) =>
+        sourcePreservedSvgAsset(sourceObjectId, sourceBox),
+      )
+      const tableCaption = {
+        ...captionRegion(
+          'Table 1. Contested native source.',
+          box(0.2, tableCaptionY, 0.5, 0.02),
+        ),
+        id: `contested-envelope-${_case}-table-caption`,
+      }
+      const overlays = [
+        textRegion(
+          `contested-envelope-${_case}-overlay-a`,
+          'series alpha',
+          box(0.28, 0.21, 0.12, 0.012),
+          'chart-label',
+        ),
+        textRegion(
+          `contested-envelope-${_case}-overlay-b`,
+          'series beta',
+          box(0.45, 0.24, 0.12, 0.012),
+          'chart-label',
+        ),
+      ]
+      const figureCaption = {
+        ...captionRegion(
+          'Figure 1. Later connected panel.',
+          box(0.2, 0.32, 0.5, 0.02),
+        ),
+        id: `contested-envelope-${_case}-figure-caption`,
+      }
+
+      const result = await reconstructPdfVisuals({
+        pages: [
+          page(
+            sourceObjectIds.map((id, index) => ({
+              id,
+              page: 1,
+              kind: index === 0 ? ('image' as const) : ('vector' as const),
+              box: sourceBox,
+              confidence: 0.99,
+              assetId: assets[index].id,
+            })),
+            1,
+            assets,
+          ),
+        ],
+        regions: [
+          tableCaption,
+          ...sourceObjectIds.map((id, index) =>
+            objectRegion(
+              `contested-envelope-${_case}-region-${index + 1}`,
+              id,
+              sourceBox,
+            ),
+          ),
+          ...overlays,
+          figureCaption,
+        ],
+        rasterizeFigure: async (input) =>
+          createSourcePageCropAsset({
+            kind:
+              input.kind === 'table'
+                ? 'table'
+                : input.kind === 'equation'
+                  ? 'equation'
+                  : 'raster',
+            cropBox: input.sourceBox,
+            sourceObjectIds: input.sourceObjectIds,
+            sourceBoxes: input.sourceBoxes,
+            width: 100,
+            height: 60,
+            pixels: new Uint8Array(100 * 60 * 4).fill(96),
+          }),
+      })
+
+      const tableRelationship = result.relationships.find(
+        (relationship) => relationship.kind === 'table',
+      )
+      const figureRelationship = result.relationships.find(
+        (relationship) => relationship.kind === 'figure',
+      )
+      const contestedFigureCandidate = figureRelationship?.candidates.find(
+        (candidate) =>
+          sourceObjectIds.every((sourceObjectId) =>
+            candidate.sourceObjectIds.includes(sourceObjectId),
+          ),
+      )
+      expect(contestedFigureCandidate?.evidence).toContain(
+        'connected-native-scaffold',
+      )
+      expect(contestedFigureCandidate?.evidence).not.toContain(
+        'caption-bounded-native-scaffold',
+      )
+      expect(
+        tableRelationship?.candidates.some((candidate) =>
+          sourceObjectIds.some((sourceObjectId) =>
+            candidate.sourceObjectIds.includes(sourceObjectId),
+          ),
+        ),
+      ).toBe(true)
+      expect(tableRelationship).toMatchObject({
+        status: 'matched',
+        sourceObjectIds: [sourceObjectIds[0]],
+      })
+      expect(figureRelationship).toMatchObject({
+        status: 'unresolved',
+        sourceObjectIds: [],
+        assetIds: [],
+        evidence: expect.arrayContaining([
+          'cross-type-source-lineage-conflict',
+          'source-rendition-unavailable',
+        ]),
+      })
+    },
+  )
+
+  it('fails a later figure closed when a table already owns its native atom', async () => {
+    const sourceBox = box(0.2, 0.18, 0.5, 0.12)
+    const sourceObjectId = 'image-p001-cross-type-native-conflict'
+    const sourceAsset = sourcePreservedSvgAsset(sourceObjectId, sourceBox)
+    const tableCaption = {
+      ...captionRegion(
+        'Table 1. Exact native source.',
+        box(0.2, 0.1, 0.5, 0.02),
+      ),
+      id: 'native-conflict-table-caption',
+    }
+    const figureCaption = {
+      ...captionRegion(
+        'Figure 1. Same exact native source.',
+        box(0.2, 0.32, 0.5, 0.02),
+      ),
+      id: 'native-conflict-figure-caption',
+    }
+
+    const result = await reconstructPdfVisuals({
+      pages: [
+        page(
+          [
+            {
+              id: sourceObjectId,
+              page: 1,
+              kind: 'image',
+              box: sourceBox,
+              confidence: 0.99,
+              assetId: sourceAsset.id,
+            },
+          ],
+          1,
+          [sourceAsset],
+        ),
+      ],
+      regions: [
+        tableCaption,
+        objectRegion(
+          'native-conflict-source-region',
+          sourceObjectId,
+          sourceBox,
+        ),
+        figureCaption,
+      ],
+    })
+
+    const tableRelationship = result.relationships.find(
+      (relationship) => relationship.kind === 'table',
+    )
+    const figureRelationship = result.relationships.find(
+      (relationship) => relationship.kind === 'figure',
+    )
+    expect(tableRelationship).toMatchObject({
+      status: 'matched',
+      sourceObjectIds: [sourceObjectId],
+      assetIds: [sourceAsset.id],
+    })
+    expect(figureRelationship).toMatchObject({
+      status: 'unresolved',
+      sourceObjectIds: [],
+      assetIds: [],
+      evidence: expect.arrayContaining([
+        'cross-type-source-lineage-conflict',
+        'source-rendition-unavailable',
+      ]),
+      candidates: [
+        expect.objectContaining({
+          sourceObjectIds: [sourceObjectId],
+        }),
+      ],
+    })
+  })
+
   it('retries an edge-touching padded figure crop at its proved render envelope', async () => {
     const firstBox = box(0.2, 0.18, 0.18, 0.12)
     const secondBox = box(0.38, 0.18, 0.18, 0.12)
@@ -6142,6 +10494,88 @@ describe('PDF visual association graph', () => {
     })
   })
 
+  it('retries an identical complete figure scope without tightening when tightening drops required lineage', async () => {
+    const boxes = [box(0.2, 0.18, 0.12, 0.12), box(0.33, 0.18, 0.12, 0.12)]
+    const objects = boxes.map((sourceBox, index) => ({
+      id: `vector-p001-complete-lineage-${index + 1}`,
+      page: 1,
+      kind: 'vector' as const,
+      box: sourceBox,
+      confidence: 0.98,
+      assetId: null,
+    }))
+    const firstPanelOnly = box(0.202, 0.182, 0.116, 0.116)
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) =>
+        input.tightenToSourceInk === false
+          ? createSourcePageCropAsset({
+              kind: 'raster',
+              cropBox: input.sourceBox,
+              sourceObjectIds: input.sourceObjectIds,
+              sourceBoxes: input.sourceBoxes,
+              width: 40,
+              height: 20,
+              pixels: new Uint8Array(40 * 20 * 4).fill(64),
+            })
+          : createSourcePageCropAsset({
+              kind: 'raster',
+              cropBox: firstPanelOnly,
+              sourceObjectIds: [input.sourceObjectIds[0]],
+              sourceBoxes: [firstPanelOnly],
+              width: 20,
+              height: 20,
+              pixels: new Uint8Array(20 * 20 * 4).fill(64),
+            }),
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [page(objects)],
+      regions: [
+        ...objects.map((object, index) =>
+          objectRegion(
+            `complete-lineage-region-${index + 1}`,
+            object.id,
+            object.box,
+          ),
+        ),
+        captionRegion(
+          'Figure 1. Both source panels form one complete figure.',
+          box(0.2, 0.32, 0.51, 0.025),
+        ),
+      ],
+      rasterizeFigure,
+    })
+
+    expect(rasterizeFigure).toHaveBeenCalledTimes(2)
+    expect(rasterizeFigure.mock.calls[1][0]).toMatchObject({
+      sourceBox: rasterizeFigure.mock.calls[0][0].sourceBox,
+      sourceObjectIds: objects.map((object) => object.id),
+      sourceBoxes: boxes,
+      tightenToSourceInk: false,
+    })
+    expect(result.relationships[0]).toMatchObject({
+      status: 'matched',
+      sourceObjectIds: objects.map((object) => object.id),
+      evidence: expect.arrayContaining([
+        'source-page-crop-complete-lineage-preserved',
+        'source-page-crop',
+      ]),
+    })
+    expect(result.relationships[0].evidence).not.toContain(
+      'source-page-crop-source-ink-tightened',
+    )
+    expect(
+      result.assets.find(
+        (asset) => asset.id === result.relationships[0].assetIds[0],
+      ),
+    ).toMatchObject({
+      rendition: 'source-page-crop',
+      sourceCropBox: rasterizeFigure.mock.calls[0][0].sourceBox,
+      sourceObjectIds: objects.map((object) => object.id),
+      sourceBoxes: boxes,
+    })
+  })
+
   it('rejects a tightened source crop that drops an expected figure object', async () => {
     const boxes = [box(0.2, 0.18, 0.12, 0.12), box(0.33, 0.18, 0.12, 0.12)]
     const objects = boxes.map((sourceBox, index) => ({
@@ -6184,7 +10618,13 @@ describe('PDF visual association graph', () => {
       rasterizeFigure,
     })
 
-    expect(rasterizeFigure).toHaveBeenCalledOnce()
+    expect(rasterizeFigure).toHaveBeenCalledTimes(2)
+    expect(rasterizeFigure.mock.calls[1][0]).toMatchObject({
+      sourceBox: rasterizeFigure.mock.calls[0][0].sourceBox,
+      sourceObjectIds: objects.map((object) => object.id),
+      sourceBoxes: boxes,
+      tightenToSourceInk: false,
+    })
     expect(result.relationships[0]).toMatchObject({
       status: 'unresolved',
       sourceObjectIds: [],
@@ -6867,6 +11307,130 @@ describe('PDF visual association graph', () => {
     )
     expect(rasterizeFigure).toHaveBeenCalledOnce()
     expect(rasterizeFigure.mock.calls[0][0].sourceBox.y).toBeGreaterThan(0.12)
+  })
+
+  it('excludes repeated side furniture enclosed by every coextensive figure layer', async () => {
+    const sourceBox = box(0.14, 0.08, 0.72, 0.24)
+    const sourceObjectIds = [
+      'vector-p001-coextensive-furniture-layer-a',
+      'vector-p001-coextensive-furniture-layer-b',
+    ]
+    const sourceAssets = sourceObjectIds.map((sourceObjectId) =>
+      sourcePreservedSvgAsset(sourceObjectId, sourceBox),
+    )
+    const runningHeader = {
+      ...textRegion(
+        'coextensive-running-side-header',
+        'REPEATED SOURCE-SIDE RUNNING HEADER ACROSS PAGES',
+        box(0.2, 0.095, 0.6, 0.016),
+        'side',
+      ),
+      includedInReadingOrder: false,
+    }
+    const repeatedHeaders = [2, 3].map((pageNumber) => ({
+      ...textRegion(
+        `coextensive-running-side-header-page-${pageNumber}`,
+        runningHeader.text,
+        box(0.2, 0.095, 0.6, 0.016, pageNumber),
+        'side',
+      ),
+      includedInReadingOrder: false,
+    }))
+    const chartLabels = [
+      textRegion(
+        'coextensive-genuine-chart-label-a',
+        'training',
+        box(0.28, 0.19, 0.1, 0.014),
+        'chart-label',
+      ),
+      textRegion(
+        'coextensive-genuine-chart-label-b',
+        'validation',
+        box(0.5, 0.25, 0.1, 0.014),
+        'chart-label',
+      ),
+    ]
+    const figureCaption = {
+      ...captionRegion(
+        'Figure 1. Coextensive chart beneath repeated furniture.',
+        box(0.16, 0.34, 0.68, 0.025),
+      ),
+      id: 'coextensive-furniture-figure-caption',
+    }
+
+    const result = await reconstructPdfVisuals({
+      pages: [
+        page(
+          sourceObjectIds.map((id, index) => ({
+            id,
+            page: 1,
+            kind: 'vector' as const,
+            box: sourceBox,
+            confidence: 0.99,
+            assetId: sourceAssets[index].id,
+          })),
+          1,
+          sourceAssets,
+        ),
+        page([], 2),
+        page([], 3),
+      ],
+      regions: [
+        ...sourceObjectIds.map((id, index) =>
+          objectRegion(
+            `coextensive-furniture-layer-region-${index + 1}`,
+            id,
+            sourceBox,
+          ),
+        ),
+        runningHeader,
+        ...repeatedHeaders,
+        ...chartLabels,
+        figureCaption,
+      ],
+      rasterizeFigure: async (input) =>
+        createSourcePageCropAsset({
+          kind: 'raster',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 100,
+          height: 60,
+          pixels: new Uint8Array(100 * 60 * 4).fill(96),
+        }),
+    })
+
+    const relationship = result.relationships.find(
+      (candidate) => candidate.label === 'Figure 1',
+    )
+    expect(relationship).toMatchObject({
+      status: 'matched',
+      sourceObjectIds: expect.arrayContaining([
+        ...sourceObjectIds,
+        ...chartLabels.map((region) => `text-overlay:${region.id}`),
+      ]),
+      sourceLineIds: chartLabels.map((region) => region.lines[0].id),
+      candidates: [
+        expect.objectContaining({
+          sourceObjectIds: expect.arrayContaining([
+            ...sourceObjectIds,
+            ...chartLabels.map((region) => `text-overlay:${region.id}`),
+          ]),
+        }),
+      ],
+    })
+    expect(relationship?.sourceObjectIds).not.toContain(
+      `text-overlay:${runningHeader.id}`,
+    )
+    expect(relationship?.sourceRegionIds).not.toContain(runningHeader.id)
+    expect(relationship?.sourceLineIds).not.toContain(runningHeader.lines[0].id)
+    expect(
+      relationship?.candidates.some((candidate) =>
+        candidate.sourceObjectIds.includes(`text-overlay:${runningHeader.id}`),
+      ),
+    ).toBe(false)
+    expect(result.consumedRegionIds.has(runningHeader.id)).toBe(false)
+    expect(result.consumedLineIds.has(runningHeader.lines[0].id)).toBe(false)
   })
 
   it('keeps a top-of-chart numeric tick sequence inside its caption-bounded native figure', async () => {
@@ -7673,7 +12237,7 @@ describe('PDF visual association graph', () => {
     ).toEqual([])
   })
 
-  it('recovers a proved reused-layer grid after exact crop lineage rejection', async () => {
+  it('keeps proved caption-bounded grid recovery ahead of a complete-lineage retry', async () => {
     const backdropBox = box(0, 0.06, 1, 0.68)
     const backdropObjects = ['a', 'b'].map((suffix, index) => ({
       id: `vector-p001-recovery-backdrop-${suffix}`,
@@ -7732,12 +12296,14 @@ describe('PDF visual association graph', () => {
         return createSourcePageCropAsset({
           kind: 'raster',
           cropBox: input.sourceBox,
-          sourceObjectIds: synthetic
-            ? input.sourceObjectIds
-            : input.sourceObjectIds.slice(1),
-          sourceBoxes: synthetic
-            ? input.sourceBoxes
-            : input.sourceBoxes.slice(1),
+          sourceObjectIds:
+            synthetic || input.tightenToSourceInk === false
+              ? input.sourceObjectIds
+              : input.sourceObjectIds.slice(1),
+          sourceBoxes:
+            synthetic || input.tightenToSourceInk === false
+              ? input.sourceBoxes
+              : input.sourceBoxes.slice(1),
           width: 120,
           height: 80,
           pixels: new Uint8Array(120 * 80 * 4).fill(72),
@@ -7773,6 +12339,11 @@ describe('PDF visual association graph', () => {
         input.sourceObjectIds[0].startsWith('source-panel:'),
       ),
     ).toBe(true)
+    expect(
+      rasterizeFigure.mock.calls.some(
+        ([input]) => input.tightenToSourceInk === false,
+      ),
+    ).toBe(false)
     expect(result.relationships[0]).toMatchObject({
       status: 'matched',
       sourceObjectIds: ['source-panel:caption-region'],
@@ -9439,6 +14010,7 @@ describe('PDF visual association graph', () => {
   it('retains equally scored Roman-label candidates instead of guessing', async () => {
     const left = box(0.05, 0.2)
     const right = box(0.7, 0.2)
+    const rasterizeFigure = vi.fn(async () => null)
     const objects = [
       {
         id: 'image-p001-001',
@@ -9467,8 +14039,10 @@ describe('PDF visual association graph', () => {
           box(0.05, 0.32, 0.85, 0.02),
         ),
       ],
+      rasterizeFigure,
     })
 
+    expect(rasterizeFigure).not.toHaveBeenCalled()
     expect(result.relationships[0]).toMatchObject({
       status: 'ambiguous',
       candidates: [

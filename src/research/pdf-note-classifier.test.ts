@@ -6,6 +6,7 @@ import {
   type NoteMarkerFixture,
 } from '../../tests/fixtures/note-marker-fixtures'
 import type {
+  PdfLineBoundaryDecision,
   PdfPageAnalysis,
   PdfPageRegion,
   PdfSourceRun,
@@ -17,6 +18,7 @@ import {
 } from './pdf-layout'
 import {
   classifyPdfNoteMarkers,
+  pdfAlternateAuthorYearKeyFromBoundary,
   PDF_NOTE_MARKER_CLASSIFICATION_THRESHOLD,
 } from './pdf-note-classifier'
 import { assessPdfCompleteness } from './pdf-quality'
@@ -27,12 +29,17 @@ const BLOCKING_NOTE_CODES = new Set<ReconstructionDiagnostic['code']>([
   'UNREFERENCED_NOTE',
 ])
 
-function reconstruct(fixture: NoteMarkerFixture, hashCharacter: string) {
+function reconstruct(
+  fixture: NoteMarkerFixture,
+  hashCharacter: string,
+  language?: string,
+) {
   return reconstructPageAnalyses({
     pages: fixture.pages,
     sourceHash: hashCharacter.repeat(64),
     fileName: `${fixture.name.replace(/[^a-z0-9]+/gi, '-')}.pdf`,
     byteLength: 4096,
+    metadata: language ? { language } : {},
   })
 }
 
@@ -69,6 +76,62 @@ function notePage(runs: PdfSourceRun[]): PdfPageAnalysis {
     textCharacters: runs.reduce((total, run) => total + run.text.length, 0),
     imageCount: 0,
     runs,
+  }
+}
+
+function authorYearRegion(
+  id: string,
+  page: number,
+  texts: string[],
+  y: number,
+): PdfPageRegion {
+  const lines = texts.map((text, index) => {
+    const source = {
+      ...noteRun(text, 0.1, y + index * 0.022, 0.72),
+      page,
+    }
+    return {
+      id: `${id}-line-${index + 1}`,
+      text,
+      fontSize: source.fontSize,
+      box: { ...source },
+      runs: [source],
+    }
+  })
+  return {
+    id,
+    page,
+    kind: 'body',
+    column: 'single',
+    text: texts.join(''),
+    confidence: 1,
+    box: {
+      page,
+      x: 0.1,
+      y,
+      width: 0.72,
+      height: Math.max(0.018, texts.length * 0.022),
+      rotation: 0,
+      method: 'pdf-text',
+    },
+    lines,
+    nativeObjectIds: [],
+    includedInReadingOrder: true,
+  }
+}
+
+function authorYearBoundaryDecision(
+  region: PdfPageRegion,
+  outcome: PdfLineBoundaryDecision['outcome'],
+): PdfLineBoundaryDecision {
+  return {
+    id: `${region.id}-boundary`,
+    page: region.page,
+    regionId: region.id,
+    fromLineId: region.lines[0].id,
+    toLineId: region.lines[1].id,
+    outcome,
+    evidence: ['test-line-boundary'],
   }
 }
 
@@ -479,6 +542,37 @@ describe('scholarly note-marker taxonomy', () => {
         { text: '1', raised: true },
         { text: ' ∑ values.' },
       ]),
+      geometryRegion('styled-variable', 0.47, [
+        { text: 'The radius √ ' },
+        { text: '𝑂𝐶' },
+        { text: '2', raised: true },
+        { text: ' remains bounded.' },
+      ]),
+      geometryRegion('styled-mixed-script', 0.472, [
+        { text: 'The mixed suffix ' },
+        { text: '𝑂𝐶' },
+        { text: '2', raised: true },
+        { text: '³', raised: true },
+        { text: ' remains mathematical.' },
+      ]),
+      geometryRegion('styled-eight-letter-variable', 0.474, [
+        { text: 'The bounded identifier ' },
+        { text: '𝐀𝐁𝐂𝐃𝐄𝐅𝐆𝐇' },
+        { text: '3', raised: true },
+        { text: ' remains mathematical.' },
+      ]),
+      geometryRegion('styled-nine-letter-control', 0.476, [
+        { text: 'The unbounded styled token ' },
+        { text: '𝐀𝐁𝐂𝐃𝐄𝐅𝐆𝐇𝐈' },
+        { text: '4', raised: true },
+        { text: ' remains fail-closed.' },
+      ]),
+      geometryRegion('styled-inline-digit', 0.478, [
+        { text: 'The inline identifier ' },
+        { text: '𝑂𝐶' },
+        { text: '2' },
+        { text: ' is not raised.' },
+      ]),
       geometryRegion('scientific', 0.48, [
         { text: 'Use learning rates 10−' },
         { text: '5', raised: true },
@@ -502,9 +596,15 @@ describe('scholarly note-marker taxonomy', () => {
         { text: '1', raised: true },
         { text: ') 2π' },
       ]),
+      geometryRegion('separated-styled-token', 0.499, [
+        { text: '𝐀𝐁 ' },
+        { text: '1', raised: true },
+        { text: ' remains a genuine prose note.' },
+      ]),
       geometryRegion('claim', 0.5, [
-        { text: 'This prose claim.' },
+        { text: 'We' },
         { text: '2', raised: true },
+        { text: ' report this prose claim.' },
       ]),
       footnote('note-one', '1 A genuine numbered note.', 0.87),
       footnote('note', '2 This is the genuine note.', 0.88),
@@ -521,6 +621,16 @@ describe('scholarly note-marker taxonomy', () => {
           taxonomy,
         })),
     ).toEqual([
+      {
+        referenceRegionId: 'styled-nine-letter-control',
+        label: '4',
+        taxonomy: 'footnote-reference',
+      },
+      {
+        referenceRegionId: 'separated-styled-token',
+        label: '1',
+        taxonomy: 'footnote-reference',
+      },
       {
         referenceRegionId: 'claim',
         label: '2',
@@ -1701,6 +1811,246 @@ describe('scholarly note-marker taxonomy', () => {
     ])
   })
 
+  it('keeps the raw citation key while exposing only one replayed unresolved boundary alternate', () => {
+    const heading = authorYearRegion('references', 2, ['References'], 0.12)
+    const citation = authorYearRegion(
+      'citation',
+      1,
+      ['Prior work (Hoff-', 'mann et al., 2020) establishes the baseline.'],
+      0.28,
+    )
+    const bibliography = authorYearRegion(
+      'bibliography',
+      2,
+      ['Hoffmann, A. (2020). Reference entry.'],
+      0.24,
+    )
+    const classify = (
+      decisions: PdfLineBoundaryDecision[],
+      extraBibliography: PdfPageRegion[] = [],
+    ) =>
+      classifyPdfNoteMarkers(
+        [citation, heading, bibliography, ...extraBibliography],
+        [
+          citation.id,
+          heading.id,
+          bibliography.id,
+          ...extraBibliography.map(({ id }) => id),
+        ],
+        decisions,
+      ).classifications.find(
+        ({ taxonomy }) => taxonomy === 'author-year-bibliography-citation',
+      )
+
+    const normalized = classify([
+      authorYearBoundaryDecision(citation, 'unresolved'),
+    ])
+    expect(normalized).toMatchObject({
+      label: 'hoff-mann:2020',
+      start: 'Prior work ('.length,
+      end: 'Prior work ('.length + 'Hoff-mann et al., 2020'.length,
+      evidence: expect.not.arrayContaining([
+        'author-year-key-normalized-from-unresolved-line-boundary-hyphen',
+      ]),
+    })
+    expect(citation.text.slice(normalized!.start, normalized!.end)).toBe(
+      'Hoff-mann et al., 2020',
+    )
+    const surnameStart = citation.text.indexOf('Hoff-mann')
+    expect(
+      pdfAlternateAuthorYearKeyFromBoundary(
+        citation,
+        [authorYearBoundaryDecision(citation, 'unresolved')],
+        'Hoff-mann',
+        '2020',
+        surnameStart,
+      ),
+    ).toBe('hoffmann:2020')
+    expect(
+      pdfAlternateAuthorYearKeyFromBoundary(
+        citation,
+        [authorYearBoundaryDecision(citation, 'ambiguous')],
+        'Hoff-mann',
+        '2020',
+        surnameStart,
+      ),
+    ).toBe('hoffmann:2020')
+
+    for (const decisions of [
+      [],
+      [authorYearBoundaryDecision(citation, 'preserved-lexical-hyphen')],
+      [authorYearBoundaryDecision(citation, 'removed-discretionary-hyphen')],
+      [
+        {
+          ...authorYearBoundaryDecision(citation, 'unresolved'),
+          toLineId: 'nonadjacent-line',
+        },
+      ],
+    ]) {
+      expect(classify(decisions)).toMatchObject({
+        label: 'hoff-mann:2020',
+        evidence: expect.not.arrayContaining([
+          'author-year-key-normalized-from-unresolved-line-boundary-hyphen',
+        ]),
+      })
+      expect(
+        pdfAlternateAuthorYearKeyFromBoundary(
+          citation,
+          decisions,
+          'Hoff-mann',
+          '2020',
+          surnameStart,
+        ),
+      ).toBeNull()
+    }
+
+    const multiplySplit = authorYearRegion(
+      'multiply-split-citation',
+      1,
+      ['Prior work (Hoff-', 'mann-', 'son et al., 2020) is relevant.'],
+      0.28,
+    )
+    const multiplySplitSurnameStart =
+      multiplySplit.text.indexOf('Hoff-mann-son')
+    const multipleDecisions = [
+      authorYearBoundaryDecision(multiplySplit, 'unresolved'),
+      {
+        ...authorYearBoundaryDecision(multiplySplit, 'ambiguous'),
+        id: 'multiply-split-second-boundary',
+        fromLineId: multiplySplit.lines[1].id,
+        toLineId: multiplySplit.lines[2].id,
+      },
+    ]
+    expect(
+      pdfAlternateAuthorYearKeyFromBoundary(
+        multiplySplit,
+        multipleDecisions,
+        'Hoff-mann-son',
+        '2020',
+        multiplySplitSurnameStart,
+      ),
+    ).toBeNull()
+  })
+
+  it('preserves an ordinary lexical surname hyphen in an author-year key', () => {
+    const citation = authorYearRegion(
+      'lexical-citation',
+      1,
+      ['Prior work (Smith-Jones et al., 2020) establishes the baseline.'],
+      0.28,
+    )
+    const heading = authorYearRegion(
+      'lexical-references',
+      2,
+      ['References'],
+      0.12,
+    )
+    const bibliography = authorYearRegion(
+      'lexical-bibliography',
+      2,
+      ['Smith-Jones, A. (2020). Reference entry.'],
+      0.24,
+    )
+
+    expect(
+      classifyPdfNoteMarkers(
+        [citation, heading, bibliography],
+        [citation.id, heading.id, bibliography.id],
+      ).classifications.find(
+        ({ taxonomy }) => taxonomy === 'author-year-bibliography-citation',
+      ),
+    ).toMatchObject({
+      label: 'smith-jones:2020',
+      evidence: expect.not.arrayContaining([
+        'author-year-key-normalized-from-unresolved-line-boundary-hyphen',
+      ]),
+    })
+  })
+
+  it('resolves a boundary-normalized author key without changing its exact canonical anchor', async () => {
+    const fixture: NoteMarkerFixture = {
+      name: 'unresolved line-boundary author-year comparison key',
+      pages: [
+        {
+          page: 1,
+          kind: 'born-digital',
+          width: 612,
+          height: 792,
+          rotation: 0,
+          textCharacters: 84,
+          imageCount: 0,
+          runs: [
+            { ...noteRun('Citation study', 0.1, 0.08, 0.72, 18), page: 1 },
+            { ...noteRun('Abstract', 0.1, 0.18, 0.25, 16), page: 1 },
+            { ...noteRun('Prior work (Hoff-', 0.1, 0.28, 0.72), page: 1 },
+            {
+              ...noteRun(
+                'mann et al., 2020) establishes the baseline.',
+                0.1,
+                0.302,
+                0.72,
+              ),
+              page: 1,
+            },
+          ],
+        },
+        {
+          page: 2,
+          kind: 'born-digital',
+          width: 612,
+          height: 792,
+          rotation: 0,
+          textCharacters: 52,
+          imageCount: 0,
+          runs: [
+            { ...noteRun('References', 0.1, 0.12, 0.3, 18), page: 2 },
+            {
+              ...noteRun(
+                'Hoffmann, A. (2020). Reference entry.',
+                0.1,
+                0.24,
+                0.72,
+              ),
+              page: 2,
+            },
+          ],
+        },
+      ],
+      expectedTaxonomies: ['author-year-bibliography-citation'],
+    }
+
+    const result = await reconstruct(fixture, 'h', 'en-US')
+    const [relationship] = result.citationRelationships
+    const anchor = relationship.canonicalAnchor
+    const owner = anchor
+      ? result.paper.nodes.find((node) => node.id === anchor.nodeId)
+      : undefined
+
+    expect(relationship).toMatchObject({
+      labels: ['hoff-mann:2020'],
+      status: 'matched',
+      targetNodeIds: [expect.stringMatching(/^p-/)],
+      evidence: expect.arrayContaining([
+        'author-year-key-normalized-from-unresolved-line-boundary-hyphen',
+      ]),
+    })
+    expect(owner && 'text' in owner && anchor).toBeTruthy()
+    if (!owner || !('text' in owner) || !anchor) return
+    expect(owner.text.slice(anchor.start, anchor.end)).toBe(
+      'Hoff-mann et al., 2020',
+    )
+    expect(owner.text).toContain('Hoff-mann et al., 2020')
+    expect(result.lineBoundaryDecisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          outcome: 'unresolved',
+          fromLineId: expect.any(String),
+          toLineId: expect.any(String),
+        }),
+      ]),
+    )
+  })
+
   it('maps bounded author-year citations to unique canonical reference entries', async () => {
     const fixture = structuredClone(decisiveNoteMarkerFixtures[0])
     fixture.name = 'author-year citations with unique reference entries'
@@ -2611,6 +2961,7 @@ describe('scholarly note-marker taxonomy', () => {
         expectedTaxonomies: ['footnote-reference'],
       },
       'c',
+      'en-US',
     )
 
     const relationship = result.noteRelationships.find(

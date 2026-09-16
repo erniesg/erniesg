@@ -204,6 +204,7 @@ describe('partial PDF-region provenance', () => {
       sourceHash: 'c'.repeat(64),
       fileName: 'partial-citation-region.pdf',
       byteLength: 1024,
+      metadata: { language: 'en-US' },
     })
     const prior = result.paper.nodes.find(
       (node) =>

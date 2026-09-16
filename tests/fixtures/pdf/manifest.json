@@ -58,9 +58,10 @@
     {
       "file": "pdf-to-epub-fidelity.pdf",
       "contract": "pdf-to-epub-fidelity.contract.json",
-      "contractSha256": "25df66ab9b2de16cec42170bd9af0e582af10768e54c4c8f1d71f89c5e777a14",
-      "sha256": "23a9f2fee8dd76a20d0db6f7c2c42bcf6633cbea46a34e1cf65a65ec03dcd1d2",
+      "contractSha256": "7578b22d89f05d98b915639a85938df56cf696dd1dd9d82ea62c54ec9de1e294",
+      "sha256": "17921375594e87b1377e86d304f9f151c393255eb94b8e0f523179f6b9e07cea",
       "features": [
+        "explicit-en-US-document-language",
         "unique-title-region",
         "continuous-prose",
         "discretionary-dehyphenation",

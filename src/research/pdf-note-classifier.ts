@@ -28,6 +28,7 @@ type MarkerCandidate = {
   end: number
   syntax: MarkerSyntax
   sourceBox: NormalizedSourceBox
+  evidence?: string[]
 }
 
 export type PdfNoteMarkerClassificationResult = {
@@ -319,6 +320,33 @@ function isMathematicalScript(
   repeatedNameTokens: ReadonlySet<string> = new Set(),
 ) {
   const scriptCharacters = '0-9⁰¹²³⁴⁵⁶⁷⁸⁹'
+  const scriptText = new RegExp(`^[${scriptCharacters}]+$`, 'u').test(
+    text.slice(start, end),
+  )
+  let mathematicalAlphanumericLetterCount = 0
+  const precedingCharacters = Array.from(text.slice(0, start))
+  const scriptCharacter = new RegExp(`^[${scriptCharacters}]$`, 'u')
+  let precedingIndex = precedingCharacters.length - 1
+  while (
+    precedingIndex >= 0 &&
+    scriptCharacter.test(precedingCharacters[precedingIndex])
+  ) {
+    precedingIndex -= 1
+  }
+  for (let index = precedingIndex; index >= 0; index -= 1) {
+    const character = precedingCharacters[index]
+    const codePoint = character.codePointAt(0) ?? -1
+    const mathematicalAlphanumericLetter =
+      ((codePoint >= 0x1d400 && codePoint <= 0x1d6a5) ||
+        (codePoint >= 0x1d6a8 && codePoint <= 0x1d7cb)) &&
+      /^\p{L}$/u.test(character)
+    if (!mathematicalAlphanumericLetter) break
+    mathematicalAlphanumericLetterCount += 1
+  }
+  const mathematicalAlphanumericVariableWithScript =
+    scriptText &&
+    mathematicalAlphanumericLetterCount >= 1 &&
+    mathematicalAlphanumericLetterCount <= 8
   const tokenCharacters = new RegExp(`[\\p{L}${scriptCharacters}]`, 'u')
   let tokenStart = start
   let tokenEnd = end
@@ -375,6 +403,7 @@ function isMathematicalScript(
   const followedByMathematicalRelation =
     /[\p{L}\p{N})\]}]/u.test(before) && /^\s*(?:=|[+\-−×÷≤≥≈∈∉])/u.test(after)
   return (
+    mathematicalAlphanumericVariableWithScript ||
     variableWithScript ||
     greekVariableWithScript ||
     repeatedNamedScript ||
@@ -734,7 +763,7 @@ function noteDefinitionLabels(
   return label === null ? [] : [normalizedNoteLabel(label)]
 }
 
-function normalizedAuthorYearKey(surname: string, year: string) {
+export function pdfAuthorYearKey(surname: string, year: string) {
   const normalizedSurname = surname
     .normalize('NFKD')
     .replace(/\p{M}/gu, '')
@@ -743,14 +772,32 @@ function normalizedAuthorYearKey(surname: string, year: string) {
   return `${normalizedSurname}:${year.toLowerCase()}`
 }
 
-function bibliographyFirstAuthorSurname(text: string) {
-  const normalized = text.replace(/\s+/gu, ' ').trim()
-  return (
-    normalized.match(/^(\p{Lu}[\p{L}\p{M}'’.-]*)(?=\s*,|\s+et\s+al\.)/u)?.[1] ??
-    normalized.match(
-      /^(?:\p{Lu}[\p{L}\p{M}'’.-]*\s+)+(\p{Lu}[\p{L}\p{M}'’.-]*)(?=\s*,)/u,
-    )?.[1]
+function bibliographyFirstAuthorSurnameRange(text: string) {
+  const surnameFirst = text.match(
+    /^(\p{Lu}[\p{L}\p{M}'’.-]*)(?=\s*,|\s+et\s+al\.)/u,
   )
+  if (surnameFirst?.[1]) {
+    return {
+      surname: surnameFirst[1],
+      start: 0,
+      end: surnameFirst[1].length,
+    }
+  }
+  const givenNameFirst = text.match(
+    /^(?:\p{Lu}[\p{L}\p{M}'’.-]*\s+)+(\p{Lu}[\p{L}\p{M}'’.-]*)(?=\s*,)/u,
+  )
+  if (!givenNameFirst?.[1]) return null
+  const start = givenNameFirst[0].lastIndexOf(givenNameFirst[1])
+  return {
+    surname: givenNameFirst[1],
+    start,
+    end: start + givenNameFirst[1].length,
+  }
+}
+
+export function pdfBibliographyFirstAuthorSurname(text: string) {
+  const normalized = text.replace(/\s+/gu, ' ').trim()
+  return bibliographyFirstAuthorSurnameRange(normalized)?.surname
 }
 
 function bibliographyYearCandidates(text: string) {
@@ -808,18 +855,72 @@ function bibliographyPublicationYear(text: string) {
   return allYears.length === 1 ? allYears[0] : null
 }
 
-function bibliographyAuthorYearKey(text: string) {
-  const surname = bibliographyFirstAuthorSurname(text)
+export function pdfBibliographyAuthorYearKey(text: string) {
+  const surname = pdfBibliographyFirstAuthorSurname(text)
   const year = bibliographyPublicationYear(text)
-  return surname && year ? normalizedAuthorYearKey(surname, year) : null
+  return surname && year ? pdfAuthorYearKey(surname, year) : null
+}
+
+export function pdfAlternateAuthorYearKeyFromBoundary(
+  region: PdfPageRegion,
+  lineBoundaryDecisions: readonly PdfLineBoundaryDecision[],
+  surname: string,
+  year: string,
+  surnameStart: number,
+) {
+  const replay = replayPdfRegionLineRanges(region, lineBoundaryDecisions)
+  if (
+    !replay ||
+    replay.text !== region.text ||
+    region.text.slice(surnameStart, surnameStart + surname.length) !== surname
+  ) {
+    return null
+  }
+  const lineIndexes = new Map(
+    region.lines.map((line, index) => [line.id, index]),
+  )
+  const boundaryHyphenOffsets = lineBoundaryDecisions.flatMap((decision) => {
+    if (
+      decision.regionId !== region.id ||
+      (decision.outcome !== 'unresolved' && decision.outcome !== 'ambiguous') ||
+      lineIndexes.get(decision.toLineId) !==
+        (lineIndexes.get(decision.fromLineId) ?? -2) + 1
+    ) {
+      return []
+    }
+    const fromRange = replay.ranges.get(decision.fromLineId)
+    const toRange = replay.ranges.get(decision.toLineId)
+    const offset = (fromRange?.end ?? 0) - 1
+    return fromRange &&
+      toRange &&
+      toRange.start === fromRange.end &&
+      offset >= surnameStart &&
+      offset < surnameStart + surname.length &&
+      /[-‐‑]/u.test(replay.text[offset] ?? '')
+      ? [offset]
+      : []
+  })
+  if (boundaryHyphenOffsets.length !== 1) return null
+  const offset = boundaryHyphenOffsets[0] - surnameStart
+  const alternateSurname = `${surname.slice(
+    0,
+    offset,
+  )}${surname.slice(offset + 1)}`
+  return alternateSurname ? pdfAuthorYearKey(alternateSurname, year) : null
 }
 
 function authorYearMarkerCandidates(
   region: PdfPageRegion,
   uniqueBibliographyKeys: ReadonlySet<string>,
+  lineBoundaryDecisions: readonly PdfLineBoundaryDecision[],
 ) {
   const found: MarkerCandidate[] = []
-  const add = (labels: string[], start: number, end: number) => {
+  const add = (
+    labels: string[],
+    start: number,
+    end: number,
+    evidence: string[] = [],
+  ) => {
     if (labels.length === 0 || start < 0 || end <= start) return
     found.push({
       label: labels.join(','),
@@ -829,7 +930,27 @@ function authorYearMarkerCandidates(
       end,
       syntax: 'author-year-syntax',
       sourceBox: sourceBox(region),
+      evidence,
     })
+  }
+  const comparisonKey = (
+    surname: string,
+    year: string,
+    surnameStart: number,
+  ) => {
+    const key = pdfAuthorYearKey(surname, year)
+    return {
+      key,
+      boundaryAlternateAvailable: Boolean(
+        pdfAlternateAuthorYearKeyFromBoundary(
+          region,
+          lineBoundaryDecisions,
+          surname,
+          year,
+          surnameStart,
+        ),
+      ),
+    }
   }
   const etAlComponent = new RegExp(
     `^\\s*(${AUTHOR_YEAR_SURNAME_SOURCE})\\s+et\\s+al\\.\\s*,\\s*(${AUTHOR_YEAR_SOURCE})\\s*$`,
@@ -845,15 +966,25 @@ function authorYearMarkerCandidates(
     const parsed = parts.map((part) => {
       const etAl = part[0].match(etAlComponent)
       if (etAl) {
+        const key = comparisonKey(
+          etAl[1],
+          etAl[2],
+          (match.index ?? 0) + 1 + (part.index ?? 0) + part[0].indexOf(etAl[1]),
+        )
         return {
-          key: normalizedAuthorYearKey(etAl[1], etAl[2]),
+          ...key,
           requiresExactBibliographyKey: false,
         }
       }
       const common = part[0].match(commonComponent)
       if (!common) return null
+      const key = comparisonKey(
+        common[1],
+        common[3],
+        (match.index ?? 0) + 1 + (part.index ?? 0) + part[0].indexOf(common[1]),
+      )
       return {
-        key: normalizedAuthorYearKey(common[1], common[3]),
+        ...key,
         requiresExactBibliographyKey: true,
       }
     })
@@ -862,7 +993,8 @@ function authorYearMarkerCandidates(
       const candidate = parsed[index]!
       if (
         candidate.requiresExactBibliographyKey &&
-        !uniqueBibliographyKeys.has(candidate.key)
+        !uniqueBibliographyKeys.has(candidate.key) &&
+        !candidate.boundaryAlternateAvailable
       ) {
         continue
       }
@@ -881,21 +1013,31 @@ function authorYearMarkerCandidates(
   )
   for (const match of region.text.matchAll(narrative)) {
     const start = match.index ?? 0
-    add(
-      [normalizedAuthorYearKey(match[1], match[2])],
-      start,
-      start + match[0].length,
+    const candidate = comparisonKey(
+      match[1],
+      match[2],
+      start + match[0].indexOf(match[1]),
     )
+    add([candidate.key], start, start + match[0].length)
   }
   const commonNarrative = new RegExp(
     `(?<![\\p{L}\\p{M}'’.-])(${AUTHOR_YEAR_SURNAME_SOURCE})(?:\\s+(?:&|and)\\s+(${AUTHOR_YEAR_SURNAME_SOURCE}))?\\s*\\(\\s*(${AUTHOR_YEAR_SOURCE})\\s*\\)`,
     'gu',
   )
   for (const match of region.text.matchAll(commonNarrative)) {
-    const key = normalizedAuthorYearKey(match[1], match[3])
-    if (!uniqueBibliographyKeys.has(key)) continue
     const start = match.index ?? 0
-    add([key], start, start + match[0].length)
+    const candidate = comparisonKey(
+      match[1],
+      match[3],
+      start + match[0].indexOf(match[1]),
+    )
+    if (
+      !uniqueBibliographyKeys.has(candidate.key) &&
+      !candidate.boundaryAlternateAvailable
+    ) {
+      continue
+    }
+    add([candidate.key], start, start + match[0].length)
   }
   return found.sort(
     (left, right) => left.start - right.start || left.end - right.end,
@@ -972,9 +1114,9 @@ export function pdfRegionHasStrongBibliographyEntryEvidence(
   const firstLine = nonemptyLines[0]
   const hangingIndent = Boolean(
     firstLine &&
-      nonemptyLines
-        .slice(1)
-        .some((line) => line.box.x - firstLine.box.x >= 0.008),
+    nonemptyLines
+      .slice(1)
+      .some((line) => line.box.x - firstLine.box.x >= 0.008),
   )
   const publicationYear = bibliographyPublicationYear(itemText)
   if (!publicationYear) return hangingIndent
@@ -984,9 +1126,8 @@ export function pdfRegionHasStrongBibliographyEntryEvidence(
   const authorPrefix =
     yearOffset < 0 ? '' : itemText.slice(0, yearOffset).trim()
   const authorNameTokens =
-    authorPrefix.match(
-      /(?:\p{Lu}[\p{L}\p{M}'’.-]+|\p{Lu}\.)(?=\s|,|\.|$)/gu,
-    ) ?? []
+    authorPrefix.match(/(?:\p{Lu}[\p{L}\p{M}'’.-]+|\p{Lu}\.)(?=\s|,|\.|$)/gu) ??
+    []
   const authorYearEvidence =
     authorPrefix.length <= 180 &&
     authorNameTokens.length >= 2 &&
@@ -1022,7 +1163,9 @@ export function classifyPdfNoteMarkers(
       REFERENCE_HEADING.test(region.text.trim()),
   )
   const referenceScopeRegions =
-    orderedReferenceHeadingIndex >= 0 ? orderedRegions : physicallyOrderedRegions
+    orderedReferenceHeadingIndex >= 0
+      ? orderedRegions
+      : physicallyOrderedRegions
   const referenceHeadingIndex =
     orderedReferenceHeadingIndex >= 0
       ? orderedReferenceHeadingIndex
@@ -1065,12 +1208,13 @@ export function classifyPdfNoteMarkers(
   const bibliographyAuthorYearKeyCounts = new Map<string, number>()
   for (const region of orderedRegions) {
     if (!bibliographyRegionIds.has(region.id)) continue
-    const key = bibliographyAuthorYearKey(region.text)
-    if (!key) continue
-    bibliographyAuthorYearKeyCounts.set(
-      key,
-      (bibliographyAuthorYearKeyCounts.get(key) ?? 0) + 1,
-    )
+    const rawKey = pdfBibliographyAuthorYearKey(region.text)
+    if (rawKey) {
+      bibliographyAuthorYearKeyCounts.set(
+        rawKey,
+        (bibliographyAuthorYearKeyCounts.get(rawKey) ?? 0) + 1,
+      )
+    }
   }
   const uniqueBibliographyAuthorYearKeys = new Set(
     [...bibliographyAuthorYearKeyCounts]
@@ -1101,6 +1245,7 @@ export function classifyPdfNoteMarkers(
             authorYearMarkerCandidates(
               region,
               uniqueBibliographyAuthorYearKeys,
+              lineBoundaryDecisions,
             ),
           )
   const bibliographyEntryCandidates = orderedRegions
@@ -1174,7 +1319,11 @@ export function classifyPdfNoteMarkers(
         'author-year-bibliography-citation',
         'citation',
         0.98,
-        ['reference-list-section-detected', 'bounded-author-year-syntax'],
+        [
+          'reference-list-section-detected',
+          'bounded-author-year-syntax',
+          ...(candidate.evidence ?? []),
+        ],
       )
     }
 

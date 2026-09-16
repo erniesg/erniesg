@@ -67,6 +67,14 @@ async function waitForImporter(page: Page) {
   })
 }
 
+async function waitForMaterializedEpub(page: Page) {
+  await expect(page.locator('.epub-rendition-preview')).toHaveAttribute(
+    'data-artifact-sha256',
+    /^[a-f0-9]{64}$/u,
+    { timeout: 90_000 },
+  )
+}
+
 async function downloadBytes(page: Page, linkName: string) {
   const downloadPromise = page.waitForEvent('download')
   await page.getByRole('link', { name: linkName, exact: true }).click()
@@ -90,6 +98,10 @@ test('uploads once and previews the matching Mobile, Move, and Pro EPUB artifact
   await expect(page.getByText('EPUB ready', { exact: true })).toBeVisible({
     timeout: 90_000,
   })
+  await expect(page.getByText('Review required', { exact: true })).toHaveCount(
+    0,
+  )
+  await waitForMaterializedEpub(page)
 
   const downloaded: Array<{
     profileId: string
@@ -127,6 +139,11 @@ test('uploads once and previews the matching Mobile, Move, and Pro EPUB artifact
     await expect(preview).toHaveAttribute(
       'data-profile-version',
       expected.version,
+    )
+    await expect(preview).toHaveAttribute(
+      'data-artifact-sha256',
+      /^[a-f0-9]{64}$/,
+      { timeout: 90_000 },
     )
     const previewHash = await preview.getAttribute('data-artifact-sha256')
     expect(previewHash).toMatch(/^[a-f0-9]{64}$/)
@@ -555,6 +572,10 @@ test('invalidates preview receipts and object URLs before reusing a filename', a
   await expect(page.getByText('EPUB ready', { exact: true })).toBeVisible({
     timeout: 90_000,
   })
+  await expect(page.getByText('Review required', { exact: true })).toHaveCount(
+    0,
+  )
+  await waitForMaterializedEpub(page)
 
   const firstPreview = page.locator('.epub-rendition-preview')
   const firstHash = await firstPreview.getAttribute('data-artifact-sha256')
@@ -630,9 +651,7 @@ test('invalidates preview receipts and object URLs before reusing a filename', a
     .toEqual(firstUrls!.map(() => 1))
 
   await page.locator('#publication-pdf').setInputFiles(upload(second))
-  await expect(page.getByText('EPUB ready', { exact: true })).toBeVisible({
-    timeout: 90_000,
-  })
+  await waitForMaterializedEpub(page)
   await expect(page.locator('.publication-result-bar strong')).toHaveText(
     'same-paper.pdf',
   )

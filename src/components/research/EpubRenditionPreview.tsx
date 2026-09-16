@@ -1,15 +1,35 @@
-import { strFromU8, unzipSync } from 'fflate'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import {
   EPUB_EXPORT_POLICY_VERSION,
   type EpubExport,
 } from '../../research/epub'
 import {
+  buildExternalLinkReceipt,
+  composePreviewCss,
+  EPUB_PREVIEW_CSP,
+  epubPreviewPayload,
+} from '../../research/epub-preview'
+import {
   resolveTargetProfile,
   TARGET_PROFILES,
   type TargetOrientation,
   type TargetProfileId,
 } from '../../research/targets'
+import {
+  createReviewPaginationScheduler,
+  materializeDiscreteReviewPages,
+  REVIEW_PAGINATION_SUPERSEDED_MESSAGE,
+  type DiscreteReviewPagination,
+  type ReviewPaginationScheduler,
+} from './epub-review-pagination'
+import PageNavigation from './PageNavigation'
+import PageZoomControls from './PageZoomControls'
+import {
+  fittedReviewScale,
+  shouldPinReviewScrollToTop,
+  steppedReviewZoom,
+  type ReviewZoomMode,
+} from './review-zoom'
 
 const previewProfileIds = ['mobile', 'paperProMove', 'paperPro'] as const
 export type PreviewProfileId = Extract<
@@ -93,13 +113,13 @@ export function composeReviewReaderCss(
 html {
   height: 100%;
   overflow-x: hidden;
-  overflow-y: auto;
+  overflow-y: hidden;
   overflow-anchor: none;
   --review-font-scale: ${fontSize.scale};
 }
 body {
   width: 100%;
-  min-height: 100%;
+  height: 100%;
   margin: 0 !important;
   overflow-x: hidden;
   overflow-y: visible;
@@ -164,19 +184,92 @@ pre, code {
 main {
   box-sizing: border-box;
   width: 100vw;
+  height: 100vh;
   max-width: none !important;
-  min-height: 100vh;
+  min-height: 0;
   margin: 0 !important;
-  padding: 6vh 8vw !important;
-  overflow: visible;
+  padding: 0 !important;
+  overflow: hidden;
   overflow-anchor: none;
 }
-[data-review-page-content] {
+[data-review-pages] {
   box-sizing: border-box;
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
   transition: none !important;
+}
+[data-review-page-fragment] {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  width: 100vw;
+  height: 100vh;
+  min-width: 0;
+  gap: 0.7rem;
+  overflow: hidden;
+  padding: 5vh 7vw;
+  background: #fff;
+}
+[data-review-page-fragment][hidden] {
+  display: none !important;
+}
+[data-review-page-body] {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+[data-review-page-notes] {
+  min-width: 0;
+  max-height: 32vh;
+  overflow: hidden;
+  border-top: 0.06rem solid currentColor;
+  padding-top: 0.45rem;
+  font-size: calc(0.76rem * var(--review-font-scale));
+  line-height: 1.25;
+}
+[data-review-page-notes]:empty {
+  display: none;
+}
+[data-review-page-notes] .publication-note {
+  margin: 0.25rem 0 0;
+  border: 0;
+  padding: 0;
+  font-size: inherit;
+}
+.review-footnote-continuation-label {
+  font-weight: 700;
+}
+[data-review-atomic-fit="true"] {
+  box-sizing: border-box;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  overflow: hidden;
+}
+[data-review-page-body] > figure,
+[data-review-page-body] > table,
+[data-review-page-body] > pre,
+[data-review-page-body] > blockquote {
+  box-sizing: border-box;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  overflow: visible;
+}
+[data-review-page-body] figure img,
+[data-review-page-body] figure svg,
+[data-review-page-body] figure object {
+  display: block;
+  width: auto !important;
+  max-width: 100% !important;
+  max-height: calc(90vh - 5rem) !important;
+  margin-inline: auto;
+  object-fit: contain;
+}
+.wide-source-visual-frame,
+.epub-embedded-table,
+.semantic-table-wrapper {
+  max-width: 100%;
+  overflow: visible !important;
 }
 figure, table, pre, blockquote {
   break-inside: avoid;
@@ -246,34 +339,12 @@ const truthLabels = {
   'reader-controlled': 'Reader-controlled',
 } as const
 
-const blockedElements = [
-  'script',
-  'iframe',
-  'frame',
-  'embed',
-  'form',
-  'input',
-  'button',
-  'textarea',
-  'select',
-  'base',
-]
-
-function safeCss(value: string) {
-  return value
-    .replace(/@import[^;]+;?/gi, '')
-    .replace(/url\s*\([^)]*\)/gi, 'none')
-}
-
-export function buildExternalLinkReceipt(href: string, accessibleName: string) {
-  const label = accessibleName.trim() || href
-  return {
-    role: 'link',
-    tabIndex: 0,
-    originalHref: href,
-    ariaLabel: `${label} (link disabled in preview)`,
-  }
-}
+// WebKit executes the parent-installed pagination and navigation listeners in
+// the frame realm, so they require script permission. Imported scripts and
+// script-bearing attributes are removed by the worker compiler and remain
+// blocked by the CSP before this document is mounted.
+export const EPUB_PREVIEW_SANDBOX = 'allow-same-origin allow-scripts'
+export { buildExternalLinkReceipt, composePreviewCss, EPUB_PREVIEW_CSP }
 
 export function internalPreviewTargetId(href: string) {
   if (!href.startsWith('#') || href.length < 2) return null
@@ -284,56 +355,342 @@ export function internalPreviewTargetId(href: string) {
   }
 }
 
-export function composePreviewCss(epubCss: string) {
-  return `${safeCss(epubCss)}
-html { color-scheme: light; background: #fff; }
-body { margin: 0; }
-.epub-embedded-table { overflow-x: auto; }
-img { max-width: 100%; height: auto; }
-[data-review-navigation-target="true"] {
-  outline: 0.15rem solid #b45309;
-  outline-offset: 0.18rem;
-  background: #fff7ed;
-  scroll-margin-block-start: 1rem;
-}`
+let reviewNavigationOriginSequence = 0
+
+export function ensureReviewNavigationOriginIdentity(
+  element: HTMLElement,
+  document: Pick<Document, 'getElementById'>,
+) {
+  const generated = element.dataset.reviewNavigationOriginId
+  if (
+    generated &&
+    (!document.getElementById(generated) ||
+      document.getElementById(generated) === element)
+  ) {
+    element.id = generated
+    return generated
+  }
+  if (
+    element.id &&
+    (!document.getElementById(element.id) ||
+      document.getElementById(element.id) === element)
+  ) {
+    return element.id
+  }
+  let identity = ''
+  do {
+    reviewNavigationOriginSequence += 1
+    identity = `epub-review-origin-${reviewNavigationOriginSequence}`
+  } while (document.getElementById(identity))
+  element.id = identity
+  element.dataset.reviewNavigationOriginId = identity
+  return identity
 }
 
-function sanitizeDocument(document: Document) {
-  for (const element of document.querySelectorAll(blockedElements.join(','))) {
-    element.remove()
+export function focusReviewNavigationTarget(
+  target: HTMLElement,
+  schedule: (callback: () => void) => void = (callback) => {
+    const frameWindow = target.ownerDocument?.defaultView
+    if (frameWindow) {
+      frameWindow.requestAnimationFrame(() => callback())
+    } else {
+      globalThis.setTimeout(callback, 0)
+    }
+  },
+) {
+  const hadTabIndex = target.hasAttribute('tabindex')
+  if (!hadTabIndex) target.setAttribute('tabindex', '-1')
+  schedule(() => {
+    try {
+      target.focus({ preventScroll: true })
+    } finally {
+      if (!hadTabIndex) target.removeAttribute('tabindex')
+    }
+  })
+}
+
+function waitForReviewImage(
+  image: HTMLImageElement,
+  signal?: AbortSignal,
+  timeoutMs = 10_000,
+) {
+  if (signal?.aborted) {
+    return Promise.reject(new Error(REVIEW_PAGINATION_SUPERSEDED_MESSAGE))
   }
-  for (const element of document.querySelectorAll('*')) {
-    for (const attribute of [...element.attributes]) {
-      const name = attribute.name.toLowerCase()
-      if (name.startsWith('on') || name === 'srcdoc' || name === 'style') {
-        element.removeAttribute(attribute.name)
+  if (image.complete && image.naturalWidth > 0 && image.naturalHeight > 0) {
+    return Promise.resolve()
+  }
+  return new Promise<void>((resolve, reject) => {
+    const frameWindow = image.ownerDocument.defaultView
+    const finish = (error?: Error) => {
+      frameWindow?.clearTimeout(timeout)
+      image.removeEventListener('load', loaded)
+      image.removeEventListener('error', failed)
+      signal?.removeEventListener('abort', aborted)
+      if (error) reject(error)
+      else resolve()
+    }
+    const loaded = () =>
+      image.naturalWidth > 0 && image.naturalHeight > 0
+        ? finish()
+        : finish(new Error('A packaged EPUB image has no intrinsic size.'))
+    const failed = () =>
+      finish(new Error('A packaged EPUB image failed to load for pagination.'))
+    const aborted = () =>
+      finish(new Error(REVIEW_PAGINATION_SUPERSEDED_MESSAGE))
+    const timeout = frameWindow?.setTimeout(
+      () =>
+        finish(
+          new Error(
+            'A packaged EPUB image did not become ready before pagination.',
+          ),
+        ),
+      timeoutMs,
+    )
+    image.addEventListener('load', loaded, { once: true })
+    image.addEventListener('error', failed, { once: true })
+    signal?.addEventListener('abort', aborted, { once: true })
+    if (image.complete) loaded()
+  })
+}
+
+function waitForReviewFonts(
+  document: Document,
+  signal?: AbortSignal,
+  timeoutMs = 10_000,
+) {
+  if (signal?.aborted) {
+    return Promise.reject(new Error(REVIEW_PAGINATION_SUPERSEDED_MESSAGE))
+  }
+  if (!document.fonts) return Promise.resolve()
+  return new Promise<void>((resolve, reject) => {
+    let settled = false
+    const finish = (error?: Error) => {
+      if (settled) return
+      settled = true
+      globalThis.clearTimeout(timeout)
+      signal?.removeEventListener('abort', aborted)
+      if (error) reject(error)
+      else resolve()
+    }
+    const aborted = () =>
+      finish(new Error(REVIEW_PAGINATION_SUPERSEDED_MESSAGE))
+    const timeout = globalThis.setTimeout(
+      () =>
+        finish(
+          new Error(
+            'Packaged EPUB fonts did not become ready before pagination.',
+          ),
+        ),
+      timeoutMs,
+    )
+    void document.fonts.ready.then(
+      () => finish(),
+      () =>
+        finish(
+          new Error('Packaged EPUB fonts failed to load before pagination.'),
+        ),
+    )
+    signal?.addEventListener('abort', aborted, { once: true })
+  })
+}
+
+const REVIEW_MEASUREMENT_FREEZE_STYLE_ID =
+  'epub-review-measurement-motion-freeze'
+
+function freezeReviewMeasurementMotion(document: Document) {
+  if (document.getElementById?.(REVIEW_MEASUREMENT_FREEZE_STYLE_ID)) return
+  if (!document.head || !document.createElement) return
+  const style = document.createElement('style')
+  style.id = REVIEW_MEASUREMENT_FREEZE_STYLE_ID
+  style.textContent = `
+*, *::before, *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}`
+  document.head.append(style)
+}
+
+export async function captureReviewBaseFontSizes(
+  document: Document,
+  frameWindow: Pick<Window, 'getComputedStyle'>,
+  {
+    scheduler = createReviewPaginationScheduler(),
+    signal,
+  }: {
+    scheduler?: ReviewPaginationScheduler
+    signal?: AbortSignal
+  } = {},
+) {
+  freezeReviewMeasurementMotion(document)
+  await waitForReviewFonts(document, signal)
+  const measurements: Array<{
+    element: HTMLElement
+    fontSize: string
+  }> = []
+  for (const element of document.querySelectorAll<HTMLElement>('main *')) {
+    let ownsVisibleText = false
+    for (const node of element.childNodes) {
+      if (node.nodeType === 3 && Boolean(node.textContent?.trim())) {
+        ownsVisibleText = true
+        break
       }
     }
+    if (ownsVisibleText) {
+      measurements.push({
+        element,
+        fontSize: frameWindow.getComputedStyle(element).fontSize,
+      })
+    }
+    await scheduler.checkpoint(signal)
   }
-  for (const link of document.querySelectorAll<HTMLAnchorElement>('a[href]')) {
-    const href = link.getAttribute('href') ?? ''
-    if (href.startsWith('#')) continue
-    const receipt = buildExternalLinkReceipt(
-      href,
-      link.getAttribute('aria-label') ?? link.textContent ?? '',
+  for (const { element, fontSize } of measurements) {
+    element.dataset.reviewBaseFontSize = 'true'
+    element.style.setProperty('--review-base-font-size', fontSize)
+    await scheduler.checkpoint(signal)
+  }
+  return measurements.length
+}
+
+export type EpubPreviewWorkPhase =
+  'unzip' | 'parse' | 'objects' | 'images' | 'sanitize' | 'serialize'
+
+type EpubPreviewWorkCheckpoint = (
+  phase: EpubPreviewWorkPhase,
+  signal?: AbortSignal,
+) => Promise<void> | void
+
+const EPUB_PREVIEW_WORK_BUDGET_MS = 16
+
+function yieldEpubPreviewTask() {
+  return new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0))
+}
+
+function epubPreviewAbortError() {
+  return new Error(REVIEW_PAGINATION_SUPERSEDED_MESSAGE)
+}
+
+function throwIfEpubPreviewAborted(signal?: AbortSignal) {
+  if (signal?.aborted) throw epubPreviewAbortError()
+}
+
+function waitForEpubPreviewTask(task: Promise<void>, signal?: AbortSignal) {
+  if (!signal) return task
+  throwIfEpubPreviewAborted(signal)
+  return new Promise<void>((resolve, reject) => {
+    const aborted = () => {
+      cleanup()
+      reject(epubPreviewAbortError())
+    }
+    const cleanup = () => signal.removeEventListener('abort', aborted)
+    signal.addEventListener('abort', aborted, { once: true })
+    void task.then(
+      () => {
+        cleanup()
+        resolve()
+      },
+      (error) => {
+        cleanup()
+        reject(error)
+      },
     )
-    link.removeAttribute('href')
-    link.setAttribute('role', receipt.role)
-    link.tabIndex = receipt.tabIndex
-    link.dataset.originalHref = receipt.originalHref
-    link.setAttribute('aria-label', receipt.ariaLabel)
-  }
-  for (const meta of document.querySelectorAll<HTMLMetaElement>('meta')) {
-    if (meta.httpEquiv) meta.remove()
+  })
+}
+
+async function runEpubPreviewCheckpoint(
+  checkpoint: EpubPreviewWorkCheckpoint,
+  phase: EpubPreviewWorkPhase,
+  signal?: AbortSignal,
+) {
+  throwIfEpubPreviewAborted(signal)
+  const pendingYield = checkpoint(phase, signal)
+  if (pendingYield) await waitForEpubPreviewTask(pendingYield, signal)
+  throwIfEpubPreviewAborted(signal)
+}
+
+export async function commitEpubPreviewAfterTask(
+  commit: () => void,
+  yieldTask: () => Promise<void> = yieldEpubPreviewTask,
+) {
+  await yieldTask()
+  commit()
+}
+
+export function createEpubPreviewWorkCheckpoint({
+  budgetMs = EPUB_PREVIEW_WORK_BUDGET_MS,
+  now = () => globalThis.performance?.now() ?? Date.now(),
+  yieldTask = () => yieldEpubPreviewTask(),
+}: {
+  budgetMs?: number
+  now?: () => number
+  yieldTask?: (phase: EpubPreviewWorkPhase, elapsedMs: number) => Promise<void>
+} = {}) {
+  let sliceStartedAt = now()
+  return (phase: EpubPreviewWorkPhase, signal?: AbortSignal) => {
+    throwIfEpubPreviewAborted(signal)
+    const elapsedMs = Math.max(0, now() - sliceStartedAt)
+    if (elapsedMs < budgetMs) return undefined
+    return waitForEpubPreviewTask(yieldTask(phase, elapsedMs), signal).then(
+      () => {
+        throwIfEpubPreviewAborted(signal)
+        sliceStartedAt = now()
+      },
+    )
   }
 }
 
-function buildPreview(epub: EpubExport) {
-  const files = unzipSync(epub.bytes)
-  const content = files['EPUB/content.xhtml']
-  if (!content) throw new Error('EPUB spine content is missing')
-  const parser = new DOMParser()
-  const document = parser.parseFromString(strFromU8(content), 'text/html')
+export async function buildEpubPreview(
+  epub: EpubExport,
+  {
+    checkpoint = createEpubPreviewWorkCheckpoint(),
+    signal,
+  }: {
+    checkpoint?: EpubPreviewWorkCheckpoint
+    signal?: AbortSignal
+  } = {},
+) {
+  throwIfEpubPreviewAborted(signal)
+  const preview = epubPreviewPayload(epub)
+  if (!preview) {
+    throw new Error(
+      'EPUB preview payload is missing; rebuild this artifact in the current background worker.',
+    )
+  }
+  const escapedPreviewCsp = EPUB_PREVIEW_CSP.replace(
+    /[.*+?^${}()|[\]\\]/g,
+    '\\$&',
+  )
+  const cspFirstPattern = new RegExp(
+    `^<!DOCTYPE html><html(?: [^<>]*)?><head(?: [^<>]*)?><meta http-equiv="Content-Security-Policy" content="${escapedPreviewCsp}">`,
+    'u',
+  )
+  if (
+    !Array.isArray(preview.template?.segments) ||
+    !Array.isArray(preview.template.assetIndices) ||
+    !Array.isArray(preview.assets) ||
+    preview.template.segments.length !==
+      preview.template.assetIndices.length + 1 ||
+    preview.template.segments.some((segment) => typeof segment !== 'string') ||
+    !cspFirstPattern.test(preview.template.segments[0] ?? '') ||
+    preview.template.assetIndices.some(
+      (assetIndex) =>
+        !Number.isSafeInteger(assetIndex) ||
+        assetIndex < 0 ||
+        assetIndex >= preview.assets.length,
+    ) ||
+    preview.assets.some(
+      (asset) =>
+        !(asset.bytes instanceof Uint8Array) ||
+        typeof asset.href !== 'string' ||
+        typeof asset.mediaType !== 'string' ||
+        !asset.mediaType.startsWith('image/'),
+    )
+  ) {
+    throw new Error(
+      'EPUB preview payload is invalid; rebuild this artifact in the current background worker.',
+    )
+  }
   const objectUrls: string[] = []
   let revoked = false
   const revoke = () => {
@@ -343,66 +700,37 @@ function buildPreview(epub: EpubExport) {
   }
 
   try {
-    for (const object of document.querySelectorAll<HTMLObjectElement>(
-      'object[data]',
-    )) {
-      const href = object.getAttribute('data') ?? ''
-      const embedded = files[`EPUB/${href}`]
-      if (!embedded || object.type !== 'application/xhtml+xml') {
-        object.replaceWith(document.createTextNode(object.textContent ?? ''))
-        continue
-      }
-      const source = parser.parseFromString(strFromU8(embedded), 'text/html')
-      const table = source.querySelector('table')
-      if (!table) {
-        object.replaceWith(document.createTextNode(object.textContent ?? ''))
-        continue
-      }
-      const wrapper = document.createElement('div')
-      wrapper.className = 'epub-embedded-table'
-      wrapper.append(document.importNode(table, true))
-      object.replaceWith(wrapper)
-    }
-
-    for (const image of document.querySelectorAll<HTMLImageElement>(
-      'img[src]',
-    )) {
-      const href = image.getAttribute('src') ?? ''
-      const asset = files[`EPUB/${href}`]
-      if (!asset) {
-        image.removeAttribute('src')
-        continue
-      }
-      const mediaType = href.endsWith('.svg')
-        ? 'image/svg+xml'
-        : href.endsWith('.png')
-          ? 'image/png'
-          : href.endsWith('.gif')
-            ? 'image/gif'
-            : 'image/jpeg'
+    for (const asset of preview.assets) {
       const url = URL.createObjectURL(
-        new Blob([asset as BlobPart], { type: mediaType }),
+        new Blob([asset.bytes as BlobPart], { type: asset.mediaType }),
       )
       objectUrls.push(url)
-      image.src = url
+      await runEpubPreviewCheckpoint(checkpoint, 'images', signal)
+    }
+    if (preview.assets.length === 0) {
+      await runEpubPreviewCheckpoint(checkpoint, 'images', signal)
     }
 
-    sanitizeDocument(document)
-    document
-      .querySelectorAll('link[rel="stylesheet"]')
-      .forEach((link) => link.remove())
-    const style = document.createElement('style')
-    style.textContent = composePreviewCss(
-      strFromU8(files['EPUB/styles.css'] ?? new Uint8Array()),
-    )
-    document.head.append(style)
-    const policy = document.createElement('meta')
-    policy.httpEquiv = 'Content-Security-Policy'
-    policy.content =
-      "default-src 'none'; img-src blob: data:; style-src 'unsafe-inline'; font-src 'none'; object-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'"
-    document.head.prepend(policy)
+    const materialized: string[] = []
+    for (
+      let markerIndex = 0;
+      markerIndex < preview.template.assetIndices.length;
+      markerIndex += 1
+    ) {
+      materialized.push(
+        preview.template.segments[markerIndex],
+        objectUrls[preview.template.assetIndices[markerIndex]],
+      )
+      await runEpubPreviewCheckpoint(checkpoint, 'serialize', signal)
+    }
+    materialized.push(preview.template.segments.at(-1)!)
+    if (preview.template.assetIndices.length === 0) {
+      await runEpubPreviewCheckpoint(checkpoint, 'serialize', signal)
+    }
+    throwIfEpubPreviewAborted(signal)
+    const srcDoc = materialized.join('')
     return {
-      srcDoc: `<!doctype html>${document.documentElement.outerHTML}`,
+      srcDoc,
       revoke,
     }
   } catch (error) {
@@ -412,11 +740,30 @@ function buildPreview(epub: EpubExport) {
 }
 
 type PreviewResult =
-  { srcDoc: string; error?: never } | { srcDoc?: never; error: string }
+  | { status: 'pending' }
+  | { status: 'success'; srcDoc: string }
+  | { status: 'error'; error: string }
 
 type PreparedPreview = {
   srcDoc: string
   revoke: () => void
+}
+
+type PreviewCacheEntry = {
+  preview: PreviewResult
+  promise: Promise<PreviewResult>
+  controller: AbortController
+  payloadIdentity: ReturnType<typeof epubPreviewPayload>
+  revoke?: () => void
+}
+
+function revokeOnce(revoke: () => void) {
+  let revoked = false
+  return () => {
+    if (revoked) return
+    revoked = true
+    revoke()
+  }
 }
 
 export function epubPreviewArtifactKey(epub: EpubExport) {
@@ -432,17 +779,18 @@ export function epubPreviewArtifactKey(epub: EpubExport) {
 }
 
 export function createEpubPreviewCache(
-  builder: (epub: EpubExport) => PreparedPreview = buildPreview,
+  builder: (
+    epub: EpubExport,
+    options: { signal: AbortSignal },
+  ) => PreparedPreview | Promise<PreparedPreview> = buildEpubPreview,
 ) {
-  const entries = new Map<
-    string,
-    { preview: PreviewResult; revoke?: () => void }
-  >()
+  const entries = new Map<string, PreviewCacheEntry>()
 
   const remove = (key: string) => {
     const entry = entries.get(key)
     if (!entry) return
     entries.delete(key)
+    entry.controller.abort()
     entry.revoke?.()
   }
 
@@ -452,33 +800,127 @@ export function createEpubPreviewCache(
     },
     prepare(epub: EpubExport) {
       const key = epubPreviewArtifactKey(epub)
+      const payloadIdentity = epubPreviewPayload(epub)
       const cached = entries.get(key)
-      if (cached) return cached.preview
-      try {
-        const built = builder(epub)
-        const entry = {
-          preview: { srcDoc: built.srcDoc } satisfies PreviewResult,
-          revoke: built.revoke,
-        }
-        entries.set(key, entry)
-        return entry.preview
-      } catch (error) {
-        const preview: PreviewResult = {
-          error:
-            error instanceof Error ? error.message : 'EPUB preview unavailable',
-        }
-        entries.set(key, { preview })
-        return preview
+      if (cached && cached.payloadIdentity === payloadIdentity) {
+        return cached.promise
       }
+      if (cached) remove(key)
+      const entry: PreviewCacheEntry = {
+        preview: { status: 'pending' },
+        promise: Promise.resolve({ status: 'pending' }),
+        controller: new AbortController(),
+        payloadIdentity,
+      }
+      entries.set(key, entry)
+      entry.promise = (async () => {
+        try {
+          const built = await builder(epub, {
+            signal: entry.controller.signal,
+          })
+          const revoke = revokeOnce(built.revoke)
+          const preview: PreviewResult = {
+            status: 'success',
+            srcDoc: built.srcDoc,
+          }
+          if (entries.get(key) !== entry) {
+            revoke()
+            return preview
+          }
+          entry.preview = preview
+          entry.revoke = revoke
+          return preview
+        } catch (error) {
+          const preview: PreviewResult = {
+            status: 'error',
+            error:
+              error instanceof Error
+                ? error.message
+                : 'EPUB preview unavailable',
+          }
+          if (entries.get(key) === entry) entry.preview = preview
+          return preview
+        }
+      })()
+      return entry.promise
     },
     retain(epubs: EpubExport[]) {
-      const retained = new Set(epubs.map(epubPreviewArtifactKey))
-      for (const key of entries.keys()) {
-        if (!retained.has(key)) remove(key)
+      const retained = new Map<
+        string,
+        Set<ReturnType<typeof epubPreviewPayload>>
+      >()
+      for (const epub of epubs) {
+        const key = epubPreviewArtifactKey(epub)
+        const identities = retained.get(key) ?? new Set()
+        identities.add(epubPreviewPayload(epub))
+        retained.set(key, identities)
+      }
+      for (const [key, entry] of entries) {
+        if (!retained.get(key)?.has(entry.payloadIdentity)) remove(key)
       }
     },
     dispose() {
       for (const key of [...entries.keys()]) remove(key)
+    },
+  }
+}
+
+export function selectEpubPreviewPreparationQueue(
+  previews: Pick<ReturnType<typeof createEpubPreviewCache>, 'get'>,
+  selected: EpubExport,
+  candidates: EpubExport[],
+) {
+  return [selected, ...candidates].filter((candidate, index, queue) => {
+    const key = epubPreviewArtifactKey(candidate)
+    if (
+      queue.findIndex((other) => epubPreviewArtifactKey(other) === key) !==
+      index
+    ) {
+      return false
+    }
+    const preview = previews.get(candidate)
+    return preview === undefined || preview.status === 'pending'
+  })
+}
+
+type ReviewLayoutAttempt = {
+  document: Document
+  key: string
+}
+
+function isSameReviewLayout(
+  left: ReviewLayoutAttempt | undefined,
+  right: ReviewLayoutAttempt,
+) {
+  return left?.document === right.document && left.key === right.key
+}
+
+export function createReviewLayoutAttemptTracker() {
+  let pending: ReviewLayoutAttempt | undefined
+  let applied: ReviewLayoutAttempt | undefined
+
+  return {
+    begin(layout: ReviewLayoutAttempt) {
+      if (isSameReviewLayout(pending, layout)) return false
+      if (!pending && isSameReviewLayout(applied, layout)) return false
+      pending = layout
+      applied = undefined
+      return true
+    },
+    complete(layout: ReviewLayoutAttempt) {
+      if (!isSameReviewLayout(pending, layout)) return
+      pending = undefined
+      applied = layout
+    },
+    fail(layout: ReviewLayoutAttempt) {
+      if (isSameReviewLayout(pending, layout)) pending = undefined
+    },
+    reset() {
+      pending = undefined
+      applied = undefined
+    },
+    current() {
+      return { pending, applied }
     },
   }
 }
@@ -535,7 +977,25 @@ export default function EpubRenditionPreview({
     useState<ReviewFontFamilyId>('publisher')
   const [epubPage, setEpubPage] = useState(1)
   const [epubPageCount, setEpubPageCount] = useState(1)
+  const epubPageRef = useRef(1)
+  const [reviewZoomMode, setReviewZoomMode] =
+    useState<ReviewZoomMode>('fit-page')
+  const [reviewZoomPercent, setReviewZoomPercent] = useState(100)
   const epubPageCountRef = useRef(1)
+  const discretePagination = useRef<DiscreteReviewPagination>()
+  const paginationRevision = useRef(0)
+  const reviewPaginationQueue = useRef<Promise<void>>(Promise.resolve())
+  const reviewPaginationAbortController = useRef<AbortController>()
+  const reviewLayoutAttempts = useRef(createReviewLayoutAttemptTracker())
+  const navigationHistory = useRef<
+    Array<{ page: number; originId: string | null }>
+  >([])
+  const [navigationHistorySize, setNavigationHistorySize] = useState(0)
+  const [reviewPaginationError, setReviewPaginationError] = useState('')
+  const [reviewPaginationStatus, setReviewPaginationStatus] = useState<
+    'idle' | 'paginating' | 'complete' | 'failed'
+  >('idle')
+  const [paginatedReviewLayoutKey, setPaginatedReviewLayoutKey] = useState('')
   const profileId = selectedProfileId ?? uncontrolledProfileId
   const [, setPreviewRevision] = useState(0)
   const iframe = useRef<HTMLIFrameElement>(null)
@@ -544,11 +1004,7 @@ export default function EpubRenditionPreview({
     width: 0,
     height: 0,
   })
-  const navigationHistory = useRef<number[]>([])
-  const [navigation, setNavigation] = useState<{
-    marker: string
-    target: string
-  } | null>(null)
+  const [navigationAnnouncement, setNavigationAnnouncement] = useState('')
   const cache = useRef<ReturnType<typeof createEpubPreviewCache> | null>(null)
   if (!cache.current) cache.current = createEpubPreviewCache()
   const epub = selectCurrentProfileEpub(epubs, profileId, selectedOrientation)
@@ -573,27 +1029,32 @@ export default function EpubRenditionPreview({
     reviewViewportId,
     reviewOrientation,
   )
+  const reviewLayoutKey = [
+    reviewViewport.id,
+    reviewOrientation,
+    reviewFontSizeId,
+    reviewFontFamilyId,
+  ].join(':')
   const viewportWidth = reviewMode ? reviewViewport.width : screen.width
   const viewportHeight = reviewMode ? reviewViewport.height : screen.height
   const viewportPreviewWidth = reviewMode
     ? reviewViewport.width
     : screen.previewWidth
-  const reviewPreviewScale =
-    reviewMode && reviewStageSize.width > 0 && reviewStageSize.height > 0
-      ? Math.min(
-          1,
-          Math.max(
-            0.1,
-            Math.min(
-              (reviewStageSize.width - 32) / viewportPreviewWidth,
-              (reviewStageSize.height - 32) / viewportHeight,
-            ),
-          ),
-        )
-      : 1
+  const reviewPreviewScale = reviewMode
+    ? fittedReviewScale({
+        mode: reviewZoomMode,
+        customPercent: reviewZoomPercent,
+        contentWidth: viewportPreviewWidth,
+        contentHeight: viewportHeight,
+        stageWidth: reviewStageSize.width,
+        stageHeight: reviewStageSize.height,
+      })
+    : 1
   const preview = epub ? cache.current.get(epub) : undefined
   const readyArtifactKey =
-    epub && preview?.srcDoc ? epubPreviewArtifactKey(epub) : undefined
+    epub && preview?.status === 'success'
+      ? epubPreviewArtifactKey(epub)
+      : undefined
 
   useEffect(() => {
     const previews = cache.current
@@ -601,22 +1062,24 @@ export default function EpubRenditionPreview({
     const currentEpubs = epubs.filter(isCurrentPreviewArtifact)
     previews.retain(currentEpubs)
     if (!hasSupportedProfile || !epub) return
-    const queue = [epub, ...currentEpubs].filter(
-      (candidate, index, candidates) =>
-        previews.get(candidate) === undefined &&
-        candidates.findIndex(
-          (other) =>
-            epubPreviewArtifactKey(other) === epubPreviewArtifactKey(candidate),
-        ) === index,
+    const queue = selectEpubPreviewPreparationQueue(
+      previews,
+      epub,
+      currentEpubs,
     )
     let cancelled = false
     let timer: number | undefined
-    const prepareNext = () => {
+    const prepareNext = async () => {
       const candidate = queue.shift()
       if (!candidate || cancelled) return
-      previews.prepare(candidate)
+      await previews.prepare(candidate)
       if (cancelled) return
-      setPreviewRevision((revision) => revision + 1)
+      await commitEpubPreviewAfterTask(() => {
+        if (!cancelled) {
+          setPreviewRevision((revision) => revision + 1)
+        }
+      })
+      if (cancelled) return
       timer = window.setTimeout(prepareNext, 0)
     }
     timer = window.setTimeout(prepareNext, 0)
@@ -628,6 +1091,7 @@ export default function EpubRenditionPreview({
 
   useEffect(
     () => () => {
+      reviewPaginationAbortController.current?.abort()
       cache.current?.dispose()
     },
     [],
@@ -650,7 +1114,7 @@ export default function EpubRenditionPreview({
     const observer = new ResizeObserver(updateSize)
     observer.observe(stage)
     return () => observer.disconnect()
-  }, [reviewMode])
+  }, [readyArtifactKey, reviewMode])
 
   useEffect(() => {
     if (!reviewMode || !previewStage.current) return
@@ -662,7 +1126,7 @@ export default function EpubRenditionPreview({
         stage.scrollLeft = 0
         stage.scrollTop = 0
       }
-      if (frameDocument) {
+      if (frameDocument?.documentElement && frameDocument.body) {
         frameDocument.documentElement.scrollLeft = 0
         frameDocument.documentElement.scrollTop = 0
         frameDocument.body.scrollLeft = 0
@@ -676,39 +1140,44 @@ export default function EpubRenditionPreview({
   }, [epub?.sha256, reviewMode, reviewPreviewScale])
 
   useEffect(() => {
+    reviewPaginationAbortController.current?.abort()
+    reviewPaginationAbortController.current = undefined
+    paginationRevision.current += 1
+    discretePagination.current = undefined
+    setNavigationAnnouncement('')
+    setReviewPaginationError('')
+    setReviewPaginationStatus('idle')
+    setPaginatedReviewLayoutKey('')
     navigationHistory.current = []
-    setNavigation(null)
+    setNavigationHistorySize(0)
     setEpubPage(1)
+    epubPageRef.current = 1
     setEpubPageCount(1)
     epubPageCountRef.current = 1
+    reviewLayoutAttempts.current.reset()
   }, [epub?.sha256])
 
   const showEpubPage = (
     requestedPage: number,
     count = epubPageCountRef.current,
   ) => {
-    const frameWindow = iframe.current?.contentWindow
     const frameDocument = iframe.current?.contentDocument
-    const content = frameDocument?.querySelector<HTMLElement>(
-      '[data-review-page-content]',
-    )
-    if (!frameWindow || !frameDocument || !content) return
+    const pagination = discretePagination.current
+    if (!frameDocument?.documentElement || !frameDocument.body || !pagination) {
+      return
+    }
     const page = clampEpubPage(requestedPage, count)
-    content.style.transform = 'none'
-    content.dataset.reviewPage = String(page)
+    pagination.show(page)
     frameDocument.documentElement.scrollLeft = 0
     frameDocument.documentElement.scrollTop = 0
     frameDocument.body.scrollLeft = 0
     frameDocument.body.scrollTop = 0
-    frameWindow.scrollTo({
-      left: 0,
-      top: (page - 1) * frameWindow.innerHeight,
-      behavior: 'auto',
-    })
+    iframe.current?.contentWindow?.scrollTo({ left: 0, top: 0 })
     if (previewStage.current) {
       previewStage.current.scrollLeft = 0
       previewStage.current.scrollTop = 0
     }
+    epubPageRef.current = page
     setEpubPage(page)
   }
 
@@ -718,74 +1187,184 @@ export default function EpubRenditionPreview({
     const document = frame?.contentDocument
     const frameWindow = frame?.contentWindow
     if (!document || !frameWindow) return
-    const styleId = 'epub-review-reader-settings'
-    const style =
-      document.getElementById(styleId) ?? document.createElement('style')
-    if (!style.parentElement) {
-      document.querySelectorAll<HTMLElement>('main *').forEach((element) => {
-        const ownsVisibleText = [...element.childNodes].some(
-          (node) =>
-            node.nodeType === Node.TEXT_NODE &&
-            Boolean(node.textContent?.trim()),
-        )
-        if (!ownsVisibleText) return
-        element.dataset.reviewBaseFontSize = 'true'
-        element.style.setProperty(
-          '--review-base-font-size',
-          frameWindow.getComputedStyle(element).fontSize,
+    const layoutAttempt = { document, key: reviewLayoutKey }
+    if (!reviewLayoutAttempts.current.begin(layoutAttempt)) return
+    setReviewPaginationError('')
+    setReviewPaginationStatus('paginating')
+    setNavigationAnnouncement('Paginating EPUB for the selected layout…')
+    const layoutKey = reviewLayoutKey
+    const revision = paginationRevision.current + 1
+    paginationRevision.current = revision
+    reviewPaginationAbortController.current?.abort()
+    const paginationAbortController = new AbortController()
+    reviewPaginationAbortController.current = paginationAbortController
+    const scheduler = createReviewPaginationScheduler()
+    const isCurrentLayout = () =>
+      paginationRevision.current === revision &&
+      iframe.current?.contentDocument === document
+
+    void (async () => {
+      const styleId = 'epub-review-reader-settings'
+      const style =
+        document.getElementById(styleId) ?? document.createElement('style')
+      if (!style.parentElement) {
+        document.documentElement.dataset.reviewPreparationPhase = 'font-capture'
+        const captureStartedAt = frameWindow.performance.now()
+        await captureReviewBaseFontSizes(document, frameWindow, {
+          scheduler,
+          signal: paginationAbortController.signal,
+        })
+        if (!isCurrentLayout()) return
+        document.documentElement.dataset.reviewFontCaptureMilliseconds = (
+          frameWindow.performance.now() - captureStartedAt
+        ).toFixed(1)
+      }
+      if (!isCurrentLayout()) return
+      style.id = styleId
+      style.textContent = composeReviewReaderCss(
+        reviewFontSizeId,
+        reviewFontFamilyId,
+      )
+      if (!style.parentElement) document.head.append(style)
+      document.documentElement.dataset.reviewPreparationPhase = 'assets'
+      await Promise.all([
+        waitForReviewFonts(document, paginationAbortController.signal),
+        ...[...document.images].map((image) =>
+          waitForReviewImage(image, paginationAbortController.signal),
+        ),
+      ])
+      if (!isCurrentLayout()) return
+      await new Promise<void>((resolve) => {
+        // WebKit does not reliably dispatch callbacks registered on a
+        // script-disabled sandboxed frame's Window. Schedule from the parent
+        // realm while measuring the already-loaded frame document.
+        window.requestAnimationFrame(() =>
+          window.requestAnimationFrame(() => resolve()),
         )
       })
-    }
-    style.id = styleId
-    style.textContent = composeReviewReaderCss(
-      reviewFontSizeId,
-      reviewFontFamilyId,
-    )
-    if (!style.parentElement) document.head.append(style)
-    const main = document.querySelector('main')
-    if (main && !main.querySelector(':scope > [data-review-page-content]')) {
-      const content = document.createElement('div')
-      content.dataset.reviewPageContent = 'true'
-      while (main.firstChild) content.append(main.firstChild)
-      main.append(content)
-    }
-    frameWindow.requestAnimationFrame(() => {
-      frameWindow.requestAnimationFrame(() => {
-        const content = document.querySelector<HTMLElement>(
-          '[data-review-page-content]',
+      if (!isCurrentLayout() || !document.documentElement || !document.body) {
+        return
+      }
+      document.documentElement.dataset.reviewPreparationPhase = 'pagination'
+      const previousPage = epubPageRef.current
+      const previousCount = epubPageCountRef.current
+      const run = reviewPaginationQueue.current.then(() =>
+        materializeDiscreteReviewPages(document, {
+          scheduler,
+          signal: paginationAbortController.signal,
+        }),
+      )
+      reviewPaginationQueue.current = run.then(
+        () => undefined,
+        () => undefined,
+      )
+      const pagination = await run
+      if (!isCurrentLayout()) return
+      reviewLayoutAttempts.current.complete(layoutAttempt)
+      discretePagination.current = pagination
+      if (
+        reviewPaginationAbortController.current === paginationAbortController
+      ) {
+        reviewPaginationAbortController.current = undefined
+      }
+      document.documentElement.dataset.reviewPreparationPhase = 'complete'
+      setPaginatedReviewLayoutKey(layoutKey)
+      setReviewPaginationStatus('complete')
+      const count = pagination.pageCount
+      epubPageCountRef.current = count
+      setEpubPageCount(count)
+      const relativePosition =
+        previousCount <= 1 ? 0 : (previousPage - 1) / (previousCount - 1)
+      const selected = clampEpubPage(
+        1 + Math.round(relativePosition * Math.max(0, count - 1)),
+        count,
+      )
+      showEpubPage(selected, count)
+      setNavigationAnnouncement(
+        `EPUB repaginated into ${count} complete pages.`,
+      )
+    })()
+      .catch((error) => {
+        if (!isCurrentLayout()) return
+        if (
+          reviewPaginationAbortController.current === paginationAbortController
+        ) {
+          reviewPaginationAbortController.current = undefined
+        }
+        document.documentElement.dataset.reviewPreparationPhase = 'failed'
+        setReviewPaginationError(
+          error instanceof Error
+            ? error.message
+            : 'EPUB review pagination failed closed.',
         )
-        const contentHeight = Math.max(
-          (content?.scrollHeight ?? 0) + frameWindow.innerHeight * 0.12,
-          frameWindow.innerHeight,
-        )
-        const count = Math.max(
-          1,
-          Math.ceil((contentHeight - 1) / frameWindow.innerHeight),
-        )
-        epubPageCountRef.current = count
-        setEpubPageCount(count)
-        showEpubPage(1, count)
-        navigationHistory.current = []
-        setNavigation(null)
+        setReviewPaginationStatus('failed')
       })
-    })
+      .finally(() => reviewLayoutAttempts.current.fail(layoutAttempt))
   }
 
-  useEffect(() => {
-    applyReviewReaderSettings()
-  }, [
-    epub?.sha256,
-    reviewFontFamilyId,
-    reviewFontSizeId,
-    reviewMode,
-    reviewViewport.height,
-    reviewViewport.width,
-  ])
+  const beginReviewRepagination = () => {
+    reviewPaginationAbortController.current?.abort()
+    reviewPaginationAbortController.current = undefined
+    paginationRevision.current += 1
+    discretePagination.current = undefined
+    navigationHistory.current = []
+    setNavigationHistorySize(0)
+    setReviewPaginationError('')
+    setReviewPaginationStatus('paginating')
+    setPaginatedReviewLayoutKey('')
+    reviewLayoutAttempts.current.reset()
+    setNavigationAnnouncement('Paginating EPUB for the selected layout…')
+  }
 
   const connectInternalNavigation = () => {
     const frame = iframe.current
     const document = frame?.contentDocument
     if (!frame || !document) return
+    const openInternalTarget = (
+      targetId: string,
+      link: HTMLAnchorElement | null,
+    ) => {
+      const target = document.getElementById(targetId)
+      document
+        .querySelectorAll('[data-review-navigation-target="true"]')
+        .forEach((candidate) =>
+          candidate.removeAttribute('data-review-navigation-target'),
+        )
+      if (!target) {
+        setNavigationAnnouncement('Target missing from this EPUB.')
+        return
+      }
+      target.setAttribute('data-review-navigation-target', 'true')
+      const frameWindow = frame.contentWindow
+      if (reviewMode && frameWindow) {
+        const targetPage =
+          discretePagination.current?.pageForTarget(target) ?? null
+        if (!targetPage) {
+          setNavigationAnnouncement('Target is not on a materialized page.')
+          return
+        }
+        navigationHistory.current.push({
+          page: epubPageRef.current,
+          originId: link
+            ? ensureReviewNavigationOriginIdentity(link, document)
+            : null,
+        })
+        setNavigationHistorySize(navigationHistory.current.length)
+        showEpubPage(targetPage)
+        focusReviewNavigationTarget(target, (callback) =>
+          frameWindow.requestAnimationFrame(() => callback()),
+        )
+        setNavigationAnnouncement(
+          `Opened ${link?.textContent?.trim() || 'target'} on EPUB page ${targetPage}.`,
+        )
+      } else {
+        target.scrollIntoView({ block: 'start' })
+        focusReviewNavigationTarget(target)
+        setNavigationAnnouncement(
+          `Opened ${link?.textContent?.trim() || 'target'}.`,
+        )
+      }
+    }
     document.addEventListener('click', (event) => {
       const origin = event.target
       const link =
@@ -794,71 +1373,22 @@ export default function EpubRenditionPreview({
           : null
       if (!link) return
       const targetId = internalPreviewTargetId(link.getAttribute('href') ?? '')
-      const target = targetId ? document.getElementById(targetId) : null
       event.preventDefault()
-      document
-        .querySelectorAll('[data-review-navigation-target="true"]')
-        .forEach((candidate) =>
-          candidate.removeAttribute('data-review-navigation-target'),
-        )
-      if (!target) {
-        setNavigation({
-          marker: link.textContent?.trim() || 'Link',
-          target: 'Target missing from this EPUB',
-        })
-        return
-      }
-      target.setAttribute('data-review-navigation-target', 'true')
-      const frameWindow = frame.contentWindow
-      if (reviewMode && frameWindow) {
-        const content = document.querySelector<HTMLElement>(
-          '[data-review-page-content]',
-        )
-        navigationHistory.current.push(Number(content?.dataset.reviewPage ?? 1))
-        const absoluteTargetTop =
-          target.getBoundingClientRect().top -
-          (content?.getBoundingClientRect().top ?? 0)
-        showEpubPage(
-          Math.floor(absoluteTargetTop / frameWindow.innerHeight) + 1,
-        )
-      } else {
-        navigationHistory.current.push(frameWindow?.scrollY ?? 0)
-        target.scrollIntoView({ block: 'start' })
-      }
-      const targetText = (target.textContent ?? '')
-        .replace(/\s+/gu, ' ')
-        .trim()
-        .slice(0, 220)
-      setNavigation({
-        marker: link.textContent?.trim() || 'Link',
-        target: targetText || targetId || 'Unnamed target',
-      })
+      if (targetId) openInternalTarget(targetId, link)
     })
-    if (reviewMode && frame.contentWindow) {
-      frame.contentWindow.addEventListener(
-        'scroll',
-        () => {
-          const frameWindow = frame.contentWindow
-          if (!frameWindow) return
-          const livePageCount = Math.max(
-            1,
-            Math.ceil(
-              frameWindow.document.documentElement.scrollHeight /
-                frameWindow.innerHeight,
-            ),
-          )
-          setEpubPage(
-            clampEpubPage(
-              Math.floor(frameWindow.scrollY / frameWindow.innerHeight) + 1,
-              livePageCount,
-            ),
-          )
-        },
-        { passive: true },
-      )
-    }
     applyReviewReaderSettings()
   }
+
+  useEffect(() => {
+    if (
+      !reviewMode ||
+      !readyArtifactKey ||
+      !iframe.current?.contentDocument?.querySelector('main')
+    ) {
+      return
+    }
+    applyReviewReaderSettings()
+  }, [readyArtifactKey, reviewLayoutKey, reviewMode])
 
   const canBuildSelectedProfile =
     hasSupportedProfile && Boolean(onSelectedProfileChange)
@@ -891,6 +1421,12 @@ export default function EpubRenditionPreview({
       data-review-orientation={reviewMode ? reviewOrientation : undefined}
       data-review-font-size={reviewMode ? reviewFontSizeId : undefined}
       data-review-font-family={reviewMode ? reviewFontFamilyId : undefined}
+      data-review-pagination-status={
+        reviewMode ? reviewPaginationStatus : undefined
+      }
+      data-review-paginated-layout={
+        reviewMode ? paginatedReviewLayoutKey : undefined
+      }
     >
       {!reviewMode && (
         <div className="epub-preview-header">
@@ -1017,55 +1553,57 @@ export default function EpubRenditionPreview({
       )}
       {reviewMode && epub && (
         <div className="epub-review-controls">
-          {navigation && (
-            <div className="epub-review-navigation" aria-live="polite">
-              <button
-                type="button"
-                onClick={() => {
-                  const position = navigationHistory.current.pop()
-                  if (position === undefined) return
-                  const frame = iframe.current
-                  frame?.contentDocument
-                    ?.querySelectorAll('[data-review-navigation-target="true"]')
-                    .forEach((candidate) =>
-                      candidate.removeAttribute(
-                        'data-review-navigation-target',
-                      ),
-                    )
-                  if (reviewMode) {
-                    showEpubPage(position)
-                  } else {
-                    frame?.contentWindow?.scrollTo(0, position)
-                  }
-                  setNavigation(null)
-                }}
-              >
-                ← Back
-              </button>
-              <span>{`${navigation.marker} → ${navigation.target}`}</span>
-            </div>
+          {reviewPaginationError && (
+            <p className="epub-review-pagination-error" role="alert">
+              {reviewPaginationError}
+            </p>
           )}
           <div
             className="epub-review-pagination"
             aria-label="EPUB page navigation"
           >
-            <button
-              type="button"
-              disabled={epubPage <= 1}
-              onClick={() => showEpubPage(epubPage - 1)}
-            >
-              ← Previous page
-            </button>
-            <strong aria-live="polite">
-              EPUB page {epubPage} of {epubPageCount}
-            </strong>
-            <button
-              type="button"
-              disabled={epubPage >= epubPageCount}
-              onClick={() => showEpubPage(epubPage + 1)}
-            >
-              Next page →
-            </button>
+            <PageNavigation
+              page={epubPage}
+              pageCount={epubPageCount}
+              label="EPUB"
+              onPageChange={showEpubPage}
+            />
+            {navigationHistorySize > 0 && (
+              <button
+                type="button"
+                className="epub-review-return"
+                aria-label="Return to previous EPUB location"
+                title="Return to previous EPUB location"
+                onClick={() => {
+                  const origin = navigationHistory.current.pop()
+                  setNavigationHistorySize(navigationHistory.current.length)
+                  if (!origin) return
+                  showEpubPage(origin.page)
+                  setNavigationAnnouncement(
+                    `Returned to EPUB page ${origin.page}.`,
+                  )
+                  const originElement = origin.originId
+                    ? iframe.current?.contentDocument?.getElementById(
+                        origin.originId,
+                      )
+                    : null
+                  if (originElement) {
+                    focusReviewNavigationTarget(originElement)
+                  }
+                }}
+              >
+                ↩
+              </button>
+            )}
+            <PageZoomControls
+              mode={reviewZoomMode}
+              percent={reviewZoomPercent}
+              actualScale={reviewPreviewScale}
+              onChange={(mode, percent) => {
+                setReviewZoomMode(mode)
+                setReviewZoomPercent(percent)
+              }}
+            />
             <details className="epub-review-settings">
               <summary>
                 <span>Reader settings</span>
@@ -1085,11 +1623,12 @@ export default function EpubRenditionPreview({
                   <select
                     aria-label="Viewport size"
                     value={reviewViewportId}
-                    onChange={(event) =>
-                      setReviewViewportId(
-                        event.target.value as ReviewViewportId,
-                      )
-                    }
+                    onChange={(event) => {
+                      const next = event.target.value as ReviewViewportId
+                      if (next === reviewViewportId) return
+                      beginReviewRepagination()
+                      setReviewViewportId(next)
+                    }}
                   >
                     {reviewViewportPresets.map((candidate) => (
                       <option key={candidate.id} value={candidate.id}>
@@ -1103,11 +1642,12 @@ export default function EpubRenditionPreview({
                   <select
                     aria-label="Orientation"
                     value={reviewOrientation}
-                    onChange={(event) =>
-                      setReviewOrientation(
-                        event.target.value as TargetOrientation,
-                      )
-                    }
+                    onChange={(event) => {
+                      const next = event.target.value as TargetOrientation
+                      if (next === reviewOrientation) return
+                      beginReviewRepagination()
+                      setReviewOrientation(next)
+                    }}
                   >
                     <option value="portrait">Portrait</option>
                     <option value="landscape">Landscape</option>
@@ -1118,11 +1658,12 @@ export default function EpubRenditionPreview({
                   <select
                     aria-label="Font size"
                     value={reviewFontSizeId}
-                    onChange={(event) =>
-                      setReviewFontSizeId(
-                        event.target.value as ReviewFontSizeId,
-                      )
-                    }
+                    onChange={(event) => {
+                      const next = event.target.value as ReviewFontSizeId
+                      if (next === reviewFontSizeId) return
+                      beginReviewRepagination()
+                      setReviewFontSizeId(next)
+                    }}
                   >
                     {reviewFontSizes.map((candidate) => (
                       <option key={candidate.id} value={candidate.id}>
@@ -1136,11 +1677,12 @@ export default function EpubRenditionPreview({
                   <select
                     aria-label="Font family"
                     value={reviewFontFamilyId}
-                    onChange={(event) =>
-                      setReviewFontFamilyId(
-                        event.target.value as ReviewFontFamilyId,
-                      )
-                    }
+                    onChange={(event) => {
+                      const next = event.target.value as ReviewFontFamilyId
+                      if (next === reviewFontFamilyId) return
+                      beginReviewRepagination()
+                      setReviewFontFamilyId(next)
+                    }}
                   >
                     {reviewFontFamilies.map((candidate) => (
                       <option key={candidate.id} value={candidate.id}>
@@ -1157,6 +1699,9 @@ export default function EpubRenditionPreview({
                 </output>
               </div>
             </details>
+            <span className="sr-only" aria-live="polite">
+              {navigationAnnouncement}
+            </span>
           </div>
         </div>
       )}
@@ -1166,9 +1711,9 @@ export default function EpubRenditionPreview({
             ? `Building ${screen.label} EPUB locally…`
             : `Preparing ${screen.label} EPUB build…`}
         </p>
-      ) : preview?.error ? (
+      ) : preview?.status === 'error' ? (
         <p role="alert">Preview unavailable: {preview.error}</p>
-      ) : preview?.srcDoc ? (
+      ) : preview?.status === 'success' ? (
         <>
           <div
             ref={previewStage}
@@ -1179,9 +1724,13 @@ export default function EpubRenditionPreview({
                 ? `Single ${screen.label} EPUB page`
                 : `Scrollable ${screen.label} EPUB viewport`
             }
+            data-zoom-mode={reviewMode ? reviewZoomMode : undefined}
             tabIndex={0}
             onScroll={(event) => {
-              if (reviewMode && event.currentTarget.scrollTop !== 0) {
+              if (
+                shouldPinReviewScrollToTop(reviewMode, reviewZoomMode) &&
+                event.currentTarget.scrollTop !== 0
+              ) {
                 event.currentTarget.scrollTop = 0
               }
             }}
@@ -1193,7 +1742,38 @@ export default function EpubRenditionPreview({
                 event.preventDefault()
                 event.stopPropagation()
                 showEpubPage(epubPage + (event.key === 'ArrowLeft' ? -1 : 1))
+              } else if (
+                reviewMode &&
+                (event.key === '+' || event.key === '=' || event.key === '-')
+              ) {
+                event.preventDefault()
+                const direction = event.key === '-' ? -1 : 1
+                setReviewZoomMode('custom')
+                setReviewZoomPercent(
+                  steppedReviewZoom(
+                    reviewZoomMode === 'custom'
+                      ? reviewZoomPercent
+                      : reviewPreviewScale * 100,
+                    direction,
+                  ),
+                )
+              } else if (reviewMode && event.key === '0') {
+                event.preventDefault()
+                setReviewZoomMode('fit-page')
               }
+            }}
+            onWheel={(event) => {
+              if (!reviewMode || !event.ctrlKey) return
+              event.preventDefault()
+              setReviewZoomMode('custom')
+              setReviewZoomPercent(
+                steppedReviewZoom(
+                  reviewZoomMode === 'custom'
+                    ? reviewZoomPercent
+                    : reviewPreviewScale * 100,
+                  event.deltaY > 0 ? -1 : 1,
+                ),
+              )
             }}
           >
             <div
@@ -1217,13 +1797,9 @@ export default function EpubRenditionPreview({
               >
                 <iframe
                   ref={iframe}
-                  key={`${screen.id}-${epub.sha256}${
-                    reviewMode
-                      ? `-${reviewViewportId}-${reviewOrientation}-${reviewFontSizeId}-${reviewFontFamilyId}`
-                      : ''
-                  }`}
+                  key={`${screen.id}-${epub.sha256}`}
                   title={`Generated EPUB rendition on ${screen.label}`}
-                  sandbox="allow-same-origin"
+                  sandbox={EPUB_PREVIEW_SANDBOX}
                   srcDoc={preview.srcDoc}
                   onLoad={connectInternalNavigation}
                 />

@@ -481,9 +481,13 @@ export function resolvePdfScholarlyCrossReferences({
       targets,
       targetNodeIds:
         status === 'matched'
-          ? targets.flatMap((target) =>
-              target.targetNodeId ? [target.targetNodeId] : [],
-            )
+          ? [
+              ...new Set(
+                targets.flatMap((target) =>
+                  target.targetNodeId ? [target.targetNodeId] : [],
+                ),
+              ),
+            ]
           : [],
       status,
       canonicalAnchor: null,

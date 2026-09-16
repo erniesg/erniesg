@@ -15,14 +15,21 @@ import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { canonicalJsonHash } from './pdf-corpus-audit-lib.mjs'
+import {
+  canonicalHyphenEvidenceSha256,
+  canonicalJsonHash,
+  PDF_HYPHEN_DERIVED_AFFIX_REMOVAL_REQUIRED_EVIDENCE,
+  PDF_HYPHEN_LEXICAL_MODEL_RECEIPT,
+  PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE_RECEIPT,
+  PDF_HYPHEN_REMOVAL_REQUIRED_EVIDENCE,
+} from './pdf-corpus-audit-lib.mjs'
 import {
   applyPrivateDecisionSet,
   comparePrivateFidelityBaseline,
   comparePrivateFidelityReceipts,
   createPrivateFidelityReceipt,
   createPrivateFidelityRunReceipt,
-  createPrivateReconstructionEvidence,
+  createPrivateReconstructionEvidence as createPrivateReconstructionEvidenceRaw,
   parsePrivateFidelityArguments,
   prepareOwnerOnlyDirectory,
   writeExclusive,
@@ -37,6 +44,113 @@ const privateCompletenessPolicy = {
   maximumUnresolvedObjects: 0,
   maximumOcrRequiredPages: 0,
   maximumReadingOrderDiagnostics: 0,
+}
+
+function createPrivateReconstructionEvidence(
+  reconstruction,
+  artifactProjections = { 'readable-fallback': reconstruction },
+) {
+  return createPrivateReconstructionEvidenceRaw(
+    reconstruction,
+    artifactProjections,
+  )
+}
+
+function canonicalHyphenDeletionRecord() {
+  const joinedWord = 'representation'
+  return {
+    id: '1'.repeat(64),
+    context: 'canonical-flow-continuation',
+    outcome: 'removed-discretionary-hyphen',
+    fromRegionId: '2'.repeat(64),
+    fromLineId: '3'.repeat(64),
+    toRegionId: '4'.repeat(64),
+    toLineId: '5'.repeat(64),
+    geometry: {
+      from: {
+        page: 1,
+        x: 0.1,
+        y: 0.2,
+        width: 0.3,
+        height: 0.02,
+        rotation: 0,
+        method: 'pdf-text',
+      },
+      to: {
+        page: 1,
+        x: 0.1,
+        y: 0.22,
+        width: 0.3,
+        height: 0.02,
+        rotation: 0,
+        method: 'pdf-text',
+      },
+    },
+    proof: {
+      tier: 'exact-same-document',
+      sourceBoundaryProven: true,
+      pinnedWordSha256: canonicalJsonHash(joinedWord),
+      pinnedJoinedFormValid: true,
+      pinnedSplit: {
+        leftSha256: canonicalJsonHash('repre'),
+        rightSha256: canonicalJsonHash('sentation'),
+        index: 5,
+      },
+      splitPointValid: true,
+      exactSameDocumentJoinedFormSha256: canonicalJsonHash(joinedWord),
+      sameDocumentJoinedFormValid: true,
+      hardHyphenFormSha256: canonicalJsonHash('repre-sentation'),
+      hardHyphenCounterproof: null,
+      model: { ...PDF_HYPHEN_LEXICAL_MODEL_RECEIPT },
+      evidenceSha256s: [
+        ...PDF_HYPHEN_REMOVAL_REQUIRED_EVIDENCE,
+        'language-scope:en-US->en-US',
+      ]
+        .map(canonicalHyphenEvidenceSha256)
+        .sort(),
+    },
+  }
+}
+
+function canonicalDerivedAffixHyphenDeletionRecord() {
+  const derivedWordSha256 = canonicalJsonHash('reparameterized')
+  const baseWordSha256 = canonicalJsonHash('parameterized')
+  const productivePrefix = {
+    ...PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE_RECEIPT,
+  }
+  return {
+    ...canonicalHyphenDeletionRecord(),
+    proof: {
+      tier: 'same-document-derived-affix',
+      sourceBoundaryProven: true,
+      derivedWordSha256,
+      productivePrefix,
+      baseWordSha256,
+      derivationBindingSha256: canonicalJsonHash({
+        derivedWordSha256,
+        productivePrefix,
+        baseWordSha256,
+      }),
+      pinnedBaseWordValid: true,
+      pinnedSplit: {
+        leftSha256: canonicalJsonHash('reparameter'),
+        rightSha256: canonicalJsonHash('ized'),
+        index: 11,
+      },
+      splitPointValid: true,
+      exactSameDocumentBaseWordSha256: baseWordSha256,
+      sameDocumentBaseWordValid: true,
+      hardHyphenFormSha256: canonicalJsonHash('reparameter-ized'),
+      hardHyphenCounterproof: null,
+      model: { ...PDF_HYPHEN_LEXICAL_MODEL_RECEIPT },
+      evidenceSha256s: [
+        ...PDF_HYPHEN_DERIVED_AFFIX_REMOVAL_REQUIRED_EVIDENCE,
+        'language-scope:en-US->en-US',
+      ]
+        .map(canonicalHyphenEvidenceSha256)
+        .sort(),
+    },
+  }
 }
 
 function citationRelationship(overrides = {}) {
@@ -211,6 +325,8 @@ function reconstruction(ready = true, ledgerAvailable = true) {
       },
       { id: 'region-2', page: 1, lines: [{ id: 'line-3' }] },
     ],
+    canonicalHyphenBoundaryDecisions: [],
+    canonicalHyphenBoundaryDecisionCount: 0,
     visualRelationships: [{ kind: 'figure', status: 'matched' }],
     noteRelationships: [],
     assets: [],
@@ -298,11 +414,14 @@ function inspectedArtifact(source, content) {
   )
 }
 
-function run(ordinal, source, artifacts) {
+function run(ordinal, source, artifacts, readableFallbackProjection = source) {
   return createPrivateFidelityRunReceipt({
     ordinal,
     reconstruction: source,
     artifacts,
+    artifactProjections: {
+      'readable-fallback': readableFallbackProjection,
+    },
   })
 }
 
@@ -348,7 +467,214 @@ function acceptedBaselineSha256(receipt) {
   return canonicalJsonHash(receipt)
 }
 
+function recomputePrivateReconstructionReceiptSha256(runReceipt) {
+  const {
+    latencyMs: _latencyMs,
+    costUsd: _costUsd,
+    ...readingOrderEvaluation
+  } = runReceipt.reconstruction.completeness.readingOrderEvaluation
+  runReceipt.reconstructionReceiptSha256 = canonicalJsonHash({
+    ...runReceipt.reconstruction,
+    completeness: {
+      ...runReceipt.reconstruction.completeness,
+      readingOrderEvaluation,
+    },
+  })
+}
+
+function rebuildPrivateFidelityReceipt(receipt) {
+  return createPrivateFidelityReceipt({
+    paperId: receipt.source.paperId,
+    sourceSha256: receipt.source.sha256,
+    byteLength: receipt.source.byteLength,
+    decisionSetSha256: receipt.decisionSetSha256,
+    runs: receipt.runs,
+    repeat: receipt.execution.repeat,
+    profiles: receipt.execution.profiles,
+    epubCheckRequired: receipt.execution.epubCheckRequired,
+    baselineComparison: receipt.baselineComparison,
+  })
+}
+
+function installCanonicalHyphenDeletionLedger(
+  receipt,
+  recordFactory = canonicalHyphenDeletionRecord,
+) {
+  const updated = structuredClone(receipt)
+  for (const runReceipt of updated.runs) {
+    const record = recordFactory()
+    const structure = runReceipt.reconstruction.structure
+    structure.canonicalHyphenDeletionLedgerAvailable = true
+    structure.canonicalHyphenDeletionCount = 1
+    structure.canonicalHyphenDeletionContextCounts = {
+      'canonical-flow-continuation': 1,
+    }
+    structure.canonicalHyphenDeletionLedger = [record]
+    structure.canonicalHyphenDeletionLedgerSha256 = canonicalJsonHash([record])
+    recomputePrivateReconstructionReceiptSha256(runReceipt)
+  }
+  return rebuildPrivateFidelityReceipt(updated)
+}
+
+function forgeCanonicalHyphenDeletionLedger(receipt, mutateRecord) {
+  const forged = structuredClone(receipt)
+  for (const runReceipt of forged.runs) {
+    const structure = runReceipt.reconstruction.structure
+    mutateRecord(structure.canonicalHyphenDeletionLedger[0])
+    structure.canonicalHyphenDeletionLedgerSha256 = canonicalJsonHash(
+      structure.canonicalHyphenDeletionLedger,
+    )
+    recomputePrivateReconstructionReceiptSha256(runReceipt)
+  }
+  return rebuildPrivateFidelityReceipt(forged)
+}
+
+function historicalV14Receipt(receipt) {
+  const historical = structuredClone(receipt)
+  for (const runReceipt of historical.runs) {
+    runReceipt.reconstruction.structure.schemaVersion = '1.4.0'
+    for (const field of [
+      'canonicalHyphenDeletionLedgerAvailable',
+      'canonicalHyphenDeletionCount',
+      'canonicalHyphenDeletionContextCounts',
+      'canonicalHyphenDeletionLedger',
+      'canonicalHyphenDeletionLedgerSha256',
+    ]) {
+      delete runReceipt.reconstruction.structure[field]
+    }
+    recomputePrivateReconstructionReceiptSha256(runReceipt)
+  }
+  return historical
+}
+
 describe('private PDF fidelity runner', () => {
+  it('accepts v1.4 only as a historical baseline and rejects current ledger tampering', () => {
+    const current = fidelityReceipt()
+    const historical = historicalV14Receipt(current)
+
+    expect(
+      comparePrivateFidelityReceipts(
+        historical,
+        current,
+        acceptedBaselineSha256(historical),
+      ),
+    ).toEqual({ status: 'failed', passed: false })
+    expect(() =>
+      comparePrivateFidelityReceipts(
+        current,
+        historical,
+        acceptedBaselineSha256(current),
+      ),
+    ).toThrow('INVALID_PRIVATE_FIDELITY_BASELINE')
+
+    const missingLedger = structuredClone(current)
+    delete missingLedger.runs[0].reconstruction.structure
+      .canonicalHyphenDeletionLedger
+    recomputePrivateReconstructionReceiptSha256(missingLedger.runs[0])
+    const tamperedHash = structuredClone(current)
+    tamperedHash.runs[0].reconstruction.structure.canonicalHyphenDeletionLedgerSha256 =
+      'f'.repeat(64)
+    recomputePrivateReconstructionReceiptSha256(tamperedHash.runs[0])
+    for (const invalid of [missingLedger, tamperedHash]) {
+      expect(() =>
+        comparePrivateFidelityReceipts(
+          invalid,
+          current,
+          acceptedBaselineSha256(invalid),
+        ),
+      ).toThrow('INVALID_PRIVATE_FIDELITY_BASELINE')
+    }
+  })
+
+  it('rejects coordinated private canonical-hyphen proof tampering after every receipt hash is recomputed', () => {
+    const valid = installCanonicalHyphenDeletionLedger(fidelityReceipt())
+    expect(
+      comparePrivateFidelityReceipts(
+        valid,
+        valid,
+        acceptedBaselineSha256(valid),
+      ),
+    ).toMatchObject({ status: 'passed', passed: true })
+
+    const joinedDigestMismatch = forgeCanonicalHyphenDeletionLedger(
+      valid,
+      (record) => {
+        record.proof.exactSameDocumentJoinedFormSha256 = 'f'.repeat(64)
+      },
+    )
+    const missingMandatoryEvidence = forgeCanonicalHyphenDeletionLedger(
+      valid,
+      (record) => {
+        record.proof.evidenceSha256s = ['a'.repeat(64)]
+      },
+    )
+    const forbiddenCounterproof = forgeCanonicalHyphenDeletionLedger(
+      valid,
+      (record) => {
+        record.proof.evidenceSha256s.push(
+          canonicalHyphenEvidenceSha256('hard-hyphen-form-valid:same-document'),
+        )
+        record.proof.evidenceSha256s.sort()
+      },
+    )
+
+    for (const forged of [
+      joinedDigestMismatch,
+      missingMandatoryEvidence,
+      forbiddenCounterproof,
+    ]) {
+      expect(() =>
+        comparePrivateFidelityReceipts(
+          forged,
+          valid,
+          acceptedBaselineSha256(forged),
+        ),
+      ).toThrow('INVALID_PRIVATE_FIDELITY_BASELINE')
+    }
+  })
+
+  it('versions and validates derived-affix proof receipts in private fidelity evidence', () => {
+    const valid = installCanonicalHyphenDeletionLedger(
+      fidelityReceipt(),
+      canonicalDerivedAffixHyphenDeletionRecord,
+    )
+    expect(valid.schemaVersion).toBe('1.8.0')
+    expect(
+      comparePrivateFidelityReceipts(
+        valid,
+        valid,
+        acceptedBaselineSha256(valid),
+      ),
+    ).toMatchObject({ status: 'passed', passed: true })
+
+    const wrongPrefix = forgeCanonicalHyphenDeletionLedger(valid, (record) => {
+      record.proof.productivePrefix.flag = 'Z'
+      record.proof.derivationBindingSha256 = canonicalJsonHash({
+        derivedWordSha256: record.proof.derivedWordSha256,
+        productivePrefix: record.proof.productivePrefix,
+        baseWordSha256: record.proof.baseWordSha256,
+      })
+    })
+    const wrongBase = forgeCanonicalHyphenDeletionLedger(valid, (record) => {
+      record.proof.exactSameDocumentBaseWordSha256 = 'f'.repeat(64)
+    })
+    const prefixBoundary = forgeCanonicalHyphenDeletionLedger(
+      valid,
+      (record) => {
+        record.proof.pinnedSplit.index = 2
+      },
+    )
+    for (const forged of [wrongPrefix, wrongBase, prefixBoundary]) {
+      expect(() =>
+        comparePrivateFidelityReceipts(
+          forged,
+          forged,
+          acceptedBaselineSha256(forged),
+        ),
+      ).toThrow('INVALID_PRIVATE_FIDELITY_BASELINE')
+    }
+  })
+
   it('records policy and error-diagnostic evidence for derived readiness round trips', () => {
     const ready = createPrivateReconstructionEvidence(reconstruction(true))
     const blocked = createPrivateReconstructionEvidence(reconstruction(false))
@@ -415,6 +741,67 @@ describe('private PDF fidelity runner', () => {
       relationshipCount: 0,
       assetCount: 0,
     })
+  })
+
+  it('binds parity to the exact authoritative readable projection', () => {
+    const source = reconstruction(false)
+    const relationship = (kind, index) => {
+      const suffix = String(index).padStart(3, '0')
+      return {
+        id: `${kind}-relationship-${suffix}`,
+        kind,
+        status: 'matched',
+        canonicalNodeId: `${kind}-node-${suffix}`,
+        captionNodeId: `${kind}-caption-${suffix}`,
+        assetIds: [`${kind}-asset-${suffix}`],
+      }
+    }
+    const equations = Array.from({ length: 66 }, (_, index) =>
+      relationship('equation', index + 1),
+    )
+    const figures = Array.from({ length: 65 }, (_, index) =>
+      relationship('figure', index + 1),
+    )
+    source.visualRelationships = [...equations, ...figures]
+    source.assets = source.visualRelationships.map((candidate, index) => {
+      const bytes = new Uint8Array([index % 256])
+      return {
+        id: candidate.assetIds[0],
+        href: `assets/${candidate.assetIds[0]}.png`,
+        mediaType: 'image/png',
+        kind: 'raster',
+        rendition: 'source-preserved',
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+        bytes,
+        width: 1,
+        height: 1,
+        resolutionDpi: null,
+        sourceObjectIds: [],
+        sourceBoxes: [],
+      }
+    })
+
+    const projectedRelationships = [...equations, ...figures.slice(0, 64)]
+    const projectedAssetIds = new Set(
+      projectedRelationships.flatMap((candidate) => candidate.assetIds),
+    )
+    const projection = {
+      ...source,
+      visualRelationships: projectedRelationships,
+      assets: source.assets.filter((asset) => projectedAssetIds.has(asset.id)),
+    }
+    const parity = createPrivateReconstructionEvidence(source, {
+      'readable-fallback': projection,
+    }).artifactParity['readable-fallback']
+
+    expect(parity.relationshipCount).toBe(66 + 64)
+    expect(parity.assetCount).toBe(66 + 64)
+  })
+
+  it('refuses to synthesize readable fallback parity without an authoritative projection', () => {
+    expect(() =>
+      createPrivateReconstructionEvidenceRaw(reconstruction()),
+    ).toThrow('READABLE_FALLBACK_PROJECTION_REQUIRED')
   })
 
   it('binds one canonical citation range to every rendered bibliography target', () => {
@@ -970,6 +1357,13 @@ describe('private PDF fidelity runner', () => {
       )
 
     const fallbackArtifact = createArtifact(false)
+    const fallbackProjection = {
+      ...source,
+      visualRelationships: source.visualRelationships.filter(
+        (relationship) => relationship.status === 'matched',
+      ),
+      assets: source.assets.filter((asset) => asset.id === 'asset-matched'),
+    }
     expect(fallbackArtifact.inlineSemanticLedger).toMatchObject({
       nodeCount: 1,
       semanticRangeCount: 3,
@@ -980,7 +1374,9 @@ describe('private PDF fidelity runner', () => {
       paperId: 'paper-v1',
       sourceSha256: hash,
       byteLength: 123,
-      runs: [1, 2].map((ordinal) => run(ordinal, source, [fallbackArtifact])),
+      runs: [1, 2].map((ordinal) =>
+        run(ordinal, source, [fallbackArtifact], fallbackProjection),
+      ),
       repeat: 2,
       profiles: ['mobile'],
     })
@@ -995,7 +1391,7 @@ describe('private PDF fidelity runner', () => {
       sourceSha256: hash,
       byteLength: 123,
       runs: [1, 2].map((ordinal) =>
-        run(ordinal, source, [overinclusiveArtifact]),
+        run(ordinal, source, [overinclusiveArtifact], fallbackProjection),
       ),
       repeat: 2,
       profiles: ['mobile'],
@@ -1005,7 +1401,12 @@ describe('private PDF fidelity runner', () => {
     )
 
     const coordinatedRuns = [1, 2].map((ordinal) => {
-      const candidate = run(ordinal, source, [overinclusiveArtifact])
+      const candidate = run(
+        ordinal,
+        source,
+        [overinclusiveArtifact],
+        fallbackProjection,
+      )
       const fallbackParity =
         candidate.reconstruction.artifactParity['readable-fallback']
       for (const key of [
@@ -1353,7 +1754,7 @@ describe('private PDF fidelity runner', () => {
       epubCheckRequired: true,
     })
 
-    expect(checked.schemaVersion).toBe('1.7.0')
+    expect(checked.schemaVersion).toBe('1.8.0')
     expect(checked.execution).toMatchObject({
       epubCheckRequired: true,
       epubCheckPassedCount: 6,
@@ -1664,7 +2065,7 @@ describe('private PDF fidelity runner', () => {
       [expect.stringMatching(/^[a-f0-9]{64}$/)],
     )
     expect(evidence.structure).toMatchObject({
-      schemaVersion: '1.4.0',
+      schemaVersion: '1.6.0',
       citationRelationshipCount: 1,
       citationRelationshipCounts: { matched: 1 },
       citationRelationshipGraphSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
@@ -1756,7 +2157,7 @@ describe('private PDF fidelity runner', () => {
       evidence.structure.crossReferenceRelationshipGraph[0].sourceBoxes,
     ).toEqual([expect.stringMatching(/^[a-f0-9]{64}$/)])
     expect(evidence.structure).toMatchObject({
-      schemaVersion: '1.4.0',
+      schemaVersion: '1.6.0',
       crossReferenceRelationshipCount: 1,
       crossReferenceRelationshipCounts: { 'figure:matched': 1 },
       crossReferenceRelationshipGraphSha256:
@@ -1909,7 +2310,7 @@ describe('private PDF fidelity runner', () => {
       profiles,
     })
 
-    expect(receipt.schemaVersion).toBe('1.7.0')
+    expect(receipt.schemaVersion).toBe('1.8.0')
     expect(receipt.execution.localValidationPassed).toBe(true)
     expect(receipt.baselineComparison).toEqual({
       status: 'not-configured',
@@ -2658,7 +3059,7 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
 
       expect(result.status, result.stderr).toBe(1)
       expect(receipt).toMatchObject({
-        schemaVersion: '1.7.0',
+        schemaVersion: '1.8.0',
         execution: {
           epubCheckRequired: true,
           epubCheckPassedCount: 2,

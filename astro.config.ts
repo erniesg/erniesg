@@ -181,11 +181,16 @@ export default defineConfig({
   },
   vite: {
     plugins: [localOcrBuildAssetsPlugin(), localOcrDevAssetsPlugin()],
-    // PDF.js is loaded only after the reader chooses a file. Pre-bundling it
-    // prevents Vite's first dynamic import from reloading the studio and
-    // discarding that browser-local File during a cold dev/Playwright run.
+    // The publication worker graph is loaded only after the reader chooses a
+    // file. Pre-bundle both PDF.js import targets and the OCR adapter so Vite
+    // cannot discover them later, reload the studio, and discard that
+    // browser-local File during a cold dev/Playwright run.
     optimizeDeps: {
-      include: ['pdfjs-dist'],
+      include: [
+        'pdfjs-dist',
+        'pdfjs-dist/legacy/build/pdf.mjs',
+        'tesseract.js',
+      ],
       // Headless OCR loads this native Node package only when `document` is
       // absent. Browser dependency discovery must not inspect its
       // platform-specific optional binaries.

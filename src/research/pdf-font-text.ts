@@ -136,6 +136,39 @@ const CMEX10_UNICODE_BY_SLOT = new Map<number, string>([
   [0x7f, '⇓'],
 ])
 
+// AMS's msbm family stores blackboard-bold capitals in the ordinary ASCII
+// uppercase slots. PDF.js can therefore expose the source glyph for `\mathbb Q`
+// as plain `Q` even when the page paints ℚ. Decode only the proven MSBM family;
+// the same ASCII text in roman or generic symbol fonts remains unchanged.
+const MSBM_UNICODE_BY_ASCII = new Map<string, string>([
+  ['A', '𝔸'],
+  ['B', '𝔹'],
+  ['C', 'ℂ'],
+  ['D', '𝔻'],
+  ['E', '𝔼'],
+  ['F', '𝔽'],
+  ['G', '𝔾'],
+  ['H', 'ℍ'],
+  ['I', '𝕀'],
+  ['J', '𝕁'],
+  ['K', '𝕂'],
+  ['L', '𝕃'],
+  ['M', '𝕄'],
+  ['N', 'ℕ'],
+  ['O', '𝕆'],
+  ['P', 'ℙ'],
+  ['Q', 'ℚ'],
+  ['R', 'ℝ'],
+  ['S', '𝕊'],
+  ['T', '𝕋'],
+  ['U', '𝕌'],
+  ['V', '𝕍'],
+  ['W', '𝕎'],
+  ['X', '𝕏'],
+  ['Y', '𝕐'],
+  ['Z', 'ℤ'],
+])
+
 const MAX_FONT_DEPENDENCIES_PER_PAGE = 64
 const PDF_FONT_DEPENDENCY_TIMEOUT_MS = 10_000
 
@@ -176,6 +209,51 @@ export type PdfFontMetadata = {
   name: string
   bold?: boolean
   italic?: boolean
+}
+
+type PdfFontStyleInput = {
+  fontName: string
+  text: string
+  bold?: boolean
+  italic?: boolean
+}
+
+const GENERIC_BOLD_FONT_NAME =
+  /(?:bold|black|demi|semibold|(?:^|[-_])medi(?:um)?(?:$|[-_]))/iu
+const GENERIC_ITALIC_FONT_NAME =
+  /(?:italic|ital(?:ic)?|oblique|(?:^|[-_])it(?:$|[-_]))/iu
+const TEX_BOLD_FONT_FAMILY =
+  /(?:^|[+_-])(?:CMBX|LMBX)(?:TI|SL|I)?\d*(?=$|[+_-])/iu
+const TEX_MATH_ITALIC_FONT_FAMILY =
+  /(?:^|[+_-])(?:CMMI|LMMI)\d*(?=$|[+_-])|(?:^|[+_-])LMMathItalic\d*(?=$|[+_-])/iu
+const TEX_TEXT_ITALIC_FONT_FAMILY =
+  /(?:^|[+_-])(?:CMTI|CMSL|LMTI|LMSL|(?:CMBX|LMBX)(?:TI|SL|I))\d*(?=$|[+_-])/iu
+
+/**
+ * Resolves source emphasis from PDF.js metadata and bounded, known font-family
+ * names. Explicit PDF.js booleans remain authoritative. The TeX aliases cover
+ * subset-prefixed Computer Modern and Latin Modern faces without treating
+ * regular roman (CMR) or math-symbol (CMSY) fonts as authored emphasis.
+ */
+export function pdfFontStyle({
+  fontName,
+  text,
+  bold,
+  italic,
+}: PdfFontStyleInput) {
+  const mathItalic = TEX_MATH_ITALIC_FONT_FAMILY.test(fontName)
+  return {
+    bold:
+      bold ??
+      (GENERIC_BOLD_FONT_NAME.test(fontName) ||
+        TEX_BOLD_FONT_FAMILY.test(fontName)),
+    italic:
+      italic ??
+      (mathItalic
+        ? /\p{L}/u.test(text)
+        : GENERIC_ITALIC_FONT_NAME.test(fontName) ||
+          TEX_TEXT_ITALIC_FONT_FAMILY.test(fontName)),
+  }
 }
 
 type PdfCommonObjects = {
@@ -321,6 +399,11 @@ export function pdfFontTextRequiresStructuralReconstruction(
 }
 
 export function normalizePdfFontText(text: string, fontName: string) {
+  if (/(?:^|[+_-])MSBM\d*(?=$|[+_-])/iu.test(fontName)) {
+    return [...text]
+      .map((character) => MSBM_UNICODE_BY_ASCII.get(character) ?? character)
+      .join('')
+  }
   if (!/CMEX\d*/iu.test(fontName)) return text
   return [...text]
     .map((character) => {

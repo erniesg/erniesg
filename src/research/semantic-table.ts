@@ -5,6 +5,7 @@ import type {
   PdfSourceRun,
   PdfVisualRelationship,
 } from './import-types'
+import { pdfFontStyle } from './pdf-font-text.ts'
 import { mergeWrappedHeaderContinuationRuns } from './pdf-table-detection.ts'
 
 export type StrictSemanticTableInlineRun = {
@@ -183,26 +184,6 @@ function safeTableHyperlink(value: string) {
   } catch {
     return false
   }
-}
-
-function sourceRunBold(run: PdfSourceRun) {
-  return (
-    run.bold === true ||
-    (run.bold === undefined &&
-      /(?:bold|black|demi|semibold|(?:^|[-_])medi(?:um)?(?:$|[-_]))/iu.test(
-        run.fontName,
-      ))
-  )
-}
-
-function sourceRunItalic(run: PdfSourceRun) {
-  return (
-    run.italic === true ||
-    (run.italic === undefined &&
-      /(?:italic|ital(?:ic)?|oblique|(?:^|[-_])it(?:$|[-_]))/iu.test(
-        run.fontName,
-      ))
-  )
 }
 
 function median(values: number[]) {
@@ -601,8 +582,7 @@ function expectedInlineRun(
   rowRuns: readonly PdfSourceRun[],
   links: NodeSourceEvidence['links'],
 ) {
-  const bold = sourceRunBold(run)
-  const italic = sourceRunItalic(run)
+  const { bold, italic } = pdfFontStyle(run)
   const verticalAlign = sourceRunVerticalAlign(rowRuns, run)
   const hrefs = [
     ...links.flatMap((link) =>

@@ -43,7 +43,7 @@ type GeometryReport = {
 type GeometryEvidence = {
   schemaVersion: '1.0.0'
   runtime: {
-    browserName: 'chromium'
+    browserName: 'chromium' | 'firefox' | 'webkit'
     browserVersion: string
     viewport: { width: number; height: number }
     deviceScaleFactor: number
@@ -356,6 +356,7 @@ async function inspectGeometry(
 
 test('captures every paginated target and rejects invalid geometry', async ({
   browser,
+  browserName,
   page,
   request,
 }, testInfo) => {
@@ -471,7 +472,7 @@ test('captures every paginated target and rejects invalid geometry', async ({
   const evidence: GeometryEvidence = {
     schemaVersion: '1.0.0',
     runtime: {
-      browserName: 'chromium',
+      browserName,
       browserVersion: browser.version(),
       viewport: { width: 1440, height: 1200 },
       deviceScaleFactor: 1,

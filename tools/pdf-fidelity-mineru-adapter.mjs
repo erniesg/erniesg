@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env -S node --experimental-strip-types --disable-warning=ExperimentalWarning
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { constants } from 'node:fs'

@@ -5,6 +5,7 @@ import { buildEpub, inspectEpub } from './epub'
 import { PdfImportError } from './import-types'
 import { buildLayoutManifest, validateLayoutManifest } from './manifest'
 import {
+  createPdfOcrRasterSurface,
   extractPdfLinkAnnotations,
   isFlowAlignedPdfTextTransform,
   isPdfLocalPathArtifact,
@@ -22,9 +23,113 @@ import {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 describe('PDF.js browser ingestion', () => {
+  it('uses an OffscreenCanvas raster inside a browser worker without a DOM canvas', async () => {
+    const pngBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
+    const context = { kind: 'offscreen-2d-context' }
+    const convertToBlob = vi.fn(async ({ type }: { type: string }) => {
+      expect(type).toBe('image/png')
+      return new Blob([pngBytes], { type })
+    })
+    const getContext = vi.fn((type: string, options: { alpha: boolean }) => {
+      expect(type).toBe('2d')
+      expect(options).toEqual({ alpha: false })
+      return context
+    })
+    vi.stubGlobal(
+      'OffscreenCanvas',
+      class {
+        constructor(
+          readonly width: number,
+          readonly height: number,
+        ) {}
+
+        getContext = getContext
+        convertToBlob = convertToBlob
+      },
+    )
+
+    const surface = await createPdfOcrRasterSurface(320, 240)
+
+    expect(surface.canvas).toMatchObject({ width: 320, height: 240 })
+    expect(surface.context).toBe(context)
+    await expect(surface.encodePng()).resolves.toEqual(pngBytes)
+    expect(getContext).toHaveBeenCalledOnce()
+    expect(convertToBlob).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    {
+      name: '2D context is unavailable',
+      canvas: class {
+        constructor(
+          readonly width: number,
+          readonly height: number,
+        ) {}
+
+        getContext() {
+          return null
+        }
+
+        async convertToBlob() {
+          return new Blob()
+        }
+      },
+    },
+    {
+      name: 'PNG encoder is unavailable',
+      canvas: class {
+        constructor(
+          readonly width: number,
+          readonly height: number,
+        ) {}
+
+        getContext() {
+          return {}
+        }
+      },
+    },
+  ])(
+    'fails closed when the worker OffscreenCanvas $name',
+    async ({ canvas }) => {
+      vi.stubGlobal('OffscreenCanvas', canvas)
+
+      await expect(createPdfOcrRasterSurface(320, 240)).rejects.toMatchObject({
+        code: 'OCR_REQUIRED',
+      })
+    },
+  )
+
+  it('normalizes a rejected worker OffscreenCanvas PNG encode', async () => {
+    vi.stubGlobal(
+      'OffscreenCanvas',
+      class {
+        constructor(
+          readonly width: number,
+          readonly height: number,
+        ) {}
+
+        getContext() {
+          return {}
+        }
+
+        async convertToBlob() {
+          throw new Error('synthetic offscreen PNG rejection')
+        }
+      },
+    )
+
+    const surface = await createPdfOcrRasterSurface(320, 240)
+    await expect(surface.encodePng()).rejects.toMatchObject({
+      code: 'OCR_REQUIRED',
+      message:
+        'The browser worker could not encode its bounded local OCR raster.',
+    })
+  })
+
   it('extracts every link annotation with a stable discriminated obligation', () => {
     const annotations = [
       {
@@ -698,7 +803,7 @@ describe('PDF.js browser ingestion', () => {
       mergeStatus: 'duplicate',
     })
     expect(result.pages[0].objects?.[0]).toMatchObject({ role: 'semantic' })
-    expect(result.completeness.sourceAssetCount).toBe(1)
+    expect(result.completeness.sourceAssetCount).toBe(0)
     expect(result.readiness).toMatchObject({
       ready: false,
       status: 'review-required',
@@ -1293,17 +1398,55 @@ describe('PDF.js browser ingestion', () => {
       expect(cmexRuns.some((run) => run.text.includes('∑'))).toBe(true)
       expect(cmexRuns.every((run) => !run.fontName.startsWith('g_'))).toBe(true)
       expect(cmexRuns.every((run) => !/[\\/]/u.test(run.fontName))).toBe(true)
-      expect(
-        result.visualRelationships.find(
-          (relationship) =>
-            relationship.kind === 'equation' &&
-            relationship.label === 'Equation 3' &&
-            relationship.sourceBoxes.some((box) => box.page === 7),
-        ),
-      ).toMatchObject({
-        status: 'matched',
-        evidence: expect.arrayContaining(['source-page-crop']),
+      const equation3 = result.visualRelationships.find(
+        (relationship) =>
+          relationship.kind === 'equation' &&
+          relationship.label === 'Equation 3' &&
+          relationship.sourceBoxes.some((box) => box.page === 7),
+      )
+      const renderOnlyAssemblyRun = result.pages
+        .find((page) => page.page === 7)
+        ?.renderVisibleTextRuns?.find(
+          (run) =>
+            run.sourceSequenceIndex === 214 &&
+            run.sourceSemanticAdmission?.status ===
+              'unresolved-extension-glyph',
+        )
+      expect(renderOnlyAssemblyRun).toMatchObject({
+        text: '\ufffd',
+        fontName: expect.stringMatching(/CMEX10/iu),
       })
+      expect(equation3).toMatchObject({
+        status: 'matched',
+        evidence: expect.arrayContaining([
+          'source-page-crop',
+          'source-render-only-extension-glyph-owned-v1',
+        ]),
+        renderOnlySourceRunOwnerships: [
+          expect.objectContaining({
+            page: 7,
+            sourceLineId: 'page-007-line-0015',
+            sourceSequenceIndex: 214,
+            precedingSourceSequenceIndex: 213,
+            followingSourceSequenceIndex: 215,
+          }),
+        ],
+      })
+      expect(
+        result.diagnostics.some(
+          (diagnostic) =>
+            diagnostic.code === 'UNRESOLVED_VISUAL_OBJECT' &&
+            diagnostic.sourceBoxes?.some(
+              (box) =>
+                renderOnlyAssemblyRun &&
+                box.page === renderOnlyAssemblyRun.page &&
+                box.x === renderOnlyAssemblyRun.x &&
+                box.y === renderOnlyAssemblyRun.y &&
+                box.width === renderOnlyAssemblyRun.width &&
+                box.height === renderOnlyAssemblyRun.height,
+            ),
+        ),
+      ).toBe(false)
     },
     30_000,
   )
@@ -1664,7 +1807,7 @@ describe('PDF.js browser ingestion', () => {
       reconstructPdf(
         await fixtureFile('born-digital.pdf'),
         (progress) => {
-          if (progress.phase === 'reconstructing') controller.abort()
+          if (progress.phase === 'reading-order') controller.abort()
         },
         { signal: controller.signal },
       ),

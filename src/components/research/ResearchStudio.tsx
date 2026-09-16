@@ -821,7 +821,7 @@ export default function ResearchStudio({
                 candidate.canonicalId === node.relationships.caption,
             )?.fragments[0]
           : undefined
-      return (
+      const renderedNode = (
         <PaperNode
           key={fragment.id}
           node={node}
@@ -834,6 +834,23 @@ export default function ResearchStudio({
           visual={previewVisuals.get(node.id)}
           reconstructionProvided={Boolean(reconstruction)}
         />
+      )
+
+      if (!fragment.fallback) return renderedNode
+
+      return (
+        <div
+          key={`${fragment.id}:fallback-frame`}
+          className="srt-pagination-fallback-frame"
+          style={
+            {
+              '--srt-pagination-scale': fragment.fallback.scale,
+              '--srt-pagination-frame-height': `${fragment.estimatedHeightCssPx + preview.marginBottomCssPx}px`,
+            } as CSSProperties
+          }
+        >
+          <div className="srt-pagination-fallback-content">{renderedNode}</div>
+        </div>
       )
     })
 

@@ -4,6 +4,7 @@ import type {
   PdfNativeObject,
   PdfPageAnalysis,
   PdfSourceRun,
+  PdfTextOperationFilterRequest,
 } from './import-types'
 import { MAX_LOCAL_PDF_BYTES, PdfImportError } from './import-types'
 import { reconstructPageAnalyses, type PdfDocumentMetadata } from './pdf-layout'
@@ -25,6 +26,7 @@ import {
   pdfOperatorListDependencyIds,
   resolvePdfFontMetadata,
 } from './pdf-font-text'
+import { provePdfTextPaintRunProvenance } from './pdf-text-paint'
 import {
   renderPdfPageCrop,
   type PdfCanvasFactory,
@@ -46,10 +48,12 @@ type PdfImportOptions = {
   standardFontDataUrl?: string
   ocr?: PdfOcrOptions
   decisionFile?: HumanDecisionFile
+  language?: string
 }
 
 export const MAX_OCR_RASTER_PIXELS = 3_200_000
 const COMPOSITE_RASTER_TIMEOUT_MS = 15_000
+const BROWSER_WORKER_COOPERATIVE_DELAY_MS = 4
 
 function cancelledError() {
   return new PdfImportError(
@@ -60,6 +64,23 @@ function cancelledError() {
 
 function throwIfAborted(signal?: AbortSignal) {
   if (signal?.aborted) throw cancelledError()
+}
+
+function isBrowserWorkerRuntime() {
+  return (
+    typeof document === 'undefined' &&
+    typeof location !== 'undefined' &&
+    (location.protocol === 'http:' || location.protocol === 'https:') &&
+    typeof globalThis.postMessage === 'function'
+  )
+}
+
+async function yieldPdfImportTask(signal?: AbortSignal) {
+  if (!isBrowserWorkerRuntime()) return
+  await new Promise<void>((resolve) =>
+    globalThis.setTimeout(resolve, BROWSER_WORKER_COOPERATIVE_DELAY_MS),
+  )
+  throwIfAborted(signal)
 }
 
 function isPdf(bytes: Uint8Array) {
@@ -84,6 +105,88 @@ function finite(value: number, fallback = 0) {
 
 function clamp(value: number) {
   return Math.max(0, Math.min(1, finite(value)))
+}
+
+export function pdfTextItemSemanticAdmission({
+  rawText,
+  decodedText,
+  fontName,
+  paintProven,
+}: {
+  rawText: string
+  decodedText: string
+  fontName: string
+  paintProven: boolean
+}): {
+  text: string
+  renderVisibleText: string
+  status: 'admitted' | 'unresolved-extension-glyph'
+} {
+  const unresolvedExtensionGlyph =
+    /CMEX\d*/iu.test(fontName) &&
+    rawText.trim().length === 0 &&
+    decodedText.trim().length > 0 &&
+    !paintProven
+  return unresolvedExtensionGlyph
+    ? {
+        // Preserve PDF.js's whitespace evidence in semantic flow, but retain an
+        // explicit marker at the exact source box for bounded visual review.
+        text: rawText,
+        renderVisibleText: '\ufffd',
+        status: 'unresolved-extension-glyph',
+      }
+    : {
+        text: decodedText,
+        renderVisibleText: decodedText,
+        status: 'admitted',
+      }
+}
+
+function renderVisiblePdfTextBox({
+  transform,
+  itemWidth,
+  viewportWidth,
+  viewportHeight,
+  viewportScale,
+}: {
+  transform: readonly number[]
+  itemWidth: number
+  viewportWidth: number
+  viewportHeight: number
+  viewportScale: number
+}) {
+  const advanceLength = Math.max(Math.abs(itemWidth * viewportScale), 0.5)
+  const axisLength = Math.hypot(transform[0] ?? 0, transform[1] ?? 0)
+  const advanceX =
+    axisLength > 0 ? ((transform[0] ?? 0) / axisLength) * advanceLength : 0
+  const advanceY =
+    axisLength > 0 ? ((transform[1] ?? 0) / axisLength) * advanceLength : 0
+  const baseX = finite(transform[4])
+  const baseY = finite(transform[5])
+  const heightX = finite(transform[2])
+  const heightY = finite(transform[3])
+  const xs = [
+    baseX,
+    baseX + advanceX,
+    baseX + heightX,
+    baseX + advanceX + heightX,
+  ]
+  const ys = [
+    baseY,
+    baseY + advanceY,
+    baseY + heightY,
+    baseY + advanceY + heightY,
+  ]
+  const left = clamp(Math.min(...xs) / viewportWidth)
+  const top = clamp(Math.min(...ys) / viewportHeight)
+  const right = clamp(Math.max(...xs) / viewportWidth)
+  const bottom = clamp(Math.max(...ys) / viewportHeight)
+  return {
+    x: left,
+    y: top,
+    width: Math.max(right - left, 0.5 / viewportWidth),
+    height: Math.max(bottom - top, 0.5 / viewportHeight),
+  }
 }
 
 function roundedSourceCoordinate(value: number) {
@@ -225,7 +328,7 @@ type NodeOcrRasterCanvas = OcrRasterCanvas & {
   encode(format: 'png'): Promise<Uint8Array>
 }
 
-async function createOcrRasterSurface(width: number, height: number) {
+export async function createPdfOcrRasterSurface(width: number, height: number) {
   if (typeof document !== 'undefined') {
     const canvas = document.createElement('canvas')
     canvas.width = width
@@ -253,6 +356,32 @@ async function createOcrRasterSurface(width: number, height: number) {
           )
         })
         return new Uint8Array(await blob.arrayBuffer())
+      },
+    }
+  }
+
+  if (typeof OffscreenCanvas !== 'undefined') {
+    const canvas = new OffscreenCanvas(width, height)
+    const context = canvas.getContext('2d', { alpha: false })
+    if (!context || typeof canvas.convertToBlob !== 'function') {
+      throw new PdfImportError(
+        'OCR_REQUIRED',
+        'The browser worker could not create a bounded local OCR raster.',
+      )
+    }
+    return {
+      canvas: canvas as OcrRasterCanvas,
+      context,
+      async encodePng() {
+        try {
+          const blob = await canvas.convertToBlob({ type: 'image/png' })
+          return new Uint8Array(await blob.arrayBuffer())
+        } catch {
+          throw new PdfImportError(
+            'OCR_REQUIRED',
+            'The browser worker could not encode its bounded local OCR raster.',
+          )
+        }
       },
     }
   }
@@ -293,7 +422,7 @@ async function renderPageRaster(
     ),
   )
   const viewport = page.getViewport({ scale })
-  const { canvas, context, encodePng } = await createOcrRasterSurface(
+  const { canvas, context, encodePng } = await createPdfOcrRasterSurface(
     Math.max(1, Math.floor(viewport.width)),
     Math.max(1, Math.floor(viewport.height)),
   )
@@ -591,7 +720,9 @@ function bitmapPixelData(
         ? Object.assign(document.createElement('canvas'), { width, height })
         : null
   const context = canvas?.getContext('2d', { willReadFrequently: true })
-  if (!context) return null
+  if (!context || !('drawImage' in context) || !('getImageData' in context)) {
+    return null
+  }
   context.drawImage(bitmap, 0, 0, width, height)
   const data = context.getImageData(0, 0, width, height).data
   return new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
@@ -855,10 +986,13 @@ export async function reconstructPdf(
   }
 
   const sourceHash = await sha256(bytes)
-  const pdfjs =
-    typeof window === 'undefined'
-      ? await import('pdfjs-dist/legacy/build/pdf.mjs')
-      : await loadBrowserPdfRuntime()
+  const browserExecution =
+    typeof window !== 'undefined' ||
+    (typeof location !== 'undefined' &&
+      (location.protocol === 'http:' || location.protocol === 'https:'))
+  const pdfjs = browserExecution
+    ? await loadBrowserPdfRuntime()
+    : await import('pdfjs-dist/legacy/build/pdf.mjs')
   throwIfAborted(options.signal)
   const loadingTask = pdfjs.getDocument({
     data: bytes.slice(),
@@ -968,7 +1102,10 @@ export async function reconstructPdf(
         const viewport = page.getViewport({ scale: 1 })
         const [textContent, operatorList, annotations] = await Promise.all([
           page.getTextContent(),
-          page.getOperatorList(),
+          // This public API is DISPLAY|OPLIST and is used only to derive
+          // source-text character spans. Crop filtering is authorized later
+          // from the exact private DISPLAY render stream.
+          page.getOperatorList({ intent: 'display' }),
           page.getAnnotations({ intent: 'display' }),
         ])
         throwIfAborted(options.signal)
@@ -985,15 +1122,106 @@ export async function reconstructPdf(
           signal: options.signal,
         })
         throwIfAborted(options.signal)
+        const sourceTextPaintByItem = provePdfTextPaintRunProvenance({
+          textContentItems: textContent.items,
+          operatorList,
+          showTextOperation: pdfjs.OPS.showText,
+          textPaintOperations: new Set([
+            pdfjs.OPS.showText,
+            pdfjs.OPS.showSpacedText,
+            pdfjs.OPS.nextLineShowText,
+            pdfjs.OPS.nextLineSetSpacingShowText,
+          ]),
+          textStateOperations: new Set([
+            pdfjs.OPS.save,
+            pdfjs.OPS.restore,
+            pdfjs.OPS.transform,
+            pdfjs.OPS.setGState,
+            pdfjs.OPS.beginText,
+            pdfjs.OPS.endText,
+            pdfjs.OPS.setCharSpacing,
+            pdfjs.OPS.setWordSpacing,
+            pdfjs.OPS.setHScale,
+            pdfjs.OPS.setLeading,
+            pdfjs.OPS.setFont,
+            pdfjs.OPS.setTextRenderingMode,
+            pdfjs.OPS.setTextRise,
+            pdfjs.OPS.moveText,
+            pdfjs.OPS.setLeadingMoveText,
+            pdfjs.OPS.setTextMatrix,
+            pdfjs.OPS.nextLine,
+            pdfjs.OPS.showText,
+            pdfjs.OPS.showSpacedText,
+            pdfjs.OPS.nextLineShowText,
+            pdfjs.OPS.nextLineSetSpacingShowText,
+          ]),
+        })
         const runs: PdfSourceRun[] = []
+        const renderVisibleTextRuns: PdfSourceRun[] = []
         let pendingPdfTextItemWhitespace = false
         let previousVisibleSourceSequenceIndex: number | null = null
 
-        for (const item of textContent.items) {
+        for (const [sourceItemIndex, item] of textContent.items.entries()) {
           if (!('str' in item)) continue
           const font = fontMetadata.get(item.fontName)
           const sourceFontName = font?.name ?? item.fontName
-          const sourceText = normalizePdfFontText(item.str, sourceFontName)
+          const decodedSourceText = normalizePdfFontText(
+            item.str,
+            sourceFontName,
+          )
+          const sourceTextAdmission = pdfTextItemSemanticAdmission({
+            rawText: item.str,
+            decodedText: decodedSourceText,
+            fontName: sourceFontName,
+            paintProven: sourceTextPaintByItem.has(sourceItemIndex),
+          })
+          const sourceText = sourceTextAdmission.text
+          const transform = pdfjs.Util.transform(
+            viewport.transform,
+            item.transform,
+          )
+          if (sourceTextAdmission.renderVisibleText.length > 0) {
+            const renderVisibleFontHeight =
+              Math.hypot(transform[2] ?? 0, transform[3] ?? 0) ||
+              Math.abs(item.height * viewport.scale) ||
+              0.5
+            const renderVisibleBox = renderVisiblePdfTextBox({
+              transform,
+              itemWidth: item.width,
+              viewportWidth: viewport.width,
+              viewportHeight: viewport.height,
+              viewportScale: viewport.scale,
+            })
+            renderVisibleTextRuns.push({
+              page: pageNumber,
+              text: sourceTextAdmission.renderVisibleText,
+              ...renderVisibleBox,
+              rotation: viewport.rotation,
+              method: 'pdf-text',
+              fontName: sourceFontName,
+              fontSize: renderVisibleFontHeight,
+              sourceSequenceIndex: sourceItemIndex,
+              ...(sourceTextAdmission.status === 'unresolved-extension-glyph'
+                ? {
+                    sourceSemanticAdmission: {
+                      algorithm: 'pdf-text-item-semantic-admission-v1' as const,
+                      status: sourceTextAdmission.status,
+                    },
+                  }
+                : {}),
+              ...(sourceTextPaintByItem.has(sourceItemIndex)
+                ? {
+                    sourceTextPaint:
+                      sourceTextPaintByItem.get(sourceItemIndex)!,
+                  }
+                : {}),
+              ...(typeof font?.bold === 'boolean' ? { bold: font.bold } : {}),
+              ...(typeof font?.italic === 'boolean'
+                ? { italic: font.italic }
+                : {}),
+              confidence: 1,
+            })
+          }
           const whitespaceEvidence = pdfTextItemWhitespaceEvidence(sourceText)
           if (!sourceText.trim()) {
             pendingPdfTextItemWhitespace ||= whitespaceEvidence.whitespaceOnly
@@ -1004,10 +1232,6 @@ export async function reconstructPdf(
             (pendingPdfTextItemWhitespace ||
               whitespaceEvidence.leadingWhitespace)
           pendingPdfTextItemWhitespace = false
-          const transform = pdfjs.Util.transform(
-            viewport.transform,
-            item.transform,
-          )
           // PDF.js reports a 90°-rotated marginal stamp as one enormous
           // horizontal bounding box. If it enters line grouping it bridges
           // otherwise separate columns and turns real prose into a discarded
@@ -1028,7 +1252,7 @@ export async function reconstructPdf(
           const x = finite(transform[4])
           const y = finite(transform[5] - fontHeight)
           const width = Math.max(Math.abs(item.width * viewport.scale), 0.5)
-          const sourceSequenceIndex = runs.length
+          const sourceSequenceIndex = sourceItemIndex
           const sourceRunBase = {
             page: pageNumber,
             text: sourceText,
@@ -1041,6 +1265,11 @@ export async function reconstructPdf(
             fontName: sourceFontName,
             fontSize: fontHeight,
             sourceSequenceIndex,
+            ...(sourceTextPaintByItem.has(sourceItemIndex)
+              ? {
+                  sourceTextPaint: sourceTextPaintByItem.get(sourceItemIndex)!,
+                }
+              : {}),
             ...(typeof font?.bold === 'boolean' ? { bold: font.bold } : {}),
             ...(typeof font?.italic === 'boolean'
               ? { italic: font.italic }
@@ -1127,6 +1356,7 @@ export async function reconstructPdf(
           objects,
           links,
           runs,
+          renderVisibleTextRuns,
         }
         const attachNativeAssets = async (target: PdfPageAnalysis) => {
           const resolved = await resolveNativeObjects(
@@ -1235,13 +1465,18 @@ export async function reconstructPdf(
       } finally {
         page.cleanup()
       }
+      // PDF.js uses its in-process fallback when this importer is already
+      // running inside a dedicated worker. Yield at page boundaries so that a
+      // large document cannot monopolize a CPU-constrained renderer process;
+      // progress, typing, cancellation, and the watchdog must remain live.
+      await yieldPdfImportTask(options.signal)
     }
 
     onProgress?.({
-      phase: 'reconstructing',
-      completed: document.numPages,
-      total: document.numPages,
-      message: 'Rebuilding semantic reading order…',
+      phase: 'segmenting',
+      completed: 0,
+      total: 0,
+      message: 'Starting typed-object segmentation…',
     })
     throwIfAborted(options.signal)
     const rawMetadata = await document.getMetadata().catch(() => undefined)
@@ -1252,6 +1487,7 @@ export async function reconstructPdf(
       title: metadataValue(info, 'Title'),
       author: metadataValue(info, 'Author'),
       subject: metadataValue(info, 'Subject'),
+      language: options.language ?? metadataValue(info, 'Language'),
       modified: pdfInfoModified,
       modifiedSource: pdfInfoModified ? 'pdf-info-mod-date' : undefined,
     }
@@ -1261,9 +1497,25 @@ export async function reconstructPdf(
       fileName: file.name,
       byteLength: file.size,
       metadata,
+      onProgress,
+      signal: options.signal,
       rasterizeFigure: async (input) => {
         const page = await document.getPage(input.page)
         try {
+          let sourceTextOperationFilter:
+            PdfTextOperationFilterRequest | undefined
+          if (input.sourceTextOperationFilter) {
+            const requestedTextOperationFilter = input.sourceTextOperationFilter
+            const runtime = pdfjs as unknown as {
+              version?: string
+              build?: string
+            }
+            sourceTextOperationFilter = {
+              ...requestedTextOperationFilter,
+              pdfjsVersion: runtime.version ?? 'unknown',
+              pdfjsBuild: runtime.build ?? runtime.version ?? 'unknown',
+            }
+          }
           const raster = await renderPdfPageCrop({
             page: page as unknown as PdfPageCropSource,
             canvasFactory:
@@ -1271,6 +1523,7 @@ export async function reconstructPdf(
             sourceBox: input.sourceBox,
             ownedSourceBoxes: input.ownedSourceBoxes,
             excludedSourceBoxes: input.excludedSourceBoxes,
+            sourceTextOperationFilter,
             signal: options.signal,
             tightenToSourceInk:
               input.tightenToSourceInk ?? input.kind === 'figure',
@@ -1281,12 +1534,15 @@ export async function reconstructPdf(
             input.sourceBoxes,
             renderedSourceBox,
           )
-          return await createSourcePageCropAsset({
-            kind: input.kind === 'figure' ? 'raster' : input.kind,
-            cropBox: renderedSourceBox,
-            ...sourceLineage,
-            ...renderedRaster,
-          })
+          return await createSourcePageCropAsset(
+            {
+              kind: input.kind === 'figure' ? 'raster' : input.kind,
+              cropBox: renderedSourceBox,
+              ...sourceLineage,
+              ...renderedRaster,
+            },
+            raster,
+          )
         } finally {
           page.cleanup()
         }

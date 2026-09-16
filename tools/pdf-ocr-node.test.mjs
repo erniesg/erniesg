@@ -243,8 +243,8 @@ describe('headless local OCR', () => {
     expect(first.stdout).toBe(second.stdout)
     const report = JSON.parse(first.stdout)
     expect(report).toMatchObject({
-      schemaVersion: '1.7.0',
-      reportSchema: 'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
+      schemaVersion: '1.9.0',
+      reportSchema: 'docs/schemas/pdf-corpus-audit-v1.9.schema.json',
       summary: {
         documents: 1,
         reviewRequired: 1,
@@ -271,15 +271,29 @@ describe('headless local OCR', () => {
         },
       ],
     })
-    const [legacySchema, ocrSchema, provenanceSchema] = await Promise.all(
+    const [
+      legacySchema,
+      ocrSchema,
+      previousProvenanceSchema,
+      previousExactHeadSchema,
+      provenanceSchema,
+    ] = await Promise.all(
       [
         'docs/schemas/pdf-corpus-audit.schema.json',
         'docs/schemas/pdf-corpus-audit-v1.6.schema.json',
         'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
+        'docs/schemas/pdf-corpus-audit-v1.8.schema.json',
+        'docs/schemas/pdf-corpus-audit-v1.9.schema.json',
       ].map(async (path) => JSON.parse(await readFile(path, 'utf8'))),
     )
     const ajv = new Ajv2020({ strict: false })
-    for (const schema of [legacySchema, ocrSchema, provenanceSchema]) {
+    for (const schema of [
+      legacySchema,
+      ocrSchema,
+      previousProvenanceSchema,
+      previousExactHeadSchema,
+      provenanceSchema,
+    ]) {
       ajv.addSchema(schema)
     }
     const validateLegacy = ajv.getSchema(legacySchema.$id)

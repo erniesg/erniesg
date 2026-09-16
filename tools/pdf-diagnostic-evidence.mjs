@@ -48,7 +48,7 @@ async function main() {
   const vite = await createServer({
     appType: 'custom',
     logLevel: 'silent',
-    server: { middlewareMode: true },
+    server: { middlewareMode: true, watch: null },
   })
   try {
     const [{ reconstructPdf }, { renderDiagnosticEvidenceHtml }] =

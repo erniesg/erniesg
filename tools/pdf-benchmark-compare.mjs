@@ -5,22 +5,33 @@ import {
   canonicalJson,
   canonicalJsonHash,
   canonicalPassRate,
+  PDF_HYPHEN_DERIVED_AFFIX_REMOVAL_REQUIRED_EVIDENCE_SHA256S,
+  PDF_HYPHEN_LEXICAL_MODEL_RECEIPT,
+  PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE_RECEIPT,
+  PDF_HYPHEN_REMOVAL_FORBIDDEN_EVIDENCE_SHA256S,
+  PDF_HYPHEN_REMOVAL_REQUIRED_EVIDENCE_SHA256S,
 } from './pdf-corpus-audit-lib.mjs'
 
 export const PDF_BENCHMARK_COMPARISON_SCHEMA_VERSION = '1.5.0'
 export const PDF_BENCHMARK_COMPARISON_OCR_SCHEMA_VERSION = '1.6.0'
 export const PDF_BENCHMARK_COMPARISON_PROVENANCE_SCHEMA_VERSION = '1.7.0'
+export const PDF_BENCHMARK_COMPARISON_V18_SCHEMA_VERSION = '1.8.0'
+export const PDF_BENCHMARK_COMPARISON_V19_SCHEMA_VERSION = '1.9.0'
 
 const CORPUS_REPORT_SCHEMA_POLICY_V15 = 'v1.5-only'
 const CORPUS_REPORT_SCHEMA_POLICY_V15_V16 = 'v1.5-v1.6-compatible'
 const CORPUS_REPORT_SCHEMA_POLICY_V17 = 'v1.7-only'
+const CORPUS_REPORT_SCHEMA_POLICY_V18 = 'v1.8-only'
+const CORPUS_REPORT_SCHEMA_POLICY_V19 = 'v1.9-only'
 const CORPUS_REPORT_SCHEMAS = Object.freeze({
   '1.5.0': 'docs/schemas/pdf-corpus-audit.schema.json',
   '1.6.0': 'docs/schemas/pdf-corpus-audit-v1.6.schema.json',
   '1.7.0': 'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
+  '1.8.0': 'docs/schemas/pdf-corpus-audit-v1.8.schema.json',
+  '1.9.0': 'docs/schemas/pdf-corpus-audit-v1.9.schema.json',
 })
 
-const METRICS = Object.freeze(
+const LEGACY_METRICS = Object.freeze(
   [
     { key: 'textCoverage', direction: 'higher', tolerance: 0 },
     { key: 'missingSourceRegionCount', direction: 'lower', tolerance: 0 },
@@ -54,6 +65,22 @@ const METRICS = Object.freeze(
     { key: 'readingOrderDiagnostics', direction: 'lower', tolerance: 0 },
   ].map((metric) => Object.freeze(metric)),
 )
+const V18_SAME_EVALUATOR_METRICS = Object.freeze(
+  [
+    { key: 'sourceAssetCount', direction: 'exact', tolerance: 0 },
+    { key: 'exportedAssetCount', direction: 'higher', tolerance: 0 },
+    { key: 'expectedRelationshipCount', direction: 'exact', tolerance: 0 },
+    { key: 'resolvedRelationshipCount', direction: 'higher', tolerance: 0 },
+  ].map((metric) => Object.freeze(metric)),
+)
+const V18_METRICS = Object.freeze([
+  ...LEGACY_METRICS.slice(0, 9),
+  ...V18_SAME_EVALUATOR_METRICS.slice(0, 2),
+  LEGACY_METRICS[9],
+  ...V18_SAME_EVALUATOR_METRICS.slice(2),
+  LEGACY_METRICS[10],
+  ...LEGACY_METRICS.slice(11),
+])
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const GIT_OBJECT_ID_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/
@@ -184,6 +211,9 @@ function metricChange(metric, baseline, candidate, tolerances) {
   if (metric.key === 'expectedSemanticTableCount') {
     return candidate === baseline ? 'unchanged' : 'regressed'
   }
+  if (metric.direction === 'exact') {
+    return candidate === baseline ? 'unchanged' : 'regressed'
+  }
   const tolerance = tolerances[metric.key] ?? metric.tolerance
   const delta = rounded(candidate - baseline)
   if (Math.abs(delta) <= tolerance) return 'unchanged'
@@ -234,11 +264,20 @@ function validateCorpusReportSchemaPolicy(value) {
   if (
     value !== CORPUS_REPORT_SCHEMA_POLICY_V15 &&
     value !== CORPUS_REPORT_SCHEMA_POLICY_V15_V16 &&
-    value !== CORPUS_REPORT_SCHEMA_POLICY_V17
+    value !== CORPUS_REPORT_SCHEMA_POLICY_V17 &&
+    value !== CORPUS_REPORT_SCHEMA_POLICY_V18 &&
+    value !== CORPUS_REPORT_SCHEMA_POLICY_V19
   ) {
     throw new Error('INVALID_CORPUS_REPORT_SCHEMA_POLICY')
   }
   return value
+}
+
+function comparisonMetricsForSchemaPolicy(corpusReportSchemaPolicy) {
+  return corpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V18 ||
+    corpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V19
+    ? V18_METRICS
+    : LEGACY_METRICS
 }
 
 function validateExecutionProvenance(value) {
@@ -643,7 +682,294 @@ function crossReferenceStatusCounts(graph) {
   return counts
 }
 
-function validateStructure(structure) {
+function validLegacyCanonicalHyphenDeletionRecord(record) {
+  const evidenceSha256s = record?.proof?.evidenceSha256s
+  return (
+    hasExactKeys(record, [
+      'id',
+      'context',
+      'outcome',
+      'fromRegionId',
+      'fromLineId',
+      'toRegionId',
+      'toLineId',
+      'geometry',
+      'proof',
+    ]) &&
+    [
+      record.id,
+      record.fromRegionId,
+      record.fromLineId,
+      record.toRegionId,
+      record.toLineId,
+    ].every((value) => SHA256_PATTERN.test(String(value ?? ''))) &&
+    ['bibliography-continuation', 'canonical-flow-continuation'].includes(
+      record.context,
+    ) &&
+    record.outcome === 'removed-discretionary-hyphen' &&
+    hasExactKeys(record.geometry, ['from', 'to']) &&
+    validSourceBox(record.geometry.from) &&
+    validSourceBox(record.geometry.to) &&
+    hasExactKeys(record.proof, [
+      'sourceBoundaryProven',
+      'pinnedWordSha256',
+      'pinnedJoinedFormValid',
+      'pinnedSplit',
+      'splitPointValid',
+      'exactSameDocumentJoinedFormSha256',
+      'sameDocumentJoinedFormValid',
+      'hardHyphenFormSha256',
+      'hardHyphenCounterproof',
+      'model',
+      'evidenceSha256s',
+    ]) &&
+    record.proof.sourceBoundaryProven === true &&
+    SHA256_PATTERN.test(String(record.proof.pinnedWordSha256 ?? '')) &&
+    record.proof.pinnedJoinedFormValid === true &&
+    hasExactKeys(record.proof.pinnedSplit, [
+      'leftSha256',
+      'rightSha256',
+      'index',
+    ]) &&
+    SHA256_PATTERN.test(String(record.proof.pinnedSplit.leftSha256 ?? '')) &&
+    SHA256_PATTERN.test(String(record.proof.pinnedSplit.rightSha256 ?? '')) &&
+    Number.isSafeInteger(record.proof.pinnedSplit.index) &&
+    record.proof.pinnedSplit.index > 0 &&
+    record.proof.splitPointValid === true &&
+    SHA256_PATTERN.test(
+      String(record.proof.exactSameDocumentJoinedFormSha256 ?? ''),
+    ) &&
+    record.proof.exactSameDocumentJoinedFormSha256 ===
+      record.proof.pinnedWordSha256 &&
+    record.proof.sameDocumentJoinedFormValid === true &&
+    SHA256_PATTERN.test(String(record.proof.hardHyphenFormSha256 ?? '')) &&
+    record.proof.hardHyphenFormSha256 !== record.proof.pinnedWordSha256 &&
+    record.proof.hardHyphenCounterproof === null &&
+    hasExactKeys(record.proof.model, [
+      'id',
+      'language',
+      'dictionarySha256',
+      'affixSha256',
+      'hyphenationSha256',
+    ]) &&
+    canonicalJson(record.proof.model) ===
+      canonicalJson(PDF_HYPHEN_LEXICAL_MODEL_RECEIPT) &&
+    validHashArray(evidenceSha256s, { nonempty: true }) &&
+    evidenceSha256s.every(
+      (value, index) =>
+        index === 0 || evidenceSha256s[index - 1].localeCompare(value) < 0,
+    ) &&
+    PDF_HYPHEN_REMOVAL_REQUIRED_EVIDENCE_SHA256S.every((evidenceSha256) =>
+      evidenceSha256s.includes(evidenceSha256),
+    ) &&
+    PDF_HYPHEN_REMOVAL_FORBIDDEN_EVIDENCE_SHA256S.every(
+      (evidenceSha256) => !evidenceSha256s.includes(evidenceSha256),
+    )
+  )
+}
+
+function validCanonicalHyphenDeletionRecord(record) {
+  const evidenceSha256s = record?.proof?.evidenceSha256s
+  if (
+    !hasExactKeys(record, [
+      'id',
+      'context',
+      'outcome',
+      'fromRegionId',
+      'fromLineId',
+      'toRegionId',
+      'toLineId',
+      'geometry',
+      'proof',
+    ]) ||
+    [
+      record.id,
+      record.fromRegionId,
+      record.fromLineId,
+      record.toRegionId,
+      record.toLineId,
+    ].some((value) => !SHA256_PATTERN.test(String(value ?? ''))) ||
+    !['bibliography-continuation', 'canonical-flow-continuation'].includes(
+      record.context,
+    ) ||
+    record.outcome !== 'removed-discretionary-hyphen' ||
+    !hasExactKeys(record.geometry, ['from', 'to']) ||
+    !validSourceBox(record.geometry.from) ||
+    !validSourceBox(record.geometry.to) ||
+    record.proof?.sourceBoundaryProven !== true ||
+    !hasExactKeys(record.proof?.pinnedSplit, [
+      'leftSha256',
+      'rightSha256',
+      'index',
+    ]) ||
+    !SHA256_PATTERN.test(String(record.proof.pinnedSplit.leftSha256 ?? '')) ||
+    !SHA256_PATTERN.test(String(record.proof.pinnedSplit.rightSha256 ?? '')) ||
+    !Number.isSafeInteger(record.proof.pinnedSplit.index) ||
+    record.proof.pinnedSplit.index < 1 ||
+    record.proof.splitPointValid !== true ||
+    !SHA256_PATTERN.test(String(record.proof.hardHyphenFormSha256 ?? '')) ||
+    record.proof.hardHyphenCounterproof !== null ||
+    !hasExactKeys(record.proof.model, [
+      'id',
+      'language',
+      'dictionarySha256',
+      'affixSha256',
+      'hyphenationSha256',
+    ]) ||
+    canonicalJson(record.proof.model) !==
+      canonicalJson(PDF_HYPHEN_LEXICAL_MODEL_RECEIPT) ||
+    !validHashArray(evidenceSha256s, { nonempty: true }) ||
+    evidenceSha256s.some(
+      (value, index) =>
+        index > 0 && evidenceSha256s[index - 1].localeCompare(value) >= 0,
+    ) ||
+    PDF_HYPHEN_REMOVAL_FORBIDDEN_EVIDENCE_SHA256S.some((evidenceSha256) =>
+      evidenceSha256s.includes(evidenceSha256),
+    )
+  ) {
+    return false
+  }
+  if (record.proof.tier === 'exact-same-document') {
+    return (
+      hasExactKeys(record.proof, [
+        'tier',
+        'sourceBoundaryProven',
+        'pinnedWordSha256',
+        'pinnedJoinedFormValid',
+        'pinnedSplit',
+        'splitPointValid',
+        'exactSameDocumentJoinedFormSha256',
+        'sameDocumentJoinedFormValid',
+        'hardHyphenFormSha256',
+        'hardHyphenCounterproof',
+        'model',
+        'evidenceSha256s',
+      ]) &&
+      SHA256_PATTERN.test(String(record.proof.pinnedWordSha256 ?? '')) &&
+      record.proof.pinnedJoinedFormValid === true &&
+      SHA256_PATTERN.test(
+        String(record.proof.exactSameDocumentJoinedFormSha256 ?? ''),
+      ) &&
+      record.proof.exactSameDocumentJoinedFormSha256 ===
+        record.proof.pinnedWordSha256 &&
+      record.proof.sameDocumentJoinedFormValid === true &&
+      record.proof.hardHyphenFormSha256 !== record.proof.pinnedWordSha256 &&
+      PDF_HYPHEN_REMOVAL_REQUIRED_EVIDENCE_SHA256S.every((evidenceSha256) =>
+        evidenceSha256s.includes(evidenceSha256),
+      )
+    )
+  }
+  if (record.proof.tier !== 'same-document-derived-affix') return false
+  return (
+    hasExactKeys(record.proof, [
+      'tier',
+      'sourceBoundaryProven',
+      'derivedWordSha256',
+      'productivePrefix',
+      'baseWordSha256',
+      'derivationBindingSha256',
+      'pinnedBaseWordValid',
+      'pinnedSplit',
+      'splitPointValid',
+      'exactSameDocumentBaseWordSha256',
+      'sameDocumentBaseWordValid',
+      'hardHyphenFormSha256',
+      'hardHyphenCounterproof',
+      'model',
+      'evidenceSha256s',
+    ]) &&
+    SHA256_PATTERN.test(String(record.proof.derivedWordSha256 ?? '')) &&
+    hasExactKeys(record.proof.productivePrefix, [
+      'kind',
+      'value',
+      'affixClass',
+      'flag',
+      'crossProduct',
+      'affixSha256',
+    ]) &&
+    canonicalJson(record.proof.productivePrefix) ===
+      canonicalJson(PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE_RECEIPT) &&
+    SHA256_PATTERN.test(String(record.proof.baseWordSha256 ?? '')) &&
+    SHA256_PATTERN.test(String(record.proof.derivationBindingSha256 ?? '')) &&
+    record.proof.derivationBindingSha256 ===
+      canonicalJsonHash({
+        derivedWordSha256: record.proof.derivedWordSha256,
+        productivePrefix: record.proof.productivePrefix,
+        baseWordSha256: record.proof.baseWordSha256,
+      }) &&
+    record.proof.pinnedBaseWordValid === true &&
+    SHA256_PATTERN.test(
+      String(record.proof.exactSameDocumentBaseWordSha256 ?? ''),
+    ) &&
+    record.proof.exactSameDocumentBaseWordSha256 ===
+      record.proof.baseWordSha256 &&
+    record.proof.sameDocumentBaseWordValid === true &&
+    record.proof.derivedWordSha256 !== record.proof.baseWordSha256 &&
+    record.proof.hardHyphenFormSha256 !== record.proof.derivedWordSha256 &&
+    record.proof.pinnedSplit.index >
+      PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE_RECEIPT.value.length &&
+    PDF_HYPHEN_DERIVED_AFFIX_REMOVAL_REQUIRED_EVIDENCE_SHA256S.every(
+      (evidenceSha256) => evidenceSha256s.includes(evidenceSha256),
+    )
+  )
+}
+
+function canonicalHyphenDeletionContextCounts(records) {
+  const counts = {}
+  for (const record of records) {
+    counts[record.context] = (counts[record.context] ?? 0) + 1
+  }
+  return counts
+}
+
+function validCanonicalHyphenDeletionLedger(structure, legacy = false) {
+  const records = structure.canonicalHyphenDeletionLedger
+  return (
+    structure.canonicalHyphenDeletionLedgerAvailable === true &&
+    isNonNegativeInteger(structure.canonicalHyphenDeletionCount) &&
+    Array.isArray(records) &&
+    records.length === structure.canonicalHyphenDeletionCount &&
+    records.every(
+      legacy
+        ? validLegacyCanonicalHyphenDeletionRecord
+        : validCanonicalHyphenDeletionRecord,
+    ) &&
+    records.every(
+      (record, index) =>
+        index === 0 || records[index - 1].id.localeCompare(record.id) < 0,
+    ) &&
+    new Set(records.map((record) => record.id)).size === records.length &&
+    new Set(
+      records.map((record) =>
+        [
+          record.fromRegionId,
+          record.fromLineId,
+          record.toRegionId,
+          record.toLineId,
+        ].join('\0'),
+      ),
+    ).size === records.length &&
+    validCountMap(structure.canonicalHyphenDeletionContextCounts) &&
+    canonicalJson(structure.canonicalHyphenDeletionContextCounts) ===
+      canonicalJson(canonicalHyphenDeletionContextCounts(records)) &&
+    SHA256_PATTERN.test(
+      String(structure.canonicalHyphenDeletionLedgerSha256 ?? ''),
+    ) &&
+    structure.canonicalHyphenDeletionLedgerSha256 === canonicalJsonHash(records)
+  )
+}
+
+function validateStructure(structure, allowHistoricalV14 = false) {
+  const current = structure?.schemaVersion === '1.6.0'
+  const legacyV15 = structure?.schemaVersion === '1.5.0'
+  const historical = allowHistoricalV14 && structure?.schemaVersion === '1.4.0'
+  const canonicalHyphenFields = [
+    'canonicalHyphenDeletionLedgerAvailable',
+    'canonicalHyphenDeletionCount',
+    'canonicalHyphenDeletionContextCounts',
+    'canonicalHyphenDeletionLedger',
+    'canonicalHyphenDeletionLedgerSha256',
+  ]
   if (
     !hasExactKeys(structure, [
       'schemaVersion',
@@ -656,8 +982,9 @@ function validateStructure(structure) {
       'lineTransitionLedgerSha256',
       'unresolvedCorruptingJoinCount',
       'structurallyConsumedLineBoundaryCount',
+      ...(current || legacyV15 ? canonicalHyphenFields : []),
     ]) ||
-    structure.schemaVersion !== '1.4.0' ||
+    (!current && !legacyV15 && !historical) ||
     STRUCTURE_COUNT_FIELDS.some(
       (field) => !isNonNegativeInteger(structure[field]),
     ) ||
@@ -693,7 +1020,9 @@ function validateStructure(structure) {
       ) ||
     structure.crossReferenceRelationshipGraphSha256 !==
       canonicalJsonHash(structure.crossReferenceRelationshipGraph) ||
-    countMapTotal(structure.assetCounts) !== structure.assetCount
+    countMapTotal(structure.assetCounts) !== structure.assetCount ||
+    (current && !validCanonicalHyphenDeletionLedger(structure)) ||
+    (legacyV15 && !validCanonicalHyphenDeletionLedger(structure, true))
   ) {
     invalidReport()
   }
@@ -753,7 +1082,7 @@ function validateCompleteness(completeness) {
       SEMANTIC_TABLE_COMPLETENESS_INTEGER_FIELDS.some(
         (field) => !isNonNegativeInteger(completeness[field]),
       )) ||
-    METRICS.filter(({ key }) => key.endsWith('Coverage')).some(
+    V18_METRICS.filter(({ key }) => key.endsWith('Coverage')).some(
       ({ key }) =>
         Object.hasOwn(completeness, key) && !isUnitInterval(completeness[key]),
     ) ||
@@ -1110,9 +1439,16 @@ function validateReport(report, corpusReportSchemaPolicy) {
       (corpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V15_V16 &&
         ['1.5.0', '1.6.0'].includes(report.schemaVersion)) ||
       (corpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V17 &&
-        report.schemaVersion === '1.7.0'))
-  const provenanceKeys =
-    report?.schemaVersion === '1.7.0' ? ['executionProvenance'] : []
+        report.schemaVersion === '1.7.0') ||
+      (corpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V18 &&
+        report.schemaVersion === '1.8.0') ||
+      (corpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V19 &&
+        report.schemaVersion === '1.9.0'))
+  const provenanceKeys = ['1.7.0', '1.8.0', '1.9.0'].includes(
+    report?.schemaVersion,
+  )
+    ? ['executionProvenance']
+    : []
   if (
     !hasOnlyAndRequiredKeys(
       report,
@@ -1125,7 +1461,7 @@ function validateReport(report, corpusReportSchemaPolicy) {
   ) {
     invalidReport()
   }
-  if (report.schemaVersion === '1.7.0') {
+  if (['1.7.0', '1.8.0', '1.9.0'].includes(report.schemaVersion)) {
     validateExecutionProvenance(report.executionProvenance)
   }
   if (Object.hasOwn(report, 'corpusContract')) {
@@ -1176,7 +1512,9 @@ function validateReport(report, corpusReportSchemaPolicy) {
     ]
     const optionalAuditedKeys = [
       'exports',
-      ...(['1.6.0', '1.7.0'].includes(report.schemaVersion) ? ['ocr'] : []),
+      ...(['1.6.0', '1.7.0', '1.8.0', '1.9.0'].includes(report.schemaVersion)
+        ? ['ocr']
+        : []),
     ]
     if (
       !hasOnlyAndRequiredKeys(
@@ -1230,7 +1568,22 @@ function validateReport(report, corpusReportSchemaPolicy) {
     ) {
       invalidReport()
     }
-    validateStructure(document.structure)
+    validateStructure(
+      document.structure,
+      ['1.5.0', '1.6.0', '1.7.0'].includes(report.schemaVersion),
+    )
+    if (
+      report.schemaVersion === '1.8.0' &&
+      document.structure.schemaVersion !== '1.5.0'
+    ) {
+      invalidReport()
+    }
+    if (
+      report.schemaVersion === '1.9.0' &&
+      document.structure.schemaVersion !== '1.6.0'
+    ) {
+      invalidReport()
+    }
     if (
       document.completeness.decidedLineBoundaryCount !==
         document.structure.lineTransitionCount ||
@@ -1252,11 +1605,13 @@ function validateReport(report, corpusReportSchemaPolicy) {
   validateSummary(report.summary, report.documents)
 }
 
-function validateTolerances(tolerances) {
+function validateTolerances(tolerances, metrics) {
   if (!isRecord(tolerances)) throw new Error('INVALID_TOLERANCE')
   for (const [key, value] of Object.entries(tolerances)) {
+    const metric = metrics.find((candidate) => candidate.key === key)
     if (
-      !METRICS.some((metric) => metric.key === key) ||
+      !metric ||
+      metric.direction === 'exact' ||
       typeof value !== 'number' ||
       !Number.isFinite(value) ||
       value < 0
@@ -1405,7 +1760,7 @@ function structuralReceiptOutput(structure) {
         left.localeCompare(right),
       ),
     )
-  return {
+  const output = {
     schemaVersion: structure.schemaVersion,
     canonicalNodeCount: structure.canonicalNodeCount,
     canonicalNodeSequenceSha256: structure.canonicalNodeSequenceSha256,
@@ -1441,6 +1796,20 @@ function structuralReceiptOutput(structure) {
     structurallyConsumedLineBoundaryCount:
       structure.structurallyConsumedLineBoundaryCount,
   }
+  return structure.schemaVersion === '1.5.0'
+    ? {
+        ...output,
+        canonicalHyphenDeletionLedgerAvailable:
+          structure.canonicalHyphenDeletionLedgerAvailable,
+        canonicalHyphenDeletionCount: structure.canonicalHyphenDeletionCount,
+        canonicalHyphenDeletionContextCounts: countMap(
+          structure.canonicalHyphenDeletionContextCounts,
+        ),
+        canonicalHyphenDeletionLedger: structure.canonicalHyphenDeletionLedger,
+        canonicalHyphenDeletionLedgerSha256:
+          structure.canonicalHyphenDeletionLedgerSha256,
+      }
+    : output
 }
 
 function structureChecks(
@@ -1458,18 +1827,36 @@ function structureChecks(
     baseline: lineTransitionLedgerCheck(baselineReceipt),
     candidate: lineTransitionLedgerCheck(candidateReceipt),
   }
+  const canonicalHyphenDeletionLedger = {
+    baseline: canonicalHyphenDeletionLedgerCheck(baselineReceipt),
+    candidate: canonicalHyphenDeletionLedgerCheck(candidateReceipt),
+  }
   return {
     baseline: structuralReceiptOutput(baselineReceipt),
     candidate: structuralReceiptOutput(candidateReceipt),
     available,
     identical,
     ledger,
+    canonicalHyphenDeletionLedger,
     nondeterministic:
       requireIdenticalStructure &&
       (!available ||
         !identical ||
         !ledger.baseline.valid ||
-        !ledger.candidate.valid),
+        !ledger.candidate.valid ||
+        !canonicalHyphenDeletionLedger.baseline.valid ||
+        !canonicalHyphenDeletionLedger.candidate.valid),
+  }
+}
+
+function canonicalHyphenDeletionLedgerCheck(structure) {
+  const available = structure?.canonicalHyphenDeletionLedgerAvailable === true
+  return {
+    available,
+    valid:
+      structure?.schemaVersion === '1.4.0'
+        ? true
+        : available && validCanonicalHyphenDeletionLedger(structure),
   }
 }
 
@@ -1506,6 +1893,9 @@ export function comparePdfBenchmarkReports(
   )
   validateReport(baseline, validatedCorpusReportSchemaPolicy)
   validateReport(candidate, validatedCorpusReportSchemaPolicy)
+  const comparisonMetrics = comparisonMetricsForSchemaPolicy(
+    validatedCorpusReportSchemaPolicy,
+  )
   const baselineCorpusContract = baseline.corpusContract ?? null
   const candidateCorpusContract = candidate.corpusContract ?? null
   if (
@@ -1516,7 +1906,7 @@ export function comparePdfBenchmarkReports(
   ) {
     throw new Error('PDF_CORPUS_CONTRACT_BINDING_MISMATCH')
   }
-  const validatedTolerances = validateTolerances(tolerances)
+  const validatedTolerances = validateTolerances(tolerances, comparisonMetrics)
   const auditPolicy = {
     baseline: { ...baseline.policy },
     candidate: { ...candidate.policy },
@@ -1551,7 +1941,7 @@ export function comparePdfBenchmarkReports(
         metrics: [],
       }
     }
-    const metrics = METRICS.map((metric) => {
+    const metrics = comparisonMetrics.map((metric) => {
       const baselineValue = metricValue(baselineDocument, metric.key)
       const candidateValue = metricValue(candidateDocument, metric.key)
       return {
@@ -1665,8 +2055,13 @@ export function comparePdfBenchmarkReports(
       ).length,
     0,
   )
+  const provenanceSchemaPolicy = [
+    CORPUS_REPORT_SCHEMA_POLICY_V17,
+    CORPUS_REPORT_SCHEMA_POLICY_V18,
+    CORPUS_REPORT_SCHEMA_POLICY_V19,
+  ].includes(validatedCorpusReportSchemaPolicy)
   const exactHeadEvidencePassed =
-    validatedCorpusReportSchemaPolicy !== CORPUS_REPORT_SCHEMA_POLICY_V17 ||
+    !provenanceSchemaPolicy ||
     (baseline.executionProvenance.implementation.exactHead === true &&
       candidate.executionProvenance.implementation.exactHead === true)
   const summary = {
@@ -1681,9 +2076,7 @@ export function comparePdfBenchmarkReports(
       .length,
     added: addedDocuments.length,
     failedEpubChecks,
-    ...(validatedCorpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V17
-      ? { exactHeadEvidencePassed }
-      : {}),
+    ...(provenanceSchemaPolicy ? { exactHeadEvidencePassed } : {}),
     passed:
       exactHeadEvidencePassed &&
       auditPolicy.identical &&
@@ -1695,28 +2088,32 @@ export function comparePdfBenchmarkReports(
     schemaVersion:
       validatedCorpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V15_V16
         ? PDF_BENCHMARK_COMPARISON_OCR_SCHEMA_VERSION
-        : validatedCorpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V17
-          ? PDF_BENCHMARK_COMPARISON_PROVENANCE_SCHEMA_VERSION
-          : PDF_BENCHMARK_COMPARISON_SCHEMA_VERSION,
+        : validatedCorpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V19
+          ? PDF_BENCHMARK_COMPARISON_V19_SCHEMA_VERSION
+          : validatedCorpusReportSchemaPolicy ===
+              CORPUS_REPORT_SCHEMA_POLICY_V18
+            ? PDF_BENCHMARK_COMPARISON_V18_SCHEMA_VERSION
+            : validatedCorpusReportSchemaPolicy ===
+                CORPUS_REPORT_SCHEMA_POLICY_V17
+              ? PDF_BENCHMARK_COMPARISON_PROVENANCE_SCHEMA_VERSION
+              : PDF_BENCHMARK_COMPARISON_SCHEMA_VERSION,
     privacy: 'basenames-hashes-metrics-artifact-invariants-only',
     ...(baselineCorpusContract
       ? { corpusContract: baselineCorpusContract }
       : {}),
     policy: {
-      metrics: METRICS.map((metric) => ({ ...metric })),
+      metrics: comparisonMetrics.map((metric) => ({ ...metric })),
       tolerances: validatedTolerances,
       auditPolicy,
       ...(validatedCorpusReportSchemaPolicy ===
-        CORPUS_REPORT_SCHEMA_POLICY_V15_V16 ||
-      validatedCorpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V17
+        CORPUS_REPORT_SCHEMA_POLICY_V15_V16 || provenanceSchemaPolicy
         ? {
             corpusReportSchemaCompatibility: {
               policy: validatedCorpusReportSchemaPolicy,
               baseline: {
                 schemaVersion: baseline.schemaVersion,
                 reportSchema: baseline.reportSchema,
-                ...(validatedCorpusReportSchemaPolicy ===
-                CORPUS_REPORT_SCHEMA_POLICY_V17
+                ...(provenanceSchemaPolicy
                   ? {
                       reportSha256: canonicalJsonHash(baseline),
                       executionProvenance: baseline.executionProvenance,
@@ -1726,8 +2123,7 @@ export function comparePdfBenchmarkReports(
               candidate: {
                 schemaVersion: candidate.schemaVersion,
                 reportSchema: candidate.reportSchema,
-                ...(validatedCorpusReportSchemaPolicy ===
-                CORPUS_REPORT_SCHEMA_POLICY_V17
+                ...(provenanceSchemaPolicy
                   ? {
                       reportSha256: canonicalJsonHash(candidate),
                       executionProvenance: candidate.executionProvenance,
@@ -1756,7 +2152,7 @@ export function comparePdfBenchmarkReports(
 }
 
 function usage() {
-  return 'Usage: node tools/pdf-benchmark-compare.mjs <baseline-corpus-audit.json> <candidate-corpus-audit.json> [--out <comparison.json>] [--tolerance <metric>=<value>]... [--corpus-report-schema-policy <v1.5-only|v1.5-v1.6-compatible|v1.7-only>] [--require-identical-artifacts] [--require-identical-structure]\n'
+  return 'Usage: node tools/pdf-benchmark-compare.mjs <baseline-corpus-audit.json> <candidate-corpus-audit.json> [--out <comparison.json>] [--tolerance <metric>=<value>]... [--corpus-report-schema-policy <v1.5-only|v1.5-v1.6-compatible|v1.7-only|v1.8-only|v1.9-only>] [--require-identical-artifacts] [--require-identical-structure]\n'
 }
 
 function parseArguments(arguments_) {
@@ -1779,7 +2175,7 @@ function parseArguments(arguments_) {
       if (
         extra !== undefined ||
         rawValue === '' ||
-        !METRICS.some((metric) => metric.key === key) ||
+        !V18_METRICS.some((metric) => metric.key === key) ||
         !Number.isFinite(value) ||
         value < 0
       ) {
@@ -1805,6 +2201,10 @@ function parseArguments(arguments_) {
   if (inputs.length !== 2 || (output !== undefined && !output)) {
     throw new Error('INVALID_USAGE')
   }
+  validateTolerances(
+    tolerances,
+    comparisonMetricsForSchemaPolicy(corpusReportSchemaPolicy),
+  )
   return {
     inputs,
     output,

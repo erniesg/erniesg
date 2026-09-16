@@ -280,9 +280,9 @@
       "status": "available",
       "kind": "code",
       "implementation": "tools/pdf-private-fidelity.mjs",
-      "implementationSha256": "e7ed5a31a0ca28b6f7c725b17d4ad95ddaa95f1c37711cd9c9e66c476d649ccb",
+      "implementationSha256": "4db0ff5b6bcbab459aa501304229fc810986713734d1b7ff53dfa3ee39982f64",
       "test": "tools/pdf-private-fidelity.test.mjs",
-      "testSha256": "b7a8414599f128ba243d5cf9b5f7ddc95efa7a60e2aa1524c525d29b4fca16bd",
+      "testSha256": "8e3baf568e16f2f2e428486b85c36cf98363178ab3560c3d05bb02b7a1bd9746",
       "calibration": null
     }
   ]

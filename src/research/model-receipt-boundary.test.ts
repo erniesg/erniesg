@@ -29,7 +29,11 @@ const genericSource = readFileSync(
   new URL('../struct/model-consultation-receipt.ts', import.meta.url),
   'utf8',
 )
-const appSource = readFileSync(
+const appPolicySource = readFileSync(
+  new URL('./model-fallback-receipt-policy.ts', import.meta.url),
+  'utf8',
+)
+const appCompatibilitySource = readFileSync(
   new URL('./model-fallback-receipt.ts', import.meta.url),
   'utf8',
 )
@@ -38,7 +42,7 @@ describe('model receipt generic/app boundary inventory', () => {
   it('classifies every exported symbol in the checked manifest', () => {
     expect(boundary.schemaVersion).toBe(1)
     const generic = exportedNames(genericSource)
-    const app = exportedNames(appSource)
+    const app = exportedNames(appPolicySource)
     expect(generic).toEqual([...boundary.generic].sort())
     expect(app).toEqual(
       [...new Set([...boundary.appShared, ...boundary.appOnly])].sort(),
@@ -49,6 +53,12 @@ describe('model receipt generic/app boundary inventory', () => {
     expect(
       boundary.appShared.some((symbol) => boundary.appOnly.includes(symbol)),
     ).toBe(false)
+  })
+
+  it('keeps the legacy app path as a policy compatibility shim', () => {
+    expect(appCompatibilitySource.trim()).toBe(
+      "export * from './model-fallback-receipt-policy'",
+    )
   })
 
   it('keeps PDF/provider policy symbols out of the generic core module', () => {

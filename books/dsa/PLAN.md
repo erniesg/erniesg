@@ -69,7 +69,7 @@ pass all four tiers in CI (`runner.py verify`). Time limits are chosen with
 ### TDD loop for the learner
 
 `start` a chapter → read `chapter.md` → run the grader and watch it fail
-(red) → implement in `book/workspace/<ch>/` → re-run until green tier by
+(red) → implement in `books/dsa/workspace/<ch>/` → re-run until green tier by
 tier → quiz yourself → move on. The grader never edits your code; you never
 edit the tests.
 
@@ -150,7 +150,7 @@ evaluation record → optional policy learning.
 ## Chapter anatomy
 
 ```
-book/chapters/chNN-slug/
+books/dsa/chapters/chNN-slug/
   chapter.md        # narrative, challenge spec, quiz (EPUB/web source)
   exercise.toml     # id, title, module, tier XP, time limits
   starter/          # what `runner.py start` copies into your workspace
@@ -168,21 +168,21 @@ metadata cross-checks. Tests import the learner's code only through
 tests grade the workspace, the reference solution, and (later) web
 submissions.
 
-## Grader (`book/tools/runner.py`)
+## Grader (`books/dsa/tools/runner.py`)
 
 Stdlib-only, Python ≥3.11 (needs `tomllib`).
 
 ```
-python3 book/tools/runner.py list            # chapters, status, XP
-python3 book/tools/runner.py start ch01      # copy starter → workspace
-python3 book/tools/runner.py run ch01        # grade tiers in order
-python3 book/tools/runner.py verify ch01     # grade reference solution (CI)
-python3 book/tools/runner.py status          # XP, badges, streak
+python3 books/dsa/tools/runner.py list            # chapters, status, XP
+python3 books/dsa/tools/runner.py start ch01      # copy starter → workspace
+python3 books/dsa/tools/runner.py run ch01        # grade tiers in order
+python3 books/dsa/tools/runner.py verify ch01     # grade reference solution (CI)
+python3 books/dsa/tools/runner.py status          # XP, badges, streak
 ```
 
 Each tier runs in a subprocess with a hard timeout; exceeding it reports
 `TIME LIMIT EXCEEDED` rather than hanging. Progress persists to
-`book/.progress.json` (gitignored).
+`books/dsa/.progress.json` (gitignored).
 
 ## Gamification
 
@@ -200,15 +200,18 @@ Each tier runs in a subprocess with a hard timeout; exceeding it reports
 - **Phase 0 (done):** the local publication is the standalone executable
   Rucksack reader; chapters are graded locally. It does not simulate the
   Ernie.SG Study library or inline blog rendition.
-- **Phase 1a (done):** `book/tools/export.py` emits a self-contained,
+- **Phase 1a (done):** `books/dsa/tools/export.py` emits a self-contained,
   reflowable EPUB 3 with cover, title page, preface, navigation, and authored
   chapters from the same Markdown sources.
 - **Phase 1b — Study integration:** publish the same metadata, Markdown, and
-  EPUB artifact through the `/study/books/` information architecture after
-  the universal-publication dependency chain is ready. Do not couple this
-  book to the active PDF semantic reconstruction implementation.
-- **Phase 2 — Web (runnable online):** the blog's web edition embeds an
-  editor + Pyodide test runner reusing the same `tests/` files, with
+  EPUB artifact at `/study/dsa`, built directly from this in-repo source
+  (#70). The Study index groups entries by kind; the URL carries only the
+  slug. Do not couple this book to the active PDF semantic reconstruction
+  implementation.
+- **Phase 2 — Web (runnable online):** the blog's web edition at
+  `/study/dsa/practice` embeds an editor + Pyodide test runner reusing the
+  same `tests/` files, running learner code in the browser (never on a
+  server), with
   progressive hints and the "why it failed" explanations (e.g. "correct
   result, but your lookup opened 8,714 files").
 - **Phase 3 — Rucksack lab:** exercises optionally run against disposable
@@ -216,7 +219,7 @@ Each tier runs in a subprocess with a hard timeout; exceeding it reports
 
 ## Versioning
 
-- `book/VERSION` holds the edition (semver; starts 0.1.0). `CHANGELOG.md`
+- `books/dsa/VERSION` holds the edition (semver; starts 0.1.0). `CHANGELOG.md`
   records chapter additions and breaking spec changes.
 - Chapter specs are append-mostly: once published, a challenge's constraints
   and tier semantics only change with a minor version bump and a changelog
@@ -235,15 +238,15 @@ Per chapter:
 
 Per release (edition bump):
 - All authored chapters verify green.
-- `python3 book/tools/test_runner.py` (grader's own unit tests) passes.
-- Repo suite `python3 -m unittest discover -s tests` still passes — the book
-  is additive and must never break Rucksack.
+- `python3 books/dsa/tools/test_runner.py` (grader's own unit tests) passes.
+- Site suite `npm run test` and `npm run build` still pass — the book is
+  additive and must never break Ernie.SG.
 - CHANGELOG updated; VERSION bumped.
 
 ## Immediate roadmap
 
 1. **Done in this branch:** grader + tests, chapters 1–3 runnable, this plan.
 2. Author ch04–ch05 and the Part I milestone (identifier index) + Interlude A.
-3. Wire the existing EPUB and web publication into Ernie.SG Study after its
-   universal-publication dependencies land.
+3. Publish the existing EPUB and web publication through Ernie.SG Study at
+   `/study/dsa` (#70); its universal-publication dependencies have landed.
 4. Draft Part II (the inverted-index arc from the sample chapter).

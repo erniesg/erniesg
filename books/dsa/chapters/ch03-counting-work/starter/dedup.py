@@ -2,7 +2,7 @@
 
 Implement `first_duplicate` in O(n) expected time.
 
-    python3 book/tools/runner.py run ch03
+    python3 books/dsa/tools/runner.py run ch03
 """
 
 

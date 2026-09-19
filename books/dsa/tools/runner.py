@@ -4,11 +4,11 @@
 Stdlib only; requires Python 3.11+ (tomllib).
 
 Usage:
-  python3 book/tools/runner.py list
-  python3 book/tools/runner.py start ch01 [--force]
-  python3 book/tools/runner.py run ch01 [--tier public|edge|stress|perf]
-  python3 book/tools/runner.py verify ch01
-  python3 book/tools/runner.py status
+  python3 books/dsa/tools/runner.py list
+  python3 books/dsa/tools/runner.py start ch01 [--force]
+  python3 books/dsa/tools/runner.py run ch01 [--tier public|edge|stress|perf]
+  python3 books/dsa/tools/runner.py verify ch01
+  python3 books/dsa/tools/runner.py status
 """
 
 from __future__ import annotations
@@ -19,10 +19,14 @@ import os
 import shutil
 import subprocess
 import sys
-import tomllib
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
+
+if sys.version_info < (3, 11):  # tomllib arrived in 3.11
+    sys.exit(f"The book's tools need Python 3.11+; this is Python {sys.version.split()[0]}.")
+
+import tomllib
 
 BOOK_DIR = Path(__file__).resolve().parent.parent
 CHAPTERS_DIR = BOOK_DIR / "chapters"
@@ -249,14 +253,14 @@ def cmd_start(args) -> int:
     print(f"{GREEN}Started {chapter.id}.{RESET}")
     print(f"  read:  {chapter.path / 'chapter.md'}")
     print(f"  edit:  {chapter.workspace / (chapter.module + '.py')}")
-    print(f"  grade: python3 book/tools/runner.py run {chapter.id}")
+    print(f"  grade: python3 books/dsa/tools/runner.py run {chapter.id}")
     return 0
 
 
 def cmd_run(args) -> int:
     chapter = find_chapter(args.chapter)
     if not chapter.workspace.is_dir():
-        print(f"Chapter not started. Run: python3 book/tools/runner.py start {chapter.id}")
+        print(f"Chapter not started. Run: python3 books/dsa/tools/runner.py start {chapter.id}")
         return 1
     progress = load_progress()
     ok = grade(chapter, chapter.workspace, args.tier, progress)

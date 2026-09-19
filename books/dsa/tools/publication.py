@@ -5,7 +5,6 @@ from __future__ import annotations
 import html
 import io
 import re
-import tomllib
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +43,8 @@ class BookMetadata:
 
 
 def load_metadata() -> BookMetadata:
+    import tomllib  # after runner's Python 3.11+ check
+
     payload = tomllib.loads(BOOK_METADATA_PATH.read_text())
     book = payload["book"]
     parts = tuple(BookPart(**part) for part in payload.get("parts", []))

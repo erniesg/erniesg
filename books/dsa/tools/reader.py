@@ -5,8 +5,8 @@ The server binds to loopback only, renders the authored chapter Markdown, and
 grades code with the same subprocess-isolated tiers as ``runner.py``.
 
 Usage:
-  python3 book/tools/reader.py
-  python3 book/tools/reader.py --no-open --port 8765
+  python3 books/dsa/tools/reader.py
+  python3 books/dsa/tools/reader.py --no-open --port 8765
 """
 
 from __future__ import annotations
@@ -310,7 +310,7 @@ class ReaderApp:
         words = len(re.findall(r"\b\w+\b", markdown))
         source_path = self._source_path(chapter)
         try:
-            displayed_source_path = str(source_path.relative_to(runner.BOOK_DIR.parent))
+            displayed_source_path = str(source_path.relative_to(runner.BOOK_DIR.parents[1]))
         except ValueError:
             displayed_source_path = source_path.name
         return {

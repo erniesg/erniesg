@@ -4,7 +4,7 @@ Implement `max_pairwise_product`. Keep `max_pairwise_product_naive` as-is:
 it is your slow-but-obviously-correct referee, and the stress tier uses the
 same double-loop idea to check you.
 
-    python3 book/tools/runner.py run ch02
+    python3 books/dsa/tools/runner.py run ch02
 """
 
 

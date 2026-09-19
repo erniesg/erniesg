@@ -61,9 +61,9 @@ price.
 ## Run it
 
 ```bash
-python3 book/tools/runner.py start ch03
-# edit book/workspace/ch03/dedup.py
-python3 book/tools/runner.py run ch03
+python3 books/dsa/tools/runner.py start ch03
+# edit books/dsa/workspace/ch03/dedup.py
+python3 books/dsa/tools/runner.py run ch03
 ```
 
 ## Quiz

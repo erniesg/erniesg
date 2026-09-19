@@ -62,9 +62,9 @@ solution — this chapter is about the workflow, not cleverness.
 ## Run it
 
 ```bash
-python3 book/tools/runner.py start ch01
-# edit book/workspace/ch01/warmup.py
-python3 book/tools/runner.py run ch01
+python3 books/dsa/tools/runner.py start ch01
+# edit books/dsa/workspace/ch01/warmup.py
+python3 books/dsa/tools/runner.py run ch01
 ```
 
 ## Quiz (answer before peeking at the solution)

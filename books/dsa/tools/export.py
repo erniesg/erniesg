@@ -13,7 +13,7 @@ from reader import render_markdown
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, help="output path (defaults to book/dist/<edition>.epub)")
+    parser.add_argument("--output", type=Path, help="output path (defaults to books/dsa/dist/<edition>.epub)")
     args = parser.parse_args(argv)
     destination = args.output or publication.runner.BOOK_DIR / "dist" / publication.epub_filename()
     destination.parent.mkdir(parents=True, exist_ok=True)

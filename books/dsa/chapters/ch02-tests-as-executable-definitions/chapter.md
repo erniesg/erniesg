@@ -60,9 +60,9 @@ stress fails, *shrink* the failing input by hand until the bug is obvious.
 ## Run it
 
 ```bash
-python3 book/tools/runner.py start ch02
-# edit book/workspace/ch02/pairwise.py  (implement max_pairwise_product)
-python3 book/tools/runner.py run ch02
+python3 books/dsa/tools/runner.py start ch02
+# edit books/dsa/workspace/ch02/pairwise.py  (implement max_pairwise_product)
+python3 books/dsa/tools/runner.py run ch02
 ```
 
 ## Quiz

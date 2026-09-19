@@ -23,7 +23,7 @@ def solution_dir() -> Path:
     if not root:
         raise GraderSetupError(
             "BOOK_SOLUTION_DIR is not set. Run tests through "
-            "`python3 book/tools/runner.py run <chapter>` instead of directly."
+            "`python3 books/dsa/tools/runner.py run <chapter>` instead of directly."
         )
     path = Path(root)
     if not path.is_dir():
@@ -37,7 +37,7 @@ def load_solution(module_name: str):
     if not path.is_file():
         raise GraderSetupError(
             f"Expected solution file is missing: {path}\n"
-            f"Did you run `python3 book/tools/runner.py start <chapter>`?"
+            f"Did you run `python3 books/dsa/tools/runner.py start <chapter>`?"
         )
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:

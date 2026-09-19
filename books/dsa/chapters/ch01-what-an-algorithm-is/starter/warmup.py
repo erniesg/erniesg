@@ -2,7 +2,7 @@
 
 Implement `add` so every grading tier passes:
 
-    python3 book/tools/runner.py run ch01
+    python3 books/dsa/tools/runner.py run ch01
 """
 
 

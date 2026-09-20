@@ -1,8 +1,9 @@
 """Perf tier: a year of bank lines, at the size limit.
 
-One pass over 200,000 lines, asking a set for the missing half, takes about two
+One pass over 200,000 lines, asking a set for the missing half, takes under two
 hundredths of a second. Every line against every earlier line is 20 billion
-additions -- nine minutes measured -- so the tier stops it at three seconds.
+additions -- nine and a half minutes measured -- so the tier stops it at three
+seconds.
 
 The filler amounts are all multiples of ten and the target ends in a 5, so no
 two filler lines can possibly add up to it. The only pair in the file is the

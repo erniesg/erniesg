@@ -2,7 +2,7 @@
 
 One sort of 200,000 times plus one walk over the neighbours takes about four
 hundredths of a second. Every ascent against every other is 20 billion
-subtractions -- sixteen minutes measured -- so the tier stops it at three.
+subtractions -- nineteen minutes measured -- so the tier stops it at three.
 
 The board is built so that no two times are equal and every gap is 15
 hundredths, except for one planted ascent four hundredths away from its

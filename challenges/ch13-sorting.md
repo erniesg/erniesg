@@ -223,8 +223,8 @@ Back to the field at the finish. Forget the timing file and picture the riders
 themselves, standing on the grass, each holding a card with their lap count on
 it — a whole number between 0 and 120. Put them in order.
 
-You could pair them off and compare cards, 900 riders at a time. Or you could
-take the chalk, write 0 to 120 across the grass in a line, one patch each, and
+You could pair them off and compare cards until the line came right. Or you
+could take the chalk, write 0 to 120 across the grass in a line, one patch each, and
 tell everybody to go and stand on their own number. Read the field from left to
 right and it is sorted. No rider was ever held up against another rider.
 

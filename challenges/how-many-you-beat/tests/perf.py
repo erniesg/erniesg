@@ -1,8 +1,8 @@
 """Perf tier: a season of ascents, at the size limit.
 
-Counting the board and walking the counts is three passes and measures at about
-five hundredths of a second. Reading the whole board once per rider is 40
-billion comparisons -- eleven minutes measured -- so the tier stops it at
+Counting the board and walking the counts is three passes and measures at under
+three hundredths of a second. Reading the whole board once per rider is 40
+billion comparisons -- twelve minutes measured -- so the tier stops it at
 three.
 
 Every time appears exactly twice, so ties are everywhere and an answer that

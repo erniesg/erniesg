@@ -1,9 +1,9 @@
 """Perf tier: a week of baskets, at the size limit.
 
-One pass over 196,060 baskets, counting frozen copies in a dict, takes a few
-hundredths of a second. Counting each basket by searching the log for it is
-196,060 x 196,060 basket comparisons -- over five minutes measured -- so the
-tier stops it at three seconds.
+One pass over 196,060 baskets, counting frozen copies in a dict, takes under
+three hundredths of a second. Counting each basket by searching the log for it
+is 196,060 x 196,060 basket comparisons -- about fifteen minutes measured -- so
+the tier stops it at three seconds.
 """
 
 import random

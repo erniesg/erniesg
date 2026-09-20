@@ -277,8 +277,8 @@ print("set: ", sys.getsizeof(set(numbers)), "bytes")
 print("dict:", sys.getsizeof({n: n for n in numbers}), "bytes")
 ```
 
-Five to six times the space, for the same hundred thousand numbers. Usually a
-fine trade. On a machine with a gigabyte and a repository with ten million
+Five times the space for a set, six and a half for a dict, holding the same
+hundred thousand numbers. Usually a fine trade. On a machine with a gigabyte and a repository with ten million
 symbols, it is a decision rather than a reflex.
 
 **Some keys cannot be hashed at all.** Lists, dicts and sets are out, and so is

@@ -100,7 +100,7 @@ def riders_you_beat(times):
 **Count it before anything else.** Asking "how many are below this one?" for
 each rider means reading the whole board for each rider: 200,000 × 200,000 =
 40 billion comparisons. The ten-million rule says 4,000 seconds; measured, it
-is around eleven minutes. The tier gives three seconds. So the per-rider scan
+is around twelve minutes. The tier gives three seconds. So the per-rider scan
 is out before you have typed it.
 
 **The idea.** Chalk a patch of grass for every time from 0 up to the slowest on
@@ -112,7 +112,7 @@ for any rider is one lookup: go to their time and read what is written there.
 
 Three passes, none of them inside another: one over the board, one along the
 chalk, one over the board again. That is n + k + n, and with n = 200,000 and
-k at most 1,000,001 it measures at about five hundredths of a second.
+k at most 1,000,001 it measures at under three hundredths of a second.
 
 **Why the running total has to be added *after* it is written down.** At each
 patch you store `faster` first and only then add the riders standing on that
@@ -136,12 +136,13 @@ time is simply the position where that time *first* appears. `if value not in
 first_at` keeps the first one and ignores the rest of a tie, which is the same
 "strictly" rule wearing different clothes.
 
-This costs n log n rather than n + k, and it measures at about the same five
-hundredths of a second, because its sort happens in C and the counting version
-loops in Python. Both are right. Which one is better depends entirely on k: at
-times up to a million, counting wins on paper and draws on the clock. If times
-could run to a billion, the counting version would try to chalk a billion
-patches of grass and the sort would not care at all.
+This costs n log n rather than n + k, and it measures at about four hundredths
+of a second against the counting version's two and a half — near enough that
+nobody would notice, because the sort happens in C while the counting loops in
+Python. Both are right. Which one is better depends entirely on k. At times up
+to a million, counting is ahead. If times could run to a billion, the counting
+version would try to chalk a billion patches of grass and the sort would not
+care at all.
 
 **The empty board.** `max([])` raises `ValueError`, so the empty case needs one
 line at the top — or a `sorted` version, which never needs `max` and handles it

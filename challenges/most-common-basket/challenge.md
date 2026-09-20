@@ -141,9 +141,9 @@ def most_common_basket(baskets):          # do not do this
 
 It is correct, and `baskets.count(basket)` walks the whole log once for every
 basket in it. 200,000 × 200,000 is 40 billion basket comparisons, and each
-comparison compares up to eight item names. Measured, it takes over five
+comparison compares up to eight item names. Measured, it takes about fifteen
 minutes; the perf tier allows three seconds. The dict version reads each basket
-once — 200,000 steps, about two hundredths of a second.
+once — 200,000 steps, under three hundredths of a second.
 
 **Where the time actually went.** Both versions do the same *comparisons*; the
 difference is how many. Counting by searching asks "is this basket equal to

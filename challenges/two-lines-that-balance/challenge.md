@@ -137,9 +137,9 @@ exactly half the target pairs with itself. `[700]` with a target of 1400 is the
 whole test, and it is the reason the edge tier holds it.
 
 **Counting it.** One subtraction, one set lookup and one set insert per line.
-At 200,000 lines that is under a million steps and measures at about two
+At 200,000 lines that is under a million steps and measures at under two
 hundredths of a second. The every-pair version, run on the same file, is still
-going twenty minutes later.
+going nine minutes later.
 
 **What the negative amounts are doing in the constraints.** They stop you
 pruning. With only positive amounts you could skip any line above the target

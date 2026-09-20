@@ -15,16 +15,21 @@ global default and can be changed at any time afterwards.
 
 ## Observed failure
 
-- 053 reserved an empty margin column. 056 can anchor a selection but has
-  nowhere to put the result. 054 can store an annotation but nothing creates
-  one.
+- 053 reserved an empty margin column in `ReadingLayout`. 056 can anchor a
+  selection but has nowhere to put the result. 054 can store an annotation but
+  nothing creates one.
+- `ResearchStudio.tsx` (1149 lines) already renders selection, highlights and
+  notes, but only for research papers, only in memory, and only for one
+  reader. Its interaction patterns are the reference for this rail; its
+  single-user, unpersisted scope is what this issue replaces.
 
 ## Success criteria
 
 1. Selecting text raises a popup near the selection offering: a colour swatch
-   row that saves a `highlighting` annotation, and a note field that saves a
-   `commenting` annotation with the highlight as its target. Dismissing the
-   popup saves nothing.
+   row that saves a `highlight` annotation, and a note field that saves a
+   `note` annotation carrying the highlight's id as its `parentId`. These are
+   the existing `kind` values from `src/annotations/`, not new ones.
+   Dismissing the popup saves nothing.
 2. The popup is reachable by keyboard: it opens on keyboard selection, is
    fully tab-navigable, traps focus while open, closes on Escape, and returns
    focus to the reader's position in the text.
@@ -97,9 +102,15 @@ a scroll boundary, anchor it to the rail entry instead and say so.
 
 ## Recommended response
 
-Build the popup and the rail against the eight colour values in the reference
-screenshots, as semantic tokens named by role rather than by hue, so a dark
+Read `ResearchStudio.tsx` before writing the rail. It has solved selection
+handling, highlight painting and note editing for this codebase already; reuse
+its approach and, where the code is genuinely general, its code. Build the
+colour swatches as semantic tokens named by role rather than by hue, so a dark
 theme does not need a second set of annotations.
+
+Once the rail works, `ResearchStudio` should be migrated onto it rather than
+left as a second annotation UI. That migration belongs in the IA issue (061),
+not here.
 
 ## Trade-offs
 

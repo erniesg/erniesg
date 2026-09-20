@@ -1,4 +1,4 @@
-# Publish the challenges book on ernie.sg with one renderer and a three-column shell
+# Publish the challenges book at /books/challenges with one renderer and the shared reading shell
 
 ## Provider
 
@@ -6,16 +6,24 @@ claude
 
 ## Goal
 
-Put `challenges/` on the web. Today the book exists only as an EPUB and a
-localhost Python server whose own docstring says it is "a local preview of the
-node format, not the published site." Nothing in `src/pages/` references it.
-Every later issue in this series (054-060) annotates, comments on, or proposes
-edits to book pages that do not yet exist at a URL.
+Put `challenges/` on the web at `/books/challenges/`, and build the
+three-column reading shell as a **shared layout** that `/library`, `/books`,
+`/papers` and `/blog` will all use, per [ADR 010](../adr/010-reading-writing-and-the-margin-layer.md).
 
-The constraint that decides this issue: `challenges/tools/render.py` stays the
-only thing that emits block markup. Astro wraps its output; Astro does not
-re-implement it. The moment a second renderer exists the web and EPUB editions
-drift and the reader sees two different books.
+Today the book exists only as an EPUB and a localhost Python server whose own
+docstring says it is "a local preview of the node format, not the published
+site." Nothing in `src/pages/` references it. Every later issue in this series
+(054-060) annotates, comments on, or proposes edits to pages that do not yet
+exist at a URL.
+
+Two constraints decide this issue:
+
+1. `challenges/tools/render.py` stays the only thing that emits block markup.
+   Astro wraps its output; Astro does not re-implement it. The moment a second
+   renderer exists the web and EPUB editions drift and the reader sees two
+   different books.
+2. The reading shell belongs to the site, not to the book. A surface that
+   cannot use it is a surface that has diverged for no reason.
 
 ## Observed failure
 
@@ -24,30 +32,33 @@ drift and the reader sees two different books.
 - `preview.py` renders on every request from disk and binds to localhost. It is
   a reading tool, not a publishing path, and it grades by running reader code
   in local subprocesses, which cannot happen on a static host.
-- `main` carries no `/challenges/` route, so a highlight or comment has no
-  document URI to anchor to and no origin to be same-origin with.
+- There is no shared reading layout. `/research/[id].astro` and the blog each
+  lay out their own text column, so a margin rail added to one would not
+  appear on the other.
 
 ## Success criteria
 
-1. `render.py` is invoked at build time and its HTML is embedded verbatim.
-   A byte-comparison test asserts the block markup for a given node is
-   identical between the Astro build output and `render_node` called directly.
-   Any divergence fails the build.
-2. Routes: `/challenges/` (the path index, with the topic map) and
-   `/challenges/<node-id>/` for all 46 nodes, generated from
-   `load_book()` + `all_nodes()`, not from a hand-maintained list.
-3. The page shell is three columns at desktop width: table of contents, book
-   text, and an empty margin column reserved for 056-060. The margin column
-   renders as an empty landmark with a stable mount point; it must not shift
-   the text column when populated later.
-4. Below 1280px the margin column collapses, matching the existing
-   `preview.py` breakpoint behaviour for `.rail`.
+1. `render.py` is invoked at build time and its HTML is embedded verbatim. A
+   byte-comparison test asserts the block markup for a given node is identical
+   between the Astro build output and `render_node` called directly. Any
+   divergence fails the build.
+2. Routes: `/books/` (index of books), `/books/challenges/` (the path index
+   with the topic map) and `/books/challenges/<node-id>/` for all 46 nodes,
+   generated from `load_book()` + `all_nodes()`, never a hand-maintained list.
+3. **A shared `ReadingLayout`** in `src/layouts/` provides the three columns:
+   navigation, text, and a margin column with a stable mount point for
+   054-060. It takes the document URI and the text content as inputs and knows
+   nothing about books specifically. The book's pages use it; a follow-up
+   issue moves `/papers` and `/blog` onto it.
+4. The margin column renders as an empty landmark reserving its width, so
+   populating it later does not shift the text column. Below 1280px it
+   collapses, matching the existing `preview.py` breakpoint for `.rail`.
 5. Every node page carries a stable document URI and, where the node has
    struct-addressable blocks, per-block stable IDs in the DOM. These are the
    anchor targets 056 depends on; a block whose ID changes between two builds
    of identical source fails the test.
 6. Runnable cells and the grader are out of scope. Where the EPUB shows a
-   listing, the web shows a listing. Interactive execution is a later issue.
+   listing, the web shows a listing.
 7. The EPUB build is unchanged: `challenges/dist/*.epub` stays
    EPUBCheck-clean and byte-stable for unchanged source.
 
@@ -57,16 +68,19 @@ drift and the reader sees two different books.
   `render_node` and asserts the block markup matches exactly.
 - A test builds twice from unchanged source and asserts every per-block DOM ID
   is identical across the two builds.
-- A test asserts all 46 node routes are emitted and that the count comes from
-  `all_nodes()`.
+- A test asserts all 46 node routes are emitted under `/books/challenges/` and
+  that the count comes from `all_nodes()`.
+- A test renders `ReadingLayout` with non-book content and asserts it produces
+  the same three-column structure, proving it is not book-coupled.
 - A Playwright test asserts three columns above 1280px and two below, with no
   horizontal page scroll at 375px.
 
 ## Definition of done
 
-`npm run build` emits `/challenges/` and 46 node pages; the renderer-parity
-test passes; the ID-stability test passes; EPUBCheck is clean; no second
-renderer exists anywhere in `src/`.
+`npm run build` emits `/books/`, `/books/challenges/` and 46 node pages; the
+renderer-parity test passes; the ID-stability test passes; `ReadingLayout` is
+proven surface-agnostic by test; EPUBCheck is clean; no second renderer exists
+anywhere in `src/`.
 
 ## Validation command
 
@@ -74,7 +88,7 @@ renderer exists anywhere in `src/`.
 python3 challenges/tools/validate.py
 npm run build
 npm test
-npx playwright test tests/e2e/challenges-shell.spec.ts
+npx playwright test tests/e2e/reading-shell.spec.ts
 ```
 
 ## Allowed secrets
@@ -83,16 +97,17 @@ None.
 
 ## Artifact outputs
 
-Astro routes for the book; a build-time bridge that calls `render.py`; the
-three-column shell with a reserved margin mount point; renderer-parity and
-ID-stability tests.
+`/books` and `/books/challenges` Astro routes; a build-time bridge that calls
+`render.py`; `src/layouts/ReadingLayout.astro` with a reserved margin mount
+point; renderer-parity, ID-stability and layout-agnosticism tests.
 
 ## Stop conditions
 
 Stop before re-implementing any block markup in TypeScript, before
-hand-listing node IDs, and before changing `render.py`'s output to suit the
-web target. If the web needs something the renderer does not emit, add it to
-`render.py` behind the existing web/print target switch so print stays in sync.
+hand-listing node IDs, before changing `render.py`'s output to suit the web
+target, and before putting anything book-specific into `ReadingLayout`. If the
+web needs something the renderer does not emit, add it to `render.py` behind
+the existing web/print target switch so print stays in sync.
 
 ## Human clarification protocol
 
@@ -113,6 +128,7 @@ correct for a book and it is what the EPUB already assumes.
 
 ## Free-form response
 
-Parts III-IX are 22 topics still to come, so this shell will take new nodes
-continuously. Generating routes from `all_nodes()` rather than a list is what
-makes that free.
+The route is `/books/challenges/`, not a top-level `/challenges/`. This issue
+was held before dispatch on 2026-09-20 specifically to change it: annotations
+from 056 anchor to a document URI, so publishing at one path and moving later
+would orphan every annotation created in between.

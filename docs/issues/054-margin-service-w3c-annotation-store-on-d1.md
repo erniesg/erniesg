@@ -13,16 +13,40 @@ layer for published documents. This issue builds the service with no UI and no
 real auth: the data model, the D1 schema, the HTTP surface, and the rule that
 decides who may see what.
 
-The data model is the W3C Web Annotation Data Model, not a bespoke schema.
-That is the decision that makes this reusable by other sites later: "we speak
-Web Annotation" instead of a bespoke integration document. Its `motivation`
-vocabulary already covers every feature asked for:
+**The anchor and annotation model already exists in this repository and must
+be reused, not reinvented.** `src/research/annotations.ts` (366 lines, tested,
+in production use by `ResearchStudio.tsx` and
+`src/pages/research/[id]/exports/[file].ts`) already defines:
 
-- `highlighting` — a saved quote, no body
-- `commenting` — a note; a reply when its target is another annotation
-- `editing` — an edit proposal
+- `semanticTextAnchorSchema` — `{nodeId, position, quote}`, where `position`
+  is a text-position selector and `quote` is an `{exact, prefix, suffix}`
+  text-quote selector. This is W3C Web Annotation shape already.
+- `textAnnotationSchema` — a discriminated union on `kind` of
+  `highlightAnnotationSchema` and `noteAnnotationSchema`.
+- `createSemanticTextAnchor`, `createSemanticTextAnchorFromRange`,
+  `resolveTextAnchor`, `cacheAnnotationGeometry`, `createLayoutVersion`.
+- `TextAnchorResolution` — `resolved` / `ambiguous` / `unresolved`, with
+  `matchedBy: 'position-and-context' | 'quote-and-context' | 'unique-quote'`.
 
-One table, three motivations.
+`src/publication/annotation-bundle.ts` builds on it with
+`annotationBundleSchema`, `createAnnotationBundle` and
+`serializeAnnotationBundle`.
+
+This issue's first task is therefore a **move, not a design**: lift these
+modules out of `src/research/` into a neutral home (`src/annotations/`) with
+no behaviour change, update the four importers, and keep the tests green.
+`src/research/` may re-export for compatibility.
+
+The stored shape is then the existing `SemanticTextAnchor` plus
+`TextAnnotation`, extended only where margin genuinely needs more:
+
+- a third `kind`, `proposal`, for 059's edit proposals;
+- `visibility`, `creator`, `parentId` and the `(site, document)` tenancy key;
+- an optional `structId` selector alongside `nodeId`, for documents that came
+  through `@erniesg/struct`.
+
+Adding a `kind` to a discriminated union and fields to a record is a small,
+reviewable change. Building a parallel model beside a working one is not.
 
 ## Observed failure
 
@@ -38,30 +62,32 @@ One table, three motivations.
    `margin-db-stg` (`48958be2-df8f-4ec9-b6d9-7d7be51f87e6`) are bound in
    `wrangler.production.jsonc` and `wrangler.jsonc`. The Worker entry point is
    added as `main`; static asset serving is unchanged for every other route.
-2. Schema stores W3C annotations: `id`, `motivation`, `target` (source URI +
-   selectors), `body`, `creator`, `visibility`, `created`, `modified`,
-   `parent_id`, and a tenancy key `(site, document)`. Selectors are stored as
-   a list so an annotation can carry both a `StructSelector` and a
-   `TextQuoteSelector`.
-3. Tenancy is real from the first commit. Nothing in the schema, the queries or
+2. `src/research/annotations.ts` and `src/publication/annotation-bundle.ts`
+   are moved to `src/annotations/` with no behaviour change, all four existing
+   importers updated, and every existing test still green. A test asserts the
+   moved schemas parse the same fixtures as before.
+3. Schema stores the existing `SemanticTextAnchor` + `TextAnnotation` plus
+   `visibility`, `creator`, `parent_id`, an optional `struct_id`, and a
+   tenancy key `(site, document)`. The `kind` union gains `proposal`.
+4. Tenancy is real from the first commit. Nothing in the schema, the queries or
    the route shapes may assume the challenges book is the only document. A
    second site must be addable without a migration.
-4. **Visibility is enforced in the query, never in serialization.** A private
+5. **Visibility is enforced in the query, never in serialization.** A private
    annotation belonging to another user must not be read from the database for
    this request. A test asserts that the SQL for a non-owner cannot return
    another user's private rows, not merely that the response omits them.
-5. Routes under `/api/margin/v1/`: `GET|POST /annotations`,
+6. Routes under `/api/margin/v1/`: `GET|POST /annotations`,
    `PATCH|DELETE /annotations/:id`, `GET|PATCH /prefs`,
    `GET /proposals`, `POST /proposals/:id/apply`,
    `GET /documents/:id/history`. Apply and history return `501` in this issue;
    059 and 060 implement them.
-6. `prefs` holds the per-user global default visibility. A new annotation with
+7. `prefs` holds the per-user global default visibility. A new annotation with
    no explicit visibility takes that default; changing the default never
    rewrites existing annotations.
-7. Storage sits behind a thin repository interface so D1 is not load-bearing
+8. Storage sits behind a thin repository interface so D1 is not load-bearing
    in route handlers. This is what makes a later extraction to
    `margin-api.berlayar.ai` mechanical.
-8. Authorization reads the caller from a single `getPrincipal(request)` seam.
+9. Authorization reads the caller from a single `getPrincipal(request)` seam.
    In this issue it is a dev stub keyed by an env var; 055 replaces the seam's
    implementation and nothing else.
 
@@ -75,8 +101,10 @@ One table, three motivations.
 - A reply whose target is an annotation is stored and returned with its
   `parent_id` intact.
 - Rows for a second `(site, document)` are invisible to the first.
-- Unknown motivation, malformed selector, oversized body and cross-tenant
+- Unknown `kind`, malformed selector, oversized body and cross-tenant
   `parent_id` are all rejected with 4xx and never stored.
+- Every test that existed for `src/research/annotations.ts` still passes from
+  its new location, unchanged.
 
 ## Definition of done
 
@@ -107,10 +135,13 @@ tests including the query-layer visibility proof.
 
 ## Stop conditions
 
-Stop before filtering private rows in serialization rather than in the query,
-before hardcoding the challenges book as the only tenant, before inventing
-fields outside the W3C model where an existing one fits, and before letting a
-route handler reach D1 directly.
+**Stop before writing a second anchor or annotation schema.** If something
+about `semanticTextAnchorSchema` or `textAnnotationSchema` does not fit,
+extend it in place and say why; do not model it again alongside.
+
+Also stop before filtering private rows in serialization rather than in the
+query, before hardcoding the challenges book as the only tenant, and before
+letting a route handler reach D1 directly.
 
 ## Human clarification protocol
 
@@ -119,8 +150,13 @@ namespaced extension property and name it, rather than abandoning the model.
 
 ## Recommended response
 
-Model replies as annotations whose `target` is another annotation's id. It is
-what the standard already says, and it means threads need no second table.
+Do the move first, as its own commit, with no other change. A pure relocation
+with green tests is reviewable in a minute; a relocation tangled with a schema
+extension is not.
+
+Then model replies as annotations carrying a `parent_id`, which is what the
+W3C model means by targeting another annotation, so threads need no second
+table.
 
 ## Trade-offs
 

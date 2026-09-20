@@ -1,0 +1,19 @@
+{
+  "id": "text-pipeline",
+  "type": "walk",
+  "title": "Three steps, three new strings",
+  "caption": "Each step reads a string and hands back a new one. Watch the original: it is the same at the end as at the start, because nothing in Python edits a string in place. The two middle strings are thrown away the moment the next step runs; only the last one is worth a name.",
+  "sequence": [".strip()", ".lower()", ".replace(' ', '-')"],
+  "markers": [{ "name": "step", "from": 0, "to": 2 }],
+  "state": [
+    {
+      "label": "result",
+      "values": ["'Reading the Deal'", "'reading the deal'", "'reading-the-deal'"]
+    },
+    {
+      "label": "original",
+      "values": ["'  Reading the Deal '", "'  Reading the Deal '", "'  Reading the Deal '"]
+    }
+  ],
+  "answer": { "label": "strings made", "value": 3 }
+}

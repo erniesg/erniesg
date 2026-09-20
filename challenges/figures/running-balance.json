@@ -1,0 +1,13 @@
+{
+  "id": "running-balance",
+  "type": "walk",
+  "title": "One pass, two things remembered",
+  "caption": "A marker moves along the payments, left to right. Underneath, two names that live outside the loop: the balance after the payment just read, and the charge racked up so far at 8 a dip. Neither is worked out at the end from the whole list; both are updated as the marker passes.",
+  "sequence": [45, 30, 28, 40, 19],
+  "markers": [{ "name": "payment", "from": 0, "to": 4 }],
+  "state": [
+    { "label": "balance", "values": [75, 45, 17, -23, -42] },
+    { "label": "charged", "values": [0, 0, 0, 8, 16] }
+  ],
+  "answer": { "label": "charged this month", "value": 16 }
+}

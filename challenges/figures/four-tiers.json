@@ -1,0 +1,12 @@
+{
+  "id": "four-tiers",
+  "type": "cells",
+  "title": "The four tiers",
+  "caption": "Tiers run left to right and stop at the first red one. Public checks you read the problem; edge checks the awkward shapes; stress races you against an obvious slow version; perf checks you picked a method that scales.",
+  "cells": [
+    { "label": "public", "note": "the statement's own examples" },
+    { "label": "edge", "note": "two values, all equal, the largest allowed" },
+    { "label": "stress", "note": "random small lists vs a slow referee" },
+    { "label": "perf", "note": "one list at the size limit" }
+  ]
+}

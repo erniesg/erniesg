@@ -1,0 +1,11 @@
+{
+  "id": "lookup-vs-scan",
+  "type": "cost",
+  "title": "Scanning a list against asking a dict",
+  "caption": "Names looked at to find one name, on average. Scanning grows with the pile: ten thousand names held means about five thousand read before the right one turns up. A dict turns the name into a place and goes there, so its line stays flat however many names it holds. Building the dict costs one pass first, so it pays from the second question on.",
+  "x": { "label": "names held", "values": [10, 100, 1000, 10000] },
+  "series": [
+    { "label": "scan the list", "values": [5, 50, 500, 5000] },
+    { "label": "ask the dict", "values": [1, 1, 1, 1] }
+  ]
+}

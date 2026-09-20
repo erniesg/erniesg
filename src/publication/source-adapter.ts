@@ -40,7 +40,7 @@ export const publicationContractReceiptSchema = z
     source: z
       .object({
         adapterId: z.string().min(1).max(256),
-        sourceType: z.enum(['astro', 'payload', 'docx', 'pdf', 'research-paper']),
+        sourceType: z.enum(['astro', 'payload', 'docx', 'pdf', 'research-paper', 'challenges']),
         mappingVersion: z.string().min(1).max(128).optional(),
       })
       .strict()
@@ -116,7 +116,7 @@ export const adapterProvenanceSchema = z
       .max(256)
       .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
     adapterVersion: z.literal(PUBLICATION_SOURCE_ADAPTER_VERSION),
-    sourceType: z.enum(['astro', 'payload', 'docx', 'pdf', 'research-paper']),
+    sourceType: z.enum(['astro', 'payload', 'docx', 'pdf', 'research-paper', 'challenges']),
     sourceId: safeSourceIdSchema,
     sourceRevision: safeSourceIdSchema.pipe(z.string().max(256)).optional(),
     mappingVersion: z.string().min(1).max(128).optional(),

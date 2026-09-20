@@ -22,6 +22,7 @@ import tomllib
 CHALLENGES_DIR = Path(__file__).resolve().parent.parent
 FIGURES_DIR = CHALLENGES_DIR / "figures"
 TIERS = ["public", "edge", "stress", "perf"]
+SUPPORT_LEVELS = ["worked", "guided", "contract", "unaided"]
 FIGURE_TYPES = {"cells", "walk", "links", "table", "cost"}
 
 BLOCKS = re.compile(r"^:::(\w+)", re.MULTILINE)
@@ -89,6 +90,17 @@ def check_node(path: Path, meta: dict, body: str) -> None:
         return
 
     node_dir = path.parent
+    support = meta.get("support")
+    if support not in SUPPORT_LEVELS:
+        fail(path, f"`support` must be one of {SUPPORT_LEVELS}")
+    else:
+        hint_count = body.count(":::hint")
+        if support in ("worked", "guided") and hint_count == 0:
+            fail(path, f"a `{support}` challenge has to carry hints")
+        if support == "unaided" and hint_count:
+            fail(path, "an `unaided` challenge must not carry hints")
+        if ":::solution" not in body:
+            fail(path, "every challenge needs a solution, even the unaided ones")
     if "module" not in meta:
         fail(path, "a challenge needs `module` in its front matter")
     for name in ("starter.py", "solution.py"):
@@ -143,9 +155,23 @@ def check_paths(nodes: dict[str, dict]) -> None:
     for path_file in sorted((CHALLENGES_DIR / "paths").glob("*.toml")):
         data = tomllib.loads(path_file.read_text())
         for part in data.get("parts", []):
+            rung = -1
             for node_id in part.get("nodes", []):
                 if node_id not in nodes:
                     fail(path_file, f"part `{part.get('id')}` lists unknown node `{node_id}`")
+                    continue
+                meta = nodes[node_id]
+                if meta.get("kind") != "challenge":
+                    continue
+                # A chapter's challenges only ever get harder: help may fall
+                # away as you go down the list, never come back.
+                here = SUPPORT_LEVELS.index(meta.get("support", "guided"))
+                if here < rung:
+                    problems.append(
+                        f"{path_file.name}: `{node_id}` offers more help than the "
+                        f"challenge before it; a ladder only goes one way"
+                    )
+                rung = max(rung, here)
 
 
 def main() -> int:

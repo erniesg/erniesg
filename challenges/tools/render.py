@@ -37,6 +37,18 @@ BLOCK = re.compile(r"^:::(\w+)(\{[^}]*\})?\s*$", re.MULTILINE)
 CLOSING = re.compile(r"^:::\s*$", re.MULTILINE)
 ATTR = re.compile(r'(\w+)\s*=\s*"?([^",}\s]+)"?')
 CARD_BLOCKS = ("statement", "io", "constraints", "sample")
+
+# How much help a challenge comes with. A chapter ends with a ladder: the first
+# problems are worked through, the last are yours alone.
+SUPPORT_LEVELS = ("worked", "guided", "contract", "unaided")
+SUPPORT_NOTES = {
+    "worked": "Worked through step by step, then hints, then the full solution.",
+    "guided": "Hints if you want them, and a worked solution behind them.",
+    "contract": "You get the contract and the tests. Hints are there; the "
+                "solution waits until you pass.",
+    "unaided": "No hints and no solution until every tier is green. This is "
+               "the one that tells you whether it stuck.",
+}
 FIGURE_TYPES = ("cells", "walk", "links", "table", "cost")
 
 
@@ -293,14 +305,25 @@ def _figure_body(data: dict, kind: str, target: str) -> str:
     return f'<p class="missing">no renderer for figure type {html.escape(str(kind))}</p>'
 
 
-def render_node(node: dict, target: str = "web") -> str:
-    """One node, one markup, differing only where a target cannot follow."""
+def render_node(node: dict, target: str = "web", solved: bool = False) -> str:
+    """One node, one markup, differing only where a target cannot follow.
+
+    `solved` gates what a challenge is willing to show: an unaided problem
+    keeps its solution until the tiers are green. Print shows everything,
+    because a book cannot know who is reading it.
+    """
+    support = node.get("support", "guided")
     pieces = split_blocks(node["body"])
     card_parts = {name: inner for name, _, inner in pieces if name in CARD_BLOCKS}
     out: list[str] = []
     if node.get("part"):
         out.append(f'<p class="eyebrow">{html.escape(node["part"])}</p>')
     out.append(f'<h1>{html.escape(node["title"])}</h1>')
+    if node.get("kind") == "challenge":
+        out.append(
+            f'<p class="support support-{support}">'
+            f'{html.escape(SUPPORT_NOTES.get(support, ""))}</p>'
+        )
     hints: list[str] = []
     card_done = False
 
@@ -327,6 +350,8 @@ def render_node(node: dict, target: str = "web") -> str:
             figure_number += 1
             out.append(figure(attrs.get("id", ""), inner, target, figure_number))
         elif name == "hint":
+            if support == "unaided" and target != "print":
+                continue
             level = html.escape(attrs.get("level", str(len(hints) + 1)))
             if target == "print":
                 hints.append(
@@ -340,6 +365,13 @@ def render_node(node: dict, target: str = "web") -> str:
                 )
         elif name == "solution":
             flush_hints()
+            locked = support in ("contract", "unaided") and not solved
+            if locked and target != "print":
+                out.append(
+                    '<p class="locked-solution">The worked solution unlocks when all '
+                    "four tiers are green.</p>"
+                )
+                continue
             if target == "print":
                 out.append(
                     '<div class="solution"><p class="solution-title">Worked solution</p>'
@@ -443,6 +475,14 @@ figcaption { font:.82rem/1.5 ui-sans-serif,system-ui; color:var(--dim); margin-t
 .hint-title, .solution-title { font:600 .85rem ui-sans-serif,system-ui; margin:.2rem 0; }
 details summary { cursor:pointer; font:600 .85rem ui-sans-serif,system-ui; }
 .missing { color:#b91c1c; font:.85rem ui-sans-serif,system-ui; }
+.support { font:.82rem/1.5 ui-sans-serif,system-ui; color:var(--dim); margin:-.4rem 0 1.2rem;
+  padding-left:.7rem; border-left:3px solid var(--line); }
+.support-worked { border-left-color:#15803d; }
+.support-guided { border-left-color:#0369a1; }
+.support-contract { border-left-color:#b45309; }
+.support-unaided { border-left-color:#be185d; }
+.locked-solution { font:.85rem ui-sans-serif,system-ui; color:var(--dim); border:1px dashed
+  var(--line); border-radius:6px; padding:10px 12px; }
 """
 
 PRINT_CSS = CONTENT_CSS + """

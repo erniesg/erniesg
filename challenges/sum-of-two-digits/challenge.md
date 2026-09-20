@@ -4,6 +4,7 @@ kind = "challenge"
 title = "Sum of two digits"
 module = "digits"
 figure = "reading-a-deal"
+support = "worked"
 difficulty = 0
 
 requires = ["ch00-the-loop"]

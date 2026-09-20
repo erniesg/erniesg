@@ -66,6 +66,13 @@ requires = ["functions"]
 agent = "reading what the test runner said"
 
 [[topic]]
+id = "stepping-through-code"
+title = "Stepping through code"
+part = 1
+requires = ["errors-and-tracebacks"]
+agent = "narrowing a failure to one line"
+
+[[topic]]
 id = "python-idioms"
 title = "Writing it the Python way"
 part = 1
@@ -230,7 +237,7 @@ agent = "fingerprints"
 id = "testing-debugging"
 title = "Testing and debugging"
 part = 8
-requires = ["the-loop"]
+requires = ["the-loop", "stepping-through-code"]
 agent = "trusting its own edits"
 
 [[topic]]

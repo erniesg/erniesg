@@ -4,6 +4,7 @@ kind = "challenge"
 title = "Biggest product of two"
 module = "pairwise"
 figure = "two-biggest"
+support = "guided"
 difficulty = 1
 
 requires = ["ch00-the-loop"]

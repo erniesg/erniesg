@@ -1,6 +1,6 @@
 # WorkOS AuthKit session and an allowlist for margin
 
-depends-on: 054
+depends-on: 062
 
 ## Provider
 

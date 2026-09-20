@@ -1,5 +1,7 @@
 # margin service: a W3C Web Annotation store on D1 that enforces visibility server-side
 
+depends-on: 062
+
 ## Provider
 
 claude
@@ -30,10 +32,8 @@ in production use by `ResearchStudio.tsx` and
 `annotationBundleSchema`, `createAnnotationBundle` and
 `serializeAnnotationBundle`.
 
-This issue's first task is therefore a **move, not a design**: lift these
-modules out of `src/research/` into a neutral home (`src/annotations/`) with
-no behaviour change, update the four importers, and keep the tests green.
-`src/research/` may re-export for compatibility.
+062 has already moved these modules to `src/annotations/` unchanged. This
+issue consumes them from there.
 
 The stored shape is then the existing `SemanticTextAnchor` plus
 `TextAnnotation`, extended only where margin genuinely needs more:
@@ -56,38 +56,29 @@ reviewable change. Building a parallel model beside a working one is not.
 
 ## Success criteria
 
-1. `margin-db` (APAC, `c98621e9-5621-401a-b2f2-35390c25411d`) and
-   `margin-db-stg` (`48958be2-df8f-4ec9-b6d9-7d7be51f87e6`) are bound in
-   `wrangler.production.jsonc` and `wrangler.jsonc`. The Worker entry point is
-   added as `main`; static asset serving is unchanged for every other route.
-2. `src/research/annotations.ts` and `src/publication/annotation-bundle.ts`
-   are moved to `src/annotations/` with no behaviour change, all four existing
-   importers updated, and every existing test still green. A test asserts the
-   moved schemas parse the same fixtures as before.
-3. Schema stores the existing `SemanticTextAnchor` + `TextAnnotation` plus
+1. Schema stores the existing `SemanticTextAnchor` + `TextAnnotation` plus
    `visibility`, `creator`, `parent_id`, an optional `struct_id`, and a
    tenancy key `(site, document)`. The `kind` union gains `proposal`.
-4. Tenancy is real from the first commit. Nothing in the schema, the queries or
+2. Tenancy is real from the first commit. Nothing in the schema, the queries or
    the route shapes may assume the challenges book is the only document. A
    second site must be addable without a migration.
-5. **Visibility is enforced in the query, never in serialization.** A private
+3. **Visibility is enforced in the query, never in serialization.** A private
    annotation belonging to another user must not be read from the database for
    this request. A test asserts that the SQL for a non-owner cannot return
    another user's private rows, not merely that the response omits them.
-6. Routes under `/api/margin/v1/`: `GET|POST /annotations`,
+4. Routes under `/api/margin/v1/`: `GET|POST /annotations`,
    `PATCH|DELETE /annotations/:id`, `GET|PATCH /prefs`,
    `GET /proposals`, `POST /proposals/:id/apply`,
    `GET /documents/:id/history`. Apply and history return `501` in this issue;
    059 and 060 implement them.
-7. `prefs` holds the per-user global default visibility. A new annotation with
+5. `prefs` holds the per-user global default visibility. A new annotation with
    no explicit visibility takes that default; changing the default never
    rewrites existing annotations.
-8. Storage sits behind a thin repository interface so D1 is not load-bearing
+6. Storage sits behind a thin repository interface so D1 is not load-bearing
    in route handlers. This is what makes a later extraction to
    `margin-api.berlayar.ai` mechanical.
-9. Authorization reads the caller from a single `getPrincipal(request)` seam.
-   In this issue it is a dev stub keyed by an env var; 055 replaces the seam's
-   implementation and nothing else.
+7. Authorization reads the caller through the `getPrincipal(request)` seam
+   that 062 created. This issue neither defines nor replaces it.
 
 ## Acceptance tests
 

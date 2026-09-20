@@ -1,6 +1,6 @@
 # @erniesg/margin: the client package, text selection and durable anchoring
 
-depends-on: 054
+depends-on: 062
 
 ## Provider
 
@@ -13,7 +13,7 @@ that imports nothing from the book and is publishable to npm as
 `@erniesg/margin`.
 
 **The anchoring core already exists and this issue extends it rather than
-writing it.** After 054's move, `src/annotations/` provides
+writing it.** After 062's move, `src/annotations/` provides
 `createSemanticTextAnchorFromRange` (a DOM Range to an anchor — that is
 selection-to-anchor, already built), `resolveTextAnchor` (the re-anchoring,
 returning `resolved` / `ambiguous` / `unresolved` with

@@ -1,0 +1,10 @@
+# The book: an ordered walk over the node pool.
+id = "agent"
+title = "Build a coding agent"
+kind = "book"
+front_matter = "front-matter"
+
+[[parts]]
+id = "part-0"
+title = "The loop"
+nodes = ["ch00-the-loop", "sum-of-two-digits", "max-pairwise-product"]

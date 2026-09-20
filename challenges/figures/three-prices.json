@@ -1,0 +1,12 @@
+{
+  "id": "three-prices",
+  "type": "cost",
+  "title": "Three prices for the same job",
+  "caption": "Two hundred bikes into number order. Shuffling into a row touches about 20,000 bikes; splitting, ordering and merging piles takes roughly 1,500 comparisons; chalked numbers on the ground take 200 placements and no comparisons at all — but need ground for every possible number.",
+  "x": { "label": "bikes", "values": [10, 50, 100, 200] },
+  "series": [
+    { "label": "row (shuffle)", "values": [50, 1250, 5000, 20000] },
+    { "label": "merge piles", "values": [33, 282, 664, 1529] },
+    { "label": "chalked ground", "values": [10, 50, 100, 200] }
+  ]
+}

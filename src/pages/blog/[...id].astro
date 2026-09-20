@@ -22,7 +22,7 @@ import {
   isLegacyChinesePostId,
 } from '@/lib/i18n'
 import { Icon } from 'astro-icon/components'
-import { Image } from 'astro:assets'
+import { Image, getImage } from 'astro:assets'
 import { type CollectionEntry, getCollection, render } from 'astro:content'
 
 export async function getStaticPaths() {
@@ -105,6 +105,24 @@ const alternates = Object.fromEntries(
     return path ? [[locale, path]] : []
   }),
 ) as Partial<Record<SupportedLocale, string>>
+// Run the social image through the asset pipeline so the file it points at is
+// emitted. Reading `.src` off the import alone no longer guarantees that, and
+// the resulting og:image URL 404s.
+// Only raster sources get a format forced on them. Anything else keeps Astro's
+// default: svg stays svg rather than being rasterized, which the pipeline
+// refuses to do and which would fail the build.
+const sourceFormat = post.data.image?.format
+const socialFormat =
+  sourceFormat === 'jpg' ? 'jpeg' : sourceFormat === 'png' ? 'png' : undefined
+const socialImage = post.data.image
+  ? (
+      await getImage(
+        socialFormat
+          ? { src: post.data.image, format: socialFormat }
+          : { src: post.data.image },
+      )
+    ).src
+  : '/static/1200x630.png'
 const localizedPaths = Object.fromEntries(
   availableLocales.flatMap((locale) => {
     const path = getLocalizedEntryPath(locale)
@@ -116,7 +134,7 @@ const localizedPaths = Object.fromEntries(
 <Layout
   title={post.data.title}
   description={post.data.description}
-  image={post.data.image?.src ?? '/static/1200x630.png'}
+  image={socialImage}
   lang={currentLocale}
   canonicalPath={getPostLocalePath(post.id, currentLocale)}
   alternates={alternates}

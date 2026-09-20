@@ -57,7 +57,6 @@ output: their sum, as a number
 :::
 
 :::figure{id="reading-a-deal"}
-What each line of a problem statement promises you.
 :::
 
 :::run{starter="starter.py"}

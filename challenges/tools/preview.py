@@ -81,7 +81,7 @@ EDGE_KINDS = {
 }
 
 PART_NAMES = {
-    0: "The loop", 1: "Python and cost", 2: "Lookup", 3: "Scanning",
+    0: "The loop", 1: "Programming basics", 2: "Lookup", 3: "Scanning",
     4: "Recursive structure", 5: "Graphs", 6: "Optimization",
     7: "The agent's structures", 8: "Engineering", 9: "At scale",
 }
@@ -109,7 +109,7 @@ header.top { position:sticky; top:0; z-index:16; background:var(--bg);
 .drawer-inner { padding:16px 14px 50px; }
 .drawer-title { font:600 .72rem ui-sans-serif,system-ui; letter-spacing:.09em;
   text-transform:uppercase; color:var(--dim); margin:0; }
-.scrim { position:fixed; inset:44px 0 0 0; background:rgba(20,20,20,.25); z-index:14; }
+.scrim { position:fixed; inset:44px 0 0 0; background:transparent; z-index:14; }
 .toc { list-style:none; padding:0; margin:12px 0 0; }
 .toc-part { font:600 .72rem ui-sans-serif,system-ui; letter-spacing:.08em; text-transform:uppercase;
   color:var(--dim); margin:18px 0 6px; }
@@ -124,8 +124,7 @@ header.top { position:sticky; top:0; z-index:16; background:var(--bg);
 main { display:grid; grid-template-columns:minmax(0,40rem) 17rem; gap:3rem;
   justify-content:center; padding:28px 24px 80px; }
 main > article { min-width:0; }
-body.with-sidebar main { margin-left:270px; }
-main.wide { grid-template-columns:minmax(0,1fr); justify-content:stretch; }
+main.wide { grid-template-columns:minmax(0,60rem); }
 .rail { position:sticky; top:64px; align-self:start; max-height:calc(100vh - 90px); overflow:auto;
   font:.85rem/1.5 ui-sans-serif,system-ui; padding-left:1.2rem; border-left:1px solid var(--line); }
 .rail-outline summary { font:600 .7rem ui-sans-serif,system-ui; letter-spacing:.08em;
@@ -157,7 +156,12 @@ main.wide { grid-template-columns:minmax(0,1fr); justify-content:stretch; }
 .desk-actions { display:flex; gap:12px; align-items:center; border:1px solid var(--line);
   border-top:0; border-radius:0 0 8px 8px; padding:8px 12px; background:#fff; }
 .desk-actions button { font:600 .85rem ui-sans-serif,system-ui; padding:6px 14px; border:0;
-  border-radius:6px; background:var(--accent); color:#fff; cursor:pointer; }
+  border-radius:6px; background:var(--accent); color:#fff; cursor:pointer; display:flex;
+  align-items:center; gap:7px; }
+.desk-actions kbd { font:.75rem ui-monospace,monospace; background:rgba(255,255,255,.22);
+  padding:1px 5px; border-radius:4px; }
+.editor:focus { outline:2px solid var(--accent); outline-offset:1px; }
+.editor:focus + .desk-actions { border-color:var(--accent); }
 .status { font:.8rem ui-sans-serif,system-ui; color:var(--dim); }
 .tiers { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
 .tier { font:.76rem ui-sans-serif,system-ui; padding:4px 10px; border-radius:20px;
@@ -221,8 +225,7 @@ nav.turn { display:flex; justify-content:space-between; margin-top:3rem;
   border-top:1px solid var(--line); padding-top:1rem; font:.9rem ui-sans-serif,system-ui; }
 nav.turn a { color:var(--accent); text-decoration:none; }
 @media (max-width:1279px) { main { grid-template-columns:minmax(0,40rem); } .rail { display:none; } }
-@media (max-width:1100px) { body.with-sidebar main { margin-left:0; }
-  .map-wrap { grid-template-columns:minmax(0,1fr); } }
+@media (max-width:1100px) { .map-wrap { grid-template-columns:minmax(0,1fr); } }
 @media (max-width:480px) { body { font-size:16px; } main { padding:20px 16px 60px; } }
 """
 
@@ -358,7 +361,6 @@ what it unlocks and what is written for it.</p>
   <span class="legend-item"><i class="swatch open"></i>open now</span>
   <span class="legend-item"><i class="swatch locked"></i>locked</span>
   <span class="legend-item"><i class="swatch empty"></i>not written</span>
-  <button id="map-fit">Fit</button>
 </div>
 <div class="map-wrap"><div class="map-stage"><div id="map"></div>
   <div class="map-controls">
@@ -398,7 +400,7 @@ def page(title: str, inner: str, book_title: str, order: list[dict], current: st
 </header>
 <div class="scrim" hidden></div>
 <aside class="drawer" hidden><div class="drawer-inner">
-  <p class="drawer-title">Contents</p>{contents_html(order, current)}
+  {contents_html(order, current)}
 </div></aside>
 <main class="{'wide' if wide else ''}"><article>{inner}</article>{render_rail(inner, node) if not wide else ''}</main>
 <script>{SCRIPT}</script></body></html>""".encode()
@@ -435,7 +437,7 @@ runnableCells.forEach((cell, index) => {
         body: JSON.stringify({ source: cell.querySelector('.editor').value, earlier }),
       });
       output.textContent = (await response.json()).output;
-      status.textContent = 'ran on your machine';
+      status.textContent = '';
     } catch (error) { status.textContent = String(error); }
     finally { button.disabled = false; }
   };
@@ -466,6 +468,24 @@ document.querySelectorAll('.desk').forEach(desk => {
   };
 });
 
+// Cmd/Ctrl+Enter runs whichever editor has focus; Shift+Enter runs it and
+// moves on to the next one, so you can walk a chapter from the keyboard.
+document.querySelectorAll('.editor').forEach(editor => {
+  editor.addEventListener('keydown', event => {
+    if (event.key !== 'Enter' || (!event.metaKey && !event.ctrlKey && !event.shiftKey)) return;
+    const holder = editor.closest('.cell-run, .desk');
+    const button = holder && holder.querySelector('.exec, .run');
+    if (!button) return;
+    event.preventDefault();
+    button.click();
+    if (event.shiftKey && !event.metaKey && !event.ctrlKey) {
+      const editors = [...document.querySelectorAll('.editor')];
+      const next = editors[editors.indexOf(editor) + 1];
+      if (next) { next.focus(); next.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+    }
+  });
+});
+
 const drawer = document.querySelector('.drawer');
 const scrim = document.querySelector('.scrim');
 const contentsButton = document.querySelector('.contents-button');
@@ -473,17 +493,15 @@ const wide = () => window.matchMedia('(min-width: 1100px)').matches;
 
 function setContents(open) {
   drawer.toggleAttribute('hidden', !open);
-  scrim.toggleAttribute('hidden', !(open && !wide()));
-  document.body.classList.toggle('with-sidebar', open && wide());
+  scrim.toggleAttribute('hidden', !open);
   contentsButton.setAttribute('aria-expanded', String(open));
 }
 
 if (drawer && contentsButton) {
-  setContents(wide());
+  setContents(false);
   contentsButton.onclick = () => setContents(drawer.hasAttribute('hidden'));
   scrim.onclick = () => setContents(false);
   document.addEventListener('keydown', e => { if (e.key === 'Escape') setContents(false); });
-  window.addEventListener('resize', () => { if (!drawer.hasAttribute('hidden')) setContents(true); });
 }
 
 const scrollBar = document.querySelector('.scroll-progress i');

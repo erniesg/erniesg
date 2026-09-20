@@ -167,17 +167,27 @@ def problem_card(node: dict, blocks: dict[str, str]) -> str:
     )
 
 
-def figure(figure_id: str, caption_override: str = "", target: str = "web") -> str:
+def figure(figure_id: str, caption_override: str = "", target: str = "web", number: int | None = None) -> str:
+    """A figure, numbered so the prose can refer to it by name.
+
+    A reader meeting a chart needs to know which figure it is and what it
+    shows, in that order, without hunting for the sentence that introduced it.
+    """
     path = FIGURES / f"{figure_id}.json"
     if not path.is_file():
         return f'<p class="missing">missing figure: {html.escape(figure_id)}</p>'
     data = json.loads(path.read_text())
     kind = data.get("type")
     title = html.escape(data.get("title", ""))
-    caption = html.escape(caption_override.strip() or data.get("caption", ""))
+    # the figure's own caption is what explains it; a directive's one-line
+    # restatement is not a substitute for it, and printing both says it twice
+    caption = html.escape(data.get("caption", "") or caption_override.strip())
     body = _figure_body(data, kind, target)
+    label = f"Figure {number}" if number else ""
+    heading = f"{label} · {title}" if label and title else (label or title)
     return (
-        f'<figure class="figure"><p class="figure-title">{title}</p>{body}'
+        f'<figure class="figure" id="figure-{html.escape(figure_id)}">'
+        f'<p class="figure-title">{heading}</p>{body}'
         f"<figcaption>{caption}</figcaption></figure>"
     )
 
@@ -299,6 +309,7 @@ def render_node(node: dict, target: str = "web") -> str:
             out.append('<div class="hints">' + "".join(hints) + "</div>")
             hints.clear()
 
+    figure_number = 0
     for name, attrs, inner in pieces:
         if name in CARD_BLOCKS:
             if not card_done:
@@ -313,7 +324,8 @@ def render_node(node: dict, target: str = "web") -> str:
             parts = {n: i for n, _, i in split_blocks(referenced["body"]) if n in CARD_BLOCKS}
             out.append(problem_card(referenced, parts))
         elif name == "figure":
-            out.append(figure(attrs.get("id", ""), inner, target))
+            figure_number += 1
+            out.append(figure(attrs.get("id", ""), inner, target, figure_number))
         elif name == "hint":
             level = html.escape(attrs.get("level", str(len(hints) + 1)))
             if target == "print":
@@ -353,8 +365,8 @@ def _runnable(rendered: str) -> str:
         lambda m: (
             '<div class="cell-run">'
             f'<textarea class="editor small" spellcheck="false">{m.group(1)}</textarea>'
-            '<div class="desk-actions"><button class="exec">Run</button>'
-            '<span class="status">edit it, then run it</span></div>'
+            '<div class="desk-actions"><button class="exec">Run <kbd>\u2318\u21b5</kbd></button>'
+            '<span class="status"></span></div>'
             '<pre class="output"></pre></div>'
         ),
         rendered,
@@ -376,7 +388,7 @@ def _desk(node: dict, attrs: dict, target: str) -> str:
     return (
         f'<section class="desk" data-node="{html.escape(node["id"])}">'
         f'<textarea class="editor" spellcheck="false">{html.escape(starter)}</textarea>'
-        '<div class="desk-actions"><button class="run">Run all tiers</button>'
+        '<div class="desk-actions"><button class="run">Run all tiers <kbd>\u2318\u21b5</kbd></button>'
         '<span class="status">The first run is supposed to be red.</span></div>'
         '<div class="tiers"></div><pre class="output"></pre></section>'
     )

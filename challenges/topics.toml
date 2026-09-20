@@ -10,24 +10,80 @@ requires = []
 agent = "self-checking edits"
 
 [[topic]]
-id = "python-basics"
-title = "Python primitives"
+id = "values-and-variables"
+title = "Values and variables"
 part = 1
 requires = ["the-loop"]
-agent = "every tool handler"
+agent = "every value it passes around"
+
+[[topic]]
+id = "conditionals"
+title = "Choosing with if"
+part = 1
+requires = ["values-and-variables"]
+agent = "deciding whether an edit applies"
+
+[[topic]]
+id = "lists"
+title = "Lists and how to use them"
+part = 1
+requires = ["values-and-variables"]
+agent = "every batch of files, matches or results"
+
+[[topic]]
+id = "loops"
+title = "Repeating with loops"
+part = 1
+requires = ["lists", "conditionals"]
+agent = "walking a repository"
+
+[[topic]]
+id = "functions"
+title = "Functions"
+part = 1
+requires = ["loops"]
+agent = "every tool it can call"
+
+[[topic]]
+id = "dicts-and-sets"
+title = "Dictionaries and sets"
+part = 1
+requires = ["lists"]
+agent = "looking something up by name"
+
+[[topic]]
+id = "strings-and-text"
+title = "Strings and text"
+part = 1
+requires = ["loops"]
+agent = "reading and rewriting source code"
+
+[[topic]]
+id = "errors-and-tracebacks"
+title = "Errors and tracebacks"
+part = 1
+requires = ["functions"]
+agent = "reading what the test runner said"
+
+[[topic]]
+id = "python-idioms"
+title = "Writing it the Python way"
+part = 1
+requires = ["functions", "dicts-and-sets", "strings-and-text"]
+agent = "code a person can review"
 
 [[topic]]
 id = "cost"
 title = "Counting work"
 part = 1
-requires = ["python-basics"]
+requires = ["python-idioms", "errors-and-tracebacks"]
 agent = "knowing what a question costs"
 
 [[topic]]
 id = "hash-maps"
 title = "Hash maps and sets"
 part = 2
-requires = ["cost"]
+requires = ["cost", "dicts-and-sets"]
 agent = "symbol lookup"
 
 [[topic]]
@@ -69,7 +125,7 @@ agent = "the context window"
 id = "stacks-queues"
 title = "Stacks and queues"
 part = 3
-requires = ["python-basics"]
+requires = ["lists", "loops"]
 agent = "nested tool calls"
 
 [[topic]]
@@ -153,7 +209,7 @@ agent = "what to keep in context"
 id = "tries"
 title = "Tries and string indexing"
 part = 7
-requires = ["trees", "hash-maps"]
+requires = ["trees", "hash-maps", "strings-and-text"]
 agent = "code search"
 
 [[topic]]
@@ -167,7 +223,7 @@ agent = "context cache eviction"
 id = "bits"
 title = "Bits and integer limits"
 part = 7
-requires = ["python-basics"]
+requires = ["values-and-variables"]
 agent = "fingerprints"
 
 [[topic]]
@@ -181,7 +237,7 @@ agent = "trusting its own edits"
 id = "concurrency"
 title = "Bounded concurrency"
 part = 8
-requires = ["python-basics"]
+requires = ["functions"]
 agent = "parallel tool calls"
 
 [[topic]]

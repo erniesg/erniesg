@@ -2,14 +2,9 @@
 id = "front-matter"
 kind = "concept"
 title = "Before the first line of code"
-figure = "three-prices"
 +++
 
 # Before the first line of code
-
-:::figure{id="three-prices"}
-The same 200 bikes, three methods, counted.
-:::
 
 ## Why this matters
 
@@ -47,7 +42,8 @@ Every structure in this book earns its place by making it better.
 ## How it builds
 
 - **0 · The loop** — read a statement, design, prove yourself wrong, fix.
-- **I · Python and cost** — counting the work before running it.
+- **I · Programming basics** — values, lists, loops, functions, dictionaries,
+  reading an error, and counting the work before you run it.
 - **II · Lookup** — hash maps, order, binary search.
 - **III · Scanning** — prefix sums, two pointers, windows, stacks.
 - **IV · Recursive structure** — recursion, trees, divide and conquer.
@@ -63,13 +59,8 @@ version of it, then challenges you write yourself.
 
 ## How to work through it
 
-Four tiers grade every challenge, stopping at the first failure.
-
-- **Public** — the statement's own examples.
-- **Edge** — empty, single, all-identical, the largest legal value.
-- **Stress** — your code against an obviously-correct slow one on random
-  inputs. This is the tier that finds what you didn't imagine.
-- **Perf** — an input big enough that a correct-but-slow answer fails.
+Every challenge is graded by four tiers that stop at the first failure; the
+next chapter earns them on a problem that fails three of them.
 
 The first run is meant to be red. Hints are staged and free; read the solution
 only once you have a failing test you understand. Everything runs in the

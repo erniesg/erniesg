@@ -60,7 +60,6 @@ output: the largest value of `numbers[i] * numbers[j]` where `i` and `j` are dif
 :::
 
 :::figure{id="two-biggest"}
-One pass over the list, keeping the best two values seen so far.
 :::
 
 :::run{starter="starter.py"}

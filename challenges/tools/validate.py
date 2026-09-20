@@ -27,7 +27,7 @@ FIGURE_TYPES = {"cells", "walk", "links", "table", "cost"}
 BLOCKS = re.compile(r"^:::(\w+)", re.MULTILINE)
 REQUIRED_BLOCKS = {
     "challenge": {"statement", "io", "constraints", "sample", "figure", "run", "hint", "solution"},
-    "concept": {"figure"},
+    "concept": set(),
 }
 EDGE_KEYS = ["requires", "assessed-by", "harder-variant-of", "motivates"]
 
@@ -51,6 +51,15 @@ def read_front_matter(path: Path) -> tuple[dict, str]:
         return {}, body
 
 
+def front_matter_ids() -> set[str]:
+    ids = set()
+    for path_file in (CHALLENGES_DIR / "paths").glob("*.toml"):
+        data = tomllib.loads(path_file.read_text())
+        if data.get("front_matter"):
+            ids.add(data["front_matter"])
+    return ids
+
+
 def check_node(path: Path, meta: dict, body: str) -> None:
     for key in ("id", "kind", "title"):
         if key not in meta:
@@ -61,12 +70,18 @@ def check_node(path: Path, meta: dict, body: str) -> None:
         return
 
     present = set(BLOCKS.findall(body))
-    for block in sorted(REQUIRED_BLOCKS[kind] - present):
+    required = set(REQUIRED_BLOCKS[kind])
+    if kind == "concept" and meta.get("figure"):
+        required.add("figure")
+    for block in sorted(required - present):
         fail(path, f"missing required block :::{block}")
 
     figure = meta.get("figure")
     if not figure:
-        fail(path, "every concept and challenge needs a figure")
+        # The book's own front matter introduces, it does not teach, so it is
+        # the one node that may stand without a diagram.
+        if meta.get("id") not in front_matter_ids():
+            fail(path, "every concept and challenge needs a figure")
     elif not (FIGURES_DIR / f"{figure}.json").is_file():
         fail(path, f"figure `{figure}` has no file in challenges/figures/")
 

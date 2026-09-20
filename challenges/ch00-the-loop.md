@@ -175,7 +175,6 @@ print(biggest_product([2, 2]), biggest_product([5, 5, 1]))
 quiet.
 
 :::figure{id="four-tiers"}
-The four tiers, and what each one is looking for.
 :::
 
 ## The four tiers

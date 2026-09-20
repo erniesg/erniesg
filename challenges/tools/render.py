@@ -302,6 +302,76 @@ def _figure_body(data: dict, kind: str, target: str) -> str:
             f'stroke="#ccc"/>{lines}{ticks}</svg>{table}'
         )
 
+    if kind == "table":
+        header = data.get("header", [])
+        rows = data.get("rows", [])
+        head = "".join(f"<th>{html.escape(str(cell))}</th>" for cell in header)
+        body_rows = "".join(
+            "<tr>" + "".join(f"<td>{html.escape(str(cell))}</td>" for cell in row) + "</tr>"
+            for row in rows
+        )
+        return (
+            '<table class="figure-table">'
+            + (f"<thead><tr>{head}</tr></thead>" if head else "")
+            + f"<tbody>{body_rows}</tbody></table>"
+        )
+
+    if kind == "links":
+        items = data.get("nodes", [])
+        edges = data.get("edges", [])
+        names = {item["id"]: item.get("label", item["id"]) for item in items}
+
+        if target == "print":
+            # Nothing moves on paper, so say the relationships in words.
+            lines_out = "".join(
+                f'<li>{html.escape(str(names.get(edge["from"], edge["from"])))} &#8594; '
+                f'{html.escape(str(names.get(edge["to"], edge["to"])))}</li>'
+                for edge in edges
+            )
+            return f'<ul class="figure-steps">{lines_out}</ul>'
+
+        depth: dict[str, int] = {}
+        incoming = {edge["to"] for edge in edges}
+        for item in items:
+            if item["id"] not in incoming:
+                depth[item["id"]] = 0
+        for _ in range(len(items)):
+            for edge in edges:
+                if edge["from"] in depth:
+                    depth[edge["to"]] = max(depth.get(edge["to"], 0), depth[edge["from"]] + 1)
+
+        columns: dict[int, list[str]] = {}
+        for item in items:
+            columns.setdefault(depth.get(item["id"], 0), []).append(item["id"])
+
+        box_w, box_h, gap_x, gap_y = 130, 38, 60, 18
+        place = {}
+        for column, ids in columns.items():
+            for index, node_id in enumerate(ids):
+                place[node_id] = (10 + column * (box_w + gap_x), 10 + index * (box_h + gap_y))
+        width = 20 + (max(columns) + 1) * (box_w + gap_x)
+        height = 20 + max(len(ids) for ids in columns.values()) * (box_h + gap_y)
+
+        drawn = "".join(
+            f'<line x1="{place[e["from"]][0] + box_w}" y1="{place[e["from"]][1] + box_h / 2}" '
+            f'x2="{place[e["to"]][0]}" y2="{place[e["to"]][1] + box_h / 2}" stroke="#94a3b8" '
+            'stroke-width="1.5" marker-end="url(#link-arrow)"/>'
+            for e in edges
+            if e["from"] in place and e["to"] in place
+        )
+        boxes = "".join(
+            f'<rect x="{x}" y="{y}" width="{box_w}" height="{box_h}" rx="7" fill="#fff" '
+            f'stroke="#cbd5e1"/><text x="{x + box_w / 2}" y="{y + box_h / 2 + 4}" font-size="12" '
+            f'text-anchor="middle" fill="#1a1a1a">{html.escape(str(names[node_id])[:18])}</text>'
+            for node_id, (x, y) in place.items()
+        )
+        return (
+            f'<svg viewBox="0 0 {width} {height}" class="links" role="img">'
+            '<defs><marker id="link-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3" '
+            'orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#94a3b8"/></marker></defs>'
+            f'{drawn}{boxes}</svg>'
+        )
+
     return f'<p class="missing">no renderer for figure type {html.escape(str(kind))}</p>'
 
 
@@ -464,6 +534,7 @@ figcaption { font:.82rem/1.5 ui-sans-serif,system-ui; color:var(--dim); margin-t
 .figure-steps { font-size:.9rem; margin:.3rem 0 .3rem 1.1rem; }
 .figure-note { font:.85rem ui-sans-serif,system-ui; color:var(--dim); margin:.4rem 0 0; }
 .figure-table { margin-top:.6rem; font-size:.85rem; }
+.links { width:100%; height:auto; }
 .cells { display:flex; gap:8px; flex-wrap:wrap; }
 .cell { flex:1 1 120px; border:1px solid var(--line); border-radius:6px; padding:8px 10px;
   background:var(--bg); }

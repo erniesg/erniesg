@@ -10,3 +10,42 @@ front_matter = "front-matter"
 id = "part-0"
 title = "The loop"
 nodes = ["ch00-the-loop", "sum-of-two-digits", "max-pairwise-product"]
+
+[[parts]]
+id = "part-1"
+title = "Programming basics"
+nodes = [
+  "ch01-values",
+  "shop-total",
+  "safe-divide",
+  "ch02-conditionals",
+  "pool-ticket-price",
+  "fridge-alarm",
+  "ch03-lists",
+  "recent-readings",
+  "remove-every-copy",
+  "ch04-loops",
+  "overdraft-fees",
+  "meter-days",
+  "ch05-functions",
+  "tray-count",
+  "shortfall-log",
+  "ch06-dicts-sets",
+  "tally-visits",
+  "missing-items",
+  "ch07-strings",
+  "title-to-slug",
+  "parse-setting",
+  "ch08-errors",
+  "change-owed",
+  "bad-row-report",
+  "ch09-stepping",
+  "longest-streak",
+  "ledger-replay",
+  "ch10-idioms",
+  "tidy-the-register",
+  "race-results",
+  "ch11-counting-work",
+  "buy-low-sell-later",
+  "seen-more-than-once",
+]

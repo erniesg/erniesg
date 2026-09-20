@@ -121,6 +121,9 @@ header.top { position:sticky; top:0; z-index:16; background:var(--bg);
 .toc-row a > .toc-title:first-child { grid-column:1 / 3; }
 .toc-num { color:var(--dim); font-size:.78rem; font-variant-numeric:tabular-nums; }
 .toc-tick { color:#15803d; font-size:.8rem; }
+.planned-row a { color:var(--dim); }
+.planned-row a:hover { background:#f6f6f4; }
+.toc-soon { font-size:.7rem; color:var(--dim); font-style:italic; }
 main { display:grid; grid-template-columns:minmax(0,40rem) 17rem; gap:3rem;
   justify-content:center; padding:28px 24px 80px; }
 main > article { min-width:0; }
@@ -231,26 +234,67 @@ nav.turn a { color:var(--accent); text-decoration:none; }
 
 
 def contents_html(order: list[dict], current: str = "") -> str:
-    rows, part = [], None
+    """The whole book, not just the pages that exist yet.
+
+    Written nodes are listed where they belong; topics with nothing written are
+    greyed and point at the map. A reader can see the shape of the book and how
+    much of it is standing.
+    """
+    topics = load_topics()
+    written_topics = {
+        topic_id
+        for node in all_nodes().values()
+        for topic_id in node.get("teaches", [])
+    }
+
+    by_part: dict[str, list[dict]] = {}
+    intro = []
     for node in order:
-        heading = None
-        if not node.get("part") and part is None:
-            heading, part = "Introduction", ""
-        elif node.get("part") and node["part"] != part:
-            part = node["part"]
-            heading = f'Part {node["part_number"]} \u00b7 {part}'
-        if heading:
-            rows.append(f'<li class="toc-part">{html.escape(heading)}</li>')
+        if node.get("part_number") == "" or not node.get("part"):
+            intro.append(node)
+        else:
+            by_part.setdefault(node["part_number"], []).append(node)
+
+    rows: list[str] = []
+
+    def row(node: dict) -> str:
         number = (
             f'<span class="toc-num">{html.escape(node["number"])}</span>'
             if node.get("number") else ""
         )
         tick = '<span class="toc-tick">\u2713</span>' if node.get("solved") else ""
         classes = "toc-row" + (" here" if node["id"] == current else "")
-        rows.append(
+        return (
             f'<li class="{classes}"><a href="/{html.escape(node["id"])}">{number}'
             f'<span class="toc-title">{html.escape(node["title"])}</span>{tick}</a></li>'
         )
+
+    if intro:
+        rows.append('<li class="toc-part">Introduction</li>')
+        rows.extend(row(node) for node in intro)
+
+    parts = sorted(
+        {str(topic.get("part", 0)) for topic in topics.values()} | set(by_part),
+        key=lambda value: int(value),
+    )
+    for part in parts:
+        rows.append(
+            f'<li class="toc-part">Part {html.escape(part)} \u00b7 '
+            f'{html.escape(PART_NAMES.get(int(part), ""))}</li>'
+        )
+        for node in by_part.get(part, []):
+            rows.append(row(node))
+        planned = [
+            topic
+            for topic in topics.values()
+            if str(topic.get("part", 0)) == part and topic["id"] not in written_topics
+        ]
+        for topic in planned:
+            rows.append(
+                f'<li class="toc-row planned-row"><a href="/map">'
+                f'<span class="toc-title">{html.escape(topic["title"])}</span>'
+                f'<span class="toc-soon">to come</span></a></li>'
+            )
     return f'<ol class="toc">{"".join(rows)}</ol>'
 
 
@@ -732,10 +776,17 @@ class Handler(BaseHTTPRequestHandler):
                 own = payload.get("source", "")
                 # Earlier cells set the stage quietly: their prints are dropped
                 # so the reader sees only what this cell produced.
+                # Earlier cells set the stage and then get out of the way:
+                # silent on both streams, and a deliberate raise up there must
+                # not take this cell down (a chapter on errors has to show one).
                 prelude = (
                     "import io, contextlib\n"
-                    "with contextlib.redirect_stdout(io.StringIO()):\n"
-                    "    exec(compile(_EARLIER, '<earlier cells>', 'exec'), globals())\n"
+                    "_quiet = io.StringIO()\n"
+                    "try:\n"
+                    "    with contextlib.redirect_stdout(_quiet), contextlib.redirect_stderr(_quiet):\n"
+                    "        exec(compile(_EARLIER, '<earlier cells>', 'exec'), globals())\n"
+                    "except Exception:\n"
+                    "    pass\n"
                 )
                 script.write_text(
                     f"_EARLIER = {earlier!r}\n{prelude if earlier.strip() else ''}{own}"

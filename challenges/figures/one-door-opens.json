@@ -1,0 +1,12 @@
+{
+  "id": "one-door-opens",
+  "type": "cells",
+  "title": "A ladder of tests, one answer",
+  "caption": "Python tries the tests top to bottom and stops at the first true one, so a reading of 3.62 m never reaches the rungs below. Write the same tests as four separate ifs and every true one runs, which at 3.62 m means the mildest message is the one left standing.",
+  "cells": [
+    { "label": "if level >= 3.50", "note": "leave now — nothing below is even read" },
+    { "label": "elif level >= 3.00", "note": "move your car — only asked if the rung above was false" },
+    { "label": "elif level >= 2.10", "note": "watch the river" },
+    { "label": "else", "note": "nothing to do — the rung that needs no test" }
+  ]
+}

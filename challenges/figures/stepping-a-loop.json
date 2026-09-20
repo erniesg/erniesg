@@ -1,0 +1,33 @@
+{
+  "id": "stepping-a-loop",
+  "type": "walk",
+  "title": "Six commands through one loop",
+  "caption": "A real pdb session on total_between(3, 7). The marker moves through the places the program sat while you typed; the rows below show the command and what came back. Three commands in a row leave you on line 14, because looking at things does not move the program. The bug is on screen at step 2: the loop is about to cover 3, 4, 5, 6 and stop before day 7.",
+  "sequence": [
+    "line 14",
+    "line 14",
+    "line 14",
+    "line 15",
+    "steps_on, line 7",
+    "steps_on, line 7"
+  ],
+  "markers": [{ "name": "stopped at", "from": 0, "to": 5 }],
+  "state": [
+    {
+      "label": "you typed",
+      "values": ["l", "p first_day, last_day", "n", "s", "p day", "c"]
+    },
+    {
+      "label": "pdb answered",
+      "values": [
+        "the listing, with -> on line 14",
+        "(3, 7)",
+        "moved on to line 15",
+        "--Call--, stepped into steps_on",
+        "3",
+        "let it run: 22985"
+      ]
+    }
+  ],
+  "answer": { "label": "printed", "value": 22985 }
+}

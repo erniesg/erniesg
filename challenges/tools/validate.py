@@ -27,7 +27,9 @@ FIGURE_TYPES = {"cells", "walk", "links", "table", "cost"}
 
 BLOCKS = re.compile(r"^:::(\w+)", re.MULTILINE)
 REQUIRED_BLOCKS = {
-    "challenge": {"statement", "io", "constraints", "sample", "figure", "run", "hint", "solution"},
+    # `hint` is governed by the support level below, not required outright: an
+    # unaided challenge must not carry any.
+    "challenge": {"statement", "io", "constraints", "sample", "figure", "run", "solution"},
     "concept": set(),
 }
 EDGE_KEYS = ["requires", "assessed-by", "harder-variant-of", "motivates"]
@@ -157,6 +159,10 @@ def check_paths(nodes: dict[str, dict]) -> None:
         for part in data.get("parts", []):
             rung = -1
             for node_id in part.get("nodes", []):
+                # A ladder belongs to a chapter. Each concept node starts a new
+                # one, so help may be offered again in the next chapter.
+                if node_id in nodes and nodes[node_id].get("kind") == "concept":
+                    rung = -1
                 if node_id not in nodes:
                     fail(path_file, f"part `{part.get('id')}` lists unknown node `{node_id}`")
                     continue
@@ -174,6 +180,46 @@ def check_paths(nodes: dict[str, dict]) -> None:
                 rung = max(rung, here)
 
 
+def check_cells() -> None:
+    """Run every ```python run cell the way the reader would.
+
+    The web edition replays earlier cells before the current one, so a cell
+    that raises takes every later cell in the chapter down with it. This runs
+    each chapter the same way and reports the first cell that breaks.
+    """
+    import subprocess
+    import tempfile
+
+    fence = re.compile(r"```python run\n(.*?)```", re.DOTALL)
+    for path in sorted(CHALLENGES_DIR.glob("*.md")) + sorted(CHALLENGES_DIR.glob("*/challenge.md")):
+        cells = fence.findall(path.read_text())
+        earlier = ""
+        for index, cell in enumerate(cells, start=1):
+            with tempfile.TemporaryDirectory() as work:
+                script = Path(work) / "cell.py"
+                # Replay earlier cells exactly as the reader's browser does:
+                # quietly, and tolerating one that raised on purpose.
+                staged = (
+                    "import io, contextlib\n"
+                    f"_EARLIER = {earlier!r}\n"
+                    "try:\n"
+                    "    with contextlib.redirect_stdout(io.StringIO()):\n"
+                    "        exec(compile(_EARLIER, '<earlier>', 'exec'), globals())\n"
+                    "except Exception:\n"
+                    "    pass\n"
+                ) if earlier.strip() else ""
+                script.write_text(staged + cell)
+                done = subprocess.run(
+                    [sys.executable, str(script)], capture_output=True, text=True, timeout=60
+                )
+            shown = (done.stdout + done.stderr).strip()
+            # A cell that raises is legitimate teaching: the reader sees the
+            # traceback. A cell that shows the reader nothing at all is not.
+            if not shown:
+                problems.append(f"{path.name}: runnable cell {index} shows the reader nothing")
+            earlier += cell + "\n"
+
+
 def main() -> int:
     nodes: dict[str, dict] = {}
     files = sorted(CHALLENGES_DIR.glob("*.md")) + sorted(CHALLENGES_DIR.glob("*/challenge.md"))
@@ -188,6 +234,8 @@ def main() -> int:
         elif node_id:
             nodes[node_id] = meta
 
+    if "--cells" in sys.argv:
+        check_cells()
     check_figures()
     check_graph(nodes)
     check_paths(nodes)

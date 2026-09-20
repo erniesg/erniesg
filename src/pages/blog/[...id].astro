@@ -108,12 +108,19 @@ const alternates = Object.fromEntries(
 // Run the social image through the asset pipeline so the file it points at is
 // emitted. Reading `.src` off the import alone no longer guarantees that, and
 // the resulting og:image URL 404s.
+// Only raster sources get a format forced on them. Anything else keeps Astro's
+// default: svg stays svg rather than being rasterized, which the pipeline
+// refuses to do and which would fail the build.
+const sourceFormat = post.data.image?.format
+const socialFormat =
+  sourceFormat === 'jpg' ? 'jpeg' : sourceFormat === 'png' ? 'png' : undefined
 const socialImage = post.data.image
   ? (
-      await getImage({
-        src: post.data.image,
-        format: post.data.image.format === 'jpg' ? 'jpeg' : 'png',
-      })
+      await getImage(
+        socialFormat
+          ? { src: post.data.image, format: socialFormat }
+          : { src: post.data.image },
+      )
     ).src
   : '/static/1200x630.png'
 const localizedPaths = Object.fromEntries(

@@ -1,6 +1,6 @@
 # @erniesg/margin: the client package, text selection and durable anchoring
 
-depends-on: 053
+depends-on: 054
 
 ## Provider
 

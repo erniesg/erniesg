@@ -1,7 +1,5 @@
 # margin service: a W3C Web Annotation store on D1 that enforces visibility server-side
 
-depends-on: 053
-
 ## Provider
 
 claude

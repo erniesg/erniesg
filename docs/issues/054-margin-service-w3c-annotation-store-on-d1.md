@@ -35,16 +35,28 @@ in production use by `ResearchStudio.tsx` and
 062 has already moved these modules to `src/annotations/` unchanged. This
 issue consumes them from there.
 
-The stored shape is then the existing `SemanticTextAnchor` plus
-`TextAnnotation`, extended only where margin genuinely needs more:
+**The wire format stays W3C; the internal model is reused behind it.** These
+are not in conflict and the distinction is the whole design:
 
-- a third `kind`, `proposal`, for 059's edit proposals;
-- `visibility`, `creator`, `parentId` and the `(site, document)` tenancy key;
-- an optional `structId` selector alongside `nodeId`, for documents that came
-  through `@erniesg/struct`.
+- **Stored/exchanged representation** is a Web Annotation: `motivation`
+  (`highlighting` | `commenting` | `editing`), a `target` with a `source` URI
+  and a *list* of typed selectors (`TextQuoteSelector`,
+  `TextPositionSelector`, and a namespaced struct selector), a `body`,
+  `creator`, `created` and `modified`. Anything less and consumers cannot
+  exchange ordinary Web Annotations, which is the entire reason for choosing
+  the standard.
+- **Internal model** is the existing `SemanticTextAnchor` / `TextAnnotation`,
+  reused unchanged, with a documented bidirectional mapping to and from the
+  wire format. `kind` maps to `motivation`; `{nodeId, position, quote}` maps
+  to a selector list; `geometryCache` is internal and never serialized.
 
-Adding a `kind` to a discriminated union and fields to a record is a small,
-reviewable change. Building a parallel model beside a working one is not.
+Margin adds `visibility`, `parentId` and the `(site, document)` tenancy key.
+Replies are annotations whose target is another annotation, per the standard.
+
+A round-trip test proves the mapping: wire to internal to wire is identity for
+every motivation. If the mapping cannot be made lossless, say so and drop
+"W3C" from this issue's title rather than shipping a custom shape under a
+standard's name.
 
 ## Observed failure
 
@@ -90,8 +102,10 @@ reviewable change. Building a parallel model beside a working one is not.
 - A reply whose target is an annotation is stored and returned with its
   `parent_id` intact.
 - Rows for a second `(site, document)` are invisible to the first.
-- Unknown `kind`, malformed selector, oversized body and cross-tenant
+- Unknown `motivation`, malformed selector, oversized body and cross-tenant
   `parent_id` are all rejected with 4xx and never stored.
+- A plain Web Annotation produced by an unrelated tool round-trips through
+  `POST` then `GET` without loss of motivation, selectors or body.
 - Every test that existed for `src/research/annotations.ts` still passes from
   its new location, unchanged.
 

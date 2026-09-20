@@ -12,14 +12,17 @@ The browser half of `margin`, as a standalone package at `packages/margin/`
 that imports nothing from the book and is publishable to npm as
 `@erniesg/margin`.
 
-**The anchoring core already exists and this issue extends it rather than
-writing it.** After 062's move, `src/annotations/` provides
-`createSemanticTextAnchorFromRange` (a DOM Range to an anchor — that is
-selection-to-anchor, already built), `resolveTextAnchor` (the re-anchoring,
-returning `resolved` / `ambiguous` / `unresolved` with
-`matchedBy: 'position-and-context' | 'quote-and-context' | 'unique-quote'`),
-and `cacheAnnotationGeometry`. `ResearchStudio.tsx` uses them in production
-today.
+**A resolver already exists and this issue extends it rather than rewriting
+it** — but read its real signature before planning around it.
+`createSemanticTextAnchorFromRange(nodeId, text, start, end, contextLength)`
+takes a **node id and numeric offsets, not a DOM `Range`**, and produces an
+anchor for a **single node**. It is not selection-to-anchor and it cannot
+serve multi-block selections. `resolveTextAnchor` is the genuinely reusable
+piece: it returns `resolved` / `ambiguous` / `unresolved` with
+`matchedBy: 'position-and-context' | 'quote-and-context' | 'unique-quote'`.
+
+So this issue must still build the DOM layer: a browser `Selection` to one or
+more semantic anchors, including selections spanning block boundaries.
 
 What this issue adds is what is genuinely missing: a struct-ID selector ahead
 of the existing chain, keyboard selection, multi-block and overlapping
@@ -46,10 +49,10 @@ constantly.
    extending a selection with shift+arrow keys, or selecting with a screen
    reader active, gets the same anchor as a mouse drag. Keyboard selection is
    a first-class path, not a fallback.
-3. The package consumes `src/annotations/` for anchor creation and
-   resolution. It does not reimplement either. A test asserts
-   `createSemanticTextAnchorFromRange` is the only path from a selection to a
-   stored anchor.
+3. A DOM layer converts a browser `Selection` into anchors, delegating
+   per-node anchor construction to the existing helper rather than
+   reimplementing it. A selection spanning several blocks yields an ordered
+   set of anchors, not a failure.
 4. A `structId` selector is added **ahead of** the existing chain, so
    resolution order becomes struct ID, then position-and-context, then
    quote-and-context, then unique-quote. `resolveTextAnchor` is extended in
@@ -132,10 +135,16 @@ rather than storing an anchor that will orphan on the next build.
 
 ## Recommended response
 
-Move `src/annotations/` into `packages/margin/` and have `src/` import it
-from the package. That satisfies the standalone rule without forking the
-resolver, and it makes the package genuinely self-contained for a second site.
-Do this as its own commit before adding the struct-ID selector.
+**Split before moving.** `src/research/annotations.ts` imports `ResearchNode`,
+`ResearchPaper` and `TargetProfileId` from research modules and carries
+demo-paper and layout-profile helpers. Moving it wholesale into
+`packages/margin/` either breaks those imports or drags application code into
+a published package, contradicting criterion 1.
+
+So: first extract the generic core — the schemas, `resolveTextAnchor`, and
+anchor construction — from the research-specific adapters; move only that
+core; leave the research helpers in `src/` importing the package. Do the
+split as its own commit before anything else.
 
 ## Trade-offs
 

@@ -1,6 +1,6 @@
 # Collapse /research and /study into /library, /books and /papers
 
-depends-on: 053
+depends-on: 053,057
 
 ## Provider
 
@@ -32,30 +32,42 @@ builds, so margin appears on all of them rather than only on the book.
 
 ## Success criteria
 
-1. `src/pages/research/studio.astro` and
-   `src/pages/study/experiments/pdf-to-epub.astro` collapse into **one** route
-   under `/library`. Note which is which before deleting: `studio.astro` is
-   the *richer* of the two — it carries a back-link to `/research` and a link
-   to the 20-paper benchmark at `/research/pdf-review` — while the `/study`
-   copy is a stripped version that gained only a `canonicalPath`. Keep the
-   benchmark link; it is the only route that points at `pdf-review`.
-2. `/library` exists and holds the browser importer as its "add a document"
+1. **Three** places render `PublicationImporter`, not two:
+   `src/pages/research/studio.astro`, `src/pages/study/experiments/pdf-to-epub.astro`,
+   and `src/pages/research/index.astro`. All three collapse into **one** route
+   under `/library`, including removal from the migrated index — otherwise
+   `/papers` keeps an importer and `/library` is not its single home. A test
+   asserts the importer is reachable from exactly one route.
+   Note which copy is richest before deleting: `studio.astro` carries the only
+   link to the 20-paper benchmark at `/research/pdf-review`. Keep it.
+2. **Struct's pipeline reaches `/library` too, or ADR 010 narrows.** The ADR
+   promises both ingestion paths — the local browser importer and struct's
+   higher-quality adapter. Either wire the second one up here with its own
+   criterion and test, or amend ADR 010 to promise only the local path. Do not
+   leave the ADR claiming a capability no issue delivers.
+3. `/library` exists and holds the browser importer as its "add a document"
    path. The importer is kept, not retired: it never uploads the file, which
    is the right property for reading other people's books, even though
    `erniesg/struct`'s adapter produces better extraction and is the deployed
    pipeline for anything else.
-3. `/research/*` becomes `/papers/*`, with permanent redirects from every old
-   path. No existing URL 404s.
-4. `/study/*` is removed entirely, with redirects to the library equivalent.
-5. The book, papers and blog entry pages all render through `ReadingLayout`
-   from 053. A test asserts each surface produces the same three-column
-   structure and the same margin mount point.
-6. `ResearchStudio.tsx` is migrated onto the margin rail from 057 rather than
+4. `/research/*` becomes `/papers/*`, with permanent redirects from every old
+   path. **The redirect inventory covers static assets as well as routes**:
+   `public/research/` holds the linked paper PDF, EPUB and three images, which
+   no route manifest enumerates. Either alias them or move them with
+   redirects, and test both.
+5. `/study/*` is removed entirely, with redirects to the library equivalent.
+6. The book, papers and blog entry pages all render through `ReadingLayout`
+   from 053, **and each carries stable per-block IDs**. Mounting the rail is
+   not enough: 056's anchors need a durable `nodeId`, and the blog route
+   currently renders `<Content />` with no stable IDs on prose blocks, while
+   053 requires ID stability only for book nodes. Round-trip anchoring tests
+   cover a paper and a blog entry, not just layout structure.
+7. `ResearchStudio.tsx` is migrated onto the margin rail from 057 rather than
    left as a second annotation UI. Its in-memory annotations become margin
    annotations; the annotation bundle export keeps working.
-7. Navigation reflects the four surfaces. `NAV_LINKS` is no longer
+8. Navigation reflects the four surfaces. `NAV_LINKS` is no longer
    conditional on `PUBLIC_RESEARCH_RELEASE` for the existence of the surface.
-8. **Whether `/papers` is publicly listed stays a separate switch.** Removing
+9. **Whether `/papers` is publicly listed stays a separate switch.** Removing
    the staging gate is an act of publishing and is the owner's call; this
    issue makes the surface exist and keeps the listing behind one flag that
    defaults to its current behaviour.
@@ -63,8 +75,12 @@ builds, so margin appears on all of them rather than only on the book.
 ## Acceptance tests
 
 - Every path under the old `/research/*` and `/study/*` returns a 301 to its
-  new location; a test enumerates them from the route manifest so a new page
-  cannot be added without a redirect.
+  new location; a test enumerates them from the route manifest **and from
+  `public/research/`** so neither a new page nor a new asset can be added
+  without a redirect.
+- `PublicationImporter` is reachable from exactly one route.
+- A paper and a blog entry each expose stable per-block IDs that survive two
+  builds of identical source, and an anchor created against one re-resolves.
 - `/library`, `/books/challenges`, `/papers/<id>` and a blog post each render
   `ReadingLayout` with a margin mount point present in the DOM.
 - The browser importer still converts a PDF end to end from `/library`.

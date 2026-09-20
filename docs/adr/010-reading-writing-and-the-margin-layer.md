@@ -55,9 +55,18 @@ Four content surfaces:
 Two supporting decisions follow:
 
 1. **Visibility, not routing, carries the in-progress dimension.** A draft
-   paper and a published one live at the same URL shape; margin's per-item
-   public/private state and the writer allowlist decide who sees what. No
-   `/drafts` tier, and no route change when something is finished.
+   paper and a published one live at the same URL shape. No `/drafts` tier,
+   and no route change when something is finished.
+
+   **This requires document-level read authorization, which margin does not
+   provide.** Margin's `visibility` governs annotation rows and its allowlist
+   governs who may write; neither controls who may read the underlying
+   document. Unlisting a paper from the nav and sitemap hides it from
+   discovery, not from anyone holding the URL — and issue 061 deliberately
+   keeps unlisted papers reachable by direct link. So a draft that is meant
+   for collaborators only needs its own read check on the document, enforced
+   server-side, before any of this is safe to rely on. Until that exists,
+   treat everything under `/papers` as public regardless of listing.
 
 2. **The three-column reading shell is a shared layout**, not something the
    book owns. All four surfaces render text in the middle and margin on the

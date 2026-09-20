@@ -26,9 +26,9 @@ global default and can be changed at any time afterwards.
 ## Success criteria
 
 1. Selecting text raises a popup near the selection offering: a colour swatch
-   row that saves a `highlight` annotation, and a note field that saves a
-   `note` annotation carrying the highlight's id as its `parentId`. These are
-   the existing `kind` values from `src/annotations/`, not new ones.
+   row that saves a `highlighting` annotation, and a note field that saves a
+   `commenting` annotation targeting it. These are the W3C motivations 054
+   stores, mapped onto the existing internal `kind` values.
    Dismissing the popup saves nothing.
 2. The popup is reachable by keyboard: it opens on keyboard selection, is
    fully tab-navigable, traps focus while open, closes on Escape, and returns

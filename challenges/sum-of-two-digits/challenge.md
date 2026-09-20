@@ -7,6 +7,7 @@ figure = "reading-a-deal"
 difficulty = 0
 
 requires = ["ch00-the-loop"]
+teaches = ["the-loop"]
 tags = ["part-0", "warm-up"]
 
 [limits]
@@ -38,8 +39,8 @@ exactly, because everything later in the book assumes you can.
 :::
 
 :::io
-**In:** two whole numbers, `a` and `b`.
-**Out:** their sum, as a number.
+input: two whole numbers, `a` and `b`
+output: their sum, as a number
 :::
 
 :::constraints

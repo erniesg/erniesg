@@ -1,0 +1,192 @@
+# The knowledge graph: every topic the book covers and what it needs first.
+# Content nodes attach to topics through their `teaches` list. The agent parts
+# are an overlay on this, not the substance of it.
+
+[[topic]]
+id = "the-loop"
+title = "The solving loop"
+part = 0
+requires = []
+agent = "self-checking edits"
+
+[[topic]]
+id = "python-basics"
+title = "Python primitives"
+part = 1
+requires = ["the-loop"]
+agent = "every tool handler"
+
+[[topic]]
+id = "cost"
+title = "Counting work"
+part = 1
+requires = ["python-basics"]
+agent = "knowing what a question costs"
+
+[[topic]]
+id = "hash-maps"
+title = "Hash maps and sets"
+part = 2
+requires = ["cost"]
+agent = "symbol lookup"
+
+[[topic]]
+id = "sorting"
+title = "Sorting and order"
+part = 2
+requires = ["cost"]
+agent = "ranking retrieved snippets"
+
+[[topic]]
+id = "binary-search"
+title = "Binary search"
+part = 2
+requires = ["sorting"]
+agent = "largest context that still fits"
+
+[[topic]]
+id = "prefix-sums"
+title = "Prefix sums"
+part = 3
+requires = ["cost"]
+agent = "token accounting"
+
+[[topic]]
+id = "two-pointers"
+title = "Two pointers"
+part = 3
+requires = ["sorting"]
+agent = "diff alignment"
+
+[[topic]]
+id = "sliding-windows"
+title = "Sliding windows"
+part = 3
+requires = ["two-pointers", "hash-maps"]
+agent = "the context window"
+
+[[topic]]
+id = "stacks-queues"
+title = "Stacks and queues"
+part = 3
+requires = ["python-basics"]
+agent = "nested tool calls"
+
+[[topic]]
+id = "recursion"
+title = "Recursion and backtracking"
+part = 4
+requires = ["cost"]
+agent = "searching edit plans"
+
+[[topic]]
+id = "trees"
+title = "Trees"
+part = 4
+requires = ["recursion"]
+agent = "syntax trees, file trees"
+
+[[topic]]
+id = "divide-conquer"
+title = "Divide and conquer"
+part = 4
+requires = ["recursion", "sorting"]
+agent = "splitting work"
+
+[[topic]]
+id = "graph-traversal"
+title = "Graph traversal"
+part = 5
+requires = ["trees", "stacks-queues"]
+agent = "import and call graphs"
+
+[[topic]]
+id = "topological-order"
+title = "Topological order"
+part = 5
+requires = ["graph-traversal"]
+agent = "what runs before what"
+
+[[topic]]
+id = "union-find"
+title = "Union-find"
+part = 5
+requires = ["graph-traversal"]
+agent = "clustering related symbols"
+
+[[topic]]
+id = "heaps"
+title = "Heaps and priority queues"
+part = 7
+requires = ["sorting"]
+agent = "scheduling tool calls"
+
+[[topic]]
+id = "shortest-paths"
+title = "Shortest paths"
+part = 5
+requires = ["graph-traversal", "heaps"]
+agent = "cheapest plan through a task graph"
+
+[[topic]]
+id = "spanning-trees"
+title = "Spanning trees"
+part = 5
+requires = ["union-find", "heaps"]
+agent = "minimal dependency set"
+
+[[topic]]
+id = "dynamic-programming"
+title = "Dynamic programming"
+part = 6
+requires = ["recursion"]
+agent = "diffs and patches"
+
+[[topic]]
+id = "greedy"
+title = "Greedy choice"
+part = 6
+requires = ["sorting"]
+agent = "what to keep in context"
+
+[[topic]]
+id = "tries"
+title = "Tries and string indexing"
+part = 7
+requires = ["trees", "hash-maps"]
+agent = "code search"
+
+[[topic]]
+id = "linked-lru"
+title = "Linked structures and LRU"
+part = 7
+requires = ["hash-maps"]
+agent = "context cache eviction"
+
+[[topic]]
+id = "bits"
+title = "Bits and integer limits"
+part = 7
+requires = ["python-basics"]
+agent = "fingerprints"
+
+[[topic]]
+id = "testing-debugging"
+title = "Testing and debugging"
+part = 8
+requires = ["the-loop"]
+agent = "trusting its own edits"
+
+[[topic]]
+id = "concurrency"
+title = "Bounded concurrency"
+part = 8
+requires = ["python-basics"]
+agent = "parallel tool calls"
+
+[[topic]]
+id = "systems-design"
+title = "Design at scale"
+part = 9
+requires = ["hash-maps", "shortest-paths", "concurrency"]
+agent = "the runtime around the agent"

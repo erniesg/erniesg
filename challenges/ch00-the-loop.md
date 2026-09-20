@@ -50,7 +50,7 @@ Most wrong answers are not bad ideas. They are unread problems.
 
 The first idea most people have: try every pair and keep the best.
 
-```python
+```python run
 def biggest_product(numbers):
     best = 0
     for i in range(len(numbers)):          # pick one position
@@ -58,6 +58,9 @@ def biggest_product(numbers):
             if i != j:                     # but not with itself
                 best = max(best, numbers[i] * numbers[j])
     return best
+
+
+print(biggest_product([1, 2, 3]))
 ```
 
 This gives right answers. It is still useless, and you can tell before you run
@@ -79,11 +82,15 @@ of code you would have thrown away.
 and you get a big result, so the answer has to be the two biggest numbers in
 the list. Find those instead of checking every pair:
 
-```python
+```python run
 def biggest_product(numbers):
     biggest = max(numbers)                                  # the largest value
     rest = [value for value in numbers if value != biggest] # everything else
     return biggest * max(rest)                              # times the next largest
+
+
+print(biggest_product([1, 2, 3]))   # 6, as promised
+print(biggest_product([5, 5, 1]))   # now try this one
 ```
 
 Two quick sweeps through the list. The example gives 6. Looks finished.
@@ -113,7 +120,7 @@ You have two versions now. The every-pair one is slow but obviously right. The
 new one is fast and suspicious. So race them on random lists until they
 disagree.
 
-```python
+```python run
 import random
 
 def every_pair(numbers):           # slow, obviously right
@@ -150,7 +157,7 @@ was wrong.
 
 Now fix it. Walk the list once and remember the best two values as you go:
 
-```python
+```python run
 def biggest_product(numbers):
     first = second = -1
     for value in numbers:
@@ -159,6 +166,9 @@ def biggest_product(numbers):
         elif value > second:           # not the best, but better than second
             second = value
     return first * second
+
+
+print(biggest_product([2, 2]), biggest_product([5, 5, 1]))
 ```
 
 `[2, 2]` gives 4. `[5, 5, 1]` gives 25. Start the race again and it stays

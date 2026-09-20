@@ -1,5 +1,4 @@
-title = "Coding Challenges"
-subtitle = "Build a coding agent from the ground up"
-edition = "0.1.0"
-author = "Chen Enjiao (Ernie)"
+# The collection. Individual books are paths over this pool of nodes.
+collection = "Challenges"
 slug = "challenges"
+author = "Chen Enjiao (Ernie)"

@@ -1,6 +1,8 @@
 # The book: an ordered walk over the node pool.
 id = "agent"
-title = "Build a coding agent"
+title = "Build a Coding Agent"
+subtitle = "Data structures and algorithms, from zero, by building one thing"
+edition = "0.1.0"
 kind = "book"
 front_matter = "front-matter"
 

@@ -7,6 +7,7 @@ figure = "two-biggest"
 difficulty = 1
 
 requires = ["ch00-the-loop"]
+teaches = ["cost", "testing-debugging"]
 instance-of = ["scan-keeping-best-k"]
 powers = ["agent-ranking"]
 tags = ["part-0", "warm-up", "repeats-trap"]
@@ -42,9 +43,8 @@ problem is concerned.
 :::
 
 :::io
-**In:** `numbers`, a list of whole numbers.
-**Out:** the largest value of `numbers[i] * numbers[j]` where `i` and `j` are
-different positions.
+input: `numbers`, a list of whole numbers
+output: the largest value of `numbers[i] * numbers[j]` where `i` and `j` are different positions
 :::
 
 :::constraints

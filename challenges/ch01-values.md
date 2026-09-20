@@ -10,8 +10,13 @@ assessed-by = ["shop-total", "safe-divide"]
 powers = ["agent-tool-arguments"]
 +++
 
-A program is mostly two things: values, and names for values. That is almost
-the whole of this chapter.
+A club runs a coach trip at 5 pounds a head. The booking form asks how many
+seats and someone types 3. The screen says the total is 53.
+
+Nothing in the computer went wrong. The 5 and the 3 arrived as text, and
+joining text end to end is exactly what `+` does to text. As numbers they add
+to 8, or multiply to 15. As text they join to 53. One symbol, three answers,
+and the difference is what kind of thing you handed it.
 
 ## Values have types, and the type decides what happens
 

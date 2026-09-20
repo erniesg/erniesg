@@ -49,3 +49,18 @@ nodes = [
   "buy-low-sell-later",
   "seen-more-than-once",
 ]
+
+[[parts]]
+id = "part-2"
+title = "Lookup"
+nodes = [
+  "ch12-hash-maps",
+  "most-common-basket",
+  "two-lines-that-balance",
+  "ch13-sorting",
+  "closest-finish",
+  "how-many-you-beat",
+  "ch14-binary-search",
+  "next-train-home",
+  "cut-them-all-the-same",
+]

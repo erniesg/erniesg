@@ -64,6 +64,11 @@ locked solution itself, where `locked-solution` already says it.
 - Opening two hints updates the control to "2 of 4"; both stay readable; the
   count does not fall when they are collapsed.
 - Reloading the page preserves the count and which rungs were opened.
+- **Consumption is per challenge, not per origin.** After opening two rungs
+  on one `guided` challenge, a different `guided` challenge with a
+  different hint count opens at "0 of N" with every rung collapsed, and
+  returning to the first still reads "2 of 4". A single origin-wide
+  session-storage record passes the reload test above and fails this one.
 - An `unaided` challenge renders no hints and no ladder, and its locked
   solution still explains the unlock condition.
 - The print target renders every hint as a section, in order, with no

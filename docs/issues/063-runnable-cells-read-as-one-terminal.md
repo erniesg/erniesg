@@ -16,29 +16,31 @@ The cell markup in `render.py:_runnable` emits three siblings:
 
 ```html
 <div class="cell-run">
-  <pre><code>…</code></pre>          <!-- dark: pre { background:#15161a } -->
-  <div class="desk-actions">…</div>  <!-- light: page background + 1px border -->
-  <pre class="output"></pre>         <!-- dark -->
+  <textarea class="editor small" spellcheck="false">…</textarea>
+  <div class="desk-actions"><button class="exec">Run …</button>
+    <span class="status"></span></div>
+  <pre class="output"></pre>
 </div>
 ```
 
-`preview.py` styles `.desk-actions` with `border:1px solid var(--line)` and no
-background, so it inherits the page's light background. The result is a white
-band cutting between the code and its output, and the two dark blocks read as
-unrelated cards rather than one terminal.
+The first child is an editable **textarea**, not a `<pre>`. And `.desk-actions`
+sets `background:#fff` **explicitly** (`preview.py:159-160`) alongside
+`border:1px solid var(--line); border-top:0`. The white band is a declaration,
+not an inherited page colour, so a fix aimed at inheritance will not move it.
 
 The intent was already there and half-applied:
 `.cell-run .output:not(:empty) { margin-top:0; border-radius:0 0 8px 8px; }`
 joins the output to whatever is above it — but what is above it is the white
 bar.
 
-**Second defect, which blocks 053.** The runnable-cell chrome
+**Second defect.** The runnable-cell chrome
 (`.cell-run`, `.desk-actions`, `.exec`, `.output`) is styled **only** in
 `preview.py`'s `STYLE`. `render.py`'s `CONTENT_CSS` — the stylesheet the web
 edition ships — has rules for `.cells`/`.cell`/`.cell-label`/`.cell-note`
 (figure cells, a different thing entirely) and nothing for the runnable cell.
-So when 053 publishes the book through `render.py`, every runnable cell
-renders unstyled. The fix belongs in `CONTENT_CSS`, not in `preview.py`.
+So a page rendered through `render.py` alone styles no runnable cell. Not a
+blocker for 053 — that issue puts runnable cells out of scope and carries no
+`depends-on: 063` — but it is why the chrome belongs in `CONTENT_CSS`.
 
 ## Success criteria
 
@@ -47,16 +49,21 @@ renders unstyled. The fix belongs in `CONTENT_CSS`, not in `preview.py`.
    action row in the same dark family separated by a hairline divider rather
    than a filled light band, and output below it.
 2. The action row's button remains clearly a button and keeps its `⌘↵` hint
-   and its focus ring. Making the row dark must not make the button ambiguous
-   or drop its contrast below WCAG AA.
+   and its focus ring. **Both the button and `.status` meet WCAG AA.**
+   `.status` carries `running...` and error text at `#666`, roughly 3.15:1
+   against `#15161a` — under the 4.5:1 threshold — so it is restyled with the
+   row, not left behind.
 3. Before output exists, the cell ends cleanly after the action row — no empty
    dark panel. `.output:empty { display:none }` already does this; it must
    keep working with the new chrome.
 4. **The chrome moves to `render.py`'s `CONTENT_CSS`** so the published web
    edition and the local preview are styled by the same rules. `preview.py`
    keeps only what is genuinely preview-only.
-5. Print is unaffected: the print target has no Run button and its `pre`
-   styling stays light.
+5. Print and EPUB **render** unchanged. Byte identity is not achievable:
+   `render.py` defines `PRINT_CSS = CONTENT_CSS + …` and `epub.py:106` writes
+   that string to `OEBPS/style.css`, so adding rules to `CONTENT_CSS` changes
+   the EPUB stylesheet bytes by construction. Assert rendered equivalence and
+   EPUBCheck cleanliness instead.
 6. The focus affordance `.editor:focus + .desk-actions { border-color:var(--accent) }`
    survives in whatever form the new chrome takes.
 
@@ -95,9 +102,13 @@ rules; visual and contrast tests.
 
 ## Stop conditions
 
-Stop before changing the cell's markup structure more than the styling needs —
-`_runnable` emits what the executor script expects, and rearranging siblings
-will break it. Stop before restyling any other `pre` on the page.
+**Scope every new rule under `.cell-run`.** `_desk` — the four-tier grader —
+emits the same `.editor`, `.desk-actions`, `.status` and `.output` names, so an
+unqualified change silently restyles the grader's toolbar and these tests
+would not catch it.
+
+Stop before changing markup structure more than the styling needs; `_runnable`
+emits what the executor expects. Stop before touching `.desk` presentation.
 
 ## Human clarification protocol
 
@@ -107,9 +118,10 @@ The band is the defect.
 
 ## Recommended response
 
-Move the background to `.cell-run` itself, strip backgrounds and radii from
-its children, and give `.desk-actions` a `border-top` hairline instead of a
-full border. That is a handful of declarations and it is the whole fix.
+Move the background to `.cell-run`, strip backgrounds and radii from its
+children, and replace `.desk-actions`' `background:#fff` and full border with a
+`border-top` hairline — **scoped as `.cell-run .desk-actions`**. A handful of
+declarations, and that is the whole fix.
 
 ## Trade-offs
 

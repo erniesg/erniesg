@@ -14,12 +14,17 @@ whole chapter and then leave the page.
 
 ## Observed failure
 
-Measured across the fourteen chapters on 2026-09-21:
+Measured across the **fifteen** concept chapters (`ch00`-`ch14`) on
+2026-09-21:
 
 - **139 runnable cells.** Every one is finished, worked code the reader presses
   Run on to watch output appear.
-- **Zero** of those cells contain a blank, a `TODO`, a `...` or a `pass`. There
-  is nowhere in any chapter where the reader writes a line.
+- **Zero contain a placeholder for the reader to fill** — no blank body, no
+  `TODO`, no `...` awaiting an answer. Two cells, both in `ch08-errors.md`,
+  do contain a bare `pass`, but as working code: they demonstrate an `except`
+  clause swallowing an error. That is the chapter's point, not a gap for the
+  reader. The distinction that matters is *unfinished placeholder*, not the
+  `pass` keyword.
 - Every chapter ends with a `## Your turn` section whose body is a pointer:
   "Two challenges. The first walks you through it. The second gives you hints
   but no walkthrough." The actual work lives in separate challenge nodes,
@@ -64,8 +69,8 @@ There is no block for "try this one line."
 6. Exercises are optional per chapter and carry no progress obligation. The
    `x/46 · y/30 solved` counters stay bound to nodes and challenges; inline
    exercises do not enter them.
-7. At least two chapters are converted as proof, chosen where the step to the
-   challenge is largest.
+7. At least two of the fifteen chapters are converted as proof, chosen where
+   the step to the challenge is largest.
 
 ## Acceptance tests
 

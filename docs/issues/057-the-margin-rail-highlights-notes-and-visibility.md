@@ -1,6 +1,6 @@
 # The margin rail: highlights, colours, notes, and the visibility default
 
-depends-on: 053,056
+depends-on: 053,054,056
 
 ## Provider
 

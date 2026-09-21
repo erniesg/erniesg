@@ -76,8 +76,21 @@ npm --workspace packages/margin test
 npx vitest run src/worker/margin
 python3 challenges/tools/validate.py
 npm test
+SRT_E2E_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')
 npx playwright test tests/e2e/margin-edit-mode.spec.ts
 ```
+
+## Concurrency
+
+This repository runs multiple issue workers on one host. Any command in this
+spec that binds a port must choose it per run, never a fixed default, and any
+temporary path must be unique per worker. A spec that hardcodes `8787`, `4321`
+or a fixed preview port is a spec that cannot be run in parallel with another.
+Playwright is the trap worth naming: `playwright.config.ts` reads
+`SRT_E2E_PORT` and otherwise binds every run to `1234`, so set that
+variable per run rather than inventing a new name for it. Ask the kernel
+for a free port rather than sampling a range: with up to 16 workers,
+`$RANDOM % 200` collides often enough to fail a correct run.
 
 ## Allowed secrets
 

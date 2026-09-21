@@ -1,6 +1,6 @@
 # WorkOS AuthKit session and an allowlist for margin
 
-depends-on: 054
+depends-on: 062
 
 ## Provider
 
@@ -81,6 +81,16 @@ npm test
 npx vitest run src/worker/margin
 npm run build
 ```
+
+## Concurrency
+
+This repository runs multiple issue workers on one host. Any command in this
+spec that binds a port must choose it per run, never a fixed default, and any
+temporary path must be unique per worker. A spec that hardcodes `8787`, `4321`
+or a fixed preview port is a spec that cannot be run in parallel with another.
+Playwright is the trap worth naming: `playwright.config.ts` reads
+`SRT_E2E_PORT` and otherwise binds every run to `1234`, so set that
+variable per run rather than inventing a new name for it.
 
 ## Allowed secrets
 

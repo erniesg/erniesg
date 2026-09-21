@@ -1,6 +1,6 @@
 # The margin rail: highlights, colours, notes, and the visibility default
 
-depends-on: 054,056
+depends-on: 053,054,056
 
 ## Provider
 
@@ -15,16 +15,21 @@ global default and can be changed at any time afterwards.
 
 ## Observed failure
 
-- 053 reserved an empty margin column. 056 can anchor a selection but has
-  nowhere to put the result. 054 can store an annotation but nothing creates
-  one.
+- 053 reserved an empty margin column in `ReadingLayout`. 056 can anchor a
+  selection but has nowhere to put the result. 054 can store an annotation but
+  nothing creates one.
+- `ResearchStudio.tsx` (1149 lines) already renders selection, highlights and
+  notes, but only for research papers, only in memory, and only for one
+  reader. Its interaction patterns are the reference for this rail; its
+  single-user, unpersisted scope is what this issue replaces.
 
 ## Success criteria
 
 1. Selecting text raises a popup near the selection offering: a colour swatch
    row that saves a `highlighting` annotation, and a note field that saves a
-   `commenting` annotation with the highlight as its target. Dismissing the
-   popup saves nothing.
+   `commenting` annotation targeting it. These are the W3C motivations 054
+   stores, mapped onto the existing internal `kind` values.
+   Dismissing the popup saves nothing.
 2. The popup is reachable by keyboard: it opens on keyboard selection, is
    fully tab-navigable, traps focus while open, closes on Escape, and returns
    focus to the reader's position in the text.
@@ -72,8 +77,21 @@ from 054 behind it; keyboard and screen-reader paths are complete, not partial.
 npm --workspace packages/margin test
 npm test
 npm run build
+SRT_E2E_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')
 npx playwright test tests/e2e/margin-rail.spec.ts
 ```
+
+## Concurrency
+
+This repository runs multiple issue workers on one host. Any command in this
+spec that binds a port must choose it per run, never a fixed default, and any
+temporary path must be unique per worker. A spec that hardcodes `8787`, `4321`
+or a fixed preview port is a spec that cannot be run in parallel with another.
+Playwright is the trap worth naming: `playwright.config.ts` reads
+`SRT_E2E_PORT` and otherwise binds every run to `1234`, so set that
+variable per run rather than inventing a new name for it. Ask the kernel
+for a free port rather than sampling a range: with up to 16 workers,
+`$RANDOM % 200` collides often enough to fail a correct run.
 
 ## Allowed secrets
 
@@ -97,9 +115,15 @@ a scroll boundary, anchor it to the rail entry instead and say so.
 
 ## Recommended response
 
-Build the popup and the rail against the eight colour values in the reference
-screenshots, as semantic tokens named by role rather than by hue, so a dark
+Read `ResearchStudio.tsx` before writing the rail. It has solved selection
+handling, highlight painting and note editing for this codebase already; reuse
+its approach and, where the code is genuinely general, its code. Build the
+colour swatches as semantic tokens named by role rather than by hue, so a dark
 theme does not need a second set of annotations.
+
+Once the rail works, `ResearchStudio` should be migrated onto it rather than
+left as a second annotation UI. That migration belongs in the IA issue (061),
+not here.
 
 ## Trade-offs
 

@@ -67,9 +67,16 @@ logic change in it.
 ```bash
 npm test
 npm run build
-npx wrangler dev --local --test-scheduled &
-curl -sf http://localhost:8787/api/margin/v1/health
+PORT=$((8700 + RANDOM % 200)); npx wrangler dev --local --port $PORT --test-scheduled &
+curl -sf http://localhost:$PORT/api/margin/v1/health
 ```
+
+## Concurrency
+
+This repository runs multiple issue workers on one host. Any command in this
+spec that binds a port must choose it per run, never a fixed default, and any
+temporary path must be unique per worker. A spec that hardcodes `8787`, `4321`
+or a fixed preview port is a spec that cannot be run in parallel with another.
 
 ## Allowed secrets
 

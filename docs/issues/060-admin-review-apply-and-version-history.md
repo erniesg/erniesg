@@ -90,6 +90,13 @@ npm run build
 npx playwright test tests/e2e/margin-review.spec.ts
 ```
 
+## Concurrency
+
+This repository runs multiple issue workers on one host. Any command in this
+spec that binds a port must choose it per run, never a fixed default, and any
+temporary path must be unique per worker. A spec that hardcodes `8787`, `4321`
+or a fixed preview port is a spec that cannot be run in parallel with another.
+
 ## Allowed secrets
 
 The adapter requires a repository-scoped credential, by name only, held at the

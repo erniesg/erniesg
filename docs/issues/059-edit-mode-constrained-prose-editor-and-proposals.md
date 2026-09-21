@@ -79,6 +79,13 @@ npm test
 npx playwright test tests/e2e/margin-edit-mode.spec.ts
 ```
 
+## Concurrency
+
+This repository runs multiple issue workers on one host. Any command in this
+spec that binds a port must choose it per run, never a fixed default, and any
+temporary path must be unique per worker. A spec that hardcodes `8787`, `4321`
+or a fixed preview port is a spec that cannot be run in parallel with another.
+
 ## Allowed secrets
 
 None. This issue produces proposals; it never writes to the repository.

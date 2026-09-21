@@ -57,14 +57,22 @@ the book either teaches or loses them.
 
 ## Acceptance tests
 
-- A run that takes longer than a moment shows in-flight feedback for its
-  duration.
+- A run that takes longer than a moment shows **active progress**, and the
+  test asserts that affordance or its state transition specifically. The
+  current `preview.py` already prints a static `running...` for the whole
+  request, so a test that accepts any in-flight label is passed by the very
+  behaviour criterion 1 exists to replace.
 - Pass and fail states differ by something other than colour. The test
   asserts the cue itself — a distinct icon, glyph, or geometry present in
   one state and absent in the other — rather than diffing a greyscale
   screenshot, which two colours of differing luminance already pass.
 - Tiers appear one at a time as they resolve; a failing second tier leaves
   tiers three and four visibly not-run rather than failed.
+- **On failure the eye lands on the first failing tier.** With a failure whose
+  output is long enough to scroll, the test asserts that tier receives the
+  intended emphasis and that the relevant part of the output is scrolled into
+  view. Criterion 4 is otherwise untested, so sequential tier badges can ship
+  with focus elsewhere and the output pinned to its top.
 - With `prefers-reduced-motion: reduce`, every state is still identifiable and
   nothing animates.
 - The success moment fires once on first completion and not on re-runs of an

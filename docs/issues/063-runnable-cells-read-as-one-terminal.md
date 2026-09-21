@@ -75,6 +75,12 @@ blocker for 053 — that issue puts runnable cells out of scope and carries no
 - A test asserts `CONTENT_CSS` contains the runnable-cell rules and that a
   page rendered through `render.py` alone (no `preview.py`) styles them.
 - Contrast of button text against its new background is asserted at AA.
+- Keyboard focus survives the restyle. The test focuses the editor and the
+  Run button in turn and asserts the computed focus affordance on the new
+  dark surface: the button keeps a visible focus ring, and the
+  `.editor:focus + .desk-actions` border still appears. No current test
+  focuses either element, so the CSS move can silently drop both and still
+  pass the visual and contrast checks.
 - A cell with no output renders no empty output panel.
 
 ## Definition of done

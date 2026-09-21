@@ -82,6 +82,15 @@ checkout they may not have.
   ship the textarea default of deleting one space and still pass.
 - Shift+Enter inserts a newline and runs nothing.
 - `⌘↵` still runs.
+- **Run-and-advance has a named chord and a test.** Criterion 3 moves it off
+  Shift+Enter without saying where it lands; pick `⌘⇧↵`/`Ctrl+Shift+↵` and
+  assert it both runs the cell and moves focus to the next editor. Otherwise
+  an implementation can free Shift+Enter, leave `⌘↵` run-only, and delete
+  advance entirely while passing every test here.
+- **The Tab escape is visibly documented.** Criterion 1 requires the affordance
+  be discoverable, but testing only that Escape-then-Tab moves focus lets an
+  implementation ship an undiscoverable handler. Assert the hint is present
+  next to each editor and exposed to assistive technology.
 - A challenge rendered for web contains no `grade.py` command; the same
   challenge rendered for print does.
 - Undo (`⌘Z`) after an auto-indent restores the previous state in one step,

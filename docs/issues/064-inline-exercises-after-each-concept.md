@@ -40,10 +40,19 @@ There is no block for "try this one line."
    prompt, a starter with a blank the reader fills, and a check. It is
    deliberately much smaller than a challenge node: one idea, a few lines, no
    tiers.
-2. The check runs the same way runnable cells already run, and reports pass or
-   fail against expected output or a tiny assertion. It does **not** reuse the
-   four-tier grader; a chapter exercise that failed a perf tier would be
-   telling the reader the wrong thing.
+2. **The check runs in the reader's browser, not on a server.** The existing
+   runnable-cell path is not reusable here: `preview.py:767` serves
+   `/api/exec`, which runs submitted Python in a subprocess **as the preview
+   server's own user**, on localhost only. A temporary working directory and a
+   timeout are not a sandbox — that code can read host files, reach the
+   network and spawn processes. Publishing it would be arbitrary remote code
+   execution, and 053 targets a static Cloudflare build with no such endpoint
+   at all.
+
+   So exercises execute client-side (Pyodide or equivalent) or against a
+   genuinely isolated service. Never `/api/exec`. It reports pass or fail
+   against expected output; it does **not** reuse the four-tier grader, since a
+   chapter exercise failing a perf tier teaches the wrong lesson.
 3. **A wrong answer teaches.** On failure the reader sees what their code
    produced next to what was expected. A bare "incorrect" is not acceptable.
 4. The answer is available but not adjacent — behind the same disclosure the
@@ -80,10 +89,13 @@ clean, and the validator covers the new block.
 
 ```bash
 python3 challenges/tools/validate.py
-python3 challenges/tools/preview.py --port 8771 --no-open &
-npx playwright test tests/e2e/inline-exercise.spec.ts
+PORT=$((8700 + RANDOM % 200)); python3 challenges/tools/preview.py --port $PORT --no-open &
+PREVIEW_PORT=$PORT npx playwright test tests/e2e/inline-exercise.spec.ts
 npm test
 ```
+
+Ports are chosen per run, not fixed, so concurrent workers on one host do not
+collide.
 
 ## Allowed secrets
 
@@ -95,6 +107,10 @@ The `:::exercise` block in `render.py` for both targets; its checker; the
 validator rule; two converted chapters; tests.
 
 ## Stop conditions
+
+**Stop before executing reader-submitted code anywhere but a real sandbox.**
+`/api/exec` is a localhost development convenience and must never back a
+published exercise.
 
 Stop before routing exercises through the four-tier grader. Stop before making
 an exercise block anything a reader must complete to proceed. Stop before

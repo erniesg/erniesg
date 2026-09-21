@@ -146,10 +146,15 @@ journalctl --user -u rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.service -f
 Manual equivalent:
 
 ```bash
-rucksack autopilot review-repair erniesg/erniesg --provider vm-codex --execute
-rucksack autopilot self-heal erniesg/erniesg --repo-root . --provider vm-codex --request-review codex --execute
-rucksack autopilot work-queue erniesg/erniesg --provider vm-codex --max-workers 1 --local --repo-root . --issue-dir docs/issues --reconcile-issues --check-provider-ready --notify-github-when-blocked --execute
+rucksack autopilot review-repair erniesg/erniesg --provider claude --execute
+rucksack autopilot self-heal erniesg/erniesg --repo-root . --provider claude --request-review codex --execute
+rucksack autopilot work-queue erniesg/erniesg --provider claude --max-workers "$(nproc)" --local --repo-root . --issue-dir docs/issues --reconcile-issues --check-provider-ready --notify-github-when-blocked --execute
 ```
+
+These mirror the installed unit, which resolves its provider from
+`.agent/autopilot.yaml` and its worker count per pass. `--max-workers` here
+is a manual stand-in for that computed number, so cap it yourself if the
+host is short on memory or disk.
 
 The queue drain first inspects unresolved review threads and requeues safe
 same-repository repair work. Only after that succeeds does self-heal classify

@@ -55,6 +55,18 @@ Two constraints decide this issue:
    is derived from the path's own identity, so adding `paths/foo.toml` yields
    `/books/<its slug>/` with no route code change. Generated from
    `load_book()` + `all_nodes()`, never a hand-maintained list.
+
+   **That identity has to be a durable field, so add one.**
+   `challenges/paths/agent.toml` today carries `id = "agent"` and
+   `title = "Build a Coding Agent"` and nothing that yields
+   `build-a-coding-agent`. Neither existing field can be the source: mapping
+   `id` in route code reintroduces the hand-maintained list this criterion
+   forbids, and slugifying `title` makes the URL move the day the title is
+   edited. Because 054-060 anchor annotations to the document URI, a moved URL
+   silently orphans every annotation on the book. Add an explicit
+   `slug = "build-a-coding-agent"` to each path file, derive the route from
+   that field alone, and treat it as durable: a test asserts the route comes
+   from `slug` and that changing `title` does not change any route.
 3. **A shared `ReadingLayout`** in `src/layouts/` provides the three columns:
    navigation, text, and a margin column with a stable mount point for
    054-060. It takes the document URI and the text content as inputs and knows
@@ -99,7 +111,8 @@ anywhere in `src/`.
 python3 challenges/tools/validate.py
 npm run build
 npm test
-SRT_E2E_PORT=$((4300 + RANDOM % 200)) npx playwright test tests/e2e/reading-shell.spec.ts
+SRT_E2E_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')
+npx playwright test tests/e2e/reading-shell.spec.ts
 ```
 
 ## Concurrency
@@ -110,7 +123,9 @@ temporary path must be unique per worker. A spec that hardcodes `8787`, `4321`
 or a fixed preview port is a spec that cannot be run in parallel with another.
 Playwright is the trap worth naming: `playwright.config.ts` reads
 `SRT_E2E_PORT` and otherwise binds every run to `1234`, so set that
-variable per run rather than inventing a new name for it.
+variable per run rather than inventing a new name for it. Ask the kernel
+for a free port rather than sampling a range: with up to 16 workers,
+`$RANDOM % 200` collides often enough to fail a correct run.
 
 ## Allowed secrets
 

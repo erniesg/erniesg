@@ -116,7 +116,8 @@ carries its own annotation implementation.
 ```bash
 npm test
 npm run build
-SRT_E2E_PORT=$((4300 + RANDOM % 200)) npx playwright test tests/e2e/ia-redirects.spec.ts tests/e2e/reading-shell.spec.ts
+SRT_E2E_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')
+npx playwright test tests/e2e/ia-redirects.spec.ts tests/e2e/reading-shell.spec.ts
 ```
 
 ## Concurrency
@@ -127,7 +128,9 @@ temporary path must be unique per worker. A spec that hardcodes `8787`, `4321`
 or a fixed preview port is a spec that cannot be run in parallel with another.
 Playwright is the trap worth naming: `playwright.config.ts` reads
 `SRT_E2E_PORT` and otherwise binds every run to `1234`, so set that
-variable per run rather than inventing a new name for it.
+variable per run rather than inventing a new name for it. Ask the kernel
+for a free port rather than sampling a range: with up to 16 workers,
+`$RANDOM % 200` collides often enough to fail a correct run.
 
 ## Allowed secrets
 

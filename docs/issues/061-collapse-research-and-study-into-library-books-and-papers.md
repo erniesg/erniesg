@@ -81,7 +81,7 @@ builds, so margin appears on all of them rather than only on the book.
 - `PublicationImporter` is reachable from exactly one route.
 - A paper and a blog entry each expose stable per-block IDs that survive two
   builds of identical source, and an anchor created against one re-resolves.
-- `/library`, `/books/challenges`, `/papers/<id>` and a blog post each render
+- `/library`, `/books/build-a-coding-agent`, `/papers/<id>` and a blog post each render
   `ReadingLayout` with a margin mount point present in the DOM.
 - The browser importer still converts a PDF end to end from `/library`.
 - `ResearchStudio`'s existing annotation tests pass against margin-backed

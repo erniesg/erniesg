@@ -1,4 +1,4 @@
-# Publish the challenges book at /books/challenges with one renderer and the shared reading shell
+# Publish the book at /books/build-a-coding-agent with one renderer and the shared reading shell
 
 ## Provider
 
@@ -6,7 +6,7 @@ claude
 
 ## Goal
 
-Put `challenges/` on the web at `/books/challenges/`, and build the
+Put the book on the web at `/books/build-a-coding-agent/`, and build the
 three-column reading shell as a **shared layout** that `/library`, `/books`,
 `/papers` and `/blog` will all use, per [ADR 010](../adr/010-reading-writing-and-the-margin-layer.md).
 
@@ -42,9 +42,19 @@ Two constraints decide this issue:
    byte-comparison test asserts the block markup for a given node is identical
    between the Astro build output and `render_node` called directly. Any
    divergence fails the build.
-2. Routes: `/books/` (index of books), `/books/challenges/` (the path index
-   with the topic map) and `/books/challenges/<node-id>/` for all 46 nodes,
-   generated from `load_book()` + `all_nodes()`, never a hand-maintained list.
+2. **`challenges` is the node pool, not a book, and must never appear in a
+   URL.** `book.toml` declares `collection = "Challenges"`; the book itself is
+   a *path* over that pool — `paths/agent.toml`, `id = "agent"`,
+   `title = "Build a Coding Agent"`, subtitled "Data structures and
+   algorithms, from zero, by building one thing". A second path over the same
+   pool would be a second book.
+
+   Routes: `/books/` (index of books), `/books/build-a-coding-agent/` (that
+   path's index with the topic map) and
+   `/books/build-a-coding-agent/<node-id>/` for all 46 nodes. The book segment
+   is derived from the path's own identity, so adding `paths/foo.toml` yields
+   `/books/<its slug>/` with no route code change. Generated from
+   `load_book()` + `all_nodes()`, never a hand-maintained list.
 3. **A shared `ReadingLayout`** in `src/layouts/` provides the three columns:
    navigation, text, and a margin column with a stable mount point for
    054-060. It takes the document URI and the text content as inputs and knows
@@ -77,7 +87,8 @@ Two constraints decide this issue:
 
 ## Definition of done
 
-`npm run build` emits `/books/`, `/books/challenges/` and 46 node pages; the
+`npm run build` emits `/books/`, `/books/build-a-coding-agent/` and 46 node
+pages; the
 renderer-parity test passes; the ID-stability test passes; `ReadingLayout` is
 proven surface-agnostic by test; EPUBCheck is clean; no second renderer exists
 anywhere in `src/`.
@@ -104,7 +115,7 @@ None.
 
 ## Artifact outputs
 
-`/books` and `/books/challenges` Astro routes; a build-time bridge that calls
+`/books` and `/books/<path-slug>` Astro routes; a build-time bridge that calls
 `render.py`; `src/layouts/ReadingLayout.astro` with a reserved margin mount
 point; renderer-parity, ID-stability and layout-agnosticism tests.
 
@@ -135,7 +146,10 @@ correct for a book and it is what the EPUB already assumes.
 
 ## Free-form response
 
-The route is `/books/challenges/`, not a top-level `/challenges/`. This issue
-was held before dispatch on 2026-09-20 specifically to change it: annotations
-from 056 anchor to a document URI, so publishing at one path and moving later
-would orphan every annotation created in between.
+The route is `/books/build-a-coding-agent/`. Not `/challenges/`, which is the
+directory the nodes happen to live in, and not `/books/challenges/`, which
+names the pool rather than the book. The repo's own model is explicit about
+this: "The collection. Individual books are paths over this pool of nodes."
+
+Annotations from 056 anchor to a document URI, so getting the URL right before
+anything is published is cheaper than redirecting later.

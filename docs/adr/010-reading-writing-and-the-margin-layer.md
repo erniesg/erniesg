@@ -44,8 +44,12 @@ Four content surfaces:
 - **`/library`** — work by other people that the owner is reading. Documents
   arrive through struct (PDF and other sources to `StructDocument` to
   XHTML/EPUB) and are annotated with margin. Private by default.
-- **`/books`** — the owner's books, written in public. `challenges/` is the
-  first. Readers highlight, comment, and propose edits.
+- **`/books`** — the owner's books, written in public. The first is
+  "Build a Coding Agent" — data structures and algorithms from zero, by
+  building one thing — at `/books/build-a-coding-agent/`. Note that
+  `challenges/` is the *node pool* those books are drawn from, not a book and
+  never a URL segment: `book.toml` says "Individual books are paths over this
+  pool of nodes." Readers highlight, comment, and propose edits.
 - **`/papers`** — the owner's research, ongoing and finished alike.
   Collaborators annotate drafts. Replaces `/research`.
 - **`/blog`** — posts. Unchanged in kind.
@@ -90,10 +94,10 @@ Removing the `PUBLIC_RESEARCH_RELEASE` staging gate is a deliberate act of
 publishing, and the owner decides when — the redirect and the gate removal are
 separable.
 
-The book gets `/books/challenges/`, not a top-level `/challenges/`. Issue #309
-was held before dispatch specifically to avoid building the top-level route
-and moving it afterwards, because annotations anchored under the old path
-would have needed re-anchoring.
+The book gets `/books/build-a-coding-agent/` — named for the book, not for
+the directory its nodes live in and not for the pool. Issue #309 was held
+before dispatch to get this right before publishing, because annotations
+anchor to a document URI and a later move would orphan them.
 
 Margin's tenancy key `(site, document)` already accommodates four surfaces;
 nothing in its data model changes because of this ADR.

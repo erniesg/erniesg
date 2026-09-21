@@ -32,12 +32,20 @@ builds, so margin appears on all of them rather than only on the book.
 
 ## Success criteria
 
-1. **Three** places render `PublicationImporter`, not two:
-   `src/pages/research/studio.astro`, `src/pages/study/experiments/pdf-to-epub.astro`,
-   and `src/pages/research/index.astro`. All three collapse into **one** route
-   under `/library`, including removal from the migrated index — otherwise
-   `/papers` keeps an importer and `/library` is not its single home. A test
-   asserts the importer is reachable from exactly one route.
+1. **Four** places reach `PublicationImporter`, not two. Three render it
+   directly: `src/pages/research/studio.astro`,
+   `src/pages/study/experiments/pdf-to-epub.astro`, and
+   `src/pages/research/index.astro`. The fourth reaches it one hop away:
+   `src/components/research/PdfEpubReviewQueue.tsx` imports and renders it, and
+   `src/pages/research/pdf-review.astro` mounts that queue — so after the
+   blanket research move, `/papers/pdf-review` is a second importer route even
+   once the three direct copies are gone. All of them collapse into **one**
+   route under `/library`, including removal from the migrated index;
+   otherwise `/papers` keeps an importer and `/library` is not its single home.
+   Either move the review workflow under `/library` too, or decouple it from
+   `PublicationImporter`. The test asserts the importer is reachable from
+   exactly one route and names `/papers/pdf-review` among the routes that must
+   not reach it.
    Note which copy is richest before deleting: `studio.astro` carries the only
    link to the 20-paper benchmark at `/research/pdf-review`. Keep it.
 2. **Struct's pipeline reaches `/library` too, or ADR 010 narrows.** The ADR
@@ -55,6 +63,14 @@ builds, so margin appears on all of them rather than only on the book.
    `public/research/` holds the linked paper PDF, EPUB and three images, which
    no route manifest enumerates. Either alias them or move them with
    redirects, and test both.
+   **And the redirects have to survive the production release gate.**
+   `npm run build` runs `tools/deployment/apply-release-gate.mjs`, which
+   recursively deletes `dist/research` after Astro emits it. Redirects written
+   under `/research/*` therefore pass a Playwright test against the dev server
+   and are still absent from the deployed artifact, turning every old research
+   URL into a production 404. This issue updates that gate to keep the
+   redirect stubs while still withholding unreleased research, and validates
+   the **post-gate `dist/`**, not only the dev route manifest.
 5. `/study/*` is removed entirely, with redirects to the library equivalent.
 6. The book, papers and blog entry pages all render through `ReadingLayout`
    from 053, **and each carries stable per-block IDs**. Mounting the rail is
@@ -100,7 +116,7 @@ carries its own annotation implementation.
 ```bash
 npm test
 npm run build
-npx playwright test tests/e2e/ia-redirects.spec.ts tests/e2e/reading-shell.spec.ts
+SRT_E2E_PORT=$((4300 + RANDOM % 200)) npx playwright test tests/e2e/ia-redirects.spec.ts tests/e2e/reading-shell.spec.ts
 ```
 
 ## Concurrency
@@ -109,6 +125,9 @@ This repository runs multiple issue workers on one host. Any command in this
 spec that binds a port must choose it per run, never a fixed default, and any
 temporary path must be unique per worker. A spec that hardcodes `8787`, `4321`
 or a fixed preview port is a spec that cannot be run in parallel with another.
+Playwright is the trap worth naming: `playwright.config.ts` reads
+`SRT_E2E_PORT` and otherwise binds every run to `1234`, so set that
+variable per run rather than inventing a new name for it.
 
 ## Allowed secrets
 

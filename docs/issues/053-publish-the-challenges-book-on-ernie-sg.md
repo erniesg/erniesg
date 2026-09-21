@@ -78,7 +78,7 @@ Two constraints decide this issue:
   `render_node` and asserts the block markup matches exactly.
 - A test builds twice from unchanged source and asserts every per-block DOM ID
   is identical across the two builds.
-- A test asserts all 46 node routes are emitted under `/books/challenges/` and
+- A test asserts all 46 node routes are emitted under `/books/build-a-coding-agent/` and
   that the count comes from `all_nodes()`.
 - A test renders `ReadingLayout` with non-book content and asserts it produces
   the same three-column structure, proving it is not book-coupled.
@@ -99,7 +99,7 @@ anywhere in `src/`.
 python3 challenges/tools/validate.py
 npm run build
 npm test
-PW_PORT=$((4300 + RANDOM % 200)) npx playwright test tests/e2e/reading-shell.spec.ts
+SRT_E2E_PORT=$((4300 + RANDOM % 200)) npx playwright test tests/e2e/reading-shell.spec.ts
 ```
 
 ## Concurrency
@@ -108,6 +108,9 @@ This repository runs multiple issue workers on one host. Any command in this
 spec that binds a port must choose it per run, never a fixed default, and any
 temporary path must be unique per worker. A spec that hardcodes `8787`, `4321`
 or a fixed preview port is a spec that cannot be run in parallel with another.
+Playwright is the trap worth naming: `playwright.config.ts` reads
+`SRT_E2E_PORT` and otherwise binds every run to `1234`, so set that
+variable per run rather than inventing a new name for it.
 
 ## Allowed secrets
 

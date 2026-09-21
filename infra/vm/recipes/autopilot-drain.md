@@ -118,8 +118,16 @@ now handled rather than ignored:
 - **port** — was the real hazard and is now fixed at the source: every issue
   spec binds ports per run rather than using `8787`, `4321` or a fixed preview
   port, and each carries a `## Concurrency` section requiring it.
-- **disk** — the drain's own host-health pass already gates on a soft floor
-  and reclaims before dispatching.
+- **disk** — handled least well of the five, and the honest description is a
+  gate rather than a budget. The drain's host-health pass measures headroom
+  once per pass and reclaims before dispatching, but nothing reserves disk per
+  worker, and `min(nproc, MemAvailable / 2GiB, 16)` has no disk term. On a host
+  with many cores and free memory but headroom only just above the floor, the
+  one-time preflight can pass and the workers it then launches can cross the
+  high-water mark together. Until a disk slot count joins that minimum
+  (`erniesg/rucksack#902` follow-up), re-measure headroom before raising the
+  ceiling on a host that has been near the floor, and treat the ceiling as the
+  operator's disk budget.
 - **memory** — read from `/proc/meminfo` on every pass and divided into ~2 GiB
   slots, which is what makes the count adaptive rather than a guess.
 - **publisher** — unchanged and still serialized: publication mints its own

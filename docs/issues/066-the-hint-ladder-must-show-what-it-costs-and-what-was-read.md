@@ -64,11 +64,24 @@ locked solution itself, where `locked-solution` already says it.
 - Opening two hints updates the control to "2 of 4"; both stay readable; the
   count does not fall when they are collapsed.
 - Reloading the page preserves the count and which rungs were opened.
+- **A spent rung stays marked once collapsed**, before and after reload, by a
+  persistent class, icon, or label. Asserting only the aggregate count lets
+  all four collapsed summaries render identically, so "2 of 4" is shown while
+  the reader cannot tell which two were spent.
 - **Consumption is per challenge, not per origin.** After opening two rungs
   on one `guided` challenge, a different `guided` challenge with a
   different hint count opens at "0 of N" with every rung collapsed, and
   returning to the first still reads "2 of 4". A single origin-wide
   session-storage record passes the reload test above and fails this one.
+- **The worked solution is not just another rung.** The test asserts
+  `.solution` sits outside or terminates the ladder and carries a distinct
+  semantic or visual treatment. Reorganising hints under one counter while
+  leaving the solution styled identically to a hint is the defect this issue
+  opens with, and nothing currently fails on it.
+- **A `worked` challenge emits no support paragraph either.** The criteria
+  remove the redundant note for `guided` and `worked`, but only `guided` is
+  covered, so an implementation can special-case it and leave the paragraph on
+  every worked challenge.
 - An `unaided` challenge renders no hints and no ladder, and its locked
   solution still explains the unlock condition.
 - The print target renders every hint as a section, in order, with no

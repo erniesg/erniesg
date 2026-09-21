@@ -81,8 +81,16 @@ There is no block for "try this one line."
   expected output.
 - Revealing the answer requires an interaction and does not run anything.
 - The EPUB still passes EPUBCheck with exercises present.
-- `validate.py` accepts a chapter with exercises and rejects a malformed one
-  (missing prompt, missing check, or a check that cannot pass).
+- `validate.py` accepts a chapter with exercises and rejects a malformed one.
+  The rejection fixtures cover all four required parts, not two: missing
+  prompt, missing check, a check that cannot pass, **missing starter**, and
+  **missing answer**. Without the last two, an exercise with no editable code
+  or nothing to reveal in web and print passes validation.
+- **Two real chapters carry exercises, not one fixture.** The test scans the
+  checked-in `ch00`-`ch14` and asserts at least two of them contain valid,
+  runnable `:::exercise` blocks. A single-chapter render test is satisfied by
+  one example or a test-only fixture, while the requirement and definition of
+  done both call for two converted concept chapters.
 - Node and challenge counters are unchanged by adding exercises.
 
 ## Definition of done

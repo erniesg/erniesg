@@ -80,8 +80,10 @@ blocker for 053 — that issue puts runnable cells out of scope and carries no
 ## Definition of done
 
 The cell reads as one terminal in both the preview and a `render.py`-only
-page, the rules live in `CONTENT_CSS`, and the print edition is byte-identical
-to before.
+page, the rules live in `CONTENT_CSS`, and the print edition **renders**
+identically. Its bytes will differ — `PRINT_CSS = CONTENT_CSS + …` and
+`epub.py:106` writes that into `OEBPS/style.css` — so assert rendered
+equivalence and a clean EPUBCheck, not byte stability.
 
 ## Validation command
 

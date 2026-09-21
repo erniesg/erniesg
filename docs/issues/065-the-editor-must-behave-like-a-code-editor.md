@@ -75,6 +75,11 @@ checkout they may not have.
 - Escape then Tab leaves the editor, so the page stays keyboard-navigable.
 - Enter after `def f():` lands the caret four spaces in; Enter after an
   indented line keeps that indent.
+- Backspace at the start of an indented line removes one whole level, at more
+  than one depth: from eight spaces it leaves four, and from four it leaves
+  the caret at column zero. Criterion 2 requires this handler and no other
+  test presses Backspace, so without this assertion an implementation can
+  ship the textarea default of deleting one space and still pass.
 - Shift+Enter inserts a newline and runs nothing.
 - `⌘↵` still runs.
 - A challenge rendered for web contains no `grade.py` command; the same

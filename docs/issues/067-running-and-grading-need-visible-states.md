@@ -59,14 +59,28 @@ the book either teaches or loses them.
 
 - A run that takes longer than a moment shows in-flight feedback for its
   duration.
-- Pass and fail states differ by something other than colour; a greyscale
-  screenshot test asserts it.
+- Pass and fail states differ by something other than colour. The test
+  asserts the cue itself — a distinct icon, glyph, or geometry present in
+  one state and absent in the other — rather than diffing a greyscale
+  screenshot, which two colours of differing luminance already pass.
 - Tiers appear one at a time as they resolve; a failing second tier leaves
   tiers three and four visibly not-run rather than failed.
 - With `prefers-reduced-motion: reduce`, every state is still identifiable and
   nothing animates.
 - The success moment fires once on first completion and not on re-runs of an
-  already-green challenge.
+  already-green challenge, **including after a reload**. The test solves a
+  challenge, reloads, and solves it again; the celebration does not
+  return. An in-memory flag satisfies the re-run case and fails this one,
+  so first-completion state is durable per challenge — `/api/grade`
+  already writes `solved` to progress but does not tell the client whether
+  this run was the one that added it, and that answer is what the client
+  needs.
+- A runnable cell whose code raises presents as a failure, not a pass.
+  `/api/exec` in `challenges/tools/preview.py` currently answers `200`
+  with `{"output": ...}` only and drops `done.returncode`, so the state
+  machine cannot tell a traceback from a program that printed one. This
+  issue adds a structured outcome to that response and covers a failing
+  cell.
 - Output and tier regions are announced to assistive technology when they
   change.
 

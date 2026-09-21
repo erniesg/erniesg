@@ -88,7 +88,7 @@ that product umbrella completes.
 - A future applicable worker receipt identifies `gpt-5.6-sol`, `high`, and the
   exact installed `struct-typeset` skill digest. Stubbed tests do not require a
   live provider credential.
-- Capacity was raised from one to four workers on 2026-09-21. Write scopes are
+- Capacity became per-pass dynamic on 2026-09-21 — `min(nproc, MemAvailable/2GiB, 16)`, floor 1 (`erniesg/rucksack#902`) — rather than any fixed count. Write scopes are
   disjoint by construction (per-issue linked worktrees), ports are now chosen
   per run by every spec rather than fixed, and disk and memory headroom were
   measured (18 GB free of 96 GB; 11.6 GB available of 23.9 GB; workers hold

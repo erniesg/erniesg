@@ -103,28 +103,31 @@ transient npm failures retry at bounded intervals, while permanent local-path or
 tooling errors wait for the next daily run after an operator repairs the VM.
 The 30-minute queue drain no longer runs a package update on every poll.
 
-The global capacity is four live issue workers, raised from one on
-2026-09-21. The original cap existed because unknown resource claims failed
-closed pending `erniesg/rucksack#347` and `#349`. Each conflict class in that
-list has since been addressed or measured:
+Capacity is **computed per pass**, not fixed. Since 2026-09-21 the drain
+chooses `min(nproc, MemAvailable / 2GiB, 16)` with a floor of 1, and logs the
+number it picked. A busy or memory-short host drains narrower on its own; a
+larger host drains wider; neither needs a unit change
+(`erniesg/rucksack#902`).
+
+The original cap of one existed because unknown resource claims failed closed
+pending `erniesg/rucksack#347` and `#349`. Each conflict class in that list is
+now handled rather than ignored:
 
 - **path** — every worker already runs in its own linked worktree under
   `.rucksack-worktrees/`, so write scopes are disjoint by construction.
 - **port** — was the real hazard and is now fixed at the source: every issue
   spec binds ports per run rather than using `8787`, `4321` or a fixed preview
   port, and each carries a `## Concurrency` section requiring it.
-- **disk** — measured 18 GB free of 96 GB, with worktrees averaging ~15 MB
-  (12 of them total 186 MB). The drain's own host-health pass already gates on
-  a soft floor and reclaims before dispatching.
-- **memory** — measured 11.6 GB available of 23.9 GB. Live Claude workers hold
-  0.3-0.9 GB each; node build spikes dominate. Four is roughly 10 GB peak.
+- **disk** — the drain's own host-health pass already gates on a soft floor
+  and reclaims before dispatching.
+- **memory** — read from `/proc/meminfo` on every pass and divided into ~2 GiB
+  slots, which is what makes the count adaptive rather than a guess.
 - **publisher** — unchanged and still serialized: publication mints its own
   narrow role token inside the fixed runtime, one mutation at a time.
 
-Four is one worker per core on this host. Raising it further needs the
-measurement redone, because this VM has no swap: exhausting memory kills a
-worker mid-run rather than slowing it. The repo pulse still does not infer
-safety from labels or filenames.
+The 2 GiB-per-worker divisor is deliberately pessimistic because this host has
+no swap: exhausting memory kills a worker mid-run rather than slowing it. The
+repo pulse still does not infer safety from labels or filenames.
 
 Inspect runs:
 

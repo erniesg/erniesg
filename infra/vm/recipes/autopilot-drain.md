@@ -103,13 +103,28 @@ transient npm failures retry at bounded intervals, while permanent local-path or
 tooling errors wait for the next daily run after an operator repairs the VM.
 The 30-minute queue drain no longer runs a package update on every poll.
 
-The default global capacity remains one verified live issue worker. A future
-second lane is limited to one disjoint evidence/eval worker beside one
-parser-core worker, and only after Rucksack persists versioned resource claims
-and enforces disk, memory, path, port, browser, and publisher conflicts under
-the dispatch lock. Until `erniesg/rucksack#347` and `#349` land, unknown claims
-fail closed to one worker; the repo pulse does not infer safety from labels or
-filenames.
+The global capacity is four live issue workers, raised from one on
+2026-09-21. The original cap existed because unknown resource claims failed
+closed pending `erniesg/rucksack#347` and `#349`. Each conflict class in that
+list has since been addressed or measured:
+
+- **path** — every worker already runs in its own linked worktree under
+  `.rucksack-worktrees/`, so write scopes are disjoint by construction.
+- **port** — was the real hazard and is now fixed at the source: every issue
+  spec binds ports per run rather than using `8787`, `4321` or a fixed preview
+  port, and each carries a `## Concurrency` section requiring it.
+- **disk** — measured 18 GB free of 96 GB, with worktrees averaging ~15 MB
+  (12 of them total 186 MB). The drain's own host-health pass already gates on
+  a soft floor and reclaims before dispatching.
+- **memory** — measured 11.6 GB available of 23.9 GB. Live Claude workers hold
+  0.3-0.9 GB each; node build spikes dominate. Four is roughly 10 GB peak.
+- **publisher** — unchanged and still serialized: publication mints its own
+  narrow role token inside the fixed runtime, one mutation at a time.
+
+Four is one worker per core on this host. Raising it further needs the
+measurement redone, because this VM has no swap: exhausting memory kills a
+worker mid-run rather than slowing it. The repo pulse still does not infer
+safety from labels or filenames.
 
 Inspect runs:
 

@@ -144,6 +144,17 @@ const {
       display: contents;
     }
 
+    /* `open` covers the first load, but a reader who folded the contents away
+       on a narrow viewport and then widened it would arrive at a rail that is
+       closed and has no summary left to reopen. This shows the content at this
+       width whatever the element's state, which is what the rule above assumes
+       it can lay out. Browsers without `::details-content` ignore it and keep
+       the `open` default. */
+    .reading-navigation > .reading-contents::details-content {
+      content-visibility: visible;
+      display: contents;
+    }
+
     .reading-navigation > .reading-contents > summary {
       display: none;
     }

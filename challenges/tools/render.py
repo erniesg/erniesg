@@ -203,8 +203,9 @@ def problem_card(node: dict, blocks: dict[str, str]) -> str:
     )
     limits = node.get("limits", {})
     limit_line = (
-        f'<p class="labelled"><b>Limits.</b> {limits.get("time_seconds", "?")} seconds, '
-        f'{limits.get("memory_mb", "?")} MB.</p>'
+        f'<p class="labelled"><b>Limits.</b> '
+        f'{html.escape(str(limits.get("time_seconds", "?")))} seconds, '
+        f'{html.escape(str(limits.get("memory_mb", "?")))} MB.</p>'
         if limits
         else ""
     )
@@ -483,10 +484,14 @@ def render_node(
         # block, same id and a different digest is drift to confirm, not to
         # silently follow.
         digest = hashlib.sha256(markup.encode("utf-8")).hexdigest()[:12]
+        # Escaped even though `validate.py` restricts an id to a slug: this is
+        # the attribute an annotation resolves through, and a value that can
+        # close the attribute would take every note on the node with it.
+        identifier = html.escape(block_id(node["id"], kind, seen[kind]), quote=True)
         out.append(
             f'<div class="block" data-block-kind="{kind}" '
             f'data-block-digest="{digest}" '
-            f'id="{block_id(node["id"], kind, seen[kind])}">{markup}</div>'
+            f'id="{identifier}">{markup}</div>'
         )
 
     if node.get("part"):

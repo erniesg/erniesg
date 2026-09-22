@@ -1,7 +1,12 @@
 import type { WorkerEnv } from './env'
 import type { PrincipalOptions } from './principal'
 import { requireAdmin, requireWriter } from './margin/authorize'
-import { AUTH_PREFIX, handleAuthRequest } from './margin/routes'
+import { readWorkosConfig } from './margin/config'
+import {
+  AUTH_PREFIX,
+  handleAuthRequest,
+  renewSession,
+} from './margin/routes'
 
 export const MARGIN_API_PREFIX = '/api/margin/v1'
 export const MARGIN_HEALTH_PATH = `${MARGIN_API_PREFIX}/health`
@@ -26,11 +31,18 @@ const APPLY_PATH = /^\/proposals\/[^/]+\/apply$/
  *
  * Reads pass straight through: reading the book requires nothing.
  */
+export type WriteGate = {
+  /** The refusal to return, if there is one. */
+  denied?: Response
+  /** A renewed session cookie to set on whatever response is returned. */
+  setCookie?: string
+}
+
 export async function marginWriteGate(
   request: Request,
   env: Partial<Omit<WorkerEnv, 'ASSETS'>>,
   options: PrincipalOptions = {},
-): Promise<Response | null> {
+): Promise<WriteGate | null> {
   const { pathname } = new URL(request.url)
   if (
     pathname !== MARGIN_API_PREFIX &&
@@ -41,10 +53,55 @@ export async function marginWriteGate(
   if (!MUTATING_METHODS.has(request.method)) return null
 
   const rest = pathname.slice(MARGIN_API_PREFIX.length).replace(/\/+$/u, '')
-  const decision = APPLY_PATH.test(rest)
-    ? await requireAdmin(request, env, options)
-    : await requireWriter(request, env, options)
-  return decision.ok ? null : decision.response
+  const authorize = (candidate: Request) =>
+    APPLY_PATH.test(rest)
+      ? requireAdmin(candidate, env, options)
+      : requireWriter(candidate, env, options)
+
+  let decision = await authorize(request)
+  if (decision.ok) return {}
+
+  // A page left open past the access token's expiry would otherwise get a 401
+  // with a live refresh token sitting in the cookie and hours left on the
+  // session. Renew here rather than relying on the client having polled
+  // `/auth/me` immediately before the write, and hand the new cookie back so the
+  // caller sets it on whatever response it returns.
+  if (decision.response.status !== 401) return { denied: decision.response }
+  const config = readWorkosConfig(env)
+  if (!config) return { denied: decision.response }
+
+  const renewal = await renewSession(request, config, {
+    now: options.now,
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    ...(options.jwks ? { jwks: options.jwks } : {}),
+  })
+  if (!renewal) return { denied: decision.response }
+
+  // The renewed cookie travels even when the write is still refused: the refresh
+  // token may have rotated, and the browser must end up holding the live one.
+  if (!renewal.principal) {
+    return { denied: withCookie(decision.response, renewal.cookie) }
+  }
+
+  const retried = await authorize(withSessionCookie(request, renewal.cookie))
+  return retried.ok
+    ? { setCookie: renewal.cookie }
+    : { denied: withCookie(retried.response, renewal.cookie), setCookie: renewal.cookie }
+}
+
+/** The same request, carrying a renewed session cookie. */
+function withSessionCookie(request: Request, cookie: string): Request {
+  const value = cookie.slice(0, cookie.indexOf(';'))
+  const headers = new Headers(request.headers)
+  headers.set('cookie', value)
+  return new Request(request, { headers })
+}
+
+/** The same response, plus a `set-cookie`. */
+function withCookie(response: Response, cookie: string): Response {
+  const next = new Response(response.body, response)
+  next.headers.append('set-cookie', cookie)
+  return next
 }
 
 function healthResponse(): Response {
@@ -90,9 +147,10 @@ export default {
     const auth = await handleAuthRequest(request, env)
     if (auth) return auth
 
-    const denied = await marginWriteGate(request, env)
-    if (denied) return denied
+    const gate = await marginWriteGate(request, env)
+    if (gate?.denied) return gate.denied
 
-    return env.ASSETS.fetch(request)
+    const response = await env.ASSETS.fetch(request)
+    return gate?.setCookie ? withCookie(response, gate.setCookie) : response
   },
 }

@@ -145,6 +145,13 @@ export const marginSessionSchema = z
      */
     refreshToken: z.string().min(1).optional(),
     email: z.string().min(1).optional(),
+    /**
+     * Whether the provider said this session's own subject holds a verified
+     * `email`. Sealed so a later request can finish the identity and admin
+     * bootstrap that a database outage during the callback interrupted; it is
+     * never a substitute for the token, which still has to verify.
+     */
+    emailVerified: z.literal(true).optional(),
   })
   .strict()
 

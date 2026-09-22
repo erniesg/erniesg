@@ -90,6 +90,20 @@ export type PrincipalOptions = {
  */
 const jwksSources = new Map<string, JwksSource>()
 
+/**
+ * Shared, and exported so the auth routes use this cache rather than their own.
+ *
+ * Two caches means two TTLs and two outage windows over one key set, and a
+ * refresh that fails on a cold second cache while the first is warm is a
+ * logout with no cause.
+ */
+export function sharedJwksSource(
+  config: WorkosConfig,
+  fetchImpl?: typeof fetch,
+): JwksSource {
+  return jwksFor(config, fetchImpl)
+}
+
 function jwksFor(config: WorkosConfig, fetchImpl?: typeof fetch): JwksSource {
   const url = jwksUrl(config)
   const existing = jwksSources.get(url)

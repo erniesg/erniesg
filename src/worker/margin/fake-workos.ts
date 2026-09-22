@@ -63,13 +63,22 @@ export function testWorkosEnv(overrides: Partial<WorkosEnv> = {}): WorkosEnv {
 /** The `cookie` header a signed-in browser would send. */
 export async function sessionCookieHeader(
   accessToken: string,
-  options: { expiresAt?: number; email?: string } = {},
+  options: {
+    expiresAt?: number
+    ceiling?: number
+    refreshToken?: string
+    email?: string
+    emailVerified?: true
+  } = {},
 ): Promise<string> {
   const sealed = await sealSession(
     {
       accessToken,
       expiresAt: options.expiresAt ?? 1_800_000_300,
+      ...(options.ceiling ? { ceiling: options.ceiling } : {}),
+      ...(options.refreshToken ? { refreshToken: options.refreshToken } : {}),
       ...(options.email ? { email: options.email } : {}),
+      ...(options.emailVerified ? { emailVerified: options.emailVerified } : {}),
     },
     TEST_COOKIE_PASSWORD,
   )

@@ -797,3 +797,90 @@ describe('GET /auth/me renews a lapsed access token', () => {
     expect(cookieNamed(response, SESSION_COOKIE_NAME)).toBeUndefined()
   })
 })
+
+describe('a partial outage is not a permanent logout', () => {
+  const user = { id: 'user_01HREADER', email: 'reader@example.test', email_verified: true }
+
+  // The exchange consumes the old refresh token. If verification then fails
+  // transiently and no cookie goes back, the browser keeps a spent token and no
+  // later attempt can recover, however healthy the provider becomes.
+  it('returns the rotated refresh token even when verification fails', async () => {
+    const cookie = `${SESSION_COOKIE_NAME}=${await (async () => {
+      const header = await sessionCookieHeader(await accessToken(), {
+        expiresAt: NOW_SECONDS - 60,
+        ceiling: NOW_SECONDS + 3_600,
+        refreshToken: 'refresh_one',
+      })
+      return header.slice(header.indexOf('=') + 1)
+    })()}`
+
+    // The exchange succeeds and rotates; the key set is unavailable, so the new
+    // token cannot be verified.
+    const provider = createFakeProvider({
+      authenticate: {
+        access_token: await accessToken({ exp: NOW_SECONDS + 300 }),
+        refresh_token: 'refresh_two',
+        user,
+      },
+    })
+
+    const response = (await call(
+      AUTH_ME_PATH,
+      { headers: { cookie } },
+      envWith(),
+      optionsFor(provider),
+    )) as Response
+
+    expect(await response.json()).toMatchObject({ authenticated: false })
+    const renewed = cookieNamed(response, SESSION_COOKIE_NAME) as string
+    expect(renewed, 'the rotated token must reach the browser').toBeTruthy()
+    const sealed = renewed.slice(renewed.indexOf('=') + 1, renewed.indexOf(';'))
+    const session = await unsealSession(sealed, config.cookiePassword)
+    expect(session?.refreshToken).toBe('refresh_two')
+    // And the cookie authorises nothing on its own: `expiresAt` did not move.
+    expect(session?.expiresAt).toBe(NOW_SECONDS - 60)
+  })
+
+  // A database outage during the callback used to leave a valid session with no
+  // identity row, and the documented out-of-band allowlist insert selects on it.
+  it('writes the identity a callback outage skipped, on the next /auth/me', async () => {
+    const db = createFakeD1()
+    db.offline = true
+    const { state, cookie } = await beginLogin()
+    const provider = providerWith({
+      access_token: await accessToken({ sub: 'user_01HADMIN' }),
+      refresh_token: 'refresh_one',
+      user: { id: 'user_01HADMIN', email: ADMIN_EMAIL, email_verified: true },
+    })
+
+    const callback = (await call(
+      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
+      { headers: { cookie } },
+      envWith(db),
+      optionsFor(provider),
+    )) as Response
+
+    // The session was still issued — the provider validated it.
+    expect(callback.status).toBe(302)
+    expect(db.identities).toHaveLength(0)
+    expect(db.allowlist).toHaveLength(0)
+
+    const header = cookieNamed(callback, SESSION_COOKIE_NAME) as string
+    const session = header.slice(0, header.indexOf(';'))
+
+    db.offline = false
+    const me = (await call(
+      AUTH_ME_PATH,
+      { headers: { cookie: session } },
+      envWith(db),
+      optionsFor(provider),
+    )) as Response
+
+    expect(await me.json()).toMatchObject({ authenticated: true, isAdmin: true })
+    expect(db.identities).toHaveLength(1)
+    expect(db.identities[0]).toMatchObject({ subject: 'user_01HADMIN' })
+    expect(db.allowlist).toEqual([
+      expect.objectContaining({ identity_id: 1, role: 'admin' }),
+    ])
+  })
+})

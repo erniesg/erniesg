@@ -1,6 +1,7 @@
 import type { WorkerEnv } from '../env'
 import {
   getPrincipal,
+  sharedJwksSource,
   type Principal,
   type PrincipalOptions,
 } from '../principal'
@@ -19,7 +20,7 @@ import {
   ensureSchema,
   recordIdentity,
 } from './identity'
-import { createJwksSource, verifyAccessToken, type JwksSource } from './jwt'
+import { verifyAccessToken, type JwksSource } from './jwt'
 import {
   clearedCookie,
   readCookie,
@@ -34,6 +35,7 @@ import {
   STATE_COOKIE_PATH,
   unsealLoginState,
   unsealSession,
+  type MarginSession,
 } from './session'
 
 /**
@@ -113,10 +115,10 @@ export function safeReturnPath(value: string | null | undefined): string {
 }
 
 function jwksFor(config: WorkosConfig, options: AuthOptions): JwksSource {
-  return (
-    options.jwks ??
-    createJwksSource(jwksUrl(config), { fetchImpl: options.fetchImpl })
-  )
+  // The same per-isolate cache `getPrincipal` reads. A second cache would mean a
+  // second TTL and a second outage window over one key set, so a refresh could
+  // fail on a cold cache while verification on the warm one is fine.
+  return options.jwks ?? sharedJwksSource(config, options.fetchImpl)
 }
 
 async function handleLogin(
@@ -151,6 +153,47 @@ function loginFailed(): Response {
   return json({ error: 'login_failed' }, 400, [
     ['set-cookie', clearedCookie(STATE_COOKIE_NAME, STATE_COOKIE_PATH)],
   ])
+}
+
+/**
+ * Writes the identity row, and binds the admin if this is the moment for it.
+ *
+ * Idempotent, and called from the callback *and* from `/auth/me`. A database
+ * outage during the callback used to leave a valid session with no identity row
+ * at all: the documented out-of-band allowlist insert selects on that row, so
+ * the person could not be allowlisted — and the owner could not be bound as
+ * admin — until they happened to sign in again, with nothing telling them so.
+ * Retrying on a later authenticated request is what makes that recoverable.
+ *
+ * A failure here is swallowed on purpose. Recording a sign-in is not what
+ * authorises it, a database hiccup must not deny a session the provider already
+ * validated, and the allowlist check on the next write reads the database again.
+ */
+async function recordSignIn(
+  env: AuthEnv,
+  principal: Principal,
+  owner: { email?: string; emailVerified: boolean; adminEmail: string },
+  options: AuthOptions,
+): Promise<void> {
+  const db = env.MARGIN_DB
+  if (!db) return
+  const nowIso = new Date(options.now ?? Date.now()).toISOString()
+  try {
+    await ensureSchema(db)
+    const identityId = await recordIdentity(db, principal, nowIso)
+    // The one place an email decides anything, and only while there is no admin
+    // yet. Afterwards the admin is an `(issuer, subject)` row like any other and
+    // this branch can never fire again.
+    if (
+      identityId !== null &&
+      owner.emailVerified &&
+      owner.email?.toLowerCase() === owner.adminEmail
+    ) {
+      await bindAdmin(db, identityId, nowIso)
+    }
+  } catch {
+    // Deliberately quiet; see above.
+  }
 }
 
 /**
@@ -239,29 +282,12 @@ async function handleCallback(
     ...(email ? { email } : {}),
   }
 
-  const db = env.MARGIN_DB
-  if (db) {
-    const nowIso = new Date(options.now ?? Date.now()).toISOString()
-    try {
-      await ensureSchema(db)
-      const identityId = await recordIdentity(db, principal, nowIso)
-      // The one place an email decides anything, and only while there is no
-      // admin yet. Afterwards the admin is an `(issuer, subject)` row like any
-      // other and this branch can never fire again.
-      if (
-        identityId !== null &&
-        emailVerified &&
-        profileIsSubject &&
-        email?.toLowerCase() === config.adminEmail
-      ) {
-        await bindAdmin(db, identityId, nowIso)
-      }
-    } catch {
-      // Recording the sign-in is not what authorises it. A database hiccup
-      // must not deny a session the provider already validated, and the
-      // allowlist check on the next write reads the database again anyway.
-    }
-  }
+  await recordSignIn(
+    env,
+    principal,
+    { email, emailVerified: emailVerified && profileIsSubject, adminEmail: config.adminEmail },
+    options,
+  )
 
   const nowSeconds = Math.floor((options.now ?? Date.now()) / 1000)
   const maxAge = Math.min(
@@ -272,6 +298,10 @@ async function handleCallback(
     typeof payload.refresh_token === 'string' && payload.refresh_token
       ? payload.refresh_token
       : undefined
+  // Sealed so a later request can finish what a database outage interrupted.
+  // Only true when the profile was verified *and* named this token's subject,
+  // which is the same pair of conditions the binding below requires.
+  const ownerEmailVerified = emailVerified && profileIsSubject
   const ceiling = nowSeconds + SESSION_MAX_AGE_SECONDS
   const sealedSession = await sealSession(
     {
@@ -284,6 +314,7 @@ async function handleCallback(
       ceiling,
       ...(refreshToken ? { refreshToken } : {}),
       ...(email ? { email } : {}),
+      ...(ownerEmailVerified ? { emailVerified: true } : {}),
     },
     config.cookiePassword,
   )
@@ -329,11 +360,19 @@ function handleLogout(): Response {
  * `ceiling` is copied, never recomputed: refreshing must not extend the
  * session past the bound login fixed for it.
  */
-async function refreshed(
+export type SessionRenewal = {
+  /** Absent when the exchange succeeded but the new token could not be verified. */
+  principal?: Principal
+  /** Always present: a rotated refresh token must reach the browser either way. */
+  cookie: string
+  session: MarginSession
+}
+
+export async function renewSession(
   request: Request,
   config: WorkosConfig,
   options: AuthOptions,
-): Promise<{ principal: Principal; cookie: string } | null> {
+): Promise<SessionRenewal | null> {
   const sealed = readCookie(request, SESSION_COOKIE_NAME)
   if (!sealed) return null
   const session = await unsealSession(sealed, config.cookiePassword)
@@ -350,44 +389,58 @@ async function refreshed(
   const accessToken = payload?.access_token
   if (typeof accessToken !== 'string' || !accessToken) return null
 
+  // The exchange has consumed the old refresh token by now, and WorkOS may have
+  // rotated it. Whatever happens next, the browser must end up holding the token
+  // that is still valid — otherwise a transient JWKS outage between here and the
+  // verification below turns into a permanent logout, because the browser would
+  // keep a token the provider has already spent.
+  const nextRefresh =
+    typeof payload.refresh_token === 'string' && payload.refresh_token
+      ? payload.refresh_token
+      : session.refreshToken
+
+  const reseal = async (
+    next: Partial<MarginSession> = {},
+  ): Promise<{ cookie: string; session: MarginSession }> => {
+    const merged: MarginSession = {
+      ...session,
+      refreshToken: nextRefresh,
+      ceiling,
+      ...next,
+    }
+    return {
+      session: merged,
+      cookie: serializeCookie(
+        SESSION_COOKIE_NAME,
+        await sealSession(merged, config.cookiePassword),
+        // Again to the ceiling: this cookie still carries the refresh token.
+        { path: SESSION_COOKIE_PATH, maxAgeSeconds: ceiling - nowSeconds },
+      ),
+    }
+  }
+
   const verified = await verifyAccessToken(accessToken, {
     config,
     jwks: jwksFor(config, options),
     now: options.now,
   })
-  if (!verified.ok) return null
+  if (!verified.ok) {
+    // Not authenticated, but the rotated token still goes back. `expiresAt` is
+    // left where it was, so this cookie authorises nothing on its own.
+    return { ...(await reseal()), principal: undefined }
+  }
 
-  const nextRefresh =
-    typeof payload.refresh_token === 'string' && payload.refresh_token
-      ? payload.refresh_token
-      : session.refreshToken
   const expiresAt = Math.min(verified.claims.exp, ceiling)
-  if (expiresAt <= nowSeconds) return null
-
-  const cookie = serializeCookie(
-    SESSION_COOKIE_NAME,
-    await sealSession(
-      {
-        accessToken,
-        expiresAt,
-        ceiling,
-        refreshToken: nextRefresh,
-        ...(session.email ? { email: session.email } : {}),
-      },
-      config.cookiePassword,
-    ),
-    // Again to the ceiling: this cookie still carries the refresh token.
-    { path: SESSION_COOKIE_PATH, maxAgeSeconds: ceiling - nowSeconds },
-  )
+  if (expiresAt <= nowSeconds) return { ...(await reseal()), principal: undefined }
 
   return {
+    ...(await reseal({ accessToken, expiresAt })),
     principal: {
       provider: WORKOS_PROVIDER,
       issuer: verified.claims.iss,
       subject: verified.claims.sub,
       ...(session.email ? { email: session.email } : {}),
     },
-    cookie,
   }
 }
 
@@ -398,19 +451,50 @@ async function handleMe(
   options: AuthOptions,
 ): Promise<Response> {
   let principal = await getPrincipal(request, env, options)
-  // The one route a client polls, and the only one holding a response it can
-  // set a cookie on, so it is where a lapsed access token is renewed.
+  // A route a client polls, and one holding a response it can set a cookie on,
+  // so it is a place a lapsed access token gets renewed.
   let renewed: string | null = null
+  let session: MarginSession | null = null
   if (!principal) {
-    const again = await refreshed(request, config, options)
+    const again = await renewSession(request, config, options)
     if (again) {
-      principal = again.principal
+      // The cookie comes back even when the principal does not: the refresh
+      // token may have rotated, and the browser has to end up with the live one.
       renewed = again.cookie
+      session = again.session
+      principal = again.principal ?? null
     }
   }
   if (!principal) {
-    return json({ authenticated: false, canWrite: false, isAdmin: false })
+    return json(
+      { authenticated: false, canWrite: false, isAdmin: false },
+      200,
+      renewed ? [['set-cookie', renewed]] : [],
+    )
   }
+  if (!session) {
+    const sealed = readCookie(request, SESSION_COOKIE_NAME)
+    session = sealed
+      ? await unsealSession(sealed, config.cookiePassword)
+      : null
+  }
+
+  // A database outage during the callback leaves a valid session with no
+  // identity row, and the documented out-of-band allowlist insert has nothing to
+  // select. Finishing it here makes that recoverable without signing out and in
+  // again — and picks up the admin bootstrap the same callback skipped.
+  await recordSignIn(
+    env,
+    principal,
+    {
+      ...(session?.email ? { email: session.email } : {}),
+      // Sealed at login only when the profile was verified and named this
+      // token's subject, so it is as trustworthy here as it was there.
+      emailVerified: session?.emailVerified === true,
+      adminEmail: config.adminEmail,
+    },
+    options,
+  )
 
   let role: string | null = null
   if (env.MARGIN_DB) {

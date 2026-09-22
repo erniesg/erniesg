@@ -48,7 +48,8 @@ SUPPORT_NOTES = {
     "worked": "",
     "guided": "",
     "contract": "",
-    "unaided": "This one tells you whether it stuck.",
+    "unaided": "No hints on this one, on purpose: it tells you whether the chapter stuck. "
+               "The worked solution unlocks when all four tiers are green.",
 }
 RUNG_LABELS = ("a nudge", "a direction", "the shape of it", "most of the way")
 FIGURE_TYPES = ("cells", "walk", "links", "table", "cost")

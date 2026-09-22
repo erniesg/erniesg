@@ -320,5 +320,5 @@ that arithmetic yourself.
 
 Two challenges. The first looks like it needs every pair of finishers compared
 with every other, and the perf tier is sized so that it cannot be. The second
-is yours alone — no hints, and the solution stays shut until all four tiers are
+is yours alone — no hints, and a worked solution to read only once your own is
 green.

@@ -25,6 +25,11 @@ TIERS = ["public", "edge", "stress", "perf"]
 SUPPORT_LEVELS = ["worked", "guided", "contract", "unaided"]
 FIGURE_TYPES = {"cells", "walk", "links", "table", "cost"}
 
+# A node id is a URL segment, a DOM id and the stem of every annotation anchor
+# on the node, so it has to be safe in all three. Restricting it here is what
+# lets the renderer treat it as a known-good token everywhere downstream.
+NODE_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
 BLOCKS = re.compile(r"^:::(\w+)", re.MULTILINE)
 REQUIRED_BLOCKS = {
     # `hint` is governed by the support level below, not required outright: an
@@ -67,6 +72,20 @@ def check_node(path: Path, meta: dict, body: str) -> None:
     for key in ("id", "kind", "title"):
         if key not in meta:
             fail(path, f"front matter is missing `{key}`")
+    node_id = meta.get("id")
+    if node_id is not None:
+        # `id = 123` is valid TOML and `str()` would let it through, but the
+        # manifest would then serialize a number where `BookNode.id` is typed
+        # a string, and the route would compare it against a string
+        # `Astro.params.node` and never match. Reject the type, not the shape.
+        if not isinstance(node_id, str):
+            fail(path, f"id `{node_id}` must be a string, not {type(node_id).__name__}")
+        elif not NODE_ID.fullmatch(node_id):
+            fail(
+                path,
+                f"id `{node_id}` is not a url-safe slug: it becomes a route segment, "
+                f"a DOM id and the stem of every annotation anchor on this node",
+            )
     kind = meta.get("kind", "")
     if kind not in REQUIRED_BLOCKS:
         fail(path, f"unknown kind `{kind}`")
@@ -153,9 +172,22 @@ def check_graph(nodes: dict[str, dict]) -> None:
         problems.append(f"`requires` has a cycle among: {stuck}")
 
 
+SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
+
 def check_paths(nodes: dict[str, dict]) -> None:
+    claimed: dict[str, str] = {}
     for path_file in sorted((CHALLENGES_DIR / "paths").glob("*.toml")):
         data = tomllib.loads(path_file.read_text())
+        # The published route is derived from `slug` alone, and readers anchor
+        # annotations to it, so a path without one must not reach the site.
+        slug = str(data.get("slug", "")).strip()
+        if not SLUG.fullmatch(slug):
+            fail(path_file, "needs a url-safe `slug`; the published route comes from it")
+        elif slug in claimed:
+            fail(path_file, f"slug `{slug}` is already claimed by {claimed[slug]}")
+        else:
+            claimed[slug] = path_file.name
         for part in data.get("parts", []):
             rung = -1
             for node_id in part.get("nodes", []):

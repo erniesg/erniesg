@@ -38,6 +38,7 @@ from render import (
     load_topics,
     CARD_BLOCKS,
     CONTENT_CSS,
+    PART_NAMES,
     all_nodes,
     figure as render_figure,
     load_book,
@@ -79,13 +80,6 @@ EDGE_KINDS = {
     "instance-of": ("#7c3aed", "same pattern as"),
     "harder-variant-of": ("#be185d", "harder version of"),
 }
-
-PART_NAMES = {
-    0: "The loop", 1: "Programming basics", 2: "Lookup", 3: "Scanning",
-    4: "Recursive structure", 5: "Graphs", 6: "Optimization",
-    7: "The agent's structures", 8: "Engineering", 9: "At scale",
-}
-
 
 STYLE = CONTENT_CSS + """
 * { box-sizing:border-box; }

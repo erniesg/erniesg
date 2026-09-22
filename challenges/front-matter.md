@@ -63,10 +63,12 @@ Every challenge is graded by four tiers that stop at the first failure; the
 next chapter earns them on a problem that fails three of them.
 
 Every chapter ends with a ladder. The first problem is worked through with you,
-the next carry hints, and the last are yours alone: no hints, and the solution
-stays shut until all four tiers are green. The book ends the same way, with a
-capstone that needs everything at once.
+the next carry hints, and the last are yours alone: no hints, and a worked
+solution meant for after you have written your own. The book ends the same way,
+with a capstone that needs everything at once.
 
 The first run is meant to be red. Hints are staged and free; read the solution
-only once you have a failing test you understand. Everything runs in the
-browser, or from a terminal if you prefer.
+only once you have a failing test you understand — that order is the method, and
+keeping to it is yours to do. Where the tiers can run, they will hold you to it:
+`python3 challenges/tools/preview.py` serves this same book with the grader
+behind it.

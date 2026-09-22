@@ -210,5 +210,5 @@ crashes. The agent just starts editing the wrong lines.
 ## Your turn
 
 Two challenges. The first is the tray sum, default argument included, and walks
-you through it. The second keeps its solution shut until all four tiers are
-green, and its edge tier is built out of the trap above.
+you through it. The second is one to finish before you read its worked
+solution, and its edge tier is built out of the trap above.

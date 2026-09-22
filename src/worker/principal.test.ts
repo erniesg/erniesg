@@ -8,6 +8,7 @@ import {
   TEST_CLIENT_ID,
   TEST_COOKIE_PASSWORD,
   TEST_ISSUER,
+  TEST_OTHER_PASSWORD,
   type TestSigner,
 } from './margin/fake-workos'
 import { createJwksSource } from './margin/jwt'
@@ -84,7 +85,7 @@ describe('getPrincipal with a real session', () => {
   it('rejects a cookie sealed with a different password', async () => {
     const sealed = await sealSession(
       { accessToken: await signer.sign(claims()), expiresAt: NOW_SECONDS + 300 },
-      'placeholder-other-password-not-a-secret-000',
+      TEST_OTHER_PASSWORD,
     )
 
     await expect(

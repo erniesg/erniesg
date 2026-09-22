@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { TEST_COOKIE_PASSWORD } from './fake-workos'
+import { TEST_COOKIE_PASSWORD, TEST_OTHER_PASSWORD } from './fake-workos'
 import {
   clearedCookie,
   readCookie,
@@ -16,7 +16,6 @@ import {
   unsealSession,
 } from './session'
 
-const OTHER_PASSWORD = 'placeholder-other-password-not-a-secret-000'
 
 describe('sealing', () => {
   it('round-trips a session', async () => {
@@ -38,7 +37,7 @@ describe('sealing', () => {
       TEST_COOKIE_PASSWORD,
     )
 
-    await expect(unsealSession(sealed, OTHER_PASSWORD)).resolves.toBeNull()
+    await expect(unsealSession(sealed, TEST_OTHER_PASSWORD)).resolves.toBeNull()
   })
 
   it('does not unseal after a single flipped character', async () => {

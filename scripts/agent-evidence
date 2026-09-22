@@ -359,9 +359,16 @@ for (const lane of lanes) {
   });
 }
 
-const requiredFailures = results
-  .filter((lane) => lane.required && lane.exit_code !== 0)
-  .map((lane) => lane.id);
+// Skipped required lanes belong here even though they are deliberately absent
+// from `results`: they are required lanes that did not pass, and the manifest
+// validator rejects a failed result whose required_failures is empty
+// (.github/workflows/agent-evidence.yml). Keeping them out of results and
+// lanes_run is what stops the receipt claiming coverage; naming them here is
+// what keeps the receipt valid.
+const requiredFailures = [
+  ...results.filter((lane) => lane.required && lane.exit_code !== 0).map((lane) => lane.id),
+  ...requiredSkipped,
+];
 const endedAt = new Date();
 const modelConsultationArtifact = modelConsultation
   ? [{
@@ -395,9 +402,9 @@ const manifest = {
     ...largeFiles.artifacts,
   ],
   caveats: [...largeFiles.caveats, ...skipCaveats],
-  result: requiredFailures.length === 0 && requiredSkipped.length === 0 ? "passed" : "failed",
+  result: requiredFailures.length === 0 ? "passed" : "failed",
   required_failures: requiredFailures,
 };
 
-writeManifest(manifest, requiredFailures.length === 0 && requiredSkipped.length === 0 ? 0 : 1);
+writeManifest(manifest, requiredFailures.length === 0 ? 0 : 1);
 NODE

@@ -3,7 +3,6 @@ id = "ch00-the-loop"
 kind = "concept"
 title = "How to solve one of these"
 part = "part-0"
-figure = "four-tiers"
 
 teaches = ["problem-statements", "stress-testing", "cost-arithmetic"]
 assessed-by = ["sum-of-two-digits", "max-pairwise-product"]
@@ -218,9 +217,6 @@ print(biggest_product([2, 2]), biggest_product([5, 5, 1]))
 
 `[2, 2]` gives 4. `[5, 5, 1]` gives 25. Start the race again and it stays
 quiet.
-
-:::figure{id="four-tiers"}
-:::
 
 ## The four tiers
 

@@ -3,7 +3,6 @@ id = "sum-of-two-digits"
 kind = "challenge"
 title = "Sum of two digits"
 module = "digits"
-figure = "reading-a-deal"
 support = "worked"
 difficulty = 0
 
@@ -55,9 +54,6 @@ output: their sum, as a number
 | `9, 7` | `16` |
 | `0, 0` | `0` |
 | `9, 9` | `18` |
-:::
-
-:::figure{id="reading-a-deal"}
 :::
 
 :::run{starter="starter.py"}

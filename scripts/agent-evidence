@@ -57,13 +57,26 @@ mkdirSync(join(outDir, "logs"), { recursive: true });
 // worker without recording which lane hung.
 const TOTAL_BUDGET_MS = 1_800_000;
 const LANE_TIMEOUT_EXIT = 124;
+// The setup probes below (HEAD, remote, branch, dirty) run before the lane
+// budget exists. They must not inherit it: three stalled Git probes would
+// otherwise burn the whole supervisor allowance before any lane runs or any
+// manifest is written.
+const SETUP_PROBE_TIMEOUT_MS = 60_000;
 
-function sh(command, timeoutMs = TOTAL_BUDGET_MS) {
+function sh(command, timeoutMs = SETUP_PROBE_TIMEOUT_MS) {
   return spawnSync(command, { shell: true, encoding: "utf8", timeout: timeoutMs });
 }
 
 function timedOut(proc) {
-  return Boolean(proc.error && proc.error.code === "ETIMEDOUT") || proc.signal === "SIGTERM";
+  // Node kills a timed-out child itself: error.code ETIMEDOUT, signal SIGTERM.
+  // The trusted runner's wrapper instead catches TimeoutExpired and returns an
+  // ordinary result with status 124 and neither field, so a predicate that
+  // checks only the Node shape never fires under revalidation.
+  return (
+    Boolean(proc.error && proc.error.code === "ETIMEDOUT")
+    || proc.signal === "SIGTERM"
+    || proc.status === LANE_TIMEOUT_EXIT
+  );
 }
 
 function safeRepository(value) {
@@ -263,28 +276,24 @@ if (selection.error || !selection.lanes || selection.lanes.length === 0) {
 const lanes = selection.lanes;
 
 const budgetDeadline = Date.now() + TOTAL_BUDGET_MS;
+const skipCaveats = [];
 let budgetSpentBy = "";
+let lastLaneId = "";
 
 for (const lane of lanes) {
   const laneStart = Date.now();
-  // Every lane still reaches the manifest, so a reader can tell which lane
-  // consumed the budget from which lanes never got to run.
-  if (budgetSpentBy) {
-    const skippedLog = join(outDir, "logs", `${lane.id}.log`);
-    writeFileSync(
-      skippedLog,
-      `[agent-evidence] not run: the ${budgetSpentBy} lane consumed the shared ${TOTAL_BUDGET_MS} ms budget\n`,
+  // A lane that was never invoked must not appear as an executed lane: that
+  // would claim coverage the run does not have. It is recorded as a caveat and
+  // left out of results and lanes_run.
+  const remaining = budgetDeadline - Date.now();
+  if (budgetSpentBy || remaining <= 0) {
+    if (!budgetSpentBy) budgetSpentBy = lastLaneId || "setup";
+    skipCaveats.push(
+      `lane not run: ${lane.id}; the ${budgetSpentBy} lane consumed the shared ${TOTAL_BUDGET_MS} ms budget`,
     );
-    results.push({
-      ...lane,
-      status: "failed",
-      exit_code: LANE_TIMEOUT_EXIT,
-      duration_ms: 0,
-      log_path: skippedLog,
-    });
     continue;
   }
-  const remaining = budgetDeadline - Date.now();
+  lastLaneId = lane.id;
   const proc = sh(lane.command, remaining > 0 ? remaining : 1);
   let exitCode = proc.status ?? 1;
   if (timedOut(proc)) {
@@ -352,7 +361,7 @@ const manifest = {
   duration_ms: endedAt.getTime() - startedAt.getTime(),
   agent_version: textHash(JSON.stringify(allLanes)),
   invocation,
-  lanes_run: lanes.map((lane) => lane.id),
+  lanes_run: results.map((lane) => lane.id),
   runner: {
     provider: process.env.AGENT_PROVIDER || (process.env.GITHUB_ACTIONS ? "github-actions" : "local"),
     os: process.platform,
@@ -365,7 +374,7 @@ const manifest = {
     ...modelConsultationArtifact,
     ...largeFiles.artifacts,
   ],
-  caveats: largeFiles.caveats,
+  caveats: [...largeFiles.caveats, ...skipCaveats],
   result: requiredFailures.length === 0 ? "passed" : "failed",
   required_failures: requiredFailures,
 };

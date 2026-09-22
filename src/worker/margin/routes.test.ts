@@ -210,7 +210,10 @@ describe('GET /auth/callback', () => {
     expect(session).toContain('; Secure')
     expect(session).toContain('; SameSite=Lax')
     expect(session.toLowerCase()).not.toContain('domain=')
-    expect(session).toContain('; Max-Age=300')
+    // To the ceiling, not to the 300-second access token: the cookie carries
+    // the refresh token, and a browser that dropped it at token expiry would
+    // throw away the only thing that can renew the session.
+    expect(session).toContain(`; Max-Age=${SESSION_MAX_AGE_SECONDS}`)
 
     const cleared = cookieNamed(response, STATE_COOKIE_NAME) as string
     expect(cleared).toContain('; Max-Age=0')
@@ -242,6 +245,37 @@ describe('GET /auth/callback', () => {
     )
     const session = await unsealSession(sealed, config.cookiePassword)
     expect(session?.expiresAt).toBe(NOW_SECONDS + SESSION_MAX_AGE_SECONDS)
+  })
+
+  // The bug this guards: sizing the cookie to the access token had a conforming
+  // browser delete the sealed refresh token at the moment it became the only
+  // thing that could renew the session.
+  it('outlives the access token it was sealed with', async () => {
+    const { state, cookie } = await beginLogin()
+    const provider = providerWith({
+      access_token: await accessToken({ exp: NOW_SECONDS + 300 }),
+      refresh_token: 'refresh_one',
+      user,
+    })
+
+    const response = (await call(
+      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
+      { headers: { cookie } },
+      envWith(),
+      optionsFor(provider),
+    )) as Response
+
+    const header = cookieNamed(response, SESSION_COOKIE_NAME) as string
+    const maxAge = Number(/; Max-Age=(\d+)/.exec(header)?.[1])
+    expect(maxAge).toBe(SESSION_MAX_AGE_SECONDS)
+    expect(maxAge).toBeGreaterThan(300)
+
+    // While the seal still bounds the access token at its own expiry.
+    const sealed = header.slice(header.indexOf('=') + 1, header.indexOf(';'))
+    const session = await unsealSession(sealed, config.cookiePassword)
+    expect(session?.expiresAt).toBe(NOW_SECONDS + 300)
+    expect(session?.ceiling).toBe(NOW_SECONDS + SESSION_MAX_AGE_SECONDS)
+    expect(session?.refreshToken).toBe('refresh_one')
   })
 
   it('exchanges the code server-side, never in the browser', async () => {

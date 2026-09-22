@@ -150,12 +150,14 @@ export async function getPrincipal(
   const session = await unsealSession(sealed, config.cookiePassword)
   if (!session) return null
 
-  // The seal carries the session's own ceiling — the lesser of the token's
-  // `exp` and `SESSION_MAX_AGE_SECONDS`. Checking it here is what makes the
-  // ceiling real: `Max-Age` only governs the browser's copy, and a cookie
-  // lifted out of one is accepted on its contents alone.
+  // The seal carries the absolute end of the sign-in, fixed at login and copied
+  // across every refresh. Checking it here is what makes it real: `Max-Age` only
+  // governs the browser's copy, and a cookie lifted out of one is accepted on
+  // its contents alone. The access token's own expiry is `verifyAccessToken`'s
+  // to enforce, below. Sessions sealed before `ceiling` existed fall back to
+  // `expiresAt`, which was the bound they were sealed with.
   const nowSeconds = Math.floor((options.now ?? Date.now()) / 1000)
-  if (nowSeconds >= session.expiresAt) return null
+  if (nowSeconds >= (session.ceiling ?? session.expiresAt)) return null
 
   const verified = await verifyAccessToken(session.accessToken, {
     config,

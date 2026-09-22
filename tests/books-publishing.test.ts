@@ -61,6 +61,20 @@ sys.stdout.write(
 )
 `
 
+/** Nodes carrying a steppable figure. */
+const FIGURE_IDS = `
+import sys, json
+sys.path.insert(0, "challenges/tools")
+from render import load_book, render_node
+_, order = load_book()
+ids = [
+    n["id"]
+    for n in order
+    if "walk-controls" in render_node(n, "web", runnable=True)
+]
+json.dump(ids, sys.stdout)
+`
+
 /** Every node the tiers would gate: `contract` and `unaided`. */
 const GATED_IDS = `
 import sys, json
@@ -268,6 +282,22 @@ describe('stable anchors', () => {
     const lines = python(DIGEST_DRIFT).trim().split('\n')
     const drifted = lines.filter((line) => line.endsWith('drift'))
     expect(drifted.length, 'an insertion must be visible as digest drift').toBeGreaterThan(0)
+  })
+
+  // The `data-walk` handler lives in challenges/tools/preview.py and is not
+  // shipped by the Astro routes, so controls on a published page are dead.
+  it('ships no figure controls it cannot drive', SLOW, () => {
+    const withFigure: string[] = JSON.parse(python(FIGURE_IDS))
+    expect(withFigure.length).toBeGreaterThan(0)
+
+    for (const id of withFigure) {
+      const published = python(RENDER_ONE, [id, 'web', 'no', 'reader'])
+      expect(published, `${id} must not ship walk controls`).not.toContain('walk-controls')
+      expect(published, `${id} must not ship walk handlers`).not.toContain('data-walk')
+    }
+
+    const preview = python(RENDER_ONE, [withFigure[0], 'web', 'yes'])
+    expect(preview, 'the runnable preview keeps its controls').toContain('walk-controls')
   })
 
   it('keeps block ids unique within a node', () => {

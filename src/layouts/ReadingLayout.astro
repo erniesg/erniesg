@@ -47,7 +47,14 @@ const {
       data-reading-column="navigation"
       aria-label="Contents"
     >
-      <slot name="navigation" />
+      <!-- Below the breakpoint the rail stacks above the article, and the
+           book has 46 nodes, so a phone would open every chapter on several
+           screens of contents. The disclosure collapses it there; above the
+           breakpoint the rule set unwraps it back into a plain rail. -->
+      <details class="reading-contents">
+        <summary>Contents</summary>
+        <slot name="navigation" />
+      </details>
     </nav>
 
     <article
@@ -87,6 +94,28 @@ const {
     min-width: 0;
   }
 
+  .reading-contents > summary {
+    cursor: pointer;
+    padding: 0.5rem 0;
+    font-weight: 600;
+  }
+
+  /* CONTENT_CSS gives figures, hints and solutions hard-coded light
+     backgrounds. Without an explicit foreground here they inherit the site's,
+     which in dark mode is near-white on near-white. Pin both together so the
+     generated panels stay legible in either theme. */
+  .book-content {
+    color: #1a1a1a;
+  }
+
+  /* Header.astro is `sticky top-0 z-10` and about 4rem tall, so anything this
+     shell pins has to start below it or the header covers its first rows. */
+  .reading-shell {
+    --reading-header: 4rem;
+    --reading-gap: 1.5rem;
+    --reading-pin: calc(var(--reading-header) + var(--reading-gap));
+  }
+
   /* Empty by design: the annotation layer mounts here. Below the breakpoint it
      collapses entirely, matching the reading rail the local preview uses. */
   .reading-margin {
@@ -100,9 +129,18 @@ const {
 
     .reading-navigation {
       position: sticky;
-      top: 1.5rem;
-      max-height: calc(100vh - 3rem);
+      top: var(--reading-pin);
+      max-height: calc(100vh - var(--reading-pin) - var(--reading-gap));
       overflow-y: auto;
+    }
+
+    /* Above the breakpoint the contents are a rail, not a disclosure. */
+    .reading-navigation > .reading-contents {
+      display: contents;
+    }
+
+    .reading-navigation > .reading-contents > summary {
+      display: none;
     }
   }
 
@@ -115,9 +153,9 @@ const {
     .reading-margin {
       display: block;
       position: sticky;
-      top: 1.5rem;
+      top: var(--reading-pin);
       min-height: 6rem;
-      max-height: calc(100vh - 3rem);
+      max-height: calc(100vh - var(--reading-pin) - var(--reading-gap));
       overflow-y: auto;
     }
   }

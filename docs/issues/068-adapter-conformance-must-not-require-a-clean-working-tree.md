@@ -13,11 +13,16 @@ receipts. It publishes nothing durable.
 
 Today it also, incidentally, asserts that the whole repository working tree is
 clean. That assertion belongs to a real publication, not to an equivalence
-test, and it makes the `build` validation lane unsatisfiable for every agent
-run in this repository.
+test, and it fails on every agent run, because an agent run is dirty by
+construction.
 
 Separate the two questions, using the pattern this checker already uses for
 route parity.
+
+**Scope, stated up front.** This fixes the conformance check in the `test`
+lane only. It does **not** unblock the `build` lane, which fails for a
+different reason on the same underlying cause -- see below. Landing this alone
+does not make an agent run pass.
 
 ## Observed failure
 
@@ -35,13 +40,21 @@ route parity.
   `gitdir: /mnt/repo.git/worktrees/<name>`, so the object store is read-only
   by design: Rucksack owns the commit, not the agent.
 - Result, observed on issue #322 on 2026-09-21: `astro check` reported 618
-  files and 0 errors and 133 pages built, but the `build` lane still failed on
-  this gate alone. The run ended `rucksack-blocked` + `rucksack-needs-human`
-  with no code committed, and its worker correctly refused both available
-  workarounds — weakening the assertion, and adding a `scripts/` wrapper to
-  evade the command allowlist.
-- This is not specific to #322. It blocks every issue dispatched into this
-  repository.
+  files and 0 errors and 133 pages built, and validation still failed. The run
+  ended `rucksack-blocked` + `rucksack-needs-human` with no code committed, and
+  its worker correctly refused both available workarounds — weakening the
+  assertion, and adding a `scripts/` wrapper to evade the command allowlist.
+- **Two different lanes fail, on two different code paths, from the same dirty
+  tree.** They are worth keeping apart:
+  - The `test` lane fails in `tools/publication-adapter-conformance.test.mjs`,
+    under `context: 'adapter-conformance'`. **That is what this issue fixes.**
+  - The `build` lane runs `npm run build` -> `build:production`
+    (`package.json:17-19`), which ends with `publication:build` and
+    `publication:check` over a real entry, with **no** conformance context. That
+    is the ordinary publication path, and criterion 4 below deliberately keeps
+    it rejecting dirty trees. This issue does not and must not change it.
+- So this is not specific to #322 — the conformance half blocks every issue
+  dispatched here — but fixing it is necessary, not sufficient.
 
 ## Success criteria
 
@@ -65,8 +78,13 @@ route parity.
 5. `receipt.repository.commit === currentCommit` continues to be asserted in
    every context, conformance included. Relaxing cleanliness must not relax
    commit binding.
-6. `scripts/agent-evidence` completes its `build` lane on a dirty tree in this
-   repository. Demonstrate with an actual dirty working tree, not a fixture.
+6. `tools/publication-adapter-conformance.test.mjs` passes with an actually
+   dirty working tree in this repository. Demonstrate against a real dirty
+   tree, not a fixture.
+7. The `build` lane is explicitly **out of scope** and is expected to keep
+   failing on a dirty tree after this lands. Do not change `package.json`'s
+   `build:production`, `publication:build` or the ordinary `publication:check`
+   path to make it pass.
 
 ## Artifact outputs
 
@@ -109,13 +127,19 @@ knows one will then already understand the other.
 
 ## Trade-offs
 
-The alternative is for Rucksack to commit the agent's diff to its branch
-before running validation, which would fix this for every repository rather
-than only this one. That is the better long-term answer and is filed
-separately against `erniesg/rucksack`. It is also a much larger change to the
-harness. This issue is the local fix that unblocks this repository now, and it
-remains correct afterwards: a conformance test should not have been asserting
-a clean tree regardless of how the harness commits.
+**What actually unblocks an agent run is the other issue, not this one.**
+`build:production` publishes a real artifact during validation, and a real
+publication receipt should bind to a clean commit — that requirement is
+correct and this issue keeps it. The only way to satisfy it under the harness
+is for the tree to genuinely be clean at a real commit, which is what Rucksack
+committing the agent diff before validation achieves. That is filed against
+`erniesg/rucksack` and it is the change that makes agent runs pass here.
+
+This issue remains worth landing on its own terms: an adapter-equivalence test
+should never have asserted a clean tree, it is one of the `test` lane's
+failures, and it stays correct regardless of how the harness commits. It is
+just not the unblocker, and the earlier draft of this spec wrongly claimed it
+was.
 
 ## Free-form response
 

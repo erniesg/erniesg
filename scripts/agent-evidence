@@ -72,9 +72,13 @@ function timedOut(proc) {
   // The trusted runner's wrapper instead catches TimeoutExpired and returns an
   // ordinary result with status 124 and neither field, so a predicate that
   // checks only the Node shape never fires under revalidation.
+  // Deliberately NOT a bare `signal === "SIGTERM"` check: Node also terminates
+  // a child with SIGTERM when its output exceeds maxBuffer, reporting
+  // error.code ENOBUFS. Treating that as a timeout would rewrite an
+  // output-heavy failure to 124 and skip every later lane with the budget
+  // almost untouched.
   return (
     Boolean(proc.error && proc.error.code === "ETIMEDOUT")
-    || proc.signal === "SIGTERM"
     || proc.status === LANE_TIMEOUT_EXIT
   );
 }
@@ -235,7 +239,16 @@ const evidenceRepo = safeRepository(process.env.GITHUB_REPOSITORY)
 const gitBranch = safeBranch(process.env.GITHUB_HEAD_REF)
   || safeBranch(process.env.GITHUB_REF_NAME)
   || safeBranch(sh("git branch --show-current").stdout);
-const dirty = sh("git status --short").stdout.trim().length > 0;
+const dirtyProbe = sh("git status --short");
+if (dirtyProbe.error || typeof dirtyProbe.status !== "number" || dirtyProbe.status !== 0) {
+  // An empty stdout from a killed or failed probe is indistinguishable from a
+  // clean tree. Fail closed rather than record an unestablished state as clean
+  // and let a passing manifest through on it.
+  const why = dirtyProbe.error ? `${dirtyProbe.error.code || dirtyProbe.error.name}` : `exit ${dirtyProbe.status}`;
+  console.error(`[agent-evidence] cannot establish worktree cleanliness: git status ${why}`);
+  process.exit(1);
+}
+const dirty = dirtyProbe.stdout.trim().length > 0;
 const startedAt = new Date();
 const results = [];
 let associationAudit = null;
@@ -277,6 +290,7 @@ const lanes = selection.lanes;
 
 const budgetDeadline = Date.now() + TOTAL_BUDGET_MS;
 const skipCaveats = [];
+const requiredSkipped = [];
 let budgetSpentBy = "";
 let lastLaneId = "";
 
@@ -291,6 +305,12 @@ for (const lane of lanes) {
     skipCaveats.push(
       `lane not run: ${lane.id}; the ${budgetSpentBy} lane consumed the shared ${TOTAL_BUDGET_MS} ms budget`,
     );
+    // Skipped lanes stay out of results so the receipt claims no coverage for
+    // them -- which means requiredFailures cannot see them, so a skipped
+    // REQUIRED lane has to force the overall result on its own. Otherwise a
+    // lane finishing just before the deadline leaves the rest unrun and the
+    // manifest still reports "passed".
+    if (lane.required) requiredSkipped.push(lane.id);
     continue;
   }
   lastLaneId = lane.id;
@@ -375,9 +395,9 @@ const manifest = {
     ...largeFiles.artifacts,
   ],
   caveats: [...largeFiles.caveats, ...skipCaveats],
-  result: requiredFailures.length === 0 ? "passed" : "failed",
+  result: requiredFailures.length === 0 && requiredSkipped.length === 0 ? "passed" : "failed",
   required_failures: requiredFailures,
 };
 
-writeManifest(manifest, requiredFailures.length === 0 ? 0 : 1);
+writeManifest(manifest, requiredFailures.length === 0 && requiredSkipped.length === 0 ? 0 : 1);
 NODE

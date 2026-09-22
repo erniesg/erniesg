@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import rawPaper from '../research/papers/semantic-responsive-typesetting.json'
-import { createDemoAnnotations } from '../research/annotations'
+import { createDemoAnnotations } from './annotations'
 import { researchPaperSchema } from '../research/schema'
 import {
   annotationBundleSchema,
   createAnnotationBundle,
   serializeAnnotationBundle,
 } from './annotation-bundle'
-import { researchPaperToPublicationGraph } from './research-paper-adapter'
+import { researchPaperToPublicationGraph } from '../publication/research-paper-adapter'
 
 describe('AnnotationBundle', () => {
   it('round-trips typed annotations and semantic anchors beside the graph', () => {

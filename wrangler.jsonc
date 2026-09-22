@@ -1,12 +1,27 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "erniesg-workers-preview",
+  "main": "./src/worker/index.ts",
   "compatibility_date": "2026-07-11",
   "workers_dev": true,
   "preview_urls": true,
+  // The Worker owns the margin API prefix and nothing else. Every other path
+  // stays on the pure static-asset path it was on before `main` was added —
+  // the Worker is not invoked for it at all — and naming the prefix keeps the
+  // health route reachable regardless of how `not_found_handling` resolves
+  // unmatched requests.
   "assets": {
+    "run_worker_first": ["/api/margin/v1/*"],
+    "binding": "ASSETS",
     "directory": "./dist",
     "not_found_handling": "404-page",
     "html_handling": "auto-trailing-slash",
   },
+  "d1_databases": [
+    {
+      "binding": "MARGIN_DB",
+      "database_name": "margin-db-stg",
+      "database_id": "48958be2-df8f-4ec9-b6d9-7d7be51f87e6",
+    },
+  ],
 }

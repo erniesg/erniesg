@@ -3,7 +3,7 @@ import {
   createDemoAnnotations,
   createSemanticTextAnchor,
   textAnnotationSchema,
-} from './annotations'
+} from '../annotations/annotations'
 import {
   buildExportPackage,
   EXPORT_PACKAGE_PATHS,

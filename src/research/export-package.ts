@@ -5,7 +5,7 @@ import {
   resolveTextAnchor,
   textAnnotationSchema,
   type TextAnnotation,
-} from './annotations'
+} from '../annotations/annotations'
 import {
   buildEpub,
   inspectEpub,

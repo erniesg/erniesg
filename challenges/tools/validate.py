@@ -5,7 +5,9 @@
 
 Fails loudly on: missing front matter keys, missing required blocks, a figure
 that is not declared or does not exist, missing tier tests, an edge pointing at
-a node that does not exist, or a cycle in `requires`.
+a node that does not exist, a cycle in `requires`, or an inline :::exercise that
+is missing a part, whose answer does not print what it promises, or whose
+starter already does.
 """
 
 from __future__ import annotations
@@ -18,6 +20,9 @@ if sys.version_info < (3, 11):
     sys.exit(f"This needs Python 3.11+; this is Python {sys.version.split()[0]}.")
 
 import tomllib
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from render import EXERCISE_PARTS, parse_exercise, same_output, split_blocks
 
 CHALLENGES_DIR = Path(__file__).resolve().parent.parent
 FIGURES_DIR = CHALLENGES_DIR / "figures"
@@ -63,7 +68,43 @@ def front_matter_ids() -> set[str]:
     return ids
 
 
+def run_python(source: str) -> str:
+    import subprocess
+    try:
+        done = subprocess.run(
+            [sys.executable, "-c", source], capture_output=True, text=True, timeout=10
+        )
+    except subprocess.TimeoutExpired:
+        return "<timed out>"
+    return done.stdout + done.stderr
+
+
+def check_exercises(path: Path, body: str) -> None:
+    seen: set[str] = set()
+    for name, attrs, inner in split_blocks(body):
+        if name != "exercise":
+            continue
+        exercise_id = attrs.get("id", "")
+        where = f"exercise `{exercise_id or '?'}`"
+        if not exercise_id:
+            fail(path, "an :::exercise needs an id")
+        elif exercise_id in seen:
+            fail(path, f"{where} is declared twice")
+        seen.add(exercise_id)
+        parts = parse_exercise(inner)
+        missing = [part for part in EXERCISE_PARTS if part not in parts]
+        if missing:
+            fail(path, f"{where} is missing {', '.join(missing)}")
+            continue
+        produced = run_python(parts["answer"])
+        if not same_output(produced, parts["output"]):
+            fail(path, f"{where}: the answer prints {produced.strip()!r}, not the expected output")
+        if same_output(run_python(parts["starter"]), parts["output"]):
+            fail(path, f"{where}: the starter already prints the answer, so there is nothing to do")
+
+
 def check_node(path: Path, meta: dict, body: str) -> None:
+    check_exercises(path, body)
     for key in ("id", "kind", "title"):
         if key not in meta:
             fail(path, f"front matter is missing `{key}`")

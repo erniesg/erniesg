@@ -41,14 +41,15 @@ CARD_BLOCKS = ("statement", "io", "constraints", "sample")
 # How much help a challenge comes with. A chapter ends with a ladder: the first
 # problems are worked through, the last are yours alone.
 SUPPORT_LEVELS = ("worked", "guided", "contract", "unaided")
+# The page shows the hints and the solution itself, so a note only says what
+# the page cannot: `unaided` is the check on whether the chapter stuck.
 SUPPORT_NOTES = {
-    "worked": "Worked through step by step, then hints, then the full solution.",
-    "guided": "Hints if you want them, and a worked solution behind them.",
-    "contract": "You get the contract and the tests. Hints are there; the "
-                "solution waits until you pass.",
-    "unaided": "No hints and no solution until every tier is green. This is "
-               "the one that tells you whether it stuck.",
+    "worked": "",
+    "guided": "",
+    "contract": "",
+    "unaided": "This one tells you whether it stuck.",
 }
+RUNG_LABELS = ("a nudge", "a direction", "the shape of it", "most of the way")
 FIGURE_TYPES = ("cells", "walk", "links", "table", "cost")
 
 
@@ -389,18 +390,34 @@ def render_node(node: dict, target: str = "web", solved: bool = False) -> str:
     if node.get("part"):
         out.append(f'<p class="eyebrow">{html.escape(node["part"])}</p>')
     out.append(f'<h1>{html.escape(node["title"])}</h1>')
-    if node.get("kind") == "challenge":
+    if node.get("kind") == "challenge" and SUPPORT_NOTES.get(support):
         out.append(
             f'<p class="support support-{support}">'
-            f'{html.escape(SUPPORT_NOTES.get(support, ""))}</p>'
+            f'{html.escape(SUPPORT_NOTES[support])}</p>'
         )
     hints: list[str] = []
     card_done = False
 
     def flush_hints() -> None:
-        if hints:
+        if not hints:
+            return
+        if target == "print":
             out.append('<div class="hints">' + "".join(hints) + "</div>")
-            hints.clear()
+        else:
+            total = len(hints)
+            rungs = "".join(
+                rung.replace("{label}", html.escape(_rung_label(i, total)))
+                for i, rung in enumerate(hints)
+            )
+            pips = '<span class="pip"></span>' * total
+            out.append(
+                f'<details class="ladder" data-ladder="{html.escape(node["id"])}" '
+                f'data-total="{total}"><summary><span class="ladder-count">0 of {total} '
+                f'hints</span><span class="pips" aria-hidden="true">{pips}</span>'
+                '<span class="ladder-note">each one gives away more</span></summary>'
+                f'<ol class="rungs">{rungs}</ol></details>'
+            )
+        hints.clear()
 
     figure_number = 0
     for name, attrs, inner in pieces:
@@ -430,8 +447,9 @@ def render_node(node: dict, target: str = "web", solved: bool = False) -> str:
                 )
             else:
                 hints.append(
-                    f"<details class='hint'><summary>Hint {level}</summary>"
-                    f"{render_markdown(inner)}</details>"
+                    f"<li><details class='hint rung' data-rung='{len(hints) + 1}'>"
+                    f"<summary>Hint {level} <span class='rung-label'>{{label}}</span></summary>"
+                    f"{render_markdown(inner)}</details></li>"
                 )
         elif name == "solution":
             flush_hints()
@@ -449,16 +467,92 @@ def render_node(node: dict, target: str = "web", solved: bool = False) -> str:
                 )
             else:
                 out.append(
-                    "<details class='solution'><summary>Worked solution — try a failing "
-                    f"test first</summary>{render_markdown(inner)}</details>"
+                    "<details class='solution'><summary>Worked solution "
+                    "<span class='rung-label'>the whole answer</span></summary>"
+                    f"{render_markdown(inner)}</details>"
                 )
         elif name == "run":
             out.append(_desk(node, attrs, target))
+        elif name == "exercise":
+            out.append(exercise(attrs.get("id", ""), inner, target))
     flush_hints()
     return "".join(out)
 
 
+def _rung_label(index: int, total: int) -> str:
+    """Hint 1 nudges and the last hint nearly tells you; label the ladder so."""
+    if total == 1:
+        return RUNG_LABELS[0]
+    return RUNG_LABELS[round(index * (len(RUNG_LABELS) - 1) / (total - 1))]
+
+
+EXERCISE_FENCE = re.compile(r"^```(\w+)[^\n]*\n(.*?)^```\s*$", re.DOTALL | re.MULTILINE)
+EXERCISE_PARTS = ("prompt", "starter", "output", "answer")
+
+
+def parse_exercise(inner: str) -> dict:
+    """Split an :::exercise into prompt, starter, expected output and answer.
+
+    The prompt is the markdown before the first fence; the fences are named by
+    their info string: ```python is the starter, ```output what it must print,
+    ```answer the finished code. A part that is absent is simply missing from
+    the result, so the validator can say which.
+    """
+    parts: dict = {}
+    first = EXERCISE_FENCE.search(inner)
+    prompt = inner[: first.start()] if first else inner
+    if prompt.strip():
+        parts["prompt"] = prompt.strip()
+    names = {"python": "starter", "output": "output", "answer": "answer"}
+    for match in EXERCISE_FENCE.finditer(inner):
+        name = names.get(match.group(1))
+        if name and name not in parts:
+            parts[name] = match.group(2)
+    return parts
+
+
+def same_output(produced: str, expected: str) -> bool:
+    tidy = lambda text: "\n".join(line.rstrip() for line in text.strip("\n").splitlines()).rstrip()
+    return tidy(produced) == tidy(expected)
+
+
+def exercise(exercise_id: str, inner: str, target: str) -> str:
+    parts = parse_exercise(inner)
+    missing = [name for name in EXERCISE_PARTS if name not in parts]
+    if missing:
+        return f'<p class="missing">exercise {html.escape(exercise_id)} is missing {", ".join(missing)}</p>'
+    prompt = render_markdown(parts["prompt"])
+    if target == "print":
+        return (
+            f'<section class="exercise" id="ex-{html.escape(exercise_id)}">'
+            f'<p class="exercise-title">Try it</p>{prompt}'
+            f'<pre><code>{html.escape(parts["starter"])}</code></pre>'
+            f'<p class="figure-note">It should print:</p><pre><code>{html.escape(parts["output"])}</code></pre>'
+            '<div class="solution"><p class="solution-title">Answer</p>'
+            f'<pre><code>{html.escape(parts["answer"])}</code></pre></div></section>'
+        )
+    return (
+        f'<section class="exercise" id="ex-{html.escape(exercise_id)}" '
+        f'data-expected="{html.escape(parts["output"])}">'
+        f'<p class="exercise-title">Try it</p>{prompt}'
+        '<div class="exercise-run">'
+        f'<textarea class="editor small" spellcheck="false">{html.escape(parts["starter"])}</textarea>'
+        '<div class="desk-actions"><button class="check">Check <kbd>\u2318\u21b5</kbd></button>'
+        f'<span class="status"></span>{KEYS_HINT}</div>'
+        '<div class="verdict" hidden></div></div>'
+        "<details class='answer'><summary>Show the answer</summary>"
+        f'<pre><code>{html.escape(parts["answer"])}</code></pre></details></section>'
+    )
+
+
 RUNNABLE = re.compile(r'<pre><code class="language-python run">(.*?)</code></pre>', re.DOTALL)
+GRADE_LINE = re.compile(r"^ *python3 challenges/tools/grade\.py \S+\n", re.MULTILINE)
+
+KEYS_HINT = (
+    '<span class="keys-hint" role="note">Tab indents \u00b7 '
+    '<kbd>Esc</kbd> then <kbd>Tab</kbd> leaves the editor \u00b7 '
+    '<kbd>\u2318\u21e7\u21b5</kbd> runs and moves on</span>'
+)
 
 
 def _runnable(rendered: str) -> str:
@@ -468,7 +562,7 @@ def _runnable(rendered: str) -> str:
             '<div class="cell-run">'
             f'<textarea class="editor small" spellcheck="false">{m.group(1)}</textarea>'
             '<div class="desk-actions"><button class="exec">Run <kbd>\u2318\u21b5</kbd></button>'
-            '<span class="status"></span></div>'
+            f'<span class="status"></span>{KEYS_HINT}</div>'
             '<pre class="output"></pre></div>'
         ),
         rendered,
@@ -487,11 +581,12 @@ def _desk(node: dict, attrs: dict, target: str) -> str:
             '<p class="figure-note">Run and grade this in the web edition, or from a '
             "terminal with the book's grader.</p>"
         )
+    starter = GRADE_LINE.sub("    Press Run (\u2318\u21b5) to grade it.\n", starter)
     return (
         f'<section class="desk" data-node="{html.escape(node["id"])}">'
         f'<textarea class="editor" spellcheck="false">{html.escape(starter)}</textarea>'
         '<div class="desk-actions"><button class="run">Run all tiers <kbd>\u2318\u21b5</kbd></button>'
-        '<span class="status">The first run is supposed to be red.</span></div>'
+        f'<span class="status">The first run is supposed to be red.</span>{KEYS_HINT}</div>'
         '<div class="tiers"></div><pre class="output"></pre></section>'
     )
 
@@ -543,6 +638,33 @@ figcaption { font:.82rem/1.5 ui-sans-serif,system-ui; color:var(--dim); margin-t
   margin-top:3px; }
 .hint, .solution { border:1px solid var(--line); border-radius:6px; padding:6px 12px; margin:8px 0;
   background:#fff; }
+.ladder { border:1px solid var(--line); border-radius:8px; background:#fff; margin:1.2rem 0 .6rem;
+  padding:8px 12px; }
+.ladder > summary { display:flex; align-items:center; gap:10px; list-style:none; }
+.ladder > summary::-webkit-details-marker { display:none; }
+.ladder > summary::before { content:"▸"; color:var(--dim); }
+.ladder[open] > summary::before { content:"▾"; }
+.ladder-note { font-weight:400; color:var(--dim); font-size:.78rem; margin-left:auto; }
+.pips { display:inline-flex; gap:4px; }
+.pip { width:9px; height:9px; border-radius:50%; border:1.5px solid #b45309; }
+.pip.spent { background:#b45309; }
+.rungs { list-style:none; padding:0; margin:.6rem 0 0; }
+.rung { margin:6px 0; border-style:dashed; }
+.rung.spent { border-style:solid; border-color:#e7c9a4; background:#fffaf2; }
+.rung.spent > summary::after { content:" · read"; font-weight:400; color:#b45309; }
+.rung-label { font-weight:400; color:var(--dim); }
+details.solution { border:0; border-top:2px solid var(--ink); border-radius:0; background:none;
+  padding:10px 0 0; margin-top:1.4rem; }
+.exercise { margin:1.8rem 0; padding:12px 16px 14px; border-left:4px solid #15803d;
+  background:#f3faf5; border-radius:0 8px 8px 0; }
+.exercise-title { font:700 .72rem/1 ui-sans-serif,system-ui; letter-spacing:.09em;
+  text-transform:uppercase; color:#15803d; margin:0 0 .5rem; }
+.exercise .answer { margin-top:.6rem; }
+.verdict { font:.85rem ui-sans-serif,system-ui; margin-top:8px; }
+.verdict.pass { color:#15803d; font-weight:600; }
+.verdict.fail .columns { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.verdict.fail pre { margin:4px 0 0; font-size:.8rem; }
+.verdict .col-label { font-weight:600; color:var(--dim); }
 .hint-title, .solution-title { font:600 .85rem ui-sans-serif,system-ui; margin:.2rem 0; }
 details summary { cursor:pointer; font:600 .85rem ui-sans-serif,system-ui; }
 .missing { color:#b91c1c; font:.85rem ui-sans-serif,system-ui; }
@@ -552,6 +674,8 @@ details summary { cursor:pointer; font:600 .85rem ui-sans-serif,system-ui; }
 .support-guided { border-left-color:#0369a1; }
 .support-contract { border-left-color:#b45309; }
 .support-unaided { border-left-color:#be185d; }
+.keys-hint { font:.72rem ui-sans-serif,system-ui; color:var(--dim); margin-left:auto; }
+.keys-hint kbd { font:inherit; border:1px solid var(--line); border-radius:3px; padding:0 .25em; }
 .locked-solution { font:.85rem ui-sans-serif,system-ui; color:var(--dim); border:1px dashed
   var(--line); border-radius:6px; padding:10px 12px; }
 """

@@ -152,10 +152,25 @@ main.wide { grid-template-columns:minmax(0,60rem); }
 .lede { font-size:1.1rem; color:#333; }
 .edition { font:.85rem ui-sans-serif,system-ui; color:var(--dim); }
 .desk, .cell-run { margin:1.6rem 0; }
-.editor { width:100%; min-height:190px; padding:12px; border:1px solid var(--line);
-  border-radius:8px 8px 0 0; font:.86rem/1.5 ui-monospace,monospace; background:#15161a;
-  color:#eee; resize:vertical; }
+.exercise-run { margin:.8rem 0 0; }
+.code-wrap { position:relative; background:#1e1f24; border:1px solid var(--line);
+  border-radius:8px 8px 0 0; overflow:hidden; }
+.editor, .code-hl, .code-gutter { font:.86rem/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;
+  tab-size:4; white-space:pre; margin:0; }
+.editor { display:block; width:100%; min-height:190px; padding:12px 12px 12px 3.6em; border:0;
+  background:transparent; color:transparent; caret-color:#f5f5f5; resize:vertical;
+  overflow:auto; position:relative; z-index:1; box-sizing:border-box; outline:none; }
+.editor::selection { background:rgba(120,160,255,.35); color:transparent; }
 .editor.small { min-height:auto; height:auto; field-sizing:content; }
+.code-hl, .code-gutter { position:absolute; top:0; left:0; pointer-events:none;
+  background:none; border-radius:0; overflow:visible; }
+.code-hl { padding:12px 12px 12px 3.6em; color:#d4d4d4; min-width:100%; box-sizing:border-box; }
+.code-gutter { width:2.8em; padding:12px 0; text-align:right; color:#6b6f78; user-select:none; }
+.code-wrap:focus-within { outline:2px solid var(--accent); outline-offset:1px; }
+.code-hl .kw { color:#c586c0; } .code-hl .def { color:#569cd6; } .code-hl .fn { color:#dcdcaa; }
+.code-hl .bi { color:#4ec9b0; } .code-hl .str { color:#ce9178; } .code-hl .num { color:#b5cea8; }
+.code-hl .com { color:#6a9955; } .code-hl .con { color:#569cd6; } .code-hl .dec { color:#dcdcaa; }
+.code-hl .ig { box-shadow:inset 1px 0 #3b3d44; }
 .desk-actions { display:flex; gap:12px; align-items:center; border:1px solid var(--line);
   border-top:0; border-radius:0 0 8px 8px; padding:8px 12px; background:#fff; }
 .desk-actions button { font:600 .85rem ui-sans-serif,system-ui; padding:6px 14px; border:0;
@@ -163,8 +178,7 @@ main.wide { grid-template-columns:minmax(0,60rem); }
   align-items:center; gap:7px; }
 .desk-actions kbd { font:.75rem ui-monospace,monospace; background:rgba(255,255,255,.22);
   padding:1px 5px; border-radius:4px; }
-.editor:focus { outline:2px solid var(--accent); outline-offset:1px; }
-.editor:focus + .desk-actions { border-color:var(--accent); }
+.code-wrap:focus-within + .desk-actions { border-color:var(--accent); }
 .status { font:.8rem ui-sans-serif,system-ui; color:var(--dim); }
 .tiers { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
 .tier { font:.76rem ui-sans-serif,system-ui; padding:4px 10px; border-radius:20px;
@@ -310,14 +324,10 @@ def render_rail(rendered: str, node: dict | None) -> str:
         nodes = all_nodes()
         links = ""
         for kind, (colour, label) in EDGE_KINDS.items():
-            for target in node.get(kind, []):
-                known = target in nodes
-                name = nodes[target]["title"] if known else target.replace("-", " ")
-                item = (
-                    f'<a href="/{html.escape(target)}">{html.escape(name)}</a>'
-                    if known
-                    else f'<span class="planned">{html.escape(name)}</span>'
-                )
+            # Edges to nodes not written yet belong on the map, not beside a chapter.
+            for target in (t for t in node.get(kind, []) if t in nodes):
+                name = nodes[target]["title"]
+                item = f'<a href="/{html.escape(target)}">{html.escape(name)}</a>'
                 links += (
                     f'<li><span class="edge-dot" style="background:{colour}"></span>'
                     f'<span class="edge-label">{html.escape(label)}</span>{item}</li>'
@@ -512,20 +522,216 @@ document.querySelectorAll('.desk').forEach(desk => {
   };
 });
 
-// Cmd/Ctrl+Enter runs whichever editor has focus; Shift+Enter runs it and
-// moves on to the next one, so you can walk a chapter from the keyboard.
+// Inline exercises run in the reader's browser (Pyodide in a worker), never
+// on the server: the published book has no /api/exec to fall back on.
+const PYODIDE = 'https://cdn.jsdelivr.net/npm/pyodide@0.26.4/pyodide.js';
+const WORKER = `importScripts('${PYODIDE}');
+const ready = loadPyodide();
+onmessage = async ({ data }) => {
+  const py = await ready;
+  let out = '';
+  py.setStdout({ batched: s => { out += s + '\\n'; } });
+  py.setStderr({ batched: s => { out += s + '\\n'; } });
+  try {
+    await py.runPythonAsync(data.source, { globals: py.globals.get('dict')() });
+  } catch (error) {
+    const lines = String(error.message).trim().split('\\n');
+    const from = lines.findIndex(l => l.includes('File "<exec>"'));
+    out += (from >= 0 ? lines.slice(from) : lines.slice(-1)).join('\\n') + '\\n';
+  }
+  postMessage(out);
+};`;
+let pyWorker = null;
+function runInBrowser(source, timeout = 8000) {
+  pyWorker ??= new Worker(URL.createObjectURL(new Blob([WORKER], { type: 'text/javascript' })));
+  const worker = pyWorker;
+  return new Promise(resolve => {
+    const timer = setTimeout(() => {
+      worker.terminate(); pyWorker = null;
+      resolve('Stopped after a few seconds: is there a loop that never ends?\n');
+    }, timeout);
+    worker.onmessage = ({ data }) => { clearTimeout(timer); resolve(data); };
+    worker.postMessage({ source });
+  });
+}
+const tidy = text => text.replace(/^\n+|\n+$/g, '').split('\n').map(l => l.trimEnd()).join('\n').trimEnd();
+const escapeHtml = text => text.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+
+document.querySelectorAll('.exercise').forEach(ex => {
+  const button = ex.querySelector('.check');
+  const status = ex.querySelector('.status');
+  const verdict = ex.querySelector('.verdict');
+  button.onclick = async () => {
+    button.disabled = true;
+    status.textContent = pyWorker ? 'checking...' : 'loading Python (first time only)...';
+    const produced = await runInBrowser(ex.querySelector('.editor').value);
+    const expected = ex.dataset.expected;
+    const ok = tidy(produced) === tidy(expected);
+    verdict.hidden = false;
+    verdict.className = 'verdict ' + (ok ? 'pass' : 'fail');
+    verdict.innerHTML = ok
+      ? '&#10003; That is it.'
+      : `Not yet. Compare:<div class="columns"><div><span class="col-label">Your code printed</span>`
+        + `<pre>${escapeHtml(tidy(produced)) || '(nothing)'}</pre></div><div><span class="col-label">Expected</span>`
+        + `<pre>${escapeHtml(tidy(expected))}</pre></div></div>`;
+    status.textContent = '';
+    button.disabled = false;
+  };
+});
+
+// The hint ladder: spending a rung is visible, per challenge, for the session.
+document.querySelectorAll('.ladder').forEach(ladder => {
+  const key = 'hints:' + ladder.dataset.ladder;
+  const total = Number(ladder.dataset.total);
+  const read = () => { try { return new Set(JSON.parse(sessionStorage.getItem(key) || '[]')); } catch { return new Set(); } };
+  const spent = read();
+  const paint = () => {
+    ladder.querySelector('.ladder-count').textContent = `${spent.size} of ${total} hints`;
+    ladder.querySelectorAll('.pip').forEach((pip, i) => pip.classList.toggle('spent', i < spent.size));
+    ladder.querySelectorAll('.rung').forEach(rung => rung.classList.toggle('spent', spent.has(rung.dataset.rung)));
+  };
+  ladder.querySelectorAll('.rung').forEach(rung => rung.addEventListener('toggle', () => {
+    if (!rung.open) return;
+    spent.add(rung.dataset.rung);
+    try { sessionStorage.setItem(key, JSON.stringify([...spent])); } catch {}
+    paint();
+  }));
+  paint();
+});
+
+// Syntax colour, line numbers and indent guides: a highlighted copy of the
+// code drawn under a transparent textarea, so editing stays native.
+const KEYWORDS = new Set(('and as assert async await break continue del elif else except finally for '
+  + 'from global if import in is lambda nonlocal not or pass raise return try while with yield').split(' '));
+const DEFINERS = new Set(['def', 'class']);
+const CONSTANTS = new Set(['True', 'False', 'None', 'self']);
+const BUILTINS = new Set(('abs all any bool dict enumerate filter float int isinstance len list map max '
+  + 'min print range reversed round set sorted str sum tuple type zip ValueError KeyError IndexError '
+  + 'TypeError ZeroDivisionError Exception NotImplementedError input open iter next ord chr divmod').split(' '));
+const TOKEN = /(#[^\n]*)|([rbfuRBFU]{0,2}(?:"{3}[\s\S]*?(?:"{3}|$)|'{3}[\s\S]*?(?:'{3}|$)|"(?:\\.|[^"\\\n])*"?|'(?:\\.|[^'\\\n])*'?))|(@\w+)|(\b\d[\d_]*(?:\.\d+)?\b)|([A-Za-z_]\w*)/g;
+const esc = text => text.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+
+function highlight(source) {
+  let html = '', last = 0, afterDef = false, m;
+  TOKEN.lastIndex = 0;
+  while ((m = TOKEN.exec(source))) {
+    html += esc(source.slice(last, m.index));
+    const [text, com, str, dec, num, word] = m;
+    let cls = com ? 'com' : str ? 'str' : dec ? 'dec' : num ? 'num' : '';
+    if (word) {
+      if (afterDef) cls = 'fn';
+      else if (DEFINERS.has(word)) cls = 'def';
+      else if (KEYWORDS.has(word)) cls = 'kw';
+      else if (CONSTANTS.has(word)) cls = 'con';
+      else if (BUILTINS.has(word)) cls = 'bi';
+      else if (source[TOKEN.lastIndex] === '(') cls = 'fn';
+      afterDef = DEFINERS.has(word);
+    } else afterDef = false;
+    html += cls ? `<span class="${cls}">${esc(text)}</span>` : esc(text);
+    last = TOKEN.lastIndex;
+  }
+  html += esc(source.slice(last));
+  return html.replace(/(^|\n)((?: {4})+)/g, (_, start, indent) =>
+    start + '<span class="ig">    </span>'.repeat(indent.length / 4));
+}
+
 document.querySelectorAll('.editor').forEach(editor => {
+  editor.setAttribute('wrap', 'off');
+  const wrap = document.createElement('div');
+  wrap.className = 'code-wrap';
+  const hl = document.createElement('pre');
+  hl.className = 'code-hl'; hl.setAttribute('aria-hidden', 'true');
+  const gutter = document.createElement('pre');
+  gutter.className = 'code-gutter'; gutter.setAttribute('aria-hidden', 'true');
+  editor.replaceWith(wrap);
+  wrap.append(gutter, hl, editor);
+  const paint = () => {
+    hl.innerHTML = highlight(editor.value) + '\n';
+    const lines = editor.value.split('\n').length;
+    gutter.textContent = Array.from({ length: lines }, (_, i) => i + 1).join('\n');
+  };
+  const follow = () => {
+    hl.style.transform = `translate(${-editor.scrollLeft}px, ${-editor.scrollTop}px)`;
+    gutter.style.transform = `translateY(${-editor.scrollTop}px)`;
+  };
+  editor.addEventListener('input', paint);
+  editor.addEventListener('scroll', follow);
+  paint();
+});
+
+// The editors are plain textareas taught the four keys Python needs.
+// Edits go through execCommand('insertText') so native undo stays one step.
+const INDENT = '    ';
+const DEDENTERS = /^\s*(return|pass|break|continue|raise)\b/;
+
+function insert(editor, text, start, end) {
+  editor.setSelectionRange(start, end);
+  if (!document.execCommand('insertText', false, text)) {
+    editor.setRangeText(text, start, end, 'end');
+    editor.dispatchEvent(new Event('input'));
+  }
+}
+
+function shiftLines(editor, outdent) {
+  const { value, selectionStart: start, selectionEnd: end } = editor;
+  const from = value.lastIndexOf('\n', start - 1) + 1;
+  const stop = value.charAt(end - 1) === '\n' && end > start ? end - 1 : end;
+  let to = value.indexOf('\n', stop);
+  if (to === -1) to = value.length;
+  const lines = value.slice(from, to).split('\n');
+  const changed = lines.map(line => outdent
+    ? line.replace(/^ {1,4}/, '')
+    : (line.trim() || lines.length === 1 ? INDENT + line : line));
+  const firstDelta = changed[0].length - lines[0].length;
+  insert(editor, changed.join('\n'), from, to);
+  const total = changed.join('\n').length - (to - from);
+  editor.setSelectionRange(Math.max(from, start + firstDelta), end + total);
+}
+
+function runCell(editor, advance) {
+  const holder = editor.closest('.cell-run, .desk, .exercise');
+  const button = holder && holder.querySelector('.exec, .run, .check');
+  if (!button) return;
+  button.click();
+  if (advance) {
+    const editors = [...document.querySelectorAll('.editor')];
+    const next = editors[editors.indexOf(editor) + 1];
+    if (next) { next.focus(); next.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+  }
+}
+
+document.querySelectorAll('.editor').forEach(editor => {
+  let escaped = false;
   editor.addEventListener('keydown', event => {
-    if (event.key !== 'Enter' || (!event.metaKey && !event.ctrlKey && !event.shiftKey)) return;
-    const holder = editor.closest('.cell-run, .desk');
-    const button = holder && holder.querySelector('.exec, .run');
-    if (!button) return;
-    event.preventDefault();
-    button.click();
-    if (event.shiftKey && !event.metaKey && !event.ctrlKey) {
-      const editors = [...document.querySelectorAll('.editor')];
-      const next = editors[editors.indexOf(editor) + 1];
-      if (next) { next.focus(); next.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+    const { key, shiftKey } = event;
+    const command = event.metaKey || event.ctrlKey;
+    if (key === 'Escape') { escaped = true; return; }
+    const leaving = escaped && key === 'Tab';
+    escaped = false;
+    if (leaving || event.isComposing) return;
+
+    const { value, selectionStart: start, selectionEnd: end } = editor;
+    const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+    const before = value.slice(lineStart, start);
+
+    if (key === 'Enter' && command) {
+      event.preventDefault();
+      runCell(editor, shiftKey);
+    } else if (key === 'Enter') {
+      event.preventDefault();
+      let indent = (before.match(/^ */) || [''])[0];
+      if (/:\s*$/.test(before)) indent += INDENT;
+      else if (DEDENTERS.test(before)) indent = indent.slice(INDENT.length);
+      insert(editor, '\n' + indent, start, end);
+    } else if (key === 'Tab') {
+      event.preventDefault();
+      const multiline = value.slice(start, end).includes('\n');
+      if (shiftKey || multiline) shiftLines(editor, shiftKey);
+      else insert(editor, ' '.repeat(4 - (before.length % 4)), start, end);
+    } else if (key === 'Backspace' && start === end && before.length && /^ +$/.test(before)) {
+      event.preventDefault();
+      const drop = before.length % 4 || 4;
+      insert(editor, '', start - drop, start);
     }
   });
 });

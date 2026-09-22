@@ -1,0 +1,124 @@
+---
+/**
+ * The three-column reading shell: navigation, text, margin.
+ *
+ * It belongs to the site, not to any one surface. It takes a document URI and
+ * some text and knows nothing about books, papers or posts — a surface that
+ * cannot use it is a surface that has diverged for no reason.
+ *
+ * The margin column is an empty landmark on purpose. It reserves its width now
+ * so that the annotation layer can mount into it later without shifting the
+ * text a single pixel.
+ */
+import Layout from '@/layouts/Layout.astro'
+
+type Props = {
+  title: string
+  description: string
+  /** The stable identity annotations anchor to. Absolute. */
+  documentUri: string
+  canonicalPath?: string
+  image?: string
+  noindex?: boolean
+}
+
+const {
+  title,
+  description,
+  documentUri,
+  canonicalPath,
+  image,
+  noindex = false,
+} = Astro.props
+---
+
+<Layout
+  title={title}
+  description={description}
+  image={image}
+  canonicalPath={canonicalPath}
+  noindex={noindex}
+>
+  <slot name="head" slot="head" />
+
+  <div class="reading-shell" data-reading-shell data-document-uri={documentUri}>
+    <nav
+      class="reading-column reading-navigation"
+      data-reading-column="navigation"
+      aria-label="Contents"
+    >
+      <slot name="navigation" />
+    </nav>
+
+    <article
+      class="reading-column reading-text"
+      data-reading-column="text"
+      data-document-uri={documentUri}
+    >
+      <slot />
+    </article>
+
+    <aside
+      id="margin-root"
+      class="reading-column reading-margin"
+      data-reading-column="margin"
+      data-margin-mount
+      data-document-uri={documentUri}
+      aria-label="Margin"
+    >
+    </aside>
+  </div>
+</Layout>
+
+<style>
+  .reading-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2rem;
+    align-items: start;
+    width: 100%;
+    max-width: 90rem;
+    margin: 0 auto;
+    padding: 0 1rem 4rem;
+    overflow-wrap: anywhere;
+  }
+
+  .reading-column {
+    min-width: 0;
+  }
+
+  /* Empty by design: the annotation layer mounts here. Below the breakpoint it
+     collapses entirely, matching the reading rail the local preview uses. */
+  .reading-margin {
+    display: none;
+  }
+
+  @media (min-width: 900px) {
+    .reading-shell {
+      grid-template-columns: 15rem minmax(0, 1fr);
+    }
+
+    .reading-navigation {
+      position: sticky;
+      top: 1.5rem;
+      max-height: calc(100vh - 3rem);
+      overflow-y: auto;
+    }
+  }
+
+  @media (min-width: 1280px) {
+    .reading-shell {
+      grid-template-columns: 15rem minmax(0, 44rem) 18rem;
+      justify-content: center;
+    }
+
+    .reading-margin {
+      display: block;
+      position: sticky;
+      top: 1.5rem;
+      min-height: 6rem;
+      max-height: calc(100vh - 3rem);
+      overflow-y: auto;
+    }
+  }
+</style>

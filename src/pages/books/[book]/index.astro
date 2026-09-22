@@ -1,0 +1,156 @@
+---
+import BookContents from '@/components/books/BookContents.astro'
+import ReadingLayout from '@/layouts/ReadingLayout.astro'
+import { bookBySlug, books, documentUri } from '@/lib/books'
+
+export function getStaticPaths() {
+  return books().map((book) => ({ params: { book: book.slug } }))
+}
+
+const slug = Astro.params.book!
+const book = bookBySlug(slug)
+if (!book) throw new Error(`no book path declares the slug \`${slug}\``)
+
+const topicsByPart = [...new Set(book.topics.map((topic) => topic.part))]
+  .sort((a, b) => a - b)
+  .map((part) => ({
+    part,
+    name: book.topics.find((topic) => topic.part === part)?.partName ?? '',
+    topics: book.topics.filter((topic) => topic.part === part),
+  }))
+
+const written = book.topics.filter((topic) => topic.nodes.length > 0).length
+---
+
+<ReadingLayout
+  title={book.title}
+  description={book.subtitle}
+  documentUri={documentUri(book.path)}
+  canonicalPath={book.path}
+>
+  <Fragment slot="navigation">
+    <BookContents book={book} />
+  </Fragment>
+
+  <header class="flex flex-col gap-y-3 border-b pb-6">
+    <small class="text-xs text-muted-foreground">
+      {book.collection} · Edition {book.edition} · {book.author}
+    </small>
+    <h1 class="text-3xl font-bold">{book.title}</h1>
+    <p class="max-w-2xl text-base leading-relaxed text-muted-foreground">
+      {book.subtitle}
+    </p>
+  </header>
+
+  <section class="mt-10 flex flex-col gap-y-6" aria-labelledby="contents">
+    <h2 id="contents" class="text-2xl font-semibold">Contents</h2>
+    {
+      book.nodes.filter((node) => !node.partNumber).length > 0 && (
+        <ol class="flex flex-col gap-y-1 border-t pt-4 text-sm">
+          {book.nodes
+            .filter((node) => !node.partNumber)
+            .map((node) => (
+              <li>
+                <a
+                  class="hover:underline hover:underline-offset-4"
+                  href={node.path}
+                >
+                  {node.title}
+                </a>
+              </li>
+            ))}
+        </ol>
+      )
+    }
+    {
+      book.parts.map((part) => (
+        <div class="flex flex-col gap-y-2 border-t pt-4">
+          <h3 class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            {part.title}
+          </h3>
+          <ol class="flex flex-col gap-y-1 text-sm">
+            {part.nodes.map((id) => {
+              const node = book.nodes.find((entry) => entry.id === id)
+              return node ? (
+                <li class="flex gap-x-3">
+                  <span class="tabular-nums text-muted-foreground">
+                    {node.number}
+                  </span>
+                  <a
+                    class="hover:underline hover:underline-offset-4"
+                    href={node.path}
+                  >
+                    {node.title}
+                  </a>
+                  <span class="text-xs text-muted-foreground">{node.kind}</span>
+                </li>
+              ) : null
+            })}
+          </ol>
+        </div>
+      ))
+    }
+  </section>
+
+  <section class="mt-12 flex flex-col gap-y-6" aria-labelledby="topic-map">
+    <div class="flex flex-col gap-y-2">
+      <h2 id="topic-map" class="text-2xl font-semibold">The topic map</h2>
+      <p class="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+        Every topic the book covers and what it needs first. {
+          book.topics.length
+        } topics, {written} with something written for them. Topics with nothing
+        written yet are part of the shape of the book, so they are listed too.
+      </p>
+    </div>
+    {
+      topicsByPart.map((group) => (
+        <div class="flex flex-col gap-y-3 border-t pt-4">
+          <h3 class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Part {group.part} · {group.name}
+          </h3>
+          <ul class="flex flex-col gap-y-4">
+            {group.topics.map((topic) => (
+              <li class="flex flex-col gap-y-1 text-sm">
+                <p class="font-semibold">{topic.title}</p>
+                {topic.agent && (
+                  <p class="text-muted-foreground">
+                    <span class="font-medium">In the agent:</span> {topic.agent}
+                  </p>
+                )}
+                <p class="text-muted-foreground">
+                  <span class="font-medium">Needs first:</span>{' '}
+                  {topic.requires.length
+                    ? topic.requires.join(', ')
+                    : 'nothing — you can start here'}
+                </p>
+                {topic.nodes.length > 0 ? (
+                  <ul class="flex flex-wrap gap-x-3 gap-y-1">
+                    {topic.nodes.map((entry) => {
+                      const node = book.nodes.find(
+                        (candidate) => candidate.id === entry.id,
+                      )
+                      return node ? (
+                        <li>
+                          <a
+                            class="hover:underline hover:underline-offset-4"
+                            href={node.path}
+                          >
+                            {entry.title}
+                          </a>
+                        </li>
+                      ) : (
+                        <li class="text-muted-foreground">{entry.title}</li>
+                      )
+                    })}
+                  </ul>
+                ) : (
+                  <p class="italic text-muted-foreground">Not written yet.</p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))
+    }
+  </section>
+</ReadingLayout>

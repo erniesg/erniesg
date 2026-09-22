@@ -23,11 +23,14 @@
     "not_found_handling": "404-page",
     "html_handling": "auto-trailing-slash",
   },
+  // One migrations directory for both databases, so preview and production
+  // apply the same files in the same order.
   "d1_databases": [
     {
       "binding": "MARGIN_DB",
       "database_name": "margin-db",
       "database_id": "c98621e9-5621-401a-b2f2-35390c25411d",
+      "migrations_dir": "migrations",
     },
   ],
 }

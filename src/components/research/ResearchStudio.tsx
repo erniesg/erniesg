@@ -14,7 +14,7 @@ import {
   resolveTextAnchor,
   type TextAnchorResolution,
   type TextAnnotation,
-} from '../../research/annotations'
+} from '../../annotations/annotations'
 import {
   COMPOSITION_POLICY_VERSION,
   getCompositionPolicy,

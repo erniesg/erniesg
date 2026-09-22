@@ -1,4 +1,4 @@
-import { createDemoAnnotations } from '@/research/annotations'
+import { createDemoAnnotations } from '@/annotations/annotations'
 import {
   buildExportPackage,
   EXPORT_PACKAGE_PATHS,

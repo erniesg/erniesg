@@ -4,8 +4,8 @@ import {
   textAnnotationSchema,
   type SemanticTextAnchor,
   type TextAnnotation,
-} from '../research/annotations'
-import type { PublicationGraph } from './schema'
+} from './annotations'
+import type { PublicationGraph } from '../publication/schema'
 
 export const ANNOTATION_BUNDLE_VERSION = '1.0.0' as const
 

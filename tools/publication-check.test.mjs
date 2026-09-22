@@ -28,6 +28,7 @@ import {
   assertPublicationReceiptSourceBinding,
   assertPublicationReceiptMappingVersion,
   assertPublicationReceiptPolicyVersions,
+  assertPublicationReceiptRepositoryBinding,
   assertPublicationReceiptRuntime,
   checkWebPubReceipt,
   normalizePdfSearchableText,
@@ -36,6 +37,7 @@ import {
   publicationPdfImageAssetRequirements,
   publicationPdfLinkRequirements,
   publicationPdfLinkRequirementsForProfile,
+  publicationReceiptRelaxesRepositoryCleanliness,
   publicationReceiptRequiresCanonicalRouteParity,
   parsePublicationCheckArgs,
   publicationPdfTextRequirements,
@@ -56,6 +58,27 @@ const browserIdentity = {
   playwrightCorePackageJsonSha256: 'c'.repeat(64),
   browsersJsonSha256: 'd'.repeat(64),
 }
+
+const checkedOutCommit = 'a'.repeat(40)
+const otherCommit = 'b'.repeat(40)
+
+const conformanceReceipt = (repository) => ({
+  source: {
+    adapterId: 'astro',
+    sourceType: 'astro',
+    routeParity: 'adapter-conformance',
+  },
+  repository,
+})
+
+const publicationReceipt = (repository) => ({
+  source: {
+    adapterId: 'astro',
+    sourceType: 'astro',
+    routeParity: 'astro-canonical-route',
+  },
+  repository,
+})
 
 describe('publication:check CLI', () => {
   it('requires the exact four-output matrix', () => {
@@ -274,6 +297,102 @@ describe('publication:check CLI', () => {
         },
       }),
     ).toThrow(/internal adapter-conformance/)
+  })
+
+  it('accepts the relaxed cleanliness binding only inside the conformance context', () => {
+    // Direction one of the binding: a receipt that declares the relaxed
+    // cleanliness policy is worthless as publication provenance, so it may
+    // never be honoured by an ordinary publication check.
+    expect(
+      publicationReceiptRelaxesRepositoryCleanliness(
+        conformanceReceipt({ commit: checkedOutCommit, dirty: true }),
+        { context: 'adapter-conformance' },
+      ),
+    ).toBe(true)
+    expect(() =>
+      publicationReceiptRelaxesRepositoryCleanliness(
+        conformanceReceipt({ commit: checkedOutCommit, dirty: true }),
+      ),
+    ).toThrow(/internal adapter-conformance cleanliness policy/)
+    expect(() =>
+      assertPublicationReceiptRepositoryBinding(
+        conformanceReceipt({ commit: checkedOutCommit, dirty: false }),
+        { commit: checkedOutCommit, dirty: false },
+      ),
+    ).toThrow(/internal adapter-conformance cleanliness policy/)
+  })
+
+  it('requires the relaxed cleanliness binding inside the conformance context', () => {
+    // Direction two: a real publication receipt must not be laundered through
+    // the conformance context, where cleanliness is not enforced.
+    expect(() =>
+      publicationReceiptRelaxesRepositoryCleanliness(
+        publicationReceipt({ commit: checkedOutCommit, dirty: false }),
+        { context: 'adapter-conformance' },
+      ),
+    ).toThrow(/require the internal adapter-conformance cleanliness policy/)
+    expect(() =>
+      assertPublicationReceiptRepositoryBinding(
+        publicationReceipt({ commit: checkedOutCommit, dirty: false }),
+        { commit: checkedOutCommit, dirty: false },
+        { context: 'adapter-conformance' },
+      ),
+    ).toThrow(/require the internal adapter-conformance cleanliness policy/)
+  })
+
+  it('passes a conformance receipt against a dirty working tree', () => {
+    expect(
+      assertPublicationReceiptRepositoryBinding(
+        conformanceReceipt({ commit: checkedOutCommit, dirty: true }),
+        { commit: checkedOutCommit, dirty: true },
+        { context: 'adapter-conformance' },
+      ),
+    ).toBe(true)
+    // The observed value still has to be recorded, truthfully or not at all.
+    expect(() =>
+      assertPublicationReceiptRepositoryBinding(
+        conformanceReceipt({ commit: checkedOutCommit }),
+        { commit: checkedOutCommit, dirty: true },
+        { context: 'adapter-conformance' },
+      ),
+    ).toThrow(/does not record its observed repository cleanliness/)
+  })
+
+  it('keeps every ordinary publication bound to a clean checked-out repository', () => {
+    expect(
+      assertPublicationReceiptRepositoryBinding(
+        publicationReceipt({ commit: checkedOutCommit, dirty: false }),
+        { commit: checkedOutCommit, dirty: false },
+      ),
+    ).toBe(false)
+    expect(() =>
+      assertPublicationReceiptRepositoryBinding(
+        publicationReceipt({ commit: checkedOutCommit, dirty: false }),
+        { commit: checkedOutCommit, dirty: true },
+      ),
+    ).toThrow(/clean checked-out repository/)
+    expect(() =>
+      assertPublicationReceiptRepositoryBinding(
+        publicationReceipt({ commit: checkedOutCommit, dirty: true }),
+        { commit: checkedOutCommit, dirty: false },
+      ),
+    ).toThrow(/clean checked-out repository/)
+  })
+
+  it('binds the receipt to the checked-out commit in every context', () => {
+    expect(() =>
+      assertPublicationReceiptRepositoryBinding(
+        conformanceReceipt({ commit: checkedOutCommit, dirty: true }),
+        { commit: otherCommit, dirty: true },
+        { context: 'adapter-conformance' },
+      ),
+    ).toThrow(/different checked-out commit/)
+    expect(() =>
+      assertPublicationReceiptRepositoryBinding(
+        publicationReceipt({ commit: checkedOutCommit, dirty: false }),
+        { commit: otherCommit, dirty: false },
+      ),
+    ).toThrow(/different checked-out commit/)
   })
 
   it('scopes A5 page expansion to the canonical Astro corpus', () => {

@@ -28,6 +28,7 @@ import {
 } from '../src/publication/renderers/vivliostyle.ts'
 import {
   parsePublicationBuildArgs,
+  bindPublicationSourceReceipt,
   canonicalRouteBodyFingerprint,
   consumeRouteImageIndex,
   createPublicationStagingDirectory,
@@ -599,6 +600,74 @@ describe('publication:build CLI', () => {
     expect(receipt.sourceId).toMatch(
       /^payload:document-[a-f0-9]{64}:en$/,
     )
+  })
+
+  it('records observed dirtiness truthfully in an adapter-conformance receipt', async () => {
+    const bundle = await payloadFixtureBundle()
+    const repositoryRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-conformance-repository-'),
+    )
+    // The rendered output lives outside the repository, so the only thing that
+    // can make this checkout dirty is the unrelated file written below.
+    const outputRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-conformance-output-'),
+    )
+    const previousDirectory = process.cwd()
+    try {
+      execFileSync('git', ['init', '--quiet'], { cwd: repositoryRoot })
+      execFileSync('git', ['config', 'user.email', 'tests@example.invalid'], {
+        cwd: repositoryRoot,
+      })
+      execFileSync('git', ['config', 'user.name', 'Publication Tests'], {
+        cwd: repositoryRoot,
+      })
+      await writeFile(resolve(repositoryRoot, 'tracked.txt'), 'tracked\n')
+      execFileSync('git', ['add', '.'], { cwd: repositoryRoot })
+      execFileSync('git', ['commit', '--quiet', '-m', 'fixture'], {
+        cwd: repositoryRoot,
+      })
+      const commit = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: repositoryRoot,
+        encoding: 'utf8',
+      }).trim()
+      const source = publicationSourceReceipt(bundle, 'adapter-conformance')
+      await writeFile(
+        resolve(outputRoot, 'publication-receipt.json'),
+        `${JSON.stringify(
+          {
+            source: {
+              graphSha256: source.graphSha256,
+              assetBundleSha256: source.assetBundleSha256,
+            },
+          },
+          null,
+          2,
+        )}\n`,
+      )
+      await writeFile(
+        resolve(repositoryRoot, 'uncommitted-agent-change.txt'),
+        'dirty\n',
+      )
+      process.chdir(repositoryRoot)
+
+      const receipt = await bindPublicationSourceReceipt(
+        outputRoot,
+        bundle,
+        'adapter-conformance',
+      )
+
+      expect(receipt.source.routeParity).toBe('adapter-conformance')
+      expect(receipt.repository).toEqual({ commit, dirty: true })
+      expect(
+        JSON.parse(
+          await readFile(resolve(outputRoot, 'publication-receipt.json'), 'utf8'),
+        ).repository,
+      ).toEqual({ commit, dirty: true })
+    } finally {
+      process.chdir(previousDirectory)
+      await rm(repositoryRoot, { recursive: true, force: true })
+      await rm(outputRoot, { recursive: true, force: true })
+    }
   })
 })
 

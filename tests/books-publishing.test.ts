@@ -364,20 +364,37 @@ describe('a published page does not describe a grader it does not have', () => {
   // a static page with the solution one click below should not be told it is
   // shut.
   it('makes no promise about tiers on any published or printed page', SLOW, () => {
-    const gatePromises = [
+    // One source, three editions: the runnable preview does gate a `contract`
+    // or `unaided` solution, the EPUB expands every section with nothing to
+    // click, and a published page has neither. A sentence that names a
+    // mechanism is wrong in at least one of them, so none of these may appear
+    // anywhere in the shared source.
+    const editionSpecific = [
       'tiers are green',
       'stays shut',
       'is locked until',
       'waits until you pass',
       'Everything runs in the',
+      'one click away',
     ]
 
     for (const node of book.nodes) {
-      for (const promise of gatePromises) {
+      for (const promise of editionSpecific) {
         expect(node.html, `${node.id} promises "${promise}" on a page with no grader`)
           .not.toContain(promise)
       }
     }
+  })
+
+  it('says nothing edition-specific in the print edition either', SLOW, () => {
+    const printed = python(RENDER_ONE, ['front-matter', 'print', 'yes'])
+
+    for (const promise of ['tiers are green', 'one click away', 'Everything runs in the']) {
+      expect(printed, `the introduction promises "${promise}" on paper`).not.toContain(
+        promise,
+      )
+    }
+    expect(printed).toContain('Where the tiers can run')
   })
 })
 

@@ -68,8 +68,7 @@ solution meant for after you have written your own. The book ends the same way,
 with a capstone that needs everything at once.
 
 The first run is meant to be red. Hints are staged and free; read the solution
-only once you have a failing test you understand. On these pages that is a
-discipline rather than a lock — everything is one click away, and the order you
-open it in is yours to keep. The tiers run where the code does: `python3
-challenges/tools/preview.py` serves this same book with the grader behind it,
-and holds you to that order.
+only once you have a failing test you understand — that order is the method, and
+keeping to it is yours to do. Where the tiers can run, they will hold you to it:
+`python3 challenges/tools/preview.py` serves this same book with the grader
+behind it.

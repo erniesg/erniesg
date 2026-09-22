@@ -409,7 +409,7 @@ def page(title: str, inner: str, book_title: str, order: list[dict], current: st
   <button class="contents-button" aria-expanded="false">Contents</button>
   <a class="book-title" href="/">{html.escape(book_title)}</a>
   <a class="graph-link" href="/map">Map</a>
-  <a class="graph-link" href="/print">Print</a>
+  <a class="graph-link" href="/print{'#print-' + html.escape(current) if current else ''}">Print</a>
   <div class="progress" title="{place} of {len(positions)} in this book">
     <div class="bar"><i style="width:{through}%"></i></div>
     <span class="progress-text">{place}/{len(positions)} · {solved}/{gradeable} solved</span>
@@ -471,6 +471,8 @@ document.querySelectorAll('.desk').forEach(desk => {
   const status = desk.querySelector('.status');
   const tiers = desk.querySelector('.tiers');
   const output = desk.querySelector('.output');
+  const verdict = desk.querySelector('.desk-verdict');
+  const details = desk.querySelector('.full-output');
   button.onclick = async () => {
     button.disabled = true;
     status.textContent = 'Running public, edge, stress, perf...';
@@ -484,8 +486,12 @@ document.querySelectorAll('.desk').forEach(desk => {
       tiers.innerHTML = result.tiers.map(t =>
         `<span class="tier ${t.outcome === 'pass' ? 'pass' : 'fail'}">${t.tier} - ${t.outcome}</span>`
       ).join('');
-      status.textContent = result.ok ? 'All four tiers green.' : `${result.stopped_at} is red.`;
+      status.textContent = result.ok ? 'All four tiers green.' : '';
+      verdict.hidden = result.ok;
+      verdict.innerHTML = result.ok ? '' :
+        `<span class="mark">&#10007;</span> ` + escapeHtml(result.summary || `${result.stopped_at} is red.`);
       output.textContent = result.output || '';
+      details.hidden = !result.output;
     } catch (error) { status.textContent = String(error); }
     finally { button.disabled = false; }
   };
@@ -568,23 +574,54 @@ document.querySelectorAll('.exercise').forEach(ex => {
   };
 });
 
-// The hint ladder: spending a rung is visible, per challenge, for the session.
-document.querySelectorAll('.ladder').forEach(ladder => {
-  const key = 'hints:' + ladder.dataset.ladder;
-  const total = Number(ladder.dataset.total);
-  const read = () => { try { return new Set(JSON.parse(sessionStorage.getItem(key) || '[]')); } catch { return new Set(); } };
-  const spent = read();
+// Hints live in the terminal. The bulb shows the next one; a read hint's dot
+// shows it again. Spending is per challenge, for the session, and never falls.
+document.querySelectorAll('.hint-panel').forEach(panel => {
+  const desk = panel.closest('.desk');
+  const button = desk.querySelector('.hint-button');
+  const total = Number(panel.dataset.total);
+  const key = 'hints:' + panel.dataset.ladder;
+  let spent = 0;
+  try { spent = Math.min(total, Number(JSON.parse(sessionStorage.getItem(key) || '0')) || 0); } catch {}
+  let current = spent;
+  const next = panel.querySelector('.hint-next');
   const paint = () => {
-    ladder.querySelector('.ladder-count').textContent = `${spent.size} of ${total} hints`;
-    ladder.querySelectorAll('.pip').forEach((pip, i) => pip.classList.toggle('spent', i < spent.size));
-    ladder.querySelectorAll('.rung').forEach(rung => rung.classList.toggle('spent', spent.has(rung.dataset.rung)));
+    if (button) button.querySelector('.hint-count').textContent = `${spent}/${total}`;
+    panel.querySelectorAll('.hint-dot').forEach(dot => {
+      const n = Number(dot.dataset.rung);
+      dot.classList.toggle('spent', n <= spent);
+      dot.classList.toggle('current', n === current);
+      dot.disabled = n > spent;
+      dot.setAttribute('aria-label', `Hint ${n}` + (n <= spent ? ', read' : ', not read yet'));
+    });
+    panel.querySelectorAll('.hint-body').forEach(body => { body.hidden = Number(body.dataset.rung) !== current; });
+    const shown = panel.querySelector(`.hint-body[data-rung="${current}"]`);
+    panel.querySelector('.hint-title').textContent = shown ? shown.dataset.title : '';
+    next.hidden = spent >= total;
+    next.textContent = spent ? 'Next hint' : 'Show hint 1';
   };
-  ladder.querySelectorAll('.rung').forEach(rung => rung.addEventListener('toggle', () => {
-    if (!rung.open) return;
-    spent.add(rung.dataset.rung);
-    try { sessionStorage.setItem(key, JSON.stringify([...spent])); } catch {}
-    paint();
-  }));
+  const open = () => {
+    panel.hidden = false;
+    panel.style.animation = 'none'; void panel.offsetWidth; panel.style.animation = '';
+    if (button) button.setAttribute('aria-expanded', 'true');
+  };
+  const spend = () => {
+    if (spent < total) spent += 1;
+    current = spent;
+    try { sessionStorage.setItem(key, JSON.stringify(spent)); } catch {}
+    paint(); open();
+  };
+  if (button) button.onclick = () => {
+    if (!panel.hidden) { panel.hidden = true; button.setAttribute('aria-expanded', 'false'); return; }
+    if (!spent) spend(); else { current = current || spent; paint(); open(); }
+  };
+  next.onclick = spend;
+  panel.querySelector('.hint-close').onclick = () => {
+    panel.hidden = true; if (button) { button.setAttribute('aria-expanded', 'false'); button.focus(); }
+  };
+  panel.querySelectorAll('.hint-dot').forEach(dot => dot.onclick = () => {
+    current = Number(dot.dataset.rung); paint(); open();
+  });
   paint();
 });
 
@@ -1012,7 +1049,7 @@ class Handler(BaseHTTPRequestHandler):
         workspace.mkdir(parents=True, exist_ok=True)
         (workspace / f"{meta['module']}.py").write_text(payload.get("source", ""))
 
-        results, output, stopped_at = [], "", None
+        results, output, stopped_at, summary = [], "", None, ""
         for tier in grader.TIERS:
             config = meta.get("tiers", {}).get(tier, {})
             outcome, tier_output = grader.run_tier(
@@ -1021,6 +1058,7 @@ class Handler(BaseHTTPRequestHandler):
             results.append({"tier": tier, "outcome": outcome})
             if outcome != "pass":
                 output, stopped_at = tier_output, tier
+                summary = grader.summarize(tier_output, node_dir / "tests" / f"{tier}.py")
                 break
         if stopped_at is None:
             progress = read_progress()
@@ -1028,7 +1066,10 @@ class Handler(BaseHTTPRequestHandler):
                 progress.setdefault("solved", []).append(node_id)
                 write_progress(progress)
         body = json.dumps(
-            {"ok": stopped_at is None, "tiers": results, "output": output, "stopped_at": stopped_at}
+            {"ok": stopped_at is None, "tiers": results, "stopped_at": stopped_at,
+             # the reader needs the test's name and line, not this machine's folders
+             "output": output.replace(str(CHALLENGES / "workspace") + "/", "").replace(str(CHALLENGES) + "/", ""),
+             "summary": summary if stopped_at else ""}
         ).encode()
         self._send(body, kind="application/json")
 

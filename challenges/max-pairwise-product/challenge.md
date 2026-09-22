@@ -60,9 +60,6 @@ output: the largest value of `numbers[i] * numbers[j]` where `i` and `j` are dif
 | `[0, 0, 7]` | `0` | Only one number above zero, so something must pair with a zero |
 :::
 
-:::figure{id="two-biggest"}
-:::
-
 :::run{starter="starter.py"}
 :::
 
@@ -128,4 +125,7 @@ that value" is the most common wrong answer, and the samples above will not
 catch it — neither one repeats a value. The edge tier does, with `[2, 2]`, and
 so does the stress tier within a handful of random lists. That gap between what
 an example shows you and what is actually true is the reason the tiers exist.
+:::
+
+:::figure{id="two-biggest"}
 :::

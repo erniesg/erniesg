@@ -12,9 +12,11 @@ for (const width of [1280, 375]) {
     const cell = page.locator('.cell-run').first()
     await cell.locator('.exec').click()
     await expect(cell.locator('.output')).not.toBeEmpty()
-    const code = await cell.locator('.code-wrap').evaluate(bg)
-    expect(await cell.locator('.desk-actions').evaluate(bg)).toBe(code)
-    expect(await cell.locator('.output').evaluate(bg)).toBe(code)
+    // every block is either see-through or the terminal's own colour
+    const surface = await cell.evaluate(bg)
+    for (const part of ['.code-wrap', '.desk-actions', '.output']) {
+      expect([surface, 'rgba(0, 0, 0, 0)']).toContain(await cell.locator(part).evaluate(bg))
+    }
     expect(await cell.evaluate(el => getComputedStyle(el).borderRadius)).toBe('8px')
     expect(await cell.locator('.output').evaluate(el => getComputedStyle(el).borderRadius)).toBe('0px')
   })
@@ -77,4 +79,39 @@ test('a walk figure explains each step and keeps the answer for the end', async 
   for (let i = 0; i < 2; i++) await walk.locator('[data-walk="next"]').click()
   await expect(walk.locator('.walk-answer')).toBeVisible()
   await expect(walk).not.toContainText('-1')
+})
+
+test('a failing tier says what was called, what came back, and what was expected', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto('/max-pairwise-product')
+  const desk = page.locator('.desk')
+  await desk.locator('.editor').fill(
+    'def max_pairwise_product(numbers):\n    max1 = max2 = -1\n    for x in numbers:\n'
+    + '        if x > max1:\n            max2 = max1\n            x = max1\n'
+    + '        elif x > max2:\n            x = max2\n    return max1 * max2\n')
+  await desk.locator('.run').click()
+  const verdict = desk.locator('.desk-verdict')
+  await expect(verdict).toBeVisible({ timeout: 90_000 })
+  await expect(verdict).toContainText('max_pairwise_product([1, 2, 3]) returned 1, expected 6')
+  await expect(desk.locator('.full-output')).toBeVisible()
+  await expect(desk.locator('.full-output .output')).toBeHidden() // the dump waits behind a click
+})
+
+test('shortcuts sit behind a keyboard icon and open on hover or focus', async ({ page }) => {
+  await page.goto('/ch06-dicts-sets')
+  const keys = page.locator('.cell-run .keys').first()
+  await expect(keys.locator('.keys-hint')).toBeHidden()
+  await keys.locator('.keys-button').hover()
+  await expect(keys.locator('.keys-hint')).toBeVisible()
+  await expect(keys.locator('.keys-hint')).toContainText('leave the editor')
+  await page.mouse.move(0, 0)
+  await keys.locator('.keys-button').focus()
+  await expect(keys.locator('.keys-hint')).toBeVisible()
+})
+
+test('Print opens the print edition at the page you were reading', async ({ page }) => {
+  await page.goto('/cut-them-all-the-same')
+  await page.locator('header .graph-link', { hasText: 'Print' }).click()
+  await expect(page).toHaveURL(/\/print#print-cut-them-all-the-same$/)
+  await expect(page.locator('#print-cut-them-all-the-same h1')).toBeInViewport()
 })

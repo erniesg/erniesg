@@ -40,10 +40,23 @@ export type AnnotationPatch = {
   modified: string
 }
 
+/** A page boundary: the `(created, id)` of the last row the caller received. */
+export type ListCursor = { created: string; id: string }
+
 export type ListOptions = {
   /** Restrict to one motivation. `GET /proposals` passes `editing`. */
   motivation?: Motivation
+  /** At most this many rows. Callers always set it; the store never returns all. */
+  limit?: number
+  /** Resume strictly after this row, in the collection's own order. */
+  after?: ListCursor
 }
+
+/** The most rows one collection response may carry. */
+export const MAX_PAGE_SIZE = 200
+
+/** What a caller gets when it does not ask for a size. */
+export const DEFAULT_PAGE_SIZE = 100
 
 export interface MarginRepository {
   /** Rows in `scope` that `viewer` is allowed to read. Filtered in SQL. */

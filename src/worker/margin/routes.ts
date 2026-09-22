@@ -1,12 +1,16 @@
 import { z } from 'zod'
 import type { Principal } from '../principal'
 import { principalKey } from './identity'
-import type {
-  MarginRepository,
-  TenantScope,
-  ViewerKey,
+import {
+  DEFAULT_PAGE_SIZE,
+  MAX_PAGE_SIZE,
+  type ListCursor,
+  type MarginRepository,
+  type TenantScope,
+  type ViewerKey,
 } from './repository'
 import {
+  annotationIdFromIri,
   joinSource,
   recordToWebAnnotation,
   splitSource,
@@ -143,6 +147,18 @@ function canonicalOrigin(site: string): string | null {
   }
 }
 
+/**
+ * Whether a store error is the `parent_id` constraint refusing a delete.
+ *
+ * SQLite and D1 both report it in the message, so this matches on that rather
+ * than on a code neither of them promises. Anything else is rethrown, because a
+ * store that is genuinely broken must not look like a conflict.
+ */
+function isForeignKeyConflict(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /FOREIGN KEY constraint failed/i.test(message)
+}
+
 const MALFORMED_JSON = Symbol('malformed-json')
 
 async function readJsonBody(request: Request): Promise<unknown> {
@@ -157,6 +173,51 @@ async function readJsonBody(request: Request): Promise<unknown> {
 /* Handlers                                                                   */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * `?limit=` and `?cursor=`, or the refusal to explain why not.
+ *
+ * A page is always bounded. A document that collects enough annotations would
+ * otherwise make one response carry every row, and each row can hold a few
+ * kilobytes of bounded body and selector text, so an unbounded collection is a
+ * 503 waiting for a popular page rather than a theoretical limit.
+ */
+function readPage(
+  url: URL,
+): { limit: number; after?: ListCursor } | { error: Response } {
+  const raw = url.searchParams.get('limit')
+  let limit = DEFAULT_PAGE_SIZE
+  if (raw !== null) {
+    const parsed = Number(raw)
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_PAGE_SIZE) {
+      return {
+        error: problem(
+          400,
+          'invalid_limit',
+          `limit must be a whole number between 1 and ${MAX_PAGE_SIZE}`,
+        ),
+      }
+    }
+    limit = parsed
+  }
+
+  const cursor = url.searchParams.get('cursor')
+  if (cursor === null) return { limit }
+  const separator = cursor.indexOf(' ')
+  const created = separator === -1 ? '' : cursor.slice(0, separator)
+  const id = separator === -1 ? '' : cursor.slice(separator + 1)
+  if (!created || !id) {
+    return {
+      error: problem(400, 'invalid_cursor', 'cursor must be one this API returned'),
+    }
+  }
+  return { limit, after: { created, id } }
+}
+
+/** The opaque-ish cursor a client sends back. `created` cannot contain a space. */
+function encodeCursor(record: { created: string; id: string }): string {
+  return `${record.created} ${record.id}`
+}
+
 async function listAnnotations(
   url: URL,
   context: MarginRouteContext,
@@ -165,13 +226,24 @@ async function listAnnotations(
 ): Promise<Response> {
   const scope = readScope(url)
   if ('error' in scope) return scope.error
+  const page = readPage(url)
+  if ('error' in page) return page.error
 
-  const records = await context.repository.listAnnotations(
-    scope,
-    viewer,
-    motivation ? { motivation } : {},
-  )
-  return json({ annotations: records.map(recordToWebAnnotation) })
+  // One row more than asked for, so "is there another page" is an observation
+  // rather than a second query.
+  const records = await context.repository.listAnnotations(scope, viewer, {
+    ...(motivation ? { motivation } : {}),
+    limit: page.limit + 1,
+    ...(page.after ? { after: page.after } : {}),
+  })
+  const rows = records.slice(0, page.limit)
+  const more = records.length > page.limit
+  const last = rows[rows.length - 1]
+
+  return json({
+    annotations: rows.map(recordToWebAnnotation),
+    ...(more && last ? { nextCursor: encodeCursor(last) } : {}),
+  })
 }
 
 async function createAnnotation(
@@ -380,7 +452,23 @@ async function deleteAnnotation(
     )
   }
 
-  const removed = await context.repository.deleteAnnotation(scope, id, owner)
+  // A reply can arrive between the count above and the delete below. The
+  // constraint catches it, and that is a conflict the caller can act on, not the
+  // store being unavailable — so it is translated here rather than escaping as
+  // the Worker's generic 503.
+  let removed: boolean
+  try {
+    removed = await context.repository.deleteAnnotation(scope, id, owner)
+  } catch (error) {
+    if (isForeignKeyConflict(error)) {
+      return problem(
+        409,
+        'has_replies',
+        'a reply arrived while this was being deleted; deleting it would delete theirs',
+      )
+    }
+    throw error
+  }
   if (!removed) {
     return problem(404, 'not_found', 'no annotation of yours has that id here')
   }
@@ -483,16 +571,21 @@ export async function handleMarginRequest(
   }
 
   if (path.length === 2 && path[0] === 'annotations') {
+    // Either spelling of the same annotation, the same as `margin:parentId`
+    // takes: every response carries `urn:margin:annotation:<uuid>` as its `id`,
+    // so that is what a client has in hand, and requiring the bare key here
+    // meant the identifier the API hands out did not work in its own URLs.
+    const id = annotationIdFromIri(path[1])
     // The `Location` header a POST returns points here, so this has to answer.
     // Visibility-scoped like the collection: the caller's own annotation or
     // anybody's public one, and nothing else.
-    if (method === 'GET') return readAnnotation(context, owner, url, path[1])
+    if (method === 'GET') return readAnnotation(context, owner, url, id)
     if (!owner) return unauthenticated()
     if (method === 'PATCH') {
-      return patchAnnotation(request, context, owner, url, path[1])
+      return patchAnnotation(request, context, owner, url, id)
     }
     if (method === 'DELETE') {
-      return deleteAnnotation(context, owner, url, path[1])
+      return deleteAnnotation(context, owner, url, id)
     }
     return methodNotAllowed(['GET', 'PATCH', 'DELETE'])
   }

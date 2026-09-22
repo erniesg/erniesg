@@ -80,6 +80,8 @@ export function webAnnotation(options: {
 
 export type MarginHarness = {
   database: SqliteD1Database
+  /** Exposed so a test can interleave a write inside a request being served. */
+  repository: D1MarginRepository
   request(
     method: string,
     path: string,
@@ -95,6 +97,7 @@ export function createHarness(): MarginHarness {
 
   return {
     database,
+    repository,
     async request(method, path, options = {}) {
       const request = new Request(`https://ernie.sg${MARGIN_API_PREFIX}${path}`, {
         method,

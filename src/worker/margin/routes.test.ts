@@ -17,6 +17,7 @@ import {
   STRUCT_SELECTOR_TYPE,
 } from './web-annotation'
 import { MARGIN_API_PREFIX } from './routes'
+import { MAX_PAGE_SIZE } from './repository'
 
 /** The acceptance tests from issue 054, against the real router and real SQL. */
 
@@ -848,5 +849,147 @@ describe('review findings, round two', () => {
     expect(((await highlight.json()) as { 'margin:color'?: string })['margin:color']).toBe(
       'amber',
     )
+  })
+})
+
+describe('review findings, round three', () => {
+  // Every response carries `urn:margin:annotation:<uuid>` as its `id`, so that is
+  // what a client holds. Requiring the bare key here meant the identifier the API
+  // hands out did not work in the API's own URLs.
+  it('takes either spelling of an id on the item routes', async () => {
+    const created = (await (await post(
+      webAnnotation({ source: CHAPTER_ONE, body: 'either spelling' }),
+    )).json()) as WireAnnotation
+
+    for (const reference of [created.id, bareId(created)]) {
+      const got = await harness.request(
+        'GET',
+        `/annotations/${encodeURIComponent(reference)}${scopeQuery(CHAPTER_ONE)}`,
+        { as: ADA },
+      )
+      expect(got.status, `GET ${reference}`).toBe(200)
+
+      const patched = await harness.request(
+        'PATCH',
+        `/annotations/${encodeURIComponent(reference)}${scopeQuery(CHAPTER_ONE)}`,
+        { as: ADA, body: { body: `edited via ${reference}` } },
+      )
+      expect(patched.status, `PATCH ${reference}`).toBe(200)
+    }
+
+    const deleted = await harness.request(
+      'DELETE',
+      `/annotations/${encodeURIComponent(created.id)}${scopeQuery(CHAPTER_ONE)}`,
+      { as: ADA },
+    )
+    expect(deleted.status).toBe(204)
+  })
+
+  // A page is always bounded: one response would otherwise carry every row on a
+  // document, and each row can hold a few kilobytes of body and selector text.
+  it('bounds a collection and hands back a cursor', async () => {
+    for (let index = 0; index < 5; index += 1) {
+      expect(
+        (await post(webAnnotation({ source: CHAPTER_ONE, body: `note ${index}` }))).status,
+      ).toBe(201)
+    }
+
+    const seen: string[] = []
+    let cursor: string | undefined
+    let pages = 0
+    do {
+      const query =
+        `${scopeQuery(CHAPTER_ONE)}&limit=2` +
+        (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '')
+      const response = await harness.request('GET', `/annotations${query}`, { as: ADA })
+      expect(response.status).toBe(200)
+      const body = (await response.json()) as {
+        annotations: WireAnnotation[]
+        nextCursor?: string
+      }
+      expect(body.annotations.length).toBeLessThanOrEqual(2)
+      seen.push(...body.annotations.map((entry) => entry.body?.value as string))
+      cursor = body.nextCursor
+      pages += 1
+      expect(pages, 'paging must terminate').toBeLessThan(10)
+    } while (cursor)
+
+    expect(pages).toBe(3)
+    expect(seen).toEqual(['note 0', 'note 1', 'note 2', 'note 3', 'note 4'])
+  })
+
+  it('refuses a limit outside the bound and a cursor it did not issue', async () => {
+    for (const query of [
+      '&limit=0',
+      `&limit=${MAX_PAGE_SIZE + 1}`,
+      '&limit=2.5',
+      '&limit=many',
+    ]) {
+      const response = await harness.request(
+        'GET',
+        `/annotations${scopeQuery(CHAPTER_ONE)}${query}`,
+        { as: ADA },
+      )
+      expect(response.status, query).toBe(400)
+      expect(await response.json()).toMatchObject({ error: { code: 'invalid_limit' } })
+    }
+
+    const bad = await harness.request(
+      'GET',
+      `/annotations${scopeQuery(CHAPTER_ONE)}&cursor=nonsense`,
+      { as: ADA },
+    )
+    expect(bad.status).toBe(400)
+    expect(await bad.json()).toMatchObject({ error: { code: 'invalid_cursor' } })
+  })
+
+  it('omits the cursor on the last page', async () => {
+    expect((await post(webAnnotation({ source: CHAPTER_ONE, body: 'only one' }))).status).toBe(
+      201,
+    )
+
+    const response = await harness.request(
+      'GET',
+      `/annotations${scopeQuery(CHAPTER_ONE)}&limit=2`,
+      { as: ADA },
+    )
+    const body = (await response.json()) as { nextCursor?: string }
+    expect(body.nextCursor).toBeUndefined()
+  })
+
+  // A reply can arrive between the count and the delete. The constraint catches
+  // it, and that is a conflict the caller can act on rather than the store being
+  // unavailable.
+  it('reports a lost race as a conflict, not as an outage', async () => {
+    const parent = (await (await post(
+      webAnnotation({ source: CHAPTER_ONE, visibility: 'public', body: 'the parent' }),
+    )).json()) as WireAnnotation
+
+    // Slip a reply in between the reply count and the delete.
+    const original = harness.repository.countReplies.bind(harness.repository)
+    harness.repository.countReplies = async (scope, id) => {
+      const count = await original(scope, id)
+      if (id === bareId(parent) && count === 0) {
+        await post(
+          webAnnotation({
+            source: CHAPTER_ONE,
+            visibility: 'public',
+            body: 'bob slips in',
+            parentId: bareId(parent),
+          }),
+          BOB,
+        )
+      }
+      return count
+    }
+
+    const response = await harness.request(
+      'DELETE',
+      `/annotations/${bareId(parent)}${scopeQuery(CHAPTER_ONE)}`,
+      { as: ADA },
+    )
+
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ error: { code: 'has_replies' } })
   })
 })

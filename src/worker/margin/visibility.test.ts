@@ -11,6 +11,7 @@ import {
   webAnnotation,
   type MarginHarness,
 } from './fixtures'
+import { DEFAULT_PAGE_SIZE } from './repository'
 import { listAnnotationsQuery, visibilityPredicate } from './queries'
 import type { TenantScope } from './repository'
 
@@ -176,11 +177,17 @@ describe('the repository runs that statement and nothing wider', () => {
     )
     expect(response.status).toBe(200)
 
+    // The route asks for one row more than a page, so it can tell whether there
+    // is another page without a second query. Same statement otherwise.
+    const expected = listAnnotationsQuery(SCOPE, BOB_KEY, {
+      limit: DEFAULT_PAGE_SIZE + 1,
+    })
     const reads = harness.database.reads()
     expect(reads).toHaveLength(1)
-    expect(reads[0].sql).toBe(listAnnotationsQuery(SCOPE, BOB_KEY).sql)
-    expect(reads[0].params).toEqual(listAnnotationsQuery(SCOPE, BOB_KEY).params)
+    expect(reads[0].sql).toBe(expected.sql)
+    expect(reads[0].params).toEqual(expected.params)
     expect(reads[0].sql).toContain("(visibility = 'public' OR creator = ?)")
+    expect(reads[0].sql).toContain('LIMIT ?')
 
     const { annotations } = (await response.json()) as { annotations: unknown[] }
     expect(annotations).toHaveLength(3)

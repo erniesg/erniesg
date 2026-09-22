@@ -326,6 +326,59 @@ describe('nothing an author writes becomes markup by accident', () => {
       expect(id, `${id} is not a url-safe slug`).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
     }
   })
+
+  // `id = 123` is valid TOML and the slug rule alone would coerce it. The
+  // manifest would then carry a number where `BookNode.id` is a string, and
+  // the route would compare it against a string `Astro.params.node`.
+  it('rejects a node id that is not a string at all', SLOW, () => {
+    const { challenges, cleanup } = copyChallenges()
+    try {
+      const file = path.join(challenges, 'ch00-the-loop.md')
+      writeFileSync(
+        file,
+        readFileSync(file, 'utf8').replace('id = "ch00-the-loop"', 'id = 123'),
+      )
+
+      let failed = false
+      try {
+        execFileSync(PYTHON, [path.join(challenges, 'tools', 'validate.py')], {
+          cwd: challenges,
+          encoding: 'utf8',
+          env: PY_ENV,
+        })
+      } catch (error) {
+        failed = true
+        expect(String((error as { stdout?: string; stderr?: string }).stdout ?? '') +
+          String((error as { stderr?: string }).stderr ?? '')).toContain('must be a string')
+      }
+      expect(failed, 'the validator must refuse a non-string id').toBe(true)
+    } finally {
+      cleanup()
+    }
+  })
+})
+
+describe('a published page does not describe a grader it does not have', () => {
+  // The support banner is only half of it: the authored prose says the same
+  // things, and it is rendered into both editions from one source. A reader on
+  // a static page with the solution one click below should not be told it is
+  // shut.
+  it('makes no promise about tiers on any published or printed page', SLOW, () => {
+    const gatePromises = [
+      'tiers are green',
+      'stays shut',
+      'is locked until',
+      'waits until you pass',
+      'Everything runs in the',
+    ]
+
+    for (const node of book.nodes) {
+      for (const promise of gatePromises) {
+        expect(node.html, `${node.id} promises "${promise}" on a page with no grader`)
+          .not.toContain(promise)
+      }
+    }
+  })
 })
 
 describe('stable anchors', () => {

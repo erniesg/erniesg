@@ -209,5 +209,5 @@ folder then costs it one check, rather than an infinite loop.
 ## Your turn
 
 Two challenges. The first counts things and talks you through it. The second
-keeps its hints but locks the worked solution until all four tiers are green,
-and its perf tier has no patience for a list where a set belongs.
+keeps its hints and asks you to finish before you read the worked solution, and
+its perf tier has no patience for a list where a set belongs.

@@ -249,5 +249,5 @@ its own work and reports success.
 ## Your turn
 
 Two challenges, both a single pass. The first walks you through it. The second
-gives you hints and keeps its solution shut until all four tiers are green —
-and its last tier will not accept a loop that counts days one at a time.
+gives you hints, and its worked solution is for after your own is green — its
+last tier will not accept a loop that counts days one at a time.

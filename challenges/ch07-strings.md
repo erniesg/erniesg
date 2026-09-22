@@ -174,4 +174,4 @@ why it can always show you what the old text was.
 
 Two challenges. The first turns titles into file names and hints as you go. The
 second reads one line of a settings file, and it is fussier than it looks: the
-hints stay, but the worked solution is locked until all four tiers are green.
+hints stay, and the worked solution is the last thing to open.

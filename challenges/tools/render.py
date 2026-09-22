@@ -59,8 +59,11 @@ FIGURE_TYPES = ("cells", "walk", "links", "table", "cost")
 SUPPORT_NOTES_READER = {
     "contract": "You get the contract and the tests. The hints are here, and "
                 "the worked solution is below when you want it.",
-    "unaided": "This is the one that tells you whether it stuck. Try it with "
-               "nothing first; the hints and the worked solution are below.",
+    # `validate.py` refuses a hint block on an unaided challenge, so this one
+    # must not offer any: there is a worked solution below and nothing else.
+    "unaided": "No hints on this one — that is what makes it the one that "
+               "tells you whether it stuck. The worked solution is below, for "
+               "after yours runs.",
 }
 
 # Figure kinds whose web body needs JavaScript. `walk` draws back/next buttons

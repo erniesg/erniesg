@@ -55,7 +55,36 @@ sys.path.insert(0, "challenges/tools")
 from render import load_book, render_node
 _, order = load_book()
 node = next(n for n in order if n["id"] == sys.argv[1])
-sys.stdout.write(render_node(node, sys.argv[2], runnable=sys.argv[3] == "yes"))
+reveal = sys.argv[4] if len(sys.argv) > 4 else "grader"
+sys.stdout.write(
+    render_node(node, sys.argv[2], runnable=sys.argv[3] == "yes", reveal=reveal)
+)
+`
+
+/** Every node the tiers would gate: `contract` and `unaided`. */
+const GATED_IDS = `
+import sys, json
+sys.path.insert(0, "challenges/tools")
+from render import load_book
+_, order = load_book()
+json.dump([n["id"] for n in order if n.get("support") in ("contract", "unaided")], sys.stdout)
+`
+
+/** Render one node twice, with a block inserted ahead of its prose. */
+const DIGEST_DRIFT = `
+import sys
+sys.path.insert(0, "challenges/tools")
+from render import render_node, BLOCK_TAG
+body = "alpha\\n\\n:::prose\\nbravo\\n:::\\n"
+inserted = "alpha\\n\\n:::prose\\nINSERTED\\n:::\\n\\n:::prose\\nbravo\\n:::\\n"
+def blocks(text):
+    markup = render_node({"id": "n", "title": "T", "kind": "prose", "body": text}, "web")
+    return {i: d for _, d, i in BLOCK_TAG.findall(markup)}
+before, after = blocks(body), blocks(inserted)
+shared = sorted(set(before) & set(after))
+sys.stdout.write(
+    "\\n".join(f"{i} {'drift' if before[i] != after[i] else 'same'}" for i in shared)
+)
 `
 
 const COUNT_POOL = `
@@ -199,6 +228,46 @@ describe('stable anchors', () => {
 
     expect(blockIds(first).length).toBeGreaterThan(0)
     expect(blockIds(second)).toEqual(blockIds(first))
+  })
+
+  // The book teaches by working through pseudocode, hints and a worked
+  // solution. A published page has no grader, so gating those on `solved`
+  // there does not defer them, it deletes them.
+  it('keeps every worked solution reachable on published pages', SLOW, () => {
+    const gated: string[] = JSON.parse(python(GATED_IDS))
+    expect(gated.length).toBeGreaterThan(0)
+
+    for (const id of gated) {
+      const published = python(RENDER_ONE, [id, 'web', 'no', 'reader'])
+      expect(published, `${id} must not lock its solution on a published page`)
+        .not.toContain('locked-solution')
+      expect(published, `${id} must keep the solution behind a disclosure`)
+        .toContain("<details class='solution'>")
+    }
+  })
+
+  it('still lets the tiers gate the solution in the runnable preview', SLOW, () => {
+    const gated: string[] = JSON.parse(python(GATED_IDS))
+    const preview = python(RENDER_ONE, [gated[0], 'web', 'yes'])
+    expect(preview).toContain('locked-solution')
+    expect(preview).not.toContain("<details class='solution'>")
+  })
+
+  // The id is positional, so inserting a block shifts every later ordinal of
+  // that kind. Without a verifier a stored note would resolve to a real
+  // element holding different content, which is worse than not resolving.
+  it('gives every block a content digest', () => {
+    for (const node of book.nodes) {
+      for (const block of node.blocks) {
+        expect(block.digest, `${node.id}/${block.id}`).toMatch(/^[0-9a-f]{12}$/)
+      }
+    }
+  })
+
+  it('changes the digest when an insertion shifts a block id onto new content', () => {
+    const lines = python(DIGEST_DRIFT).trim().split('\n')
+    const drifted = lines.filter((line) => line.endsWith('drift'))
+    expect(drifted.length, 'an insertion must be visible as digest drift').toBeGreaterThan(0)
   })
 
   it('keeps block ids unique within a node', () => {

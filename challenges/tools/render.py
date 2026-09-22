@@ -15,6 +15,7 @@ Stdlib only; needs Python 3.11+ for tomllib.
 
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import re
@@ -62,7 +63,10 @@ PART_NAMES = {
 # A block wrapper the web edition emits and print does not: paper has no
 # margin to anchor a note to. `BLOCK_TAG` is the one reader of what `emit`
 # writes, so the two cannot drift.
-BLOCK_TAG = re.compile(r'<div class="block" data-block-kind="([a-z-]+)" id="([^"]+)">')
+BLOCK_TAG = re.compile(
+    r'<div class="block" data-block-kind="([a-z-]+)" '
+    r'data-block-digest="([0-9a-f]+)" id="([^"]+)">'
+)
 
 
 def block_id(node_id: str, kind: str, ordinal: int) -> str:
@@ -399,7 +403,11 @@ def _figure_body(data: dict, kind: str, target: str) -> str:
 
 
 def render_node(
-    node: dict, target: str = "web", solved: bool = False, runnable: bool = True
+    node: dict,
+    target: str = "web",
+    solved: bool = False,
+    runnable: bool = True,
+    reveal: str = "grader",
 ) -> str:
     """One node, one markup, differing only where a target cannot follow.
 
@@ -410,7 +418,17 @@ def render_node(
     `runnable` is what a web target can offer, not what it is. The local
     preview runs the reader's code in subprocesses; a static host cannot, so
     it asks for the same listings print gets rather than for dead buttons.
+
+    `reveal` says who opens a hint or a solution. Under `"grader"` the tiers
+    do, which is the local preview. Under `"reader"` the reader does, which is
+    every published page: a static host has no grader, so gating on `solved`
+    there does not defer a solution, it deletes it. Working through pseudocode,
+    hints and a worked solution is what the book is for, so published pages
+    keep all three behind a closed disclosure rather than behind a tier check
+    that can never pass.
     """
+    if reveal not in ("grader", "reader"):
+        raise ValueError("reveal must be 'grader' or 'reader'")
     support = node.get("support", "guided")
     pieces = split_blocks(node["body"])
     card_parts = {name: inner for name, _, inner in pieces if name in CARD_BLOCKS}
@@ -428,8 +446,17 @@ def render_node(
             out.append(markup)
             return
         seen[kind] = seen.get(kind, 0) + 1
+        # The id is positional, so inserting a block ahead of this one shifts
+        # every later ordinal of the same kind. A note stored against the old
+        # id would then resolve to a real element holding different content,
+        # which is worse than not resolving at all. The digest is what lets a
+        # resolver tell the two apart: same id and same digest is the same
+        # block, same id and a different digest is drift to confirm, not to
+        # silently follow.
+        digest = hashlib.sha256(markup.encode("utf-8")).hexdigest()[:12]
         out.append(
             f'<div class="block" data-block-kind="{kind}" '
+            f'data-block-digest="{digest}" '
             f'id="{block_id(node["id"], kind, seen[kind])}">{markup}</div>'
         )
 
@@ -469,7 +496,7 @@ def render_node(
             figure_number += 1
             emit("figure", figure(attrs.get("id", ""), inner, target, figure_number))
         elif name == "hint":
-            if support == "unaided" and target != "print":
+            if support == "unaided" and target != "print" and reveal == "grader":
                 continue
             level = html.escape(attrs.get("level", str(len(hints) + 1)))
             if target == "print":
@@ -484,7 +511,11 @@ def render_node(
                 )
         elif name == "solution":
             flush_hints()
-            locked = support in ("contract", "unaided") and not solved
+            locked = (
+                support in ("contract", "unaided")
+                and not solved
+                and reveal == "grader"
+            )
             if locked and target != "print":
                 emit(
                     "solution",

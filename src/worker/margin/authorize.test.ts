@@ -6,6 +6,7 @@ import { jwksUrl, readWorkosConfig, type WorkosConfig } from './config'
 import {
   createFakeD1,
   createFakeProvider,
+  type FakeProvider,
   sessionCookieHeader,
   testSigner,
   testWorkosEnv,
@@ -286,32 +287,32 @@ describe('the Worker dispatch applies the gate', () => {
     const db = populated()
 
     const anon = await marginWriteGate(await at(ANNOTATIONS), envWith(db), options())
-    expect(anon?.status).toBe(401)
+    expect(anon?.denied?.status).toBe(401)
 
     const outsider = await marginWriteGate(
       await at(ANNOTATIONS, reader),
       envWith(db),
       options(),
     )
-    expect(outsider?.status).toBe(403)
+    expect(outsider?.denied?.status).toBe(403)
 
     const allowed = await marginWriteGate(
       await at(ANNOTATIONS, writer),
       envWith(db),
       options(),
     )
-    expect(allowed).toBeNull()
+    expect(allowed?.denied).toBeUndefined()
   })
 
   it('needs the admin for apply, not merely a writer', async () => {
     const db = populated()
 
     const asWriter = await marginWriteGate(await at(APPLY, writer), envWith(db), options())
-    expect(asWriter?.status).toBe(403)
-    await expect(asWriter?.json()).resolves.toEqual({ error: 'admin_required' })
+    expect(asWriter?.denied?.status).toBe(403)
+    await expect(asWriter?.denied?.json()).resolves.toEqual({ error: 'admin_required' })
 
     const asAdmin = await marginWriteGate(await at(APPLY, admin), envWith(db), options())
-    expect(asAdmin).toBeNull()
+    expect(asAdmin?.denied).toBeUndefined()
   })
 
   it('never stands between a reader and the book', async () => {
@@ -319,5 +320,117 @@ describe('the Worker dispatch applies the gate', () => {
     const read = new Request(ANNOTATIONS)
 
     expect(await marginWriteGate(read, envWith(db), options())).toBeNull()
+  })
+})
+
+// A page left open past the access token's expiry: the cookie still holds a live
+// refresh token and the session has hours left, so a write must renew rather
+// than answer 401 and wait for the client to have polled `/auth/me` first.
+describe('the write gate renews a lapsed session', () => {
+  const ANNOTATIONS = 'https://ernie.sg/api/margin/v1/annotations'
+
+  async function lapsedSession(): Promise<{ request: Request; provider: FakeProvider }> {
+    // A token that expired an hour ago, sealed with a refresh token and a
+    // ceiling eight hours out.
+    const stale = await signer.sign({
+      iss: TEST_ISSUER,
+      sub: writer.subject,
+      client_id: TEST_CLIENT_ID,
+      iat: NOW_SECONDS - 3_700,
+      exp: NOW_SECONDS - 3_600,
+    })
+    const cookie = await sessionCookieHeader(stale, {
+      expiresAt: NOW_SECONDS - 3_600,
+      ceiling: NOW_SECONDS + 3_600,
+      refreshToken: 'refresh_one',
+    })
+    const fresh = await signer.sign({
+      iss: TEST_ISSUER,
+      sub: writer.subject,
+      client_id: TEST_CLIENT_ID,
+      iat: NOW_SECONDS - 10,
+      exp: NOW_SECONDS + 300,
+    })
+    const provider = createFakeProvider({
+      jwks: signer.jwks,
+      authenticate: { access_token: fresh, refresh_token: 'refresh_two' },
+    })
+    return {
+      request: new Request(ANNOTATIONS, { method: 'POST', headers: { cookie } }),
+      provider,
+    }
+  }
+
+  it('renews and lets the write through, returning the new cookie', async () => {
+    const db = createFakeD1()
+    db.allow(writer, 'writer')
+    const { request, provider } = await lapsedSession()
+
+    const gate = await marginWriteGate(request, envWith(db), {
+      now: NOW_MS,
+      fetchImpl: provider.fetchImpl,
+      jwks: createJwksSource(jwksUrl(config), {
+        fetchImpl: provider.fetchImpl,
+        now: () => NOW_MS,
+      }),
+    })
+
+    expect(gate?.denied, 'the write must not be refused').toBeUndefined()
+    expect(gate?.setCookie, 'the renewed cookie must come back').toContain(
+      'margin-session=',
+    )
+  })
+
+  it('still refuses when the caller is not on the allowlist, cookie and all', async () => {
+    const db = createFakeD1()
+    const { request, provider } = await lapsedSession()
+
+    const gate = await marginWriteGate(request, envWith(db), {
+      now: NOW_MS,
+      fetchImpl: provider.fetchImpl,
+      jwks: createJwksSource(jwksUrl(config), {
+        fetchImpl: provider.fetchImpl,
+        now: () => NOW_MS,
+      }),
+    })
+
+    // Renewal authenticates; it does not authorise.
+    expect(gate?.denied?.status).toBe(403)
+    expect(gate?.setCookie).toContain('margin-session=')
+  })
+
+  it('does not renew past the ceiling', async () => {
+    const db = createFakeD1()
+    db.allow(writer, 'writer')
+    const stale = await signer.sign({
+      iss: TEST_ISSUER,
+      sub: writer.subject,
+      client_id: TEST_CLIENT_ID,
+      iat: NOW_SECONDS - 3_700,
+      exp: NOW_SECONDS - 3_600,
+    })
+    const request = new Request(ANNOTATIONS, {
+      method: 'POST',
+      headers: {
+        cookie: await sessionCookieHeader(stale, {
+          expiresAt: NOW_SECONDS - 3_600,
+          ceiling: NOW_SECONDS - 1,
+          refreshToken: 'refresh_one',
+        }),
+      },
+    })
+    const provider = createFakeProvider({ jwks: signer.jwks })
+
+    const gate = await marginWriteGate(request, envWith(db), {
+      now: NOW_MS,
+      fetchImpl: provider.fetchImpl,
+      jwks: createJwksSource(jwksUrl(config), {
+        fetchImpl: provider.fetchImpl,
+        now: () => NOW_MS,
+      }),
+    })
+
+    expect(gate?.denied?.status).toBe(401)
+    expect(gate?.setCookie).toBeUndefined()
   })
 })

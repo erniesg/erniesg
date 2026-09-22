@@ -86,6 +86,43 @@ does not make an agent run pass.
    `build:production`, `publication:build` or the ordinary `publication:check`
    path to make it pass.
 
+## Acceptance tests
+
+- `tools/publication-adapter-conformance.test.mjs` passes with the working tree
+  actually dirty.
+- A conformance receipt made from a dirty tree records `repository.dirty: true`.
+  Assert on the recorded value, not on the check's verdict.
+- A conformance-shaped receipt is rejected by the ordinary publication check.
+- A real publication receipt is rejected in the `adapter-conformance` context.
+- A dirty tree still fails an ordinary `publication:check`.
+- A conformance run against a tree at a different commit still fails on the
+  commit binding.
+
+## Definition of done
+
+`npx vitest run tools/publication-adapter-conformance.test.mjs tools/publication-check.test.mjs`
+passes with the tree dirty, and `npm run build` still fails on a dirty tree for
+the reason named in criterion 7 — not because it was made to pass.
+
+## Validation command
+
+```bash
+npx vitest run --maxWorkers=1 tools/publication-adapter-conformance.test.mjs tools/publication-check.test.mjs tools/publication-build.test.mjs
+```
+
+## Concurrency
+
+This repository runs multiple issue workers on one host. Any command in this
+spec that binds a port must choose it per run, never a fixed default, and any
+temporary path must be unique per worker. The conformance harness already
+reserves its own output directory per invocation and refuses a reused path, so
+do not weaken that reservation to make parallel runs easier — pick a fresh
+output path per run instead.
+
+## Allowed secrets
+
+None.
+
 ## Artifact outputs
 
 Changes in `tools/publication-check.mjs` and, if the receipt gains a field,

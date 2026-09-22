@@ -11,6 +11,8 @@ import { join, resolve, sep } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import type { WorkerEnv } from './env'
 import worker, { MARGIN_HEALTH_PATH } from './index'
+import { testWorkosEnv } from './margin/fake-workos'
+import { AUTH_ME_PATH } from './margin/routes'
 
 // Prefer the real build output so this asserts against the HTML the site
 // actually ships. `scripts/agent-evidence` runs the build lane before the test
@@ -146,6 +148,40 @@ describe('ernie.sg Worker entry', () => {
     const env = createEnv()
     const response = await worker.fetch(
       new Request('https://ernie.sg/nothing-is-built-here'),
+      env,
+    )
+
+    expect(response.status).toBe(404)
+    expect(env.ASSETS.seen).toHaveLength(1)
+  })
+
+  it('serves the auth endpoints without touching assets', async () => {
+    const env = { ...createEnv(), ...testWorkosEnv() }
+    const response = await worker.fetch(
+      new Request(`https://ernie.sg${AUTH_ME_PATH}`),
+      env,
+    )
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ authenticated: false })
+    expect(env.ASSETS.seen).toHaveLength(0)
+  })
+
+  it('fails the auth endpoints closed when WorkOS is not configured', async () => {
+    const env = createEnv()
+    const response = await worker.fetch(
+      new Request(`https://ernie.sg${AUTH_ME_PATH}`),
+      env,
+    )
+
+    expect(response.status).toBe(503)
+    expect(env.ASSETS.seen).toHaveLength(0)
+  })
+
+  it('leaves an unrecognised path under /auth to the asset binding', async () => {
+    const env = { ...createEnv(), ...testWorkosEnv() }
+    const response = await worker.fetch(
+      new Request('https://ernie.sg/auth/unknown'),
       env,
     )
 

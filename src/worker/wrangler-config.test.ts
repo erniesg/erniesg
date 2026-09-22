@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { MARGIN_API_PREFIX, MARGIN_HEALTH_PATH } from './index'
+import { MARGIN_API_PREFIX, MARGIN_HEALTH_PATH, WORKER_FIRST_PREFIXES } from './index'
 
 /** Minimal JSONC reader: drops comments and trailing commas, string-aware. */
 function readJsonc(file: string): Record<string, any> {
@@ -58,12 +58,29 @@ describe('Wrangler configuration', () => {
   )
 
   it.each(Object.entries(configs))(
-    'scopes the %s Worker to the margin API prefix only',
+    'scopes the %s Worker to the margin API prefix and the auth endpoints only',
     (_name, config) => {
-      expect(config.assets.run_worker_first).toEqual([`${MARGIN_API_PREFIX}/*`])
+      expect(config.assets.run_worker_first).toEqual(
+        WORKER_FIRST_PREFIXES.map((prefix) => `${prefix}/*`),
+      )
       expect(MARGIN_HEALTH_PATH.startsWith(`${MARGIN_API_PREFIX}/`)).toBe(true)
     },
   )
+
+  it('marks preview as staging and production as production', () => {
+    expect(configs.preview.vars).toEqual({ MARGIN_ENVIRONMENT: 'staging' })
+    expect(configs.production.vars).toEqual({
+      MARGIN_ENVIRONMENT: 'production',
+    })
+  })
+
+  it('never writes a WorkOS value into a Wrangler config', () => {
+    for (const config of Object.values(configs)) {
+      const serialized = JSON.stringify(config)
+      expect(serialized).not.toContain('WORKOS_')
+      expect(serialized).not.toContain('MARGIN_DEV_PRINCIPAL')
+    }
+  })
 
   it('binds margin-db-stg in preview and margin-db in production', () => {
     expect(configs.preview.d1_databases).toEqual([

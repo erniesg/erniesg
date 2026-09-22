@@ -153,9 +153,22 @@ def check_graph(nodes: dict[str, dict]) -> None:
         problems.append(f"`requires` has a cycle among: {stuck}")
 
 
+SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
+
 def check_paths(nodes: dict[str, dict]) -> None:
+    claimed: dict[str, str] = {}
     for path_file in sorted((CHALLENGES_DIR / "paths").glob("*.toml")):
         data = tomllib.loads(path_file.read_text())
+        # The published route is derived from `slug` alone, and readers anchor
+        # annotations to it, so a path without one must not reach the site.
+        slug = str(data.get("slug", "")).strip()
+        if not SLUG.fullmatch(slug):
+            fail(path_file, "needs a url-safe `slug`; the published route comes from it")
+        elif slug in claimed:
+            fail(path_file, f"slug `{slug}` is already claimed by {claimed[slug]}")
+        else:
+            claimed[slug] = path_file.name
         for part in data.get("parts", []):
             rung = -1
             for node_id in part.get("nodes", []):

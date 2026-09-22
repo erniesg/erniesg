@@ -48,13 +48,22 @@ mkdirSync(join(outDir, "logs"), { recursive: true });
 
 // 900_000 was a coin flip on the trusted VM: the unit suite measures 869-923 s
 // there against a 900 s ceiling, so the lane was killed mid-run and recorded a
-// failure that said nothing about the branch. The supervised agent run is
-// bounded at 5400 s, so 1_800_000 leaves real headroom without letting a hung
-// lane outlive its own worker.
-const LANE_TIMEOUT_MS = 1_800_000;
+// failure that said nothing about the branch.
+//
+// This is ONE budget shared by every lane, not a per-lane grant. Handing each
+// sequential lane the full amount would let four hung lanes total 7_200_000 ms
+// and blow the 5400 s supervision bound on the agent run, and because the
+// manifest is written only after the loop, the supervisor would kill the
+// worker without recording which lane hung.
+const TOTAL_BUDGET_MS = 1_800_000;
+const LANE_TIMEOUT_EXIT = 124;
 
-function sh(command) {
-  return spawnSync(command, { shell: true, encoding: "utf8", timeout: LANE_TIMEOUT_MS });
+function sh(command, timeoutMs = TOTAL_BUDGET_MS) {
+  return spawnSync(command, { shell: true, encoding: "utf8", timeout: timeoutMs });
+}
+
+function timedOut(proc) {
+  return Boolean(proc.error && proc.error.code === "ETIMEDOUT") || proc.signal === "SIGTERM";
 }
 
 function safeRepository(value) {
@@ -253,11 +262,39 @@ if (selection.error || !selection.lanes || selection.lanes.length === 0) {
 
 const lanes = selection.lanes;
 
+const budgetDeadline = Date.now() + TOTAL_BUDGET_MS;
+let budgetSpentBy = "";
+
 for (const lane of lanes) {
   const laneStart = Date.now();
-  const proc = sh(lane.command);
+  // Every lane still reaches the manifest, so a reader can tell which lane
+  // consumed the budget from which lanes never got to run.
+  if (budgetSpentBy) {
+    const skippedLog = join(outDir, "logs", `${lane.id}.log`);
+    writeFileSync(
+      skippedLog,
+      `[agent-evidence] not run: the ${budgetSpentBy} lane consumed the shared ${TOTAL_BUDGET_MS} ms budget\n`,
+    );
+    results.push({
+      ...lane,
+      status: "failed",
+      exit_code: LANE_TIMEOUT_EXIT,
+      duration_ms: 0,
+      log_path: skippedLog,
+    });
+    continue;
+  }
+  const remaining = budgetDeadline - Date.now();
+  const proc = sh(lane.command, remaining > 0 ? remaining : 1);
   let exitCode = proc.status ?? 1;
+  if (timedOut(proc)) {
+    exitCode = LANE_TIMEOUT_EXIT;
+    budgetSpentBy = lane.id;
+  }
   let output = redact(`${proc.stdout || ""}${proc.stderr || ""}`);
+  if (budgetSpentBy === lane.id) {
+    output += `\n[agent-evidence] lane timed out against the shared ${TOTAL_BUDGET_MS} ms budget\n`;
+  }
   if (lane.id === "association-audit" && exitCode === 0) {
     try {
       const candidate = JSON.parse(proc.stdout || "");

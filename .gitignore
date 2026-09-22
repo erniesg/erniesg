@@ -21,6 +21,10 @@ pnpm-debug.log*
 .env.local
 .env.production
 
+# Wrangler local secrets (WORKOS_*, MARGIN_DEV_PRINCIPAL). Never committed.
+.dev.vars
+.dev.vars.*
+
 # migration scratch
 scripts/pubpub-migrate/work/
 work/

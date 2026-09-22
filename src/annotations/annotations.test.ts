@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import rawPaper from './papers/semantic-responsive-typesetting.json'
+import rawPaper from '../research/papers/semantic-responsive-typesetting.json'
 import {
   cacheAnnotationGeometry,
   createDemoAnnotations,
@@ -12,14 +12,14 @@ import {
   type SemanticTextAnchor,
   type TextAnnotation,
 } from './annotations'
-import { COMPOSITION_POLICY_VERSION } from './composition'
-import { PAGINATION_POLICY_VERSION } from './pagination'
-import { researchPaperSchema, type ResearchPaper } from './schema'
+import { COMPOSITION_POLICY_VERSION } from '../research/composition'
+import { PAGINATION_POLICY_VERSION } from '../research/pagination'
+import { researchPaperSchema, type ResearchPaper } from '../research/schema'
 import {
   getPreviewMetrics,
   getTargetProfile,
   TARGET_PROFILE_IDS,
-} from './targets'
+} from '../research/targets'
 
 const paper = researchPaperSchema.parse(rawPaper)
 const node = paper.nodes.find((candidate) => candidate.id === 'p-proposition-1')

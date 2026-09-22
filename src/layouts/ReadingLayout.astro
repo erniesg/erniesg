@@ -48,10 +48,13 @@ const {
       aria-label="Contents"
     >
       <!-- Below the breakpoint this column stacks above the article, and a
-           long contents list would push the text off the first screens. The
-           disclosure collapses it there; above the breakpoint the rule set
-           unwraps it back into a plain rail. -->
-      <details class="reading-contents">
+           long contents list would push the text off the first screens, so it
+           is a disclosure the reader can fold away and the styles cap its
+           height. It ships `open` because a closed disclosure hides its own
+           content whatever `display` is set to, and the wide rule set below
+           hides the summary that would reopen it: without `open` the rail
+           would be empty on every desktop load. -->
+      <details class="reading-contents" open>
         <summary>Contents</summary>
         <slot name="navigation" />
       </details>
@@ -100,6 +103,14 @@ const {
     font-weight: 600;
   }
 
+  /* Stacked above the text, an open list of every entry would still be several
+     screens, so it is bounded and scrolls within itself. Above the breakpoint
+     the column is a sticky rail and this is unwrapped away. */
+  .reading-contents {
+    max-height: 40vh;
+    overflow-y: auto;
+  }
+
   /* Header.astro is `sticky top-0 z-10` and about 4rem tall, so anything this
      shell pins has to start below it or the header covers its first rows. */
   .reading-shell {
@@ -126,7 +137,9 @@ const {
       overflow-y: auto;
     }
 
-    /* Above the breakpoint the contents are a rail, not a disclosure. */
+    /* Above the breakpoint the contents are a rail, not a disclosure: the
+       element generates no box, so its entries lay out directly in the sticky
+       column and the cap above no longer applies. */
     .reading-navigation > .reading-contents {
       display: contents;
     }

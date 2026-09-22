@@ -33,10 +33,26 @@ const uri = documentUri(node.path)
 // spacing — so the few rules that put them back are the site's business and
 // stay here rather than in the renderer.
 const RESTORED = `
-/* CONTENT_CSS gives figures, hints and solutions hard-coded light
-   backgrounds, so this has to pin a foreground with them: inheriting the
-   site's would put near-white text on a near-white panel in dark mode. */
-.book-content { overflow-wrap: anywhere; color: #1a1a1a; }
+/* The container itself keeps the site's foreground over the site's background,
+   in either theme. Only the panels CONTENT_CSS gives a hard-coded light
+   background pin a dark foreground to go with it: pinning it on the container
+   would put near-black prose on the near-black page in dark mode, and leaving
+   it off the panels would put near-white text on a white panel. Inline code is
+   one of those panels; code inside a \`pre\` is not, because \`pre\` carries its
+   own pair. */
+.book-content { overflow-wrap: anywhere; }
+.book-content .figure,
+.book-content .cell,
+.book-content .hint,
+.book-content .solution,
+.book-content :not(pre) > code { color: #1a1a1a; }
+/* CONTENT_CSS's greys and its link colour are chosen against a light page. On
+   the dark page they fall to the container; the light panels take them back. */
+.dark .book-content { --dim: #9a9a9a; --line: #3f3f3f; --accent: #7dd3fc; }
+.dark .book-content .figure,
+.dark .book-content .cell,
+.dark .book-content .hint,
+.dark .book-content .solution { --dim: #666; --line: #e2e2e2; --accent: #0369a1; }
 .book-content h1, .book-content h2, .book-content h3 { font-weight: 700; }
 .book-content p { margin: 1rem 0; }
 .book-content ul { list-style: disc; margin: 1rem 0; padding-left: 1.4rem; }

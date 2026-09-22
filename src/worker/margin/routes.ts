@@ -296,7 +296,12 @@ async function handleCallback(
     'set-cookie',
     serializeCookie(SESSION_COOKIE_NAME, sealedSession, {
       path: SESSION_COOKIE_PATH,
-      maxAgeSeconds: maxAge,
+      // To the ceiling, not to the access token's expiry. The cookie carries
+      // the refresh token, so sizing it to the short-lived access token would
+      // have a conforming browser throw the refresh token away at the moment it
+      // becomes the only thing that can renew the session. What bounds the
+      // access token is `expiresAt` inside the seal, which the server checks.
+      maxAgeSeconds: ceiling - nowSeconds,
     }),
   )
   headers.append(
@@ -371,7 +376,8 @@ async function refreshed(
       },
       config.cookiePassword,
     ),
-    { path: SESSION_COOKIE_PATH, maxAgeSeconds: expiresAt - nowSeconds },
+    // Again to the ceiling: this cookie still carries the refresh token.
+    { path: SESSION_COOKIE_PATH, maxAgeSeconds: ceiling - nowSeconds },
   )
 
   return {

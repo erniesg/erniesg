@@ -1,0 +1,176 @@
+---
+/**
+ * The path index: the book in reading order, and the topic map behind it.
+ *
+ * Both come from the renderer's manifest, which is built from `load_book()`,
+ * `all_nodes()` and `load_topics()`. Nothing on this page is a list somebody has
+ * to remember to extend when Parts III-IX arrive.
+ */
+import BookShell from '@/components/challenges/BookShell.astro'
+import Layout from '@/layouts/Layout.astro'
+import {
+  challengesDocumentUri,
+  loadChallengesBook,
+} from '@/lib/challenges-book'
+
+const book = loadChallengesBook()
+const documentUri = challengesDocumentUri(Astro.site, `${book.base}/`)
+
+const written = book.topics.filter((topic) => topic.nodes.length > 0).length
+const byPart = book.contents
+  .filter((part) => part.number !== '')
+  .map((part) => ({
+    ...part,
+    topics: book.topics.filter((topic) => String(topic.part) === part.number),
+  }))
+---
+
+<Layout
+  title={book.book.title}
+  description={book.book.subtitle}
+  canonicalPath={`${book.base}/`}
+>
+  <BookShell book={book} documentUri={documentUri}>
+      <h1>{book.book.title}</h1>
+      <p class="book-lede">{book.book.subtitle}</p>
+      <p class="book-meta">
+        Edition {book.book.edition} · {book.book.author} · {
+          book.counts.pathNodes
+        } nodes · {written} of {book.counts.topics} topics written
+      </p>
+
+      <h2 id="the-path">The path</h2>
+      <p>
+        The book in reading order. A chapter explains one idea; the challenges
+        under it are a ladder, worked through at the top and yours alone at the
+        bottom.
+      </p>
+      {
+        book.contents.map((part) => (
+          <section class="book-index-part">
+            <h3 id={`part-${part.number || 'introduction'}`}>{part.title}</h3>
+            <ol class="book-index-list">
+              {part.nodes.map((row) => (
+                <li>
+                  <a href={row.path}>
+                    {row.number && <span class="book-index-num">{row.number}</span>}
+                    {row.title}
+                  </a>
+                  {row.kind && <span class="book-index-kind">{row.kind}</span>}
+                </li>
+              ))}
+              {part.planned.map((topic) => (
+                <li class="book-index-planned">
+                  {topic.title}
+                  <span class="book-index-kind">to come</span>
+                </li>
+              ))}
+            </ol>
+          </section>
+        ))
+      }
+
+      <h2 id="the-topic-map">The topic map</h2>
+      <p>
+        Every topic the book covers, what it needs first, and what it builds in
+        the agent. A topic with nothing written yet still has its place here, so
+        the shape of the whole book is visible from the start.
+      </p>
+      {
+        byPart.map((part) => (
+          <section class="book-index-part">
+            <h3 id={`topics-part-${part.number}`}>{part.title}</h3>
+            <ul class="book-index-list">
+              {part.topics.map((topic) => (
+                <li>
+                  <p class="book-topic-title">{topic.title}</p>
+                  {topic.agent && (
+                    <p class="book-topic-note">
+                      In the agent: {topic.agent}
+                    </p>
+                  )}
+                  <p class="book-topic-note">
+                    {topic.requires.length > 0
+                      ? `Needs first: ${topic.requires.join(', ')}`
+                      : 'Nothing needed first — you can start here.'}
+                  </p>
+                  {topic.nodes.length > 0 ? (
+                    <p class="book-topic-note">
+                      {topic.nodes.map((row, index) => (
+                        <>
+                          {index > 0 && ', '}
+                          <a href={row.path}>{row.title}</a>
+                        </>
+                      ))}
+                    </p>
+                  ) : (
+                    <p class="book-topic-note">Nothing written for this topic yet.</p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))
+      }
+  </BookShell>
+</Layout>
+
+<style>
+  .book-lede {
+    font-size: 1.1rem;
+  }
+
+  .book-meta {
+    font:
+      0.85rem ui-sans-serif,
+      system-ui;
+    opacity: 0.7;
+  }
+
+  .book-index-part {
+    margin: 1.4rem 0;
+  }
+
+  .book-index-list {
+    list-style: none;
+    padding: 0;
+    margin: 0.4rem 0 0;
+  }
+
+  .book-index-list > li {
+    margin: 0.3rem 0;
+  }
+
+  .book-index-num {
+    display: inline-block;
+    min-width: 2.6rem;
+    opacity: 0.55;
+    font-variant-numeric: tabular-nums;
+    font-size: 0.85rem;
+  }
+
+  .book-index-kind,
+  .book-index-planned {
+    opacity: 0.55;
+  }
+
+  .book-index-kind {
+    font:
+      0.72rem ui-sans-serif,
+      system-ui;
+    margin-left: 0.5rem;
+  }
+
+  .book-topic-title {
+    font-weight: 600;
+    margin: 0.7rem 0 0.1rem;
+  }
+
+  .book-topic-note {
+    font:
+      0.82rem / 1.5 ui-sans-serif,
+      system-ui;
+    opacity: 0.75;
+    margin: 0.1rem 0;
+  }
+</style>

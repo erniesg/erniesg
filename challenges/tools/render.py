@@ -10,6 +10,12 @@ The only difference between targets is what cannot cross:
     web    runnable cells, steppable figures, hints behind disclosure
     print  listings, the same figure states as a list, hints as sections
 
+A web target can additionally be asked for a non-interactive edition
+(`interactive=False`). The published site is static: it serves the book, so a
+cell the reader cannot run there shows the listing print already shows rather
+than a button that does nothing. That is a choice between two forms this
+renderer already emits, not a third set of markup.
+
 Stdlib only; needs Python 3.11+ for tomllib.
 """
 
@@ -50,6 +56,23 @@ SUPPORT_NOTES = {
                "the one that tells you whether it stuck.",
 }
 FIGURE_TYPES = ("cells", "walk", "links", "table", "cost")
+
+# The parts of the book, including the ones still to be written. Every edition
+# names them the same way, so the name lives here rather than in a reader.
+PART_NAMES = {
+    0: "The loop", 1: "Programming basics", 2: "Lookup", 3: "Scanning",
+    4: "Recursive structure", 5: "Graphs", 6: "Optimization",
+    7: "The agent's structures", 8: "Engineering", 9: "At scale",
+}
+
+# What one node can say about another, and how a reader should hear it.
+EDGE_KINDS = {
+    "requires": ("#0369a1", "needs first"),
+    "assessed-by": ("#15803d", "checked by"),
+    "powers": ("#b45309", "builds part of the agent"),
+    "instance-of": ("#7c3aed", "same pattern as"),
+    "harder-variant-of": ("#be185d", "harder version of"),
+}
 
 
 # --------------------------------------------------------------------------
@@ -375,50 +398,87 @@ def _figure_body(data: dict, kind: str, target: str) -> str:
     return f'<p class="missing">no renderer for figure type {html.escape(str(kind))}</p>'
 
 
-def render_node(node: dict, target: str = "web", solved: bool = False) -> str:
+def block_id(node_id: str, kind: str, ordinal: int) -> str:
+    """The name a block answers to, on the web, forever.
+
+    It is the node, the kind of block, and how many of that kind came before it
+    — all of which come from the source and nothing else. Two builds of the
+    same source therefore name the same block the same way, which is the whole
+    requirement for anything anchored to it: a highlight, a comment, a
+    proposed edit.
+    """
+    return f"{node_id}--{kind}-{ordinal}"
+
+
+def render_node(node: dict, target: str = "web", solved: bool = False,
+                interactive: bool = True) -> str:
     """One node, one markup, differing only where a target cannot follow.
 
     `solved` gates what a challenge is willing to show: an unaided problem
     keeps its solution until the tiers are green. Print shows everything,
     because a book cannot know who is reading it.
+
+    `interactive` is the published site's switch. A static host cannot run the
+    reader's Python, so it asks for the listing rather than the desk.
+
+    On the web every authored block is wrapped in a stable, addressable
+    container. Print has no anchors to hang and keeps the bare markup, so the
+    EPUB is byte-for-byte what it was.
     """
     support = node.get("support", "guided")
     pieces = split_blocks(node["body"])
     card_parts = {name: inner for name, _, inner in pieces if name in CARD_BLOCKS}
+    live = target != "print" and interactive
     out: list[str] = []
-    if node.get("part"):
-        out.append(f'<p class="eyebrow">{html.escape(node["part"])}</p>')
-    out.append(f'<h1>{html.escape(node["title"])}</h1>')
-    if node.get("kind") == "challenge":
+    seen: dict[str, int] = {}
+
+    def emit(kind: str, markup: str) -> None:
+        if target == "print" or not markup:
+            out.append(markup)
+            return
+        seen[kind] = seen.get(kind, 0) + 1
+        anchor = html.escape(block_id(node["id"], kind, seen[kind]), quote=True)
         out.append(
+            f'<div class="block" id="{anchor}" data-block-kind="{kind}" '
+            f'data-block-id="{anchor}">{markup}</div>'
+        )
+
+    heading: list[str] = []
+    if node.get("part"):
+        heading.append(f'<p class="eyebrow">{html.escape(node["part"])}</p>')
+    heading.append(f'<h1>{html.escape(node["title"])}</h1>')
+    if node.get("kind") == "challenge":
+        heading.append(
             f'<p class="support support-{support}">'
             f'{html.escape(SUPPORT_NOTES.get(support, ""))}</p>'
         )
+    emit("heading", "".join(heading))
+
     hints: list[str] = []
     card_done = False
 
     def flush_hints() -> None:
         if hints:
-            out.append('<div class="hints">' + "".join(hints) + "</div>")
+            emit("hints", '<div class="hints">' + "".join(hints) + "</div>")
             hints.clear()
 
     figure_number = 0
     for name, attrs, inner in pieces:
         if name in CARD_BLOCKS:
             if not card_done:
-                out.append(problem_card(node, card_parts))
+                emit("problem", problem_card(node, card_parts))
                 card_done = True
             continue
         if name == "prose":
             rendered = render_markdown(inner)
-            out.append(rendered if target == "print" else _runnable(rendered))
+            emit("prose", _runnable(rendered) if live else rendered)
         elif name == "problem":
             referenced = load_node(attrs.get("id", ""))
             parts = {n: i for n, _, i in split_blocks(referenced["body"]) if n in CARD_BLOCKS}
-            out.append(problem_card(referenced, parts))
+            emit("problem", problem_card(referenced, parts))
         elif name == "figure":
             figure_number += 1
-            out.append(figure(attrs.get("id", ""), inner, target, figure_number))
+            emit("figure", figure(attrs.get("id", ""), inner, target, figure_number))
         elif name == "hint":
             if support == "unaided" and target != "print":
                 continue
@@ -437,23 +497,26 @@ def render_node(node: dict, target: str = "web", solved: bool = False) -> str:
             flush_hints()
             locked = support in ("contract", "unaided") and not solved
             if locked and target != "print":
-                out.append(
+                emit(
+                    "solution",
                     '<p class="locked-solution">The worked solution unlocks when all '
-                    "four tiers are green.</p>"
+                    "four tiers are green.</p>",
                 )
                 continue
             if target == "print":
-                out.append(
+                emit(
+                    "solution",
                     '<div class="solution"><p class="solution-title">Worked solution</p>'
-                    f"{render_markdown(inner)}</div>"
+                    f"{render_markdown(inner)}</div>",
                 )
             else:
-                out.append(
+                emit(
+                    "solution",
                     "<details class='solution'><summary>Worked solution — try a failing "
-                    f"test first</summary>{render_markdown(inner)}</details>"
+                    f"test first</summary>{render_markdown(inner)}</details>",
                 )
         elif name == "run":
-            out.append(_desk(node, attrs, target))
+            emit("run", _desk(node, attrs, target, live))
     flush_hints()
     return "".join(out)
 
@@ -475,7 +538,7 @@ def _runnable(rendered: str) -> str:
     )
 
 
-def _desk(node: dict, attrs: dict, target: str) -> str:
+def _desk(node: dict, attrs: dict, target: str, live: bool = True) -> str:
     starter = ""
     if node.get("dir"):
         path = node["dir"] / attrs.get("starter", "starter.py")
@@ -486,6 +549,14 @@ def _desk(node: dict, attrs: dict, target: str) -> str:
             '<h2>Your turn</h2><pre><code>' + html.escape(starter) + "</code></pre>"
             '<p class="figure-note">Run and grade this in the web edition, or from a '
             "terminal with the book's grader.</p>"
+        )
+    if not live:
+        # A static edition shows the starter as the listing print shows, and
+        # says where the tiers can actually be run.
+        return (
+            '<h2>Your turn</h2><pre><code>' + html.escape(starter) + "</code></pre>"
+            '<p class="figure-note">Grade this from a terminal with the book\'s grader: '
+            f'<code>python3 challenges/tools/grade.py run {html.escape(node["id"])}</code>.</p>'
         )
     return (
         f'<section class="desk" data-node="{html.escape(node["id"])}">'
@@ -564,3 +635,70 @@ pre { background:#f4f4f1; color:#111; font-size:.82em; white-space:pre-wrap;
   word-wrap:break-word; border:1px solid #e4e4e0; }
 .figure, .hint, .solution { background:#fff; }
 """
+
+# What a figure needs on a screen and cannot have on paper: a walk you step
+# through, and room to scroll a wide table sideways. Every web edition — the
+# local reader and the published site — gets these from here, so a figure looks
+# the same in both. It is deliberately not part of PRINT_CSS: the EPUB's
+# stylesheet stays exactly what it was.
+WEB_FIGURE_CSS = """
+.figure { overflow-x:auto; }
+.cost { width:100%; max-width:100%; height:auto; }
+.walk-row, .walk-state { display:flex; gap:6px; align-items:center; margin:6px 0; }
+.walk-item, .slot { min-width:34px; text-align:center; padding:5px 6px; border:1px solid var(--line);
+  border-radius:5px; font:.9rem ui-monospace,monospace; background:var(--bg); }
+.walk-item.on { background:#fde68a; border-color:#d97706; }
+.walk-label { width:72px; font:.72rem ui-sans-serif,system-ui; color:var(--dim); }
+.slot { visibility:hidden; }
+.slot.on { visibility:visible; }
+.walk-controls { display:flex; gap:10px; align-items:center; margin-top:10px;
+  font:.8rem ui-sans-serif,system-ui; color:var(--dim); }
+.walk-controls button { font:inherit; padding:3px 9px; border:1px solid var(--line);
+  border-radius:5px; background:#fff; cursor:pointer; }
+"""
+
+# Stepping a `walk` figure. The markup for it comes from `_figure_body`, so the
+# behaviour that drives it belongs next to the markup and not in a reader.
+FIGURE_SCRIPT = r"""
+document.querySelectorAll('.walk').forEach(walk => {
+  const steps = Number(walk.dataset.steps) || 1;
+  let step = 0;
+  const paint = () => {
+    walk.querySelectorAll('.walk-item').forEach(el =>
+      el.classList.toggle('on', Number(el.dataset.index) === step));
+    walk.querySelectorAll('.slot').forEach(el =>
+      el.classList.toggle('on', Number(el.dataset.step) <= step));
+    walk.querySelector('.walk-step b').textContent = step + 1;
+  };
+  walk.querySelector('[data-walk="next"]').onclick = () => { step = Math.min(step + 1, steps - 1); paint(); };
+  walk.querySelector('[data-walk="back"]').onclick = () => { step = Math.max(step - 1, 0); paint(); };
+  paint();
+});
+"""
+
+
+def scoped_css(css: str, scope: str) -> str:
+    """The same rules, confined to one container.
+
+    A host page has its own chrome and its own typography, and the book's
+    stylesheet must not reach either. Rather than keep a second copy of the
+    rules with the selectors already narrowed — which would drift the way two
+    renderers drift — narrow the one copy here. `:root` becomes the container
+    itself, so the custom properties are defined where the book can see them.
+
+    The stylesheets above are flat rule lists with no at-rules and no comments,
+    which is what makes this safe; keep them that way.
+    """
+    rules: list[str] = []
+    for chunk in css.split("}"):
+        if "{" not in chunk:
+            continue
+        selectors, body = chunk.split("{", 1)
+        narrowed = [
+            scope if selector.strip() == ":root" else f"{scope} {selector.strip()}"
+            for selector in selectors.split(",")
+            if selector.strip()
+        ]
+        if narrowed:
+            rules.append(f"{', '.join(narrowed)} {{ {body.strip()} }}")
+    return "\n".join(rules)

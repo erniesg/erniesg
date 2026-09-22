@@ -1,0 +1,71 @@
+---
+/**
+ * One node of the book, at a stable URL.
+ *
+ * The routes come from the renderer's manifest — `load_book()` for the reading
+ * order and `all_nodes()` for everything in the pool — so a node that exists has
+ * a page without anybody adding it to a list here. The markup is embedded
+ * verbatim: this file renders no block of the book itself.
+ */
+import BookShell from '@/components/challenges/BookShell.astro'
+import Layout from '@/layouts/Layout.astro'
+import {
+  challengesDocumentUri,
+  loadChallengesBook,
+  type ChallengesNode,
+} from '@/lib/challenges-book'
+
+export function getStaticPaths() {
+  const book = loadChallengesBook()
+  return book.nodes.map((node) => ({ params: { id: node.id }, props: { node } }))
+}
+
+type Props = { node: ChallengesNode }
+
+const { node } = Astro.props
+const book = loadChallengesBook()
+const documentUri = challengesDocumentUri(Astro.site, node.path)
+const description = node.part
+  ? `${book.book.title} · ${node.part} · ${node.title}`
+  : `${book.book.title} · ${node.title}`
+---
+
+<Layout
+  title={`${node.title} — ${book.book.title}`}
+  description={description}
+  canonicalPath={node.path}
+>
+  <BookShell book={book} current={node} documentUri={documentUri}>
+    <Fragment set:html={node.html} />
+    {
+      (node.previous || node.next) && (
+        <nav class="book-turn" aria-label="Turn the page">
+          {node.previous ? (
+            <a href={node.previous.path}>‹ {node.previous.title}</a>
+          ) : (
+            <span />
+          )}
+          {node.next ? (
+            <a href={node.next.path}>{node.next.title} ›</a>
+          ) : (
+            <span />
+          )}
+        </nav>
+      )
+    }
+  </BookShell>
+</Layout>
+
+<style>
+  .book-turn {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-top: 3rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--line);
+    font:
+      0.9rem ui-sans-serif,
+      system-ui;
+  }
+</style>

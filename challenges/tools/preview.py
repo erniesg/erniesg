@@ -38,6 +38,10 @@ from render import (
     load_topics,
     CARD_BLOCKS,
     CONTENT_CSS,
+    EDGE_KINDS,
+    FIGURE_SCRIPT,
+    PART_NAMES,
+    WEB_FIGURE_CSS,
     all_nodes,
     figure as render_figure,
     load_book,
@@ -72,22 +76,7 @@ PROGRESS_PATH = CHALLENGES / "workspace" / "progress.json"
 
 HEADING = re.compile(r'<h2 id="([^"]+)">(.*?)</h2>')
 
-EDGE_KINDS = {
-    "requires": ("#0369a1", "needs first"),
-    "assessed-by": ("#15803d", "checked by"),
-    "powers": ("#b45309", "builds part of the agent"),
-    "instance-of": ("#7c3aed", "same pattern as"),
-    "harder-variant-of": ("#be185d", "harder version of"),
-}
-
-PART_NAMES = {
-    0: "The loop", 1: "Programming basics", 2: "Lookup", 3: "Scanning",
-    4: "Recursive structure", 5: "Graphs", 6: "Optimization",
-    7: "The agent's structures", 8: "Engineering", 9: "At scale",
-}
-
-
-STYLE = CONTENT_CSS + """
+STYLE = CONTENT_CSS + WEB_FIGURE_CSS + """
 * { box-sizing:border-box; }
 body { margin:0; background:var(--bg); color:var(--ink);
   font:17px/1.65 "Iowan Old Style","Palatino Linotype",Georgia,serif; }
@@ -174,17 +163,6 @@ main.wide { grid-template-columns:minmax(0,60rem); }
 .output:empty { display:none; }
 .output { margin-top:10px; font-size:.8rem; white-space:pre-wrap; max-height:340px; overflow:auto; }
 .cell-run .output:not(:empty) { margin-top:0; border-radius:0 0 8px 8px; }
-.walk-row, .walk-state { display:flex; gap:6px; align-items:center; margin:6px 0; }
-.walk-item, .slot { min-width:34px; text-align:center; padding:5px 6px; border:1px solid var(--line);
-  border-radius:5px; font:.9rem ui-monospace,monospace; background:var(--bg); }
-.walk-item.on { background:#fde68a; border-color:#d97706; }
-.walk-label { width:72px; font:.72rem ui-sans-serif,system-ui; color:var(--dim); }
-.slot { visibility:hidden; }
-.slot.on { visibility:visible; }
-.walk-controls { display:flex; gap:10px; align-items:center; margin-top:10px;
-  font:.8rem ui-sans-serif,system-ui; color:var(--dim); }
-.walk-controls button { font:inherit; padding:3px 9px; border:1px solid var(--line);
-  border-radius:5px; background:#fff; cursor:pointer; }
 .map-tools { display:flex; gap:14px; align-items:center; flex-wrap:wrap; margin:14px 0 10px;
   font:.78rem ui-sans-serif,system-ui; color:var(--dim); }
 #map-search { font:inherit; padding:5px 10px; border:1px solid var(--line); border-radius:6px;
@@ -450,22 +428,7 @@ def page(title: str, inner: str, book_title: str, order: list[dict], current: st
 <script>{SCRIPT}</script></body></html>""".encode()
 
 
-SCRIPT = r"""
-document.querySelectorAll('.walk').forEach(walk => {
-  const steps = Number(walk.dataset.steps) || 1;
-  let step = 0;
-  const paint = () => {
-    walk.querySelectorAll('.walk-item').forEach(el =>
-      el.classList.toggle('on', Number(el.dataset.index) === step));
-    walk.querySelectorAll('.slot').forEach(el =>
-      el.classList.toggle('on', Number(el.dataset.step) <= step));
-    walk.querySelector('.walk-step b').textContent = step + 1;
-  };
-  walk.querySelector('[data-walk="next"]').onclick = () => { step = Math.min(step + 1, steps - 1); paint(); };
-  walk.querySelector('[data-walk="back"]').onclick = () => { step = Math.max(step - 1, 0); paint(); };
-  paint();
-});
-
+SCRIPT = FIGURE_SCRIPT + r"""
 const runnableCells = [...document.querySelectorAll('.cell-run')];
 runnableCells.forEach((cell, index) => {
   const button = cell.querySelector('.exec');

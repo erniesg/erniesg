@@ -28,8 +28,14 @@ export const semanticTextAnchorSchema = z
   })
   .strict()
   .refine(
+    // Code points, not UTF-16 units. These offsets are W3C
+    // `TextPositionSelector` coordinates — `margin`'s wire format is a Web
+    // Annotation and its selectors count characters, not JavaScript string
+    // indices. An emoji spans one character and two UTF-16 units, so counting
+    // `.length` here rejected a valid selector over any non-BMP quote.
     (anchor) =>
-      anchor.position.end - anchor.position.start === anchor.quote.exact.length,
+      anchor.position.end - anchor.position.start ===
+      [...anchor.quote.exact].length,
     {
       message: 'Text offsets must span the stored exact quote',
       path: ['position'],

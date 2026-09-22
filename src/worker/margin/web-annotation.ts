@@ -131,7 +131,18 @@ const textPositionSelectorSchema = z
 const structSelectorSchema = z
   .object({
     type: z.literal(STRUCT_SELECTOR_TYPE),
-    'margin:nodeId': z.string().min(1).max(256),
+    // `@document` is this service's own sentinel for "no structural selector",
+    // so a client may not send it as a node id: the round trip reads it back as
+    // the absence of the selector and would quietly turn a structurally
+    // anchored annotation into a document-wide one. Reserved, not accepted and
+    // then lost.
+    'margin:nodeId': z
+      .string()
+      .min(1)
+      .max(256)
+      .refine((value) => value !== DOCUMENT_SCOPE_NODE_ID, {
+        message: `margin:nodeId is reserved when it is \`${DOCUMENT_SCOPE_NODE_ID}\``,
+      }),
     'margin:structId': z.string().min(1).max(256).optional(),
   })
   .strict()

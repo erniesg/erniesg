@@ -993,3 +993,94 @@ describe('review findings, round three', () => {
     expect(await response.json()).toMatchObject({ error: { code: 'has_replies' } })
   })
 })
+
+describe('review findings, round four', () => {
+  // `@document` is the service's own sentinel for "no structural selector", so
+  // accepting it as a node id and reading it back as the selector's absence
+  // would quietly turn a structurally anchored annotation into a document-wide
+  // one.
+  it('reserves the document sentinel rather than losing it on the round trip', async () => {
+    const base = webAnnotation({ source: CHAPTER_ONE })
+    const withSentinel = {
+      ...base,
+      target: {
+        ...base.target,
+        selector: base.target.selector.map((entry) =>
+          (entry as { type: string }).type === STRUCT_SELECTOR_TYPE
+            ? { type: STRUCT_SELECTOR_TYPE, 'margin:nodeId': '@document' }
+            : entry,
+        ),
+      },
+    }
+
+    const response = await post(withSentinel)
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'invalid_annotation' },
+    })
+  })
+
+  it('still round-trips a real node id, and still omits an absent selector', async () => {
+    const scoped = (await (await post(
+      webAnnotation({ source: CHAPTER_ONE, nodeId: 'p-proposition-7' }),
+    )).json()) as WireAnnotation
+    const struct = scoped.target.selector.find(
+      (entry) => entry.type === STRUCT_SELECTOR_TYPE,
+    ) as { 'margin:nodeId'?: string } | undefined
+    expect(struct?.['margin:nodeId']).toBe('p-proposition-7')
+  })
+
+  // W3C TextPositionSelector offsets count characters. An emoji is one
+  // character and two UTF-16 units, so counting `.length` rejected a valid
+  // selector over any non-BMP quote.
+  it('accepts a selector whose quote contains a non-BMP character', async () => {
+    const exact = 'a 🌊 wave'
+    const base = webAnnotation({ source: CHAPTER_ONE })
+    const emoji = {
+      ...base,
+      target: {
+        ...base.target,
+        selector: base.target.selector.map((entry) => {
+          const typed = entry as { type: string }
+          if (typed.type === 'TextQuoteSelector') {
+            return { ...entry, exact, prefix: '', suffix: '' }
+          }
+          if (typed.type === 'TextPositionSelector') {
+            // Characters, not UTF-16 units: `[...exact].length` is 8 where
+            // `exact.length` is 9.
+            return { ...entry, start: 5, end: 5 + [...exact].length }
+          }
+          return entry
+        }),
+      },
+    }
+    expect([...exact].length).toBe(8)
+    expect(exact.length).toBe(9)
+
+    const response = await post(emoji)
+    expect(response.status, JSON.stringify(await response.clone().json())).toBe(201)
+
+    const created = (await response.json()) as WireAnnotation
+    const position = created.target.selector.find(
+      (entry) => entry.type === 'TextPositionSelector',
+    ) as { start: number; end: number }
+    expect(position.end - position.start).toBe([...exact].length)
+  })
+
+  it('still refuses a span that does not match its quote', async () => {
+    const base = webAnnotation({ source: CHAPTER_ONE })
+    const mismatched = {
+      ...base,
+      target: {
+        ...base.target,
+        selector: base.target.selector.map((entry) =>
+          (entry as { type: string }).type === 'TextPositionSelector'
+            ? { ...entry, start: 5, end: 6 }
+            : entry,
+        ),
+      },
+    }
+
+    expect((await post(mismatched)).status).toBe(400)
+  })
+})

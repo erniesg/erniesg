@@ -679,6 +679,45 @@ describe('logout does not need the provider', () => {
     }
   })
 
+  // POST alone is not a defence: `SameSite=Lax` may stop a cross-site form
+  // *sending* the cookie, but the response's `Set-Cookie` deletes it anyway, so
+  // any page could sign a reader out.
+  it('refuses a cross-site logout', async () => {
+    for (const headers of [
+      { origin: 'https://evil.test' },
+      { 'sec-fetch-site': 'cross-site' },
+      { 'sec-fetch-site': 'same-site' },
+    ]) {
+      const response = (await call(
+        AUTH_LOGOUT_PATH,
+        { method: 'POST', headers },
+        envWith(),
+      )) as Response
+
+      expect(response.status, JSON.stringify(headers)).toBe(403)
+      expect(await response.json()).toEqual({ error: 'cross_origin' })
+      expect(cookieNamed(response, SESSION_COOKIE_NAME)).toBeUndefined()
+    }
+  })
+
+  it('allows a logout the browser labels as this site', async () => {
+    for (const headers of [
+      { origin: 'https://ernie.sg' },
+      { 'sec-fetch-site': 'same-origin' },
+      { 'sec-fetch-site': 'none' },
+      {},
+    ]) {
+      const response = (await call(
+        AUTH_LOGOUT_PATH,
+        { method: 'POST', headers },
+        envWith(),
+      )) as Response
+
+      expect(response.status, JSON.stringify(headers)).toBe(200)
+      expect(cookieNamed(response, SESSION_COOKIE_NAME)).toContain('; Max-Age=0')
+    }
+  })
+
   it('still refuses a GET, which a cross-site navigation could forge', async () => {
     const response = (await call(AUTH_LOGOUT_PATH, {}, {} as AuthEnv)) as Response
 

@@ -342,6 +342,25 @@ async function handleCallback(
   return new Response(null, { status: 302, headers })
 }
 
+/**
+ * Whether the browser says this request came from this site.
+ *
+ * `Sec-Fetch-Site` is the direct answer where it exists; `Origin` is the
+ * fallback, and a cross-site form submission always carries one. Absent both,
+ * the caller is not a browser, so there is no ambient cookie to abuse.
+ */
+function sameOrigin(request: Request): boolean {
+  const site = request.headers.get('sec-fetch-site')
+  if (site) return site === 'same-origin' || site === 'none'
+  const origin = request.headers.get('origin')
+  if (!origin) return true
+  try {
+    return new URL(origin).origin === new URL(request.url).origin
+  } catch {
+    return false
+  }
+}
+
 function handleLogout(): Response {
   return json({ ok: true }, 200, [
     ['set-cookie', clearedCookie(SESSION_COOKIE_NAME, SESSION_COOKIE_PATH)],
@@ -553,6 +572,14 @@ export async function handleAuthRequest(
     // POST only: a `SameSite=Lax` cookie rides along with a cross-site GET
     // navigation, so a GET logout would be forgeable.
     if (request.method !== 'POST') return methodNotAllowed('POST')
+    // And POST alone is not enough. `SameSite=Lax` may stop a cross-site form
+    // sending the cookie, but the response's `Set-Cookie` deletes it anyway, so
+    // a page anywhere could sign a reader out. A browser always labels the
+    // request it is making; a non-browser client sends neither header and is not
+    // the threat.
+    if (!sameOrigin(request)) {
+      return json({ error: 'cross_origin' }, 403)
+    }
     return handleLogout()
   }
 

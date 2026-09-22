@@ -361,6 +361,29 @@ describe('the write gate renews a lapsed session', () => {
     }
   }
 
+  it('leaves the request body untouched while renewing', async () => {
+    const db = createFakeD1()
+    db.allow(writer, 'writer')
+    const { request, provider } = await lapsedSession()
+    const withBody = new Request(request, {
+      body: JSON.stringify({ motivation: 'commenting' }),
+    })
+
+    const gate = await marginWriteGate(withBody, envWith(db), {
+      now: NOW_MS,
+      fetchImpl: provider.fetchImpl,
+      jwks: createJwksSource(jwksUrl(config), {
+        fetchImpl: provider.fetchImpl,
+        now: () => NOW_MS,
+      }),
+    })
+
+    expect(gate?.denied).toBeUndefined()
+    // The whole point: a route below this still has to be able to read it.
+    expect(withBody.bodyUsed).toBe(false)
+    expect(await withBody.json()).toEqual({ motivation: 'commenting' })
+  })
+
   it('renews and lets the write through, returning the new cookie', async () => {
     const db = createFakeD1()
     db.allow(writer, 'writer')

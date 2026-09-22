@@ -14,6 +14,16 @@ export const MARGIN_HEALTH_PATH = `${MARGIN_API_PREFIX}/health`
 /** The Worker-owned prefixes, mirrored by `run_worker_first` in Wrangler. */
 export const WORKER_FIRST_PREFIXES = [MARGIN_API_PREFIX, AUTH_PREFIX] as const
 
+function json(body: unknown, status: number): Response {
+  return new Response(`${JSON.stringify(body)}\n`, {
+    status,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+    },
+  })
+}
+
 /** Methods that change something, and therefore need an allowlist row. */
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
@@ -83,18 +93,26 @@ export async function marginWriteGate(
     return { denied: withCookie(decision.response, renewal.cookie) }
   }
 
-  const retried = await authorize(withSessionCookie(request, renewal.cookie))
+  const retried = await authorize(probeWith(request, renewal.cookie))
   return retried.ok
     ? { setCookie: renewal.cookie }
     : { denied: withCookie(retried.response, renewal.cookie), setCookie: renewal.cookie }
 }
 
-/** The same request, carrying a renewed session cookie. */
-function withSessionCookie(request: Request, cookie: string): Request {
-  const value = cookie.slice(0, cookie.indexOf(';'))
+/**
+ * A headers-only stand-in for the request, carrying the renewed cookie.
+ *
+ * Built from the url and method rather than from `request`, because
+ * `new Request(request, …)` transfers the original's body: the retry would lock
+ * a stream the actual handler still has to read, and a mutation would arrive
+ * with no JSON in it. Authorization only reads the url, the method and the
+ * cookie, so a stand-in is enough and the original is never touched.
+ */
+function probeWith(request: Request, cookie: string): Request {
   const headers = new Headers(request.headers)
-  headers.set('cookie', value)
-  return new Request(request, { headers })
+  headers.set('cookie', cookie.slice(0, cookie.indexOf(';')))
+  headers.delete('content-length')
+  return new Request(request.url, { method: request.method, headers })
 }
 
 /** The same response, plus a `set-cookie`. */
@@ -150,7 +168,27 @@ export default {
     const gate = await marginWriteGate(request, env)
     if (gate?.denied) return gate.denied
 
-    const response = await env.ASSETS.fetch(request)
-    return gate?.setCookie ? withCookie(response, gate.setCookie) : response
+    if (!gate?.setCookie) return env.ASSETS.fetch(request)
+    // The session was renewed on the way in, so the rotated refresh token has to
+    // reach the browser whatever happens below. Without this, a handler that
+    // throws would leave the browser holding a token the provider has already
+    // spent, which is a logout no later request can recover from — and an
+    // unhandled throw is a 500 with no `set-cookie` at all.
+    try {
+      return withCookie(await env.ASSETS.fetch(request), gate.setCookie)
+    } catch {
+      return withCookie(
+        json(
+          {
+            error: {
+              code: 'margin_unavailable',
+              message: 'the request failed after the session was renewed; retry it',
+            },
+          },
+          500,
+        ),
+        gate.setCookie,
+      )
+    }
   },
 }

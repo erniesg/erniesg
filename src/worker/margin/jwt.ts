@@ -25,7 +25,12 @@ export const CLOCK_SKEW_SECONDS = 60
 export type AccessTokenClaims = {
   iss: string
   sub: string
-  client_id: string
+  /**
+   * Optional: AuthKit access tokens carry neither `client_id` nor `aud`. The
+   * application binding is the key set — see `verifyAccessToken`.
+   */
+  client_id?: string
+  aud?: string | string[]
   exp: number
   nbf?: number
   iat?: number
@@ -170,7 +175,16 @@ function asClaims(value: unknown): AccessTokenClaims | null {
   const record = value as Record<string, unknown>
   if (typeof record.iss !== 'string') return null
   if (typeof record.sub !== 'string') return null
-  if (typeof record.client_id !== 'string') return null
+  if (record.client_id !== undefined && typeof record.client_id !== 'string') {
+    return null
+  }
+  if (
+    record.aud !== undefined &&
+    typeof record.aud !== 'string' &&
+    !(Array.isArray(record.aud) && record.aud.every((one) => typeof one === 'string'))
+  ) {
+    return null
+  }
   if (typeof record.exp !== 'number' || !Number.isFinite(record.exp)) return null
   for (const optional of ['nbf', 'iat'] as const) {
     const claim = record[optional]
@@ -238,7 +252,17 @@ export async function verifyAccessToken(
   if (!verified) return { ok: false, reason: 'signature' }
 
   if (claims.iss !== config.issuer) return { ok: false, reason: 'issuer' }
-  if (claims.client_id !== config.clientId) {
+  // The application binding is cryptographic, not a claim. The key set lives at
+  // `/sso/jwks/<clientId>`, so a signature that verifies against it was made by
+  // a key belonging to this application and no other — which is why a token
+  // from a different application is rejected even though AuthKit access tokens
+  // carry neither `client_id` nor `aud`. Requiring `client_id` rejected every
+  // genuine token; it is checked when a provider does send it, and `aud` with it.
+  const claimed =
+    claims.client_id ??
+    (Array.isArray(claims.aud) ? claims.aud[0] : claims.aud) ??
+    config.clientId
+  if (claimed !== config.clientId) {
     return { ok: false, reason: 'client-id' }
   }
   if (!claims.sub.trim()) return { ok: false, reason: 'subject' }

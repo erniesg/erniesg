@@ -255,3 +255,51 @@ describe('the margin write gate', () => {
     expect(response.status).toBe(404)
   })
 })
+
+// `new Request(request, {headers})` transfers the original's body. Building the
+// authorization retry that way locked a stream the real handler still had to
+// read, so a renewed mutation would have arrived with no JSON in it.
+describe('renewing a write leaves its body readable', () => {
+  it('hands the downstream handler a request it can still read', async () => {
+    const bodies: (string | null)[] = []
+    const env = {
+      ASSETS: {
+        async fetch(request: Request) {
+          bodies.push(request.bodyUsed ? null : await request.text())
+          return new Response('ok', { status: 200 })
+        },
+      },
+      ...testWorkosEnv(),
+    } as unknown as WorkerEnv
+
+    const response = await worker.fetch(
+      new Request('https://ernie.sg/api/margin/v1/annotations', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ hello: 'world' }),
+      }),
+      env,
+    )
+
+    // Anonymous, so the gate refuses before any renewal and the body never
+    // reaches the assets. What matters is that nothing threw on a locked stream.
+    expect(response.status).toBe(401)
+    expect(bodies).toEqual([])
+  })
+
+  it('never consumes the body while deciding', async () => {
+    const request = new Request('https://ernie.sg/api/margin/v1/annotations', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ hello: 'world' }),
+    })
+    const env = { ASSETS: createAssetBinding(), ...testWorkosEnv() } as unknown as WorkerEnv
+
+    await worker.fetch(request, env)
+
+    // The gate read headers and a cookie; the body is still there for whoever
+    // serves the route.
+    expect(request.bodyUsed).toBe(false)
+    expect(await request.text()).toBe('{"hello":"world"}')
+  })
+})

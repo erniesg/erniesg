@@ -166,6 +166,48 @@ describe('verifyAccessToken', () => {
   })
 })
 
+// AuthKit access tokens carry neither `client_id` nor `aud`: the application
+// binding is the key set at `/sso/jwks/<clientId>`. Requiring the claim rejected
+// every genuine token before a session could be sealed.
+describe('the application binding', () => {
+  it('accepts a token with no client_id and no aud at all', async () => {
+    const claims = validClaims()
+    delete (claims as Record<string, unknown>).client_id
+    const token = await signer.sign(claims)
+
+    await expect(verify(token)).resolves.toMatchObject({ ok: true })
+  })
+
+  it('still rejects a client_id that names another application', async () => {
+    const token = await signer.sign(
+      validClaims({ client_id: 'client_some_other_application' }),
+    )
+
+    await expect(verify(token)).resolves.toMatchObject({ ok: false })
+  })
+
+  it('checks aud when a provider sends one instead', async () => {
+    const claims = validClaims()
+    delete (claims as Record<string, unknown>).client_id
+    const mine = await signer.sign({ ...claims, aud: TEST_CLIENT_ID })
+    const theirs = await signer.sign({ ...claims, aud: 'client_somebody_else' })
+    const array = await signer.sign({ ...claims, aud: [TEST_CLIENT_ID] })
+
+    await expect(verify(mine)).resolves.toMatchObject({ ok: true })
+    await expect(verify(array)).resolves.toMatchObject({ ok: true })
+    await expect(verify(theirs)).resolves.toMatchObject({ ok: false })
+  })
+
+  it('refuses a malformed client_id or aud rather than ignoring it', async () => {
+    for (const claim of [{ client_id: 7 }, { aud: 7 }, { aud: [7] }]) {
+      const token = await signer.sign(validClaims(claim as Record<string, unknown>))
+      await expect(verify(token), JSON.stringify(claim)).resolves.toMatchObject({
+        ok: false,
+      })
+    }
+  })
+})
+
 describe('JWKS availability', () => {
   it('fails closed when the provider is unreachable', async () => {
     const provider = createFakeProvider({ jwks: signer.jwks })

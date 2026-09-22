@@ -94,6 +94,55 @@ export function publicationReceiptRequiresCanonicalRouteParity(
   return false
 }
 
+export function publicationReceiptRelaxesRepositoryCleanliness(
+  receipt,
+  options = {},
+) {
+  const policy = receipt?.source?.routeParity
+  if (policy === 'adapter-conformance') {
+    if (options.context !== 'adapter-conformance')
+      throw new Error(
+        'Publication receipt uses the internal adapter-conformance cleanliness policy outside its checker context',
+      )
+    return true
+  }
+  if (options.context === 'adapter-conformance')
+    throw new Error(
+      'Adapter conformance checks require the internal adapter-conformance cleanliness policy',
+    )
+  return false
+}
+
+export function assertPublicationReceiptRepositoryBinding(
+  receipt,
+  currentRepository,
+  options = {},
+) {
+  const relaxesCleanliness = publicationReceiptRelaxesRepositoryCleanliness(
+    receipt,
+    options,
+  )
+  assert(
+    receipt?.repository?.commit === currentRepository.commit,
+    'Publication receipt is bound to a different checked-out commit',
+  )
+  if (relaxesCleanliness) {
+    // Adapter conformance asks whether two adapters agree, and publishes
+    // nothing durable. An unrelated dirty file answers nothing about that, so
+    // the receipt records what it observed without being bound to it.
+    assert(
+      typeof receipt.repository.dirty === 'boolean',
+      'Publication receipt does not record its observed repository cleanliness',
+    )
+    return relaxesCleanliness
+  }
+  assert(
+    receipt.repository.dirty === false && !currentRepository.dirty,
+    'Publication receipt is not bound to a clean checked-out repository',
+  )
+  return relaxesCleanliness
+}
+
 export function assertPublicationPdfPageCountPolicy(
   a5Pages,
   a4Pages,
@@ -1137,14 +1186,10 @@ export async function publicationCheck(
     execution.cleanlinessExclusions,
   )
   const currentCommit = currentRepository.commit
-  const currentDirty = currentRepository.dirty
-  assert(
-    receipt.repository?.commit === currentCommit,
-    'Publication receipt is bound to a different checked-out commit',
-  )
-  assert(
-    receipt.repository?.dirty === false && !currentDirty,
-    'Publication receipt is not bound to a clean checked-out repository',
+  assertPublicationReceiptRepositoryBinding(
+    receipt,
+    currentRepository,
+    execution,
   )
   const expectedPdfRenderer = publicationPdfRendererForRuntime()
   const currentPublicationBrowser =

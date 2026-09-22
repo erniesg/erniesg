@@ -47,10 +47,10 @@ const {
       data-reading-column="navigation"
       aria-label="Contents"
     >
-      <!-- Below the breakpoint the rail stacks above the article, and the
-           book has 46 nodes, so a phone would open every chapter on several
-           screens of contents. The disclosure collapses it there; above the
-           breakpoint the rule set unwraps it back into a plain rail. -->
+      <!-- Below the breakpoint this column stacks above the article, and a
+           long contents list would push the text off the first screens. The
+           disclosure collapses it there; above the breakpoint the rule set
+           unwraps it back into a plain rail. -->
       <details class="reading-contents">
         <summary>Contents</summary>
         <slot name="navigation" />
@@ -98,14 +98,6 @@ const {
     cursor: pointer;
     padding: 0.5rem 0;
     font-weight: 600;
-  }
-
-  /* CONTENT_CSS gives figures, hints and solutions hard-coded light
-     backgrounds. Without an explicit foreground here they inherit the site's,
-     which in dark mode is near-white on near-white. Pin both together so the
-     generated panels stay legible in either theme. */
-  .book-content {
-    color: #1a1a1a;
   }
 
   /* Header.astro is `sticky top-0 z-10` and about 4rem tall, so anything this

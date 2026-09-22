@@ -33,7 +33,10 @@ const uri = documentUri(node.path)
 // spacing — so the few rules that put them back are the site's business and
 // stay here rather than in the renderer.
 const RESTORED = `
-.book-content { overflow-wrap: anywhere; }
+/* CONTENT_CSS gives figures, hints and solutions hard-coded light
+   backgrounds, so this has to pin a foreground with them: inheriting the
+   site's would put near-white text on a near-white panel in dark mode. */
+.book-content { overflow-wrap: anywhere; color: #1a1a1a; }
 .book-content h1, .book-content h2, .book-content h3 { font-weight: 700; }
 .book-content p { margin: 1rem 0; }
 .book-content ul { list-style: disc; margin: 1rem 0; padding-left: 1.4rem; }

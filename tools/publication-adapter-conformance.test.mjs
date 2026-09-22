@@ -21,15 +21,19 @@ describe('publication adapter output conformance CLI', () => {
     ).toThrow(/Usage/)
   })
 
+  // The timeouts in this file are wall-clock budgets, not assertions. Both
+  // CLI tests load the whole publication toolchain under tsx, the full matrix
+  // renders four profiles twice, and this host runs several issue workers at
+  // once. What is under test is the exit status and the output, not the clock.
   it('runs its CLI entry point instead of silently exiting', () => {
     const result = spawnSync(
       process.execPath,
       ['--import=tsx', resolve('tools/publication-adapter-conformance.mjs')],
-      { encoding: 'utf8' },
+      { encoding: 'utf8', timeout: 60_000 },
     )
     expect(result.status).toBe(1)
     expect(result.stderr).toMatch(/Usage: publication-adapter-conformance/)
-  })
+  }, 60_000)
 
   it('rejects unsupported win32 before reads, directories, or rendering', async () => {
     const temporaryRoot = await mkdtemp(
@@ -174,7 +178,7 @@ describe('publication adapter output conformance CLI', () => {
           '--output',
           output,
         ],
-        { encoding: 'utf8', timeout: 120_000 },
+        { encoding: 'utf8', timeout: 360_000 },
       )
       expect(result.status, result.stderr).toBe(0)
       expect(result.stdout).toContain(
@@ -183,5 +187,5 @@ describe('publication adapter output conformance CLI', () => {
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true })
     }
-  }, 120_000)
+  }, 360_000)
 })

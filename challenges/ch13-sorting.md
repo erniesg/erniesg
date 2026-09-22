@@ -161,6 +161,37 @@ afterwards flips the ties as well, because it flips everything. When the tie
 order carries meaning — and at a race it does — `reverse=True` is the one you
 want.
 
+:::exercise{id="ch13-two-sorts"}
+Two sorts, least important first: order by time, then by category. Print the
+names — each category fastest first.
+
+```python
+entries = [
+    ("ada", "over60", 2431),
+    ("sam", "open", 2199),
+    ("mia", "over60", 2205),
+    ("hal", "open", 2344),
+]
+# your code here
+```
+
+```output
+['sam', 'hal', 'mia', 'ada']
+```
+
+```answer
+entries = [
+    ("ada", "over60", 2431),
+    ("sam", "open", 2199),
+    ("mia", "over60", 2205),
+    ("hal", "open", 2344),
+]
+by_time = sorted(entries, key=lambda entry: entry[2])
+board = sorted(by_time, key=lambda entry: entry[1])
+print([entry[0] for entry in board])
+```
+:::
+
 ## What sorting costs, and when it pays for itself
 
 Sorting is the n log n row from Chapter 11. Scanning is the row above it. The
@@ -216,6 +247,45 @@ But two numbers that are close together must end up next to each other once the
 list is in order, so you only have to look at neighbours. One sort, one pass,
 about four million steps. Sorting did not answer the question. It made the
 question cheap.
+
+:::exercise{id="ch13-distinct-by-sorting"}
+Count the distinct values without a set: sort, then walk the neighbours and
+count each place where the value changes. Mind the empty list.
+
+```python
+def distinct(values):
+    # your code here
+    ...
+
+
+print(distinct([2, 1, 1, 2, 3, 1]))
+print(distinct([7]))
+print(distinct([]))
+```
+
+```output
+3
+1
+0
+```
+
+```answer
+def distinct(values):
+    if not values:
+        return 0
+    in_order = sorted(values)
+    count = 1
+    for earlier, later in zip(in_order, in_order[1:]):
+        if later != earlier:
+            count += 1
+    return count
+
+
+print(distinct([2, 1, 1, 2, 3, 1]))
+print(distinct([7]))
+print(distinct([]))
+```
+:::
 
 ## When a number can just be a place
 
@@ -295,6 +365,39 @@ Which is the same trade you saw last chapter, from the other side. A hash map
 turns a key into a place by a rule that scrambles. Counting sort turns a key
 into a place by the key *being* the place — so the order survives, and that is
 exactly what a hash map throws away.
+
+:::exercise{id="ch13-product-of-three"}
+The largest product of three values. Sort once; then only two candidates can
+win — the three biggest, or the two most negative times the biggest.
+
+```python
+def best_three(values):
+    # your code here
+    ...
+
+
+print(best_three([-3, 1, 2, -2, 5, 6]))
+print(best_three([-10, -10, 1, 3, 2]))
+print(best_three([1, 2, 3]))
+```
+
+```output
+60
+300
+6
+```
+
+```answer
+def best_three(values):
+    v = sorted(values)
+    return max(v[-1] * v[-2] * v[-3], v[0] * v[1] * v[-1])
+
+
+print(best_three([-3, 1, 2, -2, 5, 6]))
+print(best_three([-10, -10, 1, 3, 2]))
+print(best_three([1, 2, 3]))
+```
+:::
 
 ## What this buys the agent
 

@@ -62,6 +62,29 @@ print("2" + str(3))      # 23
 print(float("7.5") + 1)  # 8.5
 ```
 
+:::exercise{id="ch01-coach-trip"}
+The booking form handed you both numbers as text. Turn them into numbers and
+print the total the club should charge: 15, not 53.
+
+```python
+price = "5"
+seats = "3"
+total = ...
+print(total)
+```
+
+```output
+15
+```
+
+```answer
+price = "5"
+seats = "3"
+total = int(price) * int(seats)
+print(total)
+```
+:::
+
 ## Names hold values
 
 A name is a label you stick on a value:
@@ -98,6 +121,33 @@ count = "five"
 print(count * 2)     # fivefive, not 10
 ```
 
+:::exercise{id="ch01-work-it-out-again"}
+A tin costs 4 and you buy 3. Then the price goes up to 6. Make `total` show
+the new cost before it is printed.
+
+```python
+price = 4
+quantity = 3
+total = price * quantity
+price = 6
+# your code here
+print(total)
+```
+
+```output
+18
+```
+
+```answer
+price = 4
+quantity = 3
+total = price * quantity
+price = 6
+total = price * quantity
+print(total)
+```
+:::
+
 ## Integer division, and the two slashes
 
 Two kinds of division exist, and choosing the wrong one quietly changes your
@@ -117,6 +167,31 @@ many whole ones fit, and what is left over".
 Three kinds of value, and what the same symbol does to each.
 :::
 
+:::exercise{id="ch01-full-tables"}
+310 people are coming and a table seats 12. Print how many tables are full,
+then how many people are left over, on one line.
+
+```python
+people = 310
+per_table = 12
+full = ...
+left_over = ...
+print(full, left_over)
+```
+
+```output
+25 10
+```
+
+```answer
+people = 310
+per_table = 12
+full = people // per_table
+left_over = people % per_table
+print(full, left_over)
+```
+:::
+
 ## Comparing, and the difference between = and ==
 
 One equals sign gives a name to a value. Two asks a question:
@@ -130,6 +205,27 @@ print(score > 10)     # False
 
 The answer to a question is a `bool`: `True` or `False`. You will hand those to
 `if` in the next chapter, and the whole of branching rests on them.
+
+:::exercise{id="ch01-is-it-odd"}
+Ask the question with `%` and `==`: print whether 17 is odd. The answer is a
+`bool`.
+
+```python
+number = 17
+is_odd = ...
+print(is_odd)
+```
+
+```output
+True
+```
+
+```answer
+number = 17
+is_odd = number % 2 == 1
+print(is_odd)
+```
+:::
 
 ## What this buys the agent
 

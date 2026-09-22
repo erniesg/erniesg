@@ -42,6 +42,25 @@ print(tins[-1])     # the last one
 print(tins[-2])
 ```
 
+:::exercise{id="ch03-first-and-last"}
+Print the first tin and the last tin on one line, with positions that would
+still work if the shelf were a hundred tins long.
+
+```python
+tins = ["beans", "rice", "soup", "pasta", "oil"]
+# your code here
+```
+
+```output
+beans oil
+```
+
+```answer
+tins = ["beans", "rice", "soup", "pasta", "oil"]
+print(tins[0], tins[-1])
+```
+:::
+
 ## Slicing: a piece of a list
 
 ```python run
@@ -55,6 +74,27 @@ print(readings[2:99])   # slicing never complains about running off the end
 A slice is always a **new** list. The original is untouched, which makes
 `readings[:]` — every position, from start to end — the short way to ask for a
 copy. Hold on to that; it comes back at the end of the chapter.
+
+:::exercise{id="ch03-last-three"}
+Two slices: print the last three readings, then every reading except the
+first.
+
+```python
+readings = [3, 8, 2, 9, 4, 1]
+# your code here
+```
+
+```output
+[9, 4, 1]
+[8, 2, 9, 4, 1]
+```
+
+```answer
+readings = [3, 8, 2, 9, 4, 1]
+print(readings[-3:])
+print(readings[1:])
+```
+:::
 
 ## Growing a list
 
@@ -97,6 +137,27 @@ position and returns what it removed.
 These methods change the list where it stands and hand back `None`. So
 `shelf = shelf.append("tea")` does not give you a longer shelf; it gives you
 `None` and loses the shelf.
+
+:::exercise{id="ch03-one-copy"}
+Take **one** tin of beans off the shelf — the first — and print what is
+left. The second tin of beans stays.
+
+```python
+shelf = ["beans", "rice", "beans", "soup"]
+# your code here
+print(shelf)
+```
+
+```output
+['rice', 'beans', 'soup']
+```
+
+```answer
+shelf = ["beans", "rice", "beans", "soup"]
+shelf.remove("beans")
+print(shelf)
+```
+:::
 
 ## Is it in there, and how many
 
@@ -155,6 +216,36 @@ for tin in tins:
 print(good)
 ```
 
+:::exercise{id="ch03-drop-the-failures"}
+The meter writes `-1` when a reading failed. Build a new list without the
+`-1`s and leave the original alone. A reading of `0` is real, so it stays.
+
+```python
+readings = [4, -1, -1, 7, 0, -1, 3]
+good = []
+for reading in readings:
+    # your code here
+    ...
+print(good)
+print(readings)
+```
+
+```output
+[4, 7, 0, 3]
+[4, -1, -1, 7, 0, -1, 3]
+```
+
+```answer
+readings = [4, -1, -1, 7, 0, -1, 3]
+good = []
+for reading in readings:
+    if reading != -1:
+        good.append(reading)
+print(good)
+print(readings)
+```
+:::
+
 ## The second trap: b = a does not make a copy
 
 ```python run
@@ -186,6 +277,29 @@ is holding it.
 
 :::figure{id="two-names-one-list"}
 One list can answer to several names. A slice makes a second list.
+:::
+
+:::exercise{id="ch03-a-real-backup"}
+Make `backup` a real copy, so that it still has the soup after the shelf
+loses it.
+
+```python
+shelf = ["beans", "rice", "soup"]
+backup = ...
+shelf.pop()
+print(backup)
+```
+
+```output
+['beans', 'rice', 'soup']
+```
+
+```answer
+shelf = ["beans", "rice", "soup"]
+backup = shelf[:]
+shelf.pop()
+print(backup)
+```
 :::
 
 ## What this buys the agent

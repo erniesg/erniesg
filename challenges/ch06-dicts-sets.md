@@ -69,6 +69,27 @@ print(shelf.get("grace", 0))   # 9 — the real value; the stand-in is ignored
 `get` never raises. Choose the default that makes the following line work: `0`
 if you are about to add to it, `""` if you are about to print it.
 
+:::exercise{id="ch06-price-or-zero"}
+Print the price of `tea`, which is not on the list, as 0 — then the price of
+`rice`. No crash allowed.
+
+```python
+prices = {"rice": 3, "oil": 7}
+# your code here
+```
+
+```output
+0
+3
+```
+
+```answer
+prices = {"rice": 3, "oil": 7}
+print(prices.get("tea", 0))
+print(prices.get("rice", 0))
+```
+:::
+
 ## Counting is what dicts are best at
 
 Here is the pattern you will write for the rest of your life. One pass, one
@@ -86,6 +107,32 @@ Read the middle line from the inside out. `counts.get(name, 0)` is the count so
 far, or `0` the first time this name appears. Add one. Put it back under the
 same key. The first sighting and the fiftieth run the same line, which is why
 nobody needs an `if` here.
+
+:::exercise{id="ch06-count-the-basket"}
+Count how many of each fruit went through the till, in one pass, with the
+line you just learned.
+
+```python
+items = ["apple", "pear", "apple", "fig", "apple", "pear"]
+counts = {}
+for item in items:
+    # your code here
+    ...
+print(counts)
+```
+
+```output
+{'apple': 3, 'pear': 2, 'fig': 1}
+```
+
+```answer
+items = ["apple", "pear", "apple", "fig", "apple", "pear"]
+counts = {}
+for item in items:
+    counts[item] = counts.get(item, 0) + 1
+print(counts)
+```
+:::
 
 ## Walking a dict
 
@@ -112,6 +159,34 @@ for name, count in counts.items():
 print("ada" in counts)    # True — there is a pigeonhole labelled ada
 print(3 in counts)        # False — 3 is a count, not a label
 ```
+
+:::exercise{id="ch06-most-common"}
+Walk `counts.items()` and print the fruit that sold most, and how many. Keep
+the best so far, the way Chapter 4 did.
+
+```python
+counts = {"apple": 3, "pear": 2, "fig": 1}
+best_item = None
+best_count = 0
+# your code here
+print(best_item, best_count)
+```
+
+```output
+apple 3
+```
+
+```answer
+counts = {"apple": 3, "pear": 2, "fig": 1}
+best_item = None
+best_count = 0
+for item, count in counts.items():
+    if count > best_count:
+        best_item = item
+        best_count = count
+print(best_item, best_count)
+```
+:::
 
 ## Sets: membership without a value
 
@@ -140,6 +215,33 @@ print(sorted(set(visits)))
 Watch the punctuation. `{}` on its own is an empty *dict*; an empty set is
 `set()`. Sets have no order worth relying on either, so sort them before you
 print.
+
+:::exercise{id="ch06-first-to-return"}
+*Have I seen this one before?* is a set question. Print the first visitor
+who comes in for a second time.
+
+```python
+visits = ["mia", "sam", "ada", "sam", "mia"]
+seen = set()
+for name in visits:
+    # your code here
+    ...
+```
+
+```output
+sam
+```
+
+```answer
+visits = ["mia", "sam", "ada", "sam", "mia"]
+seen = set()
+for name in visits:
+    if name in seen:
+        print(name)
+        break
+    seen.add(name)
+```
+:::
 
 ## Keys have to be hashable
 
@@ -194,6 +296,49 @@ onwards, and real programs ask thousands.
 
 How a dict finds the place without reading every key is hashing. Take the flat
 line on trust until Part II shows you the trick.
+
+:::exercise{id="ch06-smallest-missing"}
+Return the smallest **positive** whole number that is not in the list. Say it
+mechanically first: the smallest `x` where `x > 0` and `x` is not in the
+numbers. Then: *does x exist?* — so put them in a set, and count up from 1.
+
+```python
+def smallest_missing(numbers):
+    # your code here
+    ...
+
+
+print(smallest_missing([1, 3, 6, 4, 1, 2]))
+print(smallest_missing([1, 2, 3]))
+print(smallest_missing([-1, -3]))
+print(smallest_missing([1, 4, 0, -1]))
+print(smallest_missing([0, 99, 100]))
+```
+
+```output
+5
+4
+1
+2
+1
+```
+
+```answer
+def smallest_missing(numbers):
+    seen = set(numbers)
+    candidate = 1
+    while candidate in seen:
+        candidate += 1
+    return candidate
+
+
+print(smallest_missing([1, 3, 6, 4, 1, 2]))
+print(smallest_missing([1, 2, 3]))
+print(smallest_missing([-1, -3]))
+print(smallest_missing([1, 4, 0, -1]))
+print(smallest_missing([0, 99, 100]))
+```
+:::
 
 ## What this buys the agent
 

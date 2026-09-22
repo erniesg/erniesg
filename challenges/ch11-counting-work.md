@@ -89,6 +89,29 @@ print("times more work:                ", books * records // (records + books))
 33,000 times the work, for an answer a set gets to in a fiftieth of a second.
 That number came out of two multiplications and cost nothing to find.
 
+:::exercise{id="ch11-price-it-first"}
+50,000 books against 50,000 records. Print the rough seconds for the
+every-pair version, then for the one-pass-and-a-set version.
+
+```python
+books, records = 50_000, 50_000
+steps_per_second = 10_000_000
+# your code here
+```
+
+```output
+250
+0.01
+```
+
+```answer
+books, records = 50_000, 50_000
+steps_per_second = 10_000_000
+print(books * records // steps_per_second)
+print((books + records) / steps_per_second)
+```
+:::
+
 ## The rule: multiply the bounds, divide by ten million
 
 That is the whole habit.
@@ -183,6 +206,43 @@ seconds: over an hour. The row above it, for the same 200,000 things, is a
 third of a second. Nobody in this story wrote slow code — one of them wrote a
 loop inside a loop.
 
+:::exercise{id="ch11-any-repeats"}
+Write `has_repeat` in one pass: remember what you have seen in a set, and
+answer as soon as something comes round twice.
+
+```python
+def has_repeat(values):
+    # your code here
+    ...
+
+
+print(has_repeat([3, 1, 4, 1, 5]))
+print(has_repeat([2, 7, 1, 8]))
+print(has_repeat([]))
+```
+
+```output
+True
+False
+False
+```
+
+```answer
+def has_repeat(values):
+    seen = set()
+    for value in values:
+        if value in seen:
+            return True
+        seen.add(value)
+    return False
+
+
+print(has_repeat([3, 1, 4, 1, 5]))
+print(has_repeat([2, 7, 1, 8]))
+print(has_repeat([]))
+```
+:::
+
 ## The difference only shows up when n grows
 
 Here is the same question asked of a list and of a set, at three sizes. Both
@@ -228,6 +288,44 @@ matters and no amount of tidy code will save the wrong one.
 Which means the question is never "is this fast?" It is "how big does n get?"
 — and that is written in the problem's constraints, which is why the constraint
 line is the line to read first.
+
+:::exercise{id="ch11-pair-to-target"}
+Is there a pair at two different positions that adds up to `target`? Every
+pair is n squared. One pass does it: for each value, ask whether its partner
+has already gone past.
+
+```python
+def pair_adds_to(values, target):
+    # your code here
+    ...
+
+
+print(pair_adds_to([8, 3, 5, 11], 16))
+print(pair_adds_to([4, 6], 8))
+print(pair_adds_to([4, 4], 8))
+```
+
+```output
+True
+False
+True
+```
+
+```answer
+def pair_adds_to(values, target):
+    seen = set()
+    for value in values:
+        if target - value in seen:
+            return True
+        seen.add(value)
+    return False
+
+
+print(pair_adds_to([8, 3, 5, 11], 16))
+print(pair_adds_to([4, 6], 8))
+print(pair_adds_to([4, 4], 8))
+```
+:::
 
 ## The clock is a worse witness than the count
 

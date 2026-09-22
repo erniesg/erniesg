@@ -68,6 +68,37 @@ So: take a list, return a new list. If you really do mean to change the
 caller's list, put it in the name — `add_member(club, name)` reads like it
 changes something, `shortlist` does not.
 
+:::exercise{id="ch10-top-two"}
+Return the two highest scores, highest first — without changing the list you
+were handed.
+
+```python
+def top_two(scores):
+    # your code here
+    ...
+
+
+scores = [31, 48, 29, 55]
+print(top_two(scores))
+print(scores)
+```
+
+```output
+[55, 48]
+[31, 48, 29, 55]
+```
+
+```answer
+def top_two(scores):
+    return sorted(scores, reverse=True)[:2]
+
+
+scores = [31, 48, 29, 55]
+print(top_two(scores))
+print(scores)
+```
+:::
+
 ## A comprehension is a filter and a transform on one line
 
 You will write "go through this list and keep some of it" hundreds of times.
@@ -114,6 +145,27 @@ One warning. A comprehension is for one clear step. When it grows three
 clauses and a condition you can't read aloud, write the loop back out. Short is
 not the goal; readable is.
 
+:::exercise{id="ch10-penalty"}
+One comprehension: keep the times under 40 and add a 2-second penalty to each
+one you keep.
+
+```python
+times = [31, 48, 29, 55, 33]
+penalised = ...
+print(penalised)
+```
+
+```output
+[33, 31, 35]
+```
+
+```answer
+times = [31, 48, 29, 55, 33]
+penalised = [t + 2 for t in times if t < 40]
+print(penalised)
+```
+:::
+
 ## `sorted` takes a key
 
 `sorted` on plain numbers or plain text needs no help. On anything with parts,
@@ -142,6 +194,24 @@ key alone. The second settles a tie. Sam and Ada both swam 29, so the keys
 `(29, "sam")` and `(29, "ada")` are compared on the number, which decides
 nothing, and then on the name, which puts Ada ahead. Tie-breaking is a tuple,
 not an `if`.
+
+:::exercise{id="ch10-time-then-name"}
+Order the swimmers by time, and where two times tie, by name.
+
+```python
+swimmers = [("sam", 29), ("mia", 31), ("ada", 29)]
+# your code here
+```
+
+```output
+[('ada', 29), ('sam', 29), ('mia', 31)]
+```
+
+```answer
+swimmers = [("sam", 29), ("mia", 31), ("ada", 29)]
+print(sorted(swimmers, key=lambda pair: (pair[1], pair[0])))
+```
+:::
 
 ## Unpacking: naming both halves at once
 
@@ -209,6 +279,31 @@ print(list(zip(names, seconds)))
 
 `zip` stops at the shorter list. That is usually what you want and occasionally
 a silent bug, so if the two lists must be the same length, check it.
+
+:::exercise{id="ch10-results-board"}
+Names and times arrive as two lists. Print a results board, fastest first:
+place (from 1), name, time.
+
+```python
+names = ["mia", "sam", "ada"]
+seconds = [31, 29, 33]
+# your code here
+```
+
+```output
+1 sam 29
+2 mia 31
+3 ada 33
+```
+
+```answer
+names = ["mia", "sam", "ada"]
+seconds = [31, 29, 33]
+board = sorted(zip(names, seconds), key=lambda pair: pair[1])
+for place, (name, time_taken) in enumerate(board, start=1):
+    print(place, name, time_taken)
+```
+:::
 
 ## Empty things are False, and that reads like English
 

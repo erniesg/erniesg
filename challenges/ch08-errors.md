@@ -166,6 +166,35 @@ except ZeroDivisionError as problem:
 Look at how thin `KeyError`'s message is — just the key it could not find. It
 is still the one fact you needed.
 
+:::exercise{id="ch08-count-bad-as-zero"}
+Add up the rows. A row that is not a number counts as 0 — catch exactly
+`ValueError`, nothing wider.
+
+```python
+rows = ["12", "x", "30", ""]
+total = 0
+for row in rows:
+    # your code here
+    ...
+print(total)
+```
+
+```output
+42
+```
+
+```answer
+rows = ["12", "x", "30", ""]
+total = 0
+for row in rows:
+    try:
+        total += int(row)
+    except ValueError:
+        pass
+print(total)
+```
+:::
+
 ## A bare except is a trap
 
 You can leave the error name off and catch everything. Do not.
@@ -232,6 +261,38 @@ print(total_reporting(rows))
 value with its quotes so you can see whether it is `12` or `"12 "`. Now the
 volunteer has one row to fix, not 312 to re-read.
 
+:::exercise{id="ch08-name-the-rows"}
+Collect the row numbers, counting from 1, of rows that are not numbers. Print
+them, then the total of the rows that were.
+
+```python
+rows = ["5", "five", "7", "", "3"]
+bad = []
+total = 0
+# your code here
+print("bad rows:", bad)
+print("total:", total)
+```
+
+```output
+bad rows: [2, 4]
+total: 15
+```
+
+```answer
+rows = ["5", "five", "7", "", "3"]
+bad = []
+total = 0
+for number, row in enumerate(rows, start=1):
+    try:
+        total += int(row)
+    except ValueError:
+        bad.append(number)
+print("bad rows:", bad)
+print("total:", total)
+```
+:::
+
 ## Raise it yourself
 
 Sometimes there is no sensible answer to give back. Say so, loudly, at the
@@ -258,6 +319,43 @@ the fault is.
 Pick the name honestly. `TypeError` means the wrong *kind* of value arrived —
 text where a number belonged. `ValueError` means the kind was right and the
 content was impossible — a negative count, an empty list, zero people.
+
+:::exercise{id="ch08-say-it-is-empty"}
+An empty list has no average. Make `average` raise `ValueError` with the
+message `no values to average` before it divides by zero.
+
+```python
+def average(values):
+    # your code here
+    return sum(values) / len(values)
+
+
+print(average([2, 4]))
+try:
+    print(average([]))
+except ValueError as problem:
+    print("ValueError:", problem)
+```
+
+```output
+3.0
+ValueError: no values to average
+```
+
+```answer
+def average(values):
+    if not values:
+        raise ValueError("no values to average")
+    return sum(values) / len(values)
+
+
+print(average([2, 4]))
+try:
+    print(average([]))
+except ValueError as problem:
+    print("ValueError:", problem)
+```
+:::
 
 ## What this buys the agent
 

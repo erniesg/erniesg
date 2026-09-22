@@ -38,6 +38,27 @@ print(len(name), "characters")
 `name[:6]` is "up to but not including position 6", the same half-open rule
 lists use. It is worth reading `[-3:]` out loud as "the last three".
 
+:::exercise{id="ch07-name-and-extension"}
+Print the extension without its dot, then the file name without the
+extension. Slices only.
+
+```python
+name = "report.csv"
+# your code here
+```
+
+```output
+csv
+report
+```
+
+```answer
+name = "report.csv"
+print(name[-3:])
+print(name[:-4])
+```
+:::
+
 ## You never edit a string
 
 Try to change one character and Python refuses:
@@ -101,6 +122,28 @@ print(messy.split(" "))
 No argument means "split on any run of whitespace and throw the empties away".
 That single difference is the whole of the first challenge below.
 
+:::exercise{id="ch07-tidy-the-order"}
+Split the order on commas, strip each item, and print them joined with
+` | `.
+
+```python
+line = " eggs,milk , bread ,tea"
+# your code here
+```
+
+```output
+eggs | milk | bread | tea
+```
+
+```answer
+line = " eggs,milk , bread ,tea"
+items = []
+for part in line.split(","):
+    items.append(part.strip())
+print(" | ".join(items))
+```
+:::
+
 ## f-strings
 
 Putting values into text by hand is fiddly. An `f` before the quote lets you
@@ -116,6 +159,29 @@ print(f"{who.title()} averaged {visits / 7:.2f} visits a day")
 Anything inside the braces is ordinary Python. After a colon comes formatting:
 `.2f` means "a number with two digits after the point", which is how you stop a
 report printing `0.42857142857142855`.
+
+:::exercise{id="ch07-receipt-line"}
+Print one receipt line with an f-string, the price to two decimal places:
+`3 x rice = 3.60`.
+
+```python
+item = "rice"
+quantity = 3
+price = 1.2
+# your code here
+```
+
+```output
+3 x rice = 3.60
+```
+
+```answer
+item = "rice"
+quantity = 3
+price = 1.2
+print(f"{quantity} x {item} = {quantity * price:.2f}")
+```
+:::
 
 ## Comparing without caring about case
 
@@ -134,6 +200,33 @@ compare. Both sides. Lowercasing only the typed one leaves you with the same
 bug against a stored address that came in shouting.
 
 :::figure{id="text-pipeline"}
+:::
+
+:::exercise{id="ch07-same-address"}
+Count how many typed addresses are the stored one once you normalise them —
+strip the ends and force one case.
+
+```python
+typed = ["Ada@Example.org ", "ada@example.org", " ADA@EXAMPLE.ORG", "ada@example.com"]
+stored = "ada@example.org"
+matches = 0
+# your code here
+print(matches)
+```
+
+```output
+3
+```
+
+```answer
+typed = ["Ada@Example.org ", "ada@example.org", " ADA@EXAMPLE.ORG", "ada@example.com"]
+stored = "ada@example.org"
+matches = 0
+for address in typed:
+    if address.strip().lower() == stored:
+        matches += 1
+print(matches)
+```
 :::
 
 ## A character is not always a byte
@@ -156,6 +249,36 @@ letter down the middle.
 Work in characters in Python and this stays out of your way. It comes back when
 you count what fits in a budget, where the unit is neither characters nor bytes
 but tokens. Later.
+
+:::exercise{id="ch07-reads-both-ways"}
+A word reads the same both ways if it equals itself reversed. Ignoring case,
+print whether each word does. (`word[::-1]` is the word backwards.)
+
+```python
+def same_both_ways(word):
+    # your code here
+    ...
+
+
+print(same_both_ways("Level"))
+print(same_both_ways("river"))
+```
+
+```output
+True
+False
+```
+
+```answer
+def same_both_ways(word):
+    word = word.lower()
+    return word == word[::-1]
+
+
+print(same_both_ways("Level"))
+print(same_both_ways("river"))
+```
+:::
 
 ## What this buys the agent
 

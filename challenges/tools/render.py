@@ -494,7 +494,15 @@ def render_node(
             emit("card", problem_card(referenced, parts))
         elif name == "figure":
             figure_number += 1
-            emit("figure", figure(attrs.get("id", ""), inner, target, figure_number))
+            # Same rule the code cells follow: a walk figure's back/next only
+            # works because the local preview ships the `data-walk` handler. A
+            # static host does not, so asking for the print body gives the
+            # reader every step as a list instead of two dead buttons.
+            figure_target = target if runnable else "print"
+            emit(
+                "figure",
+                figure(attrs.get("id", ""), inner, figure_target, figure_number),
+            )
         elif name == "hint":
             if support == "unaided" and target != "print" and reveal == "grader":
                 continue

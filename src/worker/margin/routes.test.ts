@@ -516,3 +516,139 @@ describe('the wire format survives a POST and a GET', () => {
     expect(proposal?.body?.value).toBe('a proposed replacement')
   })
 })
+
+/** The findings from review of the rescue PR, each with the case that found it. */
+describe('review findings', () => {
+  // The delete path is owner-scoped, so nothing it does may reach somebody
+  // else's annotation. A cascade through `parent_id` would have done exactly
+  // that, and quietly.
+  it('refuses to delete a parent that other people have replied to', async () => {
+    const parent = (await (await post(
+      webAnnotation({ source: CHAPTER_ONE, visibility: 'public', body: 'ada asks' }),
+    )).json()) as WireAnnotation
+
+    const reply = await post(
+      webAnnotation({
+        source: CHAPTER_ONE,
+        visibility: 'public',
+        body: 'bob answers',
+        parentId: bareId(parent),
+      }),
+      BOB,
+    )
+    expect(reply.status).toBe(201)
+
+    const refused = await harness.request(
+      'DELETE',
+      `/annotations/${bareId(parent)}${scopeQuery(CHAPTER_ONE)}`,
+      { as: ADA },
+    )
+    expect(refused.status).toBe(409)
+    expect(await refused.json()).toMatchObject({
+      error: { code: 'has_replies' },
+    })
+
+    // Both are still there, Bob's included.
+    const remaining = await list(CHAPTER_ONE, BOB)
+    expect(remaining.map((entry) => entry.body?.value).sort()).toEqual([
+      'ada asks',
+      'bob answers',
+    ])
+  })
+
+  it('still deletes an annotation nobody has replied to', async () => {
+    const own = (await (await post(
+      webAnnotation({ source: CHAPTER_ONE, body: 'no replies here' }),
+    )).json()) as WireAnnotation
+
+    const response = await harness.request(
+      'DELETE',
+      `/annotations/${bareId(own)}${scopeQuery(CHAPTER_ONE)}`,
+      { as: ADA },
+    )
+    expect(response.status).toBe(204)
+  })
+
+  // A client writing a reply has the parent's returned `id`, which is the IRI.
+  // Requiring the bare key meant the obvious thing failed with `unknown_parent`.
+  it('takes the parent id in the form it handed back', async () => {
+    const parent = (await (await post(
+      webAnnotation({ source: CHAPTER_ONE, body: 'the question' }),
+    )).json()) as WireAnnotation
+    expect(parent.id).toMatch(/^urn:margin:annotation:/)
+
+    for (const reference of [parent.id, bareId(parent)]) {
+      const response = await post(
+        webAnnotation({
+          source: CHAPTER_ONE,
+          body: `reply to ${reference}`,
+          parentId: reference,
+        }),
+      )
+      expect(response.status, `parentId ${reference}`).toBe(201)
+      const created = (await response.json()) as WireAnnotation
+      expect(created['margin:parentId']).toBe(bareId(parent))
+    }
+  })
+
+  // Valid absolute targets the URL parser rewrites: a default port spelled out,
+  // an upper-case host, a path with dot segments. Rejecting them turned ordinary
+  // external annotations away.
+  it('canonicalises a target rather than refusing its spelling', async () => {
+    for (const [sent, canonical] of [
+      ['https://ernie.sg:443/challenges/chapter-1', CHAPTER_ONE],
+      ['https://ERNIE.SG/challenges/chapter-1', CHAPTER_ONE],
+      ['https://ernie.sg/challenges/./chapter-1', CHAPTER_ONE],
+      ['https://ernie.sg/challenges/x/../chapter-1', CHAPTER_ONE],
+    ] as const) {
+      const response = await post(webAnnotation({ source: sent, body: `via ${sent}` }))
+      expect(response.status, sent).toBe(201)
+      const created = (await response.json()) as WireAnnotation
+      expect(created.target.source, sent).toBe(canonical)
+    }
+
+    // And all of them landed on the one document, not four tenants.
+    expect((await list(CHAPTER_ONE)).length).toBe(4)
+  })
+
+  it('refuses a target carrying credentials rather than dropping them', async () => {
+    const response = await post(
+      webAnnotation({ source: 'https://user:secret@ernie.sg/challenges/chapter-1' }),
+    )
+
+    expect(response.status).toBe(400)
+  })
+
+  // The store keeps a body's `value` and nothing else, so accepting metadata it
+  // would silently rewrite is worse than refusing it.
+  it('refuses body metadata it cannot keep', async () => {
+    for (const body of [
+      { type: 'TextualBody', value: 'a remark', format: 'text/markdown' },
+      { type: 'TextualBody', value: 'a remark', language: 'fr' },
+    ]) {
+      const response = await post({
+        ...webAnnotation({ source: CHAPTER_ONE }),
+        body,
+      })
+      expect(response.status, JSON.stringify(body)).toBe(400)
+    }
+
+    const accepted = await post({
+      ...webAnnotation({ source: CHAPTER_ONE }),
+      body: { type: 'TextualBody', value: 'a remark', format: 'text/plain' },
+    })
+    expect(accepted.status).toBe(201)
+  })
+
+  // An uncaught `URIError` from `decodeURIComponent` would be a 500 on a public
+  // request. A path that cannot be decoded matches no route.
+  it('answers a malformed percent escape with a 404, not a 500', async () => {
+    for (const bad of ['%', '%E0%A4%A', 'annotations/%']) {
+      const response = await harness.request('GET', `/${bad}`, { as: ADA })
+      expect(response.status, bad).toBe(404)
+      expect(await response.json()).toMatchObject({
+        error: { code: 'not_found' },
+      })
+    }
+  })
+})

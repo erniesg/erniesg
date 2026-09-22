@@ -70,6 +70,14 @@ export interface MarginRepository {
     patch: AnnotationPatch,
   ): Promise<MarginAnnotationRecord | null>
 
+  /**
+   * How many annotations name this one as their parent, whoever wrote them.
+   *
+   * Not owner-scoped on purpose: the caller is asking whether a delete would
+   * take somebody else's annotation with it, so a reply they cannot see counts.
+   */
+  countReplies(scope: TenantScope, id: string): Promise<number>
+
   /** Owner-scoped. `false` when no row matched. */
   deleteAnnotation(
     scope: TenantScope,

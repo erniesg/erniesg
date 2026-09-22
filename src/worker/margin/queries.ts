@@ -170,6 +170,21 @@ WHERE site = ? AND document = ? AND id = ? AND creator = ?`,
   }
 }
 
+/**
+ * How many annotations hang off this one, whoever wrote them.
+ *
+ * Deliberately not owner-scoped: the question is whether deleting this would
+ * take somebody else's annotation with it, and a reply the caller cannot see
+ * still counts.
+ */
+export function countRepliesQuery(scope: TenantScope, id: string): Query {
+  return {
+    sql: `SELECT COUNT(*) AS replies FROM margin_annotations
+WHERE site = ? AND document = ? AND parent_id = ?`,
+    params: [scope.site, scope.document, id],
+  }
+}
+
 export function deleteAnnotationQuery(
   scope: TenantScope,
   id: string,

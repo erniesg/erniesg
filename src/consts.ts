@@ -45,6 +45,7 @@ const researchLinks: Link[] =
 
 export const NAV_LINKS: Link[] = [
   { href: '/blog', label: 'blog' },
+  { href: '/books', label: 'books' },
   ...researchLinks,
   { href: '/about', label: 'about' },
   { href: '/tags', label: 'tags' },

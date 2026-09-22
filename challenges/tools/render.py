@@ -51,6 +51,29 @@ SUPPORT_NOTES = {
 }
 FIGURE_TYPES = ("cells", "walk", "links", "table", "cost")
 
+# The parts of the book, named once. The path files name the parts they walk;
+# these cover the topics that are mapped but not yet written.
+PART_NAMES = {
+    0: "The loop", 1: "Programming basics", 2: "Lookup", 3: "Scanning",
+    4: "Recursive structure", 5: "Graphs", 6: "Optimization",
+    7: "The agent's structures", 8: "Engineering", 9: "At scale",
+}
+
+# A block wrapper the web edition emits and print does not: paper has no
+# margin to anchor a note to. `BLOCK_TAG` is the one reader of what `emit`
+# writes, so the two cannot drift.
+BLOCK_TAG = re.compile(r'<div class="block" data-block-kind="([a-z-]+)" id="([^"]+)">')
+
+
+def block_id(node_id: str, kind: str, ordinal: int) -> str:
+    """The DOM id a margin note anchors to.
+
+    Structural, not content-derived, and not positional across kinds: the same
+    source always yields the same id, and rewording a paragraph does not move
+    the anchor off it.
+    """
+    return f"block-{node_id}-{kind}-{ordinal}"
+
 
 # --------------------------------------------------------------------------
 # loading
@@ -375,50 +398,76 @@ def _figure_body(data: dict, kind: str, target: str) -> str:
     return f'<p class="missing">no renderer for figure type {html.escape(str(kind))}</p>'
 
 
-def render_node(node: dict, target: str = "web", solved: bool = False) -> str:
+def render_node(
+    node: dict, target: str = "web", solved: bool = False, runnable: bool = True
+) -> str:
     """One node, one markup, differing only where a target cannot follow.
 
     `solved` gates what a challenge is willing to show: an unaided problem
     keeps its solution until the tiers are green. Print shows everything,
     because a book cannot know who is reading it.
+
+    `runnable` is what a web target can offer, not what it is. The local
+    preview runs the reader's code in subprocesses; a static host cannot, so
+    it asks for the same listings print gets rather than for dead buttons.
     """
     support = node.get("support", "guided")
     pieces = split_blocks(node["body"])
     card_parts = {name: inner for name, _, inner in pieces if name in CARD_BLOCKS}
     out: list[str] = []
-    if node.get("part"):
-        out.append(f'<p class="eyebrow">{html.escape(node["part"])}</p>')
-    out.append(f'<h1>{html.escape(node["title"])}</h1>')
-    if node.get("kind") == "challenge":
+    seen: dict[str, int] = {}
+
+    def emit(kind: str, markup: str) -> None:
+        """Append one addressable block.
+
+        On the web each one carries a stable id, because the margin layer has
+        to point at something that survives the next build. Print gets the
+        same markup without the wrapper: a page has nowhere to put the note.
+        """
+        if target != "web":
+            out.append(markup)
+            return
+        seen[kind] = seen.get(kind, 0) + 1
         out.append(
+            f'<div class="block" data-block-kind="{kind}" '
+            f'id="{block_id(node["id"], kind, seen[kind])}">{markup}</div>'
+        )
+
+    if node.get("part"):
+        emit("eyebrow", f'<p class="eyebrow">{html.escape(node["part"])}</p>')
+    emit("title", f'<h1>{html.escape(node["title"])}</h1>')
+    if node.get("kind") == "challenge":
+        emit(
+            "support",
             f'<p class="support support-{support}">'
-            f'{html.escape(SUPPORT_NOTES.get(support, ""))}</p>'
+            f'{html.escape(SUPPORT_NOTES.get(support, ""))}</p>',
         )
     hints: list[str] = []
     card_done = False
 
     def flush_hints() -> None:
         if hints:
-            out.append('<div class="hints">' + "".join(hints) + "</div>")
+            emit("hints", '<div class="hints">' + "".join(hints) + "</div>")
             hints.clear()
 
     figure_number = 0
     for name, attrs, inner in pieces:
         if name in CARD_BLOCKS:
             if not card_done:
-                out.append(problem_card(node, card_parts))
+                emit("card", problem_card(node, card_parts))
                 card_done = True
             continue
         if name == "prose":
             rendered = render_markdown(inner)
-            out.append(rendered if target == "print" else _runnable(rendered))
+            listing = target == "print" or not runnable
+            emit("prose", rendered if listing else _runnable(rendered))
         elif name == "problem":
             referenced = load_node(attrs.get("id", ""))
             parts = {n: i for n, _, i in split_blocks(referenced["body"]) if n in CARD_BLOCKS}
-            out.append(problem_card(referenced, parts))
+            emit("card", problem_card(referenced, parts))
         elif name == "figure":
             figure_number += 1
-            out.append(figure(attrs.get("id", ""), inner, target, figure_number))
+            emit("figure", figure(attrs.get("id", ""), inner, target, figure_number))
         elif name == "hint":
             if support == "unaided" and target != "print":
                 continue
@@ -437,23 +486,26 @@ def render_node(node: dict, target: str = "web", solved: bool = False) -> str:
             flush_hints()
             locked = support in ("contract", "unaided") and not solved
             if locked and target != "print":
-                out.append(
+                emit(
+                    "solution",
                     '<p class="locked-solution">The worked solution unlocks when all '
-                    "four tiers are green.</p>"
+                    "four tiers are green.</p>",
                 )
                 continue
             if target == "print":
-                out.append(
+                emit(
+                    "solution",
                     '<div class="solution"><p class="solution-title">Worked solution</p>'
-                    f"{render_markdown(inner)}</div>"
+                    f"{render_markdown(inner)}</div>",
                 )
             else:
-                out.append(
+                emit(
+                    "solution",
                     "<details class='solution'><summary>Worked solution — try a failing "
-                    f"test first</summary>{render_markdown(inner)}</details>"
+                    f"test first</summary>{render_markdown(inner)}</details>",
                 )
         elif name == "run":
-            out.append(_desk(node, attrs, target))
+            emit("desk", _desk(node, attrs, target, runnable))
     flush_hints()
     return "".join(out)
 
@@ -475,17 +527,24 @@ def _runnable(rendered: str) -> str:
     )
 
 
-def _desk(node: dict, attrs: dict, target: str) -> str:
+def _desk(node: dict, attrs: dict, target: str, runnable: bool = True) -> str:
     starter = ""
     if node.get("dir"):
         path = node["dir"] / attrs.get("starter", "starter.py")
         if path.is_file():
             starter = path.read_text()
-    if target == "print":
+    if target == "print" or not runnable:
+        # The same listing in both: a page cannot run code, and neither can a
+        # static host. Where the EPUB shows a listing, so does the web.
+        where = (
+            "Run and grade this in the web edition, or from a "
+            "terminal with the book's grader."
+            if target == "print"
+            else "Run and grade this from a terminal with the book's grader."
+        )
         return (
             '<h2>Your turn</h2><pre><code>' + html.escape(starter) + "</code></pre>"
-            '<p class="figure-note">Run and grade this in the web edition, or from a '
-            "terminal with the book's grader.</p>"
+            f'<p class="figure-note">{where}</p>'
         )
     return (
         f'<section class="desk" data-node="{html.escape(node["id"])}">'

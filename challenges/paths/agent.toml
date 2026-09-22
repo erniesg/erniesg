@@ -1,5 +1,9 @@
 # The book: an ordered walk over the node pool.
 id = "agent"
+# The published URL segment, and the only field allowed to decide it. Not `id`,
+# which would mean a hand-kept mapping in route code; not the title, which an
+# edit would move — and a moved URL orphans every annotation anchored to it.
+slug = "build-a-coding-agent"
 title = "Build a Coding Agent"
 subtitle = "Data structures and algorithms, from zero, by building one thing"
 edition = "0.1.0"

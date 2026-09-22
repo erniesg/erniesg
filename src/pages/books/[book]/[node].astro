@@ -1,0 +1,88 @@
+---
+import BookContents from '@/components/books/BookContents.astro'
+import ReadingLayout from '@/layouts/ReadingLayout.astro'
+import {
+  bookBySlug,
+  bookManifest,
+  books,
+  documentUri,
+  scopeContentCss,
+} from '@/lib/books'
+
+export function getStaticPaths() {
+  return books().flatMap((book) =>
+    book.nodes.map((node) => ({ params: { book: book.slug, node: node.id } })),
+  )
+}
+
+const slug = Astro.params.book!
+const nodeId = Astro.params.node!
+const book = bookBySlug(slug)
+if (!book) throw new Error(`no book path declares the slug \`${slug}\``)
+
+const index = book.nodes.findIndex((entry) => entry.id === nodeId)
+const node = book.nodes[index]
+if (!node) throw new Error(`\`${slug}\` has no node \`${nodeId}\``)
+
+const previous = index > 0 ? book.nodes[index - 1] : undefined
+const next = index + 1 < book.nodes.length ? book.nodes[index + 1] : undefined
+const uri = documentUri(node.path)
+
+// The book's own stylesheet, confined to the rendered node. The site's reset
+// zeroes things a book assumes — list markers, heading weight, paragraph
+// spacing — so the few rules that put them back are the site's business and
+// stay here rather than in the renderer.
+const RESTORED = `
+.book-content { overflow-wrap: anywhere; }
+.book-content h1, .book-content h2, .book-content h3 { font-weight: 700; }
+.book-content p { margin: 1rem 0; }
+.book-content ul { list-style: disc; margin: 1rem 0; padding-left: 1.4rem; }
+.book-content ol { list-style: decimal; margin: 1rem 0; padding-left: 1.4rem; }
+.book-content .cells, .book-content .hints { list-style: none; padding-left: 0; }
+.book-content strong, .book-content b { font-weight: 700; }
+.book-content em, .book-content i { font-style: italic; }
+.book-content a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.book-content figure.figure { overflow-x: auto; }
+.book-content img, .book-content svg { max-width: 100%; }
+`
+const style = `<style>${scopeContentCss(bookManifest().contentCss, '.book-content')}${RESTORED}</style>`
+---
+
+<ReadingLayout
+  title={`${node.title} — ${book.title}`}
+  description={book.subtitle}
+  documentUri={uri}
+  canonicalPath={node.path}
+>
+  <Fragment slot="head" set:html={style} />
+
+  <Fragment slot="navigation">
+    <BookContents book={book} currentId={node.id} />
+  </Fragment>
+
+  <div class="book-content" data-node={node.id} set:html={node.html} />
+
+  <nav
+    class="mt-12 flex justify-between gap-x-6 border-t pt-6 text-sm"
+    aria-label="Reading order"
+  >
+    {
+      previous ? (
+        <a class="hover:underline hover:underline-offset-4" href={previous.path}>
+          ‹ {previous.title}
+        </a>
+      ) : (
+        <span />
+      )
+    }
+    {
+      next ? (
+        <a class="hover:underline hover:underline-offset-4" href={next.path}>
+          {next.title} ›
+        </a>
+      ) : (
+        <span />
+      )
+    }
+  </nav>
+</ReadingLayout>

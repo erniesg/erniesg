@@ -71,11 +71,28 @@ export default {
       )
     }
 
-    return handleMarginRequest(request, {
-      repository: new D1MarginRepository(env.MARGIN_DB),
-      principal: await getPrincipal(request, env),
-      now: () => new Date().toISOString(),
-      newId: () => crypto.randomUUID(),
-    })
+    try {
+      return await handleMarginRequest(request, {
+        repository: new D1MarginRepository(env.MARGIN_DB),
+        principal: await getPrincipal(request, env),
+        now: () => new Date().toISOString(),
+        newId: () => crypto.randomUUID(),
+      })
+    } catch {
+      // The store answering with something the route did not expect — most
+      // likely a deploy that reached the Worker before
+      // `wrangler d1 migrations apply` reached the database, where every query
+      // fails on a missing table. That is a 503 the operator can read, not a
+      // raw 500 with a SQL message in it.
+      return json(
+        {
+          error: {
+            code: 'storage_unavailable',
+            message: 'the margin store did not answer; check that its migrations are applied',
+          },
+        },
+        503,
+      )
+    }
   },
 }

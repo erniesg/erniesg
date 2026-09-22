@@ -153,3 +153,56 @@ describe('ernie.sg Worker entry', () => {
     expect(env.ASSETS.seen).toHaveLength(1)
   })
 })
+
+// A deploy that reaches the Worker before `wrangler d1 migrations apply`
+// reaches the database fails every query on a missing table. That must read as
+// an operator-legible 503, not a raw 500 with SQL in it.
+describe('a store that cannot answer', () => {
+  it('is a 503 the operator can act on, not a 500', async () => {
+    const env = {
+      ASSETS: createAssetBinding(),
+      MARGIN_DB: {
+        prepare() {
+          return {
+            bind() {
+              return this
+            },
+            first() {
+              throw new Error('D1_ERROR: no such table: margin_annotations')
+            },
+            all() {
+              throw new Error('D1_ERROR: no such table: margin_annotations')
+            },
+            run() {
+              throw new Error('D1_ERROR: no such table: margin_annotations')
+            },
+          }
+        },
+      },
+    } as unknown as WorkerEnv & { ASSETS: ReturnType<typeof createAssetBinding> }
+
+    const response = await worker.fetch(
+      new Request(
+        'https://ernie.sg/api/margin/v1/annotations?source=https%3A%2F%2Fernie.sg%2Fx',
+      ),
+      env,
+    )
+
+    expect(response.status).toBe(503)
+    const body = (await response.json()) as { error: { code: string; message: string } }
+    expect(body.error.code).toBe('storage_unavailable')
+    expect(body.error.message).toContain('migrations')
+    // And nothing from the store's own message reaches the caller.
+    expect(JSON.stringify(body)).not.toContain('no such table')
+  })
+
+  it('still answers the health route, which is what it is for', async () => {
+    const env = { ASSETS: createAssetBinding() } as unknown as WorkerEnv
+    const response = await worker.fetch(
+      new Request(`https://ernie.sg${MARGIN_HEALTH_PATH}`),
+      env,
+    )
+
+    expect(response.status).toBe(200)
+  })
+})

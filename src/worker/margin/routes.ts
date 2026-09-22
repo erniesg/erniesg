@@ -301,6 +301,19 @@ async function deleteAnnotation(
   const scope = readScope(url)
   if ('error' in scope) return scope.error
 
+  // A reply belongs to whoever wrote it. Cascading a parent's delete through
+  // its children would let the parent's owner destroy other people's
+  // annotations, which no owner-scoped delete should be able to do, so a thread
+  // with replies in it refuses instead. Tombstoning a deleted parent and
+  // keeping the thread readable is 056's problem, not this route's.
+  if (await context.repository.countReplies(scope, id)) {
+    return problem(
+      409,
+      'has_replies',
+      'other people have replied to this; deleting it would delete their replies',
+    )
+  }
+
   const removed = await context.repository.deleteAnnotation(scope, id, owner)
   if (!removed) {
     return problem(404, 'not_found', 'no annotation of yours has that id here')
@@ -361,12 +374,23 @@ function notImplemented(issue: string): Response {
 /* Router                                                                     */
 /* -------------------------------------------------------------------------- */
 
-function segments(pathname: string): string[] {
-  return pathname
-    .slice(MARGIN_API_PREFIX.length)
-    .split('/')
-    .filter((part) => part.length > 0)
-    .map((part) => decodeURIComponent(part))
+/**
+ * The path, decoded, or `null` when it cannot be.
+ *
+ * `decodeURIComponent` throws `URIError` on a malformed escape such as a bare
+ * `%`, and an uncaught throw here is a 500 on a public request. A path that
+ * cannot be decoded matches no route, so it is a 404 like any other.
+ */
+function segments(pathname: string): string[] | null {
+  try {
+    return pathname
+      .slice(MARGIN_API_PREFIX.length)
+      .split('/')
+      .filter((part) => part.length > 0)
+      .map((part) => decodeURIComponent(part))
+  } catch {
+    return null
+  }
 }
 
 function unauthenticated(): Response {
@@ -379,6 +403,7 @@ export async function handleMarginRequest(
 ): Promise<Response> {
   const url = new URL(request.url)
   const path = segments(url.pathname)
+  if (!path) return problem(404, 'not_found', 'no such margin route')
   const method = request.method === 'HEAD' ? 'GET' : request.method
   const owner = context.principal ? principalKey(context.principal) : null
 

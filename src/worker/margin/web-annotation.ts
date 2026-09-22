@@ -53,6 +53,9 @@ export const MARGIN_CONTEXT = [
 export const STRUCT_SELECTOR_TYPE = 'margin:StructSelector'
 export const ANNOTATION_IRI_PREFIX = 'urn:margin:annotation:'
 
+/** The only body format the store can hold, on the way in and on the way out. */
+export const BODY_FORMAT = 'text/plain'
+
 /**
  * The node id used when a Web Annotation carries no structural selector. The
  * internal anchor requires a `nodeId`, so annotations anchored to the document
@@ -135,12 +138,22 @@ const targetSchema = z
   })
   .strict()
 
+/**
+ * A body is plain text, and the schema says so rather than pretending
+ * otherwise.
+ *
+ * The store keeps `value` and nothing else about a body, so accepting
+ * `format: 'text/markdown'` or a `language` and then reconstructing the
+ * annotation as `text/plain` with no language would corrupt it silently — the
+ * client would read its own annotation back changed. Refusing the value it
+ * cannot keep is the honest half of a lossless round trip; widening it later
+ * means columns for these, not a looser schema.
+ */
 const textualBodySchema = z
   .object({
     type: z.literal('TextualBody'),
     value: z.string().min(1).max(MAX_BODY_LENGTH),
-    format: z.string().min(1).max(128).optional(),
-    language: z.string().min(1).max(64).optional(),
+    format: z.literal(BODY_FORMAT).optional(),
   })
   .strict()
 
@@ -215,8 +228,15 @@ export function splitSource(
     return null
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+  // Credentials in a target would be dropped by `origin`, and a URI that means
+  // something different once stored is worse than one that is refused.
+  if (url.username || url.password) return null
+  // The canonical spelling, not the one that was sent. `https://ernie.sg:443/x`,
+  // an upper-case host and a path with dot segments are all valid targets that
+  // the parser rewrites, and rejecting them because the rewrite differs from
+  // the input turned ordinary external annotations away. Tenancy wants one
+  // spelling per document anyway: two spellings would be two tenants.
   const document = `${url.pathname}${url.search}${url.hash}`
-  if (joinSource(url.origin, document) !== source) return null
   return { site: url.origin, document }
 }
 
@@ -226,6 +246,21 @@ export function joinSource(site: string, document: string): string {
 
 export function annotationIri(id: string): string {
   return `${ANNOTATION_IRI_PREFIX}${id}`
+}
+
+/**
+ * The stored key for whatever a client calls an annotation.
+ *
+ * A created annotation comes back with `id: urn:margin:annotation:<uuid>`, so
+ * that is the identifier a client has in hand when it writes a reply. Looking
+ * `margin:parentId` up verbatim against the bare `<uuid>` key made the obvious
+ * thing fail with `unknown_parent`; accept either spelling of the same
+ * annotation.
+ */
+export function annotationIdFromIri(value: string): string {
+  return value.startsWith(ANNOTATION_IRI_PREFIX)
+    ? value.slice(ANNOTATION_IRI_PREFIX.length)
+    : value
 }
 
 /* -------------------------------------------------------------------------- */
@@ -352,7 +387,9 @@ export function webAnnotationToRecord(
       document: scope.document,
       creator: assigned.creator,
       visibility: assigned.visibility,
-      parentId: wire['margin:parentId'] ?? null,
+      parentId: wire['margin:parentId']
+        ? annotationIdFromIri(wire['margin:parentId'])
+        : null,
       structId: struct?.['margin:structId'] ?? null,
       color: kind === 'highlight' ? (wire['margin:color'] ?? null) : null,
       annotation: parsed.data,
@@ -404,7 +441,7 @@ export function recordToWebAnnotation(
           body: {
             type: 'TextualBody' as const,
             value: annotation.body,
-            format: 'text/plain',
+            format: BODY_FORMAT,
           },
         }),
     target: {

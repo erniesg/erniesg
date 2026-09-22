@@ -20,7 +20,11 @@ CREATE TABLE margin_annotations (
   creator        TEXT NOT NULL,
   visibility     TEXT NOT NULL CHECK (visibility IN ('private', 'public')),
   motivation     TEXT NOT NULL CHECK (motivation IN ('highlighting', 'commenting', 'editing')),
-  parent_id      TEXT REFERENCES margin_annotations (id) ON DELETE CASCADE,
+  -- RESTRICT, not CASCADE: a reply belongs to whoever wrote it, and the delete
+  -- path is owner-scoped, so cascading would let a parent's owner destroy other
+  -- people's annotations. The route refuses a delete with replies under it and
+  -- this is the backstop for anything that does not go through the route.
+  parent_id      TEXT REFERENCES margin_annotations (id) ON DELETE RESTRICT,
   struct_id      TEXT,
   node_id        TEXT NOT NULL,
   position_start INTEGER NOT NULL,

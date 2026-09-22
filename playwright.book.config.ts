@@ -9,7 +9,7 @@ const python = process.env.BOOK_PYTHON ?? 'python3'
 
 export default defineConfig({
   testDir: './tests/e2e',
-  testMatch: ['editor-keys.spec.ts', 'hint-ladder.spec.ts', 'inline-exercise.spec.ts'],
+  testMatch: ['editor-keys.spec.ts', 'hint-ladder.spec.ts', 'inline-exercise.spec.ts', 'run-cell.spec.ts'],
   fullyParallel: false,
   workers: 1,
   retries: 0,

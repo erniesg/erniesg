@@ -34,7 +34,7 @@ BLOCKS = re.compile(r"^:::(\w+)", re.MULTILINE)
 REQUIRED_BLOCKS = {
     # `hint` is governed by the support level below, not required outright: an
     # unaided challenge must not carry any.
-    "challenge": {"statement", "io", "constraints", "sample", "figure", "run", "solution"},
+    "challenge": {"statement", "io", "constraints", "sample", "run", "solution"},
     "concept": set(),
 }
 EDGE_KEYS = ["requires", "assessed-by", "harder-variant-of", "motivates"]
@@ -120,13 +120,10 @@ def check_node(path: Path, meta: dict, body: str) -> None:
     for block in sorted(required - present):
         fail(path, f"missing required block :::{block}")
 
+    # A figure is optional: a diagram that shows nothing the prose does not is
+    # worse than none. One that is declared must exist.
     figure = meta.get("figure")
-    if not figure:
-        # The book's own front matter introduces, it does not teach, so it is
-        # the one node that may stand without a diagram.
-        if meta.get("id") not in front_matter_ids():
-            fail(path, "every concept and challenge needs a figure")
-    elif not (FIGURES_DIR / f"{figure}.json").is_file():
+    if figure and not (FIGURES_DIR / f"{figure}.json").is_file():
         fail(path, f"figure `{figure}` has no file in challenges/figures/")
 
     if kind != "challenge":

@@ -207,20 +207,22 @@ def figure(figure_id: str, caption_override: str = "", target: str = "web", numb
 
 def _figure_body(data: dict, kind: str, target: str) -> str:
     if kind == "cells":
-        cells = "".join(
-            f'<div class="cell"><span class="cell-label">'
-            f'{html.escape(str(cell.get("label", "")))}</span>'
-            f'<span class="cell-note">{html.escape(str(cell.get("note", "")))}</span></div>'
+        # A label and what it means, read down one column: code on the left.
+        rows = "".join(
+            f'<dt>{html.escape(str(cell.get("label", "")))}</dt>'
+            f'<dd>{html.escape(str(cell.get("note", "")))}</dd>'
             for cell in data.get("cells", [])
         )
-        return f'<div class="cells">{cells}</div>'
+        return f'<dl class="pairs">{rows}</dl>'
 
     if kind == "walk":
         sequence = data.get("sequence", [])
         states = data.get("state", [])
         answer = data.get("answer") or {}
+        notes = data.get("notes", [])
+        # The answer is the end of the walk, so the web shows it only at the last step.
         tail = (
-            f'<p class="figure-note">{html.escape(str(answer.get("label", "")))}: '
+            f'<p class="figure-note walk-answer">{html.escape(str(answer.get("label", "")))}: '
             f'<b>{html.escape(str(answer.get("value", "")))}</b></p>'
             if answer
             else ""
@@ -235,7 +237,8 @@ def _figure_body(data: dict, kind: str, target: str) -> str:
                     for s in states
                     if step < len(s.get("values", []))
                 )
-                rows.append(f"<li>reading <b>{html.escape(str(value))}</b> → {snapshot}</li>")
+                why = f" — {html.escape(str(notes[step]))}" if step < len(notes) else ""
+                rows.append(f"<li>reading <b>{html.escape(str(value))}</b> → {snapshot}{why}</li>")
             return f'<ol class="figure-steps">{"".join(rows)}</ol>{tail}'
 
         items = "".join(
@@ -254,7 +257,12 @@ def _figure_body(data: dict, kind: str, target: str) -> str:
         )
         return (
             f'<div class="walk" data-steps="{len(sequence)}">'
-            f'<div class="walk-row">{items}</div>{rows}{tail}'
+            f'<div class="walk-row">{items}</div>{rows}'
+            + "".join(
+                f'<p class="walk-note" data-index="{i}">{html.escape(str(n))}</p>'
+                for i, n in enumerate(notes)
+            )
+            + f'{tail}'
             f'<div class="walk-controls"><button data-walk="back">‹ back</button>'
             f'<span class="walk-step">step <b>1</b> of {len(sequence)}</span>'
             f'<button data-walk="next">next ›</button></div></div>'
@@ -539,7 +547,7 @@ def exercise(exercise_id: str, inner: str, target: str) -> str:
         f'<textarea class="editor small" spellcheck="false">{html.escape(parts["starter"])}</textarea>'
         '<div class="desk-actions"><button class="check">Check <kbd>\u2318\u21b5</kbd></button>'
         f'<span class="status"></span>{KEYS_HINT}</div>'
-        '<div class="verdict" hidden></div></div>'
+        '<div class="results" role="status" hidden></div></div>'
         "<details class='answer'><summary>Show the answer</summary>"
         f'<pre><code>{html.escape(parts["answer"])}</code></pre></details></section>'
     )
@@ -627,15 +635,15 @@ td code, th code { white-space:nowrap; }
 .figure-title { font:600 .8rem ui-sans-serif,system-ui; margin:0 0 .6rem; }
 figcaption { font:.82rem/1.5 ui-sans-serif,system-ui; color:var(--dim); margin-top:.7rem; }
 .figure-steps { font-size:.9rem; margin:.3rem 0 .3rem 1.1rem; }
+.walk-note { font:.88rem/1.45 ui-sans-serif,system-ui; margin:.5rem 0 0; min-height:2.6em; }
 .figure-note { font:.85rem ui-sans-serif,system-ui; color:var(--dim); margin:.4rem 0 0; }
 .figure-table { margin-top:.6rem; font-size:.85rem; }
 .links { width:100%; height:auto; }
-.cells { display:flex; gap:8px; flex-wrap:wrap; }
-.cell { flex:1 1 120px; border:1px solid var(--line); border-radius:6px; padding:8px 10px;
-  background:var(--bg); }
-.cell-label { display:block; font:600 .85rem ui-sans-serif,system-ui; }
-.cell-note { display:block; font:.76rem/1.4 ui-sans-serif,system-ui; color:var(--dim);
-  margin-top:3px; }
+.pairs { display:grid; grid-template-columns:minmax(8rem,max-content) 1fr; gap:6px 16px;
+  margin:0; font:.9rem/1.45 ui-sans-serif,system-ui; }
+.pairs dt { font:.84rem ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--ink); }
+.pairs dd { margin:0; color:#444; }
+@media (max-width:520px) { .pairs { grid-template-columns:1fr; } .pairs dd { margin-bottom:6px; } }
 .hint, .solution { border:1px solid var(--line); border-radius:6px; padding:6px 12px; margin:8px 0;
   background:#fff; }
 .ladder { border:1px solid var(--line); border-radius:8px; background:#fff; margin:1.2rem 0 .6rem;
@@ -660,11 +668,74 @@ details.solution { border:0; border-top:2px solid var(--ink); border-radius:0; b
 .exercise-title { font:700 .72rem/1 ui-sans-serif,system-ui; letter-spacing:.09em;
   text-transform:uppercase; color:#15803d; margin:0 0 .5rem; }
 .exercise .answer { margin-top:.6rem; }
-.verdict { font:.85rem ui-sans-serif,system-ui; margin-top:8px; }
-.verdict.pass { color:#15803d; font-weight:600; }
-.verdict.fail .columns { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-.verdict.fail pre { margin:4px 0 0; font-size:.8rem; }
-.verdict .col-label { font-weight:600; color:var(--dim); }
+/* A runnable cell is one terminal: code, a hairline, the action row, output. */
+.cell-run, .exercise-run, .desk { --term:#1e1f24; --term-line:#33353d; --term-ink:#d4d4d4;
+  --term-dim:#a3a8b3; background:var(--term); border:1px solid #2b2d34; border-radius:8px;
+  overflow:hidden; margin:1.6rem 0; }
+.exercise-run { margin:.8rem 0 0; }
+.code-wrap { position:relative; background:var(--term); overflow:hidden; }
+.editor, .code-hl, .code-gutter { font:.86rem/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;
+  tab-size:4; white-space:pre; margin:0; }
+.editor { display:block; width:100%; min-height:190px; padding:12px 12px 12px 3.6em; border:0;
+  background:transparent; color:transparent; caret-color:#f5f5f5; resize:vertical;
+  overflow:auto; position:relative; z-index:1; box-sizing:border-box; outline:none; }
+.editor::selection { background:rgba(120,160,255,.35); color:transparent; }
+.editor { field-sizing:content; }
+.editor.small { min-height:auto; height:auto; }
+.code-hl, .code-gutter { position:absolute; top:0; left:0; pointer-events:none; padding:0;
+  background:none; border:0; border-radius:0; overflow:visible; }
+.code-hl { padding:12px 12px 12px 3.6em; color:var(--term-ink); min-width:100%; box-sizing:border-box; }
+.code-gutter { width:2.8em; padding:12px 0; text-align:right; color:#6b6f78; user-select:none; }
+.code-hl .kw { color:#c586c0; } .code-hl .def { color:#569cd6; } .code-hl .fn { color:#dcdcaa; }
+.code-hl .bi { color:#4ec9b0; } .code-hl .str { color:#ce9178; } .code-hl .num { color:#b5cea8; }
+.code-hl .com { color:#6a9955; } .code-hl .con { color:#569cd6; } .code-hl .dec { color:#dcdcaa; }
+.code-hl .ig { box-shadow:inset 1px 0 #3b3d44; }
+.cell-run:focus-within, .exercise-run:focus-within, .desk:focus-within {
+  border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+.desk-actions { display:flex; gap:12px; align-items:center; flex-wrap:wrap; padding:7px 12px;
+  background:var(--term); border-top:1px solid var(--term-line); }
+.code-wrap:focus-within + .desk-actions { border-top-color:var(--accent); }
+.desk-actions button { font:600 .85rem ui-sans-serif,system-ui; padding:6px 14px; border:0;
+  border-radius:6px; background:var(--accent); color:#fff; cursor:pointer; display:flex;
+  align-items:center; gap:7px; }
+.desk-actions button:focus-visible { outline:2px solid #7dd3fc; outline-offset:2px; }
+.desk-actions button:disabled { cursor:progress; }
+.desk-actions button.busy::after { content:""; width:10px; height:10px; border-radius:50%;
+  border:2px solid rgba(255,255,255,.35); border-top-color:#fff; animation:spin .7s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .desk-actions button.busy::after { animation:none; } }
+.desk-actions kbd { font:.75rem ui-monospace,monospace; background:rgba(255,255,255,.22);
+  padding:1px 5px; border-radius:4px; }
+.status { font:.8rem ui-sans-serif,system-ui; color:var(--term-dim); }
+.keys-hint { font:.72rem ui-sans-serif,system-ui; color:var(--term-dim); margin-left:auto; }
+.keys-hint kbd { font:inherit; background:none; border:1px solid #444751; border-radius:3px;
+  padding:0 .3em; }
+.output:empty { display:none; }
+.output { margin:0; padding:10px 14px 12px; background:var(--term); color:var(--term-ink);
+  border:0; border-top:1px solid var(--term-line); border-radius:0; font-size:.8rem;
+  white-space:pre-wrap; max-height:340px; overflow:auto; }
+.output::before { content:"Output"; display:block; font:600 .66rem ui-sans-serif,system-ui;
+  letter-spacing:.08em; text-transform:uppercase; color:var(--term-dim); margin-bottom:4px; }
+.output.error { box-shadow:inset 3px 0 #f87171; }
+.output.error::before { content:"Error"; color:#fca5a5; }
+.tiers:empty { display:none; }
+.tiers { display:flex; gap:8px; flex-wrap:wrap; padding:10px 12px; border-top:1px solid var(--term-line); }
+.tier { font:.76rem ui-sans-serif,system-ui; padding:4px 10px; border-radius:20px;
+  border:1px solid var(--term-line); color:var(--term-ink); }
+.tier.pass { color:#86efac; border-color:#166534; } .tier.pass::before { content:"✓ "; }
+.tier.fail { color:#fca5a5; border-color:#7f1d1d; } .tier.fail::before { content:"✗ "; }
+.results { padding:10px 14px 12px; border-top:1px solid var(--term-line); color:var(--term-ink);
+  font:.84rem ui-sans-serif,system-ui; }
+.results-head { margin:0 0 6px; font-weight:600; }
+.results-head.pass { color:#86efac; } .results-head.fail { color:#fca5a5; }
+.cases { list-style:none; margin:0; padding:0; }
+.case { display:flex; gap:10px; align-items:baseline; padding:3px 0; max-width:none; }
+.case .mark { width:1em; font-weight:700; }
+.case.pass .mark { color:#86efac; } .case.fail .mark { color:#fca5a5; }
+.case-n { color:var(--term-dim); min-width:3.6em; }
+.case code { background:#2c2e35; color:var(--term-ink); }
+.case-error { margin:8px 0 0; padding:8px 10px; background:#2a1d1f; color:#fecaca; border:0;
+  border-radius:4px; font-size:.78rem; white-space:pre-wrap; }
 .hint-title, .solution-title { font:600 .85rem ui-sans-serif,system-ui; margin:.2rem 0; }
 details summary { cursor:pointer; font:600 .85rem ui-sans-serif,system-ui; }
 .missing { color:#b91c1c; font:.85rem ui-sans-serif,system-ui; }
@@ -674,8 +745,6 @@ details summary { cursor:pointer; font:600 .85rem ui-sans-serif,system-ui; }
 .support-guided { border-left-color:#0369a1; }
 .support-contract { border-left-color:#b45309; }
 .support-unaided { border-left-color:#be185d; }
-.keys-hint { font:.72rem ui-sans-serif,system-ui; color:var(--dim); margin-left:auto; }
-.keys-hint kbd { font:inherit; border:1px solid var(--line); border-radius:3px; padding:0 .25em; }
 .locked-solution { font:.85rem ui-sans-serif,system-ui; color:var(--dim); border:1px dashed
   var(--line); border-radius:6px; padding:10px 12px; }
 """

@@ -151,43 +151,6 @@ main.wide { grid-template-columns:minmax(0,60rem); }
 .rail-more a { color:var(--accent); text-decoration:none; }
 .lede { font-size:1.1rem; color:#333; }
 .edition { font:.85rem ui-sans-serif,system-ui; color:var(--dim); }
-.desk, .cell-run { margin:1.6rem 0; }
-.exercise-run { margin:.8rem 0 0; }
-.code-wrap { position:relative; background:#1e1f24; border:1px solid var(--line);
-  border-radius:8px 8px 0 0; overflow:hidden; }
-.editor, .code-hl, .code-gutter { font:.86rem/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;
-  tab-size:4; white-space:pre; margin:0; }
-.editor { display:block; width:100%; min-height:190px; padding:12px 12px 12px 3.6em; border:0;
-  background:transparent; color:transparent; caret-color:#f5f5f5; resize:vertical;
-  overflow:auto; position:relative; z-index:1; box-sizing:border-box; outline:none; }
-.editor::selection { background:rgba(120,160,255,.35); color:transparent; }
-.editor.small { min-height:auto; height:auto; field-sizing:content; }
-.code-hl, .code-gutter { position:absolute; top:0; left:0; pointer-events:none;
-  background:none; border-radius:0; overflow:visible; }
-.code-hl { padding:12px 12px 12px 3.6em; color:#d4d4d4; min-width:100%; box-sizing:border-box; }
-.code-gutter { width:2.8em; padding:12px 0; text-align:right; color:#6b6f78; user-select:none; }
-.code-wrap:focus-within { outline:2px solid var(--accent); outline-offset:1px; }
-.code-hl .kw { color:#c586c0; } .code-hl .def { color:#569cd6; } .code-hl .fn { color:#dcdcaa; }
-.code-hl .bi { color:#4ec9b0; } .code-hl .str { color:#ce9178; } .code-hl .num { color:#b5cea8; }
-.code-hl .com { color:#6a9955; } .code-hl .con { color:#569cd6; } .code-hl .dec { color:#dcdcaa; }
-.code-hl .ig { box-shadow:inset 1px 0 #3b3d44; }
-.desk-actions { display:flex; gap:12px; align-items:center; border:1px solid var(--line);
-  border-top:0; border-radius:0 0 8px 8px; padding:8px 12px; background:#fff; }
-.desk-actions button { font:600 .85rem ui-sans-serif,system-ui; padding:6px 14px; border:0;
-  border-radius:6px; background:var(--accent); color:#fff; cursor:pointer; display:flex;
-  align-items:center; gap:7px; }
-.desk-actions kbd { font:.75rem ui-monospace,monospace; background:rgba(255,255,255,.22);
-  padding:1px 5px; border-radius:4px; }
-.code-wrap:focus-within + .desk-actions { border-color:var(--accent); }
-.status { font:.8rem ui-sans-serif,system-ui; color:var(--dim); }
-.tiers { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
-.tier { font:.76rem ui-sans-serif,system-ui; padding:4px 10px; border-radius:20px;
-  border:1px solid var(--line); background:#fff; }
-.tier.pass { background:#dcfce7; border-color:#86efac; }
-.tier.fail { background:#fee2e2; border-color:#fca5a5; }
-.output:empty { display:none; }
-.output { margin-top:10px; font-size:.8rem; white-space:pre-wrap; max-height:340px; overflow:auto; }
-.cell-run .output:not(:empty) { margin-top:0; border-radius:0 0 8px 8px; }
 .walk-row, .walk-state { display:flex; gap:6px; align-items:center; margin:6px 0; }
 .walk-item, .slot { min-width:34px; text-align:center; padding:5px 6px; border:1px solid var(--line);
   border-radius:5px; font:.9rem ui-monospace,monospace; background:var(--bg); }
@@ -470,6 +433,9 @@ document.querySelectorAll('.walk').forEach(walk => {
     walk.querySelectorAll('.slot').forEach(el =>
       el.classList.toggle('on', Number(el.dataset.step) <= step));
     walk.querySelector('.walk-step b').textContent = step + 1;
+    walk.querySelectorAll('.walk-note').forEach(el => { el.hidden = Number(el.dataset.index) !== step; });
+    const answer = walk.querySelector('.walk-answer');
+    if (answer) answer.hidden = step !== steps - 1;
   };
   walk.querySelector('[data-walk="next"]').onclick = () => { step = Math.min(step + 1, steps - 1); paint(); };
   walk.querySelector('[data-walk="back"]').onclick = () => { step = Math.max(step - 1, 0); paint(); };
@@ -482,7 +448,8 @@ runnableCells.forEach((cell, index) => {
   const status = cell.querySelector('.status');
   const output = cell.querySelector('.output');
   button.onclick = async () => {
-    button.disabled = true; status.textContent = 'running...'; output.textContent = '';
+    button.disabled = true; button.classList.add('busy'); status.textContent = 'Running';
+    output.textContent = ''; output.classList.remove('error');
     const earlier = runnableCells.slice(0, index)
       .map(c => c.querySelector('.editor').value).join('\n');
     try {
@@ -490,10 +457,12 @@ runnableCells.forEach((cell, index) => {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ source: cell.querySelector('.editor').value, earlier }),
       });
-      output.textContent = (await response.json()).output;
+      const result = await response.json();
+      output.textContent = result.output;
+      output.classList.toggle('error', result.ok === false);
       status.textContent = '';
     } catch (error) { status.textContent = String(error); }
-    finally { button.disabled = false; }
+    finally { button.disabled = false; button.classList.remove('busy'); }
   };
 });
 
@@ -529,17 +498,17 @@ const WORKER = `importScripts('${PYODIDE}');
 const ready = loadPyodide();
 onmessage = async ({ data }) => {
   const py = await ready;
-  let out = '';
+  let out = '', error = '';
   py.setStdout({ batched: s => { out += s + '\\n'; } });
-  py.setStderr({ batched: s => { out += s + '\\n'; } });
+  py.setStderr({ batched: s => { error += s + '\\n'; } });
   try {
     await py.runPythonAsync(data.source, { globals: py.globals.get('dict')() });
-  } catch (error) {
-    const lines = String(error.message).trim().split('\\n');
-    const from = lines.findIndex(l => l.includes('File "<exec>"'));
-    out += (from >= 0 ? lines.slice(from) : lines.slice(-1)).join('\\n') + '\\n';
+  } catch (err) {
+    const lines = String(err.message).trim().split('\\n');
+    const where = [...String(err.message).matchAll(/File "<exec>", line (\\d+)/g)].pop();
+    error += (where ? 'Crashed on line ' + where[1] + ' · ' : '') + lines[lines.length - 1];
   }
-  postMessage(out);
+  postMessage({ out, error });
 };`;
 let pyWorker = null;
 function runInBrowser(source, timeout = 8000) {
@@ -548,7 +517,7 @@ function runInBrowser(source, timeout = 8000) {
   return new Promise(resolve => {
     const timer = setTimeout(() => {
       worker.terminate(); pyWorker = null;
-      resolve('Stopped after a few seconds: is there a loop that never ends?\n');
+      resolve({ out: '', error: 'Stopped after a few seconds: is there a loop that never ends?' });
     }, timeout);
     worker.onmessage = ({ data }) => { clearTimeout(timer); resolve(data); };
     worker.postMessage({ source });
@@ -557,25 +526,45 @@ function runInBrowser(source, timeout = 8000) {
 const tidy = text => text.replace(/^\n+|\n+$/g, '').split('\n').map(l => l.trimEnd()).join('\n').trimEnd();
 const escapeHtml = text => text.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
 
+// Each line the exercise expects is one test, read like a grader's report.
+function results(produced, expected, error) {
+  const want = tidy(expected).split('\n');
+  const got = tidy(produced) ? tidy(produced).split('\n') : [];
+  const code = text => `<code>${escapeHtml(text)}</code>`;
+  const rows = want.map((line, i) => {
+    const ok = got[i] === line;
+    const detail = ok ? code(line)
+      : `expected ${code(line)} · got ${i < got.length ? code(got[i]) : 'nothing'}`;
+    return { ok, html: `<li class="case ${ok ? 'pass' : 'fail'}"><span class="mark">${ok ? '&#10003;' : '&#10007;'}</span>`
+      + `<span class="case-n">Test ${i + 1}</span><span>${detail}</span></li>` };
+  });
+  got.slice(want.length).forEach(line => rows.push({ ok: false, extra: true,
+    html: `<li class="case fail"><span class="mark">&#10007;</span><span class="case-n">Extra</span>`
+      + `<span>printed ${code(line)}, which no test asked for</span></li>` }));
+  const passed = rows.filter(r => r.ok).length;
+  const allOk = passed === want.length && rows.length === want.length && !error;
+  const head = allOk
+    ? `&#10003; All ${want.length} test${want.length > 1 ? 's' : ''} passed`
+    : `&#10007; ${passed} of ${want.length} test${want.length > 1 ? 's' : ''} passed`;
+  return { allOk, html: `<p class="results-head ${allOk ? 'pass' : 'fail'}">${head}</p>`
+    + `<ol class="cases">${rows.map(r => r.html).join('')}</ol>`
+    + (error ? `<pre class="case-error">${escapeHtml(error.trim())}</pre>` : '') };
+}
+
 document.querySelectorAll('.exercise').forEach(ex => {
   const button = ex.querySelector('.check');
   const status = ex.querySelector('.status');
-  const verdict = ex.querySelector('.verdict');
+  const panel = ex.querySelector('.results');
   button.onclick = async () => {
-    button.disabled = true;
-    status.textContent = pyWorker ? 'checking...' : 'loading Python (first time only)...';
-    const produced = await runInBrowser(ex.querySelector('.editor').value);
-    const expected = ex.dataset.expected;
-    const ok = tidy(produced) === tidy(expected);
-    verdict.hidden = false;
-    verdict.className = 'verdict ' + (ok ? 'pass' : 'fail');
-    verdict.innerHTML = ok
-      ? '&#10003; That is it.'
-      : `Not yet. Compare:<div class="columns"><div><span class="col-label">Your code printed</span>`
-        + `<pre>${escapeHtml(tidy(produced)) || '(nothing)'}</pre></div><div><span class="col-label">Expected</span>`
-        + `<pre>${escapeHtml(tidy(expected))}</pre></div></div>`;
+    button.disabled = true; button.classList.add('busy');
+    status.textContent = pyWorker ? 'Checking' : 'Loading Python, first time only';
+    const { out, error } = await runInBrowser(ex.querySelector('.editor').value);
+    const { allOk, html } = results(out, ex.dataset.expected, error);
+    panel.hidden = false;
+    panel.className = 'results ' + (allOk ? 'pass' : 'fail');
+    panel.innerHTML = html;
     status.textContent = '';
-    button.disabled = false;
+    button.disabled = false; button.classList.remove('busy');
   };
 });
 
@@ -1006,10 +995,11 @@ class Handler(BaseHTTPRequestHandler):
                         cwd=work,
                     )
                     output = (done.stdout + done.stderr).strip() or "(no output)"
+                    ok = done.returncode == 0
                 except subprocess.TimeoutExpired:
-                    output = "stopped after 15 seconds"
+                    output, ok = "stopped after 15 seconds", False
             return self._send(
-                json.dumps({"output": output}).encode(), kind="application/json"
+                json.dumps({"output": output, "ok": ok}).encode(), kind="application/json"
             )
         if route != "/api/grade":
             return self._send(b"{}", HTTPStatus.NOT_FOUND, "application/json")

@@ -13,7 +13,14 @@ import path from 'node:path'
 
 import { SITE } from '../consts'
 
-export type BookBlock = { kind: string; id: string }
+/**
+ * `digest` verifies the anchor. `id` is positional, so inserting a block
+ * shifts every later ordinal of that kind and a stored note would otherwise
+ * resolve to a real element holding different content. Same id and same
+ * digest is the same block; same id and a different digest is drift to
+ * confirm, not to follow.
+ */
+export type BookBlock = { kind: string; id: string; digest: string }
 
 export type BookOutlineEntry = { level: number; id: string; text: string }
 

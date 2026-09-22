@@ -71,7 +71,9 @@ def book_slug(path_id: str, data: dict) -> str:
 def node_entry(node: dict, slug: str) -> dict:
     # The published site is a static host: it cannot run the reader's code, so
     # it asks for the listings the print edition gets rather than dead buttons.
-    markup = render_node(node, "web", runnable=False)
+    # It has no grader either, so the reader opens hints and solutions rather
+    # than waiting on tiers that will never turn green here.
+    markup = render_node(node, "web", runnable=False, reveal="reader")
     return {
         "id": node["id"],
         "title": node["title"],
@@ -83,7 +85,8 @@ def node_entry(node: dict, slug: str) -> dict:
         "path": f"/books/{slug}/{node['id']}/",
         "html": markup,
         "blocks": [
-            {"kind": kind, "id": identifier} for kind, identifier in BLOCK_TAG.findall(markup)
+            {"kind": kind, "id": identifier, "digest": digest}
+            for kind, digest, identifier in BLOCK_TAG.findall(markup)
         ],
         "outline": [
             {"level": int(level), "id": anchor, "text": TAGS.sub("", text).strip()}

@@ -7,6 +7,7 @@ import type {
   ViewerKey,
 } from './repository'
 import {
+  joinSource,
   recordToWebAnnotation,
   splitSource,
   VISIBILITIES,
@@ -110,7 +111,12 @@ function readScope(url: URL): TenantScope | { error: Response } {
       ),
     }
   }
-  if (!splitSource(`${site}${document}`)) {
+  const split = splitSource(`${site}${document}`)
+  // The canonical pair, not the one that was sent — the same normalisation POST
+  // and `?source=` go through. Validating the concatenation and then querying
+  // the raw spelling meant `site=https://ERNIE.SG` or `site=https://ernie.sg:443`
+  // read an empty collection while writing to the canonical tenant.
+  if (!split || split.site !== canonicalOrigin(site)) {
     return {
       error: problem(
         400,
@@ -119,7 +125,22 @@ function readScope(url: URL): TenantScope | { error: Response } {
       ),
     }
   }
-  return { site, document }
+  return split
+}
+
+/** `site` on its own: an origin and nothing else, canonically spelled. */
+function canonicalOrigin(site: string): string | null {
+  try {
+    const url = new URL(site)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+    if (url.username || url.password) return null
+    // An origin carries no path, query or fragment, so anything the parser puts
+    // in those came from the caller mixing a document into `site`.
+    if (url.pathname !== '/' || url.search || url.hash) return null
+    return url.origin
+  } catch {
+    return null
+  }
 }
 
 const MALFORMED_JSON = Symbol('malformed-json')
@@ -194,6 +215,20 @@ async function createAnnotation(
   const record = mapped.value
   const scope: TenantScope = { site: record.site, document: record.document }
 
+  // PATCH already refuses this pair. Creation used to accept `margin:color` on a
+  // note or a proposal and then store `null`, so the 201 body and every later GET
+  // came back missing a field the client had sent. Same rule in both places.
+  if (
+    record.annotation.kind !== 'highlight' &&
+    parsed.data['margin:color'] !== undefined
+  ) {
+    return problem(
+      400,
+      'unexpected_color',
+      'margin:color applies only to an annotation motivated by highlighting',
+    )
+  }
+
   // A reply must point at an annotation the caller can see in the same
   // tenancy. The lookup is scoped, so a parent id from another site or another
   // document simply does not resolve and the row is never written.
@@ -213,9 +248,31 @@ async function createAnnotation(
   }
 
   await context.repository.insertAnnotation(record)
+  // The advertised URI has to be one a client can actually use. The item routes
+  // need a scope like every other read, so the header carries the canonical one
+  // rather than leaving a caller that follows it with `missing_scope`.
+  const source = encodeURIComponent(joinSource(scope.site, scope.document))
   return json(recordToWebAnnotation(record), 201, {
-    location: `${MARGIN_API_PREFIX}/annotations/${encodeURIComponent(record.id)}`,
+    location:
+      `${MARGIN_API_PREFIX}/annotations/${encodeURIComponent(record.id)}` +
+      `?source=${source}`,
   })
+}
+
+async function readAnnotation(
+  context: MarginRouteContext,
+  viewer: ViewerKey,
+  url: URL,
+  id: string,
+): Promise<Response> {
+  const scope = readScope(url)
+  if ('error' in scope) return scope.error
+
+  const found = await context.repository.findAnnotation(scope, id, viewer)
+  if (!found) {
+    return problem(404, 'not_found', 'no annotation you can see has that id here')
+  }
+  return json(recordToWebAnnotation(found))
 }
 
 const annotationPatchSchema = z
@@ -300,6 +357,15 @@ async function deleteAnnotation(
 ): Promise<Response> {
   const scope = readScope(url)
   if ('error' in scope) return scope.error
+
+  // Ownership first, and only then the reply count. The other way round, a 409
+  // and a 404 differ for an annotation the caller cannot see, which tells them
+  // it exists and whether anybody has replied to it — an oracle over exactly
+  // what the visibility predicate hides.
+  const own = await context.repository.findAnnotation(scope, id, owner)
+  if (!own || own.creator !== owner) {
+    return problem(404, 'not_found', 'no annotation of yours has that id here')
+  }
 
   // A reply belongs to whoever wrote it. Cascading a parent's delete through
   // its children would let the parent's owner destroy other people's
@@ -417,6 +483,10 @@ export async function handleMarginRequest(
   }
 
   if (path.length === 2 && path[0] === 'annotations') {
+    // The `Location` header a POST returns points here, so this has to answer.
+    // Visibility-scoped like the collection: the caller's own annotation or
+    // anybody's public one, and nothing else.
+    if (method === 'GET') return readAnnotation(context, owner, url, path[1])
     if (!owner) return unauthenticated()
     if (method === 'PATCH') {
       return patchAnnotation(request, context, owner, url, path[1])
@@ -424,7 +494,7 @@ export async function handleMarginRequest(
     if (method === 'DELETE') {
       return deleteAnnotation(context, owner, url, path[1])
     }
-    return methodNotAllowed(['PATCH', 'DELETE'])
+    return methodNotAllowed(['GET', 'PATCH', 'DELETE'])
   }
 
   if (path.length === 1 && path[0] === 'prefs') {

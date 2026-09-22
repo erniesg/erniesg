@@ -496,6 +496,20 @@ async function handleMe(
     options,
   )
 
+  return whoami(env, principal, renewed)
+}
+
+/**
+ * The `/auth/me` answer for a principal that is already established.
+ *
+ * Split out because there are two ways to get one: a verified WorkOS session,
+ * and the development stub — which needs no WorkOS configuration at all.
+ */
+async function whoami(
+  env: AuthEnv,
+  principal: Principal,
+  renewed: string | null,
+): Promise<Response> {
   let role: string | null = null
   if (env.MARGIN_DB) {
     try {
@@ -544,6 +558,14 @@ export async function handleAuthRequest(
 
   const config = readWorkosConfig(env)
   if (!config) {
+    // The development stub needs no WorkOS credentials, and the write gate
+    // already honours it, so `/auth/me` must be able to report it too —
+    // otherwise a local client cannot discover an identity its own writes
+    // recognise. Nothing else is answerable without configuration.
+    if (path === AUTH_ME_PATH && request.method === 'GET') {
+      const stubbed = await getPrincipal(request, env, options)
+      if (stubbed) return whoami(env, stubbed, null)
+    }
     // No credentials means no login. Failing closed here is what keeps a
     // half-configured deployment from serving an unauthenticated session.
     return json({ error: 'auth_unavailable' }, 503)

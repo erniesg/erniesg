@@ -884,3 +884,75 @@ describe('a partial outage is not a permanent logout', () => {
     ])
   })
 })
+
+describe('/auth/me in local development', () => {
+  // `MARGIN_ENVIRONMENT=development` with a stub and no WorkOS credentials is
+  // the ordinary `wrangler dev` state. The write gate honours the stub, so this
+  // has to as well, or a local client cannot see the identity its own writes use.
+  const devEnv = {
+    MARGIN_ENVIRONMENT: 'development',
+    MARGIN_DEV_PRINCIPAL: 'reader',
+  } as AuthEnv
+
+  function localMe(env: AuthEnv = devEnv) {
+    return handleAuthRequest(
+      new Request(`http://localhost:8788${AUTH_ME_PATH}`),
+      env,
+      { now: NOW_MS },
+    )
+  }
+
+  it('reports the development principal with no WorkOS configuration', async () => {
+    const response = (await localMe()) as Response
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      authenticated: true,
+      principal: { provider: 'dev', subject: 'reader' },
+    })
+  })
+
+  it('reports its allowlist role like any other identity', async () => {
+    const db = createFakeD1()
+    db.allow(
+      { provider: 'dev', issuer: 'urn:margin:dev', subject: 'reader' },
+      'admin',
+    )
+
+    const response = (await localMe({ ...devEnv, MARGIN_DB: db } as AuthEnv)) as Response
+
+    expect(await response.json()).toMatchObject({ canWrite: true, isAdmin: true })
+  })
+
+  it('still fails closed with no configuration and no stub', async () => {
+    const response = (await handleAuthRequest(
+      new Request(`http://localhost:8788${AUTH_ME_PATH}`),
+      { MARGIN_ENVIRONMENT: 'development' } as AuthEnv,
+      {},
+    )) as Response
+
+    expect(response.status).toBe(503)
+    expect(await response.json()).toEqual({ error: 'auth_unavailable' })
+  })
+
+  it('does not answer on a deployed hostname, stub or no stub', async () => {
+    const response = (await handleAuthRequest(
+      new Request(`https://ernie.sg${AUTH_ME_PATH}`),
+      devEnv,
+      {},
+    )) as Response
+
+    expect(response.status).toBe(503)
+  })
+
+  it('leaves login and callback failing closed', async () => {
+    for (const path of [AUTH_LOGIN_PATH, AUTH_CALLBACK_PATH]) {
+      const response = (await handleAuthRequest(
+        new Request(`http://localhost:8788${path}`),
+        devEnv,
+        {},
+      )) as Response
+      expect(response.status, path).toBe(503)
+    }
+  })
+})

@@ -1,6 +1,7 @@
 import { textAnnotationSchema } from '../../annotations/annotations'
 import type { D1Database } from './d1'
 import {
+  countRepliesQuery,
   deleteAnnotationQuery,
   findAnnotationQuery,
   getPrefsQuery,
@@ -170,6 +171,13 @@ export class D1MarginRepository implements MarginRepository {
     ).run()
     if ((result.meta?.changes ?? 0) === 0) return null
     return this.findAnnotation(scope, id, owner)
+  }
+
+  async countReplies(scope: TenantScope, id: string): Promise<number> {
+    const row = await this.statement(
+      countRepliesQuery(scope, id),
+    ).first<{ replies: number }>()
+    return Number(row?.replies ?? 0)
   }
 
   async deleteAnnotation(

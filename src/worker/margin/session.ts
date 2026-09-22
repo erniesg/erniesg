@@ -124,8 +124,26 @@ export async function unseal(
 export const marginSessionSchema = z
   .object({
     accessToken: z.string().min(1),
-    /** Seconds since the epoch, copied from the token's `exp`. */
+    /**
+     * Seconds since the epoch: the lesser of the token's `exp` and `ceiling`.
+     * Checked server-side, because a cookie copied out of a browser has no
+     * `Max-Age` to obey.
+     */
     expiresAt: z.number().int().positive(),
+    /**
+     * The absolute end of this sign-in, fixed once at login.
+     *
+     * A refresh moves `expiresAt`, never this: otherwise refreshing in a loop
+     * would make `SESSION_MAX_AGE_SECONDS` unreachable and the ceiling
+     * decorative. Optional so a session sealed before this field existed still
+     * unseals.
+     */
+    ceiling: z.number().int().positive().optional(),
+    /**
+     * The WorkOS refresh token. Access tokens are short-lived, so without this
+     * a sign-in would last minutes; it never leaves the sealed cookie.
+     */
+    refreshToken: z.string().min(1).optional(),
     email: z.string().min(1).optional(),
   })
   .strict()

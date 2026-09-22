@@ -46,6 +46,13 @@ function request(headers: Record<string, string> = {}) {
   return new Request('https://ernie.sg/api/margin/v1/annotations', { headers })
 }
 
+/** The same request as it arrives under `wrangler dev`. */
+function localRequest(headers: Record<string, string> = {}) {
+  return new Request('http://localhost:8788/api/margin/v1/annotations', {
+    headers,
+  })
+}
+
 function signedInEnv(overrides: Partial<PrincipalEnv> = {}): PrincipalEnv {
   return { ...testWorkosEnv(), MARGIN_ENVIRONMENT: 'production', ...overrides }
 }
@@ -117,6 +124,29 @@ describe('getPrincipal with a real session', () => {
     await expect(
       getPrincipal(request({ cookie }), signedInEnv(), options()),
     ).resolves.toBeNull()
+  })
+
+  // `Max-Age` only governs the browser's copy. A cookie lifted out of one is a
+  // bearer token, so the ceiling has to be inside the seal and checked here.
+  it('rejects a session past its own ceiling even with a live token', async () => {
+    const cookie = await sessionCookieHeader(
+      await signer.sign(claims({ exp: NOW_SECONDS + 100_000 })),
+      { expiresAt: NOW_SECONDS - 1 },
+    )
+
+    await expect(
+      getPrincipal(request({ cookie }), signedInEnv(), options()),
+    ).resolves.toBeNull()
+  })
+
+  it('accepts a session still inside its ceiling', async () => {
+    const cookie = await sessionCookieHeader(await signer.sign(claims()), {
+      expiresAt: NOW_SECONDS + 60,
+    })
+
+    await expect(
+      getPrincipal(request({ cookie }), signedInEnv(), options()),
+    ).resolves.toMatchObject({ subject: 'user_01HREADER' })
   })
 
   it('rejects a token issued to a different WorkOS application', async () => {
@@ -203,19 +233,42 @@ describe('the development stub', () => {
       MARGIN_DEV_PRINCIPAL: 'reader',
     }
 
-    await expect(getPrincipal(request(), env)).resolves.toEqual({
+    await expect(getPrincipal(localRequest(), env)).resolves.toEqual({
       provider: 'dev',
       issuer: 'urn:margin:dev',
       subject: 'reader',
     })
     await expect(
-      getPrincipal(request({ [DEV_PRINCIPAL_HEADER]: 'other' }), env),
+      getPrincipal(localRequest({ [DEV_PRINCIPAL_HEADER]: 'other' }), env),
     ).resolves.toMatchObject({ subject: 'other' })
+  })
+
+  // `MARGIN_ENVIRONMENT` is configuration, and configuration drifts. A
+  // deployed Worker answers on a real hostname, never on loopback, so the host
+  // closes the stub even where the variable says otherwise.
+  it('is unreachable on a deployed hostname whatever the environment says', async () => {
+    const env: PrincipalEnv = {
+      MARGIN_ENVIRONMENT: 'development',
+      MARGIN_DEV_PRINCIPAL: 'reader',
+    }
+
+    for (const url of [
+      'https://ernie.sg/api/margin/v1/annotations',
+      'https://erniesg.workers.dev/api/margin/v1/annotations',
+      'https://localhost.evil.test/api/margin/v1/annotations',
+    ]) {
+      await expect(
+        getPrincipal(
+          new Request(url, { headers: { [DEV_PRINCIPAL_HEADER]: 'anyone' } }),
+          env,
+        ),
+      ).resolves.toBeNull()
+    }
   })
 
   it('needs the env var as well as the environment', async () => {
     await expect(
-      getPrincipal(request({ [DEV_PRINCIPAL_HEADER]: 'reader' }), {
+      getPrincipal(localRequest({ [DEV_PRINCIPAL_HEADER]: 'reader' }), {
         MARGIN_ENVIRONMENT: 'development',
       }),
     ).resolves.toBeNull()
@@ -224,7 +277,7 @@ describe('the development stub', () => {
   it('fails closed on a malformed claim rather than inventing an identity', async () => {
     for (const claim of ['{', '{}', '{"subject":""}', '   ']) {
       await expect(
-        getPrincipal(request({ [DEV_PRINCIPAL_HEADER]: claim }), {
+        getPrincipal(localRequest({ [DEV_PRINCIPAL_HEADER]: claim }), {
           MARGIN_ENVIRONMENT: 'development',
           MARGIN_DEV_PRINCIPAL: 'reader',
         }),

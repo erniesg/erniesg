@@ -42,6 +42,32 @@ exists only inside, and on the third call it holds 310.
 division pushes any leftover up to the next whole tray. 310 plus 11 is 321, and
 321 // 12 is 26.
 
+:::exercise{id="ch05-egg-boxes"}
+A box holds 6 eggs and is sold whole. Write `boxes_needed` so that it rounds
+up — and check the four awkward sizes below.
+
+```python
+def boxes_needed(eggs):
+    # your code here
+    ...
+
+
+print(boxes_needed(0), boxes_needed(1), boxes_needed(6), boxes_needed(7))
+```
+
+```output
+0 1 1 2
+```
+
+```answer
+def boxes_needed(eggs):
+    return (eggs + 5) // 6
+
+
+print(boxes_needed(0), boxes_needed(1), boxes_needed(6), boxes_needed(7))
+```
+:::
+
 ## Returning is not printing
 
 This is the confusion that costs beginners the most hours.
@@ -77,6 +103,32 @@ It printed 15 and 20 first, then refused. `unsupported operand type(s) for +:
 'NoneType' and 'NoneType'` says, in plain words, that you tried to add two
 nothings. Nearly every time you see it, a function printed where it should have
 returned.
+
+:::exercise{id="ch05-hand-it-back"}
+The last line adds two answers together, so `seats_left` has to hand its
+answer back rather than print it.
+
+```python
+def seats_left(capacity, booked):
+    # your code here
+    ...
+
+
+print(seats_left(40, 31) + seats_left(12, 12))
+```
+
+```output
+9
+```
+
+```answer
+def seats_left(capacity, booked):
+    return capacity - booked
+
+
+print(seats_left(40, 31) + seats_left(12, 12))
+```
+:::
 
 ## One function, one thing
 
@@ -118,6 +170,31 @@ Arguments with defaults come after the ones without. Naming the argument at the
 call — `per_tray=50` — is worth doing as soon as a call carries more than one
 number; `trays_for(310, 50)` is two mystery numbers when you meet it again in a
 month.
+
+:::exercise{id="ch05-default-box"}
+Give `boxes_for` a box size that defaults to 6, so all three calls work.
+
+```python
+def boxes_for(eggs):
+    # your code here
+    ...
+
+
+print(boxes_for(13), boxes_for(13, 12), boxes_for(13, per_box=10))
+```
+
+```output
+3 2 2
+```
+
+```answer
+def boxes_for(eggs, per_box=6):
+    return (eggs + per_box - 1) // per_box
+
+
+print(boxes_for(13), boxes_for(13, 12), boxes_for(13, per_box=10))
+```
+:::
 
 ## The default that remembers
 
@@ -162,6 +239,38 @@ The rule is flat: never leave a list, a dictionary or a set as a default. Put
 
 :::figure{id="what-comes-back"}
 The two ends of the deal, and the two places people get it wrong.
+:::
+
+:::exercise{id="ch05-fresh-basket"}
+Each call that is not handed a basket should start with an empty one. Use
+the `None` default from above.
+
+```python
+def add_item(item, basket=None):
+    # your code here
+    ...
+
+
+print(add_item("rice"))
+print(add_item("oil"))
+```
+
+```output
+['rice']
+['oil']
+```
+
+```answer
+def add_item(item, basket=None):
+    if basket is None:
+        basket = []
+    basket.append(item)
+    return basket
+
+
+print(add_item("rice"))
+print(add_item("oil"))
+```
 :::
 
 ## Names inside a function stay inside

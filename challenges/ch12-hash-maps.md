@@ -98,6 +98,35 @@ all — the slot her name points at is empty, so there was nothing to read.
 Not one of those numbers is five, and five names are in the table. That is the
 flat line from Chapter 6, and now you can see what is holding it up.
 
+:::exercise{id="ch12-slot-by-hand"}
+Write the adding-up rule yourself, for 8 slots, and print where `ivy` and
+`zoe` would be filed.
+
+```python
+def slot_for(key):
+    # your code here
+    ...
+
+
+print(slot_for("ivy"))
+print(slot_for("zoe"))
+```
+
+```output
+0
+6
+```
+
+```answer
+def slot_for(key):
+    return sum(ord(letter) for letter in key) % 8
+
+
+print(slot_for("ivy"))
+print(slot_for("zoe"))
+```
+:::
+
 ## Two keys, one slot, no problem
 
 `mia` and `amy` both landed in slot 7. That is a **collision**, and it is not a
@@ -248,6 +277,33 @@ leaves the key alone, which is exactly what you want — and it is worth
 understanding that a tuple of lists is still unhashable, because the lists
 inside it can still move.
 
+:::exercise{id="ch12-count-routes"}
+Each trip arrives as a list of stops. Count how many times each route was
+taken — and a list cannot be a key.
+
+```python
+trips = [["depot", "school"], ["school", "market"], ["depot", "school"]]
+counts = {}
+for trip in trips:
+    # your code here
+    ...
+print(counts)
+```
+
+```output
+{('depot', 'school'): 2, ('school', 'market'): 1}
+```
+
+```answer
+trips = [["depot", "school"], ["school", "market"], ["depot", "school"]]
+counts = {}
+for trip in trips:
+    key = tuple(trip)
+    counts[key] = counts.get(key, 0) + 1
+print(counts)
+```
+:::
+
 ## Where a hash map is the wrong answer
 
 Three places, and you will meet all three.
@@ -291,6 +347,36 @@ not a promise. Feed it keys that all collide and every lookup reads the whole
 slot. Randomised hashing makes that hard to arrange on purpose in Python, but
 the shape is still there underneath, and it is why "constant time" gets the
 word *expected* in front of it in careful writing.
+
+:::exercise{id="ch12-same-letters"}
+`listen` and `silent` are the same letters in a different order — the thing
+that broke the adding-up hash. Group the words by their sorted letters and
+print how many groups there are.
+
+```python
+words = ["listen", "silent", "enlist", "google", "gogole", "cat"]
+groups = {}
+for word in words:
+    # your code here
+    ...
+print(len(groups))
+```
+
+```output
+3
+```
+
+```answer
+words = ["listen", "silent", "enlist", "google", "gogole", "cat"]
+groups = {}
+for word in words:
+    key = "".join(sorted(word))
+    if key not in groups:
+        groups[key] = []
+    groups[key].append(word)
+print(len(groups))
+```
+:::
 
 ## What this buys the agent
 

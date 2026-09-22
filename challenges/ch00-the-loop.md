@@ -40,6 +40,27 @@ split it. The answer is a number on its own — not "The answer is 16", just
 
 Most wrong answers are not bad ideas. They are unread problems.
 
+:::exercise{id="ch00-read-the-deal"}
+Try the deal yourself. The two numbers are already here; print their sum and
+nothing else — just the number, not a sentence around it.
+
+```python
+a = 9
+b = 7
+# your code here
+```
+
+```output
+16
+```
+
+```answer
+a = 9
+b = 7
+print(a + b)
+```
+:::
+
 ## Now one with a trap
 
 > **Biggest product of two.** You get a bunch of whole numbers, none of them
@@ -94,6 +115,30 @@ print(biggest_product([5, 5, 1]))   # now try this one
 ```
 
 Two quick sweeps through the list. The example gives 6. Looks finished.
+
+:::exercise{id="ch00-count-the-work"}
+Do the arithmetic before you write anything. A problem allows up to 100,000
+numbers. Print how many seconds the every-pair method would take, at ten
+million steps a second.
+
+```python
+n = 100_000
+steps_per_second = 10_000_000
+pairs = ...  # how many pairs does every-pair check?
+print(pairs // steps_per_second)
+```
+
+```output
+1000
+```
+
+```answer
+n = 100_000
+steps_per_second = 10_000_000
+pairs = n * n
+print(pairs // steps_per_second)
+```
+:::
 
 ## Break it
 

@@ -45,6 +45,26 @@ if level >= 3.50:
 The colon opens a block and the indented lines are the block. Indentation is
 not decoration here — it is how Python knows where the branch ends.
 
+:::exercise{id="ch02-watch-the-river"}
+The gauge reads 2.40 m. Print `watch the river` if the level is at least
+2.10 m, and print nothing otherwise.
+
+```python
+level = 2.40
+# your code here
+```
+
+```output
+watch the river
+```
+
+```answer
+level = 2.40
+if level >= 2.10:
+    print("watch the river")
+```
+:::
+
 ## elif and else: exactly one of them runs
 
 ```python run
@@ -72,6 +92,37 @@ two below it can never be reached at all.
 `else` is the rung with no test, and it catches everything that reached it.
 Leave it out and a value that matches nothing simply falls off the bottom
 having done nothing, which is a bug that makes no noise.
+
+:::exercise{id="ch02-pool-price"}
+The pool charges 2 under the age of 12, 5 from 12 to 64, and 3 from 65 up.
+Fill in `price` so the four ages on the boundaries all come out right.
+
+```python
+def price(age):
+    # your code here
+    ...
+
+
+print(price(11), price(12), price(64), price(65))
+```
+
+```output
+2 5 5 3
+```
+
+```answer
+def price(age):
+    if age < 12:
+        return 2
+    elif age < 65:
+        return 5
+    else:
+        return 3
+
+
+print(price(11), price(12), price(64), price(65))
+```
+:::
 
 ## Why a chain of elif is not a stack of ifs
 
@@ -121,6 +172,31 @@ There is no reading at position 0, so asking for one would be an error. The
 left-hand test is false, so the right-hand side is never run. Put those two
 tests the other way round and the program crashes.
 
+:::exercise{id="ch02-loan-rule"}
+A loan goes through when income is at least 3000 **and** debt is under 500 —
+or when a guarantor has signed. Write the rule as one expression.
+
+```python
+income = 3200
+debt = 650
+guarantor = True
+approved = ...
+print(approved)
+```
+
+```output
+True
+```
+
+```answer
+income = 3200
+debt = 650
+guarantor = True
+approved = (income >= 3000 and debt < 500) or guarantor
+print(approved)
+```
+:::
+
 ## Values that answer the question by themselves
 
 Anything can be used where Python expects a yes or no. Empty things are no.
@@ -149,6 +225,41 @@ The gauge reported a dry river bed, which is a fact, and the program threw it
 away as a missing reading. Whenever zero is a real value, ask the question you
 actually mean — `if level is not None:` — instead of the one that is shorter
 to type.
+
+:::exercise{id="ch02-zero-is-a-reading"}
+`None` means the gauge sent nothing; `0.0` is a dry river bed. Return
+`no reading` for `None`, and `reading: ` followed by the value for anything
+else — zero included.
+
+```python
+def describe(level):
+    # your code here
+    ...
+
+
+print(describe(0.0))
+print(describe(None))
+print(describe(3.2))
+```
+
+```output
+reading: 0.0
+no reading
+reading: 3.2
+```
+
+```answer
+def describe(level):
+    if level is None:
+        return "no reading"
+    return "reading: " + str(level)
+
+
+print(describe(0.0))
+print(describe(None))
+print(describe(3.2))
+```
+:::
 
 ## == compares values; is compares identity
 

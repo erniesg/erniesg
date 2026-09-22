@@ -189,6 +189,54 @@ you the position of 733 itself, because "the first value at or after 733" is
 `len(values)`, which is not a valid index: that check is yours to write, and
 forgetting it is an `IndexError` waiting for the last train of the night.
 
+:::exercise{id="ch14-last-train-before"}
+The mirror image of the insertion point: return the position of the **last**
+departure at or before `wanted`, or -1 if there is none. Halve; don't scan.
+
+```python
+departures = [612, 645, 700, 733, 801, 845]
+
+
+def last_at_or_before(values, wanted):
+    # your code here
+    ...
+
+
+print(last_at_or_before(departures, 650))
+print(last_at_or_before(departures, 600))
+print(last_at_or_before(departures, 733))
+print(last_at_or_before(departures, 900))
+```
+
+```output
+1
+-1
+3
+5
+```
+
+```answer
+departures = [612, 645, 700, 733, 801, 845]
+
+
+def last_at_or_before(values, wanted):
+    low, high = 0, len(values) - 1
+    while low <= high:
+        mid = (low + high) // 2
+        if values[mid] <= wanted:
+            low = mid + 1
+        else:
+            high = mid - 1
+    return high
+
+
+print(last_at_or_before(departures, 650))
+print(last_at_or_before(departures, 600))
+print(last_at_or_before(departures, 733))
+print(last_at_or_before(departures, 900))
+```
+:::
+
 ## The standard library already has it
 
 Writing that loop by hand, once, is worth it — you are about to need the shape
@@ -216,6 +264,29 @@ Two things `bisect` cannot do for you. It searches a list, so a search over
 something you cannot build a list of is yours to write. And it compares whole
 items, so if your list holds rows and you want to search by one field, pass
 `key=` — or hold a separate sorted list of just that field.
+
+:::exercise{id="ch14-count-in-window"}
+With `bisect`, count the trains leaving from 700 to 830, both ends
+included.
+
+```python
+import bisect
+
+departures = [612, 645, 700, 733, 801, 845]
+# your code here
+```
+
+```output
+3
+```
+
+```answer
+import bisect
+
+departures = [612, 645, 700, 733, 801, 845]
+print(bisect.bisect_right(departures, 830) - bisect.bisect_left(departures, 700))
+```
+:::
 
 ## Binary search on the answer
 
@@ -316,6 +387,47 @@ So: you can binary search anything where you can ask a yes-or-no question about
 a candidate answer, and the yeses are all on one side. It costs a handful of
 calls to that question instead of a trawl through every candidate — here, ten
 calls in place of 1,312.
+
+:::exercise{id="ch14-smallest-square"}
+Search the answer: the smallest whole number `x` with `x * x >= n`. Write
+the yes-or-no column out for a few candidates first, then halve.
+
+```python
+def smallest_root(n):
+    # your code here
+    ...
+
+
+print(smallest_root(1_000_000))
+print(smallest_root(10))
+print(smallest_root(1))
+```
+
+```output
+1000
+4
+1
+```
+
+```answer
+def smallest_root(n):
+    low, high = 1, n
+    best = n
+    while low <= high:
+        mid = (low + high) // 2
+        if mid * mid >= n:
+            best = mid
+            high = mid - 1
+        else:
+            low = mid + 1
+    return best
+
+
+print(smallest_root(1_000_000))
+print(smallest_root(10))
+print(smallest_root(1))
+```
+:::
 
 ## What this buys the agent
 

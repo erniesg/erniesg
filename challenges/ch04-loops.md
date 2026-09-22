@@ -62,6 +62,31 @@ print(balance)
 message, and on the page it looks almost identical to the working version.
 Accumulators go before the loop.
 
+:::exercise{id="ch04-add-them-up"}
+No `sum()` allowed. Add the payments up with a loop and print the total.
+
+```python
+payments = [45, 30, 28, 40, 19]
+total = 0
+for payment in payments:
+    # your code here
+    ...
+print(total)
+```
+
+```output
+162
+```
+
+```answer
+payments = [45, 30, 28, 40, 19]
+total = 0
+for payment in payments:
+    total = total + payment
+print(total)
+```
+:::
+
 ## Keeping the best so far
 
 Same pass, one more name. How low did it actually get?
@@ -80,6 +105,33 @@ print(lowest)
 at 0 instead and an account that never dipped would report a low of 0 — a
 number that was never true of it. Whatever you are tracking, start it at
 something genuinely in the running.
+
+:::exercise{id="ch04-biggest-payment"}
+No `max()` allowed. Print the biggest payment, starting your best-so-far at a
+value that really is in the list.
+
+```python
+payments = [30, 45, 28, 40, 19]
+biggest = ...
+for payment in payments:
+    # your code here
+    ...
+print(biggest)
+```
+
+```output
+45
+```
+
+```answer
+payments = [30, 45, 28, 40, 19]
+biggest = payments[0]
+for payment in payments:
+    if payment > biggest:
+        biggest = payment
+print(biggest)
+```
+:::
 
 ## Counting, with a condition
 
@@ -103,6 +155,31 @@ it.
 Two names updated as the marker moves, not worked out afterwards.
 :::
 
+:::exercise{id="ch04-thirty-or-more"}
+Count the payments of 30 **or more**. The 30 itself counts — read the
+boundary before you write the test.
+
+```python
+payments = [45, 30, 28, 40, 19]
+count = 0
+# your code here
+print(count)
+```
+
+```output
+3
+```
+
+```answer
+payments = [45, 30, 28, 40, 19]
+count = 0
+for payment in payments:
+    if payment >= 30:
+        count = count + 1
+print(count)
+```
+:::
+
 ## enumerate, when the position matters
 
 He also wants to know *which* payment tipped him, so he can move it. `enumerate`
@@ -121,6 +198,27 @@ Positions count from zero, so payment 3 is the fourth one: the 40.
 
 `break` leaves the loop on the spot. Without it the message prints for every
 later payment too, since the balance stays under once it is under.
+
+:::exercise{id="ch04-first-big-one"}
+Print the position of the first payment over 35, then stop looking.
+
+```python
+payments = [12, 30, 41, 28, 50]
+# your code here
+```
+
+```output
+2
+```
+
+```answer
+payments = [12, 30, 41, 28, 50]
+for position, payment in enumerate(payments):
+    if payment > 35:
+        print(position)
+        break
+```
+:::
 
 ## break and continue
 
@@ -203,6 +301,31 @@ Point three is the one people miss even when something does change. If he put
 aside 0 a week, the balance moves by 0 each round and never arrives. That is
 not a bug in the loop — it is a case the loop cannot answer, and it belongs in
 an `if` before the loop rather than a guess inside it.
+
+:::exercise{id="ch04-weeks-to-save"}
+He starts at 0 and puts 30 aside each week. Use a `while` loop to print how
+many weeks until he has at least 200.
+
+```python
+balance = 0
+weeks = 0
+# your code here
+print(weeks)
+```
+
+```output
+7
+```
+
+```answer
+balance = 0
+weeks = 0
+while balance < 200:
+    balance = balance + 30
+    weeks = weeks + 1
+print(weeks)
+```
+:::
 
 ## Changing a list while you walk it
 

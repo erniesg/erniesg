@@ -75,6 +75,44 @@ Two rules keep it useful. **Label every print** — five bare numbers down the
 screen tell you nothing about which is which. **Delete them when you are
 done**, or your program will be shouting at a log file for the next two years.
 
+:::exercise{id="ch09-last-two-days"}
+This should total the last two days, 6610 and 5240, and it does not. Print
+`day` inside the loop to see which days go in, then fix the range.
+
+```python
+readings = [3120, 4890, 2075, 6610, 5240]
+
+
+def last_n_total(n):
+    total = 0
+    for day in range(len(readings) - n, len(readings) - 1):
+        # your code here: print(day) first, then fix the line above
+        total += readings[day]
+    return total
+
+
+print(last_n_total(2))
+```
+
+```output
+11850
+```
+
+```answer
+readings = [3120, 4890, 2075, 6610, 5240]
+
+
+def last_n_total(n):
+    total = 0
+    for day in range(len(readings) - n, len(readings)):
+        total += readings[day]
+    return total
+
+
+print(last_n_total(2))
+```
+:::
+
 ## Then `breakpoint()`
 
 Prints get tedious when you don't yet know what to print. Then you want to
@@ -257,6 +295,38 @@ range.
 
 `q` at that prompt says the program "will be restarted" and offers a fresh
 prompt at line 1; a second `q` leaves for good.
+
+:::exercise{id="ch09-lowest-balance"}
+The lowest balance should be 35 and this prints 0. Print `balance` and
+`lowest` each time round, find the wrong starting value, and fix it.
+
+```python
+payments = [20, 35, 10]
+balance = 100
+lowest = 0
+for payment in payments:
+    balance -= payment
+    if balance < lowest:
+        lowest = balance
+    # your code here: print(balance, lowest), then fix the start
+print(lowest)
+```
+
+```output
+35
+```
+
+```answer
+payments = [20, 35, 10]
+balance = 100
+lowest = balance
+for payment in payments:
+    balance -= payment
+    if balance < lowest:
+        lowest = balance
+print(lowest)
+```
+:::
 
 ## What this buys the agent
 

@@ -46,8 +46,15 @@ const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(".", "");
 const outDir = join(".agent", "evidence", stamp);
 mkdirSync(join(outDir, "logs"), { recursive: true });
 
+// 900_000 was a coin flip on the trusted VM: the unit suite measures 869-923 s
+// there against a 900 s ceiling, so the lane was killed mid-run and recorded a
+// failure that said nothing about the branch. The supervised agent run is
+// bounded at 5400 s, so 1_800_000 leaves real headroom without letting a hung
+// lane outlive its own worker.
+const LANE_TIMEOUT_MS = 1_800_000;
+
 function sh(command) {
-  return spawnSync(command, { shell: true, encoding: "utf8", timeout: 900000 });
+  return spawnSync(command, { shell: true, encoding: "utf8", timeout: LANE_TIMEOUT_MS });
 }
 
 function safeRepository(value) {

@@ -76,9 +76,27 @@ describe('readWorkosConfig', () => {
     expect(config.adminEmail).toBe('hello@ernie.sg')
     expect(
       readWorkosConfig(
-        testWorkosEnv({ MARGIN_ADMIN_EMAIL: 'Owner@Example.Test' }),
+        testWorkosEnv({
+          MARGIN_ADMIN_EMAIL: 'Owner@Example.Test',
+          MARGIN_ENVIRONMENT: 'development',
+        }),
       )?.adminEmail,
     ).toBe('owner@example.test')
+  })
+
+  // The admin address is the one thing an email still decides, so a deployed
+  // environment must not be able to name its own.
+  it('ignores an admin override outside development', () => {
+    for (const environment of [undefined, 'production', 'staging', 'Development']) {
+      expect(
+        readWorkosConfig(
+          testWorkosEnv({
+            MARGIN_ADMIN_EMAIL: 'attacker@example.test',
+            MARGIN_ENVIRONMENT: environment,
+          }),
+        )?.adminEmail,
+      ).toBe(DEFAULT_ADMIN_EMAIL)
+    }
   })
 })
 

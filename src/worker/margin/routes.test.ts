@@ -23,7 +23,12 @@ import {
   type AuthEnv,
   type AuthOptions,
 } from './routes'
-import { SESSION_COOKIE_NAME, STATE_COOKIE_NAME } from './session'
+import {
+  SESSION_COOKIE_NAME,
+  SESSION_MAX_AGE_SECONDS,
+  STATE_COOKIE_NAME,
+  unsealSession,
+} from './session'
 
 const NOW_MS = 1_800_000_000_000
 const NOW_SECONDS = Math.floor(NOW_MS / 1000)
@@ -211,6 +216,34 @@ describe('GET /auth/callback', () => {
     expect(cleared).toContain('; Max-Age=0')
   })
 
+  // The eight-hour ceiling has to be in the seal, not only in `Max-Age`: a
+  // copied cookie has no `Max-Age`, and a WorkOS token may outlive the limit.
+  it('seals the lesser of the token expiry and the session ceiling', async () => {
+    const longLived = SESSION_MAX_AGE_SECONDS + 100_000
+    const { state, cookie } = await beginLogin()
+    const provider = providerWith({
+      access_token: await accessToken({ exp: NOW_SECONDS + longLived }),
+      user,
+    })
+
+    const response = (await call(
+      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
+      { headers: { cookie } },
+      envWith(),
+      optionsFor(provider),
+    )) as Response
+
+    const header = cookieNamed(response, SESSION_COOKIE_NAME) as string
+    expect(header).toContain(`; Max-Age=${SESSION_MAX_AGE_SECONDS}`)
+
+    const sealed = header.slice(
+      header.indexOf('=') + 1,
+      header.indexOf(';'),
+    )
+    const session = await unsealSession(sealed, config.cookiePassword)
+    expect(session?.expiresAt).toBe(NOW_SECONDS + SESSION_MAX_AGE_SECONDS)
+  })
+
   it('exchanges the code server-side, never in the browser', async () => {
     const { state, cookie } = await beginLogin()
     const provider = providerWith({ access_token: await accessToken(), user })
@@ -234,7 +267,7 @@ describe('GET /auth/callback', () => {
     const { state, cookie } = await beginLogin()
     const provider = providerWith({
       access_token: await accessToken({ sub: 'user_01HADMIN' }),
-      user: { email: ADMIN_EMAIL, email_verified: true },
+      user: { id: 'user_01HADMIN', email: ADMIN_EMAIL, email_verified: true },
     })
 
     await call(
@@ -251,6 +284,73 @@ describe('GET /auth/callback', () => {
       issuer: TEST_ISSUER,
       subject: 'user_01HADMIN',
     })
+    expect(db.allowlist).toEqual([
+      expect.objectContaining({ identity_id: 1, role: 'admin' }),
+    ])
+  })
+
+  // The profile block is not signed. Only the token is, so a profile that
+  // names a different subject is not this session's profile — and this is the
+  // one place an email address decides anything at all.
+  it('does not bind an admin when the profile names another subject', async () => {
+    const db = createFakeD1()
+    const { state, cookie } = await beginLogin()
+    const provider = providerWith({
+      access_token: await accessToken({ sub: 'user_01HVICTIM' }),
+      user: { id: 'user_01HATTACKER', email: ADMIN_EMAIL, email_verified: true },
+    })
+
+    await call(
+      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
+      { headers: { cookie } },
+      envWith(db),
+      optionsFor(provider),
+    )
+
+    expect(db.identities).toHaveLength(1)
+    expect(db.allowlist).toEqual([])
+  })
+
+  it('does not bind an admin when the profile names no subject', async () => {
+    const db = createFakeD1()
+    const { state, cookie } = await beginLogin()
+    const provider = providerWith({
+      access_token: await accessToken({ sub: 'user_01HADMIN' }),
+      user: { email: ADMIN_EMAIL, email_verified: true },
+    })
+
+    await call(
+      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
+      { headers: { cookie } },
+      envWith(db),
+      optionsFor(provider),
+    )
+
+    expect(db.allowlist).toEqual([])
+  })
+
+  // `identity_id` is the allowlist's primary key, so the owner already added
+  // as a writer would collide instead of being promoted, and there would be no
+  // admin at all.
+  it('promotes the owner to admin when they are already a writer', async () => {
+    const db = createFakeD1()
+    const { state, cookie } = await beginLogin()
+    db.allow(
+      { provider: 'workos', issuer: TEST_ISSUER, subject: 'user_01HADMIN' },
+      'writer',
+    )
+    const provider = providerWith({
+      access_token: await accessToken({ sub: 'user_01HADMIN' }),
+      user: { id: 'user_01HADMIN', email: ADMIN_EMAIL, email_verified: true },
+    })
+
+    await call(
+      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
+      { headers: { cookie } },
+      envWith(db),
+      optionsFor(provider),
+    )
+
     expect(db.allowlist).toEqual([
       expect.objectContaining({ identity_id: 1, role: 'admin' }),
     ])
@@ -519,5 +619,147 @@ describe('routing', () => {
       expect(response.status).toBe(503)
       expect(await response.json()).toEqual({ error: 'auth_unavailable' })
     }
+  })
+})
+
+describe('logout does not need the provider', () => {
+  // Clearing a cookie needs no credentials, and a half-configured or
+  // mid-rotation deployment is exactly when somebody wants out. A 503 there
+  // would leave the session cookie in place with no way to remove it.
+  it('clears the session even with no WorkOS configuration at all', async () => {
+    for (const env of [
+      {} as AuthEnv,
+      { ...envWith(), WORKOS_CLIENT_ID: undefined } as AuthEnv,
+      { ...envWith(), WORKOS_COOKIE_PASSWORD: 'too-short' } as AuthEnv,
+    ]) {
+      const response = (await call(
+        AUTH_LOGOUT_PATH,
+        { method: 'POST' },
+        env,
+      )) as Response
+
+      expect(response.status).toBe(200)
+      expect(await response.json()).toEqual({ ok: true })
+      const cleared = cookieNamed(response, SESSION_COOKIE_NAME) as string
+      expect(cleared).toContain('; Max-Age=0')
+    }
+  })
+
+  it('still refuses a GET, which a cross-site navigation could forge', async () => {
+    const response = (await call(AUTH_LOGOUT_PATH, {}, {} as AuthEnv)) as Response
+
+    expect(response.status).toBe(405)
+  })
+
+  it('still fails closed on login without configuration', async () => {
+    const response = (await call(AUTH_LOGIN_PATH, {}, {} as AuthEnv)) as Response
+
+    expect(response.status).toBe(503)
+    expect(await response.json()).toEqual({ error: 'auth_unavailable' })
+  })
+})
+
+describe('GET /auth/me renews a lapsed access token', () => {
+  const user = { email: 'reader@example.test', email_verified: true }
+
+  async function signIn(
+    accessTokenClaims: Record<string, unknown> = {},
+  ): Promise<{ cookie: string }> {
+    const { state, cookie } = await beginLogin()
+    const provider = providerWith({
+      access_token: await accessToken(accessTokenClaims),
+      refresh_token: 'refresh_one',
+      user,
+    })
+    const response = (await call(
+      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
+      { headers: { cookie } },
+      envWith(),
+      optionsFor(provider),
+    )) as Response
+    const header = cookieNamed(response, SESSION_COOKIE_NAME) as string
+    return { cookie: header.slice(0, header.indexOf(';')) }
+  }
+
+  // WorkOS access tokens are short-lived, so without a refresh a sign-in would
+  // last minutes rather than the eight hours the cookie claims.
+  it('exchanges the sealed refresh token and re-seals the cookie', async () => {
+    const { cookie } = await signIn({ exp: NOW_SECONDS + 60 })
+
+    // Well past the access token's expiry, well inside the session ceiling.
+    const later = NOW_MS + 3_600_000
+    const laterSeconds = Math.floor(later / 1000)
+    const provider = createFakeProvider({
+      jwks: signer.jwks,
+      authenticate: {
+        access_token: await signer.sign({
+          iss: TEST_ISSUER,
+          sub: 'user_01HREADER',
+          client_id: config.clientId,
+          iat: laterSeconds - 10,
+          exp: laterSeconds + 300,
+        }),
+        refresh_token: 'refresh_two',
+        user,
+      },
+    })
+
+    const response = (await call(
+      AUTH_ME_PATH,
+      { headers: { cookie } },
+      envWith(),
+      { ...optionsFor(provider), now: later },
+    )) as Response
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ authenticated: true })
+
+    const renewed = cookieNamed(response, SESSION_COOKIE_NAME) as string
+    expect(renewed, 'a renewed session must come back as a cookie').toBeTruthy()
+    const sealed = renewed.slice(renewed.indexOf('=') + 1, renewed.indexOf(';'))
+    const session = await unsealSession(sealed, config.cookiePassword)
+    expect(session?.refreshToken).toBe('refresh_two')
+    expect(session?.expiresAt).toBeGreaterThan(laterSeconds)
+
+    const refresh = provider.calls.find((entry) =>
+      String(entry.init?.body ?? '').includes('refresh_token'),
+    )
+    expect(refresh, 'the refresh grant must be used').toBeTruthy()
+  })
+
+  // Otherwise refreshing in a loop would make the ceiling decorative.
+  it('will not refresh past the ceiling fixed at login', async () => {
+    const { cookie } = await signIn({ exp: NOW_SECONDS + 60 })
+
+    const past = NOW_MS + (SESSION_MAX_AGE_SECONDS + 60) * 1000
+    const provider = providerWith({
+      access_token: await accessToken({ exp: Math.floor(past / 1000) + 300 }),
+      refresh_token: 'refresh_two',
+      user,
+    })
+
+    const response = (await call(
+      AUTH_ME_PATH,
+      { headers: { cookie } },
+      envWith(),
+      { ...optionsFor(provider), now: past },
+    )) as Response
+
+    expect(await response.json()).toMatchObject({ authenticated: false })
+    expect(cookieNamed(response, SESSION_COOKIE_NAME)).toBeUndefined()
+  })
+
+  it('does not renew when the provider refuses the refresh token', async () => {
+    const { cookie } = await signIn({ exp: NOW_SECONDS + 60 })
+
+    const response = (await call(
+      AUTH_ME_PATH,
+      { headers: { cookie } },
+      envWith(),
+      { ...optionsFor(providerWith({}, 401)), now: NOW_MS + 3_600_000 },
+    )) as Response
+
+    expect(await response.json()).toMatchObject({ authenticated: false })
+    expect(cookieNamed(response, SESSION_COOKIE_NAME)).toBeUndefined()
   })
 })

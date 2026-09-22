@@ -33,6 +33,7 @@ import {
   STATE_COOKIE_NAME,
   STATE_COOKIE_PATH,
   unsealLoginState,
+  unsealSession,
 } from './session'
 
 /**
@@ -142,13 +143,48 @@ async function handleLogin(
 
 type AuthenticateResponse = {
   access_token?: unknown
-  user?: { email?: unknown; email_verified?: unknown } | null
+  refresh_token?: unknown
+  user?: { id?: unknown; email?: unknown; email_verified?: unknown } | null
 }
 
 function loginFailed(): Response {
   return json({ error: 'login_failed' }, 400, [
     ['set-cookie', clearedCookie(STATE_COOKIE_NAME, STATE_COOKIE_PATH)],
   ])
+}
+
+/**
+ * One POST to `/user_management/authenticate`, for both grants.
+ *
+ * WorkOS authenticates this endpoint with `client_id` and `client_secret` in
+ * the request body — the API key is the client secret here, not a bearer
+ * token — so the grant is the only thing that differs between the login
+ * exchange and a refresh.
+ */
+async function exchange(
+  config: WorkosConfig,
+  options: AuthOptions,
+  grant: Record<string, string>,
+): Promise<AuthenticateResponse | null> {
+  const fetchImpl = options.fetchImpl ?? fetch
+  try {
+    const response = await fetchImpl(tokenEndpoint(config), {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json',
+      },
+      body: JSON.stringify({
+        client_id: config.clientId,
+        client_secret: config.apiKey,
+        ...grant,
+      }),
+    })
+    if (!response.ok) return null
+    return (await response.json()) as AuthenticateResponse
+  } catch {
+    return null
+  }
 }
 
 async function handleCallback(
@@ -169,27 +205,11 @@ async function handleCallback(
     return loginFailed()
   }
 
-  const fetchImpl = options.fetchImpl ?? fetch
-  let payload: AuthenticateResponse
-  try {
-    const response = await fetchImpl(tokenEndpoint(config), {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        accept: 'application/json',
-      },
-      body: JSON.stringify({
-        grant_type: 'authorization_code',
-        client_id: config.clientId,
-        client_secret: config.apiKey,
-        code,
-      }),
-    })
-    if (!response.ok) return loginFailed()
-    payload = (await response.json()) as AuthenticateResponse
-  } catch {
-    return loginFailed()
-  }
+  const payload = await exchange(config, options, {
+    grant_type: 'authorization_code',
+    code,
+  })
+  if (!payload) return loginFailed()
 
   const accessToken = payload?.access_token
   if (typeof accessToken !== 'string' || !accessToken) return loginFailed()
@@ -204,6 +224,13 @@ async function handleCallback(
   const email =
     typeof payload.user?.email === 'string' ? payload.user.email : undefined
   const emailVerified = payload.user?.email_verified === true
+  // The profile block is not signed; the token is. So the profile only speaks
+  // for this session if it names the same subject the token was issued for.
+  // Without that, a provider response carrying somebody else's `sub` beside
+  // the owner's verified address would hand the admin row to that subject.
+  const profileIsSubject =
+    typeof payload.user?.id === 'string' &&
+    payload.user.id === verified.claims.sub
 
   const principal: Principal = {
     provider: WORKOS_PROVIDER,
@@ -224,6 +251,7 @@ async function handleCallback(
       if (
         identityId !== null &&
         emailVerified &&
+        profileIsSubject &&
         email?.toLowerCase() === config.adminEmail
       ) {
         await bindAdmin(db, identityId, nowIso)
@@ -240,10 +268,21 @@ async function handleCallback(
     SESSION_MAX_AGE_SECONDS,
     Math.max(0, verified.claims.exp - nowSeconds),
   )
+  const refreshToken =
+    typeof payload.refresh_token === 'string' && payload.refresh_token
+      ? payload.refresh_token
+      : undefined
+  const ceiling = nowSeconds + SESSION_MAX_AGE_SECONDS
   const sealedSession = await sealSession(
     {
       accessToken,
-      expiresAt: verified.claims.exp,
+      // Both bounds go inside the seal, not only on `Max-Age`. A cookie copied
+      // out of the browser is still a bearer token, and a cookie jar is not
+      // where a session limit can be enforced. `ceiling` is fixed here and a
+      // refresh may not move it.
+      expiresAt: nowSeconds + maxAge,
+      ceiling,
+      ...(refreshToken ? { refreshToken } : {}),
       ...(email ? { email } : {}),
     },
     config.cookiePassword,
@@ -274,12 +313,95 @@ function handleLogout(): Response {
   ])
 }
 
+/**
+ * Trades the sealed refresh token for a live access token.
+ *
+ * WorkOS access tokens are short-lived by design, so without this a sign-in
+ * would last minutes rather than the eight hours the cookie claims. It returns
+ * the new sealed cookie rather than applying it, because only a route with a
+ * response in hand can set one — `getPrincipal` has no response.
+ *
+ * `ceiling` is copied, never recomputed: refreshing must not extend the
+ * session past the bound login fixed for it.
+ */
+async function refreshed(
+  request: Request,
+  config: WorkosConfig,
+  options: AuthOptions,
+): Promise<{ principal: Principal; cookie: string } | null> {
+  const sealed = readCookie(request, SESSION_COOKIE_NAME)
+  if (!sealed) return null
+  const session = await unsealSession(sealed, config.cookiePassword)
+  if (!session?.refreshToken) return null
+
+  const nowSeconds = Math.floor((options.now ?? Date.now()) / 1000)
+  const ceiling = session.ceiling ?? session.expiresAt
+  if (nowSeconds >= ceiling) return null
+
+  const payload = await exchange(config, options, {
+    grant_type: 'refresh_token',
+    refresh_token: session.refreshToken,
+  })
+  const accessToken = payload?.access_token
+  if (typeof accessToken !== 'string' || !accessToken) return null
+
+  const verified = await verifyAccessToken(accessToken, {
+    config,
+    jwks: jwksFor(config, options),
+    now: options.now,
+  })
+  if (!verified.ok) return null
+
+  const nextRefresh =
+    typeof payload.refresh_token === 'string' && payload.refresh_token
+      ? payload.refresh_token
+      : session.refreshToken
+  const expiresAt = Math.min(verified.claims.exp, ceiling)
+  if (expiresAt <= nowSeconds) return null
+
+  const cookie = serializeCookie(
+    SESSION_COOKIE_NAME,
+    await sealSession(
+      {
+        accessToken,
+        expiresAt,
+        ceiling,
+        refreshToken: nextRefresh,
+        ...(session.email ? { email: session.email } : {}),
+      },
+      config.cookiePassword,
+    ),
+    { path: SESSION_COOKIE_PATH, maxAgeSeconds: expiresAt - nowSeconds },
+  )
+
+  return {
+    principal: {
+      provider: WORKOS_PROVIDER,
+      issuer: verified.claims.iss,
+      subject: verified.claims.sub,
+      ...(session.email ? { email: session.email } : {}),
+    },
+    cookie,
+  }
+}
+
 async function handleMe(
   request: Request,
   env: AuthEnv,
+  config: WorkosConfig,
   options: AuthOptions,
 ): Promise<Response> {
-  const principal = await getPrincipal(request, env, options)
+  let principal = await getPrincipal(request, env, options)
+  // The one route a client polls, and the only one holding a response it can
+  // set a cookie on, so it is where a lapsed access token is renewed.
+  let renewed: string | null = null
+  if (!principal) {
+    const again = await refreshed(request, config, options)
+    if (again) {
+      principal = again.principal
+      renewed = again.cookie
+    }
+  }
   if (!principal) {
     return json({ authenticated: false, canWrite: false, isAdmin: false })
   }
@@ -293,12 +415,16 @@ async function handleMe(
     }
   }
 
-  return json({
-    authenticated: true,
-    principal,
-    canWrite: role !== null,
-    isAdmin: role === 'admin',
-  })
+  return json(
+    {
+      authenticated: true,
+      principal,
+      canWrite: role !== null,
+      isAdmin: role === 'admin',
+    },
+    200,
+    renewed ? [['set-cookie', renewed]] : [],
+  )
 }
 
 /**
@@ -315,6 +441,17 @@ export async function handleAuthRequest(
     pathname.length > 1 ? pathname.replace(/\/+$/u, '') || '/' : pathname
   if (!AUTH_PATHS.includes(path)) return null
 
+  // Logout is answered before the configuration gate. Clearing a cookie needs
+  // no provider, and a half-configured or mid-rotation deployment is exactly
+  // when somebody wants to get signed out — a 503 there would leave the
+  // session cookie in place with no way to remove it.
+  if (path === AUTH_LOGOUT_PATH) {
+    // POST only: a `SameSite=Lax` cookie rides along with a cross-site GET
+    // navigation, so a GET logout would be forgeable.
+    if (request.method !== 'POST') return methodNotAllowed('POST')
+    return handleLogout()
+  }
+
   const config = readWorkosConfig(env)
   if (!config) {
     // No credentials means no login. Failing closed here is what keeps a
@@ -329,13 +466,8 @@ export async function handleAuthRequest(
     case AUTH_CALLBACK_PATH:
       if (request.method !== 'GET') return methodNotAllowed('GET')
       return handleCallback(request, env, config, options)
-    case AUTH_LOGOUT_PATH:
-      // POST only: a `SameSite=Lax` cookie rides along with a cross-site GET
-      // navigation, so a GET logout would be forgeable.
-      if (request.method !== 'POST') return methodNotAllowed('POST')
-      return handleLogout()
     default:
       if (request.method !== 'GET') return methodNotAllowed('GET')
-      return handleMe(request, env, options)
+      return handleMe(request, env, config, options)
   }
 }

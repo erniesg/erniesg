@@ -65,8 +65,13 @@ export const SELECT_ROLE_SQL = `SELECT allowlist.role AS role
 export const SELECT_ADMIN_SQL = `SELECT identity_id AS identity_id
   FROM ${ALLOWLIST_TABLE} WHERE role = 'admin' LIMIT 1`
 
+// `identity_id` is the allowlist's primary key, so an owner the owner had
+// already added as a writer would collide here and never become admin. The
+// upsert promotes that row instead; `margin_allowlist_single_admin` and the
+// `hasAdmin` check above still keep it to one admin.
 export const INSERT_ADMIN_SQL = `INSERT INTO ${ALLOWLIST_TABLE}
-  (identity_id, role, added_at) VALUES (?, 'admin', ?)`
+  (identity_id, role, added_at) VALUES (?, 'admin', ?)
+  ON CONFLICT (identity_id) DO UPDATE SET role = 'admin'`
 
 export async function ensureSchema(db: D1Like): Promise<void> {
   for (const statement of SCHEMA_STATEMENTS) {

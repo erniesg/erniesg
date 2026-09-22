@@ -99,11 +99,35 @@ function jwksFor(config: WorkosConfig, fetchImpl?: typeof fetch): JwksSource {
   return created
 }
 
+/**
+ * Whether the request arrived on a loopback address.
+ *
+ * `MARGIN_ENVIRONMENT` is configuration, and configuration drifts. The stub
+ * hands out an identity with no token behind it, so it must not depend on one
+ * variable being right: a deployed Worker answers on `ernie.sg` or a
+ * `workers.dev` subdomain, never on loopback, so this closes the stub on every
+ * deployed hostname whatever the environment says.
+ */
+function onLoopback(request: Request): boolean {
+  try {
+    const { hostname } = new URL(request.url)
+    return (
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '[::1]' ||
+      hostname === '::1'
+    )
+  } catch {
+    return false
+  }
+}
+
 function devPrincipal(
   request: Request,
   env: PrincipalEnv,
 ): Principal | null {
   if (env.MARGIN_ENVIRONMENT !== DEVELOPMENT_ENVIRONMENT) return null
+  if (!onLoopback(request)) return null
   const stub = env.MARGIN_DEV_PRINCIPAL
   if (!stub) return null
   return parseDevPrincipal(request.headers.get(DEV_PRINCIPAL_HEADER) ?? stub)
@@ -125,6 +149,13 @@ export async function getPrincipal(
 
   const session = await unsealSession(sealed, config.cookiePassword)
   if (!session) return null
+
+  // The seal carries the session's own ceiling — the lesser of the token's
+  // `exp` and `SESSION_MAX_AGE_SECONDS`. Checking it here is what makes the
+  // ceiling real: `Max-Age` only governs the browser's copy, and a cookie
+  // lifted out of one is accepted on its contents alone.
+  const nowSeconds = Math.floor((options.now ?? Date.now()) / 1000)
+  if (nowSeconds >= session.expiresAt) return null
 
   const verified = await verifyAccessToken(session.accessToken, {
     config,

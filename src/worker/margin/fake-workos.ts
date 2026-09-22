@@ -333,10 +333,15 @@ export function createFakeD1(): FakeD1 {
           if (allowlist.some((row) => row.role === 'admin')) {
             throw new Error(`UNIQUE constraint failed: ${ALLOWLIST_TABLE}.role`)
           }
-          if (allowlist.some((row) => row.identity_id === Number(identityId))) {
-            throw new Error(
-              `UNIQUE constraint failed: ${ALLOWLIST_TABLE}.identity_id`,
-            )
+          // `ON CONFLICT (identity_id) DO UPDATE SET role = 'admin'`: an
+          // identity the owner had already allowlisted as a writer is promoted
+          // rather than rejected. The single-admin index above still applies.
+          const existing = allowlist.find(
+            (row) => row.identity_id === Number(identityId),
+          )
+          if (existing) {
+            existing.role = 'admin'
+            return null
           }
           allowlist.push({
             identity_id: Number(identityId),

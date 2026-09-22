@@ -189,3 +189,69 @@ describe('ernie.sg Worker entry', () => {
     expect(env.ASSETS.seen).toHaveLength(1)
   })
 })
+
+/**
+ * The write gate, over HTTP rather than through the helper.
+ *
+ * The issue's acceptance tests are about requests: an anonymous write is 401, a
+ * signed-in write without an allowlist row is 403, and `apply` needs the admin.
+ * Calling `requireWriter` directly proves the helper works and proves nothing
+ * about whether anything calls it, so these go through `worker.fetch`.
+ */
+describe('the margin write gate', () => {
+  const ANNOTATIONS = 'https://ernie.sg/api/margin/v1/annotations'
+  const APPLY = 'https://ernie.sg/api/margin/v1/proposals/ann-1/apply'
+
+  function envWithWorkos() {
+    const env = { ASSETS: createAssetBinding(), ...testWorkosEnv() }
+    return env as unknown as WorkerEnv & { ASSETS: ReturnType<typeof createAssetBinding> }
+  }
+
+  it('refuses an anonymous write without reaching the assets', async () => {
+    for (const [url, method] of [
+      [ANNOTATIONS, 'POST'],
+      [ANNOTATIONS, 'PATCH'],
+      [ANNOTATIONS, 'DELETE'],
+      [APPLY, 'POST'],
+    ] as const) {
+      const env = envWithWorkos()
+      const response = await worker.fetch(new Request(url, { method }), env)
+
+      expect(response.status, `${method} ${url}`).toBe(401)
+      expect(await response.json()).toEqual({ error: 'authentication_required' })
+      expect(env.ASSETS.seen).toHaveLength(0)
+    }
+  })
+
+  it('lets a read through to whatever serves it', async () => {
+    const env = envWithWorkos()
+    const response = await worker.fetch(new Request(ANNOTATIONS), env)
+
+    expect(response.status).toBe(404)
+    expect(env.ASSETS.seen).toHaveLength(1)
+  })
+
+  it('gates a write even on a path no route serves yet', async () => {
+    const env = envWithWorkos()
+    const response = await worker.fetch(
+      new Request('https://ernie.sg/api/margin/v1/anything/at/all', {
+        method: 'POST',
+      }),
+      env,
+    )
+
+    expect(response.status).toBe(401)
+    expect(env.ASSETS.seen).toHaveLength(0)
+  })
+
+  it('leaves everything outside the margin prefix alone', async () => {
+    const env = envWithWorkos()
+    const response = await worker.fetch(
+      new Request('https://ernie.sg/api/other/thing', { method: 'POST' }),
+      env,
+    )
+
+    expect(env.ASSETS.seen).toHaveLength(1)
+    expect(response.status).toBe(404)
+  })
+})

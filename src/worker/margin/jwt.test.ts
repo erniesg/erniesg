@@ -215,6 +215,73 @@ describe('JWKS availability', () => {
     expect(recovered.ok).toBe(true)
   })
 
+  // The requirement is that a provider failure never falls back to something
+  // trusted, and a key set past its TTL is something trusted: WorkOS may have
+  // revoked the key in the meantime, and the cache cannot know.
+  it('drops a key set past its TTL rather than trusting it through an outage', async () => {
+    let reachable = true
+    let clock = NOW_MS
+    const calls: number[] = []
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      void input
+      calls.push(clock)
+      if (!reachable) return new Response('gateway', { status: 503 })
+      return new Response(JSON.stringify(signer.jwks), { status: 200 })
+    }) as unknown as typeof fetch
+
+    const source = createJwksSource(jwksUrl(config), {
+      fetchImpl,
+      now: () => clock,
+      ttlMs: 600_000,
+    })
+    const token = await signer.sign(validClaims())
+
+    // Warm, then let the key set go stale while the provider is down.
+    await expect(
+      verifyAccessToken(token, { config, jwks: source, now: NOW_MS }),
+    ).resolves.toMatchObject({ ok: true })
+
+    reachable = false
+    clock = NOW_MS + 600_001
+    await expect(
+      verifyAccessToken(token, { config, jwks: source, now: NOW_MS }),
+    ).resolves.toEqual({ ok: false, reason: 'jwks-unavailable' })
+
+    // Still fresh, and still unreachable: nothing was kept to fall back on.
+    await expect(
+      verifyAccessToken(token, { config, jwks: source, now: NOW_MS }),
+    ).resolves.toEqual({ ok: false, reason: 'jwks-unavailable' })
+
+    // And it recovers without a restart once the provider answers again.
+    reachable = true
+    await expect(
+      verifyAccessToken(token, { config, jwks: source, now: NOW_MS }),
+    ).resolves.toMatchObject({ ok: true })
+    expect(calls.length).toBeGreaterThan(1)
+  })
+
+  it('keeps trusting a cached key set inside its TTL', async () => {
+    let clock = NOW_MS
+    const provider = createFakeProvider({ jwks: signer.jwks })
+    const source = createJwksSource(jwksUrl(config), {
+      fetchImpl: provider.fetchImpl,
+      now: () => clock,
+      ttlMs: 600_000,
+    })
+    const token = await signer.sign(validClaims())
+
+    await expect(
+      verifyAccessToken(token, { config, jwks: source, now: NOW_MS }),
+    ).resolves.toMatchObject({ ok: true })
+
+    provider.offline = true
+    clock = NOW_MS + 599_000
+    await expect(
+      verifyAccessToken(token, { config, jwks: source, now: NOW_MS }),
+    ).resolves.toMatchObject({ ok: true })
+    expect(provider.calls).toHaveLength(1)
+  })
+
   it('caches a fetched key set instead of refetching per request', async () => {
     const provider = createFakeProvider({ jwks: signer.jwks })
     const source = sourceFor(provider)

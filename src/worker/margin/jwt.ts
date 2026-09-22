@@ -145,7 +145,16 @@ export function createJwksSource(
 
   return {
     async getKey(kid: string): Promise<CryptoKey | null> {
-      if (!keys || now() - fetchedAt > ttlMs) await refresh()
+      if (!keys || now() - fetchedAt > ttlMs) {
+        // A key set past its TTL has stopped being evidence. Keeping it when
+        // the refresh fails would let a key WorkOS has revoked go on
+        // validating tokens for as long as the provider stays unreachable,
+        // which is the fallback this must not have: drop it and refuse.
+        if (!(await refresh())) {
+          keys = null
+          return null
+        }
+      }
       const cached = keys?.get(kid)
       if (cached) return cached
       // An unknown `kid` is the signal for key rotation. Refetch, but no more

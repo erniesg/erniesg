@@ -17,7 +17,7 @@ export default defineConfig({
   reporter: [['line']],
   use: { baseURL: `http://127.0.0.1:${port}`, browserName: process.env.BOOK_BROWSER === 'webkit' ? 'webkit' : 'chromium', viewport: { width: 1280, height: 1000 } },
   webServer: {
-    command: `${python} challenges/tools/preview.py --port ${port} --no-open`,
+    command: `${python} books/tools/preview.py --port ${port} --no-open`,
     url: `http://127.0.0.1:${port}/`,
     reuseExistingServer: false,
     timeout: 30_000,

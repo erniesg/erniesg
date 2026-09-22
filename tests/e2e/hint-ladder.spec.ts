@@ -93,3 +93,37 @@ test('an unaided challenge says up front that it has no hints', async ({ page })
   await page.goto('/cut-them-all-the-same')
   await expect(page.locator('.support-unaided')).toContainText('No hints on this one')
 })
+
+test('contents list chapters with their practice nested under them', async ({ page }) => {
+  await page.goto('/recent-readings')
+  await page.locator('.contents-button').click()
+  const lists = page.locator('.toc-row:not(.toc-practice)', { hasText: 'Lists and how to use them' })
+  await expect(lists.locator('.toc-num')).toHaveText('3')
+  const practice = page.locator('.toc-practice', { hasText: 'The last few readings' })
+  await expect(practice).toContainText('practice')
+  await expect(practice.locator('.toc-num')).toHaveText('')
+  await expect(page.locator('.eyebrow').first()).toHaveText('Chapter 3 · Lists and how to use them · practice 1 of 2')
+})
+
+test('headings with apostrophes are not escaped twice in the rail', async ({ page }) => {
+  await page.goto('/ch10-idioms')
+  await expect(page.locator('.rail')).toContainText("Don't rearrange")
+  await expect(page.locator('.rail')).not.toContainText('&#x27;')
+})
+
+test('the print rail lists chapters, not every heading in the book', async ({ page }) => {
+  await page.goto('/print')
+  const items = page.locator('.rail .rail-list li')
+  await expect(items).toHaveCount(15)
+  await expect(items.first()).toHaveText('0 · How to solve one of these')
+})
+
+for (const path of ['/', '/print', '/map', '/max-pairwise-product', '/ch06-dicts-sets', '/ch10-idioms']) {
+  test(`${path} runs its scripts without an error`, async ({ page }) => {
+    const errors: string[] = []
+    page.on('pageerror', e => errors.push(e.message))
+    await page.goto(path)
+    await page.waitForTimeout(200)
+    expect(errors).toEqual([])
+  })
+}

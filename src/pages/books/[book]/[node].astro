@@ -46,13 +46,15 @@ const RESTORED = `
 .book-content .hint,
 .book-content .solution,
 .book-content :not(pre) > code { color: #1a1a1a; }
-/* CONTENT_CSS's greys and its link colour are chosen against a light page. On
-   the dark page they fall to the container; the light panels take them back. */
-.dark .book-content { --dim: #9a9a9a; --line: #3f3f3f; --accent: #7dd3fc; }
+/* CONTENT_CSS's greys, its rules and its link colour are all chosen against a
+   light page — --ink draws the rules above and below a challenge card, so at
+   #1a1a1a on the dark page the card loses its boundary entirely. They get dark
+   values on the container; the light panels take the light ones back. */
+.dark .book-content { --ink: #ededed; --dim: #9a9a9a; --line: #3f3f3f; --accent: #7dd3fc; }
 .dark .book-content .figure,
 .dark .book-content .cell,
 .dark .book-content .hint,
-.dark .book-content .solution { --dim: #666; --line: #e2e2e2; --accent: #0369a1; }
+.dark .book-content .solution { --ink: #1a1a1a; --dim: #666; --line: #e2e2e2; --accent: #0369a1; }
 .book-content h1, .book-content h2, .book-content h3 { font-weight: 700; }
 .book-content p { margin: 1rem 0; }
 .book-content ul { list-style: disc; margin: 1rem 0; padding-left: 1.4rem; }

@@ -132,6 +132,39 @@ json.dump(
 )
 `
 
+/** Render a fabricated node whose id and limits try to close their attribute. */
+const HOSTILE_MARKUP = `
+import sys, json
+sys.path.insert(0, "challenges/tools")
+from render import render_node, problem_card
+hostile_id = 'x"><img src=x onerror=alert(1)>'
+hostile_limit = '</p><img src=x onerror=alert(1)><p>'
+json.dump(
+    {
+        "block": render_node(
+            {"id": hostile_id, "title": "T", "kind": "prose", "body": "alpha\\n"}, "web"
+        ),
+        "card": problem_card(
+            {
+                "id": "n",
+                "title": "T",
+                "limits": {"time_seconds": hostile_limit, "memory_mb": 256},
+            },
+            {"statement": "s", "io": ""},
+        ),
+    },
+    sys.stdout,
+)
+`
+
+/** Every node id the pool declares, for the slug rule the validator enforces. */
+const NODE_IDS = `
+import sys, json
+sys.path.insert(0, "challenges/tools")
+from render import all_nodes
+json.dump(sorted(all_nodes()), sys.stdout)
+`
+
 const COUNT_POOL = `
 import sys
 sys.path.insert(0, "challenges/tools")
@@ -263,6 +296,35 @@ describe('one renderer', () => {
     walk(path.join(ROOT, 'src'))
 
     expect(offenders).toEqual([])
+  })
+})
+
+describe('nothing an author writes becomes markup by accident', () => {
+  // The block id is what an annotation resolves through, so a value that can
+  // close its attribute would take every note on the node with it — and the
+  // limits line is interpolated straight into a paragraph.
+  it('escapes a node id and a limit that try to close their attribute', SLOW, () => {
+    const rendered = JSON.parse(python(HOSTILE_MARKUP)) as {
+      block: string
+      card: string
+    }
+
+    for (const markup of [rendered.block, rendered.card]) {
+      expect(markup).not.toContain('<img')
+      expect(markup).toContain('&lt;img')
+    }
+    expect(rendered.block).toContain('&quot;')
+  })
+
+  // And the renderer should never have to carry a hostile id in the first
+  // place: an id is a route segment, a DOM id and an anchor stem at once.
+  it('holds every node id to a url-safe slug', SLOW, () => {
+    const ids: string[] = JSON.parse(python(NODE_IDS))
+
+    expect(ids.length).toBeGreaterThan(0)
+    for (const id of ids) {
+      expect(id, `${id} is not a url-safe slug`).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+    }
   })
 })
 
@@ -478,6 +540,18 @@ describe('every node reaches the web', () => {
     expect(book.nodes.length).toBe(pool)
   })
 
+  // `builtSite` is what makes the DOM assertions below conditional, so it has
+  // to mean "no build here", not "the build dropped the book". A `dist/` with
+  // no book in it is the regression, and skipping on it would hide exactly the
+  // failure those assertions exist to catch.
+  it('does not let a missing book route look like a missing build', () => {
+    if (!existsSync(DIST)) return
+    expect(existsSync(path.join(DIST, 'books')), 'dist/ exists but has no books/').toBe(
+      true,
+    )
+    expect(existsSync(bookDist), `dist/ exists but has no books/${SLUG}/`).toBe(true)
+  })
+
   it.skipIf(!builtSite)('builds a page for each of them', () => {
     const emitted = readdirSync(bookDist).filter((entry) =>
       statSync(path.join(bookDist, entry)).isDirectory(),
@@ -528,6 +602,54 @@ describe('the topic map is this book\'s', () => {
 
     expect(empty.length).toBeGreaterThan(0)
   })
+
+  // The one book currently walks the whole pool, so membership alone proves
+  // nothing — scanning `all_nodes()` would satisfy it. This adds a second path
+  // over a subset, which is the case the scoping exists for.
+  it('gives a second book only what that book walks', SLOW, () => {
+    const { challenges, cleanup } = copyChallenges()
+    try {
+      const selected = book.nodes.slice(0, 4).map((node) => node.id)
+      writeFileSync(
+        path.join(challenges, 'paths', 'short.toml'),
+        [
+          'id = "short"',
+          'slug = "a-shorter-walk"',
+          'title = "A Shorter Walk"',
+          'subtitle = "The same pool, fewer nodes"',
+          'edition = "0.1.0"',
+          'kind = "book"',
+          '',
+          '[[parts]]',
+          'id = "part-0"',
+          'title = "The loop"',
+          `nodes = [${selected.map((id) => JSON.stringify(id)).join(', ')}]`,
+          '',
+        ].join('\n'),
+      )
+
+      const rendered = renderIn(challenges)
+      const shorter = rendered.books.find((entry) => entry.slug === 'a-shorter-walk')!
+      const full = rendered.books.find((entry) => entry.slug === SLUG)!
+
+      expect(shorter.nodes.map((node) => node.id)).toEqual(selected)
+
+      const attached = shorter.topics.flatMap((topic) => topic.nodes.map((n) => n.id))
+      expect(attached.length).toBeGreaterThan(0)
+      for (const id of attached) {
+        expect(selected, `the short book attaches ${id}, which it does not walk`).toContain(
+          id,
+        )
+      }
+
+      // And the two books must not agree: the long one teaches more.
+      const writtenIn = (entry: typeof full) =>
+        entry.topics.filter((topic) => topic.nodes.length > 0).length
+      expect(writtenIn(shorter)).toBeLessThan(writtenIn(full))
+    } finally {
+      cleanup()
+    }
+  })
 })
 
 describe('the reading shell belongs to the site', () => {
@@ -562,20 +684,26 @@ describe('the reading shell belongs to the site', () => {
   // A closed <details> hides its own content whatever `display` says, and the
   // wide breakpoint hides the summary that would reopen it, so a rail without
   // `open` in the markup is empty on every wide load.
-  it('exposes the contents without waiting for a click', () => {
-    const disclosure = layout.match(/<details[^>]*class="reading-contents"[^>]*>/)!
+  // `open` is the boolean attribute, not the substring: `data-open="false"`
+  // contains the word and leaves the rail as closed as it was.
+  const OPEN_DISCLOSURE = /<details(?=[^>]*class="reading-contents")[^>]*\sopen(?=[\s>])/
 
-    expect(disclosure).not.toBeNull()
-    expect(disclosure[0]).toContain('open')
+  it('exposes the contents without waiting for a click', () => {
+    expect(layout).toMatch(/<details[^>]*class="reading-contents"/)
+    expect(layout).toMatch(OPEN_DISCLOSURE)
+    expect('<details class="reading-contents" data-open="false">').not.toMatch(
+      OPEN_DISCLOSURE,
+    )
   })
 
   it.skipIf(!builtSite)('shows every contents entry on a wide load', () => {
     const chapter = distPage('books', SLUG, SAMPLE)
-    const rail = chapter.slice(chapter.indexOf('data-reading-column="navigation"'))
-
-    expect(rail.slice(0, rail.indexOf('data-reading-column="text"'))).toMatch(
-      /<details[^>]*\bopen\b/,
+    const rail = chapter.slice(
+      chapter.indexOf('data-reading-column="navigation"'),
+      chapter.indexOf('data-reading-column="text"'),
     )
+
+    expect(rail).toMatch(OPEN_DISCLOSURE)
   })
 
   it.skipIf(!builtSite)('reserves the margin as an empty landmark', () => {

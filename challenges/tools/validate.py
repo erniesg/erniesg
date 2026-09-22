@@ -25,6 +25,11 @@ TIERS = ["public", "edge", "stress", "perf"]
 SUPPORT_LEVELS = ["worked", "guided", "contract", "unaided"]
 FIGURE_TYPES = {"cells", "walk", "links", "table", "cost"}
 
+# A node id is a URL segment, a DOM id and the stem of every annotation anchor
+# on the node, so it has to be safe in all three. Restricting it here is what
+# lets the renderer treat it as a known-good token everywhere downstream.
+NODE_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
 BLOCKS = re.compile(r"^:::(\w+)", re.MULTILINE)
 REQUIRED_BLOCKS = {
     # `hint` is governed by the support level below, not required outright: an
@@ -67,6 +72,13 @@ def check_node(path: Path, meta: dict, body: str) -> None:
     for key in ("id", "kind", "title"):
         if key not in meta:
             fail(path, f"front matter is missing `{key}`")
+    node_id = meta.get("id")
+    if node_id is not None and not NODE_ID.fullmatch(str(node_id)):
+        fail(
+            path,
+            f"id `{node_id}` is not a url-safe slug: it becomes a route segment, "
+            f"a DOM id and the stem of every annotation anchor on this node",
+        )
     kind = meta.get("kind", "")
     if kind not in REQUIRED_BLOCKS:
         fail(path, f"unknown kind `{kind}`")

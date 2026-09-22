@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { DEVELOPMENT_ENVIRONMENT } from '../env'
 
 /**
  * WorkOS configuration, read from the deployment platform's secret store.
@@ -24,7 +25,9 @@ export type WorkosEnv = {
   WORKOS_API_KEY?: string
   WORKOS_COOKIE_PASSWORD?: string
   WORKOS_REDIRECT_URI?: string
+  /** Read only while `MARGIN_ENVIRONMENT` is `development`. */
   MARGIN_ADMIN_EMAIL?: string
+  MARGIN_ENVIRONMENT?: string
 }
 
 function httpsUrl(value: string): boolean {
@@ -64,8 +67,15 @@ export function readWorkosConfig(env: WorkosEnv): WorkosConfig | null {
     apiKey: env.WORKOS_API_KEY?.trim(),
     cookiePassword: env.WORKOS_COOKIE_PASSWORD,
     redirectUri: env.WORKOS_REDIRECT_URI?.trim(),
-    adminEmail: (env.MARGIN_ADMIN_EMAIL?.trim() || DEFAULT_ADMIN_EMAIL)
-      .toLowerCase(),
+    // Fixed everywhere it matters. A deployed environment that could name its
+    // own admin address could name an attacker's, and this is the one place an
+    // email decides anything, so the override exists for local development
+    // only — it is not in the documented secret set either.
+    adminEmail: (
+      (env.MARGIN_ENVIRONMENT === DEVELOPMENT_ENVIRONMENT
+        ? env.MARGIN_ADMIN_EMAIL?.trim()
+        : '') || DEFAULT_ADMIN_EMAIL
+    ).toLowerCase(),
   })
   return result.success ? result.data : null
 }

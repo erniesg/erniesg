@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import type { Principal } from '../principal'
+import { marginWriteGate } from '../index'
 import { requireAdmin, requireWriter } from './authorize'
 import { jwksUrl, readWorkosConfig, type WorkosConfig } from './config'
 import {
@@ -18,9 +19,11 @@ import { createJwksSource } from './jwt'
 /**
  * The acceptance tests for the write gate.
  *
- * 054 has not landed, so there are no annotation routes to drive these through
- * yet. These exercise the guard those routes will call, which is the thing
- * that decides the answer; the route handler only forwards its response.
+ * 054's annotation routes are not in this tree, so the last block here drives
+ * the guard through `marginWriteGate` — the Worker's own dispatch — rather than
+ * only through the helpers. A helper that works and that nothing calls is the
+ * failure mode these have to rule out, so the route-level answers are asserted
+ * on the path a request actually takes.
  */
 
 const NOW_MS = 1_800_000_000_000
@@ -69,6 +72,21 @@ async function signedIn(principal: Principal): Promise<Request> {
 function anonymous(): Request {
   return new Request('https://ernie.sg/api/margin/v1/annotations', {
     method: 'POST',
+  })
+}
+
+async function at(url: string, principal?: Principal): Promise<Request> {
+  if (!principal) return new Request(url, { method: 'POST' })
+  const token = await signer.sign({
+    iss: principal.issuer,
+    sub: principal.subject,
+    client_id: TEST_CLIENT_ID,
+    iat: NOW_SECONDS - 10,
+    exp: NOW_SECONDS + 300,
+  })
+  return new Request(url, {
+    method: 'POST',
+    headers: { cookie: await sessionCookieHeader(token) },
   })
 }
 
@@ -249,5 +267,57 @@ describe('requireAdmin', () => {
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.response.status).toBe(403)
+  })
+})
+
+// The dispatch, not the helper: a gate nothing calls protects nothing.
+describe('the Worker dispatch applies the gate', () => {
+  const ANNOTATIONS = 'https://ernie.sg/api/margin/v1/annotations'
+  const APPLY = 'https://ernie.sg/api/margin/v1/proposals/ann-1/apply'
+
+  function populated(): FakeD1 {
+    const db = createFakeD1()
+    db.allow(writer, 'writer')
+    db.allow(admin, 'admin')
+    return db
+  }
+
+  it('is 401 anonymous, 403 signed in without a row, and through for a writer', async () => {
+    const db = populated()
+
+    const anon = await marginWriteGate(await at(ANNOTATIONS), envWith(db), options())
+    expect(anon?.status).toBe(401)
+
+    const outsider = await marginWriteGate(
+      await at(ANNOTATIONS, reader),
+      envWith(db),
+      options(),
+    )
+    expect(outsider?.status).toBe(403)
+
+    const allowed = await marginWriteGate(
+      await at(ANNOTATIONS, writer),
+      envWith(db),
+      options(),
+    )
+    expect(allowed).toBeNull()
+  })
+
+  it('needs the admin for apply, not merely a writer', async () => {
+    const db = populated()
+
+    const asWriter = await marginWriteGate(await at(APPLY, writer), envWith(db), options())
+    expect(asWriter?.status).toBe(403)
+    await expect(asWriter?.json()).resolves.toEqual({ error: 'admin_required' })
+
+    const asAdmin = await marginWriteGate(await at(APPLY, admin), envWith(db), options())
+    expect(asAdmin).toBeNull()
+  })
+
+  it('never stands between a reader and the book', async () => {
+    const db = populated()
+    const read = new Request(ANNOTATIONS)
+
+    expect(await marginWriteGate(read, envWith(db), options())).toBeNull()
   })
 })

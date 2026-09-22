@@ -101,6 +101,37 @@ sys.stdout.write(
 )
 `
 
+/** Nodes carrying a figure that needs no controller: a static SVG chart. */
+const STATIC_CHART_IDS = `
+import sys, json
+sys.path.insert(0, "challenges/tools")
+from render import load_book, render_node
+_, order = load_book()
+ids = [
+    n["id"]
+    for n in order
+    if 'class="cost"' in render_node(n, "web", runnable=True)
+]
+json.dump(ids, sys.stdout)
+`
+
+/** The topic map as the manifest builds it, beside the pool it drew from. */
+const TOPIC_MAP = `
+import sys, json
+sys.path.insert(0, "challenges/tools")
+from render import load_book, all_nodes
+from manifest import topic_entries
+_, order = load_book()
+json.dump(
+    {
+        "topics": topic_entries(order),
+        "book": [n["id"] for n in order],
+        "pool": sorted(all_nodes()),
+    },
+    sys.stdout,
+)
+`
+
 const COUNT_POOL = `
 import sys
 sys.path.insert(0, "challenges/tools")
@@ -260,6 +291,29 @@ describe('stable anchors', () => {
     }
   })
 
+  // A published page has no tiers to turn green, so a note promising that the
+  // solution waits on them contradicts the disclosure holding it two lines
+  // below. Print has no grader either.
+  it('promises no grader on pages that have none', SLOW, () => {
+    const gated: string[] = JSON.parse(python(GATED_IDS))
+    const graderOnly = ['waits until you pass', 'until every tier is green']
+
+    for (const id of gated) {
+      const published = python(RENDER_ONE, [id, 'web', 'no', 'reader'])
+      const printed = python(RENDER_ONE, [id, 'print', 'no'])
+      for (const promise of graderOnly) {
+        expect(published, `${id} must not promise a grader when published`)
+          .not.toContain(promise)
+        expect(printed, `${id} must not promise a grader in print`).not.toContain(promise)
+      }
+      expect(published, `${id} must say where its solution is`).toMatch(/is below|are below/)
+    }
+
+    const preview = python(RENDER_ONE, [gated[0], 'web', 'yes'])
+    expect(preview, 'the runnable preview still describes its tiers')
+      .toMatch(/waits until you pass|until every tier is green/)
+  })
+
   it('still lets the tiers gate the solution in the runnable preview', SLOW, () => {
     const gated: string[] = JSON.parse(python(GATED_IDS))
     const preview = python(RENDER_ONE, [gated[0], 'web', 'yes'])
@@ -298,6 +352,21 @@ describe('stable anchors', () => {
 
     const preview = python(RENDER_ONE, [withFigure[0], 'web', 'yes'])
     expect(preview, 'the runnable preview keeps its controls').toContain('walk-controls')
+  })
+
+  // The missing thing is the `data-walk` controller, not JavaScript: a cost
+  // chart is a plain SVG and needs nothing at all, so dropping it to the print
+  // table on a static host would discard a drawing that works there.
+  it('keeps the figures that need no controller when published', SLOW, () => {
+    const withChart: string[] = JSON.parse(python(STATIC_CHART_IDS))
+    expect(withChart.length).toBeGreaterThan(0)
+
+    for (const id of withChart) {
+      const published = python(RENDER_ONE, [id, 'web', 'no', 'reader'])
+      expect(published, `${id} must keep its static chart`).toContain('<svg viewBox')
+      expect(published, `${id} must keep its static chart`).toContain('class="cost"')
+      expect(published, `${id} must keep the numbers under it`).toContain('figure-table')
+    }
   })
 
   it('keeps block ids unique within a node', () => {
@@ -426,6 +495,41 @@ describe('every node reaches the web', () => {
   })
 })
 
+describe('the topic map is this book\'s', () => {
+  // The node pool is shared. A map built by scanning all of it would give every
+  // path the same attachments, so a second path selecting a subset would count
+  // topics it never teaches and link chapters it does not contain.
+  it('attaches only nodes the book actually walks, in reading order', SLOW, () => {
+    const map = JSON.parse(python(TOPIC_MAP)) as {
+      topics: { id: string; nodes: { id: string }[] }[]
+      book: string[]
+      pool: string[]
+    }
+    const order = new Map(map.book.map((id, index) => [id, index]))
+
+    expect(map.topics.length).toBeGreaterThan(0)
+    for (const topic of map.topics) {
+      const ids = topic.nodes.map((node) => node.id)
+      for (const id of ids) {
+        expect(order.has(id), `${topic.id} attaches ${id}, which the book does not walk`).toBe(
+          true,
+        )
+      }
+      const positions = ids.map((id) => order.get(id)!)
+      expect(positions, `${topic.id} must list its nodes in reading order`).toEqual(
+        [...positions].sort((a, b) => a - b),
+      )
+    }
+  })
+
+  it('still lists the topics with nothing written for them', SLOW, () => {
+    const map = JSON.parse(python(TOPIC_MAP)) as { topics: { nodes: unknown[] }[] }
+    const empty = map.topics.filter((topic) => topic.nodes.length === 0)
+
+    expect(empty.length).toBeGreaterThan(0)
+  })
+})
+
 describe('the reading shell belongs to the site', () => {
   const layout = readFileSync(path.join(ROOT, 'src', 'layouts', 'ReadingLayout.astro'), 'utf8')
 
@@ -454,6 +558,25 @@ describe('the reading shell belongs to the site', () => {
       expect(columns(chapter)).toEqual(columns(directory))
     },
   )
+
+  // A closed <details> hides its own content whatever `display` says, and the
+  // wide breakpoint hides the summary that would reopen it, so a rail without
+  // `open` in the markup is empty on every wide load.
+  it('exposes the contents without waiting for a click', () => {
+    const disclosure = layout.match(/<details[^>]*class="reading-contents"[^>]*>/)!
+
+    expect(disclosure).not.toBeNull()
+    expect(disclosure[0]).toContain('open')
+  })
+
+  it.skipIf(!builtSite)('shows every contents entry on a wide load', () => {
+    const chapter = distPage('books', SLUG, SAMPLE)
+    const rail = chapter.slice(chapter.indexOf('data-reading-column="navigation"'))
+
+    expect(rail.slice(0, rail.indexOf('data-reading-column="text"'))).toMatch(
+      /<details[^>]*\bopen\b/,
+    )
+  })
 
   it.skipIf(!builtSite)('reserves the margin as an empty landmark', () => {
     for (const page of [distPage('books'), distPage('books', SLUG, SAMPLE)]) {

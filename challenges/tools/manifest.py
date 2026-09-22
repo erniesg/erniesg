@@ -95,15 +95,22 @@ def node_entry(node: dict, slug: str) -> dict:
     }
 
 
-def topic_entries() -> list[dict]:
+def topic_entries(order: list[dict]) -> list[dict]:
     """The map: every topic the book covers, and what stands where.
+
+    `order` is this book's nodes in reading order, and it is the only pool the
+    map may draw on. The node pool is shared, so scanning all of it would give
+    every path the same attachments — a second path that selects a subset would
+    count topics it never teaches and link to chapters it does not contain.
+    Reading order also beats filesystem order: "what stands here" means the
+    chapter the reader reaches, so the links follow the book.
 
     Topics with nothing written yet are part of the shape of the book, so they
     are listed rather than hidden.
     """
     topics = load_topics()
     attached: dict[str, list[dict]] = {topic_id: [] for topic_id in topics}
-    for node in all_nodes().values():
+    for node in order:
         for topic_id in node.get("teaches", []):
             if topic_id in attached:
                 attached[topic_id].append(node)
@@ -155,7 +162,7 @@ def book_entry(path_id: str) -> dict:
             for part in data.get("parts", [])
         ],
         "nodes": [node_entry(node, slug) for node in order],
-        "topics": topic_entries(),
+        "topics": topic_entries(order),
     }
 
 

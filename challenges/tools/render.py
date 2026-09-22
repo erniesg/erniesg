@@ -52,6 +52,22 @@ SUPPORT_NOTES = {
 }
 FIGURE_TYPES = ("cells", "walk", "links", "table", "cost")
 
+# What a published page says instead, where the grader-facing note describes a
+# gate that does not exist there. A static host has no tiers to turn green, so
+# telling the reader the solution "waits until you pass" contradicts the
+# disclosure holding it two lines below.
+SUPPORT_NOTES_READER = {
+    "contract": "You get the contract and the tests. The hints are here, and "
+                "the worked solution is below when you want it.",
+    "unaided": "This is the one that tells you whether it stuck. Try it with "
+               "nothing first; the hints and the worked solution are below.",
+}
+
+# Figure kinds whose web body needs JavaScript. `walk` draws back/next buttons
+# that only `challenges/tools/preview.py` can drive; every other kind is plain
+# markup or a static SVG and survives on a host that ships no script.
+CONTROLLED_FIGURES = ("walk",)
+
 # The parts of the book, named once. The path files name the parts they walk;
 # these cover the topics that are mapped but not yet written.
 PART_NAMES = {
@@ -206,11 +222,23 @@ def problem_card(node: dict, blocks: dict[str, str]) -> str:
     )
 
 
-def figure(figure_id: str, caption_override: str = "", target: str = "web", number: int | None = None) -> str:
+def figure(
+    figure_id: str,
+    caption_override: str = "",
+    target: str = "web",
+    number: int | None = None,
+    runnable: bool = True,
+) -> str:
     """A figure, numbered so the prose can refer to it by name.
 
     A reader meeting a chart needs to know which figure it is and what it
     shows, in that order, without hunting for the sentence that introduced it.
+
+    `runnable` is the host's, not the figure's: a static page ships no
+    `data-walk` handler, so a steppable figure falls back to the print body
+    rather than drawing buttons nothing listens to. It is the controller that
+    is missing, not JavaScript in general, so only `CONTROLLED_FIGURES` fall
+    back — the cost and links charts are static SVG and are fine as they are.
     """
     path = FIGURES / f"{figure_id}.json"
     if not path.is_file():
@@ -221,7 +249,8 @@ def figure(figure_id: str, caption_override: str = "", target: str = "web", numb
     # the figure's own caption is what explains it; a directive's one-line
     # restatement is not a substitute for it, and printing both says it twice
     caption = html.escape(data.get("caption", "") or caption_override.strip())
-    body = _figure_body(data, kind, target)
+    body_target = "print" if (not runnable and kind in CONTROLLED_FIGURES) else target
+    body = _figure_body(data, kind, body_target)
     label = f"Figure {number}" if number else ""
     heading = f"{label} · {title}" if label and title else (label or title)
     return (
@@ -464,10 +493,13 @@ def render_node(
         emit("eyebrow", f'<p class="eyebrow">{html.escape(node["part"])}</p>')
     emit("title", f'<h1>{html.escape(node["title"])}</h1>')
     if node.get("kind") == "challenge":
+        # Print has no grader either, and its reader is the same reader.
+        note = SUPPORT_NOTES.get(support, "")
+        if reveal == "reader" or target == "print":
+            note = SUPPORT_NOTES_READER.get(support, note)
         emit(
             "support",
-            f'<p class="support support-{support}">'
-            f'{html.escape(SUPPORT_NOTES.get(support, ""))}</p>',
+            f'<p class="support support-{support}">{html.escape(note)}</p>',
         )
     hints: list[str] = []
     card_done = False
@@ -494,14 +526,9 @@ def render_node(
             emit("card", problem_card(referenced, parts))
         elif name == "figure":
             figure_number += 1
-            # Same rule the code cells follow: a walk figure's back/next only
-            # works because the local preview ships the `data-walk` handler. A
-            # static host does not, so asking for the print body gives the
-            # reader every step as a list instead of two dead buttons.
-            figure_target = target if runnable else "print"
             emit(
                 "figure",
-                figure(attrs.get("id", ""), inner, figure_target, figure_number),
+                figure(attrs.get("id", ""), inner, target, figure_number, runnable),
             )
         elif name == "hint":
             if support == "unaided" and target != "print" and reveal == "grader":

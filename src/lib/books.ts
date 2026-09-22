@@ -1,5 +1,5 @@
 /**
- * The books, as `challenges/tools/render.py` renders them.
+ * The books, as `books/tools/render.py` renders them.
  *
  * This module runs the Python renderer once per build and hands its HTML on
  * verbatim. It is deliberately the only bridge: nothing in `src/` parses a
@@ -78,7 +78,7 @@ export type BookManifest = {
   books: Book[]
 }
 
-const RENDERER_FROM_ROOT = path.join('challenges', 'tools', 'manifest.py')
+const RENDERER_FROM_ROOT = path.join('books', 'tools', 'manifest.py')
 
 /**
  * Where the node pool lives.

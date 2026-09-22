@@ -51,7 +51,7 @@ function python(source: string, args: string[] = []): string {
 /** `render_node` called directly, with nothing between it and the assertion. */
 const RENDER_ONE = `
 import sys
-sys.path.insert(0, "challenges/tools")
+sys.path.insert(0, "books/tools")
 from render import load_book, render_node
 _, order = load_book()
 node = next(n for n in order if n["id"] == sys.argv[1])
@@ -64,7 +64,7 @@ sys.stdout.write(
 /** Nodes carrying a steppable figure. */
 const FIGURE_IDS = `
 import sys, json
-sys.path.insert(0, "challenges/tools")
+sys.path.insert(0, "books/tools")
 from render import load_book, render_node
 _, order = load_book()
 ids = [
@@ -78,7 +78,7 @@ json.dump(ids, sys.stdout)
 /** Every node the tiers would gate: `contract` and `unaided`. */
 const GATED_IDS = `
 import sys, json
-sys.path.insert(0, "challenges/tools")
+sys.path.insert(0, "books/tools")
 from render import load_book
 _, order = load_book()
 json.dump([n["id"] for n in order if n.get("support") in ("contract", "unaided")], sys.stdout)
@@ -87,7 +87,7 @@ json.dump([n["id"] for n in order if n.get("support") in ("contract", "unaided")
 /** Render one node twice, with a block inserted ahead of its prose. */
 const DIGEST_DRIFT = `
 import sys
-sys.path.insert(0, "challenges/tools")
+sys.path.insert(0, "books/tools")
 from render import render_node, BLOCK_TAG
 body = "alpha\\n\\n:::prose\\nbravo\\n:::\\n"
 inserted = "alpha\\n\\n:::prose\\nINSERTED\\n:::\\n\\n:::prose\\nbravo\\n:::\\n"
@@ -104,7 +104,7 @@ sys.stdout.write(
 /** Nodes carrying a figure that needs no controller: a static SVG chart. */
 const STATIC_CHART_IDS = `
 import sys, json
-sys.path.insert(0, "challenges/tools")
+sys.path.insert(0, "books/tools")
 from render import load_book, render_node
 _, order = load_book()
 ids = [
@@ -118,7 +118,7 @@ json.dump(ids, sys.stdout)
 /** The topic map as the manifest builds it, beside the pool it drew from. */
 const TOPIC_MAP = `
 import sys, json
-sys.path.insert(0, "challenges/tools")
+sys.path.insert(0, "books/tools")
 from render import load_book, all_nodes
 from manifest import topic_entries
 _, order = load_book()
@@ -135,7 +135,7 @@ json.dump(
 /** Render a fabricated node whose id and limits try to close their attribute. */
 const HOSTILE_MARKUP = `
 import sys, json
-sys.path.insert(0, "challenges/tools")
+sys.path.insert(0, "books/tools")
 from render import render_node, problem_card
 hostile_id = 'x"><img src=x onerror=alert(1)>'
 hostile_limit = '</p><img src=x onerror=alert(1)><p>'
@@ -160,14 +160,14 @@ json.dump(
 /** Every node id the pool declares, for the slug rule the validator enforces. */
 const NODE_IDS = `
 import sys, json
-sys.path.insert(0, "challenges/tools")
+sys.path.insert(0, "books/tools")
 from render import all_nodes
 json.dump(sorted(all_nodes()), sys.stdout)
 `
 
 const COUNT_POOL = `
 import sys
-sys.path.insert(0, "challenges/tools")
+sys.path.insert(0, "books/tools")
 from render import all_nodes
 sys.stdout.write(str(len(all_nodes())))
 `
@@ -200,19 +200,19 @@ function renderIn(challenges: string): BookManifest {
 /** A throwaway copy of the node pool, so a test may edit the book's identity. */
 function copyChallenges(): { challenges: string; cleanup: () => void } {
   const scratch = mkdtempSync(path.join(tmpdir(), 'challenges-'))
-  cpSync(path.join(ROOT, 'challenges'), path.join(scratch, 'challenges'), {
+  cpSync(path.join(ROOT, 'books'), path.join(scratch, 'books'), {
     recursive: true,
     filter: (source) => !['dist', 'workspace', '__pycache__'].includes(path.basename(source)),
   })
   return {
-    challenges: path.join(scratch, 'challenges'),
+    challenges: path.join(scratch, 'books'),
     cleanup: () => rmSync(scratch, { recursive: true, force: true }),
   }
 }
 
 describe('the node pool', () => {
   it('passes the book validator before anything is published', SLOW, () => {
-    const report = execFileSync(PYTHON, ['challenges/tools/validate.py'], {
+    const report = execFileSync(PYTHON, ['books/tools/validate.py'], {
       cwd: ROOT,
       encoding: 'utf8',
       env: PY_ENV,
@@ -333,7 +333,7 @@ describe('nothing an author writes becomes markup by accident', () => {
   it('rejects a node id that is not a string at all', SLOW, () => {
     const { challenges, cleanup } = copyChallenges()
     try {
-      const file = path.join(challenges, 'ch00-the-loop.md')
+      const file = path.join(challenges, 'chapters', 'ch00-the-loop.md')
       writeFileSync(
         file,
         readFileSync(file, 'utf8').replace('id = "ch00-the-loop"', 'id = 123'),
@@ -470,7 +470,7 @@ describe('stable anchors', () => {
     expect(drifted.length, 'an insertion must be visible as digest drift').toBeGreaterThan(0)
   })
 
-  // The `data-walk` handler lives in challenges/tools/preview.py and is not
+  // The `data-walk` handler lives in books/tools/preview.py and is not
   // shipped by the Astro routes, so controls on a published page are dead.
   it('ships no figure controls it cannot drive', SLOW, () => {
     const withFigure: string[] = JSON.parse(python(FIGURE_IDS))
@@ -545,7 +545,7 @@ describe('the route comes from the slug', () => {
   it('does not move a route when the title is edited', SLOW, () => {
     const { challenges, cleanup } = copyChallenges()
     try {
-      const pathFile = path.join(challenges, 'paths', 'agent.toml')
+      const pathFile = path.join(challenges, 'dsa.toml')
       const original = readFileSync(pathFile, 'utf8')
       writeFileSync(
         pathFile,
@@ -570,7 +570,7 @@ describe('the route comes from the slug', () => {
   it('moves every route when the slug is edited, and only then', SLOW, () => {
     const { challenges, cleanup } = copyChallenges()
     try {
-      const pathFile = path.join(challenges, 'paths', 'agent.toml')
+      const pathFile = path.join(challenges, 'dsa.toml')
       const original = readFileSync(pathFile, 'utf8')
       writeFileSync(
         pathFile,
@@ -590,7 +590,7 @@ describe('the route comes from the slug', () => {
   it('refuses to publish a path that declares no slug', SLOW, () => {
     const { challenges, cleanup } = copyChallenges()
     try {
-      const pathFile = path.join(challenges, 'paths', 'agent.toml')
+      const pathFile = path.join(challenges, 'dsa.toml')
       const original = readFileSync(pathFile, 'utf8')
       writeFileSync(pathFile, original.replace(`slug = "${SLUG}"\n`, ''))
 
@@ -681,7 +681,7 @@ describe('the topic map is this book\'s', () => {
     try {
       const selected = book.nodes.slice(0, 4).map((node) => node.id)
       writeFileSync(
-        path.join(challenges, 'paths', 'short.toml'),
+        path.join(challenges, 'short.toml'),
         [
           'id = "short"',
           'slug = "a-shorter-walk"',
@@ -789,7 +789,7 @@ describe('the print edition is where it was', () => {
 import json
 import sys
 import zipfile
-sys.path.insert(0, "challenges/tools")
+sys.path.insert(0, "books/tools")
 import epub
 built = epub.build()
 with zipfile.ZipFile(built) as archive:

@@ -52,7 +52,7 @@ test('the chrome lives in the shared stylesheet, not the preview', async () => {
   const { execFileSync } = await import('node:child_process')
   const python = process.env.BOOK_PYTHON ?? 'python3'
   const css = execFileSync(python, ['-c',
-    'import sys; sys.path.insert(0, "challenges/tools"); import render; print(render.CONTENT_CSS)']).toString()
+    'import sys; sys.path.insert(0, "books/tools"); import render; print(render.CONTENT_CSS)']).toString()
   expect(css).toContain('.cell-run, .exercise-run, .desk {')
   expect(css).toContain('.desk-actions {')
 })

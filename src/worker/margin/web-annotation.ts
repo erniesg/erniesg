@@ -100,12 +100,23 @@ export function kindForMotivation(
 /* Wire schema                                                                */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * A quote is a handful of words, not a document.
+ *
+ * These three go into D1 and into every collection response, and they were the
+ * only strings on the wire with no maximum — so one client could store rows
+ * large enough to make a list response exceed what a Worker can hold. The
+ * bounds are generous for a quotation and nowhere near a page.
+ */
+export const MAX_QUOTE_LENGTH = 2_000
+export const MAX_CONTEXT_LENGTH = 500
+
 const textQuoteSelectorSchema = z
   .object({
     type: z.literal('TextQuoteSelector'),
-    exact: z.string().min(1),
-    prefix: z.string().optional(),
-    suffix: z.string().optional(),
+    exact: z.string().min(1).max(MAX_QUOTE_LENGTH),
+    prefix: z.string().max(MAX_CONTEXT_LENGTH).optional(),
+    suffix: z.string().max(MAX_CONTEXT_LENGTH).optional(),
   })
   .strict()
 

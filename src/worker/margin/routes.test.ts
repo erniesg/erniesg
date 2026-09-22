@@ -11,7 +11,12 @@ import {
   webAnnotation,
   type MarginHarness,
 } from './fixtures'
-import { STRUCT_SELECTOR_TYPE } from './web-annotation'
+import {
+  MAX_CONTEXT_LENGTH,
+  MAX_QUOTE_LENGTH,
+  STRUCT_SELECTOR_TYPE,
+} from './web-annotation'
+import { MARGIN_API_PREFIX } from './routes'
 
 /** The acceptance tests from issue 054, against the real router and real SQL. */
 
@@ -650,5 +655,198 @@ describe('review findings', () => {
         error: { code: 'not_found' },
       })
     }
+  })
+})
+
+/** The second review round: each finding with the request that found it. */
+describe('review findings, round two', () => {
+  // POST and `?source=` canonicalise; the explicit pair validated the
+  // concatenation and then queried the raw spelling, so a write and a read could
+  // land on different tenants.
+  it('canonicalises the explicit site and document too', async () => {
+    expect((await post(webAnnotation({ source: CHAPTER_ONE, body: 'stored' }))).status).toBe(
+      201,
+    )
+
+    for (const site of [
+      'https://ernie.sg',
+      'https://ERNIE.SG',
+      'https://ernie.sg:443',
+    ]) {
+      const response = await harness.request(
+        'GET',
+        `/annotations?site=${encodeURIComponent(site)}` +
+          `&document=${encodeURIComponent('/challenges/chapter-1')}`,
+        { as: ADA },
+      )
+      expect(response.status, site).toBe(200)
+      const { annotations } = (await response.json()) as {
+        annotations: WireAnnotation[]
+      }
+      expect(annotations.map((a) => a.body?.value), site).toEqual(['stored'])
+    }
+  })
+
+  it('refuses a site that is not an origin on its own', async () => {
+    for (const site of [
+      'https://ernie.sg/challenges',
+      'https://ernie.sg/?a=1',
+      'https://ernie.sg/#x',
+      'https://user:secret@ernie.sg',
+      'ftp://ernie.sg',
+    ]) {
+      const response = await harness.request(
+        'GET',
+        `/annotations?site=${encodeURIComponent(site)}` +
+          `&document=${encodeURIComponent('/challenges/chapter-1')}`,
+        { as: ADA },
+      )
+      expect(response.status, site).toBe(400)
+    }
+  })
+
+  // 409 vs 404 on an annotation the caller cannot see would tell them it exists
+  // and whether anybody has replied to it — an oracle over what visibility hides.
+  it('does not let the reply check reveal somebody else\'s annotation', async () => {
+    const hidden = (await (await post(
+      webAnnotation({ source: CHAPTER_ONE, visibility: 'private', body: 'bob private' }),
+      BOB,
+    )).json()) as WireAnnotation
+    const withReply = (await (await post(
+      webAnnotation({ source: CHAPTER_ONE, visibility: 'public', body: 'bob public' }),
+      BOB,
+    )).json()) as WireAnnotation
+    expect(
+      (await post(
+        webAnnotation({
+          source: CHAPTER_ONE,
+          visibility: 'public',
+          body: 'ada replies',
+          parentId: bareId(withReply),
+        }),
+      )).status,
+    ).toBe(201)
+
+    // Ada is signed in and is not the owner of either. Both answers must match,
+    // and neither may be 409.
+    for (const target of [hidden, withReply]) {
+      const response = await harness.request(
+        'DELETE',
+        `/annotations/${bareId(target)}${scopeQuery(CHAPTER_ONE)}`,
+        { as: ADA },
+      )
+      expect(response.status, bareId(target)).toBe(404)
+    }
+  })
+
+  // These three were the only strings on the wire with no maximum, and they are
+  // copied into D1 and into every collection response.
+  it('bounds the selector text', async () => {
+    const huge = 'x'.repeat(MAX_QUOTE_LENGTH + 1)
+    const longContext = 'y'.repeat(MAX_CONTEXT_LENGTH + 1)
+    const base = webAnnotation({ source: CHAPTER_ONE })
+    const withSelector = (patch: Record<string, unknown>) => ({
+      ...base,
+      target: {
+        ...base.target,
+        selector: base.target.selector.map((entry) =>
+          (entry as { type: string }).type === 'TextQuoteSelector'
+            ? { ...entry, ...patch }
+            : entry,
+        ),
+      },
+    })
+
+    for (const patch of [
+      { exact: huge },
+      { prefix: longContext },
+      { suffix: longContext },
+    ]) {
+      expect((await post(withSelector(patch))).status, JSON.stringify(Object.keys(patch))).toBe(
+        400,
+      )
+    }
+
+    // At the bound, with the position selector agreeing: a quote and a position
+    // that describe different lengths is a different rejection, and this test is
+    // about the length limit.
+    const atBound = 'x'.repeat(MAX_QUOTE_LENGTH)
+    const consistent = {
+      ...base,
+      target: {
+        ...base.target,
+        selector: base.target.selector.map((entry) => {
+          const typed = entry as { type: string }
+          if (typed.type === 'TextQuoteSelector') return { ...entry, exact: atBound }
+          if (typed.type === 'TextPositionSelector') {
+            return { ...entry, start: 5, end: 5 + atBound.length }
+          }
+          return entry
+        }),
+      },
+    }
+    const accepted = await post(consistent)
+    expect(accepted.status, JSON.stringify(await accepted.clone().json())).toBe(201)
+  })
+
+  // A `Location` a client cannot dereference is worse than none.
+  it('returns a Location a client can actually follow', async () => {
+    const created = await post(webAnnotation({ source: CHAPTER_ONE, body: 'follow me' }))
+    expect(created.status).toBe(201)
+    const location = created.headers.get('location') as string
+
+    expect(location).toContain('source=')
+
+    const followed = await harness.request(
+      'GET',
+      location.slice(MARGIN_API_PREFIX.length),
+      { as: ADA },
+    )
+    expect(followed.status).toBe(200)
+    expect(((await followed.json()) as WireAnnotation).body?.value).toBe('follow me')
+  })
+
+  it('shows a public annotation at its own URI and hides a private one', async () => {
+    const mine = (await (await post(
+      webAnnotation({ source: CHAPTER_ONE, visibility: 'private', body: 'ada private' }),
+    )).json()) as WireAnnotation
+
+    const asOwner = await harness.request(
+      'GET',
+      `/annotations/${bareId(mine)}${scopeQuery(CHAPTER_ONE)}`,
+      { as: ADA },
+    )
+    expect(asOwner.status).toBe(200)
+
+    const asOther = await harness.request(
+      'GET',
+      `/annotations/${bareId(mine)}${scopeQuery(CHAPTER_ONE)}`,
+      { as: BOB },
+    )
+    expect(asOther.status).toBe(404)
+  })
+
+  // PATCH already refused this; creation accepted it and stored null, so the
+  // annotation came back changed.
+  it('refuses a colour on an annotation that is not a highlight', async () => {
+    for (const motivation of ['commenting', 'editing'] as const) {
+      const response = await post({
+        ...webAnnotation({ source: CHAPTER_ONE, motivation }),
+        'margin:color': 'amber',
+      })
+      expect(response.status, motivation).toBe(400)
+      expect(await response.json()).toMatchObject({
+        error: { code: 'unexpected_color' },
+      })
+    }
+
+    const highlight = await post({
+      ...webAnnotation({ source: CHAPTER_ONE, motivation: 'highlighting' }),
+      'margin:color': 'amber',
+    })
+    expect(highlight.status).toBe(201)
+    expect(((await highlight.json()) as { 'margin:color'?: string })['margin:color']).toBe(
+      'amber',
+    )
   })
 })

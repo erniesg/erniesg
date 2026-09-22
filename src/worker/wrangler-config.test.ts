@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { MARGIN_API_PREFIX, MARGIN_HEALTH_PATH } from './index'
@@ -71,6 +71,7 @@ describe('Wrangler configuration', () => {
         binding: 'MARGIN_DB',
         database_name: 'margin-db-stg',
         database_id: '48958be2-df8f-4ec9-b6d9-7d7be51f87e6',
+        migrations_dir: 'migrations',
       },
     ])
     expect(configs.production.d1_databases).toEqual([
@@ -78,8 +79,21 @@ describe('Wrangler configuration', () => {
         binding: 'MARGIN_DB',
         database_name: 'margin-db',
         database_id: 'c98621e9-5621-401a-b2f2-35390c25411d',
+        migrations_dir: 'migrations',
       },
     ])
+  })
+
+  it('ships migrations both databases can apply, numbered from 0001', () => {
+    const files = readdirSync(resolve(process.cwd(), 'migrations'))
+      .filter((name) => name.endsWith('.sql'))
+      .sort()
+
+    expect(files.length).toBeGreaterThan(0)
+    expect(files[0]).toMatch(/^0001_/)
+    for (const config of Object.values(configs)) {
+      expect(config.d1_databases[0].migrations_dir).toBe('migrations')
+    }
   })
 
   it('keeps the production route table and worker names untouched', () => {

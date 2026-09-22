@@ -77,9 +77,22 @@ const noteAnnotationSchema = annotationBase
   })
   .strict()
 
+// A proposal is a note whose body is offered as a replacement for the anchored
+// text rather than as a remark beside it. It is a third member of the existing
+// union rather than a second annotation model: the anchor, the id and the
+// geometry cache are identical, and only the reader's intent differs. It maps
+// to the W3C `editing` motivation. See `src/worker/margin/web-annotation.ts`.
+const proposalAnnotationSchema = annotationBase
+  .extend({
+    kind: z.literal('proposal'),
+    body: z.string().min(1),
+  })
+  .strict()
+
 export const textAnnotationSchema = z.discriminatedUnion('kind', [
   highlightAnnotationSchema,
   noteAnnotationSchema,
+  proposalAnnotationSchema,
 ])
 
 export type SemanticTextAnchor = z.infer<typeof semanticTextAnchorSchema>

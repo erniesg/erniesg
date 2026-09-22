@@ -260,8 +260,8 @@ def figure(
     heading = f"{label} · {title}" if label and title else (label or title)
     return (
         f'<figure class="figure" id="figure-{html.escape(figure_id)}">'
-        f'<p class="figure-title">{heading}</p>{body}'
-        f"<figcaption>{caption}</figcaption></figure>"
+        f'<figcaption><span class="figure-title">{heading}</span>'
+        f'<span class="figure-lead">{caption}</span></figcaption>{body}</figure>'
     )
 
 
@@ -527,21 +527,26 @@ def render_node(
             return
         if target == "print":
             emit("hints", '<div class="hints">' + "".join(hints) + "</div>")
-        else:
-            total = len(hints)
-            rungs = "".join(
-                rung.replace("{label}", html.escape(_rung_label(i, total)))
-                for i, rung in enumerate(hints)
-            )
-            pips = '<span class="pip"></span>' * total
+        elif not runnable:
+            # A static host ships no script to open the hint panel, so the
+            # hints stay plain disclosures there, as they are on main.
             emit(
                 "hints",
-                f'<details class="ladder" data-ladder="{html.escape(node["id"])}" '
-                f'data-total="{total}"><summary><span class="ladder-count">0 of {total} '
-                f'hints</span><span class="pips" aria-hidden="true">{pips}</span>'
-                '<span class="ladder-note">each one gives away more</span></summary>'
-                f'<ol class="rungs">{rungs}</ol></details>'
+                '<div class="hints">'
+                + "".join(
+                    f"<details class='hint'><summary>Hint {level}</summary>{body}</details>"
+                    for level, body in hints
+                )
+                + "</div>",
             )
+        else:
+            button, panel = hint_controls(node["id"], hints)
+            for index, piece in enumerate(out):
+                if HINT_BUTTON in piece:
+                    out[index] = piece.replace(HINT_BUTTON, button).replace(HINT_PANEL, panel)
+                    break
+            else:
+                emit("hints", f'<div class="desk hint-only">{panel}</div>')
         hints.clear()
 
     figure_number = 0
@@ -575,11 +580,7 @@ def render_node(
                     f"{render_markdown(inner)}</div>"
                 )
             else:
-                hints.append(
-                    f"<li><details class='hint rung' data-rung='{len(hints) + 1}'>"
-                    f"<summary>Hint {level} <span class='rung-label'>{{label}}</span></summary>"
-                    f"{render_markdown(inner)}</details></li>"
-                )
+                hints.append((level, render_markdown(inner)))
         elif name == "solution":
             flush_hints()
             locked = (
@@ -612,7 +613,53 @@ def render_node(
         elif name == "exercise":
             emit("exercise", exercise(attrs.get("id", ""), inner, target))
     flush_hints()
-    return "".join(out)
+    return "".join(out).replace(HINT_BUTTON, "").replace(HINT_PANEL, "")
+
+
+HINT_BUTTON = "<!--hint-button-->"
+HINT_PANEL = "<!--hint-panel-->"
+BULB = (
+    '<svg class="bulb" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">'
+    '<path d="M8 1.5a4.5 4.5 0 0 0-2.6 8.2c.4.3.6.7.6 1.1V12h4v-1.2c0-.4.2-.8.6-1.1A4.5 4.5 0 0 0 8 1.5z'
+    'M6 13.2h4M6.6 14.6h2.8" fill="none" stroke="currentColor" stroke-width="1.3" '
+    'stroke-linecap="round"/></svg>'
+)
+
+
+def hint_controls(node_id: str, hints: list[tuple[str, str]]) -> tuple[str, str]:
+    """A bulb in the action row, and the panel it opens inside the terminal.
+
+    Each hint is spent once and stays readable: its dot fills, and clicking a
+    filled dot shows that hint again. The count never falls.
+    """
+    total = len(hints)
+    panel_id = f"hints-{html.escape(node_id)}"
+    button = (
+        f'<button type="button" class="hint-button" aria-expanded="false" '
+        f'aria-controls="{panel_id}">{BULB}<span>Hint</span>'
+        f'<span class="hint-count">0/{total}</span></button>'
+    )
+    dots = "".join(
+        f'<button type="button" class="hint-dot" data-rung="{i + 1}" disabled '
+        f'aria-label="Hint {i + 1}, not read yet"></button>'
+        for i in range(total)
+    )
+    bodies = "".join(
+        f'<div class="hint-body" data-rung="{i + 1}" '
+        f'data-title="Hint {html.escape(level)} \u00b7 {html.escape(_rung_label(i, total))}" hidden>'
+        f"{body}</div>"
+        for i, (level, body) in enumerate(hints)
+    )
+    panel = (
+        f'<div class="hint-panel" id="{panel_id}" data-ladder="{html.escape(node_id)}" '
+        f'data-total="{total}" role="region" aria-label="Hints" hidden>'
+        f'<div class="hint-bar"><span class="hint-dots">{dots}</span>'
+        '<span class="hint-title"></span>'
+        '<button type="button" class="hint-next">Next hint</button>'
+        '<button type="button" class="hint-close" aria-label="Close hints">\u00d7</button></div>'
+        f"{bodies}</div>"
+    )
+    return button, panel
 
 
 def _rung_label(index: int, total: int) -> str:
@@ -685,9 +732,17 @@ RUNNABLE = re.compile(r'<pre><code class="language-python run">(.*?)</code></pre
 GRADE_LINE = re.compile(r"^ *python3 challenges/tools/grade\.py \S+\n", re.MULTILINE)
 
 KEYS_HINT = (
-    '<span class="keys-hint" role="note">Tab indents \u00b7 '
-    '<kbd>Esc</kbd> then <kbd>Tab</kbd> leaves the editor \u00b7 '
-    '<kbd>\u2318\u21e7\u21b5</kbd> runs and moves on</span>'
+    '<span class="keys"><button type="button" class="keys-button" aria-label="Keyboard shortcuts">'
+    '<svg viewBox="0 0 20 14" width="18" height="13" aria-hidden="true"><rect x=".75" y=".75" '
+    'width="18.5" height="12.5" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.3"/>'
+    '<path d="M4 4.5h1.5M8 4.5h1.5M12 4.5h1.5M16 4.5h.5M4 7h1.5M8 7h1.5M12 7h1.5M16 7h.5M6 9.8h8" '
+    'stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>'
+    '<span class="keys-hint" role="note"><span class="keys-row"><span><kbd>Tab</kbd> / <kbd>\u21e7Tab</kbd></span>'
+    '<span>indent / outdent</span></span>'
+    '<span class="keys-row"><span><kbd>Esc</kbd> then <kbd>Tab</kbd></span><span>leave the editor</span></span>'
+    '<span class="keys-row"><span><kbd>\u2318\u21b5</kbd></span><span>run</span></span>'
+    '<span class="keys-row"><span><kbd>\u2318\u21e7\u21b5</kbd></span><span>run, then next editor</span></span>'
+    '</span></span>'
 )
 
 
@@ -729,8 +784,10 @@ def _desk(node: dict, attrs: dict, target: str, runnable: bool = True) -> str:
         f'<section class="desk" data-node="{html.escape(node["id"])}">'
         f'<textarea class="editor" spellcheck="false">{html.escape(starter)}</textarea>'
         '<div class="desk-actions"><button class="run">Run all tiers <kbd>\u2318\u21b5</kbd></button>'
-        f'<span class="status">The first run is supposed to be red.</span>{KEYS_HINT}</div>'
-        '<div class="tiers"></div><pre class="output"></pre></section>'
+        f'{HINT_BUTTON}<span class="status"></span>{KEYS_HINT}</div>'
+        f'{HINT_PANEL}<div class="tiers"></div><p class="desk-verdict" role="status" hidden></p>'
+        '<details class="full-output" hidden><summary>Full test output</summary>'
+        '<pre class="output"></pre></details></section>'
     )
 
 
@@ -767,8 +824,9 @@ td code, th code { white-space:nowrap; }
 .labelled ul, .labelled ol { margin:.3rem 0 0; }
 .figure { margin:1.8rem 0; padding:14px 16px; border:1px solid var(--line); border-radius:8px;
   background:#fff; }
-.figure-title { font:600 .8rem ui-sans-serif,system-ui; margin:0 0 .6rem; }
-figcaption { font:.82rem/1.5 ui-sans-serif,system-ui; color:var(--dim); margin-top:.7rem; }
+.figure-title { display:block; font:600 .8rem ui-sans-serif,system-ui; color:var(--ink); }
+.figure-lead { display:block; margin:.2rem 0 .8rem; }
+figcaption { font:.85rem/1.5 ui-sans-serif,system-ui; color:#555; margin:0; }
 .figure-steps { font-size:.9rem; margin:.3rem 0 .3rem 1.1rem; }
 .walk-note { font:.88rem/1.45 ui-sans-serif,system-ui; margin:.5rem 0 0; min-height:2.6em; }
 .figure-note { font:.85rem ui-sans-serif,system-ui; color:var(--dim); margin:.4rem 0 0; }
@@ -781,21 +839,33 @@ figcaption { font:.82rem/1.5 ui-sans-serif,system-ui; color:var(--dim); margin-t
 @media (max-width:520px) { .pairs { grid-template-columns:1fr; } .pairs dd { margin-bottom:6px; } }
 .hint, .solution { border:1px solid var(--line); border-radius:6px; padding:6px 12px; margin:8px 0;
   background:#fff; }
-.ladder { border:1px solid var(--line); border-radius:8px; background:#fff; margin:1.2rem 0 .6rem;
-  padding:8px 12px; }
-.ladder > summary { display:flex; align-items:center; gap:10px; list-style:none; }
-.ladder > summary::-webkit-details-marker { display:none; }
-.ladder > summary::before { content:"▸"; color:var(--dim); }
-.ladder[open] > summary::before { content:"▾"; }
-.ladder-note { font-weight:400; color:var(--dim); font-size:.78rem; margin-left:auto; }
-.pips { display:inline-flex; gap:4px; }
-.pip { width:9px; height:9px; border-radius:50%; border:1.5px solid #b45309; }
-.pip.spent { background:#b45309; }
-.rungs { list-style:none; padding:0; margin:.6rem 0 0; }
-.rung { margin:6px 0; border-style:dashed; }
-.rung.spent { border-style:solid; border-color:#e7c9a4; background:#fffaf2; }
-.rung.spent > summary::after { content:" · read"; font-weight:400; color:#b45309; }
-.rung-label { font-weight:400; color:var(--dim); }
+.desk-actions .hint-button { background:none; border:1px solid #4a4d57; color:#fcd34d; }
+.desk-actions .hint-button[aria-expanded="true"] { background:#3a3320; border-color:#a16207; }
+.hint-count { font:500 .75rem ui-sans-serif,system-ui; color:var(--term-dim); }
+.hint-panel { border-top:1px solid var(--term-line); background:#26241d; color:#f3f0e6;
+  padding:10px 14px 12px; font:.9rem/1.5 ui-sans-serif,system-ui; }
+.hint-panel:not([hidden]) { animation:hint-in .35s ease-out; }
+@keyframes hint-in { from { background:#4a3f16; opacity:.4; } to { background:#26241d; opacity:1; } }
+@media (prefers-reduced-motion: reduce) { .hint-panel:not([hidden]) { animation:none; } }
+.hint-bar { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
+.hint-dots { display:inline-flex; gap:6px; }
+.hint-dot { width:12px; height:12px; padding:0; border-radius:50%; border:1.5px solid #a16207;
+  background:none; cursor:pointer; }
+.hint-dot:disabled { cursor:default; opacity:.6; }
+.hint-dot.spent { background:#d97706; border-color:#d97706; }
+.hint-dot.current { box-shadow:0 0 0 2px #26241d, 0 0 0 3.5px #fcd34d; }
+.hint-dot:focus-visible { outline:2px solid #7dd3fc; outline-offset:2px; }
+.hint-title { font-weight:600; color:#fcd34d; }
+.hint-next, .hint-close { font:600 .78rem ui-sans-serif,system-ui; background:none; color:#f3f0e6;
+  border:1px solid #57503a; border-radius:5px; padding:3px 9px; cursor:pointer; }
+.hint-next { margin-left:auto; }
+.hint-next[hidden] + .hint-close { margin-left:auto; }
+.hint-close { font-size:1rem; line-height:1; padding:2px 8px; }
+.hint-body p { margin:.2rem 0; max-width:none; }
+.hint-body pre { background:#1a1914; font-size:.8rem; margin:.4rem 0 0; }
+.hint-body code { background:#3a3628; color:inherit; }
+.hint-body pre code { background:none; padding:0; }
+.hint-only { padding:0; }
 details.solution { border:0; border-top:2px solid var(--ink); border-radius:0; background:none;
   padding:10px 0 0; margin-top:1.4rem; }
 .exercise { margin:1.8rem 0; padding:12px 16px 14px; border-left:4px solid #15803d;
@@ -842,9 +912,33 @@ details.solution { border:0; border-top:2px solid var(--ink); border-radius:0; b
 .desk-actions kbd { font:.75rem ui-monospace,monospace; background:rgba(255,255,255,.22);
   padding:1px 5px; border-radius:4px; }
 .status { font:.8rem ui-sans-serif,system-ui; color:var(--term-dim); }
-.keys-hint { font:.72rem ui-sans-serif,system-ui; color:var(--term-dim); margin-left:auto; }
-.keys-hint kbd { font:inherit; background:none; border:1px solid #444751; border-radius:3px;
-  padding:0 .3em; }
+.keys { position:relative; margin-left:auto; display:inline-flex; }
+.desk-actions .keys-button { background:none; border:1px solid transparent; color:var(--term-dim);
+  padding:4px 6px; border-radius:5px; }
+.desk-actions .keys-button:hover, .keys:focus-within .keys-button { color:var(--term-ink);
+  border-color:#444751; }
+.keys-hint { display:none; position:absolute; right:0; bottom:calc(100% + 8px); z-index:5;
+  background:#2b2d34; color:var(--term-ink); border:1px solid #444751; border-radius:8px;
+  padding:8px 10px; font:.78rem ui-sans-serif,system-ui; white-space:nowrap;
+  box-shadow:0 6px 18px rgba(0,0,0,.35); }
+.keys:hover .keys-hint, .keys:focus-within .keys-hint { display:grid; gap:5px; }
+.keys-row { display:grid; grid-template-columns:9.5em auto; align-items:center; gap:10px; }
+.keys-row > span:last-child { color:var(--term-dim); }
+.keys-hint kbd { font:.75rem ui-monospace,monospace; background:#1e1f24; border:1px solid #444751;
+  border-radius:3px; padding:0 .3em; }
+/* The terminal no longer clips, so the popover can rise over a short cell;
+   its blocks are transparent so no square corner shows past the radius. */
+.cell-run, .exercise-run, .desk { overflow:visible; }
+.code-wrap, .desk-actions, .output { background:transparent; }
+.code-wrap { border-radius:8px 8px 0 0; }
+.desk:not(:has(.tiers:not(:empty), .desk-verdict:not([hidden]), .full-output:not([hidden]))) .hint-panel {
+  border-radius:0 0 7px 7px; }
+.desk-verdict { max-width:none; margin:0; padding:10px 14px; border-top:1px solid var(--term-line); color:#fca5a5;
+  font:.9rem/1.45 ui-sans-serif,system-ui; }
+.desk-verdict b { color:#fecaca; }
+.full-output { border-top:1px solid var(--term-line); }
+.full-output > summary { padding:8px 14px; color:var(--term-dim); font:600 .78rem ui-sans-serif,system-ui; }
+.full-output .output { border-top:0; }
 .output:empty { display:none; }
 .output { margin:0; padding:10px 14px 12px; background:var(--term); color:var(--term-ink);
   border:0; border-top:1px solid var(--term-line); border-radius:0; font-size:.8rem;

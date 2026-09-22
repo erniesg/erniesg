@@ -1,8 +1,8 @@
 {
   "id": "two-biggest",
   "type": "walk",
-  "title": "Keeping the best two",
-  "caption": "One marker moves along the list; the two slots hold the biggest and second biggest seen so far. A dash means nothing seen yet; the code starts both at -1 for that, since every value is at least 0. Watch the second 5: a tie cannot take first place, but it still beats second.",
+  "title": "How the worked solution walks [5, 1, 5, 3, 0]",
+  "caption": "Step through it and watch the second 5: a tie can't take first place, but it still beats second.",
   "sequence": [
     5,
     1,

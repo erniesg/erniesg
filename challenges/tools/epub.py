@@ -113,7 +113,8 @@ def print_preview() -> str:
     """The EPUB's own markup, shown in the browser so you can read it here."""
     _, order = load_book()
     return "".join(
-        f"<article class='print-page'>{render_node(node, 'print')}</article>" for node in order
+        f"<article class='print-page' id='print-{node['id']}'>{render_node(node, 'print')}</article>"
+        for node in order
     )
 
 

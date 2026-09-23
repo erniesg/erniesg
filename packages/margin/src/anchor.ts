@@ -326,20 +326,28 @@ export function resolveTextAnchor(
     }
   }
 
-  // Selector 1. An unchanged digest means the block is byte-identical to the
-  // one the anchor was taken from, so the stored offsets cannot have drifted;
-  // an anchor that stored no digest has to earn this the same way, by still
-  // finding its quote exactly where it left it.
+  // Selector 1. An unchanged digest means the block is byte-identical to the one
+  // the anchor was taken from, so the stored offsets cannot have drifted and the
+  // quote at those offsets is the same quote.
+  //
+  // That reasoning needs a digest on both sides. Treating an *absent* digest as
+  // "unchanged" made this a bare offset match: an edit that leaves a duplicate
+  // of the quote at the old offsets while the original moves elsewhere with its
+  // context intact would attach here, ahead of the context selectors that exist
+  // to tell those two apart. A host that emits stable struct ids without digests
+  // is supported, and it falls through to those selectors instead — slower, and
+  // right.
   if (structNode && anchor.struct) {
-    const digestUnchanged =
-      anchor.struct.digest === undefined ||
+    const digestMatches =
+      anchor.struct.digest !== undefined &&
+      structNode.structDigest !== undefined &&
       structNode.structDigest === anchor.struct.digest
     const atStoredPosition = candidates.find(
       (candidate) =>
         candidate.start === anchor.position.start &&
         candidate.end === anchor.position.end,
     )
-    if (digestUnchanged && atStoredPosition) {
+    if (digestMatches && atStoredPosition) {
       return {
         status: 'resolved',
         nodeId: node.id,

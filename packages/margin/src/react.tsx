@@ -41,6 +41,12 @@ export function MarginRail({
 }: MarginRailProps) {
   const host = useRef<HTMLDivElement | null>(null)
   const rail = useRef<MarginRailElement | null>(null)
+  // Read by the effect that builds a replacement element, without being in its
+  // dependencies: depending on them would recreate the whole rail every time a
+  // caller passed a new transport object or a new array, which is the opposite
+  // of what anybody wants.
+  const latest = useRef({ transport, annotations })
+  latest.current = { transport, annotations }
 
   useEffect(() => {
     const mount = host.current
@@ -52,6 +58,15 @@ export function MarginRail({
     element.setAttribute('document-uri', documentUri)
     if (textSelector) element.setAttribute('text-selector', textSelector)
     if (apiBase) element.setAttribute('api-base', apiBase)
+    // Applied here as well as in the effects below, and before `append` so the
+    // element has it by the time it connects. The effects do not rerun when only
+    // the element is replaced — their own dependencies are unchanged — so a new
+    // rail would otherwise silently lose the caller's transport and every later
+    // highlight would stay client-only.
+    if (latest.current.transport) element.transport = latest.current.transport
+    if (latest.current.annotations) {
+      element.annotations = latest.current.annotations
+    }
     rail.current = element
     mount.append(element)
     return () => {

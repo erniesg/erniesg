@@ -29,6 +29,17 @@ export type PaintOptions = {
   palette?: Record<string, string>
   /** Where the fallback overlay is appended. Defaults to the document body. */
   overlayHost?: Element
+  /**
+   * A suffix for this painter's entries in the document-global highlight
+   * registry.
+   *
+   * `CSS.highlights` is per document, so two rails on one page — two embedded
+   * documents, or a rail beside a preview — wrote the same
+   * `erniesg-margin-amber` key: rendering the second replaced the first's
+   * ranges, and clearing either deleted the other's highlight. An instance
+   * suffix keeps them apart.
+   */
+  registryNamespace?: string
 }
 
 export const DEFAULT_PALETTE: Record<string, string> = {
@@ -80,25 +91,56 @@ export function rangesForTargets(
  * these rules cannot reach any element the host owns. That is why this is the
  * one stylesheet the package puts in the host page.
  */
+/**
+ * The `::highlight()` rules for one painter.
+ *
+ * One `<style>` per namespace, not one per document: the element's contents are
+ * replaced wholesale, so a shared element meant the second rail's palette wiped
+ * the first rail's rules along with its registry entries.
+ */
 function ensureStyles(
   doc: Document,
   palette: Record<string, string>,
   colors: readonly string[],
+  suffix: string,
 ) {
-  const existing = doc.head.querySelector(`style[${STYLE_ATTRIBUTE}]`)
+  const selector = `style[${STYLE_ATTRIBUTE}="${suffix}"]`
+  const existing = doc.head.querySelector(selector)
   const style = existing ?? doc.createElement('style')
   if (!existing) {
-    style.setAttribute(STYLE_ATTRIBUTE, '')
+    style.setAttribute(STYLE_ATTRIBUTE, suffix)
     doc.head.append(style)
   }
   style.textContent = colors
     .map(
       (color) =>
-        `::highlight(${REGISTRY_PREFIX}${color}) { background-color: ${
+        `::highlight(${REGISTRY_PREFIX}${color}${suffix}) { background-color: ${
           palette[color] ?? palette.default ?? DEFAULT_PALETTE.default
         }; color: inherit; }`,
     )
     .join('\n')
+}
+
+/**
+ * The document position of the overlay's own containing block.
+ *
+ * The overlay is `position: absolute` inside the host, so it is placed relative
+ * to the nearest positioned ancestor. Measuring the overlay itself rather than
+ * the host is deliberate: it is already in the tree at its zero offset, so its
+ * own rectangle *is* that containing block's origin, whatever produced it —
+ * `position: relative`, a transform, or a containing-block-establishing filter.
+ */
+function overlayOrigin(
+  overlay: Element,
+  scrollX: number,
+  scrollY: number,
+): { x: number; y: number } {
+  const box = overlay.getBoundingClientRect()
+  const scroller = overlay.parentElement
+  return {
+    x: box.left + scrollX + (scroller?.scrollLeft ?? 0),
+    y: box.top + scrollY + (scroller?.scrollTop ?? 0),
+  }
 }
 
 function paintWithOverlay(
@@ -116,6 +158,13 @@ function paintWithOverlay(
   const view = doc.defaultView
   const scrollX = view?.scrollX ?? 0
   const scrollY = view?.scrollY ?? 0
+  // `getClientRects()` plus scroll is a document position. The boxes are laid out
+  // in the containing block of whatever `overlayHost` is, so with the default
+  // `document.body` those coincide and with any positioned or offset host they do
+  // not — every highlight landing by the host's own offset. Subtract the host's
+  // document position, and its scroll, so the boxes are in the coordinate system
+  // they are actually placed in.
+  const origin = overlayOrigin(overlay, scrollX, scrollY)
   for (const { target, ranges } of painted) {
     for (const range of ranges) {
       for (const rect of Array.from(range.getClientRects())) {
@@ -123,8 +172,8 @@ function paintWithOverlay(
         box.dataset.marginHighlight = target.id
         box.style.cssText = [
           'position:absolute',
-          `left:${rect.left + scrollX}px`,
-          `top:${rect.top + scrollY}px`,
+          `left:${rect.left + scrollX - origin.x}px`,
+          `top:${rect.top + scrollY - origin.y}px`,
           `width:${rect.width}px`,
           `height:${rect.height}px`,
           `background-color:${palette[target.color] ?? palette.default ?? DEFAULT_PALETTE.default}`,
@@ -172,16 +221,41 @@ export function paintHighlights(
     byColor.set(color, [...(byColor.get(color) ?? []), ...ranges])
   }
 
-  ensureStyles(doc, palette, Array.from(byColor.keys()))
+  const suffix = registrySuffix(options.registryNamespace)
+  const nameFor = (color: string) =>
+    highlightRegistryName(color, options.registryNamespace)
+
+  ensureStyles(doc, palette, Array.from(byColor.keys()), suffix)
   for (const [color, ranges] of byColor) {
-    registry.set(`${REGISTRY_PREFIX}${color}`, new Highlight(...ranges))
+    registry.set(nameFor(color), new Highlight(...ranges))
   }
 
   return () => {
     for (const color of byColor.keys()) {
-      registry.delete(`${REGISTRY_PREFIX}${color}`)
+      registry.delete(nameFor(color))
     }
   }
+}
+
+/** A CSS-identifier-safe suffix, or none at all for the single-rail case. */
+export function registrySuffix(namespace: string | undefined): string {
+  if (!namespace) return ''
+  const safe = namespace.replace(/[^a-zA-Z0-9_-]/gu, '-')
+  return safe ? `-${safe}` : ''
+}
+
+/**
+ * The `CSS.highlights` key one painter uses for one colour.
+ *
+ * Exported so the naming can be asserted without a DOM: this repository has no
+ * DOM test environment, and the registry collision it prevents is the kind of
+ * thing that is cheap to get wrong again.
+ */
+export function highlightRegistryName(
+  color: string,
+  namespace?: string,
+): string {
+  return `${REGISTRY_PREFIX}${color}${registrySuffix(namespace)}`
 }
 
 export const HIGHLIGHT_REGISTRY_PREFIX = REGISTRY_PREFIX

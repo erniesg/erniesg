@@ -395,6 +395,71 @@ describe('JWKS availability', () => {
     expect(provider.calls).toHaveLength(1)
   })
 
+  // An ordinary cache fill also set `attemptedAt`, so a token signed by a key
+  // published just after that fill was throttled for up to `minRefreshMs` — valid
+  // callbacks rejected for a minute after every rotation.
+  it('refetches immediately on the first unknown kid after a cache fill', async () => {
+    let clock = NOW_MS
+    let published = { keys: signer.jwks.keys }
+    const calls: number[] = []
+    const fetchImpl = (async () => {
+      calls.push(clock)
+      return new Response(JSON.stringify(published), { status: 200 })
+    }) as unknown as typeof fetch
+
+    const source = createJwksSource(jwksUrl(config), {
+      fetchImpl,
+      now: () => clock,
+      ttlMs: 600_000,
+      minRefreshMs: 60_000,
+    })
+
+    // Fill the cache, which also stamps the ordinary attempt clock.
+    const known = await signer.sign(validClaims())
+    await expect(
+      verifyAccessToken(known, { config, jwks: source, now: NOW_MS }),
+    ).resolves.toMatchObject({ ok: true })
+    expect(calls).toHaveLength(1)
+
+    // WorkOS rotates one millisecond later. The new key's `kid` is unknown, and
+    // the fill just happened, so the old throttle suppressed this refetch.
+    const rotated = await foreignSigner('rotated-key')
+    published = { keys: rotated.jwks.keys }
+    clock = NOW_MS + 1
+    const token = await rotated.sign(validClaims(), { kid: 'rotated-key' })
+
+    await expect(
+      verifyAccessToken(token, { config, jwks: source, now: clock }),
+    ).resolves.toMatchObject({ ok: true })
+    expect(calls, 'the rotation must be fetched, not throttled').toHaveLength(2)
+  })
+
+  it('still throttles a second unknown kid inside the window', async () => {
+    let clock = NOW_MS
+    const calls: number[] = []
+    const fetchImpl = (async () => {
+      calls.push(clock)
+      return new Response(JSON.stringify(signer.jwks), { status: 200 })
+    }) as unknown as typeof fetch
+
+    const source = createJwksSource(jwksUrl(config), {
+      fetchImpl,
+      now: () => clock,
+      ttlMs: 600_000,
+      minRefreshMs: 60_000,
+    })
+    const bogus = await signer.sign(validClaims(), { kid: 'not-a-real-kid' })
+
+    // First: fills the cache, then one rotation refetch.
+    await verifyAccessToken(bogus, { config, jwks: source, now: clock })
+    const afterFirst = calls.length
+
+    // Second, immediately: no further fetch, so a bogus kid cannot drive traffic.
+    clock = NOW_MS + 1
+    await verifyAccessToken(bogus, { config, jwks: source, now: clock })
+    expect(calls).toHaveLength(afterFirst)
+  })
+
   it('caches a fetched key set instead of refetching per request', async () => {
     const provider = createFakeProvider({ jwks: signer.jwks })
     const source = sourceFor(provider)

@@ -997,3 +997,132 @@ describe('/auth/me in local development', () => {
     }
   })
 })
+
+describe('review findings, round six', () => {
+  const user = { id: 'user_01HREADER', email: 'reader@example.test', email_verified: true }
+
+  // The profile block is not signed. An email from a response whose `user.id`
+  // does not match the signed `sub` is somebody else's address, and it was being
+  // persisted, sealed and reported by `/auth/me`.
+  it('keeps an email that does not belong to this subject out of the session', async () => {
+    const db = createFakeD1()
+    const { state, cookie } = await beginLogin()
+    const provider = providerWith({
+      access_token: await accessToken({ sub: 'user_01HVICTIM' }),
+      refresh_token: 'refresh_one',
+      // A valid token for one subject, a profile naming another.
+      user: { id: 'user_01HSOMEBODYELSE', email: 'other@example.test', email_verified: true },
+    })
+
+    const response = (await call(
+      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
+      { headers: { cookie } },
+      envWith(db),
+      optionsFor(provider),
+    )) as Response
+
+    // The session is still issued: the token verified.
+    expect(response.status).toBe(302)
+
+    const header = cookieNamed(response, SESSION_COOKIE_NAME) as string
+    const sealed = header.slice(header.indexOf('=') + 1, header.indexOf(';'))
+    const session = await unsealSession(sealed, config.cookiePassword)
+    expect(session?.email, 'the seal must not carry the other account\'s email')
+      .toBeUndefined()
+
+    // And nothing persisted it either.
+    expect(db.identities).toHaveLength(1)
+    expect(db.identities[0]).toMatchObject({
+      subject: 'user_01HVICTIM',
+      email: null,
+    })
+  })
+
+  it('keeps the email when the profile does name this subject', async () => {
+    const db = createFakeD1()
+    const { state, cookie } = await beginLogin()
+    const provider = providerWith({
+      access_token: await accessToken({ sub: 'user_01HREADER' }),
+      refresh_token: 'refresh_one',
+      user,
+    })
+
+    const response = (await call(
+      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
+      { headers: { cookie } },
+      envWith(db),
+      optionsFor(provider),
+    )) as Response
+
+    const header = cookieNamed(response, SESSION_COOKIE_NAME) as string
+    const sealed = header.slice(header.indexOf('=') + 1, header.indexOf(';'))
+    const session = await unsealSession(sealed, config.cookiePassword)
+    expect(session?.email).toBe('reader@example.test')
+    expect(db.identities[0]).toMatchObject({ email: 'reader@example.test' })
+  })
+
+  // A page with several requests open sends the same refresh token on each, and
+  // the exchange consumes it — so without coalescing the first wins and the rest
+  // come back anonymous while holding a spent token.
+  it('exchanges once for several parallel requests on one session', async () => {
+    const { cookie } = await (async () => {
+      const { state, cookie: state_cookie } = await beginLogin()
+      const provider = providerWith({
+        access_token: await accessToken({ exp: NOW_SECONDS + 60 }),
+        refresh_token: 'refresh_one',
+        user,
+      })
+      const response = (await call(
+        `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
+        { headers: { cookie: state_cookie } },
+        envWith(),
+        optionsFor(provider),
+      )) as Response
+      const header = cookieNamed(response, SESSION_COOKIE_NAME) as string
+      return { cookie: header.slice(0, header.indexOf(';')) }
+    })()
+
+    const later = NOW_MS + 3_600_000
+    const laterSeconds = Math.floor(later / 1000)
+    const provider = createFakeProvider({
+      jwks: signer.jwks,
+      authenticate: {
+        access_token: await signer.sign({
+          iss: TEST_ISSUER,
+          sub: 'user_01HREADER',
+          client_id: config.clientId,
+          iat: laterSeconds - 10,
+          exp: laterSeconds + 300,
+        }),
+        refresh_token: 'refresh_two',
+        user,
+      },
+    })
+    const options = { ...optionsFor(provider), now: later }
+
+    const request = () =>
+      handleAuthRequest(
+        new Request(`https://ernie.sg${AUTH_ME_PATH}`, { headers: { cookie } }),
+        envWith(),
+        options,
+      )
+    const responses = (await Promise.all([
+      request(),
+      request(),
+      request(),
+    ])) as Response[]
+
+    // Every one of them is signed in, not just the first.
+    for (const [index, response] of responses.entries()) {
+      expect(await response.json(), `request ${index}`).toMatchObject({
+        authenticated: true,
+      })
+    }
+
+    // And the refresh grant was exchanged exactly once.
+    const exchanges = provider.calls.filter((entry) =>
+      String(entry.init?.body ?? '').includes('refresh_token'),
+    )
+    expect(exchanges).toHaveLength(1)
+  })
+})

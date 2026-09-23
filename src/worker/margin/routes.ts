@@ -279,7 +279,12 @@ async function handleCallback(
     provider: WORKOS_PROVIDER,
     issuer: verified.claims.iss,
     subject: verified.claims.sub,
-    ...(email ? { email } : {}),
+    // Only when the profile names this token's subject. The profile block is not
+    // signed, so an email from a response whose `user.id` does not match the
+    // signed `sub` is somebody else's address — and it would have been persisted
+    // by `recordSignIn`, sealed into the session and returned by `/auth/me`,
+    // attaching one account's identity to another's email.
+    ...(email && profileIsSubject ? { email } : {}),
   }
 
   await recordSignIn(
@@ -313,7 +318,7 @@ async function handleCallback(
       expiresAt: nowSeconds + maxAge,
       ceiling,
       ...(refreshToken ? { refreshToken } : {}),
-      ...(email ? { email } : {}),
+      ...(principal.email ? { email: principal.email } : {}),
       ...(ownerEmailVerified ? { emailVerified: true } : {}),
     },
     config.cookiePassword,
@@ -387,6 +392,20 @@ export type SessionRenewal = {
   session: MarginSession
 }
 
+/**
+ * Renewals in flight, keyed by the sealed cookie they started from.
+ *
+ * A page with several requests open sends the same refresh token on each, and the
+ * exchange consumes it — so without this the first wins and the rest come back
+ * anonymous or 401 while holding a token the provider has already spent. One
+ * exchange per session, shared by everybody who asked for it.
+ *
+ * Per isolate, which is where the requests of one page almost always land. Two
+ * isolates racing is a smaller and rarer window, and closing it needs a Durable
+ * Object — worth its own issue rather than a guess here.
+ */
+const renewalsInFlight = new Map<string, Promise<SessionRenewal | null>>()
+
 export async function renewSession(
   request: Request,
   config: WorkosConfig,
@@ -394,6 +413,22 @@ export async function renewSession(
 ): Promise<SessionRenewal | null> {
   const sealed = readCookie(request, SESSION_COOKIE_NAME)
   if (!sealed) return null
+
+  const inFlight = renewalsInFlight.get(sealed)
+  if (inFlight) return inFlight
+  const started = renewOnce(request, config, options, sealed).finally(() => {
+    renewalsInFlight.delete(sealed)
+  })
+  renewalsInFlight.set(sealed, started)
+  return started
+}
+
+async function renewOnce(
+  request: Request,
+  config: WorkosConfig,
+  options: AuthOptions,
+  sealed: string,
+): Promise<SessionRenewal | null> {
   const session = await unsealSession(sealed, config.cookiePassword)
   if (!session?.refreshToken) return null
 

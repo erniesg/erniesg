@@ -120,6 +120,17 @@ export function createJwksSource(
   let keys: Map<string, CryptoKey> | null = null
   let fetchedAt = 0
   let attemptedAt = 0
+  /**
+   * When a rotation refetch was last attempted, tracked apart from
+   * `attemptedAt`.
+   *
+   * An ordinary cache fill also sets `attemptedAt`, so sharing one clock meant a
+   * token signed by a key published just after that fill was throttled for up to
+   * `minRefreshMs` — rejecting valid callbacks for a minute after every rotation.
+   * The first unknown `kid` now refetches immediately, and only a *second* one
+   * inside the window is throttled, which is the traffic this guards against.
+   */
+  let rotationAt = 0
 
   async function refresh(): Promise<boolean> {
     attemptedAt = now()
@@ -164,7 +175,10 @@ export function createJwksSource(
       if (cached) return cached
       // An unknown `kid` is the signal for key rotation. Refetch, but no more
       // often than `minRefreshMs`, so a bogus `kid` cannot drive traffic.
-      if (keys && now() - attemptedAt >= minRefreshMs) await refresh()
+      if (keys && now() - rotationAt >= minRefreshMs) {
+        rotationAt = now()
+        await refresh()
+      }
       return keys?.get(kid) ?? null
     },
   }

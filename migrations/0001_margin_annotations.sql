@@ -63,6 +63,11 @@ CREATE INDEX margin_annotations_page
 CREATE INDEX margin_annotations_public_page
   ON margin_annotations (site, document, visibility, created, id);
 
+-- Proposals are an editing-only collection. Its predicate must lead the page
+-- order, otherwise SQLite walks every motivation in a tenant to fill a page.
+CREATE INDEX margin_annotations_proposal_page
+  ON margin_annotations (site, document, motivation, created, id);
+
 CREATE INDEX margin_annotations_owner
   ON margin_annotations (creator, site, document);
 

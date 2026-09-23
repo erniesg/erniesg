@@ -48,17 +48,18 @@ describe('the collection query plan', () => {
     expect(plan).toContain('margin_annotations_page')
   })
 
-  it('and for the proposals collection, which shares the query', () => {
+  it('uses the motivation-aware ordered index for proposals', () => {
     const plan = planFor({
       limit: DEFAULT_PAGE_SIZE + 1,
       motivation: 'editing',
     })
 
     expect(plan).not.toContain('TEMP B-TREE')
+    expect(plan).toContain('margin_annotations_proposal_page')
   })
 })
-
 it('uses the visibility-aware ordered index for anonymous pages', () => {
+
   const database = new DatabaseSync(':memory:')
   applyMigrations(database)
   const query = listAnnotationsQuery(

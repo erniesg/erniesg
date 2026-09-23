@@ -15,12 +15,12 @@ the moment a sentence is inserted above it, and a quote can be reworded,
 duplicated or moved into another block. So an annotation carries several
 selectors at once and resolution tries them in order:
 
-| order | selector | what it means |
-|---|---|---|
-| 1 | `struct-id` | the block's stable id, and its digest still matches, so the text is byte-identical |
-| 2 | `position-and-context` | the stored offsets still hold the quote, with the stored neighbourhood around it |
-| 3 | `quote-and-context` | the quote moved inside the block, but exactly one occurrence still has its neighbourhood |
-| 4 | `unique-quote` | the context is gone, but the quote occurs exactly once |
+| order | selector               | what it means                                                                            |
+| ----- | ---------------------- | ---------------------------------------------------------------------------------------- |
+| 1     | `struct-id`            | the block's stable id, and its digest still matches, so the text is byte-identical       |
+| 2     | `position-and-context` | the stored offsets still hold the quote, with the stored neighbourhood around it         |
+| 3     | `quote-and-context`    | the quote moved inside the block, but exactly one occurrence still has its neighbourhood |
+| 4     | `unique-quote`         | the context is gone, but the quote occurs exactly once                                   |
 
 `resolveTextAnchor` runs those four inside one node. `resolveAnchorInDocument`
 runs them over a whole document and adds one more step that a single-node
@@ -45,13 +45,15 @@ reader it came loose.
   "quote": {
     "exact": "a hash map is an array you address by content",
     "prefix": "…the 32 characters before it…",
-    "suffix": "…the 32 characters after it…"
-  }
+    "suffix": "…the 32 characters after it…",
+  },
 }
 ```
 
-`position.end - position.start` must equal `quote.exact.length`; the schema
-rejects anchors where it does not. `struct` is additive — an anchor stored
+An omitted `positionUnit` means UTF-16 offsets, as produced by JavaScript DOM
+selection. A wire anchor may explicitly carry `positionUnit: 'codepoint'` for
+W3C character offsets. The span must equal the quote length in its stated
+unit; the schema rejects anchors where it does not. `struct` is additive — an anchor stored
 before struct ids existed resolves exactly as it did before.
 
 Offsets are into the block's **anchorable text**: the concatenation of its
@@ -84,19 +86,18 @@ match nothing else.
 As a plain JS API, with no element at all:
 
 ```js
-import {
-  createMarginController,
-  annotationsFromAnchors,
-} from '@erniesg/margin'
+import { createMarginController, annotationsFromAnchors } from '@erniesg/margin'
 
 const margin = createMarginController({
   root: document.querySelector('[data-reading-column="text"]'),
   onSelection(capture) {
     if (capture.status !== 'captured') return
-    margin.render(annotationsFromAnchors(capture.anchors, {
-      kind: 'highlight',
-      color: 'amber',
-    }))
+    margin.render(
+      annotationsFromAnchors(capture.anchors, {
+        kind: 'highlight',
+        color: 'amber',
+      }),
+    )
   },
 })
 margin.start()
@@ -135,17 +136,49 @@ nothing into the text.
 ### Talking to a service
 
 ```js
-import { createHttpTransport, createMarginClient } from '@erniesg/margin'
+import {
+  createHttpTransport,
+  createMarginClient,
+  createMarginController,
+} from '@erniesg/margin'
 
 const client = createMarginClient(
   createHttpTransport({ baseUrl: 'https://example.test' }),
 )
+const margin = createMarginController({
+  root: document.querySelector('[data-reading-column="text"]'),
+})
+
+const captured = margin.capture()
+if (captured.status === 'captured') {
+  const blocks = margin.blocks()
+  await client.createAnnotations({
+    documentUri: 'https://example.test/books/a/ch1',
+    kind: 'highlight',
+    targets: captured.anchors,
+    targetTexts: captured.anchors.map((anchor) => {
+      const text = blocks.find((block) => block.id === anchor.nodeId)?.text
+      if (text === undefined) throw new Error('Selected block text is missing')
+      return text
+    }),
+  })
+}
 ```
 
 `baseUrl` is required. Every path the client builds starts with
 `/api/margin/v1/`. Swap `createHttpTransport` for any object with a
 `request({ path, method, body })` method to point the package somewhere else,
 or at a stub.
+
+`targetTexts` supplies each selected node's complete anchorable text in target
+order. The client checks the quote and context against that text, then converts
+UTF-16 positions to W3C codepoint positions before sending. It refuses a
+missing or mismatched text input before sending any target in the request.
+This includes ASCII selections because earlier text in the node can contain
+non-BMP characters. An anchor already marked `positionUnit: 'codepoint'`
+passes through without `targetTexts`; legacy stored wire anchors remain
+readable through that explicit unit. For `@document`, provide the complete
+ordered nonfigure text stream and the client omits the structural selector.
 
 ## Building and testing
 

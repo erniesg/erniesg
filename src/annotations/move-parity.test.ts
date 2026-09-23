@@ -72,7 +72,7 @@ describe('annotations module relocation', () => {
     ])
   })
 
-  it('bundles those annotations at the unchanged bundle version', () => {
+  it('bundles those annotations at the current bundle version', () => {
     const bundle = createAnnotationBundle(
       researchPaperToPublicationGraph(paper),
       createDemoAnnotations(paper),

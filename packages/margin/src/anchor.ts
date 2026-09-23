@@ -56,13 +56,18 @@ export const semanticTextAnchorSchema = z
   .object({
     nodeId: z.string().min(1),
     struct: structSelectorSchema.optional(),
+    /** Omitted repository anchors use UTF-16; W3C wire anchors use code points. */
+    positionUnit: z.enum(['utf16', 'codepoint']).optional(),
     position: textPositionSelectorSchema,
     quote: textQuoteSelectorSchema,
   })
   .strict()
   .refine(
     (anchor) =>
-      anchor.position.end - anchor.position.start === anchor.quote.exact.length,
+      anchor.position.end - anchor.position.start ===
+      (anchor.positionUnit === 'codepoint'
+        ? [...anchor.quote.exact].length
+        : anchor.quote.exact.length),
     {
       message: 'Text offsets must span the stored exact quote',
       path: ['position'],
@@ -110,14 +115,24 @@ const noteAnnotationSchema = annotationBase
   })
   .strict()
 
+const proposalAnnotationSchema = annotationBase
+  .extend({ kind: z.literal('proposal'), body: z.string().min(1) })
+  .strict()
+
 export const textAnnotationSchema = z.discriminatedUnion('kind', [
   highlightAnnotationSchema,
   noteAnnotationSchema,
+  proposalAnnotationSchema,
 ])
 
 export type StructSelector = z.infer<typeof structSelectorSchema>
 export type SemanticTextAnchor = z.infer<typeof semanticTextAnchorSchema>
 export type TextAnnotation = z.infer<typeof textAnnotationSchema>
+export const DOCUMENT_SCOPE_NODE_ID = '@document'
+
+export function annotationBody(annotation: TextAnnotation): string | null {
+  return annotation.kind === 'highlight' ? null : annotation.body
+}
 export type AnnotationGeometryRectangle = z.infer<
   typeof geometryRectangleSchema
 >
@@ -207,6 +222,135 @@ function contextMatches(
   }
 }
 
+export function utf16OffsetForCodePointOffset(
+  text: string,
+  offset: number,
+): number | null {
+  if (offset < 0 || !Number.isInteger(offset)) return null
+  let codePoints = 0
+  let utf16 = 0
+  for (const character of text) {
+    if (codePoints === offset) return utf16
+    codePoints += 1
+    utf16 += character.length
+  }
+  return codePoints === offset ? utf16 : null
+}
+
+export function codePointOffsetForUtf16Offset(
+  text: string,
+  offset: number,
+): number | null {
+  if (offset < 0 || !Number.isInteger(offset)) return null
+  let codePoints = 0
+  let utf16 = 0
+  for (const character of text) {
+    if (utf16 === offset) return codePoints
+    codePoints += 1
+    utf16 += character.length
+  }
+  return utf16 === offset ? codePoints : null
+}
+
+/** The ordered text stream used by document-scoped W3C selectors. */
+export function orderedTextNodes(nodes: readonly AnchorableNode[]) {
+  return nodes.flatMap((node) => {
+    const text = textForNode(node)
+    return text === null ? [] : [{ id: node.id, text }]
+  })
+}
+
+function resolveDocumentAnchor(
+  anchor: SemanticTextAnchor,
+  nodes: readonly AnchorableNode[],
+): TextAnchorResolution {
+  const stream = orderedTextNodes(nodes)
+  const documentText = stream.map((node) => node.text).join('')
+  let absoluteUtf16 = 0
+  let absoluteUnit = 0
+  const candidates: (ResolutionCandidate & {
+    nodeId: string
+    atPosition: boolean
+  })[] = []
+  for (const node of stream) {
+    const unitLength =
+      anchor.positionUnit === 'codepoint'
+        ? [...node.text].length
+        : node.text.length
+    for (const candidate of quoteCandidates(anchor, node.text)) {
+      const context = contextMatches(
+        documentText,
+        absoluteUtf16 + candidate.start,
+        absoluteUtf16 + candidate.end,
+        anchor,
+      )
+      const startUnit =
+        anchor.positionUnit === 'codepoint'
+          ? codePointOffsetForUtf16Offset(node.text, candidate.start)
+          : candidate.start
+      const endUnit =
+        anchor.positionUnit === 'codepoint'
+          ? codePointOffsetForUtf16Offset(node.text, candidate.end)
+          : candidate.end
+      candidates.push({
+        ...candidate,
+        ...context,
+        nodeId: node.id,
+        atPosition:
+          startUnit !== null &&
+          endUnit !== null &&
+          absoluteUnit + startUnit === anchor.position.start &&
+          absoluteUnit + endUnit === anchor.position.end,
+      })
+    }
+    absoluteUtf16 += node.text.length
+    absoluteUnit += unitLength
+  }
+  if (!candidates.length)
+    return {
+      status: 'unresolved',
+      nodeId: anchor.nodeId,
+      reason: 'quote-not-found',
+    }
+  const positioned = candidates.find(
+    (candidate) =>
+      candidate.atPosition &&
+      candidate.prefixMatches &&
+      candidate.suffixMatches,
+  )
+  const contextual = candidates.filter(
+    (candidate) => candidate.prefixMatches && candidate.suffixMatches,
+  )
+  const match =
+    positioned ??
+    (contextual.length === 1
+      ? contextual[0]
+      : candidates.length === 1
+        ? candidates[0]
+        : null)
+  if (match)
+    return {
+      status: 'resolved',
+      nodeId: match.nodeId,
+      start: match.start,
+      end: match.end,
+      matchedBy: positioned
+        ? 'position-and-context'
+        : contextual.length === 1
+          ? 'quote-and-context'
+          : 'unique-quote',
+    }
+  return {
+    status: 'ambiguous',
+    nodeId: anchor.nodeId,
+    reason:
+      contextual.length > 1
+        ? 'Multiple exact quotes also match the stored context.'
+        : 'Multiple exact quotes remain and the stored context does not identify one safely.',
+    candidates,
+  }
+}
+
 /** Every occurrence of the stored quote in `text`, with its context verdict. */
 export function quoteCandidates(
   anchor: SemanticTextAnchor,
@@ -290,6 +434,8 @@ export function resolveTextAnchor(
   anchor: SemanticTextAnchor,
   nodes: readonly AnchorableNode[],
 ): TextAnchorResolution {
+  if (anchor.nodeId === DOCUMENT_SCOPE_NODE_ID)
+    return resolveDocumentAnchor(anchor, nodes)
   // The struct id, when the anchor carries one, decides which node we are even
   // looking at. That is the whole point of it being ahead of the chain: a node
   // may have been renamed in a surface's own id space and still be the same
@@ -298,7 +444,8 @@ export function resolveTextAnchor(
   const structNode = structId
     ? nodes.find((candidate) => structIdOf(candidate) === structId)
     : undefined
-  const node = structNode ?? nodes.find((candidate) => candidate.id === anchor.nodeId)
+  const node =
+    structNode ?? nodes.find((candidate) => candidate.id === anchor.nodeId)
   if (!node) {
     return {
       status: 'unresolved',
@@ -317,6 +464,14 @@ export function resolveTextAnchor(
   }
 
   const candidates = quoteCandidates(anchor, text)
+  const positionStart =
+    anchor.positionUnit === 'codepoint'
+      ? utf16OffsetForCodePointOffset(text, anchor.position.start)
+      : anchor.position.start
+  const positionEnd =
+    anchor.positionUnit === 'codepoint'
+      ? utf16OffsetForCodePointOffset(text, anchor.position.end)
+      : anchor.position.end
 
   if (candidates.length === 0) {
     return {
@@ -344,8 +499,7 @@ export function resolveTextAnchor(
       structNode.structDigest === anchor.struct.digest
     const atStoredPosition = candidates.find(
       (candidate) =>
-        candidate.start === anchor.position.start &&
-        candidate.end === anchor.position.end,
+        candidate.start === positionStart && candidate.end === positionEnd,
     )
     if (digestMatches && atStoredPosition) {
       return {
@@ -361,8 +515,8 @@ export function resolveTextAnchor(
   // Selector 2.
   const positionCandidate = candidates.find(
     (candidate) =>
-      candidate.start === anchor.position.start &&
-      candidate.end === anchor.position.end &&
+      candidate.start === positionStart &&
+      candidate.end === positionEnd &&
       candidate.prefixMatches &&
       candidate.suffixMatches,
   )

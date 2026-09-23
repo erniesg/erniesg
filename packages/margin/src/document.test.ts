@@ -33,6 +33,46 @@ const graph = [
   block('block-intro-prose-2', SECOND),
 ]
 
+describe('document-wide wire anchors', () => {
+  const nodes = [
+    block('one', '🌊 before '),
+    block('two', 'x then x'),
+    block('figure', 'x'),
+  ]
+
+  it('converts absolute codepoint positions and checks cross-node context', () => {
+    const placement = resolveAnchorInDocument(
+      {
+        nodeId: '@document',
+        positionUnit: 'codepoint',
+        position: { start: 9, end: 10 },
+        quote: { exact: 'x', prefix: 'before ', suffix: ' then' },
+      },
+      nodes,
+    )
+    expect(placement).toMatchObject({
+      status: 'anchored',
+      nodeId: 'two',
+      start: 0,
+      end: 1,
+      matchedBy: 'position-and-context',
+    })
+  })
+
+  it('refuses genuinely indistinguishable occurrences', () => {
+    const placement = resolveAnchorInDocument(
+      {
+        nodeId: '@document',
+        positionUnit: 'codepoint',
+        position: { start: 99, end: 100 },
+        quote: { exact: 'x', prefix: '', suffix: '' },
+      },
+      [block('a', 'x'), block('b', 'x')],
+    )
+    expect(placement).toMatchObject({ status: 'orphaned', reason: 'ambiguous' })
+  })
+})
+
 const anchor = withStructSelector(
   createSemanticTextAnchor('block-intro-prose-1', FIRST, QUOTE),
   { id: 'block-intro-prose-1', digest: 'digest-of-block-intro-prose-1' },
@@ -77,7 +117,11 @@ describe('re-anchoring across realistic edits', () => {
 
   it('follows its own words into a different block', () => {
     const moved = [
-      block('block-intro-prose-1', 'The opening paragraph now says something else entirely.', 'digest-emptied'),
+      block(
+        'block-intro-prose-1',
+        'The opening paragraph now says something else entirely.',
+        'digest-emptied',
+      ),
       block('block-intro-prose-2', `${SECOND} ${FIRST}`, 'digest-grew'),
     ]
 
@@ -117,7 +161,11 @@ describe('re-anchoring across realistic edits', () => {
 
   it('orphans rather than guess when the same quote appears twice', () => {
     const duplicated = [
-      block('block-intro-prose-1', FIRST.replace(QUOTE, 'Something else'), 'd1'),
+      block(
+        'block-intro-prose-1',
+        FIRST.replace(QUOTE, 'Something else'),
+        'd1',
+      ),
       block('block-intro-prose-2', `${QUOTE}. ${QUOTE}.`, 'd2'),
     ]
 
@@ -130,7 +178,11 @@ describe('re-anchoring across realistic edits', () => {
 
   it('orphans when the anchored text is deleted outright', () => {
     const deleted = [
-      block('block-intro-prose-1', 'A page is a rendition, not a document.', 'd3'),
+      block(
+        'block-intro-prose-1',
+        'A page is a rendition, not a document.',
+        'd3',
+      ),
       graph[1],
     ]
 
@@ -174,7 +226,10 @@ describe('placing a whole rail', () => {
     const placements = placeAnnotations([highlight, orphan], graph)
 
     expect(placements).toHaveLength(2)
-    expect(placements.map(({ annotation }) => annotation.id)).toEqual(['a', 'b'])
+    expect(placements.map(({ annotation }) => annotation.id)).toEqual([
+      'a',
+      'b',
+    ])
     expect(placements[0].placement.status).toBe('anchored')
     expect(placements[1].placement).toMatchObject({
       status: 'orphaned',

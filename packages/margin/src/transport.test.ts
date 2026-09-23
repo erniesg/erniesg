@@ -28,18 +28,55 @@ describe('the injectable transport', () => {
 
     await client.health()
     await client.listAnnotations('https://example.test/books/a/b')
-    await client.deleteAnnotation('an id/with slash')
+    await client.deleteAnnotation(
+      'an id/with slash',
+      'https://example.test/books/a/b',
+    )
 
     expect(transport.calls.map((call) => call.path)).toEqual([
       `${MARGIN_API_PREFIX}/health`,
       // `?source=`, which is the parameter 054's `readScope` reads. `?document=`
       // is half a scope and answers `missing_scope`.
       `${MARGIN_API_PREFIX}/annotations?source=https%3A%2F%2Fexample.test%2Fbooks%2Fa%2Fb`,
-      `${MARGIN_API_PREFIX}/annotations/an%20id%2Fwith%20slash`,
+      `${MARGIN_API_PREFIX}/annotations/an%20id%2Fwith%20slash?source=https%3A%2F%2Fexample.test%2Fbooks%2Fa%2Fb`,
     ])
     for (const call of transport.calls) {
       expect(call.path.startsWith(`${MARGIN_API_PREFIX}/`)).toBe(true)
     }
+  })
+
+  it('uses the service scope for pagination, owner edits, deletion, and future defaults', async () => {
+    const transport = stubTransport()
+    const client = createMarginClient(transport)
+    const source = 'https://example.test/book'
+    await client.listAnnotations(source, '2026-09-23T00:00:00Z one')
+    await client.readPreferences()
+    await client.setDefaultVisibility('public')
+    await client.updateAnnotation('urn:margin:annotation:one', source, {
+      visibility: 'private',
+      body: 'edited',
+    })
+    await client.deleteAnnotation('urn:margin:annotation:one', source)
+    expect(transport.calls).toMatchObject([
+      {
+        path: `${MARGIN_API_PREFIX}/annotations?source=https%3A%2F%2Fexample.test%2Fbook&cursor=2026-09-23T00%3A00%3A00Z%20one`,
+      },
+      { path: `${MARGIN_API_PREFIX}/prefs` },
+      {
+        path: `${MARGIN_API_PREFIX}/prefs`,
+        method: 'PATCH',
+        body: { defaultVisibility: 'public' },
+      },
+      {
+        path: `${MARGIN_API_PREFIX}/annotations/urn%3Amargin%3Aannotation%3Aone?source=https%3A%2F%2Fexample.test%2Fbook`,
+        method: 'PATCH',
+        body: { body: 'edited', 'margin:visibility': 'private' },
+      },
+      {
+        path: `${MARGIN_API_PREFIX}/annotations/urn%3Amargin%3Aannotation%3Aone?source=https%3A%2F%2Fexample.test%2Fbook`,
+        method: 'DELETE',
+      },
+    ])
   })
 
   it('refuses to invent an origin', () => {

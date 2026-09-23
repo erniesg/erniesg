@@ -44,6 +44,10 @@ export type PaintOptions = {
 
 export const DEFAULT_PALETTE: Record<string, string> = {
   default: 'rgba(250, 204, 21, 0.35)',
+  highlight: 'rgba(250, 204, 21, 0.35)',
+  question: 'rgba(56, 189, 248, 0.32)',
+  insight: 'rgba(74, 222, 128, 0.32)',
+  action: 'rgba(244, 114, 182, 0.32)',
   amber: 'rgba(250, 204, 21, 0.35)',
   blue: 'rgba(56, 189, 248, 0.32)',
   green: 'rgba(74, 222, 128, 0.32)',

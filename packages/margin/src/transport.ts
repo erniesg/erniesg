@@ -277,7 +277,11 @@ export function createHttpTransport(
 
 export type MarginClient = {
   health(): Promise<MarginResponse>
-  listAnnotations(documentUri: string): Promise<MarginResponse>
+  listAnnotations(documentUri: string, cursor?: string): Promise<MarginResponse>
+  readPreferences(): Promise<MarginResponse>
+  setDefaultVisibility(
+    visibility: 'private' | 'public',
+  ): Promise<MarginResponse>
   /**
    * One annotation per target, because that is the service's unit.
    *
@@ -293,7 +297,12 @@ export type MarginClient = {
         targetTexts?: readonly string[]
       },
   ): Promise<MarginResponse[]>
-  deleteAnnotation(id: string): Promise<MarginResponse>
+  updateAnnotation(
+    id: string,
+    documentUri: string,
+    patch: { body?: string; visibility?: 'private' | 'public'; color?: string },
+  ): Promise<MarginResponse>
+  deleteAnnotation(id: string, documentUri: string): Promise<MarginResponse>
 }
 
 /**
@@ -307,9 +316,17 @@ export function createMarginClient(transport: MarginTransport): MarginClient {
     health: () => transport.request({ path: `${MARGIN_API_PREFIX}/health` }),
     // `?source=`, which is what 054's `readScope` reads. `?document=` alone is
     // half a scope and answers `missing_scope`.
-    listAnnotations: (documentUri) =>
+    listAnnotations: (documentUri, cursor) =>
       transport.request({
-        path: `${MARGIN_API_PREFIX}/annotations?source=${encodeURIComponent(documentUri)}`,
+        path: `${MARGIN_API_PREFIX}/annotations?source=${encodeURIComponent(documentUri)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+      }),
+    readPreferences: () =>
+      transport.request({ path: `${MARGIN_API_PREFIX}/prefs` }),
+    setDefaultVisibility: (defaultVisibility) =>
+      transport.request({
+        path: `${MARGIN_API_PREFIX}/prefs`,
+        method: 'PATCH',
+        body: { defaultVisibility },
       }),
     createAnnotations: async (input) => {
       requireNoteBody(input)
@@ -334,9 +351,21 @@ export function createMarginClient(transport: MarginTransport): MarginClient {
       }
       return responses
     },
-    deleteAnnotation: (id) =>
+    updateAnnotation: (id, documentUri, patch) =>
       transport.request({
-        path: `${MARGIN_API_PREFIX}/annotations/${encodeURIComponent(id)}`,
+        path: `${MARGIN_API_PREFIX}/annotations/${encodeURIComponent(id)}?source=${encodeURIComponent(documentUri)}`,
+        method: 'PATCH',
+        body: {
+          ...(patch.body === undefined ? {} : { body: patch.body }),
+          ...(patch.visibility === undefined
+            ? {}
+            : { 'margin:visibility': patch.visibility }),
+          ...(patch.color === undefined ? {} : { 'margin:color': patch.color }),
+        },
+      }),
+    deleteAnnotation: (id, documentUri) =>
+      transport.request({
+        path: `${MARGIN_API_PREFIX}/annotations/${encodeURIComponent(id)}?source=${encodeURIComponent(documentUri)}`,
         method: 'DELETE',
       }),
   }

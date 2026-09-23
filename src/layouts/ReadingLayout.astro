@@ -77,7 +77,7 @@ const {
       data-document-uri={documentUri}
       aria-label="Margin"
     >
-      <MarginMount documentUri={documentUri} />
+      <MarginMount documentUri={documentUri} apiBase={Astro.url.origin} />
     </aside>
   </div>
 </Layout>
@@ -121,10 +121,15 @@ const {
     --reading-pin: calc(var(--reading-header) + var(--reading-gap));
   }
 
-  /* The annotation layer mounts here. Below the breakpoint the column
-     collapses entirely, matching the reading rail the local preview uses. */
+  /* The narrow rail floats outside the grid, so opening it leaves the text
+     column at exactly the same width. The package draws its own toggle. */
   .reading-margin {
-    display: none;
+    position: fixed;
+    z-index: 20;
+    top: calc(var(--reading-header) + 0.5rem);
+    right: 1rem;
+    width: min(22rem, calc(100vw - 2rem));
+    pointer-events: none;
   }
 
   @media (min-width: 900px) {
@@ -172,9 +177,11 @@ const {
       display: block;
       position: sticky;
       top: var(--reading-pin);
+      width: auto;
       min-height: 6rem;
       max-height: calc(100vh - var(--reading-pin) - var(--reading-gap));
       overflow-y: auto;
+      pointer-events: auto;
     }
   }
 </style>

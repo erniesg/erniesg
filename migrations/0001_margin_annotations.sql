@@ -51,33 +51,90 @@ CREATE TABLE margin_annotations (
 CREATE INDEX margin_annotations_tenant
   ON margin_annotations (site, document, visibility, creator);
 
--- The collection is always read in `(created, id)` order and now in bounded
--- pages, so without a covering order this plan is `USE TEMP B-TREE FOR ORDER BY`:
--- every visible row sorted before `LIMIT` takes a handful. Paging bounds the
--- response and this is what bounds the work behind it.
-CREATE INDEX margin_annotations_page
-  ON margin_annotations (site, document, created, id);
-
 -- Anonymous readers have no owner branch. Put the public predicate before the
 -- keyset order so private rows are never scanned to fill a public page.
 CREATE INDEX margin_annotations_public_page
   ON margin_annotations (site, document, visibility, created, id);
 
--- Proposals are an editing-only collection. Its predicate must lead the page
--- order, otherwise SQLite walks every motivation in a tenant to fill a page.
-CREATE INDEX margin_annotations_proposal_page
-  ON margin_annotations (site, document, motivation, created, id);
+-- Signed-in lists merge this private owner stream with the public stream.
+-- Both predicates precede the keyset order, so a page never walks private
+-- annotations by other creators.
+CREATE INDEX margin_annotations_private_page
+  ON margin_annotations (site, document, visibility, creator, created, id);
 
 -- Anonymous proposal pages must also lead with visibility: putting motivation
 -- first would make the engine walk private editing rows to fill the page.
 CREATE INDEX margin_annotations_public_proposal_page
   ON margin_annotations (site, document, visibility, motivation, created, id);
 
+CREATE INDEX margin_annotations_private_proposal_page
+  ON margin_annotations (site, document, visibility, creator, motivation, created, id);
+
 CREATE INDEX margin_annotations_owner
   ON margin_annotations (creator, site, document);
 
 CREATE INDEX margin_annotations_parent
   ON margin_annotations (parent_id);
+
+-- A child may point only to a parent in its own tenant that its creator can
+-- read. These checks are atomic with the write, including a concurrent parent
+-- visibility change between a route's precheck and its INSERT/UPDATE.
+CREATE TRIGGER margin_annotations_parent_visible_insert
+BEFORE INSERT ON margin_annotations
+WHEN NEW.parent_id IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM margin_annotations AS parent
+    WHERE parent.id = NEW.parent_id
+      AND parent.site = NEW.site AND parent.document = NEW.document
+      AND (
+        parent.visibility = 'public'
+        OR (
+          parent.visibility = 'private'
+          AND NEW.visibility = 'private'
+          AND parent.creator = NEW.creator
+        )
+      )
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'MARGIN_PARENT_VISIBILITY_CONFLICT');
+END;
+
+CREATE TRIGGER margin_annotations_parent_visible_update
+BEFORE UPDATE OF parent_id, visibility, creator, site, document ON margin_annotations
+WHEN NEW.parent_id IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM margin_annotations AS parent
+    WHERE parent.id = NEW.parent_id
+      AND parent.site = NEW.site AND parent.document = NEW.document
+      AND (
+        parent.visibility = 'public'
+        OR (
+          parent.visibility = 'private'
+          AND NEW.visibility = 'private'
+          AND parent.creator = NEW.creator
+        )
+      )
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'MARGIN_PARENT_VISIBILITY_CONFLICT');
+END;
+
+-- A parent's owner cannot hide it from a public reply's readers or from an
+-- other-owner private reply's creator. The child index makes this a seek.
+CREATE TRIGGER margin_annotations_parent_downgrade
+BEFORE UPDATE OF visibility, creator, site, document ON margin_annotations
+WHEN EXISTS (
+  SELECT 1 FROM margin_annotations AS child
+  WHERE child.parent_id = OLD.id
+    AND (
+      child.site <> NEW.site OR child.document <> NEW.document
+      OR (NEW.visibility = 'private'
+        AND (child.visibility = 'public' OR child.creator <> NEW.creator))
+    )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'MARGIN_VISIBLE_REPLIES_CONFLICT');
+END;
 
 -- Preferences are global per user, not per site: success criterion 5 asks for
 -- one default visibility per person, and changing it never rewrites rows in

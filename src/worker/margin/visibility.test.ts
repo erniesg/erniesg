@@ -95,7 +95,9 @@ describe('the visibility predicate', () => {
   it('is present in every list statement, with the tenancy key ahead of it', () => {
     const { sql } = listAnnotationsQuery(SCOPE, ADA_KEY)
     expect(sql).toContain('WHERE site = ? AND document = ?')
-    expect(sql).toContain("(visibility = 'public' OR creator = ?)")
+    expect(sql).toContain("visibility = 'public'")
+    expect(sql).toContain("visibility = 'private' AND creator = ?")
+    expect(sql.match(/WHERE site = \? AND document = \?/g)).toHaveLength(2)
   })
 })
 
@@ -186,10 +188,13 @@ describe('the repository runs that statement and nothing wider', () => {
     expect(reads).toHaveLength(1)
     expect(reads[0].sql).toBe(expected.sql)
     expect(reads[0].params).toEqual(expected.params)
-    expect(reads[0].sql).toContain("(visibility = 'public' OR creator = ?)")
+    expect(reads[0].sql).toContain("visibility = 'private' AND creator = ?")
+    expect(reads[0].sql).toContain('UNION ALL')
     expect(reads[0].sql).toContain('LIMIT ?')
 
-    const { annotations } = (await response.json()) as { annotations: unknown[] }
+    const { annotations } = (await response.json()) as {
+      annotations: unknown[]
+    }
     expect(annotations).toHaveLength(3)
   })
 

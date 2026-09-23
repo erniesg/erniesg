@@ -13,10 +13,14 @@ import {
 import type { PublicationGraph } from '../publication/schema'
 
 export const ANNOTATION_BUNDLE_VERSION = '1.1.0' as const
+export const LEGACY_ANNOTATION_BUNDLE_VERSION = '1.0.0' as const
 
 export const annotationBundleSchema = z
   .object({
-    version: z.literal(ANNOTATION_BUNDLE_VERSION),
+    version: z.enum([
+      LEGACY_ANNOTATION_BUNDLE_VERSION,
+      ANNOTATION_BUNDLE_VERSION,
+    ]),
     graphId: z.string().min(1).max(256),
     anchors: z
       .array(

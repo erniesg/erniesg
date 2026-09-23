@@ -458,7 +458,10 @@ runnableCells.forEach((cell, index) => {
     button.disabled = true; button.classList.add('busy'); status.textContent = 'Running';
     output.textContent = ''; output.classList.remove('error');
     const earlier = runnableCells.slice(0, index)
-      .map(c => c.querySelector('.editor').value).join('\n');
+      .map((c, cellIndex) => ({
+        index: cellIndex + 1,
+        source: c.querySelector('.editor').value,
+      }));
     try {
       const response = await fetch('/api/exec', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1018,24 +1021,36 @@ class Handler(BaseHTTPRequestHandler):
 
             with tempfile.TemporaryDirectory() as work:
                 script = Path(work) / "snippet.py"
-                earlier = payload.get("earlier", "")
+                earlier = payload.get("earlier", [])
                 own = payload.get("source", "")
-                # Earlier cells set the stage quietly: their prints are dropped
-                # so the reader sees only what this cell produced.
-                # Earlier cells set the stage and then get out of the way:
-                # silent on both streams, and a deliberate raise up there must
-                # not take this cell down (a chapter on errors has to show one).
-                prelude = (
-                    "import io, contextlib\n"
-                    "_quiet = io.StringIO()\n"
+                # Older callers may still send one combined prelude string.
+                if isinstance(earlier, str):
+                    earlier = [{"index": 1, "source": earlier}] if earlier.strip() else []
+                # Earlier cells set the stage quietly. Keep their individual
+                # failures so a failing current cell can identify broken context.
+                runner = (
+                    "import contextlib, io, traceback\n"
+                    "_first_earlier_failure = None\n"
+                    "for _cell in _EARLIER:\n"
+                    "    _quiet = io.StringIO()\n"
+                    "    try:\n"
+                    "        with contextlib.redirect_stdout(_quiet), contextlib.redirect_stderr(_quiet):\n"
+                    "            exec(compile(_cell['source'], '<earlier cell>', 'exec'), globals())\n"
+                    "    except Exception:\n"
+                    "        if _first_earlier_failure is None:\n"
+                    "            _first_earlier_failure = (_cell, traceback.format_exc())\n"
                     "try:\n"
-                    "    with contextlib.redirect_stdout(_quiet), contextlib.redirect_stderr(_quiet):\n"
-                    "        exec(compile(_EARLIER, '<earlier cells>', 'exec'), globals())\n"
+                    "    exec(compile(_OWN, '<current cell>', 'exec'), globals())\n"
                     "except Exception:\n"
-                    "    pass\n"
+                    "    if _first_earlier_failure is not None:\n"
+                    "        _cell, _trace = _first_earlier_failure\n"
+                    "        print(f\"Earlier cell {_cell['index']} failed; shared state may be incomplete.\")\n"
+                    "        print('Source:\\n' + _cell['source'])\n"
+                    "        print(_trace)\n"
+                    "    raise\n"
                 )
                 script.write_text(
-                    f"_EARLIER = {earlier!r}\n{prelude if earlier.strip() else ''}{own}"
+                    f"_EARLIER = {earlier!r}\n_OWN = {own!r}\n{runner}"
                 )
                 try:
                     done = subprocess.run(

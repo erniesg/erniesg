@@ -1,4 +1,6 @@
 import { expect, test } from '@playwright/test'
+import { spawn, type ChildProcess } from 'node:child_process'
+import { createServer } from 'node:net'
 
 // Spec 063: a runnable cell reads as one terminal.
 const CHAPTER = '/ch06-dicts-sets'
@@ -114,4 +116,64 @@ test('Print opens the print edition at the page you were reading', async ({ page
   await page.locator('header .graph-link', { hasText: 'Print' }).click()
   await expect(page).toHaveURL(/\/print#print-cut-them-all-the-same$/)
   await expect(page.locator('#print-cut-them-all-the-same h1')).toBeInViewport()
+})
+
+test.describe('standalone chapter preview', () => {
+  let preview: ChildProcess | undefined
+  let url = ''
+
+  test.beforeAll(async () => {
+    const port = await new Promise<number>((resolve, reject) => {
+      const probe = createServer()
+      probe.once('error', reject)
+      probe.listen(0, '127.0.0.1', () => {
+        const address = probe.address()
+        if (!address || typeof address === 'string') return reject(new Error('could not reserve preview port'))
+        probe.close(error => error ? reject(error) : resolve(address.port))
+      })
+    })
+    url = 'http://127.0.0.1:' + port + '/ch03-lists'
+    preview = spawn(process.env.BOOK_PYTHON ?? 'python3', [
+      'books/tools/preview.py', '--port', String(port), '--no-open',
+    ], { stdio: 'ignore' })
+    const deadline = Date.now() + 15_000
+    while (Date.now() < deadline) {
+      if (preview.exitCode !== null) throw new Error('chapter preview exited')
+      try {
+        if ((await fetch(url)).ok) return
+      } catch {}
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    throw new Error('chapter preview did not become ready at ' + url)
+  })
+
+  test.afterAll(() => { preview?.kill() })
+
+  test('a failing cell explains when an earlier cell broke its context', async ({ page }) => {
+    await page.goto(url)
+    const cells = page.locator('.cell-run')
+    await expect(cells).toHaveCount(12)
+    // The 9th runnable cell establishes the shelf used by the 10th cell.
+    await cells.nth(8).locator('.editor').fill("shelf = None\nraise RuntimeError('earlier sentinel')")
+    await cells.nth(9).locator('.editor').fill("print('soup' in shelf)")
+    await cells.nth(9).locator('.exec').click()
+    const output = cells.nth(9).locator('.output')
+    await expect(output).toHaveClass(/error/)
+    await expect(output).toContainText('Earlier cell 9 failed')
+    await expect(output).toContainText('RuntimeError: earlier sentinel')
+    await expect(output).toContainText('TypeError: argument of type')
+  })
+
+  test('an earlier failure stays quiet when the current cell succeeds', async ({ page }) => {
+    await page.goto(url)
+    const cells = page.locator('.cell-run')
+    await cells.nth(8).locator('.editor').fill("print('hidden earlier output')\nshelf = None\nraise RuntimeError('earlier sentinel')")
+    await cells.nth(9).locator('.editor').fill("print('current cell ran')")
+    await cells.nth(9).locator('.exec').click()
+    const output = cells.nth(9).locator('.output')
+    await expect(output).toContainText('current cell ran')
+    await expect(output).not.toContainText('Earlier cell')
+    await expect(output).not.toContainText('hidden earlier output')
+    await expect(output).not.toHaveClass(/error/)
+  })
 })

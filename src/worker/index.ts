@@ -1,5 +1,5 @@
 import type { WorkerEnv } from './env'
-import type { PrincipalOptions } from './principal'
+import { getPrincipal, type PrincipalOptions } from './principal'
 import { requireAdmin, requireWriter } from './margin/authorize'
 import { readWorkosConfig } from './margin/config'
 import {
@@ -31,28 +31,44 @@ const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 const APPLY_PATH = /^\/proposals\/[^/]+\/apply$/
 
 /**
- * The write gate, on the prefix rather than on each route.
+ * The gate on the margin API prefix, rather than on each route.
  *
- * 054's mutation routes are not in this tree yet, and a gate every future route
- * has to remember to call is a gate one of them will not. Putting it here means
- * a write under the margin API is refused unless the caller holds an allowlist
- * row, whatever route ends up serving it — a route added without an
- * authorization call is gated anyway rather than open by omission.
+ * 054's routes are not in this tree yet, and a gate every future route has to
+ * remember to call is a gate one of them will not. Putting it here means a write
+ * is refused without an allowlist row whatever route ends up serving it — gated
+ * by omission rather than open by omission.
  *
- * Reads pass straight through: reading the book requires nothing.
+ * It does three things, and the last two are why it also touches reads:
+ *
+ *  - **Same-origin.** A cookie-authenticated write needs more than a method.
+ *    `SameSite=Lax` sends the host cookie for a *same-site* request, and an
+ *    HTTPS sibling of `ernie.sg` is same-site, so a form POST from one would
+ *    otherwise be authorized. Logout already validates this; writes must too.
+ *  - **Renewal.** A page left open past the access token's expiry has a live
+ *    refresh token in its own cookie and hours left on the session. Renewing
+ *    here beats requiring the client to have polled `/auth/me` first.
+ *  - **Forwarding the renewed request.** The handler below reads the caller
+ *    from the request it is given, so it has to be given the renewed one.
+ *    Authorizing a stand-in and forwarding the stale original would leave 054's
+ *    handlers seeing nobody — an anonymous write, or a read that hides the
+ *    caller's own private annotations.
+ *
+ * Reads stay open: renewal never denies one, it only re-identifies the caller.
  */
-export type WriteGate = {
+export type MarginGate = {
   /** The refusal to return, if there is one. */
   denied?: Response
   /** A renewed session cookie to set on whatever response is returned. */
   setCookie?: string
+  /** The request to forward downstream, when it is not the one passed in. */
+  forward?: Request
 }
 
 export async function marginWriteGate(
   request: Request,
   env: Partial<Omit<WorkerEnv, 'ASSETS'>>,
   options: PrincipalOptions = {},
-): Promise<WriteGate | null> {
+): Promise<MarginGate | null> {
   const { pathname } = new URL(request.url)
   if (
     pathname !== MARGIN_API_PREFIX &&
@@ -60,59 +76,100 @@ export async function marginWriteGate(
   ) {
     return null
   }
-  if (!MUTATING_METHODS.has(request.method)) return null
+
+  const mutating = MUTATING_METHODS.has(request.method)
+  if (mutating && !sameOriginRequest(request)) {
+    return {
+      denied: json(
+        {
+          error: {
+            code: 'cross_origin',
+            message: 'a write must come from this site',
+          },
+        },
+        403,
+      ),
+    }
+  }
+
+  const renewal = await renewIfStale(request, env, options)
+  const effective = renewal?.request ?? request
+  const cookie = renewal?.cookie
+
+  if (!mutating) {
+    // A read is never refused here. It is only re-identified, so 054's handlers
+    // see the caller they would have seen a minute earlier and a private
+    // annotation stays visible to its owner.
+    return cookie ? { setCookie: cookie, forward: effective } : null
+  }
 
   const rest = pathname.slice(MARGIN_API_PREFIX.length).replace(/\/+$/u, '')
-  const authorize = (candidate: Request) =>
-    APPLY_PATH.test(rest)
-      ? requireAdmin(candidate, env, options)
-      : requireWriter(candidate, env, options)
+  const decision = APPLY_PATH.test(rest)
+    ? await requireAdmin(effective, env, options)
+    : await requireWriter(effective, env, options)
 
-  let decision = await authorize(request)
-  if (decision.ok) return {}
+  if (decision.ok) {
+    return cookie
+      ? { setCookie: cookie, forward: effective }
+      : { forward: effective }
+  }
+  // The renewed cookie travels even when the write is refused: the refresh token
+  // may have rotated, and the browser must end up holding the live one.
+  return cookie
+    ? { denied: withCookie(decision.response, cookie), setCookie: cookie }
+    : { denied: decision.response }
+}
 
-  // A page left open past the access token's expiry would otherwise get a 401
-  // with a live refresh token sitting in the cookie and hours left on the
-  // session. Renew here rather than relying on the client having polled
-  // `/auth/me` immediately before the write, and hand the new cookie back so the
-  // caller sets it on whatever response it returns.
-  if (decision.response.status !== 401) return { denied: decision.response }
+/**
+ * The request again, with a renewed session on it — or nothing to do.
+ *
+ * Only when the cookie holds a session the access token has outlived and the
+ * ceiling has not. `new Request(request, …)` transfers the body, which is why
+ * the original is never used again after this: the returned request is the one
+ * that gets both authorized and forwarded.
+ */
+async function renewIfStale(
+  request: Request,
+  env: Partial<Omit<WorkerEnv, 'ASSETS'>>,
+  options: PrincipalOptions,
+): Promise<{ request: Request; cookie: string } | null> {
+  if (await getPrincipal(request, env, options)) return null
   const config = readWorkosConfig(env)
-  if (!config) return { denied: decision.response }
+  if (!config) return null
 
   const renewal = await renewSession(request, config, {
     now: options.now,
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
     ...(options.jwks ? { jwks: options.jwks } : {}),
   })
-  if (!renewal) return { denied: decision.response }
+  if (!renewal) return null
 
-  // The renewed cookie travels even when the write is still refused: the refresh
-  // token may have rotated, and the browser must end up holding the live one.
-  if (!renewal.principal) {
-    return { denied: withCookie(decision.response, renewal.cookie) }
+  const headers = new Headers(request.headers)
+  headers.set('cookie', renewal.cookie.slice(0, renewal.cookie.indexOf(';')))
+  return {
+    cookie: renewal.cookie,
+    request: new Request(request, { headers }),
   }
-
-  const retried = await authorize(probeWith(request, renewal.cookie))
-  return retried.ok
-    ? { setCookie: renewal.cookie }
-    : { denied: withCookie(retried.response, renewal.cookie), setCookie: renewal.cookie }
 }
 
 /**
- * A headers-only stand-in for the request, carrying the renewed cookie.
+ * Whether the browser says this request came from this site.
  *
- * Built from the url and method rather than from `request`, because
- * `new Request(request, …)` transfers the original's body: the retry would lock
- * a stream the actual handler still has to read, and a mutation would arrive
- * with no JSON in it. Authorization only reads the url, the method and the
- * cookie, so a stand-in is enough and the original is never touched.
+ * `same-site` is refused along with `cross-site`: a sibling subdomain is not
+ * this origin, and the session cookie is deliberately never scoped to a parent
+ * domain. A caller that sends neither header is not a browser and has no ambient
+ * cookie to abuse.
  */
-function probeWith(request: Request, cookie: string): Request {
-  const headers = new Headers(request.headers)
-  headers.set('cookie', cookie.slice(0, cookie.indexOf(';')))
-  headers.delete('content-length')
-  return new Request(request.url, { method: request.method, headers })
+function sameOriginRequest(request: Request): boolean {
+  const site = request.headers.get('sec-fetch-site')
+  if (site) return site === 'same-origin' || site === 'none'
+  const origin = request.headers.get('origin')
+  if (!origin) return true
+  try {
+    return new URL(origin).origin === new URL(request.url).origin
+  } catch {
+    return false
+  }
 }
 
 /** The same response, plus a `set-cookie`. */
@@ -168,14 +225,17 @@ export default {
     const gate = await marginWriteGate(request, env)
     if (gate?.denied) return gate.denied
 
-    if (!gate?.setCookie) return env.ASSETS.fetch(request)
+    // The renewed request when there is one: the handler reads the caller from
+    // what it is given.
+    const forwarded = gate?.forward ?? request
+    if (!gate?.setCookie) return env.ASSETS.fetch(forwarded)
     // The session was renewed on the way in, so the rotated refresh token has to
     // reach the browser whatever happens below. Without this, a handler that
     // throws would leave the browser holding a token the provider has already
     // spent, which is a logout no later request can recover from — and an
     // unhandled throw is a 500 with no `set-cookie` at all.
     try {
-      return withCookie(await env.ASSETS.fetch(request), gate.setCookie)
+      return withCookie(await env.ASSETS.fetch(forwarded), gate.setCookie)
     } catch {
       return withCookie(
         json(

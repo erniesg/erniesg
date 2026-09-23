@@ -361,7 +361,11 @@ describe('the write gate renews a lapsed session', () => {
     }
   }
 
-  it('leaves the request body untouched while renewing', async () => {
+  // The request handed downstream has to carry both the renewed session and the
+  // body. Earlier this asserted the *original* stayed readable, which was the
+  // invariant when the gate forwarded it; now the gate forwards the renewed one,
+  // and that is the request 054's handler reads the caller and the JSON from.
+  it('forwards a request carrying the renewed session and the body', async () => {
     const db = createFakeD1()
     db.allow(writer, 'writer')
     const { request, provider } = await lapsedSession()
@@ -379,9 +383,96 @@ describe('the write gate renews a lapsed session', () => {
     })
 
     expect(gate?.denied).toBeUndefined()
-    // The whole point: a route below this still has to be able to read it.
-    expect(withBody.bodyUsed).toBe(false)
-    expect(await withBody.json()).toEqual({ motivation: 'commenting' })
+    expect(gate?.forward, 'a renewal must hand back the request to forward')
+      .toBeDefined()
+    expect(gate?.forward?.bodyUsed).toBe(false)
+    expect(await gate!.forward!.json()).toEqual({ motivation: 'commenting' })
+    // And that request is the one the session is on.
+    expect(gate?.forward?.headers.get('cookie')).toContain('margin-session=')
+    expect(gate?.forward?.headers.get('cookie')).not.toBe(
+      withBody.headers.get('cookie'),
+    )
+  })
+
+  // A read is never refused, but it is re-identified: otherwise 054's handlers
+  // see an anonymous caller past the access token's expiry and hide the reader's
+  // own private annotations.
+  it('renews a read without refusing it', async () => {
+    const db = createFakeD1()
+    const { request, provider } = await lapsedSession()
+    const read = new Request(request.url, {
+      headers: { cookie: request.headers.get('cookie') as string },
+    })
+
+    const gate = await marginWriteGate(read, envWith(db), {
+      now: NOW_MS,
+      fetchImpl: provider.fetchImpl,
+      jwks: createJwksSource(jwksUrl(config), {
+        fetchImpl: provider.fetchImpl,
+        now: () => NOW_MS,
+      }),
+    })
+
+    expect(gate?.denied).toBeUndefined()
+    expect(gate?.setCookie).toContain('margin-session=')
+    expect(gate?.forward?.headers.get('cookie')).not.toBe(
+      read.headers.get('cookie'),
+    )
+  })
+
+  // `SameSite=Lax` sends the host cookie for a *same-site* request, and an HTTPS
+  // sibling of ernie.sg is same-site — so a form POST from one would be
+  // authorized on the reader's own session. Logout validates this; writes must.
+  it('refuses a write the browser labels as coming from elsewhere', async () => {
+    const db = createFakeD1()
+    db.allow(writer, 'writer')
+
+    const cases: Record<string, string>[] = [
+      { origin: 'https://evil.test' },
+      { origin: 'https://sibling.ernie.sg' },
+      { 'sec-fetch-site': 'cross-site' },
+      { 'sec-fetch-site': 'same-site' },
+    ]
+    for (const headers of cases) {
+      const request = await at(ANNOTATIONS, writer)
+      const flagged = new Request(request.url, {
+        method: 'POST',
+        headers: { ...headers, cookie: request.headers.get('cookie') as string },
+      })
+
+      const gate = await marginWriteGate(flagged, envWith(db), options())
+      expect(gate?.denied?.status, JSON.stringify(headers)).toBe(403)
+      await expect(gate?.denied?.json()).resolves.toMatchObject({
+        error: { code: 'cross_origin' },
+      })
+    }
+  })
+
+  it('allows a write the browser labels as this site, and a read from anywhere', async () => {
+    const db = createFakeD1()
+    db.allow(writer, 'writer')
+
+    for (const headers of [
+      { origin: 'https://ernie.sg' },
+      { 'sec-fetch-site': 'same-origin' },
+      { 'sec-fetch-site': 'none' },
+    ] as Record<string, string>[]) {
+      const request = await at(ANNOTATIONS, writer)
+      const labelled = new Request(request.url, {
+        method: 'POST',
+        headers: { ...headers, cookie: request.headers.get('cookie') as string },
+      })
+
+      const gate = await marginWriteGate(labelled, envWith(db), options())
+      expect(gate?.denied, JSON.stringify(headers)).toBeUndefined()
+    }
+
+    // A read is not a write: nothing to forge, and the book is open.
+    const crossSiteRead = new Request(ANNOTATIONS, {
+      headers: { origin: 'https://evil.test' },
+    })
+    const gate = await marginWriteGate(crossSiteRead, envWith(db), options())
+    expect(gate?.denied).toBeUndefined()
   })
 
   it('renews and lets the write through, returning the new cookie', async () => {

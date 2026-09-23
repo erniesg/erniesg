@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  annotationBody,
   createSemanticTextAnchor,
   createSemanticTextAnchorFromRange,
   resolveTextAnchor,
@@ -7,6 +8,7 @@ import {
   withStructSelector,
   type AnchorableNode,
 } from './anchor'
+import { annotationsFromAnchors } from './controller'
 
 const PROSE =
   'A page is a rendition, not a document. Once meaning becomes coordinates, ' +
@@ -31,6 +33,15 @@ const structAnchor = withStructSelector(anchor, {
 })
 
 describe('the anchor schema', () => {
+  it('keeps proposal intent and replacement body through the public annotation factory', () => {
+    const [proposal] = annotationsFromAnchors([anchor], {
+      kind: 'proposal',
+      body: 'replacement',
+      id: 'p',
+    })
+    expect(proposal.kind).toBe('proposal')
+    expect(annotationBody(proposal)).toBe('replacement')
+  })
   it('omits the struct selector entirely when none was given', () => {
     expect(anchor).not.toHaveProperty('struct')
     expect(Object.keys(anchor).sort()).toEqual(['nodeId', 'position', 'quote'])
@@ -40,7 +51,10 @@ describe('the anchor schema', () => {
     expect(() =>
       semanticTextAnchorSchema.parse({
         ...anchor,
-        position: { start: anchor.position.start, end: anchor.position.end + 1 },
+        position: {
+          start: anchor.position.start,
+          end: anchor.position.end + 1,
+        },
       }),
     ).toThrow(/Text offsets must span the stored exact quote/)
   })
@@ -48,7 +62,10 @@ describe('the anchor schema', () => {
   it('adds a struct selector without disturbing the rest of the anchor', () => {
     const { struct, ...rest } = structAnchor
     expect(rest).toEqual(anchor)
-    expect(struct).toEqual({ id: 'block-intro-prose-1', digest: 'a1b2c3d4e5f6' })
+    expect(struct).toEqual({
+      id: 'block-intro-prose-1',
+      digest: 'a1b2c3d4e5f6',
+    })
   })
 })
 
@@ -133,7 +150,10 @@ describe('the selector chain', () => {
       resolveTextAnchor(ambiguous, [
         node({ id: 'block-dup-prose-1', structId: 'block-dup-prose-1', text }),
       ]),
-    ).toMatchObject({ status: 'ambiguous', candidates: [{ start: 0 }, { start: 11 }] })
+    ).toMatchObject({
+      status: 'ambiguous',
+      candidates: [{ start: 0 }, { start: 11 }],
+    })
   })
 
   it('refuses a node that carries no text', () => {

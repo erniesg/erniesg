@@ -5,7 +5,10 @@ import {
   MARGIN_API_PREFIX,
   type MarginRequest,
   type MarginTransport,
+  webAnnotationTarget,
+  toWebAnnotation,
 } from './transport'
+import { createSemanticTextAnchorFromRange, withStructSelector } from './anchor'
 
 function stubTransport(): MarginTransport & { calls: MarginRequest[] } {
   const calls: MarginRequest[] = []
@@ -84,17 +87,112 @@ describe('the wire format is a Web Annotation', () => {
   // something that never heard of `margin`. Sending this package's own
   // `{documentUri, kind, targets}` shape would be a private protocol wearing a
   // standard's name, and 054's routes would refuse it.
-  const anchor = {
-    nodeId: 'p-proposition-1',
-    struct: { id: 'block-ch01-prose-2', digest: 'abc123' },
-    position: { start: 5, end: 14 },
-    quote: { exact: 'a sentence', prefix: 'Once ', suffix: ' ends.' },
-  }
+  const anchorText = 'Once a sentence ends.'
+  const anchor = withStructSelector(
+    createSemanticTextAnchorFromRange('p-proposition-1', anchorText, 5, 15),
+    { id: 'block-ch01-prose-2', digest: 'abc123' },
+  )
+
+  it('converts UTF-16 positions using the full node text before a duplicate quote', () => {
+    const text = '🌊 x x'
+    const target = webAnnotationTarget(
+      'https://example.test/x',
+      createSemanticTextAnchorFromRange('n', text, 5, 6),
+      text,
+    )
+    expect((target.selector as any[])[1]).toEqual({
+      type: 'TextPositionSelector',
+      start: 4,
+      end: 5,
+    })
+    expect(() =>
+      webAnnotationTarget(
+        'https://example.test/x',
+        createSemanticTextAnchorFromRange('n', text, 5, 6),
+      ),
+    ).toThrow(/full.*text/i)
+  })
+
+  it('counts a selected non-BMP character as one wire character', () => {
+    const text = '🌊 x x'
+    const target = webAnnotationTarget(
+      'https://example.test/x',
+      createSemanticTextAnchorFromRange('n', text, 0, 2),
+      text,
+    )
+    expect((target.selector as any[])[1]).toEqual({
+      type: 'TextPositionSelector',
+      start: 0,
+      end: 1,
+    })
+  })
+
+  it('refuses wrong full text and a range splitting a surrogate pair', () => {
+    const text = '🌊 x x'
+    const second = createSemanticTextAnchorFromRange('n', text, 5, 6)
+    expect(() =>
+      webAnnotationTarget('https://example.test/x', second, '🦀 x x'),
+    ).toThrow(/context/)
+    expect(() =>
+      webAnnotationTarget(
+        'https://example.test/x',
+        createSemanticTextAnchorFromRange('n', text, 0, 1),
+        text,
+      ),
+    ).toThrow(/Unicode character/)
+  })
+
+  it('passes through explicit wire codepoint positions without source text', () => {
+    const target = webAnnotationTarget('https://example.test/x', {
+      nodeId: 'n',
+      positionUnit: 'codepoint',
+      position: { start: 4, end: 5 },
+      quote: { exact: 'x', prefix: '🌊 x ', suffix: '' },
+    })
+    expect((target.selector as any[])[1]).toEqual({
+      type: 'TextPositionSelector',
+      start: 4,
+      end: 5,
+    })
+  })
+
+  it('checks every target before posting any of a multi-block selection', async () => {
+    const transport = stubTransport()
+    const first = createSemanticTextAnchorFromRange('one', 'first', 0, 5)
+    const second = createSemanticTextAnchorFromRange('two', '🌊 x x', 5, 6)
+    await expect(
+      createMarginClient(transport).createAnnotations({
+        documentUri: 'https://example.test/x',
+        kind: 'highlight',
+        targets: [first, second],
+        targetTexts: ['first'],
+      }),
+    ).rejects.toThrow(/full.*text/i)
+    expect(transport.calls).toEqual([])
+  })
+
+  it('serializes proposals with an editing motivation and body', () => {
+    const wire = toWebAnnotation({
+      documentUri: 'https://example.test/x',
+      kind: 'proposal',
+      body: 'replacement',
+      target: anchor,
+      targetText: anchorText,
+    })
+    expect(wire).toMatchObject({
+      motivation: 'editing',
+      body: { value: 'replacement' },
+    })
+  })
 
   it('requires a non-empty note body before any request is sent', async () => {
     const transport = stubTransport()
     const client = createMarginClient(transport)
-    const common = { documentUri: 'https://example.test/x', targets: [anchor] }
+    const common = {
+      documentUri: 'https://example.test/x',
+      targets: [anchor],
+      targetTexts: [anchorText],
+    }
     await expect(
       // @ts-expect-error A note request cannot omit its body.
       client.createAnnotations({ ...common, kind: 'note' }),
@@ -111,6 +209,7 @@ describe('the wire format is a Web Annotation', () => {
       documentUri: 'https://example.test/books/a/b',
       kind: 'note',
       targets: [{ ...anchor, quote: { ...anchor.quote } }],
+      targetTexts: [anchorText],
       body: 'a remark',
       visibility: 'public',
     })
@@ -140,7 +239,7 @@ describe('the wire format is a Web Annotation', () => {
     expect(sent.target.selector[1]).toEqual({
       type: 'TextPositionSelector',
       start: 5,
-      end: 14,
+      end: 15,
     })
     expect(sent.target.selector[2]).toEqual({
       type: 'margin:StructSelector',
@@ -160,6 +259,7 @@ describe('the wire format is a Web Annotation', () => {
       documentUri: 'https://example.test/books/a/b',
       kind: 'highlight',
       targets: [anchor],
+      targetTexts: [anchorText],
       color: 'amber',
     })
 
@@ -181,6 +281,7 @@ describe('the wire format is a Web Annotation', () => {
         anchor,
         { ...anchor, nodeId: 'p-proposition-2', struct: { id: 'block-b' } },
       ],
+      targetTexts: [anchorText, anchorText],
     })
 
     expect(responses).toHaveLength(2)
@@ -202,6 +303,7 @@ describe('the wire format is a Web Annotation', () => {
       documentUri: 'https://example.test/x',
       kind: 'highlight',
       targets: [anchor],
+      targetTexts: [anchorText],
     })
     expect((transport.calls[0].body as any)['@context']).toBe(
       'http://www.w3.org/ns/anno.jsonld',
@@ -215,6 +317,7 @@ describe('the wire format is a Web Annotation', () => {
       documentUri: 'https://example.test/x',
       kind: 'highlight',
       targets: [anchor],
+      targetTexts: [anchorText],
       context: hostContext,
     })
     expect((transport.calls[1].body as any)['@context']).toEqual(hostContext)

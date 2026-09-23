@@ -229,11 +229,21 @@ export class MarginRailElement extends ElementBase {
       const common = {
         documentUri: this.documentUri,
         targets: created.map((annotation) => annotation.target),
+        targetTexts: created.map((annotation) => {
+          const text = this.#controller
+            ?.blocks()
+            .find((block) => block.id === annotation.target.nodeId)?.text
+          if (text === undefined)
+            throw new Error(
+              `Full text unavailable for ${annotation.target.nodeId}`,
+            )
+          return text
+        }),
       }
       const responses = await client.createAnnotations(
         first.kind === 'highlight'
           ? { ...common, kind: 'highlight', color: first.appearance.color }
-          : { ...common, kind: 'note', body: first.body },
+          : { ...common, kind: first.kind, body: first.body },
       )
       // A transport resolves with whatever status it got: an HTTP error is a
       // value here, not a throw. Treating it as success meant a 401, a 429 or a

@@ -450,3 +450,26 @@ describe('research studio imported preview', () => {
     expect(markup).toContain('>Simulate larger reader text</button>')
   })
 })
+
+it('renders a proposal as an anchored annotation with its replacement body', () => {
+  const markup = renderToStaticMarkup(
+    <ResearchStudio
+      paper={importedPaper}
+      initialAnnotations={[
+        {
+          id: 'proposal-inline',
+          kind: 'proposal',
+          target: {
+            nodeId: 'p-inline',
+            position: { start: 0, end: 13 },
+            quote: { exact: 'Reconstructed', prefix: '', suffix: ' prose' },
+          },
+          body: 'Use a more direct opening.',
+          geometryCache: [],
+        },
+      ]}
+    />,
+  )
+  expect(markup).toContain('data-annotation-kind="proposal"')
+  expect(markup).toContain('Use a more direct opening.')
+})

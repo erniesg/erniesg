@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react'
 import {
+  annotationBody,
   cacheAnnotationGeometry,
   createDemoAnnotations,
   createLayoutVersion,
@@ -131,7 +132,9 @@ function AnnotatedText({
       ({ resolution }) => resolution.start < end && resolution.end > start,
     )
     let content: ReactNode = text.slice(start, end)
-    const note = active.find(({ annotation }) => annotation.kind === 'note')
+    const note = active.find(
+      ({ annotation }) => annotationBody(annotation) !== null,
+    )
     const highlight = active.find(
       ({ annotation }) => annotation.kind === 'highlight',
     )
@@ -167,12 +170,12 @@ function AnnotatedText({
       content = <a href={linkRun.href}>{content}</a>
     }
 
-    if (note?.annotation.kind === 'note') {
+    if (note && annotationBody(note.annotation) !== null) {
       content = (
         <span
           className="srt-note-target"
           data-annotation-id={note.annotation.id}
-          data-annotation-kind="note"
+          data-annotation-kind={note.annotation.kind}
           data-note-label="1"
           aria-describedby={`${note.annotation.id}-body`}
         >
@@ -1126,8 +1129,10 @@ export default function ResearchStudio({
                       {annotation.target.position.end} ·{' '}
                       {cache?.rectangles.length ?? 0} cached rects
                     </small>
-                    {annotation.kind === 'note' && (
-                      <p id={`${annotation.id}-body`}>{annotation.body}</p>
+                    {annotationBody(annotation) !== null && (
+                      <p id={`${annotation.id}-body`}>
+                        {annotationBody(annotation)}
+                      </p>
                     )}
                     {resolution.status !== 'resolved' && (
                       <p role="status">

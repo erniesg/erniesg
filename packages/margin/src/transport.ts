@@ -6,7 +6,12 @@
  * on another site, or on a stub in a test, without a source change. The path
  * prefix is fixed because it is the service's contract, not its address.
  */
-import type { SemanticTextAnchor, TextAnnotation } from './anchor.js'
+import {
+  codePointOffsetForUtf16Offset,
+  DOCUMENT_SCOPE_NODE_ID,
+  type SemanticTextAnchor,
+  type TextAnnotation,
+} from './anchor.js'
 
 export const MARGIN_API_PREFIX = '/api/margin/v1'
 
@@ -48,6 +53,7 @@ export const ANNOTATION_TYPE = 'Annotation'
 const MOTIVATION_BY_KIND = {
   highlight: 'highlighting',
   note: 'commenting',
+  proposal: 'editing',
 } as const satisfies Record<TextAnnotation['kind'], string>
 
 export type WebAnnotationBody = {
@@ -59,6 +65,7 @@ export type WebAnnotationBody = {
 type AnnotationKindInput =
   | { kind: 'highlight'; body?: never; color?: string }
   | { kind: 'note'; body: string; color?: never }
+  | { kind: 'proposal'; body: string; color?: never }
 
 type AnnotationRequestCommon = {
   documentUri: string
@@ -69,10 +76,10 @@ type AnnotationRequestCommon = {
 
 function requireNoteBody(input: AnnotationKindInput): void {
   if (
-    input.kind === 'note' &&
+    input.kind !== 'highlight' &&
     (typeof input.body !== 'string' || !input.body.trim())
   ) {
-    throw new Error('note body must be non-empty')
+    throw new Error(`${input.kind} body must be non-empty`)
   }
 }
 
@@ -80,7 +87,30 @@ function requireNoteBody(input: AnnotationKindInput): void {
 export function webAnnotationTarget(
   source: string,
   anchor: SemanticTextAnchor,
+  /** Complete ordered text for @document, or complete text of this node. */
+  text?: string,
 ): Record<string, unknown> {
+  let position = anchor.position
+  if (anchor.positionUnit !== 'codepoint') {
+    if (text === undefined)
+      throw new Error(
+        'full node or document text is required to serialize UTF-16 positions',
+      )
+    if (text.slice(position.start, position.end) !== anchor.quote.exact) {
+      throw new Error('anchor position does not match the supplied full text')
+    }
+    if (
+      !text.slice(0, position.start).endsWith(anchor.quote.prefix) ||
+      !text.slice(position.end).startsWith(anchor.quote.suffix)
+    ) {
+      throw new Error('anchor context does not match the supplied full text')
+    }
+    const start = codePointOffsetForUtf16Offset(text, position.start)
+    const end = codePointOffsetForUtf16Offset(text, position.end)
+    if (start === null || end === null)
+      throw new Error('anchor position splits a Unicode character')
+    position = { start, end }
+  }
   return {
     source,
     selector: [
@@ -92,18 +122,24 @@ export function webAnnotationTarget(
       },
       {
         type: 'TextPositionSelector',
-        start: anchor.position.start,
-        end: anchor.position.end,
+        start: position.start,
+        end: position.end,
       },
-      {
-        type: STRUCT_SELECTOR_TYPE,
-        'margin:nodeId': anchor.nodeId,
-        // `margin:nodeId` is the node; `margin:structId` is struct's own id for
-        // the block, which is a different thing and only sometimes present. The
-        // digest does not travel: 054 stores it against the block in the
-        // manifest, not against the annotation.
-        ...(anchor.struct?.id ? { 'margin:structId': anchor.struct.id } : {}),
-      },
+      ...(anchor.nodeId === DOCUMENT_SCOPE_NODE_ID
+        ? []
+        : [
+            {
+              type: STRUCT_SELECTOR_TYPE,
+              'margin:nodeId': anchor.nodeId,
+              // `margin:nodeId` is the node; `margin:structId` is struct's own id for
+              // the block, which is a different thing and only sometimes present. The
+              // digest does not travel: 054 stores it against the block in the
+              // manifest, not against the annotation.
+              ...(anchor.struct?.id
+                ? { 'margin:structId': anchor.struct.id }
+                : {}),
+            },
+          ]),
     ],
   }
 }
@@ -119,6 +155,7 @@ export function toWebAnnotation(
   input: AnnotationRequestCommon &
     AnnotationKindInput & {
       target: SemanticTextAnchor
+      targetText?: string
     },
 ): Record<string, unknown> {
   requireNoteBody(input)
@@ -136,7 +173,11 @@ export function toWebAnnotation(
             format: BODY_FORMAT,
           },
         }),
-    target: webAnnotationTarget(input.documentUri, input.target),
+    target: webAnnotationTarget(
+      input.documentUri,
+      input.target,
+      input.targetText,
+    ),
     ...(input.visibility ? { 'margin:visibility': input.visibility } : {}),
     ...(input.kind === 'highlight' && input.color
       ? { 'margin:color': input.color }
@@ -248,6 +289,8 @@ export type MarginClient = {
     input: AnnotationRequestCommon &
       AnnotationKindInput & {
         targets: readonly SemanticTextAnchor[]
+        /** Full text for each target, in the same order; required for UTF-16 anchors. */
+        targetTexts?: readonly string[]
       },
   ): Promise<MarginResponse[]>
   deleteAnnotation(id: string): Promise<MarginResponse>
@@ -271,12 +314,21 @@ export function createMarginClient(transport: MarginTransport): MarginClient {
     createAnnotations: async (input) => {
       requireNoteBody(input)
       const responses: MarginResponse[] = []
-      for (const target of input.targets) {
+      // Build every request before sending one, so missing text cannot leave a
+      // multi-block selection half persisted.
+      const bodies = input.targets.map((target, index) =>
+        toWebAnnotation({
+          ...input,
+          target,
+          targetText: input.targetTexts?.[index],
+        }),
+      )
+      for (const body of bodies) {
         responses.push(
           await transport.request({
             path: `${MARGIN_API_PREFIX}/annotations`,
             method: 'POST',
-            body: toWebAnnotation({ ...input, target }),
+            body,
           }),
         )
       }

@@ -9,6 +9,41 @@ import {
 } from './annotation-bundle'
 import { researchPaperToPublicationGraph } from '../publication/research-paper-adapter'
 
+it('accepts codepoint and document-scoped anchors against ordered text', () => {
+  const paper = researchPaperSchema.parse(rawPaper)
+  const graph = researchPaperToPublicationGraph(paper)
+  const first = graph.nodes.find(
+    (node) =>
+      'text' in node && node.text.includes('meaning becomes coordinates'),
+  )
+  if (!first || !('text' in first)) throw new Error('fixture text missing')
+  const quote = 'meaning becomes coordinates'
+  const position = [...first.text.slice(0, first.text.indexOf(quote))].length
+  const target = {
+    nodeId: first.id,
+    positionUnit: 'codepoint' as const,
+    position: { start: position, end: position + [...quote].length },
+    quote: {
+      exact: quote,
+      prefix: first.text.slice(0, first.text.indexOf(quote)),
+      suffix: '',
+    },
+  }
+  const annotation = {
+    id: 'wire',
+    kind: 'proposal' as const,
+    body: 'replacement',
+    target,
+    geometryCache: [],
+  }
+  expect(() => createAnnotationBundle(graph, [annotation])).not.toThrow()
+  expect(() =>
+    createAnnotationBundle(graph, [
+      { ...annotation, target: { ...target, nodeId: '@document' } },
+    ]),
+  ).not.toThrow()
+})
+
 describe('AnnotationBundle', () => {
   it('round-trips typed annotations and semantic anchors beside the graph', () => {
     const paper = researchPaperSchema.parse(rawPaper)

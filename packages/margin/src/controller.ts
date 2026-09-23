@@ -126,7 +126,7 @@ export function annotationsFromAnchors(
   anchors: readonly SemanticTextAnchor[],
   input:
     | { kind: 'highlight'; color: string; id?: string }
-    | { kind: 'note'; body: string; id?: string },
+    | { kind: 'note' | 'proposal'; body: string; id?: string },
 ): TextAnnotation[] {
   const groupId = input.id ?? newAnnotationId()
   return anchors.map((target, position) =>
@@ -141,7 +141,7 @@ export function annotationsFromAnchors(
           }
         : {
             id: anchors.length === 1 ? groupId : `${groupId}:${position}`,
-            kind: 'note',
+            kind: input.kind,
             target,
             body: input.body,
             geometryCache: [],

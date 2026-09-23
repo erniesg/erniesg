@@ -5,9 +5,14 @@ import {
   type SemanticTextAnchor,
   type TextAnnotation,
 } from './annotations'
+import {
+  DOCUMENT_SCOPE_NODE_ID,
+  resolveTextAnchor,
+  utf16OffsetForCodePointOffset,
+} from '../../packages/margin/src/anchor'
 import type { PublicationGraph } from '../publication/schema'
 
-export const ANNOTATION_BUNDLE_VERSION = '1.0.0' as const
+export const ANNOTATION_BUNDLE_VERSION = '1.1.0' as const
 
 export const annotationBundleSchema = z
   .object({
@@ -65,7 +70,25 @@ export function createAnnotationBundle(
   })),
 ): AnnotationBundle {
   const nodesById = new Map(graph.nodes.map((node) => [node.id, node]))
+  const documentNodes = graph.nodes.map((node) => ({
+    id: node.id,
+    type: node.type,
+    text:
+      'text' in node
+        ? node.text
+        : node.type === 'code'
+          ? node.code
+          : node.type === 'equation'
+            ? node.source
+            : undefined,
+  }))
   const validateAnchor = (id: string, anchor: SemanticTextAnchor) => {
+    if (anchor.nodeId === DOCUMENT_SCOPE_NODE_ID) {
+      if (resolveTextAnchor(anchor, documentNodes).status !== 'resolved') {
+        throw new Error(`Anchor ${id} does not resolve to one graph node`)
+      }
+      return
+    }
     const node = nodesById.get(anchor.nodeId)
     if (!node) {
       throw new Error(
@@ -82,10 +105,19 @@ export function createAnnotationBundle(
             : node.type === 'code'
               ? node.code
               : null
+    const start =
+      text !== null && anchor.positionUnit === 'codepoint'
+        ? utf16OffsetForCodePointOffset(text, anchor.position.start)
+        : anchor.position.start
+    const end =
+      text !== null && anchor.positionUnit === 'codepoint'
+        ? utf16OffsetForCodePointOffset(text, anchor.position.end)
+        : anchor.position.end
     if (
       text === null ||
-      text.slice(anchor.position.start, anchor.position.end) !==
-        anchor.quote.exact
+      start === null ||
+      end === null ||
+      text.slice(start, end) !== anchor.quote.exact
     ) {
       throw new Error(`Anchor ${id} does not match graph node text`)
     }

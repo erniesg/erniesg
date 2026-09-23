@@ -74,6 +74,8 @@ export function createAnnotationBundle(
           : node.type === 'code'
             ? node.code
             : null
+  const documentTextForNode = (node: PublicationGraph['nodes'][number]) =>
+    'text' in node ? node.text : null
   const utf16Offset = (text: string, offset: number) => {
     const codePoints = [...text]
     return offset <= codePoints.length
@@ -97,15 +99,15 @@ export function createAnnotationBundle(
   }
   const documentPositionMatches = (anchor: SemanticTextAnchor) => {
     const documentText = graph.nodes
-      .map((node) => textForNode(node) ?? '')
+      .map((node) => documentTextForNode(node) ?? '')
       .join('')
     let documentOffset = 0
     let documentUtf16Offset = 0
 
     for (const node of graph.nodes) {
-      const text = textForNode(node)
-      if (text === null) continue
+      const text = documentTextForNode(node)
 
+      if (text === null) continue
       const textLength =
         anchor.positionUnit === 'codepoint' ? [...text].length : text.length
       const localStart = anchor.position.start - documentOffset
@@ -146,13 +148,13 @@ export function createAnnotationBundle(
       if (documentPositionMatches(anchor)) return
 
       const documentText = graph.nodes
-        .map((node) => textForNode(node) ?? '')
+        .map((node) => documentTextForNode(node) ?? '')
         .join('')
       let documentOffset = 0
       const candidates = graph.nodes.flatMap((node) => {
-        const text = textForNode(node)
-        if (text === null) return []
+        const text = documentTextForNode(node)
         const matches: number[] = []
+        if (text === null) return []
         let searchFrom = 0
         while (searchFrom <= text.length - anchor.quote.exact.length) {
           const start = text.indexOf(anchor.quote.exact, searchFrom)

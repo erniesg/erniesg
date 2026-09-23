@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import rawPaper from '../research/papers/semantic-responsive-typesetting.json'
-import { createDemoAnnotations } from './annotations'
+import { createDemoAnnotations, resolveTextAnchor } from './annotations'
 import { researchPaperSchema } from '../research/schema'
 import {
   annotationBundleSchema,
@@ -162,6 +162,50 @@ it('accepts document context across graph-node boundaries', () => {
     },
   }
 
+  expect(() =>
+    createAnnotationBundle(researchPaperToPublicationGraph(paper), [
+      annotation,
+    ]),
+  ).not.toThrow()
+})
+
+it('keeps document positions aligned with resolver text projection', () => {
+  const figure = rawPaper.nodes.find((node) => node.type === 'figure')
+  const caption = rawPaper.nodes.find(
+    (node) => node.id === figure?.relationships.caption,
+  )
+  if (!figure || !caption) throw new Error('Annotation fixture lost its figure')
+
+  const paper = researchPaperSchema.parse({
+    ...rawPaper,
+    id: 'figure-document-position-test',
+    nodes: [
+      { ...figure, sourceText: '🌊 ' },
+      { id: 'p-target', type: 'paragraph', source: 'test', text: 'x x' },
+      caption,
+    ],
+  })
+  const target = {
+    nodeId: '@document',
+    positionUnit: 'codepoint' as const,
+    position: { start: 2, end: 3 },
+    quote: { exact: 'x', prefix: 'x ', suffix: '' },
+  }
+  const annotation = {
+    id: 'figure-document-position',
+    kind: 'note' as const,
+    body: 'body',
+    geometryCache: [],
+    target,
+  }
+
+  expect(resolveTextAnchor(target, paper.nodes)).toEqual({
+    status: 'resolved',
+    nodeId: 'p-target',
+    start: 2,
+    end: 3,
+    matchedBy: 'position-and-context',
+  })
   expect(() =>
     createAnnotationBundle(researchPaperToPublicationGraph(paper), [
       annotation,

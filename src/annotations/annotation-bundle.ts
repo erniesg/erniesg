@@ -97,16 +97,24 @@ export function createAnnotationBundle(
   }
   const validateAnchor = (id: string, anchor: SemanticTextAnchor) => {
     if (anchor.nodeId === '@document') {
-      const candidates = graph.nodes.filter((node) => {
+      const candidates = graph.nodes.flatMap((node) => {
         const text = textForNode(node)
-        if (text === null) return false
-        const start = text.indexOf(anchor.quote.exact)
-        if (start < 0) return false
-        const end = start + anchor.quote.exact.length
-        return (
-          text.slice(0, start).endsWith(anchor.quote.prefix) &&
-          text.slice(end).startsWith(anchor.quote.suffix)
-        )
+        if (text === null) return []
+        const matches: number[] = []
+        let searchFrom = 0
+        while (searchFrom <= text.length - anchor.quote.exact.length) {
+          const start = text.indexOf(anchor.quote.exact, searchFrom)
+          if (start < 0) break
+          const end = start + anchor.quote.exact.length
+          if (
+            text.slice(0, start).endsWith(anchor.quote.prefix) &&
+            text.slice(end).startsWith(anchor.quote.suffix)
+          ) {
+            matches.push(start)
+          }
+          searchFrom = start + 1
+        }
+        return matches
       })
       if (candidates.length !== 1) {
         throw new Error(`Anchor ${id} does not resolve to one graph node`)

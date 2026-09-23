@@ -83,3 +83,35 @@ it('validates code-point and document-scoped anchors', () => {
     createAnnotationBundle(graph, [codepoint, document]),
   ).not.toThrow()
 })
+
+it('resolves a document anchor at a later quote occurrence', () => {
+  const paper = researchPaperSchema.parse({
+    ...rawPaper,
+    id: 'later-document-anchor',
+    nodes: [
+      {
+        id: 'p-1',
+        type: 'paragraph',
+        source: 'test',
+        text: 'first target then second target',
+      },
+    ],
+  })
+  const annotation = {
+    id: 'later',
+    kind: 'note' as const,
+    body: 'body',
+    geometryCache: [],
+    target: {
+      nodeId: '@document',
+      positionUnit: 'codepoint' as const,
+      position: { start: 24, end: 30 },
+      quote: { exact: 'target', prefix: 'then second ', suffix: '' },
+    },
+  }
+  expect(() =>
+    createAnnotationBundle(researchPaperToPublicationGraph(paper), [
+      annotation,
+    ]),
+  ).not.toThrow()
+})

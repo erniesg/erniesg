@@ -9,24 +9,24 @@ import {
   textAnnotationSchema,
   type SemanticTextAnchor,
   type TextAnnotation,
-} from './anchor'
-import { placeAnnotations, type AnnotationPlacement } from './document'
+} from './anchor.js'
+import { placeAnnotations, type AnnotationPlacement } from './document.js'
 import {
   readAnchorableBlocks,
   type AnchorableBlock,
   type BlockOptions,
-} from './dom/blocks'
+} from './dom/blocks.js'
 import {
   paintHighlights,
   type PaintOptions,
   type PaintTarget,
-} from './dom/paint'
+} from './dom/paint.js'
 import {
   anchorsFromSelection,
   watchSelection,
   DEFAULT_CONTEXT_LENGTH,
   type SelectionCapture,
-} from './dom/selection'
+} from './dom/selection.js'
 
 export type MarginControllerOptions = BlockOptions &
   PaintOptions & {

@@ -10,20 +10,20 @@
  * and the orphan list are all client-side — which is what makes it embeddable
  * before a host has a service at all.
  */
-import type { TextAnnotation } from './anchor'
+import type { TextAnnotation } from './anchor.js'
 import {
   annotationsFromAnchors,
   createMarginController,
   type MarginController,
-} from './controller'
-import type { AnnotationPlacement } from './document'
-import type { SelectionCapture } from './dom/selection'
+} from './controller.js'
+import type { AnnotationPlacement } from './document.js'
+import type { SelectionCapture } from './dom/selection.js'
 import {
   MarginTransportError,
   createHttpTransport,
   createMarginClient,
   type MarginTransport,
-} from './transport'
+} from './transport.js'
 
 export const MARGIN_RAIL_TAG = 'margin-rail'
 
@@ -59,8 +59,9 @@ const ORPHAN_LABELS: Record<string, string> = {
  * Nothing on the server instantiates it: `defineMarginElements` returns early
  * without a `customElements` registry, which is the same condition.
  */
-const ElementBase: typeof HTMLElement = (globalThis as { HTMLElement?: typeof HTMLElement })
-  .HTMLElement ?? (class {} as unknown as typeof HTMLElement)
+const ElementBase: typeof HTMLElement =
+  (globalThis as { HTMLElement?: typeof HTMLElement }).HTMLElement ??
+  (class {} as unknown as typeof HTMLElement)
 
 export class MarginRailElement extends ElementBase {
   static observedAttributes = ['document-uri', 'text-selector', 'api-base']
@@ -126,12 +127,18 @@ export class MarginRailElement extends ElementBase {
    * and a new `document-uri` left the previous document's annotations in memory.
    * The React binding worked only because it destroys and recreates the element.
    */
-  attributeChangedCallback(name: string, previous: string | null, next: string | null) {
+  attributeChangedCallback(
+    name: string,
+    previous: string | null,
+    next: string | null,
+  ) {
     if (previous === next || !this.isConnected) return
     if (name === 'document-uri') {
       // A different document is a different set of annotations. Keeping the old
       // ones would paint one document's highlights onto another.
       this.#annotations = []
+    }
+    if (name === 'document-uri' || name === 'text-selector') {
       this.#capture = { status: 'empty' }
     }
     if (name === 'api-base') {
@@ -218,14 +225,16 @@ export class MarginRailElement extends ElementBase {
     if (!this.#transport || created.length === 0) return
     const client = createMarginClient(this.#transport)
     try {
-      const responses = await client.createAnnotations({
+      const first = created[0]
+      const common = {
         documentUri: this.documentUri,
-        kind: created[0].kind,
         targets: created.map((annotation) => annotation.target),
-        ...(created[0].kind === 'highlight'
-          ? { color: created[0].appearance.color }
-          : {}),
-      })
+      }
+      const responses = await client.createAnnotations(
+        first.kind === 'highlight'
+          ? { ...common, kind: 'highlight', color: first.appearance.color }
+          : { ...common, kind: 'note', body: first.body },
+      )
       // A transport resolves with whatever status it got: an HTTP error is a
       // value here, not a throw. Treating it as success meant a 401, a 429 or a
       // 500 left the annotation in memory only, to disappear on reload with
@@ -310,8 +319,7 @@ export class MarginRailElement extends ElementBase {
         item.dataset.orphaned = placement.reason
         const reason = doc.createElement('span')
         reason.className = 'reason'
-        reason.textContent =
-          ORPHAN_LABELS[placement.reason] ?? 'orphaned'
+        reason.textContent = ORPHAN_LABELS[placement.reason] ?? 'orphaned'
         item.append(reason)
       }
       const quote = doc.createElement('span')

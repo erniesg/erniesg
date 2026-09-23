@@ -12,8 +12,8 @@
  * missing, the fallback draws absolutely positioned rectangles behind the text
  * from `getClientRects()`. Both leave `innerHTML` byte-identical.
  */
-import type { AnchorableBlock } from './blocks'
-import { rangeForOffsets } from './text-index'
+import type { AnchorableBlock } from './blocks.js'
+import { rangesForOffsets } from './text-index.js'
 
 export type PaintTarget = {
   id: string
@@ -79,8 +79,8 @@ export function rangesForTargets(
   return targets.flatMap((target) => {
     const block = byId.get(target.nodeId)
     if (!block) return []
-    const range = rangeForOffsets(block.index, target.start, target.end)
-    return range ? [{ target, ranges: [range] }] : []
+    const ranges = rangesForOffsets(block.index, target.start, target.end)
+    return ranges.length ? [{ target, ranges }] : []
   })
 }
 
@@ -158,35 +158,78 @@ function paintWithOverlay(
   host.append(overlay)
 
   const view = doc.defaultView
-  const scrollX = view?.scrollX ?? 0
-  const scrollY = view?.scrollY ?? 0
-  // `getClientRects()` plus scroll is a document position. The boxes are laid out
-  // in the containing block of whatever `overlayHost` is, so with the default
-  // `document.body` those coincide and with any positioned or offset host they do
-  // not — every highlight landing by the host's own offset. Subtract the host's
-  // document position, and its scroll, so the boxes are in the coordinate system
-  // they are actually placed in.
-  const origin = overlayOrigin(overlay, scrollX, scrollY)
-  for (const { target, ranges } of painted) {
-    for (const range of ranges) {
-      for (const rect of Array.from(range.getClientRects())) {
-        const box = doc.createElement('div')
-        box.dataset.marginHighlight = target.id
-        box.style.cssText = [
-          'position:absolute',
-          `left:${rect.left + scrollX - origin.x}px`,
-          `top:${rect.top + scrollY - origin.y}px`,
-          `width:${rect.width}px`,
-          `height:${rect.height}px`,
-          `background-color:${palette[target.color] ?? palette.default ?? DEFAULT_PALETTE.default}`,
-          'pointer-events:none',
-        ].join(';')
-        overlay.append(box)
+  const draw = () => {
+    const scrollX = view?.scrollX ?? 0
+    const scrollY = view?.scrollY ?? 0
+    const origin = overlayOrigin(overlay, scrollX, scrollY)
+    const boxes: Element[] = []
+    for (const { target, ranges } of painted) {
+      for (const range of ranges) {
+        for (const rect of Array.from(range.getClientRects())) {
+          const box = doc.createElement('div')
+          box.dataset.marginHighlight = target.id
+          box.style.cssText = [
+            'position:absolute',
+            `left:${rect.left + scrollX - origin.x}px`,
+            `top:${rect.top + scrollY - origin.y}px`,
+            `width:${rect.width}px`,
+            `height:${rect.height}px`,
+            `background-color:${palette[target.color] ?? palette.default ?? DEFAULT_PALETTE.default}`,
+            'pointer-events:none',
+          ].join(';')
+          boxes.push(box)
+        }
       }
     }
+    overlay.replaceChildren(...boxes)
   }
+  draw()
 
-  return () => overlay.remove()
+  let frame = 0
+  const schedule = () => {
+    if (frame || !view) return
+    frame = view.requestAnimationFrame(() => {
+      frame = 0
+      draw()
+    })
+  }
+  view?.addEventListener('resize', schedule)
+  view?.visualViewport?.addEventListener('resize', schedule)
+  doc.addEventListener('scroll', schedule, true)
+  doc.fonts?.addEventListener('loadingdone', schedule)
+  const Resize = view?.ResizeObserver
+  const resize = Resize ? new Resize(schedule) : null
+  resize?.observe(host)
+  for (const { ranges } of painted) {
+    for (const range of ranges) {
+      const element = range.startContainer.parentElement
+      if (element) resize?.observe(element)
+    }
+  }
+  const Mutation = view?.MutationObserver
+  const mutation = Mutation
+    ? new Mutation((records) => {
+        if (records.some((record) => !overlay.contains(record.target)))
+          schedule()
+      })
+    : null
+  mutation?.observe(doc.documentElement, {
+    attributes: true,
+    childList: true,
+    characterData: true,
+    subtree: true,
+  })
+
+  return () => {
+    if (frame && view) view.cancelAnimationFrame(frame)
+    view?.removeEventListener('resize', schedule)
+    view?.visualViewport?.removeEventListener('resize', schedule)
+    doc.removeEventListener('scroll', schedule, true)
+    doc.fonts?.removeEventListener('loadingdone', schedule)
+    resize?.disconnect()
+    mutation?.disconnect()
+    overlay.remove()
+  }
 }
 
 /**
@@ -214,9 +257,11 @@ export function paintHighlights(
     return paintWithOverlay(doc, host, painted, palette)
   }
 
-  const Highlight = (doc.defaultView as unknown as {
-    Highlight: HighlightConstructor
-  }).Highlight
+  const Highlight = (
+    doc.defaultView as unknown as {
+      Highlight: HighlightConstructor
+    }
+  ).Highlight
   const byColor = new Map<string, Range[]>()
   for (const { target, ranges } of painted) {
     const color = palette[target.color] ? target.color : 'default'

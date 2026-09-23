@@ -7,11 +7,19 @@
  * what came out.
  */
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
 
 // `export =` CJS, loaded the one way that needs no interop flag to be set.
@@ -94,6 +102,25 @@ describe('the published package', () => {
     }
   })
 
+  it('imports the emitted ESM entry with Node module resolution', () => {
+    // TypeScript accepts extensionless imports in bundler mode even though
+    // Node rejects the resulting .js files. Exercise the emitted entry and
+    // every transitive relative specifier with the runtime we advertise.
+    writeFileSync(path.join(outDir, 'package.json'), '{"type":"module"}')
+    symlinkSync(
+      path.join(PACKAGE_ROOT, '..', '..', 'node_modules'),
+      path.join(outDir, 'node_modules'),
+      'dir',
+    )
+    const entry = pathToFileURL(path.join(outDir, 'index.js')).href
+    const imported = spawnSync(
+      process.execPath,
+      ['--input-type=module', '-e', `await import(${JSON.stringify(entry)})`],
+      { cwd: PACKAGE_ROOT, encoding: 'utf8', timeout: 30_000 },
+    )
+    expect(imported.status, imported.stderr).toBe(0)
+  })
+
   it('carries no book identifier into the build output', () => {
     // Anything here would mean the package had learned about this site.
     const forbidden = [
@@ -142,7 +169,9 @@ describe('the published package', () => {
           }
           return !allowed.has(specifier.split('/')[0])
         })
-        .map((specifier) => `${path.relative(PACKAGE_ROOT, file)} -> ${specifier}`)
+        .map(
+          (specifier) => `${path.relative(PACKAGE_ROOT, file)} -> ${specifier}`,
+        )
     })
 
     expect(offences).toEqual([])

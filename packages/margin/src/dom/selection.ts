@@ -14,9 +14,9 @@ import {
   createSemanticTextAnchorFromRange,
   withStructSelector,
   type SemanticTextAnchor,
-} from '../anchor'
-import type { AnchorableBlock } from './blocks'
-import { offsetForPoint } from './text-index'
+} from '../anchor.js'
+import type { AnchorableBlock } from './blocks.js'
+import { offsetForPoint } from './text-index.js'
 
 export const DEFAULT_CONTEXT_LENGTH = 32
 

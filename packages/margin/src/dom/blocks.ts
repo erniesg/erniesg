@@ -7,12 +7,12 @@
  * named here and nowhere else. A host whose markup differs passes different
  * attribute names rather than a different package.
  */
-import type { AnchorableNode } from '../anchor'
+import type { AnchorableNode } from '../anchor.js'
 import {
   indexBlockText,
   type BlockTextIndex,
   type IndexOptions,
-} from './text-index'
+} from './text-index.js'
 
 export type BlockAttributes = {
   /** Elements that are addressable blocks. */
@@ -48,8 +48,7 @@ export function readAnchorableBlocks(
   const structIdAttribute =
     options.structIdAttribute ?? DEFAULT_BLOCK_OPTIONS.structIdAttribute
   const digestAttribute =
-    options.structDigestAttribute ??
-    DEFAULT_BLOCK_OPTIONS.structDigestAttribute
+    options.structDigestAttribute ?? DEFAULT_BLOCK_OPTIONS.structDigestAttribute
 
   const elements = Array.from(root.querySelectorAll(selector))
   // Blocks are siblings in every renderer this targets, but a host could nest

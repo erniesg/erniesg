@@ -6,7 +6,7 @@
  * on another site, or on a stub in a test, without a source change. The path
  * prefix is fixed because it is the service's contract, not its address.
  */
-import type { SemanticTextAnchor, TextAnnotation } from './anchor'
+import type { SemanticTextAnchor, TextAnnotation } from './anchor.js'
 
 export const MARGIN_API_PREFIX = '/api/margin/v1'
 
@@ -56,6 +56,26 @@ export type WebAnnotationBody = {
   format: typeof BODY_FORMAT
 }
 
+type AnnotationKindInput =
+  | { kind: 'highlight'; body?: never; color?: string }
+  | { kind: 'note'; body: string; color?: never }
+
+type AnnotationRequestCommon = {
+  documentUri: string
+  visibility?: 'private' | 'public'
+  parentId?: string
+  context?: unknown
+}
+
+function requireNoteBody(input: AnnotationKindInput): void {
+  if (
+    input.kind === 'note' &&
+    (typeof input.body !== 'string' || !input.body.trim())
+  ) {
+    throw new Error('note body must be non-empty')
+  }
+}
+
 /** One anchor, as the three selectors 054 reads. */
 export function webAnnotationTarget(
   source: string,
@@ -95,17 +115,13 @@ export function webAnnotationTarget(
  * selection spanning three blocks is three annotations sharing a body, not one
  * annotation with three targets.
  */
-export function toWebAnnotation(input: {
-  documentUri: string
-  kind: TextAnnotation['kind']
-  target: SemanticTextAnchor
-  body?: string
-  color?: string
-  visibility?: 'private' | 'public'
-  parentId?: string
-  /** The host's own `@context`, when its `margin:` prefix should resolve. */
-  context?: unknown
-}): Record<string, unknown> {
+export function toWebAnnotation(
+  input: AnnotationRequestCommon &
+    AnnotationKindInput & {
+      target: SemanticTextAnchor
+    },
+): Record<string, unknown> {
+  requireNoteBody(input)
   const motivation = MOTIVATION_BY_KIND[input.kind]
   return {
     '@context': input.context ?? WEB_ANNOTATION_CONTEXT,
@@ -116,7 +132,7 @@ export function toWebAnnotation(input: {
       : {
           body: {
             type: 'TextualBody' as const,
-            value: input.body ?? '',
+            value: input.body,
             format: BODY_FORMAT,
           },
         }),
@@ -199,9 +215,7 @@ export function createHttpTransport(
         credentials: options.credentials ?? 'include',
         headers: {
           accept: 'application/json',
-          ...(body === undefined
-            ? {}
-            : { 'content-type': 'application/json' }),
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
           ...(options.headers ?? {}),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -230,16 +244,12 @@ export type MarginClient = {
    * multi-block selection was stored and which was refused rather than getting
    * one status for all of them.
    */
-  createAnnotations(input: {
-    documentUri: string
-    kind: TextAnnotation['kind']
-    targets: readonly SemanticTextAnchor[]
-    body?: string
-    color?: string
-    visibility?: 'private' | 'public'
-    parentId?: string
-    context?: unknown
-  }): Promise<MarginResponse[]>
+  createAnnotations(
+    input: AnnotationRequestCommon &
+      AnnotationKindInput & {
+        targets: readonly SemanticTextAnchor[]
+      },
+  ): Promise<MarginResponse[]>
   deleteAnnotation(id: string): Promise<MarginResponse>
 }
 
@@ -259,6 +269,7 @@ export function createMarginClient(transport: MarginTransport): MarginClient {
         path: `${MARGIN_API_PREFIX}/annotations?source=${encodeURIComponent(documentUri)}`,
       }),
     createAnnotations: async (input) => {
+      requireNoteBody(input)
       const responses: MarginResponse[] = []
       for (const target of input.targets) {
         responses.push(

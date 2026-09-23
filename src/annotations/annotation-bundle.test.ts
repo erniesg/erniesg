@@ -171,10 +171,13 @@ it('accepts document context across graph-node boundaries', () => {
 
 it('keeps document positions aligned with resolver text projection', () => {
   const figure = rawPaper.nodes.find((node) => node.type === 'figure')
+  if (!figure?.relationships?.caption) {
+    throw new Error('Annotation fixture lost its figure caption')
+  }
   const caption = rawPaper.nodes.find(
-    (node) => node.id === figure?.relationships.caption,
+    (node) => node.id === figure.relationships.caption,
   )
-  if (!figure || !caption) throw new Error('Annotation fixture lost its figure')
+  if (!caption) throw new Error('Annotation fixture lost its figure caption')
 
   const paper = researchPaperSchema.parse({
     ...rawPaper,

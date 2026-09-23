@@ -119,6 +119,24 @@ export const textAnnotationSchema = z.discriminatedUnion('kind', [
 
 export type SemanticTextAnchor = z.infer<typeof semanticTextAnchorSchema>
 export type TextAnnotation = z.infer<typeof textAnnotationSchema>
+
+/**
+ * The text an annotation shows a reader, or `null` when it shows none.
+ *
+ * Exhaustive by construction, which is the point: adding a kind to the union
+ * stops this compiling until it says whether it has a body. `proposal` arrived
+ * without that, and every consumer testing `kind === 'note'` silently rendered
+ * nothing for it — a body a reader wrote, stored and invisible.
+ */
+export function annotationBody(annotation: TextAnnotation): string | null {
+  switch (annotation.kind) {
+    case 'highlight':
+      return null
+    case 'note':
+    case 'proposal':
+      return annotation.body
+  }
+}
 export type AnnotationGeometryRectangle = z.infer<
   typeof geometryRectangleSchema
 >

@@ -60,6 +60,16 @@ export const BODY_FORMAT = 'text/plain'
 export const ANNOTATION_TYPE = 'Annotation'
 
 /**
+ * The longest `target.source` the store accepts, checked on the canonical form.
+ *
+ * Checking the value as sent is not enough: `url.pathname` percent-encodes raw
+ * non-ASCII characters, so a source of 200 emoji arrives at 417 UTF-16 units and
+ * is reconstructed at 2,417 — accepted, stored, and then handed back in a shape
+ * the schema would refuse.
+ */
+export const MAX_SOURCE_LENGTH = 2_048
+
+/**
  * The node id used when a Web Annotation carries no structural selector. The
  * internal anchor requires a `nodeId`, so annotations anchored to the document
  * as a whole get this sentinel and the mapping stays reversible.
@@ -158,7 +168,7 @@ const selectorSchema = z.discriminatedUnion('type', [
 
 const targetSchema = z
   .object({
-    source: z.string().min(1).max(2_048),
+    source: z.string().min(1).max(MAX_SOURCE_LENGTH),
     selector: z.union([selectorSchema, z.array(selectorSchema).min(1).max(8)]),
   })
   .strict()
@@ -266,6 +276,10 @@ export function splitSource(
   // Credentials in a target would be dropped by `origin`, and a URI that means
   // something different once stored is worse than one that is refused.
   if (url.username || url.password) return null
+  // The canonical length, not the sent one — canonicalising can only grow it.
+  if (`${url.origin}${url.pathname}${url.search}${url.hash}`.length > MAX_SOURCE_LENGTH) {
+    return null
+  }
   // The canonical spelling, not the one that was sent. `https://ernie.sg:443/x`,
   // an upper-case host and a path with dot segments are all valid targets that
   // the parser rewrites, and rejecting them because the rewrite differs from

@@ -50,6 +50,13 @@ CREATE TABLE margin_annotations (
 CREATE INDEX margin_annotations_tenant
   ON margin_annotations (site, document, visibility, creator);
 
+-- The collection is always read in `(created, id)` order and now in bounded
+-- pages, so without a covering order this plan is `USE TEMP B-TREE FOR ORDER BY`:
+-- every visible row sorted before `LIMIT` takes a handful. Paging bounds the
+-- response and this is what bounds the work behind it.
+CREATE INDEX margin_annotations_page
+  ON margin_annotations (site, document, created, id);
+
 CREATE INDEX margin_annotations_owner
   ON margin_annotations (creator, site, document);
 

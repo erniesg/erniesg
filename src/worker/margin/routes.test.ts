@@ -18,6 +18,7 @@ import {
 } from './web-annotation'
 import { MARGIN_API_PREFIX } from './routes'
 import { MAX_PAGE_SIZE } from './repository'
+import { MAX_SOURCE_LENGTH } from './web-annotation'
 
 /** The acceptance tests from issue 054, against the real router and real SQL. */
 
@@ -1214,5 +1215,38 @@ describe('review findings, round five', () => {
     expect((await post(withSpan(5 + [...exact].length))).status).toBe(201)
     expect((await post(withSpan(5 + exact.length))).status).toBe(201)
     expect((await post(withSpan(5 + 4))).status).toBe(400)
+  })
+})
+
+describe('review findings, round six', () => {
+  // `url.pathname` percent-encodes raw non-ASCII, so a source can grow past the
+  // maximum *after* the maximum has been checked — accepted, stored, and handed
+  // back in a shape the schema would refuse.
+  it('rechecks the source length against its canonical form', async () => {
+    const tooLong = `https://ernie.sg/${'🌊'.repeat(600)}`
+    expect(tooLong.length).toBeLessThan(MAX_SOURCE_LENGTH)
+    expect(encodeURI(tooLong).length).toBeGreaterThan(MAX_SOURCE_LENGTH)
+
+    expect((await post(webAnnotation({ source: tooLong }))).status).toBe(400)
+
+    // And one that is long but fits once encoded is still accepted.
+    const fits = `https://ernie.sg/${'🌊'.repeat(10)}`
+    expect((await post(webAnnotation({ source: fits }))).status).toBe(201)
+  })
+
+  // A proposal has a body. Every consumer testing `kind === 'note'` rendered
+  // nothing for it — a body a reader wrote, stored and invisible.
+  it('reports a body for every kind that has one', async () => {
+    const bodies = await Promise.all(
+      (['commenting', 'editing'] as const).map(async (motivation) => {
+        const response = await post(
+          webAnnotation({ source: CHAPTER_ONE, motivation, body: `a ${motivation} body` }),
+        )
+        expect(response.status, motivation).toBe(201)
+        return ((await response.json()) as WireAnnotation).body?.value
+      }),
+    )
+
+    expect(bodies).toEqual(['a commenting body', 'a editing body'])
   })
 })

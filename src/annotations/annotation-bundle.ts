@@ -75,7 +75,13 @@ export function createAnnotationBundle(
             ? node.code
             : null
   const documentTextForNode = (node: PublicationGraph['nodes'][number]) =>
-    'text' in node ? node.text : null
+    'text' in node
+      ? node.text
+      : node.type === 'code'
+        ? node.code
+        : node.type === 'equation'
+          ? node.source
+          : null
   const utf16Offset = (text: string, offset: number) => {
     const codePoints = [...text]
     return offset <= codePoints.length

@@ -7,6 +7,7 @@ import {
   createAnnotationBundle,
   serializeAnnotationBundle,
 } from './annotation-bundle'
+import type { PublicationGraph } from '../publication/schema'
 import { researchPaperToPublicationGraph } from '../publication/research-paper-adapter'
 
 describe('AnnotationBundle', () => {
@@ -213,5 +214,59 @@ it('keeps document positions aligned with resolver text projection', () => {
     createAnnotationBundle(researchPaperToPublicationGraph(paper), [
       annotation,
     ]),
+  ).not.toThrow()
+})
+
+it('resolves document anchors in code and equation nodes', () => {
+  const paper = researchPaperSchema.parse({
+    ...rawPaper,
+    id: 'generic-document-anchor-test',
+    nodes: [{ id: 'p-1', type: 'paragraph', source: 'test', text: 'template' }],
+  })
+  const graph = researchPaperToPublicationGraph(paper)
+  const paragraph = graph.nodes[0]
+  if (!paragraph || !('text' in paragraph)) {
+    throw new Error('Annotation fixture lost its paragraph')
+  }
+  const { text: _text, ...nodeBase } = paragraph
+  const genericGraph = {
+    ...graph,
+    nodes: [
+      { ...nodeBase, id: 'code-1', type: 'code' as const, code: 'x x' },
+      {
+        ...nodeBase,
+        id: 'equation-1',
+        type: 'equation' as const,
+        source: 'target',
+        format: 'plain-text' as const,
+      },
+    ],
+  } as PublicationGraph
+
+  const codeAnnotation = {
+    id: 'code-document-position',
+    kind: 'note' as const,
+    body: 'body',
+    geometryCache: [],
+    target: {
+      nodeId: '@document',
+      position: { start: 0, end: 1 },
+      quote: { exact: 'x', prefix: '', suffix: '' },
+    },
+  }
+  const equationAnnotation = {
+    id: 'equation-document-fallback',
+    kind: 'note' as const,
+    body: 'body',
+    geometryCache: [],
+    target: {
+      nodeId: '@document',
+      position: { start: 0, end: 6 },
+      quote: { exact: 'target', prefix: 'x x', suffix: '' },
+    },
+  }
+
+  expect(() =>
+    createAnnotationBundle(genericGraph, [codeAnnotation, equationAnnotation]),
   ).not.toThrow()
 })

@@ -1411,7 +1411,7 @@ describe('reply visibility boundaries', () => {
     )
     expect(response.status).toBe(409)
     expect(await response.json()).toMatchObject({
-      error: { code: 'parent_visibility_conflict' },
+      error: { code: 'unknown_parent' },
     })
     expect(await list(CHAPTER_ONE, BOB)).toEqual([])
     expect(await list(CHAPTER_ONE)).toHaveLength(1)

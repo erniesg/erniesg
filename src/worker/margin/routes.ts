@@ -372,7 +372,22 @@ async function createAnnotation(
     await context.repository.insertAnnotation(record)
   } catch (error) {
     const conflict = replyVisibilityConflict(error)
-    if (conflict) return conflict
+    if (conflict) {
+      // A deleted parent and one that became unreadable must remain
+      // indistinguishable. Recheck through the same tenant/viewer boundary;
+      // only a parent still readable by this caller may explain its conflict.
+      const parent = record.parentId === null
+        ? null
+        : await context.repository.findAnnotation(scope, record.parentId, owner)
+      if (!parent) {
+        return problem(
+          409,
+          'unknown_parent',
+          'the annotation this replies to is no longer available',
+        )
+      }
+      return conflict
+    }
     if (isForeignKeyConflict(error)) {
       return problem(
         409,

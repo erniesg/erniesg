@@ -81,12 +81,8 @@ export function listAnnotationsQuery(
   // resuming after the last row the caller saw is one comparison and cannot
   // skip or repeat a row when something is inserted between pages.
   if (options.after) {
-    extraSql.push('AND (created > ? OR (created = ? AND id > ?))')
-    extraParams.push(
-      options.after.created,
-      options.after.created,
-      options.after.id,
-    )
+    extraSql.push('AND (created, id) > (?, ?)')
+    extraParams.push(options.after.created, options.after.id)
   }
   extraSql.push('ORDER BY created ASC, id ASC')
   if (options.limit !== undefined) {

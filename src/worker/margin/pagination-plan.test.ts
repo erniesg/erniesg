@@ -49,6 +49,7 @@ describe('the collection query plan', () => {
 
     expect(plan).not.toContain('TEMP B-TREE')
     expect(plan).toContain('margin_annotations_page')
+    expect(plan).toContain('(created,id)>(?,?)')
   })
 
   it('uses the motivation-aware ordered index for proposals', () => {
@@ -61,6 +62,17 @@ describe('the collection query plan', () => {
     expect(plan).toContain('margin_annotations_proposal_page')
   })
 
+  it('seeks through both fields of a signed-in proposal cursor', () => {
+    const plan = planFor({
+      limit: DEFAULT_PAGE_SIZE + 1,
+      motivation: 'editing',
+      after: { created: '2026-09-23T00:00:00.000Z', id: 'annotation-050' },
+    })
+
+    expect(plan).not.toContain('TEMP B-TREE')
+    expect(plan).toContain('margin_annotations_proposal_page')
+    expect(plan).toContain('(created,id)>(?,?)')
+  })
   it('uses the public proposal index before returning an anonymous first page', () => {
     const plan = planFor(
       { limit: DEFAULT_PAGE_SIZE + 1, motivation: 'editing' },
@@ -83,23 +95,24 @@ describe('the collection query plan', () => {
 
     expect(plan).not.toContain('TEMP B-TREE')
     expect(plan).toContain('margin_annotations_public_proposal_page')
+    expect(plan).toContain('(created,id)>(?,?)')
   })
-  it('uses the visibility-aware ordered index for anonymous pages', () => {})
-
-  const database = new DatabaseSync(':memory:')
-  applyMigrations(database)
-  const query = listAnnotationsQuery(
-    { site: 'https://ernie.sg', document: '/challenges/chapter-1' },
-    null,
-    { limit: DEFAULT_PAGE_SIZE + 1 },
-  )
-  const plan = (
-    database
-      .prepare(`EXPLAIN QUERY PLAN ${query.sql}`)
-      .all(...(query.params as never[])) as { detail: string }[]
-  )
-    .map((row) => row.detail)
-    .join('\n')
-  expect(plan).toContain('margin_annotations_public_page')
-  expect(plan).not.toContain('TEMP B-TREE')
+  it('uses the visibility-aware ordered index for anonymous pages', () => {
+    const database = new DatabaseSync(':memory:')
+    applyMigrations(database)
+    const query = listAnnotationsQuery(
+      { site: 'https://ernie.sg', document: '/challenges/chapter-1' },
+      null,
+      { limit: DEFAULT_PAGE_SIZE + 1 },
+    )
+    const plan = (
+      database
+        .prepare(`EXPLAIN QUERY PLAN ${query.sql}`)
+        .all(...(query.params as never[])) as { detail: string }[]
+    )
+      .map((row) => row.detail)
+      .join('\n')
+    expect(plan).toContain('margin_annotations_public_page')
+    expect(plan).not.toContain('TEMP B-TREE')
+  })
 })

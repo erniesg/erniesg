@@ -52,3 +52,34 @@ describe('AnnotationBundle', () => {
     ).toThrow(/does not match/)
   })
 })
+
+it('validates code-point and document-scoped anchors', () => {
+  const paper = researchPaperSchema.parse({
+    ...rawPaper,
+    id: 'emoji-bundle',
+    nodes: [
+      { id: 'p-1', type: 'paragraph', source: 'test', text: '🌊 target' },
+    ],
+  })
+  const graph = researchPaperToPublicationGraph(paper)
+  const codepoint = {
+    id: 'codepoint',
+    kind: 'note' as const,
+    body: 'body',
+    geometryCache: [],
+    target: {
+      nodeId: 'p-1',
+      positionUnit: 'codepoint' as const,
+      position: { start: 2, end: 8 },
+      quote: { exact: 'target', prefix: '🌊 ', suffix: '' },
+    },
+  }
+  const document = {
+    ...codepoint,
+    id: 'document',
+    target: { ...codepoint.target, nodeId: '@document' },
+  }
+  expect(() =>
+    createAnnotationBundle(graph, [codepoint, document]),
+  ).not.toThrow()
+})

@@ -49,6 +49,7 @@ type AnnotationRow = {
   node_id: string
   position_start: number
   position_end: number
+  position_unit: 'utf16' | 'codepoint'
   quote_exact: string
   quote_prefix: string
   quote_suffix: string
@@ -72,6 +73,7 @@ export function rowToRecord(row: AnnotationRow): MarginAnnotationRecord {
     kind,
     target: {
       nodeId: row.node_id,
+      positionUnit: row.position_unit,
       position: { start: row.position_start, end: row.position_end },
       quote: {
         exact: row.quote_exact,
@@ -114,6 +116,7 @@ export function recordToRow(record: MarginAnnotationRecord) {
     nodeId: annotation.target.nodeId,
     positionStart: annotation.target.position.start,
     positionEnd: annotation.target.position.end,
+    positionUnit: annotation.target.positionUnit ?? 'utf16',
     quoteExact: annotation.target.quote.exact,
     quotePrefix: annotation.target.quote.prefix,
     quoteSuffix: annotation.target.quote.suffix,
@@ -155,9 +158,7 @@ export class D1MarginRepository implements MarginRepository {
   }
 
   async insertAnnotation(record: MarginAnnotationRecord): Promise<void> {
-    await this.statement(
-      insertAnnotationQuery(recordToRow(record)),
-    ).run()
+    await this.statement(insertAnnotationQuery(recordToRow(record))).run()
   }
 
   async updateAnnotation(
@@ -174,9 +175,9 @@ export class D1MarginRepository implements MarginRepository {
   }
 
   async countReplies(scope: TenantScope, id: string): Promise<number> {
-    const row = await this.statement(
-      countRepliesQuery(scope, id),
-    ).first<{ replies: number }>()
+    const row = await this.statement(countRepliesQuery(scope, id)).first<{
+      replies: number
+    }>()
     return Number(row?.replies ?? 0)
   }
 
@@ -214,9 +215,7 @@ export class D1MarginRepository implements MarginRepository {
     defaultVisibility: MarginVisibility,
     now: string,
   ): Promise<MarginPrefs> {
-    await this.statement(
-      upsertPrefsQuery(owner, defaultVisibility, now),
-    ).run()
+    await this.statement(upsertPrefsQuery(owner, defaultVisibility, now)).run()
     return this.getPrefs(owner)
   }
 }

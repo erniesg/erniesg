@@ -24,6 +24,7 @@ export const ANNOTATION_COLUMNS = [
   'node_id',
   'position_start',
   'position_end',
+  'position_unit',
   'quote_exact',
   'quote_prefix',
   'quote_suffix',
@@ -81,7 +82,11 @@ export function listAnnotationsQuery(
   // skip or repeat a row when something is inserted between pages.
   if (options.after) {
     extraSql.push('AND (created > ? OR (created = ? AND id > ?))')
-    extraParams.push(options.after.created, options.after.created, options.after.id)
+    extraParams.push(
+      options.after.created,
+      options.after.created,
+      options.after.id,
+    )
   }
   extraSql.push('ORDER BY created ASC, id ASC')
   if (options.limit !== undefined) {
@@ -111,6 +116,7 @@ export function insertAnnotationQuery(row: {
   nodeId: string
   positionStart: number
   positionEnd: number
+  positionUnit: string
   quoteExact: string
   quotePrefix: string
   quoteSuffix: string
@@ -121,7 +127,7 @@ export function insertAnnotationQuery(row: {
 }): Query {
   return {
     sql: `INSERT INTO margin_annotations (${ANNOTATION_COLUMNS})
-VALUES (${new Array(18).fill('?').join(', ')})`,
+VALUES (${new Array(19).fill('?').join(', ')})`,
     params: [
       row.id,
       row.site,
@@ -134,6 +140,7 @@ VALUES (${new Array(18).fill('?').join(', ')})`,
       row.nodeId,
       row.positionStart,
       row.positionEnd,
+      row.positionUnit,
       row.quoteExact,
       row.quotePrefix,
       row.quoteSuffix,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   DOCUMENT_SCOPE_NODE_ID,
+  MAX_SOURCE_LENGTH,
   MARGIN_CONTEXT,
   MOTIVATIONS,
   recordToWebAnnotation,
@@ -339,4 +340,14 @@ describe('canonical target delimiters and offset units', () => {
       value: { annotation: { target: { positionUnit: 'codepoint' } } },
     })
   })
+})
+
+it('rejects a Unicode-host source whose canonical href exceeds the limit', () => {
+  const host = `${'é'.repeat(57)}.test`
+  const prefix = `https://${host}/`
+  const canonicalPrefix = new URL(prefix).href
+  const source = `${prefix}${'a'.repeat(MAX_SOURCE_LENGTH - canonicalPrefix.length)}?`
+  expect(source.length).toBeLessThan(MAX_SOURCE_LENGTH)
+  expect(new URL(source).href.length).toBe(MAX_SOURCE_LENGTH + 1)
+  expect(splitSource(source)).toBeNull()
 })

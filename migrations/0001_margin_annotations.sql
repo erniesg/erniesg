@@ -29,6 +29,7 @@ CREATE TABLE margin_annotations (
   node_id        TEXT NOT NULL,
   position_start INTEGER NOT NULL,
   position_end   INTEGER NOT NULL,
+  position_unit  TEXT NOT NULL CHECK (position_unit IN ('utf16', 'codepoint')),
   quote_exact    TEXT NOT NULL,
   quote_prefix   TEXT NOT NULL DEFAULT '',
   quote_suffix   TEXT NOT NULL DEFAULT '',

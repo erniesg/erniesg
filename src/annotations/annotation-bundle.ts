@@ -64,29 +64,63 @@ export function createAnnotationBundle(
     anchor: annotation.target,
   })),
 ): AnnotationBundle {
-  const nodesById = new Map(graph.nodes.map((node) => [node.id, node]))
+  const textForNode = (node: PublicationGraph['nodes'][number]) =>
+    'text' in node
+      ? node.text
+      : node.type === 'figure'
+        ? (node.sourceText ?? '')
+        : node.type === 'equation'
+          ? node.source
+          : node.type === 'code'
+            ? node.code
+            : null
+  const utf16Offset = (text: string, offset: number) => {
+    const codePoints = [...text]
+    return offset <= codePoints.length
+      ? codePoints.slice(0, offset).join('').length
+      : null
+  }
+  const matches = (text: string, anchor: SemanticTextAnchor) => {
+    const start =
+      anchor.positionUnit === 'codepoint'
+        ? utf16Offset(text, anchor.position.start)
+        : anchor.position.start
+    const end =
+      anchor.positionUnit === 'codepoint'
+        ? utf16Offset(text, anchor.position.end)
+        : anchor.position.end
+    return (
+      start !== null &&
+      end !== null &&
+      text.slice(start, end) === anchor.quote.exact
+    )
+  }
   const validateAnchor = (id: string, anchor: SemanticTextAnchor) => {
-    const node = nodesById.get(anchor.nodeId)
+    if (anchor.nodeId === '@document') {
+      const candidates = graph.nodes.filter((node) => {
+        const text = textForNode(node)
+        if (text === null) return false
+        const start = text.indexOf(anchor.quote.exact)
+        if (start < 0) return false
+        const end = start + anchor.quote.exact.length
+        return (
+          text.slice(0, start).endsWith(anchor.quote.prefix) &&
+          text.slice(end).startsWith(anchor.quote.suffix)
+        )
+      })
+      if (candidates.length !== 1) {
+        throw new Error(`Anchor ${id} does not resolve to one graph node`)
+      }
+      return
+    }
+    const node = graph.nodes.find((candidate) => candidate.id === anchor.nodeId)
     if (!node) {
       throw new Error(
         `Anchor ${id} targets missing graph node ${anchor.nodeId}`,
       )
     }
-    const text =
-      'text' in node
-        ? node.text
-        : node.type === 'figure'
-          ? (node.sourceText ?? '')
-          : node.type === 'equation'
-            ? node.source
-            : node.type === 'code'
-              ? node.code
-              : null
-    if (
-      text === null ||
-      text.slice(anchor.position.start, anchor.position.end) !==
-        anchor.quote.exact
-    ) {
+    const text = textForNode(node)
+    if (text === null || !matches(text, anchor)) {
       throw new Error(`Anchor ${id} does not match graph node text`)
     }
   }

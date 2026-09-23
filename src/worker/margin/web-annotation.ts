@@ -279,13 +279,8 @@ export function splitSource(
   // Credentials in a target would be dropped by `origin`, and a URI that means
   // something different once stored is worse than one that is refused.
   if (url.username || url.password) return null
-  // The canonical length, not the sent one — canonicalising can only grow it.
-  if (
-    `${url.origin}${url.pathname}${url.search}${url.hash}`.length >
-    MAX_SOURCE_LENGTH
-  ) {
-    return null
-  }
+  // href retains empty delimiters and Unicode-host punycode.
+  if (url.href.length > MAX_SOURCE_LENGTH) return null
   // The canonical spelling, not the one that was sent. `https://ernie.sg:443/x`,
   // an upper-case host and a path with dot segments are all valid targets that
   // the parser rewrites, and rejecting them because the rewrite differs from

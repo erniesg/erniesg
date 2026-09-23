@@ -292,3 +292,80 @@ it('uses document context when the same quote repeats in one node', () => {
     end: 31,
   })
 })
+it('uses document-wide position to disambiguate a repeated quote', () => {
+  const documentPaper = paragraphFixture('x x')
+  const resolution = resolveTextAnchor(
+    {
+      nodeId: '@document',
+      position: { start: 0, end: 1 },
+      quote: { exact: 'x', prefix: '', suffix: '' },
+    },
+    documentPaper.nodes,
+  )
+
+  expect(resolution).toEqual({
+    status: 'resolved',
+    nodeId: 'p-test',
+    start: 0,
+    end: 1,
+    matchedBy: 'position-and-context',
+  })
+})
+
+it('uses quote context when a document-wide position becomes stale', () => {
+  const documentPaper = paragraphFixture('drift before x after x')
+  const resolution = resolveTextAnchor(
+    {
+      nodeId: '@document',
+      position: { start: 7, end: 8 },
+      quote: { exact: 'x', prefix: 'before ', suffix: ' after' },
+    },
+    documentPaper.nodes,
+  )
+
+  expect(resolution).toEqual({
+    status: 'resolved',
+    nodeId: 'p-test',
+    start: 13,
+    end: 14,
+    matchedBy: 'quote-and-context',
+  })
+})
+it('maps code-point document positions across graph nodes', () => {
+  const documentPaper = researchPaperSchema.parse({
+    ...rawPaper,
+    id: 'annotation-document-position-test',
+    nodes: [
+      {
+        id: 'p-prefix',
+        type: 'paragraph',
+        text: '🌊 ',
+        source: 'test fixture',
+      },
+      {
+        id: 'p-target',
+        type: 'paragraph',
+        text: 'x x',
+        source: 'test fixture',
+      },
+    ],
+  })
+
+  expect(
+    resolveTextAnchor(
+      {
+        nodeId: '@document',
+        positionUnit: 'codepoint',
+        position: { start: 2, end: 3 },
+        quote: { exact: 'x', prefix: '', suffix: '' },
+      },
+      documentPaper.nodes,
+    ),
+  ).toEqual({
+    status: 'resolved',
+    nodeId: 'p-target',
+    start: 0,
+    end: 1,
+    matchedBy: 'position-and-context',
+  })
+})

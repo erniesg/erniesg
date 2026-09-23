@@ -257,6 +257,48 @@ function contextMatches(
   }
 }
 
+function documentPositionCandidate(
+  anchor: SemanticTextAnchor,
+  nodes: readonly ResearchNode[],
+): { nodeId: string; start: number; end: number } | null {
+  let documentOffset = 0
+
+  for (const node of nodes) {
+    const text = textForNode(node)
+    if (text === null) continue
+
+    const textLength =
+      anchor.positionUnit === 'codepoint' ? [...text].length : text.length
+    const localStart = anchor.position.start - documentOffset
+    const localEnd = anchor.position.end - documentOffset
+
+    if (localStart >= 0 && localEnd <= textLength) {
+      const start =
+        anchor.positionUnit === 'codepoint'
+          ? utf16OffsetForCodePointOffset(text, localStart)
+          : localStart
+      const end =
+        anchor.positionUnit === 'codepoint'
+          ? utf16OffsetForCodePointOffset(text, localEnd)
+          : localEnd
+
+      if (
+        start !== null &&
+        end !== null &&
+        text.slice(start, end) === anchor.quote.exact
+      ) {
+        const context = contextMatches(text, start, end, anchor)
+        if (context.prefixMatches && context.suffixMatches) {
+          return { nodeId: node.id, start, end }
+        }
+      }
+    }
+
+    documentOffset += textLength
+  }
+
+  return null
+}
 export function createSemanticTextAnchor(
   nodeId: string,
   text: string,
@@ -308,6 +350,15 @@ export function resolveTextAnchor(
   nodes: readonly ResearchNode[],
 ): TextAnchorResolution {
   if (anchor.nodeId === '@document') {
+    const positionMatch = documentPositionCandidate(anchor, nodes)
+    if (positionMatch) {
+      return {
+        status: 'resolved',
+        ...positionMatch,
+        matchedBy: 'position-and-context',
+      }
+    }
+
     const matches = nodes.flatMap((candidate) => {
       const text = textForNode(candidate)
       if (text === null) return []

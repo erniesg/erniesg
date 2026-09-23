@@ -19,6 +19,7 @@ import {
   type MarginRailElement,
 } from './element.js'
 import type { MarginTransport } from './transport.js'
+import { createHttpTransport } from './transport.js'
 
 export type MarginRailProps = {
   documentUri: string
@@ -76,11 +77,14 @@ export function MarginRail({
   }, [documentUri, textSelector, apiBase])
 
   useEffect(() => {
-    // `?? null`, not a truthiness guard: a consumer clearing `transport` — on
-    // logout, or to go client-only — meant the old one stayed installed and later
-    // highlights kept being sent to a service the caller had disconnected from.
-    if (rail.current) rail.current.transport = transport ?? null
-  }, [transport])
+    // React's effect runs after connection, including the first render. Restore
+    // the declarative API transport when an override is removed; only an absent
+    // apiBase means client-only mode.
+    if (rail.current) {
+      rail.current.transport = transport ??
+        (apiBase ? createHttpTransport({ baseUrl: apiBase }) : null)
+    }
+  }, [transport, apiBase])
 
   useEffect(() => {
     if (rail.current && annotations) rail.current.annotations = annotations

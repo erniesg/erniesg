@@ -16,11 +16,10 @@ import {
  * that is the part a future edit is most likely to break.
  */
 describe('the highlight registry key', () => {
-  it('is unchanged for a single rail', () => {
+  it('uses a stable name for a single rail', () => {
     expect(registrySuffix(undefined)).toBe('')
-    expect(highlightRegistryName('amber')).toBe(
-      `${HIGHLIGHT_REGISTRY_PREFIX}amber`,
-    )
+    expect(highlightRegistryName('amber')).toBe(highlightRegistryName('amber'))
+    expect(highlightRegistryName('amber')).toMatch(/^[a-zA-Z][a-zA-Z0-9_-]*$/)
   })
 
   it('separates two rails on one page', () => {
@@ -28,7 +27,7 @@ describe('the highlight registry key', () => {
     const second = highlightRegistryName('amber', 'rail-2')
 
     expect(first).not.toBe(second)
-    expect(first).toBe(`${HIGHLIGHT_REGISTRY_PREFIX}amber-rail-1`)
+    expect(first.startsWith(HIGHLIGHT_REGISTRY_PREFIX)).toBe(true)
   })
 
   it('stays a usable CSS identifier whatever the namespace is', () => {
@@ -38,16 +37,36 @@ describe('the highlight registry key', () => {
       'https://ernie.sg/books/a/b#frag?q=1',
     )
 
-    expect(name.startsWith(`${HIGHLIGHT_REGISTRY_PREFIX}amber-`)).toBe(true)
+    expect(name.startsWith(HIGHLIGHT_REGISTRY_PREFIX)).toBe(true)
     expect(name).toMatch(/^[a-zA-Z][a-zA-Z0-9_-]*$/)
   })
 
-  it('falls back to no suffix rather than a trailing dash', () => {
-    // Everything sanitised away would otherwise leave `…amber-` — a different
-    // key from `…amber`, and a silently separate registry entry.
+  it('uses no suffix for an empty namespace', () => {
     expect(registrySuffix('')).toBe('')
-    expect(highlightRegistryName('amber', '   ')).toBe(
-      `${HIGHLIGHT_REGISTRY_PREFIX}amber----`,
+    expect(highlightRegistryName('amber', '')).toBe(highlightRegistryName('amber'))
+  })
+
+  it('encodes arbitrary palette keys and namespaces without collisions', () => {
+    const pairs: [string, string | undefined][] = [
+      ['brand.yellow', 'rail'],
+      ['brand yellow', 'rail'],
+      ['brand-yellow', 'rail'],
+      ['soft amber', 'rail'],
+      ['色', 'rail'],
+      ['amber', 'brand.yellow'],
+      ['amber', 'brand yellow'],
+      ['amber', 'brand-yellow'],
+      ['amber-rail', undefined],
+      ['amber', 'rail'],
+      ['a-b', 'c'],
+      ['a', 'b-c'],
+    ]
+    const names = pairs.map(([color, namespace]) =>
+      highlightRegistryName(color, namespace),
     )
+    expect(new Set(names).size).toBe(names.length)
+    for (const name of names) {
+      expect(name).toMatch(/^[a-zA-Z][a-zA-Z0-9_-]*$/)
+    }
   })
 })

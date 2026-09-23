@@ -115,7 +115,7 @@ function ensureStyles(
   style.textContent = colors
     .map(
       (color) =>
-        `::highlight(${REGISTRY_PREFIX}${color}${suffix}) { background-color: ${
+        `::highlight(${REGISTRY_PREFIX}c${encodeNamePart(color)}${suffix}) { background-color: ${
           palette[color] ?? palette.default ?? DEFAULT_PALETTE.default
         }; color: inherit; }`,
     )
@@ -300,11 +300,17 @@ export function paintHighlights(
   }
 }
 
-/** A CSS-identifier-safe suffix, or none at all for the single-rail case. */
+/** Fixed-width code points preserve every key, including punctuation and Unicode. */
+function encodeNamePart(value: string): string {
+  return Array.from(value, (character) =>
+    character.codePointAt(0)!.toString(16).padStart(6, '0'),
+  ).join('')
+}
+
+/** A CSS-identifier-safe, collision-free suffix, or none for a single rail. */
 export function registrySuffix(namespace: string | undefined): string {
   if (!namespace) return ''
-  const safe = namespace.replace(/[^a-zA-Z0-9_-]/gu, '-')
-  return safe ? `-${safe}` : ''
+  return `-n${encodeNamePart(namespace)}`
 }
 
 /**
@@ -318,7 +324,7 @@ export function highlightRegistryName(
   color: string,
   namespace?: string,
 ): string {
-  return `${REGISTRY_PREFIX}${color}${registrySuffix(namespace)}`
+  return `${REGISTRY_PREFIX}c${encodeNamePart(color)}${registrySuffix(namespace)}`
 }
 
 export const HIGHLIGHT_REGISTRY_PREFIX = REGISTRY_PREFIX

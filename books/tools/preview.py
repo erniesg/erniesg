@@ -1022,30 +1022,36 @@ class Handler(BaseHTTPRequestHandler):
                     earlier = [{"index": 1, "source": earlier}] if earlier.strip() else []
                 # Earlier cells set the stage quietly. Keep their individual
                 # failures so a failing current cell can identify broken context.
-                runner = (
-                    "import contextlib, io, traceback\n"
-                    "_first_earlier_failure = None\n"
-                    "for _cell in _EARLIER:\n"
-                    "    _quiet = io.StringIO()\n"
-                    "    try:\n"
-                    "        with contextlib.redirect_stdout(_quiet), contextlib.redirect_stderr(_quiet):\n"
-                    "            exec(compile(_cell['source'], '<earlier cell>', 'exec'), globals())\n"
-                    "    except Exception:\n"
-                    "        if _first_earlier_failure is None:\n"
-                    "            _first_earlier_failure = (_cell, traceback.format_exc())\n"
-                    "try:\n"
-                    "    exec(compile(_OWN, '<current cell>', 'exec'), globals())\n"
-                    "except Exception:\n"
-                    "    if _first_earlier_failure is not None:\n"
-                    "        _cell, _trace = _first_earlier_failure\n"
-                    "        print(f\"Earlier cell {_cell['index']} failed; shared state may be incomplete.\")\n"
-                    "        print('Source:\\n' + _cell['source'])\n"
-                    "        print(_trace)\n"
-                    "    raise\n"
-                )
-                script.write_text(
-                    f"_EARLIER = {earlier!r}\n_OWN = {own!r}\n{runner}"
-                )
+                runner = r'''import contextlib, io, traceback
+def _run_cells(_earlier_cells, _own_source):
+    _namespace = globals()
+    _execute = exec
+    _compile = compile
+    _string_io = io.StringIO
+    _redirect_stdout = contextlib.redirect_stdout
+    _redirect_stderr = contextlib.redirect_stderr
+    _format_exception = traceback.format_exc
+    _first_earlier_failure = None
+    for _cell in _earlier_cells:
+        _quiet = _string_io()
+        try:
+            with _redirect_stdout(_quiet), _redirect_stderr(_quiet):
+                _execute(_compile(_cell['source'], '<earlier cell>', 'exec'), _namespace, _namespace)
+        except Exception:
+            if _first_earlier_failure is None:
+                _first_earlier_failure = (_cell, _format_exception())
+    try:
+        _execute(_compile(_own_source, '<current cell>', 'exec'), _namespace, _namespace)
+    except Exception:
+        if _first_earlier_failure is not None:
+            _cell, _trace = _first_earlier_failure
+            print(f"Earlier cell {_cell['index']} failed; shared state may be incomplete.")
+            print('Source:\n' + _cell['source'])
+            print(_trace)
+        raise
+'''
+                runner += f"_run_cells({earlier!r}, {own!r})\n"
+                script.write_text(runner)
                 try:
                     done = subprocess.run(
                         [sys.executable, str(script)],

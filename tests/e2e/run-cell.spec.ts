@@ -164,6 +164,18 @@ test.describe('standalone chapter preview', () => {
     await expect(output).toContainText('TypeError: argument of type')
   })
 
+  test('earlier cells cannot replace the current source', async ({ page }) => {
+    await page.goto(url)
+    const cells = page.locator('.cell-run')
+    await cells.nth(8).locator('.editor').fill("_OWN = 'print(\"hijacked\")'")
+    await cells.nth(9).locator('.editor').fill("print('expected')")
+    await cells.nth(9).locator('.exec').click()
+    const output = cells.nth(9).locator('.output')
+    await expect(output).toContainText('expected')
+    await expect(output).not.toContainText('hijacked')
+    await expect(output).not.toHaveClass(/error/)
+  })
+
   test('an earlier failure stays quiet when the current cell succeeds', async ({ page }) => {
     await page.goto(url)
     const cells = page.locator('.cell-run')

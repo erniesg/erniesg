@@ -12,13 +12,13 @@
  * package should not have an opinion about that.
  */
 import { useEffect, useRef } from 'react'
-import type { TextAnnotation } from './anchor'
+import type { TextAnnotation } from './anchor.js'
 import {
   defineMarginElements,
   MARGIN_RAIL_TAG,
   type MarginRailElement,
-} from './element'
-import type { MarginTransport } from './transport'
+} from './element.js'
+import type { MarginTransport } from './transport.js'
 
 export type MarginRailProps = {
   documentUri: string

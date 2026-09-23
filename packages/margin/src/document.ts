@@ -15,13 +15,10 @@ import {
   type AnchorableNode,
   type SemanticTextAnchor,
   type TextAnnotation,
-} from './anchor'
+} from './anchor.js'
 
 export type OrphanReason =
-  | 'ambiguous'
-  | 'missing-node'
-  | 'non-text-node'
-  | 'quote-not-found'
+  'ambiguous' | 'missing-node' | 'non-text-node' | 'quote-not-found'
 
 export type AnchorPlacement =
   | {
@@ -145,6 +142,24 @@ export function resolveAnchorInDocument(
   }
 
   if (resolution.status === 'ambiguous') {
+    // Ambiguity inside the old block is not ambiguity across the document.
+    // Both local duplicates may have lost their neighbourhood while the
+    // original occurrence moved, with both stored context sides intact.
+    const moved = relocate(anchor, nodes)
+    if (
+      moved !== 'ambiguous' &&
+      moved !== 'not-found' &&
+      moved.nodeId !== anchor.nodeId
+    ) {
+      return {
+        status: 'anchored',
+        nodeId: moved.nodeId,
+        start: moved.start,
+        end: moved.end,
+        matchedBy: 'relocated-quote',
+        movedFromNodeId: anchor.nodeId,
+      }
+    }
     return {
       status: 'orphaned',
       nodeId: resolution.nodeId,

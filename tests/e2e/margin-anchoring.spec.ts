@@ -101,7 +101,10 @@ async function prosePair(page: Page): Promise<[string, string]> {
       .map((block) => block.id)
     return ids.length >= 2 ? [ids[0], ids[1]] : null
   })
-  expect(pair, 'the chapter has fewer than two long prose blocks').not.toBeNull()
+  expect(
+    pair,
+    'the chapter has fewer than two long prose blocks',
+  ).not.toBeNull()
   return pair as [string, string]
 }
 
@@ -186,8 +189,9 @@ async function selectAcross(page: Page, pair: [string, string]) {
 
 async function paintedTexts(page: Page): Promise<string[] | null> {
   return page.evaluate(() => {
-    const registry = (CSS as unknown as { highlights?: Map<string, Set<Range>> })
-      .highlights
+    const registry = (
+      CSS as unknown as { highlights?: Map<string, Set<Range>> }
+    ).highlights
     if (!registry) return null
     return Array.from(registry.values()).flatMap((highlight) =>
       Array.from(highlight).map((range) => range.toString()),
@@ -195,7 +199,70 @@ async function paintedTexts(page: Page): Promise<string[] | null> {
   })
 }
 
+async function mountOmittedTextFixture(page: Page) {
+  await page.evaluate(() => {
+    const root = document.createElement('section')
+    root.id = 'margin-omitted-fixture'
+    root.style.cssText = 'width:320px;font-size:20px;line-height:1.5'
+    const block = document.createElement('p')
+    block.id = 'margin-omitted-block'
+    block.dataset.blockKind = 'prose'
+    block.append('before ')
+    const button = document.createElement('button')
+    button.textContent = 'OMITTED'
+    block.append(button, ' after')
+    root.append(block)
+    document.body.append(root)
+
+    const rail = document.createElement('margin-rail') as HTMLElement & {
+      annotations: unknown
+    }
+    rail.setAttribute('text-selector', '#margin-omitted-fixture')
+    rail.setAttribute('document-uri', 'https://example.test/omitted')
+    document.body.append(rail)
+    const quote = 'before  after'
+    rail.annotations = [
+      {
+        id: 'omitted-spanning-highlight',
+        kind: 'highlight',
+        target: {
+          nodeId: block.id,
+          position: { start: 0, end: quote.length },
+          quote: { exact: quote, prefix: '', suffix: '' },
+        },
+        appearance: { color: 'amber' },
+        geometryCache: [],
+      },
+    ]
+  })
+}
+
 test.describe('selection capture', () => {
+  test('changing either document context clears a captured selection', async ({
+    page,
+  }) => {
+    await open(page)
+    const widest = await widestProse(page)
+    const rail = page.locator('margin-rail').first()
+
+    await selectWithin(page, widest, 5, 25)
+    await waitForCapture(page, 'captured')
+    await expect(page.locator(HIGHLIGHT_BUTTON)).toBeEnabled()
+    await rail.evaluate((element) =>
+      element.setAttribute('text-selector', '#missing-root'),
+    )
+    await expect(page.locator(HIGHLIGHT_BUTTON)).toBeDisabled()
+
+    await rail.evaluate((element) => element.removeAttribute('text-selector'))
+    await selectWithin(page, widest, 5, 25)
+    await waitForCapture(page, 'captured')
+    await expect(page.locator(HIGHLIGHT_BUTTON)).toBeEnabled()
+    await rail.evaluate((element) =>
+      element.setAttribute('document-uri', 'https://example.test/other'),
+    )
+    await expect(page.locator(HIGHLIGHT_BUTTON)).toBeDisabled()
+  })
+
   test('a keyboard-extended selection gives the mouse selection’s anchor', async ({
     page,
   }) => {
@@ -216,7 +283,9 @@ test.describe('selection capture', () => {
       })
       return best
     })
-    expect(index, 'the chapter has no prose paragraph').toBeGreaterThanOrEqual(0)
+    expect(index, 'the chapter has no prose paragraph').toBeGreaterThanOrEqual(
+      0,
+    )
 
     const paragraph = paragraphs.nth(index)
     // The pointer works in viewport coordinates, so a paragraph below the fold
@@ -269,7 +338,10 @@ test.describe('selection capture', () => {
       const selection = window.getSelection()
       if (!pointed || !selection) return ''
       selection.removeAllRanges()
-      selection.collapse(pointed.range.startContainer, pointed.range.startOffset)
+      selection.collapse(
+        pointed.range.startContainer,
+        pointed.range.startOffset,
+      )
       const modify = (
         selection as Selection & {
           modify?: (
@@ -329,6 +401,78 @@ test.describe('selection capture', () => {
 })
 
 test.describe('highlight painting', () => {
+  test('does not paint excluded text inside a spanning anchor', async ({
+    page,
+  }) => {
+    await open(page)
+    await mountOmittedTextFixture(page)
+    const text = await page.evaluate(() => {
+      const registry = (
+        CSS as unknown as { highlights: Map<string, Set<Range>> }
+      ).highlights
+      return Array.from(registry.values()).flatMap((highlight) =>
+        Array.from(highlight)
+          .filter((range) =>
+            range.startContainer.parentElement?.closest(
+              '#margin-omitted-fixture',
+            ),
+          )
+          .map((range) => range.toString()),
+      )
+    })
+    expect(text).toEqual(['before ', ' after'])
+  })
+
+  test('fallback boxes follow layout changes and clean up', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(CSS, 'highlights', {
+        configurable: true,
+        value: undefined,
+      })
+    })
+    await open(page)
+    await mountOmittedTextFixture(page)
+    const boxes = page.locator(
+      '[data-erniesg-margin-overlay] [data-margin-highlight="omitted-spanning-highlight"]',
+    )
+    await expect(boxes).toHaveCount(2)
+    const measure = () =>
+      boxes.evaluateAll((nodes) =>
+        nodes.map((node) => {
+          const rect = node.getBoundingClientRect()
+          return {
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+          }
+        }),
+      )
+    const before = await measure()
+    await page.evaluate(() => {
+      document.querySelector<HTMLElement>(
+        '#margin-omitted-fixture',
+      )!.style.fontSize = '32px'
+    })
+    await expect.poll(measure).not.toEqual(before)
+    const afterFont = await measure()
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.evaluate(() => {
+      document.querySelector<HTMLElement>(
+        '#margin-omitted-fixture',
+      )!.style.width = '120px'
+    })
+    await expect.poll(measure).not.toEqual(afterFont)
+    await page.evaluate(() => {
+      document
+        .querySelector('margin-rail[text-selector="#margin-omitted-fixture"]')!
+        .remove()
+    })
+    await expect(boxes).toHaveCount(0)
+  })
+
   test('paints across blocks and round-trips to the same anchors', async ({
     page,
   }) => {
@@ -353,15 +497,18 @@ test.describe('highlight painting', () => {
 
     const painted = await paintedTexts(page)
     expect(painted, 'this browser has no Custom Highlight API').not.toBeNull()
-    expect(painted).toEqual(
-      captured.anchors?.map((anchor) => anchor.quote.exact),
+    // Painting has one Range per indexed text node so skipped descendants
+    // cannot be filled in by a spanning DOM Range.
+    expect(painted?.join('')).toBe(
+      captured.anchors?.map((anchor) => anchor.quote.exact).join(''),
     )
 
     // Select exactly what was painted, and read the anchors back out.
     await resetCaptures(page)
     await page.evaluate(() => {
-      const registry = (CSS as unknown as { highlights: Map<string, Set<Range>> })
-        .highlights
+      const registry = (
+        CSS as unknown as { highlights: Map<string, Set<Range>> }
+      ).highlights
       const ranges = Array.from(registry.values()).flatMap((highlight) =>
         Array.from(highlight),
       )

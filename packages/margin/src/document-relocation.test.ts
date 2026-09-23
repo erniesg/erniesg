@@ -23,6 +23,19 @@ function node(id: string, text: string) {
 }
 
 describe('a weak in-node match does not shadow a strong one elsewhere', () => {
+  it('relocates past ambiguous mismatching duplicates in the old block', () => {
+    const placement = resolveAnchorInDocument(anchor, [
+      node('p-1', 'We lost the signal entirely. Later, the signal faded.'),
+      node('p-2', 'Once the signal arrives, the loop begins.'),
+    ])
+    expect(placement).toMatchObject({
+      status: 'anchored',
+      nodeId: 'p-2',
+      matchedBy: 'relocated-quote',
+      movedFromNodeId: 'p-1',
+    })
+  })
+
   it('prefers the block whose stored context still matches', () => {
     const placement = resolveAnchorInDocument(anchor, [
       // The duplicate left behind: the only occurrence here, wrong neighbours.

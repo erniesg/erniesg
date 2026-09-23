@@ -91,6 +91,20 @@ describe('the wire format is a Web Annotation', () => {
     quote: { exact: 'a sentence', prefix: 'Once ', suffix: ' ends.' },
   }
 
+  it('requires a non-empty note body before any request is sent', async () => {
+    const transport = stubTransport()
+    const client = createMarginClient(transport)
+    const common = { documentUri: 'https://example.test/x', targets: [anchor] }
+    await expect(
+      // @ts-expect-error A note request cannot omit its body.
+      client.createAnnotations({ ...common, kind: 'note' }),
+    ).rejects.toThrow(/note body/)
+    await expect(
+      client.createAnnotations({ ...common, kind: 'note', body: '   ' }),
+    ).rejects.toThrow(/note body/)
+    expect(transport.calls).toEqual([])
+  })
+
   it('sends motivation, a target source and typed selectors', async () => {
     const transport = stubTransport()
     const responses = await createMarginClient(transport).createAnnotations({

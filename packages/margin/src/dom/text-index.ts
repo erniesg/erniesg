@@ -114,7 +114,8 @@ function pointAt(index: BlockTextIndex, offset: number, side: 'start' | 'end') {
   const { segments } = index
   if (segments.length === 0) return { node: index.element as Node, offset: 0 }
   for (const segment of segments) {
-    const reached = side === 'start' ? offset < segment.end : offset <= segment.end
+    const reached =
+      side === 'start' ? offset < segment.end : offset <= segment.end
     if (!reached) continue
     if (offset < segment.start) return { node: segment.node as Node, offset: 0 }
     return { node: segment.node as Node, offset: offset - segment.start }
@@ -137,4 +138,23 @@ export function rangeForOffsets(
   range.setStart(from.node, from.offset)
   range.setEnd(to.node, to.offset)
   return range.collapsed ? null : range
+}
+
+/** Ranges only over indexed text nodes, never the DOM skipped between them. */
+export function rangesForOffsets(
+  index: BlockTextIndex,
+  start: number,
+  end: number,
+): Range[] {
+  const doc = index.element.ownerDocument
+  if (!doc || end <= start) return []
+  return index.segments.flatMap((segment) => {
+    const from = Math.max(start, segment.start) - segment.start
+    const to = Math.min(end, segment.end) - segment.start
+    if (to <= from) return []
+    const range = doc.createRange()
+    range.setStart(segment.node, from)
+    range.setEnd(segment.node, to)
+    return [range]
+  })
 }

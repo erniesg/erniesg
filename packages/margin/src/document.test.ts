@@ -89,6 +89,32 @@ describe('re-anchoring across realistic edits', () => {
     })
   })
 
+  it('relocates when the old node becomes non-text', () => {
+    const edited: AnchorableNode[] = [
+      { id: 'block-intro-prose-1', type: 'figure' },
+      block('block-intro-prose-2', `${SECOND} ${FIRST}`, 'digest-grew'),
+    ]
+    expect(resolveAnchorInDocument(anchor, edited)).toMatchObject({
+      status: 'anchored',
+      nodeId: 'block-intro-prose-2',
+      matchedBy: 'relocated-quote',
+      movedFromNodeId: 'block-intro-prose-1',
+    })
+  })
+
+  it('keeps a non-text old node orphaned when relocation is ambiguous', () => {
+    const edited: AnchorableNode[] = [
+      { id: 'block-intro-prose-1', type: 'figure' },
+      block('one', `${QUOTE}.`, 'one'),
+      block('two', `${QUOTE}.`, 'two'),
+    ]
+    expect(resolveAnchorInDocument(anchor, edited)).toMatchObject({
+      status: 'orphaned',
+      reason: 'ambiguous',
+      quote: QUOTE,
+    })
+  })
+
   it('orphans rather than guess when the same quote appears twice', () => {
     const duplicated = [
       block('block-intro-prose-1', FIRST.replace(QUOTE, 'Something else'), 'd1'),

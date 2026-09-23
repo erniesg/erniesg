@@ -169,18 +169,8 @@ export function resolveAnchorInDocument(
     }
   }
 
-  if (resolution.reason === 'non-text-node') {
-    return {
-      status: 'orphaned',
-      nodeId: resolution.nodeId,
-      reason: 'non-text-node',
-      quote: anchor.quote.exact,
-      detail: `Node ${resolution.nodeId} no longer carries text.`,
-    }
-  }
-
-  // The block is gone, or no longer holds the quote. The words themselves may
-  // still be in the document, one block over.
+  // The block is gone, became non-text, or no longer holds the quote. The
+  // words themselves may still be in the document, one block over.
   const moved = relocate(anchor, nodes)
   if (moved === 'ambiguous') {
     return {
@@ -201,7 +191,9 @@ export function resolveAnchorInDocument(
       detail:
         resolution.reason === 'missing-node'
           ? `Node ${resolution.nodeId} is no longer in the document and its quote is not elsewhere in it.`
-          : `The quote is no longer anywhere in the document.`,
+          : resolution.reason === 'non-text-node'
+            ? `Node ${resolution.nodeId} no longer carries text and its quote is not elsewhere in the document.`
+            : `The quote is no longer anywhere in the document.`,
     }
   }
 

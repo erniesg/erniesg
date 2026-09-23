@@ -329,6 +329,41 @@ describe('the Worker dispatch applies the gate', () => {
 describe('the write gate renews a lapsed session', () => {
   const ANNOTATIONS = 'https://ernie.sg/api/margin/v1/annotations'
 
+  it.each([
+    ['GET', ANNOTATIONS, undefined],
+    ['POST', ANNOTATIONS, 401],
+    ['POST', 'https://ernie.sg/api/margin/v1/proposals/ann-1/apply', 401],
+  ] as const)('expires a terminal refresh on %s %s', async (method, url, deniedStatus) => {
+    const { request } = await lapsedSession()
+    const provider = createFakeProvider({
+      jwks: signer.jwks,
+      authenticate: { error: 'invalid_grant' },
+      authenticateStatus: 400,
+    })
+    const gate = await marginWriteGate(
+      new Request(url, { method, headers: { cookie: request.headers.get('cookie')! } }),
+      envWith(createFakeD1()),
+      {
+        now: NOW_MS,
+        fetchImpl: provider.fetchImpl,
+        jwks: createJwksSource(jwksUrl(config), {
+          fetchImpl: provider.fetchImpl,
+          now: () => NOW_MS,
+        }),
+      },
+    )
+
+    expect(gate?.denied?.status).toBe(deniedStatus)
+    expect(gate?.setCookie).toContain('; Max-Age=0')
+    expect(gate?.denied?.headers.get('set-cookie') ?? gate?.setCookie)
+      .toContain('margin-session=;')
+    if (method === 'GET') {
+      expect(gate?.forward?.headers.get('cookie')).toBe('margin-session=')
+    } else {
+      expect(gate?.forward).toBeUndefined()
+    }
+  })
+
   async function lapsedSession(): Promise<{ request: Request; provider: FakeProvider }> {
     // A token that expired an hour ago, sealed with a refresh token and a
     // ceiling eight hours out.

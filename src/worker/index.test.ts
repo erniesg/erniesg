@@ -8,10 +8,17 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import type { WorkerEnv } from './env'
 import worker, { MARGIN_HEALTH_PATH } from './index'
-import { testWorkosEnv } from './margin/fake-workos'
+import {
+  createFakeProvider,
+  sessionCookieHeader,
+  testSigner,
+  testWorkosEnv,
+  TEST_CLIENT_ID,
+  TEST_ISSUER,
+} from './margin/fake-workos'
 import { AUTH_ME_PATH } from './margin/routes'
 
 // Prefer the real build output so this asserts against the HTML the site
@@ -253,6 +260,68 @@ describe('the margin write gate', () => {
 
     expect(env.ASSETS.seen).toHaveLength(1)
     expect(response.status).toBe(404)
+  })
+})
+
+describe('terminal refresh responses', () => {
+  it('expires the stale session on auth, API reads, denied writes, and apply', async () => {
+    const now = Math.floor(Date.now() / 1000)
+    const signer = await testSigner()
+    const stale = await signer.sign({
+      iss: TEST_ISSUER,
+      sub: 'user_01HREADER',
+      client_id: TEST_CLIENT_ID,
+      iat: now - 3_700,
+      exp: now - 3_600,
+    })
+    const cookie = await sessionCookieHeader(stale, {
+      expiresAt: now - 3_600,
+      ceiling: now + 3_600,
+      refreshToken: 'refresh_one',
+    })
+    const provider = createFakeProvider({
+      jwks: signer.jwks,
+      authenticateStatus: 400,
+      authenticate: { error: 'invalid_grant' },
+    })
+    vi.stubGlobal('fetch', provider.fetchImpl)
+    try {
+      for (const [path, method, status] of [
+        [AUTH_ME_PATH, 'GET', 200],
+        ['/api/margin/v1/annotations', 'GET', 404],
+        ['/api/margin/v1/annotations', 'POST', 401],
+        ['/api/margin/v1/proposals/ann-1/apply', 'POST', 401],
+      ] as const) {
+        const env = { ASSETS: createAssetBinding(), ...testWorkosEnv() } as WorkerEnv
+        const response = await worker.fetch(
+          new Request(`https://ernie.sg${path}`, { method, headers: { cookie } }),
+          env,
+        )
+        expect(response.status, `${method} ${path}`).toBe(status)
+        expect(response.headers.get('set-cookie'), `${method} ${path}`)
+          .toContain('margin-session=; Path=/; Max-Age=0')
+      }
+      const failedAsset = await worker.fetch(
+        new Request('https://ernie.sg/api/margin/v1/annotations', {
+          headers: { cookie },
+        }),
+        {
+          ASSETS: { fetch: async () => { throw new Error('downstream unavailable') } },
+          ...testWorkosEnv(),
+        } as WorkerEnv,
+      )
+      expect(failedAsset.status).toBe(500)
+      expect(failedAsset.headers.get('set-cookie'))
+        .toContain('margin-session=; Path=/; Max-Age=0')
+      const callsAfterClear = provider.calls.length
+      await worker.fetch(
+        new Request(`https://ernie.sg${AUTH_ME_PATH}`),
+        { ASSETS: createAssetBinding(), ...testWorkosEnv() } as WorkerEnv,
+      )
+      expect(provider.calls).toHaveLength(callsAfterClear)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
 

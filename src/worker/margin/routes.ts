@@ -149,6 +149,11 @@ type AuthenticateResponse = {
   user?: { id?: unknown; email?: unknown; email_verified?: unknown } | null
 }
 
+type ExchangeResult =
+  | { kind: 'success'; payload: AuthenticateResponse }
+  | { kind: 'terminal' }
+  | { kind: 'retryable' }
+
 function loginFailed(): Response {
   return json({ error: 'login_failed' }, 400, [
     ['set-cookie', clearedCookie(STATE_COOKIE_NAME, STATE_COOKIE_PATH)],
@@ -208,7 +213,7 @@ async function exchange(
   config: WorkosConfig,
   options: AuthOptions,
   grant: Record<string, string>,
-): Promise<AuthenticateResponse | null> {
+): Promise<ExchangeResult> {
   const fetchImpl = options.fetchImpl ?? fetch
   try {
     const response = await fetchImpl(tokenEndpoint(config), {
@@ -223,10 +228,19 @@ async function exchange(
         ...grant,
       }),
     })
-    if (!response.ok) return null
-    return (await response.json()) as AuthenticateResponse
+    if (!response.ok) {
+      // Only the provider's explicit invalid_grant proves this refresh token
+      // cannot recover. A timeout, rate limit, 5xx, or opaque error leaves the
+      // sealed cookie available for a later retry.
+      if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+        const body = (await response.json().catch(() => null)) as { error?: unknown } | null
+        if (body?.error === 'invalid_grant') return { kind: 'terminal' }
+      }
+      return { kind: 'retryable' }
+    }
+    return { kind: 'success', payload: (await response.json()) as AuthenticateResponse }
   } catch {
-    return null
+    return { kind: 'retryable' }
   }
 }
 
@@ -248,11 +262,12 @@ async function handleCallback(
     return loginFailed()
   }
 
-  const payload = await exchange(config, options, {
+  const exchanged = await exchange(config, options, {
     grant_type: 'authorization_code',
     code,
   })
-  if (!payload) return loginFailed()
+  if (exchanged.kind !== 'success') return loginFailed()
+  const payload = exchanged.payload
 
   const accessToken = payload?.access_token
   if (typeof accessToken !== 'string' || !accessToken) return loginFailed()
@@ -385,11 +400,16 @@ function handleLogout(): Response {
  * session past the bound login fixed for it.
  */
 export type SessionRenewal = {
+  kind: 'renewed'
   /** Absent when the exchange succeeded but the new token could not be verified. */
   principal?: Principal
-  /** Always present: a rotated refresh token must reach the browser either way. */
+  /** A rotated refresh token must reach the browser even if verification fails. */
   cookie: string
   session: MarginSession
+} | {
+  kind: 'terminal'
+  /** Expire a refresh token the provider has definitively rejected. */
+  cookie: string
 }
 
 /**
@@ -436,10 +456,18 @@ async function renewOnce(
   const ceiling = session.ceiling ?? session.expiresAt
   if (nowSeconds >= ceiling) return null
 
-  const payload = await exchange(config, options, {
+  const exchanged = await exchange(config, options, {
     grant_type: 'refresh_token',
     refresh_token: session.refreshToken,
   })
+  if (exchanged.kind === 'terminal') {
+    return {
+      kind: 'terminal',
+      cookie: clearedCookie(SESSION_COOKIE_NAME, SESSION_COOKIE_PATH),
+    }
+  }
+  if (exchanged.kind !== 'success') return null
+  const payload = exchanged.payload
   const accessToken = payload?.access_token
   if (typeof accessToken !== 'string' || !accessToken) return null
 
@@ -481,13 +509,14 @@ async function renewOnce(
   if (!verified.ok) {
     // Not authenticated, but the rotated token still goes back. `expiresAt` is
     // left where it was, so this cookie authorises nothing on its own.
-    return { ...(await reseal()), principal: undefined }
+    return { kind: 'renewed', ...(await reseal()), principal: undefined }
   }
 
   const expiresAt = Math.min(verified.claims.exp, ceiling)
-  if (expiresAt <= nowSeconds) return { ...(await reseal()), principal: undefined }
+  if (expiresAt <= nowSeconds) return { kind: 'renewed', ...(await reseal()), principal: undefined }
 
   return {
+    kind: 'renewed',
     ...(await reseal({ accessToken, expiresAt })),
     principal: {
       provider: WORKOS_PROVIDER,
@@ -512,11 +541,13 @@ async function handleMe(
   if (!principal) {
     const again = await renewSession(request, config, options)
     if (again) {
-      // The cookie comes back even when the principal does not: the refresh
-      // token may have rotated, and the browser has to end up with the live one.
+      // Return either the rotated token or a terminal expiry even when the
+      // principal could not be established.
       renewed = again.cookie
-      session = again.session
-      principal = again.principal ?? null
+      if (again.kind === 'renewed') {
+        session = again.session
+        principal = again.principal ?? null
+      }
     }
   }
   if (!principal) {

@@ -58,7 +58,7 @@ const APPLY_PATH = /^\/proposals\/[^/]+\/apply$/
 export type MarginGate = {
   /** The refusal to return, if there is one. */
   denied?: Response
-  /** A renewed session cookie to set on whatever response is returned. */
+  /** A renewed session or terminal expiry to set on the response. */
   setCookie?: string
   /** The request to forward downstream, when it is not the one passed in. */
   forward?: Request
@@ -113,15 +113,15 @@ export async function marginWriteGate(
       ? { setCookie: cookie, forward: effective }
       : { forward: effective }
   }
-  // The renewed cookie travels even when the write is refused: the refresh token
-  // may have rotated, and the browser must end up holding the live one.
+  // The cookie travels even when the write is refused: it either holds a
+  // rotated refresh token or expires one the provider has rejected.
   return cookie
     ? { denied: withCookie(decision.response, cookie), setCookie: cookie }
     : { denied: decision.response }
 }
 
 /**
- * The request again, with a renewed session on it — or nothing to do.
+ * The request again, with a renewed or expired session on it — or nothing to do.
  *
  * Only when the cookie holds a session the access token has outlived and the
  * ceiling has not. `new Request(request, …)` transfers the body, which is why
@@ -225,15 +225,11 @@ export default {
     const gate = await marginWriteGate(request, env)
     if (gate?.denied) return gate.denied
 
-    // The renewed request when there is one: the handler reads the caller from
-    // what it is given.
+    // The request carrying the renewed or expired session when there is one.
     const forwarded = gate?.forward ?? request
     if (!gate?.setCookie) return env.ASSETS.fetch(forwarded)
-    // The session was renewed on the way in, so the rotated refresh token has to
-    // reach the browser whatever happens below. Without this, a handler that
-    // throws would leave the browser holding a token the provider has already
-    // spent, which is a logout no later request can recover from — and an
-    // unhandled throw is a 500 with no `set-cookie` at all.
+    // A rotated token or terminal expiry has to reach the browser whatever
+    // happens below. An unhandled throw would otherwise lose the Set-Cookie.
     try {
       return withCookie(await env.ASSETS.fetch(forwarded), gate.setCookie)
     } catch {

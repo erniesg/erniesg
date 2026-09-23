@@ -837,6 +837,51 @@ describe('GET /auth/me renews a lapsed access token', () => {
     expect(await response.json()).toMatchObject({ authenticated: false })
     expect(cookieNamed(response, SESSION_COOKIE_NAME)).toBeUndefined()
   })
+
+  it.each([400, 401, 422])('clears a terminal invalid_grant refresh at HTTP %i', async (status) => {
+    const { cookie } = await signIn({ exp: NOW_SECONDS + 60 })
+    const provider = providerWith({ error: 'invalid_grant' }, status)
+
+    const response = (await call(
+      AUTH_ME_PATH,
+      { headers: { cookie } },
+      envWith(),
+      { ...optionsFor(provider), now: NOW_MS + 3_600_000 },
+    )) as Response
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ authenticated: false })
+    expect(cookieNamed(response, SESSION_COOKIE_NAME)).toContain('; Max-Age=0')
+    expect(cookieNamed(response, SESSION_COOKIE_NAME)).toContain('; Path=/')
+  })
+
+  it.each([429, 503])('keeps a retryable HTTP %i refresh session', async (status) => {
+    const { cookie } = await signIn({ exp: NOW_SECONDS + 60 })
+    const response = (await call(
+      AUTH_ME_PATH,
+      { headers: { cookie } },
+      envWith(),
+      { ...optionsFor(providerWith({ error: 'invalid_grant' }, status)), now: NOW_MS + 3_600_000 },
+    )) as Response
+
+    expect(await response.json()).toMatchObject({ authenticated: false })
+    expect(cookieNamed(response, SESSION_COOKIE_NAME)).toBeUndefined()
+  })
+
+  it('keeps the session when the refresh network is unavailable', async () => {
+    const { cookie } = await signIn({ exp: NOW_SECONDS + 60 })
+    const provider = providerWith({ error: 'invalid_grant' }, 400)
+    provider.offline = true
+    const response = (await call(
+      AUTH_ME_PATH,
+      { headers: { cookie } },
+      envWith(),
+      { ...optionsFor(provider), now: NOW_MS + 3_600_000 },
+    )) as Response
+
+    expect(await response.json()).toMatchObject({ authenticated: false })
+    expect(cookieNamed(response, SESSION_COOKIE_NAME)).toBeUndefined()
+  })
 })
 
 describe('a partial outage is not a permanent logout', () => {

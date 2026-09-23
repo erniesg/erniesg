@@ -14,12 +14,15 @@ import { DEFAULT_PAGE_SIZE } from './repository'
  * migration, because the index is only useful if the planner actually picks it.
  */
 describe('the collection query plan', () => {
-  function planFor(options: Parameters<typeof listAnnotationsQuery>[2]) {
+  function planFor(
+    options: Parameters<typeof listAnnotationsQuery>[2],
+    viewer: string | null = 'workos:https://api.workos.test:user_01H',
+  ) {
     const database = new DatabaseSync(':memory:')
     applyMigrations(database)
     const query = listAnnotationsQuery(
       { site: 'https://ernie.sg', document: '/challenges/chapter-1' },
-      'workos:https://api.workos.test:user_01H',
+      viewer,
       options,
     )
     return (
@@ -57,8 +60,31 @@ describe('the collection query plan', () => {
     expect(plan).not.toContain('TEMP B-TREE')
     expect(plan).toContain('margin_annotations_proposal_page')
   })
-})
-it('uses the visibility-aware ordered index for anonymous pages', () => {
+
+  it('uses the public proposal index before returning an anonymous first page', () => {
+    const plan = planFor(
+      { limit: DEFAULT_PAGE_SIZE + 1, motivation: 'editing' },
+      null,
+    )
+
+    expect(plan).not.toContain('TEMP B-TREE')
+    expect(plan).toContain('margin_annotations_public_proposal_page')
+  })
+
+  it('keeps private proposals out of an anonymous keyset page scan', () => {
+    const plan = planFor(
+      {
+        limit: DEFAULT_PAGE_SIZE + 1,
+        motivation: 'editing',
+        after: { created: '2026-09-23T00:00:00.000Z', id: 'annotation-050' },
+      },
+      null,
+    )
+
+    expect(plan).not.toContain('TEMP B-TREE')
+    expect(plan).toContain('margin_annotations_public_proposal_page')
+  })
+  it('uses the visibility-aware ordered index for anonymous pages', () => {})
 
   const database = new DatabaseSync(':memory:')
   applyMigrations(database)

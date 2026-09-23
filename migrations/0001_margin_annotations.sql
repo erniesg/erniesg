@@ -68,6 +68,11 @@ CREATE INDEX margin_annotations_public_page
 CREATE INDEX margin_annotations_proposal_page
   ON margin_annotations (site, document, motivation, created, id);
 
+-- Anonymous proposal pages must also lead with visibility: putting motivation
+-- first would make the engine walk private editing rows to fill the page.
+CREATE INDEX margin_annotations_public_proposal_page
+  ON margin_annotations (site, document, visibility, motivation, created, id);
+
 CREATE INDEX margin_annotations_owner
   ON margin_annotations (creator, site, document);
 

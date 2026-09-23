@@ -120,7 +120,12 @@ function readScope(url: URL): TenantScope | { error: Response } {
   // `https://ernie.sg//chapter`, which splits back to the document `//chapter`
   // and reads an empty collection — a trailing slash silently addressing a
   // different document than the one written.
-  const origin = canonicalOrigin(site)
+  // A document is a path, and it has to say so. Without the leading slash the
+  // concatenation can leave the origin entirely: `document=.example.com/x`
+  // against `site=https://ernie.sg` is `https://ernie.sg.example.com/x`, which
+  // splits back cleanly into a *different tenant* — so a caller could read and
+  // write somebody else's site by spelling the pair carefully.
+  const origin = document.startsWith('/') ? canonicalOrigin(site) : null
   if (!origin) {
     return {
       error: problem(

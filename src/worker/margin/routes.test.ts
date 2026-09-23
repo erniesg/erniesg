@@ -688,6 +688,28 @@ describe('review findings, round two', () => {
     }
   })
 
+  // Without the leading slash the concatenation can leave the origin altogether
+  // and split back into a different tenant, which is a read and a write against
+  // somebody else's site rather than a malformed request.
+  it('refuses a document that is not a path', async () => {
+    for (const document of [
+      '.example.com/x',
+      'chapter',
+      '@evil.test/x',
+      '',
+      '?q=1',
+      '#frag',
+    ]) {
+      const response = await harness.request(
+        'GET',
+        `/annotations?site=${encodeURIComponent('https://ernie.sg')}` +
+          `&document=${encodeURIComponent(document)}`,
+        { as: ADA },
+      )
+      expect(response.status, JSON.stringify(document)).toBe(400)
+    }
+  })
+
   it('refuses a site that is not an origin on its own', async () => {
     for (const site of [
       'https://ernie.sg/challenges',

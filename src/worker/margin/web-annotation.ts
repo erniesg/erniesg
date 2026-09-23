@@ -56,6 +56,9 @@ export const ANNOTATION_IRI_PREFIX = 'urn:margin:annotation:'
 /** The only body format the store can hold, on the way in and on the way out. */
 export const BODY_FORMAT = 'text/plain'
 
+/** The only `type` the store can hold, likewise. */
+export const ANNOTATION_TYPE = 'Annotation'
+
 /**
  * The node id used when a Web Annotation carries no structural selector. The
  * internal anchor requires a `nodeId`, so annotations anchored to the document
@@ -194,7 +197,17 @@ const bodySchema = z.union([
 export const webAnnotationSchema = z.object({
   '@context': z.unknown().optional(),
   id: z.string().min(1).max(2_048).optional(),
-  type: z.union([z.string(), z.array(z.string())]).optional(),
+  /**
+   * `Annotation`, or a list containing it and nothing else.
+   *
+   * The record does not store `type` and `recordToWebAnnotation` always emits
+   * `Annotation`, so anything else was accepted at 201 and read back with
+   * different JSON-LD semantics. Refusing what cannot be preserved is the same
+   * rule the body format and the node-id sentinel follow.
+   */
+  type: z
+    .union([z.literal(ANNOTATION_TYPE), z.array(z.literal(ANNOTATION_TYPE)).min(1)])
+    .optional(),
   motivation: z.enum(MOTIVATIONS),
   body: bodySchema.optional(),
   target: z.union([targetSchema, z.array(targetSchema).length(1)]),
@@ -455,7 +468,7 @@ export function recordToWebAnnotation(
   return {
     '@context': MARGIN_CONTEXT,
     id: annotationIri(record.id),
-    type: 'Annotation',
+    type: ANNOTATION_TYPE,
     motivation: motivationForKind(annotation.kind),
     ...(annotation.kind === 'highlight'
       ? {}

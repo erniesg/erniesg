@@ -115,12 +115,23 @@ function readScope(url: URL): TenantScope | { error: Response } {
       ),
     }
   }
-  const split = splitSource(`${site}${document}`)
-  // The canonical pair, not the one that was sent — the same normalisation POST
-  // and `?source=` go through. Validating the concatenation and then querying
-  // the raw spelling meant `site=https://ERNIE.SG` or `site=https://ernie.sg:443`
-  // read an empty collection while writing to the canonical tenant.
-  if (!split || split.site !== canonicalOrigin(site)) {
+  // The canonical origin first, then the document joined to *that*. Joining the
+  // raw value left `site=https://ernie.sg/` + `document=/chapter` producing
+  // `https://ernie.sg//chapter`, which splits back to the document `//chapter`
+  // and reads an empty collection — a trailing slash silently addressing a
+  // different document than the one written.
+  const origin = canonicalOrigin(site)
+  if (!origin) {
+    return {
+      error: problem(
+        400,
+        'invalid_scope',
+        'site must be a URL origin and document must begin with /',
+      ),
+    }
+  }
+  const split = splitSource(`${origin}${document}`)
+  if (!split) {
     return {
       error: problem(
         400,
@@ -319,7 +330,22 @@ async function createAnnotation(
     }
   }
 
-  await context.repository.insertAnnotation(record)
+  // The mirror of the delete race: the parent can be deleted between the lookup
+  // above and this insert, and `parent_id` then refuses the row. The store is
+  // healthy — the parent simply went away — so this is the same answer the
+  // caller would have got a moment earlier, not a 503.
+  try {
+    await context.repository.insertAnnotation(record)
+  } catch (error) {
+    if (isForeignKeyConflict(error)) {
+      return problem(
+        409,
+        'unknown_parent',
+        'the annotation this replies to was deleted while this was being written',
+      )
+    }
+    throw error
+  }
   // The advertised URI has to be one a client can actually use. The item routes
   // need a scope like every other read, so the header carries the canonical one
   // rather than leaving a caller that follows it with `missing_scope`.

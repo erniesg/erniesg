@@ -1063,7 +1063,7 @@ describe('review findings, round four', () => {
     const created = (await response.json()) as WireAnnotation
     const position = created.target.selector.find(
       (entry) => entry.type === 'TextPositionSelector',
-    ) as { start: number; end: number }
+    ) as unknown as { start: number; end: number }
     expect(position.end - position.start).toBe([...exact].length)
   })
 
@@ -1082,5 +1082,115 @@ describe('review findings, round four', () => {
     }
 
     expect((await post(mismatched)).status).toBe(400)
+  })
+})
+
+describe('review findings, round five', () => {
+  // `site=https://ernie.sg/` + `document=/chapter` concatenated to
+  // `https://ernie.sg//chapter`, which splits back to the document `//chapter`.
+  // A trailing slash silently addressed a different document than was written.
+  it('joins the document to the canonical origin, trailing slash and all', async () => {
+    expect((await post(webAnnotation({ source: CHAPTER_ONE, body: 'stored' }))).status).toBe(
+      201,
+    )
+
+    for (const site of ['https://ernie.sg', 'https://ernie.sg/', 'https://ERNIE.SG/']) {
+      const response = await harness.request(
+        'GET',
+        `/annotations?site=${encodeURIComponent(site)}` +
+          `&document=${encodeURIComponent('/challenges/chapter-1')}`,
+        { as: ADA },
+      )
+      expect(response.status, site).toBe(200)
+      const { annotations } = (await response.json()) as {
+        annotations: WireAnnotation[]
+      }
+      expect(annotations.map((a) => a.body?.value), site).toEqual(['stored'])
+    }
+  })
+
+  // The mirror of the delete race: the parent goes away between the lookup and
+  // the insert, so `parent_id` refuses the row. The store is healthy.
+  it('reports a deleted parent as a conflict, not as an outage', async () => {
+    const parent = (await (await post(
+      webAnnotation({ source: CHAPTER_ONE, body: 'about to vanish' }),
+    )).json()) as WireAnnotation
+
+    // Delete the parent between `findAnnotation` and `insertAnnotation`.
+    //
+    // Once, and the guard is load-bearing rather than tidy: the DELETE below
+    // goes through `deleteAnnotation`, which calls `findAnnotation` itself, so an
+    // unguarded wrapper re-enters through its own interleaving and recurses
+    // until the heap is gone. It did exactly that — a 4 GB OOM after 267 s —
+    // which is how this comment came to exist.
+    const original = harness.repository.findAnnotation.bind(harness.repository)
+    let interleaved = false
+    harness.repository.findAnnotation = async (scope, id, viewer) => {
+      const found = await original(scope, id, viewer)
+      if (!interleaved && id === bareId(parent)) {
+        interleaved = true
+        await harness.request(
+          'DELETE',
+          `/annotations/${bareId(parent)}${scopeQuery(CHAPTER_ONE)}`,
+          { as: ADA },
+        )
+      }
+      return found
+    }
+
+    const response = await post(
+      webAnnotation({
+        source: CHAPTER_ONE,
+        body: 'a reply to nothing',
+        parentId: bareId(parent),
+      }),
+    )
+
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'unknown_parent' },
+    })
+  })
+
+  // The record does not store `type` and the response always says `Annotation`,
+  // so anything else was accepted and read back with different JSON-LD meaning.
+  it('refuses a type it cannot preserve', async () => {
+    for (const type of ['AnnotationPage', ['Annotation', 'CustomType'], [], 'annotation']) {
+      const response = await post({ ...webAnnotation({ source: CHAPTER_ONE }), type })
+      expect(response.status, JSON.stringify(type)).toBe(400)
+    }
+
+    for (const type of ['Annotation', ['Annotation']]) {
+      const response = await post({ ...webAnnotation({ source: CHAPTER_ONE }), type })
+      expect(response.status, JSON.stringify(type)).toBe(201)
+      expect(((await response.json()) as { type: string }).type).toBe('Annotation')
+    }
+  })
+
+  // One rule for the span, in a unit the schema cannot infer: it validates
+  // annotations this repository builds with UTF-16 offsets and annotations a
+  // conformant client sends with character offsets.
+  it('accepts a span counted either way, and refuses one that is neither', async () => {
+    const exact = 'a 🌊 wave'
+    const base = webAnnotation({ source: CHAPTER_ONE })
+    const withSpan = (end: number) => ({
+      ...base,
+      target: {
+        ...base.target,
+        selector: base.target.selector.map((entry) => {
+          const typed = entry as { type: string }
+          if (typed.type === 'TextQuoteSelector') {
+            return { ...entry, exact, prefix: '', suffix: '' }
+          }
+          if (typed.type === 'TextPositionSelector') return { ...entry, start: 5, end }
+          return entry
+        }),
+      },
+    })
+
+    // 8 characters, 9 UTF-16 units.
+    expect((await post(withSpan(5 + [...exact].length))).status).toBe(201)
+    expect((await post(withSpan(5 + exact.length))).status).toBe(201)
+    expect((await post(withSpan(5 + 4))).status).toBe(400)
   })
 })

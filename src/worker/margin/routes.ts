@@ -18,6 +18,7 @@ import {
   webAnnotationSchema,
   webAnnotationToRecord,
   type MarginVisibility,
+  type MarginAnnotationRecord,
 } from './web-annotation'
 
 /**
@@ -173,6 +174,30 @@ function canonicalOrigin(site: string): string | null {
 function isForeignKeyConflict(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
   return /FOREIGN KEY constraint failed/i.test(message)
+}
+
+function parentVisibilityConflict(status: 400 | 409): Response {
+  return problem(
+    status,
+    'parent_visibility_conflict',
+    'a reply must not expose its parent to readers who cannot see it',
+  )
+}
+
+/** Stable trigger tokens distinguish write races from a broken store. */
+function replyVisibilityConflict(error: unknown): Response | null {
+  const message = error instanceof Error ? error.message : String(error)
+  if (/\bMARGIN_PARENT_VISIBILITY_CONFLICT\b/.test(message)) {
+    return parentVisibilityConflict(409)
+  }
+  if (/\bMARGIN_VISIBLE_REPLIES_CONFLICT\b/.test(message)) {
+    return problem(
+      409,
+      'has_visible_replies',
+      'replies visible to other readers prevent making this annotation private',
+    )
+  }
+  return null
 }
 
 const MALFORMED_JSON = Symbol('malformed-json')
@@ -333,6 +358,10 @@ async function createAnnotation(
         'margin:parentId must name an annotation on the same site and document',
       )
     }
+    // Author access does not imply access for everyone who can see the reply.
+    if (record.visibility === 'public' && parent.visibility !== 'public') {
+      return parentVisibilityConflict(400)
+    }
   }
 
   // The mirror of the delete race: the parent can be deleted between the lookup
@@ -342,6 +371,8 @@ async function createAnnotation(
   try {
     await context.repository.insertAnnotation(record)
   } catch (error) {
+    const conflict = replyVisibilityConflict(error)
+    if (conflict) return conflict
     if (isForeignKeyConflict(error)) {
       return problem(
         409,
@@ -436,16 +467,39 @@ async function patchAnnotation(
     )
   }
 
-  const updated = await context.repository.updateAnnotation(scope, id, owner, {
-    ...(parsed.data.body !== undefined ? { body: parsed.data.body } : {}),
-    ...(parsed.data['margin:visibility'] !== undefined
-      ? { visibility: parsed.data['margin:visibility'] }
-      : {}),
-    ...(parsed.data['margin:color'] !== undefined
-      ? { color: parsed.data['margin:color'] }
-      : {}),
-    modified: context.now(),
-  })
+  if (
+    parsed.data['margin:visibility'] === 'public' &&
+    existing.parentId !== null
+  ) {
+    const parent = await context.repository.findAnnotation(
+      scope,
+      existing.parentId,
+      owner,
+    )
+    if (!parent || parent.visibility !== 'public') {
+      return parentVisibilityConflict(409)
+    }
+  }
+
+  // The database also checks both directions of the reference atomically:
+  // publishing a reply and making its parent private cannot race each other.
+  let updated: MarginAnnotationRecord | null
+  try {
+    updated = await context.repository.updateAnnotation(scope, id, owner, {
+      ...(parsed.data.body !== undefined ? { body: parsed.data.body } : {}),
+      ...(parsed.data['margin:visibility'] !== undefined
+        ? { visibility: parsed.data['margin:visibility'] }
+        : {}),
+      ...(parsed.data['margin:color'] !== undefined
+        ? { color: parsed.data['margin:color'] }
+        : {}),
+      modified: context.now(),
+    })
+  } catch (error) {
+    const conflict = replyVisibilityConflict(error)
+    if (conflict) return conflict
+    throw error
+  }
   if (!updated) {
     return problem(404, 'not_found', 'no annotation of yours has that id here')
   }

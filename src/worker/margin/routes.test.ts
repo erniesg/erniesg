@@ -1249,3 +1249,208 @@ describe('review findings, round six', () => {
     expect(bodies).toEqual(['a commenting body', 'a editing body'])
   })
 })
+
+describe('reply visibility boundaries', () => {
+  async function create(
+    visibility: 'private' | 'public',
+    parentId?: string,
+    as = ADA,
+  ) {
+    const response = await post(
+      webAnnotation({ source: CHAPTER_ONE, visibility, parentId }),
+      as,
+    )
+    expect(response.status).toBe(201)
+    return (await response.json()) as WireAnnotation
+  }
+
+  async function setVisibility(
+    annotation: WireAnnotation,
+    visibility: 'private' | 'public',
+    as = ADA,
+  ) {
+    return harness.request(
+      'PATCH',
+      `/annotations/${bareId(annotation)}${scopeQuery(CHAPTER_ONE)}`,
+      { as, body: { 'margin:visibility': visibility } },
+    )
+  }
+
+  it.each(['explicit', 'preference'] as const)(
+    'rejects an owner public reply to a private parent using %s visibility',
+    async (mode) => {
+      const parent = await create('private')
+      if (mode === 'preference') {
+        expect(
+          (
+            await harness.request('PATCH', '/prefs', {
+              body: { defaultVisibility: 'public' },
+            })
+          ).status,
+        ).toBe(200)
+      }
+      const response = await post(
+        webAnnotation({
+          source: CHAPTER_ONE,
+          parentId: bareId(parent),
+          ...(mode === 'explicit' ? { visibility: 'public' as const } : {}),
+        }),
+      )
+      expect(response.status).toBe(400)
+      expect(await response.json()).toMatchObject({
+        error: { code: 'parent_visibility_conflict' },
+      })
+      expect(await list(CHAPTER_ONE, null)).toEqual([])
+      expect(await list(CHAPTER_ONE)).toHaveLength(1)
+    },
+  )
+
+  it('keeps private replies to an owner private parent usable', async () => {
+    const parent = await create('private')
+    const reply = await create('private', bareId(parent))
+    expect(reply['margin:parentId']).toBe(bareId(parent))
+    expect(await list(CHAPTER_ONE, null)).toEqual([])
+    expect(await list(CHAPTER_ONE, BOB)).toEqual([])
+    expect(await list(CHAPTER_ONE)).toHaveLength(2)
+  })
+
+  it('rejects publishing an existing private reply to a private parent', async () => {
+    const parent = await create('private')
+    const reply = await create('private', bareId(parent))
+    const response = await setVisibility(reply, 'public')
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'parent_visibility_conflict' },
+    })
+    expect(await list(CHAPTER_ONE, null)).toEqual([])
+  })
+
+  it('refuses to hide a parent with a public reply without changing either row', async () => {
+    const parent = await create('public')
+    const reply = await create('public', bareId(parent), BOB)
+    const response = await setVisibility(parent, 'private')
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'has_visible_replies' },
+    })
+    expect((await list(CHAPTER_ONE, null)).map((row) => row.id)).toEqual([
+      parent.id,
+      reply.id,
+    ])
+  })
+
+  it('refuses to hide a parent that another owner has privately replied to', async () => {
+    const parent = await create('public')
+    const reply = await create('private', bareId(parent), BOB)
+    const response = await setVisibility(parent, 'private')
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'has_visible_replies' },
+    })
+    expect((await list(CHAPTER_ONE, BOB)).map((row) => row.id)).toEqual([
+      parent.id,
+      reply.id,
+    ])
+    expect(await list(CHAPTER_ONE, null)).toHaveLength(1)
+  })
+
+  it('keeps ownership checks ahead of visibility conflicts', async () => {
+    const parent = await create('public')
+    await create('public', bareId(parent), BOB)
+    expect((await setVisibility(parent, 'private', BOB)).status).toBe(404)
+  })
+
+  it('allows an owner to hide a parent with only their private replies', async () => {
+    const parent = await create('public')
+    await create('private', bareId(parent))
+    expect((await setVisibility(parent, 'private')).status).toBe(200)
+    expect(await list(CHAPTER_ONE, null)).toEqual([])
+    expect(await list(CHAPTER_ONE)).toHaveLength(2)
+  })
+
+  it('returns a conflict when a parent becomes private after the reply precheck', async () => {
+    const parent = await create('public')
+    const original = harness.repository.insertAnnotation.bind(
+      harness.repository,
+    )
+    harness.repository.insertAnnotation = async (record) => {
+      expect((await setVisibility(parent, 'private')).status).toBe(200)
+      return original(record)
+    }
+    const response = await post(
+      webAnnotation({
+        source: CHAPTER_ONE,
+        visibility: 'public',
+        parentId: bareId(parent),
+      }),
+    )
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'parent_visibility_conflict' },
+    })
+    expect(await list(CHAPTER_ONE, null)).toEqual([])
+    expect(await list(CHAPTER_ONE)).toHaveLength(1)
+  })
+
+  it('rejects another owner private reply when the parent becomes private before insertion', async () => {
+    const parent = await create('public')
+    const original = harness.repository.insertAnnotation.bind(
+      harness.repository,
+    )
+    harness.repository.insertAnnotation = async (record) => {
+      expect((await setVisibility(parent, 'private')).status).toBe(200)
+      return original(record)
+    }
+    const response = await post(
+      webAnnotation({
+        source: CHAPTER_ONE,
+        visibility: 'private',
+        parentId: bareId(parent),
+      }),
+      BOB,
+    )
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'parent_visibility_conflict' },
+    })
+    expect(await list(CHAPTER_ONE, BOB)).toEqual([])
+    expect(await list(CHAPTER_ONE)).toHaveLength(1)
+  })
+
+  it('returns a conflict when a parent becomes private before a reply publication write', async () => {
+    const parent = await create('public')
+    const reply = await create('private', bareId(parent))
+    const original = harness.repository.updateAnnotation.bind(
+      harness.repository,
+    )
+    harness.repository.updateAnnotation = async (scope, id, owner, patch) => {
+      if (id === bareId(reply)) {
+        expect((await setVisibility(parent, 'private')).status).toBe(200)
+      }
+      return original(scope, id, owner, patch)
+    }
+    const response = await setVisibility(reply, 'public')
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'parent_visibility_conflict' },
+    })
+    expect(await list(CHAPTER_ONE, null)).toEqual([])
+  })
+
+  it('returns a conflict when a public reply arrives before a parent privacy write', async () => {
+    const parent = await create('public')
+    const original = harness.repository.updateAnnotation.bind(
+      harness.repository,
+    )
+    harness.repository.updateAnnotation = async (scope, id, owner, patch) => {
+      await create('public', bareId(parent), BOB)
+      return original(scope, id, owner, patch)
+    }
+    const response = await setVisibility(parent, 'private')
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'has_visible_replies' },
+    })
+    expect(await list(CHAPTER_ONE, null)).toHaveLength(2)
+  })
+})

@@ -28,6 +28,7 @@ declare global {
     __marginCaptures: Capture[]
     __marginPointerEvents: number
     __marginPointerSelection?: { range: Range; text: string }
+    __marginRectReads: number
   }
 }
 
@@ -471,6 +472,87 @@ test.describe('highlight painting', () => {
         .remove()
     })
     await expect(boxes).toHaveCount(0)
+  })
+
+  test('two fallback painters settle and react only to host reflow', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(CSS, 'highlights', {
+        configurable: true,
+        value: undefined,
+      })
+    })
+    await open(page)
+    await page.evaluate(() => {
+      window.__marginRectReads = 0
+      const original = Range.prototype.getClientRects
+      Range.prototype.getClientRects = function () {
+        if (
+          this.startContainer.parentElement?.closest('#margin-omitted-fixture')
+        ) {
+          window.__marginRectReads += 1
+        }
+        return original.call(this)
+      }
+    })
+    await mountOmittedTextFixture(page)
+    await page.evaluate(() => {
+      const first = document.querySelector(
+        'margin-rail[text-selector="#margin-omitted-fixture"]',
+      ) as HTMLElement & { annotations: { id: string }[] }
+      const second = document.createElement('margin-rail') as HTMLElement & {
+        annotations: { id: string }[]
+      }
+      second.setAttribute('text-selector', '#margin-omitted-fixture')
+      second.setAttribute('document-uri', 'https://example.test/omitted')
+      document.body.append(second)
+      second.annotations = first.annotations.map((annotation) => ({
+        ...annotation,
+        id: 'second-' + annotation.id,
+      }))
+    })
+    const overlays = page.locator('[data-erniesg-margin-overlay]')
+    await expect(overlays).toHaveCount(2)
+    await expect(overlays.locator('[data-margin-highlight]')).toHaveCount(4)
+    const reads = () => page.evaluate(() => window.__marginRectReads)
+    await page.waitForTimeout(100)
+    const settled = await reads()
+    await page.waitForTimeout(250)
+    expect(await reads(), 'overlay writes must not repoll either painter').toBe(
+      settled,
+    )
+
+    await page.evaluate(() => {
+      document.querySelector<HTMLElement>(
+        '#margin-omitted-fixture',
+      )!.style.fontSize = '32px'
+    })
+    await expect.poll(reads).toBeGreaterThan(settled)
+    await page.waitForTimeout(100)
+    const afterReflow = await reads()
+    await page.waitForTimeout(250)
+    expect(await reads()).toBe(afterReflow)
+
+    await page.evaluate(() => {
+      document
+        .querySelectorAll(
+          'margin-rail[text-selector="#margin-omitted-fixture"]',
+        )[1]
+        .remove()
+    })
+    await expect(overlays).toHaveCount(1)
+    await expect(overlays.locator('[data-margin-highlight]')).toHaveCount(2)
+    await page.waitForTimeout(100)
+    const afterCleanup = await reads()
+    await page.waitForTimeout(250)
+    expect(await reads()).toBe(afterCleanup)
+    await page.evaluate(() => {
+      document
+        .querySelector('margin-rail[text-selector="#margin-omitted-fixture"]')!
+        .remove()
+    })
+    await expect(overlays).toHaveCount(0)
   })
 
   test('paints across blocks and round-trips to the same anchors', async ({

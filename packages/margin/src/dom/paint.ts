@@ -53,6 +53,7 @@ export const DEFAULT_PALETTE: Record<string, string> = {
 const REGISTRY_PREFIX = 'erniesg-margin-'
 const STYLE_ATTRIBUTE = 'data-erniesg-margin-highlights'
 const OVERLAY_ATTRIBUTE = 'data-erniesg-margin-overlay'
+const OVERLAY_SELECTOR = `[${OVERLAY_ATTRIBUTE}]`
 
 type HighlightRegistry = {
   set(name: string, highlight: unknown): void
@@ -145,6 +146,21 @@ function overlayOrigin(
   return { x: box.left + scrollX, y: box.top + scrollY }
 }
 
+/** Ignore overlay writes from every Margin painter, even another package copy. */
+function inMarginOverlay(node: Node): boolean {
+  const element = node.nodeType === 1 ? (node as Element) : node.parentElement
+  return Boolean(element?.closest(OVERLAY_SELECTOR))
+}
+
+function isMarginOverlayMutation(record: MutationRecord): boolean {
+  if (inMarginOverlay(record.target)) return true
+  if (record.type !== 'childList') return false
+  // Insertion/removal targets the host, not the overlay. Ignore that record
+  // only when every changed node is a Margin overlay; mixed host edits redraw.
+  const changed = [...record.addedNodes, ...record.removedNodes]
+  return changed.length > 0 && changed.every(inMarginOverlay)
+}
+
 function paintWithOverlay(
   doc: Document,
   host: Element,
@@ -209,7 +225,7 @@ function paintWithOverlay(
   const Mutation = view?.MutationObserver
   const mutation = Mutation
     ? new Mutation((records) => {
-        if (records.some((record) => !overlay.contains(record.target)))
+        if (records.some((record) => !isMarginOverlayMutation(record)))
           schedule()
       })
     : null

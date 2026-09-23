@@ -1190,10 +1190,9 @@ describe('review findings, round five', () => {
     }
   })
 
-  // One rule for the span, in a unit the schema cannot infer: it validates
-  // annotations this repository builds with UTF-16 offsets and annotations a
-  // conformant client sends with character offsets.
-  it('accepts a span counted either way, and refuses one that is neither', async () => {
+  // TextPositionSelector is W3C code-point based. The wire mapping records that
+  // unit, so accepting a UTF-16 span here would create an ambiguous anchor.
+  it('accepts only the W3C code-point span', async () => {
     const exact = 'a 🌊 wave'
     const base = webAnnotation({ source: CHAPTER_ONE })
     const withSpan = (end: number) => ({
@@ -1211,9 +1210,9 @@ describe('review findings, round five', () => {
       },
     })
 
-    // 8 characters, 9 UTF-16 units.
+    // 8 code points; 9 is the UTF-16 spelling and must not enter storage.
     expect((await post(withSpan(5 + [...exact].length))).status).toBe(201)
-    expect((await post(withSpan(5 + exact.length))).status).toBe(201)
+    expect((await post(withSpan(5 + exact.length))).status).toBe(400)
     expect((await post(withSpan(5 + 4))).status).toBe(400)
   })
 })

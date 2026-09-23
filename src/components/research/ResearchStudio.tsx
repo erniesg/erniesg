@@ -173,12 +173,12 @@ function AnnotatedText({
       content = <a href={linkRun.href}>{content}</a>
     }
 
-    if (note?.annotation.kind === 'note') {
+    if (note) {
       content = (
         <span
           className="srt-note-target"
           data-annotation-id={note.annotation.id}
-          data-annotation-kind="note"
+          data-annotation-kind={note.annotation.kind}
           data-note-label="1"
           aria-describedby={`${note.annotation.id}-body`}
         >

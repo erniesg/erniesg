@@ -74,7 +74,8 @@ function roundTrip(wire: WebAnnotation): WebAnnotation {
     created: String(wire.created),
     modified: String(wire.modified),
   })
-  if (!mapped.ok) throw new Error(`${mapped.error.code}: ${mapped.error.message}`)
+  if (!mapped.ok)
+    throw new Error(`${mapped.error.code}: ${mapped.error.message}`)
   return recordToWebAnnotation(mapped.value)
 }
 
@@ -253,7 +254,8 @@ describe('the W3C wire format', () => {
       },
     )
     expect(withoutQuote.ok).toBe(false)
-    if (!withoutQuote.ok) expect(withoutQuote.error.code).toBe('missing_selector')
+    if (!withoutQuote.ok)
+      expect(withoutQuote.error.code).toBe('missing_selector')
   })
 
   it('rejects an oversized body before anything is mapped', () => {
@@ -287,5 +289,54 @@ describe('target.source and the tenancy key', () => {
   it('refuses a non-http source', () => {
     expect(splitSource('urn:isbn:9780000000000')).toBeNull()
     expect(splitSource('not a uri')).toBeNull()
+  })
+})
+
+describe('canonical target delimiters and offset units', () => {
+  it.each(['https://ernie.sg/document?', 'https://ernie.sg/document#'])(
+    'round-trips %s without dropping its empty delimiter',
+    (source) => {
+      const wire = canonicalWire('commenting')
+      const target = wire.target as { source: string; selector: never[] }
+      expect(
+        roundTrip({ ...wire, target: { ...target, source } }),
+      ).toMatchObject({
+        target: { source },
+      })
+    },
+  )
+
+  it('retains W3C code-point offsets in the shared anchor', () => {
+    const wire = canonicalWire('commenting')
+    const target = wire.target as { source: string; selector: unknown[] }
+    const mapped = webAnnotationToRecord(
+      {
+        ...wire,
+        target: {
+          source: SOURCE,
+          selector: [
+            {
+              type: 'TextQuoteSelector',
+              exact: '🌊 x',
+              prefix: '',
+              suffix: '',
+            },
+            { type: 'TextPositionSelector', start: 0, end: 3 },
+            target.selector[2],
+          ] as never,
+        },
+      },
+      {
+        id: 'codepoint',
+        creator: CREATOR,
+        visibility: 'private',
+        created: CREATED,
+        modified: CREATED,
+      },
+    )
+    expect(mapped).toMatchObject({
+      ok: true,
+      value: { annotation: { target: { positionUnit: 'codepoint' } } },
+    })
   })
 })

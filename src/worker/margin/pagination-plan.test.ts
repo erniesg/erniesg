@@ -49,8 +49,30 @@ describe('the collection query plan', () => {
   })
 
   it('and for the proposals collection, which shares the query', () => {
-    const plan = planFor({ limit: DEFAULT_PAGE_SIZE + 1, motivation: 'editing' })
+    const plan = planFor({
+      limit: DEFAULT_PAGE_SIZE + 1,
+      motivation: 'editing',
+    })
 
     expect(plan).not.toContain('TEMP B-TREE')
   })
+})
+
+it('uses the visibility-aware ordered index for anonymous pages', () => {
+  const database = new DatabaseSync(':memory:')
+  applyMigrations(database)
+  const query = listAnnotationsQuery(
+    { site: 'https://ernie.sg', document: '/challenges/chapter-1' },
+    null,
+    { limit: DEFAULT_PAGE_SIZE + 1 },
+  )
+  const plan = (
+    database
+      .prepare(`EXPLAIN QUERY PLAN ${query.sql}`)
+      .all(...(query.params as never[])) as { detail: string }[]
+  )
+    .map((row) => row.detail)
+    .join('\n')
+  expect(plan).toContain('margin_annotations_public_page')
+  expect(plan).not.toContain('TEMP B-TREE')
 })

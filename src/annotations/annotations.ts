@@ -23,6 +23,10 @@ const textQuoteSelectorSchema = z
 export const semanticTextAnchorSchema = z
   .object({
     nodeId: z.string().min(1),
+    // Repository-created anchors use JavaScript UTF-16 offsets. W3C wire
+    // anchors retain their code-point offsets so a resolver with the document
+    // text can translate them without losing the original selector.
+    positionUnit: z.enum(['utf16', 'codepoint']).optional(),
     position: textPositionSelectorSchema,
     quote: textQuoteSelectorSchema,
   })
@@ -47,10 +51,11 @@ export const semanticTextAnchorSchema = z
      */
     (anchor) => {
       const span = anchor.position.end - anchor.position.start
-      return (
-        span === anchor.quote.exact.length ||
-        span === [...anchor.quote.exact].length
-      )
+      const quoteLength =
+        anchor.positionUnit === 'codepoint'
+          ? [...anchor.quote.exact].length
+          : anchor.quote.exact.length
+      return span === quoteLength
     },
     {
       message: 'Text offsets must span the stored exact quote',
@@ -230,6 +235,16 @@ function textForNode(node: ResearchNode) {
   return node.type === 'figure' ? null : node.text
 }
 
+function utf16OffsetForCodePointOffset(
+  text: string,
+  offset: number,
+): number | null {
+  const codePoints = [...text]
+  return offset <= codePoints.length
+    ? codePoints.slice(0, offset).join('').length
+    : null
+}
+
 function contextMatches(
   text: string,
   start: number,
@@ -292,6 +307,46 @@ export function resolveTextAnchor(
   anchor: SemanticTextAnchor,
   nodes: readonly ResearchNode[],
 ): TextAnchorResolution {
+  if (anchor.nodeId === '@document') {
+    const matches = nodes.flatMap((candidate) => {
+      const text = textForNode(candidate)
+      if (text === null) return []
+      const matchesInNode: { nodeId: string; start: number; end: number }[] = []
+      let searchFrom = 0
+      while (searchFrom <= text.length - anchor.quote.exact.length) {
+        const start = text.indexOf(anchor.quote.exact, searchFrom)
+        if (start < 0) break
+        const end = start + anchor.quote.exact.length
+        const context = contextMatches(text, start, end, anchor)
+        if (context.prefixMatches && context.suffixMatches) {
+          matchesInNode.push({ nodeId: candidate.id, start, end })
+        }
+        searchFrom = start + 1
+      }
+      return matchesInNode
+    })
+    if (matches.length === 1) {
+      return {
+        status: 'resolved',
+        ...matches[0],
+        matchedBy: 'quote-and-context',
+      }
+    }
+    if (matches.length === 0) {
+      return {
+        status: 'unresolved',
+        nodeId: anchor.nodeId,
+        reason: 'quote-not-found',
+      }
+    }
+    return {
+      status: 'ambiguous',
+      nodeId: anchor.nodeId,
+      reason: 'Multiple document nodes match the stored quote and context.',
+      candidates: [],
+    }
+  }
+
   const node = nodes.find((candidate) => candidate.id === anchor.nodeId)
   if (!node) {
     return {
@@ -328,10 +383,18 @@ export function resolveTextAnchor(
     }
   }
 
+  const positionStart =
+    anchor.positionUnit === 'codepoint'
+      ? utf16OffsetForCodePointOffset(text, anchor.position.start)
+      : anchor.position.start
+  const positionEnd =
+    anchor.positionUnit === 'codepoint'
+      ? utf16OffsetForCodePointOffset(text, anchor.position.end)
+      : anchor.position.end
   const positionCandidate = candidates.find(
     (candidate) =>
-      candidate.start === anchor.position.start &&
-      candidate.end === anchor.position.end &&
+      candidate.start === positionStart &&
+      candidate.end === positionEnd &&
       candidate.prefixMatches &&
       candidate.suffixMatches,
   )

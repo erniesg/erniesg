@@ -235,3 +235,60 @@ describe('SRT semantic reading anchors and annotations', () => {
     })
   })
 })
+
+it('resolves a document-scoped anchor to its unique matching node', () => {
+  const documentPaper = paragraphFixture('before 🌊 target after')
+  const resolution = resolveTextAnchor(
+    {
+      nodeId: '@document',
+      positionUnit: 'codepoint',
+      position: { start: 7, end: 13 },
+      quote: { exact: 'target', prefix: 'before 🌊 ', suffix: ' after' },
+    },
+    documentPaper.nodes,
+  )
+  expect(resolution).toMatchObject({
+    status: 'resolved',
+    nodeId: 'p-test',
+    start: 10,
+    end: 16,
+  })
+})
+
+it('converts W3C code-point offsets while resolving a structural anchor', () => {
+  const emojiPaper = paragraphFixture('🌊 x x')
+  const resolution = resolveTextAnchor(
+    {
+      nodeId: 'p-test',
+      positionUnit: 'codepoint',
+      position: { start: 4, end: 5 },
+      quote: { exact: 'x', prefix: '🌊 x ', suffix: '' },
+    },
+    emojiPaper.nodes,
+  )
+  expect(resolution).toMatchObject({
+    status: 'resolved',
+    start: 5,
+    end: 6,
+    matchedBy: 'position-and-context',
+  })
+})
+
+it('uses document context when the same quote repeats in one node', () => {
+  const documentPaper = paragraphFixture('first target then second target')
+  const resolution = resolveTextAnchor(
+    {
+      nodeId: '@document',
+      positionUnit: 'codepoint',
+      position: { start: 24, end: 30 },
+      quote: { exact: 'target', prefix: 'then second ', suffix: '' },
+    },
+    documentPaper.nodes,
+  )
+  expect(resolution).toMatchObject({
+    status: 'resolved',
+    nodeId: 'p-test',
+    start: 25,
+    end: 31,
+  })
+})

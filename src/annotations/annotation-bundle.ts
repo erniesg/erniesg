@@ -7,7 +7,7 @@ import {
 } from './annotations'
 import type { PublicationGraph } from '../publication/schema'
 
-export const ANNOTATION_BUNDLE_VERSION = '1.0.0' as const
+export const ANNOTATION_BUNDLE_VERSION = '1.1.0' as const
 
 export const annotationBundleSchema = z
   .object({

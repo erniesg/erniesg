@@ -57,6 +57,11 @@ CREATE INDEX margin_annotations_tenant
 CREATE INDEX margin_annotations_page
   ON margin_annotations (site, document, created, id);
 
+-- Anonymous readers have no owner branch. Put the public predicate before the
+-- keyset order so private rows are never scanned to fill a public page.
+CREATE INDEX margin_annotations_public_page
+  ON margin_annotations (site, document, visibility, created, id);
+
 CREATE INDEX margin_annotations_owner
   ON margin_annotations (creator, site, document);
 

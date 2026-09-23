@@ -149,6 +149,7 @@ export function createAnnotationBundle(
 
     return false
   }
+  const nodesById = new Map(graph.nodes.map((node) => [node.id, node]))
   const validateAnchor = (id: string, anchor: SemanticTextAnchor) => {
     if (anchor.nodeId === '@document') {
       if (documentPositionMatches(anchor)) return
@@ -157,15 +158,17 @@ export function createAnnotationBundle(
         .map((node) => documentTextForNode(node) ?? '')
         .join('')
       let documentOffset = 0
-      const candidates = graph.nodes.flatMap((node) => {
+      let exactCount = 0
+      let contextualCount = 0
+      for (const node of graph.nodes) {
         const text = documentTextForNode(node)
-        const matches: number[] = []
-        if (text === null) return []
+        if (text === null) continue
         let searchFrom = 0
         while (searchFrom <= text.length - anchor.quote.exact.length) {
           const start = text.indexOf(anchor.quote.exact, searchFrom)
           if (start < 0) break
           const end = start + anchor.quote.exact.length
+          exactCount += 1
           if (
             documentText
               .slice(0, documentOffset + start)
@@ -174,19 +177,18 @@ export function createAnnotationBundle(
               .slice(documentOffset + end)
               .startsWith(anchor.quote.suffix)
           ) {
-            matches.push(start)
+            contextualCount += 1
           }
           searchFrom = start + 1
         }
         documentOffset += text.length
-        return matches
-      })
-      if (candidates.length !== 1) {
+      }
+      if (contextualCount !== 1 && exactCount !== 1) {
         throw new Error(`Anchor ${id} does not resolve to one graph node`)
       }
       return
     }
-    const node = graph.nodes.find((candidate) => candidate.id === anchor.nodeId)
+    const node = nodesById.get(anchor.nodeId)
     if (!node) {
       throw new Error(
         `Anchor ${id} targets missing graph node ${anchor.nodeId}`,

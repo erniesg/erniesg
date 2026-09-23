@@ -397,3 +397,78 @@ it('uses document context across graph-node boundaries', () => {
     matchedBy: 'position-and-context',
   })
 })
+
+it('recovers a unique document quote after both position and context drift', () => {
+  const documentPaper = paragraphFixture(
+    'revised opening target revised ending',
+  )
+  const resolution = resolveTextAnchor(
+    {
+      nodeId: '@document',
+      position: { start: 0, end: 6 },
+      quote: { exact: 'target', prefix: 'old ', suffix: ' old' },
+    },
+    documentPaper.nodes,
+  )
+
+  expect(resolution).toEqual({
+    status: 'resolved',
+    nodeId: 'p-test',
+    start: 16,
+    end: 22,
+    matchedBy: 'unique-quote',
+  })
+})
+
+it('surfaces document match locations when stale context leaves a repeated quote ambiguous', () => {
+  const documentPaper = researchPaperSchema.parse({
+    ...rawPaper,
+    id: 'annotation-document-ambiguous-test',
+    nodes: [
+      {
+        id: 'p-first',
+        type: 'paragraph',
+        text: 'target one',
+        source: 'test fixture',
+      },
+      {
+        id: 'p-second',
+        type: 'paragraph',
+        text: 'two target',
+        source: 'test fixture',
+      },
+    ],
+  })
+
+  expect(
+    resolveTextAnchor(
+      {
+        nodeId: '@document',
+        position: { start: 1, end: 7 },
+        quote: { exact: 'target', prefix: 'old', suffix: 'old' },
+      },
+      documentPaper.nodes,
+    ),
+  ).toEqual({
+    status: 'ambiguous',
+    nodeId: '@document',
+    reason:
+      'Multiple exact quotes remain and the stored context does not identify one safely.',
+    candidates: [
+      {
+        nodeId: 'p-first',
+        start: 0,
+        end: 6,
+        prefixMatches: false,
+        suffixMatches: false,
+      },
+      {
+        nodeId: 'p-second',
+        start: 4,
+        end: 10,
+        prefixMatches: false,
+        suffixMatches: false,
+      },
+    ],
+  })
+})

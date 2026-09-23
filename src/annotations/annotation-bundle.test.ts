@@ -270,3 +270,63 @@ it('resolves document anchors in code and equation nodes', () => {
     createAnnotationBundle(genericGraph, [codeAnnotation, equationAnnotation]),
   ).not.toThrow()
 })
+
+it('accepts a unique document quote after position and context drift', () => {
+  const paper = researchPaperSchema.parse({
+    ...rawPaper,
+    id: 'bundle-unique-document-fallback',
+    nodes: [
+      {
+        id: 'p-1',
+        type: 'paragraph',
+        source: 'test',
+        text: 'revised opening target revised ending',
+      },
+    ],
+  })
+  const annotation = {
+    id: 'unique-document-fallback',
+    kind: 'note' as const,
+    body: 'body',
+    geometryCache: [],
+    target: {
+      nodeId: '@document',
+      position: { start: 0, end: 6 },
+      quote: { exact: 'target', prefix: 'old ', suffix: ' old' },
+    },
+  }
+
+  expect(() =>
+    createAnnotationBundle(researchPaperToPublicationGraph(paper), [
+      annotation,
+    ]),
+  ).not.toThrow()
+})
+
+it('rejects a document quote when stale context leaves multiple matches', () => {
+  const paper = researchPaperSchema.parse({
+    ...rawPaper,
+    id: 'bundle-ambiguous-document-fallback',
+    nodes: [
+      { id: 'p-1', type: 'paragraph', source: 'test', text: 'target one' },
+      { id: 'p-2', type: 'paragraph', source: 'test', text: 'two target' },
+    ],
+  })
+  const annotation = {
+    id: 'ambiguous-document-fallback',
+    kind: 'note' as const,
+    body: 'body',
+    geometryCache: [],
+    target: {
+      nodeId: '@document',
+      position: { start: 1, end: 7 },
+      quote: { exact: 'target', prefix: 'old', suffix: 'old' },
+    },
+  }
+
+  expect(() =>
+    createAnnotationBundle(researchPaperToPublicationGraph(paper), [
+      annotation,
+    ]),
+  ).toThrow(/does not resolve to one graph node/)
+})

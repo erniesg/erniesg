@@ -147,6 +147,7 @@ export type AnnotationGeometryRectangle = z.infer<
 >
 
 type ResolutionCandidate = {
+  nodeId?: string
   start: number
   end: number
   prefixMatches: boolean
@@ -369,48 +370,69 @@ export function resolveTextAnchor(
 
     const documentText = nodes.map((node) => textForNode(node) ?? '').join('')
     let documentOffset = 0
-    const matches = nodes.flatMap((candidate) => {
-      const text = textForNode(candidate)
+    const candidates: ResolutionCandidate[] = nodes.flatMap((node) => {
+      const text = textForNode(node)
       if (text === null) return []
-      const matchesInNode: { nodeId: string; start: number; end: number }[] = []
+      const matchesInNode: ResolutionCandidate[] = []
       let searchFrom = 0
       while (searchFrom <= text.length - anchor.quote.exact.length) {
         const start = text.indexOf(anchor.quote.exact, searchFrom)
         if (start < 0) break
         const end = start + anchor.quote.exact.length
-        const context = contextMatches(
-          documentText,
-          documentOffset + start,
-          documentOffset + end,
-          anchor,
-        )
-        if (context.prefixMatches && context.suffixMatches) {
-          matchesInNode.push({ nodeId: candidate.id, start, end })
-        }
+        matchesInNode.push({
+          nodeId: node.id,
+          start,
+          end,
+          ...contextMatches(
+            documentText,
+            documentOffset + start,
+            documentOffset + end,
+            anchor,
+          ),
+        })
         searchFrom = start + 1
       }
       documentOffset += text.length
       return matchesInNode
     })
-    if (matches.length === 1) {
-      return {
-        status: 'resolved',
-        ...matches[0],
-        matchedBy: 'quote-and-context',
-      }
-    }
-    if (matches.length === 0) {
+    if (candidates.length === 0) {
       return {
         status: 'unresolved',
         nodeId: anchor.nodeId,
         reason: 'quote-not-found',
       }
     }
+
+    const contextualCandidates = candidates.filter(
+      (candidate) => candidate.prefixMatches && candidate.suffixMatches,
+    )
+    const match =
+      contextualCandidates.length === 1
+        ? contextualCandidates[0]
+        : candidates.length === 1
+          ? candidates[0]
+          : null
+    if (match && match.nodeId) {
+      return {
+        status: 'resolved',
+        nodeId: match.nodeId,
+        start: match.start,
+        end: match.end,
+        matchedBy:
+          contextualCandidates.length === 1
+            ? 'quote-and-context'
+            : 'unique-quote',
+      }
+    }
+
     return {
       status: 'ambiguous',
       nodeId: anchor.nodeId,
-      reason: 'Multiple document nodes match the stored quote and context.',
-      candidates: [],
+      reason:
+        contextualCandidates.length > 1
+          ? 'Multiple exact quotes also match the stored context.'
+          : 'Multiple exact quotes remain and the stored context does not identify one safely.',
+      candidates,
     }
   }
 

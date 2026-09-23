@@ -9,5 +9,10 @@
     "jsx": "react-jsx",
     "jsxImportSource": "react"
   },
-  "exclude": ["scripts/**", "dist/**", "node_modules/**"]
+  "exclude": [
+    "scripts/**",
+    "dist/**",
+    "packages/*/dist/**",
+    "node_modules/**"
+  ]
 }

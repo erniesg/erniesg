@@ -1,0 +1,29 @@
+---
+/**
+ * The margin layer, mounted into the reading shell's landmark.
+ *
+ * All of the behaviour is `@erniesg/margin`, which is a standalone package
+ * that knows nothing about this site. This file is the whole of the binding:
+ * one element, one attribute, and the call that registers the element. There
+ * is deliberately nothing here for the package to grow a dependency on.
+ *
+ * The import is relative because `packages/margin/` is published rather than
+ * installed — see that package's README.
+ */
+type Props = {
+  /** The stable identity annotations are stored against. */
+  documentUri: string
+  /** Where the margin service lives. Omitted until 054 ships its routes. */
+  apiBase?: string
+}
+
+const { documentUri, apiBase } = Astro.props
+---
+
+<margin-rail document-uri={documentUri} api-base={apiBase}></margin-rail>
+
+<script>
+  import { defineMarginElements } from '../../../packages/margin/src/index'
+
+  defineMarginElements()
+</script>

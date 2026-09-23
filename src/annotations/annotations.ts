@@ -261,7 +261,9 @@ function documentPositionCandidate(
   anchor: SemanticTextAnchor,
   nodes: readonly ResearchNode[],
 ): { nodeId: string; start: number; end: number } | null {
+  const documentText = nodes.map((node) => textForNode(node) ?? '').join('')
   let documentOffset = 0
+  let documentUtf16Offset = 0
 
   for (const node of nodes) {
     const text = textForNode(node)
@@ -287,7 +289,12 @@ function documentPositionCandidate(
         end !== null &&
         text.slice(start, end) === anchor.quote.exact
       ) {
-        const context = contextMatches(text, start, end, anchor)
+        const context = contextMatches(
+          documentText,
+          documentUtf16Offset + start,
+          documentUtf16Offset + end,
+          anchor,
+        )
         if (context.prefixMatches && context.suffixMatches) {
           return { nodeId: node.id, start, end }
         }
@@ -295,6 +302,7 @@ function documentPositionCandidate(
     }
 
     documentOffset += textLength
+    documentUtf16Offset += text.length
   }
 
   return null
@@ -359,6 +367,8 @@ export function resolveTextAnchor(
       }
     }
 
+    const documentText = nodes.map((node) => textForNode(node) ?? '').join('')
+    let documentOffset = 0
     const matches = nodes.flatMap((candidate) => {
       const text = textForNode(candidate)
       if (text === null) return []
@@ -368,12 +378,18 @@ export function resolveTextAnchor(
         const start = text.indexOf(anchor.quote.exact, searchFrom)
         if (start < 0) break
         const end = start + anchor.quote.exact.length
-        const context = contextMatches(text, start, end, anchor)
+        const context = contextMatches(
+          documentText,
+          documentOffset + start,
+          documentOffset + end,
+          anchor,
+        )
         if (context.prefixMatches && context.suffixMatches) {
           matchesInNode.push({ nodeId: candidate.id, start, end })
         }
         searchFrom = start + 1
       }
+      documentOffset += text.length
       return matchesInNode
     })
     if (matches.length === 1) {

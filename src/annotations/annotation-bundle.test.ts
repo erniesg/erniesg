@@ -140,3 +140,31 @@ it('accepts a document position that disambiguates repeated quotes', () => {
     ]),
   ).not.toThrow()
 })
+
+it('accepts document context across graph-node boundaries', () => {
+  const paper = researchPaperSchema.parse({
+    ...rawPaper,
+    id: 'bundle-cross-node-context-test',
+    nodes: [
+      { id: 'p-prefix', type: 'paragraph', source: 'test', text: 'a' },
+      { id: 'p-target', type: 'paragraph', source: 'test', text: 'x' },
+    ],
+  })
+  const annotation = {
+    id: 'cross-node-context',
+    kind: 'note' as const,
+    body: 'body',
+    geometryCache: [],
+    target: {
+      nodeId: '@document',
+      position: { start: 1, end: 2 },
+      quote: { exact: 'x', prefix: 'a', suffix: '' },
+    },
+  }
+
+  expect(() =>
+    createAnnotationBundle(researchPaperToPublicationGraph(paper), [
+      annotation,
+    ]),
+  ).not.toThrow()
+})

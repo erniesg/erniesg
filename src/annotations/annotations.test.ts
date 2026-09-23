@@ -369,3 +369,31 @@ it('maps code-point document positions across graph nodes', () => {
     matchedBy: 'position-and-context',
   })
 })
+
+it('uses document context across graph-node boundaries', () => {
+  const documentPaper = researchPaperSchema.parse({
+    ...rawPaper,
+    id: 'annotation-cross-node-context-test',
+    nodes: [
+      { id: 'p-prefix', type: 'paragraph', text: 'a', source: 'test fixture' },
+      { id: 'p-target', type: 'paragraph', text: 'x', source: 'test fixture' },
+    ],
+  })
+
+  expect(
+    resolveTextAnchor(
+      {
+        nodeId: '@document',
+        position: { start: 1, end: 2 },
+        quote: { exact: 'x', prefix: 'a', suffix: '' },
+      },
+      documentPaper.nodes,
+    ),
+  ).toEqual({
+    status: 'resolved',
+    nodeId: 'p-target',
+    start: 0,
+    end: 1,
+    matchedBy: 'position-and-context',
+  })
+})

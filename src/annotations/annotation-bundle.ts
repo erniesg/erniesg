@@ -96,7 +96,11 @@ export function createAnnotationBundle(
     )
   }
   const documentPositionMatches = (anchor: SemanticTextAnchor) => {
+    const documentText = graph.nodes
+      .map((node) => textForNode(node) ?? '')
+      .join('')
     let documentOffset = 0
+    let documentUtf16Offset = 0
 
     for (const node of graph.nodes) {
       const text = textForNode(node)
@@ -120,14 +124,19 @@ export function createAnnotationBundle(
           start !== null &&
           end !== null &&
           text.slice(start, end) === anchor.quote.exact &&
-          text.slice(0, start).endsWith(anchor.quote.prefix) &&
-          text.slice(end).startsWith(anchor.quote.suffix)
+          documentText
+            .slice(0, documentUtf16Offset + start)
+            .endsWith(anchor.quote.prefix) &&
+          documentText
+            .slice(documentUtf16Offset + end)
+            .startsWith(anchor.quote.suffix)
         ) {
           return true
         }
       }
 
       documentOffset += textLength
+      documentUtf16Offset += text.length
     }
 
     return false
@@ -136,6 +145,10 @@ export function createAnnotationBundle(
     if (anchor.nodeId === '@document') {
       if (documentPositionMatches(anchor)) return
 
+      const documentText = graph.nodes
+        .map((node) => textForNode(node) ?? '')
+        .join('')
+      let documentOffset = 0
       const candidates = graph.nodes.flatMap((node) => {
         const text = textForNode(node)
         if (text === null) return []
@@ -146,13 +159,18 @@ export function createAnnotationBundle(
           if (start < 0) break
           const end = start + anchor.quote.exact.length
           if (
-            text.slice(0, start).endsWith(anchor.quote.prefix) &&
-            text.slice(end).startsWith(anchor.quote.suffix)
+            documentText
+              .slice(0, documentOffset + start)
+              .endsWith(anchor.quote.prefix) &&
+            documentText
+              .slice(documentOffset + end)
+              .startsWith(anchor.quote.suffix)
           ) {
             matches.push(start)
           }
           searchFrom = start + 1
         }
+        documentOffset += text.length
         return matches
       })
       if (candidates.length !== 1) {
@@ -184,7 +202,6 @@ export function createAnnotationBundle(
     annotations,
   })
 }
-
 export function serializeAnnotationBundle(bundle: AnnotationBundle) {
   return JSON.stringify(annotationBundleSchema.parse(bundle))
 }

@@ -95,8 +95,47 @@ export function createAnnotationBundle(
       text.slice(start, end) === anchor.quote.exact
     )
   }
+  const documentPositionMatches = (anchor: SemanticTextAnchor) => {
+    let documentOffset = 0
+
+    for (const node of graph.nodes) {
+      const text = textForNode(node)
+      if (text === null) continue
+
+      const textLength =
+        anchor.positionUnit === 'codepoint' ? [...text].length : text.length
+      const localStart = anchor.position.start - documentOffset
+      const localEnd = anchor.position.end - documentOffset
+
+      if (localStart >= 0 && localEnd <= textLength) {
+        const start =
+          anchor.positionUnit === 'codepoint'
+            ? utf16Offset(text, localStart)
+            : localStart
+        const end =
+          anchor.positionUnit === 'codepoint'
+            ? utf16Offset(text, localEnd)
+            : localEnd
+        if (
+          start !== null &&
+          end !== null &&
+          text.slice(start, end) === anchor.quote.exact &&
+          text.slice(0, start).endsWith(anchor.quote.prefix) &&
+          text.slice(end).startsWith(anchor.quote.suffix)
+        ) {
+          return true
+        }
+      }
+
+      documentOffset += textLength
+    }
+
+    return false
+  }
   const validateAnchor = (id: string, anchor: SemanticTextAnchor) => {
     if (anchor.nodeId === '@document') {
+      if (documentPositionMatches(anchor)) return
+
       const candidates = graph.nodes.flatMap((node) => {
         const text = textForNode(node)
         if (text === null) return []

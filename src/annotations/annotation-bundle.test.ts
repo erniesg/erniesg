@@ -115,3 +115,28 @@ it('resolves a document anchor at a later quote occurrence', () => {
     ]),
   ).not.toThrow()
 })
+
+it('accepts a document position that disambiguates repeated quotes', () => {
+  const paper = researchPaperSchema.parse({
+    ...rawPaper,
+    id: 'repeated-document-anchor',
+    nodes: [{ id: 'p-1', type: 'paragraph', source: 'test', text: 'x x' }],
+  })
+  const annotation = {
+    id: 'repeated',
+    kind: 'note' as const,
+    body: 'body',
+    geometryCache: [],
+    target: {
+      nodeId: '@document',
+      position: { start: 0, end: 1 },
+      quote: { exact: 'x', prefix: '', suffix: '' },
+    },
+  }
+
+  expect(() =>
+    createAnnotationBundle(researchPaperToPublicationGraph(paper), [
+      annotation,
+    ]),
+  ).not.toThrow()
+})

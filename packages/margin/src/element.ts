@@ -19,6 +19,7 @@ import {
 import type { AnnotationPlacement } from './document'
 import type { SelectionCapture } from './dom/selection'
 import {
+  MarginTransportError,
   createHttpTransport,
   createMarginClient,
   type MarginTransport,
@@ -54,6 +55,8 @@ export class MarginRailElement extends HTMLElement {
   #annotations: TextAnnotation[] = []
   #capture: SelectionCapture = { status: 'empty' }
   #transport: MarginTransport | null = null
+  /** Whether `#transport` is one this element built from `api-base`. */
+  #ownsTransport = false
   #shadow: ShadowRoot
 
   constructor() {
@@ -80,6 +83,7 @@ export class MarginRailElement extends HTMLElement {
   /** The seam. Set this to point the rail at any host, or at a stub. */
   set transport(next: MarginTransport | null) {
     this.#transport = next
+    this.#ownsTransport = false
   }
 
   get transport(): MarginTransport | null {
@@ -87,6 +91,36 @@ export class MarginRailElement extends HTMLElement {
   }
 
   connectedCallback() {
+    this.#attach()
+  }
+
+  /**
+   * Observed attributes are observed for a reason.
+   *
+   * The class declared three and implemented no callback, so a plain custom-
+   * element consumer changing `text-selector` after connection kept a controller
+   * attached to the old text root, a new `api-base` never created a transport,
+   * and a new `document-uri` left the previous document's annotations in memory.
+   * The React binding worked only because it destroys and recreates the element.
+   */
+  attributeChangedCallback(name: string, previous: string | null, next: string | null) {
+    if (previous === next || !this.isConnected) return
+    if (name === 'document-uri') {
+      // A different document is a different set of annotations. Keeping the old
+      // ones would paint one document's highlights onto another.
+      this.#annotations = []
+      this.#capture = { status: 'empty' }
+    }
+    if (name === 'api-base') {
+      // Only a transport this element made itself: one that was injected through
+      // the `transport` setter belongs to the caller and is not ours to replace.
+      if (this.#ownsTransport) this.#transport = null
+    }
+    this.#detach()
+    this.#attach()
+  }
+
+  #attach() {
     const selector =
       this.getAttribute('text-selector') ?? '[data-reading-column="text"]'
     const root = this.ownerDocument.querySelector(selector)
@@ -100,6 +134,7 @@ export class MarginRailElement extends HTMLElement {
     const base = this.getAttribute('api-base')
     if (base && !this.#transport) {
       this.#transport = createHttpTransport({ baseUrl: base })
+      this.#ownsTransport = true
     }
 
     this.#controller = createMarginController({
@@ -121,6 +156,10 @@ export class MarginRailElement extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this.#detach()
+  }
+
+  #detach() {
     this.#controller?.stop()
     this.#controller = null
   }
@@ -151,7 +190,7 @@ export class MarginRailElement extends HTMLElement {
     if (!this.#transport || created.length === 0) return
     const client = createMarginClient(this.#transport)
     try {
-      await client.createAnnotation({
+      const responses = await client.createAnnotations({
         documentUri: this.documentUri,
         kind: created[0].kind,
         targets: created.map((annotation) => annotation.target),
@@ -159,17 +198,38 @@ export class MarginRailElement extends HTMLElement {
           ? { color: created[0].appearance.color }
           : {}),
       })
-    } catch (error) {
-      // A service that is down must not cost the reader their highlight: it is
-      // already painted and already in the rail. Say so and keep going.
-      this.dispatchEvent(
-        new CustomEvent('margin-transport-error', {
-          detail: error,
-          bubbles: true,
-          composed: true,
-        }),
+      // A transport resolves with whatever status it got: an HTTP error is a
+      // value here, not a throw. Treating it as success meant a 401, a 429 or a
+      // 500 left the annotation in memory only, to disappear on reload with
+      // nothing having said so.
+      const refused = responses.filter(
+        (response) => response.status < 200 || response.status >= 300,
       )
+      if (refused.length > 0) {
+        this.#reportTransportFailure(
+          new MarginTransportError(
+            `the margin service refused ${refused.length} of ${responses.length} annotations`,
+            refused,
+          ),
+        )
+      }
+    } catch (error) {
+      this.#reportTransportFailure(error)
     }
+  }
+
+  /**
+   * A service that is down must not cost the reader their highlight: it is
+   * already painted and already in the rail. Say so and keep going.
+   */
+  #reportTransportFailure(error: unknown) {
+    this.dispatchEvent(
+      new CustomEvent('margin-transport-error', {
+        detail: error,
+        bubbles: true,
+        composed: true,
+      }),
+    )
   }
 
   #paint() {

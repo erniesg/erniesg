@@ -75,7 +75,13 @@ function relocate(
         nodeId: node.id,
         start: candidate.start,
         end: candidate.end,
-        contextual: candidate.prefixMatches || candidate.suffixMatches,
+        // Both sides, matching the in-node resolver. Either-side made a
+        // one-sided coincidence count as context, so a quote that appears more
+        // than once across blocks could be relocated onto a weak candidate, or
+        // called ambiguous when exactly one occurrence matched the whole stored
+        // neighbourhood. Cross-block relocation is the weakest rung of the
+        // ladder; it should not be the most permissive.
+        contextual: candidate.prefixMatches && candidate.suffixMatches,
       })
     }
   }

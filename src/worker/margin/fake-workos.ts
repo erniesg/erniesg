@@ -376,11 +376,12 @@ export function createFakeD1(): FakeD1 {
           return execute() as T | null
         },
         async run() {
-          return execute()
+          execute()
+          return { results: [], success: true }
         },
         async all<T = Record<string, unknown>>() {
           const row = execute()
-          return { results: (row ? [row] : []) as T[] }
+          return { results: (row ? [row] : []) as T[], success: true }
         },
       }
       return statement

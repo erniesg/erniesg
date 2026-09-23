@@ -78,8 +78,8 @@ describe('annotations module relocation', () => {
       createDemoAnnotations(paper),
     )
 
-    expect(ANNOTATION_BUNDLE_VERSION).toBe('1.0.0')
-    expect(bundle.version).toBe('1.0.0')
+    expect(ANNOTATION_BUNDLE_VERSION).toBe('1.1.0')
+    expect(bundle.version).toBe('1.1.0')
     expect(bundle.graphId).toBe('semantic-responsive-typesetting')
     expect(bundle.anchors).toEqual([
       { id: 'highlight-reading-position:target', anchor: FIXTURE_ANCHOR },

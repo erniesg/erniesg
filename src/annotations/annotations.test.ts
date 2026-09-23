@@ -235,3 +235,240 @@ describe('SRT semantic reading anchors and annotations', () => {
     })
   })
 })
+
+it('resolves a document-scoped anchor to its unique matching node', () => {
+  const documentPaper = paragraphFixture('before 🌊 target after')
+  const resolution = resolveTextAnchor(
+    {
+      nodeId: '@document',
+      positionUnit: 'codepoint',
+      position: { start: 7, end: 13 },
+      quote: { exact: 'target', prefix: 'before 🌊 ', suffix: ' after' },
+    },
+    documentPaper.nodes,
+  )
+  expect(resolution).toMatchObject({
+    status: 'resolved',
+    nodeId: 'p-test',
+    start: 10,
+    end: 16,
+  })
+})
+
+it('converts W3C code-point offsets while resolving a structural anchor', () => {
+  const emojiPaper = paragraphFixture('🌊 x x')
+  const resolution = resolveTextAnchor(
+    {
+      nodeId: 'p-test',
+      positionUnit: 'codepoint',
+      position: { start: 4, end: 5 },
+      quote: { exact: 'x', prefix: '🌊 x ', suffix: '' },
+    },
+    emojiPaper.nodes,
+  )
+  expect(resolution).toMatchObject({
+    status: 'resolved',
+    start: 5,
+    end: 6,
+    matchedBy: 'position-and-context',
+  })
+})
+
+it('uses document context when the same quote repeats in one node', () => {
+  const documentPaper = paragraphFixture('first target then second target')
+  const resolution = resolveTextAnchor(
+    {
+      nodeId: '@document',
+      positionUnit: 'codepoint',
+      position: { start: 24, end: 30 },
+      quote: { exact: 'target', prefix: 'then second ', suffix: '' },
+    },
+    documentPaper.nodes,
+  )
+  expect(resolution).toMatchObject({
+    status: 'resolved',
+    nodeId: 'p-test',
+    start: 25,
+    end: 31,
+  })
+})
+it('uses document-wide position to disambiguate a repeated quote', () => {
+  const documentPaper = paragraphFixture('x x')
+  const resolution = resolveTextAnchor(
+    {
+      nodeId: '@document',
+      position: { start: 0, end: 1 },
+      quote: { exact: 'x', prefix: '', suffix: '' },
+    },
+    documentPaper.nodes,
+  )
+
+  expect(resolution).toEqual({
+    status: 'resolved',
+    nodeId: 'p-test',
+    start: 0,
+    end: 1,
+    matchedBy: 'position-and-context',
+  })
+})
+
+it('uses quote context when a document-wide position becomes stale', () => {
+  const documentPaper = paragraphFixture('drift before x after x')
+  const resolution = resolveTextAnchor(
+    {
+      nodeId: '@document',
+      position: { start: 7, end: 8 },
+      quote: { exact: 'x', prefix: 'before ', suffix: ' after' },
+    },
+    documentPaper.nodes,
+  )
+
+  expect(resolution).toEqual({
+    status: 'resolved',
+    nodeId: 'p-test',
+    start: 13,
+    end: 14,
+    matchedBy: 'quote-and-context',
+  })
+})
+it('maps code-point document positions across graph nodes', () => {
+  const documentPaper = researchPaperSchema.parse({
+    ...rawPaper,
+    id: 'annotation-document-position-test',
+    nodes: [
+      {
+        id: 'p-prefix',
+        type: 'paragraph',
+        text: '🌊 ',
+        source: 'test fixture',
+      },
+      {
+        id: 'p-target',
+        type: 'paragraph',
+        text: 'x x',
+        source: 'test fixture',
+      },
+    ],
+  })
+
+  expect(
+    resolveTextAnchor(
+      {
+        nodeId: '@document',
+        positionUnit: 'codepoint',
+        position: { start: 2, end: 3 },
+        quote: { exact: 'x', prefix: '', suffix: '' },
+      },
+      documentPaper.nodes,
+    ),
+  ).toEqual({
+    status: 'resolved',
+    nodeId: 'p-target',
+    start: 0,
+    end: 1,
+    matchedBy: 'position-and-context',
+  })
+})
+
+it('uses document context across graph-node boundaries', () => {
+  const documentPaper = researchPaperSchema.parse({
+    ...rawPaper,
+    id: 'annotation-cross-node-context-test',
+    nodes: [
+      { id: 'p-prefix', type: 'paragraph', text: 'a', source: 'test fixture' },
+      { id: 'p-target', type: 'paragraph', text: 'x', source: 'test fixture' },
+    ],
+  })
+
+  expect(
+    resolveTextAnchor(
+      {
+        nodeId: '@document',
+        position: { start: 1, end: 2 },
+        quote: { exact: 'x', prefix: 'a', suffix: '' },
+      },
+      documentPaper.nodes,
+    ),
+  ).toEqual({
+    status: 'resolved',
+    nodeId: 'p-target',
+    start: 0,
+    end: 1,
+    matchedBy: 'position-and-context',
+  })
+})
+
+it('recovers a unique document quote after both position and context drift', () => {
+  const documentPaper = paragraphFixture(
+    'revised opening target revised ending',
+  )
+  const resolution = resolveTextAnchor(
+    {
+      nodeId: '@document',
+      position: { start: 0, end: 6 },
+      quote: { exact: 'target', prefix: 'old ', suffix: ' old' },
+    },
+    documentPaper.nodes,
+  )
+
+  expect(resolution).toEqual({
+    status: 'resolved',
+    nodeId: 'p-test',
+    start: 16,
+    end: 22,
+    matchedBy: 'unique-quote',
+  })
+})
+
+it('surfaces document match locations when stale context leaves a repeated quote ambiguous', () => {
+  const documentPaper = researchPaperSchema.parse({
+    ...rawPaper,
+    id: 'annotation-document-ambiguous-test',
+    nodes: [
+      {
+        id: 'p-first',
+        type: 'paragraph',
+        text: 'target one',
+        source: 'test fixture',
+      },
+      {
+        id: 'p-second',
+        type: 'paragraph',
+        text: 'two target',
+        source: 'test fixture',
+      },
+    ],
+  })
+
+  expect(
+    resolveTextAnchor(
+      {
+        nodeId: '@document',
+        position: { start: 1, end: 7 },
+        quote: { exact: 'target', prefix: 'old', suffix: 'old' },
+      },
+      documentPaper.nodes,
+    ),
+  ).toEqual({
+    status: 'ambiguous',
+    nodeId: '@document',
+    reason:
+      'Multiple exact quotes remain and the stored context does not identify one safely.',
+    candidates: [
+      {
+        nodeId: 'p-first',
+        start: 0,
+        end: 6,
+        prefixMatches: false,
+        suffixMatches: false,
+      },
+      {
+        nodeId: 'p-second',
+        start: 4,
+        end: 10,
+        prefixMatches: false,
+        suffixMatches: false,
+      },
+    ],
+  })
+})

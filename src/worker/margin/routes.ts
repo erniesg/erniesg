@@ -1,681 +1,716 @@
-import type { WorkerEnv } from '../env'
+import { z } from 'zod'
+import type { Principal } from '../principal'
+import { principalKey } from './identity'
 import {
-  getPrincipal,
-  sharedJwksSource,
-  type Principal,
-  type PrincipalOptions,
-} from '../principal'
-import { randomToken, timingSafeEqual } from './base64url'
+  DEFAULT_PAGE_SIZE,
+  MAX_PAGE_SIZE,
+  type ListCursor,
+  type MarginRepository,
+  type TenantScope,
+  type ViewerKey,
+} from './repository'
 import {
-  authorizationUrl,
-  jwksUrl,
-  readWorkosConfig,
-  tokenEndpoint,
-  WORKOS_PROVIDER,
-  type WorkosConfig,
-} from './config'
-import {
-  allowlistRole,
-  bindAdmin,
-  ensureSchema,
-  recordIdentity,
-} from './identity'
-import { verifyAccessToken, type JwksSource } from './jwt'
-import {
-  clearedCookie,
-  readCookie,
-  sealLoginState,
-  sealSession,
-  serializeCookie,
-  SESSION_COOKIE_NAME,
-  SESSION_COOKIE_PATH,
-  SESSION_MAX_AGE_SECONDS,
-  STATE_COOKIE_MAX_AGE_SECONDS,
-  STATE_COOKIE_NAME,
-  STATE_COOKIE_PATH,
-  unsealLoginState,
-  unsealSession,
-  type MarginSession,
-} from './session'
+  annotationIdFromIri,
+  joinSource,
+  recordToWebAnnotation,
+  splitSource,
+  VISIBILITIES,
+  webAnnotationSchema,
+  webAnnotationToRecord,
+  type MarginVisibility,
+  type MarginAnnotationRecord,
+} from './web-annotation'
 
 /**
- * `/auth/login`, `/auth/callback`, `/auth/logout`, `/auth/me`.
+ * The `/api/margin/v1/` route table.
  *
- * The authorization-code half of AuthKit: the browser is redirected to the
- * hosted UI, comes back with a code, and the code is exchanged server-side so
- * the API key never leaves the Worker. The resulting access token is validated
- * before anything is stored, then sealed into the `margin-session` cookie.
+ * Nothing here knows what a database is. Every read and every write goes
+ * through `MarginRepository`, and the visibility rule is enforced by the
+ * statements that interface runs rather than by anything in this file — there
+ * is deliberately no `.filter()` over annotations anywhere below.
  *
- * Error responses are deliberately uninformative. A caller learns that login
- * failed and nothing about why, because the interesting reasons involve
- * provider responses we do not want to paraphrase back to the internet.
+ *   GET    /annotations              list, scoped and visibility-filtered
+ *   POST   /annotations              create
+ *   PATCH  /annotations/:id          owner-scoped update
+ *   DELETE /annotations/:id          owner-scoped delete
+ *   GET    /prefs                    read the caller's default visibility
+ *   PATCH  /prefs                    set it; existing rows are never rewritten
+ *   GET    /proposals                list, restricted to `editing`
+ *   POST   /proposals/:id/apply      501 — issue 060
+ *   GET    /documents/:id/history    501 — issue 059
+ *
+ * `GET /health` is answered by the Worker entry point instead, so that it
+ * still reports a running Worker when the database binding is what is missing.
  */
 
-export const AUTH_PREFIX = '/auth'
-export const AUTH_LOGIN_PATH = `${AUTH_PREFIX}/login`
-export const AUTH_CALLBACK_PATH = `${AUTH_PREFIX}/callback`
-export const AUTH_LOGOUT_PATH = `${AUTH_PREFIX}/logout`
-export const AUTH_ME_PATH = `${AUTH_PREFIX}/me`
+export const MARGIN_API_PREFIX = '/api/margin/v1'
 
-export const AUTH_PATHS: readonly string[] = [
-  AUTH_LOGIN_PATH,
-  AUTH_CALLBACK_PATH,
-  AUTH_LOGOUT_PATH,
-  AUTH_ME_PATH,
-]
+export type MarginRouteContext = {
+  repository: MarginRepository
+  principal: Principal | null
+  /** Injected so tests get deterministic timestamps and ids. */
+  now: () => string
+  newId: () => string
+}
 
-export type AuthEnv = Partial<Omit<WorkerEnv, 'ASSETS'>>
-
-export type AuthOptions = PrincipalOptions & {
-  /** Used for the token exchange too. Injected so the provider is testable. */
-  fetchImpl?: typeof fetch
+const JSON_HEADERS = {
+  'content-type': 'application/json; charset=utf-8',
+  'cache-control': 'no-store',
 }
 
 function json(
   body: unknown,
   status = 200,
-  extraHeaders: Array<[string, string]> = [],
+  headers: HeadersInit = {},
 ): Response {
-  const headers = new Headers({
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
+  return new Response(`${JSON.stringify(body)}\n`, {
+    status,
+    headers: { ...JSON_HEADERS, ...headers },
   })
-  for (const [name, value] of extraHeaders) headers.append(name, value)
-  return new Response(`${JSON.stringify(body)}\n`, { status, headers })
 }
 
-function methodNotAllowed(allow: string): Response {
-  return new Response(null, { status: 405, headers: { allow } })
+function problem(status: number, code: string, message: string): Response {
+  return json({ error: { code, message } }, status)
 }
 
-const CONTROL_CHARACTER_MAX = 0x1f
-const DELETE_CHARACTER = 0x7f
-
-function hasControlCharacter(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index)
-    if (code <= CONTROL_CHARACTER_MAX || code === DELETE_CHARACTER) return true
-  }
-  return false
-}
-
-/**
- * Keeps only a same-origin path across login.
- *
- * Anything absolute, protocol-relative, backslash-smuggled or carrying control
- * characters becomes `/`. An open redirect through the login endpoint would
- * hand an attacker a credible `ernie.sg` link to somewhere else.
- */
-export function safeReturnPath(value: string | null | undefined): string {
-  if (!value) return '/'
-  if (!value.startsWith('/')) return '/'
-  if (value.startsWith('//') || value.startsWith('/\\')) return '/'
-  if (hasControlCharacter(value)) return '/'
-  return value
-}
-
-function jwksFor(config: WorkosConfig, options: AuthOptions): JwksSource {
-  // The same per-isolate cache `getPrincipal` reads. A second cache would mean a
-  // second TTL and a second outage window over one key set, so a refresh could
-  // fail on a cold cache while verification on the warm one is fine.
-  return options.jwks ?? sharedJwksSource(config, options.fetchImpl)
-}
-
-async function handleLogin(
-  request: Request,
-  config: WorkosConfig,
-): Promise<Response> {
-  const url = new URL(request.url)
-  const returnTo = safeReturnPath(url.searchParams.get('return_to'))
-  const state = randomToken()
-  const sealed = await sealLoginState({ state, returnTo }, config.cookiePassword)
-
+function methodNotAllowed(allow: string[]): Response {
   return new Response(null, {
-    status: 302,
-    headers: {
-      location: authorizationUrl(config, state),
-      'cache-control': 'no-store',
-      'set-cookie': serializeCookie(STATE_COOKIE_NAME, sealed, {
-        path: STATE_COOKIE_PATH,
-        maxAgeSeconds: STATE_COOKIE_MAX_AGE_SECONDS,
-      }),
-    },
+    status: 405,
+    headers: { allow: allow.join(', '), ...JSON_HEADERS },
   })
 }
 
-type AuthenticateResponse = {
-  access_token?: unknown
-  refresh_token?: unknown
-  user?: { id?: unknown; email?: unknown; email_verified?: unknown } | null
-}
-
-type ExchangeResult =
-  | { kind: 'success'; payload: AuthenticateResponse }
-  | { kind: 'terminal' }
-  | { kind: 'retryable' }
-
-function loginFailed(): Response {
-  return json({ error: 'login_failed' }, 400, [
-    ['set-cookie', clearedCookie(STATE_COOKIE_NAME, STATE_COOKIE_PATH)],
-  ])
-}
+/* -------------------------------------------------------------------------- */
+/* Tenancy                                                                    */
+/* -------------------------------------------------------------------------- */
 
 /**
- * Writes the identity row, and binds the admin if this is the moment for it.
- *
- * Idempotent, and called from the callback *and* from `/auth/me`. A database
- * outage during the callback used to leave a valid session with no identity row
- * at all: the documented out-of-band allowlist insert selects on that row, so
- * the person could not be allowlisted — and the owner could not be bound as
- * admin — until they happened to sign in again, with nothing telling them so.
- * Retrying on a later authenticated request is what makes that recoverable.
- *
- * A failure here is swallowed on purpose. Recording a sign-in is not what
- * authorises it, a database hiccup must not deny a session the provider already
- * validated, and the allowlist check on the next write reads the database again.
+ * The scope comes from the request, never from a constant. A caller supplies
+ * either `?source=<absolute URI>` or the `(site, document)` pair directly, so
+ * a second site is a different query string rather than a code change.
  */
-async function recordSignIn(
-  env: AuthEnv,
-  principal: Principal,
-  owner: { email?: string; emailVerified: boolean; adminEmail: string },
-  options: AuthOptions,
-): Promise<void> {
-  const db = env.MARGIN_DB
-  if (!db) return
-  const nowIso = new Date(options.now ?? Date.now()).toISOString()
-  try {
-    await ensureSchema(db)
-    const identityId = await recordIdentity(db, principal, nowIso)
-    // The one place an email decides anything, and only while there is no admin
-    // yet. Afterwards the admin is an `(issuer, subject)` row like any other and
-    // this branch can never fire again.
-    if (
-      identityId !== null &&
-      owner.emailVerified &&
-      owner.email?.toLowerCase() === owner.adminEmail
-    ) {
-      await bindAdmin(db, identityId, nowIso)
-    }
-  } catch {
-    // Deliberately quiet; see above.
-  }
-}
-
-/**
- * One POST to `/user_management/authenticate`, for both grants.
- *
- * WorkOS authenticates this endpoint with `client_id` and `client_secret` in
- * the request body — the API key is the client secret here, not a bearer
- * token — so the grant is the only thing that differs between the login
- * exchange and a refresh.
- */
-async function exchange(
-  config: WorkosConfig,
-  options: AuthOptions,
-  grant: Record<string, string>,
-): Promise<ExchangeResult> {
-  const fetchImpl = options.fetchImpl ?? fetch
-  try {
-    const response = await fetchImpl(tokenEndpoint(config), {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        accept: 'application/json',
-      },
-      body: JSON.stringify({
-        client_id: config.clientId,
-        client_secret: config.apiKey,
-        ...grant,
-      }),
-    })
-    if (!response.ok) {
-      // Only the provider's explicit invalid_grant proves this refresh token
-      // cannot recover. A 408 timeout, 429 rate limit, 5xx, network failure,
-      // or opaque error leaves the sealed cookie available for a later retry.
-      if (
-        response.status >= 400 && response.status < 500 &&
-        response.status !== 408 && response.status !== 429
-      ) {
-        const body = (await response.json().catch(() => null)) as { error?: unknown } | null
-        if (body?.error === 'invalid_grant') return { kind: 'terminal' }
+function readScope(url: URL): TenantScope | { error: Response } {
+  const source = url.searchParams.get('source')
+  if (source) {
+    const split = splitSource(source)
+    if (!split) {
+      return {
+        error: problem(
+          400,
+          'invalid_source',
+          'source must be an absolute http(s) URI',
+        ),
       }
-      return { kind: 'retryable' }
     }
-    return { kind: 'success', payload: (await response.json()) as AuthenticateResponse }
-  } catch {
-    return { kind: 'retryable' }
-  }
-}
-
-async function handleCallback(
-  request: Request,
-  env: AuthEnv,
-  config: WorkosConfig,
-  options: AuthOptions,
-): Promise<Response> {
-  const url = new URL(request.url)
-  const code = url.searchParams.get('code')
-  const state = url.searchParams.get('state')
-  if (!code || !state) return loginFailed()
-
-  const sealedState = readCookie(request, STATE_COOKIE_NAME)
-  if (!sealedState) return loginFailed()
-  const loginState = await unsealLoginState(sealedState, config.cookiePassword)
-  if (!loginState || !timingSafeEqual(loginState.state, state)) {
-    return loginFailed()
+    return split
   }
 
-  const exchanged = await exchange(config, options, {
-    grant_type: 'authorization_code',
-    code,
-  })
-  if (exchanged.kind !== 'success') return loginFailed()
-  const payload = exchanged.payload
-
-  const accessToken = payload?.access_token
-  if (typeof accessToken !== 'string' || !accessToken) return loginFailed()
-
-  const verified = await verifyAccessToken(accessToken, {
-    config,
-    jwks: jwksFor(config, options),
-    now: options.now,
-  })
-  if (!verified.ok) return loginFailed()
-
-  const email =
-    typeof payload.user?.email === 'string' ? payload.user.email : undefined
-  const emailVerified = payload.user?.email_verified === true
-  // The profile block is not signed; the token is. So the profile only speaks
-  // for this session if it names the same subject the token was issued for.
-  // Without that, a provider response carrying somebody else's `sub` beside
-  // the owner's verified address would hand the admin row to that subject.
-  const profileIsSubject =
-    typeof payload.user?.id === 'string' &&
-    payload.user.id === verified.claims.sub
-
-  const principal: Principal = {
-    provider: WORKOS_PROVIDER,
-    issuer: verified.claims.iss,
-    subject: verified.claims.sub,
-    // Only when the profile names this token's subject. The profile block is not
-    // signed, so an email from a response whose `user.id` does not match the
-    // signed `sub` is somebody else's address — and it would have been persisted
-    // by `recordSignIn`, sealed into the session and returned by `/auth/me`,
-    // attaching one account's identity to another's email.
-    ...(email && profileIsSubject ? { email } : {}),
-  }
-
-  await recordSignIn(
-    env,
-    principal,
-    { email, emailVerified: emailVerified && profileIsSubject, adminEmail: config.adminEmail },
-    options,
-  )
-
-  const nowSeconds = Math.floor((options.now ?? Date.now()) / 1000)
-  const maxAge = Math.min(
-    SESSION_MAX_AGE_SECONDS,
-    Math.max(0, verified.claims.exp - nowSeconds),
-  )
-  const refreshToken =
-    typeof payload.refresh_token === 'string' && payload.refresh_token
-      ? payload.refresh_token
-      : undefined
-  // Sealed so a later request can finish what a database outage interrupted.
-  // Only true when the profile was verified *and* named this token's subject,
-  // which is the same pair of conditions the binding below requires.
-  const ownerEmailVerified = emailVerified && profileIsSubject
-  const ceiling = nowSeconds + SESSION_MAX_AGE_SECONDS
-  const sealedSession = await sealSession(
-    {
-      accessToken,
-      // Both bounds go inside the seal, not only on `Max-Age`. A cookie copied
-      // out of the browser is still a bearer token, and a cookie jar is not
-      // where a session limit can be enforced. `ceiling` is fixed here and a
-      // refresh may not move it.
-      expiresAt: nowSeconds + maxAge,
-      ceiling,
-      ...(refreshToken ? { refreshToken } : {}),
-      ...(principal.email ? { email: principal.email } : {}),
-      ...(ownerEmailVerified ? { emailVerified: true } : {}),
-    },
-    config.cookiePassword,
-  )
-
-  const headers = new Headers({
-    location: loginState.returnTo,
-    'cache-control': 'no-store',
-  })
-  headers.append(
-    'set-cookie',
-    serializeCookie(SESSION_COOKIE_NAME, sealedSession, {
-      path: SESSION_COOKIE_PATH,
-      // To the ceiling, not to the access token's expiry. The cookie carries
-      // the refresh token, so sizing it to the short-lived access token would
-      // have a conforming browser throw the refresh token away at the moment it
-      // becomes the only thing that can renew the session. What bounds the
-      // access token is `expiresAt` inside the seal, which the server checks.
-      maxAgeSeconds: ceiling - nowSeconds,
-    }),
-  )
-  headers.append(
-    'set-cookie',
-    clearedCookie(STATE_COOKIE_NAME, STATE_COOKIE_PATH),
-  )
-  return new Response(null, { status: 302, headers })
-}
-
-/**
- * Whether the browser says this request came from this site.
- *
- * `Sec-Fetch-Site` is the direct answer where it exists; `Origin` is the
- * fallback, and a cross-site form submission always carries one. Absent both,
- * the caller is not a browser, so there is no ambient cookie to abuse.
- */
-function sameOrigin(request: Request): boolean {
-  const site = request.headers.get('sec-fetch-site')
-  if (site) return site === 'same-origin' || site === 'none'
-  const origin = request.headers.get('origin')
-  if (!origin) return true
-  try {
-    return new URL(origin).origin === new URL(request.url).origin
-  } catch {
-    return false
-  }
-}
-
-function handleLogout(): Response {
-  return json({ ok: true }, 200, [
-    ['set-cookie', clearedCookie(SESSION_COOKIE_NAME, SESSION_COOKIE_PATH)],
-    ['set-cookie', clearedCookie(STATE_COOKIE_NAME, STATE_COOKIE_PATH)],
-  ])
-}
-
-/**
- * Trades the sealed refresh token for a live access token.
- *
- * WorkOS access tokens are short-lived by design, so without this a sign-in
- * would last minutes rather than the eight hours the cookie claims. It returns
- * the new sealed cookie rather than applying it, because only a route with a
- * response in hand can set one — `getPrincipal` has no response.
- *
- * `ceiling` is copied, never recomputed: refreshing must not extend the
- * session past the bound login fixed for it.
- */
-export type SessionRenewal = {
-  kind: 'renewed'
-  /** Absent when the exchange succeeded but the new token could not be verified. */
-  principal?: Principal
-  /** A rotated refresh token must reach the browser even if verification fails. */
-  cookie: string
-  session: MarginSession
-} | {
-  kind: 'terminal'
-  /** Expire a refresh token the provider has definitively rejected. */
-  cookie: string
-}
-
-/**
- * Renewals in flight, keyed by the sealed cookie they started from.
- *
- * A page with several requests open sends the same refresh token on each, and the
- * exchange consumes it — so without this the first wins and the rest come back
- * anonymous or 401 while holding a token the provider has already spent. One
- * exchange per session, shared by everybody who asked for it.
- *
- * Per isolate, which is where the requests of one page almost always land. Two
- * isolates racing is a smaller and rarer window, and closing it needs a Durable
- * Object — worth its own issue rather than a guess here.
- */
-const renewalsInFlight = new Map<string, Promise<SessionRenewal | null>>()
-
-export async function renewSession(
-  request: Request,
-  config: WorkosConfig,
-  options: AuthOptions,
-): Promise<SessionRenewal | null> {
-  const sealed = readCookie(request, SESSION_COOKIE_NAME)
-  if (!sealed) return null
-
-  const inFlight = renewalsInFlight.get(sealed)
-  if (inFlight) return inFlight
-  const started = renewOnce(request, config, options, sealed).finally(() => {
-    renewalsInFlight.delete(sealed)
-  })
-  renewalsInFlight.set(sealed, started)
-  return started
-}
-
-async function renewOnce(
-  request: Request,
-  config: WorkosConfig,
-  options: AuthOptions,
-  sealed: string,
-): Promise<SessionRenewal | null> {
-  const session = await unsealSession(sealed, config.cookiePassword)
-  if (!session?.refreshToken) return null
-
-  const nowSeconds = Math.floor((options.now ?? Date.now()) / 1000)
-  const ceiling = session.ceiling ?? session.expiresAt
-  if (nowSeconds >= ceiling) return null
-
-  const exchanged = await exchange(config, options, {
-    grant_type: 'refresh_token',
-    refresh_token: session.refreshToken,
-  })
-  if (exchanged.kind === 'terminal') {
+  const site = url.searchParams.get('site')
+  const document = url.searchParams.get('document')
+  if (!site || !document) {
     return {
-      kind: 'terminal',
-      cookie: clearedCookie(SESSION_COOKIE_NAME, SESSION_COOKIE_PATH),
-    }
-  }
-  if (exchanged.kind !== 'success') return null
-  const payload = exchanged.payload
-  const accessToken = payload?.access_token
-  if (typeof accessToken !== 'string' || !accessToken) return null
-
-  // The exchange has consumed the old refresh token by now, and WorkOS may have
-  // rotated it. Whatever happens next, the browser must end up holding the token
-  // that is still valid — otherwise a transient JWKS outage between here and the
-  // verification below turns into a permanent logout, because the browser would
-  // keep a token the provider has already spent.
-  const nextRefresh =
-    typeof payload.refresh_token === 'string' && payload.refresh_token
-      ? payload.refresh_token
-      : session.refreshToken
-
-  const reseal = async (
-    next: Partial<MarginSession> = {},
-  ): Promise<{ cookie: string; session: MarginSession }> => {
-    const merged: MarginSession = {
-      ...session,
-      refreshToken: nextRefresh,
-      ceiling,
-      ...next,
-    }
-    return {
-      session: merged,
-      cookie: serializeCookie(
-        SESSION_COOKIE_NAME,
-        await sealSession(merged, config.cookiePassword),
-        // Again to the ceiling: this cookie still carries the refresh token.
-        { path: SESSION_COOKIE_PATH, maxAgeSeconds: ceiling - nowSeconds },
+      error: problem(
+        400,
+        'missing_scope',
+        'supply either source, or both site and document',
       ),
     }
   }
-
-  const verified = await verifyAccessToken(accessToken, {
-    config,
-    jwks: jwksFor(config, options),
-    now: options.now,
-  })
-  if (!verified.ok) {
-    // Not authenticated, but the rotated token still goes back. `expiresAt` is
-    // left where it was, so this cookie authorises nothing on its own.
-    return { kind: 'renewed', ...(await reseal()), principal: undefined }
+  // The canonical origin first, then the document joined to *that*. Joining the
+  // raw value left `site=https://ernie.sg/` + `document=/chapter` producing
+  // `https://ernie.sg//chapter`, which splits back to the document `//chapter`
+  // and reads an empty collection — a trailing slash silently addressing a
+  // different document than the one written.
+  // A document is a path, and it has to say so. Without the leading slash the
+  // concatenation can leave the origin entirely: `document=.example.com/x`
+  // against `site=https://ernie.sg` is `https://ernie.sg.example.com/x`, which
+  // splits back cleanly into a *different tenant* — so a caller could read and
+  // write somebody else's site by spelling the pair carefully.
+  const origin = document.startsWith('/') ? canonicalOrigin(site) : null
+  if (!origin) {
+    return {
+      error: problem(
+        400,
+        'invalid_scope',
+        'site must be a URL origin and document must begin with /',
+      ),
+    }
   }
+  const split = splitSource(`${origin}${document}`)
+  if (!split) {
+    return {
+      error: problem(
+        400,
+        'invalid_scope',
+        'site must be a URL origin and document must begin with /',
+      ),
+    }
+  }
+  return split
+}
 
-  const expiresAt = Math.min(verified.claims.exp, ceiling)
-  if (expiresAt <= nowSeconds) return { kind: 'renewed', ...(await reseal()), principal: undefined }
-
-  return {
-    kind: 'renewed',
-    ...(await reseal({ accessToken, expiresAt })),
-    principal: {
-      provider: WORKOS_PROVIDER,
-      issuer: verified.claims.iss,
-      subject: verified.claims.sub,
-      ...(session.email ? { email: session.email } : {}),
-    },
+/** `site` on its own: an origin and nothing else, canonically spelled. */
+function canonicalOrigin(site: string): string | null {
+  try {
+    const url = new URL(site)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+    if (url.username || url.password) return null
+    // An origin carries no path, query or fragment, so anything the parser puts
+    // in those came from the caller mixing a document into `site`.
+    if (url.pathname !== '/' || url.search || url.hash) return null
+    return url.origin
+  } catch {
+    return null
   }
 }
 
-async function handleMe(
-  request: Request,
-  env: AuthEnv,
-  config: WorkosConfig,
-  options: AuthOptions,
-): Promise<Response> {
-  let principal = await getPrincipal(request, env, options)
-  // A route a client polls, and one holding a response it can set a cookie on,
-  // so it is a place a lapsed access token gets renewed.
-  let renewed: string | null = null
-  let session: MarginSession | null = null
-  if (!principal) {
-    const again = await renewSession(request, config, options)
-    if (again) {
-      // Return either the rotated token or a terminal expiry even when the
-      // principal could not be established.
-      renewed = again.cookie
-      if (again.kind === 'renewed') {
-        session = again.session
-        principal = again.principal ?? null
-      }
-    }
+/**
+ * Whether a store error is the `parent_id` constraint refusing a delete.
+ *
+ * SQLite and D1 both report it in the message, so this matches on that rather
+ * than on a code neither of them promises. Anything else is rethrown, because a
+ * store that is genuinely broken must not look like a conflict.
+ */
+function isForeignKeyConflict(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /FOREIGN KEY constraint failed/i.test(message)
+}
+
+function parentVisibilityConflict(status: 400 | 409): Response {
+  return problem(
+    status,
+    'parent_visibility_conflict',
+    'a reply must not expose its parent to readers who cannot see it',
+  )
+}
+
+/** Stable trigger tokens distinguish write races from a broken store. */
+function replyVisibilityConflict(error: unknown): Response | null {
+  const message = error instanceof Error ? error.message : String(error)
+  if (/\bMARGIN_PARENT_VISIBILITY_CONFLICT\b/.test(message)) {
+    return parentVisibilityConflict(409)
   }
-  if (!principal) {
-    return json(
-      { authenticated: false, canWrite: false, isAdmin: false },
-      200,
-      renewed ? [['set-cookie', renewed]] : [],
+  if (/\bMARGIN_VISIBLE_REPLIES_CONFLICT\b/.test(message)) {
+    return problem(
+      409,
+      'has_visible_replies',
+      'replies visible to other readers prevent making this annotation private',
     )
   }
-  if (!session) {
-    const sealed = readCookie(request, SESSION_COOKIE_NAME)
-    session = sealed
-      ? await unsealSession(sealed, config.cookiePassword)
-      : null
-  }
-
-  // A database outage during the callback leaves a valid session with no
-  // identity row, and the documented out-of-band allowlist insert has nothing to
-  // select. Finishing it here makes that recoverable without signing out and in
-  // again — and picks up the admin bootstrap the same callback skipped.
-  await recordSignIn(
-    env,
-    principal,
-    {
-      ...(session?.email ? { email: session.email } : {}),
-      // Sealed at login only when the profile was verified and named this
-      // token's subject, so it is as trustworthy here as it was there.
-      emailVerified: session?.emailVerified === true,
-      adminEmail: config.adminEmail,
-    },
-    options,
-  )
-
-  return whoami(env, principal, renewed)
+  return null
 }
 
+const MALFORMED_JSON = Symbol('malformed-json')
+
+async function readJsonBody(request: Request): Promise<unknown> {
+  try {
+    return await request.json()
+  } catch {
+    return MALFORMED_JSON
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Handlers                                                                   */
+/* -------------------------------------------------------------------------- */
+
 /**
- * The `/auth/me` answer for a principal that is already established.
+ * `?limit=` and `?cursor=`, or the refusal to explain why not.
  *
- * Split out because there are two ways to get one: a verified WorkOS session,
- * and the development stub — which needs no WorkOS configuration at all.
+ * A page is always bounded. A document that collects enough annotations would
+ * otherwise make one response carry every row, and each row can hold a few
+ * kilobytes of bounded body and selector text, so an unbounded collection is a
+ * 503 waiting for a popular page rather than a theoretical limit.
  */
-async function whoami(
-  env: AuthEnv,
-  principal: Principal,
-  renewed: string | null,
+function readPage(
+  url: URL,
+): { limit: number; after?: ListCursor } | { error: Response } {
+  const raw = url.searchParams.get('limit')
+  let limit = DEFAULT_PAGE_SIZE
+  if (raw !== null) {
+    const parsed = Number(raw)
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_PAGE_SIZE) {
+      return {
+        error: problem(
+          400,
+          'invalid_limit',
+          `limit must be a whole number between 1 and ${MAX_PAGE_SIZE}`,
+        ),
+      }
+    }
+    limit = parsed
+  }
+
+  const cursor = url.searchParams.get('cursor')
+  if (cursor === null) return { limit }
+  const separator = cursor.indexOf(' ')
+  const created = separator === -1 ? '' : cursor.slice(0, separator)
+  const id = separator === -1 ? '' : cursor.slice(separator + 1)
+  if (!created || !id) {
+    return {
+      error: problem(400, 'invalid_cursor', 'cursor must be one this API returned'),
+    }
+  }
+  return { limit, after: { created, id } }
+}
+
+/** The opaque-ish cursor a client sends back. `created` cannot contain a space. */
+function encodeCursor(record: { created: string; id: string }): string {
+  return `${record.created} ${record.id}`
+}
+
+async function listAnnotations(
+  url: URL,
+  context: MarginRouteContext,
+  viewer: ViewerKey,
+  motivation?: 'editing',
 ): Promise<Response> {
-  let role: string | null = null
-  if (env.MARGIN_DB) {
-    try {
-      role = await allowlistRole(env.MARGIN_DB, principal)
-    } catch {
-      role = null
+  const scope = readScope(url)
+  if ('error' in scope) return scope.error
+  const page = readPage(url)
+  if ('error' in page) return page.error
+
+  // One row more than asked for, so "is there another page" is an observation
+  // rather than a second query.
+  const records = await context.repository.listAnnotations(scope, viewer, {
+    ...(motivation ? { motivation } : {}),
+    limit: page.limit + 1,
+    ...(page.after ? { after: page.after } : {}),
+  })
+  const rows = records.slice(0, page.limit)
+  const more = records.length > page.limit
+  const last = rows[rows.length - 1]
+
+  return json({
+    annotations: rows.map(recordToWebAnnotation),
+    ...(more && last ? { nextCursor: encodeCursor(last) } : {}),
+  })
+}
+
+async function createAnnotation(
+  request: Request,
+  context: MarginRouteContext,
+  owner: string,
+): Promise<Response> {
+  const payload = await readJsonBody(request)
+  if (payload === MALFORMED_JSON) {
+    return problem(400, 'malformed_json', 'the request body is not JSON')
+  }
+
+  const parsed = webAnnotationSchema.safeParse(payload)
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0]
+    return problem(
+      400,
+      'invalid_annotation',
+      `${issue?.path.join('.') || 'body'}: ${issue?.message ?? 'invalid'}`,
+    )
+  }
+
+  // Visibility is the caller's stored default unless this annotation names
+  // one. The default is read now and copied onto the row, so changing it later
+  // cannot reach back and rewrite anything.
+  const prefs = await context.repository.getPrefs(owner)
+  const visibility: MarginVisibility =
+    parsed.data['margin:visibility'] ?? prefs.defaultVisibility
+
+  const now = context.now()
+  const mapped = webAnnotationToRecord(parsed.data, {
+    id: context.newId(),
+    creator: owner,
+    visibility,
+    created: now,
+    modified: now,
+  })
+  if (!mapped.ok) {
+    return problem(400, mapped.error.code, mapped.error.message)
+  }
+  const record = mapped.value
+  const scope: TenantScope = { site: record.site, document: record.document }
+
+  // PATCH already refuses this pair. Creation used to accept `margin:color` on a
+  // note or a proposal and then store `null`, so the 201 body and every later GET
+  // came back missing a field the client had sent. Same rule in both places.
+  if (
+    record.annotation.kind !== 'highlight' &&
+    parsed.data['margin:color'] !== undefined
+  ) {
+    return problem(
+      400,
+      'unexpected_color',
+      'margin:color applies only to an annotation motivated by highlighting',
+    )
+  }
+
+  // A reply must point at an annotation the caller can see in the same
+  // tenancy. The lookup is scoped, so a parent id from another site or another
+  // document simply does not resolve and the row is never written.
+  if (record.parentId !== null) {
+    const parent = await context.repository.findAnnotation(
+      scope,
+      record.parentId,
+      owner,
+    )
+    if (!parent) {
+      return problem(
+        400,
+        'unknown_parent',
+        'margin:parentId must name an annotation on the same site and document',
+      )
+    }
+    // Author access does not imply access for everyone who can see the reply.
+    if (record.visibility === 'public' && parent.visibility !== 'public') {
+      return parentVisibilityConflict(400)
     }
   }
 
+  // The mirror of the delete race: the parent can be deleted between the lookup
+  // above and this insert, and `parent_id` then refuses the row. The store is
+  // healthy — the parent simply went away — so this is the same answer the
+  // caller would have got a moment earlier, not a 503.
+  try {
+    await context.repository.insertAnnotation(record)
+  } catch (error) {
+    const conflict = replyVisibilityConflict(error)
+    if (conflict) {
+      // A deleted parent and one that became unreadable must remain
+      // indistinguishable. Recheck through the same tenant/viewer boundary;
+      // only a parent still readable by this caller may explain its conflict.
+      const parent = record.parentId === null
+        ? null
+        : await context.repository.findAnnotation(scope, record.parentId, owner)
+      if (!parent) {
+        return problem(
+          409,
+          'unknown_parent',
+          'the annotation this replies to is no longer available',
+        )
+      }
+      return conflict
+    }
+    if (isForeignKeyConflict(error)) {
+      return problem(
+        409,
+        'unknown_parent',
+        'the annotation this replies to was deleted while this was being written',
+      )
+    }
+    throw error
+  }
+  // The advertised URI has to be one a client can actually use. The item routes
+  // need a scope like every other read, so the header carries the canonical one
+  // rather than leaving a caller that follows it with `missing_scope`.
+  const source = encodeURIComponent(joinSource(scope.site, scope.document))
+  return json(recordToWebAnnotation(record), 201, {
+    location:
+      `${MARGIN_API_PREFIX}/annotations/${encodeURIComponent(record.id)}` +
+      `?source=${source}`,
+  })
+}
+
+async function readAnnotation(
+  context: MarginRouteContext,
+  viewer: ViewerKey,
+  url: URL,
+  id: string,
+): Promise<Response> {
+  const scope = readScope(url)
+  if ('error' in scope) return scope.error
+
+  const found = await context.repository.findAnnotation(scope, id, viewer)
+  if (!found) {
+    return problem(404, 'not_found', 'no annotation you can see has that id here')
+  }
+  return json(recordToWebAnnotation(found))
+}
+
+const annotationPatchSchema = z
+  .object({
+    body: z.string().min(1).max(8_000).optional(),
+    'margin:visibility': z.enum(VISIBILITIES).optional(),
+    'margin:color': z.string().min(1).max(64).optional(),
+  })
+  .strict()
+  .refine((patch) => Object.keys(patch).length > 0, {
+    message: 'the patch is empty',
+  })
+
+async function patchAnnotation(
+  request: Request,
+  context: MarginRouteContext,
+  owner: string,
+  url: URL,
+  id: string,
+): Promise<Response> {
+  const scope = readScope(url)
+  if ('error' in scope) return scope.error
+
+  const payload = await readJsonBody(request)
+  if (payload === MALFORMED_JSON) {
+    return problem(400, 'malformed_json', 'the request body is not JSON')
+  }
+  const parsed = annotationPatchSchema.safeParse(payload)
+  if (!parsed.success) {
+    return problem(
+      400,
+      'invalid_patch',
+      parsed.error.issues[0]?.message ?? 'invalid',
+    )
+  }
+
+  // A highlight has no body and a note has no colour. Checking the existing
+  // row first turns what the schema would otherwise reject as a constraint
+  // violation into an ordinary 400, and keeps the 404 for a row the caller
+  // does not own.
+  const existing = await context.repository.findAnnotation(scope, id, owner)
+  if (!existing || existing.creator !== owner) {
+    return problem(404, 'not_found', 'no annotation of yours has that id here')
+  }
+  const isHighlight = existing.annotation.kind === 'highlight'
+  if (isHighlight && parsed.data.body !== undefined) {
+    return problem(
+      400,
+      'unexpected_body',
+      'an annotation motivated by highlighting carries no body',
+    )
+  }
+  if (!isHighlight && parsed.data['margin:color'] !== undefined) {
+    return problem(
+      400,
+      'unexpected_color',
+      'margin:color applies only to an annotation motivated by highlighting',
+    )
+  }
+
+  if (
+    parsed.data['margin:visibility'] === 'public' &&
+    existing.parentId !== null
+  ) {
+    const parent = await context.repository.findAnnotation(
+      scope,
+      existing.parentId,
+      owner,
+    )
+    if (!parent || parent.visibility !== 'public') {
+      return parentVisibilityConflict(409)
+    }
+  }
+
+  // The database also checks both directions of the reference atomically:
+  // publishing a reply and making its parent private cannot race each other.
+  let updated: MarginAnnotationRecord | null
+  try {
+    updated = await context.repository.updateAnnotation(scope, id, owner, {
+      ...(parsed.data.body !== undefined ? { body: parsed.data.body } : {}),
+      ...(parsed.data['margin:visibility'] !== undefined
+        ? { visibility: parsed.data['margin:visibility'] }
+        : {}),
+      ...(parsed.data['margin:color'] !== undefined
+        ? { color: parsed.data['margin:color'] }
+        : {}),
+      modified: context.now(),
+    })
+  } catch (error) {
+    const conflict = replyVisibilityConflict(error)
+    if (conflict) return conflict
+    throw error
+  }
+  if (!updated) {
+    return problem(404, 'not_found', 'no annotation of yours has that id here')
+  }
+  return json(recordToWebAnnotation(updated))
+}
+
+async function deleteAnnotation(
+  context: MarginRouteContext,
+  owner: string,
+  url: URL,
+  id: string,
+): Promise<Response> {
+  const scope = readScope(url)
+  if ('error' in scope) return scope.error
+
+  // Ownership first, and only then the reply count. The other way round, a 409
+  // and a 404 differ for an annotation the caller cannot see, which tells them
+  // it exists and whether anybody has replied to it — an oracle over exactly
+  // what the visibility predicate hides.
+  const own = await context.repository.findAnnotation(scope, id, owner)
+  if (!own || own.creator !== owner) {
+    return problem(404, 'not_found', 'no annotation of yours has that id here')
+  }
+
+  // A reply belongs to whoever wrote it. Cascading a parent's delete through
+  // its children would let the parent's owner destroy other people's
+  // annotations, which no owner-scoped delete should be able to do, so a thread
+  // with replies in it refuses instead. Tombstoning a deleted parent and
+  // keeping the thread readable is 056's problem, not this route's.
+  if (await context.repository.countReplies(scope, id)) {
+    return problem(
+      409,
+      'has_replies',
+      'other people have replied to this; deleting it would delete their replies',
+    )
+  }
+
+  // A reply can arrive between the count above and the delete below. The
+  // constraint catches it, and that is a conflict the caller can act on, not the
+  // store being unavailable — so it is translated here rather than escaping as
+  // the Worker's generic 503.
+  let removed: boolean
+  try {
+    removed = await context.repository.deleteAnnotation(scope, id, owner)
+  } catch (error) {
+    if (isForeignKeyConflict(error)) {
+      return problem(
+        409,
+        'has_replies',
+        'a reply arrived while this was being deleted; deleting it would delete theirs',
+      )
+    }
+    throw error
+  }
+  if (!removed) {
+    return problem(404, 'not_found', 'no annotation of yours has that id here')
+  }
+  return new Response(null, { status: 204, headers: JSON_HEADERS })
+}
+
+const prefsPatchSchema = z
+  .object({ defaultVisibility: z.enum(VISIBILITIES) })
+  .strict()
+
+async function readPrefs(
+  context: MarginRouteContext,
+  owner: string,
+): Promise<Response> {
+  const prefs = await context.repository.getPrefs(owner)
+  return json({ defaultVisibility: prefs.defaultVisibility })
+}
+
+async function writePrefs(
+  request: Request,
+  context: MarginRouteContext,
+  owner: string,
+): Promise<Response> {
+  const payload = await readJsonBody(request)
+  if (payload === MALFORMED_JSON) {
+    return problem(400, 'malformed_json', 'the request body is not JSON')
+  }
+  const parsed = prefsPatchSchema.safeParse(payload)
+  if (!parsed.success) {
+    return problem(
+      400,
+      'invalid_prefs',
+      `defaultVisibility must be one of ${VISIBILITIES.join(', ')}`,
+    )
+  }
+  const prefs = await context.repository.setDefaultVisibility(
+    owner,
+    parsed.data.defaultVisibility,
+    context.now(),
+  )
+  return json({ defaultVisibility: prefs.defaultVisibility })
+}
+
+function notImplemented(issue: string): Response {
   return json(
     {
-      authenticated: true,
-      principal,
-      canWrite: role !== null,
-      isAdmin: role === 'admin',
+      error: {
+        code: 'not_implemented',
+        message: `this route lands in issue ${issue}`,
+      },
     },
-    200,
-    renewed ? [['set-cookie', renewed]] : [],
+    501,
   )
 }
 
+/* -------------------------------------------------------------------------- */
+/* Router                                                                     */
+/* -------------------------------------------------------------------------- */
+
 /**
- * Routes an `/auth/*` request, or returns `null` when the path is not ours so
- * the Worker entry can fall through to the asset binding unchanged.
+ * The path, decoded, or `null` when it cannot be.
+ *
+ * `decodeURIComponent` throws `URIError` on a malformed escape such as a bare
+ * `%`, and an uncaught throw here is a 500 on a public request. A path that
+ * cannot be decoded matches no route, so it is a 404 like any other.
  */
-export async function handleAuthRequest(
+function segments(pathname: string): string[] | null {
+  try {
+    return pathname
+      .slice(MARGIN_API_PREFIX.length)
+      .split('/')
+      .filter((part) => part.length > 0)
+      .map((part) => decodeURIComponent(part))
+  } catch {
+    return null
+  }
+}
+
+function unauthenticated(): Response {
+  return problem(401, 'unauthenticated', 'this route needs a signed-in caller')
+}
+
+export async function handleMarginRequest(
   request: Request,
-  env: AuthEnv,
-  options: AuthOptions = {},
-): Promise<Response | null> {
-  const { pathname } = new URL(request.url)
-  const path =
-    pathname.length > 1 ? pathname.replace(/\/+$/u, '') || '/' : pathname
-  if (!AUTH_PATHS.includes(path)) return null
+  context: MarginRouteContext,
+): Promise<Response> {
+  const url = new URL(request.url)
+  const path = segments(url.pathname)
+  if (!path) return problem(404, 'not_found', 'no such margin route')
+  const method = request.method === 'HEAD' ? 'GET' : request.method
+  const owner = context.principal ? principalKey(context.principal) : null
 
-  // Logout is answered before the configuration gate. Clearing a cookie needs
-  // no provider, and a half-configured or mid-rotation deployment is exactly
-  // when somebody wants to get signed out — a 503 there would leave the
-  // session cookie in place with no way to remove it.
-  if (path === AUTH_LOGOUT_PATH) {
-    // POST only: a `SameSite=Lax` cookie rides along with a cross-site GET
-    // navigation, so a GET logout would be forgeable.
-    if (request.method !== 'POST') return methodNotAllowed('POST')
-    // And POST alone is not enough. `SameSite=Lax` may stop a cross-site form
-    // sending the cookie, but the response's `Set-Cookie` deletes it anyway, so
-    // a page anywhere could sign a reader out. A browser always labels the
-    // request it is making; a non-browser client sends neither header and is not
-    // the threat.
-    if (!sameOrigin(request)) {
-      return json({ error: 'cross_origin' }, 403)
+  if (path.length === 1 && path[0] === 'annotations') {
+    if (method === 'GET') return listAnnotations(url, context, owner)
+    if (method === 'POST') {
+      if (!owner) return unauthenticated()
+      return createAnnotation(request, context, owner)
     }
-    return handleLogout()
+    return methodNotAllowed(['GET', 'HEAD', 'POST'])
   }
 
-  const config = readWorkosConfig(env)
-  if (!config) {
-    // The development stub needs no WorkOS credentials, and the write gate
-    // already honours it, so `/auth/me` must be able to report it too —
-    // otherwise a local client cannot discover an identity its own writes
-    // recognise. Nothing else is answerable without configuration.
-    if (path === AUTH_ME_PATH && request.method === 'GET') {
-      const stubbed = await getPrincipal(request, env, options)
-      if (stubbed) return whoami(env, stubbed, null)
+  if (path.length === 2 && path[0] === 'annotations') {
+    // Either spelling of the same annotation, the same as `margin:parentId`
+    // takes: every response carries `urn:margin:annotation:<uuid>` as its `id`,
+    // so that is what a client has in hand, and requiring the bare key here
+    // meant the identifier the API hands out did not work in its own URLs.
+    const id = annotationIdFromIri(path[1])
+    // The `Location` header a POST returns points here, so this has to answer.
+    // Visibility-scoped like the collection: the caller's own annotation or
+    // anybody's public one, and nothing else.
+    if (method === 'GET') return readAnnotation(context, owner, url, id)
+    if (!owner) return unauthenticated()
+    if (method === 'PATCH') {
+      return patchAnnotation(request, context, owner, url, id)
     }
-    // No credentials means no login. Failing closed here is what keeps a
-    // half-configured deployment from serving an unauthenticated session.
-    return json({ error: 'auth_unavailable' }, 503)
+    if (method === 'DELETE') {
+      return deleteAnnotation(context, owner, url, id)
+    }
+    return methodNotAllowed(['GET', 'PATCH', 'DELETE'])
   }
 
-  switch (path) {
-    case AUTH_LOGIN_PATH:
-      if (request.method !== 'GET') return methodNotAllowed('GET')
-      return handleLogin(request, config)
-    case AUTH_CALLBACK_PATH:
-      if (request.method !== 'GET') return methodNotAllowed('GET')
-      return handleCallback(request, env, config, options)
-    default:
-      if (request.method !== 'GET') return methodNotAllowed('GET')
-      return handleMe(request, env, config, options)
+  if (path.length === 1 && path[0] === 'prefs') {
+    if (!owner) return unauthenticated()
+    if (method === 'GET') return readPrefs(context, owner)
+    if (method === 'PATCH') return writePrefs(request, context, owner)
+    return methodNotAllowed(['GET', 'HEAD', 'PATCH'])
   }
+
+  if (path.length === 1 && path[0] === 'proposals') {
+    if (method !== 'GET') return methodNotAllowed(['GET', 'HEAD'])
+    return listAnnotations(url, context, owner, 'editing')
+  }
+
+  if (path.length === 3 && path[0] === 'proposals' && path[2] === 'apply') {
+    if (method !== 'POST') return methodNotAllowed(['POST'])
+    return notImplemented('060')
+  }
+
+  if (path.length === 3 && path[0] === 'documents' && path[2] === 'history') {
+    if (method !== 'GET') return methodNotAllowed(['GET', 'HEAD'])
+    return notImplemented('059')
+  }
+
+  return problem(404, 'not_found', 'no such margin route')
 }

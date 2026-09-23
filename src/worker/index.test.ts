@@ -19,7 +19,7 @@ import {
   TEST_CLIENT_ID,
   TEST_ISSUER,
 } from './margin/fake-workos'
-import { AUTH_ME_PATH } from './margin/routes'
+import { AUTH_ME_PATH } from './margin/auth-routes'
 
 // Prefer the real build output so this asserts against the HTML the site
 // actually ships. `scripts/agent-evidence` runs the build lane before the test
@@ -230,12 +230,12 @@ describe('the margin write gate', () => {
     }
   })
 
-  it('lets a read through to whatever serves it', async () => {
+  it('reports missing service storage for a read', async () => {
     const env = envWithWorkos()
     const response = await worker.fetch(new Request(ANNOTATIONS), env)
 
-    expect(response.status).toBe(404)
-    expect(env.ASSETS.seen).toHaveLength(1)
+    expect(response.status).toBe(503)
+    expect(env.ASSETS.seen).toHaveLength(0)
   })
 
   it('gates a write even on a path no route serves yet', async () => {
@@ -322,7 +322,7 @@ describe('terminal refresh responses', () => {
     try {
       for (const [path, method, status] of [
         [AUTH_ME_PATH, 'GET', 200],
-        ['/api/margin/v1/annotations', 'GET', 404],
+        ['/api/margin/v1/annotations', 'GET', 503],
         ['/api/margin/v1/annotations', 'POST', 401],
         ['/api/margin/v1/proposals/ann-1/apply', 'POST', 401],
       ] as const) {
@@ -335,17 +335,18 @@ describe('terminal refresh responses', () => {
         expect(response.headers.get('set-cookie'), `${method} ${path}`)
           .toContain('margin-session=; Path=/; Max-Age=0')
       }
-      const failedAsset = await worker.fetch(
-        new Request('https://ernie.sg/api/margin/v1/annotations', {
+      const failedStore = await worker.fetch(
+        new Request('https://ernie.sg/api/margin/v1/annotations?source=https%3A%2F%2Fernie.sg%2Fx', {
           headers: { cookie },
         }),
         {
-          ASSETS: { fetch: async () => { throw new Error('downstream unavailable') } },
+          ASSETS: createAssetBinding(),
+          MARGIN_DB: { prepare() { throw new Error('downstream unavailable') } },
           ...testWorkosEnv(),
         } as WorkerEnv,
       )
-      expect(failedAsset.status).toBe(500)
-      expect(failedAsset.headers.get('set-cookie'))
+      expect(failedStore.status).toBe(503)
+      expect(failedStore.headers.get('set-cookie'))
         .toContain('margin-session=; Path=/; Max-Age=0')
       const callsAfterClear = provider.calls.length
       await worker.fetch(
@@ -404,5 +405,58 @@ describe('renewing a write leaves its body readable', () => {
     // serves the route.
     expect(request.bodyUsed).toBe(false)
     expect(await request.text()).toBe('{"hello":"world"}')
+  })
+})
+
+// A deploy that reaches the Worker before `wrangler d1 migrations apply`
+// reaches the database fails every query on a missing table. That must read as
+// an operator-legible 503, not a raw 500 with SQL in it.
+describe('a store that cannot answer', () => {
+  it('is a 503 the operator can act on, not a 500', async () => {
+    const env = {
+      ASSETS: createAssetBinding(),
+      MARGIN_DB: {
+        prepare() {
+          return {
+            bind() {
+              return this
+            },
+            first() {
+              throw new Error('D1_ERROR: no such table: margin_annotations')
+            },
+            all() {
+              throw new Error('D1_ERROR: no such table: margin_annotations')
+            },
+            run() {
+              throw new Error('D1_ERROR: no such table: margin_annotations')
+            },
+          }
+        },
+      },
+    } as unknown as WorkerEnv & { ASSETS: ReturnType<typeof createAssetBinding> }
+
+    const response = await worker.fetch(
+      new Request(
+        'https://ernie.sg/api/margin/v1/annotations?source=https%3A%2F%2Fernie.sg%2Fx',
+      ),
+      env,
+    )
+
+    expect(response.status).toBe(503)
+    const body = (await response.json()) as { error: { code: string; message: string } }
+    expect(body.error.code).toBe('storage_unavailable')
+    expect(body.error.message).toContain('migrations')
+    // And nothing from the store's own message reaches the caller.
+    expect(JSON.stringify(body)).not.toContain('no such table')
+  })
+
+  it('still answers the health route, which is what it is for', async () => {
+    const env = { ASSETS: createAssetBinding() } as unknown as WorkerEnv
+    const response = await worker.fetch(
+      new Request(`https://ernie.sg${MARGIN_HEALTH_PATH}`),
+      env,
+    )
+
+    expect(response.status).toBe(200)
   })
 })

@@ -1,1173 +1,1456 @@
-import { beforeAll, describe, expect, it } from 'vitest'
-import { jwksUrl, readWorkosConfig, type WorkosConfig } from './config'
+import { beforeEach, describe, expect, it } from 'vitest'
 import {
-  createFakeD1,
-  createFakeProvider,
-  sessionCookieHeader,
-  testSigner,
-  testWorkosEnv,
-  TEST_CLIENT_ID,
-  TEST_ISSUER,
-  type FakeD1,
-  type FakeProvider,
-  type TestSigner,
-} from './fake-workos'
-import { createJwksSource } from './jwt'
+  ADA,
+  ADA_KEY,
+  BOB,
+  CHAPTER_ONE,
+  CHAPTER_TWO,
+  createHarness,
+  OTHER_SITE,
+  scopeQuery,
+  webAnnotation,
+  type MarginHarness,
+} from './fixtures'
 import {
-  AUTH_CALLBACK_PATH,
-  AUTH_LOGIN_PATH,
-  AUTH_LOGOUT_PATH,
-  AUTH_ME_PATH,
-  handleAuthRequest,
-  safeReturnPath,
-  type AuthEnv,
-  type AuthOptions,
-} from './routes'
-import {
-  SESSION_COOKIE_NAME,
-  SESSION_MAX_AGE_SECONDS,
-  STATE_COOKIE_NAME,
-  unsealSession,
-} from './session'
+  MAX_CONTEXT_LENGTH,
+  MAX_QUOTE_LENGTH,
+  STRUCT_SELECTOR_TYPE,
+} from './web-annotation'
+import { MARGIN_API_PREFIX } from './routes'
+import { MAX_PAGE_SIZE } from './repository'
+import { MAX_SOURCE_LENGTH } from './web-annotation'
 
-const NOW_MS = 1_800_000_000_000
-const NOW_SECONDS = Math.floor(NOW_MS / 1000)
-const ADMIN_EMAIL = 'hello@ernie.sg'
+/** The acceptance tests from issue 054, against the real router and real SQL. */
 
-const config = readWorkosConfig(testWorkosEnv()) as WorkosConfig
+let harness: MarginHarness
 
-let signer: TestSigner
-
-beforeAll(async () => {
-  signer = await testSigner()
+beforeEach(() => {
+  harness = createHarness()
 })
 
-function setCookies(response: Response): string[] {
-  return (
-    response.headers as unknown as { getSetCookie(): string[] }
-  ).getSetCookie()
+type WireAnnotation = {
+  id: string
+  motivation: string
+  body?: { value: string }
+  target: { source: string; selector: { type: string }[] }
+  creator: string
+  'margin:visibility': string
+  'margin:parentId'?: string
 }
 
-function cookieNamed(response: Response, name: string): string | undefined {
-  return setCookies(response).find((header) => header.startsWith(`${name}=`))
-}
-
-function accessToken(overrides: Record<string, unknown> = {}) {
-  return signer.sign({
-    iss: TEST_ISSUER,
-    sub: 'user_01HREADER',
-    client_id: TEST_CLIENT_ID,
-    iat: NOW_SECONDS - 10,
-    exp: NOW_SECONDS + 300,
-    ...overrides,
-  })
-}
-
-function providerWith(
-  authenticate: unknown,
-  authenticateStatus?: number,
-): FakeProvider {
-  return createFakeProvider({
-    jwks: signer.jwks,
-    authenticate,
-    ...(authenticateStatus === undefined ? {} : { authenticateStatus }),
-  })
-}
-
-function optionsFor(provider: FakeProvider): AuthOptions {
-  return {
-    now: NOW_MS,
-    fetchImpl: provider.fetchImpl,
-    jwks: createJwksSource(jwksUrl(config), {
-      fetchImpl: provider.fetchImpl,
-      now: () => NOW_MS,
-    }),
-  }
-}
-
-function envWith(db?: FakeD1): AuthEnv {
-  return {
-    ...testWorkosEnv(),
-    MARGIN_ENVIRONMENT: 'production',
-    ...(db ? { MARGIN_DB: db } : {}),
-  }
-}
-
-async function call(
-  path: string,
-  init: RequestInit = {},
-  env: AuthEnv = envWith(),
-  options: AuthOptions = {},
-): Promise<Response | null> {
-  return handleAuthRequest(
-    new Request(`https://ernie.sg${path}`, init),
-    env,
-    options,
+async function list(source: string, as: typeof ADA | null = ADA) {
+  const response = await harness.request(
+    'GET',
+    `/annotations${scopeQuery(source)}`,
+    { as },
   )
+  expect(response.status).toBe(200)
+  const { annotations } = (await response.json()) as {
+    annotations: WireAnnotation[]
+  }
+  return annotations
 }
 
-async function beginLogin(
-  returnTo?: string,
-): Promise<{ state: string; cookie: string }> {
-  const query = returnTo ? `?return_to=${encodeURIComponent(returnTo)}` : ''
-  const response = await call(`${AUTH_LOGIN_PATH}${query}`)
-  const location = new URL(response?.headers.get('location') as string)
-  const stateCookie = cookieNamed(response as Response, STATE_COOKIE_NAME)
-  return {
-    state: location.searchParams.get('state') as string,
-    cookie: (stateCookie as string).split(';')[0] as string,
-  }
+async function post(body: unknown, as: typeof ADA | null = ADA) {
+  return harness.request('POST', '/annotations', { as, body })
 }
 
-describe('GET /auth/login', () => {
-  it('redirects to the hosted AuthKit UI with an opaque state', async () => {
-    const response = (await call(AUTH_LOGIN_PATH)) as Response
-    const location = new URL(response.headers.get('location') as string)
+/** The stored id, stripped of the `urn:margin:annotation:` IRI prefix. */
+function bareId(wire: WireAnnotation): string {
+  return wire.id.replace('urn:margin:annotation:', '')
+}
 
-    expect(response.status).toBe(302)
-    expect(location.origin).toBe(TEST_ISSUER)
-    expect(location.pathname).toBe('/user_management/authorize')
-    expect(location.searchParams.get('client_id')).toBe(TEST_CLIENT_ID)
-    expect(location.searchParams.get('state')?.length).toBeGreaterThan(20)
-  })
-
-  it('pins the state to the browser in a short-lived /auth cookie', async () => {
-    const response = (await call(AUTH_LOGIN_PATH)) as Response
-    const cookie = cookieNamed(response, STATE_COOKIE_NAME) as string
-
-    expect(cookie).toContain('; Path=/auth')
-    expect(cookie).toContain('; HttpOnly')
-    expect(cookie).toContain('; Secure')
-    expect(cookie).toContain('; SameSite=Lax')
-    expect(cookie).toContain('; Max-Age=600')
-    expect(cookie.toLowerCase()).not.toContain('domain=')
-  })
-
-  it('never leaks the API key into the redirect', async () => {
-    const response = (await call(AUTH_LOGIN_PATH)) as Response
-
-    expect(response.headers.get('location')).not.toContain(config.apiKey)
-  })
-
-  it('refuses anything but GET', async () => {
-    const response = (await call(AUTH_LOGIN_PATH, { method: 'POST' })) as Response
-
-    expect(response.status).toBe(405)
-    expect(response.headers.get('allow')).toBe('GET')
-  })
-})
-
-describe('safeReturnPath', () => {
-  it('keeps a same-origin path', () => {
-    expect(safeReturnPath('/challenges/one?page=2#anchor')).toBe(
-      '/challenges/one?page=2#anchor',
-    )
-  })
-
-  it('refuses everything that could leave the origin', () => {
-    for (const candidate of [
-      'https://evil.test/',
-      '//evil.test/',
-      '/\\evil.test',
-      'javascript:alert(1)',
-      'challenges',
-      '',
-      null,
-      undefined,
-    ]) {
-      expect(safeReturnPath(candidate)).toBe('/')
+describe('GET|POST /annotations', () => {
+  it('shows each reader their own private rows plus every public one', async () => {
+    for (const [as, visibility, body] of [
+      [ADA, 'private', 'ada private'],
+      [ADA, 'public', 'ada public'],
+      [BOB, 'private', 'bob private'],
+      [BOB, 'public', 'bob public'],
+    ] as const) {
+      expect(
+        (await post(webAnnotation({ source: CHAPTER_ONE, visibility, body }), as))
+          .status,
+      ).toBe(201)
     }
-  })
 
-  it('refuses a header-splitting path', () => {
-    expect(safeReturnPath('/ok\r\nSet-Cookie: margin-session=forged')).toBe('/')
-  })
-})
-
-describe('GET /auth/callback', () => {
-  const user = { email: 'reader@example.test', email_verified: true }
-
-  it('exchanges the code and seals the session', async () => {
-    const { state, cookie } = await beginLogin('/challenges/one')
-    const provider = providerWith({
-      access_token: await accessToken(),
-      user,
-    })
-
-    const response = (await call(
-      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
-      { headers: { cookie } },
-      envWith(),
-      optionsFor(provider),
-    )) as Response
-
-    expect(response.status).toBe(302)
-    expect(response.headers.get('location')).toBe('/challenges/one')
-
-    const session = cookieNamed(response, SESSION_COOKIE_NAME) as string
-    expect(session).toContain('; Path=/')
-    expect(session).toContain('; HttpOnly')
-    expect(session).toContain('; Secure')
-    expect(session).toContain('; SameSite=Lax')
-    expect(session.toLowerCase()).not.toContain('domain=')
-    // To the ceiling, not to the 300-second access token: the cookie carries
-    // the refresh token, and a browser that dropped it at token expiry would
-    // throw away the only thing that can renew the session.
-    expect(session).toContain(`; Max-Age=${SESSION_MAX_AGE_SECONDS}`)
-
-    const cleared = cookieNamed(response, STATE_COOKIE_NAME) as string
-    expect(cleared).toContain('; Max-Age=0')
-  })
-
-  // The eight-hour ceiling has to be in the seal, not only in `Max-Age`: a
-  // copied cookie has no `Max-Age`, and a WorkOS token may outlive the limit.
-  it('seals the lesser of the token expiry and the session ceiling', async () => {
-    const longLived = SESSION_MAX_AGE_SECONDS + 100_000
-    const { state, cookie } = await beginLogin()
-    const provider = providerWith({
-      access_token: await accessToken({ exp: NOW_SECONDS + longLived }),
-      user,
-    })
-
-    const response = (await call(
-      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
-      { headers: { cookie } },
-      envWith(),
-      optionsFor(provider),
-    )) as Response
-
-    const header = cookieNamed(response, SESSION_COOKIE_NAME) as string
-    expect(header).toContain(`; Max-Age=${SESSION_MAX_AGE_SECONDS}`)
-
-    const sealed = header.slice(
-      header.indexOf('=') + 1,
-      header.indexOf(';'),
-    )
-    const session = await unsealSession(sealed, config.cookiePassword)
-    expect(session?.expiresAt).toBe(NOW_SECONDS + SESSION_MAX_AGE_SECONDS)
-  })
-
-  // The bug this guards: sizing the cookie to the access token had a conforming
-  // browser delete the sealed refresh token at the moment it became the only
-  // thing that could renew the session.
-  it('outlives the access token it was sealed with', async () => {
-    const { state, cookie } = await beginLogin()
-    const provider = providerWith({
-      access_token: await accessToken({ exp: NOW_SECONDS + 300 }),
-      refresh_token: 'refresh_one',
-      user,
-    })
-
-    const response = (await call(
-      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
-      { headers: { cookie } },
-      envWith(),
-      optionsFor(provider),
-    )) as Response
-
-    const header = cookieNamed(response, SESSION_COOKIE_NAME) as string
-    const maxAge = Number(/; Max-Age=(\d+)/.exec(header)?.[1])
-    expect(maxAge).toBe(SESSION_MAX_AGE_SECONDS)
-    expect(maxAge).toBeGreaterThan(300)
-
-    // While the seal still bounds the access token at its own expiry.
-    const sealed = header.slice(header.indexOf('=') + 1, header.indexOf(';'))
-    const session = await unsealSession(sealed, config.cookiePassword)
-    expect(session?.expiresAt).toBe(NOW_SECONDS + 300)
-    expect(session?.ceiling).toBe(NOW_SECONDS + SESSION_MAX_AGE_SECONDS)
-    expect(session?.refreshToken).toBe('refresh_one')
-  })
-
-  it('exchanges the code server-side, never in the browser', async () => {
-    const { state, cookie } = await beginLogin()
-    const provider = providerWith({ access_token: await accessToken(), user })
-
-    await call(
-      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
-      { headers: { cookie } },
-      envWith(),
-      optionsFor(provider),
-    )
-
-    const exchange = provider.calls.find((entry) =>
-      entry.url.includes('/user_management/authenticate'),
-    )
-    expect(exchange?.init?.method).toBe('POST')
-    expect(String(exchange?.init?.body)).toContain(config.clientId)
-  })
-
-  it('records the identity and binds the admin once, by verified email', async () => {
-    const db = createFakeD1()
-    const { state, cookie } = await beginLogin()
-    const provider = providerWith({
-      access_token: await accessToken({ sub: 'user_01HADMIN' }),
-      user: { id: 'user_01HADMIN', email: ADMIN_EMAIL, email_verified: true },
-    })
-
-    await call(
-      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
-      { headers: { cookie } },
-      envWith(db),
-      optionsFor(provider),
-    )
-
-    expect(db.schemaApplied()).toBe(true)
-    expect(db.identities).toHaveLength(1)
-    expect(db.identities[0]).toMatchObject({
-      provider: 'workos',
-      issuer: TEST_ISSUER,
-      subject: 'user_01HADMIN',
-    })
-    expect(db.allowlist).toEqual([
-      expect.objectContaining({ identity_id: 1, role: 'admin' }),
+    const forAda = await list(CHAPTER_ONE, ADA)
+    expect(forAda).toHaveLength(3)
+    expect(forAda.map((a) => a.body?.value).sort()).toEqual([
+      'ada private',
+      'ada public',
+      'bob public',
     ])
+
+    const forBob = await list(CHAPTER_ONE, BOB)
+    expect(forBob).toHaveLength(3)
+
+    expect(await list(CHAPTER_ONE, null)).toHaveLength(2)
   })
 
-  // The profile block is not signed. Only the token is, so a profile that
-  // names a different subject is not this session's profile — and this is the
-  // one place an email address decides anything at all.
-  it('does not bind an admin when the profile names another subject', async () => {
-    const db = createFakeD1()
-    const { state, cookie } = await beginLogin()
-    const provider = providerWith({
-      access_token: await accessToken({ sub: 'user_01HVICTIM' }),
-      user: { id: 'user_01HATTACKER', email: ADMIN_EMAIL, email_verified: true },
-    })
+  it('refuses an unauthenticated write', async () => {
+    const response = await post(webAnnotation({ source: CHAPTER_ONE }), null)
+    expect(response.status).toBe(401)
+    expect(await list(CHAPTER_ONE, ADA)).toHaveLength(0)
+  })
 
-    await call(
-      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
-      { headers: { cookie } },
-      envWith(db),
-      optionsFor(provider),
+  it('accepts either ?source= or ?site=&document=', async () => {
+    await post(webAnnotation({ source: CHAPTER_ONE, visibility: 'public' }))
+    const response = await harness.request(
+      'GET',
+      '/annotations?site=https%3A%2F%2Fernie.sg&document=%2Fchallenges%2Fchapter-1',
     )
-
-    expect(db.identities).toHaveLength(1)
-    expect(db.allowlist).toEqual([])
-  })
-
-  it('does not bind an admin when the profile names no subject', async () => {
-    const db = createFakeD1()
-    const { state, cookie } = await beginLogin()
-    const provider = providerWith({
-      access_token: await accessToken({ sub: 'user_01HADMIN' }),
-      user: { email: ADMIN_EMAIL, email_verified: true },
-    })
-
-    await call(
-      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
-      { headers: { cookie } },
-      envWith(db),
-      optionsFor(provider),
-    )
-
-    expect(db.allowlist).toEqual([])
-  })
-
-  // `identity_id` is the allowlist's primary key, so the owner already added
-  // as a writer would collide instead of being promoted, and there would be no
-  // admin at all.
-  it('promotes the owner to admin when they are already a writer', async () => {
-    const db = createFakeD1()
-    const { state, cookie } = await beginLogin()
-    db.allow(
-      { provider: 'workos', issuer: TEST_ISSUER, subject: 'user_01HADMIN' },
-      'writer',
-    )
-    const provider = providerWith({
-      access_token: await accessToken({ sub: 'user_01HADMIN' }),
-      user: { id: 'user_01HADMIN', email: ADMIN_EMAIL, email_verified: true },
-    })
-
-    await call(
-      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
-      { headers: { cookie } },
-      envWith(db),
-      optionsFor(provider),
-    )
-
-    expect(db.allowlist).toEqual([
-      expect.objectContaining({ identity_id: 1, role: 'admin' }),
-    ])
-  })
-
-  it('does not bind an admin on an unverified email', async () => {
-    const db = createFakeD1()
-    const { state, cookie } = await beginLogin()
-    const provider = providerWith({
-      access_token: await accessToken({ sub: 'user_01HIMPOSTER' }),
-      user: { email: ADMIN_EMAIL, email_verified: false },
-    })
-
-    await call(
-      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
-      { headers: { cookie } },
-      envWith(db),
-      optionsFor(provider),
-    )
-
-    expect(db.identities).toHaveLength(1)
-    expect(db.allowlist).toEqual([])
-  })
-
-  it('does not rebind the admin once one exists', async () => {
-    const db = createFakeD1()
-    db.allow(
-      { provider: 'workos', issuer: TEST_ISSUER, subject: 'user_01HADMIN' },
-      'admin',
-    )
-
-    const { state, cookie } = await beginLogin()
-    const provider = providerWith({
-      access_token: await accessToken({ sub: 'user_01HLATECOMER' }),
-      user: { email: ADMIN_EMAIL, email_verified: true },
-    })
-
-    await call(
-      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
-      { headers: { cookie } },
-      envWith(db),
-      optionsFor(provider),
-    )
-
-    expect(db.allowlist.filter((row) => row.role === 'admin')).toEqual([
-      expect.objectContaining({ identity_id: 1 }),
-    ])
-  })
-
-  it('rejects a state that does not match the cookie', async () => {
-    const { cookie } = await beginLogin()
-    const provider = providerWith({ access_token: await accessToken(), user })
-
-    const response = (await call(
-      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=forged-state`,
-      { headers: { cookie } },
-      envWith(),
-      optionsFor(provider),
-    )) as Response
-
-    expect(response.status).toBe(400)
-    expect(cookieNamed(response, SESSION_COOKIE_NAME)).toBeUndefined()
-    expect(provider.calls).toHaveLength(0)
-  })
-
-  it('rejects a callback with no state cookie at all', async () => {
-    const { state } = await beginLogin()
-
-    const response = (await call(
-      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
-    )) as Response
-
-    expect(response.status).toBe(400)
-    expect(cookieNamed(response, SESSION_COOKIE_NAME)).toBeUndefined()
-  })
-
-  it('rejects a callback with no code', async () => {
-    const { state, cookie } = await beginLogin()
-
-    const response = (await call(
-      `${AUTH_CALLBACK_PATH}?state=${encodeURIComponent(state)}`,
-      { headers: { cookie } },
-    )) as Response
-
-    expect(response.status).toBe(400)
-  })
-
-  it('fails closed when the exchange is refused', async () => {
-    const { state, cookie } = await beginLogin()
-    const provider = providerWith({ error: 'invalid_grant' }, 401)
-
-    const response = (await call(
-      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
-      { headers: { cookie } },
-      envWith(),
-      optionsFor(provider),
-    )) as Response
-
-    expect(response.status).toBe(400)
-    expect(await response.json()).toEqual({ error: 'login_failed' })
-    expect(cookieNamed(response, SESSION_COOKIE_NAME)).toBeUndefined()
-  })
-
-  it('fails closed when the provider is unreachable', async () => {
-    const { state, cookie } = await beginLogin()
-    const provider = providerWith({ access_token: await accessToken(), user })
-    provider.offline = true
-
-    const response = (await call(
-      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
-      { headers: { cookie } },
-      envWith(),
-      optionsFor(provider),
-    )) as Response
-
-    expect(response.status).toBe(400)
-    expect(cookieNamed(response, SESSION_COOKIE_NAME)).toBeUndefined()
-  })
-
-  it('refuses a token minted for another application', async () => {
-    const db = createFakeD1()
-    const { state, cookie } = await beginLogin()
-    const provider = providerWith({
-      access_token: await accessToken({ client_id: 'client_somebody_else' }),
-      user,
-    })
-
-    const response = (await call(
-      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
-      { headers: { cookie } },
-      envWith(db),
-      optionsFor(provider),
-    )) as Response
-
-    expect(response.status).toBe(400)
-    expect(cookieNamed(response, SESSION_COOKIE_NAME)).toBeUndefined()
-    expect(db.identities).toEqual([])
-  })
-
-  it('never echoes the provider’s failure back to the caller', async () => {
-    const { state, cookie } = await beginLogin()
-    const provider = providerWith(
-      { error: 'invalid_client', error_description: config.apiKey },
-      400,
-    )
-
-    const response = (await call(
-      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
-      { headers: { cookie } },
-      envWith(),
-      optionsFor(provider),
-    )) as Response
-    const body = await response.text()
-
-    expect(body).not.toContain(config.apiKey)
-    expect(body).not.toContain('invalid_client')
-  })
-})
-
-describe('POST /auth/logout', () => {
-  it('clears the session on the path that set it', async () => {
-    const response = (await call(AUTH_LOGOUT_PATH, {
-      method: 'POST',
-    })) as Response
-    const cleared = cookieNamed(response, SESSION_COOKIE_NAME) as string
-
     expect(response.status).toBe(200)
-    expect(cleared).toContain('; Path=/')
-    expect(cleared).toContain('; Max-Age=0')
+    const { annotations } = (await response.json()) as {
+      annotations: WireAnnotation[]
+    }
+    expect(annotations).toHaveLength(1)
   })
 
-  it('refuses GET, which a cross-site link could forge', async () => {
-    const response = (await call(AUTH_LOGOUT_PATH)) as Response
-
-    expect(response.status).toBe(405)
-    expect(response.headers.get('allow')).toBe('POST')
+  it('rejects a read with no tenancy scope', async () => {
+    const response = await harness.request('GET', '/annotations')
+    expect(response.status).toBe(400)
+    expect((await response.json()).error.code).toBe('missing_scope')
   })
 })
 
-describe('GET /auth/me', () => {
-  async function me(db?: FakeD1, subject = 'user_01HREADER') {
-    const provider = providerWith({})
-    const cookie = await sessionCookieHeader(await accessToken({ sub: subject }))
-
-    return (await call(
-      AUTH_ME_PATH,
-      { headers: { cookie } },
-      envWith(db),
-      optionsFor(provider),
-    )) as Response
-  }
-
-  it('is anonymous and cacheable by nobody when signed out', async () => {
-    const response = (await call(AUTH_ME_PATH)) as Response
-
-    expect(response.status).toBe(200)
-    expect(response.headers.get('cache-control')).toBe('no-store')
-    expect(await response.json()).toEqual({
-      authenticated: false,
-      canWrite: false,
-      isAdmin: false,
-    })
-  })
-
-  it('reports a signed-in identity that may not write', async () => {
-    const response = await me(createFakeD1())
-
-    expect(await response.json()).toEqual({
-      authenticated: true,
-      principal: {
-        provider: 'workos',
-        issuer: TEST_ISSUER,
-        subject: 'user_01HREADER',
-      },
-      canWrite: false,
-      isAdmin: false,
-    })
-  })
-
-  it('reports an allowlisted writer and the admin', async () => {
-    const writers = createFakeD1()
-    writers.allow(
-      { provider: 'workos', issuer: TEST_ISSUER, subject: 'user_01HWRITER' },
-      'writer',
+describe('tenancy', () => {
+  it('keeps a second document invisible to the first', async () => {
+    await post(
+      webAnnotation({ source: CHAPTER_ONE, visibility: 'public', body: 'one' }),
     )
-    const admins = createFakeD1()
-    admins.allow(
-      { provider: 'workos', issuer: TEST_ISSUER, subject: 'user_01HADMIN' },
-      'admin',
+    await post(
+      webAnnotation({ source: CHAPTER_TWO, visibility: 'public', body: 'two' }),
     )
 
-    await expect(
-      (await me(writers, 'user_01HWRITER')).json(),
-    ).resolves.toMatchObject({ canWrite: true, isAdmin: false })
-    await expect(
-      (await me(admins, 'user_01HADMIN')).json(),
-    ).resolves.toMatchObject({ canWrite: true, isAdmin: true })
+    expect((await list(CHAPTER_ONE)).map((a) => a.body?.value)).toEqual(['one'])
+    expect((await list(CHAPTER_TWO)).map((a) => a.body?.value)).toEqual(['two'])
+  })
+
+  it('keeps a second site invisible to the first, with no migration', async () => {
+    await post(
+      webAnnotation({ source: CHAPTER_ONE, visibility: 'public', body: 'ernie' }),
+    )
+    await post(
+      webAnnotation({
+        source: OTHER_SITE,
+        visibility: 'public',
+        body: 'berlayar',
+      }),
+    )
+
+    expect((await list(CHAPTER_ONE)).map((a) => a.body?.value)).toEqual([
+      'ernie',
+    ])
+    expect((await list(OTHER_SITE)).map((a) => a.body?.value)).toEqual([
+      'berlayar',
+    ])
   })
 })
 
-describe('routing', () => {
-  it('claims exactly the four documented paths', async () => {
-    for (const path of [
-      AUTH_LOGIN_PATH,
-      AUTH_CALLBACK_PATH,
-      AUTH_LOGOUT_PATH,
-      AUTH_ME_PATH,
-    ]) {
-      expect(await call(path, { method: 'PUT' })).not.toBeNull()
-    }
-  })
+describe('prefs and the default visibility', () => {
+  it('defaults to private and never rewrites an existing annotation', async () => {
+    const initial = await harness.request('GET', '/prefs')
+    expect(await initial.json()).toEqual({ defaultVisibility: 'private' })
 
-  it('leaves any other path to the asset binding', async () => {
-    for (const path of ['/auth', '/auth/', '/authorize', '/auth/unknown']) {
-      expect(await call(path)).toBeNull()
-    }
-  })
+    // No `margin:visibility` on the wire: the stored default applies.
+    const created = await post(
+      webAnnotation({ source: CHAPTER_ONE, body: 'takes the default' }),
+    )
+    expect(created.status).toBe(201)
+    expect((await created.json())['margin:visibility']).toBe('private')
 
-  it('is 503 everywhere when WorkOS is not configured', async () => {
-    for (const path of [
-      AUTH_LOGIN_PATH,
-      AUTH_CALLBACK_PATH,
-      AUTH_ME_PATH,
-    ]) {
-      const response = (await call(path, {}, {})) as Response
-      expect(response.status).toBe(503)
-      expect(await response.json()).toEqual({ error: 'auth_unavailable' })
-    }
-  })
-})
-
-describe('logout does not need the provider', () => {
-  // Clearing a cookie needs no credentials, and a half-configured or
-  // mid-rotation deployment is exactly when somebody wants out. A 503 there
-  // would leave the session cookie in place with no way to remove it.
-  it('clears the session even with no WorkOS configuration at all', async () => {
-    for (const env of [
-      {} as AuthEnv,
-      { ...envWith(), WORKOS_CLIENT_ID: undefined } as AuthEnv,
-      { ...envWith(), WORKOS_COOKIE_PASSWORD: 'too-short' } as AuthEnv,
-    ]) {
-      const response = (await call(
-        AUTH_LOGOUT_PATH,
-        { method: 'POST' },
-        env,
-      )) as Response
-
-      expect(response.status).toBe(200)
-      expect(await response.json()).toEqual({ ok: true })
-      const cleared = cookieNamed(response, SESSION_COOKIE_NAME) as string
-      expect(cleared).toContain('; Max-Age=0')
-    }
-  })
-
-  // POST alone is not a defence: `SameSite=Lax` may stop a cross-site form
-  // *sending* the cookie, but the response's `Set-Cookie` deletes it anyway, so
-  // any page could sign a reader out.
-  it('refuses a cross-site logout', async () => {
-    const cases: Record<string, string>[] = [
-      { origin: 'https://evil.test' },
-      { 'sec-fetch-site': 'cross-site' },
-      { 'sec-fetch-site': 'same-site' },
-    ]
-    for (const headers of cases) {
-      const response = (await call(
-        AUTH_LOGOUT_PATH,
-        { method: 'POST', headers },
-        envWith(),
-      )) as Response
-
-      expect(response.status, JSON.stringify(headers)).toBe(403)
-      expect(await response.json()).toEqual({ error: 'cross_origin' })
-      expect(cookieNamed(response, SESSION_COOKIE_NAME)).toBeUndefined()
-    }
-  })
-
-  it('allows a logout the browser labels as this site', async () => {
-    const cases: Record<string, string>[] = [
-      { origin: 'https://ernie.sg' },
-      { 'sec-fetch-site': 'same-origin' },
-      { 'sec-fetch-site': 'none' },
-      {},
-    ]
-    for (const headers of cases) {
-      const response = (await call(
-        AUTH_LOGOUT_PATH,
-        { method: 'POST', headers },
-        envWith(),
-      )) as Response
-
-      expect(response.status, JSON.stringify(headers)).toBe(200)
-      expect(cookieNamed(response, SESSION_COOKIE_NAME)).toContain('; Max-Age=0')
-    }
-  })
-
-  it('still refuses a GET, which a cross-site navigation could forge', async () => {
-    const response = (await call(AUTH_LOGOUT_PATH, {}, {} as AuthEnv)) as Response
-
-    expect(response.status).toBe(405)
-  })
-
-  it('still fails closed on login without configuration', async () => {
-    const response = (await call(AUTH_LOGIN_PATH, {}, {} as AuthEnv)) as Response
-
-    expect(response.status).toBe(503)
-    expect(await response.json()).toEqual({ error: 'auth_unavailable' })
-  })
-})
-
-describe('GET /auth/me renews a lapsed access token', () => {
-  const user = { email: 'reader@example.test', email_verified: true }
-
-  async function signIn(
-    accessTokenClaims: Record<string, unknown> = {},
-  ): Promise<{ cookie: string }> {
-    const { state, cookie } = await beginLogin()
-    const provider = providerWith({
-      access_token: await accessToken(accessTokenClaims),
-      refresh_token: 'refresh_one',
-      user,
+    const changed = await harness.request('PATCH', '/prefs', {
+      body: { defaultVisibility: 'public' },
     })
-    const response = (await call(
-      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
-      { headers: { cookie } },
-      envWith(),
-      optionsFor(provider),
-    )) as Response
-    const header = cookieNamed(response, SESSION_COOKIE_NAME) as string
-    return { cookie: header.slice(0, header.indexOf(';')) }
-  }
+    expect(changed.status).toBe(200)
+    expect(await changed.json()).toEqual({ defaultVisibility: 'public' })
 
-  // WorkOS access tokens are short-lived, so without a refresh a sign-in would
-  // last minutes rather than the eight hours the cookie claims.
-  it('exchanges the sealed refresh token and re-seals the cookie', async () => {
-    const { cookie } = await signIn({ exp: NOW_SECONDS + 60 })
+    // The earlier annotation is untouched...
+    const [existing] = await list(CHAPTER_ONE)
+    expect(existing['margin:visibility']).toBe('private')
 
-    // Well past the access token's expiry, well inside the session ceiling.
-    const later = NOW_MS + 3_600_000
-    const laterSeconds = Math.floor(later / 1000)
-    const provider = createFakeProvider({
-      jwks: signer.jwks,
-      authenticate: {
-        access_token: await signer.sign({
-          iss: TEST_ISSUER,
-          sub: 'user_01HREADER',
-          client_id: config.clientId,
-          iat: laterSeconds - 10,
-          exp: laterSeconds + 300,
+    // ...and only the next one picks the new default up.
+    const next = await post(
+      webAnnotation({ source: CHAPTER_ONE, body: 'takes the new default' }),
+    )
+    expect((await next.json())['margin:visibility']).toBe('public')
+  })
+
+  it('keeps one default per user, not per document', async () => {
+    await harness.request('PATCH', '/prefs', {
+      as: BOB,
+      body: { defaultVisibility: 'public' },
+    })
+    expect(await (await harness.request('GET', '/prefs', { as: ADA })).json())
+      .toEqual({ defaultVisibility: 'private' })
+    expect(await (await harness.request('GET', '/prefs', { as: BOB })).json())
+      .toEqual({ defaultVisibility: 'public' })
+
+    const bobSecondDocument = await post(
+      webAnnotation({ source: CHAPTER_TWO, body: 'still public' }),
+      BOB,
+    )
+    expect((await bobSecondDocument.json())['margin:visibility']).toBe('public')
+  })
+
+  it('rejects an unknown default and requires a caller', async () => {
+    const bad = await harness.request('PATCH', '/prefs', {
+      body: { defaultVisibility: 'semi-public' },
+    })
+    expect(bad.status).toBe(400)
+    expect(
+      (await harness.request('GET', '/prefs', { as: null })).status,
+    ).toBe(401)
+  })
+})
+
+describe('replies', () => {
+  it('stores and returns a reply with its parent id intact', async () => {
+    const parent = (await (
+      await post(
+        webAnnotation({
+          source: CHAPTER_ONE,
+          visibility: 'public',
+          body: 'the root note',
         }),
-        refresh_token: 'refresh_two',
-        user,
-      },
-    })
+      )
+    ).json()) as WireAnnotation
+    const parentId = bareId(parent)
 
-    const response = (await call(
-      AUTH_ME_PATH,
-      { headers: { cookie } },
-      envWith(),
-      { ...optionsFor(provider), now: later },
-    )) as Response
-
-    expect(response.status).toBe(200)
-    expect(await response.json()).toMatchObject({ authenticated: true })
-
-    const renewed = cookieNamed(response, SESSION_COOKIE_NAME) as string
-    expect(renewed, 'a renewed session must come back as a cookie').toBeTruthy()
-    const sealed = renewed.slice(renewed.indexOf('=') + 1, renewed.indexOf(';'))
-    const session = await unsealSession(sealed, config.cookiePassword)
-    expect(session?.refreshToken).toBe('refresh_two')
-    expect(session?.expiresAt).toBeGreaterThan(laterSeconds)
-
-    const refresh = provider.calls.find((entry) =>
-      String(entry.init?.body ?? '').includes('refresh_token'),
+    const reply = await post(
+      webAnnotation({
+        source: CHAPTER_ONE,
+        visibility: 'public',
+        body: 'a reply',
+        parentId,
+      }),
+      BOB,
     )
-    expect(refresh, 'the refresh grant must be used').toBeTruthy()
+    expect(reply.status).toBe(201)
+    expect((await reply.json())['margin:parentId']).toBe(parentId)
+
+    const listed = await list(CHAPTER_ONE, BOB)
+    const stored = listed.find((a) => a.body?.value === 'a reply')
+    expect(stored?.['margin:parentId']).toBe(parentId)
   })
 
-  // Otherwise refreshing in a loop would make the ceiling decorative.
-  it('will not refresh past the ceiling fixed at login', async () => {
-    const { cookie } = await signIn({ exp: NOW_SECONDS + 60 })
+  it('refuses a parent id from another tenant and stores nothing', async () => {
+    const elsewhere = (await (
+      await post(
+        webAnnotation({
+          source: OTHER_SITE,
+          visibility: 'public',
+          body: 'on another site',
+        }),
+      )
+    ).json()) as WireAnnotation
 
-    const past = NOW_MS + (SESSION_MAX_AGE_SECONDS + 60) * 1000
-    const provider = providerWith({
-      access_token: await accessToken({ exp: Math.floor(past / 1000) + 300 }),
-      refresh_token: 'refresh_two',
-      user,
-    })
-
-    const response = (await call(
-      AUTH_ME_PATH,
-      { headers: { cookie } },
-      envWith(),
-      { ...optionsFor(provider), now: past },
-    )) as Response
-
-    expect(await response.json()).toMatchObject({ authenticated: false })
-    expect(cookieNamed(response, SESSION_COOKIE_NAME)).toBeUndefined()
+    const response = await post(
+      webAnnotation({
+        source: CHAPTER_ONE,
+        visibility: 'public',
+        body: 'cross-tenant reply',
+        parentId: bareId(elsewhere),
+      }),
+    )
+    expect(response.status).toBe(400)
+    expect((await response.json()).error.code).toBe('unknown_parent')
+    expect(await list(CHAPTER_ONE)).toHaveLength(0)
   })
 
-  it('does not renew when the provider refuses the refresh token', async () => {
-    const { cookie } = await signIn({ exp: NOW_SECONDS + 60 })
+  it('refuses a parent id the caller cannot see', async () => {
+    const hidden = (await (
+      await post(
+        webAnnotation({
+          source: CHAPTER_ONE,
+          visibility: 'private',
+          body: 'ada keeps this',
+        }),
+        ADA,
+      )
+    ).json()) as WireAnnotation
 
-    const response = (await call(
-      AUTH_ME_PATH,
-      { headers: { cookie } },
-      envWith(),
-      { ...optionsFor(providerWith({}, 401)), now: NOW_MS + 3_600_000 },
-    )) as Response
-
-    expect(await response.json()).toMatchObject({ authenticated: false })
-    expect(cookieNamed(response, SESSION_COOKIE_NAME)).toBeUndefined()
-  })
-
-  it.each([400, 401, 422])('clears a terminal invalid_grant refresh at HTTP %i', async (status) => {
-    const { cookie } = await signIn({ exp: NOW_SECONDS + 60 })
-    const provider = providerWith({ error: 'invalid_grant' }, status)
-
-    const response = (await call(
-      AUTH_ME_PATH,
-      { headers: { cookie } },
-      envWith(),
-      { ...optionsFor(provider), now: NOW_MS + 3_600_000 },
-    )) as Response
-
-    expect(response.status).toBe(200)
-    expect(await response.json()).toMatchObject({ authenticated: false })
-    expect(cookieNamed(response, SESSION_COOKIE_NAME)).toContain('; Max-Age=0')
-    expect(cookieNamed(response, SESSION_COOKIE_NAME)).toContain('; Path=/')
-  })
-
-  it.each([408, 429, 503])('keeps a retryable HTTP %i refresh session', async (status) => {
-    const { cookie } = await signIn({ exp: NOW_SECONDS + 60 })
-    const response = (await call(
-      AUTH_ME_PATH,
-      { headers: { cookie } },
-      envWith(),
-      { ...optionsFor(providerWith({ error: 'invalid_grant' }, status)), now: NOW_MS + 3_600_000 },
-    )) as Response
-
-    expect(await response.json()).toMatchObject({ authenticated: false })
-    expect(cookieNamed(response, SESSION_COOKIE_NAME)).toBeUndefined()
-  })
-
-  it('keeps the session when the refresh network is unavailable', async () => {
-    const { cookie } = await signIn({ exp: NOW_SECONDS + 60 })
-    const provider = providerWith({ error: 'invalid_grant' }, 400)
-    provider.offline = true
-    const response = (await call(
-      AUTH_ME_PATH,
-      { headers: { cookie } },
-      envWith(),
-      { ...optionsFor(provider), now: NOW_MS + 3_600_000 },
-    )) as Response
-
-    expect(await response.json()).toMatchObject({ authenticated: false })
-    expect(cookieNamed(response, SESSION_COOKIE_NAME)).toBeUndefined()
+    const response = await post(
+      webAnnotation({
+        source: CHAPTER_ONE,
+        body: 'bob replies to what he cannot read',
+        parentId: bareId(hidden),
+      }),
+      BOB,
+    )
+    expect(response.status).toBe(400)
+    expect(await list(CHAPTER_ONE, BOB)).toHaveLength(0)
   })
 })
 
-describe('a partial outage is not a permanent logout', () => {
-  const user = { id: 'user_01HREADER', email: 'reader@example.test', email_verified: true }
-
-  // The exchange consumes the old refresh token. If verification then fails
-  // transiently and no cookie goes back, the browser keeps a spent token and no
-  // later attempt can recover, however healthy the provider becomes.
-  it('returns the rotated refresh token even when verification fails', async () => {
-    const cookie = `${SESSION_COOKIE_NAME}=${await (async () => {
-      const header = await sessionCookieHeader(await accessToken(), {
-        expiresAt: NOW_SECONDS - 60,
-        ceiling: NOW_SECONDS + 3_600,
-        refreshToken: 'refresh_one',
-      })
-      return header.slice(header.indexOf('=') + 1)
-    })()}`
-
-    // The exchange succeeds and rotates; the key set is unavailable, so the new
-    // token cannot be verified.
-    const provider = createFakeProvider({
-      authenticate: {
-        access_token: await accessToken({ exp: NOW_SECONDS + 300 }),
-        refresh_token: 'refresh_two',
-        user,
+describe('rejected input is never stored', () => {
+  it.each([
+    [
+      'an unknown motivation',
+      { ...webAnnotation({ source: CHAPTER_ONE }), motivation: 'bookmarking' },
+    ],
+    [
+      'a malformed selector',
+      {
+        ...webAnnotation({ source: CHAPTER_ONE }),
+        target: {
+          source: CHAPTER_ONE,
+          selector: [{ type: 'XPathSelector', value: '/html/body' }],
+        },
       },
-    })
+    ],
+    [
+      'an oversized body',
+      {
+        ...webAnnotation({ source: CHAPTER_ONE }),
+        body: { type: 'TextualBody', value: 'x'.repeat(8_001) },
+      },
+    ],
+    [
+      'a non-http target source',
+      {
+        ...webAnnotation({ source: CHAPTER_ONE }),
+        target: {
+          ...webAnnotation({ source: CHAPTER_ONE }).target,
+          source: 'urn:isbn:9780000000000',
+        },
+      },
+    ],
+  ])('rejects %s with 4xx and writes no row', async (_name, body) => {
+    const response = await post(body)
+    expect(response.status).toBeGreaterThanOrEqual(400)
+    expect(response.status).toBeLessThan(500)
 
-    const response = (await call(
-      AUTH_ME_PATH,
-      { headers: { cookie } },
-      envWith(),
-      optionsFor(provider),
-    )) as Response
-
-    expect(await response.json()).toMatchObject({ authenticated: false })
-    const renewed = cookieNamed(response, SESSION_COOKIE_NAME) as string
-    expect(renewed, 'the rotated token must reach the browser').toBeTruthy()
-    const sealed = renewed.slice(renewed.indexOf('=') + 1, renewed.indexOf(';'))
-    const session = await unsealSession(sealed, config.cookiePassword)
-    expect(session?.refreshToken).toBe('refresh_two')
-    // And the cookie authorises nothing on its own: `expiresAt` did not move.
-    expect(session?.expiresAt).toBe(NOW_SECONDS - 60)
+    const rows = harness.database.query(
+      'SELECT count(*) AS total FROM margin_annotations',
+    ) as { total: number }[]
+    expect(rows[0].total).toBe(0)
   })
 
-  // A database outage during the callback used to leave a valid session with no
-  // identity row, and the documented out-of-band allowlist insert selects on it.
-  it('writes the identity a callback outage skipped, on the next /auth/me', async () => {
-    const db = createFakeD1()
-    db.offline = true
-    const { state, cookie } = await beginLogin()
-    const provider = providerWith({
-      access_token: await accessToken({ sub: 'user_01HADMIN' }),
-      refresh_token: 'refresh_one',
-      user: { id: 'user_01HADMIN', email: ADMIN_EMAIL, email_verified: true },
-    })
-
-    const callback = (await call(
-      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
-      { headers: { cookie } },
-      envWith(db),
-      optionsFor(provider),
-    )) as Response
-
-    // The session was still issued — the provider validated it.
-    expect(callback.status).toBe(302)
-    expect(db.identities).toHaveLength(0)
-    expect(db.allowlist).toHaveLength(0)
-
-    const header = cookieNamed(callback, SESSION_COOKIE_NAME) as string
-    const session = header.slice(0, header.indexOf(';'))
-
-    db.offline = false
-    const me = (await call(
-      AUTH_ME_PATH,
-      { headers: { cookie: session } },
-      envWith(db),
-      optionsFor(provider),
-    )) as Response
-
-    expect(await me.json()).toMatchObject({ authenticated: true, isAdmin: true })
-    expect(db.identities).toHaveLength(1)
-    expect(db.identities[0]).toMatchObject({ subject: 'user_01HADMIN' })
-    expect(db.allowlist).toEqual([
-      expect.objectContaining({ identity_id: 1, role: 'admin' }),
-    ])
+  it('rejects a request with no JSON body at all', async () => {
+    const response = await harness.request('POST', '/annotations')
+    expect(response.status).toBe(400)
+    expect((await response.json()).error.code).toBe('malformed_json')
   })
 })
 
-describe('/auth/me in local development', () => {
-  // `MARGIN_ENVIRONMENT=development` with a stub and no WorkOS credentials is
-  // the ordinary `wrangler dev` state. The write gate honours the stub, so this
-  // has to as well, or a local client cannot see the identity its own writes use.
-  const devEnv = {
-    MARGIN_ENVIRONMENT: 'development',
-    MARGIN_DEV_PRINCIPAL: 'reader',
-  } as AuthEnv
-
-  function localMe(env: AuthEnv = devEnv) {
-    return handleAuthRequest(
-      new Request(`http://localhost:8788${AUTH_ME_PATH}`),
-      env,
-      { now: NOW_MS },
-    )
+describe('PATCH and DELETE /annotations/:id', () => {
+  async function seedOwn() {
+    const created = (await (
+      await post(
+        webAnnotation({
+          source: CHAPTER_ONE,
+          visibility: 'private',
+          body: 'first draft',
+        }),
+      )
+    ).json()) as WireAnnotation
+    return bareId(created)
   }
 
-  it('reports the development principal with no WorkOS configuration', async () => {
-    const response = (await localMe()) as Response
-
+  it('lets the owner edit the body and the visibility', async () => {
+    const id = await seedOwn()
+    const response = await harness.request(
+      'PATCH',
+      `/annotations/${id}${scopeQuery(CHAPTER_ONE)}`,
+      { body: { body: 'second draft', 'margin:visibility': 'public' } },
+    )
     expect(response.status).toBe(200)
-    expect(await response.json()).toMatchObject({
-      authenticated: true,
-      principal: { provider: 'dev', subject: 'reader' },
+    const updated = (await response.json()) as WireAnnotation
+    expect(updated.body?.value).toBe('second draft')
+    expect(updated['margin:visibility']).toBe('public')
+  })
+
+  it('will not let another user edit or delete it', async () => {
+    const id = await seedOwn()
+    const patched = await harness.request(
+      'PATCH',
+      `/annotations/${id}${scopeQuery(CHAPTER_ONE)}`,
+      { as: BOB, body: { body: 'bob was here' } },
+    )
+    expect(patched.status).toBe(404)
+
+    const deleted = await harness.request(
+      'DELETE',
+      `/annotations/${id}${scopeQuery(CHAPTER_ONE)}`,
+      { as: BOB },
+    )
+    expect(deleted.status).toBe(404)
+    expect(await list(CHAPTER_ONE, ADA)).toHaveLength(1)
+  })
+
+  it('deletes the owner’s own row', async () => {
+    const id = await seedOwn()
+    const response = await harness.request(
+      'DELETE',
+      `/annotations/${id}${scopeQuery(CHAPTER_ONE)}`,
+    )
+    expect(response.status).toBe(204)
+    expect(await list(CHAPTER_ONE, ADA)).toHaveLength(0)
+  })
+})
+
+describe('proposals and the routes 059 and 060 will finish', () => {
+  it('lists only annotations motivated by editing', async () => {
+    await post(
+      webAnnotation({ source: CHAPTER_ONE, visibility: 'public', body: 'note' }),
+    )
+    await post(
+      webAnnotation({
+        source: CHAPTER_ONE,
+        motivation: 'editing',
+        visibility: 'public',
+        body: 'read "coordinates" as "positions"',
+      }),
+    )
+
+    const response = await harness.request(
+      'GET',
+      `/proposals${scopeQuery(CHAPTER_ONE)}`,
+    )
+    expect(response.status).toBe(200)
+    const { annotations } = (await response.json()) as {
+      annotations: WireAnnotation[]
+    }
+    expect(annotations).toHaveLength(1)
+    expect(annotations[0].motivation).toBe('editing')
+  })
+
+  it.each([
+    ['POST', '/proposals/annotation-001/apply', '060'],
+    ['GET', '/documents/chapter-1/history', '059'],
+  ])('answers %s %s with 501', async (method, path, issue) => {
+    const response = await harness.request(method, path)
+    expect(response.status).toBe(501)
+    expect((await response.json()).error.message).toContain(issue)
+  })
+})
+
+describe('the wire format survives a POST and a GET', () => {
+  it('round-trips a plain Web Annotation without losing motivation, selectors or body', async () => {
+    const foreign = {
+      '@context': 'http://www.w3.org/ns/anno.jsonld',
+      id: 'https://hypothes.is/a/8f21c9',
+      type: 'Annotation',
+      motivation: 'commenting',
+      body: {
+        type: 'TextualBody',
+        value: 'quoted out of context',
+        format: 'text/plain',
+      },
+      target: [
+        {
+          source: CHAPTER_ONE,
+          selector: [
+            { type: 'TextPositionSelector', start: 5, end: 32 },
+            {
+              type: 'TextQuoteSelector',
+              exact: 'meaning becomes coordinates',
+              prefix: 'Once ',
+              suffix: ', every new screen',
+            },
+          ],
+        },
+      ],
+    }
+
+    const created = await post({ ...foreign, 'margin:visibility': 'public' })
+    expect(created.status).toBe(201)
+
+    const [stored] = await list(CHAPTER_ONE)
+    expect(stored.motivation).toBe('commenting')
+    expect(stored.body).toEqual({
+      type: 'TextualBody',
+      value: 'quoted out of context',
+      format: 'text/plain',
+    })
+    expect(stored.target.source).toBe(CHAPTER_ONE)
+    expect(stored.target.selector).toEqual(
+      expect.arrayContaining([
+        { type: 'TextPositionSelector', start: 5, end: 32 },
+        {
+          type: 'TextQuoteSelector',
+          exact: 'meaning becomes coordinates',
+          prefix: 'Once ',
+          suffix: ', every new screen',
+        },
+      ]),
+    )
+    // The server owns identity: the foreign `id` and `creator` do not stick.
+    expect(stored.id).not.toBe(foreign.id)
+    expect(stored.creator).toBe(ADA_KEY)
+  })
+
+  it('keeps a structural selector when one was supplied', async () => {
+    await post(
+      webAnnotation({
+        source: CHAPTER_ONE,
+        visibility: 'public',
+        nodeId: 'p-proposition-1',
+        structId: 'sec-propositions',
+      }),
+    )
+    const [stored] = await list(CHAPTER_ONE)
+    expect(stored.target.selector).toContainEqual({
+      type: STRUCT_SELECTOR_TYPE,
+      'margin:nodeId': 'p-proposition-1',
+      'margin:structId': 'sec-propositions',
     })
   })
 
-  it('reports its allowlist role like any other identity', async () => {
-    const db = createFakeD1()
-    db.allow(
-      { provider: 'dev', issuer: 'urn:margin:dev', subject: 'reader' },
-      'admin',
+  it('stores a highlight with no body and a proposal with one', async () => {
+    await post(
+      webAnnotation({
+        source: CHAPTER_ONE,
+        motivation: 'highlighting',
+        visibility: 'public',
+      }),
+    )
+    await post(
+      webAnnotation({
+        source: CHAPTER_ONE,
+        motivation: 'editing',
+        visibility: 'public',
+        body: 'a proposed replacement',
+      }),
     )
 
-    const response = (await localMe({ ...devEnv, MARGIN_DB: db } as AuthEnv)) as Response
+    const stored = await list(CHAPTER_ONE)
+    const highlight = stored.find((a) => a.motivation === 'highlighting')
+    const proposal = stored.find((a) => a.motivation === 'editing')
+    expect(highlight?.body).toBeUndefined()
+    expect(proposal?.body?.value).toBe('a proposed replacement')
+  })
+})
 
-    expect(await response.json()).toMatchObject({ canWrite: true, isAdmin: true })
+/** The findings from review of the rescue PR, each with the case that found it. */
+describe('review findings', () => {
+  // The delete path is owner-scoped, so nothing it does may reach somebody
+  // else's annotation. A cascade through `parent_id` would have done exactly
+  // that, and quietly.
+  it('refuses to delete a parent that other people have replied to', async () => {
+    const parent = (await (await post(
+      webAnnotation({ source: CHAPTER_ONE, visibility: 'public', body: 'ada asks' }),
+    )).json()) as WireAnnotation
+
+    const reply = await post(
+      webAnnotation({
+        source: CHAPTER_ONE,
+        visibility: 'public',
+        body: 'bob answers',
+        parentId: bareId(parent),
+      }),
+      BOB,
+    )
+    expect(reply.status).toBe(201)
+
+    const refused = await harness.request(
+      'DELETE',
+      `/annotations/${bareId(parent)}${scopeQuery(CHAPTER_ONE)}`,
+      { as: ADA },
+    )
+    expect(refused.status).toBe(409)
+    expect(await refused.json()).toMatchObject({
+      error: { code: 'has_replies' },
+    })
+
+    // Both are still there, Bob's included.
+    const remaining = await list(CHAPTER_ONE, BOB)
+    expect(remaining.map((entry) => entry.body?.value).sort()).toEqual([
+      'ada asks',
+      'bob answers',
+    ])
   })
 
-  it('still fails closed with no configuration and no stub', async () => {
-    const response = (await handleAuthRequest(
-      new Request(`http://localhost:8788${AUTH_ME_PATH}`),
-      { MARGIN_ENVIRONMENT: 'development' } as AuthEnv,
-      {},
-    )) as Response
+  it('still deletes an annotation nobody has replied to', async () => {
+    const own = (await (await post(
+      webAnnotation({ source: CHAPTER_ONE, body: 'no replies here' }),
+    )).json()) as WireAnnotation
 
-    expect(response.status).toBe(503)
-    expect(await response.json()).toEqual({ error: 'auth_unavailable' })
+    const response = await harness.request(
+      'DELETE',
+      `/annotations/${bareId(own)}${scopeQuery(CHAPTER_ONE)}`,
+      { as: ADA },
+    )
+    expect(response.status).toBe(204)
   })
 
-  it('does not answer on a deployed hostname, stub or no stub', async () => {
-    const response = (await handleAuthRequest(
-      new Request(`https://ernie.sg${AUTH_ME_PATH}`),
-      devEnv,
-      {},
-    )) as Response
+  // A client writing a reply has the parent's returned `id`, which is the IRI.
+  // Requiring the bare key meant the obvious thing failed with `unknown_parent`.
+  it('takes the parent id in the form it handed back', async () => {
+    const parent = (await (await post(
+      webAnnotation({ source: CHAPTER_ONE, body: 'the question' }),
+    )).json()) as WireAnnotation
+    expect(parent.id).toMatch(/^urn:margin:annotation:/)
 
-    expect(response.status).toBe(503)
-  })
-
-  it('leaves login and callback failing closed', async () => {
-    for (const path of [AUTH_LOGIN_PATH, AUTH_CALLBACK_PATH]) {
-      const response = (await handleAuthRequest(
-        new Request(`http://localhost:8788${path}`),
-        devEnv,
-        {},
-      )) as Response
-      expect(response.status, path).toBe(503)
+    for (const reference of [parent.id, bareId(parent)]) {
+      const response = await post(
+        webAnnotation({
+          source: CHAPTER_ONE,
+          body: `reply to ${reference}`,
+          parentId: reference,
+        }),
+      )
+      expect(response.status, `parentId ${reference}`).toBe(201)
+      const created = (await response.json()) as WireAnnotation
+      expect(created['margin:parentId']).toBe(bareId(parent))
     }
+  })
+
+  // Valid absolute targets the URL parser rewrites: a default port spelled out,
+  // an upper-case host, a path with dot segments. Rejecting them turned ordinary
+  // external annotations away.
+  it('canonicalises a target rather than refusing its spelling', async () => {
+    for (const [sent, canonical] of [
+      ['https://ernie.sg:443/challenges/chapter-1', CHAPTER_ONE],
+      ['https://ERNIE.SG/challenges/chapter-1', CHAPTER_ONE],
+      ['https://ernie.sg/challenges/./chapter-1', CHAPTER_ONE],
+      ['https://ernie.sg/challenges/x/../chapter-1', CHAPTER_ONE],
+    ] as const) {
+      const response = await post(webAnnotation({ source: sent, body: `via ${sent}` }))
+      expect(response.status, sent).toBe(201)
+      const created = (await response.json()) as WireAnnotation
+      expect(created.target.source, sent).toBe(canonical)
+    }
+
+    // And all of them landed on the one document, not four tenants.
+    expect((await list(CHAPTER_ONE)).length).toBe(4)
+  })
+
+  it('refuses a target carrying credentials rather than dropping them', async () => {
+    const response = await post(
+      webAnnotation({ source: 'https://user:secret@ernie.sg/challenges/chapter-1' }),
+    )
+
+    expect(response.status).toBe(400)
+  })
+
+  // The store keeps a body's `value` and nothing else, so accepting metadata it
+  // would silently rewrite is worse than refusing it.
+  it('refuses body metadata it cannot keep', async () => {
+    for (const body of [
+      { type: 'TextualBody', value: 'a remark', format: 'text/markdown' },
+      { type: 'TextualBody', value: 'a remark', language: 'fr' },
+    ]) {
+      const response = await post({
+        ...webAnnotation({ source: CHAPTER_ONE }),
+        body,
+      })
+      expect(response.status, JSON.stringify(body)).toBe(400)
+    }
+
+    const accepted = await post({
+      ...webAnnotation({ source: CHAPTER_ONE }),
+      body: { type: 'TextualBody', value: 'a remark', format: 'text/plain' },
+    })
+    expect(accepted.status).toBe(201)
+  })
+
+  // An uncaught `URIError` from `decodeURIComponent` would be a 500 on a public
+  // request. A path that cannot be decoded matches no route.
+  it('answers a malformed percent escape with a 404, not a 500', async () => {
+    for (const bad of ['%', '%E0%A4%A', 'annotations/%']) {
+      const response = await harness.request('GET', `/${bad}`, { as: ADA })
+      expect(response.status, bad).toBe(404)
+      expect(await response.json()).toMatchObject({
+        error: { code: 'not_found' },
+      })
+    }
+  })
+})
+
+/** The second review round: each finding with the request that found it. */
+describe('review findings, round two', () => {
+  // POST and `?source=` canonicalise; the explicit pair validated the
+  // concatenation and then queried the raw spelling, so a write and a read could
+  // land on different tenants.
+  it('canonicalises the explicit site and document too', async () => {
+    expect((await post(webAnnotation({ source: CHAPTER_ONE, body: 'stored' }))).status).toBe(
+      201,
+    )
+
+    for (const site of [
+      'https://ernie.sg',
+      'https://ERNIE.SG',
+      'https://ernie.sg:443',
+    ]) {
+      const response = await harness.request(
+        'GET',
+        `/annotations?site=${encodeURIComponent(site)}` +
+          `&document=${encodeURIComponent('/challenges/chapter-1')}`,
+        { as: ADA },
+      )
+      expect(response.status, site).toBe(200)
+      const { annotations } = (await response.json()) as {
+        annotations: WireAnnotation[]
+      }
+      expect(annotations.map((a) => a.body?.value), site).toEqual(['stored'])
+    }
+  })
+
+  // Without the leading slash the concatenation can leave the origin altogether
+  // and split back into a different tenant, which is a read and a write against
+  // somebody else's site rather than a malformed request.
+  it('refuses a document that is not a path', async () => {
+    for (const document of [
+      '.example.com/x',
+      'chapter',
+      '@evil.test/x',
+      '',
+      '?q=1',
+      '#frag',
+    ]) {
+      const response = await harness.request(
+        'GET',
+        `/annotations?site=${encodeURIComponent('https://ernie.sg')}` +
+          `&document=${encodeURIComponent(document)}`,
+        { as: ADA },
+      )
+      expect(response.status, JSON.stringify(document)).toBe(400)
+    }
+  })
+
+  it('refuses a site that is not an origin on its own', async () => {
+    for (const site of [
+      'https://ernie.sg/challenges',
+      'https://ernie.sg/?a=1',
+      'https://ernie.sg/#x',
+      'https://user:secret@ernie.sg',
+      'ftp://ernie.sg',
+    ]) {
+      const response = await harness.request(
+        'GET',
+        `/annotations?site=${encodeURIComponent(site)}` +
+          `&document=${encodeURIComponent('/challenges/chapter-1')}`,
+        { as: ADA },
+      )
+      expect(response.status, site).toBe(400)
+    }
+  })
+
+  // 409 vs 404 on an annotation the caller cannot see would tell them it exists
+  // and whether anybody has replied to it — an oracle over what visibility hides.
+  it('does not let the reply check reveal somebody else\'s annotation', async () => {
+    const hidden = (await (await post(
+      webAnnotation({ source: CHAPTER_ONE, visibility: 'private', body: 'bob private' }),
+      BOB,
+    )).json()) as WireAnnotation
+    const withReply = (await (await post(
+      webAnnotation({ source: CHAPTER_ONE, visibility: 'public', body: 'bob public' }),
+      BOB,
+    )).json()) as WireAnnotation
+    expect(
+      (await post(
+        webAnnotation({
+          source: CHAPTER_ONE,
+          visibility: 'public',
+          body: 'ada replies',
+          parentId: bareId(withReply),
+        }),
+      )).status,
+    ).toBe(201)
+
+    // Ada is signed in and is not the owner of either. Both answers must match,
+    // and neither may be 409.
+    for (const target of [hidden, withReply]) {
+      const response = await harness.request(
+        'DELETE',
+        `/annotations/${bareId(target)}${scopeQuery(CHAPTER_ONE)}`,
+        { as: ADA },
+      )
+      expect(response.status, bareId(target)).toBe(404)
+    }
+  })
+
+  // These three were the only strings on the wire with no maximum, and they are
+  // copied into D1 and into every collection response.
+  it('bounds the selector text', async () => {
+    const huge = 'x'.repeat(MAX_QUOTE_LENGTH + 1)
+    const longContext = 'y'.repeat(MAX_CONTEXT_LENGTH + 1)
+    const base = webAnnotation({ source: CHAPTER_ONE })
+    const withSelector = (patch: Record<string, unknown>) => ({
+      ...base,
+      target: {
+        ...base.target,
+        selector: base.target.selector.map((entry) =>
+          (entry as { type: string }).type === 'TextQuoteSelector'
+            ? { ...entry, ...patch }
+            : entry,
+        ),
+      },
+    })
+
+    for (const patch of [
+      { exact: huge },
+      { prefix: longContext },
+      { suffix: longContext },
+    ]) {
+      expect((await post(withSelector(patch))).status, JSON.stringify(Object.keys(patch))).toBe(
+        400,
+      )
+    }
+
+    // At the bound, with the position selector agreeing: a quote and a position
+    // that describe different lengths is a different rejection, and this test is
+    // about the length limit.
+    const atBound = 'x'.repeat(MAX_QUOTE_LENGTH)
+    const consistent = {
+      ...base,
+      target: {
+        ...base.target,
+        selector: base.target.selector.map((entry) => {
+          const typed = entry as { type: string }
+          if (typed.type === 'TextQuoteSelector') return { ...entry, exact: atBound }
+          if (typed.type === 'TextPositionSelector') {
+            return { ...entry, start: 5, end: 5 + atBound.length }
+          }
+          return entry
+        }),
+      },
+    }
+    const accepted = await post(consistent)
+    expect(accepted.status, JSON.stringify(await accepted.clone().json())).toBe(201)
+  })
+
+  // A `Location` a client cannot dereference is worse than none.
+  it('returns a Location a client can actually follow', async () => {
+    const created = await post(webAnnotation({ source: CHAPTER_ONE, body: 'follow me' }))
+    expect(created.status).toBe(201)
+    const location = created.headers.get('location') as string
+
+    expect(location).toContain('source=')
+
+    const followed = await harness.request(
+      'GET',
+      location.slice(MARGIN_API_PREFIX.length),
+      { as: ADA },
+    )
+    expect(followed.status).toBe(200)
+    expect(((await followed.json()) as WireAnnotation).body?.value).toBe('follow me')
+  })
+
+  it('shows a public annotation at its own URI and hides a private one', async () => {
+    const mine = (await (await post(
+      webAnnotation({ source: CHAPTER_ONE, visibility: 'private', body: 'ada private' }),
+    )).json()) as WireAnnotation
+
+    const asOwner = await harness.request(
+      'GET',
+      `/annotations/${bareId(mine)}${scopeQuery(CHAPTER_ONE)}`,
+      { as: ADA },
+    )
+    expect(asOwner.status).toBe(200)
+
+    const asOther = await harness.request(
+      'GET',
+      `/annotations/${bareId(mine)}${scopeQuery(CHAPTER_ONE)}`,
+      { as: BOB },
+    )
+    expect(asOther.status).toBe(404)
+  })
+
+  // PATCH already refused this; creation accepted it and stored null, so the
+  // annotation came back changed.
+  it('refuses a colour on an annotation that is not a highlight', async () => {
+    for (const motivation of ['commenting', 'editing'] as const) {
+      const response = await post({
+        ...webAnnotation({ source: CHAPTER_ONE, motivation }),
+        'margin:color': 'amber',
+      })
+      expect(response.status, motivation).toBe(400)
+      expect(await response.json()).toMatchObject({
+        error: { code: 'unexpected_color' },
+      })
+    }
+
+    const highlight = await post({
+      ...webAnnotation({ source: CHAPTER_ONE, motivation: 'highlighting' }),
+      'margin:color': 'amber',
+    })
+    expect(highlight.status).toBe(201)
+    expect(((await highlight.json()) as { 'margin:color'?: string })['margin:color']).toBe(
+      'amber',
+    )
+  })
+})
+
+describe('review findings, round three', () => {
+  // Every response carries `urn:margin:annotation:<uuid>` as its `id`, so that is
+  // what a client holds. Requiring the bare key here meant the identifier the API
+  // hands out did not work in the API's own URLs.
+  it('takes either spelling of an id on the item routes', async () => {
+    const created = (await (await post(
+      webAnnotation({ source: CHAPTER_ONE, body: 'either spelling' }),
+    )).json()) as WireAnnotation
+
+    for (const reference of [created.id, bareId(created)]) {
+      const got = await harness.request(
+        'GET',
+        `/annotations/${encodeURIComponent(reference)}${scopeQuery(CHAPTER_ONE)}`,
+        { as: ADA },
+      )
+      expect(got.status, `GET ${reference}`).toBe(200)
+
+      const patched = await harness.request(
+        'PATCH',
+        `/annotations/${encodeURIComponent(reference)}${scopeQuery(CHAPTER_ONE)}`,
+        { as: ADA, body: { body: `edited via ${reference}` } },
+      )
+      expect(patched.status, `PATCH ${reference}`).toBe(200)
+    }
+
+    const deleted = await harness.request(
+      'DELETE',
+      `/annotations/${encodeURIComponent(created.id)}${scopeQuery(CHAPTER_ONE)}`,
+      { as: ADA },
+    )
+    expect(deleted.status).toBe(204)
+  })
+
+  // A page is always bounded: one response would otherwise carry every row on a
+  // document, and each row can hold a few kilobytes of body and selector text.
+  it('bounds a collection and hands back a cursor', async () => {
+    for (let index = 0; index < 5; index += 1) {
+      expect(
+        (await post(webAnnotation({ source: CHAPTER_ONE, body: `note ${index}` }))).status,
+      ).toBe(201)
+    }
+
+    const seen: string[] = []
+    let cursor: string | undefined
+    let pages = 0
+    do {
+      const query =
+        `${scopeQuery(CHAPTER_ONE)}&limit=2` +
+        (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '')
+      const response = await harness.request('GET', `/annotations${query}`, { as: ADA })
+      expect(response.status).toBe(200)
+      const body = (await response.json()) as {
+        annotations: WireAnnotation[]
+        nextCursor?: string
+      }
+      expect(body.annotations.length).toBeLessThanOrEqual(2)
+      seen.push(...body.annotations.map((entry) => entry.body?.value as string))
+      cursor = body.nextCursor
+      pages += 1
+      expect(pages, 'paging must terminate').toBeLessThan(10)
+    } while (cursor)
+
+    expect(pages).toBe(3)
+    expect(seen).toEqual(['note 0', 'note 1', 'note 2', 'note 3', 'note 4'])
+  })
+
+  it('refuses a limit outside the bound and a cursor it did not issue', async () => {
+    for (const query of [
+      '&limit=0',
+      `&limit=${MAX_PAGE_SIZE + 1}`,
+      '&limit=2.5',
+      '&limit=many',
+    ]) {
+      const response = await harness.request(
+        'GET',
+        `/annotations${scopeQuery(CHAPTER_ONE)}${query}`,
+        { as: ADA },
+      )
+      expect(response.status, query).toBe(400)
+      expect(await response.json()).toMatchObject({ error: { code: 'invalid_limit' } })
+    }
+
+    const bad = await harness.request(
+      'GET',
+      `/annotations${scopeQuery(CHAPTER_ONE)}&cursor=nonsense`,
+      { as: ADA },
+    )
+    expect(bad.status).toBe(400)
+    expect(await bad.json()).toMatchObject({ error: { code: 'invalid_cursor' } })
+  })
+
+  it('omits the cursor on the last page', async () => {
+    expect((await post(webAnnotation({ source: CHAPTER_ONE, body: 'only one' }))).status).toBe(
+      201,
+    )
+
+    const response = await harness.request(
+      'GET',
+      `/annotations${scopeQuery(CHAPTER_ONE)}&limit=2`,
+      { as: ADA },
+    )
+    const body = (await response.json()) as { nextCursor?: string }
+    expect(body.nextCursor).toBeUndefined()
+  })
+
+  // A reply can arrive between the count and the delete. The constraint catches
+  // it, and that is a conflict the caller can act on rather than the store being
+  // unavailable.
+  it('reports a lost race as a conflict, not as an outage', async () => {
+    const parent = (await (await post(
+      webAnnotation({ source: CHAPTER_ONE, visibility: 'public', body: 'the parent' }),
+    )).json()) as WireAnnotation
+
+    // Slip a reply in between the reply count and the delete.
+    const original = harness.repository.countReplies.bind(harness.repository)
+    harness.repository.countReplies = async (scope, id) => {
+      const count = await original(scope, id)
+      if (id === bareId(parent) && count === 0) {
+        await post(
+          webAnnotation({
+            source: CHAPTER_ONE,
+            visibility: 'public',
+            body: 'bob slips in',
+            parentId: bareId(parent),
+          }),
+          BOB,
+        )
+      }
+      return count
+    }
+
+    const response = await harness.request(
+      'DELETE',
+      `/annotations/${bareId(parent)}${scopeQuery(CHAPTER_ONE)}`,
+      { as: ADA },
+    )
+
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ error: { code: 'has_replies' } })
+  })
+})
+
+describe('review findings, round four', () => {
+  // `@document` is the service's own sentinel for "no structural selector", so
+  // accepting it as a node id and reading it back as the selector's absence
+  // would quietly turn a structurally anchored annotation into a document-wide
+  // one.
+  it('reserves the document sentinel rather than losing it on the round trip', async () => {
+    const base = webAnnotation({ source: CHAPTER_ONE })
+    const withSentinel = {
+      ...base,
+      target: {
+        ...base.target,
+        selector: base.target.selector.map((entry) =>
+          (entry as { type: string }).type === STRUCT_SELECTOR_TYPE
+            ? { type: STRUCT_SELECTOR_TYPE, 'margin:nodeId': '@document' }
+            : entry,
+        ),
+      },
+    }
+
+    const response = await post(withSentinel)
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'invalid_annotation' },
+    })
+  })
+
+  it('still round-trips a real node id, and still omits an absent selector', async () => {
+    const scoped = (await (await post(
+      webAnnotation({ source: CHAPTER_ONE, nodeId: 'p-proposition-7' }),
+    )).json()) as WireAnnotation
+    const struct = scoped.target.selector.find(
+      (entry) => entry.type === STRUCT_SELECTOR_TYPE,
+    ) as { 'margin:nodeId'?: string } | undefined
+    expect(struct?.['margin:nodeId']).toBe('p-proposition-7')
+  })
+
+  // W3C TextPositionSelector offsets count characters. An emoji is one
+  // character and two UTF-16 units, so counting `.length` rejected a valid
+  // selector over any non-BMP quote.
+  it('accepts a selector whose quote contains a non-BMP character', async () => {
+    const exact = 'a 🌊 wave'
+    const base = webAnnotation({ source: CHAPTER_ONE })
+    const emoji = {
+      ...base,
+      target: {
+        ...base.target,
+        selector: base.target.selector.map((entry) => {
+          const typed = entry as { type: string }
+          if (typed.type === 'TextQuoteSelector') {
+            return { ...entry, exact, prefix: '', suffix: '' }
+          }
+          if (typed.type === 'TextPositionSelector') {
+            // Characters, not UTF-16 units: `[...exact].length` is 8 where
+            // `exact.length` is 9.
+            return { ...entry, start: 5, end: 5 + [...exact].length }
+          }
+          return entry
+        }),
+      },
+    }
+    expect([...exact].length).toBe(8)
+    expect(exact.length).toBe(9)
+
+    const response = await post(emoji)
+    expect(response.status, JSON.stringify(await response.clone().json())).toBe(201)
+
+    const created = (await response.json()) as WireAnnotation
+    const position = created.target.selector.find(
+      (entry) => entry.type === 'TextPositionSelector',
+    ) as unknown as { start: number; end: number }
+    expect(position.end - position.start).toBe([...exact].length)
+  })
+
+  it('still refuses a span that does not match its quote', async () => {
+    const base = webAnnotation({ source: CHAPTER_ONE })
+    const mismatched = {
+      ...base,
+      target: {
+        ...base.target,
+        selector: base.target.selector.map((entry) =>
+          (entry as { type: string }).type === 'TextPositionSelector'
+            ? { ...entry, start: 5, end: 6 }
+            : entry,
+        ),
+      },
+    }
+
+    expect((await post(mismatched)).status).toBe(400)
+  })
+})
+
+describe('review findings, round five', () => {
+  // `site=https://ernie.sg/` + `document=/chapter` concatenated to
+  // `https://ernie.sg//chapter`, which splits back to the document `//chapter`.
+  // A trailing slash silently addressed a different document than was written.
+  it('joins the document to the canonical origin, trailing slash and all', async () => {
+    expect((await post(webAnnotation({ source: CHAPTER_ONE, body: 'stored' }))).status).toBe(
+      201,
+    )
+
+    for (const site of ['https://ernie.sg', 'https://ernie.sg/', 'https://ERNIE.SG/']) {
+      const response = await harness.request(
+        'GET',
+        `/annotations?site=${encodeURIComponent(site)}` +
+          `&document=${encodeURIComponent('/challenges/chapter-1')}`,
+        { as: ADA },
+      )
+      expect(response.status, site).toBe(200)
+      const { annotations } = (await response.json()) as {
+        annotations: WireAnnotation[]
+      }
+      expect(annotations.map((a) => a.body?.value), site).toEqual(['stored'])
+    }
+  })
+
+  // The mirror of the delete race: the parent goes away between the lookup and
+  // the insert, so `parent_id` refuses the row. The store is healthy.
+  it('reports a deleted parent as a conflict, not as an outage', async () => {
+    const parent = (await (await post(
+      webAnnotation({ source: CHAPTER_ONE, body: 'about to vanish' }),
+    )).json()) as WireAnnotation
+
+    // Delete the parent between `findAnnotation` and `insertAnnotation`.
+    //
+    // Once, and the guard is load-bearing rather than tidy: the DELETE below
+    // goes through `deleteAnnotation`, which calls `findAnnotation` itself, so an
+    // unguarded wrapper re-enters through its own interleaving and recurses
+    // until the heap is gone. It did exactly that — a 4 GB OOM after 267 s —
+    // which is how this comment came to exist.
+    const original = harness.repository.findAnnotation.bind(harness.repository)
+    let interleaved = false
+    harness.repository.findAnnotation = async (scope, id, viewer) => {
+      const found = await original(scope, id, viewer)
+      if (!interleaved && id === bareId(parent)) {
+        interleaved = true
+        await harness.request(
+          'DELETE',
+          `/annotations/${bareId(parent)}${scopeQuery(CHAPTER_ONE)}`,
+          { as: ADA },
+        )
+      }
+      return found
+    }
+
+    const response = await post(
+      webAnnotation({
+        source: CHAPTER_ONE,
+        body: 'a reply to nothing',
+        parentId: bareId(parent),
+      }),
+    )
+
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'unknown_parent' },
+    })
+  })
+
+  // The record does not store `type` and the response always says `Annotation`,
+  // so anything else was accepted and read back with different JSON-LD meaning.
+  it('refuses a type it cannot preserve', async () => {
+    for (const type of ['AnnotationPage', ['Annotation', 'CustomType'], [], 'annotation']) {
+      const response = await post({ ...webAnnotation({ source: CHAPTER_ONE }), type })
+      expect(response.status, JSON.stringify(type)).toBe(400)
+    }
+
+    for (const type of ['Annotation', ['Annotation']]) {
+      const response = await post({ ...webAnnotation({ source: CHAPTER_ONE }), type })
+      expect(response.status, JSON.stringify(type)).toBe(201)
+      expect(((await response.json()) as { type: string }).type).toBe('Annotation')
+    }
+  })
+
+  // TextPositionSelector is W3C code-point based. The wire mapping records that
+  // unit, so accepting a UTF-16 span here would create an ambiguous anchor.
+  it('accepts only the W3C code-point span', async () => {
+    const exact = 'a 🌊 wave'
+    const base = webAnnotation({ source: CHAPTER_ONE })
+    const withSpan = (end: number) => ({
+      ...base,
+      target: {
+        ...base.target,
+        selector: base.target.selector.map((entry) => {
+          const typed = entry as { type: string }
+          if (typed.type === 'TextQuoteSelector') {
+            return { ...entry, exact, prefix: '', suffix: '' }
+          }
+          if (typed.type === 'TextPositionSelector') return { ...entry, start: 5, end }
+          return entry
+        }),
+      },
+    })
+
+    // 8 code points; 9 is the UTF-16 spelling and must not enter storage.
+    expect((await post(withSpan(5 + [...exact].length))).status).toBe(201)
+    expect((await post(withSpan(5 + exact.length))).status).toBe(400)
+    expect((await post(withSpan(5 + 4))).status).toBe(400)
   })
 })
 
 describe('review findings, round six', () => {
-  const user = { id: 'user_01HREADER', email: 'reader@example.test', email_verified: true }
+  // `url.pathname` percent-encodes raw non-ASCII, so a source can grow past the
+  // maximum *after* the maximum has been checked — accepted, stored, and handed
+  // back in a shape the schema would refuse.
+  it('rechecks the source length against its canonical form', async () => {
+    const tooLong = `https://ernie.sg/${'🌊'.repeat(600)}`
+    expect(tooLong.length).toBeLessThan(MAX_SOURCE_LENGTH)
+    expect(encodeURI(tooLong).length).toBeGreaterThan(MAX_SOURCE_LENGTH)
 
-  // The profile block is not signed. An email from a response whose `user.id`
-  // does not match the signed `sub` is somebody else's address, and it was being
-  // persisted, sealed and reported by `/auth/me`.
-  it('keeps an email that does not belong to this subject out of the session', async () => {
-    const db = createFakeD1()
-    const { state, cookie } = await beginLogin()
-    const provider = providerWith({
-      access_token: await accessToken({ sub: 'user_01HVICTIM' }),
-      refresh_token: 'refresh_one',
-      // A valid token for one subject, a profile naming another.
-      user: { id: 'user_01HSOMEBODYELSE', email: 'other@example.test', email_verified: true },
-    })
+    expect((await post(webAnnotation({ source: tooLong }))).status).toBe(400)
 
-    const response = (await call(
-      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
-      { headers: { cookie } },
-      envWith(db),
-      optionsFor(provider),
-    )) as Response
-
-    // The session is still issued: the token verified.
-    expect(response.status).toBe(302)
-
-    const header = cookieNamed(response, SESSION_COOKIE_NAME) as string
-    const sealed = header.slice(header.indexOf('=') + 1, header.indexOf(';'))
-    const session = await unsealSession(sealed, config.cookiePassword)
-    expect(session?.email, 'the seal must not carry the other account\'s email')
-      .toBeUndefined()
-
-    // And nothing persisted it either.
-    expect(db.identities).toHaveLength(1)
-    expect(db.identities[0]).toMatchObject({
-      subject: 'user_01HVICTIM',
-      email: null,
-    })
+    // And one that is long but fits once encoded is still accepted.
+    const fits = `https://ernie.sg/${'🌊'.repeat(10)}`
+    expect((await post(webAnnotation({ source: fits }))).status).toBe(201)
   })
 
-  it('keeps the email when the profile does name this subject', async () => {
-    const db = createFakeD1()
-    const { state, cookie } = await beginLogin()
-    const provider = providerWith({
-      access_token: await accessToken({ sub: 'user_01HREADER' }),
-      refresh_token: 'refresh_one',
-      user,
-    })
-
-    const response = (await call(
-      `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
-      { headers: { cookie } },
-      envWith(db),
-      optionsFor(provider),
-    )) as Response
-
-    const header = cookieNamed(response, SESSION_COOKIE_NAME) as string
-    const sealed = header.slice(header.indexOf('=') + 1, header.indexOf(';'))
-    const session = await unsealSession(sealed, config.cookiePassword)
-    expect(session?.email).toBe('reader@example.test')
-    expect(db.identities[0]).toMatchObject({ email: 'reader@example.test' })
-  })
-
-  // A page with several requests open sends the same refresh token on each, and
-  // the exchange consumes it — so without coalescing the first wins and the rest
-  // come back anonymous while holding a spent token.
-  it('exchanges once for several parallel requests on one session', async () => {
-    const { cookie } = await (async () => {
-      const { state, cookie: state_cookie } = await beginLogin()
-      const provider = providerWith({
-        access_token: await accessToken({ exp: NOW_SECONDS + 60 }),
-        refresh_token: 'refresh_one',
-        user,
-      })
-      const response = (await call(
-        `${AUTH_CALLBACK_PATH}?code=code_placeholder&state=${encodeURIComponent(state)}`,
-        { headers: { cookie: state_cookie } },
-        envWith(),
-        optionsFor(provider),
-      )) as Response
-      const header = cookieNamed(response, SESSION_COOKIE_NAME) as string
-      return { cookie: header.slice(0, header.indexOf(';')) }
-    })()
-
-    const later = NOW_MS + 3_600_000
-    const laterSeconds = Math.floor(later / 1000)
-    const provider = createFakeProvider({
-      jwks: signer.jwks,
-      authenticate: {
-        access_token: await signer.sign({
-          iss: TEST_ISSUER,
-          sub: 'user_01HREADER',
-          client_id: config.clientId,
-          iat: laterSeconds - 10,
-          exp: laterSeconds + 300,
-        }),
-        refresh_token: 'refresh_two',
-        user,
-      },
-    })
-    const options = { ...optionsFor(provider), now: later }
-
-    const request = () =>
-      handleAuthRequest(
-        new Request(`https://ernie.sg${AUTH_ME_PATH}`, { headers: { cookie } }),
-        envWith(),
-        options,
-      )
-    const responses = (await Promise.all([
-      request(),
-      request(),
-      request(),
-    ])) as Response[]
-
-    // Every one of them is signed in, not just the first.
-    for (const [index, response] of responses.entries()) {
-      expect(await response.json(), `request ${index}`).toMatchObject({
-        authenticated: true,
-      })
-    }
-
-    // And the refresh grant was exchanged exactly once.
-    const exchanges = provider.calls.filter((entry) =>
-      String(entry.init?.body ?? '').includes('refresh_token'),
+  // A proposal has a body. Every consumer testing `kind === 'note'` rendered
+  // nothing for it — a body a reader wrote, stored and invisible.
+  it('reports a body for every kind that has one', async () => {
+    const bodies = await Promise.all(
+      (['commenting', 'editing'] as const).map(async (motivation) => {
+        const response = await post(
+          webAnnotation({ source: CHAPTER_ONE, motivation, body: `a ${motivation} body` }),
+        )
+        expect(response.status, motivation).toBe(201)
+        return ((await response.json()) as WireAnnotation).body?.value
+      }),
     )
-    expect(exchanges).toHaveLength(1)
+
+    expect(bodies).toEqual(['a commenting body', 'a editing body'])
+  })
+})
+
+describe('reply visibility boundaries', () => {
+  async function create(
+    visibility: 'private' | 'public',
+    parentId?: string,
+    as = ADA,
+  ) {
+    const response = await post(
+      webAnnotation({ source: CHAPTER_ONE, visibility, parentId }),
+      as,
+    )
+    expect(response.status).toBe(201)
+    return (await response.json()) as WireAnnotation
+  }
+
+  async function setVisibility(
+    annotation: WireAnnotation,
+    visibility: 'private' | 'public',
+    as = ADA,
+  ) {
+    return harness.request(
+      'PATCH',
+      `/annotations/${bareId(annotation)}${scopeQuery(CHAPTER_ONE)}`,
+      { as, body: { 'margin:visibility': visibility } },
+    )
+  }
+
+  it.each(['explicit', 'preference'] as const)(
+    'rejects an owner public reply to a private parent using %s visibility',
+    async (mode) => {
+      const parent = await create('private')
+      if (mode === 'preference') {
+        expect(
+          (
+            await harness.request('PATCH', '/prefs', {
+              body: { defaultVisibility: 'public' },
+            })
+          ).status,
+        ).toBe(200)
+      }
+      const response = await post(
+        webAnnotation({
+          source: CHAPTER_ONE,
+          parentId: bareId(parent),
+          ...(mode === 'explicit' ? { visibility: 'public' as const } : {}),
+        }),
+      )
+      expect(response.status).toBe(400)
+      expect(await response.json()).toMatchObject({
+        error: { code: 'parent_visibility_conflict' },
+      })
+      expect(await list(CHAPTER_ONE, null)).toEqual([])
+      expect(await list(CHAPTER_ONE)).toHaveLength(1)
+    },
+  )
+
+  it('keeps private replies to an owner private parent usable', async () => {
+    const parent = await create('private')
+    const reply = await create('private', bareId(parent))
+    expect(reply['margin:parentId']).toBe(bareId(parent))
+    expect(await list(CHAPTER_ONE, null)).toEqual([])
+    expect(await list(CHAPTER_ONE, BOB)).toEqual([])
+    expect(await list(CHAPTER_ONE)).toHaveLength(2)
+  })
+
+  it('rejects publishing an existing private reply to a private parent', async () => {
+    const parent = await create('private')
+    const reply = await create('private', bareId(parent))
+    const response = await setVisibility(reply, 'public')
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'parent_visibility_conflict' },
+    })
+    expect(await list(CHAPTER_ONE, null)).toEqual([])
+  })
+
+  it('refuses to hide a parent with a public reply without changing either row', async () => {
+    const parent = await create('public')
+    const reply = await create('public', bareId(parent), BOB)
+    const response = await setVisibility(parent, 'private')
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'has_visible_replies' },
+    })
+    expect((await list(CHAPTER_ONE, null)).map((row) => row.id)).toEqual([
+      parent.id,
+      reply.id,
+    ])
+  })
+
+  it('refuses to hide a parent that another owner has privately replied to', async () => {
+    const parent = await create('public')
+    const reply = await create('private', bareId(parent), BOB)
+    const response = await setVisibility(parent, 'private')
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'has_visible_replies' },
+    })
+    expect((await list(CHAPTER_ONE, BOB)).map((row) => row.id)).toEqual([
+      parent.id,
+      reply.id,
+    ])
+    expect(await list(CHAPTER_ONE, null)).toHaveLength(1)
+  })
+
+  it('keeps ownership checks ahead of visibility conflicts', async () => {
+    const parent = await create('public')
+    await create('public', bareId(parent), BOB)
+    expect((await setVisibility(parent, 'private', BOB)).status).toBe(404)
+  })
+
+  it('allows an owner to hide a parent with only their private replies', async () => {
+    const parent = await create('public')
+    await create('private', bareId(parent))
+    expect((await setVisibility(parent, 'private')).status).toBe(200)
+    expect(await list(CHAPTER_ONE, null)).toEqual([])
+    expect(await list(CHAPTER_ONE)).toHaveLength(2)
+  })
+
+  it('returns a conflict when a parent becomes private after the reply precheck', async () => {
+    const parent = await create('public')
+    const original = harness.repository.insertAnnotation.bind(
+      harness.repository,
+    )
+    harness.repository.insertAnnotation = async (record) => {
+      expect((await setVisibility(parent, 'private')).status).toBe(200)
+      return original(record)
+    }
+    const response = await post(
+      webAnnotation({
+        source: CHAPTER_ONE,
+        visibility: 'public',
+        parentId: bareId(parent),
+      }),
+    )
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'parent_visibility_conflict' },
+    })
+    expect(await list(CHAPTER_ONE, null)).toEqual([])
+    expect(await list(CHAPTER_ONE)).toHaveLength(1)
+  })
+
+  it('rejects another owner private reply when the parent becomes private before insertion', async () => {
+    const parent = await create('public')
+    const original = harness.repository.insertAnnotation.bind(
+      harness.repository,
+    )
+    harness.repository.insertAnnotation = async (record) => {
+      expect((await setVisibility(parent, 'private')).status).toBe(200)
+      return original(record)
+    }
+    const response = await post(
+      webAnnotation({
+        source: CHAPTER_ONE,
+        visibility: 'private',
+        parentId: bareId(parent),
+      }),
+      BOB,
+    )
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'unknown_parent' },
+    })
+    expect(await list(CHAPTER_ONE, BOB)).toEqual([])
+    expect(await list(CHAPTER_ONE)).toHaveLength(1)
+  })
+
+  it('returns a conflict when a parent becomes private before a reply publication write', async () => {
+    const parent = await create('public')
+    const reply = await create('private', bareId(parent))
+    const original = harness.repository.updateAnnotation.bind(
+      harness.repository,
+    )
+    harness.repository.updateAnnotation = async (scope, id, owner, patch) => {
+      if (id === bareId(reply)) {
+        expect((await setVisibility(parent, 'private')).status).toBe(200)
+      }
+      return original(scope, id, owner, patch)
+    }
+    const response = await setVisibility(reply, 'public')
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'parent_visibility_conflict' },
+    })
+    expect(await list(CHAPTER_ONE, null)).toEqual([])
+  })
+
+  it('returns a conflict when a public reply arrives before a parent privacy write', async () => {
+    const parent = await create('public')
+    const original = harness.repository.updateAnnotation.bind(
+      harness.repository,
+    )
+    harness.repository.updateAnnotation = async (scope, id, owner, patch) => {
+      await create('public', bareId(parent), BOB)
+      return original(scope, id, owner, patch)
+    }
+    const response = await setVisibility(parent, 'private')
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'has_visible_replies' },
+    })
+    expect(await list(CHAPTER_ONE, null)).toHaveLength(2)
   })
 })

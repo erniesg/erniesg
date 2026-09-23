@@ -1,4 +1,4 @@
-import type { D1Like } from './margin/d1'
+import type { D1Database } from './margin/d1'
 import type { WorkosEnv } from './margin/config'
 
 /**
@@ -25,7 +25,7 @@ export type WorkerEnv = WorkosEnv & {
   /** Static asset binding. Everything the Worker does not handle goes here. */
   ASSETS: AssetFetcher
   /** `margin-db` in production, `margin-db-stg` in preview. */
-  MARGIN_DB?: D1Like
+  MARGIN_DB?: D1Database
   /** `development`, `staging` or `production`. Absent means production. */
   MARGIN_ENVIRONMENT?: string
   /** Principal stub, reachable only when `MARGIN_ENVIRONMENT=development`. */

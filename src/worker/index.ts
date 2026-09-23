@@ -6,9 +6,13 @@ import {
   AUTH_PREFIX,
   handleAuthRequest,
   renewSession,
-} from './margin/routes'
+} from './margin/auth-routes'
 
-export const MARGIN_API_PREFIX = '/api/margin/v1'
+import { isD1Database } from './margin/d1'
+import { D1MarginRepository } from './margin/d1-repository'
+import { handleMarginRequest, MARGIN_API_PREFIX } from './margin/routes'
+
+export { MARGIN_API_PREFIX }
 export const MARGIN_HEALTH_PATH = `${MARGIN_API_PREFIX}/health`
 
 /** The Worker-owned prefixes, mirrored by `run_worker_first` in Wrangler. */
@@ -27,14 +31,26 @@ function json(body: unknown, status: number): Response {
 /** Methods that change something, and therefore need an allowlist row. */
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
-/** `POST /proposals/<id>/apply`, relative to the margin API prefix. */
-const APPLY_PATH = /^\/proposals\/[^/]+\/apply$/
+/** Match the service router's decoded segments, including repeated slashes. */
+function isProposalApply(pathname: string): boolean {
+  try {
+    const parts = pathname
+      .slice(MARGIN_API_PREFIX.length)
+      .split('/')
+      .filter(Boolean)
+      .map(decodeURIComponent)
+    return (
+      parts.length === 3 && parts[0] === 'proposals' && parts[2] === 'apply'
+    )
+  } catch {
+    return false
+  }
+}
 
 /**
  * The gate on the margin API prefix, rather than on each route.
  *
- * 054's routes are not in this tree yet, and a gate every future route has to
- * remember to call is a gate one of them will not. Putting it here means a write
+ * Keeping authorization at the composition root means every service write
  * is refused without an allowlist row whatever route ends up serving it — gated
  * by omission rather than open by omission.
  *
@@ -49,8 +65,8 @@ const APPLY_PATH = /^\/proposals\/[^/]+\/apply$/
  *    here beats requiring the client to have polled `/auth/me` first.
  *  - **Forwarding the renewed request.** The handler below reads the caller
  *    from the request it is given, so it has to be given the renewed one.
- *    Authorizing a stand-in and forwarding the stale original would leave 054's
- *    handlers seeing nobody — an anonymous write, or a read that hides the
+ *    Authorizing a stand-in and forwarding the stale original would leave the
+ *    service handlers seeing nobody — an anonymous write, or a read that hides the
  *    caller's own private annotations.
  *
  * Reads stay open: renewal never denies one, it only re-identifies the caller.
@@ -97,14 +113,13 @@ export async function marginWriteGate(
   const cookie = renewal?.cookie
 
   if (!mutating) {
-    // A read is never refused here. It is only re-identified, so 054's handlers
+    // A read is never refused here. It is only re-identified, so the service handlers
     // see the caller they would have seen a minute earlier and a private
     // annotation stays visible to its owner.
     return cookie ? { setCookie: cookie, forward: effective } : null
   }
 
-  const rest = pathname.slice(MARGIN_API_PREFIX.length).replace(/\/+$/u, '')
-  const decision = APPLY_PATH.test(rest)
+  const decision = isProposalApply(pathname)
     ? await requireAdmin(effective, env, options)
     : await requireWriter(effective, env, options)
 
@@ -162,7 +177,7 @@ async function renewIfStale(
  */
 function sameOriginRequest(request: Request): boolean {
   const site = request.headers.get('sec-fetch-site')
-  if (site) return site === 'same-origin' || site === 'none'
+  if (site && site !== 'same-origin' && site !== 'none') return false
   const origin = request.headers.get('origin')
   if (!origin) return true
   try {
@@ -191,17 +206,9 @@ function healthResponse(): Response {
 }
 
 /**
- * The Worker entry point for ernie.sg.
- *
- * It serves the margin health check and the four AuthKit endpoints, and hands
- * every other request straight to the static asset binding, unchanged.
- * Wrangler's `run_worker_first` list scopes the Worker to `/api/margin/v1/*`
- * and `/auth/*`, so existing pages never reach this handler at all and are
- * served exactly as they were before `main` was added. The asset fallthrough
- * below keeps that true for any request that does arrive here, including an
- * unrecognised path under `/auth/`. Issue 054 adds the rest of the API prefix,
- * behind `marginWriteGate`, which already refuses every write under that prefix
- * from anybody without an allowlist row.
+ * Compose AuthKit, prefix-wide authorization and the canonical margin service.
+ * Resolve identity from the effective (possibly renewed) request for every
+ * service route. Only requests outside the API fall through to static assets.
  */
 export default {
   async fetch(request: Request, env: WorkerEnv): Promise<Response> {
@@ -221,30 +228,50 @@ export default {
 
     const auth = await handleAuthRequest(request, env)
     if (auth) return auth
+    if (
+      pathname !== MARGIN_API_PREFIX &&
+      !pathname.startsWith(`${MARGIN_API_PREFIX}/`)
+    ) {
+      return env.ASSETS.fetch(request)
+    }
 
     const gate = await marginWriteGate(request, env)
     if (gate?.denied) return gate.denied
-
-    // The request carrying the renewed or expired session when there is one.
     const forwarded = gate?.forward ?? request
-    if (!gate?.setCookie) return env.ASSETS.fetch(forwarded)
-    // A rotated token or terminal expiry has to reach the browser whatever
-    // happens below. An unhandled throw would otherwise lose the Set-Cookie.
-    try {
-      return withCookie(await env.ASSETS.fetch(forwarded), gate.setCookie)
-    } catch {
-      return withCookie(
-        json(
+    let response: Response
+    if (!isD1Database(env.MARGIN_DB)) {
+      response = json(
+        {
+          error: {
+            code: 'storage_unavailable',
+            message: 'the MARGIN_DB binding is missing',
+          },
+        },
+        503,
+      )
+    } else {
+      try {
+        response = await handleMarginRequest(forwarded, {
+          repository: new D1MarginRepository(env.MARGIN_DB),
+          principal: await getPrincipal(forwarded, env),
+          now: () => new Date().toISOString(),
+          newId: () => crypto.randomUUID(),
+        })
+      } catch {
+        response = json(
           {
             error: {
-              code: 'margin_unavailable',
-              message: 'the request failed after the session was renewed; retry it',
+              code: 'storage_unavailable',
+              message:
+                'the margin store did not answer; check that its migrations are applied',
             },
           },
-          500,
-        ),
-        gate.setCookie,
-      )
+          503,
+        )
+      }
     }
+    // Both rotation and terminal expiry reach the browser on success, missing
+    // storage and downstream errors. Never lose a cleared cookie to a throw.
+    return gate?.setCookie ? withCookie(response, gate.setCookie) : response
   },
 }

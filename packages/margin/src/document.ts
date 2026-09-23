@@ -100,6 +100,41 @@ export function resolveAnchorInDocument(
 ): AnchorPlacement {
   const resolution = resolveTextAnchor(anchor, nodes)
   if (resolution.status === 'resolved') {
+    // `unique-quote` means "the only occurrence in this block", and nothing
+    // more — the stored prefix and suffix were not confirmed. If the original
+    // moved to another block and a duplicate happens to remain here, returning
+    // straight away attaches the annotation to the duplicate and never looks at
+    // the occurrence whose whole neighbourhood still matches. Every stronger
+    // rung already carries that confirmation, so only this one has to ask.
+    if (resolution.matchedBy !== 'unique-quote') {
+      return {
+        status: 'anchored',
+        nodeId: resolution.nodeId,
+        start: resolution.start,
+        end: resolution.end,
+        matchedBy: resolution.matchedBy,
+      }
+    }
+
+    const elsewhere = relocate(anchor, nodes)
+    // A document-wide match is only preferred when it is contextual *and* in a
+    // different block: `relocate` requires both sides of the context, so a
+    // result from another node has evidence this one does not.
+    if (
+      elsewhere !== 'ambiguous' &&
+      elsewhere !== 'not-found' &&
+      elsewhere.nodeId !== resolution.nodeId
+    ) {
+      return {
+        status: 'anchored',
+        nodeId: elsewhere.nodeId,
+        start: elsewhere.start,
+        end: elsewhere.end,
+        matchedBy: 'relocated-quote',
+        movedFromNodeId: anchor.nodeId,
+      }
+    }
+
     return {
       status: 'anchored',
       nodeId: resolution.nodeId,

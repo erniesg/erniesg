@@ -58,7 +58,15 @@ export function indexBlockText(
     for (const child of Array.from(node.childNodes)) visit(child)
   }
 
-  for (const child of Array.from(element.childNodes)) visit(child)
+  // The root is tested too. Starting at its children meant a block that is itself
+  // non-annotatable — a `<figure data-block-kind="figure">`, or anything marked
+  // `data-margin-annotatable="false"` — had its caption or fallback text indexed
+  // as durable content, so a selection could anchor to text the block says is not
+  // anchorable.
+  const annotatable = !skip || !element.matches(skip)
+  if (annotatable) {
+    for (const child of Array.from(element.childNodes)) visit(child)
+  }
 
   return {
     element,

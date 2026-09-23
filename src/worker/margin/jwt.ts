@@ -170,6 +170,28 @@ export function createJwksSource(
   }
 }
 
+/**
+ * Whether two issuer spellings name the same issuer.
+ *
+ * Canonical origin plus path with any trailing slash removed. Anything that is
+ * not a parseable absolute URL falls back to a byte comparison, so a malformed
+ * issuer cannot match a well-formed one by accident.
+ */
+function sameIssuer(claimed: string, configured: string): boolean {
+  const canonical = (value: string): string | null => {
+    try {
+      const url = new URL(value)
+      return `${url.origin}${url.pathname.replace(/\/+$/u, '')}${url.search}`
+    } catch {
+      return null
+    }
+  }
+  const a = canonical(claimed)
+  const b = canonical(configured)
+  if (a === null || b === null) return claimed === configured
+  return a === b
+}
+
 function asClaims(value: unknown): AccessTokenClaims | null {
   if (typeof value !== 'object' || value === null) return null
   const record = value as Record<string, unknown>
@@ -251,7 +273,16 @@ export async function verifyAccessToken(
   }
   if (!verified) return { ok: false, reason: 'signature' }
 
-  if (claims.iss !== config.issuer) return { ok: false, reason: 'issuer' }
+  // Compared as URLs, not as strings. WorkOS's own documentation writes this
+  // issuer both ways — `https://api.workos.com` on the access-token reference and
+  // `https://api.workos.com/` on the AuthKit sessions page — and the operator
+  // types it by hand into a secret. A byte comparison would reject every token
+  // over a trailing slash, with `reason: 'issuer'` and nothing to say which
+  // character was wrong. This is still exact about the thing that matters: the
+  // same origin and the same path, and a different issuer is still a rejection.
+  if (!sameIssuer(claims.iss, config.issuer)) {
+    return { ok: false, reason: 'issuer' }
+  }
   // The application binding is cryptographic, not a claim. The key set lives at
   // `/sso/jwks/<clientId>`, so a signature that verifies against it was made by
   // a key belonging to this application and no other — which is why a token

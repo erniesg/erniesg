@@ -169,6 +169,42 @@ describe('verifyAccessToken', () => {
 // AuthKit access tokens carry neither `client_id` nor `aud`: the application
 // binding is the key set at `/sso/jwks/<clientId>`. Requiring the claim rejected
 // every genuine token before a session could be sealed.
+// WorkOS writes this issuer both ways in its own documentation, and an operator
+// types it by hand into a secret. A byte comparison would reject every token
+// over a trailing slash.
+describe('the issuer', () => {
+  it('matches across a trailing slash, either way round', async () => {
+    const withSlash = readWorkosConfig(
+      testWorkosEnv({ WORKOS_ISSUER: `${TEST_ISSUER}/` }),
+    ) as WorkosConfig
+    const token = await signer.sign(validClaims())
+    const slashed = await signer.sign(validClaims({ iss: `${TEST_ISSUER}/` }))
+
+    // configured with a slash, token without
+    await expect(
+      verifyAccessToken(token, {
+        config: withSlash,
+        jwks: sourceFor(createFakeProvider({ jwks: signer.jwks })),
+        now: NOW_MS,
+      }),
+    ).resolves.toMatchObject({ ok: true })
+    // configured without, token with
+    await expect(verify(slashed)).resolves.toMatchObject({ ok: true })
+  })
+
+  it('still refuses a different issuer, and a look-alike path', async () => {
+    for (const iss of [
+      'https://api.workos.example',
+      `${TEST_ISSUER}/user_management/client_other`,
+      `${TEST_ISSUER}.evil.test`,
+      'not a url',
+    ]) {
+      const token = await signer.sign(validClaims({ iss }))
+      await expect(verify(token), iss).resolves.toMatchObject({ ok: false })
+    }
+  })
+})
+
 describe('the application binding', () => {
   it('accepts a token with no client_id and no aud at all', async () => {
     const claims = validClaims()

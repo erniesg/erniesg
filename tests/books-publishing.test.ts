@@ -788,9 +788,18 @@ describe('the reading shell belongs to the site', () => {
       expect(aside, 'the margin landmark must still be an <aside>').not.toBeNull()
 
       const inside = aside![1].trim()
-      // Exactly one element, and it is the margin rail.
-      expect(inside).toMatch(/^<margin-rail[^>]*><\/margin-rail>$/)
-      expect(inside).toContain('document-uri=')
+      // Astro emits the component's own module script beside the element it
+      // renders, so that is part of the layer rather than something the column
+      // grew. Everything else has to be the rail and nothing but.
+      const scripts = [...inside.matchAll(/<script\b[^>]*><\/script>/g)]
+      for (const script of scripts) {
+        expect(script[0], 'only the layer\'s own module script belongs here')
+          .toContain('type="module"')
+      }
+      const withoutScripts = inside.replace(/<script\b[^>]*><\/script>/g, '').trim()
+
+      expect(withoutScripts).toMatch(/^<margin-rail[^>]*><\/margin-rail>$/)
+      expect(withoutScripts).toContain('document-uri=')
     }
   })
 

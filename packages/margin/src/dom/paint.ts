@@ -297,6 +297,14 @@ export function paintHighlights(
     for (const color of byColor.keys()) {
       registry.delete(nameFor(color))
     }
+    // `ensureStyles` created a namespace-specific `<style>` in `document.head`
+    // that nothing else references; the registry entries above are only half
+    // of what this painter added. Each `MarginRailElement` gets a
+    // never-reused counter namespace and the React wrapper replaces the
+    // element on a `documentUri`/`textSelector`/`apiBase` change, so leaving
+    // this behind accumulates one permanent style element and its rules per
+    // replacement over a long-lived reading session.
+    doc.head.querySelector(`style[${STYLE_ATTRIBUTE}="${suffix}"]`)?.remove()
   }
 }
 

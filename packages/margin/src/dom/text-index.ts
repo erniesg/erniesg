@@ -105,7 +105,28 @@ export function offsetForPoint(
     } catch {
       continue
     }
-    if (comparison <= 0) return segment.start
+    if (comparison < 0) return segment.start
+    if (comparison === 0) {
+      // The point is not inside this text node (the fast path above already
+      // caught that); a non-text-node container can only coincide with this
+      // segment's range at one of its two boundaries. A range created with
+      // `selectNode()`, for instance, expresses "right after this text node"
+      // as a parent/child-index point rather than as an offset into the node
+      // itself, and that point compares equal (0) to the range end here just
+      // as the range start does. Treating every such point as the segment's
+      // start collapsed captures to the wrong end or swallowed the preceding
+      // text; a second probe collapsed at the end tells the two apart.
+      const endProbe = doc.createRange()
+      endProbe.setStart(segment.node, segment.node.data.length)
+      endProbe.setEnd(segment.node, segment.node.data.length)
+      let atEnd: number
+      try {
+        atEnd = endProbe.comparePoint(container, offset)
+      } catch {
+        atEnd = -1
+      }
+      return atEnd === 0 ? segment.end : segment.start
+    }
   }
   return index.text.length
 }

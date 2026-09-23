@@ -9,6 +9,7 @@
  * ever drops one.
  */
 import {
+  DOCUMENT_SCOPE_NODE_ID,
   quoteCandidates,
   resolveTextAnchor,
   type AnchorMatchedBy,
@@ -145,7 +146,20 @@ export function resolveAnchorInDocument(
     // Ambiguity inside the old block is not ambiguity across the document.
     // Both local duplicates may have lost their neighbourhood while the
     // original occurrence moved, with both stored context sides intact.
-    const moved = relocate(anchor, nodes)
+    //
+    // A `@document`-scoped anchor is the exception: its ambiguity already
+    // came from `resolveDocumentAnchor` weighing the *whole* document text,
+    // context spanning block boundaries included. `relocate` only checks
+    // context inside one block at a time, so it can drop a candidate whose
+    // prefix crosses a boundary and "resolve" what was correctly ambiguous —
+    // and since no real node id ever equals the `@document` sentinel, the
+    // `moved.nodeId !== anchor.nodeId` check below would always let it
+    // through. Skip relocation for this anchor entirely; the duplicate stays
+    // orphaned rather than being attached arbitrarily.
+    const moved =
+      anchor.nodeId === DOCUMENT_SCOPE_NODE_ID
+        ? ('ambiguous' as const)
+        : relocate(anchor, nodes)
     if (
       moved !== 'ambiguous' &&
       moved !== 'not-found' &&

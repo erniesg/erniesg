@@ -56,6 +56,11 @@ export function anchorsFromRange(
   if (touched.length === 0) return { status: 'empty' }
 
   const anchors: SemanticTextAnchor[] = []
+  // Whether any touched block had indexed (annotatable) text under the raw,
+  // untrimmed span. A whitespace-only selection reaches zero anchors the same
+  // way a selection entirely inside a generated figure does, but only the
+  // second one is actually non-annotatable.
+  let hadAnnotatableSpan = false
   for (const block of touched) {
     const { index } = block
     if (index.segments.length === 0) continue
@@ -68,6 +73,8 @@ export function anchorsFromRange(
     const rawEnd = endsHere
       ? offsetForPoint(index, range.endContainer, range.endOffset)
       : index.text.length
+
+    if (rawEnd > rawStart) hadAnnotatableSpan = true
 
     const { from, to } = trimmedSlice(index.text, rawStart, rawEnd)
     if (to <= from) continue
@@ -88,7 +95,9 @@ export function anchorsFromRange(
     )
   }
 
-  if (anchors.length === 0) return { status: 'non-annotatable' }
+  if (anchors.length === 0) {
+    return { status: hadAnnotatableSpan ? 'empty' : 'non-annotatable' }
+  }
   return { status: 'captured', anchors, range }
 }
 

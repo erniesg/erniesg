@@ -87,7 +87,12 @@ export function MarginRail({
   }, [transport, apiBase])
 
   useEffect(() => {
-    if (rail.current && annotations) rail.current.annotations = annotations
+    // `annotations` absent is a controlled transition to empty, not "leave
+    // whatever is already painted" — a truthiness guard here left a rail's
+    // last set of annotations installed forever once a consumer cleared the
+    // prop, since only an unrelated recreation (e.g. `documentUri` changing)
+    // ever produced an empty rail.
+    if (rail.current) rail.current.annotations = annotations ?? []
   }, [annotations])
 
   return <div ref={host} className={className} />

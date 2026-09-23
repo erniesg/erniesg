@@ -258,12 +258,25 @@ export async function verifyAccessToken(
   // from a different application is rejected even though AuthKit access tokens
   // carry neither `client_id` nor `aud`. Requiring `client_id` rejected every
   // genuine token; it is checked when a provider does send it, and `aud` with it.
-  const claimed =
-    claims.client_id ??
-    (Array.isArray(claims.aud) ? claims.aud[0] : claims.aud) ??
-    config.clientId
-  if (claimed !== config.clientId) {
+  // Each is checked when present, and they are checked separately: preferring
+  // one would let a token whose `client_id` is right and whose `aud` names
+  // another application through.
+  if (
+    claims.client_id !== undefined &&
+    claims.client_id !== config.clientId
+  ) {
     return { ok: false, reason: 'client-id' }
+  }
+  // Exactly this application, not "among others". A contains-check would accept
+  // a token minted for a different service that happens to list us too, and an
+  // application binding is not a general-purpose audience. An `aud` that is
+  // present and names nobody is refused for the same reason: present and
+  // meaningless is not the same as absent.
+  if (claims.aud !== undefined) {
+    const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud]
+    if (audiences.length !== 1 || audiences[0] !== config.clientId) {
+      return { ok: false, reason: 'client-id' }
+    }
   }
   if (!claims.sub.trim()) return { ok: false, reason: 'subject' }
 

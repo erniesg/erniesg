@@ -198,6 +198,41 @@ describe('the application binding', () => {
     await expect(verify(theirs)).resolves.toMatchObject({ ok: false })
   })
 
+  // An application binding, not a general-purpose audience: a token minted for
+  // another service that happens to list us as well is not a token for us.
+  it('refuses an aud that names this application among others', async () => {
+    const claims = validClaims()
+    delete (claims as Record<string, unknown>).client_id
+
+    for (const aud of [
+      [TEST_CLIENT_ID, 'client_somebody_else'],
+      ['client_somebody_else', TEST_CLIENT_ID],
+      [],
+    ]) {
+      const token = await signer.sign({ ...claims, aud })
+      await expect(verify(token), JSON.stringify(aud)).resolves.toMatchObject({
+        ok: false,
+      })
+    }
+  })
+
+  // And they are checked separately, so a right `client_id` cannot carry a wrong
+  // `aud` through.
+  it('refuses a right client_id beside a wrong aud, and the reverse', async () => {
+    const right = await signer.sign(
+      validClaims({ aud: 'client_somebody_else' } as Record<string, unknown>),
+    )
+    const wrong = await signer.sign(
+      validClaims({
+        client_id: 'client_somebody_else',
+        aud: TEST_CLIENT_ID,
+      } as Record<string, unknown>),
+    )
+
+    await expect(verify(right)).resolves.toMatchObject({ ok: false })
+    await expect(verify(wrong)).resolves.toMatchObject({ ok: false })
+  })
+
   it('refuses a malformed client_id or aud rather than ignoring it', async () => {
     for (const claim of [{ client_id: 7 }, { aud: 7 }, { aud: [7] }]) {
       const token = await signer.sign(validClaims(claim as Record<string, unknown>))

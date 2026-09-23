@@ -89,6 +89,8 @@ export type TokenClaims = {
   iss?: string
   sub?: string
   client_id?: string
+  /** AuthKit sends neither `client_id` nor `aud`; both are checked if present. */
+  aud?: string | string[] | unknown
   exp?: number
   nbf?: number
   iat?: number

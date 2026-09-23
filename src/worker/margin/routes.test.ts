@@ -683,11 +683,12 @@ describe('logout does not need the provider', () => {
   // *sending* the cookie, but the response's `Set-Cookie` deletes it anyway, so
   // any page could sign a reader out.
   it('refuses a cross-site logout', async () => {
-    for (const headers of [
+    const cases: Record<string, string>[] = [
       { origin: 'https://evil.test' },
       { 'sec-fetch-site': 'cross-site' },
       { 'sec-fetch-site': 'same-site' },
-    ]) {
+    ]
+    for (const headers of cases) {
       const response = (await call(
         AUTH_LOGOUT_PATH,
         { method: 'POST', headers },
@@ -701,12 +702,13 @@ describe('logout does not need the provider', () => {
   })
 
   it('allows a logout the browser labels as this site', async () => {
-    for (const headers of [
+    const cases: Record<string, string>[] = [
       { origin: 'https://ernie.sg' },
       { 'sec-fetch-site': 'same-origin' },
       { 'sec-fetch-site': 'none' },
       {},
-    ]) {
+    ]
+    for (const headers of cases) {
       const response = (await call(
         AUTH_LOGOUT_PATH,
         { method: 'POST', headers },

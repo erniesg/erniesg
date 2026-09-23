@@ -230,9 +230,12 @@ async function exchange(
     })
     if (!response.ok) {
       // Only the provider's explicit invalid_grant proves this refresh token
-      // cannot recover. A timeout, rate limit, 5xx, or opaque error leaves the
-      // sealed cookie available for a later retry.
-      if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+      // cannot recover. A 408 timeout, 429 rate limit, 5xx, network failure,
+      // or opaque error leaves the sealed cookie available for a later retry.
+      if (
+        response.status >= 400 && response.status < 500 &&
+        response.status !== 408 && response.status !== 429
+      ) {
         const body = (await response.json().catch(() => null)) as { error?: unknown } | null
         if (body?.error === 'invalid_grant') return { kind: 'terminal' }
       }

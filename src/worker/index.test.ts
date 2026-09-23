@@ -264,6 +264,40 @@ describe('the margin write gate', () => {
 })
 
 describe('terminal refresh responses', () => {
+  it('preserves the session on an HTTP 408 even when its body says invalid_grant', async () => {
+    const now = Math.floor(Date.now() / 1000)
+    const signer = await testSigner()
+    const stale = await signer.sign({
+      iss: TEST_ISSUER,
+      sub: 'user_01HREADER',
+      client_id: TEST_CLIENT_ID,
+      iat: now - 3_700,
+      exp: now - 3_600,
+    })
+    const cookie = await sessionCookieHeader(stale, {
+      expiresAt: now - 3_600,
+      ceiling: now + 3_600,
+      refreshToken: 'refresh_one',
+    })
+    const provider = createFakeProvider({
+      jwks: signer.jwks,
+      authenticateStatus: 408,
+      authenticate: { error: 'invalid_grant' },
+    })
+    vi.stubGlobal('fetch', provider.fetchImpl)
+    try {
+      for (const path of [AUTH_ME_PATH, '/api/margin/v1/annotations']) {
+        const response = await worker.fetch(
+          new Request(`https://ernie.sg${path}`, { headers: { cookie } }),
+          { ASSETS: createAssetBinding(), ...testWorkosEnv() } as WorkerEnv,
+        )
+        expect(response.headers.get('set-cookie'), path).toBeNull()
+      }
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('expires the stale session on auth, API reads, denied writes, and apply', async () => {
     const now = Math.floor(Date.now() / 1000)
     const signer = await testSigner()

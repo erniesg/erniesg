@@ -855,7 +855,7 @@ describe('GET /auth/me renews a lapsed access token', () => {
     expect(cookieNamed(response, SESSION_COOKIE_NAME)).toContain('; Path=/')
   })
 
-  it.each([429, 503])('keeps a retryable HTTP %i refresh session', async (status) => {
+  it.each([408, 429, 503])('keeps a retryable HTTP %i refresh session', async (status) => {
     const { cookie } = await signIn({ exp: NOW_SECONDS + 60 })
     const response = (await call(
       AUTH_ME_PATH,

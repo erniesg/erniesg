@@ -76,7 +76,10 @@ export function MarginRail({
   }, [documentUri, textSelector, apiBase])
 
   useEffect(() => {
-    if (rail.current && transport) rail.current.transport = transport
+    // `?? null`, not a truthiness guard: a consumer clearing `transport` — on
+    // logout, or to go client-only — meant the old one stayed installed and later
+    // highlights kept being sent to a service the caller had disconnected from.
+    if (rail.current) rail.current.transport = transport ?? null
   }, [transport])
 
   useEffect(() => {

@@ -135,12 +135,14 @@ function overlayOrigin(
   scrollX: number,
   scrollY: number,
 ): { x: number; y: number } {
+  // The overlay's own rectangle, and nothing added to it. It sits at content
+  // coordinate zero inside the host, so if the host is scrolled the overlay moves
+  // with the content and its rectangle already carries that — adding the host's
+  // `scrollLeft`/`scrollTop` back subtracted the scroll twice and put every box
+  // out by the scroll offset. The whole point of measuring the overlay rather
+  // than the host is that it needs no corrections.
   const box = overlay.getBoundingClientRect()
-  const scroller = overlay.parentElement
-  return {
-    x: box.left + scrollX + (scroller?.scrollLeft ?? 0),
-    y: box.top + scrollY + (scroller?.scrollTop ?? 0),
-  }
+  return { x: box.left + scrollX, y: box.top + scrollY }
 }
 
 function paintWithOverlay(

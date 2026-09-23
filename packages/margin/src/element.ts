@@ -48,7 +48,21 @@ const ORPHAN_LABELS: Record<string, string> = {
   'quote-not-found': 'orphaned — the quote was removed',
 }
 
-export class MarginRailElement extends HTMLElement {
+/**
+ * `HTMLElement` when there is one, an empty class when there is not.
+ *
+ * `react.tsx` imports this module statically, so an SSR build evaluates this
+ * class declaration in Node — where `HTMLElement` does not exist — and threw a
+ * `ReferenceError` before React reached a `useEffect`. That made the optional
+ * React entry unusable in every SSR framework.
+ *
+ * Nothing on the server instantiates it: `defineMarginElements` returns early
+ * without a `customElements` registry, which is the same condition.
+ */
+const ElementBase: typeof HTMLElement = (globalThis as { HTMLElement?: typeof HTMLElement })
+  .HTMLElement ?? (class {} as unknown as typeof HTMLElement)
+
+export class MarginRailElement extends ElementBase {
   static observedAttributes = ['document-uri', 'text-selector', 'api-base']
 
   #controller: MarginController | null = null
@@ -57,6 +71,15 @@ export class MarginRailElement extends HTMLElement {
   #transport: MarginTransport | null = null
   /** Whether `#transport` is one this element built from `api-base`. */
   #ownsTransport = false
+  /**
+   * This rail's own suffix for the document-global highlight registry.
+   *
+   * A counter rather than the document URI: two rails showing the *same*
+   * document — a reading column beside a preview of it — still need separate
+   * entries, and a URI would give them the same one.
+   */
+  static #rails = 0
+  readonly #namespace = `rail-${(MarginRailElement.#rails += 1)}`
   #shadow: ShadowRoot
 
   constructor() {
@@ -139,6 +162,11 @@ export class MarginRailElement extends HTMLElement {
 
     this.#controller = createMarginController({
       root,
+      // Every rail gets its own registry entries. `paint.ts` grew the option and
+      // nothing passed one, so two rails on a page went on overwriting and
+      // deleting each other's `CSS.highlights` keys and stylesheet — the fix was
+      // available and unused.
+      registryNamespace: this.#namespace,
       onSelection: (capture) => {
         this.#capture = capture
         this.#render()

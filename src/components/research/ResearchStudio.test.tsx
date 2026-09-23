@@ -6,6 +6,10 @@ import type {
   PublicationVisualRelationship,
 } from '../../research/import-types'
 import type { ResearchPaper } from '../../research/schema'
+import {
+  createSemanticTextAnchor,
+  textAnnotationSchema,
+} from '../../annotations/annotations'
 import ResearchStudio from './ResearchStudio'
 
 const HOSTILE_XHTML = [
@@ -294,6 +298,57 @@ function importedMarkup() {
 }
 
 describe('research studio imported preview', () => {
+  it('marks an anchored proposal with its body in the document', () => {
+    const proposal = textAnnotationSchema.parse({
+      id: 'proposal-inline',
+      kind: 'proposal',
+      target: createSemanticTextAnchor('p-inline', INTRO_TEXT, 'source link'),
+      body: 'replacement wording',
+      geometryCache: [],
+    })
+    const markup = renderToStaticMarkup(
+      <ResearchStudio
+        paper={importedPaper}
+        reconstruction={importedReconstruction()}
+        initialAnnotations={[proposal]}
+      />,
+    )
+
+    expect(markup).toContain('data-annotation-id="proposal-inline"')
+    expect(markup).toContain('data-annotation-kind="proposal"')
+    expect(markup).toContain('replacement wording')
+  })
+
+  it('paints a document-scoped wire proposal on the resolved source node', () => {
+    const documentText = importedPaper.nodes
+      .filter((node) => node.type !== 'figure')
+      .map((node) => node.text)
+      .join('')
+    const quote = 'source link'
+    const start = documentText.indexOf(quote)
+    expect(start).toBeGreaterThanOrEqual(0)
+    const proposal = textAnnotationSchema.parse({
+      id: 'document-proposal',
+      kind: 'proposal',
+      target: {
+        nodeId: '@document',
+        positionUnit: 'codepoint',
+        position: {
+          start: [...documentText.slice(0, start)].length,
+          end: [...documentText.slice(0, start + quote.length)].length,
+        },
+        quote: { exact: quote, prefix: '', suffix: '' },
+      },
+      body: 'replacement wording',
+      geometryCache: [],
+    })
+    const markup = renderToStaticMarkup(
+      <ResearchStudio paper={importedPaper} reconstruction={importedReconstruction()} initialAnnotations={[proposal]} />,
+    )
+    expect(markup).toContain('data-annotation-id="document-proposal"')
+    expect(markup).toContain('data-annotation-kind="proposal"')
+  })
+
   it('keeps hostile XHTML bytes and executable elements out of preview markup', () => {
     const markup = importedMarkup()
 

@@ -74,11 +74,27 @@ function roundTrip(wire: WebAnnotation): WebAnnotation {
     created: String(wire.created),
     modified: String(wire.modified),
   })
-  if (!mapped.ok) throw new Error(`${mapped.error.code}: ${mapped.error.message}`)
+  if (!mapped.ok)
+    throw new Error(`${mapped.error.code}: ${mapped.error.message}`)
   return recordToWebAnnotation(mapped.value)
 }
 
 describe('the W3C wire format', () => {
+  it('retains the wire character unit so a reader can convert with full text', () => {
+    const wire = canonicalWire('highlighting')
+    const mapped = webAnnotationToRecord(wire, {
+      id: 'a1',
+      creator: CREATOR,
+      visibility: 'private',
+      created: CREATED,
+      modified: CREATED,
+    })
+    expect(mapped.ok).toBe(true)
+    if (!mapped.ok) return
+    expect(mapped.value.annotation.target.positionUnit).toBe('codepoint')
+    expect(recordToWebAnnotation(mapped.value)).toEqual(wire)
+  })
+
   it.each(MOTIVATIONS)(
     'round-trips %s from wire to internal model and back unchanged',
     (motivation) => {
@@ -253,7 +269,8 @@ describe('the W3C wire format', () => {
       },
     )
     expect(withoutQuote.ok).toBe(false)
-    if (!withoutQuote.ok) expect(withoutQuote.error.code).toBe('missing_selector')
+    if (!withoutQuote.ok)
+      expect(withoutQuote.error.code).toBe('missing_selector')
   })
 
   it('rejects an oversized body before anything is mapped', () => {
@@ -270,6 +287,9 @@ describe('target.source and the tenancy key', () => {
     'https://ernie.sg/challenges/chapter-1',
     'https://berlayar.ai/notes/one?v=2',
     'http://localhost:4321/a/b#c',
+    'https://example.test/doc?',
+    'https://example.test/doc#',
+    'https://example.test/doc?#',
   ])('splits and rejoins %s exactly', (source) => {
     const split = splitSource(source)
     expect(split).not.toBeNull()

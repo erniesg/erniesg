@@ -173,12 +173,15 @@ function AnnotatedText({
       content = <a href={linkRun.href}>{content}</a>
     }
 
-    if (note?.annotation.kind === 'note') {
+    // Anything with a body, for the same reason the selection above changed: a
+    // proposal has one, and the inspector showing it while the text carries no
+    // marker is the half-rendered state that fix left behind.
+    if (note && annotationBody(note.annotation) !== null) {
       content = (
         <span
           className="srt-note-target"
           data-annotation-id={note.annotation.id}
-          data-annotation-kind="note"
+          data-annotation-kind={note.annotation.kind}
           data-note-label="1"
           aria-describedby={`${note.annotation.id}-body`}
         >

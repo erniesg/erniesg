@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
   createDemoAnnotations,
@@ -68,6 +69,59 @@ function verificationCodes(error: unknown) {
 }
 
 describe('SRT export package', () => {
+  it('versions proposal artifacts and reads legacy highlight manifests', async () => {
+    const legacy = await buildExportPackage(paper, annotations)
+    const legacyManifest = replaceFile(
+      legacy,
+      'export-manifest.json',
+      (bytes) => {
+        const manifest = JSON.parse(decoder.decode(bytes))
+        manifest.schemaVersion = '1.1.0'
+        return encoder.encode(JSON.stringify(manifest))
+      },
+    )
+    const legacyChecksums = replaceFile(
+      legacyManifest,
+      'checksums.sha256',
+      () =>
+        encoder.encode(
+          legacyManifest.files
+            .filter((file) => file.path !== 'checksums.sha256')
+            .map(
+              (file) =>
+                `${createHash('sha256').update(file.bytes).digest('hex')}  ${file.path}`,
+            )
+            .join('\n') + '\n',
+        ),
+    )
+    await expect(
+      verifyExportPackage(legacyChecksums, paper, annotations),
+    ).resolves.toMatchObject({ status: 'passed' })
+
+    const proposal = textAnnotationSchema.parse({
+      id: 'export-proposal',
+      kind: 'proposal',
+      target: annotations[0].target,
+      body: 'replacement text',
+      geometryCache: [],
+    })
+    const current = await buildExportPackage(paper, [proposal])
+    const manifest = JSON.parse(
+      decoder.decode(getExportFile(current, 'export-manifest.json').bytes),
+    )
+    expect(manifest.schemaVersion).toBe('1.2.0')
+    const mislabeled = replaceFile(current, 'export-manifest.json', (bytes) =>
+      encoder.encode(
+        JSON.stringify({
+          ...JSON.parse(decoder.decode(bytes)),
+          schemaVersion: '1.1.0',
+        }),
+      ),
+    )
+    await expect(
+      verifyExportPackage(mislabeled, paper, [proposal]),
+    ).rejects.toThrow(/ANNOTATIONS_VERSION_MISMATCH/)
+  })
   it('exports every configured research paper with PDF text fidelity', async () => {
     const lettersPaper = researchPaperSchema.parse(rawLettersPaper)
 

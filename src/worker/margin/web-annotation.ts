@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import {
+  DOCUMENT_SCOPE_NODE_ID,
   textAnnotationSchema,
   type TextAnnotation,
 } from '../../annotations/annotations'
@@ -74,7 +75,7 @@ export const MAX_SOURCE_LENGTH = 2_048
  * internal anchor requires a `nodeId`, so annotations anchored to the document
  * as a whole get this sentinel and the mapping stays reversible.
  */
-export const DOCUMENT_SCOPE_NODE_ID = '@document'
+export { DOCUMENT_SCOPE_NODE_ID } from '../../annotations/annotations'
 
 /** A highlight with no `margin:color` still needs one internally. */
 export const DEFAULT_HIGHLIGHT_COLOR = 'yellow'
@@ -216,7 +217,10 @@ export const webAnnotationSchema = z.object({
    * rule the body format and the node-id sentinel follow.
    */
   type: z
-    .union([z.literal(ANNOTATION_TYPE), z.array(z.literal(ANNOTATION_TYPE)).min(1)])
+    .union([
+      z.literal(ANNOTATION_TYPE),
+      z.array(z.literal(ANNOTATION_TYPE)).min(1),
+    ])
     .optional(),
   motivation: z.enum(MOTIVATIONS),
   body: bodySchema.optional(),
@@ -277,7 +281,7 @@ export function splitSource(
   // something different once stored is worse than one that is refused.
   if (url.username || url.password) return null
   // The canonical length, not the sent one — canonicalising can only grow it.
-  if (`${url.origin}${url.pathname}${url.search}${url.hash}`.length > MAX_SOURCE_LENGTH) {
+  if (url.href.length > MAX_SOURCE_LENGTH) {
     return null
   }
   // The canonical spelling, not the one that was sent. `https://ernie.sg:443/x`,
@@ -285,7 +289,11 @@ export function splitSource(
   // the parser rewrites, and rejecting them because the rewrite differs from
   // the input turned ordinary external annotations away. Tenancy wants one
   // spelling per document anyway: two spellings would be two tenants.
-  const document = `${url.pathname}${url.search}${url.hash}`
+  // Taken from `href` rather than reassembled. `search` and `hash` are the empty
+  // string both when the delimiter is absent and when it is present and empty, so
+  // building the document from them turns `…/doc?` into `…/doc` — a different URI,
+  // silently, and a different tenant key from the one the client sent.
+  const document = url.href.slice(url.origin.length)
   return { site: url.origin, document }
 }
 
@@ -319,8 +327,7 @@ export function annotationIdFromIri(value: string): string {
 export type MappingFailure = { code: string; message: string }
 
 export type MappingResult<T> =
-  | { ok: true; value: T }
-  | { ok: false; error: MappingFailure }
+  { ok: true; value: T } | { ok: false; error: MappingFailure }
 
 function fail<T>(code: string, message: string): MappingResult<T> {
   return { ok: false, error: { code, message } }
@@ -362,8 +369,7 @@ export function webAnnotationToRecord(
     (entry): entry is QuoteSelector => entry.type === 'TextQuoteSelector',
   )
   const position = selectors.find(
-    (entry): entry is PositionSelector =>
-      entry.type === 'TextPositionSelector',
+    (entry): entry is PositionSelector => entry.type === 'TextPositionSelector',
   )
   const struct = selectors.find(
     (entry): entry is StructSelector => entry.type === STRUCT_SELECTOR_TYPE,
@@ -403,6 +409,9 @@ export function webAnnotationToRecord(
     kind,
     target: {
       nodeId: struct?.['margin:nodeId'] ?? DOCUMENT_SCOPE_NODE_ID,
+      // Keep the wire unit explicit. Absolute offsets cannot be converted to
+      // UTF-16 without the complete document text before this selector.
+      positionUnit: 'codepoint',
       position: { start: position.start, end: position.end },
       quote: {
         exact: quote.exact,
@@ -424,7 +433,8 @@ export function webAnnotationToRecord(
   if (!parsed.success) {
     return fail(
       'malformed_selector',
-      parsed.error.issues[0]?.message ?? 'the selectors do not describe a range',
+      parsed.error.issues[0]?.message ??
+        'the selectors do not describe a range',
     )
   }
 
@@ -457,6 +467,8 @@ export function recordToWebAnnotation(
 ): WebAnnotation {
   const { annotation } = record
   const anchor = annotation.target
+  // Service records originate from W3C selectors. Older stored rows have no
+  // positionUnit tag but retain their original codepoint offsets unchanged.
   const selector: z.infer<typeof selectorSchema>[] = [
     {
       type: 'TextQuoteSelector',

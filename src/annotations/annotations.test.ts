@@ -55,6 +55,71 @@ function paragraphFixture(text: string): ResearchPaper {
   })
 }
 
+describe('wire character offsets in the shared anchor model', () => {
+  it('uses full node text to locate the second duplicate after an emoji', () => {
+    const target = semanticTextAnchorSchema.parse({
+      nodeId: 'p-test',
+      positionUnit: 'codepoint',
+      position: { start: 4, end: 5 },
+      quote: { exact: 'x', prefix: '', suffix: '' },
+    })
+    expect(
+      resolveTextAnchor(target, paragraphFixture('🌊 x x').nodes),
+    ).toMatchObject({
+      status: 'resolved',
+      nodeId: 'p-test',
+      start: 5,
+      end: 6,
+      matchedBy: 'position-and-context',
+    })
+  })
+
+  it('uses document-wide position and context across node boundaries', () => {
+    const nodes = [
+      {
+        id: 'before',
+        type: 'paragraph' as const,
+        text: 'prefix 🌊 ',
+        source: 'test fixture',
+      },
+      {
+        id: 'target',
+        type: 'paragraph' as const,
+        text: 'x suffix',
+        source: 'test fixture',
+      },
+    ]
+    const target = semanticTextAnchorSchema.parse({
+      nodeId: '@document',
+      positionUnit: 'codepoint',
+      position: { start: 9, end: 10 },
+      quote: { exact: 'x', prefix: 'prefix 🌊 ', suffix: ' suffix' },
+    })
+    expect(resolveTextAnchor(target, nodes)).toMatchObject({
+      status: 'resolved',
+      nodeId: 'target',
+      start: 0,
+      end: 1,
+      matchedBy: 'position-and-context',
+    })
+  })
+
+  it('does not guess a document-wide duplicate with no matching position or context', () => {
+    const target = semanticTextAnchorSchema.parse({
+      nodeId: '@document',
+      positionUnit: 'codepoint',
+      position: { start: 10, end: 11 },
+      quote: { exact: 'x', prefix: '', suffix: '' },
+    })
+    expect(
+      resolveTextAnchor(target, [
+        { id: 'one', type: 'paragraph', text: 'x ', source: 'test fixture' },
+        { id: 'two', type: 'paragraph', text: 'x', source: 'test fixture' },
+      ]),
+    ).toMatchObject({ status: 'ambiguous' })
+  })
+})
+
 describe('SRT semantic reading anchors and annotations', () => {
   it('creates deterministic demo annotation targets for export and studio use', () => {
     const first = createDemoAnnotations(paper)

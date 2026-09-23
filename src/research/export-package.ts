@@ -83,7 +83,7 @@ export class ExportVerificationError extends Error {
 
 const exportManifestSchema = z
   .object({
-    schemaVersion: z.literal('1.1.0'),
+    schemaVersion: z.enum(['1.1.0', '1.2.0']),
     document: z
       .object({
         id: z.string().min(1),
@@ -369,7 +369,7 @@ export async function buildExportPackage(
     file('print.pdf', pdf.mediaType, pdf.bytes),
   ]
   const exportManifest = exportManifestSchema.parse({
-    schemaVersion: '1.1.0',
+    schemaVersion: '1.2.0',
     document: {
       id: paper.id,
       version: paper.version,
@@ -683,6 +683,19 @@ export async function verifyExportPackage(
     fail(
       'EXPORT_MANIFEST_INVALID',
       error instanceof Error ? error.message : 'Export manifest is invalid',
+    )
+  }
+  if (
+    exportManifest.schemaVersion === '1.1.0' &&
+    annotations.some(
+      (annotation) =>
+        annotation.kind === 'proposal' ||
+        annotation.target.positionUnit !== undefined,
+    )
+  ) {
+    fail(
+      'ANNOTATIONS_VERSION_MISMATCH',
+      'Proposal and codepoint anchors require export manifest 1.2.0',
     )
   }
   if (

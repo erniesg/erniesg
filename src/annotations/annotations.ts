@@ -20,36 +20,25 @@ const textQuoteSelectorSchema = z
   })
   .strict()
 
+export const DOCUMENT_SCOPE_NODE_ID = '@document'
+
 export const semanticTextAnchorSchema = z
   .object({
     nodeId: z.string().min(1),
+    /** Wire selectors count code points; local authors count UTF-16 units. */
+    positionUnit: z.literal('codepoint').optional(),
     position: textPositionSelectorSchema,
     quote: textQuoteSelectorSchema,
   })
   .strict()
   .refine(
-    /**
-     * The span has to match the quote. It does not have to say which unit it
-     * was counted in, because nothing here can tell.
-     *
-     * W3C `TextPositionSelector` counts characters; every producer in this file
-     * derives offsets from `indexOf` and `.slice`, which count UTF-16 units.
-     * The two differ only over non-BMP text — an emoji is one character and two
-     * units — and this schema validates annotations from both: the ones this
-     * file builds, and the ones the Worker receives over a Web Annotation wire.
-     *
-     * Requiring UTF-16 rejected a conformant client; requiring characters made
-     * `createSemanticTextAnchor` throw on its own output. Accepting a span
-     * consistent with either catches the error that matters — a span that
-     * describes different text than the quote — and leaves the choice of
-     * coordinate system to the reader that has the document, which is the only
-     * place it can be resolved. See #336 and the note on #312.
-     */
     (anchor) => {
       const span = anchor.position.end - anchor.position.start
       return (
-        span === anchor.quote.exact.length ||
-        span === [...anchor.quote.exact].length
+        span ===
+        (anchor.positionUnit === 'codepoint'
+          ? [...anchor.quote.exact].length
+          : anchor.quote.exact.length)
       )
     },
     {
@@ -242,6 +231,119 @@ function contextMatches(
   }
 }
 
+/** Convert an absolute character offset only when the full preceding text exists. */
+function utf16Offset(
+  text: string,
+  offset: number,
+  unit: SemanticTextAnchor['positionUnit'],
+): number | null {
+  if (unit !== 'codepoint') return offset <= text.length ? offset : null
+  let characters = 0
+  let units = 0
+  for (const character of text) {
+    if (characters === offset) return units
+    characters += 1
+    units += character.length
+  }
+  return characters === offset ? units : null
+}
+
+function candidatesInText(
+  text: string,
+  anchor: SemanticTextAnchor,
+): ResolutionCandidate[] {
+  const candidates: ResolutionCandidate[] = []
+  let searchFrom = 0
+  while (searchFrom <= text.length - anchor.quote.exact.length) {
+    const start = text.indexOf(anchor.quote.exact, searchFrom)
+    if (start < 0) break
+    const end = start + anchor.quote.exact.length
+    candidates.push({ start, end, ...contextMatches(text, start, end, anchor) })
+    searchFrom = start + 1
+  }
+  return candidates
+}
+
+function selectCandidate(
+  candidates: ResolutionCandidate[],
+  anchor: SemanticTextAnchor,
+  text: string,
+): {
+  candidate: ResolutionCandidate
+  matchedBy: Extract<TextAnchorResolution, { status: 'resolved' }>['matchedBy']
+} | null {
+  const start = utf16Offset(text, anchor.position.start, anchor.positionUnit)
+  const end = utf16Offset(text, anchor.position.end, anchor.positionUnit)
+  const position = candidates.find(
+    (candidate) =>
+      candidate.start === start &&
+      candidate.end === end &&
+      candidate.prefixMatches &&
+      candidate.suffixMatches,
+  )
+  if (position)
+    return { candidate: position, matchedBy: 'position-and-context' }
+  const contextual = candidates.filter(
+    (candidate) => candidate.prefixMatches && candidate.suffixMatches,
+  )
+  if (contextual.length === 1) {
+    return { candidate: contextual[0], matchedBy: 'quote-and-context' }
+  }
+  if (candidates.length === 1) {
+    return { candidate: candidates[0], matchedBy: 'unique-quote' }
+  }
+  return null
+}
+
+function resolveDocumentAnchor(
+  anchor: SemanticTextAnchor,
+  nodes: readonly ResearchNode[],
+): TextAnchorResolution {
+  const spans: { id: string; start: number; end: number }[] = []
+  let text = ''
+  for (const node of nodes) {
+    const content = textForNode(node)
+    if (content === null) continue
+    const start = text.length
+    text += content
+    spans.push({ id: node.id, start, end: text.length })
+  }
+  const candidates = candidatesInText(text, anchor).filter((candidate) =>
+    spans.some(
+      (span) => candidate.start >= span.start && candidate.end <= span.end,
+    ),
+  )
+  if (candidates.length === 0) {
+    return {
+      status: 'unresolved',
+      nodeId: anchor.nodeId,
+      reason: 'quote-not-found',
+    }
+  }
+  const selected = selectCandidate(candidates, anchor, text)
+  if (!selected) {
+    return {
+      status: 'ambiguous',
+      nodeId: anchor.nodeId,
+      reason:
+        'Multiple document quotes remain and the stored context does not identify one safely.',
+      candidates,
+    }
+  }
+  const span = spans.find(
+    (entry) =>
+      selected.candidate.start >= entry.start &&
+      selected.candidate.end <= entry.end,
+  )!
+  return {
+    status: 'resolved',
+    nodeId: span.id,
+    start: selected.candidate.start - span.start,
+    end: selected.candidate.end - span.start,
+    matchedBy: selected.matchedBy,
+  }
+}
+
 export function createSemanticTextAnchor(
   nodeId: string,
   text: string,
@@ -292,6 +394,9 @@ export function resolveTextAnchor(
   anchor: SemanticTextAnchor,
   nodes: readonly ResearchNode[],
 ): TextAnchorResolution {
+  if (anchor.nodeId === DOCUMENT_SCOPE_NODE_ID) {
+    return resolveDocumentAnchor(anchor, nodes)
+  }
   const node = nodes.find((candidate) => candidate.id === anchor.nodeId)
   if (!node) {
     return {
@@ -310,15 +415,7 @@ export function resolveTextAnchor(
     }
   }
 
-  const candidates: ResolutionCandidate[] = []
-  let searchFrom = 0
-  while (searchFrom <= text.length - anchor.quote.exact.length) {
-    const start = text.indexOf(anchor.quote.exact, searchFrom)
-    if (start < 0) break
-    const end = start + anchor.quote.exact.length
-    candidates.push({ start, end, ...contextMatches(text, start, end, anchor) })
-    searchFrom = start + 1
-  }
+  const candidates = candidatesInText(text, anchor)
 
   if (candidates.length === 0) {
     return {
@@ -328,51 +425,23 @@ export function resolveTextAnchor(
     }
   }
 
-  const positionCandidate = candidates.find(
-    (candidate) =>
-      candidate.start === anchor.position.start &&
-      candidate.end === anchor.position.end &&
-      candidate.prefixMatches &&
-      candidate.suffixMatches,
-  )
-  if (positionCandidate) {
+  const selected = selectCandidate(candidates, anchor, text)
+  if (selected) {
     return {
       status: 'resolved',
       nodeId: anchor.nodeId,
-      start: positionCandidate.start,
-      end: positionCandidate.end,
-      matchedBy: 'position-and-context',
+      start: selected.candidate.start,
+      end: selected.candidate.end,
+      matchedBy: selected.matchedBy,
     }
   }
-
-  const contextualCandidates = candidates.filter(
-    (candidate) => candidate.prefixMatches && candidate.suffixMatches,
-  )
-  if (contextualCandidates.length === 1) {
-    return {
-      status: 'resolved',
-      nodeId: anchor.nodeId,
-      start: contextualCandidates[0].start,
-      end: contextualCandidates[0].end,
-      matchedBy: 'quote-and-context',
-    }
-  }
-
-  if (candidates.length === 1) {
-    return {
-      status: 'resolved',
-      nodeId: anchor.nodeId,
-      start: candidates[0].start,
-      end: candidates[0].end,
-      matchedBy: 'unique-quote',
-    }
-  }
-
   return {
     status: 'ambiguous',
     nodeId: anchor.nodeId,
     reason:
-      contextualCandidates.length > 1
+      candidates.filter((candidate) =>
+        candidate.prefixMatches && candidate.suffixMatches,
+      ).length > 1
         ? 'Multiple exact quotes also match the stored context.'
         : 'Multiple exact quotes remain and the stored context does not identify one safely.',
     candidates,

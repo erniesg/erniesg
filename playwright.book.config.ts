@@ -1,5 +1,6 @@
 import { defineConfig } from '@playwright/test'
 import path from 'node:path'
+import { BOOK_SPECS } from './tests/e2e/book-specs'
 
 // The challenges book is served by its own local preview, not Astro.
 // Pick once and export, so the workers that re-load this file agree on it.
@@ -9,7 +10,7 @@ const python = process.env.BOOK_PYTHON ?? 'python3'
 
 export default defineConfig({
   testDir: './tests/e2e',
-  testMatch: ['editor-keys.spec.ts', 'hint-ladder.spec.ts', 'inline-exercise.spec.ts', 'run-cell.spec.ts'],
+  testMatch: BOOK_SPECS,
   fullyParallel: false,
   workers: 1,
   retries: 0,

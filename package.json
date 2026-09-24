@@ -15,6 +15,7 @@
     "test": "vitest run --exclude 'tests/e2e/**' --exclude 'tools/agent-evidence-budget.test.mjs' --maxWorkers=1 && npm run pdf:association-audit:test",
     "test:agent-evidence": "vitest run tools/agent-evidence-budget.test.mjs",
     "test:e2e": "playwright test",
+    "test:e2e:book": "playwright test --config playwright.book.config.ts",
     "test:margin": "vitest run src/worker src/annotations",
     "build": "npm run build:production",
     "build:astro": "astro check && astro build",

@@ -120,10 +120,13 @@ reuses its patterns: a `workflow_run` trigger; a trusted checkout at
 The coordinator does all of this on the VM. It uses no GitHub workflow and
 no new credential.
 
-Every `wrangler` call below uses the version pinned in `package-lock.json`,
-as `WR="npx --yes wrangler@4.135.0"`. That way it works even after the daily
-storage GC has deleted a worktree's `node_modules`. If `package-lock.json` at
-`$HEAD` pins a different version, use that one instead.
+Every `wrangler` call below uses **the artifact's own wrangler**, installed
+from the repository lockfile when the artifact is built (I1 step 5):
+`WR="$ART/tooling/node_modules/.bin/wrangler"`. Never use `npx` or a global
+`wrangler`. `npx wrangler@<version>` ignores the lockfile, so miniflare,
+workerd, esbuild and the rest would resolve fresh with no integrity check,
+and these commands run with the owner's broad-scope Wrangler login. If
+`$WR` is missing, or the tooling check under I1 fails, **stop**.
 
 #### I1. One clean exact-head build, saved as the artifact
 
@@ -142,16 +145,40 @@ storage GC has deleted a worktree's `node_modules`. If `package-lock.json` at
 4. Run `npm run build` (`build:production`). Preview and production both get
    this production build, not `build:staging`, so what the owner reviews is
    what gets promoted.
-5. Bundle the Worker without uploading it:
-   `$WR deploy --dry-run --outdir "$ART/worker" --config wrangler.production.jsonc`.
+5. **Install the deploy tooling into the artifact, from the lockfile.**
+   1. `mkdir -p "$ART/tooling"`, then copy `package.json` and
+      `package-lock.json` from the worktree into it.
+   2. In `$ART/tooling`, run
+      `pnpm import && pnpm install --frozen-lockfile --ignore-scripts`.
+      `pnpm import` carries each package's recorded `sha512` integrity from
+      `package-lock.json` into `pnpm-lock.yaml`. `--frozen-lockfile` refuses
+      any resolution that the lock does not already record, and pnpm checks
+      every tarball against its integrity. The install is hard-linked from
+      the shared store (`~/.local/share/pnpm/store`), so it costs little disk.
+   3. Check the tooling. All three must hold, or stop:
+      - `node -p "require('$ART/tooling/package-lock.json').packages['node_modules/wrangler'].version"`
+        prints the version that `"$WR" --version` prints (`4.135.0` at
+        `fb60bce`);
+      - the lock's integrity
+        (`node -p "require('$ART/tooling/package-lock.json').packages['node_modules/wrangler'].integrity"`)
+        equals the `integrity` recorded for `wrangler@<version>` in
+        `$ART/tooling/pnpm-lock.yaml`;
+      - `"$ART/tooling/node_modules/wrangler/package.json"` has that same
+        `version`.
+6. **Bundle the Worker once, before the ask**, with that binary. From the
+   worktree:
+   `"$WR" deploy --dry-run --outdir "$ART/worker" --config wrangler.production.jsonc`.
    The `main` entry is the same in both configs, and `vars` are applied at
-   deploy time, not in the bundle, so one bundle serves both Workers. The
-   outdir must contain only `index.js` and `index.js.map`. If it holds any
-   other module file, stop and report it: `--no-bundle` would not upload that
-   file.
-6. Complete the artifact in `$ART`. It contains:
+   deploy time, not in the bundle, so one bundle serves both Workers.
+   Confirm that `ls -A "$ART/worker"` lists exactly `index.js` and
+   `index.js.map`, and record that listing and `"$WR" --version` for the
+   ask. If the outdir holds any other file, stop and report it:
+   `--no-bundle` would not upload that file. The check is done once, here;
+   later steps only deploy what it produced.
+7. Complete the artifact in `$ART`. It contains:
    - `dist/` (copied with `cp -a dist "$ART/dist"`);
-   - `worker/` (from step 5);
+   - `worker/` (from step 6);
+   - `tooling/` (from step 5);
    - `migrations/` (copied from the worktree);
    - two derived configs, `wrangler.jsonc` and
      `wrangler.production.jsonc`. Each is copied from the worktree with one
@@ -160,22 +187,36 @@ storage GC has deleted a worktree's `node_modules`. If `package-lock.json` at
      `migrations_dir` (`migrations`) already resolve inside `$ART`. Check
      that `diff` against the original shows exactly that one line.
    - `HEAD`, a file containing the full commit SHA.
-7. Write the manifest, then its digest:
-   `(cd "$ART" && find . -path ./.wrangler -prune -o -type f ! -name MANIFEST.sha256 -print0 | sort -z | xargs -0 sha256sum) > "$ART/MANIFEST.sha256"`,
-   then `ARTIFACT_DIGEST=$(sha256sum "$ART/MANIFEST.sha256" | cut -d' ' -f1)`.
-   Do not make `$ART` read-only: `wrangler` writes its scratch directory,
-   `.wrangler/`, next to the config. That directory is the only path left
-   out of the manifest.
+8. Write the manifest, then its digest. The file list is defined once and
+   used both here and in the checks below:
 
-**Verify the artifact before every deploy (I3 and I6).** Both checks must
-pass:
-- `(cd "$ART" && sha256sum --quiet -c MANIFEST.sha256)`;
+   ```bash
+   artifact_files() {
+     (cd "$ART" && find . \( -path ./.wrangler -o -path ./tooling/node_modules/.cache \) -prune \
+       -o -type f ! -name MANIFEST.sha256 -print | LC_ALL=C sort)
+   }
+   (cd "$ART" && artifact_files | xargs -d '\n' sha256sum --) > "$ART/MANIFEST.sha256"
+   ARTIFACT_DIGEST=$(sha256sum "$ART/MANIFEST.sha256" | cut -d' ' -f1)
+   ```
+
+   The manifest covers `tooling/package.json`,
+   `tooling/package-lock.json`, `tooling/pnpm-lock.yaml`, and every regular
+   file under `tooling/node_modules`, including the wrangler package and
+   everything it loads. Do not make `$ART` read-only. `wrangler` writes its
+   scratch directory, `.wrangler/`, next to the config, and its cache,
+   `node_modules/.cache/`, under the tooling. Those two paths are the only
+   ones left out of the manifest.
+
+**Verify the artifact before every wrangler call after I1 (I2, I3, I6 and
+the rollback).** All of these must pass:
+- `(cd "$ART" && sha256sum --quiet --strict -c MANIFEST.sha256)`;
 - the file list equals the manifest's list:
-  `diff <(cd "$ART" && find . -path ./.wrangler -prune -o -type f ! -name MANIFEST.sha256 -print | sort) <(awk '{print $2}' "$ART/MANIFEST.sha256" | sort)`.
+  `diff <(artifact_files) <(sed 's/^[0-9a-f]\{64\}  //' "$ART/MANIFEST.sha256")`;
+- `sha256sum "$ART/MANIFEST.sha256"` still equals `ARTIFACT_DIGEST`;
+- `"$WR" --version` still prints the recorded version.
 
-Also check that `sha256sum MANIFEST.sha256` still equals
-`ARTIFACT_DIGEST`. If `$ART` is missing, or any check fails, **stop**: do
-not deploy, and **never rebuild silently**. Post the failure on the
+If `$ART` or `$WR` is missing, or any check fails, **stop**. Do not deploy,
+do not reinstall, and **never rebuild silently**. Post the failure on the
 promotion issue. Rebuilding to produce a new artifact means a new preview
 and an update to the same ask, so the owner approves the digest that will
 actually ship.
@@ -183,11 +224,11 @@ actually ship.
 #### I2. Read-only preconditions, before the ask
 
 Run each of these from `$ART`, and keep the output:
-- `$WR d1 migrations list margin-db --remote --config wrangler.production.jsonc`
-- `$WR d1 migrations list margin-db-stg --remote --config wrangler.jsonc`
-- `$WR secret list --config wrangler.production.jsonc` (names only)
-- `$WR secret list --config wrangler.jsonc` (names only)
-- `$WR deployments list --config wrangler.production.jsonc`. From the
+- `"$WR" d1 migrations list margin-db --remote --config wrangler.production.jsonc`
+- `"$WR" d1 migrations list margin-db-stg --remote --config wrangler.jsonc`
+- `"$WR" secret list --config wrangler.production.jsonc` (names only)
+- `"$WR" secret list --config wrangler.jsonc` (names only)
+- `"$WR" deployments list --config wrangler.production.jsonc`. From the
   current deployment, record the **version id** (not the deployment id) as
   `PREV_VERSION`, for rollback.
 
@@ -200,14 +241,14 @@ with the error. It is not recorded as "fine" or as "missing".
 After the artifact check passes, run from `$ART`:
 
 ```bash
-$WR deploy --config wrangler.jsonc --no-bundle --message "preview $HEAD $ARTIFACT_DIGEST"
+"$WR" deploy --config wrangler.jsonc --no-bundle --message "preview $HEAD $ARTIFACT_DIGEST"
 ```
 
 `--no-bundle` uploads `worker/index.js` as it is, with the assets in
 `./dist`, so nothing is rebuilt.
 
 If `margin-db-stg` has an unapplied migration, apply it to the **preview**
-database first: `$WR d1 migrations apply margin-db-stg --remote --config wrangler.jsonc`.
+database first: `"$WR" d1 migrations apply margin-db-stg --remote --config wrangler.jsonc`.
 Preview data is disposable, so one retry is allowed. If the retry also
 fails, stop and post the error on the promotion issue as *failed*. That is a
 different state from *could not be evaluated*.
@@ -267,6 +308,7 @@ Open one GitHub issue, "Promote main to ernie.sg", with the marker
 contains:
 - the preview URL;
 - `$HEAD`, `ARTIFACT_DIGEST` and the artifact path;
+- the tooling's wrangler version and the I1 step 6 bundle listing;
 - the diff summary from I4;
 - the precondition results from I2.
 
@@ -289,20 +331,20 @@ From `$ART`, in this order:
 1. Verify the artifact (the checks under I1). If they fail, stop.
 2. If the ask named a migration:
    1. record a D1 Time Travel bookmark first:
-      `$WR d1 time-travel info margin-db --config wrangler.production.jsonc`,
+      `"$WR" d1 time-travel info margin-db --config wrangler.production.jsonc`,
       and save the bookmark as `BOOKMARK`;
-   2. apply it: `$WR d1 migrations apply margin-db --remote --config wrangler.production.jsonc`;
+   2. apply it: `"$WR" d1 migrations apply margin-db --remote --config wrangler.production.jsonc`;
    3. **if the apply exits non-zero: do not deploy, and do not retry.**
       `0001_margin_annotations.sql` has no `IF NOT EXISTS`, so a retry after a
       partial apply fails with "already exists". Re-run
-      `$WR d1 migrations list margin-db --remote --config wrangler.production.jsonc`.
+      `"$WR" d1 migrations list margin-db --remote --config wrangler.production.jsonc`.
       Post its output on the promotion issue, with `BOOKMARK` and the restore
       command,
-      `$WR d1 time-travel restore margin-db --bookmark=<BOOKMARK> --config wrangler.production.jsonc`,
+      `"$WR" d1 time-travel restore margin-db --bookmark=<BOOKMARK> --config wrangler.production.jsonc`,
       marked as an owner-only action. Record the state as *failed*, not
       *could not be evaluated*, and stop. This is a stop, not a second
       decision: the promotion ends there.
-3. Deploy: `$WR deploy --config wrangler.production.jsonc --no-bundle --message "promote $HEAD $ARTIFACT_DIGEST"`.
+3. Deploy: `"$WR" deploy --config wrangler.production.jsonc --no-bundle --message "promote $HEAD $ARTIFACT_DIGEST"`.
 4. From a worktree at `$HEAD`, run
    `npm run worker:verify -- --base https://ernie.sg --expect workers`.
 
@@ -320,10 +362,11 @@ table. It contains:
 - the migration applied (if any) and `BOOKMARK`;
 - the verifier results.
 
-The rollback, which runs only if the owner asks, is:
+The rollback, which runs only if the owner asks, uses the same artifact's
+wrangler after the artifact check passes:
 
 ```bash
-$WR rollback "$PREV_VERSION" --config wrangler.production.jsonc --message "rollback to $PREV_VERSION" --yes
+"$WR" rollback "$PREV_VERSION" --config wrangler.production.jsonc --message "rollback to $PREV_VERSION" --yes
 ```
 
 It restores the previous Worker version, **not** the database. A migration

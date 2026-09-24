@@ -49,6 +49,7 @@
       "type": "array",
       "items": { "$ref": "#/$defs/disagreement" }
     },
+    "authority": { "$ref": "#/$defs/authority" },
     "reportSha256": { "$ref": "#/$defs/sha256" }
   },
   "$defs": {
@@ -59,6 +60,52 @@
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
     },
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "armScore": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "number", "minimum": 0, "maximum": 1 }
+      ]
+    },
+    "syntheticAuthority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "realProviderCalls",
+        "realProviderAuthority",
+        "promotionEligible"
+      ],
+      "properties": {
+        "kind": { "const": "synthetic-contract-self-test" },
+        "realProviderCalls": { "const": 0 },
+        "realProviderAuthority": { "const": false },
+        "promotionEligible": { "const": false }
+      }
+    },
+    "ownerLocalRealProviderAuthority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "realProviderCalls",
+        "realProviderAuthority",
+        "promotionEligible",
+        "providerExecutionReceiptSha256"
+      ],
+      "properties": {
+        "kind": { "const": "owner-local-real-provider-evidence" },
+        "realProviderCalls": { "type": "integer", "minimum": 1 },
+        "realProviderAuthority": { "const": true },
+        "promotionEligible": { "const": false },
+        "providerExecutionReceiptSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "authority": {
+      "oneOf": [
+        { "$ref": "#/$defs/syntheticAuthority" },
+        { "$ref": "#/$defs/ownerLocalRealProviderAuthority" }
+      ]
+    },
     "identity": {
       "type": "object",
       "additionalProperties": false,
@@ -89,6 +136,22 @@
           "items": { "$ref": "#/$defs/id" }
         },
         "issueCount": { "type": "integer", "minimum": 0 }
+      },
+      "if": {
+        "properties": { "status": { "const": "passed" } },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "issueCodes": { "maxItems": 0 },
+          "issueCount": { "const": 0 }
+        }
+      },
+      "else": {
+        "properties": {
+          "issueCodes": { "minItems": 1 },
+          "issueCount": { "minimum": 1 }
+        }
       }
     },
     "caseScore": {
@@ -104,6 +167,7 @@
         "typeRecall",
         "sourceRecall",
         "assetRecall",
+        "structureHash",
         "boilerplateContamination",
         "verification"
       ],
@@ -117,13 +181,47 @@
         "typeRecall": { "type": "number", "minimum": 0, "maximum": 1 },
         "sourceRecall": { "type": "number", "minimum": 0, "maximum": 1 },
         "assetRecall": { "type": "number", "minimum": 0, "maximum": 1 },
+        "headingLevelRecall": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "structureHash": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/sha256" }]
+        },
         "boilerplateContamination": {
           "type": "number",
           "minimum": 0,
           "maximum": 1
         },
         "verification": { "$ref": "#/$defs/verification" }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "verification": {
+                "properties": {
+                  "status": { "const": "passed" }
+                },
+                "required": ["status"]
+              }
+            },
+            "required": ["verification"]
+          },
+          "then": {
+            "properties": {
+              "structureHash": { "$ref": "#/$defs/sha256" }
+            }
+          },
+          "else": {
+            "properties": {
+              "structureHash": { "type": "null" },
+              "score": { "const": 0 }
+            }
+          }
+        }
+      ]
     },
     "document": {
       "type": "object",
@@ -159,6 +257,30 @@
         "caseScores": {
           "type": "array",
           "items": { "$ref": "#/$defs/caseScore" }
+        }
+      },
+      "if": {
+        "properties": { "status": { "const": "passed" } },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "verification": {
+            "properties": { "status": { "const": "passed" } }
+          },
+          "outputHash": { "$ref": "#/$defs/sha256" },
+          "byteStable": { "const": true },
+          "latencyMsPerPage": { "type": "number" },
+          "costUsdPerPage": { "type": "number" }
+        }
+      },
+      "else": {
+        "properties": {
+          "verification": {
+            "properties": { "status": { "const": "failed" } }
+          },
+          "outputHash": { "type": "null" },
+          "byteStable": { "const": false }
         }
       }
     },
@@ -197,11 +319,12 @@
         "layout": { "enum": ["one-column", "two-column"] },
         "scores": {
           "type": "object",
-          "additionalProperties": {
-            "oneOf": [
-              { "type": "null" },
-              { "type": "number", "minimum": 0, "maximum": 1 }
-            ]
+          "additionalProperties": false,
+          "required": ["geometric-baseline", "llm-authored", "llm-grounded"],
+          "properties": {
+            "geometric-baseline": { "$ref": "#/$defs/armScore" },
+            "llm-authored": { "$ref": "#/$defs/armScore" },
+            "llm-grounded": { "$ref": "#/$defs/armScore" }
           }
         },
         "winner": {

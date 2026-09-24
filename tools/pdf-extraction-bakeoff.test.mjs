@@ -571,4 +571,84 @@ describe('extraction bake-off CLI', () => {
       )
     }
   })
+
+  it('binds every passed or failed verdict to its evidence, even after recomputing the report hash', () => {
+    const report = committedReport()
+    const validate = compileReportSchema()
+    expect(validate(report), JSON.stringify(validate.errors)).toBe(true)
+    const sha = 'c'.repeat(64)
+    const forgeries = []
+    const documentStatuses = new Set()
+    for (const arm of ARM_IDS) {
+      report.arms[arm].documents.forEach((document, index) => {
+        const at = `${arm}.documents[${index}]`
+        const edit = (label, change) =>
+          forgeries.push([
+            `${at} (${document.status}) ${label}`,
+            (value) => change(value.arms[arm].documents[index]),
+          ])
+        documentStatuses.add(document.status)
+        if (document.status === 'passed') {
+          // A passed document keeps the evidence that made it pass.
+          edit('outputHash null', (d) => (d.outputHash = null))
+          edit('byteStable false', (d) => (d.byteStable = false))
+          edit('verification failed', (d) => {
+            d.verification = {
+              status: 'failed',
+              issueCodes: ['byte-instability'],
+              issueCount: 1,
+            }
+          })
+          edit('latency null', (d) => (d.latencyMsPerPage = null))
+          edit('cost null', (d) => (d.costUsdPerPage = null))
+        } else {
+          // Nothing but a passed document may carry success evidence.
+          edit('outputHash set', (d) => (d.outputHash = sha))
+          edit('byteStable true', (d) => (d.byteStable = true))
+          edit('verification passed', (d) => {
+            d.verification = { status: 'passed', issueCodes: [], issueCount: 0 }
+          })
+          edit('relabelled passed', (d) => (d.status = 'passed'))
+          edit('relabelled disqualified with output', (d) => {
+            d.status = 'disqualified'
+            d.outputHash = sha
+          })
+        }
+        edit('document verification passed with issues', (d) => {
+          d.verification = {
+            status: 'passed',
+            issueCodes: ['invalid-output'],
+            issueCount: 1,
+          }
+        })
+        document.caseScores.forEach((score, caseIndex) => {
+          const caseEdit = (label, change) =>
+            edit(`caseScores[${caseIndex}] ${label}`, (d) =>
+              change(d.caseScores[caseIndex]),
+            )
+          if (score.verification.status === 'passed') {
+            caseEdit('passed with issue count', (s) => {
+              s.verification.issueCount = 1
+            })
+            caseEdit('passed with issue codes', (s) => {
+              s.verification.issueCodes = ['invalid-output']
+            })
+          } else {
+            caseEdit('failed with structure hash', (s) => {
+              s.structureHash = sha
+            })
+            caseEdit('failed with a nonzero score', (s) => {
+              s.score = 0.5
+            })
+            caseEdit('failed with no issues', (s) => {
+              s.verification = { status: 'failed', issueCodes: [], issueCount: 0 }
+            })
+          }
+        })
+      })
+    }
+    expect([...documentStatuses].sort()).toEqual(['failed', 'passed'])
+    for (const [label, mutate] of forgeries)
+      expectRejected(validate, rehashed(report, mutate), label)
+  })
 })

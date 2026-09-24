@@ -136,6 +136,22 @@
           "items": { "$ref": "#/$defs/id" }
         },
         "issueCount": { "type": "integer", "minimum": 0 }
+      },
+      "if": {
+        "properties": { "status": { "const": "passed" } },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "issueCodes": { "maxItems": 0 },
+          "issueCount": { "const": 0 }
+        }
+      },
+      "else": {
+        "properties": {
+          "issueCodes": { "minItems": 1 },
+          "issueCount": { "minimum": 1 }
+        }
       }
     },
     "caseScore": {
@@ -192,6 +208,12 @@
             "properties": {
               "structureHash": { "$ref": "#/$defs/sha256" }
             }
+          },
+          "else": {
+            "properties": {
+              "structureHash": { "type": "null" },
+              "score": { "const": 0 }
+            }
           }
         }
       ]
@@ -230,6 +252,30 @@
         "caseScores": {
           "type": "array",
           "items": { "$ref": "#/$defs/caseScore" }
+        }
+      },
+      "if": {
+        "properties": { "status": { "const": "passed" } },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "verification": {
+            "properties": { "status": { "const": "passed" } }
+          },
+          "outputHash": { "$ref": "#/$defs/sha256" },
+          "byteStable": { "const": true },
+          "latencyMsPerPage": { "type": "number" },
+          "costUsdPerPage": { "type": "number" }
+        }
+      },
+      "else": {
+        "properties": {
+          "verification": {
+            "properties": { "status": { "const": "failed" } }
+          },
+          "outputHash": { "type": "null" },
+          "byteStable": { "const": false }
         }
       }
     },

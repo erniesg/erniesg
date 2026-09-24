@@ -19,6 +19,7 @@ import {
   AUTH_LOGOUT_PATH,
   AUTH_ME_PATH,
   handleAuthRequest,
+  renewSession,
   safeReturnPath,
   type AuthEnv,
   type AuthOptions,
@@ -1170,5 +1171,111 @@ describe('review findings, round six', () => {
       String(entry.init?.body ?? '').includes('refresh_token'),
     )
     expect(exchanges).toHaveLength(1)
+  })
+})
+
+/**
+ * A fetch whose token-exchange response the test controls: it can hang
+ * forever and ignore its abort signal (an originating request that was
+ * cancelled), hang until its signal aborts (a slow provider), or answer.
+ */
+function controlledTokenEndpoint(answer: () => Promise<unknown>) {
+  let mode: 'orphaned' | 'slow' | 'answer' = 'orphaned'
+  const signals: Array<AbortSignal | null | undefined> = []
+  let exchanges = 0
+  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input.toString()
+    if (!url.includes('/user_management/authenticate')) {
+      return new Response(JSON.stringify(signer.jwks), { status: 200 })
+    }
+    exchanges += 1
+    signals.push(init?.signal)
+    if (mode === 'orphaned') return new Promise<Response>(() => {})
+    if (mode === 'slow') {
+      return new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason))
+      })
+    }
+    return new Response(JSON.stringify(await answer()), { status: 200 })
+  }) as unknown as typeof fetch
+  return {
+    fetchImpl,
+    signals,
+    exchanges: () => exchanges,
+    set(next: typeof mode) {
+      mode = next
+    },
+  }
+}
+
+describe('a shared renewal never outlives its waiters', () => {
+  const later = NOW_MS + 3_600_000
+  const laterSeconds = Math.floor(later / 1000)
+
+  async function lapsedSession(): Promise<Request> {
+    const stale = await accessToken({ iat: NOW_SECONDS - 70, exp: NOW_SECONDS - 60 })
+    const cookie = await sessionCookieHeader(stale, {
+      expiresAt: NOW_SECONDS - 60,
+      ceiling: laterSeconds + 3_600,
+      refreshToken: 'refresh_one',
+    })
+    return new Request(`https://ernie.sg${AUTH_ME_PATH}`, { headers: { cookie } })
+  }
+
+  function options(endpoint: ReturnType<typeof controlledTokenEndpoint>): AuthOptions {
+    return {
+      now: later,
+      fetchImpl: endpoint.fetchImpl,
+      providerTimeoutMs: 50,
+      jwks: createJwksSource(jwksUrl(config), {
+        fetchImpl: endpoint.fetchImpl,
+        now: () => later,
+      }),
+    }
+  }
+
+  it('lets a waiter go when the originating request is cancelled, and starts fresh after', async () => {
+    const endpoint = controlledTokenEndpoint(async () => ({
+      access_token: await signer.sign({
+        iss: TEST_ISSUER,
+        sub: 'user_01HREADER',
+        client_id: config.clientId,
+        iat: laterSeconds - 10,
+        exp: laterSeconds + 300,
+      }),
+      refresh_token: 'refresh_two',
+    }))
+    const request = await lapsedSession()
+
+    // The originator's exchange never settles, as when its request is gone.
+    void renewSession(request.clone(), config, options(endpoint))
+    const started = Date.now()
+    const waiter = await renewSession(request.clone(), config, options(endpoint))
+    expect(waiter, 'a waiter goes unrenewed rather than hanging').toBeNull()
+    expect(Date.now() - started).toBeLessThan(2_000)
+    // It did not run a second exchange with the single-use refresh token.
+    expect(endpoint.exchanges()).toBe(1)
+
+    // The slot was emptied, so the next request renews on its own.
+    endpoint.set('answer')
+    const next = await renewSession(request.clone(), config, options(endpoint))
+    expect(next?.kind).toBe('renewed')
+    expect(endpoint.exchanges()).toBe(2)
+  })
+
+  it('bounds the token exchange, and a timeout keeps the session', async () => {
+    const endpoint = controlledTokenEndpoint(async () => ({}))
+    endpoint.set('slow')
+    const request = await lapsedSession()
+
+    const started = Date.now()
+    const renewal = await renewSession(request, config, options(endpoint))
+    // Retryable, not terminal: no cleared cookie, the user stays signed in.
+    expect(renewal).toBeNull()
+    expect(Date.now() - started).toBeLessThan(2_000)
+    expect(endpoint.signals[0], 'the exchange carries an abort signal').toBeInstanceOf(
+      AbortSignal,
+    )
+    expect(endpoint.signals[0]?.aborted).toBe(true)
   })
 })

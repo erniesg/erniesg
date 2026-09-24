@@ -550,6 +550,73 @@ describe('JWKS availability', () => {
     expect(endpoint.calls, 'one expiry fetch, shared').toHaveLength(2)
   })
 
+  it('never hangs a caller on a fetch whose originating request was cancelled', async () => {
+    // The first fetch never settles and ignores its signal, as when the request
+    // that started it is gone. Later callers must not wait on it forever.
+    let orphan = true
+    const calls: number[] = []
+    const fetchImpl = (async () => {
+      calls.push(calls.length)
+      if (orphan) {
+        orphan = false
+        return new Promise<Response>(() => {})
+      }
+      return new Response(JSON.stringify(signer.jwks), { status: 200 })
+    }) as unknown as typeof fetch
+    const source = createJwksSource(jwksUrl(config), {
+      fetchImpl,
+      now: () => NOW_MS,
+      fetchTimeoutMs: 50,
+    })
+    const token = await signer.sign(validClaims())
+
+    void verifyAccessToken(token, { config, jwks: source, now: NOW_MS })
+    const started = Date.now()
+    await expect(
+      verifyAccessToken(token, { config, jwks: source, now: NOW_MS }),
+    ).resolves.toMatchObject({ ok: true })
+    expect(Date.now() - started).toBeLessThan(2_000)
+    expect(calls, 'the waiter fetched for itself').toHaveLength(2)
+
+    // And the slot is not pinned: the fresh key set now serves from cache.
+    await expect(
+      verifyAccessToken(token, { config, jwks: source, now: NOW_MS }),
+    ).resolves.toMatchObject({ ok: true })
+    expect(calls).toHaveLength(2)
+  })
+
+  it('bounds a key-set fetch and fails closed when it times out', async () => {
+    const signals: AbortSignal[] = []
+    let slow = true
+    const fetchImpl = (async (_input: unknown, init?: RequestInit) => {
+      signals.push(init?.signal as AbortSignal)
+      if (!slow) return new Response(JSON.stringify(signer.jwks), { status: 200 })
+      return new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason))
+      })
+    }) as unknown as typeof fetch
+    const source = createJwksSource(jwksUrl(config), {
+      fetchImpl,
+      now: () => NOW_MS,
+      fetchTimeoutMs: 50,
+    })
+    const token = await signer.sign(validClaims())
+
+    const started = Date.now()
+    await expect(
+      verifyAccessToken(token, { config, jwks: source, now: NOW_MS }),
+    ).resolves.toEqual({ ok: false, reason: 'jwks-unavailable' })
+    expect(Date.now() - started).toBeLessThan(2_000)
+    expect(signals[0]?.aborted).toBe(true)
+
+    // Nothing was cached or left in flight: the next call fetches again.
+    slow = false
+    await expect(
+      verifyAccessToken(token, { config, jwks: source, now: NOW_MS }),
+    ).resolves.toMatchObject({ ok: true })
+    expect(signals).toHaveLength(2)
+  })
+
   it('still throttles a second unknown kid inside the window', async () => {
     let clock = NOW_MS
     const calls: number[] = []

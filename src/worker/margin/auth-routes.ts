@@ -21,6 +21,7 @@ import {
   recordIdentity,
 } from './identity'
 import { verifyAccessToken, type JwksSource } from './jwt'
+import { PROVIDER_FETCH_TIMEOUT_MS, settleWithin } from './deadline'
 import {
   clearedCookie,
   readCookie,
@@ -69,6 +70,11 @@ export type AuthEnv = Partial<Omit<WorkerEnv, 'ASSETS'>>
 export type AuthOptions = PrincipalOptions & {
   /** Used for the token exchange too. Injected so the provider is testable. */
   fetchImpl?: typeof fetch
+  /**
+   * Bound on a token exchange, and on how long a request waits for a renewal
+   * another request started. Injected so the bound is testable.
+   */
+  providerTimeoutMs?: number
 }
 
 function json(
@@ -216,7 +222,10 @@ async function exchange(
 ): Promise<ExchangeResult> {
   const fetchImpl = options.fetchImpl ?? fetch
   try {
+    // Bounded, so a renewal other requests are waiting on cannot hang. A
+    // timeout is `retryable`, like any other failure to hear back.
     const response = await fetchImpl(tokenEndpoint(config), {
+      signal: AbortSignal.timeout(options.providerTimeoutMs ?? PROVIDER_FETCH_TIMEOUT_MS),
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -384,6 +393,12 @@ function sameOrigin(request: Request): boolean {
   }
 }
 
+/**
+ * Logout clears this browser's cookies. It does not revoke the WorkOS session
+ * or its refresh token, so a sealed cookie copied out of the browser keeps
+ * working, renewal included, until its sealed ceiling. The guarantee is "this
+ * browser", not "this session". Revoking at WorkOS on logout is a follow-up.
+ */
 function handleLogout(): Response {
   return json({ ok: true }, 200, [
     ['set-cookie', clearedCookie(SESSION_COOKIE_NAME, SESSION_COOKIE_PATH)],
@@ -438,9 +453,29 @@ export async function renewSession(
   if (!sealed) return null
 
   const inFlight = renewalsInFlight.get(sealed)
-  if (inFlight) return inFlight
-  const started = renewOnce(request, config, options, sealed).finally(() => {
-    renewalsInFlight.delete(sealed)
+  if (inFlight) {
+    // Waited for on this request's own timer, never for as long as the request
+    // that started it lives: if that request was cancelled, the shared promise
+    // may never settle. A waiter that runs out of time empties the slot so the
+    // next request can start fresh. It does not run a second exchange itself,
+    // because the refresh token is single-use, and a second exchange racing
+    // the first could be answered with invalid_grant and sign the user out.
+    // This request goes unrenewed and keeps its cookie. The next one renews.
+    const waited = await settleWithin(
+      inFlight,
+      options.providerTimeoutMs ?? PROVIDER_FETCH_TIMEOUT_MS,
+    )
+    if (waited.settled) return waited.value
+    if (renewalsInFlight.get(sealed) === inFlight) renewalsInFlight.delete(sealed)
+    return null
+  }
+  const started: Promise<SessionRenewal | null> = renewOnce(
+    request,
+    config,
+    options,
+    sealed,
+  ).finally(() => {
+    if (renewalsInFlight.get(sealed) === started) renewalsInFlight.delete(sealed)
   })
   renewalsInFlight.set(sealed, started)
   return started

@@ -12,11 +12,7 @@ import {
 } from './identity'
 import type { Principal } from '../principal'
 import type { WorkosEnv } from './config'
-import {
-  LEGACY_SESSION_COOKIE,
-  sealSession,
-  SESSION_COOKIE_NAME,
-} from './session'
+import { sealSession, SESSION_COOKIE_NAME } from './session'
 
 /**
  * Test doubles for the two things this service cannot reach from a unit test:
@@ -82,59 +78,11 @@ export async function sessionCookieHeader(
       ...(options.ceiling ? { ceiling: options.ceiling } : {}),
       ...(options.refreshToken ? { refreshToken: options.refreshToken } : {}),
       ...(options.email ? { email: options.email } : {}),
-      ...(options.emailVerified
-        ? { emailVerified: options.emailVerified }
-        : {}),
+      ...(options.emailVerified ? { emailVerified: options.emailVerified } : {}),
     },
     TEST_COOKIE_PASSWORD,
   )
   return `${SESSION_COOKIE_NAME}=${sealed}`
-}
-
-/** A `v1` seal as the pre-`__Host-` build wrote it. */
-export async function legacySeal(
-  value: unknown,
-  password: string,
-): Promise<string> {
-  const salt = crypto.getRandomValues(new Uint8Array(16))
-  const iv = crypto.getRandomValues(new Uint8Array(12))
-  const material = await crypto.subtle.importKey(
-    'raw',
-    encodeUtf8(password),
-    'HKDF',
-    false,
-    ['deriveKey'],
-  )
-  const key = await crypto.subtle.deriveKey(
-    {
-      name: 'HKDF',
-      hash: 'SHA-256',
-      salt,
-      info: encodeUtf8('margin-session-seal-v1'),
-    },
-    material,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt'],
-  )
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv, additionalData: encodeUtf8('v1') },
-    key,
-    encodeUtf8(JSON.stringify(value)),
-  )
-  return [
-    'v1',
-    encodeBase64Url(salt),
-    encodeBase64Url(iv),
-    encodeBase64Url(new Uint8Array(ciphertext)),
-  ].join('.')
-}
-
-/** The `cookie` header a browser signed in before the `__Host-` rename sends. */
-export async function legacySessionCookieHeader(
-  session: Record<string, unknown>,
-): Promise<string> {
-  return `${LEGACY_SESSION_COOKIE.name}=${await legacySeal(session, TEST_COOKIE_PASSWORD)}`
 }
 
 export type TokenClaims = {

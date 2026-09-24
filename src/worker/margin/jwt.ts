@@ -1,5 +1,6 @@
 import { decodeBase64Url, decodeJsonSegment, encodeUtf8 } from './base64url'
 import type { WorkosConfig } from './config'
+import { PROVIDER_FETCH_TIMEOUT_MS, settleWithin } from './deadline'
 
 /**
  * Access-token validation, ported from the checks in
@@ -97,6 +98,11 @@ export type JwksSourceOptions = {
   ttlMs?: number
   /** Floor between refetches triggered by an unknown `kid`, for rotation. */
   minRefreshMs?: number
+  /**
+   * Bound on one key-set fetch, and on how long a caller waits for a fetch
+   * another request started before it fetches for itself.
+   */
+  fetchTimeoutMs?: number
 }
 
 /**
@@ -116,19 +122,18 @@ export function createJwksSource(
   const now = options.now ?? Date.now
   const ttlMs = options.ttlMs ?? 600_000
   const minRefreshMs = options.minRefreshMs ?? 60_000
+  const fetchTimeoutMs = options.fetchTimeoutMs ?? PROVIDER_FETCH_TIMEOUT_MS
 
   let keys: Map<string, CryptoKey> | null = null
   let fetchedAt = 0
-  let attemptedAt = 0
   /**
-   * When a rotation refetch was last attempted, tracked apart from
-   * `attemptedAt`.
-   *
-   * An ordinary cache fill also sets `attemptedAt`, so sharing one clock meant a
-   * token signed by a key published just after that fill was throttled for up to
-   * `minRefreshMs` — rejecting valid callbacks for a minute after every rotation.
-   * The first unknown `kid` now refetches immediately, and only a *second* one
-   * inside the window is throttled, which is the traffic this guards against.
+   * When a rotation refetch was last attempted. It is its own clock, not the
+   * time of the last fetch of any kind: an ordinary cache fill used to share one
+   * clock with rotation, so a key published just after that fill was throttled
+   * for up to `minRefreshMs`, rejecting valid callbacks for a minute after
+   * every rotation. The first unknown `kid` now refetches immediately, and only
+   * a *second* one inside the window is throttled, which is the traffic this
+   * guards against.
    */
   let rotationAt = 0
   /**
@@ -142,21 +147,37 @@ export function createJwksSource(
    */
   let inflight: Promise<boolean> | null = null
 
-  function refresh(): Promise<boolean> {
-    if (!inflight) {
-      inflight = fetchKeySet().finally(() => {
-        inflight = null
-      })
-    }
-    return inflight
+  function startFetch(): Promise<boolean> {
+    const started: Promise<boolean> = fetchKeySet().finally(() => {
+      if (inflight === started) inflight = null
+    })
+    inflight = started
+    return started
+  }
+
+  /**
+   * Joins the fetch in flight, or starts one.
+   *
+   * A joiner does not depend on the request that started the fetch. It waits
+   * on its own timer for at most `fetchTimeoutMs`. If the shared fetch has not
+   * settled by then (its request was cancelled, or the provider is slow), the
+   * joiner empties the slot so it cannot stay pinned, and fetches for itself.
+   */
+  async function refresh(): Promise<boolean> {
+    const shared = inflight
+    if (!shared) return startFetch()
+    const waited = await settleWithin(shared, fetchTimeoutMs)
+    if (waited.settled) return waited.value
+    if (inflight === shared) inflight = null
+    return startFetch()
   }
 
   async function fetchKeySet(): Promise<boolean> {
-    attemptedAt = now()
     let payload: unknown
     try {
       const response = await fetchImpl(url, {
         headers: { accept: 'application/json' },
+        signal: AbortSignal.timeout(fetchTimeoutMs),
       })
       if (!response.ok) return false
       payload = await response.json()
@@ -197,7 +218,7 @@ export function createJwksSource(
       // that costs no extra traffic, and it is what keeps a second request with
       // the same new `kid` from reading the stale map.
       if (inflight) {
-        await inflight
+        await refresh()
         const fetched = keys?.get(kid)
         if (fetched) return fetched
       }

@@ -1,20 +1,13 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import {
-  legacySeal,
-  TEST_COOKIE_PASSWORD,
-  TEST_OTHER_PASSWORD,
-} from './fake-workos'
+import { TEST_COOKIE_PASSWORD, TEST_OTHER_PASSWORD } from './fake-workos'
 import {
   AUTH_COOKIE_NAMES,
   clearedCookie,
-  clearedLegacyCookie,
   HOST_COOKIE_PREFIX,
   LEGACY_AUTH_COOKIES,
-  LEGACY_SESSION_COOKIE,
-  LEGACY_STATE_COOKIE,
-  migrateLegacyAuthCookies,
+  legacyCookieClears,
   readCookie,
   seal,
   sealLoginState,
@@ -236,110 +229,35 @@ describe('every auth cookie is a __Host- cookie', () => {
   })
 })
 
-describe('migrating the unprefixed legacy cookies', () => {
-  const NOW_MS = 1_800_000_000_000
-  const NOW_SECONDS = NOW_MS / 1000
-  const live = {
-    accessToken: 'header.payload.signature',
-    expiresAt: NOW_SECONDS + 300,
-    ceiling: NOW_SECONDS + 3600,
-    refreshToken: 'refresh-token',
-  }
+describe('the unprefixed pre-release cookie names', () => {
   const withCookie = (cookie: string) =>
     new Request('https://ernie.sg/auth/me', { headers: { cookie } })
 
-  it('leaves a request with no legacy cookie alone', async () => {
-    await expect(
-      migrateLegacyAuthCookies(withCookie('a=1'), TEST_COOKIE_PASSWORD, NOW_MS),
-    ).resolves.toBeNull()
-  })
-
-  it('moves a live legacy session to the prefixed name once, then clears it', async () => {
-    const legacy = await legacySeal(live, TEST_COOKIE_PASSWORD)
-    const migration = await migrateLegacyAuthCookies(
-      withCookie(`a=1; margin-session=${legacy}`),
-      TEST_COOKIE_PASSWORD,
-      NOW_MS,
+  it('clears each one it sees, host-only, on the path it was set on', () => {
+    expect(legacyCookieClears(withCookie('a=1'))).toEqual([])
+    const clears = legacyCookieClears(
+      withCookie('margin-session=x; margin-auth-state=y'),
     )
-    expect(migration).not.toBeNull()
-    const { request, setCookies } = migration!
-
-    // Downstream readers see only the prefixed cookie, holding the same session.
-    const sealed = readCookie(request, SESSION_COOKIE_NAME) as string
-    expect(sealed.startsWith('v2.')).toBe(true)
-    await expect(unsealSession(sealed, TEST_COOKIE_PASSWORD)).resolves.toEqual(
-      live,
-    )
-    expect(request.headers.get('cookie')).not.toContain('margin-session=v1')
-    expect(request.headers.get('cookie')).toContain('a=1')
-
-    expect(setCookies).toContain(clearedLegacyCookie(LEGACY_SESSION_COOKIE))
-    const moved = setCookies.find((c) =>
-      c.startsWith(`${SESSION_COOKIE_NAME}=`),
-    )
-    expect(moved).toContain('; Max-Age=3600')
-  })
-
-  it('clears the legacy state cookie on its old path without trusting it', async () => {
-    const state = await legacySeal(
-      { state: 's', returnTo: '/' },
-      TEST_COOKIE_PASSWORD,
-    )
-    const migration = await migrateLegacyAuthCookies(
-      withCookie(`margin-auth-state=${state}`),
-      TEST_COOKIE_PASSWORD,
-      NOW_MS,
-    )
-    expect(migration!.setCookies).toEqual([
-      clearedLegacyCookie(LEGACY_STATE_COOKIE),
-    ])
-    expect(migration!.setCookies[0]).toContain('; Path=/auth;')
-    expect(migration!.request.headers.get('cookie')).toBeNull()
-  })
-
-  it('never lets a legacy cookie override a prefixed session', async () => {
-    const legacy = await legacySeal(live, TEST_COOKIE_PASSWORD)
-    const current = await sealSession(
-      { ...live, email: 'me@example.test' },
-      TEST_COOKIE_PASSWORD,
-    )
-    const migration = await migrateLegacyAuthCookies(
-      withCookie(`margin-session=${legacy}; ${SESSION_COOKIE_NAME}=${current}`),
-      TEST_COOKIE_PASSWORD,
-      NOW_MS,
-    )
-    expect(readCookie(migration!.request, SESSION_COOKIE_NAME)).toBe(current)
-    expect(migration!.setCookies).toEqual([
-      clearedLegacyCookie(LEGACY_SESSION_COOKIE),
-    ])
-  })
-
-  it('refuses a legacy cookie holding a current seal, an ended session, or garbage', async () => {
-    // A v2 seal under the old name is what a sibling host would toss in after
-    // the rename: it must not be carried into the prefixed cookie.
-    const tossed = await sealSession(live, TEST_COOKIE_PASSWORD)
-    const ended = await legacySeal(
-      { ...live, ceiling: NOW_SECONDS - 1 },
-      TEST_COOKIE_PASSWORD,
-    )
-    for (const value of [tossed, ended, 'garbage']) {
-      const migration = await migrateLegacyAuthCookies(
-        withCookie(`margin-session=${value}`),
-        TEST_COOKIE_PASSWORD,
-        NOW_MS,
-      )
-      expect(migration!.setCookies).toEqual([
-        clearedLegacyCookie(LEGACY_SESSION_COOKIE),
-      ])
-      expect(readCookie(migration!.request, SESSION_COOKIE_NAME)).toBeNull()
+    expect(clears).toHaveLength(2)
+    expect(clears[0]).toMatch(/^margin-session=; Path=\/; Max-Age=0;/u)
+    expect(clears[1]).toMatch(/^margin-auth-state=; Path=\/auth; Max-Age=0;/u)
+    for (const clear of clears) {
+      expect(clear.toLowerCase()).not.toContain('domain=')
     }
   })
 
-  it('never accepts a v1 seal outside the migration', async () => {
-    const legacy = await legacySeal(live, TEST_COOKIE_PASSWORD)
-    await expect(
-      unsealSession(legacy, TEST_COOKIE_PASSWORD),
-    ).resolves.toBeNull()
+  it('never reads a planted old-name cookie as a session, whatever it holds', async () => {
+    // A sibling host can plant these with `Domain=ernie.sg`, which a host-only
+    // clear cannot remove. The defence is that nothing reads them.
+    const genuine = await sealSession(
+      { accessToken: 'a.b.c', expiresAt: 4_000_000_000 },
+      TEST_COOKIE_PASSWORD,
+    )
+    for (const { name } of LEGACY_AUTH_COOKIES) {
+      const request = withCookie(`${name}=${genuine}`)
+      expect(readCookie(request, SESSION_COOKIE_NAME)).toBeNull()
+      expect(readCookie(request, STATE_COOKIE_NAME)).toBeNull()
+    }
   })
 })
 
@@ -368,6 +286,17 @@ describe('readCookie', () => {
   it('does not read the unprefixed name a sibling host could set', () => {
     expect(
       readCookie(request('margin-session=shadow'), SESSION_COOKIE_NAME),
+    ).toBeNull()
+  })
+
+  it('reads an auth cookie that appears twice as absent', () => {
+    // Only a nameless cookie planted by a sibling on an old browser can
+    // duplicate a __Host- name. Picking either copy would let the plant pick.
+    expect(
+      readCookie(
+        request(`${SESSION_COOKIE_NAME}=planted; ${SESSION_COOKIE_NAME}=mine`),
+        SESSION_COOKIE_NAME,
+      ),
     ).toBeNull()
   })
 

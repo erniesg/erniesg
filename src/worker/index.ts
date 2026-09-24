@@ -2,7 +2,7 @@ import type { WorkerEnv } from './env'
 import { getPrincipal, type PrincipalOptions } from './principal'
 import { requireAdmin, requireWriter } from './margin/authorize'
 import { readWorkosConfig } from './margin/config'
-import { migrateLegacyAuthCookies } from './margin/session'
+import { legacyCookieClears } from './margin/session'
 import {
   AUTH_PREFIX,
   handleAuthRequest,
@@ -195,21 +195,6 @@ function withCookie(response: Response, cookie: string): Response {
   return next
 }
 
-/**
- * The same response, with `cookies` placed before its own `set-cookie`
- * headers. The browser applies them in order, so a route that sets or clears
- * the session (sign-in, renewal, logout) still wins over the migrated copy.
- */
-function withCookiesFirst(response: Response, cookies: string[]): Response {
-  const next = new Response(response.body, response)
-  const own = next.headers.getSetCookie()
-  next.headers.delete('set-cookie')
-  for (const cookie of [...cookies, ...own]) {
-    next.headers.append('set-cookie', cookie)
-  }
-  return next
-}
-
 function healthResponse(): Response {
   const body = JSON.stringify({ status: 'ok', service: 'margin' })
   return new Response(`${body}\n`, {
@@ -242,20 +227,11 @@ export default {
       return healthResponse()
     }
 
-    // Before anything reads a cookie: a session signed in under the old
-    // unprefixed name moves to `__Host-margin-session` once, and the legacy
-    // cookies are cleared, whichever route the browser happens to hit first.
-    const migration = await migrateLegacyAuthCookies(
-      request,
-      readWorkosConfig(env)?.cookiePassword ?? null,
-    )
-    if (migration) {
-      return withCookiesFirst(
-        await route(migration.request, env),
-        migration.setCookies,
-      )
-    }
-    return route(request, env)
+    // The pre-release unprefixed cookie names are never read. A browser that
+    // still sends one gets it cleared, on whichever route it hits first.
+    const clears = legacyCookieClears(request)
+    const response = await route(request, env)
+    return clears.reduce(withCookie, response)
   },
 }
 

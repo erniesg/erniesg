@@ -13,7 +13,6 @@ import type { WorkerEnv } from './env'
 import worker, { MARGIN_HEALTH_PATH } from './index'
 import {
   createFakeProvider,
-  legacySessionCookieHeader,
   sessionCookieHeader,
   testSigner,
   testWorkosEnv,
@@ -498,8 +497,8 @@ describe('a store that cannot answer', () => {
   })
 })
 
-describe('the __Host- cookie rename', () => {
-  async function signedInLegacyBrowser() {
+describe('the __Host- cookie names', () => {
+  async function plantedOldNameSession() {
     const now = Math.floor(Date.now() / 1000)
     const signer = await testSigner()
     const token = await signer.sign({
@@ -515,57 +514,62 @@ describe('the __Host- cookie rename', () => {
       ceiling: now + 3_600,
     }
     const provider = createFakeProvider({ jwks: signer.jwks })
-    return { cookie: await legacySessionCookieHeader(session), provider }
+    // A genuine seal of a valid session, carried under the old name: what a
+    // sibling host could plant with `Domain=ernie.sg` from its own sign-in.
+    const current = await sessionCookieHeader(token, {
+      expiresAt: session.expiresAt,
+      ceiling: session.ceiling,
+    })
+    const sealed = current.slice(current.indexOf('=') + 1)
+    return { cookie: `margin-session=${sealed}`, current, provider }
   }
 
   const env = () =>
     ({ ASSETS: createAssetBinding(), ...testWorkosEnv() }) as WorkerEnv
   const nameOf = (header: string) => header.slice(0, header.indexOf('='))
 
-  it('keeps a user signed in before the rename signed in, and moves the cookie once', async () => {
-    const { cookie, provider } = await signedInLegacyBrowser()
+  it('never yields a session from a planted old-name cookie, and clears it', async () => {
+    const { cookie, provider } = await plantedOldNameSession()
     vi.stubGlobal('fetch', provider.fetchImpl)
     try {
-      const first = await worker.fetch(
-        new Request(`https://ernie.sg${AUTH_ME_PATH}`, { headers: { cookie } }),
-        env(),
-      )
-      expect(await first.json()).toMatchObject({ authenticated: true })
-      const set = first.headers.getSetCookie()
-      expect(set.map(nameOf)).toEqual(['margin-session', SESSION_COOKIE_NAME])
-      expect(set[0]).toContain('; Max-Age=0')
-
-      // The next request carries only what the browser now holds.
-      const moved = set[1] as string
-      const second = await worker.fetch(
-        new Request(`https://ernie.sg${AUTH_ME_PATH}`, {
-          headers: { cookie: moved.slice(0, moved.indexOf(';')) },
+      for (const path of [AUTH_ME_PATH, '/api/margin/v1/annotations']) {
+        const response = await worker.fetch(
+          new Request(`https://ernie.sg${path}`, { headers: { cookie } }),
+          env(),
+        )
+        if (path === AUTH_ME_PATH) {
+          expect(await response.json()).toMatchObject({ authenticated: false })
+        }
+        const set = response.headers.getSetCookie()
+        expect(set.map(nameOf), path).toEqual(['margin-session'])
+        expect(set[0]).toContain('; Max-Age=0')
+      }
+      // A write carrying only the planted cookie is anonymous, so refused.
+      const write = await worker.fetch(
+        new Request('https://ernie.sg/api/margin/v1/annotations', {
+          method: 'POST',
+          headers: { cookie, 'content-type': 'application/json' },
+          body: '{}',
         }),
         env(),
       )
-      expect(await second.json()).toMatchObject({ authenticated: true })
-      expect(second.headers.getSetCookie()).toEqual([])
+      expect(write.status).toBe(401)
     } finally {
       vi.unstubAllGlobals()
     }
   })
 
-  it('lets logout win over the migrated copy', async () => {
-    const { cookie, provider } = await signedInLegacyBrowser()
+  it('still signs in on the __Host- name beside a planted old-name cookie', async () => {
+    const { cookie, current, provider } = await plantedOldNameSession()
     vi.stubGlobal('fetch', provider.fetchImpl)
     try {
       const response = await worker.fetch(
-        new Request(`https://ernie.sg${AUTH_LOGOUT_PATH}`, {
-          method: 'POST',
-          headers: { cookie },
+        new Request(`https://ernie.sg${AUTH_ME_PATH}`, {
+          headers: { cookie: `${cookie}; ${current}` },
         }),
         env(),
       )
-      const set = response.headers.getSetCookie()
-      const lastSession = set
-        .filter((c) => nameOf(c) === SESSION_COOKIE_NAME)
-        .at(-1)
-      expect(lastSession).toContain('; Max-Age=0')
+      expect(await response.json()).toMatchObject({ authenticated: true })
     } finally {
       vi.unstubAllGlobals()
     }
@@ -574,8 +578,8 @@ describe('the __Host- cookie rename', () => {
   // The rule, at the edge: every cookie the worker sets on any auth flow is a
   // `__Host-` cookie, apart from the expiry of a legacy name.
   it('sets no auth cookie without the __Host- prefix on any flow', async () => {
-    const { cookie, provider } = await signedInLegacyBrowser()
-    const legacy = new Set(LEGACY_AUTH_COOKIES.map(({ name }) => name))
+    const { cookie, provider } = await plantedOldNameSession()
+    const legacy = new Set<string>(LEGACY_AUTH_COOKIES.map(({ name }) => name))
     vi.stubGlobal('fetch', provider.fetchImpl)
     try {
       const requests = [

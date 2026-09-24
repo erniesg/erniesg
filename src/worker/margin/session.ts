@@ -21,7 +21,7 @@ import {
  * Every auth cookie name carries the `__Host-` prefix. Leaving out `Domain`
  * keeps our cookie off sibling hosts, but it does not stop a sibling of
  * `ernie.sg` from setting a parent-domain cookie with the same name. The
- * browser sends both, `readCookie` takes the first, and that shadow cookie can
+ * browser sends both, a reader that takes the first gets the shadow, which can
  * block sign-in or pin a victim to the attacker's session. The browser accepts
  * a `__Host-` cookie only when it is `Secure`, has `Path=/` and has no `Domain`,
  * which means it can come only from this exact host. `serializeCookie` refuses
@@ -43,21 +43,17 @@ export const AUTH_COOKIE_NAMES = [
 ] as const
 
 /**
- * The unprefixed names these cookies had before, with the paths they were set
- * on. They are read once, only to migrate a live session, and then cleared.
- * They are never trusted as-is. See `migrateLegacyAuthCookies`.
+ * The unprefixed names these cookies had on pre-release deploys of this
+ * branch. They are never read: a sibling host can set a parent-domain cookie
+ * under either name, so its contents are never evidence of anything. A request
+ * carrying one gets a host-only clear on the path it was set on. That clear
+ * cannot remove a copy planted with `Domain=`, which is why ignoring the names
+ * on read, not the clear, is the defence. Anyone signed in on a pre-release
+ * deploy signs in again.
  */
-export const LEGACY_SESSION_COOKIE = {
-  name: 'margin-session',
-  path: '/',
-} as const
-export const LEGACY_STATE_COOKIE = {
-  name: 'margin-auth-state',
-  path: '/auth',
-} as const
 export const LEGACY_AUTH_COOKIES = [
-  LEGACY_SESSION_COOKIE,
-  LEGACY_STATE_COOKIE,
+  { name: 'margin-session', path: '/' },
+  { name: 'margin-auth-state', path: '/auth' },
 ] as const
 
 /** A login attempt is worth ten minutes and no more. */
@@ -66,15 +62,7 @@ export const STATE_COOKIE_MAX_AGE_SECONDS = 600
 /** Upper bound on a session regardless of what the provider says. */
 export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 8
 
-/**
- * `v2` began with the `__Host-` names. Nothing seals `v1` any more, so the set
- * of valid `v1` seals stopped growing at deploy, and every one of them ends
- * within `SESSION_MAX_AGE_SECONDS` of then. Only the one-time migration of the
- * legacy session cookie accepts `v1`. A legacy-named cookie that a sibling host
- * tosses in later therefore cannot carry a fresh session into the migration.
- */
-const SEAL_VERSION = 'v2'
-const LEGACY_SEAL_VERSION = 'v1'
+const SEAL_VERSION = 'v1'
 // Named rather than written inline at the call: a string literal sitting next
 // to an argument called `password` reads to a generic secret scanner as that
 // password's value, and a false positive on every pull request that touches
@@ -124,25 +112,13 @@ export async function seal(value: unknown, password: string): Promise<string> {
   ].join('.')
 }
 
-export type UnsealOptions = {
-  /**
-   * Accept only a pre-`__Host-` `v1` seal instead of a current one. Only the
-   * legacy migration sets this. It is exclusive, so a current seal carried
-   * under a legacy name is refused and cannot be moved into the prefixed
-   * cookie.
-   */
-  legacySeal?: boolean
-}
-
 /** Returns `null` for anything that is not an intact seal of ours. */
 export async function unseal(
   sealed: string,
   password: string,
-  { legacySeal = false }: UnsealOptions = {},
 ): Promise<unknown> {
   const parts = sealed.split('.')
-  const version = legacySeal ? LEGACY_SEAL_VERSION : SEAL_VERSION
-  if (parts.length !== 4 || parts[0] !== version) return null
+  if (parts.length !== 4 || parts[0] !== SEAL_VERSION) return null
   const salt = decodeBase64Url(parts[1] as string)
   const iv = decodeBase64Url(parts[2] as string)
   const ciphertext = decodeBase64Url(parts[3] as string)
@@ -151,7 +127,7 @@ export async function unseal(
   try {
     const key = await deriveKey(password, salt)
     const plaintext = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv, additionalData: encodeUtf8(version) },
+      { name: 'AES-GCM', iv, additionalData: encodeUtf8(SEAL_VERSION) },
       key,
       ciphertext,
     )
@@ -223,11 +199,8 @@ export async function sealSession(
 export async function unsealSession(
   sealed: string,
   password: string,
-  options: UnsealOptions = {},
 ): Promise<MarginSession | null> {
-  const result = marginSessionSchema.safeParse(
-    await unseal(sealed, password, options),
-  )
+  const result = marginSessionSchema.safeParse(await unseal(sealed, password))
   return result.success ? result.data : null
 }
 
@@ -290,13 +263,6 @@ export function clearedCookie(name: string, path: string): string {
   return serializeCookie(name, '', { path, maxAgeSeconds: 0 })
 }
 
-/** Expires one of the unprefixed legacy cookies, on the path it was set on. */
-export function clearedLegacyCookie(
-  legacy: (typeof LEGACY_AUTH_COOKIES)[number],
-): string {
-  return headerFor(legacy.name, '', legacy.path, 0)
-}
-
 function cookiePairs(header: string | null): Array<[string, string]> {
   if (!header) return []
   const pairs: Array<[string, string]> = []
@@ -311,85 +277,33 @@ function cookiePairs(header: string | null): Array<[string, string]> {
   return pairs
 }
 
-export type LegacyCookieMigration = {
-  /** The request with every legacy auth cookie removed, plus any migrated one. */
-  request: Request
-  /** Headers that clear the legacy cookies and set any migrated session. */
-  setCookies: string[]
-}
-
 /**
- * Reads the pre-`__Host-` auth cookies once, then clears them.
- *
- * A session signed in before the rename is re-sealed under
- * `__Host-margin-session`, so the user stays signed in. This happens only when
- * the request has no prefixed session, the legacy value is an intact `v1` seal
- * (see `SEAL_VERSION`), and that seal has not reached its own end. The
- * returned request carries the migrated cookie, so every reader downstream
- * sees only the prefixed name. A login still in progress under the legacy
- * state cookie is not migrated. That cookie is only cleared, and the sign-in
- * starts again. Nothing on the server bounds a state seal's age, so trusting
- * an unprefixed one would reopen the shadowing it was renamed to prevent.
- *
- * Returns `null` when the request carries no legacy cookie.
+ * Host-only clears for any legacy cookie the request carries, on the path each
+ * was set on, and nothing else. Their contents are not read. Returns `[]` when
+ * there is none.
  */
-export async function migrateLegacyAuthCookies(
-  request: Request,
-  password: string | null,
-  nowMs: number = Date.now(),
-): Promise<LegacyCookieMigration | null> {
-  const pairs = cookiePairs(request.headers.get('cookie'))
-  const legacyNames = new Set<string>(
-    LEGACY_AUTH_COOKIES.map(({ name }) => name),
+export function legacyCookieClears(request: Request): string[] {
+  const names = new Set(
+    cookiePairs(request.headers.get('cookie')).map(([key]) => key),
   )
-  const present = LEGACY_AUTH_COOKIES.filter(({ name }) =>
-    pairs.some(([key]) => key === name),
+  return LEGACY_AUTH_COOKIES.filter(({ name }) => names.has(name)).map(
+    ({ name, path }) => headerFor(name, '', path, 0),
   )
-  if (present.length === 0) return null
-
-  const setCookies = present.map(clearedLegacyCookie)
-  const kept = pairs.filter(([key]) => !legacyNames.has(key))
-
-  const legacySession = pairs.find(
-    ([key, value]) => key === LEGACY_SESSION_COOKIE.name && value,
-  )?.[1]
-  const hasSession = kept.some(
-    ([key, value]) => key === SESSION_COOKIE_NAME && value,
-  )
-  if (legacySession && !hasSession && password) {
-    const session = await unsealSession(legacySession, password, {
-      legacySeal: true,
-    })
-    const nowSeconds = Math.floor(nowMs / 1000)
-    const end = session ? (session.ceiling ?? session.expiresAt) : 0
-    if (session && end > nowSeconds) {
-      const resealed = await sealSession({ ...session, ceiling: end }, password)
-      setCookies.push(
-        serializeCookie(SESSION_COOKIE_NAME, resealed, {
-          path: SESSION_COOKIE_PATH,
-          maxAgeSeconds: end - nowSeconds,
-        }),
-      )
-      kept.push([SESSION_COOKIE_NAME, resealed])
-    }
-  }
-
-  const headers = new Headers(request.headers)
-  if (kept.length > 0) {
-    headers.set(
-      'cookie',
-      kept.map(([key, value]) => `${key}=${value}`).join('; '),
-    )
-  } else {
-    headers.delete('cookie')
-  }
-  return { request: new Request(request, { headers }), setCookies }
 }
 
 /**
- * The first value of an auth cookie. Only `__Host-` names can be read, because
- * an unprefixed name is exactly the one a sibling host can shadow. The legacy
- * names are read only by `migrateLegacyAuthCookies`.
+ * The value of an auth cookie, or `null`.
+ *
+ * Only `__Host-` names can be read, because an unprefixed name is exactly the
+ * one a sibling host can shadow. The legacy names are never read.
+ *
+ * A name that appears more than once is ambiguous and reads as absent. Only
+ * this host can set a `__Host-` cookie with `Path=/`, so a legitimate browser
+ * holds one. A second copy can come only from a browser that still accepts a
+ * nameless cookie whose value spells `__Host-...=`. A sibling host can plant
+ * one of those with a longer path, which sorts it first. Taking any one of the
+ * copies would let that plant pick the session. Refusing both turns a
+ * fixation attempt into a sign-out.
  */
 export function readCookie(request: Request, name: string): string | null {
   if (!name.startsWith(HOST_COOKIE_PREFIX)) {
@@ -397,8 +311,9 @@ export function readCookie(request: Request, name: string): string | null {
       `auth cookie ${name} must carry the ${HOST_COOKIE_PREFIX} prefix`,
     )
   }
-  for (const [key, value] of cookiePairs(request.headers.get('cookie'))) {
-    if (key === name) return value || null
-  }
-  return null
+  const values = cookiePairs(request.headers.get('cookie'))
+    .filter(([key]) => key === name)
+    .map(([, value]) => value)
+  if (values.length !== 1) return null
+  return values[0] || null
 }

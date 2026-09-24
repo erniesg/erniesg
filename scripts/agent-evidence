@@ -52,14 +52,16 @@ mkdirSync(join(outDir, "logs"), { recursive: true });
 //
 // This is ONE budget shared by every lane, not a per-lane grant. Handing each
 // sequential lane the full amount would let four hung lanes total four budgets
-// and blow the 5400 s supervision bound on the agent run, and because the
+// and blow the supervision bound on the agent run, and because the
 // manifest is written only after the loop, the supervisor would kill the
 // worker without recording which lane hung.
 //
 // Sized to the required lane sequence, not to one lane: the `test` lane alone
-// measured 1_724_172 ms on the trusted VM, `build` may take up to its 900 s
-// allowance in `.agent/commands.yaml`, and the association and unit lanes run
-// first. The total stays inside the 5400 s supervision bound.
+// measured 1_724_172 ms on the trusted VM, `build` runs before it, and the
+// association and unit lanes run first. `.agent/commands.yaml` gives these
+// lanes no timeout of their own, so this budget is the only one. The total,
+// plus the publisher's overhead, stays inside the supervision bound
+// (CANDIDATE_TIMEOUT_CEILING_MS in the publisher), which a test checks.
 //
 // This line is the single source of the budget. The trusted publisher
 // (`.github/workflows/agent-evidence-publisher.yml`) parses it from the pinned
@@ -87,7 +89,7 @@ function sh(command, timeoutMs = SETUP_PROBE_TIMEOUT_MS) {
   return spawnSync(command, { shell: true, encoding: "utf8", timeout: timeoutMs });
 }
 
-function timedOut(proc) {
+function timedOut(proc, deadline) {
   // Node kills a timed-out child itself: error.code ETIMEDOUT, signal SIGTERM.
   // The trusted runner's wrapper instead catches TimeoutExpired and returns an
   // ordinary result with status 124 and neither field, so a predicate that
@@ -97,9 +99,13 @@ function timedOut(proc) {
   // error.code ENOBUFS. Treating that as a timeout would rewrite an
   // output-heavy failure to 124 and skip every later lane with the budget
   // almost untouched.
+  // A 124 status alone is ambiguous: a lane's own command can exit 124 (GNU
+  // `timeout` inside an npm script). It counts as the budget only once the
+  // deadline has passed. Otherwise it is an ordinary lane failure, and later
+  // lanes still run.
   return (
     Boolean(proc.error && proc.error.code === "ETIMEDOUT")
-    || proc.status === LANE_TIMEOUT_EXIT
+    || (proc.status === LANE_TIMEOUT_EXIT && Date.now() >= deadline)
   );
 }
 
@@ -347,7 +353,7 @@ for (const lane of lanes) {
   lastLaneId = lane.id;
   const proc = sh(lane.command, remaining > 0 ? remaining : 1);
   let exitCode = proc.status ?? 1;
-  if (timedOut(proc)) {
+  if (timedOut(proc, budgetDeadline)) {
     exitCode = LANE_TIMEOUT_EXIT;
     budgetSpentBy = lane.id;
   }

@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -13,33 +14,27 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 /**
- * The shared lane budget in `scripts/agent-evidence`.
+ * The shared lane budget in `scripts/agent-evidence`, exercised against the
+ * real producer.
  *
- * Two rules are held here.
+ * A run the budget cuts short still produces a manifest the production
+ * validator accepts. The validator is not re-implemented: it is extracted
+ * from `.github/workflows/agent-evidence.yml` and run as the workflow runs it,
+ * so any check it makes (the association lane must pass, `lanes_run` must
+ * equal `lanes`, `required_failures` must match) applies here too.
  *
- * 1. A run the budget cuts short still produces a manifest the production
- *    validator accepts. The validator is not re-implemented: it is extracted
- *    from `.github/workflows/agent-evidence.yml` and run as the workflow runs
- *    it, so any check it makes (the association lane must pass, `lanes_run`
- *    must equal `lanes`, `required_failures` must match) applies here too.
- *
- * 2. The budget is one value. `DEFAULT_BUDGET_MS` in `scripts/agent-evidence`
- *    is the only place its number may appear; every other evidence file
- *    either derives it or names the constant.
+ * This file runs the producer, so it is excluded from `npm run test`, which is
+ * itself the evidence `test` lane: running the producer from inside it would
+ * spend the budget it is testing and could leave a nested `.agent/evidence`
+ * run in the candidate tree. Run it with `npm run test:agent-evidence`. The
+ * static rules about the budget live in `agent-evidence-budget-rule.test.mjs`,
+ * which the ordinary test run does include.
  */
 
 const REPOSITORY = 'erniesg/erniesg'
 const BRANCH = 'evidence-budget-test'
 const PRODUCER = 'scripts/agent-evidence'
 const WORKFLOW = '.github/workflows/agent-evidence.yml'
-const PUBLISHER = '.github/workflows/agent-evidence-publisher.yml'
-
-function laneBudgetMs() {
-  const source = readFileSync(PRODUCER, 'utf8')
-  const matches = [...source.matchAll(/^const DEFAULT_BUDGET_MS = ([1-9][0-9_]*);$/gmu)]
-  expect(matches, 'exactly one DEFAULT_BUDGET_MS integer literal').toHaveLength(1)
-  return Number(matches[0][1].replaceAll('_', ''))
-}
 
 /** The validator heredoc from the workflow, dedented, exactly as it runs. */
 function productionValidator() {
@@ -108,14 +103,6 @@ function runEvidence({ cwd, only, budgetMs, head }) {
   return { evidence, manifestPath: match ? resolve(cwd, match[1]) : null }
 }
 
-function removeEvidence(cwd, manifestPath) {
-  if (manifestPath === null) return
-  const runDir = dirname(manifestPath)
-  if (dirname(runDir) === resolve(cwd, '.agent/evidence') && existsSync(runDir)) {
-    rmSync(runDir, { recursive: true, force: true })
-  }
-}
-
 /** Exactly what the validator derives from `lanes`, restated for a readable failure. */
 function expectManifestConsistent(manifest) {
   expect(manifest.lanes_run).toEqual(manifest.lanes.map((lane) => lane.id))
@@ -126,12 +113,18 @@ function expectManifestConsistent(manifest) {
   )
 }
 
+function evidenceRuns(cwd) {
+  const root = resolve(cwd, '.agent/evidence')
+  return existsSync(root) ? new Set(readdirSync(root)) : new Set()
+}
+
 let ordinary = null
 /** One real run of the real association audit, shared by both cases. */
 function ordinaryRun() {
   if (ordinary) return ordinary
   const cwd = resolve('.')
   const head = gitHead(cwd)
+  const before = evidenceRuns(cwd)
   const { evidence, manifestPath } = runEvidence({ cwd, only: 'association-audit', head })
   try {
     expect(manifestPath, evidence.stdout || evidence.stderr).not.toBeNull()
@@ -145,7 +138,13 @@ function ordinaryRun() {
     ordinary = { evidence, manifest, verdict }
     return ordinary
   } finally {
-    removeEvidence(cwd, manifestPath)
+    // Every run directory this call created, whether or not the producer got
+    // far enough to print its manifest path.
+    for (const run of evidenceRuns(cwd)) {
+      if (!before.has(run)) {
+        rmSync(resolve(cwd, '.agent/evidence', run), { recursive: true, force: true })
+      }
+    }
   }
 }
 
@@ -258,81 +257,4 @@ describe('the shared lane budget', () => {
       rmSync(root, { recursive: true, force: true })
     }
   }, 190_000)
-})
-
-describe('the lane budget is one value', () => {
-  /** Every way the evidence files have written a budget or timeout number. */
-  function restatements(text, budgetMs) {
-    const found = []
-    const seconds = budgetMs / 1000
-    const minutes = seconds / 60
-    const spellings = new Set([
-      String(budgetMs),
-      budgetMs.toLocaleString('en-US'),
-      budgetMs.toLocaleString('en-US').replaceAll(',', '_'),
-      `${seconds} s`,
-      `${seconds}s`,
-      `${seconds.toLocaleString('en-US')} s`,
-      `${seconds} seconds`,
-      `${minutes} min`,
-      `${minutes} minutes`,
-    ])
-    for (const spelling of spellings) {
-      const pattern = new RegExp(`(?<![0-9_,.])${spelling.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}(?![0-9_,])`, 'gu')
-      for (const match of text.matchAll(pattern)) found.push(match[0])
-    }
-    return found
-  }
-
-  const governed = [
-    PRODUCER,
-    '.agent/verify.md',
-    '.agent/commands.yaml',
-    WORKFLOW,
-    PUBLISHER,
-    'tools/agent-evidence-budget.test.mjs',
-  ]
-
-  it('states the budget number only in its definition', () => {
-    const budgetMs = laneBudgetMs()
-    for (const file of governed) {
-      let text = readFileSync(file, 'utf8')
-      if (file === PRODUCER) {
-        text = text.replace(/^const DEFAULT_BUDGET_MS = [0-9_]+;$/mu, '')
-      }
-      expect(restatements(text, budgetMs), `${file} restates the lane budget`).toEqual([])
-    }
-  })
-
-  it('bounds the trusted producer by the budget, not by a number of its own', () => {
-    const publisher = readFileSync(PUBLISHER, 'utf8')
-    const producerCall = publisher.match(
-      /candidateSpawnSync\(\s*producerNode,[\s\S]*?"trusted evidence producer",\s*\)/u,
-    )
-    expect(producerCall, 'the trusted producer call').not.toBeNull()
-    expect(producerCall[0]).toMatch(/timeout: producerTimeoutMs\b/u)
-    expect(producerCall[0]).not.toMatch(/timeout: [0-9]/u)
-    expect(publisher).toContain(
-      '/^const DEFAULT_BUDGET_MS = ([1-9][0-9_]*);$/m.exec(trustedProducerSource)',
-    )
-
-    // The derived bound must fit under every ceiling the trusted runner
-    // enforces, or the runner refuses the producer before it starts.
-    const overhead = Number(
-      publisher.match(/const PRODUCER_OVERHEAD_MS = ([0-9_]+);/u)[1].replaceAll('_', ''),
-    )
-    const ceilings = [
-      ...publisher.matchAll(/(?:MAX_TIMEOUT_MS|CANDIDATE_TIMEOUT_CEILING_MS) = ([0-9_]+);?$/gmu),
-    ].map((match) => Number(match[1].replaceAll('_', '')))
-    expect(ceilings.length).toBeGreaterThanOrEqual(2)
-    for (const ceiling of ceilings) {
-      expect(laneBudgetMs() + overhead).toBeLessThanOrEqual(ceiling)
-    }
-  })
-
-  it('describes the budget as shared in the runbook, by its constant', () => {
-    const runbook = readFileSync('.agent/verify.md', 'utf8')
-    expect(runbook).toContain('DEFAULT_BUDGET_MS')
-    expect(runbook).not.toMatch(/gives each lane/u)
-  })
 })

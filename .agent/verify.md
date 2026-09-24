@@ -49,7 +49,9 @@ checkout. Neither is caused by the code under test:
   manifest. Read the lane log before reading the exit code: an exit of `124`
   means the budget ran out, not that an assertion failed. The trusted publisher
   reads the same constant to size its outer bound, so change the budget only
-  there.
+  there. `.agent/commands.yaml` gives these lanes no timeout of their own.
+  `npm run test:agent-evidence` runs the real producer against the budget; it
+  is excluded from `npm run test`, which is itself the `test` lane.
 
 Run the model-consultation receipt lane on its own with:
 

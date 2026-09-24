@@ -1,5 +1,6 @@
 import { defineConfig } from '@playwright/test'
 import path from 'node:path'
+import { BOOK_SPECS } from './tests/e2e/book-specs'
 
 const evidenceRoot = process.env.AGENT_EVIDENCE_DIR ?? '.agent/evidence'
 const staticBuildDirectory = process.env.SRT_STATIC_BUILD_DIR
@@ -35,6 +36,8 @@ if (workersDevBaseUrl) {
 
 export default defineConfig({
   testDir: './tests/e2e',
+  // The book specs need the book's preview server, which the book config starts.
+  testIgnore: BOOK_SPECS,
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
   retries: 0,

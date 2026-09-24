@@ -1,0 +1,4 @@
+# The collection. Individual books are <id>.toml files over this pool of nodes.
+collection = "Challenges"
+slug = "challenges"
+author = "Chen Enjiao (Ernie)"

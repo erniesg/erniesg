@@ -74,7 +74,7 @@ proposal applies cleanly to its base commit with `git apply` in a test.
 ```bash
 npm --workspace packages/margin test
 npx vitest run src/worker/margin
-python3 challenges/tools/validate.py
+python3 books/tools/validate.py
 npm test
 SRT_E2E_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')
 npx playwright test tests/e2e/margin-edit-mode.spec.ts

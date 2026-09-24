@@ -33,7 +33,7 @@ const SLOW = { timeout: 120_000 }
 /** One node through the renderer, with nothing between it and the assertion. */
 const RENDER_BODY = `
 import sys
-sys.path.insert(0, "challenges/tools")
+sys.path.insert(0, "books/tools")
 from render import render_node
 sys.stdout.write(
     render_node(
@@ -45,7 +45,7 @@ sys.stdout.write(
 
 const RENDER_BOOK_NODE = `
 import sys
-sys.path.insert(0, "challenges/tools")
+sys.path.insert(0, "books/tools")
 from render import load_book, render_node
 _, order = load_book()
 node = next(n for n in order if n["id"] == sys.argv[1])

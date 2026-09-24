@@ -25,7 +25,7 @@ stay at each owning adapter boundary.
 - 059 produces proposals that nothing reviews. `POST /proposals/:id/apply` and
   `GET /documents/:id/history` still return 501 from 054.
 - No adapter exists, so there is no path from an approved proposal to
-  `challenges/<node>.md`.
+  `books/chapters/<node>.md`.
 
 ## Success criteria
 
@@ -43,7 +43,7 @@ stay at each owning adapter boundary.
 5. `adapters/margin/` implements a source adapter contract with two
    operations: resolve a document id to its source, and apply an approved
    proposal. The challenges implementation maps a document id to
-   `challenges/<node-id>.md` (or `<node-id>/challenge.md`) and applies by
+   `books/chapters/<node-id>.md` (or `books/challenges/<node-id>/challenge.md`) and applies by
    opening a pull request against `erniesg/erniesg`.
 6. The contract is written so a second site implements it without touching the
    service. The service passes an approved proposal and its base commit and
@@ -84,7 +84,7 @@ credential present in the Worker.
 ```bash
 npx vitest run src/worker/margin adapters/margin
 npm --workspace packages/margin test
-python3 challenges/tools/validate.py
+python3 books/tools/validate.py
 npm test
 npm run build
 SRT_E2E_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')

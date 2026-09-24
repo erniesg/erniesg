@@ -15,6 +15,7 @@
     "test": "vitest run --exclude 'tests/e2e/**' --exclude 'tools/agent-evidence-budget.test.mjs' --maxWorkers=1 && npm run pdf:association-audit:test",
     "test:agent-evidence": "vitest run tools/agent-evidence-budget.test.mjs",
     "test:e2e": "playwright test",
+    "test:e2e:book": "playwright test --config playwright.book.config.ts",
     "test:e2e:spec": "node tools/e2e-spec.mjs",
     "test:margin": "vitest run packages/margin tests/margin-book-anchoring.test.ts src/worker src/annotations",
     "margin:build": "tsc -p packages/margin/tsconfig.build.json",

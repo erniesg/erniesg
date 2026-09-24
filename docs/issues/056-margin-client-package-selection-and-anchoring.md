@@ -42,7 +42,7 @@ constantly.
 ## Success criteria
 
 1. `packages/margin/` builds and tests independently, with zero imports from
-   `challenges/`, `src/content/` or anything book-specific. A test asserts the
+   `books/`, `src/content/` or anything book-specific. A test asserts the
    built bundle contains no book identifiers. It ships as a web component plus
    a plain JS API; the optional React wrapper is a separate entry point.
 2. Selection capture works by **keyboard as well as mouse**: a reader

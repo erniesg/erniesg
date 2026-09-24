@@ -46,16 +46,27 @@ const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(".", "");
 const outDir = join(".agent", "evidence", stamp);
 mkdirSync(join(outDir, "logs"), { recursive: true });
 
-// 900_000 was a coin flip on the trusted VM: the unit suite measures 869-923 s
-// there against a 900 s ceiling, so the lane was killed mid-run and recorded a
-// failure that said nothing about the branch.
+// The old fixed per-lane ceiling was a coin flip on the trusted VM: the unit
+// suite measured 869-923 s there against it, so the lane was killed mid-run and
+// recorded a failure that said nothing about the branch.
 //
 // This is ONE budget shared by every lane, not a per-lane grant. Handing each
-// sequential lane the full amount would let four hung lanes total 7_200_000 ms
+// sequential lane the full amount would let four hung lanes total four budgets
 // and blow the 5400 s supervision bound on the agent run, and because the
 // manifest is written only after the loop, the supervisor would kill the
 // worker without recording which lane hung.
-const DEFAULT_BUDGET_MS = 1_800_000;
+//
+// Sized to the required lane sequence, not to one lane: the `test` lane alone
+// measured 1_724_172 ms on the trusted VM, `build` may take up to its 900 s
+// allowance in `.agent/commands.yaml`, and the association and unit lanes run
+// first. The total stays inside the 5400 s supervision bound.
+//
+// This line is the single source of the budget. The trusted publisher
+// (`.github/workflows/agent-evidence-publisher.yml`) parses it from the pinned
+// default-branch copy of this file to size its outer bound on the producer, and
+// `tools/agent-evidence-budget.test.mjs` fails if any evidence file restates
+// the number instead of deriving it. Keep it one integer literal on one line.
+const DEFAULT_BUDGET_MS = 3_600_000;
 // Overridable so the skip path can be exercised by a test rather than only
 // reasoned about — it is the path that produced an invalid manifest, and it had
 // no coverage. Lowering it cannot manufacture a pass: a skipped required lane is

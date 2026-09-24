@@ -1,38 +1,122 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, rmSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, relative, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 /**
- * The shared-budget skip path, which had no coverage and produced an invalid
- * manifest because of it.
+ * The shared lane budget in `scripts/agent-evidence`.
  *
- * `.github/workflows/agent-evidence.yml` requires `manifest.lanes_run` to equal
- * the ids in `manifest.lanes` exactly, and derives the expected
- * `required_failures` from `manifest.lanes`. A skipped lane named in
- * `required_failures` but absent from `lanes` made the two disagree, and the
- * validator discarded the whole manifest — losing the timeout evidence the
- * skip existed to record. These assert the invariants that validator checks,
- * against a real run.
+ * Two rules are held here.
+ *
+ * 1. A run the budget cuts short still produces a manifest the production
+ *    validator accepts. The validator is not re-implemented: it is extracted
+ *    from `.github/workflows/agent-evidence.yml` and run as the workflow runs
+ *    it, so any check it makes (the association lane must pass, `lanes_run`
+ *    must equal `lanes`, `required_failures` must match) applies here too.
+ *
+ * 2. The budget is one value. `DEFAULT_BUDGET_MS` in `scripts/agent-evidence`
+ *    is the only place its number may appear; every other evidence file
+ *    either derives it or names the constant.
  */
-function runWithBudget(budgetMs, lanes) {
-  const evidence = spawnSync('scripts/agent-evidence', ['--only', lanes], {
-    cwd: resolve('.'),
+
+const REPOSITORY = 'erniesg/erniesg'
+const BRANCH = 'evidence-budget-test'
+const PRODUCER = 'scripts/agent-evidence'
+const WORKFLOW = '.github/workflows/agent-evidence.yml'
+const PUBLISHER = '.github/workflows/agent-evidence-publisher.yml'
+
+function laneBudgetMs() {
+  const source = readFileSync(PRODUCER, 'utf8')
+  const matches = [...source.matchAll(/^const DEFAULT_BUDGET_MS = ([1-9][0-9_]*);$/gmu)]
+  expect(matches, 'exactly one DEFAULT_BUDGET_MS integer literal').toHaveLength(1)
+  return Number(matches[0][1].replaceAll('_', ''))
+}
+
+/** The validator heredoc from the workflow, dedented, exactly as it runs. */
+function productionValidator() {
+  const workflow = readFileSync(WORKFLOW, 'utf8')
+  const opener = "<<'RUCKSACK_VALIDATE_MANIFEST'\n"
+  const start = workflow.indexOf(opener)
+  expect(start, 'the workflow validator heredoc').toBeGreaterThan(-1)
+  const body = workflow.slice(start + opener.length)
+  const end = body.search(/^\s*RUCKSACK_VALIDATE_MANIFEST$/mu)
+  expect(end).toBeGreaterThan(0)
+  const lines = body.slice(0, end).split('\n')
+  const indent = Math.min(
+    ...lines.filter((line) => line.trim()).map((line) => line.match(/^ */u)[0].length),
+  )
+  return lines.map((line) => line.slice(indent)).join('\n')
+}
+
+function validate({ cwd, manifestPath, status, head }) {
+  const scratch = mkdtempSync(join(tmpdir(), 'agent-evidence-validator-'))
+  try {
+    const validator = join(scratch, 'validate.cjs')
+    writeFileSync(validator, productionValidator())
+    return spawnSync(process.execPath, [validator, manifestPath], {
+      cwd,
+      encoding: 'utf8',
+      env: {
+        PATH: process.env.PATH,
+        EXPECTED_HEAD_SHA: head,
+        EXPECTED_REPOSITORY: REPOSITORY,
+        EXPECTED_BRANCH: BRANCH,
+        EVIDENCE_STATUS: String(status),
+        CANONICAL_MANIFEST: join(scratch, 'canonical.json'),
+      },
+    })
+  } finally {
+    rmSync(scratch, { recursive: true, force: true })
+  }
+}
+
+function gitHead(cwd) {
+  const head = spawnSync('git', ['rev-parse', '--verify', 'HEAD'], { cwd, encoding: 'utf8' })
+  expect(head.status).toBe(0)
+  return head.stdout.trim()
+}
+
+function runEvidence({ cwd, only, budgetMs, head }) {
+  const env = {
+    ...process.env,
+    NO_COLOR: '1',
+    GITHUB_HEAD_SHA: head,
+    GITHUB_REPOSITORY: REPOSITORY,
+    GITHUB_HEAD_REF: BRANCH,
+    GITHUB_REF_NAME: '',
+  }
+  if (budgetMs === undefined) delete env.AGENT_EVIDENCE_BUDGET_MS
+  else env.AGENT_EVIDENCE_BUDGET_MS = String(budgetMs)
+  const evidence = spawnSync('sh', [resolve(cwd, PRODUCER), '--only', only], {
+    cwd,
     encoding: 'utf8',
     timeout: 180_000,
-    env: {
-      ...process.env,
-      NO_COLOR: '1',
-      AGENT_EVIDENCE_BUDGET_MS: String(budgetMs),
-    },
+    env,
   })
   const match = evidence.stdout.match(
     /\[agent-evidence\] (?:passed|failed): (.+\/manifest\.json)\s*$/u,
   )
-  return { evidence, manifestPath: match ? resolve(match[1]) : null }
+  return { evidence, manifestPath: match ? resolve(cwd, match[1]) : null }
 }
 
-/** Exactly what the workflow validator derives, from the same source. */
+function removeEvidence(cwd, manifestPath) {
+  if (manifestPath === null) return
+  const runDir = dirname(manifestPath)
+  if (dirname(runDir) === resolve(cwd, '.agent/evidence') && existsSync(runDir)) {
+    rmSync(runDir, { recursive: true, force: true })
+  }
+}
+
+/** Exactly what the validator derives from `lanes`, restated for a readable failure. */
 function expectManifestConsistent(manifest) {
   expect(manifest.lanes_run).toEqual(manifest.lanes.map((lane) => lane.id))
   expect(manifest.required_failures).toEqual(
@@ -40,77 +124,215 @@ function expectManifestConsistent(manifest) {
       .filter((lane) => lane.required && lane.exit_code !== 0)
       .map((lane) => lane.id),
   )
-  for (const lane of manifest.lanes) {
-    expect(new Set(['passed', 'failed'])).toContain(lane.status)
-    expect(lane.status === 'passed').toBe(lane.exit_code === 0)
+}
+
+let ordinary = null
+/** One real run of the real association audit, shared by both cases. */
+function ordinaryRun() {
+  if (ordinary) return ordinary
+  const cwd = resolve('.')
+  const head = gitHead(cwd)
+  const { evidence, manifestPath } = runEvidence({ cwd, only: 'association-audit', head })
+  try {
+    expect(manifestPath, evidence.stdout || evidence.stderr).not.toBeNull()
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    const verdict = validate({
+      cwd,
+      manifestPath: relative(cwd, manifestPath),
+      status: evidence.status,
+      head,
+    })
+    ordinary = { evidence, manifest, verdict }
+    return ordinary
+  } finally {
+    removeEvidence(cwd, manifestPath)
+  }
+}
+
+/**
+ * A throwaway repository holding the real producer and receipt checks, with
+ * two lane commands replaced: the association audit replays the receipt the
+ * real audit just produced, and the unit lane hangs. The budget then expires
+ * in a lane the test controls and can reap, never in the real audit, whose
+ * Vite grandchild a shell-level kill would leave running.
+ */
+function budgetFixture(receipt) {
+  const root = mkdtempSync(join(tmpdir(), 'agent-evidence-budget-'))
+  for (const file of [
+    PRODUCER,
+    'tools/association-audit-receipt.cjs',
+    'tools/model-consultation-evidence-receipt.cjs',
+    'tests/fixtures/pdf/note-citation-associations.pdf',
+  ]) {
+    mkdirSync(dirname(join(root, file)), { recursive: true })
+    copyFileSync(file, join(root, file))
+  }
+  writeFileSync(
+    join(root, 'tools/pdf-association-fixture-audit.mjs'),
+    `process.stdout.write(${JSON.stringify(`${JSON.stringify(receipt)}\n`)})\n`,
+  )
+  const pidFile = join(root, 'hung-lane.pid')
+  // Plain JavaScript is valid input to --experimental-strip-types. It exits on
+  // its own after a minute in case the reaper below never runs.
+  writeFileSync(
+    join(root, 'tools/model-consultation-evidence.ts'),
+    `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid))\n` +
+      'setTimeout(() => {}, 60_000)\n',
+  )
+  for (const args of [
+    ['init', '-q'],
+    ['add', '-A'],
+    ['-c', 'user.name=test', '-c', 'user.email=test@invalid', 'commit', '-qm', 'fixture'],
+  ]) {
+    expect(spawnSync('git', args, { cwd: root }).status).toBe(0)
+  }
+  return { root, pidFile }
+}
+
+function reap(pidFile) {
+  if (!existsSync(pidFile)) return
+  try {
+    process.kill(Number(readFileSync(pidFile, 'utf8')), 'SIGKILL')
+  } catch (error) {
+    if (error.code !== 'ESRCH') throw error
   }
 }
 
 describe('the shared lane budget', () => {
-  it('records a skipped required lane in a manifest the validator accepts', () => {
-    // A one-millisecond budget kills the first lane, which marks the budget
-    // spent, so the second is skipped before it starts. Both paths in one run:
-    // the killed lane has a duration, the skipped one does not. (The
-    // model-consultation lane's id is `unit`.)
-    const { evidence, manifestPath } = runWithBudget(
-      1,
-      'association-audit,model-consultation',
-    )
-    const evidenceRoot = resolve('.agent/evidence')
-    const removable =
-      manifestPath !== null && dirname(dirname(manifestPath)) === evidenceRoot
+  it('leaves an ordinary run valid under the production validator', () => {
+    const { manifest, verdict } = ordinaryRun()
+    expect(verdict.status, verdict.stderr).toBe(0)
+    expectManifestConsistent(manifest)
+    expect(manifest.result).toBe('passed')
+    expect(manifest.required_failures).toEqual([])
+  }, 190_000)
 
+  it('records a killed and a skipped required lane in a manifest the production validator accepts', () => {
+    const { manifest: real } = ordinaryRun()
+    expect(real.association_audit, 'the real audit receipt').not.toBeNull()
+    const { root, pidFile } = budgetFixture(real.association_audit)
     try {
+      const head = gitHead(root)
+      // Enough for the replayed audit to pass; the hung unit lane then spends
+      // the rest, and build is skipped before it starts.
+      const { evidence, manifestPath } = runEvidence({
+        cwd: root,
+        only: 'association-audit,model-consultation,build',
+        budgetMs: 10_000,
+        head,
+      })
       expect(manifestPath, evidence.stdout || evidence.stderr).not.toBeNull()
       const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
 
+      const verdict = validate({
+        cwd: root,
+        manifestPath: relative(root, manifestPath),
+        status: evidence.status,
+        head,
+      })
+      expect(verdict.status, verdict.stderr).toBe(0)
       expectManifestConsistent(manifest)
       expect(manifest.result).toBe('failed')
       expect(evidence.status).toBe(1)
 
-      const killed = manifest.lanes.find((lane) => lane.id === 'association-audit')
-      const skipped = manifest.lanes.find((lane) => lane.id === 'unit')
-      expect(killed, 'the first lane must still be recorded').toBeDefined()
-      expect(skipped, 'the skipped lane must be in lanes, not only in caveats')
-        .toBeDefined()
+      const byId = Object.fromEntries(manifest.lanes.map((lane) => [lane.id, lane]))
+      expect(byId['association-audit'].status).toBe('passed')
 
-      // Killed: it ran, so it has a duration.
-      expect(killed.exit_code).toBe(124)
-      expect(killed.status).toBe('failed')
+      // Killed: it ran until the budget ran out.
+      expect(byId.unit.exit_code).toBe(124)
+      expect(byId.unit.duration_ms).toBeGreaterThan(0)
+      expect(readFileSync(resolve(root, byId.unit.log_path), 'utf8')).toContain(
+        'lane timed out against the shared',
+      )
 
-      // Skipped: it never started, and that is what `duration_ms: 0` and the log
-      // say — the schema has no `skipped` status to say it with (owner ask #337).
-      expect(skipped.exit_code).toBe(124)
-      expect(skipped.status).toBe('failed')
-      expect(skipped.duration_ms).toBe(0)
-      expect(readFileSync(skipped.log_path, 'utf8')).toContain('never started')
-      expect(manifest.caveats.join('\n')).toContain('lane not run: unit')
+      // Skipped: in `lanes`, not only in caveats, and marked as never started.
+      expect(byId.build.exit_code).toBe(124)
+      expect(byId.build.status).toBe('failed')
+      expect(byId.build.duration_ms).toBe(0)
+      expect(readFileSync(resolve(root, byId.build.log_path), 'utf8')).toContain('never started')
+      expect(manifest.caveats.join('\n')).toContain('lane not run: build')
 
-      expect(manifest.required_failures).toEqual(['association-audit', 'unit'])
+      expect(manifest.required_failures).toEqual(['unit', 'build'])
     } finally {
-      if (removable && existsSync(dirname(manifestPath))) {
-        rmSync(dirname(manifestPath), { recursive: true, force: true })
-      }
+      reap(pidFile)
+      rmSync(root, { recursive: true, force: true })
     }
   }, 190_000)
+})
 
-  it('leaves an ordinary run consistent too', () => {
-    const { evidence, manifestPath } = runWithBudget(180_000, 'association-audit')
-    const evidenceRoot = resolve('.agent/evidence')
-    const removable =
-      manifestPath !== null && dirname(dirname(manifestPath)) === evidenceRoot
-
-    try {
-      expect(manifestPath, evidence.stdout || evidence.stderr).not.toBeNull()
-      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
-
-      expectManifestConsistent(manifest)
-      expect(manifest.result).toBe('passed')
-      expect(manifest.required_failures).toEqual([])
-    } finally {
-      if (removable && existsSync(dirname(manifestPath))) {
-        rmSync(dirname(manifestPath), { recursive: true, force: true })
-      }
+describe('the lane budget is one value', () => {
+  /** Every way the evidence files have written a budget or timeout number. */
+  function restatements(text, budgetMs) {
+    const found = []
+    const seconds = budgetMs / 1000
+    const minutes = seconds / 60
+    const spellings = new Set([
+      String(budgetMs),
+      budgetMs.toLocaleString('en-US'),
+      budgetMs.toLocaleString('en-US').replaceAll(',', '_'),
+      `${seconds} s`,
+      `${seconds}s`,
+      `${seconds.toLocaleString('en-US')} s`,
+      `${seconds} seconds`,
+      `${minutes} min`,
+      `${minutes} minutes`,
+    ])
+    for (const spelling of spellings) {
+      const pattern = new RegExp(`(?<![0-9_,.])${spelling.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}(?![0-9_,])`, 'gu')
+      for (const match of text.matchAll(pattern)) found.push(match[0])
     }
-  }, 190_000)
+    return found
+  }
+
+  const governed = [
+    PRODUCER,
+    '.agent/verify.md',
+    '.agent/commands.yaml',
+    WORKFLOW,
+    PUBLISHER,
+    'tools/agent-evidence-budget.test.mjs',
+  ]
+
+  it('states the budget number only in its definition', () => {
+    const budgetMs = laneBudgetMs()
+    for (const file of governed) {
+      let text = readFileSync(file, 'utf8')
+      if (file === PRODUCER) {
+        text = text.replace(/^const DEFAULT_BUDGET_MS = [0-9_]+;$/mu, '')
+      }
+      expect(restatements(text, budgetMs), `${file} restates the lane budget`).toEqual([])
+    }
+  })
+
+  it('bounds the trusted producer by the budget, not by a number of its own', () => {
+    const publisher = readFileSync(PUBLISHER, 'utf8')
+    const producerCall = publisher.match(
+      /candidateSpawnSync\(\s*producerNode,[\s\S]*?"trusted evidence producer",\s*\)/u,
+    )
+    expect(producerCall, 'the trusted producer call').not.toBeNull()
+    expect(producerCall[0]).toMatch(/timeout: producerTimeoutMs\b/u)
+    expect(producerCall[0]).not.toMatch(/timeout: [0-9]/u)
+    expect(publisher).toContain(
+      '/^const DEFAULT_BUDGET_MS = ([1-9][0-9_]*);$/m.exec(trustedProducerSource)',
+    )
+
+    // The derived bound must fit under every ceiling the trusted runner
+    // enforces, or the runner refuses the producer before it starts.
+    const overhead = Number(
+      publisher.match(/const PRODUCER_OVERHEAD_MS = ([0-9_]+);/u)[1].replaceAll('_', ''),
+    )
+    const ceilings = [
+      ...publisher.matchAll(/(?:MAX_TIMEOUT_MS|CANDIDATE_TIMEOUT_CEILING_MS) = ([0-9_]+);?$/gmu),
+    ].map((match) => Number(match[1].replaceAll('_', '')))
+    expect(ceilings.length).toBeGreaterThanOrEqual(2)
+    for (const ceiling of ceilings) {
+      expect(laneBudgetMs() + overhead).toBeLessThanOrEqual(ceiling)
+    }
+  })
+
+  it('describes the budget as shared in the runbook, by its constant', () => {
+    const runbook = readFileSync('.agent/verify.md', 'utf8')
+    expect(runbook).toContain('DEFAULT_BUDGET_MS')
+    expect(runbook).not.toMatch(/gives each lane/u)
+  })
 })

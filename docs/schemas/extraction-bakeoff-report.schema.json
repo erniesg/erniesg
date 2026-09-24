@@ -181,6 +181,11 @@
         "typeRecall": { "type": "number", "minimum": 0, "maximum": 1 },
         "sourceRecall": { "type": "number", "minimum": 0, "maximum": 1 },
         "assetRecall": { "type": "number", "minimum": 0, "maximum": 1 },
+        "headingLevelRecall": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
         "structureHash": {
           "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/sha256" }]
         },

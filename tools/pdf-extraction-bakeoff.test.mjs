@@ -11,6 +11,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Ajv2020 from 'ajv/dist/2020.js'
 import { describe, expect, it } from 'vitest'
+import {
+  EXTRACTION_BAKEOFF_STRATA,
+  runExtractionBakeoff,
+} from '../src/research/extraction-bakeoff.ts'
 import { structuredExtractionHash } from '../src/research/structured-extraction.ts'
 import {
   validateSyntheticBakeoffReport,
@@ -650,5 +654,133 @@ describe('extraction bake-off CLI', () => {
     expect([...documentStatuses].sort()).toEqual(['failed', 'passed'])
     for (const [label, mutate] of forgeries)
       expectRejected(validate, rehashed(report, mutate), label)
+  })
+
+  it('accepts every report shape the runtime emits, including optional score fields and every document status', async () => {
+    // One corpus that drives every optional field and every status the
+    // runtime can emit: a sectioning case with expected heading levels
+    // (headingLevelRecall), a passing arm, a failing arm and a byte-unstable
+    // arm (disqualified). A field the runtime emits but the schema forbids,
+    // or a conditional the runtime does not satisfy, fails here.
+    const documents = [
+      ['development-one', 'development', 'one-column'],
+      ['heldout-one', 'held-out', 'one-column'],
+      ['heldout-two', 'held-out', 'two-column'],
+    ].map(([id, split, layout]) => ({
+      id,
+      split,
+      layout,
+      context: {
+        documentId: id,
+        sourceSha256: (split === 'development' ? 'a' : 'b').repeat(64),
+        split,
+        layout,
+        sourceRuns: [
+          { id: `${id}-title`, text: 'Synthetic title', page: 1, order: 1 },
+          { id: `${id}-body`, text: 'Synthetic paragraph.', page: 1, order: 2 },
+          { id: `${id}-heading`, text: 'Section', page: 1, order: 3 },
+        ],
+        sourceAssets: [],
+      },
+      cases: EXTRACTION_BAKEOFF_STRATA.map((stratum) => ({
+        id: `${id}-${stratum}`,
+        documentId: id,
+        stratum,
+        layout,
+        expectedNodeTypes: ['title', 'paragraph', 'heading'],
+        expectedSourceRunIds: [`${id}-title`, `${id}-body`, `${id}-heading`],
+        ...(stratum === 'sectioning' ? { expectedHeadingLevels: [2] } : {}),
+      })),
+    }))
+    const nodes = (documentId, headingId = `${documentId}-heading`) => [
+      {
+        id: `${documentId}-title`,
+        type: 'title',
+        sourceRunIds: [`${documentId}-title`],
+      },
+      {
+        id: `${documentId}-body`,
+        type: 'paragraph',
+        sourceRunIds: [`${documentId}-body`],
+      },
+      {
+        id: headingId,
+        type: 'heading',
+        level: 2,
+        sourceRunIds: [`${documentId}-heading`],
+      },
+    ]
+    let unstableCall = 0
+    const outputs = {
+      'geometric-baseline': (input) => nodes(input.documentId),
+      'llm-authored': (input) =>
+        nodes(input.documentId).map((node) =>
+          node.type === 'paragraph'
+            ? { ...node, text: 'Model-authored text that cannot be verified.' }
+            : node,
+        ),
+      'llm-grounded': (input) =>
+        nodes(input.documentId, `${input.documentId}-heading-${unstableCall++}`),
+    }
+    const report = await runExtractionBakeoff({
+      corpus: {
+        id: 'runtime-shape-bakeoff',
+        development: documents.filter(({ split }) => split === 'development'),
+        heldOut: documents.filter(({ split }) => split === 'held-out'),
+      },
+      arms: ARM_IDS.map((id) => ({
+        id,
+        identity: {
+          providerId: id,
+          modelId: `${id}-model`,
+          modelVersion: 'fixture-1.0.0',
+          modelDigest: 'a'.repeat(64),
+          promptHash: 'b'.repeat(64),
+        },
+        tunedOn: ['development'],
+        run: async (input) => ({
+          proposal: { schemaVersion: '1.0.0', nodes: outputs[id](input) },
+          metrics: { latencyMs: 1, costUsd: 0 },
+        }),
+      })),
+      scoredHeldOutKeys: new Set(),
+    })
+    const statuses = Object.fromEntries(
+      ARM_IDS.map((id) => [
+        id,
+        [...new Set(report.arms[id].documents.map(({ status }) => status))],
+      ]),
+    )
+    expect(statuses).toEqual({
+      'geometric-baseline': ['passed'],
+      'llm-authored': ['failed'],
+      'llm-grounded': ['disqualified'],
+    })
+    expect(
+      report.arms['geometric-baseline'].documents.some(({ caseScores }) =>
+        caseScores.some(
+          (score) => typeof score.headingLevelRecall === 'number',
+        ),
+      ),
+    ).toBe(true)
+
+    const validate = compileReportSchema()
+    expect(validate(report), JSON.stringify(validate.errors)).toBe(true)
+    const { reportSha256: _reportSha256, ...raw } = report
+    const synthetic = {
+      ...raw,
+      authority: {
+        kind: 'synthetic-contract-self-test',
+        realProviderCalls: 0,
+        realProviderAuthority: false,
+        promotionEligible: false,
+      },
+    }
+    expect(() =>
+      validateSyntheticBakeoffReport({
+        ...synthetic,
+        reportSha256: structuredExtractionHash(synthetic),
+      }),
+    ).not.toThrow()
   })
 })

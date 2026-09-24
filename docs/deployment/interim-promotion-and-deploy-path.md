@@ -1,26 +1,21 @@
-# Restore a reviewed deploy path, with a preview of main before production
+# Interim promotion of main to ernie.sg, and the later automated deploy path
 
-## Implementer
-
-**The coordinator owns this spec. It is not for the drain, and it is excluded
-from seeding.**
+**This is a deployment runbook and plan, not an issue spec.** It
+deliberately lives in `docs/deployment/` and not in `docs/issues/`.
+`rucksack github issues seed` and
+`rucksack autopilot reconcile --queue-after-activation` read every `*.md`
+directly in `docs/issues/`, with no per-file scope, so a file there would be
+seeded and could be queued to an unattended worker. Keeping it here takes it
+out of the queue by construction. The coordinator owns it.
 
 - Part 1 is a deploy: `wrangler deploy` is in `.agent/policy.yaml`
   `blocked_without_approval`.
 - Part 2 changes only `.github/**` and `.agent/deploy.yaml`, which
   `.agent/pr-policy.yaml` lists as `human_only_paths`.
 
-The GitHub seeder does not read a `labels:` metadata line; only the local
-ledger selector does. So nothing in this file can hold it on the GitHub
-queue. And with no `## Provider` section, a seeded copy would fall to the repo
-default provider and could be queued. Therefore:
-
-- The coordinator seeds only 069, 070 and 071, with a run scoped to those
-  files. It never passes this file to `rucksack github issues seed`.
-- If this spec is ever seeded by mistake, the coordinator immediately applies
-  `rucksack-needs-human` and `rucksack-blocked` to that GitHub issue and
-  removes `rucksack-queued`.
-- Part 2's PR is human-merge-only: apply `rucksack-human-merge`.
+Do not move this file into `docs/issues/`. If Part 2 is ever turned into
+an issue spec, it needs its own mechanical hold that the seeder honours.
+Part 2's PR is human-merge-only: apply `rucksack-human-merge`.
 
 ## Goal
 
@@ -111,8 +106,8 @@ PR #222, "fix: port trusted publisher closure boundary" (open since
 `.github/workflows/agent-evidence-publisher.yml`. That is the publisher for
 **PR evidence**: it revalidates a candidate's evidence artifact and posts a
 check. It does not build or deploy the site, and it holds no Cloudflare
-credential. It is **not** the publisher half of this spec. This spec neither
-builds on it nor supersedes it, and the two touch no common file. This spec
+credential. It is **not** the publisher half of this plan. This plan neither
+builds on it nor supersedes it, and the two touch no common file. This plan
 reuses its patterns: a `workflow_run` trigger; a trusted checkout at
 `${{ github.workflow_sha }}`; binding to the event's exact head SHA; and
 `permissions: {}` by default with per-job grants. Another lane is bringing
@@ -125,121 +120,222 @@ reuses its patterns: a `workflow_run` trigger; a trusted checkout at
 The coordinator does all of this on the VM. It uses no GitHub workflow and
 no new credential.
 
-#### I1. One clean exact-head build
+Every `wrangler` call below uses the version pinned in `package-lock.json`,
+as `WR="npx --yes wrangler@4.135.0"`. That way it works even after the daily
+storage GC has deleted a worktree's `node_modules`. If `package-lock.json` at
+`$HEAD` pins a different version, use that one instead.
 
-Record `HEAD=$(git -C /home/ubuntu/code/erniesg/erniesg rev-parse origin/main)`.
-Create a detached worktree at `$HEAD` under the coordinator's scratch
-directory, and check that `git status --porcelain` is empty. Install with
-`pnpm import && pnpm install --frozen-lockfile --config.shamefully-hoist=true`.
-The hoist is needed: under pnpm's default layout, `astro build` fails with
-"Could not find Sharp" (seen on this VM on 2026-09-24). Do not commit the
-generated `pnpm-lock.yaml`. Then run `npm run build` (`build:production`), and
-record
-`DIST_DIGEST=$( (cd dist && find . -type f -print0 | sort -z | xargs -0 sha256sum) | sha256sum | cut -d' ' -f1)`. Preview and production
-get **this** `dist/`: the preview is a production build, not
-`build:staging`, so what the owner reviews is what gets promoted.
+#### I1. One clean exact-head build, saved as the artifact
+
+1. Record `HEAD=$(git -C /home/ubuntu/code/erniesg/erniesg rev-parse origin/main)`,
+   `SHA8=${HEAD:0:8}` and
+   `ART=/home/ubuntu/.local/share/rucksack/deployments/erniesg-$SHA8`, then
+   run `mkdir -p "$ART"`. `$ART` is outside anything the daily storage GC
+   removes.
+2. Create a detached worktree at `$HEAD` under the coordinator's scratch
+   directory, and check that `git status --porcelain` is empty.
+3. Install with
+   `pnpm import && pnpm install --frozen-lockfile --config.shamefully-hoist=true`.
+   The hoist is needed: under pnpm's default layout, `astro build` fails with
+   "Could not find Sharp" (seen on this VM on 2026-09-24). Do not commit the
+   generated `pnpm-lock.yaml`.
+4. Run `npm run build` (`build:production`). Preview and production both get
+   this production build, not `build:staging`, so what the owner reviews is
+   what gets promoted.
+5. Bundle the Worker without uploading it:
+   `$WR deploy --dry-run --outdir "$ART/worker" --config wrangler.production.jsonc`.
+   The `main` entry is the same in both configs, and `vars` are applied at
+   deploy time, not in the bundle, so one bundle serves both Workers. The
+   outdir must contain only `index.js` and `index.js.map`. If it holds any
+   other module file, stop and report it: `--no-bundle` would not upload that
+   file.
+6. Complete the artifact in `$ART`. It contains:
+   - `dist/` (copied with `cp -a dist "$ART/dist"`);
+   - `worker/` (from step 5);
+   - `migrations/` (copied from the worktree);
+   - two derived configs, `wrangler.jsonc` and
+     `wrangler.production.jsonc`. Each is copied from the worktree with one
+     line changed, `"main": "./src/worker/index.ts"` →
+     `"main": "./worker/index.js"`. Their `assets.directory` (`./dist`) and
+     `migrations_dir` (`migrations`) already resolve inside `$ART`. Check
+     that `diff` against the original shows exactly that one line.
+   - `HEAD`, a file containing the full commit SHA.
+7. Write the manifest, then its digest:
+   `(cd "$ART" && find . -path ./.wrangler -prune -o -type f ! -name MANIFEST.sha256 -print0 | sort -z | xargs -0 sha256sum) > "$ART/MANIFEST.sha256"`,
+   then `ARTIFACT_DIGEST=$(sha256sum "$ART/MANIFEST.sha256" | cut -d' ' -f1)`.
+   Do not make `$ART` read-only: `wrangler` writes its scratch directory,
+   `.wrangler/`, next to the config. That directory is the only path left
+   out of the manifest.
+
+**Verify the artifact before every deploy (I3 and I6).** Both checks must
+pass:
+- `(cd "$ART" && sha256sum --quiet -c MANIFEST.sha256)`;
+- the file list equals the manifest's list:
+  `diff <(cd "$ART" && find . -path ./.wrangler -prune -o -type f ! -name MANIFEST.sha256 -print | sort) <(awk '{print $2}' "$ART/MANIFEST.sha256" | sort)`.
+
+Also check that `sha256sum MANIFEST.sha256` still equals
+`ARTIFACT_DIGEST`. If `$ART` is missing, or any check fails, **stop**: do
+not deploy, and **never rebuild silently**. Post the failure on the
+promotion issue. Rebuilding to produce a new artifact means a new preview
+and an update to the same ask, so the owner approves the digest that will
+actually ship.
 
 #### I2. Read-only preconditions, before the ask
 
-Run each of these from the worktree, and keep the output:
-- `npx wrangler d1 migrations list margin-db --remote --config wrangler.production.jsonc`
-- `npx wrangler d1 migrations list margin-db-stg --remote --config wrangler.jsonc`
-- `npx wrangler secret list --config wrangler.production.jsonc` (names only)
-- `npx wrangler secret list --config wrangler.jsonc` (names only)
-- `npx wrangler deployments list --config wrangler.production.jsonc`, to
-  record the current production version id for rollback.
+Run each of these from `$ART`, and keep the output:
+- `$WR d1 migrations list margin-db --remote --config wrangler.production.jsonc`
+- `$WR d1 migrations list margin-db-stg --remote --config wrangler.jsonc`
+- `$WR secret list --config wrangler.production.jsonc` (names only)
+- `$WR secret list --config wrangler.jsonc` (names only)
+- `$WR deployments list --config wrangler.production.jsonc`. From the
+  current deployment, record the **version id** (not the deployment id) as
+  `PREV_VERSION`, for rollback.
 
 Compare the secret names with the five `WORKOS_*` names above. A command
 that fails for lack of permission is recorded as *could not be evaluated*,
 with the error. It is not recorded as "fine" or as "missing".
 
-#### I3. Preview deploy
+#### I3. Preview deploy of the saved artifact
 
-Deploy that `dist/` to `erniesg-workers-preview`:
-`npx wrangler deploy --config wrangler.jsonc --message "preview $HEAD"`.
-Do not re-run the build: `wrangler deploy` bundles `src/worker/index.ts`
-from the same worktree and uploads the existing `dist/`. If `margin-db-stg`
-has an unapplied migration, the coordinator applies it to the **preview**
-database only (`npx wrangler d1 migrations apply margin-db-stg --remote --config wrangler.jsonc`),
-since preview data is disposable. Then run
+After the artifact check passes, run from `$ART`:
+
+```bash
+$WR deploy --config wrangler.jsonc --no-bundle --message "preview $HEAD $ARTIFACT_DIGEST"
+```
+
+`--no-bundle` uploads `worker/index.js` as it is, with the assets in
+`./dist`, so nothing is rebuilt.
+
+If `margin-db-stg` has an unapplied migration, apply it to the **preview**
+database first: `$WR d1 migrations apply margin-db-stg --remote --config wrangler.jsonc`.
+Preview data is disposable, so one retry is allowed. If the retry also
+fails, stop and post the error on the promotion issue as *failed*. That is a
+different state from *could not be evaluated*.
+
+Then, from a worktree at `$HEAD` (recreate it and reinstall if the GC has
+removed it; the verifier is not part of the artifact), run
 `npm run worker:verify -- --base https://erniesg-workers-preview.erniesg.workers.dev --expect workers`,
 and check that `/books/build-a-coding-agent/` returns 200.
 
 #### I4. Visible-change diff
 
-Run this from the worktree. It needs no token:
+Run this from a worktree at `$HEAD`. It needs no token:
 
 ```bash
+set -euo pipefail
 PREVIEW=https://erniesg-workers-preview.erniesg.workers.dev
-routes() { curl -s "$1/sitemap-index.xml" | grep -o '<loc>[^<]*' | sed 's#<loc>##' \
-  | while read -r s; do curl -s "$1/${s#https://ernie.sg/}"; done \
-  | grep -o '<loc>[^<]*' | sed 's#<loc>https://ernie.sg##' | sort -u; }
-routes https://ernie.sg > prod.txt; routes "$PREVIEW" > preview.txt
+get() { curl -fsS --retry 2 --max-time 30 "$1"; }
+routes() {
+  local index subs s
+  index=$(get "$1/sitemap-index.xml")
+  subs=$(printf '%s\n' "$index" | grep -o '<loc>[^<]*' | sed 's#<loc>https://ernie.sg/##')
+  [ -n "$subs" ] || { echo "no sub-sitemaps at $1" >&2; exit 1; }
+  for s in $subs; do get "$1/$s"; done \
+    | grep -o '<loc>[^<]*' | sed 's#<loc>https://ernie.sg##' | sort -u
+}
+text_hash() {
+  get "$1" | python3 -c 'import sys,re,hashlib;h=sys.stdin.read();h=re.sub(r"(?s)<(script|style)\b.*?</\1>","",h);print(hashlib.sha256(" ".join(re.sub(r"<[^>]+>"," ",h).split()).encode()).hexdigest())'
+}
+routes https://ernie.sg > prod.txt
+routes "$PREVIEW" > preview.txt
 [ -s prod.txt ] && [ -s preview.txt ] || { echo "empty route list: refetch" >&2; exit 1; }
-comm -13 prod.txt preview.txt > added.txt; comm -23 prod.txt preview.txt > removed.txt
-comm -12 prod.txt preview.txt | while read -r r; do
-  a=$(curl -s "https://ernie.sg$r" | python3 -c 'import sys,re,hashlib;h=sys.stdin.read();h=re.sub(r"(?s)<(script|style)\b.*?</\1>","",h);print(hashlib.sha256(" ".join(re.sub(r"<[^>]+>"," ",h).split()).encode()).hexdigest())')
-  b=$(curl -s "$PREVIEW$r" | python3 -c 'import sys,re,hashlib;h=sys.stdin.read();h=re.sub(r"(?s)<(script|style)\b.*?</\1>","",h);print(hashlib.sha256(" ".join(re.sub(r"<[^>]+>"," ",h).split()).encode()).hexdigest())')
-  [ "$a" = "$b" ] || echo "$r"; done > changed.txt
+comm -13 prod.txt preview.txt > added.txt
+comm -23 prod.txt preview.txt > removed.txt
+: > changed.txt
+while read -r r; do
+  [ "$(text_hash "https://ernie.sg$r")" = "$(text_hash "$PREVIEW$r")" ] || echo "$r" >> changed.txt
+done < <(comm -12 prod.txt preview.txt)
 git log --first-parent --since=2026-07-08 --format='%h %s' "$HEAD" -- src public astro.config.ts wrangler.jsonc wrangler.production.jsonc migrations > features.txt
 ```
 
-An empty route list means the fetch failed, not that there are no
-routes. This happened once in testing on 2026-09-24, so the guard refuses to
-go on. The ask summarizes these files: routes added (with counts per top-level
+Any failed fetch (a 404 or 5xx sub-sitemap or page) stops the script, so a
+partial route list is refused the same way an empty one is. One test run on
+2026-09-24 did return an empty list.
+
+The ask summarizes these files: routes added (with counts per top-level
 section, for example `/books/**`), routes removed, the number of pages
-changed plus the first 20, and a short list of user-visible features
-drawn from `features.txt` (books, the DSA practice book, margin, and so
-on). Production's deployed commit is unknown. The last recorded version is
-from 2026-07-11, and the served content falls between the 2026-07-08 and
+changed plus the first 20, and a short list of user-visible features drawn
+from `features.txt` (books, the DSA practice book, margin, and so on).
+Production's deployed commit is unknown. The last recorded version is from
+2026-07-11, and the served content falls between the 2026-07-08 and
 2026-08-28 merges. So the feature list starts at 2026-07-08 and says so.
 
 #### I5. Exactly one owner ask
 
-Open one GitHub issue, "Promote main to
-ernie.sg", with the marker `<!-- site-promote -->`. Update it in place;
-never open a second one. It contains:
+Open one GitHub issue, "Promote main to ernie.sg", with the marker
+`<!-- site-promote -->`. Update it in place; never open a second one. It
+contains:
 - the preview URL;
-- `$HEAD` and `DIST_DIGEST`;
+- `$HEAD`, `ARTIFACT_DIGEST` and the artifact path;
 - the diff summary from I4;
 - the precondition results from I2.
 
-The owner's approval covers exactly what the ask states, and nothing else
-is asked later:
+The owner's approval covers exactly what the ask states, and nothing else is
+asked later:
 - If `margin-db` has an unapplied migration, the ask names the file (for
   example `migrations/0001_margin_annotations.sql`), and approval covers
   applying exactly that file to `margin-db`.
 - If a `WORKOS_*` name is missing on `erniesg-workers`, the ask says that
-  margin sign-in will be unavailable in production until it is set. It
-  does not ask the owner to set it now.
-- Approval is a comment by `erniesg` on that issue that says "approve".
-  Do not ask for a `/rucksack` command, because rucksack automation acts on
+  margin sign-in will be unavailable in production until it is set. It does
+  not ask the owner to set it now.
+- Approval is a comment by `erniesg` on that issue that says "approve". Do
+  not ask for a `/rucksack` command, because rucksack automation acts on
   those.
 
 #### I6. Promotion, on approval only
 
-From the same worktree, still at `$HEAD`:
-1. recompute the digest and check it equals `DIST_DIGEST`;
-2. apply the named migration, if the ask named one:
-   `npx wrangler d1 migrations apply margin-db --remote --config wrangler.production.jsonc`;
-3. `npx wrangler deploy --config wrangler.production.jsonc --message "promote $HEAD"`;
-4. `npm run worker:verify -- --base https://ernie.sg --expect workers`.
+From `$ART`, in this order:
 
-Always deploy the **approved** `$HEAD`, even if `origin/main` has moved
-since the ask; newer commits wait for the next promotion. If the digest in
-step 1 differs, the worktree has changed. Recreate it at `$HEAD`, rebuild,
-and redeploy and re-verify preview. Record both digests on the issue, then
-continue. The approval is for the head, so this needs no new ask.
+1. Verify the artifact (the checks under I1). If they fail, stop.
+2. If the ask named a migration:
+   1. record a D1 Time Travel bookmark first:
+      `$WR d1 time-travel info margin-db --config wrangler.production.jsonc`,
+      and save the bookmark as `BOOKMARK`;
+   2. apply it: `$WR d1 migrations apply margin-db --remote --config wrangler.production.jsonc`;
+   3. **if the apply exits non-zero: do not deploy, and do not retry.**
+      `0001_margin_annotations.sql` has no `IF NOT EXISTS`, so a retry after a
+      partial apply fails with "already exists". Re-run
+      `$WR d1 migrations list margin-db --remote --config wrangler.production.jsonc`.
+      Post its output on the promotion issue, with `BOOKMARK` and the restore
+      command,
+      `$WR d1 time-travel restore margin-db --bookmark=<BOOKMARK> --config wrangler.production.jsonc`,
+      marked as an owner-only action. Record the state as *failed*, not
+      *could not be evaluated*, and stop. This is a stop, not a second
+      decision: the promotion ends there.
+3. Deploy: `$WR deploy --config wrangler.production.jsonc --no-bundle --message "promote $HEAD $ARTIFACT_DIGEST"`.
+4. From a worktree at `$HEAD`, run
+   `npm run worker:verify -- --base https://ernie.sg --expect workers`.
+
+Always deploy the **approved** artifact, even if `origin/main` has moved
+since the ask. Newer commits wait for the next promotion.
 
 #### I7. Receipts and rollback
 
-Record, in a comment on the promotion issue
-and in `docs/deployment/cloudflare-workers-migration.md` under a new
-"Promotions" table: `$HEAD`, `DIST_DIGEST`, the preview and production
-Worker version ids, the previous production version id, the migration
-applied (if any), and the verifier results. The rollback is
-`npx wrangler rollback <previous-version-id> --config wrangler.production.jsonc`,
-and it runs only if the owner asks. Close the issue after the receipt.
+Record the receipt in a comment on the promotion issue, and in
+`docs/deployment/cloudflare-workers-migration.md` under a new "Promotions"
+table. It contains:
+- `$HEAD` and `ARTIFACT_DIGEST`;
+- the preview and production Worker version ids;
+- `PREV_VERSION`;
+- the migration applied (if any) and `BOOKMARK`;
+- the verifier results.
+
+The rollback, which runs only if the owner asks, is:
+
+```bash
+$WR rollback "$PREV_VERSION" --config wrangler.production.jsonc --message "rollback to $PREV_VERSION" --yes
+```
+
+It restores the previous Worker version, **not** the database. A migration
+applied in I6 stays. That is acceptable for `0001_margin_annotations.sql`,
+which only adds a table, indexes and triggers, because the old Worker
+version has no D1 binding and never reads them. If a future promotion applies
+a non-additive migration, the receipt must say so, and the rollback note
+must name `BOOKMARK` and the restore command.
+
+Close the issue after the receipt. Keep `$ART` until the next promotion's
+receipt is recorded, then remove it with
+`rm -rf -- "/home/ubuntu/.local/share/rucksack/deployments/erniesg-${OLD_SHA8:?}"`.
 
 ### Part 2: Later, the automated path (not part of this release)
 
@@ -445,9 +541,12 @@ required-reviewer rule, the token, and the account variable.
 
 - Part 1: stop before deploying to `erniesg-workers` without the owner's
   approval on the promotion issue, or deploying any head or build other than
-  the approved `$HEAD` with a matching `DIST_DIGEST`.
+  the approved artifact `$ART`, with its manifest check passing and
+  `ARTIFACT_DIGEST` unchanged. Never rebuild silently.
 - Part 1: stop before applying any production D1 migration that the ask did
-  not name.
+  not name, or before applying one without first recording a Time Travel
+  bookmark. After a failed production apply, stop: do not deploy and do not
+  retry (I6).
 - Part 2 (the CI path): stop before deploying production from anywhere other
   than the approved `site-production` job, and before using the VM's
   personal Wrangler OAuth login in any workflow. The manual-deploy ban and
@@ -492,5 +591,5 @@ preview would close the gap, at the cost of a separate D1 and a separate
 The held workflow's own message named this design: "a reviewed tokenless
 build artifact and a separate fixed publisher boundary". The deploy that
 actually happened, a laptop running `wrangler deploy`, had neither. This
-spec builds the path the hold asked for, and makes the owner's approval the
+plan builds the path the hold asked for, and makes the owner's approval the
 only way into production.

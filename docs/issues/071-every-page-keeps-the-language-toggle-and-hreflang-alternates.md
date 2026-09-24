@@ -29,7 +29,7 @@ against production:
   `LanguageToggle` and `ModeToggle` outside `MobileMenu`. That contradicts
   #341's observed failure ("at 390px both controls are folded into the
   hamburger menu"). The screenshots were most likely taken on the stale
-  production build (see spec 072). #341's in-post row is still wanted; only
+  production build (see `docs/deployment/interim-promotion-and-deploy-path.md`). #341's in-post row is still wanted; only
   that claim does not reproduce on main.
 - **hreflang exists only on blog posts.** The 100 post-locale pages (25
   published families × 4 locales) carry `en`/`zh`/`ko`/`ja`/`x-default`. No
@@ -100,14 +100,17 @@ pass `alternates`.
    | Page kind | Examples | `data-content-locale` | `<html lang>` |
    |---|---|---|---|
    | Per-locale post page | `/blog/<slug>/`, `/blog/<slug>/zh/` | the page's locale | always that page's locale (`en`, `zh-Hans`, `ja`, `ko`). The URL is the translation, so choosing another locale navigates away rather than relabelling the page. |
-   | Content page with no translation | `/books/**`, `/library/**`, `/papers/**`, `/study/**` (everything on `ReadingLayout`) | `en` | always `en`, whatever the reader chose. The body is English, and only the chrome changes. |
+   | Content page with no translation | `/books/**`, `/library/**`, `/papers/**` (everything on `ReadingLayout`), and `/study/**`, whose one page, `src/pages/study/experiments/pdf-to-epub.astro`, uses `Layout` directly and so must pass `lang="en"` itself | `en` | always `en`, whatever the reader chose. The body is English, and only the chrome changes. |
    | Single-URL chrome page | `/`, `/blog/`, `/blog/<n>/`, `/tags/**`, `/authors/**`, `/about/`, `/404.html` | **not rendered** | the reader's choice (`zh-Hans` for `zh`, and so on), as today. The chrome and the cards are that page's translation, switched client-side. |
 
    Implement it this way:
    - `Layout` renders `data-content-locale` **only when the page passes
      `lang` explicitly**. Do not render it from the prop's `'en'` default,
      which would pin the single-URL pages to English.
-   - The post page and `ReadingLayout` pass `lang` explicitly.
+   - The post page, `ReadingLayout`, and `src/pages/study/experiments/pdf-to-epub.astro`
+     pass `lang` explicitly. The study page passes `lang="en"` until spec
+     061 removes it. A page that uses `Layout` directly and has English-only
+     content must pass `lang` itself; nothing infers it.
    - The header's `updateStaticText` sets `document.documentElement.lang`
      from the chosen locale only when `<html>` has no `data-content-locale`.
      Otherwise it leaves the server-rendered value alone.
@@ -125,7 +128,10 @@ pass `alternates`.
      each `href` resolving to a built page, and exactly one `x-default`;
    - if the page has no versions: it matches an allowlist entry, and it
      emits no `hreflang`;
-   - `<html lang>` matches the page's `data-content-locale`.
+   - where `<html>` has `data-content-locale`: `<html lang>` equals
+     `LOCALE_HTML_LANG[data-content-locale]` from `src/lib/i18n.ts`
+     (`zh` → `zh-Hans`; `en`, `ja` and `ko` map to themselves). Pages without
+     the attribute are not checked by this rule.
 
    The checker prints a per-rule count and each failing path with the rule it
    broke.

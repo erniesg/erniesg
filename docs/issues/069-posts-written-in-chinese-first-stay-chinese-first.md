@@ -349,7 +349,9 @@ the dropdown labels; `tools/site/check-post-families.mjs` and its test; the
   translation tool. Stop before editing any `zh.mdx`, `ja.mdx` or `ko.mdx`
   body.
 - Stop before building the in-post language or theme row. That is #341.
-- Stop before deploying. Production and preview deploys belong to spec 072.
+- Stop before deploying. Production and preview deploys follow
+  `docs/deployment/interim-promotion-and-deploy-path.md` and are the
+  coordinator's job.
 
 ## Human clarification protocol
 

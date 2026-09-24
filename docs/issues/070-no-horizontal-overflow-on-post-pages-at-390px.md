@@ -99,8 +99,13 @@ which is why the book pages do not overflow.
   - Viewport 390×844. Each test does this, in order:
     1. `page.goto(path, { waitUntil: 'load' })`;
     2. `await page.evaluate(() => document.fonts.ready)`;
-    3. wait for hydration, meaning every `astro-island` has lost its `ssr`
-       attribute (`await page.waitForFunction(() => !document.querySelector('astro-island[ssr]'))`);
+    3. wait for hydration of the islands that hydrate on load:
+       `await page.waitForFunction(() => !document.querySelector('astro-island[ssr][client="load"]'), null, { timeout: 10_000 })`.
+       Scope the wait to `client="load"`: a `client:visible`, `client:idle`
+       or `client:media` island may never hydrate off-screen, and an
+       unscoped wait would hang. Today every island in `src/` is
+       `client:load` (15 uses). If the wait times out, fail with the
+       `component-url` of each island still carrying `ssr`;
     4. for the 200% pass only, set
        `document.documentElement.style.fontSize = '200%'`, then
        `await document.fonts.ready` again;

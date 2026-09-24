@@ -780,11 +780,44 @@ describe('the reading shell belongs to the site', () => {
     expect(rail).toMatch(OPEN_DISCLOSURE)
   })
 
-  it.skipIf(!builtSite)('reserves the margin as an empty landmark', () => {
+  // #309 reserved this column empty so the annotation layer could mount into it
+  // without moving the text. It is mounted now, so "empty" is no longer the
+  // invariant — "nothing but the margin layer" is. A column that grows site
+  // chrome is the regression this was guarding against, and still is.
+  it.skipIf(!builtSite)('holds the margin layer and nothing else', () => {
     for (const page of [distPage('books'), distPage('books', SLUG, SAMPLE)]) {
-      expect(page).toMatch(/<aside[^>]*data-margin-mount[^>]*>\s*<\/aside>/)
       expect(page).toContain('id="margin-root"')
+
+      const aside = page.match(/<aside[^>]*data-margin-mount[^>]*>([\s\S]*?)<\/aside>/)
+      expect(aside, 'the margin landmark must still be an <aside>').not.toBeNull()
+
+      const inside = aside![1].trim()
+      // Astro emits the component's own module script beside the element it
+      // renders, so that is part of the layer rather than something the column
+      // grew. Everything else has to be the rail and nothing but.
+      const scripts = [...inside.matchAll(/<script\b[^>]*><\/script>/g)]
+      for (const script of scripts) {
+        expect(script[0], 'only the layer\'s own module script belongs here')
+          .toContain('type="module"')
+      }
+      const withoutScripts = inside.replace(/<script\b[^>]*><\/script>/g, '').trim()
+
+      expect(withoutScripts).toMatch(/^<margin-rail[^>]*><\/margin-rail>$/)
+      expect(withoutScripts).toContain('document-uri=')
     }
+  })
+
+  // Not conditional on a build: it reads the shell, so it runs everywhere.
+  it('still reserves the column at the same width', () => {
+    // The geometry belongs to the shell, not to what mounts in it: the layer
+    // arriving must not have moved the text.
+    const layout = readFileSync(
+      path.join(ROOT, 'src', 'layouts', 'ReadingLayout.astro'),
+      'utf8',
+    )
+
+    expect(layout).toContain('grid-template-columns: 15rem minmax(0, 44rem) 18rem')
+    expect(layout).toMatch(/\.reading-margin \{\s*display: none;/)
   })
 })
 

@@ -6,10 +6,11 @@
  * some text and knows nothing about books, papers or posts — a surface that
  * cannot use it is a surface that has diverged for no reason.
  *
- * The margin column is an empty landmark on purpose. It reserves its width now
- * so that the annotation layer can mount into it later without shifting the
- * text a single pixel.
+ * The margin column reserved its width before anything could use it. The
+ * annotation layer now mounts into it, and mounts nothing else: the column's
+ * geometry is unchanged, so the text still does not move a pixel.
  */
+import MarginMount from '@/components/margin/MarginMount.astro'
 import Layout from '@/layouts/Layout.astro'
 
 type Props = {
@@ -76,6 +77,7 @@ const {
       data-document-uri={documentUri}
       aria-label="Margin"
     >
+      <MarginMount documentUri={documentUri} />
     </aside>
   </div>
 </Layout>
@@ -119,7 +121,7 @@ const {
     --reading-pin: calc(var(--reading-header) + var(--reading-gap));
   }
 
-  /* Empty by design: the annotation layer mounts here. Below the breakpoint it
+  /* The annotation layer mounts here. Below the breakpoint the column
      collapses entirely, matching the reading rail the local preview uses. */
   .reading-margin {
     display: none;

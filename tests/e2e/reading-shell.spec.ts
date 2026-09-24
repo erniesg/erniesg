@@ -1,11 +1,18 @@
 import { expect, test, type Page } from '@playwright/test'
+import { installStaticRoutes } from './static-build'
 
 /**
  * The three-column reading shell, in a browser.
  *
- * The margin column is empty on purpose: it reserves its width now so that
- * mounting the annotation layer later moves the text by nothing.
+ * The margin column reserved its width before it held anything, so that
+ * mounting the annotation layer into it moved the text by nothing.
  */
+
+// A no-op unless `SRT_STATIC_BUILD_DIR` is set, in which case these run
+// against the built site rather than a dev server.
+test.beforeEach(async ({ page }) => {
+  await installStaticRoutes(page)
+})
 
 const BOOK = '/books/build-a-coding-agent/'
 const CHAPTER = '/books/build-a-coding-agent/ch12-hash-maps/'
@@ -44,7 +51,9 @@ test.describe('the reading shell', () => {
     await expect(page.locator('[data-margin-mount]')).toBeHidden()
   })
 
-  test('reserves the margin width without holding content', async ({ page }) => {
+  test('holds the annotation layer in the width it reserved', async ({
+    page,
+  }) => {
     await page.setViewportSize({ width: 1440, height: 1000 })
     await page.goto(CHAPTER)
 
@@ -52,7 +61,10 @@ test.describe('the reading shell', () => {
     const box = await margin.boundingBox()
 
     expect(box?.width ?? 0).toBeGreaterThan(100)
-    expect((await margin.innerHTML()).trim()).toBe('')
+    // The column was reserved for exactly this. Its only child is the margin
+    // element, which draws inside a shadow root, so the shell's own markup is
+    // as bare as it was when the column was empty.
+    await expect(margin.locator('margin-rail')).toHaveCount(1)
   })
 
   test('does not scroll sideways at 375px', async ({ page }) => {

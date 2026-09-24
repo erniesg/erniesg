@@ -1,0 +1,37 @@
+{
+  "id": "halving-the-log",
+  "type": "walk",
+  "title": "Six looks into a log of 2,400,000 lines",
+  "caption": "Searching a log written in time order for the first line at or after 03:14:00. Each step reads one line, in the middle of whatever is still in play, and the timestamp there throws away the half that cannot hold the answer. Nothing is compared twice and nothing is compared cleverly: the only work per step is one look. Six steps take the window from 2,400,000 lines to 37,499. Twenty-two take it to one.",
+  "sequence": [
+    "line 1,199,999",
+    "line 599,999",
+    "line 299,999",
+    "line 449,999",
+    "line 374,999",
+    "line 337,499"
+  ],
+  "markers": [{ "name": "looking at", "from": 0, "to": 5 }],
+  "state": [
+    {
+      "label": "time on that line",
+      "values": ["11:59:59", "05:59:59", "02:59:59", "04:29:59", "03:44:59", "03:22:29"]
+    },
+    {
+      "label": "so",
+      "values": [
+        "after 03:14 — drop the bottom half",
+        "after 03:14 — drop the bottom half",
+        "before 03:14 — drop the top half",
+        "after 03:14 — drop the bottom half",
+        "after 03:14 — drop the bottom half",
+        "after 03:14 — drop the bottom half"
+      ]
+    },
+    {
+      "label": "lines still in play",
+      "values": ["1,199,999", "599,999", "299,999", "149,999", "74,999", "37,499"]
+    }
+  ],
+  "answer": { "label": "looks to pin down one line in 2,400,000", "value": 22 }
+}

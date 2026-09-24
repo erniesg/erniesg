@@ -19,7 +19,7 @@ const DEFAULT_SCHEMA_PATH = resolve(
 const DEFAULT_SCHEMA_ID =
   'https://ernie.sg/schemas/pdf-benchmark-readiness-registry-1.0.0.json'
 const DEFAULT_SCHEMA_SHA256 =
-  '3dd77733e86da34b9810afeab607c1f325d4b70fa43c2c8116dd30d3cd5c4ff9'
+  '3303e6f7041a8a72206c3be933e7d2f3c09026d2c686704e833be43fb981828a'
 const PUBLIC_ERROR_CODE = /^(?:INVALID|MISSING|PDF)_[A-Z0-9_]+$/
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/
 const SAFE_FAILURE_CLASS = /^[a-z][a-z0-9]*(?:-[a-z0-9]+){0,11}$/
@@ -48,6 +48,12 @@ const REQUIRED_METRICS = [
   'abstention-risk-coverage',
   'review-gate-precision-recall',
   'package-integrity',
+]
+const PACKAGE_INTEGRITY_TEST_DEPENDENCIES = [
+  'tools/pdf-private-fidelity.cases-support.mjs',
+  'tools/pdf-private-fidelity-semantic.cases.mjs',
+  'tools/pdf-private-fidelity-receipt.cases.mjs',
+  'tools/pdf-private-fidelity-boundary.cases.mjs',
 ]
 
 function sha256(value) {
@@ -309,12 +315,29 @@ async function validateMetricImplementations(registry) {
   const verifiedMetricIds = []
   for (const metric of registry.metricImplementations) {
     if (metric.status !== 'available') continue
+    if (metric.id === 'package-integrity') {
+      const dependencies = metric.testDependencies
+      if (
+        !Array.isArray(dependencies) ||
+        dependencies.length !== PACKAGE_INTEGRITY_TEST_DEPENDENCIES.length ||
+        new Set(dependencies.map((dependency) => dependency.path)).size !==
+          dependencies.length ||
+        !PACKAGE_INTEGRITY_TEST_DEPENDENCIES.every((path) =>
+          dependencies.some((dependency) => dependency.path === path),
+        )
+      ) {
+        invalid('PDF_BENCHMARK_METRIC_BINDING_MISMATCH')
+      }
+    }
     await Promise.all([
       verifyRepositoryFileBinding(
         metric.implementation,
         metric.implementationSha256,
       ),
       verifyRepositoryFileBinding(metric.test, metric.testSha256),
+      ...(metric.testDependencies ?? []).map((dependency) =>
+        verifyRepositoryFileBinding(dependency.path, dependency.fileSha256),
+      ),
     ])
     if (metric.kind === 'calibrated-judge') {
       const [calibrationEvidence, executionReceipt] = await Promise.all([

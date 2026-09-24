@@ -578,6 +578,18 @@
         "testSha256": {
           "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
         },
+        "testDependencies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "fileSha256"],
+            "properties": {
+              "path": { "$ref": "#/$defs/path" },
+              "fileSha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        },
         "calibration": {
           "oneOf": [{ "$ref": "#/$defs/judgeCalibration" }, { "type": "null" }]
         }
@@ -593,7 +605,26 @@
               "implementation": { "$ref": "#/$defs/path" },
               "implementationSha256": { "$ref": "#/$defs/sha256" },
               "test": { "$ref": "#/$defs/path" },
-              "testSha256": { "$ref": "#/$defs/sha256" }
+              "testSha256": { "$ref": "#/$defs/sha256" },
+              "testDependencies": { "type": "array" }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["id", "status"],
+            "properties": {
+              "id": { "const": "package-integrity" },
+              "status": { "const": "available" }
+            }
+          },
+          "then": {
+            "required": ["testDependencies"],
+            "properties": {
+              "testDependencies": {
+                "minItems": 4,
+                "uniqueItems": true
+              }
             }
           }
         },

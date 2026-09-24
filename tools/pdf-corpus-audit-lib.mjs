@@ -1932,6 +1932,10 @@ export async function auditPdfPath(
     ) {
       throw error
     }
+    if (process.env.PDF_CORPUS_AUDIT_DEBUG_ERRORS === '1') {
+      // Opt-in operator diagnostics only: stderr, never the report.
+      console.error('[pdf-corpus-audit] audit failure:', error)
+    }
     return {
       document: createSafeAuditFailureDocument(
         stableBasename,

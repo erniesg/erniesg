@@ -1,0 +1,12 @@
+{
+  "id": "three-kinds",
+  "type": "cells",
+  "title": "Same symbol, different meaning",
+  "caption": "The type of a value decides what an operator does to it. + adds numbers and joins text; mixing the two is refused rather than guessed at. Crossing between kinds is something you ask for, with int(), str() or float().",
+  "cells": [
+    { "label": "int · 7", "note": "whole number. 2 + 3 is 5" },
+    { "label": "float · 7.5", "note": "has a decimal point. 7 / 2 is 3.5" },
+    { "label": "str · \"7\"", "note": "text. \"2\" + \"3\" is \"23\"" },
+    { "label": "bool · True", "note": "the answer to a question. 7 == 7" }
+  ]
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import rawPaper from './papers/semantic-responsive-typesetting.json'
-import { createDemoAnnotations } from './annotations'
+import { createDemoAnnotations } from '../annotations/annotations'
 import {
   evaluateSrt,
   type CompositionTiming,

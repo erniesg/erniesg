@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { createLayoutVersion } from './annotations'
+import { createLayoutVersion } from '../annotations/annotations'
 import {
   canonicalContentHash,
   canonicalNodeContentHash,

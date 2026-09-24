@@ -1,0 +1,15 @@
+{
+  "id": "counting-the-field",
+  "type": "walk",
+  "title": "Sorting without comparing anything",
+  "caption": "Five riders come off the course carrying lap counts 3, 1, 3, 0 and 2. Four numbers are chalked on the grass and each rider walks to the patch that matches the number in their hand. No rider is ever held up against another rider. Read the chalk marks left to right at the end and the field is in order. This only works because the numbers are small and dense: one patch of grass per possible value.",
+  "sequence": [3, 1, 3, 0, 2],
+  "markers": [{ "name": "rider", "from": 0, "to": 4 }],
+  "state": [
+    { "label": "chalk 0", "values": [0, 0, 0, 1, 1] },
+    { "label": "chalk 1", "values": [0, 1, 1, 1, 1] },
+    { "label": "chalk 2", "values": [0, 0, 0, 0, 1] },
+    { "label": "chalk 3", "values": [1, 1, 2, 2, 2] }
+  ],
+  "answer": { "label": "read the chalk left to right", "value": "0 1 2 3 3" }
+}

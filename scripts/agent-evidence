@@ -46,8 +46,67 @@ const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(".", "");
 const outDir = join(".agent", "evidence", stamp);
 mkdirSync(join(outDir, "logs"), { recursive: true });
 
-function sh(command) {
-  return spawnSync(command, { shell: true, encoding: "utf8", timeout: 900000 });
+// The old fixed per-lane ceiling was a coin flip on the trusted VM: the unit
+// suite measured 869-923 s there against it, so the lane was killed mid-run and
+// recorded a failure that said nothing about the branch.
+//
+// This is ONE budget shared by every lane, not a per-lane grant. Handing each
+// sequential lane the full amount would let four hung lanes total four budgets
+// and blow the supervision bound on the agent run, and because the
+// manifest is written only after the loop, the supervisor would kill the
+// worker without recording which lane hung.
+//
+// Sized to the required lane sequence, not to one lane: the `test` lane alone
+// measured 1_724_172 ms on the trusted VM, `build` runs before it, and the
+// association and unit lanes run first. `.agent/commands.yaml` gives these
+// lanes no timeout of their own, so this budget is the only one. The total,
+// plus the publisher's overhead, stays inside the supervision bound
+// (CANDIDATE_TIMEOUT_CEILING_MS in the publisher), which a test checks.
+//
+// This line is the single source of the budget. The trusted publisher
+// (`.github/workflows/agent-evidence-publisher.yml`) parses it from the pinned
+// default-branch copy of this file to size its outer bound on the producer, and
+// `tools/agent-evidence-budget.test.mjs` fails if any evidence file restates
+// the number instead of deriving it. Keep it one integer literal on one line.
+const DEFAULT_BUDGET_MS = 3_600_000;
+// Overridable so the skip path can be exercised by a test rather than only
+// reasoned about — it is the path that produced an invalid manifest, and it had
+// no coverage. Lowering it cannot manufacture a pass: a skipped required lane is
+// recorded as a failure, so a short budget makes the run fail, never succeed.
+// Nothing in `.github/workflows/` sets it.
+const TOTAL_BUDGET_MS = (() => {
+  const raw = Number(process.env.AGENT_EVIDENCE_BUDGET_MS);
+  return Number.isInteger(raw) && raw > 0 ? raw : DEFAULT_BUDGET_MS;
+})();
+const LANE_TIMEOUT_EXIT = 124;
+// The setup probes below (HEAD, remote, branch, dirty) run before the lane
+// budget exists. They must not inherit it: three stalled Git probes would
+// otherwise burn the whole supervisor allowance before any lane runs or any
+// manifest is written.
+const SETUP_PROBE_TIMEOUT_MS = 60_000;
+
+function sh(command, timeoutMs = SETUP_PROBE_TIMEOUT_MS) {
+  return spawnSync(command, { shell: true, encoding: "utf8", timeout: timeoutMs });
+}
+
+function timedOut(proc, deadline) {
+  // Node kills a timed-out child itself: error.code ETIMEDOUT, signal SIGTERM.
+  // The trusted runner's wrapper instead catches TimeoutExpired and returns an
+  // ordinary result with status 124 and neither field, so a predicate that
+  // checks only the Node shape never fires under revalidation.
+  // Deliberately NOT a bare `signal === "SIGTERM"` check: Node also terminates
+  // a child with SIGTERM when its output exceeds maxBuffer, reporting
+  // error.code ENOBUFS. Treating that as a timeout would rewrite an
+  // output-heavy failure to 124 and skip every later lane with the budget
+  // almost untouched.
+  // A 124 status alone is ambiguous: a lane's own command can exit 124 (GNU
+  // `timeout` inside an npm script). It counts as the budget only once the
+  // deadline has passed. Otherwise it is an ordinary lane failure, and later
+  // lanes still run.
+  return (
+    Boolean(proc.error && proc.error.code === "ETIMEDOUT")
+    || (proc.status === LANE_TIMEOUT_EXIT && Date.now() >= deadline)
+  );
 }
 
 function safeRepository(value) {
@@ -206,7 +265,16 @@ const evidenceRepo = safeRepository(process.env.GITHUB_REPOSITORY)
 const gitBranch = safeBranch(process.env.GITHUB_HEAD_REF)
   || safeBranch(process.env.GITHUB_REF_NAME)
   || safeBranch(sh("git branch --show-current").stdout);
-const dirty = sh("git status --short").stdout.trim().length > 0;
+const dirtyProbe = sh("git status --short");
+if (dirtyProbe.error || typeof dirtyProbe.status !== "number" || dirtyProbe.status !== 0) {
+  // An empty stdout from a killed or failed probe is indistinguishable from a
+  // clean tree. Fail closed rather than record an unestablished state as clean
+  // and let a passing manifest through on it.
+  const why = dirtyProbe.error ? `${dirtyProbe.error.code || dirtyProbe.error.name}` : `exit ${dirtyProbe.status}`;
+  console.error(`[agent-evidence] cannot establish worktree cleanliness: git status ${why}`);
+  process.exit(1);
+}
+const dirty = dirtyProbe.stdout.trim().length > 0;
 const startedAt = new Date();
 const results = [];
 let associationAudit = null;
@@ -246,11 +314,53 @@ if (selection.error || !selection.lanes || selection.lanes.length === 0) {
 
 const lanes = selection.lanes;
 
+const budgetDeadline = Date.now() + TOTAL_BUDGET_MS;
+const skipCaveats = [];
+let budgetSpentBy = "";
+let lastLaneId = "";
+
 for (const lane of lanes) {
   const laneStart = Date.now();
-  const proc = sh(lane.command);
+  const remaining = budgetDeadline - Date.now();
+  if (budgetSpentBy || remaining <= 0) {
+    if (!budgetSpentBy) budgetSpentBy = lastLaneId || "setup";
+    const why = `lane not run: ${lane.id}; the ${budgetSpentBy} lane consumed the shared ${TOTAL_BUDGET_MS} ms budget`;
+    skipCaveats.push(why);
+    // A skipped lane is recorded in `lanes` as a failure, and the manifest
+    // validator is why. `.github/workflows/agent-evidence.yml` requires
+    // `lanes_run` to equal the ids in `lanes` exactly, and allows a lane only
+    // `passed` or `failed` -- so a lane cannot be in one and not the other, and
+    // there is no `skipped` state to use. Keeping it out of `lanes` while naming
+    // it in `required_failures` made the two disagree and the validator threw
+    // the whole manifest away, losing the very evidence this records.
+    //
+    // "failed" is true in the sense the validator cares about: a required lane
+    // that did not pass. `duration_ms: 0`, the 124 exit and the log below are
+    // what distinguish "never started" from "ran and failed". A real `skipped`
+    // state would say it properly and needs a workflow change, which is owner
+    // ask #337.
+    const logPath = join(outDir, "logs", `${lane.id}.log`);
+    writeFileSync(logPath, `[agent-evidence] ${why}\n[agent-evidence] this lane was never started\n`);
+    results.push({
+      ...lane,
+      status: "failed",
+      exit_code: LANE_TIMEOUT_EXIT,
+      duration_ms: 0,
+      log_path: logPath,
+    });
+    continue;
+  }
+  lastLaneId = lane.id;
+  const proc = sh(lane.command, remaining > 0 ? remaining : 1);
   let exitCode = proc.status ?? 1;
+  if (timedOut(proc, budgetDeadline)) {
+    exitCode = LANE_TIMEOUT_EXIT;
+    budgetSpentBy = lane.id;
+  }
   let output = redact(`${proc.stdout || ""}${proc.stderr || ""}`);
+  if (budgetSpentBy === lane.id) {
+    output += `\n[agent-evidence] lane timed out against the shared ${TOTAL_BUDGET_MS} ms budget\n`;
+  }
   if (lane.id === "association-audit" && exitCode === 0) {
     try {
       const candidate = JSON.parse(proc.stdout || "");
@@ -286,6 +396,10 @@ for (const lane of lanes) {
   });
 }
 
+// Exactly what the manifest validator derives from `lanes`, and from the same
+// source, so the two cannot disagree: every required lane whose exit code is not
+// zero. A lane the budget skipped is in `results` with exit 124, so it is here
+// too, and the caveat beside it says it was never started.
 const requiredFailures = results
   .filter((lane) => lane.required && lane.exit_code !== 0)
   .map((lane) => lane.id);
@@ -308,7 +422,7 @@ const manifest = {
   duration_ms: endedAt.getTime() - startedAt.getTime(),
   agent_version: textHash(JSON.stringify(allLanes)),
   invocation,
-  lanes_run: lanes.map((lane) => lane.id),
+  lanes_run: results.map((lane) => lane.id),
   runner: {
     provider: process.env.AGENT_PROVIDER || (process.env.GITHUB_ACTIONS ? "github-actions" : "local"),
     os: process.platform,
@@ -321,7 +435,7 @@ const manifest = {
     ...modelConsultationArtifact,
     ...largeFiles.artifacts,
   ],
-  caveats: largeFiles.caveats,
+  caveats: [...largeFiles.caveats, ...skipCaveats],
   result: requiredFailures.length === 0 ? "passed" : "failed",
   required_failures: requiredFailures,
 };

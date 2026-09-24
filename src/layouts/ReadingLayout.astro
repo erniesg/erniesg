@@ -1,0 +1,180 @@
+---
+/**
+ * The three-column reading shell: navigation, text, margin.
+ *
+ * It belongs to the site, not to any one surface. It takes a document URI and
+ * some text and knows nothing about books, papers or posts — a surface that
+ * cannot use it is a surface that has diverged for no reason.
+ *
+ * The margin column reserved its width before anything could use it. The
+ * annotation layer now mounts into it, and mounts nothing else: the column's
+ * geometry is unchanged, so the text still does not move a pixel.
+ */
+import MarginMount from '@/components/margin/MarginMount.astro'
+import Layout from '@/layouts/Layout.astro'
+
+type Props = {
+  title: string
+  description: string
+  /** The stable identity annotations anchor to. Absolute. */
+  documentUri: string
+  canonicalPath?: string
+  image?: string
+  noindex?: boolean
+}
+
+const {
+  title,
+  description,
+  documentUri,
+  canonicalPath,
+  image,
+  noindex = false,
+} = Astro.props
+---
+
+<Layout
+  title={title}
+  description={description}
+  image={image}
+  canonicalPath={canonicalPath}
+  noindex={noindex}
+>
+  <slot name="head" slot="head" />
+
+  <div class="reading-shell" data-reading-shell data-document-uri={documentUri}>
+    <nav
+      class="reading-column reading-navigation"
+      data-reading-column="navigation"
+      aria-label="Contents"
+    >
+      <!-- Below the breakpoint this column stacks above the article, and a
+           long contents list would push the text off the first screens, so it
+           is a disclosure the reader can fold away and the styles cap its
+           height. It ships `open` because a closed disclosure hides its own
+           content whatever `display` is set to, and the wide rule set below
+           hides the summary that would reopen it: without `open` the rail
+           would be empty on every desktop load. -->
+      <details class="reading-contents" open>
+        <summary>Contents</summary>
+        <slot name="navigation" />
+      </details>
+    </nav>
+
+    <article
+      class="reading-column reading-text"
+      data-reading-column="text"
+      data-document-uri={documentUri}
+    >
+      <slot />
+    </article>
+
+    <aside
+      id="margin-root"
+      class="reading-column reading-margin"
+      data-reading-column="margin"
+      data-margin-mount
+      data-document-uri={documentUri}
+      aria-label="Margin"
+    >
+      <MarginMount documentUri={documentUri} />
+    </aside>
+  </div>
+</Layout>
+
+<style>
+  .reading-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2rem;
+    align-items: start;
+    width: 100%;
+    max-width: 90rem;
+    margin: 0 auto;
+    padding: 0 1rem 4rem;
+    overflow-wrap: anywhere;
+  }
+
+  .reading-column {
+    min-width: 0;
+  }
+
+  .reading-contents > summary {
+    cursor: pointer;
+    padding: 0.5rem 0;
+    font-weight: 600;
+  }
+
+  /* Stacked above the text, an open list of every entry would still be several
+     screens, so it is bounded and scrolls within itself. Above the breakpoint
+     the column is a sticky rail and this is unwrapped away. */
+  .reading-contents {
+    max-height: 40vh;
+    overflow-y: auto;
+  }
+
+  /* Header.astro is `sticky top-0 z-10` and about 4rem tall, so anything this
+     shell pins has to start below it or the header covers its first rows. */
+  .reading-shell {
+    --reading-header: 4rem;
+    --reading-gap: 1.5rem;
+    --reading-pin: calc(var(--reading-header) + var(--reading-gap));
+  }
+
+  /* The annotation layer mounts here. Below the breakpoint the column
+     collapses entirely, matching the reading rail the local preview uses. */
+  .reading-margin {
+    display: none;
+  }
+
+  @media (min-width: 900px) {
+    .reading-shell {
+      grid-template-columns: 15rem minmax(0, 1fr);
+    }
+
+    .reading-navigation {
+      position: sticky;
+      top: var(--reading-pin);
+      max-height: calc(100vh - var(--reading-pin) - var(--reading-gap));
+      overflow-y: auto;
+    }
+
+    /* Above the breakpoint the contents are a rail, not a disclosure: the
+       element generates no box, so its entries lay out directly in the sticky
+       column and the cap above no longer applies. */
+    .reading-navigation > .reading-contents {
+      display: contents;
+    }
+
+    /* `open` covers the first load, but a reader who folded the contents away
+       on a narrow viewport and then widened it would arrive at a rail that is
+       closed and has no summary left to reopen. This shows the content at this
+       width whatever the element's state, which is what the rule above assumes
+       it can lay out. Browsers without `::details-content` ignore it and keep
+       the `open` default. */
+    .reading-navigation > .reading-contents::details-content {
+      content-visibility: visible;
+      display: contents;
+    }
+
+    .reading-navigation > .reading-contents > summary {
+      display: none;
+    }
+  }
+
+  @media (min-width: 1280px) {
+    .reading-shell {
+      grid-template-columns: 15rem minmax(0, 44rem) 18rem;
+      justify-content: center;
+    }
+
+    .reading-margin {
+      display: block;
+      position: sticky;
+      top: var(--reading-pin);
+      min-height: 6rem;
+      max-height: calc(100vh - var(--reading-pin) - var(--reading-gap));
+      overflow-y: auto;
+    }
+  }
+</style>

@@ -5,7 +5,7 @@ import {
   resolveTextAnchor,
   textAnnotationSchema,
   type TextAnnotation,
-} from './annotations'
+} from '../annotations/annotations'
 import {
   buildEpub,
   inspectEpub,
@@ -83,7 +83,7 @@ export class ExportVerificationError extends Error {
 
 const exportManifestSchema = z
   .object({
-    schemaVersion: z.literal('1.1.0'),
+    schemaVersion: z.enum(['1.1.0', '1.2.0']),
     document: z
       .object({
         id: z.string().min(1),
@@ -369,7 +369,7 @@ export async function buildExportPackage(
     file('print.pdf', pdf.mediaType, pdf.bytes),
   ]
   const exportManifest = exportManifestSchema.parse({
-    schemaVersion: '1.1.0',
+    schemaVersion: '1.2.0',
     document: {
       id: paper.id,
       version: paper.version,

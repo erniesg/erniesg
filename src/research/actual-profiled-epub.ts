@@ -102,6 +102,24 @@ export type EpubCheckReceipt = {
   receiptSha256: string
 }
 
+export function isRendererGeneratedAnonymousTableCell(cell: {
+  id: string
+  tagName: string
+  text: string
+  rowSpan: number
+  columnSpan: number
+  scope: string | null
+}) {
+  return (
+    cell.id === '' &&
+    cell.tagName === 'td' &&
+    cell.text === '' &&
+    cell.rowSpan === 1 &&
+    cell.columnSpan === 1 &&
+    cell.scope === null
+  )
+}
+
 function artifact(bytes: Uint8Array): HashedArtifact {
   return { sha256: sha256HexSync(bytes), byteLength: bytes.byteLength }
 }
@@ -329,7 +347,12 @@ async function renderOne(browser: Browser, build: ProfiledStructEpubArtifact) {
         screenshotDimensions,
         locators: captured.locators,
         metrics: captured.metrics,
-        blockFacts: captured.blockFacts,
+        blockFacts: captured.blockFacts.map(({ cells, ...fact }) => ({
+          ...fact,
+          cells: cells.filter(
+            (cell) => !isRendererGeneratedAnonymousTableCell(cell),
+          ),
+        })),
         status: 'rendered',
       })
       return {

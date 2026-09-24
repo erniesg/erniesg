@@ -88,11 +88,14 @@ that product umbrella completes.
 - A future applicable worker receipt identifies `gpt-5.6-sol`, `high`, and the
   exact installed `struct-typeset` skill digest. Stubbed tests do not require a
   live provider credential.
-- A later two-lane scheduler may run at most one parser-core worker plus one
-  evidence/eval worker only when both carry versioned resource claims, their
-  write scopes and ports are disjoint, and measured disk and memory headroom
-  pass under the dispatch lock. Unknown claims, overlapping scopes, or low
-  headroom retain the total cap of one. This cross-pulse selection belongs to
+- Capacity became per-pass dynamic on 2026-09-21 — `min(nproc, MemAvailable/2GiB, 16)`, floor 1 (`erniesg/rucksack#902`) — rather than any fixed count. Write scopes are
+  disjoint by construction (per-issue linked worktrees), ports are now chosen
+  per run by every spec rather than fixed, and disk and memory headroom were
+  measured (18 GB free of 96 GB; 11.6 GB available of 23.9 GB; workers hold
+  0.3-0.9 GB each). Publisher mutations remain serialized. See
+  `infra/vm/recipes/autopilot-drain.md` for the per-conflict reasoning.
+  Raising it further requires redoing the measurement, because this host has
+  no swap. This cross-pulse selection belongs to
   Rucksack issues `erniesg/rucksack#347` and `erniesg/rucksack#349`; the repo
   pulse must not guess it from process names.
 
@@ -119,10 +122,15 @@ plain-language blocked/resumable status.
 ## Stop conditions
 
 Stop before automatically clearing an operator hold, dispatching a duplicate
-lease, increasing worker/retry limits without verified resource claims,
+lease, increasing worker/retry limits without disjoint write scopes, per-run ports,
+and measured headroom,
 treating a masked timer as idle, deleting an uncheckpointed worktree or
 evidence artifact, or claiming unattended completion without a durable
 checkpoint and future timer fire.
+
+Raising worker limits is allowed only with the per-conflict reasoning recorded
+in `infra/vm/recipes/autopilot-drain.md` and the headroom re-measured; it is
+not allowed on headroom alone.
 
 ## Human clarification protocol
 

@@ -173,7 +173,7 @@ function AnnotatedText({
       content = <a href={linkRun.href}>{content}</a>
     }
 
-    if (note) {
+    if (note && annotationBody(note.annotation) !== null) {
       content = (
         <span
           className="srt-note-target"

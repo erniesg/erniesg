@@ -83,7 +83,7 @@ export class ExportVerificationError extends Error {
 
 const exportManifestSchema = z
   .object({
-    schemaVersion: z.literal('1.2.0'),
+    schemaVersion: z.enum(['1.1.0', '1.2.0']),
     document: z
       .object({
         id: z.string().min(1),

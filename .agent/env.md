@@ -12,6 +12,20 @@ Deploy/IaC hints detected:
 
 Required secret/env names for deploy contexts:
 - `cloudflare`: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`
+- `margin` (WorkOS AuthKit, per Worker environment, set with
+  `wrangler secret put <NAME> --config wrangler[.production].jsonc`):
+  `WORKOS_ISSUER`, `WORKOS_CLIENT_ID`, `WORKOS_API_KEY`,
+  `WORKOS_COOKIE_PASSWORD`, `WORKOS_REDIRECT_URI`.
+  `WORKOS_CLIENT_ID` and `WORKOS_API_KEY` come from a WorkOS application named
+  `Margin`, which is a dashboard action with no API. `WORKOS_ISSUER` is the value the
+  access token's `iss` claim carries, which is the environment's API origin —
+  `https://api.workos.com` for production. A trailing slash is fine: the
+  verifier compares issuers as URLs, not as bytes, because WorkOS's own
+  documentation writes it both ways. `WORKOS_REDIRECT_URI` is
+  `<origin>/auth/callback`,
+  and `WORKOS_COOKIE_PASSWORD` is a freshly generated 32-byte random value.
+  Non-secret `MARGIN_ENVIRONMENT` lives in the Wrangler configs; local
+  development values belong in an ignored `.dev.vars`.
 
 Optional non-secret runtime paths:
 

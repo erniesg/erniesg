@@ -36,3 +36,7 @@ export function isD1Database(value: unknown): value is D1Database {
     typeof (value as D1Database).prepare === 'function'
   )
 }
+
+/** Shared with the AuthKit identity and allowlist helpers. */
+export type D1Like = D1Database
+export type D1Value = string | number | null

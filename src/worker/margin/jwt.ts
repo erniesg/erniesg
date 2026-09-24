@@ -57,6 +57,26 @@ export type VerifyResult =
 export type JwksSource = {
   /** Resolves to `null` when the key is unknown or the provider is down. */
   getKey(kid: string): Promise<CryptoKey | null>
+  /**
+   * The longest one `getKey` can take when every refresh on its path runs to
+   * its bound. Callers that must finish inside a deadline of their own, such
+   * as a session renewal, size that deadline from this.
+   */
+  readonly worstCaseMs: number
+}
+
+/**
+ * The most refreshes one `getKey` can run in sequence: a TTL refresh, a join
+ * on a fetch another request has in flight, and the rotation refetch.
+ */
+export const JWKS_REFRESHES_PER_LOOKUP = 3
+
+/**
+ * One refresh at its worst: waiting out another request's fetch for the full
+ * bound, then fetching for itself for the full bound.
+ */
+export function jwksWorstCaseMs(fetchTimeoutMs: number): number {
+  return JWKS_REFRESHES_PER_LOOKUP * 2 * fetchTimeoutMs
 }
 
 type JwkLike = {
@@ -200,6 +220,7 @@ export function createJwksSource(
   }
 
   return {
+    worstCaseMs: jwksWorstCaseMs(fetchTimeoutMs),
     async getKey(kid: string): Promise<CryptoKey | null> {
       if (!keys || now() - fetchedAt > ttlMs) {
         // A key set past its TTL has stopped being evidence. Keeping it when

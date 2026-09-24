@@ -459,14 +459,23 @@ type RenewalInFlight = {
 const renewalsInFlight = new Map<string, RenewalInFlight>()
 
 /**
- * The longest a healthy renewal can take: the token exchange, then a JWKS
- * refresh during verification, where a joiner may wait one fetch bound and
- * then fetch for itself, plus one bound of slack for sealing and scheduling.
- * Each part is aborted at its own bound, so past this the originator's
- * exchange can no longer complete.
+ * The time budget of one renewal, from the real timeouts it runs under.
+ *
+ * - `verifyBy`: the exchange (aborted at `providerTimeoutMs`), plus the
+ *   longest key-set refresh chain verification can run (`jwks.worstCaseMs`).
+ *   The originator stops waiting for verification at this point, whatever
+ *   state it is in.
+ * - `slot`: `verifyBy` plus one more `providerTimeoutMs` for sealing the
+ *   result. The originator always settles before this. A slot older than it
+ *   can only belong to a request cancelled before its `finally` ran, and that
+ *   is the only time another request may replace it.
  */
-function renewalBoundMs(providerTimeoutMs: number): number {
-  return 4 * providerTimeoutMs
+export function renewalBounds(
+  providerTimeoutMs: number,
+  jwks: JwksSource,
+): { verifyBy: number; slot: number } {
+  const verifyBy = providerTimeoutMs + jwks.worstCaseMs
+  return { verifyBy, slot: verifyBy + providerTimeoutMs }
 }
 
 export async function renewSession(
@@ -478,12 +487,13 @@ export async function renewSession(
   if (!sealed) return null
 
   const providerTimeoutMs = options.providerTimeoutMs ?? PROVIDER_FETCH_TIMEOUT_MS
+  const bounds = renewalBounds(providerTimeoutMs, jwksFor(config, options))
   const inFlight = renewalsInFlight.get(sealed)
   // Only the request that started a renewal frees its slot, in `finally`. The
   // one exception is an entry older than the originator's worst case: every
   // part of that renewal has been aborted by then, so it can only be one whose
   // request was cancelled before its `finally` could run.
-  if (inFlight && Date.now() - inFlight.startedAt < renewalBoundMs(providerTimeoutMs)) {
+  if (inFlight && Date.now() - inFlight.startedAt < bounds.slot) {
     // Waited for on this request's own timer, never for as long as the request
     // that started it lives. A waiter that runs out of time goes unrenewed for
     // this one request and keeps its cookie. It leaves the slot alone and
@@ -495,20 +505,30 @@ export async function renewSession(
   }
 
   // A renewal that throws is an unrenewed request, never a 500: callers read
-  // `null` as "no fresh session" and answer anonymously or with a 401.
+  // `null` as "no fresh session" and answer anonymously or with a 401. The
+  // failure is still logged, by error class only, so a persistent throw does
+  // not pass for "not renewed" forever. The message is not logged, because a
+  // provider or crypto error could carry token material.
+  const startedAt = Date.now()
   const promise: Promise<SessionRenewal | null> = renewOnce(
     request,
     config,
     options,
     sealed,
+    startedAt + bounds.verifyBy,
   )
-    .catch(() => null)
+    .catch((error: unknown) => {
+      console.error(
+        `[margin] session renewal failed: ${error instanceof Error ? error.name : typeof error}`,
+      )
+      return null
+    })
     .finally(() => {
       if (renewalsInFlight.get(sealed)?.promise === promise) {
         renewalsInFlight.delete(sealed)
       }
     })
-  renewalsInFlight.set(sealed, { promise, startedAt: Date.now() })
+  renewalsInFlight.set(sealed, { promise, startedAt })
   return promise
 }
 
@@ -517,6 +537,7 @@ async function renewOnce(
   config: WorkosConfig,
   options: AuthOptions,
   sealed: string,
+  verifyBy: number,
 ): Promise<SessionRenewal | null> {
   const session = await unsealSession(sealed, config.cookiePassword)
   if (!session?.refreshToken) return null
@@ -570,11 +591,22 @@ async function renewOnce(
     }
   }
 
-  const verified = await verifyAccessToken(accessToken, {
-    config,
-    jwks: jwksFor(config, options),
-    now: options.now,
-  })
+  // Verification runs against the renewal's own deadline. A key-set refresh
+  // chain during a rotation can outlast it, and until this settles the slot is
+  // held and the rotated refresh token has not reached the browser. On overrun
+  // it is treated like a verification failure: the rotated token still goes
+  // back, and this request is unauthenticated.
+  const verification = await settleWithin(
+    verifyAccessToken(accessToken, {
+      config,
+      jwks: jwksFor(config, options),
+      now: options.now,
+    }),
+    Math.max(0, verifyBy - Date.now()),
+  )
+  const verified = verification.settled
+    ? verification.value
+    : ({ ok: false, reason: 'jwks-unavailable' } as const)
   if (!verified.ok) {
     // Not authenticated, but the rotated token still goes back. `expiresAt` is
     // left where it was, so this cookie authorises nothing on its own.

@@ -1,8 +1,9 @@
-import { beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { jwksUrl, readWorkosConfig, type WorkosConfig } from './config'
 import {
   createFakeD1,
   createFakeProvider,
+  foreignSigner,
   sessionCookieHeader,
   testSigner,
   testWorkosEnv,
@@ -19,6 +20,7 @@ import {
   AUTH_LOGOUT_PATH,
   AUTH_ME_PATH,
   handleAuthRequest,
+  renewalBounds,
   renewSession,
   safeReturnPath,
   type AuthEnv,
@@ -1221,8 +1223,8 @@ function controlledTokenEndpoint(
 describe('a shared renewal never outlives its waiters', () => {
   const later = NOW_MS + 3_600_000
   const laterSeconds = Math.floor(later / 1000)
-  // Short bounds so the test runs in milliseconds. The originator's worst case
-  // is four of these.
+  // Short bounds so the test runs in milliseconds. The originator's budget is
+  // derived from these by `renewalBounds`, as in production.
   const PROVIDER_TIMEOUT_MS = 50
 
   async function lapsedSession(): Promise<Request> {
@@ -1259,6 +1261,7 @@ describe('a shared renewal never outlives its waiters', () => {
         createJwksSource(jwksUrl(config), {
           fetchImpl: endpoint.fetchImpl,
           now: () => later,
+          fetchTimeoutMs: PROVIDER_TIMEOUT_MS,
         }),
     }
   }
@@ -1305,7 +1308,11 @@ describe('a shared renewal never outlives its waiters', () => {
 
     // Past the bound every part of that renewal has been aborted, so the next
     // request renews on its own.
-    await sleep(4 * PROVIDER_TIMEOUT_MS + 20)
+    const { slot } = renewalBounds(
+      PROVIDER_TIMEOUT_MS,
+      options(endpoint).jwks as NonNullable<AuthOptions['jwks']>,
+    )
+    await sleep(slot + 20)
     endpoint.set('answer')
     const next = await renewSession(request.clone(), config, options(endpoint))
     expect(next?.kind).toBe('renewed')
@@ -1339,6 +1346,7 @@ describe('a shared renewal never outlives its waiters', () => {
       now: () => later,
     })
     const throwing: AuthOptions['jwks'] = {
+      worstCaseMs: good.worstCaseMs,
       async getKey(kid) {
         lookups += 1
         if (lookups > 1) throw new Error('key store exploded')
@@ -1349,11 +1357,20 @@ describe('a shared renewal never outlives its waiters', () => {
     const request = await lapsedSession()
     // Called directly, the renewal's own lookup is the first: make it throw.
     lookups = 1
-    await expect(
-      renewSession(request.clone(), config, options(endpoint, throwing)),
-    ).resolves.toBeNull()
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      await expect(
+        renewSession(request.clone(), config, options(endpoint, throwing)),
+      ).resolves.toBeNull()
+      // Logged by class only: never the message, which could carry tokens.
+      expect(logged).toHaveBeenCalledWith('[margin] session renewal failed: Error')
+      expect(JSON.stringify(logged.mock.calls)).not.toContain('exploded')
+    } finally {
+      logged.mockRestore()
+    }
 
     lookups = 0
+    vi.spyOn(console, 'error').mockImplementation(() => {})
     const response = (await handleAuthRequest(
       request.clone(),
       envWith(),
@@ -1361,5 +1378,73 @@ describe('a shared renewal never outlives its waiters', () => {
     )) as Response
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({ authenticated: false })
+    vi.restoreAllMocks()
+  })
+
+  // Verification after the exchange can run a whole key-set refresh chain
+  // during a rotation. The originator must still settle inside its slot, and
+  // hand back the rotated refresh token, so no one re-exchanges the spent one.
+  it('settles inside its bound when key-set verification stalls during a rotation', async () => {
+    const rotated = await foreignSigner('rotated-during-renewal')
+    // The key-set endpoint serves the old keys once (a warm cache), then hangs
+    // and ignores its abort signal, as a stalled fetch of the new key would.
+    let keySetCalls = 0
+    const keySetFetch = (async () => {
+      keySetCalls += 1
+      if (keySetCalls === 1) {
+        return new Response(JSON.stringify(signer.jwks), { status: 200 })
+      }
+      return new Promise<Response>(() => {})
+    }) as unknown as typeof fetch
+    const jwks = createJwksSource(jwksUrl(config), {
+      fetchImpl: keySetFetch,
+      now: () => later,
+      fetchTimeoutMs: PROVIDER_TIMEOUT_MS,
+    })
+    await jwks.getKey(signer.jwks.keys[0]!.kid)
+
+    const endpoint = controlledTokenEndpoint(async () => ({
+      access_token: await rotated.sign(
+        {
+          iss: TEST_ISSUER,
+          sub: 'user_01HREADER',
+          client_id: config.clientId,
+          iat: laterSeconds - 10,
+          exp: laterSeconds + 300,
+        },
+        { kid: 'rotated-during-renewal' },
+      ),
+      refresh_token: 'refresh_two',
+    }))
+    endpoint.set('answer')
+    const request = await lapsedSession()
+    const shared = options(endpoint, jwks)
+    const { verifyBy, slot } = renewalBounds(PROVIDER_TIMEOUT_MS, jwks)
+
+    const started = Date.now()
+    const originator = renewSession(request.clone(), config, shared)
+    // Requests keep arriving for as long as it is stuck. Past a 5 s-scale
+    // bound, the previous code treated this slot as abandoned and let one of
+    // them exchange the spent token. A request that arrives with the old
+    // cookie after the originator has settled is a new renewal by design: the
+    // browser holds the rotated cookie by then.
+    const burst: Array<Promise<unknown>> = []
+    for (const at of [10, verifyBy / 2, verifyBy - 20]) {
+      await sleep(Math.max(0, started + at - Date.now()))
+      burst.push(renewSession(request.clone(), config, shared))
+    }
+    const renewal = await originator
+    const settledAfter = Date.now() - started
+    await Promise.all(burst)
+
+    expect(settledAfter, 'the originator settles inside its slot').toBeLessThan(slot)
+    expect(endpoint.exchanges(), 'no second exchange of the spent token').toBe(1)
+    // Unverified, but the rotated refresh token still reaches the browser.
+    expect(renewal?.kind).toBe('renewed')
+    const cookie = (renewal as { cookie: string }).cookie
+    const sealedValue = cookie.slice(cookie.indexOf('=') + 1, cookie.indexOf(';'))
+    const session = await unsealSession(sealedValue, config.cookiePassword)
+    expect(session?.refreshToken).toBe('refresh_two')
+    expect((renewal as { principal?: unknown }).principal).toBeUndefined()
   })
 })

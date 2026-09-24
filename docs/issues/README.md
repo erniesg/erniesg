@@ -15,6 +15,8 @@ making them runnable:
 rucksack github issues seed erniesg/erniesg --issue-dir docs/issues --label rucksack-ledger --execute
 ```
 
+**Warning:** `--issue-dir docs/issues` seeds every spec in this folder, so a whole-folder seed re-creates ledger issues for 063–067 (#329 finished 063–066; 067 is still open). To seed only new specs, copy them to a temporary folder and seed that.
+
 Seeding preserves GitHub issue state and never reopens a closed marker-matched
 issue. Reopen only a reviewed unfinished issue explicitly before seeding:
 

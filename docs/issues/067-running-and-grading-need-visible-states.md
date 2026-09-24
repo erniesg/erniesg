@@ -84,11 +84,15 @@ the book either teaches or loses them.
   this run was the one that added it, and that answer is what the client
   needs.
 - A runnable cell whose code raises presents as a failure, not a pass.
-  `/api/exec` in `challenges/tools/preview.py` currently answers `200`
+  `/api/exec` in `books/tools/preview.py` currently answers `200`
   with `{"output": ...}` only and drops `done.returncode`, so the state
   machine cannot tell a traceback from a program that printed one. This
   issue adds a structured outcome to that response and covers a failing
-  cell.
+  cell. **Every response path carries it**: a clean run, a raise, the
+  timeout path (which answered only `{"output": "stopped after 15
+  seconds"}`), and a request the server cannot read. The test drives each of
+  those four paths and requires a boolean `ok` on every one, so the outcome
+  cannot be added to the normal subprocess branch alone.
 - Output and tier regions are announced to assistive technology when they
   change.
 
@@ -101,7 +105,7 @@ motion.
 ## Validation command
 
 ```bash
-python3 challenges/tools/validate.py
+python3 books/tools/validate.py
 npx playwright test tests/e2e/run-feedback.spec.ts
 npm test
 ```

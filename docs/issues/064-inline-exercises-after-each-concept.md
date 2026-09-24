@@ -101,8 +101,8 @@ clean, and the validator covers the new block.
 ## Validation command
 
 ```bash
-python3 challenges/tools/validate.py
-PORT=$((8700 + RANDOM % 200)); python3 challenges/tools/preview.py --port $PORT --no-open &
+python3 books/tools/validate.py
+PORT=$((8700 + RANDOM % 200)); python3 books/tools/preview.py --port $PORT --no-open &
 PREVIEW_PORT=$PORT npx playwright test tests/e2e/inline-exercise.spec.ts
 npm test
 ```

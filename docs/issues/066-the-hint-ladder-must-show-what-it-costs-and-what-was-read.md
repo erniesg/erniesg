@@ -42,16 +42,21 @@ locked solution itself, where `locked-solution` already says it.
 1. Hints render as one ladder, not five sibling boxes: a single control
    showing consumption — "2 of 4 hints" — that expands into the ladder.
 2. **Spending a hint is visibly a choice with a cost.** Unopened rungs read as
-   available; opened ones read as spent and stay open to re-read. The count
+   available; opened ones read as spent. A spent rung may be put away, but it
+   stays marked as spent and one action (its marker) shows the same text
+   again, without spending anything. It is never re-locked, and the count
    never decreases.
 3. Consumption persists for the session, so a reader returning to a challenge
    sees what they already spent rather than a fresh ladder.
 4. The worked solution is visually a different kind of thing from a hint —
    it ends the ladder rather than continuing it.
-5. **The redundant support note goes.** `worked` and `guided` print nothing;
-   the ladder itself carries the information. `contract` and `unaided` keep
-   only the part the page does not otherwise show, and `unaided` continues to
-   render no hints at all as it does today.
+5. **The redundant support note goes, on the web.** On the web target,
+   `worked` and `guided` print nothing; the ladder itself carries the
+   information. `contract` and `unaided` keep only the part the page does not
+   otherwise show, and `unaided` continues to render no hints at all as it
+   does today. The print target is out of scope for this criterion: a page has
+   no ladder to carry the information, so every support level keeps its note
+   in print (criterion 6).
 6. Print is unchanged in substance: hints remain sections in document order,
    because a printed page has no disclosure and no consumption.
 7. Hint consumption is reader-local. It does not enter the `x/46 · y/30`
@@ -61,8 +66,10 @@ locked solution itself, where `locked-solution` already says it.
 
 - A `guided` challenge renders one ladder control reading "0 of 4 hints" and
   no support paragraph.
-- Opening two hints updates the control to "2 of 4"; both stay readable; the
-  count does not fall when they are collapsed.
+- Opening two hints updates the control to "2 of 4". After the ladder is put
+  away, each spent rung is still marked spent and one action on its marker
+  shows its full text again; the count does not fall and nothing is spent by
+  re-reading.
 - Reloading the page preserves the count and which rungs were opened.
 - **A spent rung stays marked once collapsed**, before and after reload, by a
   persistent class, icon, or label. Asserting only the aggregate count lets
@@ -86,6 +93,10 @@ locked solution itself, where `locked-solution` already says it.
   solution still explains the unlock condition.
 - The print target renders every hint as a section, in order, with no
   disclosure and no counter.
+- **Print keeps its support note for every level.** The printed challenge of
+  each support level (`worked`, `guided`, `contract`, `unaided`) carries a
+  non-empty support paragraph. Checking the printed hints alone would not
+  catch a note removed from print along with the web one.
 - A `contract` challenge's note says only what the page does not already
   show.
 
@@ -97,7 +108,7 @@ redundant notes are gone, and print is unchanged.
 ## Validation command
 
 ```bash
-python3 challenges/tools/validate.py
+python3 books/tools/validate.py
 npx playwright test tests/e2e/hint-ladder.spec.ts
 npm test
 ```

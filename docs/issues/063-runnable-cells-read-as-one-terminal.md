@@ -94,7 +94,7 @@ equivalence and a clean EPUBCheck, not byte stability.
 ## Validation command
 
 ```bash
-python3 challenges/tools/validate.py
+python3 books/tools/validate.py
 npx playwright test tests/e2e/runnable-cell.spec.ts
 npm test
 ```

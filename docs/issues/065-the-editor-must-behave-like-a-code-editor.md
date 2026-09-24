@@ -40,7 +40,7 @@ no bracket or quote completion, and no block indent/dedent for a selection.
 their docstring:
 
 ```
-python3 challenges/tools/grade.py max-pairwise-product
+python3 books/tools/grade.py max-pairwise-product
 ```
 
 That instruction is correct for a reader working from a terminal and wrong
@@ -105,7 +105,7 @@ appears in the web edition.
 ## Validation command
 
 ```bash
-python3 challenges/tools/validate.py
+python3 books/tools/validate.py
 npx playwright test tests/e2e/editor-keys.spec.ts
 npm test
 ```

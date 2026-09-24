@@ -106,7 +106,7 @@ nothing in its data model changes because of this ADR.
 
 This ADR does not merge the two publication pipelines. `src/publication/`
 (TypeScript, adapter-based, vivliostyle renderer, profile matrix) and
-`challenges/tools/render.py` (Python, one renderer for web and print) both
+`books/tools/render.py` (Python, one renderer for web and print) both
 remain. Making the book a third `src/publication/` adapter would mean either
 porting `render.py` to TypeScript or bridging Python into the Astro build, and
 the book's governing rule is that `render.py` is the only thing that emits

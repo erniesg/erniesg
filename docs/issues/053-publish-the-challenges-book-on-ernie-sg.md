@@ -18,7 +18,7 @@ exist at a URL.
 
 Two constraints decide this issue:
 
-1. `challenges/tools/render.py` stays the only thing that emits block markup.
+1. `books/tools/render.py` stays the only thing that emits block markup.
    Astro wraps its output; Astro does not re-implement it. The moment a second
    renderer exists the web and EPUB editions drift and the reader sees two
    different books.
@@ -57,7 +57,7 @@ Two constraints decide this issue:
    `load_book()` + `all_nodes()`, never a hand-maintained list.
 
    **That identity has to be a durable field, so add one.**
-   `challenges/paths/agent.toml` today carries `id = "agent"` and
+   `challenges/paths/agent.toml` (now `books/dsa.toml`) then carried `id = "agent"` and
    `title = "Build a Coding Agent"` and nothing that yields
    `build-a-coding-agent`. Neither existing field can be the source: mapping
    `id` in route code reintroduces the hand-maintained list this criterion
@@ -81,7 +81,7 @@ Two constraints decide this issue:
    of identical source fails the test.
 6. Runnable cells and the grader are out of scope. Where the EPUB shows a
    listing, the web shows a listing.
-7. The EPUB build is unchanged: `challenges/dist/*.epub` stays
+7. The EPUB build is unchanged: `books/dist/*.epub` stays
    EPUBCheck-clean and byte-stable for unchanged source.
 
 ## Acceptance tests
@@ -108,7 +108,7 @@ anywhere in `src/`.
 ## Validation command
 
 ```bash
-python3 challenges/tools/validate.py
+python3 books/tools/validate.py
 npm run build
 npm test
 SRT_E2E_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')

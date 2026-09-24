@@ -70,5 +70,5 @@ with a capstone that needs everything at once.
 The first run is meant to be red. Hints are staged and free; read the solution
 only once you have a failing test you understand — that order is the method, and
 keeping to it is yours to do. Where the tiers can run, they will hold you to it:
-`python3 challenges/tools/preview.py` serves this same book with the grader
+`python3 books/tools/preview.py` serves this same book with the grader
 behind it.

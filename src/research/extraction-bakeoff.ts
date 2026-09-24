@@ -137,6 +137,30 @@ export type ExtractionBakeoffComparisonRow = {
   disagreementDocumentIds: string[]
 }
 
+export type SyntheticExtractionBakeoffAuthority = {
+  kind: 'synthetic-contract-self-test'
+  realProviderCalls: 0
+  realProviderAuthority: false
+  promotionEligible: false
+}
+
+/**
+ * A privacy-safe receipt emitted by an owner-local real-provider run. It is
+ * deliberately non-promotable: a report cannot substitute for the separate
+ * human architecture decision or prove the contents of the private run.
+ */
+export type OwnerLocalRealProviderExtractionBakeoffAuthority = {
+  kind: 'owner-local-real-provider-evidence'
+  realProviderCalls: number
+  realProviderAuthority: true
+  promotionEligible: false
+  providerExecutionReceiptSha256: string
+}
+
+export type ExtractionBakeoffAuthority =
+  | SyntheticExtractionBakeoffAuthority
+  | OwnerLocalRealProviderExtractionBakeoffAuthority
+
 export type ExtractionBakeoffReport = {
   schemaVersion: typeof EXTRACTION_BAKEOFF_SCHEMA_VERSION
   corpusId: string
@@ -162,6 +186,7 @@ export type ExtractionBakeoffReport = {
     arms: ExtractionBakeoffArmId[]
     reason: 'verification' | 'structure' | 'score'
   }>
+  authority?: ExtractionBakeoffAuthority
   reportSha256: string
 }
 
@@ -452,18 +477,14 @@ function caseEvidenceProjection(
     ...(caseInput.expectedExcludedBoilerplateRunIds ?? []),
   ])
   const assetIds = new Set(caseInput.expectedAssetIds ?? [])
-  const sourceRuns = context.sourceRuns.filter(({ id }) =>
-    sourceRunIds.has(id),
-  )
+  const sourceRuns = context.sourceRuns.filter(({ id }) => sourceRunIds.has(id))
   const sourceLines = (context.sourceLines ?? [])
     .map((line) => ({
       ...line,
       sourceRunIds: line.sourceRunIds.filter((id) => sourceRunIds.has(id)),
     }))
     .filter(({ sourceRunIds: ids }) => ids.length > 0)
-  const sourceAssets = context.sourceAssets.filter(({ id }) =>
-    assetIds.has(id),
-  )
+  const sourceAssets = context.sourceAssets.filter(({ id }) => assetIds.has(id))
   const sourceLinks = (context.sourceLinks ?? []).filter(
     ({ sourceRunIds: runIds, sourceAssetIds: linkAssetIds }) =>
       runIds.every((id) => sourceRunIds.has(id)) &&
@@ -508,9 +529,7 @@ function caseEvidenceProjection(
     ...(provenArtifacts.length > 0 ? { provenArtifacts } : {}),
     ...(caseInput.expectedExcludedBoilerplateRunIds
       ? {
-          boilerplateRunIds: [
-            ...caseInput.expectedExcludedBoilerplateRunIds,
-          ],
+          boilerplateRunIds: [...caseInput.expectedExcludedBoilerplateRunIds],
         }
       : {}),
   }
@@ -1255,18 +1274,9 @@ export function createExtractionArchitectureDecision({
       perStratum[row.stratum] =
         previous === 'pending' || winner === 'pending' ? 'pending' : 'tie'
   }
-  const winners = Object.values(perStratum).filter(
-    (value): value is ExtractionBakeoffArmId =>
-      EXTRACTION_BAKEOFF_ARMS.includes(value as ExtractionBakeoffArmId),
-  )
-  const uniqueWinners = [...new Set(winners)]
-  const unresolved = Object.values(perStratum).some(
-    (value) => value === 'tie' || value === 'pending',
-  )
-  const humanDecisionRequired = unresolved || uniqueWinners.length !== 1
-  const owner: ExtractionArchitectureDecision['owner'] = humanDecisionRequired
-    ? 'pending'
-    : uniqueWinners[0]!
+  for (const stratum of Object.keys(perStratum)) perStratum[stratum] = 'pending'
+  const humanDecisionRequired = true
+  const owner: ExtractionArchitectureDecision['owner'] = 'pending'
   return {
     schemaVersion: EXTRACTION_BAKEOFF_SCHEMA_VERSION,
     decisionId,

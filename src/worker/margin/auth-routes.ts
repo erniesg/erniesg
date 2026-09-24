@@ -408,7 +408,12 @@ function sameOrigin(request: Request): boolean {
  * working, renewal included, until its sealed ceiling. The guarantee is "this
  * browser", not "this session". Revoking at WorkOS on logout is a follow-up.
  */
-function handleLogout(): Response {
+async function handleLogout(request: Request): Promise<Response> {
+  // Every path back to this session in this isolate ends here too: a grace
+  // entry would otherwise hand the session straight back to a replayed old
+  // cookie.
+  const sealed = readCookie(request, SESSION_COOKIE_NAME)
+  if (sealed) await revokeSession(sealed)
   return json({ ok: true }, 200, [
     ['set-cookie', clearedCookie(SESSION_COOKIE_NAME, SESSION_COOKIE_PATH)],
     ['set-cookie', clearedCookie(STATE_COOKIE_NAME, STATE_COOKIE_PATH)],
@@ -440,7 +445,7 @@ export type SessionRenewal = {
 }
 
 /**
- * Renewals in flight, keyed by the sealed cookie they started from.
+ * Renewals in flight, keyed by a SHA-256 of the sealed cookie they started from.
  *
  * A page with several requests open sends the same refresh token on each, and the
  * exchange consumes it — so without this the first wins and the rest come back
@@ -472,63 +477,147 @@ export const RENEWAL_REUSE_GRACE_MS = 60_000
 export const RENEWAL_REUSE_MAX_ENTRIES = 1_000
 
 /**
- * Finished renewals, keyed by the sealed cookie they replaced.
+ * Finished renewals, keyed by a SHA-256 of the sealed cookie they replaced.
  *
- * Only what the cookies already hold is kept: the new sealed `Set-Cookie`,
- * which is unsealed again on use, and the principal verified from it, which
- * is identity rather than a credential. No token is kept in plaintext.
+ * Each entry holds the new sealed `Set-Cookie` value, unsealed again on use,
+ * its hash, the session ceiling, and the verified principal, which is
+ * identity rather than a credential. No token is kept in plaintext, and the
+ * old cookie is kept only as a hash.
  *
- * A holder of the old sealed cookie gets the rotated session during the grace
- * window. That adds nothing, since they could already have raced the exchange
- * with the same cookie. This is per isolate: an old cookie that lands on
- * another isolate can still re-exchange. Closing that needs shared state (a
- * Durable Object keyed by a hash of the sealed cookie) or a reuse grace on
+ * The cost, stated plainly: for up to `RENEWAL_REUSE_GRACE_MS` after a
+ * rotation, whoever holds the old sealed cookie, including someone who stole
+ * it, can still turn it into the new session. Without this map the old cookie
+ * dies as soon as its refresh token is spent. This window is the price of not
+ * signing out the owner's own in-flight requests.
+ *
+ * Logout ends every path back to the session it logs out, in this isolate:
+ * see `revokeSession`. All of this is per isolate. An old cookie, or a logout,
+ * that lands on another isolate does not see these entries. Closing that needs
+ * shared state (a Durable Object keyed by these hashes) or a reuse grace on
  * the WorkOS side.
  */
-const renewalsRecent = new Map<
-  string,
-  { cookie: string; principal?: Principal; until: number }
->()
+type RecentRenewal = {
+  value: string
+  newKey: string
+  ceiling: number
+  principal?: Principal
+  until: number
+}
 
-function rememberRenewal(sealed: string, renewal: SessionRenewal): void {
-  if (renewal.kind !== 'renewed') return
-  const now = Date.now()
-  for (const [key, entry] of renewalsRecent) {
-    if (entry.until <= now) renewalsRecent.delete(key)
+const renewalsRecent = new Map<string, RecentRenewal>()
+
+/**
+ * Hashes of sessions logged out in this isolate, for as long as any session
+ * can live (`SESSION_MAX_AGE_SECONDS`), within the same size bound. A logged-out
+ * cookie never renews here again. A renewal already in flight when its session
+ * is logged out is dropped when it finishes, not remembered or handed out.
+ */
+const revokedSessions = new Map<string, number>()
+
+async function sessionKey(sealed: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(sealed))
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
+}
+
+function sweep<T>(map: Map<string, T>, expiry: (entry: T) => number, now: number): void {
+  for (const [key, entry] of map) {
+    if (expiry(entry) <= now) map.delete(key)
   }
-  while (renewalsRecent.size >= RENEWAL_REUSE_MAX_ENTRIES) {
-    const oldest = renewalsRecent.keys().next().value
+  while (map.size >= RENEWAL_REUSE_MAX_ENTRIES) {
+    const oldest = map.keys().next().value
     if (oldest === undefined) break
-    renewalsRecent.delete(oldest)
+    map.delete(oldest)
   }
-  renewalsRecent.set(sealed, {
-    cookie: renewal.cookie,
+}
+
+function isRevoked(key: string): boolean {
+  const until = revokedSessions.get(key)
+  if (until === undefined) return false
+  if (until > Date.now()) return true
+  revokedSessions.delete(key)
+  return false
+}
+
+function sealedValueOf(setCookie: string): string {
+  return setCookie.slice(setCookie.indexOf('=') + 1, setCookie.indexOf(';'))
+}
+
+async function rememberRenewal(key: string, renewal: SessionRenewal): Promise<void> {
+  if (renewal.kind !== 'renewed') return
+  const value = sealedValueOf(renewal.cookie)
+  const newKey = await sessionKey(value)
+  const now = Date.now()
+  sweep(renewalsRecent, (entry) => entry.until, now)
+  renewalsRecent.set(key, {
+    value,
+    newKey,
+    ceiling: renewal.session.ceiling ?? renewal.session.expiresAt,
     ...(renewal.principal ? { principal: renewal.principal } : {}),
     until: now + RENEWAL_REUSE_GRACE_MS,
   })
 }
 
 async function recentRenewal(
-  sealed: string,
+  key: string,
   config: WorkosConfig,
+  nowMs: number,
 ): Promise<SessionRenewal | null> {
-  const entry = renewalsRecent.get(sealed)
+  const entry = renewalsRecent.get(key)
   if (!entry) return null
   if (entry.until <= Date.now()) {
-    renewalsRecent.delete(sealed)
+    renewalsRecent.delete(key)
     return null
   }
-  const value = entry.cookie.slice(
-    entry.cookie.indexOf('=') + 1,
-    entry.cookie.indexOf(';'),
-  )
-  const session = await unsealSession(value, config.cookiePassword)
+  // Never past the session's own ceiling, whenever in the window it is replayed.
+  const remaining = entry.ceiling - Math.floor(nowMs / 1000)
+  if (remaining <= 0) return null
+  const session = await unsealSession(entry.value, config.cookiePassword)
   if (!session) return null
   return {
     kind: 'renewed',
-    cookie: entry.cookie,
+    cookie: serializeCookie(SESSION_COOKIE_NAME, entry.value, {
+      path: SESSION_COOKIE_PATH,
+      maxAgeSeconds: remaining,
+    }),
     session,
     principal: entry.principal,
+  }
+}
+
+/**
+ * Ends every path back to a session in this isolate.
+ *
+ * Starting from the cookie being logged out, this follows grace entries in
+ * both directions: from an old cookie to the cookie it was renewed into, and
+ * from a new cookie back to the one it replaced, across whole chains. Every
+ * entry it touches is removed, and every cookie it reaches is marked revoked,
+ * so a renewal still in flight for any of them is dropped when it finishes.
+ */
+async function revokeSession(sealed: string): Promise<void> {
+  const reached = new Set([await sessionKey(sealed)])
+  let grew = true
+  while (grew) {
+    grew = false
+    for (const [key, entry] of renewalsRecent) {
+      if (reached.has(key) || reached.has(entry.newKey)) {
+        for (const one of [key, entry.newKey]) {
+          if (!reached.has(one)) {
+            reached.add(one)
+            grew = true
+          }
+        }
+      }
+    }
+  }
+  for (const [key, entry] of renewalsRecent) {
+    if (reached.has(key) || reached.has(entry.newKey)) renewalsRecent.delete(key)
+  }
+  const now = Date.now()
+  sweep(revokedSessions, (until) => until, now)
+  for (const key of reached) {
+    revokedSessions.set(key, now + SESSION_MAX_AGE_SECONDS * 1000)
   }
 }
 
@@ -559,15 +648,18 @@ export async function renewSession(
 ): Promise<SessionRenewal | null> {
   const sealed = readCookie(request, SESSION_COOKIE_NAME)
   if (!sealed) return null
+  const key = await sessionKey(sealed)
+  // Logged out in this isolate: no path leads back to it.
+  if (isRevoked(key)) return null
 
   // Already renewed moments ago from this very cookie: hand back the same
   // new session instead of exchanging a refresh token that is now spent.
-  const recent = await recentRenewal(sealed, config)
+  const recent = await recentRenewal(key, config, options.now ?? Date.now())
   if (recent) return recent
 
   const providerTimeoutMs = options.providerTimeoutMs ?? PROVIDER_FETCH_TIMEOUT_MS
   const bounds = renewalBounds(providerTimeoutMs, jwksFor(config, options))
-  const inFlight = renewalsInFlight.get(sealed)
+  const inFlight = renewalsInFlight.get(key)
   // Only the request that started a renewal frees its slot, in `finally`. The
   // one exception is an entry older than the originator's worst case: every
   // part of that renewal has been aborted by then, so it can only be one whose
@@ -602,18 +694,21 @@ export async function renewSession(
       )
       return null
     })
-    .then((result) => {
+    .then(async (result) => {
+      // Logged out while this was running: hand nothing back and keep
+      // nothing, so the logout is not undone by a renewal that finished late.
+      if (isRevoked(key)) return null
       // Kept only when renewed. A failed or terminal renewal is forgotten at
       // once, so the next request can retry.
-      if (result) rememberRenewal(sealed, result)
+      if (result) await rememberRenewal(key, result)
       return result
     })
     .finally(() => {
-      if (renewalsInFlight.get(sealed)?.promise === promise) {
-        renewalsInFlight.delete(sealed)
+      if (renewalsInFlight.get(key)?.promise === promise) {
+        renewalsInFlight.delete(key)
       }
     })
-  renewalsInFlight.set(sealed, { promise, startedAt })
+  renewalsInFlight.set(key, { promise, startedAt })
   return promise
 }
 
@@ -832,7 +927,7 @@ export async function handleAuthRequest(
     if (!sameOrigin(request)) {
       return json({ error: 'cross_origin' }, 403)
     }
-    return handleLogout()
+    return handleLogout(request)
   }
 
   const config = readWorkosConfig(env)

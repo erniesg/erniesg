@@ -1513,4 +1513,123 @@ describe('a shared renewal never outlives its waiters', () => {
     expect((await renewSession(request.clone(), config, shared))?.kind).toBe('terminal')
     expect(exchanges).toBe(2)
   })
+
+  // The rule: a logout ends every path back to that session in this isolate.
+  describe('logout ends every path back to the session', () => {
+    async function renewedPair() {
+      const endpoint = controlledTokenEndpoint(fresh)
+      endpoint.set('answer')
+      const request = await lapsedSession()
+      const shared = options(endpoint)
+      const renewal = await renewSession(request.clone(), config, shared)
+      expect(renewal?.kind).toBe('renewed')
+      const setCookie = (renewal as { cookie: string }).cookie
+      return {
+        endpoint,
+        shared,
+        request,
+        oldCookie: request.headers.get('cookie') as string,
+        newCookie: setCookie.slice(0, setCookie.indexOf(';')),
+      }
+    }
+
+    async function logOutWith(cookie: string) {
+      const response = (await call(AUTH_LOGOUT_PATH, {
+        method: 'POST',
+        headers: { cookie, 'sec-fetch-site': 'same-origin' },
+      })) as Response
+      expect(response.status).toBe(200)
+    }
+
+    async function replayOldCookie(pair: Awaited<ReturnType<typeof renewedPair>>) {
+      const replayed = await renewSession(pair.request.clone(), config, pair.shared)
+      const handled = (await handleAuthRequest(
+        pair.request.clone(),
+        envWith(),
+        pair.shared,
+      )) as Response
+      const restored = setCookies(handled).filter(
+        (header) =>
+          header.startsWith(`${SESSION_COOKIE_NAME}=`) && !header.includes('Max-Age=0'),
+      )
+      return { replayed, restored }
+    }
+
+    it('after logging out with the new cookie, a replayed old cookie gets no session', async () => {
+      const pair = await renewedPair()
+      await logOutWith(pair.newCookie)
+      const { replayed, restored } = await replayOldCookie(pair)
+      expect(replayed).toBeNull()
+      expect(restored, 'no session Set-Cookie').toEqual([])
+      expect(pair.endpoint.exchanges(), 'and no new exchange').toBe(1)
+    })
+
+    it('after logging out with the old cookie, replaying it gets no session either', async () => {
+      const pair = await renewedPair()
+      await logOutWith(pair.oldCookie)
+      const { replayed, restored } = await replayOldCookie(pair)
+      expect(replayed).toBeNull()
+      expect(restored, 'no session Set-Cookie').toEqual([])
+      expect(pair.endpoint.exchanges()).toBe(1)
+    })
+
+    it('follows a chain of renewals from its newest cookie back to the first', async () => {
+      const pair = await renewedPair()
+      // Renew again from the new cookie, so old -> new -> newer.
+      const second = controlledTokenEndpoint(async () => ({
+        ...(await fresh()),
+        refresh_token: 'refresh_three',
+      }))
+      second.set('answer')
+      const newRequest = new Request(`https://ernie.sg${AUTH_ME_PATH}`, {
+        headers: { cookie: pair.newCookie },
+      })
+      // Its access token is the unverified old one, so it is lapsed too.
+      const again = await renewSession(newRequest, config, options(second))
+      expect(again?.kind).toBe('renewed')
+      const newer = (again as { cookie: string }).cookie
+      await logOutWith(newer.slice(0, newer.indexOf(';')))
+
+      expect((await replayOldCookie(pair)).replayed).toBeNull()
+      expect(
+        await renewSession(
+          new Request(`https://ernie.sg${AUTH_ME_PATH}`, { headers: { cookie: pair.newCookie } }),
+          config,
+          options(second),
+        ),
+      ).toBeNull()
+    })
+
+    it('drops a renewal that was still in flight when its session logged out', async () => {
+      const endpoint = controlledTokenEndpoint(fresh)
+      endpoint.set('delayed', 40)
+      const request = await lapsedSession()
+      const pending = renewSession(request.clone(), config, options(endpoint))
+      await sleep(5)
+      await logOutWith(request.headers.get('cookie') as string)
+      await expect(pending).resolves.toBeNull()
+      expect(await renewSession(request.clone(), config, options(endpoint))).toBeNull()
+    })
+  })
+
+  it('caps a replayed cookie at the session ceiling', async () => {
+    const endpoint = controlledTokenEndpoint(fresh)
+    endpoint.set('answer')
+    const request = await lapsedSession()
+    const first = await renewSession(request.clone(), config, options(endpoint))
+    const firstCookie = (first as { cookie: string }).cookie
+    const firstMaxAge = Number(/Max-Age=(\d+)/u.exec(firstCookie)?.[1])
+
+    // Replayed ten seconds later by the session clock: ten seconds less.
+    const replayed = await renewSession(request.clone(), config, {
+      ...options(endpoint),
+      now: later + 10_000,
+    })
+    const replayedMaxAge = Number(
+      /Max-Age=(\d+)/u.exec((replayed as { cookie: string }).cookie)?.[1],
+    )
+    expect(replayedMaxAge).toBe(firstMaxAge - 10)
+    expect(endpoint.exchanges()).toBe(1)
+  })
 })
+

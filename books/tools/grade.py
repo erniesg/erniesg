@@ -25,7 +25,7 @@ if sys.version_info < (3, 11):  # tomllib arrived in 3.11
 import tomllib
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from render import BOOKS, CHALLENGES, WORKSPACE as WORKSPACE_DIR
+from render import BOOKS, CHALLENGES, WORKSPACE as WORKSPACE_DIR, report_legacy_workspace
 TIERS = ["public", "edge", "stress", "perf"]
 
 GREEN, RED, DIM, RESET = "\033[32m", "\033[31m", "\033[2m", "\033[0m"
@@ -87,6 +87,18 @@ def run_tier(node_dir: Path, tier: str, solution_dir: Path, timeout: int) -> tup
     return ("pass" if done.returncode == 0 else "fail"), output
 
 
+def harness_frame(path: str) -> bool:
+    """Whether a traceback frame belongs to the grader rather than the reader.
+
+    Decided on path components, never on a separator-bearing substring: a
+    Windows traceback says `\\tests\\`, not `/tests/`, and a reader's folder
+    that merely contains the word "unittest" is still theirs.
+    """
+    parts = [part for part in re.split(r"[\\/]+", path) if part]
+    folders, name = parts[:-1], (parts[-1] if parts else path)
+    return "tests" in folders or "unittest" in folders or name == "bookgrader.py"
+
+
 FRAME = re.compile(r'^\s*File "([^"]+)", line (\d+)', re.MULTILINE)
 ASSERTION = re.compile(r"^AssertionError: (.*?)(?: : (.*))?$", re.MULTILINE)
 EXCEPTION = re.compile(r"^(\w+(?:Error|Exception|Exit|Interrupt)|NotImplementedError)(?::\s?(.*))?$", re.MULTILINE)
@@ -113,10 +125,7 @@ def summarize(output: str, test_file: Path | None = None) -> str:
             name = found.group(1)
 
     frames = FRAME.findall(output)
-    user_frames = [
-        (path, line) for path, line in frames
-        if "/tests/" not in path and "bookgrader" not in path and "unittest" not in path
-    ]
+    user_frames = [(path, line) for path, line in frames if not harness_frame(path)]
     failure = ASSERTION.search(output)
     if failure and not user_frames:
         comparison, message = failure.group(1), failure.group(2)
@@ -188,6 +197,7 @@ def main() -> int:
         if name == "start":
             p.add_argument("--force", action="store_true")
     args = parser.parse_args()
+    report_legacy_workspace()
 
     if args.command == "start":
         return start(args.node, args.force)

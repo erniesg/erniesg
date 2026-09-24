@@ -40,6 +40,66 @@ CHALLENGES = BOOKS / "challenges"
 FIGURES = BOOKS / "figures"
 WORKSPACE = BOOKS / "workspace"
 DEFAULT_BOOK = "dsa"
+# Where attempts lived before the pool moved from challenges/ to books/. Git
+# does not move an ignored folder, so a reader who pulls the rename still has
+# their solutions and progress here until `migrate_legacy_workspace` runs.
+LEGACY_WORKSPACE = BOOKS.parent / "challenges" / "workspace"
+
+
+def migrate_legacy_workspace(
+    legacy: Path = LEGACY_WORKSPACE, current: Path = WORKSPACE
+) -> list[Path]:
+    """Move a reader's pre-rename attempts to the current workspace, once.
+
+    Every entry the new workspace lacks is moved across. `progress.json` in
+    both is merged, so a challenge solved on either side stays solved. Any
+    other entry present in both is left where it is and returned, so the
+    caller can say so rather than overwrite a reader's work. Safe to call on
+    every start: with nothing left at the old path it does nothing.
+    """
+    if not legacy.is_dir():
+        return []
+    current.mkdir(parents=True, exist_ok=True)
+    left: list[Path] = []
+    for entry in sorted(legacy.iterdir()):
+        target = current / entry.name
+        if not target.exists():
+            entry.rename(target)
+        elif entry.name == "progress.json" and entry.is_file():
+            merged = {"solved": []}
+            for source in (target, entry):
+                try:
+                    data = json.loads(source.read_text())
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if isinstance(data, dict):
+                    for key, value in data.items():
+                        if key != "solved":
+                            merged.setdefault(key, value)
+                    for node_id in data.get("solved", []):
+                        if node_id not in merged["solved"]:
+                            merged["solved"].append(node_id)
+            target.write_text(json.dumps(merged, indent=2))
+            entry.unlink()
+        else:
+            left.append(entry)
+    if not left:
+        legacy.rmdir()
+        parent = legacy.parent
+        try:
+            parent.rmdir()  # only if the old pool folder is now empty
+        except OSError:
+            pass
+    return left
+
+
+def report_legacy_workspace() -> None:
+    """Run the migration and say, on stderr, what could not be moved."""
+    for entry in migrate_legacy_workspace():
+        print(
+            f"note: {entry} was left in place: {WORKSPACE / entry.name} already exists",
+            file=sys.stderr,
+        )
 
 
 def node_files() -> list[Path]:
@@ -87,6 +147,16 @@ SUPPORT_NOTES_READER = {
     "unaided": "No hints on this one — that is what makes it the one that "
                "tells you whether it stuck. The worked solution is below, for "
                "after yours runs.",
+}
+
+# What print says. Spec 066 drops the `worked` and `guided` notes on the web,
+# where the hint bulb and the solution disclosure show the same thing; a page
+# has neither, so print keeps a note for every level, as it did before 066.
+# `contract` and `unaided` use the reader's wording: print has no grader.
+SUPPORT_NOTES_PRINT = {
+    "worked": "Worked through step by step, then hints, then the full solution.",
+    "guided": "Hints if you want them, and a worked solution behind them.",
+    **SUPPORT_NOTES_READER,
 }
 
 # Figure kinds whose web body needs JavaScript. `walk` draws back/next buttons
@@ -559,7 +629,9 @@ def render_node(
     if node.get("kind") == "challenge":
         # Print has no grader either, and its reader is the same reader.
         note = SUPPORT_NOTES.get(support, "")
-        if reveal == "reader" or target == "print":
+        if target == "print":
+            note = SUPPORT_NOTES_PRINT.get(support, note)
+        elif reveal == "reader":
             note = SUPPORT_NOTES_READER.get(support, note)
         if note:
             emit(

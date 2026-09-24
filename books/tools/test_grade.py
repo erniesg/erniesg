@@ -62,5 +62,47 @@ class SummarizeTests(unittest.TestCase):
         self.assertEqual(grade.summarize(""), "")
 
 
+class HarnessFrameTests(unittest.TestCase):
+    """Rule: which frames are the grader's does not depend on the separator."""
+
+    POSIX = (
+        "E\nTraceback (most recent call last):\n"
+        '  File "/x/books/challenges/max-pairwise-product/tests/public.py", line 13, in test_x\n'
+        "    self.assertEqual(self.solve([1, 2, 3]), 6)\n"
+        "AssertionError: 1 != 6\n"
+    )
+
+    def windows(self, text: str) -> str:
+        return text.replace(
+            "/x/books/challenges/max-pairwise-product/tests/public.py",
+            "C:\\x\\books\\challenges\\max-pairwise-product\\tests\\public.py",
+        )
+
+    def test_an_assertion_reads_the_same_on_windows(self):
+        posix = grade.summarize(self.POSIX, TESTS / "public.py")
+        self.assertEqual(posix, "max_pairwise_product([1, 2, 3]) returned 1, expected 6")
+        self.assertEqual(grade.summarize(self.windows(self.POSIX), TESTS / "public.py"), posix)
+
+    def test_every_harness_frame_is_recognised_on_either_separator(self):
+        harness = [
+            "/x/books/challenges/a/tests/public.py",
+            "C:\\x\\books\\challenges\\a\\tests\\public.py",
+            "/usr/lib/python3.12/unittest/case.py",
+            "C:\\Python312\\Lib\\unittest\\case.py",
+            "/x/books/tools/bookgrader.py",
+            "C:\\x\\books\\tools\\bookgrader.py",
+        ]
+        readers = [
+            "/x/books/workspace/a/pairwise.py",
+            "C:\\x\\books\\workspace\\a\\pairwise.py",
+            "/home/me/my_unittest_notes/pairwise.py",
+            "/home/me/latests/pairwise.py",
+        ]
+        for path in harness:
+            self.assertTrue(grade.harness_frame(path), path)
+        for path in readers:
+            self.assertFalse(grade.harness_frame(path), path)
+
+
 if __name__ == "__main__":
     unittest.main()

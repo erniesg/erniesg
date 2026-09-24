@@ -20,7 +20,7 @@ import threading
 import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from pathlib import Path, PurePath
 from urllib.parse import unquote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -48,6 +48,7 @@ from render import (
     load_topics,
     problem_card as render_problem_card,
     render_node,
+    report_legacy_workspace,
     split_blocks,
 )
 
@@ -481,7 +482,11 @@ document.querySelectorAll('.desk').forEach(desk => {
   button.onclick = async () => {
     button.disabled = true;
     status.textContent = 'Running public, edge, stress, perf...';
+    // Everything the last run left is cleared before this one starts, so a
+    // stale red verdict never sits beside a run that has not finished (and a
+    // request error cannot leave one up indefinitely).
     tiers.innerHTML = ''; output.textContent = '';
+    verdict.hidden = true; verdict.innerHTML = ''; details.hidden = true;
     try {
       const response = await fetch('/api/grade', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -504,9 +509,15 @@ document.querySelectorAll('.desk').forEach(desk => {
 
 // Inline exercises run in the reader's browser (Pyodide in a worker), never
 // on the server: the published book has no /api/exec to fall back on.
-const PYODIDE = 'https://cdn.jsdelivr.net/npm/pyodide@0.26.4/pyodide.js';
+// Overridable so a test can stand in a Python whose load time it controls.
+const PYODIDE = window.__bookPyodideUrl || 'https://cdn.jsdelivr.net/npm/pyodide@0.26.4/pyodide.js';
+// The learner's code gets this long once Python is up. Loading Python has its
+// own, longer budget: a slow first download is not an infinite loop.
+const RUN_BUDGET_MS = 8000;
+const LOAD_BUDGET_MS = 60000;
 const WORKER = `importScripts('${PYODIDE}');
 const ready = loadPyodide();
+ready.then(() => postMessage({ ready: true }), err => postMessage({ ready: false, error: String(err) }));
 onmessage = async ({ data }) => {
   const py = await ready;
   let out = '', error = '';
@@ -519,20 +530,66 @@ onmessage = async ({ data }) => {
     const where = [...String(err.message).matchAll(/File "<exec>", line (\\d+)/g)].pop();
     error += (where ? 'Crashed on line ' + where[1] + ' · ' : '') + lines[lines.length - 1];
   }
-  postMessage({ out, error });
+  postMessage({ id: data.id, out, error });
 };`;
+// One worker, one run at a time. Python's stdout is global to the worker, so
+// two runs at once would interleave their output; and a reply is matched to
+// its request by id, never by whichever handler was installed last.
 let pyWorker = null;
-function runInBrowser(source, timeout = 8000) {
-  pyWorker ??= new Worker(URL.createObjectURL(new Blob([WORKER], { type: 'text/javascript' })));
-  const worker = pyWorker;
-  return new Promise(resolve => {
-    const timer = setTimeout(() => {
-      worker.terminate(); pyWorker = null;
-      resolve({ out: '', error: 'Stopped after a few seconds: is there a loop that never ends?' });
-    }, timeout);
-    worker.onmessage = ({ data }) => { clearTimeout(timer); resolve(data); };
-    worker.postMessage({ source });
+let pyReady = null;
+let nextRunId = 0;
+let queue = Promise.resolve();
+const pending = new Map();
+function startWorker() {
+  const worker = new Worker(URL.createObjectURL(new Blob([WORKER], { type: 'text/javascript' })));
+  pyWorker = worker;
+  pyReady = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Python did not load in time. Check your connection and try again.')), LOAD_BUDGET_MS);
+    worker.onmessage = ({ data }) => {
+      if ('ready' in data) {
+        clearTimeout(timer);
+        return data.ready ? resolve() : reject(new Error('Python could not load: ' + data.error));
+      }
+      const job = pending.get(data.id);
+      if (!job) return; // a reply to a run that already timed out
+      pending.delete(data.id);
+      clearTimeout(job.timer);
+      job.resolve({ out: data.out, error: data.error });
+    };
+    worker.onerror = event => { clearTimeout(timer); reject(new Error(event.message || 'Python could not load.')); };
   });
+  return pyReady;
+}
+function stopWorker() {
+  pyWorker?.terminate();
+  pyWorker = null; pyReady = null;
+}
+function runOnce(source) {
+  return (async () => {
+    try {
+      await (pyReady ?? startWorker());
+    } catch (err) {
+      stopWorker();
+      return { out: '', error: err.message };
+    }
+    const worker = pyWorker;
+    const id = ++nextRunId;
+    return new Promise(resolve => {
+      // The budget starts now: Python is loaded and this run is the only one.
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        if (pyWorker === worker) stopWorker();
+        resolve({ out: '', error: 'Stopped after a few seconds: is there a loop that never ends?' });
+      }, RUN_BUDGET_MS);
+      pending.set(id, { resolve, timer });
+      worker.postMessage({ id, source });
+    });
+  })();
+}
+function runInBrowser(source) {
+  const run = queue.then(() => runOnce(source));
+  queue = run.catch(() => {});
+  return run;
 }
 const tidy = text => text.replace(/^\n+|\n+$/g, '').split('\n').map(l => l.trimEnd()).join('\n').trimEnd();
 const escapeHtml = text => text.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
@@ -570,6 +627,7 @@ document.querySelectorAll('.exercise').forEach(ex => {
   button.onclick = async () => {
     button.disabled = true; button.classList.add('busy');
     status.textContent = pyWorker ? 'Checking' : 'Loading Python, first time only';
+    panel.hidden = true; panel.innerHTML = ''; panel.className = 'results';
     const { out, error } = await runInBrowser(ex.querySelector('.editor').value);
     const { allOk, html } = results(out, ex.dataset.expected, error);
     panel.hidden = false;
@@ -924,6 +982,82 @@ cy.ready(() => { cy.fit(undefined, 30); summary(); });
 """
 
 
+# How long one runnable cell may take on the local preview.
+EXEC_TIMEOUT_SECONDS = 15
+
+RUNNER = r'''import contextlib, io, traceback
+def _run_cells(_earlier_cells, _own_source):
+    _namespace = globals()
+    _execute = exec
+    _compile = compile
+    _string_io = io.StringIO
+    _redirect_stdout = contextlib.redirect_stdout
+    _redirect_stderr = contextlib.redirect_stderr
+    _format_exception = traceback.format_exc
+    _first_earlier_failure = None
+    for _cell in _earlier_cells:
+        _quiet = _string_io()
+        try:
+            with _redirect_stdout(_quiet), _redirect_stderr(_quiet):
+                _execute(_compile(_cell['source'], '<earlier cell>', 'exec'), _namespace, _namespace)
+        except Exception:
+            if _first_earlier_failure is None:
+                _first_earlier_failure = (_cell, _format_exception())
+    try:
+        _execute(_compile(_own_source, '<current cell>', 'exec'), _namespace, _namespace)
+    except Exception:
+        if _first_earlier_failure is not None:
+            _cell, _trace = _first_earlier_failure
+            print(f"Earlier cell {_cell['index']} failed; shared state may be incomplete.")
+            print('Source:\n' + _cell['source'])
+            print(_trace)
+        raise
+'''
+
+
+def strip_roots(output: str, roots: tuple[PurePath, ...] | None = None) -> str:
+    """Drop this machine's folders from grader output, on any separator.
+
+    The reader needs the test's name and line, not where the book lives. The
+    roots are matched with either separator after them, because a Windows
+    path ends in a backslash and a forward-slash-only match left it whole.
+    """
+    for root in roots or (WORKSPACE, BOOKS):
+        text = str(root)
+        for spelling in {text, text.replace("\\", "/")}:
+            for separator in ("/", "\\"):
+                output = output.replace(spelling + separator, "")
+    return output
+
+
+def run_cell(earlier, own: str, timeout: float | None = None) -> dict:
+    """Run one cell after the cells before it. Always `{"output", "ok"}`."""
+    import subprocess
+    import tempfile
+
+    # Older callers may still send one combined prelude string.
+    if isinstance(earlier, str):
+        earlier = [{"index": 1, "source": earlier}] if earlier.strip() else []
+    limit = EXEC_TIMEOUT_SECONDS if timeout is None else timeout
+    with tempfile.TemporaryDirectory() as work:
+        script = Path(work) / "snippet.py"
+        # Earlier cells set the stage quietly. Keep their individual failures
+        # so a failing current cell can identify broken context.
+        script.write_text(RUNNER + f"_run_cells({earlier!r}, {own!r})\n")
+        try:
+            done = subprocess.run(
+                [sys.executable, str(script)],
+                capture_output=True,
+                text=True,
+                timeout=limit,
+                cwd=work,
+            )
+        except subprocess.TimeoutExpired:
+            return {"output": f"stopped after {limit:g} seconds", "ok": False}
+    output = (done.stdout + done.stderr).strip() or "(no output)"
+    return {"output": output, "ok": done.returncode == 0}
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):  # quieter
         pass
@@ -1009,71 +1143,41 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         route = urlparse(self.path).path
         if route == "/api/exec":
-            length = int(self.headers.get("Content-Length", "0"))
-            payload = json.loads(self.rfile.read(length) or b"{}")
-            import subprocess
-            import tempfile
-
-            with tempfile.TemporaryDirectory() as work:
-                script = Path(work) / "snippet.py"
-                earlier = payload.get("earlier", [])
-                own = payload.get("source", "")
-                # Older callers may still send one combined prelude string.
-                if isinstance(earlier, str):
-                    earlier = [{"index": 1, "source": earlier}] if earlier.strip() else []
-                # Earlier cells set the stage quietly. Keep their individual
-                # failures so a failing current cell can identify broken context.
-                runner = r'''import contextlib, io, traceback
-def _run_cells(_earlier_cells, _own_source):
-    _namespace = globals()
-    _execute = exec
-    _compile = compile
-    _string_io = io.StringIO
-    _redirect_stdout = contextlib.redirect_stdout
-    _redirect_stderr = contextlib.redirect_stderr
-    _format_exception = traceback.format_exc
-    _first_earlier_failure = None
-    for _cell in _earlier_cells:
-        _quiet = _string_io()
-        try:
-            with _redirect_stdout(_quiet), _redirect_stderr(_quiet):
-                _execute(_compile(_cell['source'], '<earlier cell>', 'exec'), _namespace, _namespace)
-        except Exception:
-            if _first_earlier_failure is None:
-                _first_earlier_failure = (_cell, _format_exception())
-    try:
-        _execute(_compile(_own_source, '<current cell>', 'exec'), _namespace, _namespace)
-    except Exception:
-        if _first_earlier_failure is not None:
-            _cell, _trace = _first_earlier_failure
-            print(f"Earlier cell {_cell['index']} failed; shared state may be incomplete.")
-            print('Source:\n' + _cell['source'])
-            print(_trace)
-        raise
-'''
-                runner += f"_run_cells({earlier!r}, {own!r})\n"
-                script.write_text(runner)
-                try:
-                    done = subprocess.run(
-                        [sys.executable, str(script)],
-                        capture_output=True,
-                        text=True,
-                        timeout=15,
-                        cwd=work,
-                    )
-                    output = (done.stdout + done.stderr).strip() or "(no output)"
-                    ok = done.returncode == 0
-                except subprocess.TimeoutExpired:
-                    output, ok = "stopped after 15 seconds", False
-            return self._send(
-                json.dumps({"output": output, "ok": ok}).encode(), kind="application/json"
-            )
+            # Every response on this route carries a boolean `ok`: a clean run,
+            # a raise, a timeout and a request that cannot be read alike. The
+            # client's state machine must never have to guess from the text.
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                payload = json.loads(self.rfile.read(length) or b"{}")
+                if not isinstance(payload, dict):
+                    raise ValueError("the request body must be a JSON object")
+            except (ValueError, UnicodeDecodeError) as error:
+                return self._send(
+                    json.dumps({"output": f"bad request: {error}", "ok": False}).encode(),
+                    HTTPStatus.BAD_REQUEST,
+                    "application/json",
+                )
+            result = run_cell(payload.get("earlier", []), payload.get("source", ""))
+            return self._send(json.dumps(result).encode(), kind="application/json")
         if route != "/api/grade":
             return self._send(b"{}", HTTPStatus.NOT_FOUND, "application/json")
-        length = int(self.headers.get("Content-Length", "0"))
-        payload = json.loads(self.rfile.read(length) or b"{}")
-        node_id = payload.get("node", "")
-        node_dir, meta = grader.load_node(node_id)
+        # The same contract as /api/exec: a request that cannot be graded still
+        # answers with the shape the client reads, `ok` false and a reason.
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            if not isinstance(payload, dict):
+                raise ValueError("the request body must be a JSON object")
+            node_id = str(payload.get("node", ""))
+            node_dir, meta = grader.load_node(node_id)
+        except (ValueError, UnicodeDecodeError, SystemExit, OSError, KeyError) as error:
+            reason = f"cannot grade this request: {error}"
+            return self._send(
+                json.dumps({"ok": False, "tiers": [], "stopped_at": None,
+                            "output": reason, "summary": reason}).encode(),
+                HTTPStatus.BAD_REQUEST,
+                "application/json",
+            )
 
         workspace = grader.WORKSPACE_DIR / node_id
         workspace.mkdir(parents=True, exist_ok=True)
@@ -1098,7 +1202,7 @@ def _run_cells(_earlier_cells, _own_source):
         body = json.dumps(
             {"ok": stopped_at is None, "tiers": results, "stopped_at": stopped_at,
              # the reader needs the test's name and line, not this machine's folders
-             "output": output.replace(str(WORKSPACE) + "/", "").replace(str(BOOKS) + "/", ""),
+             "output": strip_roots(output),
              "summary": summary if stopped_at else ""}
         ).encode()
         self._send(body, kind="application/json")
@@ -1109,6 +1213,7 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=8770)
     parser.add_argument("--no-open", action="store_true")
     args = parser.parse_args()
+    report_legacy_workspace()
 
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     url = f"http://127.0.0.1:{args.port}/"

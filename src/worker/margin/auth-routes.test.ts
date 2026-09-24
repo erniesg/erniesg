@@ -1174,18 +1174,26 @@ describe('review findings, round six', () => {
   })
 })
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
 /**
  * A fetch whose token-exchange response the test controls: it can hang
  * forever and ignore its abort signal (an originating request that was
- * cancelled), hang until its signal aborts (a slow provider), or answer.
+ * cancelled), hang until its signal aborts (a slow provider), answer after a
+ * delay, or answer at once. Key-set requests answer after `jwksDelayMs`.
  */
-function controlledTokenEndpoint(answer: () => Promise<unknown>) {
-  let mode: 'orphaned' | 'slow' | 'answer' = 'orphaned'
+function controlledTokenEndpoint(
+  answer: () => Promise<unknown>,
+  { jwksDelayMs = 0 }: { jwksDelayMs?: number } = {},
+) {
+  let mode: 'orphaned' | 'slow' | 'delayed' | 'answer' = 'orphaned'
+  let delayMs = 0
   const signals: Array<AbortSignal | null | undefined> = []
   let exchanges = 0
   const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString()
     if (!url.includes('/user_management/authenticate')) {
+      if (jwksDelayMs) await sleep(jwksDelayMs)
       return new Response(JSON.stringify(signer.jwks), { status: 200 })
     }
     exchanges += 1
@@ -1196,14 +1204,16 @@ function controlledTokenEndpoint(answer: () => Promise<unknown>) {
         init?.signal?.addEventListener('abort', () => reject(init.signal?.reason))
       })
     }
+    if (mode === 'delayed') await sleep(delayMs)
     return new Response(JSON.stringify(await answer()), { status: 200 })
   }) as unknown as typeof fetch
   return {
     fetchImpl,
     signals,
     exchanges: () => exchanges,
-    set(next: typeof mode) {
+    set(next: typeof mode, ms = 0) {
       mode = next
+      delayMs = ms
     },
   }
 }
@@ -1211,6 +1221,9 @@ function controlledTokenEndpoint(answer: () => Promise<unknown>) {
 describe('a shared renewal never outlives its waiters', () => {
   const later = NOW_MS + 3_600_000
   const laterSeconds = Math.floor(later / 1000)
+  // Short bounds so the test runs in milliseconds. The originator's worst case
+  // is four of these.
+  const PROVIDER_TIMEOUT_MS = 50
 
   async function lapsedSession(): Promise<Request> {
     const stale = await accessToken({ iat: NOW_SECONDS - 70, exp: NOW_SECONDS - 60 })
@@ -1222,29 +1235,60 @@ describe('a shared renewal never outlives its waiters', () => {
     return new Request(`https://ernie.sg${AUTH_ME_PATH}`, { headers: { cookie } })
   }
 
-  function options(endpoint: ReturnType<typeof controlledTokenEndpoint>): AuthOptions {
+  const fresh = async () => ({
+    access_token: await signer.sign({
+      iss: TEST_ISSUER,
+      sub: 'user_01HREADER',
+      client_id: config.clientId,
+      iat: laterSeconds - 10,
+      exp: laterSeconds + 300,
+    }),
+    refresh_token: 'refresh_two',
+  })
+
+  function options(
+    endpoint: ReturnType<typeof controlledTokenEndpoint>,
+    jwks?: AuthOptions['jwks'],
+  ): AuthOptions {
     return {
       now: later,
       fetchImpl: endpoint.fetchImpl,
-      providerTimeoutMs: 50,
-      jwks: createJwksSource(jwksUrl(config), {
-        fetchImpl: endpoint.fetchImpl,
-        now: () => later,
-      }),
+      providerTimeoutMs: PROVIDER_TIMEOUT_MS,
+      jwks:
+        jwks ??
+        createJwksSource(jwksUrl(config), {
+          fetchImpl: endpoint.fetchImpl,
+          now: () => later,
+        }),
     }
   }
 
-  it('lets a waiter go when the originating request is cancelled, and starts fresh after', async () => {
-    const endpoint = controlledTokenEndpoint(async () => ({
-      access_token: await signer.sign({
-        iss: TEST_ISSUER,
-        sub: 'user_01HREADER',
-        client_id: config.clientId,
-        iat: laterSeconds - 10,
-        exp: laterSeconds + 300,
-      }),
-      refresh_token: 'refresh_two',
-    }))
+  // The rule: only the originator frees the slot, so a renewal that is slow
+  // but healthy (longer than a waiter's wait, shorter than the originator's
+  // bound) is never duplicated with the same single-use refresh token.
+  it('never starts a second exchange under a slow but healthy renewal', async () => {
+    // Exchange 40 ms, then a cold key-set fetch of 40 ms: about 80 ms in all,
+    // past the 50 ms a waiter waits and inside the 200 ms originator bound.
+    const endpoint = controlledTokenEndpoint(fresh, { jwksDelayMs: 40 })
+    endpoint.set('delayed', 40)
+    const request = await lapsedSession()
+    const shared = options(endpoint)
+
+    const originator = renewSession(request.clone(), config, shared)
+    await sleep(5)
+    const early = await renewSession(request.clone(), config, shared)
+    expect(early, 'a waiter past its own wait goes unrenewed').toBeNull()
+    // Arrives after that waiter gave up, while the originator is still working.
+    const late = renewSession(request.clone(), config, shared)
+
+    const [first, joined] = await Promise.all([originator, late])
+    expect(first?.kind).toBe('renewed')
+    expect(joined?.kind).toBe('renewed')
+    expect(endpoint.exchanges(), 'one exchange for the whole burst').toBe(1)
+  })
+
+  it('lets waiters go when the originating request is cancelled, and frees the slot only past its bound', async () => {
+    const endpoint = controlledTokenEndpoint(fresh)
     const request = await lapsedSession()
 
     // The originator's exchange never settles, as when its request is gone.
@@ -1253,10 +1297,15 @@ describe('a shared renewal never outlives its waiters', () => {
     const waiter = await renewSession(request.clone(), config, options(endpoint))
     expect(waiter, 'a waiter goes unrenewed rather than hanging').toBeNull()
     expect(Date.now() - started).toBeLessThan(2_000)
-    // It did not run a second exchange with the single-use refresh token.
+
+    // Inside the originator's bound the slot is still its own: no second
+    // exchange with the single-use refresh token.
+    expect(await renewSession(request.clone(), config, options(endpoint))).toBeNull()
     expect(endpoint.exchanges()).toBe(1)
 
-    // The slot was emptied, so the next request renews on its own.
+    // Past the bound every part of that renewal has been aborted, so the next
+    // request renews on its own.
+    await sleep(4 * PROVIDER_TIMEOUT_MS + 20)
     endpoint.set('answer')
     const next = await renewSession(request.clone(), config, options(endpoint))
     expect(next?.kind).toBe('renewed')
@@ -1277,5 +1326,40 @@ describe('a shared renewal never outlives its waiters', () => {
       AbortSignal,
     )
     expect(endpoint.signals[0]?.aborted).toBe(true)
+  })
+
+  it('answers a renewal that throws as unrenewed, never as a 500', async () => {
+    const endpoint = controlledTokenEndpoint(fresh)
+    endpoint.set('answer')
+    // The first key lookup (the ordinary principal check) works; every one
+    // after it, inside the renewal, throws.
+    let lookups = 0
+    const good = createJwksSource(jwksUrl(config), {
+      fetchImpl: endpoint.fetchImpl,
+      now: () => later,
+    })
+    const throwing: AuthOptions['jwks'] = {
+      async getKey(kid) {
+        lookups += 1
+        if (lookups > 1) throw new Error('key store exploded')
+        return good.getKey(kid)
+      },
+    }
+
+    const request = await lapsedSession()
+    // Called directly, the renewal's own lookup is the first: make it throw.
+    lookups = 1
+    await expect(
+      renewSession(request.clone(), config, options(endpoint, throwing)),
+    ).resolves.toBeNull()
+
+    lookups = 0
+    const response = (await handleAuthRequest(
+      request.clone(),
+      envWith(),
+      options(endpoint, throwing),
+    )) as Response
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ authenticated: false })
   })
 })

@@ -224,6 +224,15 @@ async function exchange(
   try {
     // Bounded, so a renewal other requests are waiting on cannot hang. A
     // timeout is `retryable`, like any other failure to hear back.
+    //
+    // A known limit: WorkOS may still complete an exchange this side has
+    // abandoned, and rotate the refresh token. The browser then holds a spent
+    // token, and the next renewal gets invalid_grant and clears the session.
+    // Treating that invalid_grant as retryable would not save the session:
+    // the spent token can never be exchanged again, so the user would stay
+    // signed out either way, only with a dead cookie kept longer. Recovering
+    // it would need WorkOS to offer refresh-token reuse within a grace
+    // window, which this code does not rely on.
     const response = await fetchImpl(tokenEndpoint(config), {
       signal: AbortSignal.timeout(options.providerTimeoutMs ?? PROVIDER_FETCH_TIMEOUT_MS),
       method: 'POST',
@@ -442,7 +451,23 @@ export type SessionRenewal = {
  * isolates racing is a smaller and rarer window, and closing it needs a Durable
  * Object — worth its own issue rather than a guess here.
  */
-const renewalsInFlight = new Map<string, Promise<SessionRenewal | null>>()
+type RenewalInFlight = {
+  promise: Promise<SessionRenewal | null>
+  startedAt: number
+}
+
+const renewalsInFlight = new Map<string, RenewalInFlight>()
+
+/**
+ * The longest a healthy renewal can take: the token exchange, then a JWKS
+ * refresh during verification, where a joiner may wait one fetch bound and
+ * then fetch for itself, plus one bound of slack for sealing and scheduling.
+ * Each part is aborted at its own bound, so past this the originator's
+ * exchange can no longer complete.
+ */
+function renewalBoundMs(providerTimeoutMs: number): number {
+  return 4 * providerTimeoutMs
+}
 
 export async function renewSession(
   request: Request,
@@ -452,33 +477,39 @@ export async function renewSession(
   const sealed = readCookie(request, SESSION_COOKIE_NAME)
   if (!sealed) return null
 
+  const providerTimeoutMs = options.providerTimeoutMs ?? PROVIDER_FETCH_TIMEOUT_MS
   const inFlight = renewalsInFlight.get(sealed)
-  if (inFlight) {
+  // Only the request that started a renewal frees its slot, in `finally`. The
+  // one exception is an entry older than the originator's worst case: every
+  // part of that renewal has been aborted by then, so it can only be one whose
+  // request was cancelled before its `finally` could run.
+  if (inFlight && Date.now() - inFlight.startedAt < renewalBoundMs(providerTimeoutMs)) {
     // Waited for on this request's own timer, never for as long as the request
-    // that started it lives: if that request was cancelled, the shared promise
-    // may never settle. A waiter that runs out of time empties the slot so the
-    // next request can start fresh. It does not run a second exchange itself,
-    // because the refresh token is single-use, and a second exchange racing
-    // the first could be answered with invalid_grant and sign the user out.
-    // This request goes unrenewed and keeps its cookie. The next one renews.
-    const waited = await settleWithin(
-      inFlight,
-      options.providerTimeoutMs ?? PROVIDER_FETCH_TIMEOUT_MS,
-    )
-    if (waited.settled) return waited.value
-    if (renewalsInFlight.get(sealed) === inFlight) renewalsInFlight.delete(sealed)
-    return null
+    // that started it lives. A waiter that runs out of time goes unrenewed for
+    // this one request and keeps its cookie. It leaves the slot alone and
+    // never exchanges itself: the refresh token is single-use, so a second
+    // exchange racing a slow but healthy first one could be answered with
+    // invalid_grant and sign the user out.
+    const waited = await settleWithin(inFlight.promise, providerTimeoutMs)
+    return waited.settled ? waited.value : null
   }
-  const started: Promise<SessionRenewal | null> = renewOnce(
+
+  // A renewal that throws is an unrenewed request, never a 500: callers read
+  // `null` as "no fresh session" and answer anonymously or with a 401.
+  const promise: Promise<SessionRenewal | null> = renewOnce(
     request,
     config,
     options,
     sealed,
-  ).finally(() => {
-    if (renewalsInFlight.get(sealed) === started) renewalsInFlight.delete(sealed)
-  })
-  renewalsInFlight.set(sealed, started)
-  return started
+  )
+    .catch(() => null)
+    .finally(() => {
+      if (renewalsInFlight.get(sealed)?.promise === promise) {
+        renewalsInFlight.delete(sealed)
+      }
+    })
+  renewalsInFlight.set(sealed, { promise, startedAt: Date.now() })
+  return promise
 }
 
 async function renewOnce(

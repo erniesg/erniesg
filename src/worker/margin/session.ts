@@ -24,7 +24,9 @@ import {
  * browser sends both, a reader that takes the first gets the shadow, which can
  * block sign-in or pin a victim to the attacker's session. The browser accepts
  * a `__Host-` cookie only when it is `Secure`, has `Path=/` and has no `Domain`,
- * which means it can come only from this exact host. `serializeCookie` refuses
+ * which means it can come only from this exact host, on any browser that
+ * rejects a nameless cookie spelling a `__Host-` name (see `readCookie` for
+ * what remains on one that does not). `serializeCookie` refuses
  * any other name or path, so a new auth cookie cannot skip the prefix.
  */
 
@@ -297,13 +299,22 @@ export function legacyCookieClears(request: Request): string[] {
  * Only `__Host-` names can be read, because an unprefixed name is exactly the
  * one a sibling host can shadow. The legacy names are never read.
  *
- * A name that appears more than once is ambiguous and reads as absent. Only
- * this host can set a `__Host-` cookie with `Path=/`, so a legitimate browser
- * holds one. A second copy can come only from a browser that still accepts a
- * nameless cookie whose value spells `__Host-...=`. A sibling host can plant
- * one of those with a longer path, which sorts it first. Taking any one of the
- * copies would let that plant pick the session. Refusing both turns a
- * fixation attempt into a sign-out.
+ * A name that appears more than once is ambiguous and reads as absent.
+ * Only this host can set a `__Host-` cookie with `Path=/`, so a legitimate
+ * browser holds at most one. A second copy can come only from a browser that
+ * still accepts a nameless cookie whose value spells `__Host-...=`, which a
+ * sibling host can plant with a longer path so that it sorts first.
+ *
+ * What this does and does not protect, on such a browser only (current
+ * Chrome, Firefox and Safari reject the nameless form):
+ * - A signed-in victim: the plant makes two copies, both read as absent, and
+ *   an attempted fixation becomes a sign-out.
+ * - A signed-out victim: the plant is the only copy and is read as the
+ *   session, so fixation still works. Nothing on the server can tell a lone
+ *   planted copy from a real one.
+ * - Either victim: a long-lived plant makes every later sign-in read as
+ *   absent, and a host-only clear cannot remove it, so the user stays locked
+ *   out until they clear this site's cookies.
  */
 export function readCookie(request: Request, name: string): string | null {
   if (!name.startsWith(HOST_COOKIE_PREFIX)) {

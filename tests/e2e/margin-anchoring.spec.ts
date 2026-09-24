@@ -126,6 +126,33 @@ async function widestProse(page: Page): Promise<string> {
   return id
 }
 
+/**
+ * The prose block whose first text node is longest.
+ *
+ * `paintedTexts` counts ranges, and a highlight over inline markup (a `<code>`
+ * name, say) is painted as one range per text node it crosses. A test that
+ * counts one range per highlight must select inside one text node, and which
+ * block offers the longest run of plain text depends on what the chapter
+ * currently says, so it is chosen here rather than assumed.
+ */
+async function widestPlainProse(page: Page, atLeast = 80): Promise<string> {
+  const id = await page.evaluate(
+    (atLeast) =>
+      Array.from(
+        document.querySelectorAll('.book-content [data-block-kind="prose"]'),
+      )
+        .map((block) => {
+          const first = document.createTreeWalker(block, NodeFilter.SHOW_TEXT).nextNode()
+          return { id: block.id, length: first?.textContent?.length ?? 0 }
+        })
+        .filter((block) => block.length >= atLeast)
+        .sort((a, b) => b.length - a.length)[0]?.id ?? '',
+    atLeast,
+  )
+  expect(id).not.toBe('')
+  return id
+}
+
 /** Select `[start, end)` of one block's text, with no input event at all. */
 async function selectWithin(
   page: Page,
@@ -610,7 +637,7 @@ test.describe('highlight painting', () => {
     page,
   }) => {
     await open(page)
-    const widest = await widestProse(page)
+    const widest = await widestPlainProse(page)
     const length = await page.evaluate(
       (id) => (document.getElementById(id)?.textContent ?? '').length,
       widest,

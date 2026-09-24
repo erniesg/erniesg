@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createSemanticTextAnchor,
   textAnnotationSchema,
+  resolveTextAnchor,
   withStructSelector,
   type AnchorableNode,
   type TextAnnotation,
@@ -245,5 +246,61 @@ describe('placing a whole rail', () => {
 
     expect(orphans).toHaveLength(1)
     expect(orphans[0].annotation).toBe(orphan)
+  })
+})
+
+/**
+ * Rule: a `@document` anchor's placement is exactly its document-wide
+ * resolution. No block-local rung (`relocate` after a unique quote, after
+ * ambiguity, or after quote-not-found) may re-decide it, because those check
+ * context one block at a time and the sentinel id never equals a real node id.
+ */
+describe('document-scoped anchors are placed by the document pass alone', () => {
+  // "abc target d" occurs twice in the document stream. The first occurrence's
+  // prefix crosses the boundary between `left` and `right`; the second sits
+  // wholly inside `later`. Block-local context only sees the second.
+  const nodes = [
+    block('left', 'ab'),
+    block('right', 'c target d'),
+    block('later', 'zz abc target d'),
+    block('lone', 'solitary words'),
+  ]
+  const scoped = (exact: string, prefix: string, suffix: string) => ({
+    nodeId: '@document',
+    position: { start: 0, end: exact.length },
+    quote: { exact, prefix, suffix },
+  })
+  const cases = {
+    ambiguousAcrossBoundary: scoped('target', 'abc ', ' d'),
+    uniqueQuote: scoped('solitary', 'nothing', 'nothing'),
+    notFound: scoped('absent', '', ''),
+    contextual: scoped('target', 'zz abc ', ' d'),
+  }
+
+  for (const [name, anchor] of Object.entries(cases)) {
+    it(`mirrors resolveTextAnchor for ${name}`, () => {
+      const resolution = resolveTextAnchor(anchor, nodes)
+      const placement = resolveAnchorInDocument(anchor, nodes)
+      if (resolution.status === 'resolved') {
+        expect(placement).toEqual({
+          status: 'anchored',
+          nodeId: resolution.nodeId,
+          start: resolution.start,
+          end: resolution.end,
+          matchedBy: resolution.matchedBy,
+        })
+      } else {
+        expect(placement.status).toBe('orphaned')
+        expect(placement).toMatchObject({
+          nodeId: '@document',
+          reason: resolution.status === 'ambiguous' ? 'ambiguous' : resolution.reason,
+        })
+      }
+    })
+  }
+
+  it('keeps the cross-boundary duplicate ambiguous rather than picking one', () => {
+    const placement = resolveAnchorInDocument(cases.ambiguousAcrossBoundary, nodes)
+    expect(placement).toMatchObject({ status: 'orphaned', reason: 'ambiguous' })
   })
 })

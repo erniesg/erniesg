@@ -15,6 +15,7 @@ import {
   type AnchorMatchedBy,
   type AnchorableNode,
   type SemanticTextAnchor,
+  type TextAnchorResolution,
   type TextAnnotation,
 } from './anchor.js'
 
@@ -92,11 +93,51 @@ function relocate(
   return { nodeId: only.nodeId, start: only.start, end: only.end }
 }
 
+/**
+ * A `@document` anchor's placement is its resolution, and nothing else.
+ *
+ * `resolveDocumentAnchor` already weighed the whole document text, with context
+ * that may cross block boundaries. Every rung below that — `relocate` after a
+ * unique quote, after ambiguity, after quote-not-found — checks context inside
+ * one block at a time, so it can drop a candidate whose prefix crosses a
+ * boundary and "resolve" what the document pass correctly called ambiguous.
+ * And since no real node id equals the `@document` sentinel, every
+ * `nodeId !== anchor.nodeId` guard would let that through. So none of them
+ * runs for this anchor.
+ */
+function placeDocumentScoped(
+  anchor: SemanticTextAnchor,
+  resolution: TextAnchorResolution,
+): AnchorPlacement {
+  if (resolution.status === 'resolved') {
+    return {
+      status: 'anchored',
+      nodeId: resolution.nodeId,
+      start: resolution.start,
+      end: resolution.end,
+      matchedBy: resolution.matchedBy,
+    }
+  }
+  return {
+    status: 'orphaned',
+    nodeId: resolution.nodeId,
+    reason: resolution.status === 'ambiguous' ? 'ambiguous' : resolution.reason,
+    quote: anchor.quote.exact,
+    detail:
+      resolution.status === 'ambiguous'
+        ? resolution.reason
+        : 'The quote is no longer anywhere in the document.',
+  }
+}
+
 export function resolveAnchorInDocument(
   anchor: SemanticTextAnchor,
   nodes: readonly AnchorableNode[],
 ): AnchorPlacement {
   const resolution = resolveTextAnchor(anchor, nodes)
+  if (anchor.nodeId === DOCUMENT_SCOPE_NODE_ID) {
+    return placeDocumentScoped(anchor, resolution)
+  }
   if (resolution.status === 'resolved') {
     // `unique-quote` means "the only occurrence in this block", and nothing
     // more — the stored prefix and suffix were not confirmed. If the original
@@ -146,20 +187,7 @@ export function resolveAnchorInDocument(
     // Ambiguity inside the old block is not ambiguity across the document.
     // Both local duplicates may have lost their neighbourhood while the
     // original occurrence moved, with both stored context sides intact.
-    //
-    // A `@document`-scoped anchor is the exception: its ambiguity already
-    // came from `resolveDocumentAnchor` weighing the *whole* document text,
-    // context spanning block boundaries included. `relocate` only checks
-    // context inside one block at a time, so it can drop a candidate whose
-    // prefix crosses a boundary and "resolve" what was correctly ambiguous —
-    // and since no real node id ever equals the `@document` sentinel, the
-    // `moved.nodeId !== anchor.nodeId` check below would always let it
-    // through. Skip relocation for this anchor entirely; the duplicate stays
-    // orphaned rather than being attached arbitrarily.
-    const moved =
-      anchor.nodeId === DOCUMENT_SCOPE_NODE_ID
-        ? ('ambiguous' as const)
-        : relocate(anchor, nodes)
+    const moved = relocate(anchor, nodes)
     if (
       moved !== 'ambiguous' &&
       moved !== 'not-found' &&

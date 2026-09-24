@@ -131,11 +131,12 @@ describe('GET /auth/login', () => {
     expect(location.searchParams.get('state')?.length).toBeGreaterThan(20)
   })
 
-  it('pins the state to the browser in a short-lived /auth cookie', async () => {
+  it('pins the state to the browser in a short-lived __Host- cookie', async () => {
     const response = (await call(AUTH_LOGIN_PATH)) as Response
     const cookie = cookieNamed(response, STATE_COOKIE_NAME) as string
 
-    expect(cookie).toContain('; Path=/auth')
+    expect(cookie.startsWith('__Host-margin-auth-state=')).toBe(true)
+    expect(cookie).toContain('; Path=/;')
     expect(cookie).toContain('; HttpOnly')
     expect(cookie).toContain('; Secure')
     expect(cookie).toContain('; SameSite=Lax')

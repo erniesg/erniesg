@@ -13,13 +13,23 @@ import type { WorkerEnv } from './env'
 import worker, { MARGIN_HEALTH_PATH } from './index'
 import {
   createFakeProvider,
+  legacySessionCookieHeader,
   sessionCookieHeader,
   testSigner,
   testWorkosEnv,
   TEST_CLIENT_ID,
   TEST_ISSUER,
 } from './margin/fake-workos'
-import { AUTH_ME_PATH } from './margin/auth-routes'
+import {
+  AUTH_LOGIN_PATH,
+  AUTH_LOGOUT_PATH,
+  AUTH_ME_PATH,
+} from './margin/auth-routes'
+import {
+  HOST_COOKIE_PREFIX,
+  LEGACY_AUTH_COOKIES,
+  SESSION_COOKIE_NAME,
+} from './margin/session'
 
 // Prefer the real build output so this asserts against the HTML the site
 // actually ships. `scripts/agent-evidence` runs the build lane before the test
@@ -211,7 +221,9 @@ describe('the margin write gate', () => {
 
   function envWithWorkos() {
     const env = { ASSETS: createAssetBinding(), ...testWorkosEnv() }
-    return env as unknown as WorkerEnv & { ASSETS: ReturnType<typeof createAssetBinding> }
+    return env as unknown as WorkerEnv & {
+      ASSETS: ReturnType<typeof createAssetBinding>
+    }
   }
 
   it('refuses an anonymous write without reaching the assets', async () => {
@@ -225,7 +237,9 @@ describe('the margin write gate', () => {
       const response = await worker.fetch(new Request(url, { method }), env)
 
       expect(response.status, `${method} ${url}`).toBe(401)
-      expect(await response.json()).toEqual({ error: 'authentication_required' })
+      expect(await response.json()).toEqual({
+        error: 'authentication_required',
+      })
       expect(env.ASSETS.seen).toHaveLength(0)
     }
   })
@@ -326,33 +340,49 @@ describe('terminal refresh responses', () => {
         ['/api/margin/v1/annotations', 'POST', 401],
         ['/api/margin/v1/proposals/ann-1/apply', 'POST', 401],
       ] as const) {
-        const env = { ASSETS: createAssetBinding(), ...testWorkosEnv() } as WorkerEnv
+        const env = {
+          ASSETS: createAssetBinding(),
+          ...testWorkosEnv(),
+        } as WorkerEnv
         const response = await worker.fetch(
-          new Request(`https://ernie.sg${path}`, { method, headers: { cookie } }),
+          new Request(`https://ernie.sg${path}`, {
+            method,
+            headers: { cookie },
+          }),
           env,
         )
         expect(response.status, `${method} ${path}`).toBe(status)
-        expect(response.headers.get('set-cookie'), `${method} ${path}`)
-          .toContain('margin-session=; Path=/; Max-Age=0')
+        expect(
+          response.headers.get('set-cookie'),
+          `${method} ${path}`,
+        ).toContain('margin-session=; Path=/; Max-Age=0')
       }
       const failedStore = await worker.fetch(
-        new Request('https://ernie.sg/api/margin/v1/annotations?source=https%3A%2F%2Fernie.sg%2Fx', {
-          headers: { cookie },
-        }),
+        new Request(
+          'https://ernie.sg/api/margin/v1/annotations?source=https%3A%2F%2Fernie.sg%2Fx',
+          {
+            headers: { cookie },
+          },
+        ),
         {
           ASSETS: createAssetBinding(),
-          MARGIN_DB: { prepare() { throw new Error('downstream unavailable') } },
+          MARGIN_DB: {
+            prepare() {
+              throw new Error('downstream unavailable')
+            },
+          },
           ...testWorkosEnv(),
         } as WorkerEnv,
       )
       expect(failedStore.status).toBe(503)
-      expect(failedStore.headers.get('set-cookie'))
-        .toContain('margin-session=; Path=/; Max-Age=0')
-      const callsAfterClear = provider.calls.length
-      await worker.fetch(
-        new Request(`https://ernie.sg${AUTH_ME_PATH}`),
-        { ASSETS: createAssetBinding(), ...testWorkosEnv() } as WorkerEnv,
+      expect(failedStore.headers.get('set-cookie')).toContain(
+        'margin-session=; Path=/; Max-Age=0',
       )
+      const callsAfterClear = provider.calls.length
+      await worker.fetch(new Request(`https://ernie.sg${AUTH_ME_PATH}`), {
+        ASSETS: createAssetBinding(),
+        ...testWorkosEnv(),
+      } as WorkerEnv)
       expect(provider.calls).toHaveLength(callsAfterClear)
     } finally {
       vi.unstubAllGlobals()
@@ -397,7 +427,10 @@ describe('renewing a write leaves its body readable', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ hello: 'world' }),
     })
-    const env = { ASSETS: createAssetBinding(), ...testWorkosEnv() } as unknown as WorkerEnv
+    const env = {
+      ASSETS: createAssetBinding(),
+      ...testWorkosEnv(),
+    } as unknown as WorkerEnv
 
     await worker.fetch(request, env)
 
@@ -433,7 +466,9 @@ describe('a store that cannot answer', () => {
           }
         },
       },
-    } as unknown as WorkerEnv & { ASSETS: ReturnType<typeof createAssetBinding> }
+    } as unknown as WorkerEnv & {
+      ASSETS: ReturnType<typeof createAssetBinding>
+    }
 
     const response = await worker.fetch(
       new Request(
@@ -443,7 +478,9 @@ describe('a store that cannot answer', () => {
     )
 
     expect(response.status).toBe(503)
-    const body = (await response.json()) as { error: { code: string; message: string } }
+    const body = (await response.json()) as {
+      error: { code: string; message: string }
+    }
     expect(body.error.code).toBe('storage_unavailable')
     expect(body.error.message).toContain('migrations')
     // And nothing from the store's own message reaches the caller.
@@ -458,5 +495,120 @@ describe('a store that cannot answer', () => {
     )
 
     expect(response.status).toBe(200)
+  })
+})
+
+describe('the __Host- cookie rename', () => {
+  async function signedInLegacyBrowser() {
+    const now = Math.floor(Date.now() / 1000)
+    const signer = await testSigner()
+    const token = await signer.sign({
+      iss: TEST_ISSUER,
+      sub: 'user_01HREADER',
+      client_id: TEST_CLIENT_ID,
+      iat: now - 10,
+      exp: now + 300,
+    })
+    const session = {
+      accessToken: token,
+      expiresAt: now + 300,
+      ceiling: now + 3_600,
+    }
+    const provider = createFakeProvider({ jwks: signer.jwks })
+    return { cookie: await legacySessionCookieHeader(session), provider }
+  }
+
+  const env = () =>
+    ({ ASSETS: createAssetBinding(), ...testWorkosEnv() }) as WorkerEnv
+  const nameOf = (header: string) => header.slice(0, header.indexOf('='))
+
+  it('keeps a user signed in before the rename signed in, and moves the cookie once', async () => {
+    const { cookie, provider } = await signedInLegacyBrowser()
+    vi.stubGlobal('fetch', provider.fetchImpl)
+    try {
+      const first = await worker.fetch(
+        new Request(`https://ernie.sg${AUTH_ME_PATH}`, { headers: { cookie } }),
+        env(),
+      )
+      expect(await first.json()).toMatchObject({ authenticated: true })
+      const set = first.headers.getSetCookie()
+      expect(set.map(nameOf)).toEqual(['margin-session', SESSION_COOKIE_NAME])
+      expect(set[0]).toContain('; Max-Age=0')
+
+      // The next request carries only what the browser now holds.
+      const moved = set[1] as string
+      const second = await worker.fetch(
+        new Request(`https://ernie.sg${AUTH_ME_PATH}`, {
+          headers: { cookie: moved.slice(0, moved.indexOf(';')) },
+        }),
+        env(),
+      )
+      expect(await second.json()).toMatchObject({ authenticated: true })
+      expect(second.headers.getSetCookie()).toEqual([])
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('lets logout win over the migrated copy', async () => {
+    const { cookie, provider } = await signedInLegacyBrowser()
+    vi.stubGlobal('fetch', provider.fetchImpl)
+    try {
+      const response = await worker.fetch(
+        new Request(`https://ernie.sg${AUTH_LOGOUT_PATH}`, {
+          method: 'POST',
+          headers: { cookie },
+        }),
+        env(),
+      )
+      const set = response.headers.getSetCookie()
+      const lastSession = set
+        .filter((c) => nameOf(c) === SESSION_COOKIE_NAME)
+        .at(-1)
+      expect(lastSession).toContain('; Max-Age=0')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  // The rule, at the edge: every cookie the worker sets on any auth flow is a
+  // `__Host-` cookie, apart from the expiry of a legacy name.
+  it('sets no auth cookie without the __Host- prefix on any flow', async () => {
+    const { cookie, provider } = await signedInLegacyBrowser()
+    const legacy = new Set(LEGACY_AUTH_COOKIES.map(({ name }) => name))
+    vi.stubGlobal('fetch', provider.fetchImpl)
+    try {
+      const requests = [
+        new Request(`https://ernie.sg${AUTH_LOGIN_PATH}`),
+        new Request(`https://ernie.sg${AUTH_ME_PATH}`, { headers: { cookie } }),
+        new Request(`https://ernie.sg${AUTH_LOGOUT_PATH}`, { method: 'POST' }),
+        new Request(`https://ernie.sg${AUTH_LOGOUT_PATH}`, {
+          method: 'POST',
+          headers: { cookie: `${cookie}; margin-auth-state=x` },
+        }),
+        new Request('https://ernie.sg/api/margin/v1/annotations', {
+          headers: { cookie },
+        }),
+      ]
+      const seen: string[] = []
+      for (const request of requests) {
+        seen.push(
+          ...(await worker.fetch(request, env())).headers.getSetCookie(),
+        )
+      }
+      expect(seen.length).toBeGreaterThan(0)
+      for (const header of seen) {
+        if (legacy.has(nameOf(header))) {
+          expect(header, header).toContain('; Max-Age=0')
+          continue
+        }
+        expect(header.startsWith(HOST_COOKIE_PREFIX), header).toBe(true)
+        expect(header, header).toContain('; Path=/;')
+        expect(header, header).toContain('; Secure')
+        expect(header.toLowerCase(), header).not.toContain('domain=')
+      }
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

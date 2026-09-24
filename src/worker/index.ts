@@ -2,6 +2,7 @@ import type { WorkerEnv } from './env'
 import { getPrincipal, type PrincipalOptions } from './principal'
 import { requireAdmin, requireWriter } from './margin/authorize'
 import { readWorkosConfig } from './margin/config'
+import { migrateLegacyAuthCookies } from './margin/session'
 import {
   AUTH_PREFIX,
   handleAuthRequest,
@@ -194,6 +195,21 @@ function withCookie(response: Response, cookie: string): Response {
   return next
 }
 
+/**
+ * The same response, with `cookies` placed before its own `set-cookie`
+ * headers. The browser applies them in order, so a route that sets or clears
+ * the session (sign-in, renewal, logout) still wins over the migrated copy.
+ */
+function withCookiesFirst(response: Response, cookies: string[]): Response {
+  const next = new Response(response.body, response)
+  const own = next.headers.getSetCookie()
+  next.headers.delete('set-cookie')
+  for (const cookie of [...cookies, ...own]) {
+    next.headers.append('set-cookie', cookie)
+  }
+  return next
+}
+
 function healthResponse(): Response {
   const body = JSON.stringify({ status: 'ok', service: 'margin' })
   return new Response(`${body}\n`, {
@@ -226,52 +242,70 @@ export default {
       return healthResponse()
     }
 
-    const auth = await handleAuthRequest(request, env)
-    if (auth) return auth
-    if (
-      pathname !== MARGIN_API_PREFIX &&
-      !pathname.startsWith(`${MARGIN_API_PREFIX}/`)
-    ) {
-      return env.ASSETS.fetch(request)
+    // Before anything reads a cookie: a session signed in under the old
+    // unprefixed name moves to `__Host-margin-session` once, and the legacy
+    // cookies are cleared, whichever route the browser happens to hit first.
+    const migration = await migrateLegacyAuthCookies(
+      request,
+      readWorkosConfig(env)?.cookiePassword ?? null,
+    )
+    if (migration) {
+      return withCookiesFirst(
+        await route(migration.request, env),
+        migration.setCookies,
+      )
     }
+    return route(request, env)
+  },
+}
 
-    const gate = await marginWriteGate(request, env)
-    if (gate?.denied) return gate.denied
-    const forwarded = gate?.forward ?? request
-    let response: Response
-    if (!isD1Database(env.MARGIN_DB)) {
+async function route(request: Request, env: WorkerEnv): Promise<Response> {
+  const { pathname } = new URL(request.url)
+  const auth = await handleAuthRequest(request, env)
+  if (auth) return auth
+  if (
+    pathname !== MARGIN_API_PREFIX &&
+    !pathname.startsWith(`${MARGIN_API_PREFIX}/`)
+  ) {
+    return env.ASSETS.fetch(request)
+  }
+
+  const gate = await marginWriteGate(request, env)
+  if (gate?.denied) return gate.denied
+  const forwarded = gate?.forward ?? request
+  let response: Response
+  if (!isD1Database(env.MARGIN_DB)) {
+    response = json(
+      {
+        error: {
+          code: 'storage_unavailable',
+          message: 'the MARGIN_DB binding is missing',
+        },
+      },
+      503,
+    )
+  } else {
+    try {
+      response = await handleMarginRequest(forwarded, {
+        repository: new D1MarginRepository(env.MARGIN_DB),
+        principal: await getPrincipal(forwarded, env),
+        now: () => new Date().toISOString(),
+        newId: () => crypto.randomUUID(),
+      })
+    } catch {
       response = json(
         {
           error: {
             code: 'storage_unavailable',
-            message: 'the MARGIN_DB binding is missing',
+            message:
+              'the margin store did not answer; check that its migrations are applied',
           },
         },
         503,
       )
-    } else {
-      try {
-        response = await handleMarginRequest(forwarded, {
-          repository: new D1MarginRepository(env.MARGIN_DB),
-          principal: await getPrincipal(forwarded, env),
-          now: () => new Date().toISOString(),
-          newId: () => crypto.randomUUID(),
-        })
-      } catch {
-        response = json(
-          {
-            error: {
-              code: 'storage_unavailable',
-              message:
-                'the margin store did not answer; check that its migrations are applied',
-            },
-          },
-          503,
-        )
-      }
     }
-    // Both rotation and terminal expiry reach the browser on success, missing
-    // storage and downstream errors. Never lose a cleared cookie to a throw.
-    return gate?.setCookie ? withCookie(response, gate.setCookie) : response
-  },
+  }
+  // Both rotation and terminal expiry reach the browser on success, missing
+  // storage and downstream errors. Never lose a cleared cookie to a throw.
+  return gate?.setCookie ? withCookie(response, gate.setCookie) : response
 }

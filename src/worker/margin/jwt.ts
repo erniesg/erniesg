@@ -131,8 +131,27 @@ export function createJwksSource(
    * inside the window is throttled, which is the traffic this guards against.
    */
   let rotationAt = 0
+  /**
+   * The one key-set fetch in flight, shared by every caller that needs it.
+   *
+   * Every refresh goes through `refresh()`, and a caller that arrives while a
+   * fetch is running awaits that fetch instead of starting or skipping one.
+   * Without this, a second request carrying a newly rotated `kid` saw the
+   * rotation throttle already set by the first, skipped the refetch, and read
+   * the stale map, so a valid token got a 401 during key rotation.
+   */
+  let inflight: Promise<boolean> | null = null
 
-  async function refresh(): Promise<boolean> {
+  function refresh(): Promise<boolean> {
+    if (!inflight) {
+      inflight = fetchKeySet().finally(() => {
+        inflight = null
+      })
+    }
+    return inflight
+  }
+
+  async function fetchKeySet(): Promise<boolean> {
     attemptedAt = now()
     let payload: unknown
     try {
@@ -173,8 +192,17 @@ export function createJwksSource(
       }
       const cached = keys?.get(kid)
       if (cached) return cached
-      // An unknown `kid` is the signal for key rotation. Refetch, but no more
-      // often than `minRefreshMs`, so a bogus `kid` cannot drive traffic.
+      // An unknown `kid` is the signal for key rotation. A fetch already in
+      // flight may be the one that brings the new key, so wait for it first:
+      // that costs no extra traffic, and it is what keeps a second request with
+      // the same new `kid` from reading the stale map.
+      if (inflight) {
+        await inflight
+        const fetched = keys?.get(kid)
+        if (fetched) return fetched
+      }
+      // Otherwise refetch, but no more often than `minRefreshMs`, so a bogus
+      // `kid` cannot drive traffic.
       if (keys && now() - rotationAt >= minRefreshMs) {
         rotationAt = now()
         await refresh()

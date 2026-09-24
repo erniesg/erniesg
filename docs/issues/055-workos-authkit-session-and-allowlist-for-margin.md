@@ -35,8 +35,9 @@ blast radius."
 
 1. Authorization-code flow through AuthKit's hosted UI. The code is exchanged
    server-side and a sealed session is stored in an app-specific cookie named
-   `margin-session`, `Secure`, `HttpOnly`, `SameSite=Lax`, narrowest viable
-   path, never scoped to a parent domain.
+   `__Host-margin-session`, `Secure`, `HttpOnly`, `SameSite=Lax`, never scoped
+   to a parent domain. The `__Host-` prefix, which requires `Path=/` and no
+   `Domain`, applies to every auth cookie, so a sibling host cannot shadow it.
 2. Token validation fails closed and checks all of: signature and allowed
    algorithm, expiry and activation, exact environment issuer, exact
    application `client_id` claim, non-empty subject. Provider or JWKS failure

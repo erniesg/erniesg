@@ -356,9 +356,9 @@ describe('the write gate renews a lapsed session', () => {
     expect(gate?.denied?.status).toBe(deniedStatus)
     expect(gate?.setCookie).toContain('; Max-Age=0')
     expect(gate?.denied?.headers.get('set-cookie') ?? gate?.setCookie)
-      .toContain('margin-session=;')
+      .toContain('__Host-margin-session=;')
     if (method === 'GET') {
-      expect(gate?.forward?.headers.get('cookie')).toBe('margin-session=')
+      expect(gate?.forward?.headers.get('cookie')).toBe('__Host-margin-session=')
     } else {
       expect(gate?.forward).toBeUndefined()
     }

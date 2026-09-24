@@ -16,7 +16,7 @@ import {
 /**
  * The single place any route learns who the caller is.
  *
- * A caller is whoever holds a sealed `margin-session` cookie containing a
+ * A caller is whoever holds a sealed `__Host-margin-session` cookie containing a
  * WorkOS access token that still passes every check in `verifyAccessToken` —
  * signature, allowed algorithm, expiry, activation, exact issuer, exact
  * `client_id`, non-empty subject. Nothing else produces a principal. There is

@@ -44,7 +44,7 @@ import {
  * The authorization-code half of AuthKit: the browser is redirected to the
  * hosted UI, comes back with a code, and the code is exchanged server-side so
  * the API key never leaves the Worker. The resulting access token is validated
- * before anything is stored, then sealed into the `margin-session` cookie.
+ * before anything is stored, then sealed into the `__Host-margin-session` cookie.
  *
  * Error responses are deliberately uninformative. A caller learns that login
  * failed and nothing about why, because the interesting reasons involve

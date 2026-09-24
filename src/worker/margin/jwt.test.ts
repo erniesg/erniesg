@@ -434,6 +434,122 @@ describe('JWKS availability', () => {
     expect(calls, 'the rotation must be fetched, not throttled').toHaveLength(2)
   })
 
+  /**
+   * A key-set endpoint whose responses are held until the test releases them,
+   * so several verifications are provably in flight at once.
+   */
+  function gatedEndpoint(initial: { keys: TestJwk[] }) {
+    let published = initial
+    let gated = false
+    const waiting: Array<() => void> = []
+    const calls: number[] = []
+    const fetchImpl = (async () => {
+      calls.push(calls.length)
+      const body = JSON.stringify(published)
+      if (gated) await new Promise<void>((release) => waiting.push(release))
+      return new Response(body, { status: 200 })
+    }) as unknown as typeof fetch
+    return {
+      fetchImpl,
+      calls,
+      publish(next: { keys: TestJwk[] }) {
+        published = next
+      },
+      hold() {
+        gated = true
+      },
+      release() {
+        gated = false
+        for (const release of waiting.splice(0)) release()
+      },
+    }
+  }
+
+  /** Let every started verification reach its pending key-set fetch. */
+  async function settle() {
+    for (let turn = 0; turn < 20; turn += 1) await Promise.resolve()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+
+  // Every refresh path must be single-flighted: callers that arrive while a
+  // fetch is in flight await it. The rotation path used to let the first
+  // request stamp the throttle and the rest read the stale map, a spurious 401
+  // for a valid token. The TTL path would issue one fetch per caller.
+  it('shares one in-flight fetch with concurrent verifications across a rotation', async () => {
+    let clock = NOW_MS
+    const endpoint = gatedEndpoint({ keys: signer.jwks.keys })
+    const source = createJwksSource(jwksUrl(config), {
+      fetchImpl: endpoint.fetchImpl,
+      now: () => clock,
+      ttlMs: 600_000,
+      minRefreshMs: 60_000,
+    })
+
+    const old = await signer.sign(validClaims())
+    await expect(
+      verifyAccessToken(old, { config, jwks: source, now: clock }),
+    ).resolves.toMatchObject({ ok: true })
+    expect(endpoint.calls).toHaveLength(1)
+
+    // WorkOS rotates: the new key is published beside the old one.
+    const rotated = await foreignSigner('rotated-concurrent')
+    endpoint.publish({ keys: [...signer.jwks.keys, ...rotated.jwks.keys] })
+    clock = NOW_MS + 1
+    const fresh = await rotated.sign(validClaims(), { kid: 'rotated-concurrent' })
+
+    endpoint.hold()
+    const pending = Array.from({ length: 8 }, (_, index) =>
+      verifyAccessToken(index % 4 === 3 ? old : fresh, {
+        config,
+        jwks: source,
+        now: clock,
+      }),
+    )
+    await settle()
+    endpoint.release()
+    const results = await Promise.all(pending)
+
+    expect(results.map((result) => result.ok)).toEqual(Array(8).fill(true))
+    expect(endpoint.calls, 'one rotation fetch, shared').toHaveLength(2)
+  })
+
+  it('shares one in-flight fetch with concurrent verifications at TTL expiry', async () => {
+    let clock = NOW_MS
+    const endpoint = gatedEndpoint({ keys: signer.jwks.keys })
+    const source = createJwksSource(jwksUrl(config), {
+      fetchImpl: endpoint.fetchImpl,
+      now: () => clock,
+      ttlMs: 600_000,
+      minRefreshMs: 60_000,
+    })
+    // Valid past the TTL, so only the key set expires, not the tokens.
+    const lasting = validClaims({ exp: NOW_SECONDS + 3600 })
+    const old = await signer.sign(lasting)
+    await verifyAccessToken(old, { config, jwks: source, now: clock })
+    expect(endpoint.calls).toHaveLength(1)
+
+    // The key set expires just as WorkOS rotates.
+    const rotated = await foreignSigner('rotated-at-expiry')
+    endpoint.publish({ keys: [...signer.jwks.keys, ...rotated.jwks.keys] })
+    clock = NOW_MS + 600_001
+    const fresh = await rotated.sign(lasting, { kid: 'rotated-at-expiry' })
+
+    endpoint.hold()
+    const pending = Array.from({ length: 8 }, (_, index) =>
+      verifyAccessToken(index % 2 === 0 ? fresh : old, {
+        config,
+        jwks: source,
+        now: clock,
+      }),
+    )
+    await settle()
+    endpoint.release()
+    const results = await Promise.all(pending)
+
+    expect(results.map((result) => result.ok)).toEqual(Array(8).fill(true))
+    expect(endpoint.calls, 'one expiry fetch, shared').toHaveLength(2)
+  })
+
   it('still throttles a second unknown kid inside the window', async () => {
     let clock = NOW_MS
     const calls: number[] = []

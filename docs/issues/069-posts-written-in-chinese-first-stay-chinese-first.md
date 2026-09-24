@@ -13,7 +13,18 @@ listed once, and URLs that have moved answer with a real `301`.
 
 GitHub issue #341 (the language and theme row inside each post) depends on
 this issue. It reads the `originalLocale` data defined here to mark the
-original in its in-post row. This issue does **not** build that row.
+original in its in-post row, and it edits the same files. This issue does
+**not** build that row. Once this spec is seeded and has an issue number, the
+coordinator adds the queue's dependency marker to #341's body, so #341 does
+not start before this issue lands.
+
+#341 also reports that at 390px both header controls are folded into the
+hamburger menu. On `main` at `fb60bce` that does not happen:
+`src/components/Header.astro` renders `LanguageToggle` and `ModeToggle`
+outside `MobileMenu`. At 390px, in Chromium and WebKit, both are visible
+without opening the menu. The screenshots were most likely taken on the
+ten-week-old production build. #341's in-post row is still wanted; only that
+claim in its observed failure does not reproduce.
 
 ## Observed failure
 
@@ -118,7 +129,7 @@ Findings:
 3. **One locale decision, in one place.** Add a pure function, for example
    `resolvePostLocale({ stored, navigatorLanguages, originalLocale, available })`
    in `src/lib/i18n.ts` or a new `src/lib/post-locale.ts`, with this order:
-   1. an explicitly stored preference that the family has;
+   1. an **explicit** stored choice (criterion 4) that the family has;
    2. otherwise, if `originalLocale !== 'en'`, the original. The browser
       language is deliberately not consulted here: the owner's requirement is
       that a first visit shows the original;
@@ -129,14 +140,32 @@ Findings:
    with a processed `<script>` that imports this function. The canonical URL
    `/blog/<slug>/` is the only URL that auto-redirects. A `/blog/<slug>/<locale>/`
    URL never redirects.
-4. **Only an explicit choice is a stored preference.** `siteLang` is written
-   only when the reader picks a locale: `LanguageToggle.chooseLocale`, the
-   header's `[data-language-choice]` click listener, and later #341's in-post
-   row. Remove the three implicit writes: the mount-effect write in
-   `language-toggle.tsx`, the route-locale write in `Header.astro`
-   `getPreferredLocale`, and the `if (!savedLocale) localStorage.setItem(...)`
-   in the post script. Reading and display do not change: a locale URL still
-   renders its chrome in that locale. Arriving there just does not persist it.
+4. **Only an explicit choice is a stored preference, including for
+   returning visitors.** Every past visitor already has `siteLang` stored,
+   because `LanguageToggle`'s mount effect wrote the *detected* locale on every
+   page load. A stored `siteLang` therefore does not show that anyone chose
+   it; the owner has `siteLang=en` too. So:
+   - Add a new key, `SITE_LOCALE_CHOICE_STORAGE_KEY = 'siteLangChoice'`, in
+     `src/lib/site-preferences.ts`. It is written **only** on an explicit pick:
+     `LanguageToggle.chooseLocale`, the header's `[data-language-choice]`
+     click listener in `Header.astro`, and later #341's in-post row. An
+     explicit pick also writes `siteLang`, so chrome display keeps working.
+   - `resolvePostLocale`'s `stored` input reads `siteLangChoice` **only**. A
+     bare legacy `siteLang` or `blogLang` with no `siteLangChoice` counts as no
+     choice, so it is skipped in step 1 and not used in step 3. This is the
+     migration. Nothing is deleted, so a rollback still finds the old keys.
+   - Remove all four implicit writes of `siteLang`:
+     1. the mount-effect write in `src/components/ui/language-toggle.tsx`;
+     2. the route-locale write in `Header.astro` `getPreferredLocale`
+        (line 102 at `fb60bce`);
+     3. the `blogLang` → `siteLang` copy in the same function (line 110 at
+        `fb60bce`). Keep reading `blogLang` as a display fallback, but stop
+        copying it;
+     4. the `if (!savedLocale) localStorage.setItem(...)` in the post page
+        script.
+   - Display does not change: the header chrome still reads `siteLang`, then
+     `blogLang`, for its text, and a locale URL still renders its chrome in
+     that locale. Arriving somewhere just does not persist anything.
 5. **hreflang.** `src/components/Head.astro` points `x-default` at the
    original's URL, not at `alternates.en`. The post page passes the family's
    `originalLocale` through `Layout` to `Head` as an explicit prop. For the
@@ -166,9 +195,17 @@ Findings:
    Use it at every listing site: `src/pages/index.astro`,
    `src/pages/blog/[...page].astro`, `src/pages/tags/index.astro`,
    `src/pages/tags/[...id].astro`, `src/pages/rss.xml.ts`,
-   `src/components/BlogCard.astro`, `src/pages/authors/[...id].astro`, and the
-   prev/next list in `src/pages/blog/[...id].astro`. That is eight sites, and
-   the authors page is the only one that is wrong today.
+   `src/pages/authors/[...id].astro`, and the prev/next list in
+   `src/pages/blog/[...id].astro`. That is seven sites, and the authors page
+   is the only one that is wrong today.
+
+   **`src/components/BlogCard.astro` is not a listing site.** It looks up
+   every locale entry of one family to build the card's `data-localizations`
+   (zh/ja/ko titles and URLs), so it must not receive family-only entries.
+   The same module exports a second helper, for example
+   `listPostEntries()`: every non-draft entry of every locale. BlogCard uses
+   that in place of its own `getCollection` filter, which today depends on
+   the `isLegacyChinesePostId` being deleted.
 9. **301 redirects.** Move all 29 entries out of `astro.config.ts`
    `redirects` into `public/_redirects`. Astro copies that file to
    `dist/_redirects`, and Cloudflare Workers Static Assets serves it
@@ -180,11 +217,23 @@ Findings:
    `redirects` key from `astro.config.ts` so no refresh page is built at a
    redirected path. Dev servers lose these redirects; that is accepted.
 10. **The deploy verifier moves with the redirects.**
-    `tools/deployment/verify-cloudflare.mjs` (lines 224–251 at `fb60bce`)
-    currently asserts that `/blog/161hmmds/` returns a `200` refresh page.
-    Change it to assert a `301` with `location` equal to the mapped target,
-    for `/blog/161hmmds/` and for one `-zh` slug. Update
-    `tools/deployment/verify-cloudflare.test.mjs` to match.
+    `tools/deployment/verify-cloudflare.mjs` makes two assertions about
+    `/blog/161hmmds` (lines 224–251 at `fb60bce`), and both change:
+    - `/blog/161hmmds` (no slash) is asserted to be `307` (Workers) or `308`
+      (Pages) with `location: /blog/161hmmds/`. That is the platform's
+      clean-URL behaviour. With the `_redirects` entry it becomes a `301`
+      straight to
+      `/blog/a-i-for-humans-building-a-i-native-products-and-treating-data/`.
+      Assert that. Move the clean-URL probe to a path that is not redirected,
+      `/about`, which must still answer `307` or `308` to `/about/`.
+    - `/blog/161hmmds/` is asserted to return a `200` refresh page. Change it
+      to a `301` to the same target.
+    - Add the same `301` assertion for
+      `/blog/sight-before-sound-seeing-and-searching-with-machines-zh/` →
+      `/blog/sight-before-sound-seeing-and-searching-with-machines/zh/`.
+
+    Update `tools/deployment/verify-cloudflare.test.mjs` to match. Its mock
+    server serves `/blog/161hmmds` at lines 43–47.
 11. **A build-time check enforces 1, 2, 5, 7, 8 and 9.** Add
     `tools/site/check-post-families.mjs --dist dist` and run it in
     `build:production` in `package.json`, straight after
@@ -196,7 +245,9 @@ Findings:
     - any listing page in `dist` (`index.html`, `blog/**/index.html` pages
       that are not posts, `tags/**`, `authors/**`, `rss.xml`) links the same
       family more than once, links a non-canonical locale URL as a separate
-      entry, or links a draft;
+      entry, or links a draft. The checker counts only `<a href>` values (and
+      `<link>` in `rss.xml`). It does not count the URLs inside a card's
+      `data-localizations` JSON, which list every locale by design;
     - any post page's `x-default` differs from its family's original URL;
     - any HTML file in `dist` contains `http-equiv="refresh"`;
     - any `from` in `dist/_redirects` has a built page at that path.
@@ -209,8 +260,9 @@ Findings:
 - `tools/site/check-post-families.test.mjs`: one failing fixture per rule in
   criterion 11, and one passing fixture.
 - A unit test of `resolvePostLocale` covering the four orders in
-  criterion 3. It must include "no stored preference, `navigatorLanguages` is
-  `['ja']`, original `zh`" → `zh`, and "stored `en`, original `zh`" → `en`.
+  criterion 3. It must include "no explicit choice, `navigatorLanguages` is
+  `['ja']`, original `zh`" → `zh`, and "explicit choice `en`, original `zh`"
+  → `en`.
 - **Every family is listed once.** After `npm run build`, the checker passes.
   It covers `/`, `/blog/`, `/blog/2/`, `/blog/3/`, `/tags/**`,
   `/authors/erniesg/` and `rss.xml`.
@@ -229,17 +281,25 @@ Findings:
 - **Default-locale behaviour** (Playwright, static-build mode, new file
   `tests/e2e/original-locale.spec.ts`):
   - A fresh context with empty storage and `locale: 'en-US'` opens
-    `/blog/sight-before-sound-seeing-and-searching-with-machines/`, lands on
-    `…/zh/`, and `localStorage.siteLang` is still `null`.
+    `/blog/sight-before-sound-seeing-and-searching-with-machines/` and lands
+    on `…/zh/`. Afterwards `localStorage.siteLang` and
+    `localStorage.siteLangChoice` are both still `null`.
   - The same fresh context then opens `/blog/moving-to-cloudflare-with-astro/`
     and stays in English.
-  - A context whose stored `siteLang` is `en` opens the trilogy URL and stays
-    in English.
-  - A context with `locale: 'ja-JP'` and no stored preference opens the
+  - **Returning visitor:** a context with legacy `siteLang=en` (and a second
+    one with legacy `blogLang=en`), but no `siteLangChoice`, opens the
+    trilogy URL and lands on `/zh/`. `siteLang` is still `en` afterwards.
+  - A context with explicit `siteLangChoice=en` opens the trilogy URL and
+    stays in English.
+  - A context with explicit `siteLangChoice=ja` opens
+    `/blog/moving-to-cloudflare-with-astro/` and lands on its `/ja/` page.
+    The explicit-choice path still works for English-original posts.
+  - A context with `locale: 'ja-JP'` and no explicit choice opens the
     trilogy URL and lands on `/zh/`.
   - Opening the header dropdown on a trilogy page shows "original" on 中文
     and "translation" on the other three.
-  - Choosing 日本語 from the dropdown stores `ja`.
+  - Choosing 日本語 from the dropdown stores `ja` in both `siteLangChoice` and
+    `siteLang`.
 
 ## Definition of done
 
@@ -276,8 +336,8 @@ None.
 
 Schema change; three trilogy frontmatter edits; four deleted `-zh`
 directories; `public/_redirects`; the `astro.config.ts` redirect removal;
-`resolvePostLocale` and its test; the listing helper and its eight call
-sites; the `Head`/`Layout` x-default prop; the `site-locale-meta` record and
+`resolvePostLocale` and its test; the `siteLangChoice` key; the listing
+helpers and their call sites (seven listing sites, plus BlogCard); the `Head`/`Layout` x-default prop; the `site-locale-meta` record and
 the dropdown labels; `tools/site/check-post-families.mjs` and its test; the
 `verify-cloudflare` update; `tests/e2e/original-locale.spec.ts`.
 
@@ -307,10 +367,17 @@ the rule and not only the three posts.
 
 ## Trade-offs
 
-A Japanese-browser reader with no stored preference is sent to the Chinese
+A Japanese-browser reader with no explicit choice is sent to the Chinese
 original of the trilogy, not to the Japanese translation. That is the owner's
 stated requirement, and the header toggle, with its new "translation" label,
 is one click away.
+
+Readers who really did pick English before this change had that choice
+stored only as a bare `siteLang`, which can't be told apart from a detected
+value. They see the trilogy in Chinese once. Choosing English again from the
+toggle stores an explicit choice, and it holds from then on. The alternative
+is to trust every legacy `siteLang`, which would show the owner, and nearly
+everyone else, the English translation.
 
 Moving the redirects to `_redirects` means `astro dev` no longer serves them.
 The static check and the local Worker check cover them instead.

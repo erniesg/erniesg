@@ -92,12 +92,30 @@ which is why the book pages do not overflow.
   - It lists every `index.html` and `404.html` under `dist/`, skipping only
     files whose first 400 bytes contain `http-equiv="refresh"`. It fails if
     the list is empty.
-  - Viewport 390×844. For each page, in two passes (default text, then
-    `document.documentElement.style.fontSize = '200%'`), it asserts
-    `document.scrollingElement.scrollWidth <= document.scrollingElement.clientWidth`.
-    A failure message names the page and the outermost element whose right
-    edge passes the viewport, ignoring elements inside an ancestor whose
-    `overflow-x` is not `visible`.
+  - **One generated test per page and per pass**, not one loop. Build the
+    page list at module load and call `` test(`${path} @ ${pass}`, …) `` for
+    each, so one slow page cannot exhaust a shared 30 s timeout and a failure
+    names its page. Today that is about 176 pages × 2 passes per browser.
+  - Viewport 390×844. Each test does this, in order:
+    1. `page.goto(path, { waitUntil: 'load' })`;
+    2. `await page.evaluate(() => document.fonts.ready)`;
+    3. wait for hydration, meaning every `astro-island` has lost its `ssr`
+       attribute (`await page.waitForFunction(() => !document.querySelector('astro-island[ssr]'))`);
+    4. for the 200% pass only, set
+       `document.documentElement.style.fontSize = '200%'`, then
+       `await document.fonts.ready` again;
+    5. force a reflow: read `document.body.offsetWidth`, then wait two
+       `requestAnimationFrame` callbacks;
+    6. assert
+       `document.scrollingElement.scrollWidth <= document.scrollingElement.clientWidth`.
+  - The check is **strict, with no tolerance**. The overflows seen were 5 and
+    7 px (395 and 397 against 390), so a 1–2 px allowance would not hide
+    them. But `scrollWidth` and `clientWidth` are integers, so sub-pixel
+    rounding cannot produce a false 1 px failure, and no tolerance is
+    justified.
+  - A failure message names the page and the outermost element whose right
+    edge passes the viewport, ignoring elements inside a **component-level**
+    scroll container (see the stop conditions for what counts).
   - It requires coverage of these page types and fails if any is missing from
     `dist/`: home `/`; `/blog/`; a post in each of `en`, `zh`, `ja`, `ko`;
     `/books/`; one book (`/books/<book>/`); one book node
@@ -138,8 +156,11 @@ Static-build mode binds no port. If a dev-server run is ever needed, use
 `npm run test:e2e:spec`, which picks a free port. Do not use the
 `playwright.config.ts` default. This issue edits the `h1` and `PostNavigation`
 markup in `src/pages/blog/[...id].astro`. Spec 069 edits that file's script
-and data code, and spec 071 does not touch it. It can run in parallel with
-069 and 071. Rebase on whichever lands first.
+and data code, and spec 071 does not touch it. GitHub #341 adds its in-post
+row directly under the title and meta line, which is the region this spec
+edits. This issue can run in parallel with 069, 071 and #341. Rebase on
+whichever lands first, and on a conflict with #341 keep both the wrap rules
+and #341's row.
 
 ## Allowed secrets
 
@@ -157,8 +178,15 @@ CSS and class changes in `src/pages/blog/[...id].astro`,
 - Stop before setting `overflow-x: hidden` or `clip` on `html`, `body`, `main`
   or any page-level wrapper. That hides the overflow from the check without
   fixing it, and iOS Safari still lets the reader pan. A test that passes only
-  because a page-level ancestor clips is not a pass. The spec must fail if a
-  page-level ancestor of the content has `overflow-x` other than `visible`.
+  because a page-level ancestor clips is not a pass.
+
+  "Page-level" means `html`, `body`, `main`, the direct children of `body`
+  and `main`, the `Layout` wrapper `div` in `src/layouts/Layout.astro`, the
+  post page's outer `section` grid in `src/pages/blog/[...id].astro`, and
+  `.reading-shell` in `ReadingLayout`. For each page, the spec asserts that
+  every one of these present has computed `overflow-x: visible`. Any other
+  element (`pre`, a table wrapper, `.reading-contents`) is component-level,
+  and it may scroll.
 - Stop before changing font sizes to make titles fit.
 - Stop before narrowing the page list to the reported post.
 

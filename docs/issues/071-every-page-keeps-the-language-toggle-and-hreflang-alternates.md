@@ -25,7 +25,12 @@ against production:
   `Header` or `LanguageToggle` directly. They get both through
   `src/layouts/ReadingLayout.astro` → `src/layouts/Layout.astro` →
   `src/components/Header.astro`. At 390px, in Chromium and WebKit, the toggle
-  is visible in the header without opening the menu.
+  is visible in the header without opening the menu. `Header.astro` renders
+  `LanguageToggle` and `ModeToggle` outside `MobileMenu`. That contradicts
+  #341's observed failure ("at 390px both controls are folded into the
+  hamburger menu"). The screenshots were most likely taken on the stale
+  production build (see spec 072). #341's in-post row is still wanted; only
+  that claim does not reproduce on main.
 - **hreflang exists only on blog posts.** The 100 post-locale pages (25
   published families × 4 locales) carry `en`/`zh`/`ko`/`ja`/`x-default`. No
   other page carries any `hreflang`. `ReadingLayout` accepts no `lang` or
@@ -88,13 +93,25 @@ pass `alternates`.
 1. `src/layouts/ReadingLayout.astro` accepts optional `lang` and
    `alternates` props and passes them to `Layout`, the same way post pages
    pass them. The book pages pass `lang="en"` and no alternates.
-2. A page states its content language, and the header script respects it.
-   `Layout` renders `data-content-locale` on `<html>` from its `lang` prop.
-   The header's `updateStaticText` changes `document.documentElement.lang`
-   only on pages without `data-content-locale`, or when the chosen locale is
-   the page's content locale. The page is marked in the template. Do not
-   infer it from the URL. Book pages, and all other `ReadingLayout` pages,
-   then keep `<html lang="en">` whatever the stored preference is.
+2. **`<html lang>` names the language the reader is actually reading.** The
+   rule: use the reader's chosen locale where the page has that translation,
+   and the page's own language otherwise. There are three kinds of page:
+
+   | Page kind | Examples | `data-content-locale` | `<html lang>` |
+   |---|---|---|---|
+   | Per-locale post page | `/blog/<slug>/`, `/blog/<slug>/zh/` | the page's locale | always that page's locale (`en`, `zh-Hans`, `ja`, `ko`). The URL is the translation, so choosing another locale navigates away rather than relabelling the page. |
+   | Content page with no translation | `/books/**`, `/library/**`, `/papers/**`, `/study/**` (everything on `ReadingLayout`) | `en` | always `en`, whatever the reader chose. The body is English, and only the chrome changes. |
+   | Single-URL chrome page | `/`, `/blog/`, `/blog/<n>/`, `/tags/**`, `/authors/**`, `/about/`, `/404.html` | **not rendered** | the reader's choice (`zh-Hans` for `zh`, and so on), as today. The chrome and the cards are that page's translation, switched client-side. |
+
+   Implement it this way:
+   - `Layout` renders `data-content-locale` **only when the page passes
+     `lang` explicitly**. Do not render it from the prop's `'en'` default,
+     which would pin the single-URL pages to English.
+   - The post page and `ReadingLayout` pass `lang` explicitly.
+   - The header's `updateStaticText` sets `document.documentElement.lang`
+     from the chosen locale only when `<html>` has no `data-content-locale`.
+     Otherwise it leaves the server-rendered value alone.
+   - The page kind comes from the template. Do not infer it from the URL.
 3. A build-time checker `tools/site/check-page-i18n.mjs --dist dist` runs
    inside `build:production` in `package.json`, after spec 069's
    `check-post-families.mjs`. For **every** `*.html` file in `dist/`, it
@@ -134,9 +151,13 @@ pass `alternates`.
   every built HTML page. Record the page count in the PR.
 - Playwright, in static-build mode (`SRT_STATIC_BUILD_DIR=dist`), new file
   `tests/e2e/page-language.spec.ts`:
-  - With `siteLang` stored as `zh`, `/books/` and one book node page keep
-    `<html lang="en">`, and the header toggle is visible without opening the
-    menu at 390px, 768px and 1280px.
+  - One case per row of the table in criterion 2, each with `siteLang`
+    stored as `zh`:
+    - `/books/` and one book node page keep `<html lang="en">`;
+    - `/`, `/blog/` and `/about/` get `<html lang="zh-Hans">`;
+    - `/blog/moving-to-cloudflare-with-astro/ja/` stays `<html lang="ja">`.
+  - The header toggle is visible without opening the menu on `/books/` at
+    390px, 768px and 1280px.
   - On `/books/`, choosing 中文 from the header dropdown changes the
     navigation labels to Chinese and stores `zh`.
   - On a post page, choosing 日本語 still navigates to the `/ja/` URL and sets

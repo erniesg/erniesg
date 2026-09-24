@@ -12,7 +12,45 @@ import { join } from 'node:path'
 import Ajv2020 from 'ajv/dist/2020.js'
 import { describe, expect, it } from 'vitest'
 import { structuredExtractionHash } from '../src/research/structured-extraction.ts'
-import { withScoreLedger } from './pdf-extraction-bakeoff.mjs'
+import {
+  validateSyntheticBakeoffReport,
+  withScoreLedger,
+} from './pdf-extraction-bakeoff.mjs'
+
+const ARM_IDS = ['geometric-baseline', 'llm-authored', 'llm-grounded']
+
+function committedReport() {
+  return JSON.parse(
+    readFileSync('benchmarks/pdf/extraction-bakeoff-report-v1.json', 'utf8'),
+  )
+}
+
+function compileReportSchema() {
+  return new Ajv2020({ strict: false }).compile(
+    JSON.parse(
+      readFileSync(
+        'docs/schemas/extraction-bakeoff-report.schema.json',
+        'utf8',
+      ),
+    ),
+  )
+}
+
+/** Apply `mutate` to a copy of `report` and recompute its report hash. */
+function rehashed(report, mutate) {
+  const { reportSha256: _reportSha256, ...withoutHash } = report
+  const mutated = structuredClone(withoutHash)
+  mutate(mutated)
+  return { ...mutated, reportSha256: structuredExtractionHash(mutated) }
+}
+
+/** Both the schema and the CLI validator must refuse `forged`. */
+function expectRejected(validate, forged, label) {
+  expect(validate(forged), label).toBe(false)
+  expect(() => validateSyntheticBakeoffReport(forged), label).toThrow(
+    'INVALID_SYNTHETIC_BAKEOFF_REPORT_SCHEMA',
+  )
+}
 
 describe('extraction bake-off CLI', () => {
   it('runs the privacy-safe synthetic held-out smoke benchmark', () => {
@@ -488,5 +526,49 @@ describe('extraction bake-off CLI', () => {
     ).rejects.toThrow('EXTRACTION_SCORE_LEDGER_RECOVERY_REQUIRED')
     expect(replayed).toBe(false)
     rmSync(directory, { recursive: true, force: true })
+  })
+
+  it('requires exactly the three arm keys in every arm-keyed object, even after recomputing the report hash', () => {
+    const report = committedReport()
+    const validate = compileReportSchema()
+    expect(validate(report), JSON.stringify(validate.errors)).toBe(true)
+    // Every object in the report that is keyed by arm id. A new arm-keyed
+    // field belongs in this list; the schema must close it the same way.
+    const armKeyedObjects = [
+      ['candidateIdentities', (value) => value.candidateIdentities],
+      ['arms', (value) => value.arms],
+      ...report.comparison.map((_row, index) => [
+        `comparison[${index}].scores`,
+        (value) => value.comparison[index].scores,
+      ]),
+    ]
+    expect(report.comparison.length).toBeGreaterThan(0)
+    for (const [label, select] of armKeyedObjects) {
+      for (const arm of ARM_IDS) {
+        expectRejected(
+          validate,
+          rehashed(report, (value) => {
+            delete select(value)[arm]
+          }),
+          `${label} without ${arm}`,
+        )
+      }
+      expectRejected(
+        validate,
+        rehashed(report, (value) => {
+          const target = select(value)
+          for (const arm of ARM_IDS) delete target[arm]
+        }),
+        `${label} without any arm`,
+      )
+      expectRejected(
+        validate,
+        rehashed(report, (value) => {
+          const target = select(value)
+          target['llm-unlisted'] = target['llm-grounded']
+        }),
+        `${label} with an unlisted arm`,
+      )
+    }
   })
 })

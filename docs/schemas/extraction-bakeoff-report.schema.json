@@ -60,6 +60,12 @@
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
     },
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "armScore": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "number", "minimum": 0, "maximum": 1 }
+      ]
+    },
     "syntheticAuthority": {
       "type": "object",
       "additionalProperties": false,
@@ -262,11 +268,12 @@
         "layout": { "enum": ["one-column", "two-column"] },
         "scores": {
           "type": "object",
-          "additionalProperties": {
-            "oneOf": [
-              { "type": "null" },
-              { "type": "number", "minimum": 0, "maximum": 1 }
-            ]
+          "additionalProperties": false,
+          "required": ["geometric-baseline", "llm-authored", "llm-grounded"],
+          "properties": {
+            "geometric-baseline": { "$ref": "#/$defs/armScore" },
+            "llm-authored": { "$ref": "#/$defs/armScore" },
+            "llm-grounded": { "$ref": "#/$defs/armScore" }
           }
         },
         "winner": {

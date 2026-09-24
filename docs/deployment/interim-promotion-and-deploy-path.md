@@ -137,11 +137,24 @@ and these commands run with the owner's broad-scope Wrangler login. If
    removes.
 2. Create a detached worktree at `$HEAD` under the coordinator's scratch
    directory, and check that `git status --porcelain` is empty.
-3. Install with
-   `pnpm import && pnpm install --frozen-lockfile --config.shamefully-hoist=true`.
-   The hoist is needed: under pnpm's default layout, `astro build` fails with
-   "Could not find Sharp" (seen on this VM on 2026-09-24). Do not commit the
-   generated `pnpm-lock.yaml`.
+3. Install the site build's dependencies from the reviewed lockfile, under
+   the load gate:
+
+   ```bash
+   RUCKSACK_NPM_SHIM=passthrough systemd-run --user --scope -q -p CPUQuota=150% \
+     npm ci --no-audit --no-fund
+   ```
+
+   The site build ships to readers, so its dependencies must be exactly
+   `package-lock.json`'s. `npm ci` installs those versions and checks every
+   package's `sha512` integrity. `pnpm import` does not: it re-resolves
+   against the registry. **Install scripts stay enabled here**, because
+   `sharp` and similar packages need them to fetch or link native binaries
+   that the build uses. They are disabled only for the deploy tooling
+   (step 5), which never builds and runs only wrangler. npm's layout also
+   finds `sharp`, so no pnpm hoist workaround is needed. This is the same
+   deliberate exception to the host's pnpm-first rule as step 5, at about
+   700 MB of private `node_modules`, which step 9 removes.
 4. Run `npm run build` (`build:production`). Preview and production both get
    this production build, not `build:staging`, so what the owner reviews is
    what gets promoted.
@@ -220,6 +233,16 @@ and these commands run with the owner's broad-scope Wrangler login. If
    scratch directory, `.wrangler/`, next to the config, and its cache,
    `node_modules/.cache/`, under the tooling. Those two paths are the only
    ones left out of the manifest.
+9. Remove the build's dependencies, now that the artifact is saved. The
+   bundle from step 6 has already been made, and it needed the worktree's
+   `node_modules`:
+   `rm -rf -- "${WORKTREE:?}/node_modules"`, where `WORKTREE` is the step 2
+   worktree. From then on, a command that needs the worktree's dependencies
+   (only `npm run worker:verify` in I3 and I6) runs with
+   `ln -s "$ART/tooling/node_modules" "$WORKTREE/node_modules"`. That tree
+   comes from the same lockfile and has already been integrity-checked, and
+   the verifier needs no install scripts. Remove the link afterwards with
+   `rm -- "$WORKTREE/node_modules"`.
 
 **Verify the artifact before every wrangler call after I1 (I2, I3, I6 and
 the rollback).** All of these must pass:
@@ -267,8 +290,10 @@ Preview data is disposable, so one retry is allowed. If the retry also
 fails, stop and post the error on the promotion issue as *failed*. That is a
 different state from *could not be evaluated*.
 
-Then, from a worktree at `$HEAD` (recreate it and reinstall if the GC has
-removed it; the verifier is not part of the artifact), run
+Then, from the worktree at `$HEAD`, with `node_modules` linked to the
+tooling as in I1 step 9, run the verifier. If the GC has removed the
+worktree, recreate it at `$HEAD`; the verifier is not part of the artifact.
+Run
 `npm run worker:verify -- --base https://erniesg-workers-preview.erniesg.workers.dev --expect workers`,
 and check that `/books/build-a-coding-agent/` returns 200.
 
@@ -359,7 +384,8 @@ From `$ART`, in this order:
       *could not be evaluated*, and stop. This is a stop, not a second
       decision: the promotion ends there.
 3. Deploy: `"$WR" deploy --config wrangler.production.jsonc --no-bundle --message "promote $HEAD $ARTIFACT_DIGEST"`.
-4. From a worktree at `$HEAD`, run
+4. From the worktree at `$HEAD`, with `node_modules` linked to the tooling
+   (I1 step 9), run
    `npm run worker:verify -- --base https://ernie.sg --expect workers`.
 
 Always deploy the **approved** artifact, even if `origin/main` has moved

@@ -347,7 +347,8 @@ function resolveDocumentAnchor(
       contextual.length > 1
         ? 'Multiple exact quotes also match the stored context.'
         : 'Multiple exact quotes remain and the stored context does not identify one safely.',
-    candidates,
+    // `atPosition` is how this resolver chose; it is not part of a candidate.
+    candidates: candidates.map(({ atPosition: _atPosition, ...candidate }) => candidate),
   }
 }
 

@@ -37,10 +37,21 @@ checkout. Neither is caused by the code under test:
   `publicationRepositoryForCurrentCheckout` asserts `git status` is empty, so
   the publication receipt can only bind on a committed tree. `astro check`,
   `astro build` (181 pages), and `publication:build` all pass before it.
-- `scripts/agent-evidence` gives each lane 900 s. `npm run test` measured
-  869–923 s on this box, so the `test` lane can be killed mid-run by its own
-  timeout rather than by a failing assertion. Read the lane log before reading
-  the exit code: a truncated log with no vitest summary means the timeout.
+- `scripts/agent-evidence` gives all lanes one shared budget,
+  `DEFAULT_BUDGET_MS` in that script, not a per-lane grant. Lanes run in order
+  (`association-audit`, `unit`, `build`, `test`), and each one gets only what
+  the lanes before it left. `npm run test` alone has measured about 1,724 s on
+  this box, so a slow `build` still shrinks what `test` gets. When the budget
+  runs out mid-lane, that lane is killed and recorded with exit `124`, and its
+  log ends with `lane timed out against the shared ... ms budget`. Every later
+  lane is recorded as failed with exit `124` and `duration_ms: 0`, a log that
+  says `this lane was never started`, and a `lane not run:` caveat in the
+  manifest. Read the lane log before reading the exit code: an exit of `124`
+  means the budget ran out, not that an assertion failed. The trusted publisher
+  reads the same constant to size its outer bound, so change the budget only
+  there. `.agent/commands.yaml` gives these lanes no timeout of their own.
+  `npm run test:agent-evidence` runs the real producer against the budget; it
+  is excluded from `npm run test`, which is itself the `test` lane.
 
 Run the model-consultation receipt lane on its own with:
 

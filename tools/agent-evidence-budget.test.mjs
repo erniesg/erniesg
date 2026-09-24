@@ -118,6 +118,35 @@ function evidenceRuns(cwd) {
   return existsSync(root) ? new Set(readdirSync(root)) : new Set()
 }
 
+/** The start time a producer run directory is named after (`YYYYMMDDTHHMMSSmmmZ`). */
+function stampTime(run) {
+  const match = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(\d{3})Z$/u.exec(run)
+  if (!match) return null
+  const [, y, mo, d, h, mi, sec, ms] = match
+  return Date.UTC(+y, +mo - 1, +d, +h, +mi, +sec, +ms)
+}
+
+/**
+ * The run directory this call's producer created, and no other.
+ *
+ * The printed manifest path names it exactly. If the producer died before
+ * printing, the one new directory whose stamp falls inside this call is
+ * taken as ours. If there is more than one, another run was going on in the
+ * same checkout, so nothing is deleted and the leftovers are named instead.
+ */
+function ownRunDirectory(cwd, before, manifestPath, startedAt, endedAt) {
+  const root = resolve(cwd, '.agent/evidence')
+  if (manifestPath !== null && dirname(dirname(manifestPath)) === root) {
+    return { own: dirname(manifestPath), ambiguous: [] }
+  }
+  const candidates = [...evidenceRuns(cwd)].filter((run) => {
+    const at = stampTime(run)
+    return !before.has(run) && at !== null && at >= startedAt - 1_000 && at <= endedAt
+  })
+  if (candidates.length === 1) return { own: resolve(root, candidates[0]), ambiguous: [] }
+  return { own: null, ambiguous: candidates }
+}
+
 let ordinary = null
 /** One real run of the real association audit, shared by both cases. */
 function ordinaryRun() {
@@ -125,7 +154,9 @@ function ordinaryRun() {
   const cwd = resolve('.')
   const head = gitHead(cwd)
   const before = evidenceRuns(cwd)
+  const startedAt = Date.now()
   const { evidence, manifestPath } = runEvidence({ cwd, only: 'association-audit', head })
+  const endedAt = Date.now()
   try {
     expect(manifestPath, evidence.stdout || evidence.stderr).not.toBeNull()
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
@@ -138,12 +169,11 @@ function ordinaryRun() {
     ordinary = { evidence, manifest, verdict }
     return ordinary
   } finally {
-    // Every run directory this call created, whether or not the producer got
-    // far enough to print its manifest path.
-    for (const run of evidenceRuns(cwd)) {
-      if (!before.has(run)) {
-        rmSync(resolve(cwd, '.agent/evidence', run), { recursive: true, force: true })
-      }
+    // Only this call's own run directory: never a concurrent run's evidence.
+    const { own, ambiguous } = ownRunDirectory(cwd, before, manifestPath, startedAt, endedAt)
+    if (own) rmSync(own, { recursive: true, force: true })
+    if (ambiguous.length > 0) {
+      console.warn(`[agent-evidence-budget] left unowned run directories: ${ambiguous.join(', ')}`)
     }
   }
 }
@@ -155,7 +185,11 @@ function ordinaryRun() {
  * in a lane the test controls and can reap, never in the real audit, whose
  * Vite grandchild a shell-level kill would leave running.
  */
-function budgetFixture(receipt) {
+const HUNG_UNIT_LANE = (pidFile) =>
+  `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid))\n` +
+  'setTimeout(() => {}, 60_000)\n'
+
+function budgetFixture(receipt, unitLane = HUNG_UNIT_LANE) {
   const root = mkdtempSync(join(tmpdir(), 'agent-evidence-budget-'))
   for (const file of [
     PRODUCER,
@@ -173,11 +207,7 @@ function budgetFixture(receipt) {
   const pidFile = join(root, 'hung-lane.pid')
   // Plain JavaScript is valid input to --experimental-strip-types. It exits on
   // its own after a minute in case the reaper below never runs.
-  writeFileSync(
-    join(root, 'tools/model-consultation-evidence.ts'),
-    `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid))\n` +
-      'setTimeout(() => {}, 60_000)\n',
-  )
+  writeFileSync(join(root, 'tools/model-consultation-evidence.ts'), unitLane(pidFile))
   for (const args of [
     ['init', '-q'],
     ['add', '-A'],
@@ -252,6 +282,45 @@ describe('the shared lane budget', () => {
       expect(manifest.caveats.join('\n')).toContain('lane not run: build')
 
       expect(manifest.required_failures).toEqual(['unit', 'build'])
+    } finally {
+      reap(pidFile)
+      rmSync(root, { recursive: true, force: true })
+    }
+  }, 190_000)
+
+  it('treats a lane that exits 124 on its own, before the deadline, as an ordinary failure', () => {
+    // GNU `timeout` inside a lane's own script exits 124 too. With the budget
+    // barely spent, that must not be blamed on the budget or skip later lanes.
+    const { manifest: real } = ordinaryRun()
+    const { root, pidFile } = budgetFixture(real.association_audit, () => 'process.exit(124)\n')
+    try {
+      const head = gitHead(root)
+      const { evidence, manifestPath } = runEvidence({
+        cwd: root,
+        only: 'association-audit,model-consultation,build',
+        budgetMs: 120_000,
+        head,
+      })
+      expect(manifestPath, evidence.stdout || evidence.stderr).not.toBeNull()
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+      const verdict = validate({
+        cwd: root,
+        manifestPath: relative(root, manifestPath),
+        status: evidence.status,
+        head,
+      })
+      expect(verdict.status, verdict.stderr).toBe(0)
+
+      const byId = Object.fromEntries(manifest.lanes.map((lane) => [lane.id, lane]))
+      expect(byId.unit.exit_code).toBe(124)
+      expect(readFileSync(resolve(root, byId.unit.log_path), 'utf8')).not.toContain(
+        'lane timed out against the shared',
+      )
+      // build still ran: it was not skipped as "never started".
+      expect(readFileSync(resolve(root, byId.build.log_path), 'utf8')).not.toContain(
+        'never started',
+      )
+      expect((manifest.caveats ?? []).join('\n')).not.toContain('lane not run')
     } finally {
       reap(pidFile)
       rmSync(root, { recursive: true, force: true })

@@ -150,6 +150,15 @@ describe('the lane budget is one value', () => {
     expect(scripts['test:agent-evidence']).toContain(PRODUCER_TEST)
   })
 
+  it('runs the producer-running test in CI, as its own step', () => {
+    // Excluded from the test lane, it must still run somewhere: it is the only
+    // end-to-end check that a budget-cut run yields a valid manifest.
+    const ci = readFileSync('.github/workflows/ci.yml', 'utf8')
+    const step = ci.split(/^      - name: /mu).find((one) => one.startsWith('Agent evidence budget'))
+    expect(step, 'a CI step named "Agent evidence budget"').toBeDefined()
+    expect(step).toMatch(/run test:agent-evidence/u)
+  })
+
   it('describes the budget as shared in the runbook, by its constant', () => {
     const runbook = readFileSync('.agent/verify.md', 'utf8')
     expect(runbook).toContain('DEFAULT_BUDGET_MS')

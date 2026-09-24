@@ -883,7 +883,6 @@ figcaption { font:.85rem/1.5 ui-sans-serif,system-ui; color:#555; margin:0; }
   margin:0; font:.9rem/1.45 ui-sans-serif,system-ui; }
 .pairs dt { font:.84rem ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--ink); }
 .pairs dd { margin:0; color:#444; }
-@media (max-width:520px) { .pairs { grid-template-columns:1fr; } .pairs dd { margin-bottom:6px; } }
 .hint, .solution { border:1px solid var(--line); border-radius:6px; padding:6px 12px; margin:8px 0;
   background:#fff; }
 .desk-actions .hint-button { background:none; border:1px solid #4a4d57; color:#fcd34d; }
@@ -892,8 +891,6 @@ figcaption { font:.85rem/1.5 ui-sans-serif,system-ui; color:#555; margin:0; }
 .hint-panel { border-top:1px solid var(--term-line); background:#26241d; color:#f3f0e6;
   padding:10px 14px 12px; font:.9rem/1.5 ui-sans-serif,system-ui; }
 .hint-panel:not([hidden]) { animation:hint-in .35s ease-out; }
-@keyframes hint-in { from { background:#4a3f16; opacity:.4; } to { background:#26241d; opacity:1; } }
-@media (prefers-reduced-motion: reduce) { .hint-panel:not([hidden]) { animation:none; } }
 .hint-bar { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
 .hint-dots { display:inline-flex; gap:6px; }
 .hint-dot { width:12px; height:12px; padding:0; border-radius:50%; border:1.5px solid #a16207;
@@ -954,8 +951,6 @@ details.solution { border:0; border-top:2px solid var(--ink); border-radius:0; b
 .desk-actions button:disabled { cursor:progress; }
 .desk-actions button.busy::after { content:""; width:10px; height:10px; border-radius:50%;
   border:2px solid rgba(255,255,255,.35); border-top-color:#fff; animation:spin .7s linear infinite; }
-@keyframes spin { to { transform:rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .desk-actions button.busy::after { animation:none; } }
 .desk-actions kbd { font:.75rem ui-monospace,monospace; background:rgba(255,255,255,.22);
   padding:1px 5px; border-radius:4px; }
 .status { font:.8rem ui-sans-serif,system-ui; color:var(--term-dim); }
@@ -1025,7 +1020,19 @@ details summary { cursor:pointer; font:600 .85rem ui-sans-serif,system-ui; }
   var(--line); border-radius:6px; padding:10px 12px; }
 """
 
-PRINT_CSS = CONTENT_CSS + """
+# The site scopes CONTENT_CSS by selector prefix (`scopeContentCss` in
+# src/lib/books.ts), and that refuses any at-rule it cannot scope safely. The
+# at-rules live here instead, and every target that owns its whole document
+# (the preview and the EPUB) appends them straight after CONTENT_CSS.
+CONTENT_AT_RULES = """
+@media (max-width:520px) { .pairs { grid-template-columns:1fr; } .pairs dd { margin-bottom:6px; } }
+@keyframes hint-in { from { background:#4a3f16; opacity:.4; } to { background:#26241d; opacity:1; } }
+@media (prefers-reduced-motion: reduce) { .hint-panel:not([hidden]) { animation:none; } }
+@keyframes spin { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .desk-actions button.busy::after { animation:none; } }
+"""
+
+PRINT_CSS = CONTENT_CSS + CONTENT_AT_RULES + """
 body { font-family: Georgia, serif; line-height:1.55; margin:0 6%; background:#fff; color:#111; }
 h1 { font-size:1.6em; } h2 { font-size:1.2em; } h3 { font-size:1.02em; }
 p, li { max-width:none; }

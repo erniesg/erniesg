@@ -38,6 +38,7 @@ from render import (
     all_nodes,
     load_topics,
     CARD_BLOCKS,
+    CONTENT_AT_RULES,
     CONTENT_CSS,
     PART_NAMES,
     all_nodes,
@@ -80,7 +81,7 @@ EDGE_KINDS = {
     "harder-variant-of": ("#be185d", "harder version of"),
 }
 
-STYLE = CONTENT_CSS + """
+STYLE = CONTENT_CSS + CONTENT_AT_RULES + """
 * { box-sizing:border-box; }
 body { margin:0; background:var(--bg); color:var(--ink);
   font:17px/1.65 "Iowan Old Style","Palatino Linotype",Georgia,serif; }

@@ -428,7 +428,11 @@ describe('stable anchors', () => {
   // below. Print has no grader either.
   it('promises no grader on pages that have none', SLOW, () => {
     const gated: string[] = JSON.parse(python(GATED_IDS))
-    const graderOnly = ['waits until you pass', 'until every tier is green']
+    const graderOnly = [
+      'waits until you pass',
+      'until every tier is green',
+      'unlocks when all four tiers are green',
+    ]
 
     for (const id of gated) {
       const published = python(RENDER_ONE, [id, 'web', 'no', 'reader'])
@@ -443,7 +447,7 @@ describe('stable anchors', () => {
 
     const preview = python(RENDER_ONE, [gated[0], 'web', 'yes'])
     expect(preview, 'the runnable preview still describes its tiers')
-      .toMatch(/waits until you pass|until every tier is green/)
+      .toMatch(/waits until you pass|until every tier is green|unlocks when all four tiers are green/)
   })
 
   it('still lets the tiers gate the solution in the runnable preview', SLOW, () => {

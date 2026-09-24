@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodeBase64Url, encodeUtf8 } from './base64url'
 import { jwksUrl, readWorkosConfig, type WorkosConfig } from './config'
 import {
@@ -25,6 +25,26 @@ const NOW_SECONDS = Math.floor(NOW_MS / 1000)
 const config = readWorkosConfig(testWorkosEnv()) as WorkosConfig
 
 let signer: TestSigner
+
+/**
+ * No test here waits on a real timeout. Fetch bounds and join waits run on
+ * `setTimeout`, which is virtual in this file: time passes only when a test
+ * advances it. Real I/O (WebCrypto) still runs for real.
+ */
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+})
+afterEach(() => {
+  vi.useRealTimers()
+})
+
+/** Lets real work run until `ready()` holds. No virtual time passes. */
+async function until(ready: () => boolean): Promise<void> {
+  for (let turn = 0; !ready(); turn += 1) {
+    if (turn > 200_000) throw new Error('the awaited state was never reached')
+    await new Promise((resolve) => setImmediate(resolve))
+  }
+}
 
 beforeAll(async () => {
   signer = await testSigner()
@@ -474,7 +494,7 @@ describe('JWKS availability', () => {
   /** Let every started verification reach its pending key-set fetch. */
   async function settle() {
     for (let turn = 0; turn < 20; turn += 1) await Promise.resolve()
-    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setImmediate(resolve))
   }
 
   // Every refresh path must be single-flighted: callers that arrive while a
@@ -577,10 +597,14 @@ describe('JWKS availability', () => {
     const token = await signer.sign(validClaims())
 
     void verifyAccessToken(token, { config, jwks: source, now: NOW_MS })
+    await until(() => calls.length === 1)
     const started = Date.now()
-    await expect(
-      verifyAccessToken(token, { config, jwks: source, now: NOW_MS }),
-    ).resolves.toMatchObject({ ok: true })
+    const timersBefore = vi.getTimerCount()
+    const waiting = verifyAccessToken(token, { config, jwks: source, now: NOW_MS })
+    // Parked on its own 50 ms join wait, then past it.
+    await until(() => vi.getTimerCount() > timersBefore)
+    await vi.advanceTimersByTimeAsync(50)
+    await expect(waiting).resolves.toMatchObject({ ok: true })
     expect(Date.now() - started).toBeLessThan(2_000)
     expect(calls, 'the waiter fetched for itself').toHaveLength(2)
 
@@ -609,9 +633,11 @@ describe('JWKS availability', () => {
     const token = await signer.sign(validClaims())
 
     const started = Date.now()
-    await expect(
-      verifyAccessToken(token, { config, jwks: source, now: NOW_MS }),
-    ).resolves.toEqual({ ok: false, reason: 'jwks-unavailable' })
+    const verifying = verifyAccessToken(token, { config, jwks: source, now: NOW_MS })
+    // Parked on the 50 ms fetch bound, then past it.
+    await until(() => signals.length === 1)
+    await vi.advanceTimersByTimeAsync(50)
+    await expect(verifying).resolves.toEqual({ ok: false, reason: 'jwks-unavailable' })
     expect(Date.now() - started).toBeLessThan(2_000)
     expect(signals[0]?.aborted).toBe(true)
 

@@ -1,6 +1,6 @@
 import { decodeBase64Url, decodeJsonSegment, encodeUtf8 } from './base64url'
 import type { WorkosConfig } from './config'
-import { PROVIDER_FETCH_TIMEOUT_MS, settleWithin } from './deadline'
+import { PROVIDER_FETCH_TIMEOUT_MS, settleWithin, timeoutSignal } from './deadline'
 
 /**
  * Access-token validation, ported from the checks in
@@ -197,7 +197,7 @@ export function createJwksSource(
     try {
       const response = await fetchImpl(url, {
         headers: { accept: 'application/json' },
-        signal: AbortSignal.timeout(fetchTimeoutMs),
+        signal: timeoutSignal(fetchTimeoutMs),
       })
       if (!response.ok) return false
       payload = await response.json()

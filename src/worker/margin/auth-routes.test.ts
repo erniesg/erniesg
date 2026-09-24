@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { jwksUrl, readWorkosConfig, type WorkosConfig } from './config'
 import {
   createFakeD1,
@@ -1176,7 +1176,47 @@ describe('review findings, round six', () => {
   })
 })
 
+/**
+ * No test in this file waits on a real timeout. Every bound the code under
+ * test enforces (provider calls, waiters, the renewal slot, the grace window)
+ * runs on `setTimeout` and `Date`, which are virtual here: time passes only
+ * when a test advances it, so a loaded CI machine cannot push a test past a
+ * bound it did not mean to cross. Real I/O (WebCrypto) still runs for real.
+ */
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+})
+afterEach(() => {
+  vi.useRealTimers()
+})
+
+/** A virtual delay inside a fake provider; passes only when a test advances time. */
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** Lets real work (WebCrypto) run until `ready()` holds. No virtual time passes. */
+async function until(ready: () => boolean): Promise<void> {
+  for (let turn = 0; !ready(); turn += 1) {
+    if (turn > 200_000) throw new Error('the awaited state was never reached')
+    await new Promise((resolve) => setImmediate(resolve))
+  }
+}
+
+/**
+ * Starts `work` and returns once it has parked on `timers` new timers, so a
+ * following `advance` lands on a known state instead of racing real work.
+ */
+async function parked<T>(
+  work: () => Promise<T>,
+  timers = 1,
+): Promise<{ result: Promise<T> }> {
+  const before = vi.getTimerCount()
+  const result = work()
+  await until(() => vi.getTimerCount() >= before + timers)
+  // Wrapped, so awaiting this does not also await the work itself.
+  return { result }
+}
+
+const advance = (ms: number) => vi.advanceTimersByTimeAsync(ms)
 
 /**
  * A fetch whose token-exchange response the test controls: it can hang
@@ -1192,9 +1232,11 @@ function controlledTokenEndpoint(
   let delayMs = 0
   const signals: Array<AbortSignal | null | undefined> = []
   let exchanges = 0
+  let keySetCalls = 0
   const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString()
     if (!url.includes('/user_management/authenticate')) {
+      keySetCalls += 1
       if (jwksDelayMs) await sleep(jwksDelayMs)
       return new Response(JSON.stringify(signer.jwks), { status: 200 })
     }
@@ -1213,6 +1255,7 @@ function controlledTokenEndpoint(
     fetchImpl,
     signals,
     exchanges: () => exchanges,
+    keySetCalls: () => keySetCalls,
     set(next: typeof mode, ms = 0) {
       mode = next
       delayMs = ms
@@ -1277,12 +1320,20 @@ describe('a shared renewal never outlives its waiters', () => {
     const request = await lapsedSession()
     const shared = options(endpoint)
 
-    const originator = renewSession(request.clone(), config, shared)
-    await sleep(5)
-    const early = await renewSession(request.clone(), config, shared)
+    // The originator parks on its exchange: the abort bound and the 40 ms delay.
+    const originator = (await parked(() => renewSession(request.clone(), config, shared), 2)).result
+    await advance(5)
+    const earlyWaiter = (await parked(() => renewSession(request.clone(), config, shared))).result
+    // 50 ms later the exchange has answered (at 40) and the waiter has given up.
+    await advance(50)
+    const early = await earlyWaiter
     expect(early, 'a waiter past its own wait goes unrenewed').toBeNull()
+    // The originator is now in its 40 ms key-set fetch.
+    await until(() => endpoint.keySetCalls() >= 1)
     // Arrives after that waiter gave up, while the originator is still working.
-    const late = renewSession(request.clone(), config, shared)
+    const late = (await parked(() => renewSession(request.clone(), config, shared))).result
+    // The key set answers before this waiter's own 50 ms bound.
+    await advance(40)
 
     const [first, joined] = await Promise.all([originator, late])
     expect(first?.kind).toBe('renewed')
@@ -1296,14 +1347,19 @@ describe('a shared renewal never outlives its waiters', () => {
 
     // The originator's exchange never settles, as when its request is gone.
     void renewSession(request.clone(), config, options(endpoint))
+    await until(() => endpoint.exchanges() === 1)
     const started = Date.now()
-    const waiter = await renewSession(request.clone(), config, options(endpoint))
+    const waiting = (await parked(() => renewSession(request.clone(), config, options(endpoint)))).result
+    await advance(PROVIDER_TIMEOUT_MS)
+    const waiter = await waiting
     expect(waiter, 'a waiter goes unrenewed rather than hanging').toBeNull()
     expect(Date.now() - started).toBeLessThan(2_000)
 
     // Inside the originator's bound the slot is still its own: no second
     // exchange with the single-use refresh token.
-    expect(await renewSession(request.clone(), config, options(endpoint))).toBeNull()
+    const inside = (await parked(() => renewSession(request.clone(), config, options(endpoint)))).result
+    await advance(PROVIDER_TIMEOUT_MS)
+    expect(await inside).toBeNull()
     expect(endpoint.exchanges()).toBe(1)
 
     // Past the bound every part of that renewal has been aborted, so the next
@@ -1312,7 +1368,7 @@ describe('a shared renewal never outlives its waiters', () => {
       PROVIDER_TIMEOUT_MS,
       options(endpoint).jwks as NonNullable<AuthOptions['jwks']>,
     )
-    await sleep(slot + 20)
+    await advance(slot + 20)
     endpoint.set('answer')
     const next = await renewSession(request.clone(), config, options(endpoint))
     expect(next?.kind).toBe('renewed')
@@ -1325,7 +1381,9 @@ describe('a shared renewal never outlives its waiters', () => {
     const request = await lapsedSession()
 
     const started = Date.now()
-    const renewal = await renewSession(request, config, options(endpoint))
+    const renewing = (await parked(() => renewSession(request, config, options(endpoint)))).result
+    await advance(PROVIDER_TIMEOUT_MS)
+    const renewal = await renewing
     // Retryable, not terminal: no cleared cookie, the user stays signed in.
     expect(renewal).toBeNull()
     expect(Date.now() - started).toBeLessThan(2_000)
@@ -1423,6 +1481,8 @@ describe('a shared renewal never outlives its waiters', () => {
 
     const started = Date.now()
     const originator = renewSession(request.clone(), config, shared)
+    // Verification is now stuck on the stalled fetch of the new key.
+    await until(() => keySetCalls >= 2)
     // Requests keep arriving for as long as it is stuck. Past a 5 s-scale
     // bound, the previous code treated this slot as abandoned and let one of
     // them exchange the spent token. A request that arrives with the old
@@ -1430,9 +1490,11 @@ describe('a shared renewal never outlives its waiters', () => {
     // browser holds the rotated cookie by then.
     const burst: Array<Promise<unknown>> = []
     for (const at of [10, verifyBy / 2, verifyBy - 20]) {
-      await sleep(Math.max(0, started + at - Date.now()))
-      burst.push(renewSession(request.clone(), config, shared))
+      await advance(Math.max(0, started + at - Date.now()))
+      burst.push((await parked(() => renewSession(request.clone(), config, shared))).result)
     }
+    // Up to the originator's own verification deadline, and no further.
+    await advance(started + verifyBy - Date.now())
     const renewal = await originator
     const settledAfter = Date.now() - started
     await Promise.all(burst)
@@ -1483,7 +1545,9 @@ describe('a shared renewal never outlives its waiters', () => {
     const request = await lapsedSession()
     const shared = options(endpoint)
 
-    await expect(renewSession(request.clone(), config, shared)).resolves.toBeNull()
+    const failing = (await parked(() => renewSession(request.clone(), config, shared))).result
+    await advance(PROVIDER_TIMEOUT_MS)
+    await expect(failing).resolves.toBeNull()
     expect(endpoint.exchanges()).toBe(1)
 
     endpoint.set('answer')
@@ -1604,9 +1668,14 @@ describe('a shared renewal never outlives its waiters', () => {
       const endpoint = controlledTokenEndpoint(fresh)
       endpoint.set('delayed', 40)
       const request = await lapsedSession()
-      const pending = renewSession(request.clone(), config, options(endpoint))
-      await sleep(5)
+      // Parked in its 40 ms exchange when the logout lands.
+      const pending = (await parked(
+        () => renewSession(request.clone(), config, options(endpoint)),
+        2,
+      )).result
+      await advance(5)
       await logOutWith(request.headers.get('cookie') as string)
+      await advance(40)
       await expect(pending).resolves.toBeNull()
       expect(await renewSession(request.clone(), config, options(endpoint))).toBeNull()
     })

@@ -34,3 +34,20 @@ export function settleWithin<T>(
     )
   })
 }
+
+/**
+ * An abort signal that fires after `ms`, on the ordinary `setTimeout`.
+ *
+ * Used instead of `AbortSignal.timeout` so that every bound in this module
+ * runs on one timer source: the one a test can drive, rather than a wall
+ * clock it would have to wait out.
+ */
+export function timeoutSignal(ms: number): AbortSignal {
+  const controller = new AbortController()
+  setTimeout(() => {
+    controller.abort(
+      new DOMException('provider call timed out', 'TimeoutError'),
+    )
+  }, ms)
+  return controller.signal
+}

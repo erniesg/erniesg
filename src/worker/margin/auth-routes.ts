@@ -21,7 +21,7 @@ import {
   recordIdentity,
 } from './identity'
 import { verifyAccessToken, type JwksSource } from './jwt'
-import { PROVIDER_FETCH_TIMEOUT_MS, settleWithin } from './deadline'
+import { PROVIDER_FETCH_TIMEOUT_MS, settleWithin, timeoutSignal } from './deadline'
 import {
   clearedCookie,
   readCookie,
@@ -234,7 +234,7 @@ async function exchange(
     // it would need WorkOS to offer refresh-token reuse within a grace
     // window, which this code does not rely on.
     const response = await fetchImpl(tokenEndpoint(config), {
-      signal: AbortSignal.timeout(options.providerTimeoutMs ?? PROVIDER_FETCH_TIMEOUT_MS),
+      signal: timeoutSignal(options.providerTimeoutMs ?? PROVIDER_FETCH_TIMEOUT_MS),
       method: 'POST',
       headers: {
         'content-type': 'application/json',

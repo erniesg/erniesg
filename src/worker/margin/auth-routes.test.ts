@@ -1447,4 +1447,70 @@ describe('a shared renewal never outlives its waiters', () => {
     expect(session?.refreshToken).toBe('refresh_two')
     expect((renewal as { principal?: unknown }).principal).toBeUndefined()
   })
+
+  // The browser sends some requests with the old cookie before it applies the
+  // rotated one. They must get the same new session, not re-exchange the
+  // spent refresh token and come back with a sign-out.
+  it('hands a just-finished renewal to requests that still carry the old cookie', async () => {
+    const endpoint = controlledTokenEndpoint(fresh)
+    endpoint.set('answer')
+    const request = await lapsedSession()
+    const shared = options(endpoint)
+
+    const first = await renewSession(request.clone(), config, shared)
+    expect(first?.kind).toBe('renewed')
+
+    const stragglers = await Promise.all(
+      Array.from({ length: 5 }, () => renewSession(request.clone(), config, shared)),
+    )
+    expect(endpoint.exchanges(), 'one exchange for the renewal and every straggler').toBe(1)
+    for (const straggler of stragglers) {
+      expect(straggler?.kind).toBe('renewed')
+      expect((straggler as { cookie: string }).cookie).toBe(
+        (first as { cookie: string }).cookie,
+      )
+      const session = (straggler as { session: { refreshToken?: string } }).session
+      expect(session.refreshToken).toBe('refresh_two')
+      expect((straggler as { principal?: unknown }).principal).toEqual(
+        (first as { principal?: unknown }).principal,
+      )
+    }
+  })
+
+  it('does not remember a failed renewal, so the next request retries', async () => {
+    const endpoint = controlledTokenEndpoint(fresh)
+    endpoint.set('slow')
+    const request = await lapsedSession()
+    const shared = options(endpoint)
+
+    await expect(renewSession(request.clone(), config, shared)).resolves.toBeNull()
+    expect(endpoint.exchanges()).toBe(1)
+
+    endpoint.set('answer')
+    const retried = await renewSession(request.clone(), config, shared)
+    expect(retried?.kind).toBe('renewed')
+    expect(endpoint.exchanges(), 'the failure was retried, not replayed').toBe(2)
+  })
+
+  it('does not remember a terminal renewal either', async () => {
+    let exchanges = 0
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (!url.includes('/user_management/authenticate')) {
+        return new Response(JSON.stringify(signer.jwks), { status: 200 })
+      }
+      exchanges += 1
+      return new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 })
+    }) as unknown as typeof fetch
+    const request = await lapsedSession()
+    const shared: AuthOptions = {
+      now: later,
+      fetchImpl,
+      providerTimeoutMs: PROVIDER_TIMEOUT_MS,
+    }
+
+    expect((await renewSession(request.clone(), config, shared))?.kind).toBe('terminal')
+    expect((await renewSession(request.clone(), config, shared))?.kind).toBe('terminal')
+    expect(exchanges).toBe(2)
+  })
 })

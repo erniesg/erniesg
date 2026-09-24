@@ -459,6 +459,80 @@ type RenewalInFlight = {
 const renewalsInFlight = new Map<string, RenewalInFlight>()
 
 /**
+ * How long a finished renewal is handed to requests that still carry the
+ * cookie it replaced. A page fires several requests around access-token
+ * expiry, and some leave the browser before it applies the rotated
+ * `Set-Cookie`. Without this, each of them would exchange the spent refresh
+ * token, get invalid_grant, and send back a cookie clear that could sign the
+ * user out mid-use. One minute covers that burst.
+ */
+export const RENEWAL_REUSE_GRACE_MS = 60_000
+
+/** Upper bound on remembered renewals per isolate. The oldest go first. */
+export const RENEWAL_REUSE_MAX_ENTRIES = 1_000
+
+/**
+ * Finished renewals, keyed by the sealed cookie they replaced.
+ *
+ * Only what the cookies already hold is kept: the new sealed `Set-Cookie`,
+ * which is unsealed again on use, and the principal verified from it, which
+ * is identity rather than a credential. No token is kept in plaintext.
+ *
+ * A holder of the old sealed cookie gets the rotated session during the grace
+ * window. That adds nothing, since they could already have raced the exchange
+ * with the same cookie. This is per isolate: an old cookie that lands on
+ * another isolate can still re-exchange. Closing that needs shared state (a
+ * Durable Object keyed by a hash of the sealed cookie) or a reuse grace on
+ * the WorkOS side.
+ */
+const renewalsRecent = new Map<
+  string,
+  { cookie: string; principal?: Principal; until: number }
+>()
+
+function rememberRenewal(sealed: string, renewal: SessionRenewal): void {
+  if (renewal.kind !== 'renewed') return
+  const now = Date.now()
+  for (const [key, entry] of renewalsRecent) {
+    if (entry.until <= now) renewalsRecent.delete(key)
+  }
+  while (renewalsRecent.size >= RENEWAL_REUSE_MAX_ENTRIES) {
+    const oldest = renewalsRecent.keys().next().value
+    if (oldest === undefined) break
+    renewalsRecent.delete(oldest)
+  }
+  renewalsRecent.set(sealed, {
+    cookie: renewal.cookie,
+    ...(renewal.principal ? { principal: renewal.principal } : {}),
+    until: now + RENEWAL_REUSE_GRACE_MS,
+  })
+}
+
+async function recentRenewal(
+  sealed: string,
+  config: WorkosConfig,
+): Promise<SessionRenewal | null> {
+  const entry = renewalsRecent.get(sealed)
+  if (!entry) return null
+  if (entry.until <= Date.now()) {
+    renewalsRecent.delete(sealed)
+    return null
+  }
+  const value = entry.cookie.slice(
+    entry.cookie.indexOf('=') + 1,
+    entry.cookie.indexOf(';'),
+  )
+  const session = await unsealSession(value, config.cookiePassword)
+  if (!session) return null
+  return {
+    kind: 'renewed',
+    cookie: entry.cookie,
+    session,
+    principal: entry.principal,
+  }
+}
+
+/**
  * The time budget of one renewal, from the real timeouts it runs under.
  *
  * - `verifyBy`: the exchange (aborted at `providerTimeoutMs`), plus the
@@ -485,6 +559,11 @@ export async function renewSession(
 ): Promise<SessionRenewal | null> {
   const sealed = readCookie(request, SESSION_COOKIE_NAME)
   if (!sealed) return null
+
+  // Already renewed moments ago from this very cookie: hand back the same
+  // new session instead of exchanging a refresh token that is now spent.
+  const recent = await recentRenewal(sealed, config)
+  if (recent) return recent
 
   const providerTimeoutMs = options.providerTimeoutMs ?? PROVIDER_FETCH_TIMEOUT_MS
   const bounds = renewalBounds(providerTimeoutMs, jwksFor(config, options))
@@ -522,6 +601,12 @@ export async function renewSession(
         `[margin] session renewal failed: ${error instanceof Error ? error.name : typeof error}`,
       )
       return null
+    })
+    .then((result) => {
+      // Kept only when renewed. A failed or terminal renewal is forgotten at
+      // once, so the next request can retry.
+      if (result) rememberRenewal(sealed, result)
+      return result
     })
     .finally(() => {
       if (renewalsInFlight.get(sealed)?.promise === promise) {

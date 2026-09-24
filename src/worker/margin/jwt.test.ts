@@ -11,7 +11,13 @@ import {
   type TestJwk,
   type TestSigner,
 } from './fake-workos'
-import { createJwksSource, verifyAccessToken } from './jwt'
+import {
+  createJwksSource,
+  JWKS_REFRESHES_PER_LOOKUP,
+  jwksWorstCaseMs,
+  verifyAccessToken,
+} from './jwt'
+import { readFileSync } from 'node:fs'
 
 const NOW_MS = 1_800_000_000_000
 const NOW_SECONDS = Math.floor(NOW_MS / 1000)
@@ -660,3 +666,25 @@ describe('JWKS availability', () => {
     expect(provider.calls).toHaveLength(1)
   })
 })
+
+describe('the key-set worst case', () => {
+  // `worstCaseMs` sizes a session renewal's verification deadline. It counts
+  // the refreshes one `getKey` can run in sequence, so a new refresh path in
+  // `getKey` must raise the count, or verification would be cut off before
+  // the key set could arrive.
+  it('counts every refresh call on the getKey path', () => {
+    const source = readFileSync(new URL('./jwt.ts', import.meta.url), 'utf8')
+    const start = source.indexOf('async getKey(kid: string)')
+    expect(start).toBeGreaterThan(-1)
+    const body = source.slice(start, source.indexOf('\n    },\n', start))
+    const calls = body.match(/\brefresh\(\)/gu) ?? []
+    expect(calls).toHaveLength(JWKS_REFRESHES_PER_LOOKUP)
+  })
+
+  it('reports a worst case of one join wait plus one fetch per refresh', () => {
+    const source = createJwksSource(jwksUrl(config), { fetchTimeoutMs: 70 })
+    expect(source.worstCaseMs).toBe(jwksWorstCaseMs(70))
+    expect(source.worstCaseMs).toBe(JWKS_REFRESHES_PER_LOOKUP * 2 * 70)
+  })
+})
+

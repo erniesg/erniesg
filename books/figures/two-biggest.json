@@ -1,0 +1,53 @@
+{
+  "id": "two-biggest",
+  "type": "walk",
+  "title": "How the worked solution walks [5, 1, 5, 3, 0]",
+  "caption": "Step through it and watch the second 5: a tie can't take first place, but it still beats second.",
+  "sequence": [
+    5,
+    1,
+    5,
+    3,
+    0
+  ],
+  "markers": [
+    {
+      "name": "value",
+      "from": 0,
+      "to": 4
+    }
+  ],
+  "state": [
+    {
+      "label": "biggest",
+      "values": [
+        5,
+        5,
+        5,
+        5,
+        5
+      ]
+    },
+    {
+      "label": "second",
+      "values": [
+        "—",
+        1,
+        5,
+        5,
+        5
+      ]
+    }
+  ],
+  "answer": {
+    "label": "product",
+    "value": 25
+  },
+  "notes": [
+    "5 beats biggest (nothing yet), so biggest becomes 5.",
+    "1 does not beat biggest 5, but beats second (nothing yet), so second becomes 1.",
+    "5 only ties biggest, so it cannot take first place. It beats second 1, so second becomes 5.",
+    "3 beats neither: it is under biggest 5 and under second 5.",
+    "0 beats neither. The list is done: 5 × 5 = 25."
+  ]
+}

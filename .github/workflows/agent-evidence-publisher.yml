@@ -1715,7 +1715,10 @@ jobs:
 
 
           MAX_CONFIG_BYTES = 8 * 1024 * 1024
-          MAX_TIMEOUT_MS = 900_000
+          # The supervision bound on one evidence run, not the lane budget. The
+          # producer's own timeout is derived from the lane budget in the trusted
+          # scripts/agent-evidence and must fit under this ceiling.
+          MAX_TIMEOUT_MS = 5_400_000
           SECRET_ENVIRONMENT_NAME = re.compile(
               r"TOKEN|SECRET|KEY|PASSWORD|COOKIE|SESSION|AUTH|WEBHOOK|CREDENTIAL",
               re.IGNORECASE,
@@ -1781,7 +1784,7 @@ jobs:
                   or timeout_ms <= 0
                   or timeout_ms > MAX_TIMEOUT_MS
               ):
-                  refuse("command timeout must be between 1 and 900000 milliseconds")
+                  refuse(f"command timeout must be between 1 and {MAX_TIMEOUT_MS} milliseconds")
               return validate_argv(decoded["argv"]), timeout_ms
 
 
@@ -3306,6 +3309,27 @@ jobs:
           }
           commandEnvironment.RUCKSACK_PRODUCER_NODE = producerNode;
 
+          // The producer's outer bound comes from the one lane budget the producer
+          // itself enforces, read from the pinned default-branch source above. A
+          // fixed number here drifted: it stayed at the old per-lane ceiling after
+          // the budget was raised, so it killed every full evidence run before the
+          // producer could write a manifest. The overhead covers the Git probes, the
+          // untracked-file scan and the manifest write around the lane loop.
+          const CANDIDATE_TIMEOUT_CEILING_MS = 5_400_000;
+          const PRODUCER_OVERHEAD_MS = 600_000;
+          const laneBudgetMatch = /^const DEFAULT_BUDGET_MS = ([1-9][0-9_]*);$/m.exec(trustedProducerSource);
+          if (!laneBudgetMatch) {
+            fail("trusted evidence producer does not declare one DEFAULT_BUDGET_MS integer literal");
+          }
+          const laneBudgetMs = Number(laneBudgetMatch[1].replaceAll("_", ""));
+          const producerTimeoutMs = laneBudgetMs + PRODUCER_OVERHEAD_MS;
+          if (!Number.isSafeInteger(producerTimeoutMs) || producerTimeoutMs > CANDIDATE_TIMEOUT_CEILING_MS) {
+            fail(
+              `trusted evidence producer lane budget ${laneBudgetMs} ms plus ${PRODUCER_OVERHEAD_MS} ms overhead ` +
+              `exceeds the ${CANDIDATE_TIMEOUT_CEILING_MS} ms supervision bound`,
+            );
+          }
+
           function assertCandidateCannotWriteTree(target, stage) {
             const stats = fs.lstatSync(target);
             if (stats.isSymbolicLink()) return;
@@ -3342,9 +3366,9 @@ jobs:
                 typeof timeoutMs !== "number" ||
                 !Number.isSafeInteger(timeoutMs) ||
                 timeoutMs <= 0 ||
-                timeoutMs > 900000
+                timeoutMs > CANDIDATE_TIMEOUT_CEILING_MS
               ) {
-                fail("candidate command timeout must be between 1 and 900000 milliseconds");
+                fail(`candidate command timeout must be between 1 and ${CANDIDATE_TIMEOUT_CEILING_MS} milliseconds`);
               }
             }
             return { argv, options, timeoutMs };
@@ -4568,7 +4592,7 @@ jobs:
           const produced = candidateSpawnSync(
             producerNode,
             ["-e", isolatedProducerSource, trustedProducerPath],
-            { stdio: "inherit", timeout: 900000 },
+            { stdio: "inherit", timeout: producerTimeoutMs },
             "trusted evidence producer",
           );
           if (!Number.isInteger(produced.status) || produced.status < 0 || produced.status > 255) {

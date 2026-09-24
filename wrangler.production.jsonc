@@ -1,6 +1,7 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "erniesg-workers",
+  "main": "./src/worker/index.ts",
   "compatibility_date": "2026-07-11",
   "workers_dev": false,
   "preview_urls": false,
@@ -10,9 +11,32 @@
       "zone_name": "ernie.sg",
     },
   ],
+  // Non-secret. Anything other than `development` makes the principal stub
+  // unreachable, so this build has no path to it at all. Every WORKOS_* value
+  // is a secret held in the Cloudflare secret store and is never written here.
+  "vars": {
+    "MARGIN_ENVIRONMENT": "production",
+  },
+  // The Worker owns the margin API prefix and the AuthKit endpoints, and
+  // nothing else. Every other path stays on the pure static-asset path it was
+  // on before `main` was added — the Worker is not invoked for it at all — and
+  // naming the prefixes keeps those routes reachable regardless of how
+  // `not_found_handling` resolves unmatched requests.
   "assets": {
+    "run_worker_first": ["/api/margin/v1/*", "/auth/*"],
+    "binding": "ASSETS",
     "directory": "./dist",
     "not_found_handling": "404-page",
     "html_handling": "auto-trailing-slash",
   },
+  // One migrations directory for both databases, so preview and production
+  // apply the same files in the same order.
+  "d1_databases": [
+    {
+      "binding": "MARGIN_DB",
+      "database_name": "margin-db",
+      "database_id": "c98621e9-5621-401a-b2f2-35390c25411d",
+      "migrations_dir": "migrations",
+    },
+  ],
 }

@@ -1,0 +1,86 @@
+---
+/** The book's contents, in reading order, for the navigation column. */
+import type { Book, BookNode } from '@/lib/books'
+
+type Props = {
+  book: Book
+  currentId?: string
+}
+
+const { book, currentId } = Astro.props
+
+const byId = new Map<string, BookNode>(
+  book.nodes.map((node) => [node.id, node]),
+)
+const intro = book.nodes.filter((node) => !node.partNumber)
+const parts = book.parts.map((part) => ({
+  title: part.title,
+  entries: part.nodes
+    .map((id) => byId.get(id))
+    .filter((node): node is BookNode => Boolean(node)),
+}))
+---
+
+<p class="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+  Contents
+</p>
+
+<a
+  class="mb-4 block text-sm font-semibold hover:underline hover:underline-offset-4"
+  href={book.path}>{book.title}</a
+>
+
+<ol class="flex flex-col gap-y-4 text-sm">
+  {
+    intro.length > 0 && (
+      <li>
+        <ol class="flex flex-col gap-y-1">
+          {intro.map((node) => (
+            <li>
+              <a
+                class:list={[
+                  'block rounded px-1 py-0.5 hover:underline hover:underline-offset-4',
+                  node.id === currentId
+                    ? 'font-semibold text-foreground'
+                    : 'text-muted-foreground',
+                ]}
+                href={node.path}
+                aria-current={node.id === currentId ? 'page' : undefined}
+              >
+                {node.title}
+              </a>
+            </li>
+          ))}
+        </ol>
+      </li>
+    )
+  }
+  {
+    parts.map((part) => (
+      <li>
+        <p class="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          {part.title}
+        </p>
+        <ol class="flex flex-col gap-y-1">
+          {part.entries.map((node) => (
+            <li>
+              <a
+                class:list={[
+                  'flex gap-x-2 rounded px-1 py-0.5 hover:underline hover:underline-offset-4',
+                  node.id === currentId
+                    ? 'font-semibold text-foreground'
+                    : 'text-muted-foreground',
+                ]}
+                href={node.path}
+                aria-current={node.id === currentId ? 'page' : undefined}
+              >
+                <span class="tabular-nums opacity-70">{node.number}</span>
+                <span>{node.title}</span>
+              </a>
+            </li>
+          ))}
+        </ol>
+      </li>
+    ))
+  }
+</ol>

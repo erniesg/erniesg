@@ -1,0 +1,13 @@
+{
+  "id": "four-shapes",
+  "type": "cost",
+  "title": "Four shapes of work, counted",
+  "caption": "Steps performed for a list of n things, counting a halving-per-item for the sort-shaped row. At n = 10 every row is instant and the shape is invisible. At n = 200,000 the last row is 40 billion steps — about four thousand seconds at ten million steps a second — while the row above it finishes in a third of a second. The shape is what you are choosing when you choose a method.",
+  "x": { "label": "n", "values": [10, 1000, 200000] },
+  "series": [
+    { "label": "constant", "values": [1, 1, 1] },
+    { "label": "one pass (n)", "values": [10, 1000, 200000] },
+    { "label": "sort-shaped (n log n)", "values": [30, 9000, 3400000] },
+    { "label": "every pair (n squared)", "values": [100, 1000000, 40000000000] }
+  ]
+}

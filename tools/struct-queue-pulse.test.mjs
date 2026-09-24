@@ -27,13 +27,6 @@ const servicePath = new URL(
   import.meta.url,
 )
 const service = readFileSync(servicePath, 'utf8')
-const issueSpec = readFileSync(
-  new URL(
-    '../docs/issues/048-vm-drain-persistence-and-checkpoints.md',
-    import.meta.url,
-  ),
-  'utf8',
-)
 const pulsePath = fileURLToPath(
   new URL('./struct-queue-pulse.mjs', import.meta.url),
 )
@@ -145,7 +138,7 @@ describe('STRUCT queue pulse contract', () => {
     expect(result.availableSlots).toBe(0)
   })
 
-  it('keeps the default host-wide cap at one until resource claims are proven', () => {
+  it('keeps capacity dynamic per pass and gated on re-measured headroom', () => {
     const otherRepo = session({
       repo: 'erniesg/rucksack',
       issue_number: '349',
@@ -168,9 +161,6 @@ describe('STRUCT queue pulse contract', () => {
       { repo: 'erniesg/rucksack', issue_number: '349' },
     ])
     expect(result.availableSlots).toBe(0)
-    expect(issueSpec).toContain('one parser-core worker plus one')
-    expect(issueSpec).toContain('Rucksack issues `erniesg/rucksack#347`')
-    expect(issueSpec).toContain('Unknown claims, overlapping scopes, or low')
   })
 
   it('fails closed when repository lease state is missing or malformed', () => {
@@ -637,13 +627,13 @@ const generateUnit = (call) => {
 
 // Every generator-owned snapshot under infra/vm/systemd with the exact
 // (repo, provider) generator call that `rucksack vm autopilot install-timer`
-// resolves for this repo (.agent/autopilot.yaml: provider vm-codex, issue_dir
+// resolves for this repo (.agent/autopilot.yaml: provider claude, issue_dir
 // docs/issues; --max-workers 1). The .d drop-in tree and the repo pulse units
 // are repo-owned policy, not generator output, and are intentionally absent.
 const drainSnapshots = [
   {
     file: 'infra/vm/systemd/rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.service',
-    call: 'vm_autopilot_drain_service(repo="erniesg/erniesg", provider="vm-codex")',
+    call: 'vm_autopilot_drain_service(repo="erniesg/erniesg", provider="claude")',
   },
   {
     file: 'infra/vm/systemd/rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.timer',

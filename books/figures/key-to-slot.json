@@ -1,0 +1,14 @@
+{
+  "id": "key-to-slot",
+  "type": "table",
+  "title": "A key becomes a number, and the number is the place",
+  "caption": "Add up the character codes, divide by the number of slots, keep the remainder. That remainder is where the record is filed and where the next reader will look, so nobody searches. Two keys can land on the same slot — mia and amy both add up to a number ending in 7 — and that is fine: the slot holds a short list and a lookup reads it. The rule has to be quick, and it has to spread. A rule that sends everything to one slot is a list wearing a disguise.",
+  "header": ["key", "character codes added up", "divided by 8", "slot"],
+  "rows": [
+    ["ada", "97 + 100 + 97 = 294", "294 % 8", "6"],
+    ["sam", "115 + 97 + 109 = 321", "321 % 8", "1"],
+    ["mia", "109 + 105 + 97 = 311", "311 % 8", "7"],
+    ["amy", "97 + 109 + 121 = 327", "327 % 8", "7 — mia is already there"],
+    ["hal", "104 + 97 + 108 = 309", "309 % 8", "5"]
+  ]
+}

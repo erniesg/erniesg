@@ -1,0 +1,12 @@
+{
+  "id": "what-comes-back",
+  "type": "cells",
+  "title": "What goes in, what comes back",
+  "caption": "A function is a deal about two things: what it is handed, and what it hands back. Printing is not handing back — it puts the number where only a person can see it, and the caller gets None. Defaults are settled once, when the def line runs, which is why a list left as a default is shared by every call that omits it.",
+  "cells": [
+    { "label": "argument", "note": "a name for what the caller handed over. Exists only during the call" },
+    { "label": "return", "note": "hands a value back. trays_needed(310) is 26, and 26 can be added to something" },
+    { "label": "print", "note": "shows it and hands back None. None + None is a TypeError" },
+    { "label": "default", "note": "used when the caller says nothing. Worked out once, at def — so never a list" }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "id": "reading-a-traceback",
+  "type": "cells",
+  "title": "A traceback, read bottom-up",
+  "caption": "Python prints the call chain in the order it was built, so the useful end is the bottom. Start at the last line for the fact, then climb one frame at a time for the route. The first frame naming a file you wrote is almost always the one to open.",
+  "cells": [
+    { "label": "1 · last line", "note": "the error's name and what it objected to: ValueError on 'twelve'" },
+    { "label": "2 · frame above it", "note": "the call that was running when it broke: read_cents, line 5" },
+    { "label": "3 · next frame up", "note": "who called that, and from which line: total, line 11" },
+    { "label": "4 · top frame", "note": "where the program started. Skip it unless the rest made no sense." }
+  ]
+}

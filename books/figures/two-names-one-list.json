@@ -1,0 +1,12 @@
+{
+  "id": "two-names-one-list",
+  "type": "cells",
+  "title": "Two names, one list",
+  "caption": "Assignment hands over a name, not a copy. After b = a there is still one list, and a change made through either name shows up under both. a[:] and list(a) are the two ways to ask for a second list, and then the names go their separate ways.",
+  "cells": [
+    { "label": "a = [\"beans\", \"rice\", \"soup\"]", "note": "one list exists, called a" },
+    { "label": "b = a", "note": "still one list; now it answers to b as well" },
+    { "label": "a.pop()", "note": "b is [\"beans\", \"rice\"] too — same list" },
+    { "label": "c = a[:]", "note": "a second list, with the same contents. c == a, c is not a" }
+  ]
+}

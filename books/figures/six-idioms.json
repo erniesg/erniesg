@@ -1,0 +1,14 @@
+{
+  "id": "six-idioms",
+  "type": "cells",
+  "title": "Six habits, and what each one buys",
+  "caption": "None of these make code faster. They make it shorter to read and harder to get wrong, and the first one — hand back a new list instead of rearranging the caller's — is the only one that fixes a real bug rather than a style complaint.",
+  "cells": [
+    { "label": "build, don't change", "note": "sorted(names) returns a new list; names.sort() rearranges the caller's" },
+    { "label": "comprehension", "note": "[t for t in times if t < 40] — keep some, change some, one line" },
+    { "label": "sorted(key=…)", "note": "key says which part to order by; a tuple key breaks ties" },
+    { "label": "unpacking", "note": "a, b = b, a swaps; for name, time in pairs names both parts" },
+    { "label": "enumerate / zip", "note": "position with the value; two lists walked side by side" },
+    { "label": "return early", "note": "answer the awkward cases first, then write the real work unindented" }
+  ]
+}

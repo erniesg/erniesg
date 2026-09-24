@@ -1,0 +1,67 @@
+---
+import ReadingLayout from '@/layouts/ReadingLayout.astro'
+import { bookManifest, documentUri } from '@/lib/books'
+
+const manifest = bookManifest()
+const all = manifest.books
+const here = '/books/'
+---
+
+<ReadingLayout
+  title="Books"
+  description="Books written in public, drawn from one pool of nodes."
+  documentUri={documentUri(here)}
+  canonicalPath={here}
+>
+  <Fragment slot="navigation">
+    <p
+      class="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+    >
+      Books
+    </p>
+    <ol class="flex flex-col gap-y-1 text-sm">
+      {
+        all.map((book) => (
+          <li>
+            <a
+              class="text-muted-foreground hover:underline hover:underline-offset-4"
+              href={book.path}
+            >
+              {book.title}
+            </a>
+          </li>
+        ))
+      }
+    </ol>
+  </Fragment>
+
+  <header class="flex flex-col gap-y-3 border-b pb-6">
+    <h1 class="text-3xl font-bold">Books</h1>
+    <p class="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+      Books written in public. Each one is a path over the {
+        manifest.collection
+      } pool — {manifest.poolNodeCount} nodes that a book walks in its own order.
+      A second path over the same pool would be a second book.
+    </p>
+  </header>
+
+  <ul class="mt-8 border-t">
+    {
+      all.map((book) => (
+        <li class="border-b py-6">
+          <a class="group flex flex-col gap-y-2" href={book.path}>
+            <small class="text-xs text-muted-foreground">
+              Edition {book.edition} · {book.nodes.length} nodes
+            </small>
+            <h2 class="text-xl font-semibold group-hover:underline group-hover:underline-offset-4">
+              {book.title}
+            </h2>
+            <p class="text-sm leading-relaxed text-muted-foreground">
+              {book.subtitle}
+            </p>
+          </a>
+        </li>
+      ))
+    }
+  </ul>
+</ReadingLayout>

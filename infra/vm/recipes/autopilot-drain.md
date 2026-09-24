@@ -103,13 +103,39 @@ transient npm failures retry at bounded intervals, while permanent local-path or
 tooling errors wait for the next daily run after an operator repairs the VM.
 The 30-minute queue drain no longer runs a package update on every poll.
 
-The default global capacity remains one verified live issue worker. A future
-second lane is limited to one disjoint evidence/eval worker beside one
-parser-core worker, and only after Rucksack persists versioned resource claims
-and enforces disk, memory, path, port, browser, and publisher conflicts under
-the dispatch lock. Until `erniesg/rucksack#347` and `#349` land, unknown claims
-fail closed to one worker; the repo pulse does not infer safety from labels or
-filenames.
+Capacity is **computed per pass**, not fixed. Since 2026-09-21 the drain
+chooses `min(nproc, MemAvailable / 2GiB, 16)` with a floor of 1, and logs the
+number it picked. A busy or memory-short host drains narrower on its own; a
+larger host drains wider; neither needs a unit change
+(`erniesg/rucksack#902`).
+
+The original cap of one existed because unknown resource claims failed closed
+pending `erniesg/rucksack#347` and `#349`. Each conflict class in that list is
+now handled rather than ignored:
+
+- **path** — every worker already runs in its own linked worktree under
+  `.rucksack-worktrees/`, so write scopes are disjoint by construction.
+- **port** — was the real hazard and is now fixed at the source: every issue
+  spec binds ports per run rather than using `8787`, `4321` or a fixed preview
+  port, and each carries a `## Concurrency` section requiring it.
+- **disk** — handled least well of the five, and the honest description is a
+  gate rather than a budget. The drain's host-health pass measures headroom
+  once per pass and reclaims before dispatching, but nothing reserves disk per
+  worker, and `min(nproc, MemAvailable / 2GiB, 16)` has no disk term. On a host
+  with many cores and free memory but headroom only just above the floor, the
+  one-time preflight can pass and the workers it then launches can cross the
+  high-water mark together. Until a disk slot count joins that minimum
+  (`erniesg/rucksack#902` follow-up), re-measure headroom before raising the
+  ceiling on a host that has been near the floor, and treat the ceiling as the
+  operator's disk budget.
+- **memory** — read from `/proc/meminfo` on every pass and divided into ~2 GiB
+  slots, which is what makes the count adaptive rather than a guess.
+- **publisher** — unchanged and still serialized: publication mints its own
+  narrow role token inside the fixed runtime, one mutation at a time.
+
+The 2 GiB-per-worker divisor is deliberately pessimistic because this host has
+no swap: exhausting memory kills a worker mid-run rather than slowing it. The
+repo pulse still does not infer safety from labels or filenames.
 
 Inspect runs:
 
@@ -120,10 +146,15 @@ journalctl --user -u rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.service -f
 Manual equivalent:
 
 ```bash
-rucksack autopilot review-repair erniesg/erniesg --provider vm-codex --execute
-rucksack autopilot self-heal erniesg/erniesg --repo-root . --provider vm-codex --request-review codex --execute
-rucksack autopilot work-queue erniesg/erniesg --provider vm-codex --max-workers 1 --local --repo-root . --issue-dir docs/issues --reconcile-issues --check-provider-ready --notify-github-when-blocked --execute
+rucksack autopilot review-repair erniesg/erniesg --provider claude --execute
+rucksack autopilot self-heal erniesg/erniesg --repo-root . --provider claude --request-review codex --execute
+rucksack autopilot work-queue erniesg/erniesg --provider claude --max-workers "$(nproc)" --local --repo-root . --issue-dir docs/issues --reconcile-issues --check-provider-ready --notify-github-when-blocked --execute
 ```
+
+These mirror the installed unit, which resolves its provider from
+`.agent/autopilot.yaml` and its worker count per pass. `--max-workers` here
+is a manual stand-in for that computed number, so cap it yourself if the
+host is short on memory or disk.
 
 The queue drain first inspects unresolved review threads and requeues safe
 same-repository repair work. Only after that succeeds does self-heal classify

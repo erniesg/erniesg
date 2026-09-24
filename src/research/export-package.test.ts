@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import { createHash } from 'node:crypto'
 import {
   createDemoAnnotations,
   createSemanticTextAnchor,
   textAnnotationSchema,
-} from './annotations'
+} from '../annotations/annotations'
 import {
   buildExportPackage,
   EXPORT_PACKAGE_PATHS,
@@ -68,6 +69,37 @@ function verificationCodes(error: unknown) {
 }
 
 describe('SRT export package', () => {
+  it('writes manifest 1.2 and verifies a saved 1.1 manifest with matching checksums', async () => {
+    const current = await buildExportPackage(paper, annotations)
+    const manifest = JSON.parse(
+      decoder.decode(getExportFile(current, 'export-manifest.json').bytes),
+    )
+    expect(manifest.schemaVersion).toBe('1.2.0')
+
+    const legacyManifest = { ...manifest, schemaVersion: '1.1.0' }
+    const legacyBytes = encoder.encode(
+      `${JSON.stringify(legacyManifest, null, 2)}\n`,
+    )
+    const legacy = replaceFile(
+      current,
+      'export-manifest.json',
+      () => legacyBytes,
+    )
+    const checksums = decoder.decode(
+      getExportFile(current, 'checksums.sha256').bytes,
+    )
+    const legacyHash = createHash('sha256').update(legacyBytes).digest('hex')
+    const legacyChecksums = checksums.replace(
+      /^.*  export-manifest\.json$/m,
+      `${legacyHash}  export-manifest.json`,
+    )
+    const validLegacy = replaceFile(legacy, 'checksums.sha256', () =>
+      encoder.encode(legacyChecksums),
+    )
+    await expect(
+      verifyExportPackage(validLegacy, paper, annotations),
+    ).resolves.toMatchObject({ status: 'passed' })
+  })
   it('exports every configured research paper with PDF text fidelity', async () => {
     const lettersPaper = researchPaperSchema.parse(rawLettersPaper)
 

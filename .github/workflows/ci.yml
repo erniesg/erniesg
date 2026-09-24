@@ -233,6 +233,21 @@ jobs:
             echo "no test script"
           fi
 
+      # Its own step, outside the Agent evidence step and outside `npm run
+      # test`: this test runs scripts/agent-evidence itself, so running it
+      # inside an evidence lane would be re-entrant. It is the end-to-end
+      # regression check for the shared lane budget: a budget-skipped lane
+      # must still produce a manifest the production validator accepts.
+      - name: Agent evidence budget
+        run: |
+          set -eu
+          runner="$(cat "$RUNNER_TEMP/rucksack-node-runner" 2>/dev/null || echo npm)"
+          if node -e "const s=require('./package.json').scripts||{}; process.exit(s['test:agent-evidence']?0:1)"; then
+            $runner run test:agent-evidence
+          else
+            echo "no test:agent-evidence script"
+          fi
+
       - name: Python tests
         run: |
           set -eu

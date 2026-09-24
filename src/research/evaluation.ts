@@ -1,4 +1,7 @@
-import { resolveTextAnchor, type TextAnnotation } from './annotations'
+import {
+  resolveTextAnchor,
+  type TextAnnotation,
+} from '../annotations/annotations'
 import { canonicalNodeContentHash } from './canonical-hash'
 import type { ResearchPaper } from './schema'
 import { TARGET_PROFILE_IDS, type TargetProfileId } from './targets'

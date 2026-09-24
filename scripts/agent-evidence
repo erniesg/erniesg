@@ -72,7 +72,8 @@ const DEFAULT_BUDGET_MS = 3_600_000;
 // Overridable so the skip path can be exercised by a test rather than only
 // reasoned about — it is the path that produced an invalid manifest, and it had
 // no coverage. Lowering it cannot manufacture a pass: a skipped required lane is
-// recorded as a failure, so a short budget makes the run fail, never succeed.
+// a required failure that blocks the run, so a short budget makes the run
+// blocked or failed, never passed.
 // Nothing in `.github/workflows/` sets it.
 const TOTAL_BUDGET_MS = (() => {
   const raw = Number(process.env.AGENT_EVIDENCE_BUDGET_MS);
@@ -326,25 +327,17 @@ for (const lane of lanes) {
     if (!budgetSpentBy) budgetSpentBy = lastLaneId || "setup";
     const why = `lane not run: ${lane.id}; the ${budgetSpentBy} lane consumed the shared ${TOTAL_BUDGET_MS} ms budget`;
     skipCaveats.push(why);
-    // A skipped lane is recorded in `lanes` as a failure, and the manifest
-    // validator is why. `.github/workflows/agent-evidence.yml` requires
-    // `lanes_run` to equal the ids in `lanes` exactly, and allows a lane only
-    // `passed` or `failed` -- so a lane cannot be in one and not the other, and
-    // there is no `skipped` state to use. Keeping it out of `lanes` while naming
-    // it in `required_failures` made the two disagree and the validator threw
-    // the whole manifest away, losing the very evidence this records.
-    //
-    // "failed" is true in the sense the validator cares about: a required lane
-    // that did not pass. `duration_ms: 0`, the 124 exit and the log below are
-    // what distinguish "never started" from "ran and failed". A real `skipped`
-    // state would say it properly and needs a workflow change, which is owner
-    // ask #337.
+    // A lane the budget never started is `skipped` (erniesg#337): it stays in
+    // `lanes`, is left out of `lanes_run` because it did not run, and records
+    // exit_code null -- never 0, which a reader of exit codes would take for a
+    // pass, and never 124, which would claim it ran and was killed. The lane
+    // that was running when the budget ran out is the one recorded with 124.
     const logPath = join(outDir, "logs", `${lane.id}.log`);
     writeFileSync(logPath, `[agent-evidence] ${why}\n[agent-evidence] this lane was never started\n`);
     results.push({
       ...lane,
-      status: "failed",
-      exit_code: LANE_TIMEOUT_EXIT,
+      status: "skipped",
+      exit_code: null,
       duration_ms: 0,
       log_path: logPath,
     });
@@ -397,12 +390,30 @@ for (const lane of lanes) {
 }
 
 // Exactly what the manifest validator derives from `lanes`, and from the same
-// source, so the two cannot disagree: every required lane whose exit code is not
-// zero. A lane the budget skipped is in `results` with exit 124, so it is here
-// too, and the caveat beside it says it was never started.
+// source, so the two cannot disagree: every required lane that did not pass,
+// whether it ran and failed or the budget skipped it.
 const requiredFailures = results
-  .filter((lane) => lane.required && lane.exit_code !== 0)
+  .filter((lane) => lane.required && lane.status !== "passed")
   .map((lane) => lane.id);
+// A required lane that ran and failed was evaluated and said no: the run
+// failed. A required lane the budget skipped could not be evaluated: on its
+// own that blocks the run (exit 2, blocked-environment) instead of reporting a
+// test failure nobody ran, and it can never pass.
+const ranRequiredFailures = results.filter((lane) => lane.required && lane.status === "failed");
+const skippedRequired = results
+  .filter((lane) => lane.required && lane.status === "skipped")
+  .map((lane) => lane.id);
+let outcome = { result: "passed", exitCode: 0 };
+if (ranRequiredFailures.length > 0) {
+  outcome = { result: "failed", exitCode: 1 };
+} else if (skippedRequired.length > 0) {
+  outcome = {
+    result: "blocked",
+    exitCode: 2,
+    blocked_class: "blocked-environment",
+    blocked_reason: `the shared ${TOTAL_BUDGET_MS} ms evidence budget ran out before these required lanes started: ${skippedRequired.join(", ")}; the ${budgetSpentBy} lane consumed it`,
+  };
+}
 const endedAt = new Date();
 const modelConsultationArtifact = modelConsultation
   ? [{
@@ -422,7 +433,7 @@ const manifest = {
   duration_ms: endedAt.getTime() - startedAt.getTime(),
   agent_version: textHash(JSON.stringify(allLanes)),
   invocation,
-  lanes_run: results.map((lane) => lane.id),
+  lanes_run: results.filter((lane) => lane.status !== "skipped").map((lane) => lane.id),
   runner: {
     provider: process.env.AGENT_PROVIDER || (process.env.GITHUB_ACTIONS ? "github-actions" : "local"),
     os: process.platform,
@@ -436,9 +447,12 @@ const manifest = {
     ...largeFiles.artifacts,
   ],
   caveats: [...largeFiles.caveats, ...skipCaveats],
-  result: requiredFailures.length === 0 ? "passed" : "failed",
+  result: outcome.result,
+  ...(outcome.result === "blocked"
+    ? { blocked_class: outcome.blocked_class, blocked_reason: outcome.blocked_reason }
+    : {}),
   required_failures: requiredFailures,
 };
 
-writeManifest(manifest, requiredFailures.length === 0 ? 0 : 1);
+writeManifest(manifest, outcome.exitCode);
 NODE

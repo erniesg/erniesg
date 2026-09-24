@@ -345,6 +345,7 @@ def _validate_manifest(raw: bytes, identity: dict[str, object]) -> tuple[dict[st
     if not isinstance(lanes, list) or not lanes:
         raise ValueError("passed manifest must contain validation lanes")
     lane_ids: list[str] = []
+    ran_lane_ids: list[str] = []
     failed_required: list[str] = []
     for index, lane_object in enumerate(lanes):
         lane = _record(lane_object, f"manifest.lanes[{index}]")
@@ -359,22 +360,31 @@ def _validate_manifest(raw: bytes, identity: dict[str, object]) -> tuple[dict[st
         _text(lane["command"], f"manifest.lanes[{index}].command")
         if not isinstance(lane["required"], bool):
             raise ValueError(f"manifest.lanes[{index}].required must be boolean")
-        exit_code = _integer(lane["exit_code"], f"manifest.lanes[{index}].exit_code")
         status = lane["status"]
-        if status not in {"passed", "failed"}:
+        if status not in {"passed", "failed", "skipped"}:
             raise ValueError(f"manifest.lanes[{index}].status is invalid")
-        if (status == "passed") != (exit_code == 0):
-            raise ValueError(
-                f"manifest.lanes[{index}].status does not match its exit code"
-            )
-        if lane["required"] and exit_code != 0:
+        # A skipped lane never ran: exit_code null (never 0, which reads as a
+        # pass), duration_ms 0, and not in lanes_run.
+        if status == "skipped":
+            if lane["exit_code"] is not None or lane["duration_ms"] != 0:
+                raise ValueError(
+                    f"manifest.lanes[{index}] is skipped, so it must record exit_code null and duration_ms 0"
+                )
+        else:
+            exit_code = _integer(lane["exit_code"], f"manifest.lanes[{index}].exit_code")
+            if (status == "passed") != (exit_code == 0):
+                raise ValueError(
+                    f"manifest.lanes[{index}].status does not match its exit code"
+                )
+            ran_lane_ids.append(lane_id)
+        if lane["required"] and status != "passed":
             failed_required.append(lane_id)
         _integer(lane["duration_ms"], f"manifest.lanes[{index}].duration_ms")
         _relative_path(lane["log_path"], f"manifest.lanes[{index}].log_path")
     if len(lane_ids) != len(set(lane_ids)):
         raise ValueError("manifest lane ids must be unique")
-    if _string_list(value["lanes_run"], "manifest.lanes_run") != lane_ids:
-        raise ValueError("manifest lanes_run must exactly match lanes")
+    if _string_list(value["lanes_run"], "manifest.lanes_run") != ran_lane_ids:
+        raise ValueError("manifest lanes_run must exactly match the lanes that ran")
     failures = _string_list(value["required_failures"], "manifest.required_failures")
     if failures or failures != failed_required:
         raise ValueError("manifest required failures must be empty")

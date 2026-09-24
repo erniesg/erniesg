@@ -7,7 +7,7 @@ import {
 } from './annotations'
 import type { PublicationGraph } from '../publication/schema'
 
-export const ANNOTATION_BUNDLE_VERSION = '1.0.0' as const
+export const ANNOTATION_BUNDLE_VERSION = '1.1.0' as const
 
 export const annotationBundleSchema = z
   .object({
@@ -64,29 +64,138 @@ export function createAnnotationBundle(
     anchor: annotation.target,
   })),
 ): AnnotationBundle {
+  const textForNode = (node: PublicationGraph['nodes'][number]) =>
+    'text' in node
+      ? node.text
+      : node.type === 'figure'
+        ? (node.sourceText ?? '')
+        : node.type === 'equation'
+          ? node.source
+          : node.type === 'code'
+            ? node.code
+            : null
+  const documentTextForNode = (node: PublicationGraph['nodes'][number]) =>
+    'text' in node
+      ? node.text
+      : node.type === 'code'
+        ? node.code
+        : node.type === 'equation'
+          ? node.source
+          : null
+  const utf16Offset = (text: string, offset: number) => {
+    const codePoints = [...text]
+    return offset <= codePoints.length
+      ? codePoints.slice(0, offset).join('').length
+      : null
+  }
+  const matches = (text: string, anchor: SemanticTextAnchor) => {
+    const start =
+      anchor.positionUnit === 'codepoint'
+        ? utf16Offset(text, anchor.position.start)
+        : anchor.position.start
+    const end =
+      anchor.positionUnit === 'codepoint'
+        ? utf16Offset(text, anchor.position.end)
+        : anchor.position.end
+    return (
+      start !== null &&
+      end !== null &&
+      text.slice(start, end) === anchor.quote.exact
+    )
+  }
+  const documentPositionMatches = (anchor: SemanticTextAnchor) => {
+    const documentText = graph.nodes
+      .map((node) => documentTextForNode(node) ?? '')
+      .join('')
+    let documentOffset = 0
+    let documentUtf16Offset = 0
+
+    for (const node of graph.nodes) {
+      const text = documentTextForNode(node)
+
+      if (text === null) continue
+      const textLength =
+        anchor.positionUnit === 'codepoint' ? [...text].length : text.length
+      const localStart = anchor.position.start - documentOffset
+      const localEnd = anchor.position.end - documentOffset
+
+      if (localStart >= 0 && localEnd <= textLength) {
+        const start =
+          anchor.positionUnit === 'codepoint'
+            ? utf16Offset(text, localStart)
+            : localStart
+        const end =
+          anchor.positionUnit === 'codepoint'
+            ? utf16Offset(text, localEnd)
+            : localEnd
+        if (
+          start !== null &&
+          end !== null &&
+          text.slice(start, end) === anchor.quote.exact &&
+          documentText
+            .slice(0, documentUtf16Offset + start)
+            .endsWith(anchor.quote.prefix) &&
+          documentText
+            .slice(documentUtf16Offset + end)
+            .startsWith(anchor.quote.suffix)
+        ) {
+          return true
+        }
+      }
+
+      documentOffset += textLength
+      documentUtf16Offset += text.length
+    }
+
+    return false
+  }
   const nodesById = new Map(graph.nodes.map((node) => [node.id, node]))
   const validateAnchor = (id: string, anchor: SemanticTextAnchor) => {
+    if (anchor.nodeId === '@document') {
+      if (documentPositionMatches(anchor)) return
+
+      const documentText = graph.nodes
+        .map((node) => documentTextForNode(node) ?? '')
+        .join('')
+      let documentOffset = 0
+      let exactCount = 0
+      let contextualCount = 0
+      for (const node of graph.nodes) {
+        const text = documentTextForNode(node)
+        if (text === null) continue
+        let searchFrom = 0
+        while (searchFrom <= text.length - anchor.quote.exact.length) {
+          const start = text.indexOf(anchor.quote.exact, searchFrom)
+          if (start < 0) break
+          const end = start + anchor.quote.exact.length
+          exactCount += 1
+          if (
+            documentText
+              .slice(0, documentOffset + start)
+              .endsWith(anchor.quote.prefix) &&
+            documentText
+              .slice(documentOffset + end)
+              .startsWith(anchor.quote.suffix)
+          ) {
+            contextualCount += 1
+          }
+          searchFrom = start + 1
+        }
+        documentOffset += text.length
+      }
+      if (contextualCount !== 1 && exactCount !== 1) {
+        throw new Error(`Anchor ${id} does not resolve to one graph node`)
+      }
+      return
+    }
     const node = nodesById.get(anchor.nodeId)
     if (!node) {
       throw new Error(
         `Anchor ${id} targets missing graph node ${anchor.nodeId}`,
       )
     }
-    const text =
-      'text' in node
-        ? node.text
-        : node.type === 'figure'
-          ? (node.sourceText ?? '')
-          : node.type === 'equation'
-            ? node.source
-            : node.type === 'code'
-              ? node.code
-              : null
-    if (
-      text === null ||
-      text.slice(anchor.position.start, anchor.position.end) !==
-        anchor.quote.exact
-    ) {
+    const text = textForNode(node)
+    if (text === null || !matches(text, anchor)) {
       throw new Error(`Anchor ${id} does not match graph node text`)
     }
   }
@@ -103,7 +212,6 @@ export function createAnnotationBundle(
     annotations,
   })
 }
-
 export function serializeAnnotationBundle(bundle: AnnotationBundle) {
   return JSON.stringify(annotationBundleSchema.parse(bundle))
 }

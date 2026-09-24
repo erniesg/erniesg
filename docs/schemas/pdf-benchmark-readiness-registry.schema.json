@@ -122,6 +122,9 @@
     "candidateCommitment": {
       "$ref": "#/$defs/candidateCommitment"
     },
+    "nativeReaderEvidence": {
+      "$ref": "#/$defs/nativeReaderEvidence"
+    },
     "discoveryOrder": {
       "type": "object",
       "additionalProperties": false,
@@ -379,6 +382,69 @@
           }
         }
       ]
+    },
+    "nativeReaderEvidenceEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "readerIdentity", "executionReceipt"],
+      "properties": {
+        "status": { "enum": ["unavailable-blocker", "passed"] },
+        "readerIdentity": {
+          "oneOf": [{ "$ref": "#/$defs/fileBinding" }, { "type": "null" }]
+        },
+        "executionReceipt": {
+          "oneOf": [{ "$ref": "#/$defs/fileBinding" }, { "type": "null" }]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "unavailable-blocker" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "readerIdentity": { "type": "null" },
+              "executionReceipt": { "type": "null" }
+            }
+          },
+          "else": {
+            "properties": {
+              "readerIdentity": { "$ref": "#/$defs/fileBinding" },
+              "executionReceipt": { "$ref": "#/$defs/fileBinding" }
+            }
+          }
+        }
+      ]
+    },
+    "nativeReaderEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "exportEvidence",
+        "apple-books",
+        "independent-desktop-epub-reader",
+        "target-eink-reader-device"
+      ],
+      "properties": {
+        "exportEvidence": {
+          "oneOf": [
+            { "$ref": "#/$defs/exactEpubExportEvidenceBinding" },
+            { "type": "null" }
+          ]
+        },
+        "apple-books": { "$ref": "#/$defs/nativeReaderEvidenceEntry" },
+        "independent-desktop-epub-reader": {
+          "$ref": "#/$defs/nativeReaderEvidenceEntry"
+        },
+        "target-eink-reader-device": {
+          "$ref": "#/$defs/nativeReaderEvidenceEntry"
+        }
+      }
+    },
+    "exactEpubExportEvidenceBinding": {
+      "description": "Hash-bound export evidence whose validator requires a retained EPUB, export receipt, pinned publication toolchain manifest, and successful EPUBCheck transcript and receipt.",
+      "$ref": "#/$defs/fileBinding"
     },
     "split": {
       "type": "object",

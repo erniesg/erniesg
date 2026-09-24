@@ -148,21 +148,33 @@ and these commands run with the owner's broad-scope Wrangler login. If
 5. **Install the deploy tooling into the artifact, from the lockfile.**
    1. `mkdir -p "$ART/tooling"`, then copy `package.json` and
       `package-lock.json` from the worktree into it.
-   2. In `$ART/tooling`, run
-      `pnpm import && pnpm install --frozen-lockfile --ignore-scripts`.
-      `pnpm import` carries each package's recorded `sha512` integrity from
-      `package-lock.json` into `pnpm-lock.yaml`. `--frozen-lockfile` refuses
-      any resolution that the lock does not already record, and pnpm checks
-      every tarball against its integrity. The install is hard-linked from
-      the shared store (`~/.local/share/pnpm/store`), so it costs little disk.
-   3. Check the tooling. All three must hold, or stop:
+   2. In `$ART/tooling`, under the load gate
+      (`until [ "$(cut -d' ' -f1 /proc/loadavg | cut -d. -f1)" -lt 12 ]; do sleep 30; done`),
+      run:
+
+      ```bash
+      RUCKSACK_NPM_SHIM=passthrough systemd-run --user --scope -q -p CPUQuota=150% \
+        npm ci --ignore-scripts --no-audit --no-fund
+      ```
+
+      `npm ci` installs exactly the versions in `package-lock.json` and checks
+      every package's tarball against the `sha512` integrity recorded there,
+      failing on any mismatch. Nothing is re-resolved, so wrangler, miniflare,
+      workerd, esbuild and unenv are all tied to the reviewed lock.
+      `--ignore-scripts` is safe: the platform binaries (esbuild, workerd)
+      arrive as optional dependencies that need no install script.
+
+      **This is a deliberate exception to the host's pnpm-first rule.**
+      `pnpm import` does not carry `package-lock.json`'s integrity values: it
+      re-resolves against the registry, and `--frozen-lockfile` then enforces
+      the `pnpm-lock.yaml` it has just written. So pnpm would not tie the deploy
+      tooling to the reviewed lock. The cost is about 700 MB of private
+      `node_modules` per artifact. The cleanup in I7 removes it after the
+      receipt.
+   3. Check the tooling. Both must hold, or stop:
       - `node -p "require('$ART/tooling/package-lock.json').packages['node_modules/wrangler'].version"`
         prints the version that `"$WR" --version` prints (`4.135.0` at
         `fb60bce`);
-      - the lock's integrity
-        (`node -p "require('$ART/tooling/package-lock.json').packages['node_modules/wrangler'].integrity"`)
-        equals the `integrity` recorded for `wrangler@<version>` in
-        `$ART/tooling/pnpm-lock.yaml`;
       - `"$ART/tooling/node_modules/wrangler/package.json"` has that same
         `version`.
 6. **Bundle the Worker once, before the ask**, with that binary. From the
@@ -199,10 +211,12 @@ and these commands run with the owner's broad-scope Wrangler login. If
    ARTIFACT_DIGEST=$(sha256sum "$ART/MANIFEST.sha256" | cut -d' ' -f1)
    ```
 
-   The manifest covers `tooling/package.json`,
-   `tooling/package-lock.json`, `tooling/pnpm-lock.yaml`, and every regular
-   file under `tooling/node_modules`, including the wrangler package and
-   everything it loads. Do not make `$ART` read-only. `wrangler` writes its
+   The manifest covers `tooling/package.json`, `tooling/package-lock.json`,
+   and every regular file under `tooling/node_modules`, including the
+   wrangler package and everything it loads. That is roughly 37,000 files
+   and 700 MB. Run the hashing, both here and in every check below, under the
+   load gate and inside `systemd-run --user --scope -q -p CPUQuota=150%`.
+   Expect about 1–3 minutes per pass on this VM. Do not make `$ART` read-only. `wrangler` writes its
    scratch directory, `.wrangler/`, next to the config, and its cache,
    `node_modules/.cache/`, under the tooling. Those two paths are the only
    ones left out of the manifest.
@@ -376,8 +390,27 @@ version has no D1 binding and never reads them. If a future promotion applies
 a non-additive migration, the receipt must say so, and the rollback note
 must name `BOOKMARK` and the restore command.
 
-Close the issue after the receipt. Keep `$ART` until the next promotion's
-receipt is recorded, then remove it with
+Close the issue after the receipt.
+
+**Cleanup after the receipt is recorded.** Remove the ~700 MB of tooling
+dependencies, and keep the record: `dist/`, `worker/`, `migrations/`, the
+derived configs, `HEAD`, `tooling/package.json`, `tooling/package-lock.json`
+and `MANIFEST.sha256`:
+
+```bash
+rm -rf -- "/home/ubuntu/.local/share/rucksack/deployments/erniesg-${SHA8:?}/tooling/node_modules"
+```
+
+A later rollback first restores the tooling. Run the same
+`npm ci --ignore-scripts --no-audit --no-fund` in `$ART/tooling`; it checks
+integrity against the kept lock. Then run the full artifact check against
+the kept manifest. If that check fails, stop and post the mismatching paths
+on the issue. The owner can still roll back without wrangler, from the
+Cloudflare dashboard (Workers › `erniesg-workers` › Deployments), to
+`PREV_VERSION`.
+
+Keep the rest of `$ART` until the next promotion's receipt is recorded, then
+remove it with
 `rm -rf -- "/home/ubuntu/.local/share/rucksack/deployments/erniesg-${OLD_SHA8:?}"`.
 
 ### Part 2: Later, the automated path (not part of this release)

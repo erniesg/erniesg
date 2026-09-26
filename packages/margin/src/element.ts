@@ -243,6 +243,12 @@ export class MarginRailElement extends ElementBase {
   #writes = new WeakMap<RailRecord, Promise<void>>()
   /** How many writes each record has queued or running. */
   #inFlight = new WeakMap<RailRecord, number>()
+  /** Writes queued or running per record and field. */
+  #fieldWrites = new Map<string, number>()
+  /** Records with a delete already on its way. */
+  #deleting = new WeakSet<RailRecord>()
+  /** Default-visibility writes not yet finished. */
+  #prefsWritesPending = 0
   #flashTimer = 0
   #unflash: (() => void) | null = null
   #listeners: (() => void)[] = []
@@ -331,6 +337,10 @@ export class MarginRailElement extends ElementBase {
       (record) => record.serverId === null && !this.#saving.has(record),
     )
     this.#viewer = null
+    // The default belonged to that connection's reader too. Until the new one's
+    // is read, new annotations take the private fallback, not the old reader's.
+    this.#defaultVisibility = DEFAULT_VISIBILITY
+    this.#savedDefault = null
     this.#paint()
     if (this.isConnected) void this.#load()
   }
@@ -578,7 +588,12 @@ export class MarginRailElement extends ElementBase {
             this.#savedDefault = body.defaultVisibility
             // ...but a reader who changed the default while this read was out
             // has the newer value on screen, and the response is older.
-            if (revision === this.#prefsRevision) {
+            // A write of the reader's choice still in flight is newer than any
+            // read, even one that started after the choice was made.
+            if (
+              revision === this.#prefsRevision &&
+              this.#prefsWritesPending === 0
+            ) {
               this.#defaultVisibility = body.defaultVisibility
             }
           }
@@ -753,6 +768,15 @@ export class MarginRailElement extends ElementBase {
       const responses: MarginResponse[] = []
       let duplicated = false
       for (const [index, record] of created.entries()) {
+        // Checked before every request, not once: a host that switches
+        // connections part-way must not have the rest sent to the old one.
+        if (source.transport !== this.#transport) {
+          this.#reportTransportFailure(
+            new Error('the margin transport changed during the save'),
+            'Not saved: the connection changed. It stays on this page only.',
+          )
+          break
+        }
         const [response] = await client.createAnnotations({
           documentUri: source.documentUri,
           visibility: record.visibility,
@@ -913,12 +937,21 @@ export class MarginRailElement extends ElementBase {
    * quick toggles otherwise race as concurrent PATCHes, and whichever lands
    * last wins on the server while the rail shows the other.
    */
-  #enqueue<T>(record: RailRecord, write: () => Promise<T>): Promise<T> {
+  #enqueue<T>(
+    record: RailRecord,
+    field: WriteField,
+    write: () => Promise<T>,
+  ): Promise<T> {
     const before = this.#writes.get(record) ?? this.#saving.get(record)
+    const key = fieldKey(record, field)
     this.#inFlight.set(record, (this.#inFlight.get(record) ?? 0) + 1)
+    this.#fieldWrites.set(key, (this.#fieldWrites.get(key) ?? 0) + 1)
     this.#touched.set(record, (this.#clock += 1))
     const run = (before ?? Promise.resolve()).then(write, write).finally(() => {
       this.#inFlight.set(record, (this.#inFlight.get(record) ?? 1) - 1)
+      const left = (this.#fieldWrites.get(key) ?? 1) - 1
+      if (left > 0) this.#fieldWrites.set(key, left)
+      else this.#fieldWrites.delete(key)
       this.#touched.set(record, (this.#clock += 1))
     })
     this.#writes.set(
@@ -931,9 +964,13 @@ export class MarginRailElement extends ElementBase {
     return run
   }
 
-  /** Whether the running write is the only one left queued for its record. */
-  #isLastWrite(record: RailRecord) {
-    return (this.#inFlight.get(record) ?? 0) <= 1
+  /**
+   * Whether the running write is the last one queued for this record's field.
+   * Per field, not per record: a refused visibility change must roll back
+   * even with an unrelated note edit queued behind it, and the reverse.
+   */
+  #isLastWrite(record: RailRecord, field: WriteField) {
+    return (this.#fieldWrites.get(fieldKey(record, field)) ?? 0) <= 1
   }
 
   /** Resolves once the latest preference read has settled. */
@@ -961,7 +998,7 @@ export class MarginRailElement extends ElementBase {
     // queued write runs, the page may be showing another.
     const documentUri = this.documentUri
     const transport = this.#transport
-    await this.#enqueue(record, async () => {
+    await this.#enqueue(record, 'visibility', async () => {
       const client = this.#clientFor(transport)
       if (!client || !record.serverId) return
       try {
@@ -986,7 +1023,7 @@ export class MarginRailElement extends ElementBase {
         // shows: an earlier failure leaves a later write's value alone. The last
         // one, failing, falls back to what the service is known to hold — not
         // to this write's own predecessor, which may never have been stored.
-        if (this.#isLastWrite(record)) {
+        if (this.#isLastWrite(record, 'visibility')) {
           record.visibility =
             this.#confirmed.get(record)?.visibility ?? record.visibility
           this.#render()
@@ -1010,6 +1047,7 @@ export class MarginRailElement extends ElementBase {
     // One preference write at a time, in order, and only the latest choice is
     // sent: two concurrent PATCHes could otherwise land reversed and store the
     // default the reader moved away from.
+    this.#prefsWritesPending += 1
     const run = this.#prefsWrites.then(async () => {
       // Whether there is a signed-in reader to save it for is only known once
       // the preference read has settled.
@@ -1036,7 +1074,11 @@ export class MarginRailElement extends ElementBase {
         this.#reportTransportFailure(error, 'The default was not saved.')
       }
     })
-    this.#prefsWrites = run.catch(() => undefined)
+    this.#prefsWrites = run
+      .catch(() => undefined)
+      .finally(() => {
+        this.#prefsWritesPending -= 1
+      })
     await run
   }
 
@@ -1053,7 +1095,7 @@ export class MarginRailElement extends ElementBase {
     const transport = this.#transport
     // As with visibility: an edit made while the create is in flight is sent
     // once the create has an id, or it is lost on reload.
-    await this.#enqueue(record, async () => {
+    await this.#enqueue(record, 'body', async () => {
       const client = this.#clientFor(transport)
       if (!client || !record.serverId) return
       try {
@@ -1074,7 +1116,7 @@ export class MarginRailElement extends ElementBase {
           annotation: edited,
         })
       } catch (error) {
-        if (this.#isLastWrite(record)) {
+        if (this.#isLastWrite(record, 'body')) {
           record.annotation =
             this.#confirmed.get(record)?.annotation ?? record.annotation
           this.#paint()
@@ -1089,13 +1131,16 @@ export class MarginRailElement extends ElementBase {
 
   async deleteAnnotation(id: string) {
     const record = this.#find(id)
-    if (!record || !record.mine) return
+    // A double click, or Enter held down, would queue a second delete that runs
+    // after the first succeeded and reports a 404 as "Not deleted".
+    if (!record || !record.mine || this.#deleting.has(record)) return
+    this.#deleting.add(record)
     const documentUri = this.documentUri
     const transport = this.#transport
     // A delete that overtakes its own create would remove the entry here while
     // the create went on to store it — possibly public — to reappear on the
     // next load. It waits for the create, and for any earlier write.
-    const deleted = await this.#enqueue(record, async () => {
+    const deleted = await this.#enqueue(record, 'delete', async () => {
       if (transport !== this.#transport) return false // switched away; gone anyway
       const client = this.#clientFor(transport)
       if (!client || !record.serverId) return true
@@ -1124,7 +1169,10 @@ export class MarginRailElement extends ElementBase {
         return false
       }
     })
-    if (!deleted) return
+    if (!deleted) {
+      this.#deleting.delete(record)
+      return
+    }
     const position = this.#visibleRecords().findIndex(
       (entry) => entry.annotation.id === id,
     )
@@ -1677,7 +1725,15 @@ export class MarginRailElement extends ElementBase {
       'data-focus-key': 'search',
     })
     search.value = this.#query
-    search.addEventListener('input', () => {
+    // Not mid-composition: rebuilding the rail replaces this field and ends
+    // an IME session before the reader has chosen a candidate — no Chinese,
+    // Japanese or Korean query could be typed. The query applies at the end.
+    search.addEventListener('input', (event) => {
+      if ((event as InputEvent).isComposing) return
+      this.#query = search.value
+      this.#render()
+    })
+    search.addEventListener('compositionend', () => {
       this.#query = search.value
       this.#render()
     })
@@ -2015,6 +2071,20 @@ function isTextField(
     (element instanceof HTMLInputElement &&
       ['text', 'search'].includes(element.type))
   )
+}
+
+type WriteField = 'visibility' | 'body' | 'delete'
+
+/** A key per record object and field, for counting writes. */
+const recordKeys = new WeakMap<object, number>()
+let nextRecordKey = 0
+function fieldKey(record: object, field: WriteField): string {
+  let key = recordKeys.get(record)
+  if (key === undefined) {
+    key = nextRecordKey += 1
+    recordKeys.set(record, key)
+  }
+  return `${key}:${field}`
 }
 
 function captureKey(capture: SelectionCapture): string {

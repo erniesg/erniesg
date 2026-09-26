@@ -688,6 +688,62 @@ test.describe('the margin rail under slow or racing requests', () => {
     expect(await focusedKey(page)).toBe('search')
   })
 
+  test('search waits for an IME composition to finish', async ({ page }) => {
+    await mountService(page)
+    await open(page)
+    const [block] = await proseBlocks(page)
+    await highlight(page, block, 0, 20)
+    const search = page.locator(`${RAIL} [data-margin-search]`)
+    await search.focus()
+    const same = await search.evaluate((input: HTMLInputElement) => {
+      ;(window as unknown as { searchField: unknown }).searchField = input
+      input.value = 'zh'
+      input.dispatchEvent(
+        new InputEvent('input', {
+          bubbles: true,
+          composed: true,
+          isComposing: true,
+        }),
+      )
+      const root = input.getRootNode() as ShadowRoot
+      return root.querySelector('[data-margin-search]') === input
+    })
+    // Mid-composition the field is the same element: nothing was rebuilt.
+    expect(same).toBe(true)
+    await expect(page.locator(ENTRY)).toHaveCount(1)
+    await search.evaluate((input: HTMLInputElement) => {
+      input.value = 'zzz-no-match'
+      input.dispatchEvent(
+        new CompositionEvent('compositionend', {
+          bubbles: true,
+          composed: true,
+        }),
+      )
+    })
+    await expect(page.locator(ENTRY)).toHaveCount(0)
+  })
+
+  test('a second delete of the same entry is ignored, not reported as a failure', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    const [block] = await proseBlocks(page)
+    await highlight(page, block, 0, 20)
+    await expect.poll(async () => (await service.rows()).length).toBe(1)
+    const deletes = gate()
+    service.holdDeletes = deletes.promise
+    const remove = page.locator(`${ENTRY} [data-margin-action="delete"]`)
+    await remove.click()
+    await remove.click()
+    deletes.open()
+    await expect(page.locator(ENTRY)).toHaveCount(0)
+    await page.waitForTimeout(300)
+    await expect(
+      page.locator(`${RAIL} [data-margin-notice="transport"]`),
+    ).toHaveCount(0)
+  })
+
   test('is not printed', async ({ page }) => {
     await mountService(page)
     await open(page, 1024)

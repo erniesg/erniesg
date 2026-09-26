@@ -84,10 +84,15 @@ checkout. Neither is caused by the code under test:
   this box, so a slow `build` still shrinks what `test` gets. When the budget
   runs out mid-lane, that lane is killed and recorded with exit `124`, and its
   log ends with `lane timed out against the shared ... ms budget`. Every later
-  lane is recorded as failed with exit `124` and `duration_ms: 0`, a log that
-  says `this lane was never started`, and a `lane not run:` caveat in the
-  manifest. Read the lane log before reading the exit code: an exit of `124`
-  means the budget ran out, not that an assertion failed. The trusted publisher
+  lane is recorded as `status: skipped` with `exit_code: null` and
+  `duration_ms: 0`, left out of `lanes_run`, with a log that says `this lane
+  was never started` and a `lane not run:` caveat in the manifest. A skipped
+  required lane is a required failure that could not be evaluated: if no
+  required lane ran and failed, the run is `blocked` (`blocked-environment`,
+  exit `2`) with a `blocked_reason` naming the skipped lanes, never `failed`
+  and never `passed`. A skipped optional lane changes nothing. Read the lane log
+  before reading the exit code: an exit of `124` means the budget ran out, not
+  that an assertion failed. The trusted publisher
   reads the same constant to size its outer bound, so change the budget only
   there. `.agent/commands.yaml` gives these lanes no timeout of their own.
   `npm run test:agent-evidence` runs the real producer against the budget; it

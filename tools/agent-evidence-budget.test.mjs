@@ -12,6 +12,7 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { publisherVerdict } from './agent-evidence-publisher-verdict.mjs'
 
 /**
  * The shared lane budget in `scripts/agent-evidence`, exercised against the
@@ -20,8 +21,9 @@ import { describe, expect, it } from 'vitest'
  * A run the budget cuts short still produces a manifest the production
  * validator accepts. The validator is not re-implemented: it is extracted
  * from `.github/workflows/agent-evidence.yml` and run as the workflow runs it,
- * so any check it makes (the association lane must pass, `lanes_run` must
- * equal `lanes`, `required_failures` must match) applies here too.
+ * so any check it makes (the association lane must pass or be skipped,
+ * `lanes_run` must equal the lanes that ran, `required_failures` must match,
+ * a skipped required lane blocks rather than fails) applies here too.
  *
  * This file runs the producer, so it is excluded from `npm run test`, which is
  * itself the evidence `test` lane: running the producer from inside it would
@@ -80,9 +82,10 @@ function gitHead(cwd) {
   return head.stdout.trim()
 }
 
-function runEvidence({ cwd, only, budgetMs, head }) {
+function runEvidence({ cwd, only, budgetMs, head, nodeOptions }) {
   const env = {
     ...process.env,
+    ...(nodeOptions ? { NODE_OPTIONS: nodeOptions } : {}),
     NO_COLOR: '1',
     GITHUB_HEAD_SHA: head,
     GITHUB_REPOSITORY: REPOSITORY,
@@ -98,19 +101,25 @@ function runEvidence({ cwd, only, budgetMs, head }) {
     env,
   })
   const match = evidence.stdout.match(
-    /\[agent-evidence\] (?:passed|failed): (.+\/manifest\.json)\s*$/u,
+    /\[agent-evidence\] (?:passed|failed|blocked): (.+\/manifest\.json)\s*$/u,
   )
   return { evidence, manifestPath: match ? resolve(cwd, match[1]) : null }
 }
 
 /** Exactly what the validator derives from `lanes`, restated for a readable failure. */
 function expectManifestConsistent(manifest) {
-  expect(manifest.lanes_run).toEqual(manifest.lanes.map((lane) => lane.id))
+  expect(manifest.lanes_run).toEqual(
+    manifest.lanes.filter((lane) => lane.status !== 'skipped').map((lane) => lane.id),
+  )
   expect(manifest.required_failures).toEqual(
     manifest.lanes
-      .filter((lane) => lane.required && lane.exit_code !== 0)
+      .filter((lane) => lane.required && lane.status !== 'passed')
       .map((lane) => lane.id),
   )
+  for (const lane of manifest.lanes.filter(({ status }) => status === 'skipped')) {
+    expect(lane.exit_code, `${lane.id} never ran, so it has no exit code`).toBeNull()
+    expect(lane.duration_ms).toBe(0)
+  }
 }
 
 function evidenceRuns(cwd) {
@@ -189,7 +198,7 @@ const HUNG_UNIT_LANE = (pidFile) =>
   `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid))\n` +
   'setTimeout(() => {}, 60_000)\n'
 
-function budgetFixture(receipt, unitLane = HUNG_UNIT_LANE) {
+function budgetFixture(receipt, unitLane = HUNG_UNIT_LANE, auditLane = null) {
   const root = mkdtempSync(join(tmpdir(), 'agent-evidence-budget-'))
   for (const file of [
     PRODUCER,
@@ -202,7 +211,8 @@ function budgetFixture(receipt, unitLane = HUNG_UNIT_LANE) {
   }
   writeFileSync(
     join(root, 'tools/pdf-association-fixture-audit.mjs'),
-    `process.stdout.write(${JSON.stringify(`${JSON.stringify(receipt)}\n`)})\n`,
+    (auditLane ?? '') +
+      `process.stdout.write(${JSON.stringify(`${JSON.stringify(receipt)}\n`)})\n`,
   )
   const pidFile = join(root, 'hung-lane.pid')
   // Plain JavaScript is valid input to --experimental-strip-types. It exits on
@@ -236,7 +246,7 @@ describe('the shared lane budget', () => {
     expect(manifest.required_failures).toEqual([])
   }, 190_000)
 
-  it('records a killed and a skipped required lane in a manifest the production validator accepts', () => {
+  it('records a killed lane as failed and the lane after it as skipped, in a manifest the production validator accepts', () => {
     const { manifest: real } = ordinaryRun()
     expect(real.association_audit, 'the real audit receipt').not.toBeNull()
     const { root, pidFile } = budgetFixture(real.association_audit)
@@ -274,18 +284,112 @@ describe('the shared lane budget', () => {
         'lane timed out against the shared',
       )
 
-      // Skipped: in `lanes`, not only in caveats, and marked as never started.
-      expect(byId.build.exit_code).toBe(124)
-      expect(byId.build.status).toBe('failed')
+      // Skipped: in `lanes`, not only in caveats, marked as never started, with
+      // no exit code, and not in `lanes_run`.
+      expect(byId.build.status).toBe('skipped')
+      expect(byId.build.exit_code).toBeNull()
       expect(byId.build.duration_ms).toBe(0)
+      expect(manifest.lanes_run).not.toContain('build')
       expect(readFileSync(resolve(root, byId.build.log_path), 'utf8')).toContain('never started')
       expect(manifest.caveats.join('\n')).toContain('lane not run: build')
 
+      // unit ran and was killed, so the run failed; build did not pass either.
       expect(manifest.required_failures).toEqual(['unit', 'build'])
     } finally {
       reap(pidFile)
       rmSync(root, { recursive: true, force: true })
     }
+  }, 190_000)
+
+  /**
+   * A lane that finishes just as the budget runs out leaves the next lane
+   * skipped with no lane killed. That boundary is a race on a real clock, so
+   * the test moves the producer's clock instead: a `--require` preload shifts
+   * `Date.now()` past any budget once the replayed audit lane has written a
+   * sentinel file. Only the producer's deadline arithmetic reads `Date.now()`;
+   * the lane timeout itself is libuv's, so the audit lane still passes.
+   */
+  function budgetRunsOutAfterAudit(only) {
+    const { manifest: real } = ordinaryRun()
+    const scratch = mkdtempSync(join(tmpdir(), 'agent-evidence-clock-'))
+    const sentinel = join(scratch, 'budget-spent')
+    const clock = join(scratch, 'clock.cjs')
+    writeFileSync(
+      clock,
+      `const { existsSync } = require('node:fs')\n` +
+        `const realNow = Date.now\n` +
+        `Date.now = () => realNow() + (existsSync(${JSON.stringify(sentinel)}) ? 86_400_000 : 0)\n`,
+    )
+    // The replayed audit is an ES module, so no `require` here.
+    const audit = `import { writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(sentinel)}, '')\n`
+    const { root, pidFile } = budgetFixture(real.association_audit, HUNG_UNIT_LANE, audit)
+    try {
+      const head = gitHead(root)
+      const { evidence, manifestPath } = runEvidence({
+        cwd: root,
+        only,
+        budgetMs: 600_000,
+        head,
+        nodeOptions: `--require ${clock}`,
+      })
+      expect(manifestPath, evidence.stdout || evidence.stderr).not.toBeNull()
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+      const verdict = validate({
+        cwd: root,
+        manifestPath: relative(root, manifestPath),
+        status: evidence.status,
+        head,
+      })
+      return { evidence, manifest, verdict }
+    } finally {
+      reap(pidFile)
+      rmSync(root, { recursive: true, force: true })
+      rmSync(scratch, { recursive: true, force: true })
+    }
+  }
+
+  it('blocks, never fails or passes, a run whose only unpassed required lane was skipped', () => {
+    const { evidence, manifest, verdict } = budgetRunsOutAfterAudit('association-audit,build')
+    expect(verdict.status, verdict.stderr).toBe(0)
+    expectManifestConsistent(manifest)
+
+    const byId = Object.fromEntries(manifest.lanes.map((lane) => [lane.id, lane]))
+    expect(byId['association-audit'].status).toBe('passed')
+    expect(byId.build.status).toBe('skipped')
+    expect(manifest.lanes_run).toEqual(['association-audit'])
+    expect(manifest.required_failures).toEqual(['build'])
+
+    // Could not be evaluated: blocked on the machine's time, exit 2, not a
+    // test failure (1) and never a pass (0), with a reason that names the lane.
+    expect(manifest.result).toBe('blocked')
+    expect(evidence.status).toBe(2)
+    expect(manifest.blocked_class).toBe('blocked-environment')
+    expect(manifest.blocked_reason).toContain('evidence budget ran out before these required lanes started: build')
+    expect(manifest.blocked_reason).toContain('the association-audit lane consumed it')
+  }, 190_000)
+
+  it('keeps a passed run passed when only an optional lane was skipped', () => {
+    const { evidence, manifest, verdict } = budgetRunsOutAfterAudit('association-audit,e2e')
+    expect(verdict.status, verdict.stderr).toBe(0)
+    expectManifestConsistent(manifest)
+
+    const byId = Object.fromEntries(manifest.lanes.map((lane) => [lane.id, lane]))
+    expect(byId.e2e.required).toBe(false)
+    expect(byId.e2e.status).toBe('skipped')
+    expect(manifest.caveats.join('\n')).toContain('lane not run: e2e')
+    expect(manifest.result).toBe('passed')
+    expect(manifest.required_failures).toEqual([])
+    expect(evidence.status).toBe(0)
+
+    // CI is green, so publication must accept the same manifest: its only
+    // caveat is the producer's note naming the skipped optional lane.
+    expect(manifest.caveats).toEqual([expect.stringMatching(/^lane not run: e2e; /u)])
+    const published = publisherVerdict(manifest, {
+      repository: REPOSITORY,
+      branch: BRANCH,
+      head: manifest.commit,
+    })
+    expect(published.accepted, published.reason).toBe(true)
   }, 190_000)
 
   it('treats a lane that exits 124 on its own, before the deadline, as an ordinary failure', () => {

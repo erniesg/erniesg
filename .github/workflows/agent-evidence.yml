@@ -96,6 +96,7 @@ jobs:
           // The documented exit taxonomy, rendered from rucksack.evidence_taxonomy so the
           // validator cannot drift from the script that produces the manifest.
           const blockedClassExitCodes = {"blocked-auth": 3, "blocked-decision": 4, "blocked-environment": 2};
+          const budgetSkippedClass = "blocked-environment";
 
           function fail(message) {
             console.error(`evidence manifest rejected: ${message}`);
@@ -396,12 +397,23 @@ jobs:
             laneIds.push(laneId);
             stringValue(lane.command, `${location}.command`);
             if (typeof lane.required !== "boolean") fail(`${location}.required must be a boolean`);
-            if (!new Set(["passed", "failed"]).has(lane.status)) fail(`${location}.status is invalid`);
-            nonNegativeInteger(lane.exit_code, `${location}.exit_code`);
+            // "skipped": a lane the evidence budget never started (rucksack#999,
+            // erniesg#337). It did not run, so it records exit_code null -- never 0, which
+            // any reader of exit codes would take for a pass -- and duration_ms 0, and it
+            // is absent from lanes_run. A required skipped lane did not pass, so it is a
+            // required failure; alone it makes the run "blocked", never "failed" or "passed".
+            if (!new Set(["passed", "failed", "skipped"]).has(lane.status)) fail(`${location}.status is invalid`);
             nonNegativeInteger(lane.duration_ms, `${location}.duration_ms`);
             relativePath(lane.log_path, `${location}.log_path`);
-            if ((lane.status === "passed") !== (lane.exit_code === 0)) {
-              fail(`${location}.status does not match its exit code`);
+            if (lane.status === "skipped") {
+              if (lane.exit_code !== null || lane.duration_ms !== 0) {
+                fail(`${location} is skipped, so it must record exit_code null and duration_ms 0`);
+              }
+            } else {
+              nonNegativeInteger(lane.exit_code, `${location}.exit_code`);
+              if ((lane.status === "passed") !== (lane.exit_code === 0)) {
+                fail(`${location}.status does not match its exit code`);
+              }
             }
           });
           if (new Set(laneIds).size !== laneIds.length) fail("manifest lane ids must be unique");
@@ -414,24 +426,35 @@ jobs:
           if (
             associationLane.required !== true
             || associationLane.command !== "node tools/pdf-association-fixture-audit.mjs"
-            || associationLane.status !== "passed"
-            || associationLane.exit_code !== 0
           ) {
-            fail("manifest association-audit lane must be required and pass the exact audited command");
+            fail("manifest association-audit lane must be required and run the exact audited command");
           }
-          validateAssociationAudit(manifest.association_audit);
+          // The audit lane runs first, so the budget skips it only when setup spent the
+          // whole budget. Then there is no receipt to validate, and the run is blocked.
+          if (associationLane.status === "skipped") {
+            if (manifest.association_audit !== null) fail("a skipped association-audit lane must not carry a receipt");
+          } else {
+            if (associationLane.status !== "passed" || associationLane.exit_code !== 0) {
+              fail("manifest association-audit lane must be required and pass the exact audited command");
+            }
+            validateAssociationAudit(manifest.association_audit);
+          }
 
           const lanesRun = stringArray(manifest.lanes_run, "manifest.lanes_run");
-          if (JSON.stringify(lanesRun) !== JSON.stringify(laneIds)) {
-            fail("manifest.lanes_run must exactly match manifest.lanes");
+          const ranLaneIds = manifest.lanes.filter((lane) => lane.status !== "skipped").map((lane) => lane.id);
+          if (JSON.stringify(lanesRun) !== JSON.stringify(ranLaneIds)) {
+            fail("manifest.lanes_run must exactly match the lanes that ran");
           }
           const requiredFailures = stringArray(manifest.required_failures, "manifest.required_failures");
           const expectedFailures = manifest.lanes
-            .filter((lane) => lane.required && lane.exit_code !== 0)
+            .filter((lane) => lane.required && lane.status !== "passed")
             .map((lane) => lane.id);
           if (JSON.stringify(requiredFailures) !== JSON.stringify(expectedFailures)) {
-            fail("manifest.required_failures does not match failed required lanes");
+            fail("manifest.required_failures does not match the required lanes that did not pass");
           }
+          // A required lane that ran and failed was evaluated and said no. A required lane
+          // that was skipped could not be evaluated. Only the first may make a run "failed".
+          const ranRequiredFailures = manifest.lanes.filter((lane) => lane.required && lane.status === "failed");
 
           if (!Array.isArray(manifest.artifacts)) fail("manifest.artifacts must be an array");
           let manifestArtifacts = 0;
@@ -480,6 +503,9 @@ jobs:
             if (requiredFailures.length === 0 || evidenceStatus !== 1) {
               fail("failed manifest is inconsistent with lanes or exit status");
             }
+            if (ranRequiredFailures.length === 0) {
+              fail("failed manifest names no required lane that ran and failed; a skipped required lane is blocked");
+            }
             if (Object.hasOwn(manifest, "blocked_reason")) fail("failed manifest must not contain blocked_reason");
             if (Object.hasOwn(manifest, "blocked_class")) fail("failed manifest must not contain blocked_class");
           } else {
@@ -501,6 +527,11 @@ jobs:
               if (!Object.hasOwn(blockedClassExitCodes, blockedClass)) fail("manifest.blocked_class is not a documented class");
               if (blockedClassExitCodes[blockedClass] !== evidenceStatus) {
                 fail("manifest.blocked_class does not match the evidence exit status");
+              }
+              // Blocked only by lanes the budget never started: that is the machine's
+              // time, not a credential or a human decision, so it has one class.
+              if (ranRequiredFailures.length === 0 && blockedClass !== budgetSkippedClass) {
+                fail(`blocked manifest whose only required failures were skipped must be ${budgetSkippedClass}`);
               }
             }
           }
@@ -531,7 +562,7 @@ jobs:
           manifest="$RUNNER_TEMP/rucksack-agent-evidence-manifest.json"
           if [ -f "$manifest" ]; then
             echo "## Agent Evidence" >> "$GITHUB_STEP_SUMMARY"
-            node -e 'const fs=require("fs"); const m=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); console.log(`- Result: ${m.result}\n- Commit: ${m.commit}\n- Dirty: ${m.dirty === true ? "true" : "false"}\n- Lanes: ${m.lanes_run.join(", ") || "(none)"}\n- Required failures: ${m.required_failures.join(", ") || "(none)"}`)' "$manifest" >> "$GITHUB_STEP_SUMMARY"
+            node -e 'const fs=require("fs"); const m=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); console.log(`- Result: ${m.result}\n- Commit: ${m.commit}\n- Dirty: ${m.dirty === true ? "true" : "false"}\n- Lanes: ${m.lanes_run.join(", ") || "(none)"}\n- Skipped (never started): ${m.lanes.filter((l) => l.status === "skipped").map((l) => l.id).join(", ") || "(none)"}\n- Required failures: ${m.required_failures.join(", ") || "(none)"}${m.result === "blocked" ? `\n- Blocked (${m.blocked_class || "no lanes"}): ${m.blocked_reason}` : ""}`)' "$manifest" >> "$GITHUB_STEP_SUMMARY"
             echo "- Artifact: \`agent-evidence-${{ github.run_id }}\`" >> "$GITHUB_STEP_SUMMARY"
             echo "- Manifest artifact: \`agent-evidence-manifest-${{ github.run_id }}\`" >> "$GITHUB_STEP_SUMMARY"
           else

@@ -817,7 +817,12 @@ describe('the reading shell belongs to the site', () => {
     )
 
     expect(layout).toContain('grid-template-columns: 15rem minmax(0, 44rem) 18rem')
-    expect(layout).toMatch(/\.reading-margin \{\s*display: none;/)
+    // Below the breakpoint the column takes no space — fixed and zero-sized —
+    // rather than `display: none`, so the rail can still draw its toggle,
+    // overlay and selection popup there without the text column moving.
+    expect(layout).toMatch(
+      /\.reading-margin \{\s*position: fixed;[^}]*width: 0;\s*height: 0;/,
+    )
   })
 })
 

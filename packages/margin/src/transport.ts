@@ -293,7 +293,36 @@ export type MarginClient = {
         targetTexts?: readonly string[]
       },
   ): Promise<MarginResponse[]>
-  deleteAnnotation(id: string): Promise<MarginResponse>
+  /**
+   * Owner-scoped. `documentUri` is required because the service scopes every
+   * annotation route by `?source=`: a delete without it answers
+   * `missing_scope`, so the old one-argument form could never succeed.
+   */
+  deleteAnnotation(id: string, documentUri: string): Promise<MarginResponse>
+  /** Owner-scoped: visibility, colour or a note's body, never the target. */
+  updateAnnotation(
+    id: string,
+    documentUri: string,
+    patch: AnnotationPatch,
+  ): Promise<MarginResponse>
+  /** A later page of `listAnnotations`, from the `nextCursor` it returned. */
+  listAnnotationsAfter(
+    documentUri: string,
+    cursor: string,
+  ): Promise<MarginResponse>
+  readPrefs(): Promise<MarginResponse>
+  /** Affects only annotations created afterwards; the service rewrites none. */
+  writePrefs(defaultVisibility: 'private' | 'public'): Promise<MarginResponse>
+}
+
+export type AnnotationPatch = {
+  visibility?: 'private' | 'public'
+  color?: string
+  body?: string
+}
+
+function annotationPath(id: string, documentUri: string) {
+  return `${MARGIN_API_PREFIX}/annotations/${encodeURIComponent(id)}?source=${encodeURIComponent(documentUri)}`
 }
 
 /**
@@ -334,10 +363,35 @@ export function createMarginClient(transport: MarginTransport): MarginClient {
       }
       return responses
     },
-    deleteAnnotation: (id) =>
+    deleteAnnotation: (id, documentUri) =>
       transport.request({
-        path: `${MARGIN_API_PREFIX}/annotations/${encodeURIComponent(id)}`,
+        path: annotationPath(id, documentUri),
         method: 'DELETE',
+      }),
+    updateAnnotation: (id, documentUri, patch) => {
+      const body: Record<string, string> = {}
+      if (patch.visibility) body['margin:visibility'] = patch.visibility
+      if (patch.color) body['margin:color'] = patch.color
+      if (patch.body !== undefined) body.body = patch.body
+      if (Object.keys(body).length === 0) {
+        throw new Error('an annotation patch must change something')
+      }
+      return transport.request({
+        path: annotationPath(id, documentUri),
+        method: 'PATCH',
+        body,
+      })
+    },
+    listAnnotationsAfter: (documentUri, cursor) =>
+      transport.request({
+        path: `${MARGIN_API_PREFIX}/annotations?source=${encodeURIComponent(documentUri)}&cursor=${encodeURIComponent(cursor)}`,
+      }),
+    readPrefs: () => transport.request({ path: `${MARGIN_API_PREFIX}/prefs` }),
+    writePrefs: (defaultVisibility) =>
+      transport.request({
+        path: `${MARGIN_API_PREFIX}/prefs`,
+        method: 'PATCH',
+        body: { defaultVisibility },
       }),
   }
 }

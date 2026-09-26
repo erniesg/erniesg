@@ -72,7 +72,7 @@ proposal applies cleanly to its base commit with `git apply` in a test.
 ## Validation command
 
 ```bash
-npm --workspace packages/margin test
+npm run test:margin
 npx vitest run src/worker/margin
 python3 books/tools/validate.py
 npm test

@@ -48,6 +48,13 @@ type WireAnnotation = {
 
 type Service = {
   as: Principal | null
+  /** While set, `GET /prefs` and `POST /annotations` wait for these. */
+  holdPrefs: Promise<void> | null
+  holdPosts: Promise<void> | null
+  setPrefs(
+    principal: Principal,
+    defaultVisibility: 'private' | 'public',
+  ): Promise<void>
   /** Every list response the service sent, as the browser received it. */
   listed: { as: string | null; annotations: WireAnnotation[] }[]
   rows(): Promise<WireAnnotation[]>
@@ -78,6 +85,18 @@ async function mountService(page: Page): Promise<Service> {
 
   const service: Service = {
     as: ADA,
+    holdPrefs: null,
+    holdPosts: null,
+    async setPrefs(principal, defaultVisibility) {
+      await call(
+        new Request('https://ernie.sg/api/margin/v1/prefs', {
+          method: 'PATCH',
+          body: JSON.stringify({ defaultVisibility }),
+          headers: { 'content-type': 'application/json' },
+        }),
+        principal,
+      )
+    },
     listed: [],
     async rows() {
       // Every row, whoever owns it: read as each owner and merge.
@@ -124,6 +143,17 @@ async function mountService(page: Page): Promise<Service> {
         ? {}
         : { body: incoming.postData() ?? undefined }),
     })
+    const path = new URL(incoming.url()).pathname
+    if (method === 'GET' && path.endsWith('/prefs') && service.holdPrefs) {
+      await service.holdPrefs
+    }
+    if (
+      method === 'POST' &&
+      path.endsWith('/annotations') &&
+      service.holdPosts
+    ) {
+      await service.holdPosts
+    }
     const response = await call(request, service.as)
     const text = await response.text()
     if (
@@ -244,6 +274,119 @@ async function tabTo(page: Page, key: string, limit = 800) {
   }
   throw new Error(`Tab never reached ${key}`)
 }
+
+function gate(): { promise: Promise<void>; open: () => void } {
+  let open = () => {}
+  const promise = new Promise<void>((resolve) => {
+    open = resolve
+  })
+  return { promise, open }
+}
+
+/** An annotation the page cannot anchor, so any number of them are valid. */
+function orphanNote(n: number, nodeId: string) {
+  const quote = `unanchored passage number ${n}`
+  return {
+    '@context': 'http://www.w3.org/ns/anno.jsonld',
+    type: 'Annotation',
+    motivation: 'commenting',
+    body: { type: 'TextualBody', value: `note ${n}`, format: 'text/plain' },
+    target: {
+      source: documentUri,
+      selector: [
+        { type: 'TextQuoteSelector', exact: quote },
+        { type: 'TextPositionSelector', start: 0, end: quote.length },
+        { type: 'margin:StructSelector', 'margin:nodeId': nodeId },
+      ],
+    },
+  }
+}
+
+test.describe('the margin rail under slow or racing requests', () => {
+  test('a delete that overtakes its own create still deletes what was stored', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    const [block] = await proseBlocks(page)
+    const posts = gate()
+    service.holdPosts = posts.promise
+    await highlight(page, block, 0, 20)
+    await page.locator(`${ENTRY} [data-margin-action="delete"]`).click()
+    posts.open()
+    await expect(page.locator(ENTRY)).toHaveCount(0)
+    await expect.poll(async () => (await service.rows()).length).toBe(0)
+    service.holdPosts = null
+    await page.reload()
+    await expect(page.locator(ENTRY)).toHaveCount(0)
+  })
+
+  test('an annotation made before the stored default arrives takes that default', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await service.setPrefs(ADA, 'public')
+    const prefs = gate()
+    service.holdPrefs = prefs.promise
+    await open(page)
+    const [block] = await proseBlocks(page)
+    await highlight(page, block, 0, 20)
+    prefs.open()
+    await expect
+      .poll(async () => (await service.rows())[0]?.['margin:visibility'])
+      .toBe('public')
+    await expect(page.locator(ENTRY)).toHaveAttribute(
+      'data-visibility',
+      'public',
+    )
+  })
+
+  test('loads every page of annotations, not the first few', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    const [block] = await proseBlocks(page)
+    // Over two of the service's default 100-row pages.
+    for (let n = 0; n < 230; n += 1) {
+      expect((await service.post(orphanNote(n, block), ADA)).status).toBe(201)
+    }
+    await page.reload()
+    await expect(page.locator(ENTRY)).toHaveCount(230)
+  })
+
+  test('a host update to a known annotation renders', async ({ page }) => {
+    await mountService(page)
+    await open(page)
+    const [block] = await proseBlocks(page)
+    const set = (body: string) =>
+      page.evaluate(
+        ({ block, body }) => {
+          const rail = document.querySelector('margin-rail') as HTMLElement & {
+            annotations: unknown
+          }
+          rail.annotations = [
+            {
+              id: 'host-1',
+              kind: 'note',
+              target: {
+                nodeId: block,
+                position: { start: 0, end: 6 },
+                quote: { exact: 'absent', prefix: '', suffix: '' },
+              },
+              body,
+              geometryCache: [],
+            },
+          ]
+        },
+        { block, body },
+      )
+    await set('first body')
+    await expect(page.locator(ENTRY)).toContainText('first body')
+    await set('second body')
+    await expect(page.locator(ENTRY)).toContainText('second body')
+  })
+})
 
 test.describe('the margin rail', () => {
   test('keyboard only: select, annotate, find, toggle and delete', async ({

@@ -71,7 +71,6 @@ import {
 export const MARGIN_RAIL_TAG = 'margin-rail'
 
 /** How many pages of annotations a load follows before it stops asking. */
-const MAX_LOAD_PAGES = 20
 const FLASH_MS = 1200
 
 const ROLE_SWATCHES = HIGHLIGHT_ROLES.map(
@@ -202,6 +201,13 @@ export class MarginRailElement extends ElementBase {
   #overlayOpen = false
   #media: MediaQueryList | null = null
   #loadGeneration = 0
+  /** Settles once the reader's stored default is known (or known unknowable). */
+  #prefsReady: Promise<void> = Promise.resolve()
+  #prefsSettled = true
+  /** Records made before `#prefsReady` settled: their visibility is provisional. */
+  #provisional = new WeakSet<RailRecord>()
+  /** Records created on this page, with the save each is waiting on. */
+  #saving = new WeakMap<RailRecord, Promise<void>>()
   #flashTimer = 0
   #listeners: (() => void)[] = []
   /**
@@ -241,15 +247,22 @@ export class MarginRailElement extends ElementBase {
     const known = new Map(
       this.#records.map((record) => [record.annotation.id, record]),
     )
-    this.#records = next.map(
-      (annotation) =>
-        known.get(annotation.id) ?? {
-          annotation,
-          visibility: this.#defaultVisibility,
-          mine: true,
-          serverId: null,
-        },
-    )
+    this.#records = next.map((annotation) => {
+      const existing = known.get(annotation.id)
+      if (existing) {
+        // Same record — its visibility, owner and server id stay — but the
+        // host's new value for the annotation itself wins: a controlled update
+        // to a body or colour has to render.
+        existing.annotation = annotation
+        return existing
+      }
+      return {
+        annotation,
+        visibility: this.#defaultVisibility,
+        mine: true,
+        serverId: null,
+      }
+    })
     this.#paint()
   }
 
@@ -370,6 +383,10 @@ export class MarginRailElement extends ElementBase {
   }
 
   #detach() {
+    // A load still in flight belongs to the state being torn down; without
+    // this, a response for the old document could land after a switch to a
+    // state that starts no replacement load, and repopulate the rail.
+    this.#loadGeneration += 1
     this.#closePopup({ restoreFocus: false })
     this.#stopKeyboard()
     for (const remove of this.#listeners.splice(0)) remove()
@@ -460,26 +477,45 @@ export class MarginRailElement extends ElementBase {
     const documentUri = this.documentUri
     if (!client || !documentUri) return
     const generation = (this.#loadGeneration += 1)
+    let settlePrefs = () => {}
+    this.#prefsSettled = false
+    this.#prefsReady = new Promise<void>((resolve) => {
+      settlePrefs = () => {
+        this.#prefsSettled = true
+        resolve()
+      }
+    })
     try {
-      const prefs = await client.readPrefs()
-      if (generation !== this.#loadGeneration) return
-      if (isSuccess(prefs)) {
-        const body = prefs.body as {
-          defaultVisibility?: string
-          creator?: string
+      // The default is settled only once it has been applied — or once it is
+      // clear it cannot be, whatever the reason — so a save waiting on it never
+      // reads the fallback.
+      try {
+        const prefs = await client.readPrefs()
+        if (generation !== this.#loadGeneration) return
+        if (isSuccess(prefs)) {
+          const body = prefs.body as {
+            defaultVisibility?: string
+            creator?: string
+          }
+          this.#viewer = typeof body?.creator === 'string' ? body.creator : null
+          if (
+            body?.defaultVisibility === 'public' ||
+            body?.defaultVisibility === 'private'
+          ) {
+            this.#defaultVisibility = body.defaultVisibility
+          }
         }
-        this.#viewer = typeof body?.creator === 'string' ? body.creator : null
-        if (
-          body?.defaultVisibility === 'public' ||
-          body?.defaultVisibility === 'private'
-        ) {
-          this.#defaultVisibility = body.defaultVisibility
-        }
+      } finally {
+        settlePrefs()
       }
 
       const loaded: RailRecord[] = []
+      const cursors = new Set<string>()
       let response = await client.listAnnotations(documentUri)
-      for (let page = 0; page < MAX_LOAD_PAGES; page += 1) {
+      // Every page, not the first N: a rail that silently stops at some count
+      // makes the rest of the document's annotations unreachable. The only stop
+      // besides the last page is a cursor seen twice, which would loop forever.
+      for (;;) {
         if (generation !== this.#loadGeneration) return
         if (!isSuccess(response)) {
           throw new MarginTransportError(
@@ -495,17 +531,30 @@ export class MarginRailElement extends ElementBase {
           const record = recordFromWebAnnotation(wire, this.#viewer)
           if (record) loaded.push(record)
         }
-        if (!body?.nextCursor) break
+        if (!body?.nextCursor || cursors.has(body.nextCursor)) break
+        cursors.add(body.nextCursor)
         response = await client.listAnnotationsAfter(
           documentUri,
           body.nextCursor,
         )
       }
       if (generation !== this.#loadGeneration) return
-      // Anything made on this page before the load finished and not yet saved
-      // stays; everything the service knows comes from the service.
-      const pending = this.#records.filter((record) => record.serverId === null)
-      this.#records = [...loaded, ...pending]
+      // Everything the service knows comes from the service — except what this
+      // page created, which may be unsaved, or saved after the list's snapshot.
+      // One of those that the list already contains is kept once: as the local
+      // record, so its entry does not change identity under the reader.
+      const createdHere = this.#records.filter(
+        (record) => this.#saving.has(record) || record.serverId === null,
+      )
+      const local = new Set(
+        createdHere.flatMap((record) =>
+          record.serverId ? [record.serverId] : [],
+        ),
+      )
+      this.#records = [
+        ...loaded.filter((record) => !local.has(record.serverId ?? '')),
+        ...createdHere,
+      ]
       this.#paint()
     } catch (error) {
       // A 404 is a page with no service mounted behind it — the dev server, a
@@ -524,6 +573,21 @@ export class MarginRailElement extends ElementBase {
   async #publish(created: readonly RailRecord[]) {
     const client = this.#client()
     if (!client || created.length === 0) return
+    // A record made before the stored default arrived took the fallback; it
+    // takes the reader's real default now, before anything is sent. Sending
+    // first would store an annotation private for a reader whose default is
+    // public, and nothing after could correct it.
+    await this.#prefsReady
+    let adjusted = false
+    for (const record of created) {
+      if (!this.#provisional.has(record)) continue
+      this.#provisional.delete(record)
+      if (record.visibility !== this.#defaultVisibility) {
+        record.visibility = this.#defaultVisibility
+        adjusted = true
+      }
+    }
+    if (adjusted) this.#render()
     try {
       const first = created[0].annotation
       const common = {
@@ -546,12 +610,23 @@ export class MarginRailElement extends ElementBase {
           ? { ...common, kind: 'highlight', color: first.appearance.color }
           : { ...common, kind: first.kind, body: first.body },
       )
+      let duplicated = false
       responses.forEach((response, index) => {
         const id = (response.body as { id?: unknown } | null)?.id
         if (isSuccess(response) && typeof id === 'string') {
-          created[index].serverId = serverIdFromIri(id)
+          const serverId = serverIdFromIri(id)
+          created[index].serverId = serverId
+          // A load whose snapshot already held this row, merged before the id
+          // arrived, left a second copy of it in the rail.
+          const before = this.#records.length
+          this.#records = this.#records.filter(
+            (record) =>
+              record === created[index] || record.serverId !== serverId,
+          )
+          duplicated ||= this.#records.length !== before
         }
       })
+      if (duplicated) this.#paint()
       // A transport resolves with whatever status it got: an HTTP error is a
       // value here, not a throw. Treating it as success meant a 401, a 429 or a
       // 500 left the annotation in memory only, to disappear on reload with
@@ -633,6 +708,11 @@ export class MarginRailElement extends ElementBase {
     this.#records = [...this.#records, ...records]
     this.#notice = ''
     this.#paint()
+    const saved = this.#publish(records)
+    for (const record of records) {
+      if (!this.#prefsSettled) this.#provisional.add(record)
+      this.#saving.set(record, saved)
+    }
     this.dispatchEvent(
       new CustomEvent('margin-annotations-created', {
         detail: created,
@@ -640,7 +720,6 @@ export class MarginRailElement extends ElementBase {
         composed: true,
       }),
     )
-    void this.#publish(records)
     return created
   }
 
@@ -742,6 +821,10 @@ export class MarginRailElement extends ElementBase {
   async deleteAnnotation(id: string) {
     const record = this.#find(id)
     if (!record || !record.mine) return
+    // A delete that overtakes its own create would remove the entry here while
+    // the create went on to store it — possibly public — to reappear on the
+    // next load. Wait for the create, then delete what it stored.
+    await this.#saving.get(record)
     const client = this.#client()
     if (client && record.serverId) {
       try {

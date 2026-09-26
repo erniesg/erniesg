@@ -41,6 +41,7 @@ import {
   startKeyboardSelection,
   type KeyboardSelection,
 } from './dom/keyboard.js'
+import { paintHighlights } from './dom/paint.js'
 import { anchorsFromSelection, type SelectionCapture } from './dom/selection.js'
 import { offsetForPoint, rangesForOffsets } from './dom/text-index.js'
 import {
@@ -64,6 +65,7 @@ import {
   createHttpTransport,
   createMarginClient,
   type MarginClient,
+  toWebAnnotation,
   type MarginResponse,
   type MarginTransport,
 } from './transport.js'
@@ -72,6 +74,7 @@ export const MARGIN_RAIL_TAG = 'margin-rail'
 
 /** How many pages of annotations a load follows before it stops asking. */
 const FLASH_MS = 1200
+const FLASH_PAINT = 'rgba(250, 204, 21, 0.85)'
 
 const ROLE_SWATCHES = HIGHLIGHT_ROLES.map(
   (role) =>
@@ -207,11 +210,16 @@ export class MarginRailElement extends ElementBase {
   /** Settles once the reader's stored default is known (or known unknowable). */
   #prefsReady: Promise<void> = Promise.resolve()
   #prefsSettled = true
+  /** Bumped by every local default change, so an older read cannot undo one. */
+  #prefsRevision = 0
   /** Records made before `#prefsReady` settled: their visibility is provisional. */
   #provisional = new WeakSet<RailRecord>()
   /** Records created on this page, with the save each is waiting on. */
   #saving = new WeakMap<RailRecord, Promise<void>>()
+  /** The tail of each record's queue of writes after its create. */
+  #writes = new WeakMap<RailRecord, Promise<void>>()
   #flashTimer = 0
+  #unflash: (() => void) | null = null
   #listeners: (() => void)[] = []
   /**
    * This rail's own suffix for the document-global highlight registry.
@@ -282,6 +290,9 @@ export class MarginRailElement extends ElementBase {
   set transport(next: MarginTransport | null) {
     this.#transport = next
     this.#ownsTransport = false
+    // A request through the previous transport must not land after this —
+    // least of all when `next` is null and no replacement load starts.
+    this.#loadGeneration += 1
     if (this.isConnected) void this.#load()
   }
 
@@ -480,6 +491,7 @@ export class MarginRailElement extends ElementBase {
     const documentUri = this.documentUri
     if (!client || !documentUri) return
     const generation = (this.#loadGeneration += 1)
+    const revision = this.#prefsRevision
     let settlePrefs = () => {}
     this.#prefsSettled = false
     this.#prefsReady = new Promise<void>((resolve) => {
@@ -508,8 +520,11 @@ export class MarginRailElement extends ElementBase {
           }
           this.#viewer = typeof body?.creator === 'string' ? body.creator : null
           if (
-            body?.defaultVisibility === 'public' ||
-            body?.defaultVisibility === 'private'
+            // A reader who changed the default while this read was out has
+            // the newer value; the response is older than their choice.
+            revision === this.#prefsRevision &&
+            (body?.defaultVisibility === 'public' ||
+              body?.defaultVisibility === 'private')
           ) {
             this.#defaultVisibility = body.defaultVisibility
           }
@@ -555,6 +570,23 @@ export class MarginRailElement extends ElementBase {
       const createdHere = this.#records.filter(
         (record) => this.#saving.has(record) || record.serverId === null,
       )
+      // A host may hand the rail annotations before the first load, carrying
+      // the service's own ids but no server id of their own. Matched by id,
+      // such a record takes the loaded row's metadata and stands in for it.
+      const loadedById = new Map(
+        loaded.map((record) => [record.serverId ?? '', record]),
+      )
+      for (const record of createdHere) {
+        const match =
+          record.serverId === null
+            ? loadedById.get(record.annotation.id)
+            : undefined
+        if (match) {
+          record.serverId = match.serverId
+          record.visibility = match.visibility
+          record.mine = match.mine
+        }
+      }
       const local = new Set(
         createdHere.flatMap((record) =>
           record.serverId ? [record.serverId] : [],
@@ -591,11 +623,7 @@ export class MarginRailElement extends ElementBase {
     // public, and nothing after could correct it.
     // The *current* readiness: a load that started while this one was waiting
     // replaced it, and the default is only known once the latest has settled.
-    for (;;) {
-      const ready = this.#prefsReady
-      await ready
-      if (ready === this.#prefsReady) break
-    }
+    await this.#prefsSettledNow()
     // The page moved to another document while this waited: what was selected
     // belongs to the old one, and sending it now would store it against the new.
     if (source.documentUri !== this.documentUri) return
@@ -611,33 +639,47 @@ export class MarginRailElement extends ElementBase {
     if (adjusted) this.#render()
     try {
       const first = created[0].annotation
-      const common = {
-        documentUri: source.documentUri,
-        visibility: created[0].visibility,
-        targets: created.map((record) => record.annotation.target),
-        targetTexts: source.targetTexts,
-      }
-      const responses = await client.createAnnotations(
+      const kind =
         first.kind === 'highlight'
-          ? { ...common, kind: 'highlight', color: first.appearance.color }
-          : { ...common, kind: first.kind, body: first.body },
-      )
+          ? ({ kind: 'highlight', color: first.appearance.color } as const)
+          : ({ kind: first.kind, body: first.body } as const)
+      // Every body is built before any is sent, so a selection that cannot be
+      // serialised is refused whole rather than half stored.
+      for (const [index, record] of created.entries()) {
+        toWebAnnotation({
+          documentUri: source.documentUri,
+          target: record.annotation.target,
+          targetText: source.targetTexts[index],
+          ...kind,
+        })
+      }
+      // Then one request per annotation, each id kept the moment it arrives: a
+      // failure on the third block of a selection must not leave the first two
+      // stored with no id here to delete them by.
+      const responses: MarginResponse[] = []
       let duplicated = false
-      responses.forEach((response, index) => {
+      for (const [index, record] of created.entries()) {
+        const [response] = await client.createAnnotations({
+          documentUri: source.documentUri,
+          visibility: record.visibility,
+          targets: [record.annotation.target],
+          targetTexts: [source.targetTexts[index]],
+          ...kind,
+        })
+        responses.push(response)
         const id = (response.body as { id?: unknown } | null)?.id
         if (isSuccess(response) && typeof id === 'string') {
           const serverId = serverIdFromIri(id)
-          created[index].serverId = serverId
+          record.serverId = serverId
           // A load whose snapshot already held this row, merged before the id
           // arrived, left a second copy of it in the rail.
           const before = this.#records.length
           this.#records = this.#records.filter(
-            (record) =>
-              record === created[index] || record.serverId !== serverId,
+            (entry) => entry === record || entry.serverId !== serverId,
           )
           duplicated ||= this.#records.length !== before
         }
-      })
+      }
       if (duplicated) this.#paint()
       // A transport resolves with whatever status it got: an HTTP error is a
       // value here, not a throw. Treating it as success meant a 401, a 429 or a
@@ -755,6 +797,34 @@ export class MarginRailElement extends ElementBase {
   }
 
   /**
+   * Run a write for one record after everything already queued for it — its
+   * create first, then earlier writes in the order the reader made them. Two
+   * quick toggles otherwise race as concurrent PATCHes, and whichever lands
+   * last wins on the server while the rail shows the other.
+   */
+  #enqueue<T>(record: RailRecord, write: () => Promise<T>): Promise<T> {
+    const before = this.#writes.get(record) ?? this.#saving.get(record)
+    const run = (before ?? Promise.resolve()).then(write, write)
+    this.#writes.set(
+      record,
+      run.then(
+        () => undefined,
+        () => undefined,
+      ),
+    )
+    return run
+  }
+
+  /** Resolves once the latest preference read has settled. */
+  async #prefsSettledNow() {
+    for (;;) {
+      const ready = this.#prefsReady
+      await ready
+      if (ready === this.#prefsReady) return
+    }
+  }
+
+  /**
    * Flip one annotation's visibility, and only that one. Immediate in the rail;
    * put back if the service refuses, so the rail never claims a state the
    * service does not hold.
@@ -767,31 +837,33 @@ export class MarginRailElement extends ElementBase {
     // The reader chose; the default arriving later must not overwrite that.
     this.#provisional.delete(record)
     this.#render()
-    // A create still in flight carries the old visibility. Wait for it, then
-    // change what it stored — otherwise the rail says Private while the
-    // service keeps it public.
-    await this.#saving.get(record)
-    const client = this.#client()
-    if (!client || !record.serverId) return
-    try {
-      const response = await client.updateAnnotation(
-        record.serverId,
-        this.documentUri,
-        { visibility },
-      )
-      if (!isSuccess(response)) {
-        throw new MarginTransportError(
-          'the margin service refused the change',
-          [response],
+    // The document is the one the reader acted on, captured now: by the time a
+    // queued write runs, the page may be showing another.
+    const documentUri = this.documentUri
+    await this.#enqueue(record, async () => {
+      const client = this.#client()
+      if (!client || !record.serverId) return
+      try {
+        const response = await client.updateAnnotation(
+          record.serverId,
+          documentUri,
+          { visibility },
+        )
+        if (!isSuccess(response)) {
+          throw new MarginTransportError(
+            'the margin service refused the change',
+            [response],
+          )
+        }
+      } catch (error) {
+        // Only undo what is still this write's: a later toggle owns the value now.
+        if (record.visibility === visibility) record.visibility = previous
+        this.#reportTransportFailure(
+          error,
+          'Visibility was not changed: the service refused it.',
         )
       }
-    } catch (error) {
-      record.visibility = previous
-      this.#reportTransportFailure(
-        error,
-        'Visibility was not changed: the service refused it.',
-      )
-    }
+    })
   }
 
   /** Only new annotations take the default; existing ones are not touched. */
@@ -799,9 +871,15 @@ export class MarginRailElement extends ElementBase {
     if (visibility === this.#defaultVisibility) return
     const previous = this.#defaultVisibility
     this.#defaultVisibility = visibility
+    this.#prefsRevision += 1
     this.#render()
+    // Whether there is a signed-in reader to save it for is only known once
+    // the preference read has settled.
+    await this.#prefsSettledNow()
     const client = this.#client()
     if (!client || !this.#viewer) return
+    // A later choice superseded this one while it waited; that one saves.
+    if (this.#defaultVisibility !== visibility) return
     try {
       const response = await client.writePrefs(visibility)
       if (!isSuccess(response)) {
@@ -811,7 +889,9 @@ export class MarginRailElement extends ElementBase {
         )
       }
     } catch (error) {
-      this.#defaultVisibility = previous
+      if (this.#defaultVisibility === visibility) {
+        this.#defaultVisibility = previous
+      }
       this.#reportTransportFailure(error, 'The default was not saved.')
     }
   }
@@ -822,47 +902,52 @@ export class MarginRailElement extends ElementBase {
     if (!record || !record.mine || record.annotation.kind !== 'note' || !text)
       return
     const previous = record.annotation
-    record.annotation = { ...previous, body: text }
+    const edited = { ...previous, body: text }
+    record.annotation = edited
     this.#editing = null
     this.#paint()
+    const documentUri = this.documentUri
     // As with visibility: an edit made while the create is in flight is sent
     // once the create has an id, or it is lost on reload.
-    await this.#saving.get(record)
-    const client = this.#client()
-    if (!client || !record.serverId) return
-    try {
-      const response = await client.updateAnnotation(
-        record.serverId,
-        this.documentUri,
-        { body: text },
-      )
-      if (!isSuccess(response)) {
-        throw new MarginTransportError('the margin service refused the edit', [
-          response,
-        ])
+    await this.#enqueue(record, async () => {
+      const client = this.#client()
+      if (!client || !record.serverId) return
+      try {
+        const response = await client.updateAnnotation(
+          record.serverId,
+          documentUri,
+          { body: text },
+        )
+        if (!isSuccess(response)) {
+          throw new MarginTransportError(
+            'the margin service refused the edit',
+            [response],
+          )
+        }
+      } catch (error) {
+        if (record.annotation === edited) record.annotation = previous
+        this.#reportTransportFailure(
+          error,
+          'The note was not changed: the service refused it.',
+        )
       }
-    } catch (error) {
-      record.annotation = previous
-      this.#reportTransportFailure(
-        error,
-        'The note was not changed: the service refused it.',
-      )
-    }
+    })
   }
 
   async deleteAnnotation(id: string) {
     const record = this.#find(id)
     if (!record || !record.mine) return
+    const documentUri = this.documentUri
     // A delete that overtakes its own create would remove the entry here while
     // the create went on to store it — possibly public — to reappear on the
-    // next load. Wait for the create, then delete what it stored.
-    await this.#saving.get(record)
-    const client = this.#client()
-    if (client && record.serverId) {
+    // next load. It waits for the create, and for any earlier write.
+    const deleted = await this.#enqueue(record, async () => {
+      const client = this.#client()
+      if (!client || !record.serverId) return true
       try {
         const response = await client.deleteAnnotation(
           record.serverId,
-          this.documentUri,
+          documentUri,
         )
         if (!isSuccess(response)) {
           throw new MarginTransportError(
@@ -870,6 +955,7 @@ export class MarginRailElement extends ElementBase {
             [response],
           )
         }
+        return true
       } catch (error) {
         const replies =
           error instanceof MarginTransportError &&
@@ -880,9 +966,10 @@ export class MarginRailElement extends ElementBase {
             ? 'Not deleted: other readers have replied to it.'
             : 'Not deleted: the service refused it.',
         )
-        return
+        return false
       }
-    }
+    })
+    if (!deleted) return
     const position = this.#visibleRecords().findIndex(
       (entry) => entry.annotation.id === id,
     )
@@ -1074,47 +1161,45 @@ export class MarginRailElement extends ElementBase {
       block: 'center',
       behavior: reduced ? 'auto' : 'smooth',
     })
-    this.#flash(ranges)
+    this.#flash({
+      nodeId: entry.placement.nodeId,
+      start: entry.placement.start,
+      end: entry.placement.end,
+    })
     if (this.#compact) this.#overlayOpen = false
     this.#render()
   }
 
-  #flashName() {
-    return `erniesg-margin-flash-${this.#namespace}`
-  }
-
-  #flash(ranges: Range[]) {
-    const view = this.ownerDocument.defaultView as
-      | (Window & {
-          CSS?: { highlights?: Map<string, unknown> }
-          Highlight?: new (...ranges: Range[]) => unknown
-        })
-      | null
+  /**
+   * The flash is painted by the same painter as highlights, under its own
+   * registry namespace, so it gets the same fallback: where the Custom
+   * Highlight API is missing it draws an overlay rather than nothing.
+   */
+  #flash(target: { nodeId: string; start: number; end: number }) {
     this.#clearFlash()
-    const name = this.#flashName()
     this.setAttribute('data-flashing', '')
-    if (view?.CSS?.highlights && view.Highlight && ranges.length) {
-      const doc = this.ownerDocument
-      if (!doc.querySelector(`style[data-margin-flash="${name}"]`)) {
-        const style = doc.createElement('style')
-        style.dataset.marginFlash = name
-        style.textContent = `::highlight(${name}) { background-color: rgba(250, 204, 21, 0.85); color: inherit; }`
-        doc.head.append(style)
-      }
-      view.CSS.highlights.set(name, new view.Highlight(...ranges))
-    }
-    this.#flashTimer = (view ?? globalThis).setTimeout(
+    const blocks = this.#controller?.blocks() ?? []
+    this.#unflash = paintHighlights(
+      blocks,
+      [{ id: 'flash', color: 'flash', ...target }],
+      {
+        palette: { flash: FLASH_PAINT, default: FLASH_PAINT },
+        registryNamespace: `${this.#namespace}-flash`,
+      },
+    )
+    const view = this.ownerDocument.defaultView ?? globalThis
+    this.#flashTimer = view.setTimeout(
       () => this.#clearFlash(),
       FLASH_MS,
     ) as unknown as number
   }
 
   #clearFlash() {
-    const view = this.ownerDocument?.defaultView as
-      (Window & { CSS?: { highlights?: Map<string, unknown> } }) | null
-    if (this.#flashTimer) (view ?? globalThis).clearTimeout(this.#flashTimer)
+    const view = this.ownerDocument?.defaultView ?? globalThis
+    if (this.#flashTimer) view.clearTimeout(this.#flashTimer)
     this.#flashTimer = 0
-    view?.CSS?.highlights?.delete(this.#flashName())
+    this.#unflash?.()
+    this.#unflash = null
     this.removeAttribute('data-flashing')
   }
 

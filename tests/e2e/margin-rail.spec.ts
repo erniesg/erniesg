@@ -51,6 +51,8 @@ type Service = {
   /** While set, `GET /prefs` and `POST /annotations` wait for these. */
   holdPrefs: Promise<void> | null
   holdPosts: Promise<void> | null
+  /** Held once: the next PATCH waits for this, and later ones do not. */
+  holdNextPatch: Promise<void> | null
   setPrefs(
     principal: Principal,
     defaultVisibility: 'private' | 'public',
@@ -87,6 +89,7 @@ async function mountService(page: Page): Promise<Service> {
     as: ADA,
     holdPrefs: null,
     holdPosts: null,
+    holdNextPatch: null,
     async setPrefs(principal, defaultVisibility) {
       await call(
         new Request('https://ernie.sg/api/margin/v1/prefs', {
@@ -146,6 +149,11 @@ async function mountService(page: Page): Promise<Service> {
     const path = new URL(incoming.url()).pathname
     if (method === 'GET' && path.endsWith('/prefs') && service.holdPrefs) {
       await service.holdPrefs
+    }
+    if (method === 'PATCH' && service.holdNextPatch) {
+      const hold = service.holdNextPatch
+      service.holdNextPatch = null
+      await hold
     }
     if (
       method === 'POST' &&
@@ -408,6 +416,109 @@ test.describe('the margin rail under slow or racing requests', () => {
     await expect
       .poll(async () => (await service.rows())[0]?.['margin:visibility'])
       .toBe('private')
+  })
+
+  test('two quick toggles land on the service in the order they were made', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    const [block] = await proseBlocks(page)
+    await highlight(page, block, 0, 20)
+    await expect.poll(async () => (await service.rows()).length).toBe(1)
+    const first = gate()
+    service.holdNextPatch = first.promise
+    const toggle = page.locator(`${ENTRY} [data-margin-action="visibility"]`)
+    await toggle.click() // public — held
+    await toggle.click() // private — would overtake the held one if not queued
+    await expect(page.locator(ENTRY)).toHaveAttribute(
+      'data-visibility',
+      'private',
+    )
+    first.open()
+    await expect
+      .poll(async () => (await service.rows())[0]['margin:visibility'])
+      .toBe('private')
+    await page.waitForTimeout(300)
+    expect((await service.rows())[0]['margin:visibility']).toBe('private')
+  })
+
+  test('a default changed while the stored one is loading is kept and saved', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    const prefs = gate()
+    service.holdPrefs = prefs.promise
+    await open(page)
+    await page.locator(`${RAIL} input[value="public"]`).check()
+    prefs.open()
+    await expect
+      .poll(async () => (await service.prefs(ADA)).defaultVisibility)
+      .toBe('public')
+    await expect(page.locator(`${RAIL} fieldset`)).toHaveAttribute(
+      'data-margin-default-visibility',
+      'public',
+    )
+  })
+
+  test('host-supplied annotations are not duplicated by the first load', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    const [block] = await proseBlocks(page)
+    expect((await service.post(orphanNote(1, block), ADA)).status).toBe(201)
+    const [row] = await service.rows()
+    const id = row.id.replace('urn:margin:annotation:', '')
+    const prefs = gate()
+    service.holdPrefs = prefs.promise
+    await page.reload()
+    await page.evaluate(
+      ({ id, block }) => {
+        const quote = 'unanchored passage number 1'
+        const rail = document.querySelector('margin-rail') as HTMLElement & {
+          annotations: unknown
+        }
+        rail.annotations = [
+          {
+            id,
+            kind: 'note',
+            target: {
+              nodeId: block,
+              position: { start: 0, end: quote.length },
+              quote: { exact: quote, prefix: '', suffix: '' },
+            },
+            body: 'note 1',
+            geometryCache: [],
+          },
+        ]
+      },
+      { id, block },
+    )
+    prefs.open()
+    await expect.poll(async () => page.locator(ENTRY).count()).toBe(1)
+    await page.waitForTimeout(300)
+    await expect(page.locator(ENTRY)).toHaveCount(1)
+  })
+
+  test('flashes a passage even without the Custom Highlight API', async ({
+    page,
+  }) => {
+    await mountService(page)
+    await open(page)
+    const [block] = await proseBlocks(page)
+    await highlight(page, block, 0, 30)
+    await page.evaluate(() => {
+      delete (window as unknown as { Highlight?: unknown }).Highlight
+    })
+    await page.locator(`${ENTRY} .quote`).click()
+    await expect(
+      page
+        .locator(
+          '[data-erniesg-margin-overlay] [data-margin-highlight="flash"]',
+        )
+        .first(),
+    ).toBeAttached()
   })
 
   test('is not printed', async ({ page }) => {

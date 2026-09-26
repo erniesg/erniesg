@@ -313,11 +313,25 @@ export class MarginRailElement extends ElementBase {
 
   /** The seam. Set this to point the rail at any host, or at a stub. */
   set transport(next: MarginTransport | null) {
+    if (next === this.#transport) {
+      // The same connection again: a reload, nothing to forget.
+      this.#loadGeneration += 1
+      if (this.isConnected) void this.#load()
+      return
+    }
     this.#transport = next
     this.#ownsTransport = false
     // A request through the previous transport must not land after this —
     // least of all when `next` is null and no replacement load starts.
     this.#loadGeneration += 1
+    // A different connection is a different backend or session. Its rows —
+    // anything with a server id, or still being saved there — are not this
+    // one's to show, own or write to; only purely local annotations stay.
+    this.#records = this.#records.filter(
+      (record) => record.serverId === null && !this.#saving.has(record),
+    )
+    this.#viewer = null
+    this.#paint()
     if (this.isConnected) void this.#load()
   }
 
@@ -505,6 +519,17 @@ export class MarginRailElement extends ElementBase {
   }
 
   /**
+   * The client for a write the reader started under `transport`, or null if
+   * the host has since switched connections: a server id from one backend or
+   * session means nothing — or something else — to another.
+   */
+  #clientFor(transport: MarginTransport | null): MarginClient | null {
+    return transport && transport === this.#transport
+      ? createMarginClient(transport)
+      : null
+  }
+
+  /**
    * The document's annotations and the reader's default.
    *
    * A reader who is not signed in gets a 401 from `/prefs`; that is not an
@@ -625,6 +650,10 @@ export class MarginRailElement extends ElementBase {
           record.serverId = match.serverId
           record.visibility = match.visibility
           record.mine = match.mine
+          this.#confirmed.set(record, {
+            visibility: match.visibility,
+            annotation: record.annotation,
+          })
         }
       }
       const local = new Set(
@@ -931,8 +960,9 @@ export class MarginRailElement extends ElementBase {
     // The document is the one the reader acted on, captured now: by the time a
     // queued write runs, the page may be showing another.
     const documentUri = this.documentUri
+    const transport = this.#transport
     await this.#enqueue(record, async () => {
-      const client = this.#client()
+      const client = this.#clientFor(transport)
       if (!client || !record.serverId) return
       try {
         const response = await client.updateAnnotation(
@@ -975,6 +1005,7 @@ export class MarginRailElement extends ElementBase {
     this.#defaultVisibility = visibility
     this.#prefsRevision += 1
     const revision = this.#prefsRevision
+    const transport = this.#transport
     this.#render()
     // One preference write at a time, in order, and only the latest choice is
     // sent: two concurrent PATCHes could otherwise land reversed and store the
@@ -984,7 +1015,9 @@ export class MarginRailElement extends ElementBase {
       // the preference read has settled.
       await this.#prefsSettledNow()
       if (revision !== this.#prefsRevision) return // superseded; that one saves
-      const client = this.#client()
+      // Chosen under one connection, never written through another: that would
+      // set a different account's default.
+      const client = this.#clientFor(transport)
       if (!client || !this.#viewer) return
       try {
         const response = await client.writePrefs(visibility)
@@ -1017,10 +1050,11 @@ export class MarginRailElement extends ElementBase {
     this.#editing = null
     this.#paint()
     const documentUri = this.documentUri
+    const transport = this.#transport
     // As with visibility: an edit made while the create is in flight is sent
     // once the create has an id, or it is lost on reload.
     await this.#enqueue(record, async () => {
-      const client = this.#client()
+      const client = this.#clientFor(transport)
       if (!client || !record.serverId) return
       try {
         const response = await client.updateAnnotation(
@@ -1057,11 +1091,13 @@ export class MarginRailElement extends ElementBase {
     const record = this.#find(id)
     if (!record || !record.mine) return
     const documentUri = this.documentUri
+    const transport = this.#transport
     // A delete that overtakes its own create would remove the entry here while
     // the create went on to store it — possibly public — to reappear on the
     // next load. It waits for the create, and for any earlier write.
     const deleted = await this.#enqueue(record, async () => {
-      const client = this.#client()
+      if (transport !== this.#transport) return false // switched away; gone anyway
+      const client = this.#clientFor(transport)
       if (!client || !record.serverId) return true
       try {
         const response = await client.deleteAnnotation(
@@ -1092,8 +1128,16 @@ export class MarginRailElement extends ElementBase {
     const position = this.#visibleRecords().findIndex(
       (entry) => entry.annotation.id === id,
     )
+    // Whether the reader is still on this entry. A slow delete gives them time
+    // to move on; focus is only carried forward if it would otherwise be lost.
+    const focusedEntry = (
+      this.#shadow.activeElement?.closest('li') as HTMLElement | null
+    )?.dataset.marginAnnotation
+    const doc = this.ownerDocument
+    const focusLost = !doc.activeElement || doc.activeElement === doc.body
     this.#records = this.#records.filter((entry) => entry !== record)
     this.#paint()
+    if (focusedEntry !== id && !focusLost) return
     // Focus goes to the entry that took its place, or the search box, never
     // to the top of the document.
     const next =
@@ -1285,7 +1329,14 @@ export class MarginRailElement extends ElementBase {
       start: entry.placement.start,
       end: entry.placement.end,
     })
-    if (this.#compact) this.#overlayOpen = false
+    if (this.#compact) {
+      // The overlay closes, and the control that had focus goes with it; focus
+      // goes to the passage, which is what the reader asked to go to.
+      this.#overlayOpen = false
+      this.#render()
+      if (block) returnFocusToText(block.element, ranges[0] ?? null)
+      return
+    }
     this.#render()
   }
 

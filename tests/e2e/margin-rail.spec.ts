@@ -55,6 +55,8 @@ type Service = {
   holdNextPatch: Promise<void> | null
   /** While set, every list request waits for this. */
   holdLists: Promise<void> | null
+  /** While set, every DELETE waits for this. */
+  holdDeletes: Promise<void> | null
   /** While true, every PATCH is refused with a 500. */
   failPatches: boolean
   setPrefs(
@@ -95,6 +97,7 @@ async function mountService(page: Page): Promise<Service> {
     holdPosts: null,
     holdNextPatch: null,
     holdLists: null,
+    holdDeletes: null,
     failPatches: false,
     async setPrefs(principal, defaultVisibility) {
       await call(
@@ -156,6 +159,7 @@ async function mountService(page: Page): Promise<Service> {
     if (method === 'GET' && path.endsWith('/prefs') && service.holdPrefs) {
       await service.holdPrefs
     }
+    if (method === 'DELETE' && service.holdDeletes) await service.holdDeletes
     if (
       method === 'GET' &&
       path.endsWith('/annotations') &&
@@ -648,6 +652,40 @@ test.describe('the margin rail under slow or racing requests', () => {
       'data-visibility',
       'public',
     )
+  })
+
+  test('going to a passage from the compact overlay puts focus on the passage', async ({
+    page,
+  }) => {
+    await mountService(page)
+    await open(page, 1024)
+    const [block] = await proseBlocks(page)
+    await highlight(page, block, 0, 20)
+    await page.locator(`${RAIL} [data-margin-action="toggle-rail"]`).click()
+    const quote = page.locator(`${ENTRY} .quote`)
+    await quote.focus()
+    await page.keyboard.press('Enter')
+    await expect(page.locator(`${RAIL} [data-margin-search]`)).toBeHidden()
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe(block)
+  })
+
+  test('a slow delete does not pull focus back from where the reader went', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    const [block] = await proseBlocks(page)
+    await highlight(page, block, 0, 20)
+    await expect.poll(async () => (await service.rows()).length).toBe(1)
+    const deletes = gate()
+    service.holdDeletes = deletes.promise
+    await page.locator(`${ENTRY} [data-margin-action="delete"]`).click()
+    await page.locator(`${RAIL} [data-margin-search]`).focus()
+    await page.keyboard.type('x')
+    deletes.open()
+    await page.locator(`${RAIL} [data-margin-search]`).fill('')
+    await expect(page.locator(ENTRY)).toHaveCount(0)
+    expect(await focusedKey(page)).toBe('search')
   })
 
   test('is not printed', async ({ page }) => {

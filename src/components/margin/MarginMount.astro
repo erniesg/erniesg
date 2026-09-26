@@ -13,14 +13,24 @@
 type Props = {
   /** The stable identity annotations are stored against. */
   documentUri: string
-  /** Where the margin service lives. Omitted until 054 ships its routes. */
+  /**
+   * Where the margin service lives. The Worker serves it on this site's own
+   * origin, so the default is the origin root; a page with no service behind
+   * it (the dev server) gets a 404 on load, which the rail treats as "no
+   * service here" and keeps working in memory.
+   */
   apiBase?: string
+  /** Below this width the rail is a toggle and an overlay, not a column. */
+  collapseBelow?: number
 }
 
-const { documentUri, apiBase } = Astro.props
+const { documentUri, apiBase = '/', collapseBelow } = Astro.props
 ---
 
-<margin-rail document-uri={documentUri} api-base={apiBase}></margin-rail>
+<margin-rail
+  document-uri={documentUri}
+  api-base={apiBase}
+  collapse-below={collapseBelow}></margin-rail>
 
 <script>
   import { defineMarginElements } from '../../../packages/margin/src/index'

@@ -13,6 +13,7 @@
  * from `getClientRects()`. Both leave `innerHTML` byte-identical.
  */
 import type { AnchorableBlock } from './blocks.js'
+import { NOTE_PAINT, NOTE_PAINT_KEY, ROLE_PALETTE } from '../palette.js'
 import { rangesForOffsets } from './text-index.js'
 
 export type PaintTarget = {
@@ -48,6 +49,8 @@ export const DEFAULT_PALETTE: Record<string, string> = {
   blue: 'rgba(56, 189, 248, 0.32)',
   green: 'rgba(74, 222, 128, 0.32)',
   pink: 'rgba(244, 114, 182, 0.32)',
+  ...ROLE_PALETTE,
+  [NOTE_PAINT_KEY]: NOTE_PAINT,
 }
 
 const REGISTRY_PREFIX = 'erniesg-margin-'

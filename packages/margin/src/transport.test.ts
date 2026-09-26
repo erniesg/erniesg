@@ -28,14 +28,17 @@ describe('the injectable transport', () => {
 
     await client.health()
     await client.listAnnotations('https://example.test/books/a/b')
-    await client.deleteAnnotation('an id/with slash')
+    await client.deleteAnnotation(
+      'an id/with slash',
+      'https://example.test/books/a/b',
+    )
 
     expect(transport.calls.map((call) => call.path)).toEqual([
       `${MARGIN_API_PREFIX}/health`,
       // `?source=`, which is the parameter 054's `readScope` reads. `?document=`
       // is half a scope and answers `missing_scope`.
       `${MARGIN_API_PREFIX}/annotations?source=https%3A%2F%2Fexample.test%2Fbooks%2Fa%2Fb`,
-      `${MARGIN_API_PREFIX}/annotations/an%20id%2Fwith%20slash`,
+      `${MARGIN_API_PREFIX}/annotations/an%20id%2Fwith%20slash?source=https%3A%2F%2Fexample.test%2Fbooks%2Fa%2Fb`,
     ])
     for (const call of transport.calls) {
       expect(call.path.startsWith(`${MARGIN_API_PREFIX}/`)).toBe(true)

@@ -81,6 +81,7 @@ const ROLE_SWATCHES = HIGHLIGHT_ROLES.map(
 const STYLES = `
 :host { display: block; font: inherit; color: inherit; ${ROLE_SWATCHES} --margin-role-note: ${NOTE_PAINT}; }
 :host([hidden]) { display: none; }
+@media print { :host { display: none; } }
 * { box-sizing: border-box; }
 .panel { display: grid; gap: 0.75rem; }
 .panel[data-overlay] { position: fixed; top: 0; right: 0; bottom: 0; z-index: 50; width: min(22rem, 100vw); overflow-y: auto; padding: 1rem; background: var(--margin-surface, Canvas); color: var(--margin-ink, CanvasText); box-shadow: -8px 0 24px rgb(0 0 0 / 0.18); }
@@ -130,6 +131,8 @@ type PopupState = {
   range: Range | null
   /** Where focus goes back to when the popup closes. */
   returnTo: Element | null
+  /** A temporary `tabindex` keyboard mode handed over, for us to remove. */
+  ownedTabIndex: Element | null
 }
 
 /**
@@ -481,7 +484,10 @@ export class MarginRailElement extends ElementBase {
     this.#prefsSettled = false
     this.#prefsReady = new Promise<void>((resolve) => {
       settlePrefs = () => {
-        this.#prefsSettled = true
+        // A stale load settles its own promise and nothing else: marking the
+        // shared flag would let a record made while the *current* request is
+        // still out skip the provisional mark and publish the fallback.
+        if (generation === this.#loadGeneration) this.#prefsSettled = true
         resolve()
       }
     })
@@ -492,7 +498,10 @@ export class MarginRailElement extends ElementBase {
       try {
         const prefs = await client.readPrefs()
         if (generation !== this.#loadGeneration) return
-        if (isSuccess(prefs)) {
+        if (!isSuccess(prefs)) {
+          // Signed out, or refused: nobody here owns anything, whoever did before.
+          this.#viewer = null
+        } else {
           const body = prefs.body as {
             defaultVisibility?: string
             creator?: string
@@ -570,14 +579,26 @@ export class MarginRailElement extends ElementBase {
     }
   }
 
-  async #publish(created: readonly RailRecord[]) {
+  async #publish(
+    created: readonly RailRecord[],
+    source: { documentUri: string; targetTexts: string[] },
+  ) {
     const client = this.#client()
     if (!client || created.length === 0) return
     // A record made before the stored default arrived took the fallback; it
     // takes the reader's real default now, before anything is sent. Sending
     // first would store an annotation private for a reader whose default is
     // public, and nothing after could correct it.
-    await this.#prefsReady
+    // The *current* readiness: a load that started while this one was waiting
+    // replaced it, and the default is only known once the latest has settled.
+    for (;;) {
+      const ready = this.#prefsReady
+      await ready
+      if (ready === this.#prefsReady) break
+    }
+    // The page moved to another document while this waited: what was selected
+    // belongs to the old one, and sending it now would store it against the new.
+    if (source.documentUri !== this.documentUri) return
     let adjusted = false
     for (const record of created) {
       if (!this.#provisional.has(record)) continue
@@ -591,19 +612,10 @@ export class MarginRailElement extends ElementBase {
     try {
       const first = created[0].annotation
       const common = {
-        documentUri: this.documentUri,
+        documentUri: source.documentUri,
         visibility: created[0].visibility,
         targets: created.map((record) => record.annotation.target),
-        targetTexts: created.map((record) => {
-          const text = this.#controller
-            ?.blocks()
-            .find((block) => block.id === record.annotation.target.nodeId)?.text
-          if (text === undefined)
-            throw new Error(
-              `Full text unavailable for ${record.annotation.target.nodeId}`,
-            )
-          return text
-        }),
+        targetTexts: source.targetTexts,
       }
       const responses = await client.createAnnotations(
         first.kind === 'highlight'
@@ -708,7 +720,18 @@ export class MarginRailElement extends ElementBase {
     this.#records = [...this.#records, ...records]
     this.#notice = ''
     this.#paint()
-    const saved = this.#publish(records)
+    // Snapshotted now, while the selection's document is the page's document.
+    const targetTexts = records.map(
+      (record) =>
+        this.#controller
+          ?.blocks()
+          .find((block) => block.id === record.annotation.target.nodeId)
+          ?.text ?? '',
+    )
+    const saved = this.#publish(records, {
+      documentUri: this.documentUri,
+      targetTexts,
+    })
     for (const record of records) {
       if (!this.#prefsSettled) this.#provisional.add(record)
       this.#saving.set(record, saved)
@@ -741,7 +764,13 @@ export class MarginRailElement extends ElementBase {
     if (!record || !record.mine || record.visibility === visibility) return
     const previous = record.visibility
     record.visibility = visibility
+    // The reader chose; the default arriving later must not overwrite that.
+    this.#provisional.delete(record)
     this.#render()
+    // A create still in flight carries the old visibility. Wait for it, then
+    // change what it stored — otherwise the rail says Private while the
+    // service keeps it public.
+    await this.#saving.get(record)
     const client = this.#client()
     if (!client || !record.serverId) return
     try {
@@ -796,6 +825,9 @@ export class MarginRailElement extends ElementBase {
     record.annotation = { ...previous, body: text }
     this.#editing = null
     this.#paint()
+    // As with visibility: an edit made while the create is in flight is sent
+    // once the create has an id, or it is lost on reload.
+    await this.#saving.get(record)
     const client = this.#client()
     if (!client || !record.serverId) return
     try {
@@ -862,7 +894,23 @@ export class MarginRailElement extends ElementBase {
       this.#visibleRecords()[
         Math.min(position, this.#visibleRecords().length - 1)
       ]
-    this.#focusKey(next ? `goto:${next.annotation.id}` : 'search')
+    this.#focusEntry(next?.annotation.id)
+  }
+
+  /**
+   * Focus an entry by the first control it actually renders: an orphan has no
+   * "go to" button, and someone else's annotation has no delete.
+   */
+  #focusEntry(id: string | undefined) {
+    const keys = id
+      ? [`goto:${id}`, `edit:${id}`, `visibility:${id}`, `delete:${id}`]
+      : []
+    for (const key of [...keys, 'search']) {
+      if (this.#shadow.querySelector(`[data-focus-key="${CSS.escape(key)}"]`)) {
+        this.#focusKey(key)
+        return
+      }
+    }
   }
 
   /* ------------------------------------------------------------------ */
@@ -882,7 +930,11 @@ export class MarginRailElement extends ElementBase {
     )
   }
 
-  #openPopup(anchors: PopupState['anchors'], range: Range | null) {
+  #openPopup(
+    anchors: PopupState['anchors'],
+    range: Range | null,
+    ownedTabIndex: Element | null = null,
+  ) {
     const doc = this.ownerDocument
     this.#noteDraft = ''
     this.#popup = {
@@ -892,6 +944,7 @@ export class MarginRailElement extends ElementBase {
         doc.activeElement && doc.activeElement !== doc.body
           ? doc.activeElement
           : null,
+      ownedTabIndex,
     }
     this.#render()
     this.#focusKey(`swatch:${DEFAULT_HIGHLIGHT_ROLE}`)
@@ -902,12 +955,16 @@ export class MarginRailElement extends ElementBase {
     if (!popup) return
     this.#popup = null
     this.#render()
+    const block = restoreFocus
+      ? this.#blockFor(popup.anchors[popup.anchors.length - 1]?.nodeId)
+      : undefined
+    // A `tabindex` keyboard mode added is ours to remove: now, unless focus is
+    // going back to that very block, in which case once focus leaves it.
+    const owned = popup.ownedTabIndex
+    if (owned && owned !== block?.element) owned.removeAttribute('tabindex')
     if (!restoreFocus) return
-    const block = this.#blockFor(
-      popup.anchors[popup.anchors.length - 1]?.nodeId,
-    )
     if (block) {
-      returnFocusToText(block.element, popup.range)
+      returnFocusToText(block.element, popup.range, owned === block.element)
     } else if (popup.returnTo instanceof HTMLElement) {
       popup.returnTo.focus()
     }
@@ -972,9 +1029,9 @@ export class MarginRailElement extends ElementBase {
         const range = selection?.rangeCount
           ? selection.getRangeAt(0).cloneRange()
           : null
-        this.#stopKeyboard({ keepFocus: true })
+        const owned = this.#stopKeyboard({ keepFocus: true })
         this.#capture = capture
-        this.#openPopup(capture.anchors, range)
+        this.#openPopup(capture.anchors, range, owned)
       },
       onExit: () => {
         this.#stopKeyboard()
@@ -984,9 +1041,10 @@ export class MarginRailElement extends ElementBase {
     this.#render()
   }
 
-  #stopKeyboard(options?: { keepFocus?: boolean }) {
-    this.#keyboard?.stop(options)
+  #stopKeyboard(options?: { keepFocus?: boolean }): Element | null {
+    const owned = this.#keyboard?.stop(options) ?? null
     this.#keyboard = null
+    return owned
   }
 
   /* ------------------------------------------------------------------ */
@@ -1090,7 +1148,10 @@ export class MarginRailElement extends ElementBase {
     const offset = offsetForPoint(block.index, caret.node, caret.offset)
     const hits = this.#placements
       .filter(
-        ({ placement }) =>
+        ({ annotation, placement }) =>
+          // Only what is painted can be clicked: proposals paint as 060's diff,
+          // not here, and must not capture a click on unmarked prose.
+          annotation.kind !== 'proposal' &&
           placement.status === 'anchored' &&
           placement.nodeId === block.id &&
           placement.start <= offset &&

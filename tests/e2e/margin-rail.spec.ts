@@ -341,6 +341,89 @@ test.describe('the margin rail under slow or racing requests', () => {
     )
   })
 
+  test('a visibility change made while the create is in flight reaches the service', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    const [block] = await proseBlocks(page)
+    const posts = gate()
+    service.holdPosts = posts.promise
+    await highlight(page, block, 0, 20)
+    const entry = page.locator(ENTRY)
+    await entry.locator('[data-margin-action="visibility"]').click()
+    await expect(entry).toHaveAttribute('data-visibility', 'public')
+    posts.open()
+    await expect
+      .poll(async () => (await service.rows())[0]?.['margin:visibility'])
+      .toBe('public')
+  })
+
+  test('a note edited while its create is in flight keeps the edit', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    const [block] = await proseBlocks(page)
+    const posts = gate()
+    service.holdPosts = posts.promise
+    await selectWithin(page, block, 0, 20)
+    await expect(
+      page.locator(`${RAIL} [data-margin-action="highlight"]`),
+    ).toBeEnabled()
+    await page.evaluate(() => {
+      const rail = document.querySelector('margin-rail') as HTMLElement & {
+        noteSelection(body: string): unknown[]
+      }
+      rail.noteSelection('first draft')
+    })
+    const entry = page.locator(ENTRY)
+    await entry.locator('[data-margin-action="edit"]').click()
+    await entry.locator('textarea').fill('second draft')
+    await entry.getByRole('button', { name: 'Save' }).click()
+    posts.open()
+    await expect
+      .poll(async () => (await service.rows())[0]?.body?.value)
+      .toBe('second draft')
+  })
+
+  test('the reader’s own visibility choice survives a default arriving later', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await service.setPrefs(ADA, 'public')
+    const prefs = gate()
+    service.holdPrefs = prefs.promise
+    await open(page)
+    const [block] = await proseBlocks(page)
+    await highlight(page, block, 0, 20)
+    // Made under the private fallback; the reader flips it twice before /prefs lands.
+    await page.locator(`${ENTRY} [data-margin-action="visibility"]`).click()
+    await page.locator(`${ENTRY} [data-margin-action="visibility"]`).click()
+    await expect(page.locator(ENTRY)).toHaveAttribute(
+      'data-visibility',
+      'private',
+    )
+    prefs.open()
+    await expect
+      .poll(async () => (await service.rows())[0]?.['margin:visibility'])
+      .toBe('private')
+  })
+
+  test('is not printed', async ({ page }) => {
+    await mountService(page)
+    await open(page, 1024)
+    await expect(
+      page.locator(`${RAIL} [data-margin-action="toggle-rail"]`),
+    ).toBeVisible()
+    await page.emulateMedia({ media: 'print' })
+    await expect(
+      page.locator(`${RAIL} [data-margin-action="toggle-rail"]`),
+    ).toBeHidden()
+    await page.setViewportSize({ width: 1440, height: 1000 })
+    await expect(page.locator(`${RAIL} [data-margin-search]`)).toBeHidden()
+  })
+
   test('loads every page of annotations, not the first few', async ({
     page,
   }) => {
@@ -454,6 +537,12 @@ test.describe('the margin rail', () => {
     await page.keyboard.press('Enter')
 
     await expect(page.locator(POPUP)).toHaveCount(0)
+    const tabbable = () =>
+      page.evaluate(
+        () =>
+          document.querySelectorAll('.book-content [data-block-kind][tabindex]')
+            .length,
+      )
     // Focus went back to the reader's place in the text, not to the page top.
     expect(
       await page.evaluate(() =>
@@ -472,6 +561,8 @@ test.describe('the margin rail', () => {
 
     const id = await entry.getAttribute('data-margin-annotation')
     await tabTo(page, `goto:${id}`)
+    // Once focus has left the text, no block keeps a tabindex the margin added.
+    expect(await tabbable()).toBe(0)
     await tabTo(page, `visibility:${id}`)
     await page.keyboard.press('Enter')
     await expect(entry).toHaveAttribute('data-visibility', 'public')

@@ -31,7 +31,12 @@ export type KeyboardSelectionOptions = {
 export type KeyboardSelection = {
   /** The block the caret is in. */
   current(): AnchorableBlock | null
-  stop(options?: { keepFocus?: boolean }): void
+  /**
+   * Leave the mode. With `keepFocus`, a `tabindex` this mode added stays so the
+   * block can keep focus, and the element is returned: the caller now owns it
+   * and must remove it.
+   */
+  stop(options?: { keepFocus?: boolean }): Element | null
 }
 
 const CURSOR_ATTRIBUTE = 'data-margin-keyboard-cursor'
@@ -137,14 +142,17 @@ export function startKeyboardSelection(
   return {
     current: () => (stopped ? null : blocks[index]),
     stop({ keepFocus = false } = {}) {
-      if (stopped) return
+      if (stopped) return null
       stopped = true
       doc.removeEventListener('keydown', onKeyDown, true)
       blocks[index].element.removeAttribute(CURSOR_ATTRIBUTE)
-      if (addedTabIndex && !keepFocus) {
-        addedTabIndex.removeAttribute('tabindex')
-        addedTabIndex = null
+      const owned = addedTabIndex
+      addedTabIndex = null
+      if (owned && !keepFocus) {
+        owned.removeAttribute('tabindex')
+        return null
       }
+      return owned
     },
   }
 }
@@ -157,9 +165,14 @@ export function startKeyboardSelection(
  * The block needs a `tabindex` to take focus; one added here is removed again
  * as soon as focus leaves, so the markup is not left changed.
  */
-export function returnFocusToText(block: Element, range: Range | null) {
+export function returnFocusToText(
+  block: Element,
+  range: Range | null,
+  /** The caller already owns a temporary `tabindex` on this block. */
+  owned = false,
+) {
   const doc = block.ownerDocument
-  const added = !block.hasAttribute('tabindex')
+  const added = owned || !block.hasAttribute('tabindex')
   if (added) block.setAttribute('tabindex', '-1')
   ;(block as HTMLElement).focus({ preventScroll: true })
   if (range) {

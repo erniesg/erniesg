@@ -196,4 +196,11 @@ const {
       overflow-y: auto;
     }
   }
+
+  /* The rail is interactive; a printed page gets the text, not its controls. */
+  @media print {
+    .reading-margin {
+      display: none;
+    }
+  }
 </style>

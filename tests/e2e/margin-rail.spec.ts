@@ -53,6 +53,10 @@ type Service = {
   holdPosts: Promise<void> | null
   /** Held once: the next PATCH waits for this, and later ones do not. */
   holdNextPatch: Promise<void> | null
+  /** While set, every list request waits for this. */
+  holdLists: Promise<void> | null
+  /** While true, every PATCH is refused with a 500. */
+  failPatches: boolean
   setPrefs(
     principal: Principal,
     defaultVisibility: 'private' | 'public',
@@ -90,6 +94,8 @@ async function mountService(page: Page): Promise<Service> {
     holdPrefs: null,
     holdPosts: null,
     holdNextPatch: null,
+    holdLists: null,
+    failPatches: false,
     async setPrefs(principal, defaultVisibility) {
       await call(
         new Request('https://ernie.sg/api/margin/v1/prefs', {
@@ -149,6 +155,26 @@ async function mountService(page: Page): Promise<Service> {
     const path = new URL(incoming.url()).pathname
     if (method === 'GET' && path.endsWith('/prefs') && service.holdPrefs) {
       await service.holdPrefs
+    }
+    if (
+      method === 'GET' &&
+      path.endsWith('/annotations') &&
+      service.holdLists
+    ) {
+      await service.holdLists
+    }
+    if (method === 'PATCH' && service.failPatches) {
+      if (service.holdNextPatch) {
+        const hold = service.holdNextPatch
+        service.holdNextPatch = null
+        await hold
+      }
+      await route.fulfill({
+        status: 500,
+        headers: { 'content-type': 'application/json' },
+        body: '{"error":{"code":"test_refusal"}}',
+      })
+      return
     }
     if (method === 'PATCH' && service.holdNextPatch) {
       const hold = service.holdNextPatch
@@ -539,6 +565,88 @@ test.describe('the margin rail under slow or racing requests', () => {
     await expect(page.locator(`${RAIL} fieldset`)).toHaveAttribute(
       'data-margin-default-visibility',
       'private',
+    )
+  })
+
+  test('a refused run of toggles rolls back to what the service holds', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    const [block] = await proseBlocks(page)
+    await highlight(page, block, 0, 20)
+    await expect.poll(async () => (await service.rows()).length).toBe(1)
+    const toggle = page.locator(`${ENTRY} [data-margin-action="visibility"]`)
+    await toggle.click() // public, stored
+    await expect
+      .poll(async () => (await service.rows())[0]['margin:visibility'])
+      .toBe('public')
+    service.failPatches = true
+    const first = gate()
+    service.holdNextPatch = first.promise
+    await toggle.click() // private — held, then refused
+    await toggle.click() // public — refused
+    first.open()
+    await expect(page.locator(ENTRY)).toHaveAttribute(
+      'data-visibility',
+      'public',
+    )
+    await page.waitForTimeout(300)
+    await expect(page.locator(ENTRY)).toHaveAttribute(
+      'data-visibility',
+      'public',
+    )
+    expect((await service.rows())[0]['margin:visibility']).toBe('public')
+  })
+
+  test('a default changed after creation does not rewrite a pending annotation', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    const prefs = gate()
+    service.holdPrefs = prefs.promise
+    await open(page)
+    const [block] = await proseBlocks(page)
+    await highlight(page, block, 0, 20) // made while the rail says private
+    await page.locator(`${RAIL} input[value="public"]`).check()
+    prefs.open()
+    await expect.poll(async () => (await service.rows()).length).toBe(1)
+    expect((await service.rows())[0]['margin:visibility']).toBe('private')
+    await expect(page.locator(ENTRY)).toHaveAttribute(
+      'data-visibility',
+      'private',
+    )
+  })
+
+  test('a change made after a reload’s snapshot survives the reload', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    const [block] = await proseBlocks(page)
+    await highlight(page, block, 0, 20)
+    await expect.poll(async () => (await service.rows()).length).toBe(1)
+    const lists = gate()
+    service.holdLists = lists.promise
+    // Reload in place: reassigning the transport starts a fresh load.
+    await page.evaluate(() => {
+      const rail = document.querySelector('margin-rail') as HTMLElement & {
+        transport: unknown
+      }
+      rail.transport = rail.transport
+    })
+    await page.waitForTimeout(200) // the list request is out, snapshot pending
+    await page.locator(`${ENTRY} [data-margin-action="visibility"]`).click()
+    await expect
+      .poll(async () => (await service.rows())[0]['margin:visibility'])
+      .toBe('public')
+    service.holdLists = null
+    lists.open()
+    await page.waitForTimeout(300)
+    await expect(page.locator(ENTRY)).toHaveCount(1)
+    await expect(page.locator(ENTRY)).toHaveAttribute(
+      'data-visibility',
+      'public',
     )
   })
 

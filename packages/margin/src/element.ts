@@ -218,7 +218,25 @@ export class MarginRailElement extends ElementBase {
   /** The default the service is known to hold, for rolling back a refusal. */
   #savedDefault: MarginVisibility | null = null
   /** Records made before `#prefsReady` settled: their visibility is provisional. */
-  #provisional = new WeakSet<RailRecord>()
+  /**
+   * Records made before the stored default arrived, with the preference
+   * revision current at creation. Only a record whose revision is still
+   * current takes the loaded default; a later local change of default must
+   * not reach back into it.
+   */
+  #provisional = new WeakMap<RailRecord, number>()
+  /**
+   * What the service is known to hold for each record, so a refused write
+   * rolls the rail back to the truth rather than to its own last guess.
+   */
+  #confirmed = new WeakMap<
+    RailRecord,
+    { visibility: MarginVisibility; annotation: TextAnnotation }
+  >()
+  /** A logical clock, advanced by every write queued or finished. */
+  #clock = 0
+  /** When each record was last touched by a write, on `#clock`. */
+  #touched = new WeakMap<RailRecord, number>()
   /** Records created on this page, with the save each is waiting on. */
   #saving = new WeakMap<RailRecord, Promise<void>>()
   /** The tail of each record's queue of writes after its create. */
@@ -499,6 +517,7 @@ export class MarginRailElement extends ElementBase {
     if (!client || !documentUri) return
     const generation = (this.#loadGeneration += 1)
     const revision = this.#prefsRevision
+    const startedAt = this.#clock
     let settlePrefs = () => {}
     this.#prefsSettled = false
     this.#prefsReady = new Promise<void>((resolve) => {
@@ -527,14 +546,16 @@ export class MarginRailElement extends ElementBase {
           }
           this.#viewer = typeof body?.creator === 'string' ? body.creator : null
           if (
-            // A reader who changed the default while this read was out has
-            // the newer value; the response is older than their choice.
-            revision === this.#prefsRevision &&
-            (body?.defaultVisibility === 'public' ||
-              body?.defaultVisibility === 'private')
+            body?.defaultVisibility === 'public' ||
+            body?.defaultVisibility === 'private'
           ) {
-            this.#defaultVisibility = body.defaultVisibility
+            // What the service holds is the rollback baseline either way...
             this.#savedDefault = body.defaultVisibility
+            // ...but a reader who changed the default while this read was out
+            // has the newer value on screen, and the response is older.
+            if (revision === this.#prefsRevision) {
+              this.#defaultVisibility = body.defaultVisibility
+            }
           }
         }
       } finally {
@@ -578,11 +599,16 @@ export class MarginRailElement extends ElementBase {
       // Also kept: any record with a write still queued or running. Replacing
       // it with the loaded copy would strand that write — a delete would remove
       // the old object and leave the new one on screen.
+      // "Touched after this load started" covers both: a write queued or
+      // finished after the snapshot was taken makes the snapshot's copy stale.
+      // A create that finished and was not touched since is left to the list,
+      // which rebuilds it for whoever is reading now.
       const createdHere = this.#records.filter(
         (record) =>
           this.#saving.has(record) ||
           record.serverId === null ||
-          (this.#inFlight.get(record) ?? 0) > 0,
+          (this.#inFlight.get(record) ?? 0) > 0 ||
+          (this.#touched.get(record) ?? -1) > startedAt,
       )
       // A host may hand the rail annotations before the first load, carrying
       // the service's own ids but no server id of their own. Matched by id,
@@ -606,10 +632,14 @@ export class MarginRailElement extends ElementBase {
           record.serverId ? [record.serverId] : [],
         ),
       )
-      this.#records = [
-        ...loaded.filter((record) => !local.has(record.serverId ?? '')),
-        ...createdHere,
-      ]
+      const fresh = loaded.filter((record) => !local.has(record.serverId ?? ''))
+      for (const record of fresh) {
+        this.#confirmed.set(record, {
+          visibility: record.visibility,
+          annotation: record.annotation,
+        })
+      }
+      this.#records = [...fresh, ...createdHere]
       if (this.#notice === LOAD_FAILED) this.#notice = ''
       this.#paint()
     } catch (error) {
@@ -627,10 +657,13 @@ export class MarginRailElement extends ElementBase {
 
   async #publish(
     created: readonly RailRecord[],
-    source: { documentUri: string; targetTexts: string[] },
+    source: {
+      documentUri: string
+      targetTexts: string[]
+      transport: MarginTransport | null
+    },
   ) {
-    const client = this.#client()
-    if (!client || created.length === 0) return
+    if (!source.transport || created.length === 0) return
     // A record made before the stored default arrived took the fallback; it
     // takes the reader's real default now, before anything is sent. Sending
     // first would store an annotation private for a reader whose default is
@@ -641,22 +674,40 @@ export class MarginRailElement extends ElementBase {
     // The page moved to another document while this waited: what was selected
     // belongs to the old one, and sending it now would store it against the new.
     if (source.documentUri !== this.documentUri) return
+    // Likewise the service: a host that replaced or removed the transport while
+    // this waited has switched away from that backend or session, and nothing
+    // made under it may be sent there now — nor to the new one unasked.
+    if (source.transport !== this.#transport) {
+      this.#reportTransportFailure(
+        new Error('the margin transport changed before this was saved'),
+        'Not saved: the connection changed. It stays on this page only.',
+      )
+      return
+    }
+    const client = createMarginClient(source.transport)
     let adjusted = false
     for (const record of created) {
-      if (!this.#provisional.has(record)) continue
+      const revision = this.#provisional.get(record)
+      if (revision === undefined) continue
       this.#provisional.delete(record)
-      if (record.visibility !== this.#defaultVisibility) {
+      // Only while the reader has not changed the default since: then the
+      // loaded one is the default this record was made under.
+      if (
+        revision === this.#prefsRevision &&
+        record.visibility !== this.#defaultVisibility
+      ) {
         record.visibility = this.#defaultVisibility
         adjusted = true
       }
     }
     if (adjusted) this.#render()
     try {
-      const first = created[0].annotation
-      const kind =
-        first.kind === 'highlight'
-          ? ({ kind: 'highlight', color: first.appearance.color } as const)
-          : ({ kind: first.kind, body: first.body } as const)
+      // Each request is built from its own record: a note in several blocks is
+      // several records, and one may have been edited while this waited.
+      const kindOf = (annotation: TextAnnotation) =>
+        annotation.kind === 'highlight'
+          ? ({ kind: 'highlight', color: annotation.appearance.color } as const)
+          : ({ kind: annotation.kind, body: annotation.body } as const)
       // Every body is built before any is sent, so a selection that cannot be
       // serialised is refused whole rather than half stored.
       for (const [index, record] of created.entries()) {
@@ -664,7 +715,7 @@ export class MarginRailElement extends ElementBase {
           documentUri: source.documentUri,
           target: record.annotation.target,
           targetText: source.targetTexts[index],
-          ...kind,
+          ...kindOf(record.annotation),
         })
       }
       // Then one request per annotation, each id kept the moment it arrives: a
@@ -678,13 +729,17 @@ export class MarginRailElement extends ElementBase {
           visibility: record.visibility,
           targets: [record.annotation.target],
           targetTexts: [source.targetTexts[index]],
-          ...kind,
+          ...kindOf(record.annotation),
         })
         responses.push(response)
         const id = (response.body as { id?: unknown } | null)?.id
         if (isSuccess(response) && typeof id === 'string') {
           const serverId = serverIdFromIri(id)
           record.serverId = serverId
+          this.#confirmed.set(record, {
+            visibility: record.visibility,
+            annotation: record.annotation,
+          })
           // A load whose snapshot already held this row, merged before the id
           // arrived, left a second copy of it in the rail.
           const before = this.#records.length
@@ -784,14 +839,27 @@ export class MarginRailElement extends ElementBase {
           .find((block) => block.id === record.annotation.target.nodeId)
           ?.text ?? '',
     )
+    for (const record of records) {
+      if (!this.#prefsSettled) {
+        this.#provisional.set(record, this.#prefsRevision)
+      }
+    }
     const saved = this.#publish(records, {
       documentUri: this.documentUri,
       targetTexts,
+      transport: this.#transport,
     })
-    for (const record of records) {
-      if (!this.#prefsSettled) this.#provisional.add(record)
-      this.#saving.set(record, saved)
-    }
+    for (const record of records) this.#saving.set(record, saved)
+    // A create is pending only while it is pending. Kept in the map after, it
+    // made every record this element ever created outlive a reload — including
+    // for the next reader, after a sign-out or account switch.
+    void saved.finally(() => {
+      this.#clock += 1
+      for (const record of records) {
+        this.#saving.delete(record)
+        this.#touched.set(record, this.#clock)
+      }
+    })
     this.dispatchEvent(
       new CustomEvent('margin-annotations-created', {
         detail: created,
@@ -819,8 +887,10 @@ export class MarginRailElement extends ElementBase {
   #enqueue<T>(record: RailRecord, write: () => Promise<T>): Promise<T> {
     const before = this.#writes.get(record) ?? this.#saving.get(record)
     this.#inFlight.set(record, (this.#inFlight.get(record) ?? 0) + 1)
+    this.#touched.set(record, (this.#clock += 1))
     const run = (before ?? Promise.resolve()).then(write, write).finally(() => {
       this.#inFlight.set(record, (this.#inFlight.get(record) ?? 1) - 1)
+      this.#touched.set(record, (this.#clock += 1))
     })
     this.#writes.set(
       record,
@@ -830,6 +900,11 @@ export class MarginRailElement extends ElementBase {
       ),
     )
     return run
+  }
+
+  /** Whether the running write is the only one left queued for its record. */
+  #isLastWrite(record: RailRecord) {
+    return (this.#inFlight.get(record) ?? 0) <= 1
   }
 
   /** Resolves once the latest preference read has settled. */
@@ -849,7 +924,6 @@ export class MarginRailElement extends ElementBase {
   async setVisibility(id: string, visibility: MarginVisibility) {
     const record = this.#find(id)
     if (!record || !record.mine || record.visibility === visibility) return
-    const previous = record.visibility
     record.visibility = visibility
     // The reader chose; the default arriving later must not overwrite that.
     this.#provisional.delete(record)
@@ -872,9 +946,21 @@ export class MarginRailElement extends ElementBase {
             [response],
           )
         }
+        const confirmed = this.#confirmed.get(record)
+        this.#confirmed.set(record, {
+          visibility,
+          annotation: confirmed?.annotation ?? record.annotation,
+        })
       } catch (error) {
-        // Only undo what is still this write's: a later toggle owns the value now.
-        if (record.visibility === visibility) record.visibility = previous
+        // Only the last write queued for this record settles what the rail
+        // shows: an earlier failure leaves a later write's value alone. The last
+        // one, failing, falls back to what the service is known to hold — not
+        // to this write's own predecessor, which may never have been stored.
+        if (this.#isLastWrite(record)) {
+          record.visibility =
+            this.#confirmed.get(record)?.visibility ?? record.visibility
+          this.#render()
+        }
         this.#reportTransportFailure(
           error,
           'Visibility was not changed: the service refused it.',
@@ -926,8 +1012,7 @@ export class MarginRailElement extends ElementBase {
     const text = body.trim()
     if (!record || !record.mine || record.annotation.kind !== 'note' || !text)
       return
-    const previous = record.annotation
-    const edited = { ...previous, body: text }
+    const edited = { ...record.annotation, body: text }
     record.annotation = edited
     this.#editing = null
     this.#paint()
@@ -949,8 +1034,17 @@ export class MarginRailElement extends ElementBase {
             [response],
           )
         }
+        const confirmed = this.#confirmed.get(record)
+        this.#confirmed.set(record, {
+          visibility: confirmed?.visibility ?? record.visibility,
+          annotation: edited,
+        })
       } catch (error) {
-        if (record.annotation === edited) record.annotation = previous
+        if (this.#isLastWrite(record)) {
+          record.annotation =
+            this.#confirmed.get(record)?.annotation ?? record.annotation
+          this.#paint()
+        }
         this.#reportTransportFailure(
           error,
           'The note was not changed: the service refused it.',

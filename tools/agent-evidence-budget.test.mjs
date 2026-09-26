@@ -12,6 +12,7 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { publisherVerdict } from './agent-evidence-publisher-verdict.mjs'
 
 /**
  * The shared lane budget in `scripts/agent-evidence`, exercised against the
@@ -379,6 +380,16 @@ describe('the shared lane budget', () => {
     expect(manifest.result).toBe('passed')
     expect(manifest.required_failures).toEqual([])
     expect(evidence.status).toBe(0)
+
+    // CI is green, so publication must accept the same manifest: its only
+    // caveat is the producer's note naming the skipped optional lane.
+    expect(manifest.caveats).toEqual([expect.stringMatching(/^lane not run: e2e; /u)])
+    const published = publisherVerdict(manifest, {
+      repository: REPOSITORY,
+      branch: BRANCH,
+      head: manifest.commit,
+    })
+    expect(published.accepted, published.reason).toBe(true)
   }, 190_000)
 
   it('treats a lane that exits 124 on its own, before the deadline, as an ordinary failure', () => {

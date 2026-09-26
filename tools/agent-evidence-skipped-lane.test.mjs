@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { publisherVerdict } from './agent-evidence-publisher-verdict.mjs'
 
 /**
  * A lane the evidence budget never started is `skipped` (erniesg#337), and
@@ -157,12 +158,114 @@ const CASES = [
   ['a skipped audit lane listed in lanes_run', EVIDENCE,
     manifest([auditSkipped, lane('build', { status: 'skipped' })],
       { ...BUDGET_BLOCK, lanes_run: ['association-audit'] }), 2, false],
+  // It never ran, so it produced no receipt to validate; one that claims to is
+  // not from this run.
+  ['a skipped audit lane carrying a receipt', EVIDENCE,
+    manifest([auditSkipped, lane('build', { status: 'skipped' })],
+      {
+        ...BUDGET_BLOCK,
+        blocked_reason: 'the shared evidence budget ran out before these required lanes started: association-audit, build',
+        association_audit: { schema_version: '1', result: 'passed' },
+      }), 2, false],
+]
+
+/** The note `scripts/agent-evidence` records for each lane the budget never started. */
+const skipNote = (id, spentBy = 'unit') =>
+  `lane not run: ${id}; the ${spentBy} lane consumed the shared 5400000 ms budget`
+
+/**
+ * A passed run the budget cut short before its optional e2e lane, shaped as
+ * the producer writes it: every required lane passed, e2e is skipped and
+ * optional, and the only caveat is the producer's note naming e2e.
+ */
+const producerShaped = (extra = {}) => manifest(
+  [
+    lane('association-audit', { status: 'passed' }),
+    lane('unit', { status: 'passed' }),
+    lane('build', { status: 'passed' }),
+    lane('e2e', { required: false, status: 'skipped' }),
+  ],
+  { caveats: [skipNote('e2e', 'build')], ...extra },
+)
+
+const IDENTITY = { repository: REPOSITORY, branch: BRANCH, head: HEAD }
+
+// [name, manifest, accepted] -- one caveat rule, as rucksack#1099 settled it:
+// on a passed manifest a caveat is allowed only if it is exactly
+// "lane not run: <id>" or "lane not run: <id>; <why>" and <id> is a lane the
+// same manifest marks skipped and optional. Every caveat is a distinct,
+// non-empty string with no control character and at most 8192 UTF-16 units,
+// the list holds at most 200 items, and `caveats: null` is refused.
+const CAVEAT_CASES = [
+  ['the producer\'s note naming a skipped optional lane', producerShaped(), true],
+  ['the bare note, with no reason', producerShaped({ caveats: ['lane not run: e2e'] }), true],
+  ['200 distinct notes naming the skipped optional lane',
+    producerShaped({ caveats: Array.from({ length: 200 }, (_, n) => `lane not run: e2e; r${n}`) }), true],
+  ['no caveats at all', producerShaped({ caveats: [] }), true],
+  ['a note naming a lane that ran', producerShaped({ caveats: [skipNote('unit')] }), false],
+  ['a note naming a skipped required lane',
+    manifest(
+      [lane('unit', { status: 'passed' }), lane('build', { status: 'skipped' })],
+      { caveats: [skipNote('build')] },
+    ), false],
+  ['a note naming a lane the manifest does not have', producerShaped({ caveats: [skipNote('lint')] }), false],
+  ['a prefixed note', producerShaped({ caveats: [`note: ${skipNote('e2e')}`] }), false],
+  ['a note with trailing text after the id', producerShaped({ caveats: ['lane not run: e2e and more'] }), false],
+  ['a note listed twice', producerShaped({ caveats: [skipNote('e2e'), skipNote('e2e')] }), false],
+  ['201 caveats',
+    producerShaped({ caveats: Array.from({ length: 201 }, (_, n) => `lane not run: e2e; r${n}`) }), false],
+  ['a note carrying a second caveat after a line break',
+    producerShaped({ caveats: [`${skipNote('e2e')}\nlarge-file scan skipped`] }), false],
+  ['a note longer than 8192 UTF-16 units',
+    producerShaped({ caveats: [`lane not run: e2e; ${'x'.repeat(8192)}`] }), false],
+  ['an empty caveat', producerShaped({ caveats: [''] }), false],
+  ['caveats: null', producerShaped({ caveats: null }), false],
+  ['any other caveat beside the note',
+    producerShaped({ caveats: [skipNote('e2e'), 'large-file scan skipped: git ls-files failed with 128'] }), false],
+]
+
+// A skipped lane never ran: exit_code null (never 0, which reads as a pass, and
+// never 124, which claims it ran and was killed) and duration_ms 0.
+const SKIPPED_SHAPE_CASES = [
+  ['a skipped lane claiming exit 0', { exit_code: 0 }],
+  ['a skipped lane claiming the budget kill exit', { exit_code: 124 }],
+  ['a skipped lane claiming a duration', { duration_ms: 5 }],
 ]
 
 describe('a lane the evidence budget never started', () => {
   it.each(CASES)('%s', (_name, workflowPath, value, status, accepted) => {
     const verdict = validate(workflowPath, value, status)
     expect(verdict.status === 0, verdict.stderr || verdict.stdout).toBe(accepted)
+  })
+
+  it('records its note in the shape the caveat rule exempts', () => {
+    // The fixtures above use the producer's note; hold the producer to it.
+    expect(readFileSync('scripts/agent-evidence', 'utf8')).toContain(
+      'const why = `lane not run: ${lane.id}; the ${budgetSpentBy} lane consumed the shared ${TOTAL_BUDGET_MS} ms budget`;',
+    )
+  })
+
+  it.each(CAVEAT_CASES)('publication: %s', (_name, value, accepted) => {
+    const verdict = publisherVerdict(value, IDENTITY)
+    expect(verdict.accepted, verdict.reason).toBe(accepted)
+    // A refusal here must be the caveat rule's, not an unrelated one.
+    if (!accepted) expect(verdict.reason).toMatch(/caveat/u)
+  })
+
+  it('a producer-shaped passed run is accepted by CI and by publication alike', () => {
+    const value = producerShaped()
+    const ci = validate(PUBLISHER, value, 0)
+    expect(ci.status, ci.stderr || ci.stdout).toBe(0)
+    const verdict = publisherVerdict(value, IDENTITY)
+    expect(verdict.accepted, verdict.reason).toBe(true)
+  })
+
+  it.each(SKIPPED_SHAPE_CASES)('publication refuses %s', (_name, override) => {
+    const value = producerShaped({ caveats: [] })
+    value.lanes = value.lanes.map((item) => (item.id === 'e2e' ? { ...item, ...override } : item))
+    const verdict = publisherVerdict(value, IDENTITY)
+    expect(verdict.accepted).toBe(false)
+    expect(verdict.reason).toContain('is skipped, so it must record exit_code null and duration_ms 0')
   })
 
   it('is judged by the same lines in both workflow validators', () => {

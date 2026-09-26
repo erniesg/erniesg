@@ -521,6 +521,27 @@ test.describe('the margin rail under slow or racing requests', () => {
     ).toBeAttached()
   })
 
+  test('two quick default changes leave the service on the last one', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    await expect
+      .poll(async () => (await service.prefs(ADA)).defaultVisibility)
+      .toBe('private')
+    const first = gate()
+    service.holdNextPatch = first.promise
+    await page.locator(`${RAIL} input[value="public"]`).check() // held
+    await page.locator(`${RAIL} input[value="private"]`).check()
+    first.open()
+    await page.waitForTimeout(500)
+    expect((await service.prefs(ADA)).defaultVisibility).toBe('private')
+    await expect(page.locator(`${RAIL} fieldset`)).toHaveAttribute(
+      'data-margin-default-visibility',
+      'private',
+    )
+  })
+
   test('is not printed', async ({ page }) => {
     await mountService(page)
     await open(page, 1024)

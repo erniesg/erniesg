@@ -74,6 +74,7 @@ export const MARGIN_RAIL_TAG = 'margin-rail'
 
 /** How many pages of annotations a load follows before it stops asking. */
 const FLASH_MS = 1200
+const LOAD_FAILED = 'Could not load annotations for this page.'
 const FLASH_PAINT = 'rgba(250, 204, 21, 0.85)'
 
 const ROLE_SWATCHES = HIGHLIGHT_ROLES.map(
@@ -212,12 +213,18 @@ export class MarginRailElement extends ElementBase {
   #prefsSettled = true
   /** Bumped by every local default change, so an older read cannot undo one. */
   #prefsRevision = 0
+  /** The tail of the preference-write queue. */
+  #prefsWrites: Promise<void> = Promise.resolve()
+  /** The default the service is known to hold, for rolling back a refusal. */
+  #savedDefault: MarginVisibility | null = null
   /** Records made before `#prefsReady` settled: their visibility is provisional. */
   #provisional = new WeakSet<RailRecord>()
   /** Records created on this page, with the save each is waiting on. */
   #saving = new WeakMap<RailRecord, Promise<void>>()
   /** The tail of each record's queue of writes after its create. */
   #writes = new WeakMap<RailRecord, Promise<void>>()
+  /** How many writes each record has queued or running. */
+  #inFlight = new WeakMap<RailRecord, number>()
   #flashTimer = 0
   #unflash: (() => void) | null = null
   #listeners: (() => void)[] = []
@@ -527,6 +534,7 @@ export class MarginRailElement extends ElementBase {
               body?.defaultVisibility === 'private')
           ) {
             this.#defaultVisibility = body.defaultVisibility
+            this.#savedDefault = body.defaultVisibility
           }
         }
       } finally {
@@ -567,8 +575,14 @@ export class MarginRailElement extends ElementBase {
       // page created, which may be unsaved, or saved after the list's snapshot.
       // One of those that the list already contains is kept once: as the local
       // record, so its entry does not change identity under the reader.
+      // Also kept: any record with a write still queued or running. Replacing
+      // it with the loaded copy would strand that write — a delete would remove
+      // the old object and leave the new one on screen.
       const createdHere = this.#records.filter(
-        (record) => this.#saving.has(record) || record.serverId === null,
+        (record) =>
+          this.#saving.has(record) ||
+          record.serverId === null ||
+          (this.#inFlight.get(record) ?? 0) > 0,
       )
       // A host may hand the rail annotations before the first load, carrying
       // the service's own ids but no server id of their own. Matched by id,
@@ -596,18 +610,18 @@ export class MarginRailElement extends ElementBase {
         ...loaded.filter((record) => !local.has(record.serverId ?? '')),
         ...createdHere,
       ]
+      if (this.#notice === LOAD_FAILED) this.#notice = ''
       this.#paint()
     } catch (error) {
+      // A superseded load's failure belongs to state that is gone.
+      if (generation !== this.#loadGeneration) return
       // A 404 is a page with no service mounted behind it — the dev server, a
       // static preview. That is not something to warn a reader about; the rail
       // works in memory there, as it does with no transport at all.
       const absent =
         error instanceof MarginTransportError &&
         error.responses.every((response) => response.status === 404)
-      this.#reportTransportFailure(
-        error,
-        absent ? undefined : 'Could not load annotations for this page.',
-      )
+      this.#reportTransportFailure(error, absent ? undefined : LOAD_FAILED)
     }
   }
 
@@ -804,7 +818,10 @@ export class MarginRailElement extends ElementBase {
    */
   #enqueue<T>(record: RailRecord, write: () => Promise<T>): Promise<T> {
     const before = this.#writes.get(record) ?? this.#saving.get(record)
-    const run = (before ?? Promise.resolve()).then(write, write)
+    this.#inFlight.set(record, (this.#inFlight.get(record) ?? 0) + 1)
+    const run = (before ?? Promise.resolve()).then(write, write).finally(() => {
+      this.#inFlight.set(record, (this.#inFlight.get(record) ?? 1) - 1)
+    })
     this.#writes.set(
       record,
       run.then(
@@ -869,31 +886,39 @@ export class MarginRailElement extends ElementBase {
   /** Only new annotations take the default; existing ones are not touched. */
   async setDefaultVisibility(visibility: MarginVisibility) {
     if (visibility === this.#defaultVisibility) return
-    const previous = this.#defaultVisibility
     this.#defaultVisibility = visibility
     this.#prefsRevision += 1
+    const revision = this.#prefsRevision
     this.#render()
-    // Whether there is a signed-in reader to save it for is only known once
-    // the preference read has settled.
-    await this.#prefsSettledNow()
-    const client = this.#client()
-    if (!client || !this.#viewer) return
-    // A later choice superseded this one while it waited; that one saves.
-    if (this.#defaultVisibility !== visibility) return
-    try {
-      const response = await client.writePrefs(visibility)
-      if (!isSuccess(response)) {
-        throw new MarginTransportError(
-          'the margin service refused the default',
-          [response],
-        )
+    // One preference write at a time, in order, and only the latest choice is
+    // sent: two concurrent PATCHes could otherwise land reversed and store the
+    // default the reader moved away from.
+    const run = this.#prefsWrites.then(async () => {
+      // Whether there is a signed-in reader to save it for is only known once
+      // the preference read has settled.
+      await this.#prefsSettledNow()
+      if (revision !== this.#prefsRevision) return // superseded; that one saves
+      const client = this.#client()
+      if (!client || !this.#viewer) return
+      try {
+        const response = await client.writePrefs(visibility)
+        if (!isSuccess(response)) {
+          throw new MarginTransportError(
+            'the margin service refused the default',
+            [response],
+          )
+        }
+        this.#savedDefault = visibility
+      } catch (error) {
+        if (revision === this.#prefsRevision) {
+          this.#defaultVisibility = this.#savedDefault ?? DEFAULT_VISIBILITY
+          this.#render()
+        }
+        this.#reportTransportFailure(error, 'The default was not saved.')
       }
-    } catch (error) {
-      if (this.#defaultVisibility === visibility) {
-        this.#defaultVisibility = previous
-      }
-      this.#reportTransportFailure(error, 'The default was not saved.')
-    }
+    })
+    this.#prefsWrites = run.catch(() => undefined)
+    await run
   }
 
   async editNote(id: string, body: string) {
@@ -1620,9 +1645,11 @@ export class MarginRailElement extends ElementBase {
           'Save',
         )
         save.addEventListener('click', () => {
-          void this.editNote(id, field.value).then(() =>
-            this.#focusKey(`edit:${id}`),
-          )
+          // Focus moves now, with the redraw, not when the request returns:
+          // until then the reader would have no focus in the rail, and after
+          // it a late return could pull focus back from wherever they went.
+          void this.editNote(id, field.value)
+          this.#focusKey(`edit:${id}`)
         })
         const cancel = el(
           doc,

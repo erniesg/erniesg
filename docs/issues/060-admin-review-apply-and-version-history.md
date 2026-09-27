@@ -66,27 +66,47 @@ stay at each owning adapter boundary.
    `git show <commit>:<path-at-that-commit>`. The page and the endpoint read
    that asset, so history needs no credential and no GitHub API rate limit,
    and it always matches the deployed build. Like 059's stamp, it refuses a
-   shallow checkout.
+   shallow or partial checkout, and any git error fails the build rather than
+   emitting partial history.
 9. Applying is idempotent: a retried apply does not open a second pull request.
-10. **Apply is one action; merging follows the repository's merge policy.**
-    `POST /proposals/:id/apply` records the approval and returns `202` with
-    state `approved`. It never waits on the adapter. The adapter opens the pull
-    request and reports back, moving the row to `applied` (with the PR URL) or
-    `apply_failed` (with the reason, retried on the next run).
-    `.agent/merge-policy.yaml` is authoritative for merging: today `books/**`
+10. **Apply is one action, bound to what was reviewed; merging follows the
+    repository's merge policy.** `POST /proposals/:id/apply` carries the
+    `revision` (from 059) the admin reviewed. In one transaction it refuses
+    with `409` if the proposal has moved past that revision, and otherwise
+    snapshots that revision's CriticMarkup and base commit as the approved
+    change and returns `202` with state `approved`. Later revisions never alter
+    an approved snapshot. It never waits on the adapter.
+    The adapter's feed is rows in `approved`, plus rows in `apply_failed` whose
+    attempt count is under the limit (3), so a failed apply is retried on the
+    next run. The adapter reports back, and the queue shows every state:
+    `pr_open` (PR number, URL and full head SHA), `conflict` (the rebase
+    conflict, shown to the admin), `merged` (the merge commit SHA), `closed`,
+    or `apply_failed` (reason and attempt count). While a PR is open, each
+    adapter run refreshes its head SHA and check state from GitHub and reports
+    them.
+    `.agent/merge-policy.yaml` is authoritative for merging. Today `books/**`
     is not an automatic path, so an applied PR waits for the owner's
-    `/rucksack merge <n>`, and the review queue shows that command beside the
-    PR. Adding book paths to automatic merge is an owner policy decision made
-    through the guarded policy process, outside this issue. Do not arm GitHub
-    auto-merge around it. The queue shows each applied proposal's state
-    (approved, PR open, checks, merged, closed, apply failed).
+    `/rucksack merge <full-current-head-sha>`. The queue shows that exact
+    command, filled with the head SHA the adapter last reported. The policy also
+    forbids a PR with no linked issue, so for each approved proposal the adapter
+    opens one tracking issue (title from the proposal, body linking it) and puts
+    `Closes #<issue>` in the PR body. Adding book paths to automatic merge is an
+    owner policy decision made through the guarded policy process, outside this
+    issue. Do not arm GitHub auto-merge around it.
 11. The adapter runs as a GitHub Actions workflow in `erniesg/erniesg`
     (`schedule` plus `workflow_dispatch`) that **pulls** approved proposals
     from the service. The Worker never calls GitHub, so it holds no GitHub
-    credential of any kind. The adapter authenticates to the service with
-    `MARGIN_ADAPTER_TOKEN` (see Allowed secrets), which can only list approved
-    proposals and report their results. The Worker stores only its SHA-256
-    and compares in constant time.
+    credential of any kind. The adapter authenticates to the service with an
+    adapter token **bound to one site and one adapter identity**. The Worker
+    stores only the token's SHA-256 with that `(site, adapter)` scope, compares
+    in constant time, and lets the token do exactly two things within its site:
+    read the feed and report results. Proposals from another site are
+    invisible to it. A second consuming repository gets its own token without
+    any change to this contract.
+    Every adapter PR puts a `Margin-Proposal: <proposal-id>` trailer in its
+    body and in the squash commit message, and the reported merge commit SHA
+    is stored on the proposal. 072 resolves a history commit to its proposal
+    through either one.
 12. The page has a history panel: the node's versions, newest first, and any
     two picked to show a rendered diff. Replay over time is 072.
 
@@ -96,8 +116,16 @@ stay at each owning adapter boundary.
   CriticMarkup exactly.
 - Save leaves the proposal pending and writes nothing to the repository;
   a test asserts no git operation occurred.
-- Apply opens exactly one pull request containing exactly the proposed change;
-  a retry opens none.
+- Apply opens exactly one pull request containing exactly the proposed change
+  (the approved snapshot, converted by 059's `toUnifiedDiff`), with a linked
+  tracking issue and a `Margin-Proposal` trailer; a retry opens none.
+- Apply with a stale `revision` is refused with `409`. A revision saved after
+  approval does not change what the adapter applies.
+- A row that failed once is in the next run's feed and ends with exactly one
+  PR; after three failures it leaves the feed and stays `apply_failed`.
+- The adapter's reports move a row through `pr_open`, `conflict`, `merged` and
+  `closed`, and the queue shows `/rucksack merge <full-head-sha>` with the
+  last reported head SHA.
 - An admin's own edit produces the same artifact as a reader's proposal.
 - A proposal whose base commit is behind `main` but conflict-free rebases and
   applies; one that conflicts is refused with the conflict surfaced.
@@ -108,8 +136,9 @@ stay at each owning adapter boundary.
   `202`, the row stays `approved`, and nothing is written; the Worker never
   falls back to a direct write. After an adapter run fails, the next run
   opens exactly one PR for that row.
-- The adapter token can list approved proposals and report results, and
-  nothing else: any other route answers 403 to it.
+- An adapter token can read its own site's feed and report results for its
+  own site's proposals, and nothing else: another site's proposals are absent
+  from its feed, reporting on them is 403, and every other route is 403.
 - A non-admin calling apply is 403.
 - The adapter's pull-request step uses the repo-scoped credential, never
   `GITHUB_TOKEN` (a workflow-boundary test greps the adapter workflow), and it
@@ -134,7 +163,7 @@ npm run test:margin
 python3 books/tools/validate.py
 npm test
 npm run build
-SRT_E2E_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')
+export SRT_E2E_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')
 npx playwright test tests/e2e/margin-review.spec.ts
 ```
 
@@ -160,9 +189,9 @@ Two secrets, both by name only:
 - `MARGIN_ADAPTER_GITHUB_TOKEN`: a GitHub Actions secret on `erniesg/erniesg`,
   a fine-grained token for this repository only, with contents and pull
   requests write. It opens the adapter's PRs, so their checks run.
-- `MARGIN_ADAPTER_TOKEN`: a GitHub Actions secret holding the service token.
-  The Worker holds only `MARGIN_ADAPTER_TOKEN_SHA256` (a Wrangler secret),
-  never the token itself.
+- `MARGIN_ADAPTER_TOKEN`: a GitHub Actions secret holding this repository's
+  adapter token for the `ernie.sg` site. The Worker holds only its SHA-256,
+  bound to `(site, adapter)`, never the token itself.
 
 ## Artifact outputs
 
@@ -182,7 +211,8 @@ Both adapter secrets are human actions. The owner creates the fine-grained,
 repo-scoped token for `erniesg/erniesg` and stages it as
 `MARGIN_ADAPTER_GITHUB_TOKEN`. The owner (or the coordinator on the owner's
 say-so) generates `MARGIN_ADAPTER_TOKEN`, stages it as an Actions secret, and
-puts its SHA-256 in the Worker with `wrangler secret put`. Apply
+registers its SHA-256 with the Worker, bound to the `ernie.sg` site and this
+adapter. Apply
 `rucksack-needs-human` with one ask covering both, and build against a stub
 adapter until they exist.
 

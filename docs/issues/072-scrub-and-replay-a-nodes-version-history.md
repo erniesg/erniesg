@@ -15,8 +15,8 @@ two versions to compare is 060's; this issue adds time.
 
 Every version is a git commit, and 060's build-time history asset already
 holds each commit's metadata and the file's content at that commit. Replay is
-a view over that asset. It needs no new storage, no new endpoint and no
-credential.
+a view over that asset, plus each version pre-rendered at build time. It
+needs no new storage, no new endpoint and no credential.
 
 ## Observed failure
 
@@ -39,8 +39,12 @@ credential.
    animation.
 4. Each version links to its commit, and when it came from an applied margin
    proposal (060's PR), to that proposal and its thread, but only if the
-   proposal is public or the viewer may see it. Visibility rules come from
-   the service and are never re-derived in the client.
+   proposal is public or the viewer may see it. The build reads 060's
+   `Margin-Proposal: <id>` trailer from each commit message into the history
+   asset. The client then asks the existing `GET /proposals` route for that
+   id, and the service's visibility filter decides whether a link appears. It
+   is a filter on an existing route, not a new endpoint, and visibility is
+   never re-derived in the client.
 5. Deep links: `?version=<commit>` opens the history view at that version,
    and `?compare=<a>..<b>` opens 060's two-version diff.
 6. The history view is read-only. It never offers to edit, restore or apply.
@@ -78,7 +82,7 @@ npx vitest run src/worker/margin
 python3 books/tools/validate.py
 npm test
 npm run build
-SRT_E2E_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')
+export SRT_E2E_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')
 npx playwright test tests/e2e/margin-history-replay.spec.ts
 ```
 
@@ -118,17 +122,20 @@ asset in 060's code path and say so.
 
 ## Recommended response
 
-Render each version with the same pipeline the page uses, then word-diff the
-rendered text blocks between consecutive versions, keyed by struct ID where
-the block exists in both. Diffing rendered blocks keeps figures, `:::` blocks
-and code intact, with changes inside them shown at block level.
+Pre-render every historical version at build time with the same pipeline
+the page uses (`books/tools/render.py`), into a static per-version asset
+beside 060's history asset. Do not write a second renderer for the browser.
+The client word-diffs the rendered text blocks between consecutive versions,
+keyed by struct ID where the block exists in both. Diffing rendered blocks
+keeps figures, `:::` blocks and code intact, with changes inside them shown
+at block level.
 
 ## Trade-offs
 
 Rendering every version at build time costs build time and asset size in
-proportion to history length. Build it lazily, rendering a version when it is
-first visited and caching the result in the browser. At 46 nodes with short
-histories, that is small.
+proportion to history length. At 46 nodes with short histories that is small;
+if it grows, cache rendered versions by blob hash across builds rather than
+rendering in the browser.
 
 ## Free-form response
 

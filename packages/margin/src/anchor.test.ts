@@ -8,7 +8,8 @@ import {
   withStructSelector,
   type AnchorableNode,
 } from './anchor'
-import { annotationsFromAnchors } from './controller'
+import { annotationsFromAnchors, paintTargetsFor } from './controller'
+import { NOTE_PAINT_KEY } from './palette'
 
 const PROSE =
   'A page is a rendition, not a document. Once meaning becomes coordinates, ' +
@@ -166,5 +167,39 @@ describe('the selector chain', () => {
       nodeId: 'block-intro-prose-1',
       reason: 'non-text-node',
     })
+  })
+})
+
+describe('a note tagged with a role', () => {
+  it('carries the role colour and paints in it; an untagged note paints as a note', () => {
+    const [tagged] = annotationsFromAnchors([anchor], {
+      kind: 'note',
+      body: 'why this order?',
+      color: 'question',
+      id: 'n1',
+    })
+    expect(tagged).toMatchObject({
+      kind: 'note',
+      body: 'why this order?',
+      appearance: { color: 'question' },
+    })
+    const [plain] = annotationsFromAnchors([anchor], {
+      kind: 'note',
+      body: 'plain',
+      id: 'n2',
+    })
+    expect(plain).not.toHaveProperty('appearance')
+
+    const placement = {
+      status: 'anchored' as const,
+      nodeId: anchor.nodeId,
+      start: anchor.position.start,
+      end: anchor.position.end,
+    }
+    const colours = paintTargetsFor([
+      { annotation: tagged, placement },
+      { annotation: plain, placement },
+    ] as never).map((target) => target.color)
+    expect(colours).toEqual(['question', NOTE_PAINT_KEY])
   })
 })

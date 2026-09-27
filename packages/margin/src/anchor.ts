@@ -97,21 +97,25 @@ const annotationBase = z.object({
   geometryCache: z.array(geometryCacheEntrySchema),
 })
 
-const highlightAnnotationSchema = annotationBase
-  .extend({
-    kind: z.literal('highlight'),
-    appearance: z
-      .object({
-        color: z.string().min(1),
-      })
-      .strict(),
+const appearanceSchema = z
+  .object({
+    color: z.string().min(1),
   })
   .strict()
 
+const highlightAnnotationSchema = annotationBase
+  .extend({
+    kind: z.literal('highlight'),
+    appearance: appearanceSchema,
+  })
+  .strict()
+
+/** A note may also be tagged with a role (key point, question...). */
 const noteAnnotationSchema = annotationBase
   .extend({
     kind: z.literal('note'),
     body: z.string().min(1),
+    appearance: appearanceSchema.optional(),
   })
   .strict()
 

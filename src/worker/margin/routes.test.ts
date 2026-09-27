@@ -915,28 +915,66 @@ describe('review findings, round two', () => {
     expect(asOther.status).toBe(404)
   })
 
-  // PATCH already refused this; creation accepted it and stored null, so the
-  // annotation came back changed.
-  it('refuses a colour on an annotation that is not a highlight', async () => {
-    for (const motivation of ['commenting', 'editing'] as const) {
-      const response = await post({
-        ...webAnnotation({ source: CHAPTER_ONE, motivation }),
-        'margin:color': 'amber',
-      })
-      expect(response.status, motivation).toBe(400)
-      expect(await response.json()).toMatchObject({
-        error: { code: 'unexpected_color' },
-      })
-    }
-
-    const highlight = await post({
-      ...webAnnotation({ source: CHAPTER_ONE, motivation: 'highlighting' }),
+  // A note can be tagged with a role (key point, question...) as well as carry
+  // text. A proposal cannot: its colour would have nowhere to show in review.
+  it('keeps a colour on a highlight or a note and refuses one on a proposal', async () => {
+    const proposal = await post({
+      ...webAnnotation({ source: CHAPTER_ONE, motivation: 'editing' }),
       'margin:color': 'amber',
     })
-    expect(highlight.status).toBe(201)
+    expect(proposal.status).toBe(400)
+    expect(await proposal.json()).toMatchObject({
+      error: { code: 'unexpected_color' },
+    })
+
+    for (const motivation of ['highlighting', 'commenting'] as const) {
+      const created = await post({
+        ...webAnnotation({ source: CHAPTER_ONE, motivation }),
+        'margin:color': 'question',
+      })
+      expect(created.status, motivation).toBe(201)
+      const wire = (await created.json()) as WireAnnotation & {
+        'margin:color'?: string
+      }
+      expect(wire['margin:color'], motivation).toBe('question')
+      const fetched = await harness.request(
+        'GET',
+        `/annotations/${bareId(wire)}${scopeQuery(CHAPTER_ONE)}`,
+        { as: ADA },
+      )
+      expect(
+        ((await fetched.json()) as { 'margin:color'?: string })['margin:color'],
+        motivation,
+      ).toBe('question')
+    }
+  })
+
+  it('lets the owner recolour a note but not a proposal', async () => {
+    const note = (await (
+      await post(webAnnotation({ source: CHAPTER_ONE, motivation: 'commenting' }))
+    ).json()) as WireAnnotation
+    const recoloured = await harness.request(
+      'PATCH',
+      `/annotations/${bareId(note)}${scopeQuery(CHAPTER_ONE)}`,
+      { as: ADA, body: { 'margin:color': 'idea' } },
+    )
+    expect(recoloured.status).toBe(200)
     expect(
-      ((await highlight.json()) as { 'margin:color'?: string })['margin:color'],
-    ).toBe('amber')
+      ((await recoloured.json()) as { 'margin:color'?: string })['margin:color'],
+    ).toBe('idea')
+
+    const proposal = (await (
+      await post(webAnnotation({ source: CHAPTER_ONE, motivation: 'editing' }))
+    ).json()) as WireAnnotation
+    const refused = await harness.request(
+      'PATCH',
+      `/annotations/${bareId(proposal)}${scopeQuery(CHAPTER_ONE)}`,
+      { as: ADA, body: { 'margin:color': 'idea' } },
+    )
+    expect(refused.status).toBe(400)
+    expect(await refused.json()).toMatchObject({
+      error: { code: 'unexpected_color' },
+    })
   })
 })
 

@@ -188,6 +188,29 @@ describe('the wire format is a Web Annotation', () => {
     })
   })
 
+  it('sends a note’s role colour, and never one on a proposal', () => {
+    const note = toWebAnnotation({
+      documentUri: 'https://example.test/x',
+      kind: 'note',
+      body: 'why?',
+      color: 'question',
+      target: anchor,
+      targetText: anchorText,
+    })
+    expect(note).toMatchObject({
+      motivation: 'commenting',
+      'margin:color': 'question',
+    })
+    const untagged = toWebAnnotation({
+      documentUri: 'https://example.test/x',
+      kind: 'note',
+      body: 'plain',
+      target: anchor,
+      targetText: anchorText,
+    })
+    expect(untagged).not.toHaveProperty('margin:color')
+  })
+
   it('requires a non-empty note body before any request is sent', async () => {
     const transport = stubTransport()
     const client = createMarginClient(transport)

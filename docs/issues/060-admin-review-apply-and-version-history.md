@@ -23,7 +23,13 @@ stay at each owning adapter boundary.
 ## Observed failure
 
 - 059 produces proposals that nothing reviews. `POST /proposals/:id/apply` and
-  `GET /documents/:id/history` still return 501 from 054.
+  `GET /documents/:id/history` still return 501 from 054. The route table
+  comment in `src/worker/margin/routes.ts` attributes history to 059; this
+  issue owns it, so correct the comment.
+- **A pull request opened with `GITHUB_TOKEN` starts no workflows.** GitHub
+  does not trigger workflows from events that `GITHUB_TOKEN` causes. An apply
+  that used it would open a PR whose required checks never run, and it could
+  never merge. The adapter must open PRs with the repo-scoped credential below.
 - No adapter exists, so there is no path from an approved proposal to
   `books/chapters/<node>.md`.
 
@@ -52,8 +58,26 @@ stay at each owning adapter boundary.
    `main` and says so, or it is refused with the conflict shown to the admin.
 8. `GET /documents/:id/history` returns the node's commit history through the
    adapter — commit, author, date, message — and a diff between any two
-   revisions. No commit content is duplicated into D1.
+   revisions. No commit content is duplicated into D1. The challenges adapter
+   implements this **at build time**: for each node, the build writes a
+   static history asset from `git log --follow -- <file>` holding each
+   commit's metadata and the file's content at that commit. The page and the
+   endpoint read that asset, so history needs no credential and no GitHub API
+   rate limit, and it always matches the deployed build.
 9. Applying is idempotent: a retried apply does not open a second pull request.
+10. **Apply is one action for the owner.** When the admin applies, the adapter
+    opens the pull request with auto-merge (squash) armed. Branch protection's
+    required checks still gate the merge, so criterion 4's invariant holds.
+    The review queue shows each applied proposal's PR state (open, checks
+    running, merged, closed), so the owner never has to leave the page to
+    know where a change is.
+11. The adapter runs as a GitHub Actions workflow in `erniesg/erniesg`
+    (`schedule` plus `workflow_dispatch`) that **pulls** approved proposals
+    from the service. The Worker never calls GitHub, so it holds no GitHub
+    credential of any kind. It reads with a service token scoped to
+    approved-proposal reads.
+12. The page has a history panel: the node's versions, newest first, and any
+    two picked to show a rendered diff. Replay over time is 072.
 
 ## Acceptance tests
 
@@ -72,6 +96,12 @@ stay at each owning adapter boundary.
   contain no repository token, and that apply fails closed if the adapter is
   unreachable rather than falling back to a direct write.
 - A non-admin calling apply is 403.
+- The adapter's pull-request step uses the repo-scoped credential, never
+  `GITHUB_TOKEN` (a workflow-boundary test greps the adapter workflow), and an
+  applied PR has auto-merge armed.
+- The build's history asset for a node lists the same commits as
+  `git log --follow --format=%H -- <file>`, and the content at each commit
+  equals `git show <commit>:<file>`.
 
 ## Definition of done
 

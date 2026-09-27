@@ -28,6 +28,16 @@ instead.
   fences, the figure attributes or the front matter, producing a proposal that
   cannot be applied.
 - Nothing currently lets a reader propose any change at all.
+- **The page does not say what it was built from.** `<margin-rail>` carries
+  only `document-uri` (checked on the workers.dev preview, 2026-09-28).
+  Nothing on the page names the node's source file or the commit it was
+  rendered from, so criterion 4's base commit has no source until the build
+  stamps one.
+- **What already exists; extend it, never duplicate it.** A `proposal` kind is
+  in `packages/margin/src/anchor.ts` (`body: string`, no base commit yet), and
+  `GET /proposals` in `src/worker/margin/routes.ts` lists `editing` rows. Add
+  the base commit and the CriticMarkup patch to that record. Do not add a
+  second proposal shape.
 
 ## Success criteria
 
@@ -52,6 +62,18 @@ instead.
    withdraw it. Reviewing and applying belong to 060.
 8. Edit mode is keyboard-complete and announces its state to assistive
    technology.
+9. The build stamps each node's page with its repo-relative source path and
+   `source-commit`, the last commit that touched that file
+   (`git log -1 --format=%H -- <file>`), as attributes on `<margin-rail>`.
+   A proposal takes its base commit from these, never from the client's clock
+   or a guess.
+10. Edit mode covers ordinary editing, not only one-word fixes. Deleting a
+    word, a sentence, a whole paragraph or a list item, replacing text,
+    retyping a passage, and splitting or joining paragraphs all work, with
+    undo and redo inside the session. Before saving, the change shows inline
+    as tracked changes (deletions struck, insertions marked). The owner uses
+    this same mode; applying their change belongs to 060, and this issue gives
+    nobody a direct write.
 
 ## Acceptance tests
 
@@ -63,6 +85,12 @@ instead.
 - A proposal against an outdated base commit is marked stale, not applied.
 - A locked block cannot be edited by keyboard, paste or drag.
 - Withdrawing a proposal removes it from review without deleting its thread.
+- For three nodes, the stamped `source-commit` equals
+  `git log -1 --format=%H -- <file>` at the build commit, and the stamped
+  path exists.
+- Deleting a whole paragraph and joining two paragraphs each produce a
+  CriticMarkup patch that `git apply`s cleanly to the base commit; undo
+  restores a byte-identical document.
 
 ## Definition of done
 

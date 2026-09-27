@@ -22,7 +22,7 @@ import {
  * | `TextPositionSelector`                 | `anchor.position`                  |
  * | `margin:StructSelector`                | `anchor.nodeId` + `struct_id`      |
  * | `body` / `TextualBody.value`           | `note.body` / `proposal.body`      |
- * | `margin:color`                         | `highlight.appearance.color`       |
+ * | `margin:color`                         | highlight or note role colour      |
  * | `margin:visibility`                    | `visibility`                       |
  * | `margin:parentId`                      | `parent_id` (a reply)              |
  * | — (never serialized)                   | `geometryCache`                    |
@@ -419,7 +419,13 @@ export function webAnnotationToRecord(
             color: wire['margin:color'] ?? DEFAULT_HIGHLIGHT_COLOR,
           },
         }
-      : { body: bodyValue }),
+      : {
+          body: bodyValue,
+          // A note's role lives on the annotation too, not only the row.
+          ...(kind === 'note' && wire['margin:color']
+            ? { appearance: { color: wire['margin:color'] } }
+            : {}),
+        }),
   }
 
   const parsed = textAnnotationSchema.safeParse(candidate)
@@ -443,7 +449,7 @@ export function webAnnotationToRecord(
         ? annotationIdFromIri(wire['margin:parentId'])
         : null,
       structId: struct?.['margin:structId'] ?? null,
-      color: kind === 'highlight' ? (wire['margin:color'] ?? null) : null,
+      color: kind === 'proposal' ? null : (wire['margin:color'] ?? null),
       annotation: parsed.data,
       created: assigned.created,
       modified: assigned.modified,

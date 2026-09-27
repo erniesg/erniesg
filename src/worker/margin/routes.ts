@@ -328,18 +328,15 @@ async function createAnnotation(
   const record = mapped.value
   const scope: TenantScope = { site: record.site, document: record.document }
 
-  // PATCH already refuses this pair. Creation used to accept `margin:color` on a
-  // note or a proposal and then store `null`, so the 201 body and every later GET
-  // came back missing a field the client had sent. Same rule in both places.
+  // A highlight or a note may carry a role colour (a note tagged "question",
+  // say); a proposal may not, since review shows it as a diff, not a role.
+  // Refused rather than stored as null, so nothing the client sent goes
+  // missing from the 201 body or a later GET. PATCH applies the same rule.
   if (
-    record.annotation.kind !== 'highlight' &&
+    record.annotation.kind === 'proposal' &&
     parsed.data['margin:color'] !== undefined
   ) {
-    return problem(
-      400,
-      'unexpected_color',
-      'margin:color applies only to an annotation motivated by highlighting',
-    )
+    return problem(400, 'unexpected_color', COLOR_SCOPE_MESSAGE)
   }
 
   // A reply must point at an annotation the caller can see in the same
@@ -424,6 +421,9 @@ async function readAnnotation(
   return json(recordToWebAnnotation(found))
 }
 
+const COLOR_SCOPE_MESSAGE =
+  'margin:color applies only to an annotation motivated by highlighting or commenting'
+
 const annotationPatchSchema = z
   .object({
     body: z.string().min(1).max(8_000).optional(),
@@ -458,10 +458,10 @@ async function patchAnnotation(
     )
   }
 
-  // A highlight has no body and a note has no colour. Checking the existing
-  // row first turns what the schema would otherwise reject as a constraint
-  // violation into an ordinary 400, and keeps the 404 for a row the caller
-  // does not own.
+  // A highlight has no body and a proposal has no colour. Checking the
+  // existing row first turns what the schema would otherwise reject as a
+  // constraint violation into an ordinary 400, and keeps the 404 for a row the
+  // caller does not own.
   const existing = await context.repository.findAnnotation(scope, id, owner)
   if (!existing || existing.creator !== owner) {
     return problem(404, 'not_found', 'no annotation of yours has that id here')
@@ -474,12 +474,11 @@ async function patchAnnotation(
       'an annotation motivated by highlighting carries no body',
     )
   }
-  if (!isHighlight && parsed.data['margin:color'] !== undefined) {
-    return problem(
-      400,
-      'unexpected_color',
-      'margin:color applies only to an annotation motivated by highlighting',
-    )
+  if (
+    existing.annotation.kind === 'proposal' &&
+    parsed.data['margin:color'] !== undefined
+  ) {
+    return problem(400, 'unexpected_color', COLOR_SCOPE_MESSAGE)
   }
 
   if (

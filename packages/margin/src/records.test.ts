@@ -79,6 +79,34 @@ describe('recordFromWebAnnotation', () => {
     expect(record?.visibility).toBe('private')
   })
 
+  it('keeps the role colour a note was tagged with', () => {
+    const record = recordFromWebAnnotation(
+      wire({
+        motivation: 'commenting',
+        body: { type: 'TextualBody', value: 'why?', format: 'text/plain' },
+        'margin:color': 'question',
+      }),
+      ME,
+    )
+    expect(record?.annotation).toMatchObject({
+      kind: 'note',
+      body: 'why?',
+      appearance: { color: 'question' },
+    })
+  })
+
+  it('reads an untagged note as having no colour', () => {
+    const record = recordFromWebAnnotation(
+      wire({
+        motivation: 'commenting',
+        body: { type: 'TextualBody', value: 'hm', format: 'text/plain' },
+        'margin:color': undefined,
+      }),
+      ME,
+    )
+    expect(record?.annotation).not.toHaveProperty('appearance')
+  })
+
   it('treats a signed-out reader as owning nothing', () => {
     expect(recordFromWebAnnotation(wire(), null)?.mine).toBe(false)
   })

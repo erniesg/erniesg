@@ -304,6 +304,13 @@ async function highlight(
   }, role)
 }
 
+/** Select the start of a block and release the pointer there, as a reader does. */
+async function openPopupOn(page: Page, blockId: string) {
+  await selectWithin(page, blockId, 0, 24)
+  await page.locator(`#${blockId}`).dispatchEvent('pointerup')
+  await expect(page.locator(POPUP)).toBeVisible()
+}
+
 /** The focus key of whatever is focused, looking through the rail's shadow root. */
 async function focusedKey(page: Page): Promise<string | null> {
   return page.evaluate(() => {
@@ -953,6 +960,14 @@ test.describe('the margin rail', () => {
     await page.keyboard.press('Tab')
     expect(await focusedKey(page)).toBe('swatch:question')
     await page.keyboard.press('Enter')
+    // Picking a role marks it and saves nothing yet.
+    await expect(page.locator(POPUP)).toBeVisible()
+    await expect(
+      page.locator(`${POPUP} [data-margin-swatch="question"]`),
+    ).toHaveAttribute('aria-pressed', 'true')
+    expect(await service.rows()).toHaveLength(0)
+    await tabTo(page, 'popup-save', 20)
+    await page.keyboard.press('Enter')
 
     await expect(page.locator(POPUP)).toHaveCount(0)
     const tabbable = () =>
@@ -1044,13 +1059,94 @@ test.describe('the margin rail', () => {
       if (await page.locator(POPUP).isVisible()) break
     }
     await page.locator(`${POPUP} [data-margin-note]`).fill('Worth rereading.')
-    await page.locator(`${POPUP} [data-margin-action="save-note"]`).click()
+    await page.locator(`${POPUP} [data-margin-action="save"]`).click()
     await expect(page.locator(ENTRY)).toHaveCount(1)
     await expect(page.locator(ENTRY)).toHaveAttribute('data-kind', 'note')
     await expect(page.locator(ENTRY)).toContainText('Worth rereading.')
     await expect
       .poll(async () => (await service.rows())[0]?.motivation)
       .toBe('commenting')
+  })
+
+  test('picking a role saves nothing until Save, and Save needs a role or a note', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    const [block] = await proseBlocks(page)
+    await openPopupOn(page, block)
+    await expect(page.locator(POPUP)).toBeVisible()
+
+    const save = page.locator(`${POPUP} [data-margin-action="save"]`)
+    await expect(save).toBeDisabled()
+
+    const idea = page.locator(`${POPUP} [data-margin-swatch="idea"]`)
+    await idea.click()
+    await expect(idea).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator(POPUP)).toBeVisible()
+    expect(await service.rows()).toHaveLength(0)
+    await expect(save).toBeEnabled()
+
+    // Picking it again clears it.
+    await idea.click()
+    await expect(idea).toHaveAttribute('aria-pressed', 'false')
+    await expect(save).toBeDisabled()
+
+    await page.locator(`${POPUP} [data-margin-swatch="revisit"]`).click()
+    await save.click()
+    await expect(page.locator(POPUP)).toHaveCount(0)
+    await expect(page.locator(ENTRY)).toHaveAttribute('data-kind', 'highlight')
+    await expect.poll(async () => (await service.rows()).length).toBe(1)
+    const [row] = await service.rows()
+    expect(row.motivation).toBe('highlighting')
+    expect(row['margin:color']).toBe('revisit')
+  })
+
+  test('a role and a note save once, as a note tagged with that role', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    const [block] = await proseBlocks(page)
+    await openPopupOn(page, block)
+
+    await page.locator(`${POPUP} [data-margin-swatch="question"]`).click()
+    const note = page.locator(`${POPUP} [data-margin-note]`)
+    await note.fill('Why arrival order?')
+    // Enter is a newline, not a save.
+    await note.press('Enter')
+    await expect(page.locator(POPUP)).toBeVisible()
+    await note.pressSequentially('Surely urgency.')
+    await note.press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter')
+
+    await expect(page.locator(POPUP)).toHaveCount(0)
+    const entry = page.locator(ENTRY)
+    await expect(entry).toHaveCount(1)
+    await expect(entry).toHaveAttribute('data-kind', 'note')
+    await expect(entry).toContainText('Why arrival order?')
+    expect(
+      await entry.evaluate((element) =>
+        (element as HTMLElement).style.getPropertyValue('--swatch'),
+      ),
+    ).toContain('question')
+    await expect.poll(async () => (await service.rows()).length).toBe(1)
+    const [row] = await service.rows()
+    expect(row.motivation).toBe('commenting')
+    expect(row['margin:color']).toBe('question')
+    expect((row.body as { value?: string }).value).toBe(
+      'Why arrival order?\nSurely urgency.',
+    )
+
+    // It survives a reload with its role.
+    await page.reload()
+    await expect(page.locator(ENTRY)).toHaveCount(1)
+    expect(
+      await page
+        .locator(ENTRY)
+        .evaluate((element) =>
+          (element as HTMLElement).style.getPropertyValue('--swatch'),
+        ),
+    ).toContain('question')
   })
 
   test('a default change affects only annotations created afterwards', async ({

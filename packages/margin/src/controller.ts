@@ -63,7 +63,7 @@ export function paintTargetsFor(
             color:
               annotation.kind === 'highlight'
                 ? annotation.appearance.color
-                : NOTE_PAINT_KEY,
+                : (annotation.appearance?.color ?? NOTE_PAINT_KEY),
             nodeId: placement.nodeId,
             start: placement.start,
             end: placement.end,
@@ -133,7 +133,8 @@ export function annotationsFromAnchors(
   anchors: readonly SemanticTextAnchor[],
   input:
     | { kind: 'highlight'; color: string; id?: string }
-    | { kind: 'note' | 'proposal'; body: string; id?: string },
+    | { kind: 'note'; body: string; color?: string; id?: string }
+    | { kind: 'proposal'; body: string; id?: string },
 ): TextAnnotation[] {
   const groupId = input.id ?? newAnnotationId()
   return anchors.map((target, position) =>
@@ -151,6 +152,9 @@ export function annotationsFromAnchors(
             kind: input.kind,
             target,
             body: input.body,
+            ...(input.kind === 'note' && input.color
+              ? { appearance: { color: input.color } }
+              : {}),
             geometryCache: [],
           },
     ),

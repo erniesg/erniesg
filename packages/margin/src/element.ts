@@ -120,6 +120,9 @@ textarea { min-height: 4.5rem; resize: vertical; }
 .popup .title { margin: 0; font-size: 0.8125rem; font-weight: 600; }
 .swatches { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .swatch { display: inline-flex; align-items: center; gap: 0.35rem; }
+.swatch[aria-pressed='true'] { background: color-mix(in srgb, var(--swatch) 35%, transparent); font-weight: 600; }
+.swatch[aria-pressed='true']::before { box-shadow: 0 0 0 2px currentColor; }
+button.primary:not([disabled]) { font-weight: 600; }
 .swatch::before, .chip::before { content: ''; width: 0.8rem; height: 0.8rem; border-radius: 999px; background: var(--swatch); border: 1px solid currentColor; }
 .chip { display: inline-flex; align-items: center; gap: 0.3rem; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
@@ -201,6 +204,8 @@ export class MarginRailElement extends ElementBase {
    * selection change is enough to trigger one.
    */
   #noteDraft = ''
+  /** The role picked in the open popup, if any. Picking one never saves. */
+  #roleDraft: string | null = null
   #editDraft = ''
   #popup: PopupState | null = null
   /** The entry the last click on painted text went to, for cycling overlaps. */
@@ -767,7 +772,15 @@ export class MarginRailElement extends ElementBase {
       const kindOf = (annotation: TextAnnotation) =>
         annotation.kind === 'highlight'
           ? ({ kind: 'highlight', color: annotation.appearance.color } as const)
-          : ({ kind: annotation.kind, body: annotation.body } as const)
+          : annotation.kind === 'note'
+            ? ({
+                kind: 'note',
+                body: annotation.body,
+                ...(annotation.appearance
+                  ? { color: annotation.appearance.color }
+                  : {}),
+              } as const)
+            : ({ kind: annotation.kind, body: annotation.body } as const)
       // Every body is built before any is sent, so a selection that cannot be
       // serialised is refused whole rather than half stored.
       for (const [index, record] of created.entries()) {
@@ -874,19 +887,27 @@ export class MarginRailElement extends ElementBase {
     return this.#create(anchors, { kind: 'highlight', color })
   }
 
-  /** Attach a note to the live selection. Returns what it created. */
-  noteSelection(body: string): TextAnnotation[] {
+  /**
+   * Attach a note to the live selection, optionally tagged with a role.
+   * Returns what it created.
+   */
+  noteSelection(body: string, color?: string): TextAnnotation[] {
     if (this.#capture.status !== 'captured' || !body.trim()) return []
     const anchors = this.#capture.anchors
     this.#capture = { status: 'empty' }
     this.ownerDocument.getSelection()?.removeAllRanges()
-    return this.#create(anchors, { kind: 'note', body: body.trim() })
+    return this.#create(anchors, {
+      kind: 'note',
+      body: body.trim(),
+      ...(color ? { color } : {}),
+    })
   }
 
   #create(
     anchors: PopupState['anchors'],
     input:
-      { kind: 'highlight'; color: string } | { kind: 'note'; body: string },
+      | { kind: 'highlight'; color: string }
+      | { kind: 'note'; body: string; color?: string },
   ): TextAnnotation[] {
     const created = annotationsFromAnchors(anchors, input)
     // The default is read now, at creation, and written onto the record. A later
@@ -1275,6 +1296,7 @@ export class MarginRailElement extends ElementBase {
   ) {
     const doc = this.ownerDocument
     this.#noteDraft = ''
+    this.#roleDraft = null
     this.#popup = {
       anchors,
       range,
@@ -1308,16 +1330,22 @@ export class MarginRailElement extends ElementBase {
     }
   }
 
-  #savePopup(
-    input:
-      { kind: 'highlight'; color: string } | { kind: 'note'; body: string },
-  ) {
+  /**
+   * The popup's one save. A note, when there is text, tagged with the picked
+   * role if there is one; otherwise a highlight in the picked role. Nothing
+   * picked and nothing written saves nothing.
+   */
+  #savePopup() {
     const popup = this.#popup
     if (!popup) return
-    if (input.kind === 'note' && !input.body.trim()) return
+    const body = this.#noteDraft.trim()
+    const role = this.#roleDraft
+    if (!body && !role) return
     this.#create(
       popup.anchors,
-      input.kind === 'note' ? { kind: 'note', body: input.body.trim() } : input,
+      body
+        ? { kind: 'note', body, ...(role ? { color: role } : {}) }
+        : { kind: 'highlight', color: role! },
     )
     this.#capture = { status: 'empty' }
     this.#closePopup({ restoreFocus: true })
@@ -1817,7 +1845,9 @@ export class MarginRailElement extends ElementBase {
     const role =
       annotation.kind === 'highlight'
         ? highlightRole(annotation.appearance.color)
-        : null
+        : annotation.kind === 'note' && annotation.appearance
+          ? highlightRole(annotation.appearance.color)
+          : null
     item.style.setProperty(
       '--swatch',
       role ? `var(--margin-role-${role})` : 'var(--margin-role-note)',
@@ -2009,11 +2039,35 @@ export class MarginRailElement extends ElementBase {
       ),
     )
 
+    // Picking a role only marks it. The reader may still write a note, and
+    // one Save stores whichever they made: a highlight in that role, or a
+    // note tagged with it.
     const swatches = el(doc, 'div', {
       class: 'swatches',
       role: 'group',
-      'aria-label': 'Highlight',
+      'aria-label': 'Tag (optional)',
     })
+    const chips: HTMLButtonElement[] = []
+    const save = el(
+      doc,
+      'button',
+      {
+        type: 'button',
+        class: 'primary',
+        'data-margin-action': 'save',
+        'data-focus-key': 'popup-save',
+      },
+      'Save',
+    ) as HTMLButtonElement
+    const sync = () => {
+      for (const chip of chips) {
+        chip.setAttribute(
+          'aria-pressed',
+          String(chip.dataset.marginSwatch === this.#roleDraft),
+        )
+      }
+      save.disabled = !this.#roleDraft && !this.#noteDraft.trim()
+    }
     for (const role of HIGHLIGHT_ROLES) {
       const swatch = el(
         doc,
@@ -2023,22 +2077,25 @@ export class MarginRailElement extends ElementBase {
           class: 'swatch',
           'data-margin-swatch': role,
           'data-focus-key': `swatch:${role}`,
-          'aria-label': `Highlight as ${HIGHLIGHT_ROLE_LABELS[role]}`,
+          'aria-pressed': 'false',
+          'aria-label': `Tag as ${HIGHLIGHT_ROLE_LABELS[role]}`,
         },
         HIGHLIGHT_ROLE_LABELS[role],
-      )
+      ) as HTMLButtonElement
       swatch.style.setProperty(
         '--swatch',
         `var(--margin-role-${role as HighlightRole})`,
       )
-      swatch.addEventListener('click', () =>
-        this.#savePopup({ kind: 'highlight', color: role }),
-      )
+      swatch.addEventListener('click', () => {
+        this.#roleDraft = this.#roleDraft === role ? null : role
+        sync()
+      })
+      chips.push(swatch)
       swatches.append(swatch)
     }
     dialog.append(swatches)
 
-    const label = el(doc, 'label', {}, 'Note')
+    const label = el(doc, 'label', {}, 'Note (optional)')
     const note = el(doc, 'textarea', {
       'data-margin-note': '',
       'data-focus-key': 'popup-note',
@@ -2046,24 +2103,21 @@ export class MarginRailElement extends ElementBase {
     note.value = this.#noteDraft
     note.addEventListener('input', () => {
       this.#noteDraft = note.value
+      sync()
+    })
+    // Enter is a newline in a note; Cmd or Ctrl+Enter saves.
+    note.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault()
+        this.#savePopup()
+      }
     })
     label.append(note)
     dialog.append(label)
 
     const controls = el(doc, 'div', { class: 'controls' })
-    const save = el(
-      doc,
-      'button',
-      {
-        type: 'button',
-        'data-margin-action': 'save-note',
-        'data-focus-key': 'popup-save',
-      },
-      'Save note',
-    )
-    save.addEventListener('click', () =>
-      this.#savePopup({ kind: 'note', body: note.value }),
-    )
+    save.addEventListener('click', () => this.#savePopup())
+    sync()
     const cancel = el(
       doc,
       'button',
@@ -2092,7 +2146,9 @@ export class MarginRailElement extends ElementBase {
       }
       if (event.key !== 'Tab') return
       const focusable = Array.from(
-        dialog.querySelectorAll<HTMLElement>('button, textarea'),
+        dialog.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), textarea',
+        ),
       )
       const first = focusable[0]
       const last = focusable[focusable.length - 1]

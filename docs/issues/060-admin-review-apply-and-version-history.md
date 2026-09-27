@@ -60,22 +60,33 @@ stay at each owning adapter boundary.
    adapter — commit, author, date, message — and a diff between any two
    revisions. No commit content is duplicated into D1. The challenges adapter
    implements this **at build time**: for each node, the build writes a
-   static history asset from `git log --follow -- <file>` holding each
-   commit's metadata and the file's content at that commit. The page and the
-   endpoint read that asset, so history needs no credential and no GitHub API
-   rate limit, and it always matches the deployed build.
+   static history asset from `git log --follow --name-status -- <file>`,
+   holding each commit's metadata, **the file's path at that commit** (so a
+   renamed node keeps its pre-rename versions), and the content read with
+   `git show <commit>:<path-at-that-commit>`. The page and the endpoint read
+   that asset, so history needs no credential and no GitHub API rate limit,
+   and it always matches the deployed build. Like 059's stamp, it refuses a
+   shallow checkout.
 9. Applying is idempotent: a retried apply does not open a second pull request.
-10. **Apply is one action for the owner.** When the admin applies, the adapter
-    opens the pull request with auto-merge (squash) armed. Branch protection's
-    required checks still gate the merge, so criterion 4's invariant holds.
-    The review queue shows each applied proposal's PR state (open, checks
-    running, merged, closed), so the owner never has to leave the page to
-    know where a change is.
+10. **Apply is one action; merging follows the repository's merge policy.**
+    `POST /proposals/:id/apply` records the approval and returns `202` with
+    state `approved`. It never waits on the adapter. The adapter opens the pull
+    request and reports back, moving the row to `applied` (with the PR URL) or
+    `apply_failed` (with the reason, retried on the next run).
+    `.agent/merge-policy.yaml` is authoritative for merging: today `books/**`
+    is not an automatic path, so an applied PR waits for the owner's
+    `/rucksack merge <n>`, and the review queue shows that command beside the
+    PR. Adding book paths to automatic merge is an owner policy decision made
+    through the guarded policy process, outside this issue. Do not arm GitHub
+    auto-merge around it. The queue shows each applied proposal's state
+    (approved, PR open, checks, merged, closed, apply failed).
 11. The adapter runs as a GitHub Actions workflow in `erniesg/erniesg`
     (`schedule` plus `workflow_dispatch`) that **pulls** approved proposals
     from the service. The Worker never calls GitHub, so it holds no GitHub
-    credential of any kind. It reads with a service token scoped to
-    approved-proposal reads.
+    credential of any kind. The adapter authenticates to the service with
+    `MARGIN_ADAPTER_TOKEN` (see Allowed secrets), which can only list approved
+    proposals and report their results. The Worker stores only its SHA-256
+    and compares in constant time.
 12. The page has a history panel: the node's versions, newest first, and any
     two picked to show a rendered diff. Replay over time is 072.
 
@@ -93,15 +104,21 @@ stay at each owning adapter boundary.
 - `history` returns the real git log for a node and a correct diff between two
   revisions.
 - The service holds no git credential: a test asserts the Worker's bindings
-  contain no repository token, and that apply fails closed if the adapter is
-  unreachable rather than falling back to a direct write.
+  contain no repository token. With the adapter not running, apply returns
+  `202`, the row stays `approved`, and nothing is written; the Worker never
+  falls back to a direct write. After an adapter run fails, the next run
+  opens exactly one PR for that row.
+- The adapter token can list approved proposals and report results, and
+  nothing else: any other route answers 403 to it.
 - A non-admin calling apply is 403.
 - The adapter's pull-request step uses the repo-scoped credential, never
-  `GITHUB_TOKEN` (a workflow-boundary test greps the adapter workflow), and an
-  applied PR has auto-merge armed.
+  `GITHUB_TOKEN` (a workflow-boundary test greps the adapter workflow), and it
+  never arms auto-merge on a PR touching a path that
+  `.agent/merge-policy.yaml` does not list as automatic.
 - The build's history asset for a node lists the same commits as
   `git log --follow --format=%H -- <file>`, and the content at each commit
-  equals `git show <commit>:<file>`.
+  equals `git show <commit>:<path-at-that-commit>`. A fixture that renames a
+  node keeps its pre-rename versions.
 
 ## Definition of done
 
@@ -139,6 +156,14 @@ The adapter requires a repository-scoped credential, by name only, held at the
 adapter boundary and never in the Worker. Never `admin:org`. The Worker's own
 bindings must contain no repository token at all.
 
+Two secrets, both by name only:
+- `MARGIN_ADAPTER_GITHUB_TOKEN`: a GitHub Actions secret on `erniesg/erniesg`,
+  a fine-grained token for this repository only, with contents and pull
+  requests write. It opens the adapter's PRs, so their checks run.
+- `MARGIN_ADAPTER_TOKEN`: a GitHub Actions secret holding the service token.
+  The Worker holds only `MARGIN_ADAPTER_TOKEN_SHA256` (a Wrangler secret),
+  never the token itself.
+
 ## Artifact outputs
 
 The review queue and diff view; save and apply as distinct actions; the source
@@ -153,9 +178,13 @@ copying commit history into D1.
 
 ## Human clarification protocol
 
-The adapter's repository credential is a human action: a fine-grained,
-repo-scoped token for `erniesg/erniesg` only, staged by name. Apply
-`rucksack-needs-human` and build against a stub adapter until it exists.
+Both adapter secrets are human actions. The owner creates the fine-grained,
+repo-scoped token for `erniesg/erniesg` and stages it as
+`MARGIN_ADAPTER_GITHUB_TOKEN`. The owner (or the coordinator on the owner's
+say-so) generates `MARGIN_ADAPTER_TOKEN`, stages it as an Actions secret, and
+puts its SHA-256 in the Worker with `wrangler secret put`. Apply
+`rucksack-needs-human` with one ask covering both, and build against a stub
+adapter until they exist.
 
 ## Recommended response
 

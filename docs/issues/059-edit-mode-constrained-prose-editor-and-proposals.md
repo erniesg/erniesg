@@ -66,7 +66,12 @@ instead.
    `source-commit`, the last commit that touched that file
    (`git log -1 --format=%H -- <file>`), as attributes on `<margin-rail>`.
    A proposal takes its base commit from these, never from the client's clock
-   or a guess.
+   or a guess. **The build refuses a shallow checkout**: if
+   `git rev-parse --is-shallow-repository` prints `true`, it fails and names
+   the fix, because in a one-commit clone `git log -1 -- <file>` is empty for
+   every file HEAD did not touch. Every build and deploy path that runs it
+   (`.github/workflows/ci.yml`, `agent-evidence.yml`, and any deploy
+   workflow) checks out with `fetch-depth: 0`.
 10. Edit mode covers ordinary editing, not only one-word fixes. Deleting a
     word, a sentence, a whole paragraph or a list item, replacing text,
     retyping a passage, and splitting or joining paragraphs all work, with
@@ -88,6 +93,8 @@ instead.
 - For three nodes, the stamped `source-commit` equals
   `git log -1 --format=%H -- <file>` at the build commit, and the stamped
   path exists.
+- The build run in a `git clone --depth 1` checkout fails with a message
+  naming the shallow clone, and emits no page.
 - Deleting a whole paragraph and joining two paragraphs each produce a
   CriticMarkup patch that `git apply`s cleanly to the base commit; undo
   restores a byte-identical document.

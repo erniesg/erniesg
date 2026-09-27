@@ -83,7 +83,7 @@ credential present in the Worker.
 
 ```bash
 npx vitest run src/worker/margin adapters/margin
-npm --workspace packages/margin test
+npm run test:margin
 python3 books/tools/validate.py
 npm test
 npm run build

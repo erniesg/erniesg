@@ -584,7 +584,9 @@ async function readPrefs(
   owner: string,
 ): Promise<Response> {
   const prefs = await context.repository.getPrefs(owner)
-  return json({ defaultVisibility: prefs.defaultVisibility })
+  // `creator` is the value this caller's annotations carry, so a client can
+  // tell its own rows from others' without re-deriving the principal key.
+  return json({ defaultVisibility: prefs.defaultVisibility, creator: owner })
 }
 
 async function writePrefs(
@@ -609,7 +611,7 @@ async function writePrefs(
     parsed.data.defaultVisibility,
     context.now(),
   )
-  return json({ defaultVisibility: prefs.defaultVisibility })
+  return json({ defaultVisibility: prefs.defaultVisibility, creator: owner })
 }
 
 function notImplemented(issue: string): Response {

@@ -64,7 +64,7 @@ N+1 test passes.
 ## Validation command
 
 ```bash
-npm --workspace packages/margin test
+npm run test:margin
 npx vitest run src/worker/margin
 npm test
 SRT_E2E_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')

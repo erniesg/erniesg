@@ -10,6 +10,7 @@ import {
   type SemanticTextAnchor,
   type TextAnnotation,
 } from './anchor.js'
+import { NOTE_PAINT_KEY } from './palette.js'
 import { placeAnnotations, type AnnotationPlacement } from './document.js'
 import {
   readAnchorableBlocks,
@@ -51,12 +52,18 @@ export type MarginController = {
 export function paintTargetsFor(
   placements: readonly AnnotationPlacement[],
 ): PaintTarget[] {
+  // A note paints as well as a highlight: the passage it is about has to be
+  // visible, and clickable, or the note is attached to nothing the reader can
+  // see. Proposals are 060's and paint as their own diff, not here.
   return placements.flatMap(({ annotation, placement }) =>
-    placement.status === 'anchored' && annotation.kind === 'highlight'
+    placement.status === 'anchored' && annotation.kind !== 'proposal'
       ? [
           {
             id: annotation.id,
-            color: annotation.appearance.color,
+            color:
+              annotation.kind === 'highlight'
+                ? annotation.appearance.color
+                : NOTE_PAINT_KEY,
             nodeId: placement.nodeId,
             start: placement.start,
             end: placement.end,

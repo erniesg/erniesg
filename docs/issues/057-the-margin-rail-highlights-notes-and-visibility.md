@@ -74,7 +74,7 @@ from 054 behind it; keyboard and screen-reader paths are complete, not partial.
 ## Validation command
 
 ```bash
-npm --workspace packages/margin test
+npm run test:margin
 npm test
 npm run build
 SRT_E2E_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')

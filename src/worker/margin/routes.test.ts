@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import {
   ADA,
   ADA_KEY,
+  BOB_KEY,
   BOB,
   CHAPTER_ONE,
   CHAPTER_TWO,
@@ -69,8 +70,12 @@ describe('GET|POST /annotations', () => {
       [BOB, 'public', 'bob public'],
     ] as const) {
       expect(
-        (await post(webAnnotation({ source: CHAPTER_ONE, visibility, body }), as))
-          .status,
+        (
+          await post(
+            webAnnotation({ source: CHAPTER_ONE, visibility, body }),
+            as,
+          )
+        ).status,
       ).toBe(201)
     }
 
@@ -129,7 +134,11 @@ describe('tenancy', () => {
 
   it('keeps a second site invisible to the first, with no migration', async () => {
     await post(
-      webAnnotation({ source: CHAPTER_ONE, visibility: 'public', body: 'ernie' }),
+      webAnnotation({
+        source: CHAPTER_ONE,
+        visibility: 'public',
+        body: 'ernie',
+      }),
     )
     await post(
       webAnnotation({
@@ -151,7 +160,10 @@ describe('tenancy', () => {
 describe('prefs and the default visibility', () => {
   it('defaults to private and never rewrites an existing annotation', async () => {
     const initial = await harness.request('GET', '/prefs')
-    expect(await initial.json()).toEqual({ defaultVisibility: 'private' })
+    expect(await initial.json()).toEqual({
+      defaultVisibility: 'private',
+      creator: ADA_KEY,
+    })
 
     // No `margin:visibility` on the wire: the stored default applies.
     const created = await post(
@@ -164,7 +176,10 @@ describe('prefs and the default visibility', () => {
       body: { defaultVisibility: 'public' },
     })
     expect(changed.status).toBe(200)
-    expect(await changed.json()).toEqual({ defaultVisibility: 'public' })
+    expect(await changed.json()).toEqual({
+      defaultVisibility: 'public',
+      creator: ADA_KEY,
+    })
 
     // The earlier annotation is untouched...
     const [existing] = await list(CHAPTER_ONE)
@@ -182,10 +197,12 @@ describe('prefs and the default visibility', () => {
       as: BOB,
       body: { defaultVisibility: 'public' },
     })
-    expect(await (await harness.request('GET', '/prefs', { as: ADA })).json())
-      .toEqual({ defaultVisibility: 'private' })
-    expect(await (await harness.request('GET', '/prefs', { as: BOB })).json())
-      .toEqual({ defaultVisibility: 'public' })
+    expect(
+      await (await harness.request('GET', '/prefs', { as: ADA })).json(),
+    ).toEqual({ defaultVisibility: 'private', creator: ADA_KEY })
+    expect(
+      await (await harness.request('GET', '/prefs', { as: BOB })).json(),
+    ).toEqual({ defaultVisibility: 'public', creator: BOB_KEY })
 
     const bobSecondDocument = await post(
       webAnnotation({ source: CHAPTER_TWO, body: 'still public' }),
@@ -199,9 +216,9 @@ describe('prefs and the default visibility', () => {
       body: { defaultVisibility: 'semi-public' },
     })
     expect(bad.status).toBe(400)
-    expect(
-      (await harness.request('GET', '/prefs', { as: null })).status,
-    ).toBe(401)
+    expect((await harness.request('GET', '/prefs', { as: null })).status).toBe(
+      401,
+    )
   })
 })
 
@@ -394,7 +411,11 @@ describe('PATCH and DELETE /annotations/:id', () => {
 describe('proposals and the routes 059 and 060 will finish', () => {
   it('lists only annotations motivated by editing', async () => {
     await post(
-      webAnnotation({ source: CHAPTER_ONE, visibility: 'public', body: 'note' }),
+      webAnnotation({
+        source: CHAPTER_ONE,
+        visibility: 'public',
+        body: 'note',
+      }),
     )
     await post(
       webAnnotation({
@@ -530,9 +551,15 @@ describe('review findings', () => {
   // else's annotation. A cascade through `parent_id` would have done exactly
   // that, and quietly.
   it('refuses to delete a parent that other people have replied to', async () => {
-    const parent = (await (await post(
-      webAnnotation({ source: CHAPTER_ONE, visibility: 'public', body: 'ada asks' }),
-    )).json()) as WireAnnotation
+    const parent = (await (
+      await post(
+        webAnnotation({
+          source: CHAPTER_ONE,
+          visibility: 'public',
+          body: 'ada asks',
+        }),
+      )
+    ).json()) as WireAnnotation
 
     const reply = await post(
       webAnnotation({
@@ -564,9 +591,11 @@ describe('review findings', () => {
   })
 
   it('still deletes an annotation nobody has replied to', async () => {
-    const own = (await (await post(
-      webAnnotation({ source: CHAPTER_ONE, body: 'no replies here' }),
-    )).json()) as WireAnnotation
+    const own = (await (
+      await post(
+        webAnnotation({ source: CHAPTER_ONE, body: 'no replies here' }),
+      )
+    ).json()) as WireAnnotation
 
     const response = await harness.request(
       'DELETE',
@@ -579,9 +608,9 @@ describe('review findings', () => {
   // A client writing a reply has the parent's returned `id`, which is the IRI.
   // Requiring the bare key meant the obvious thing failed with `unknown_parent`.
   it('takes the parent id in the form it handed back', async () => {
-    const parent = (await (await post(
-      webAnnotation({ source: CHAPTER_ONE, body: 'the question' }),
-    )).json()) as WireAnnotation
+    const parent = (await (
+      await post(webAnnotation({ source: CHAPTER_ONE, body: 'the question' }))
+    ).json()) as WireAnnotation
     expect(parent.id).toMatch(/^urn:margin:annotation:/)
 
     for (const reference of [parent.id, bareId(parent)]) {
@@ -608,7 +637,9 @@ describe('review findings', () => {
       ['https://ernie.sg/challenges/./chapter-1', CHAPTER_ONE],
       ['https://ernie.sg/challenges/x/../chapter-1', CHAPTER_ONE],
     ] as const) {
-      const response = await post(webAnnotation({ source: sent, body: `via ${sent}` }))
+      const response = await post(
+        webAnnotation({ source: sent, body: `via ${sent}` }),
+      )
       expect(response.status, sent).toBe(201)
       const created = (await response.json()) as WireAnnotation
       expect(created.target.source, sent).toBe(canonical)
@@ -620,7 +651,9 @@ describe('review findings', () => {
 
   it('refuses a target carrying credentials rather than dropping them', async () => {
     const response = await post(
-      webAnnotation({ source: 'https://user:secret@ernie.sg/challenges/chapter-1' }),
+      webAnnotation({
+        source: 'https://user:secret@ernie.sg/challenges/chapter-1',
+      }),
     )
 
     expect(response.status).toBe(400)
@@ -666,9 +699,10 @@ describe('review findings, round two', () => {
   // concatenation and then queried the raw spelling, so a write and a read could
   // land on different tenants.
   it('canonicalises the explicit site and document too', async () => {
-    expect((await post(webAnnotation({ source: CHAPTER_ONE, body: 'stored' }))).status).toBe(
-      201,
-    )
+    expect(
+      (await post(webAnnotation({ source: CHAPTER_ONE, body: 'stored' })))
+        .status,
+    ).toBe(201)
 
     for (const site of [
       'https://ernie.sg',
@@ -685,7 +719,10 @@ describe('review findings, round two', () => {
       const { annotations } = (await response.json()) as {
         annotations: WireAnnotation[]
       }
-      expect(annotations.map((a) => a.body?.value), site).toEqual(['stored'])
+      expect(
+        annotations.map((a) => a.body?.value),
+        site,
+      ).toEqual(['stored'])
     }
   })
 
@@ -731,24 +768,38 @@ describe('review findings, round two', () => {
 
   // 409 vs 404 on an annotation the caller cannot see would tell them it exists
   // and whether anybody has replied to it — an oracle over what visibility hides.
-  it('does not let the reply check reveal somebody else\'s annotation', async () => {
-    const hidden = (await (await post(
-      webAnnotation({ source: CHAPTER_ONE, visibility: 'private', body: 'bob private' }),
-      BOB,
-    )).json()) as WireAnnotation
-    const withReply = (await (await post(
-      webAnnotation({ source: CHAPTER_ONE, visibility: 'public', body: 'bob public' }),
-      BOB,
-    )).json()) as WireAnnotation
-    expect(
-      (await post(
+  it("does not let the reply check reveal somebody else's annotation", async () => {
+    const hidden = (await (
+      await post(
+        webAnnotation({
+          source: CHAPTER_ONE,
+          visibility: 'private',
+          body: 'bob private',
+        }),
+        BOB,
+      )
+    ).json()) as WireAnnotation
+    const withReply = (await (
+      await post(
         webAnnotation({
           source: CHAPTER_ONE,
           visibility: 'public',
-          body: 'ada replies',
-          parentId: bareId(withReply),
+          body: 'bob public',
         }),
-      )).status,
+        BOB,
+      )
+    ).json()) as WireAnnotation
+    expect(
+      (
+        await post(
+          webAnnotation({
+            source: CHAPTER_ONE,
+            visibility: 'public',
+            body: 'ada replies',
+            parentId: bareId(withReply),
+          }),
+        )
+      ).status,
     ).toBe(201)
 
     // Ada is signed in and is not the owner of either. Both answers must match,
@@ -786,9 +837,10 @@ describe('review findings, round two', () => {
       { prefix: longContext },
       { suffix: longContext },
     ]) {
-      expect((await post(withSelector(patch))).status, JSON.stringify(Object.keys(patch))).toBe(
-        400,
-      )
+      expect(
+        (await post(withSelector(patch))).status,
+        JSON.stringify(Object.keys(patch)),
+      ).toBe(400)
     }
 
     // At the bound, with the position selector agreeing: a quote and a position
@@ -801,7 +853,8 @@ describe('review findings, round two', () => {
         ...base.target,
         selector: base.target.selector.map((entry) => {
           const typed = entry as { type: string }
-          if (typed.type === 'TextQuoteSelector') return { ...entry, exact: atBound }
+          if (typed.type === 'TextQuoteSelector')
+            return { ...entry, exact: atBound }
           if (typed.type === 'TextPositionSelector') {
             return { ...entry, start: 5, end: 5 + atBound.length }
           }
@@ -810,12 +863,16 @@ describe('review findings, round two', () => {
       },
     }
     const accepted = await post(consistent)
-    expect(accepted.status, JSON.stringify(await accepted.clone().json())).toBe(201)
+    expect(accepted.status, JSON.stringify(await accepted.clone().json())).toBe(
+      201,
+    )
   })
 
   // A `Location` a client cannot dereference is worse than none.
   it('returns a Location a client can actually follow', async () => {
-    const created = await post(webAnnotation({ source: CHAPTER_ONE, body: 'follow me' }))
+    const created = await post(
+      webAnnotation({ source: CHAPTER_ONE, body: 'follow me' }),
+    )
     expect(created.status).toBe(201)
     const location = created.headers.get('location') as string
 
@@ -827,13 +884,21 @@ describe('review findings, round two', () => {
       { as: ADA },
     )
     expect(followed.status).toBe(200)
-    expect(((await followed.json()) as WireAnnotation).body?.value).toBe('follow me')
+    expect(((await followed.json()) as WireAnnotation).body?.value).toBe(
+      'follow me',
+    )
   })
 
   it('shows a public annotation at its own URI and hides a private one', async () => {
-    const mine = (await (await post(
-      webAnnotation({ source: CHAPTER_ONE, visibility: 'private', body: 'ada private' }),
-    )).json()) as WireAnnotation
+    const mine = (await (
+      await post(
+        webAnnotation({
+          source: CHAPTER_ONE,
+          visibility: 'private',
+          body: 'ada private',
+        }),
+      )
+    ).json()) as WireAnnotation
 
     const asOwner = await harness.request(
       'GET',
@@ -869,9 +934,9 @@ describe('review findings, round two', () => {
       'margin:color': 'amber',
     })
     expect(highlight.status).toBe(201)
-    expect(((await highlight.json()) as { 'margin:color'?: string })['margin:color']).toBe(
-      'amber',
-    )
+    expect(
+      ((await highlight.json()) as { 'margin:color'?: string })['margin:color'],
+    ).toBe('amber')
   })
 })
 
@@ -880,9 +945,11 @@ describe('review findings, round three', () => {
   // what a client holds. Requiring the bare key here meant the identifier the API
   // hands out did not work in the API's own URLs.
   it('takes either spelling of an id on the item routes', async () => {
-    const created = (await (await post(
-      webAnnotation({ source: CHAPTER_ONE, body: 'either spelling' }),
-    )).json()) as WireAnnotation
+    const created = (await (
+      await post(
+        webAnnotation({ source: CHAPTER_ONE, body: 'either spelling' }),
+      )
+    ).json()) as WireAnnotation
 
     for (const reference of [created.id, bareId(created)]) {
       const got = await harness.request(
@@ -913,7 +980,11 @@ describe('review findings, round three', () => {
   it('bounds a collection and hands back a cursor', async () => {
     for (let index = 0; index < 5; index += 1) {
       expect(
-        (await post(webAnnotation({ source: CHAPTER_ONE, body: `note ${index}` }))).status,
+        (
+          await post(
+            webAnnotation({ source: CHAPTER_ONE, body: `note ${index}` }),
+          )
+        ).status,
       ).toBe(201)
     }
 
@@ -924,7 +995,9 @@ describe('review findings, round three', () => {
       const query =
         `${scopeQuery(CHAPTER_ONE)}&limit=2` +
         (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '')
-      const response = await harness.request('GET', `/annotations${query}`, { as: ADA })
+      const response = await harness.request('GET', `/annotations${query}`, {
+        as: ADA,
+      })
       expect(response.status).toBe(200)
       const body = (await response.json()) as {
         annotations: WireAnnotation[]
@@ -954,7 +1027,9 @@ describe('review findings, round three', () => {
         { as: ADA },
       )
       expect(response.status, query).toBe(400)
-      expect(await response.json()).toMatchObject({ error: { code: 'invalid_limit' } })
+      expect(await response.json()).toMatchObject({
+        error: { code: 'invalid_limit' },
+      })
     }
 
     const bad = await harness.request(
@@ -963,13 +1038,16 @@ describe('review findings, round three', () => {
       { as: ADA },
     )
     expect(bad.status).toBe(400)
-    expect(await bad.json()).toMatchObject({ error: { code: 'invalid_cursor' } })
+    expect(await bad.json()).toMatchObject({
+      error: { code: 'invalid_cursor' },
+    })
   })
 
   it('omits the cursor on the last page', async () => {
-    expect((await post(webAnnotation({ source: CHAPTER_ONE, body: 'only one' }))).status).toBe(
-      201,
-    )
+    expect(
+      (await post(webAnnotation({ source: CHAPTER_ONE, body: 'only one' })))
+        .status,
+    ).toBe(201)
 
     const response = await harness.request(
       'GET',
@@ -984,9 +1062,15 @@ describe('review findings, round three', () => {
   // it, and that is a conflict the caller can act on rather than the store being
   // unavailable.
   it('reports a lost race as a conflict, not as an outage', async () => {
-    const parent = (await (await post(
-      webAnnotation({ source: CHAPTER_ONE, visibility: 'public', body: 'the parent' }),
-    )).json()) as WireAnnotation
+    const parent = (await (
+      await post(
+        webAnnotation({
+          source: CHAPTER_ONE,
+          visibility: 'public',
+          body: 'the parent',
+        }),
+      )
+    ).json()) as WireAnnotation
 
     // Slip a reply in between the reply count and the delete.
     const original = harness.repository.countReplies.bind(harness.repository)
@@ -1013,7 +1097,9 @@ describe('review findings, round three', () => {
     )
 
     expect(response.status).toBe(409)
-    expect(await response.json()).toMatchObject({ error: { code: 'has_replies' } })
+    expect(await response.json()).toMatchObject({
+      error: { code: 'has_replies' },
+    })
   })
 })
 
@@ -1044,9 +1130,11 @@ describe('review findings, round four', () => {
   })
 
   it('still round-trips a real node id, and still omits an absent selector', async () => {
-    const scoped = (await (await post(
-      webAnnotation({ source: CHAPTER_ONE, nodeId: 'p-proposition-7' }),
-    )).json()) as WireAnnotation
+    const scoped = (await (
+      await post(
+        webAnnotation({ source: CHAPTER_ONE, nodeId: 'p-proposition-7' }),
+      )
+    ).json()) as WireAnnotation
     const struct = scoped.target.selector.find(
       (entry) => entry.type === STRUCT_SELECTOR_TYPE,
     ) as { 'margin:nodeId'?: string } | undefined
@@ -1081,7 +1169,9 @@ describe('review findings, round four', () => {
     expect(exact.length).toBe(9)
 
     const response = await post(emoji)
-    expect(response.status, JSON.stringify(await response.clone().json())).toBe(201)
+    expect(response.status, JSON.stringify(await response.clone().json())).toBe(
+      201,
+    )
 
     const created = (await response.json()) as WireAnnotation
     const position = created.target.selector.find(
@@ -1113,11 +1203,16 @@ describe('review findings, round five', () => {
   // `https://ernie.sg//chapter`, which splits back to the document `//chapter`.
   // A trailing slash silently addressed a different document than was written.
   it('joins the document to the canonical origin, trailing slash and all', async () => {
-    expect((await post(webAnnotation({ source: CHAPTER_ONE, body: 'stored' }))).status).toBe(
-      201,
-    )
+    expect(
+      (await post(webAnnotation({ source: CHAPTER_ONE, body: 'stored' })))
+        .status,
+    ).toBe(201)
 
-    for (const site of ['https://ernie.sg', 'https://ernie.sg/', 'https://ERNIE.SG/']) {
+    for (const site of [
+      'https://ernie.sg',
+      'https://ernie.sg/',
+      'https://ERNIE.SG/',
+    ]) {
       const response = await harness.request(
         'GET',
         `/annotations?site=${encodeURIComponent(site)}` +
@@ -1128,16 +1223,21 @@ describe('review findings, round five', () => {
       const { annotations } = (await response.json()) as {
         annotations: WireAnnotation[]
       }
-      expect(annotations.map((a) => a.body?.value), site).toEqual(['stored'])
+      expect(
+        annotations.map((a) => a.body?.value),
+        site,
+      ).toEqual(['stored'])
     }
   })
 
   // The mirror of the delete race: the parent goes away between the lookup and
   // the insert, so `parent_id` refuses the row. The store is healthy.
   it('reports a deleted parent as a conflict, not as an outage', async () => {
-    const parent = (await (await post(
-      webAnnotation({ source: CHAPTER_ONE, body: 'about to vanish' }),
-    )).json()) as WireAnnotation
+    const parent = (await (
+      await post(
+        webAnnotation({ source: CHAPTER_ONE, body: 'about to vanish' }),
+      )
+    ).json()) as WireAnnotation
 
     // Delete the parent between `findAnnotation` and `insertAnnotation`.
     //
@@ -1178,15 +1278,28 @@ describe('review findings, round five', () => {
   // The record does not store `type` and the response always says `Annotation`,
   // so anything else was accepted and read back with different JSON-LD meaning.
   it('refuses a type it cannot preserve', async () => {
-    for (const type of ['AnnotationPage', ['Annotation', 'CustomType'], [], 'annotation']) {
-      const response = await post({ ...webAnnotation({ source: CHAPTER_ONE }), type })
+    for (const type of [
+      'AnnotationPage',
+      ['Annotation', 'CustomType'],
+      [],
+      'annotation',
+    ]) {
+      const response = await post({
+        ...webAnnotation({ source: CHAPTER_ONE }),
+        type,
+      })
       expect(response.status, JSON.stringify(type)).toBe(400)
     }
 
     for (const type of ['Annotation', ['Annotation']]) {
-      const response = await post({ ...webAnnotation({ source: CHAPTER_ONE }), type })
+      const response = await post({
+        ...webAnnotation({ source: CHAPTER_ONE }),
+        type,
+      })
       expect(response.status, JSON.stringify(type)).toBe(201)
-      expect(((await response.json()) as { type: string }).type).toBe('Annotation')
+      expect(((await response.json()) as { type: string }).type).toBe(
+        'Annotation',
+      )
     }
   })
 
@@ -1204,7 +1317,8 @@ describe('review findings, round five', () => {
           if (typed.type === 'TextQuoteSelector') {
             return { ...entry, exact, prefix: '', suffix: '' }
           }
-          if (typed.type === 'TextPositionSelector') return { ...entry, start: 5, end }
+          if (typed.type === 'TextPositionSelector')
+            return { ...entry, start: 5, end }
           return entry
         }),
       },
@@ -1239,7 +1353,11 @@ describe('review findings, round six', () => {
     const bodies = await Promise.all(
       (['commenting', 'editing'] as const).map(async (motivation) => {
         const response = await post(
-          webAnnotation({ source: CHAPTER_ONE, motivation, body: `a ${motivation} body` }),
+          webAnnotation({
+            source: CHAPTER_ONE,
+            motivation,
+            body: `a ${motivation} body`,
+          }),
         )
         expect(response.status, motivation).toBe(201)
         return ((await response.json()) as WireAnnotation).body?.value

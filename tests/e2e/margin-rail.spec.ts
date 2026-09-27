@@ -57,6 +57,8 @@ type Service = {
   holdLists: Promise<void> | null
   /** While set, every DELETE waits for this. */
   holdDeletes: Promise<void> | null
+  /** While true, GET /prefs answers 500. */
+  failPrefs: boolean
   /** While true, every PATCH is refused with a 500. */
   failPatches: boolean
   setPrefs(
@@ -98,6 +100,7 @@ async function mountService(page: Page): Promise<Service> {
     holdNextPatch: null,
     holdLists: null,
     holdDeletes: null,
+    failPrefs: false,
     failPatches: false,
     async setPrefs(principal, defaultVisibility) {
       await call(
@@ -160,6 +163,14 @@ async function mountService(page: Page): Promise<Service> {
       await service.holdPrefs
     }
     if (method === 'DELETE' && service.holdDeletes) await service.holdDeletes
+    if (method === 'GET' && path.endsWith('/prefs') && service.failPrefs) {
+      await route.fulfill({
+        status: 500,
+        headers: { 'content-type': 'application/json' },
+        body: '{"error":{"code":"test_outage"}}',
+      })
+      return
+    }
     if (
       method === 'GET' &&
       path.endsWith('/annotations') &&
@@ -735,13 +746,86 @@ test.describe('the margin rail under slow or racing requests', () => {
     service.holdDeletes = deletes.promise
     const remove = page.locator(`${ENTRY} [data-margin-action="delete"]`)
     await remove.click()
-    await remove.click()
+    // Now shown as unavailable; forced, because a second activation (a double
+    // click, Enter held down) is exactly what must be ignored.
+    await remove.click({ force: true })
     deletes.open()
     await expect(page.locator(ENTRY)).toHaveCount(0)
     await page.waitForTimeout(300)
     await expect(
       page.locator(`${RAIL} [data-margin-notice="transport"]`),
     ).toHaveCount(0)
+  })
+
+  test('a settings outage is reported, not treated as signing out', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    const [block] = await proseBlocks(page)
+    await highlight(page, block, 0, 20)
+    await expect.poll(async () => (await service.rows()).length).toBe(1)
+    service.failPrefs = true
+    await page.evaluate(() => {
+      const rail = document.querySelector('margin-rail') as HTMLElement & {
+        transport: unknown
+      }
+      rail.transport = rail.transport
+    })
+    await expect(
+      page.locator(`${RAIL} [data-margin-notice="transport"]`),
+    ).toContainText('margin settings')
+    // The reader known before the outage still owns their annotation.
+    await expect(
+      page.locator(`${ENTRY} [data-margin-action="delete"]`),
+    ).toHaveCount(1)
+  })
+
+  test('a deleted annotation does not come back from a load that started before the delete', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    const [block] = await proseBlocks(page)
+    await highlight(page, block, 0, 20)
+    await expect.poll(async () => (await service.rows()).length).toBe(1)
+    const lists = gate()
+    service.holdLists = lists.promise
+    await page.evaluate(() => {
+      const rail = document.querySelector('margin-rail') as HTMLElement & {
+        transport: unknown
+      }
+      rail.transport = rail.transport
+    })
+    await page.waitForTimeout(200)
+    // Release the snapshot only after the delete has gone through.
+    const snapshotTaken = lists
+    await page.locator(`${ENTRY} [data-margin-action="delete"]`).click()
+    await expect.poll(async () => (await service.rows()).length).toBe(0)
+    service.holdLists = null
+    snapshotTaken.open()
+    await page.waitForTimeout(300)
+    await expect(page.locator(ENTRY)).toHaveCount(0)
+  })
+
+  test('an entry being deleted accepts no other change', async ({ page }) => {
+    const service = await mountService(page)
+    await open(page)
+    const [block] = await proseBlocks(page)
+    await highlight(page, block, 0, 20)
+    await expect.poll(async () => (await service.rows()).length).toBe(1)
+    const deletes = gate()
+    service.holdDeletes = deletes.promise
+    await page.locator(`${ENTRY} [data-margin-action="delete"]`).click()
+    const toggle = page.locator(`${ENTRY} [data-margin-action="visibility"]`)
+    await expect(toggle).toHaveAttribute('aria-disabled', 'true')
+    await toggle.click({ force: true })
+    await expect(page.locator(ENTRY)).toHaveAttribute(
+      'data-visibility',
+      'private',
+    )
+    deletes.open()
+    await expect(page.locator(ENTRY)).toHaveCount(0)
   })
 
   test('is not printed', async ({ page }) => {

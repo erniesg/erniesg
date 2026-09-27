@@ -75,6 +75,8 @@ export const MARGIN_RAIL_TAG = 'margin-rail'
 /** How many pages of annotations a load follows before it stops asking. */
 const FLASH_MS = 1200
 const LOAD_FAILED = 'Could not load annotations for this page.'
+const PREFS_FAILED =
+  'Could not load your margin settings; your annotations may show without their controls. Reload to try again.'
 const FLASH_PAINT = 'rgba(250, 204, 21, 0.85)'
 
 const ROLE_SWATCHES = HIGHLIGHT_ROLES.map(
@@ -105,7 +107,7 @@ button.quote:hover { text-decoration: underline; }
 button, input, textarea { font: inherit; color: inherit; }
 button { font-size: 0.8125rem; cursor: pointer; background: none; border: 1px solid currentColor; border-radius: 0.25rem; padding: 0.2rem 0.55rem; }
 button.quote { border: 0; padding: 0; font-size: inherit; }
-button[disabled] { cursor: default; opacity: 0.55; }
+button[disabled], button[aria-disabled='true'] { cursor: default; opacity: 0.55; }
 button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 fieldset { border: 0; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; font-size: 0.8125rem; }
@@ -247,8 +249,13 @@ export class MarginRailElement extends ElementBase {
   #fieldWrites = new Map<string, number>()
   /** Records with a delete already on its way. */
   #deleting = new WeakSet<RailRecord>()
+  /**
+   * Server ids this page deleted. A load whose snapshot predates the delete
+   * still lists the row; without this it would come back after being removed.
+   */
+  #deletedIds = new Set<string>()
   /** Default-visibility writes not yet finished. */
-  #prefsWritesPending = 0
+  #prefsWritesPending = new Map<MarginTransport | null, number>()
   #flashTimer = 0
   #unflash: (() => void) | null = null
   #listeners: (() => void)[] = []
@@ -337,6 +344,7 @@ export class MarginRailElement extends ElementBase {
       (record) => record.serverId === null && !this.#saving.has(record),
     )
     this.#viewer = null
+    this.#deletedIds.clear()
     // The default belonged to that connection's reader too. Until the new one's
     // is read, new annotations take the private fallback, not the old reader's.
     this.#defaultVisibility = DEFAULT_VISIBILITY
@@ -571,9 +579,13 @@ export class MarginRailElement extends ElementBase {
       try {
         const prefs = await client.readPrefs()
         if (generation !== this.#loadGeneration) return
-        if (!isSuccess(prefs)) {
+        if (prefs.status === 401 || prefs.status === 403) {
           // Signed out, or refused: nobody here owns anything, whoever did before.
           this.#viewer = null
+        } else if (!isSuccess(prefs)) {
+          // A 429 or a 500 says nothing about who is reading. Keep what is
+          // known, say the settings did not load, and let the list go on.
+          this.#notice = PREFS_FAILED
         } else {
           const body = prefs.body as {
             defaultVisibility?: string
@@ -592,7 +604,7 @@ export class MarginRailElement extends ElementBase {
             // read, even one that started after the choice was made.
             if (
               revision === this.#prefsRevision &&
-              this.#prefsWritesPending === 0
+              !this.#prefsWritesPending.get(this.#transport)
             ) {
               this.#defaultVisibility = body.defaultVisibility
             }
@@ -676,7 +688,11 @@ export class MarginRailElement extends ElementBase {
           record.serverId ? [record.serverId] : [],
         ),
       )
-      const fresh = loaded.filter((record) => !local.has(record.serverId ?? ''))
+      const fresh = loaded.filter(
+        (record) =>
+          !local.has(record.serverId ?? '') &&
+          !this.#deletedIds.has(record.serverId ?? ''),
+      )
       for (const record of fresh) {
         this.#confirmed.set(record, {
           visibility: record.visibility,
@@ -989,7 +1005,13 @@ export class MarginRailElement extends ElementBase {
    */
   async setVisibility(id: string, visibility: MarginVisibility) {
     const record = this.#find(id)
-    if (!record || !record.mine || record.visibility === visibility) return
+    if (
+      !record ||
+      !record.mine ||
+      this.#deleting.has(record) ||
+      record.visibility === visibility
+    )
+      return
     record.visibility = visibility
     // The reader chose; the default arriving later must not overwrite that.
     this.#provisional.delete(record)
@@ -1047,7 +1069,12 @@ export class MarginRailElement extends ElementBase {
     // One preference write at a time, in order, and only the latest choice is
     // sent: two concurrent PATCHes could otherwise land reversed and store the
     // default the reader moved away from.
-    this.#prefsWritesPending += 1
+    // Counted per connection: an old connection's write still in flight must
+    // not stop a new connection's read from applying its own default.
+    this.#prefsWritesPending.set(
+      transport,
+      (this.#prefsWritesPending.get(transport) ?? 0) + 1,
+    )
     const run = this.#prefsWrites.then(async () => {
       // Whether there is a signed-in reader to save it for is only known once
       // the preference read has settled.
@@ -1077,7 +1104,9 @@ export class MarginRailElement extends ElementBase {
     this.#prefsWrites = run
       .catch(() => undefined)
       .finally(() => {
-        this.#prefsWritesPending -= 1
+        const left = (this.#prefsWritesPending.get(transport) ?? 1) - 1
+        if (left > 0) this.#prefsWritesPending.set(transport, left)
+        else this.#prefsWritesPending.delete(transport)
       })
     await run
   }
@@ -1085,7 +1114,13 @@ export class MarginRailElement extends ElementBase {
   async editNote(id: string, body: string) {
     const record = this.#find(id)
     const text = body.trim()
-    if (!record || !record.mine || record.annotation.kind !== 'note' || !text)
+    if (
+      !record ||
+      !record.mine ||
+      this.#deleting.has(record) ||
+      record.annotation.kind !== 'note' ||
+      !text
+    )
       return
     const edited = { ...record.annotation, body: text }
     record.annotation = edited
@@ -1135,6 +1170,9 @@ export class MarginRailElement extends ElementBase {
     // after the first succeeded and reports a 404 as "Not deleted".
     if (!record || !record.mine || this.#deleting.has(record)) return
     this.#deleting.add(record)
+    // Shown as unavailable while the delete is out. `aria-disabled` rather than
+    // `disabled`, so the focused control keeps focus instead of dropping it.
+    this.#render()
     const documentUri = this.documentUri
     const transport = this.#transport
     // A delete that overtakes its own create would remove the entry here while
@@ -1171,8 +1209,10 @@ export class MarginRailElement extends ElementBase {
     })
     if (!deleted) {
       this.#deleting.delete(record)
+      this.#render()
       return
     }
+    if (record.serverId) this.#deletedIds.add(record.serverId)
     const position = this.#visibleRecords().findIndex(
       (entry) => entry.annotation.id === id,
     )
@@ -1885,6 +1925,8 @@ export class MarginRailElement extends ElementBase {
       record.visibility === 'public' ? 'Public' : 'Private',
     )
     if (record.mine) {
+      const busy = this.#deleting.has(record) ? 'true' : undefined
+      if (busy) item.setAttribute('aria-busy', 'true')
       const next: MarginVisibility =
         record.visibility === 'public' ? 'private' : 'public'
       const toggle = el(
@@ -1895,6 +1937,7 @@ export class MarginRailElement extends ElementBase {
           'data-margin-action': 'visibility',
           'data-focus-key': `visibility:${id}`,
           'aria-label': `${record.visibility === 'public' ? 'Public' : 'Private'}. Make ${next}`,
+          'aria-disabled': busy,
         },
         record.visibility === 'public' ? 'Public' : 'Private',
       )
@@ -1908,10 +1951,12 @@ export class MarginRailElement extends ElementBase {
             type: 'button',
             'data-margin-action': 'edit',
             'data-focus-key': `edit:${id}`,
+            'aria-disabled': busy,
           },
           'Edit',
         )
         edit.addEventListener('click', () => {
+          if (busy) return
           this.#editing = id
           this.#editDraft = annotation.body
           this.#render()
@@ -1927,6 +1972,7 @@ export class MarginRailElement extends ElementBase {
           'data-margin-action': 'delete',
           'data-focus-key': `delete:${id}`,
           'aria-label': `Delete: ${quoteText}`,
+          'aria-disabled': busy,
         },
         'Delete',
       )

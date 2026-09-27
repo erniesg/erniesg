@@ -66,6 +66,8 @@ describe('D1 annotation coordinate units', () => {
     const byId = Object.fromEntries(stored.map((row) => [row.id, row]))
     expect(byId.tagged.color).toBe('question')
     expect(byId.tagged.annotation).toMatchObject({ kind: 'note', body: 'why this order?' })
+    expect(byId.tagged.annotation).toMatchObject({ appearance: { color: 'question' } })
     expect(byId.plain.color).toBeNull()
+    expect(byId.plain.annotation).not.toHaveProperty('appearance')
   })
 })

@@ -419,7 +419,13 @@ export function webAnnotationToRecord(
             color: wire['margin:color'] ?? DEFAULT_HIGHLIGHT_COLOR,
           },
         }
-      : { body: bodyValue }),
+      : {
+          body: bodyValue,
+          // A note's role lives on the annotation too, not only the row.
+          ...(kind === 'note' && wire['margin:color']
+            ? { appearance: { color: wire['margin:color'] } }
+            : {}),
+        }),
   }
 
   const parsed = textAnnotationSchema.safeParse(candidate)

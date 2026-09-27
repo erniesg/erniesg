@@ -84,7 +84,12 @@ export function rowToRecord(row: AnnotationRow): MarginAnnotationRecord {
     geometryCache: [],
     ...(kind === 'highlight'
       ? { appearance: { color: row.color ?? DEFAULT_HIGHLIGHT_COLOR } }
-      : { body: row.body }),
+      : {
+          body: row.body,
+          ...(kind === 'note' && row.color
+            ? { appearance: { color: row.color } }
+            : {}),
+        }),
   })
 
   return {

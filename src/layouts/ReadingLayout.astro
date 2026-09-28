@@ -42,8 +42,13 @@ const {
 >
   <slot name="head" slot="head" />
 
+  <!-- Chrome a surface puts above the shell, such as a bar of its own. The
+       shell itself stays surface-agnostic. -->
+  <slot name="before" />
+
   <div class="reading-shell" data-reading-shell data-document-uri={documentUri}>
     <nav
+      id="reading-navigation"
       class="reading-column reading-navigation"
       data-reading-column="navigation"
       aria-label="Contents"

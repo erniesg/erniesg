@@ -1,4 +1,5 @@
 ---
+import BookBar from '@/components/books/BookBar.astro'
 import BookContents from '@/components/books/BookContents.astro'
 import BookProgress from '@/components/books/BookProgress.astro'
 import ReadingLayout from '@/layouts/ReadingLayout.astro'
@@ -77,6 +78,8 @@ const style = `<style>${scopeContentCss(bookManifest().contentCss, '.book-conten
   canonicalPath={node.path}
 >
   <Fragment slot="head" set:html={style} />
+
+  <BookBar slot="before" book={book} currentId={node.id} />
 
   <Fragment slot="navigation">
     <BookContents book={book} currentId={node.id} />

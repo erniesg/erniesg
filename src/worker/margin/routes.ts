@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { Principal } from '../principal'
 import { principalKey } from './identity'
+import { displayNameFor } from './participants'
 import {
   DEFAULT_PAGE_SIZE,
   MAX_PAGE_SIZE,
@@ -11,6 +12,7 @@ import {
 } from './repository'
 import {
   annotationIdFromIri,
+  isTombstoneBody,
   joinSource,
   recordToWebAnnotation,
   splitSource,
@@ -31,8 +33,9 @@ import {
  *
  *   GET    /annotations              list, scoped and visibility-filtered
  *   POST   /annotations              create
- *   PATCH  /annotations/:id          owner-scoped update
- *   DELETE /annotations/:id          owner-scoped delete
+ *   PATCH  /annotations/:id          owner-scoped update; 403 on another's
+ *   DELETE /annotations/:id          owner-scoped delete; tombstones a note
+ *                                    that has replies (issue 058)
  *   GET    /prefs                    read the caller's default visibility
  *   PATCH  /prefs                    set it; existing rows are never rewritten
  *   GET    /proposals                list, restricted to `editing`
@@ -41,7 +44,42 @@ import {
  *
  * `GET /health` is answered by the Worker entry point instead, so that it
  * still reports a running Worker when the database binding is what is missing.
+ *
+ * Threads (issue 058) are not a route of their own. A reply is a `commenting`
+ * annotation whose `margin:parentId` names another `commenting` annotation, so
+ * `GET /annotations` already returns a document's threads in the same single
+ * query as its annotations, in `(created, id)` order, and a client assembles
+ * the tree in memory. The visibility rules compose through that query and the
+ * migration's triggers:
+ *
+ * - A reply to a public note may be private; a public reply to a private note
+ *   is refused, by this file and atomically by the database.
+ * - A reply to a note the caller cannot read is a 404 identical to a reply to
+ *   one that does not exist.
+ * - A note cannot be made private while a reply someone else can read hangs
+ *   from it, so a reply never outlives its reader's access to the parent's
+ *   quote. The database refuses that write (`has_visible_replies`).
+ * - Deleting a note with replies tombstones it: see `TOMBSTONE_BODY`.
+ * - Every response names each participant by `margin:creatorName`, a
+ *   pseudonym, never by an email address.
  */
+
+/** A record as a response carries it: the Web Annotation plus a display name. */
+function present(record: MarginAnnotationRecord) {
+  return {
+    ...recordToWebAnnotation(record),
+    'margin:creatorName': displayNameFor(record.creator),
+  }
+}
+
+const NOT_VISIBLE_MESSAGE = 'no annotation you can see has that id here'
+
+function isTombstone(record: MarginAnnotationRecord): boolean {
+  return (
+    record.annotation.kind === 'note' &&
+    isTombstoneBody(record.annotation.body)
+  )
+}
 
 export const MARGIN_API_PREFIX = '/api/margin/v1'
 
@@ -282,7 +320,7 @@ async function listAnnotations(
   const last = rows[rows.length - 1]
 
   return json({
-    annotations: rows.map(recordToWebAnnotation),
+    annotations: rows.map(present),
     ...(more && last ? { nextCursor: encodeCursor(last) } : {}),
   })
 }
@@ -339,9 +377,24 @@ async function createAnnotation(
     return problem(400, 'unexpected_color', COLOR_SCOPE_MESSAGE)
   }
 
+  // A reply is a note answering a note (issue 058). Checked before the parent
+  // lookup, so it says nothing about whether the parent exists.
+  if (record.parentId !== null && record.annotation.kind !== 'note') {
+    return problem(
+      400,
+      'invalid_reply',
+      'a reply is an annotation motivated by commenting',
+    )
+  }
+
   // A reply must point at an annotation the caller can see in the same
   // tenancy. The lookup is scoped, so a parent id from another site or another
   // document simply does not resolve and the row is never written.
+  //
+  // 404, and the same 404 `GET /annotations/:id` gives for an id that was
+  // never issued: replying to a note the caller cannot read must be
+  // indistinguishable from replying to one that does not exist. A 403 or a
+  // distinct code here would confirm the note is there.
   if (record.parentId !== null) {
     const parent = await context.repository.findAnnotation(
       scope,
@@ -349,10 +402,13 @@ async function createAnnotation(
       owner,
     )
     if (!parent) {
+      return problem(404, 'not_found', NOT_VISIBLE_MESSAGE)
+    }
+    if (parent.annotation.kind !== 'note') {
       return problem(
         400,
-        'unknown_parent',
-        'margin:parentId must name an annotation on the same site and document',
+        'invalid_reply',
+        'margin:parentId must name an annotation motivated by commenting',
       )
     }
     // Author access does not imply access for everyone who can see the reply.
@@ -398,7 +454,7 @@ async function createAnnotation(
   // need a scope like every other read, so the header carries the canonical one
   // rather than leaving a caller that follows it with `missing_scope`.
   const source = encodeURIComponent(joinSource(scope.site, scope.document))
-  return json(recordToWebAnnotation(record), 201, {
+  return json(present(record), 201, {
     location:
       `${MARGIN_API_PREFIX}/annotations/${encodeURIComponent(record.id)}` +
       `?source=${source}`,
@@ -416,9 +472,9 @@ async function readAnnotation(
 
   const found = await context.repository.findAnnotation(scope, id, viewer)
   if (!found) {
-    return problem(404, 'not_found', 'no annotation you can see has that id here')
+    return problem(404, 'not_found', NOT_VISIBLE_MESSAGE)
   }
-  return json(recordToWebAnnotation(found))
+  return json(present(found))
 }
 
 const COLOR_SCOPE_MESSAGE =
@@ -462,9 +518,20 @@ async function patchAnnotation(
   // existing row first turns what the schema would otherwise reject as a
   // constraint violation into an ordinary 400, and keeps the 404 for a row the
   // caller does not own.
+  //
+  // One the caller can read but did not write is a 403, not a 404: it is on
+  // their screen already, so refusing it hides nothing, and issue 058 asks for
+  // editing another reader's reply to be refused at the API in so many words.
+  // One they cannot read stays a 404, so nothing here tells them it exists.
   const existing = await context.repository.findAnnotation(scope, id, owner)
-  if (!existing || existing.creator !== owner) {
+  if (!existing) {
     return problem(404, 'not_found', 'no annotation of yours has that id here')
+  }
+  if (existing.creator !== owner) {
+    return problem(403, 'forbidden', 'only its author can change an annotation')
+  }
+  if (isTombstone(existing)) {
+    return problem(409, 'deleted', 'this note was deleted and cannot be changed')
   }
   const isHighlight = existing.annotation.kind === 'highlight'
   if (isHighlight && parsed.data.body !== undefined) {
@@ -517,7 +584,7 @@ async function patchAnnotation(
   if (!updated) {
     return problem(404, 'not_found', 'no annotation of yours has that id here')
   }
-  return json(recordToWebAnnotation(updated))
+  return json(present(updated))
 }
 
 async function deleteAnnotation(
@@ -540,35 +607,57 @@ async function deleteAnnotation(
 
   // A reply belongs to whoever wrote it. Cascading a parent's delete through
   // its children would let the parent's owner destroy other people's
-  // annotations, which no owner-scoped delete should be able to do, so a thread
-  // with replies in it refuses instead. Tombstoning a deleted parent and
-  // keeping the thread readable is 056's problem, not this route's.
+  // annotations, which no owner-scoped delete should be able to do. A note with
+  // replies is tombstoned instead (issue 058): its body is replaced, the row
+  // and the thread under it stay readable. Anything else with replies — only a
+  // row written before replies had to be notes can be one — still refuses.
   if (await context.repository.countReplies(scope, id)) {
+    return tombstoneOrRefuse(context, scope, own, owner)
+  }
+
+  // A reply can arrive between the count above and the delete below. The
+  // constraint catches it, and the note is tombstoned exactly as it would have
+  // been had the reply arrived a moment earlier, rather than escaping as the
+  // Worker's generic 503.
+  let removed: boolean
+  try {
+    removed = await context.repository.deleteAnnotation(scope, id, owner)
+  } catch (error) {
+    if (isForeignKeyConflict(error)) {
+      return tombstoneOrRefuse(context, scope, own, owner)
+    }
+    throw error
+  }
+  if (!removed) {
+    return problem(404, 'not_found', 'no annotation of yours has that id here')
+  }
+  return new Response(null, { status: 204, headers: JSON_HEADERS })
+}
+
+async function tombstoneOrRefuse(
+  context: MarginRouteContext,
+  scope: TenantScope,
+  own: MarginAnnotationRecord,
+  owner: string,
+): Promise<Response> {
+  if (own.annotation.kind !== 'note') {
     return problem(
       409,
       'has_replies',
       'other people have replied to this; deleting it would delete their replies',
     )
   }
-
-  // A reply can arrive between the count above and the delete below. The
-  // constraint catches it, and that is a conflict the caller can act on, not the
-  // store being unavailable — so it is translated here rather than escaping as
-  // the Worker's generic 503.
-  let removed: boolean
-  try {
-    removed = await context.repository.deleteAnnotation(scope, id, owner)
-  } catch (error) {
-    if (isForeignKeyConflict(error)) {
-      return problem(
-        409,
-        'has_replies',
-        'a reply arrived while this was being deleted; deleting it would delete theirs',
-      )
-    }
-    throw error
-  }
-  if (!removed) {
+  // Deleting a tombstone that still has replies changes nothing, and says so
+  // the same way the first delete did.
+  if (
+    !isTombstone(own) &&
+    !(await context.repository.tombstoneAnnotation(
+      scope,
+      own.id,
+      owner,
+      context.now(),
+    ))
+  ) {
     return problem(404, 'not_found', 'no annotation of yours has that id here')
   }
   return new Response(null, { status: 204, headers: JSON_HEADERS })

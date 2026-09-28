@@ -27,7 +27,20 @@ export type RailRecord = {
   mine: boolean
   /** The service's id, once the service has one. */
   serverId: string | null
+  /**
+   * A note deleted after others replied to it. The service keeps it as a
+   * tombstone so its thread survives; the rail shows it without its body.
+   */
+  deleted?: boolean
+  /** How the service names its author: a display name, never an address. */
+  creatorName?: string
 }
+
+/**
+ * What a tombstone reads as. It stands in for the body the service no longer
+ * sends, because the internal note model requires one.
+ */
+export const DELETED_NOTE_TEXT = 'This note was deleted.'
 
 const ANNOTATION_IRI_PREFIX = 'urn:margin:annotation:'
 
@@ -86,6 +99,7 @@ export function recordFromWebAnnotation(
   if (!quote || !position) return null
 
   const body = asRecord(annotation.body)
+  const deleted = kind === 'note' && annotation['margin:deleted'] === true
   const visibility =
     annotation['margin:visibility'] === 'public' ? 'public' : 'private'
   const parsed = textAnnotationSchema.safeParse({
@@ -117,7 +131,11 @@ export function recordFromWebAnnotation(
           },
         }
       : {
-          body: typeof body?.value === 'string' ? body.value : '',
+          body: deleted
+            ? DELETED_NOTE_TEXT
+            : typeof body?.value === 'string'
+              ? body.value
+              : '',
           ...(kind === 'note' && typeof annotation['margin:color'] === 'string'
             ? { appearance: { color: annotation['margin:color'] } }
             : {}),
@@ -130,5 +148,9 @@ export function recordFromWebAnnotation(
     visibility,
     mine: viewer !== null && annotation.creator === viewer,
     serverId: id,
+    ...(deleted ? { deleted: true } : {}),
+    ...(typeof annotation['margin:creatorName'] === 'string'
+      ? { creatorName: annotation['margin:creatorName'] }
+      : {}),
   }
 }

@@ -55,11 +55,21 @@ import {
 } from './palette.js'
 import {
   DEFAULT_VISIBILITY,
+  DELETED_NOTE_TEXT,
   recordFromWebAnnotation,
   serverIdFromIri,
   type MarginVisibility,
   type RailRecord,
 } from './records.js'
+import {
+  flattenThread,
+  hasReplies,
+  REPLY_FRAGMENT_PREFIX,
+  replyFragment,
+  replyFromWebAnnotation,
+  type ThreadEntry,
+  type ThreadReply,
+} from './threads.js'
 import {
   MarginTransportError,
   createHttpTransport,
@@ -125,6 +135,12 @@ textarea { min-height: 4.5rem; resize: vertical; }
 button.primary:not([disabled]) { font-weight: 600; }
 .swatch::before, .chip::before { content: ''; width: 0.8rem; height: 0.8rem; border-radius: 999px; background: var(--swatch); border: 1px solid currentColor; }
 .chip { display: inline-flex; align-items: center; gap: 0.3rem; }
+.thread { margin-top: 0.4rem; display: grid; gap: 0.4rem; }
+.thread ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; }
+.thread li { border-left-width: 1px; margin-left: calc(var(--indent, 1) * 0.6rem - 0.6rem); }
+.thread li:target, .thread li:focus { outline: 2px solid currentColor; outline-offset: 2px; }
+.author { font-weight: 600; }
+.deleted { font-style: italic; opacity: 0.75; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 `
 
@@ -207,6 +223,16 @@ export class MarginRailElement extends ElementBase {
   /** The role picked in the open popup, if any. Picking one never saves. */
   #roleDraft: string | null = null
   #editDraft = ''
+  /** Replies to this document's notes, as the last load returned them. */
+  #replies: ThreadReply[] = []
+  /** The server id the open reply field answers, a note's or a reply's. */
+  #replyingTo: string | null = null
+  #replyDraft = ''
+  /** The server id of the reply being edited. */
+  #editingReply: string | null = null
+  #replyEditDraft = ''
+  /** A reply write is out: its controls wait for it. */
+  #threadBusy = false
   #popup: PopupState | null = null
   /** The entry the last click on painted text went to, for cycling overlaps. */
   #lastPointed: string | null = null
@@ -348,6 +374,7 @@ export class MarginRailElement extends ElementBase {
     this.#records = this.#records.filter(
       (record) => record.serverId === null && !this.#saving.has(record),
     )
+    this.#replies = []
     this.#viewer = null
     this.#deletedIds.clear()
     // The default belonged to that connection's reader too. Until the new one's
@@ -394,6 +421,7 @@ export class MarginRailElement extends ElementBase {
       // A different document is a different set of annotations. Keeping the old
       // ones would paint one document's highlights onto another.
       this.#records = []
+      this.#replies = []
     }
     if (name === 'document-uri' || name === 'text-selector') {
       this.#capture = { status: 'empty' }
@@ -517,6 +545,10 @@ export class MarginRailElement extends ElementBase {
       if (selection && !selection.isCollapsed) return
       this.#focusEntryAtPoint(event.clientX, event.clientY)
     })
+    // A reply is addressable: `#margin-reply-<id>` in the page URL, or a
+    // reply's own "Link", brings it into view and focuses it.
+    const view = doc.defaultView
+    if (view) this.#on(view, 'hashchange', () => this.#revealHash())
   }
 
   #watchLayout() {
@@ -634,6 +666,9 @@ export class MarginRailElement extends ElementBase {
       }
 
       const loaded: RailRecord[] = []
+      // Threads arrive in the same pages as the notes they hang from: one
+      // request per page, never one per reply.
+      const loadedReplies: ThreadReply[] = []
       const cursors = new Set<string>()
       let response = await client.listAnnotations(documentUri)
       // Every page, not the first N: a rail that silently stops at some count
@@ -653,7 +688,12 @@ export class MarginRailElement extends ElementBase {
         }
         for (const wire of body?.annotations ?? []) {
           const record = recordFromWebAnnotation(wire, this.#viewer)
-          if (record) loaded.push(record)
+          if (record) {
+            loaded.push(record)
+            continue
+          }
+          const reply = replyFromWebAnnotation(wire, this.#viewer)
+          if (reply) loadedReplies.push(reply)
         }
         if (!body?.nextCursor || cursors.has(body.nextCursor)) break
         cursors.add(body.nextCursor)
@@ -712,7 +752,9 @@ export class MarginRailElement extends ElementBase {
       const fresh = loaded.filter(
         (record) =>
           !local.has(record.serverId ?? '') &&
-          !this.#deletedIds.has(record.serverId ?? ''),
+          // A tombstone is what a delete leaves when a reply this page had
+          // not seen yet hangs from it; the thread still needs its root.
+          (!this.#deletedIds.has(record.serverId ?? '') || record.deleted),
       )
       for (const record of fresh) {
         this.#confirmed.set(record, {
@@ -721,8 +763,20 @@ export class MarginRailElement extends ElementBase {
         })
       }
       this.#records = [...fresh, ...createdHere]
+      // A note this page tombstoned is still a local record; the list's copy
+      // of it says so too, but only the local one is drawn.
+      for (const record of loaded) {
+        if (!record.deleted || !record.serverId || !local.has(record.serverId))
+          continue
+        const kept = createdHere.find(
+          (entry) => entry.serverId === record.serverId,
+        )
+        if (kept) kept.deleted = true
+      }
+      this.#replies = loadedReplies
       if (this.#notice === LOAD_FAILED) this.#notice = ''
       this.#paint()
+      this.#revealHash()
     } catch (error) {
       // A superseded load's failure belongs to state that is gone.
       if (generation !== this.#loadGeneration) return
@@ -1169,6 +1223,7 @@ export class MarginRailElement extends ElementBase {
     if (
       !record ||
       !record.mine ||
+      record.deleted ||
       this.#deleting.has(record) ||
       record.annotation.kind !== 'note' ||
       !text
@@ -1262,6 +1317,24 @@ export class MarginRailElement extends ElementBase {
     if (!deleted) {
       this.#deleting.delete(record)
       this.#render()
+      return
+    }
+    // A note with replies is tombstoned by the service, not removed: the
+    // thread under it stays, so its entry does too, without its text.
+    if (
+      record.serverId &&
+      record.annotation.kind === 'note' &&
+      hasReplies(record.serverId, this.#replies)
+    ) {
+      this.#deleting.delete(record)
+      record.deleted = true
+      if (this.#editing === id) this.#editing = null
+      const hadFocus =
+        this.#shadow.activeElement?.getAttribute('data-focus-key') ===
+        `delete:${id}`
+      this.#render()
+      // Its delete button is gone; the entry itself is still there.
+      if (hadFocus) this.#focusEntry(id)
       return
     }
     if (record.serverId) this.#deletedIds.add(record.serverId)
@@ -1956,7 +2029,10 @@ export class MarginRailElement extends ElementBase {
       item.append(quote)
     }
 
-    if (annotation.kind !== 'highlight') {
+    if (record.deleted) {
+      item.dataset.deleted = ''
+      item.append(el(doc, 'p', { class: 'body deleted' }, DELETED_NOTE_TEXT))
+    } else if (annotation.kind !== 'highlight') {
       if (this.#editing === id) {
         const label = el(doc, 'label', {}, 'Edit note')
         const field = el(doc, 'textarea', {
@@ -2012,7 +2088,7 @@ export class MarginRailElement extends ElementBase {
       { class: 'meta', 'data-margin-visibility': record.visibility },
       record.visibility === 'public' ? 'Public' : 'Private',
     )
-    if (record.mine) {
+    if (record.mine && !record.deleted) {
       const busy = this.#deleting.has(record) ? 'true' : undefined
       if (busy) item.setAttribute('aria-busy', 'true')
       const next: MarginVisibility =
@@ -2069,7 +2145,463 @@ export class MarginRailElement extends ElementBase {
     } else {
       controls.append(visibility)
     }
+    const serverId = record.serverId
+    if (annotation.kind === 'note' && serverId) {
+      if (this.#canReply()) {
+        controls.append(this.#replyButton(serverId, `the note on ${quoteText}`))
+      }
+      item.append(controls)
+      const thread = this.#thread(serverId, quoteText)
+      if (thread) item.append(thread)
+      return item
+    }
     item.append(controls)
+    return item
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Threads                                                            */
+  /* ------------------------------------------------------------------ */
+
+  /** Replies from the last load. The service sent only what this reader may see. */
+  get replies(): readonly ThreadReply[] {
+    return this.#replies
+  }
+
+  /** Only a signed-in reader with a service behind the rail can reply. */
+  #canReply() {
+    return this.#viewer !== null && this.#transport !== null
+  }
+
+  /** The note or reply `serverId` names, as something a reply can hang from. */
+  #replyParent(
+    serverId: string,
+  ): { target: TextAnnotation['target']; visibility: MarginVisibility } | null {
+    const note = this.#records.find(
+      (record) =>
+        record.serverId === serverId && record.annotation.kind === 'note',
+    )
+    if (note) {
+      return { target: note.annotation.target, visibility: note.visibility }
+    }
+    const reply = this.#replies.find((entry) => entry.serverId === serverId)
+    return reply ? { target: reply.target, visibility: reply.visibility } : null
+  }
+
+  /**
+   * Run one thread write, then reload, so the thread on screen is the one the
+   * service holds rather than a guess at it. Returns the response, or null
+   * when nothing was sent.
+   */
+  async #threadWrite(
+    refusal: string,
+    send: (client: MarginClient) => Promise<MarginResponse>,
+  ): Promise<MarginResponse | null> {
+    const client = this.#client()
+    if (!client || this.#threadBusy) return null
+    this.#threadBusy = true
+    this.#render()
+    let response: MarginResponse | null = null
+    try {
+      response = await send(client)
+      if (!isSuccess(response)) {
+        this.#reportTransportFailure(
+          new MarginTransportError(refusal, [response]),
+          response.status === 403
+            ? `${refusal} Only its author can change it.`
+            : refusal,
+        )
+      } else {
+        this.#notice = ''
+        await this.#load()
+      }
+    } catch (error) {
+      this.#reportTransportFailure(error, refusal)
+    } finally {
+      this.#threadBusy = false
+      this.#render()
+    }
+    return response
+  }
+
+  /**
+   * Reply to a note or to a reply, by its server id. The reply takes the
+   * reader's default visibility, except that a reply to something private is
+   * private: the service refuses a public one, since it would show the
+   * parent's passage to readers who cannot see the parent.
+   */
+  async reply(parentId: string, body: string): Promise<boolean> {
+    const text = body.trim()
+    const documentUri = this.documentUri
+    const parent = this.#replyParent(parentId)
+    if (!text || !documentUri || !parent || !this.#canReply()) return false
+    await this.#prefsSettledNow()
+    const visibility: MarginVisibility =
+      parent.visibility === 'private' ? 'private' : this.#defaultVisibility
+    const targetText =
+      this.#controller
+        ?.blocks()
+        .find((block) => block.id === parent.target.nodeId)?.text ?? undefined
+    const response = await this.#threadWrite(
+      'The reply was not saved: the service refused it.',
+      async (client) => {
+        const [created] = await client.createAnnotations({
+          documentUri,
+          kind: 'note',
+          body: text,
+          visibility,
+          parentId,
+          targets: [parent.target],
+          ...(targetText === undefined ? {} : { targetTexts: [targetText] }),
+        })
+        return created
+      },
+    )
+    if (!response || !isSuccess(response)) return false
+    this.#replyingTo = null
+    this.#replyDraft = ''
+    const id = (response.body as { id?: unknown } | null)?.id
+    this.#render()
+    if (typeof id === 'string') this.#focusReply(serverIdFromIri(id))
+    return true
+  }
+
+  /** Edit one of the reader's own replies. The service refuses anyone else's. */
+  async editReply(serverId: string, body: string): Promise<boolean> {
+    const text = body.trim()
+    const documentUri = this.documentUri
+    if (!text || !documentUri) return false
+    const response = await this.#threadWrite(
+      'The reply was not changed: the service refused it.',
+      (client) => client.updateAnnotation(serverId, documentUri, { body: text }),
+    )
+    if (!response || !isSuccess(response)) return false
+    this.#editingReply = null
+    this.#replyEditDraft = ''
+    this.#render()
+    this.#focusReply(serverId)
+    return true
+  }
+
+  /**
+   * Delete one of the reader's own replies. One that has been answered is
+   * tombstoned by the service and stays in the thread without its text.
+   */
+  async deleteReply(serverId: string): Promise<boolean> {
+    const documentUri = this.documentUri
+    if (!documentUri) return false
+    const reply = this.#replies.find((entry) => entry.serverId === serverId)
+    const response = await this.#threadWrite(
+      'The reply was not deleted: the service refused it.',
+      (client) => client.deleteAnnotation(serverId, documentUri),
+    )
+    if (!response || !isSuccess(response)) return false
+    if (this.#replies.some((entry) => entry.serverId === serverId)) {
+      this.#focusReply(serverId)
+    } else if (reply) {
+      this.#focusReply(reply.parentId)
+    }
+    return true
+  }
+
+  /** Focus a reply, or failing that the note it hangs from. */
+  #focusReply(serverId: string) {
+    const target = this.#shadow.getElementById(replyFragment(serverId))
+    if (target) {
+      target.focus()
+      return
+    }
+    const note = this.#records.find((record) => record.serverId === serverId)
+    if (note) this.#focusEntry(note.annotation.id)
+  }
+
+  /** Bring the reply the page URL names into view, once it has loaded. */
+  #revealHash() {
+    const hash = this.ownerDocument.defaultView?.location.hash ?? ''
+    if (!hash.startsWith(`#${REPLY_FRAGMENT_PREFIX}`)) return
+    let id: string
+    try {
+      id = decodeURIComponent(hash.slice(1))
+    } catch {
+      return
+    }
+    const target = this.#shadow.getElementById(id)
+    if (!target) return
+    if (this.#compact && !this.#overlayOpen) {
+      this.#overlayOpen = true
+      this.#render()
+    }
+    const current = this.#shadow.getElementById(id)
+    current?.scrollIntoView({ block: 'center' })
+    current?.focus({ preventScroll: true })
+  }
+
+  #replyButton(serverId: string, what: string): HTMLButtonElement {
+    const button = el(
+      this.ownerDocument,
+      'button',
+      {
+        type: 'button',
+        'data-margin-action': 'reply',
+        'data-focus-key': `reply:${serverId}`,
+        'aria-label': `Reply to ${what}`,
+        'aria-expanded': String(this.#replyingTo === serverId),
+        'aria-disabled': this.#threadBusy ? 'true' : undefined,
+      },
+      'Reply',
+    )
+    button.addEventListener('click', () => {
+      if (this.#threadBusy) return
+      if (this.#replyingTo !== serverId) this.#replyDraft = ''
+      this.#replyingTo = serverId
+      this.#render()
+      this.#focusKey(`reply-field:${serverId}`)
+    })
+    return button
+  }
+
+  /** The field that writes a reply to `serverId`, when it is open. */
+  #replyForm(serverId: string): HTMLElement | null {
+    if (this.#replyingTo !== serverId) return null
+    const doc = this.ownerDocument
+    const parent = this.#replyParent(serverId)
+    const form = el(doc, 'div', { class: 'reply-form' })
+    const label = el(doc, 'label', {}, 'Your reply')
+    const field = el(doc, 'textarea', {
+      'data-focus-key': `reply-field:${serverId}`,
+      'data-margin-reply-field': serverId,
+    })
+    field.value = this.#replyDraft
+    field.addEventListener('input', () => {
+      this.#replyDraft = field.value
+    })
+    label.append(field)
+    const privateOnly = parent?.visibility === 'private'
+    const note = el(
+      doc,
+      'span',
+      { class: 'meta' },
+      privateOnly
+        ? 'Private, because what it answers is private'
+        : this.#defaultVisibility === 'public'
+          ? 'Public'
+          : 'Private',
+    )
+    const send = el(
+      doc,
+      'button',
+      {
+        type: 'button',
+        class: 'primary',
+        'data-margin-action': 'reply-send',
+        'data-focus-key': `reply-send:${serverId}`,
+        'aria-disabled': this.#threadBusy ? 'true' : undefined,
+      },
+      'Send reply',
+    )
+    send.addEventListener('click', () => {
+      if (this.#threadBusy) return
+      void this.reply(serverId, field.value)
+    })
+    const cancel = el(
+      doc,
+      'button',
+      { type: 'button', 'data-focus-key': `reply-cancel:${serverId}` },
+      'Cancel',
+    )
+    cancel.addEventListener('click', () => {
+      this.#replyingTo = null
+      this.#replyDraft = ''
+      this.#render()
+      this.#focusKey(`reply:${serverId}`)
+    })
+    field.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        cancel.click()
+      } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault()
+        send.click()
+      }
+    })
+    const controls = el(doc, 'div', { class: 'controls' })
+    controls.append(send, cancel)
+    form.append(label, note, controls)
+    return form
+  }
+
+  /** A note's replies and its reply field, or null when it has neither. */
+  #thread(rootId: string, quoteText: string): HTMLElement | null {
+    const doc = this.ownerDocument
+    const entries = flattenThread(rootId, this.#replies)
+    const rootForm = this.#replyForm(rootId)
+    if (entries.length === 0 && !rootForm) return null
+    // A group, not a `section`: a labelled section is a region landmark, and
+    // one landmark per note would bury the rail's own.
+    const section = el(doc, 'div', {
+      class: 'thread',
+      role: 'group',
+      'data-margin-thread': rootId,
+      'aria-label': `${entries.length} ${entries.length === 1 ? 'reply' : 'replies'} to the note on ${quoteText}`,
+    })
+    if (rootForm) section.append(rootForm)
+    if (entries.length > 0) {
+      const list = el(doc, 'ol', { 'aria-label': 'Replies' })
+      for (const entry of entries) list.append(this.#replyEntry(entry))
+      section.append(list)
+    }
+    return section
+  }
+
+  #replyEntry({ reply, depth, indent, inReplyTo }: ThreadEntry): HTMLLIElement {
+    const doc = this.ownerDocument
+    const id = reply.serverId
+    const author = reply.mine ? 'You' : reply.creatorName
+    const item = el(doc, 'li', {
+      id: replyFragment(id),
+      tabindex: '-1',
+      'data-margin-reply': id,
+      'data-depth': String(depth),
+      'data-visibility': reply.visibility,
+      'aria-label': `${author}, reply at depth ${depth}`,
+    })
+    item.style.setProperty('--indent', String(indent))
+    if (reply.deleted) item.dataset.deleted = ''
+
+    const header = el(doc, 'span', { class: 'meta' })
+    header.append(el(doc, 'span', { class: 'author' }, author))
+    header.append(
+      doc.createTextNode(
+        ` · ${reply.visibility === 'public' ? 'Public' : 'Private'}${
+          reply.modified && reply.modified !== reply.created ? ' · edited' : ''
+        }`,
+      ),
+    )
+    item.append(header)
+    // Drawn at the indent cap, a reply says who it answers: the indent alone
+    // no longer does.
+    if (inReplyTo && depth > indent) {
+      item.append(
+        el(
+          doc,
+          'span',
+          { class: 'meta', 'data-margin-in-reply-to': inReplyTo.serverId },
+          `Replying to ${inReplyTo.mine ? 'you' : inReplyTo.creatorName}`,
+        ),
+      )
+    }
+
+    if (this.#editingReply === id && reply.mine && !reply.deleted) {
+      const label = el(doc, 'label', {}, 'Edit reply')
+      const field = el(doc, 'textarea', {
+        'data-focus-key': `reply-edit-field:${id}`,
+      })
+      field.value = this.#replyEditDraft
+      field.addEventListener('input', () => {
+        this.#replyEditDraft = field.value
+      })
+      label.append(field)
+      const save = el(
+        doc,
+        'button',
+        {
+          type: 'button',
+          'data-focus-key': `reply-edit-save:${id}`,
+          'aria-disabled': this.#threadBusy ? 'true' : undefined,
+        },
+        'Save',
+      )
+      save.addEventListener('click', () => {
+        if (this.#threadBusy) return
+        void this.editReply(id, field.value)
+      })
+      const cancel = el(
+        doc,
+        'button',
+        { type: 'button', 'data-focus-key': `reply-edit-cancel:${id}` },
+        'Cancel',
+      )
+      cancel.addEventListener('click', () => {
+        this.#editingReply = null
+        this.#render()
+        this.#focusKey(`reply-edit:${id}`)
+      })
+      field.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+          event.stopPropagation()
+          cancel.click()
+        }
+      })
+      const editControls = el(doc, 'div', { class: 'controls' })
+      editControls.append(save, cancel)
+      item.append(label, editControls)
+    } else {
+      item.append(
+        el(
+          doc,
+          'p',
+          { class: reply.deleted ? 'body deleted' : 'body' },
+          reply.body,
+        ),
+      )
+    }
+
+    const controls = el(doc, 'div', { class: 'controls' })
+    if (this.#canReply()) {
+      controls.append(this.#replyButton(id, `${author}`))
+    }
+    const link = el(
+      doc,
+      'a',
+      {
+        href: `#${replyFragment(id)}`,
+        'data-focus-key': `reply-link:${id}`,
+        'aria-label': `Link to this reply by ${author}`,
+      },
+      'Link',
+    )
+    controls.append(link)
+    if (reply.mine && !reply.deleted && this.#editingReply !== id) {
+      const busy = this.#threadBusy ? 'true' : undefined
+      const edit = el(
+        doc,
+        'button',
+        {
+          type: 'button',
+          'data-margin-action': 'reply-edit',
+          'data-focus-key': `reply-edit:${id}`,
+          'aria-disabled': busy,
+        },
+        'Edit',
+      )
+      edit.addEventListener('click', () => {
+        if (this.#threadBusy) return
+        this.#editingReply = id
+        this.#replyEditDraft = reply.body
+        this.#render()
+        this.#focusKey(`reply-edit-field:${id}`)
+      })
+      const remove = el(
+        doc,
+        'button',
+        {
+          type: 'button',
+          'data-margin-action': 'reply-delete',
+          'data-focus-key': `reply-delete:${id}`,
+          'aria-label': 'Delete this reply',
+          'aria-disabled': busy,
+        },
+        'Delete',
+      )
+      remove.addEventListener('click', () => {
+        if (this.#threadBusy) return
+        void this.deleteReply(id)
+      })
+      controls.append(edit, remove)
+    }
+    item.append(controls)
+    const form = this.#replyForm(id)
+    if (form) item.append(form)
     return item
   }
 

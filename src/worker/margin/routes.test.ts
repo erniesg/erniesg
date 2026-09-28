@@ -271,8 +271,8 @@ describe('replies', () => {
         parentId: bareId(elsewhere),
       }),
     )
-    expect(response.status).toBe(400)
-    expect((await response.json()).error.code).toBe('unknown_parent')
+    expect(response.status).toBe(404)
+    expect((await response.json()).error.code).toBe('not_found')
     expect(await list(CHAPTER_ONE)).toHaveLength(0)
   })
 
@@ -296,7 +296,7 @@ describe('replies', () => {
       }),
       BOB,
     )
-    expect(response.status).toBe(400)
+    expect(response.status).toBe(404)
     expect(await list(CHAPTER_ONE, BOB)).toHaveLength(0)
   })
 })
@@ -549,8 +549,8 @@ describe('the wire format survives a POST and a GET', () => {
 describe('review findings', () => {
   // The delete path is owner-scoped, so nothing it does may reach somebody
   // else's annotation. A cascade through `parent_id` would have done exactly
-  // that, and quietly.
-  it('refuses to delete a parent that other people have replied to', async () => {
+  // that, and quietly. Since issue 058 the parent is tombstoned instead.
+  it('tombstones a parent that other people have replied to', async () => {
     const parent = (await (
       await post(
         webAnnotation({
@@ -572,22 +572,20 @@ describe('review findings', () => {
     )
     expect(reply.status).toBe(201)
 
-    const refused = await harness.request(
+    const tombstoned = await harness.request(
       'DELETE',
       `/annotations/${bareId(parent)}${scopeQuery(CHAPTER_ONE)}`,
       { as: ADA },
     )
-    expect(refused.status).toBe(409)
-    expect(await refused.json()).toMatchObject({
-      error: { code: 'has_replies' },
-    })
+    expect(tombstoned.status).toBe(204)
 
-    // Both are still there, Bob's included.
+    // Both rows are still there, Bob's untouched and Ada's without its body.
     const remaining = await list(CHAPTER_ONE, BOB)
-    expect(remaining.map((entry) => entry.body?.value).sort()).toEqual([
-      'ada asks',
+    expect(remaining.map((entry) => entry.body?.value)).toEqual([
+      undefined,
       'bob answers',
     ])
+    expect(remaining[0]).toMatchObject({ id: parent.id, 'margin:deleted': true })
   })
 
   it('still deletes an annotation nobody has replied to', async () => {
@@ -1097,9 +1095,9 @@ describe('review findings, round three', () => {
   })
 
   // A reply can arrive between the count and the delete. The constraint catches
-  // it, and that is a conflict the caller can act on rather than the store being
-  // unavailable.
-  it('reports a lost race as a conflict, not as an outage', async () => {
+  // it, and the parent is tombstoned as it would have been a moment earlier,
+  // rather than the store looking unavailable.
+  it('tombstones on a lost race rather than reporting an outage', async () => {
     const parent = (await (
       await post(
         webAnnotation({
@@ -1134,10 +1132,12 @@ describe('review findings, round three', () => {
       { as: ADA },
     )
 
-    expect(response.status).toBe(409)
-    expect(await response.json()).toMatchObject({
-      error: { code: 'has_replies' },
-    })
+    expect(response.status).toBe(204)
+    const remaining = await list(CHAPTER_ONE, BOB)
+    expect(remaining.map((entry) => entry.body?.value)).toEqual([
+      undefined,
+      'bob slips in',
+    ])
   })
 })
 
@@ -1513,7 +1513,7 @@ describe('reply visibility boundaries', () => {
   it('keeps ownership checks ahead of visibility conflicts', async () => {
     const parent = await create('public')
     await create('public', bareId(parent), BOB)
-    expect((await setVisibility(parent, 'private', BOB)).status).toBe(404)
+    expect((await setVisibility(parent, 'private', BOB)).status).toBe(403)
   })
 
   it('allows an owner to hide a parent with only their private replies', async () => {

@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url'
 import type { Plugin } from 'vite'
 import rehypeBlockIds from './src/lib/rehype-block-ids'
 import { includeInSitemap, papersListing } from './src/lib/papers-listing'
+import { papersListingEnv } from './src/lib/papers-listing-env'
 import {
   legacyRedirectTarget,
   REDIRECT_STATUS,
@@ -32,11 +33,14 @@ import { LOCAL_OCR_ASSET_FILES } from './tools/local-ocr-assets'
 
 const SITE_URL = 'https://ernie.sg'
 
-const papersListingState = papersListing({
-  PUBLIC_PAPERS_LISTING: process.env.PUBLIC_PAPERS_LISTING,
-  PUBLIC_RESEARCH_RELEASE: process.env.PUBLIC_RESEARCH_RELEASE,
-})
-const productionRelease = process.env.PUBLIC_RESEARCH_RELEASE === 'production'
+// The same inputs page modules see through `import.meta.env`, `.env` files
+// included, so the sitemap and the nav can never disagree.
+const listingEnv = papersListingEnv(
+  process.env.NODE_ENV === 'development' ? 'development' : 'production',
+  fileURLToPath(new URL('.', import.meta.url)),
+)
+const papersListingState = papersListing(listingEnv)
+const productionRelease = listingEnv.PUBLIC_RESEARCH_RELEASE === 'production'
 
 /**
  * The dev server's half of the ADR 010 redirects: a real 301 for every legacy

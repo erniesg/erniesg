@@ -102,7 +102,7 @@ npm run test:margin
 npm run margin:build
 npm test
 npm run build
-export SRT_E2E_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')
+if [ -f tools/e2e-port.mjs ]; then export SRT_E2E_PORT=$(node tools/e2e-port.mjs); else export SRT_E2E_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()'); fi
 npx playwright test tests/e2e/margin-anchoring.spec.ts
 ```
 

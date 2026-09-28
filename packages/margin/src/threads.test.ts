@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   DELETED_REPLY_TEXT,
   flattenThread,
+  indexThreads,
   hasReplies,
   MAX_THREAD_INDENT,
   replyFromWebAnnotation,
@@ -177,6 +178,24 @@ describe('flattenThread', () => {
     expect(entries[depth - 1].depth).toBe(depth)
     expect(entries[depth - 1].indent).toBe(MAX_THREAD_INDENT)
     expect(entries[depth - 1].inReplyTo?.serverId).toBe(`n${depth - 1}`)
+  })
+
+  it('flattens every root from one index, in linear time over the replies', () => {
+    // Many roots, each with a reply: flattening them one by one used to
+    // rebuild and sort the whole child map per root, O(roots × replies).
+    const roots = 20_000
+    const replies: ThreadReply[] = []
+    for (let index = 0; index < roots; index += 1) {
+      replies.push(reply(`r${index}`, `root${index}`, '2026-09-28T00:00:01.000Z'))
+    }
+    const started = performance.now()
+    const threads = indexThreads(replies)
+    for (let index = 0; index < roots; index += 1) {
+      expect(threads.flatten(`root${index}`)).toHaveLength(1)
+    }
+    expect(performance.now() - started).toBeLessThan(2_000)
+    // The index agrees with flattenThread, which it now backs.
+    expect(threads.flatten('root7')).toEqual(flattenThread('root7', replies))
   })
 
   it('survives a cycle in a malformed response', () => {

@@ -107,6 +107,24 @@ export function compareReplies(a: ThreadReply, b: ThreadReply): number {
 }
 
 /**
+ * The replies grouped by what they answer, built once, sorted once. The rail
+ * draws every root from one index: flattening root by root over the whole list
+ * rebuilt and sorted the child map per root, quadratic in a busy document.
+ */
+export function indexThreads(replies: readonly ThreadReply[]): {
+  flatten(rootId: string): ThreadEntry[]
+} {
+  const children = new Map<string, ThreadReply[]>()
+  for (const reply of replies) {
+    const siblings = children.get(reply.parentId)
+    if (siblings) siblings.push(reply)
+    else children.set(reply.parentId, [reply])
+  }
+  for (const siblings of children.values()) siblings.sort(compareReplies)
+  return { flatten: (rootId) => walk(rootId, children) }
+}
+
+/**
  * The replies under one note, depth first, each level in creation order.
  *
  * Depth is not limited — a reply to a reply to a reply is stored and shown —
@@ -118,14 +136,13 @@ export function flattenThread(
   rootId: string,
   replies: readonly ThreadReply[],
 ): ThreadEntry[] {
-  const children = new Map<string, ThreadReply[]>()
-  for (const reply of replies) {
-    const siblings = children.get(reply.parentId)
-    if (siblings) siblings.push(reply)
-    else children.set(reply.parentId, [reply])
-  }
-  for (const siblings of children.values()) siblings.sort(compareReplies)
+  return indexThreads(replies).flatten(rootId)
+}
 
+function walk(
+  rootId: string,
+  children: ReadonlyMap<string, readonly ThreadReply[]>,
+): ThreadEntry[] {
   // An explicit stack, not recursion: depth is unlimited and a writer can make
   // a chain deeper than the call stack. Children are pushed in reverse so they
   // pop in creation order, which keeps the walk depth first.

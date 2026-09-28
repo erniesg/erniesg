@@ -62,7 +62,7 @@ import {
   type RailRecord,
 } from './records.js'
 import {
-  flattenThread,
+  indexThreads,
   REPLY_FRAGMENT_PREFIX,
   replyFragment,
   replyFromWebAnnotation,
@@ -225,6 +225,15 @@ export class MarginRailElement extends ElementBase {
   #editDraft = ''
   /** Replies to this document's notes, as the last load returned them. */
   #replies: ThreadReply[] = []
+  /**
+   * The thread index for `#replies`, built once per load rather than once per
+   * root per render. `#replies` is only ever replaced, never mutated, so its
+   * identity says when the index is stale.
+   */
+  #threadIndex: {
+    replies: readonly ThreadReply[]
+    index: ReturnType<typeof indexThreads>
+  } | null = null
   /** The server id the open reply field answers, a note's or a reply's. */
   #replyingTo: string | null = null
   #replyDraft = ''
@@ -771,7 +780,16 @@ export class MarginRailElement extends ElementBase {
         const kept = createdHere.find(
           (entry) => entry.serverId === record.serverId,
         )
-        if (kept) kept.deleted = true
+        if (kept) {
+          // Take the service's tombstone, not just its flag: a host-cached
+          // body must not stay in `annotations`, `records` or search.
+          kept.deleted = true
+          kept.annotation = record.annotation
+          this.#confirmed.set(kept, {
+            visibility: kept.visibility,
+            annotation: kept.annotation,
+          })
+        }
       }
       this.#replies = loadedReplies
       if (this.#notice === LOAD_FAILED) this.#notice = ''
@@ -2474,7 +2492,13 @@ export class MarginRailElement extends ElementBase {
   /** A note's replies and its reply field, or null when it has neither. */
   #thread(rootId: string, quoteText: string): HTMLElement | null {
     const doc = this.ownerDocument
-    const entries = flattenThread(rootId, this.#replies)
+    if (this.#threadIndex?.replies !== this.#replies) {
+      this.#threadIndex = {
+        replies: this.#replies,
+        index: indexThreads(this.#replies),
+      }
+    }
+    const entries = this.#threadIndex.index.flatten(rootId)
     const rootForm = this.#replyForm(rootId)
     if (entries.length === 0 && !rootForm) return null
     // A group, not a `section`: a labelled section is a region landmark, and

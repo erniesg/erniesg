@@ -145,6 +145,21 @@ async function open(page: Page) {
     .getAttribute('document-uri')) as string
 }
 
+/** The anchor `noteAsReader` makes: the first 24 characters of that block. */
+async function firstAnchor(page: Page) {
+  const block = await firstProseBlock(page)
+  const exact = await page.evaluate(
+    (id) => (document.getElementById(id)!.textContent ?? '').slice(0, 24),
+    block,
+  )
+  return {
+    nodeId: block,
+    positionUnit: 'codepoint',
+    position: { start: 0, end: 24 },
+    quote: { exact, prefix: '', suffix: '' },
+  }
+}
+
 async function firstProseBlock(page: Page): Promise<string> {
   return page.evaluate(
     () =>
@@ -413,6 +428,54 @@ test.describe('threaded comments in the margin', () => {
     await expect(page.locator(`${ENTRY} > .body`)).toHaveText(
       'This note was deleted.',
     )
+  })
+
+  test('a host-cached note the service has since tombstoned loses its cached text', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await service.call('PATCH', '/prefs', ADA, { defaultVisibility: 'public' })
+    service.as = ADA
+    await open(page)
+    const note = await noteAsReader(page, service, 'cached words')
+    await reply(service, note, 'keeps it alive', BOB)
+    // Tombstoned elsewhere: another tab, another device.
+    const deleted = await service.call(
+      'DELETE',
+      `/annotations/${bare(note.id)}?source=${encodeURIComponent(documentUri)}`,
+      ADA,
+    )
+    expect(deleted.status).toBe(200)
+
+    // A host that cached the note hands it to a fresh rail under the
+    // service's id, before that rail's first load matches it by that id.
+    await page.reload()
+    await expect(page.locator(REPLY)).toHaveCount(1)
+    const target = await firstAnchor(page)
+    await page.evaluate(
+      ({ id, target }) => {
+        const old = document.querySelector('margin-rail')!
+        const fresh = document.createElement('margin-rail') as HTMLElement & {
+          annotations: unknown
+        }
+        for (const { name, value } of Array.from(old.attributes)) {
+          fresh.setAttribute(name, value)
+        }
+        fresh.annotations = [
+          { id, kind: 'note', target, body: 'cached words', geometryCache: [] },
+        ]
+        old.replaceWith(fresh)
+      },
+      { id: bare(note.id), target },
+    )
+    await expect(page.locator(REPLY)).toHaveCount(1)
+    await expect(page.locator(`${ENTRY} > .body`)).toHaveText(
+      'This note was deleted.',
+    )
+    const local = await page.locator(RAIL).evaluate((rail) =>
+      JSON.stringify((rail as HTMLElement & { annotations: unknown }).annotations),
+    )
+    expect(local).not.toContain('cached words')
   })
 
   test('a root note shows its author by display name', async ({ page }) => {

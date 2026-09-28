@@ -991,9 +991,12 @@ details.solution { border:0; border-top:2px solid var(--ink); border-radius:0; b
 .exercise .answer { margin-top:.6rem; }
 /* Marked by the page code once the reader has passed it, in any edition that runs it. */
 .exercise.solved .exercise-title::after { content:" · solved ✓"; }
-/* A runnable cell is one terminal: code, a hairline, the action row, output. */
+/* A runnable cell is one terminal: code, a hairline, the action row, output.
+   It is dark on every page, so its colours do not follow the page's theme: a
+   deep button fill that holds a white label, and a light focus ring that
+   stands out against the terminal. */
 .cell-run, .exercise-run, .desk { --term:#1e1f24; --term-line:#33353d; --term-ink:#d4d4d4;
-  --term-dim:#a3a8b3; background:var(--term); border:1px solid #2b2d34; border-radius:8px;
+  --term-dim:#a3a8b3; --term-button:#0369a1; --term-focus:#7dd3fc; background:var(--term); border:1px solid #2b2d34; border-radius:8px;
   overflow:hidden; margin:1.6rem 0; }
 .exercise-run { margin:.8rem 0 0; }
 .code-wrap { position:relative; background:var(--term); overflow:hidden; }
@@ -1014,12 +1017,12 @@ details.solution { border:0; border-top:2px solid var(--ink); border-radius:0; b
 .code-hl .com { color:#6a9955; } .code-hl .con { color:#569cd6; } .code-hl .dec { color:#dcdcaa; }
 .code-hl .ig { box-shadow:inset 1px 0 #3b3d44; }
 .cell-run:focus-within, .exercise-run:focus-within, .desk:focus-within {
-  border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+  border-color:var(--term-focus); box-shadow:0 0 0 1px var(--term-focus); }
 .desk-actions { display:flex; gap:12px; align-items:center; flex-wrap:wrap; padding:7px 12px;
   background:var(--term); border-top:1px solid var(--term-line); }
-.code-wrap:focus-within + .desk-actions { border-top-color:var(--accent); }
+.code-wrap:focus-within + .desk-actions { border-top-color:var(--term-focus); }
 .desk-actions button { font:600 .85rem ui-sans-serif,system-ui; padding:6px 14px; border:0;
-  border-radius:6px; background:var(--accent); color:#fff; cursor:pointer; display:flex;
+  border-radius:6px; background:var(--term-button); color:#fff; cursor:pointer; display:flex;
   align-items:center; gap:7px; }
 .desk-actions button:focus-visible { outline:2px solid #7dd3fc; outline-offset:2px; }
 .desk-actions button:disabled { cursor:progress; }

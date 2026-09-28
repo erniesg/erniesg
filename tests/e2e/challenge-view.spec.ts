@@ -81,7 +81,10 @@ test.describe('the challenge side-by-side view', () => {
       page.locator(selector).first().evaluate((element) => !!element.closest('[inert]'))
     const READING_ORDER = 'nav[aria-label="Reading order"]'
     await page.locator(TOGGLE).click()
-    expect(await inert('[data-book-look-choice="plain"]')).toBe(true)
+    // The book bar (chapter progress and the look switch) is pinned above the
+    // panes, so it stays usable; the page behind the panes does not.
+    expect(await inert('[data-book-look-choice="plain"]')).toBe(false)
+    expect(await inert('[data-chapter-progress]')).toBe(false)
     expect(await inert(READING_ORDER)).toBe(true)
     expect(await inert('#reading-navigation')).toBe(true)
     expect(await inert(TOGGLE)).toBe(false)
@@ -95,7 +98,7 @@ test.describe('the challenge side-by-side view', () => {
       const covered = await page.evaluate(() => {
         const active = document.activeElement
         return !!active && !active.closest('[data-challenge-split]') && !active.closest('header')
-          && !active.closest('.reading-margin')
+          && !active.closest('.reading-margin') && !active.closest('[data-book-bar]')
       })
       expect(covered).toBe(false)
     }

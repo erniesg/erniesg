@@ -36,6 +36,10 @@ export type BookNode = {
   html: string
   blocks: BookBlock[]
   outline: BookOutlineEntry[]
+  /** Previous and next in reading order, as `render.py` writes them. */
+  pager: string
+  /** The chapter progress indicator, as `render.py` writes it. */
+  progress: string
 }
 
 export type BookPart = { id: string; title: string; nodes: string[] }
@@ -79,6 +83,8 @@ export type BookManifest = {
   splitCss: string
   /** The side-by-side toggle's behaviour, shared with `books/tools/preview.py`. */
   splitScript: string
+  /** The indicator, pager and shortcut sheet; unscoped, their classes are their own. */
+  navCss: string
   books: Book[]
 }
 

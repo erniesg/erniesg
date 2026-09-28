@@ -44,6 +44,7 @@ from render import (
     CARD_BLOCKS,
     CONTENT_AT_RULES,
     CONTENT_CSS,
+    NAV_CSS,
     PART_NAMES,
     all_nodes,
     figure as render_figure,
@@ -51,7 +52,9 @@ from render import (
     load_node,
     load_topics,
     problem_card as render_problem_card,
+    reading_navigation,
     render_node,
+    section_headings,
     report_legacy_workspace,
     split_blocks,
 )
@@ -206,11 +209,11 @@ main.wide { grid-template-columns:minmax(0,60rem); }
 .map-detail .rail-title:first-of-type { border-top:0; padding-top:0; }
 .tick { color:#15803d; }
 .print-page { border-bottom:1px solid var(--line); padding-bottom:2rem; margin-bottom:2rem; }
-nav.turn { display:flex; justify-content:space-between; margin-top:3rem;
-  border-top:1px solid var(--line); padding-top:1rem; font:.9rem ui-sans-serif,system-ui; }
-nav.turn a { color:var(--accent); text-decoration:none; }
+header.top .chapter-progress { max-width:34rem; margin:0 auto; }
+article h2[id] { scroll-margin-top:64px; }
 @media (max-width:1279px) { main { grid-template-columns:minmax(0,40rem); } .rail { display:none; } }
 @media (max-width:1100px) { .map-wrap { grid-template-columns:minmax(0,1fr); } }
+@media (max-width:760px) { header.top:has(.chapter-progress) :is(.book-title, .graph-link, .progress) { display:none; } }
 @media (max-width:480px) { body { font-size:16px; } main { padding:20px 16px 60px; } }
 :root { --split-top:45px; --split-surface:var(--bg); --split-ink:var(--ink); }
 """ + SPLIT_CSS + (
@@ -219,7 +222,7 @@ nav.turn a { color:var(--accent); text-decoration:none; }
     "@media screen and (min-width:%dpx) {"
     ' html[data-challenge-view="split"] main:has([data-challenge-split]) > .rail'
     " { display:none; } }" % CHALLENGE_SPLIT_MIN_WIDTH
-)
+) + NAV_CSS
 
 
 def contents_html(order: list[dict], current: str = "") -> str:
@@ -407,8 +410,20 @@ what it unlocks and what is written for it.</p>
 <script>{MAP_SCRIPT}</script>'''
 
 
+NAV_RUNTIME = Path(__file__).resolve().parent / "runtime" / "book-nav.mjs"
+
+
+def nav_script() -> str:
+    """The shortcuts and the live indicator: the site's module, inlined as-is."""
+    return (
+        f'<script type="module">{NAV_RUNTIME.read_text()}\n'
+        "installBookKeys(document); trackChapterProgress(document);</script>"
+    )
+
+
 def page(title: str, inner: str, book_title: str, order: list[dict], current: str = "",
-         node: dict | None = None, wide: bool = False, rail: str | None = None) -> bytes:
+         node: dict | None = None, wide: bool = False, rail: str | None = None,
+         progress: str = "") -> bytes:
     positions = [n["id"] for n in order]
     place = positions.index(current) + 1 if current in positions else 0
     solved = sum(1 for n in order if n.get("solved"))
@@ -424,6 +439,7 @@ def page(title: str, inner: str, book_title: str, order: list[dict], current: st
   <a class="book-title" href="/">{html.escape(book_title)}</a>
   <a class="graph-link" href="/map">Map</a>
   <a class="graph-link" href="/print{'#print-' + html.escape(current) if current else ''}">Print</a>
+  {progress}
   <div class="progress" title="{place} of {len(positions)} in this book">
     <div class="bar"><i style="width:{through}%"></i></div>
     <span class="progress-text">{place}/{len(positions)} · {solved}/{gradeable} solved</span>
@@ -434,7 +450,7 @@ def page(title: str, inner: str, book_title: str, order: list[dict], current: st
   {contents_html(order, current)}
 </div></aside>
 <main class="{'wide' if wide else ''}"><article>{inner}</article>{(rail if rail is not None else render_rail(inner, node)) if not wide else ''}</main>
-<script>{SPLIT_SCRIPT}</script><script>{SCRIPT}</script></body></html>""".encode()
+<script>{SPLIT_SCRIPT}</script><script>{SCRIPT}</script>{nav_script() if progress else ''}</body></html>""".encode()
 
 
 SCRIPT = r"""
@@ -1135,20 +1151,24 @@ class Handler(BaseHTTPRequestHandler):
             )
 
         node = order[found]
-        turn = '<nav class="turn">'
-        turn += (
-            f'<a href="/{order[found-1]["id"]}">‹ {html.escape(order[found-1]["title"])}</a>'
-            if found > 0
-            else "<span></span>"
+        body = render_node(node)
+        rendered = {node["id"]: body}
+
+        def sections(node_id: str) -> list[tuple[str, str]]:
+            if node_id not in rendered:
+                rendered[node_id] = render_node(next(n for n in order if n["id"] == node_id))
+            return section_headings(rendered[node_id])
+
+        nav = reading_navigation(
+            order,
+            node["id"],
+            lambda node_id: f"/{node_id}",
+            sections,
+            frozenset(read_progress().get("solved", [])),
         )
-        turn += (
-            f'<a href="/{order[found+1]["id"]}">{html.escape(order[found+1]["title"])} ›</a>'
-            if found + 1 < len(order)
-            else "<span></span>"
-        )
-        turn += "</nav>"
         return self._send(
-            page(node["title"], render_node(node) + turn, title, order, node["id"], node)
+            page(node["title"], body + nav["pager"], title, order, node["id"], node,
+                 progress=nav["progress"])
         )
 
     def do_POST(self):

@@ -20,9 +20,15 @@ type Props = {
   book: Book
   /** The node being read, for the "where you are" counter. */
   currentId?: string
+  /**
+   * The chapter progress indicator, as `render.py` writes it. With it the bar
+   * stays in view in both looks: pinned under the site header in `site`, and
+   * in the middle of the plain bar in `plain`.
+   */
+  progress?: string
 }
 
-const { book, currentId } = Astro.props
+const { book, currentId, progress } = Astro.props
 const total = book.nodes.length
 const index = currentId
   ? book.nodes.findIndex((node) => node.id === currentId)
@@ -31,7 +37,7 @@ const place = index + 1
 const through = total > 0 ? Math.round((place / total) * 100) : 0
 ---
 
-<div class="book-bar" data-book-bar>
+<div class="book-bar" data-book-bar data-has-progress={progress ? '' : undefined}>
   <div class="book-bar-start book-bar-plain-only">
     <button
       type="button"
@@ -44,6 +50,8 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
     </button>
     <a class="book-bar-title" href={book.path}>{book.title}</a>
   </div>
+
+  {progress && <div class="book-bar-middle" set:html={progress} />}
 
   <div class="book-bar-end">
     <div class="book-look" role="group" aria-label="Look">
@@ -98,8 +106,22 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
     type BookLook,
   } from '@/lib/book-look'
   import { THEME_CHANGE_EVENT, THEME_STORAGE_KEY } from '@/lib/site-preferences'
+  import {
+    installBookKeys,
+    trackChapterProgress,
+  } from '../../../books/tools/runtime/book-nav.mjs'
 
   const root = document.documentElement
+
+  // `[`/`]`, `j`/`k` and `?`, once per session; they read the page at the key
+  // press, so the client router's swaps need nothing more. The indicator's
+  // observers are per page.
+  installBookKeys(document)
+  let stopProgress = trackChapterProgress(document)
+  document.addEventListener('astro:page-load', () => {
+    stopProgress()
+    stopProgress = trackChapterProgress(document)
+  })
 
   function currentLook(): BookLook {
     const value = root.getAttribute(BOOK_LOOK_ATTRIBUTE)
@@ -276,6 +298,99 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
     display: none;
   }
 
+  /* ---------- Both looks: the chapter indicator ----------
+     `render.py`'s NAV_CSS draws it from `--nav-*`; each look maps its own
+     palette onto them. In `site` the bar that carries it stays pinned under
+     the site header, so the reader always sees where they are in the chapter;
+     in `plain` it sits in the middle of the plain bar, which is pinned
+     already. */
+  html {
+    --nav-ink: hsl(var(--foreground));
+    --nav-dim: hsl(var(--muted-foreground));
+    --nav-line: hsl(var(--border));
+    --nav-accent: #0369a1;
+    --nav-panel: hsl(var(--background));
+  }
+
+  html.dark {
+    --nav-accent: #7dd3fc;
+  }
+
+  html[data-book-look='plain'] {
+    --nav-ink: var(--plain-ink);
+    --nav-dim: var(--plain-dim);
+    --nav-line: var(--plain-line);
+    --nav-accent: var(--plain-accent);
+    --nav-panel: var(--plain-panel);
+  }
+
+  /* Capped, so the step arrows stay beside the track rather than at the far
+     edges of a wide window. */
+  .book-bar-middle {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: 44rem;
+  }
+
+  .book-bar[data-has-progress] {
+    justify-content: space-between;
+  }
+
+  html:not([data-book-look='plain']) .book-bar[data-has-progress] {
+    position: sticky;
+    top: 4rem;
+    z-index: 9;
+    max-width: none;
+    margin: 0 0 0.75rem;
+    padding: 0.45rem max(1rem, calc((100% - 88rem) / 2));
+    background: hsl(var(--background));
+    border-bottom: 1px solid hsl(var(--border));
+  }
+
+  /* The shell pins its contents and margin columns under whatever is pinned
+     above it; in `site` that is now the header and this bar. */
+  html:not([data-book-look='plain'])
+    .book-bar[data-has-progress]
+    ~ .reading-shell {
+    --reading-header: 7.25rem;
+  }
+
+  .book-content h2[id] {
+    scroll-margin-top: 7.75rem;
+  }
+
+  html[data-book-look='plain'] .book-content h2[id] {
+    scroll-margin-top: calc(var(--plain-bar-height) + 1rem);
+  }
+
+  /* On a phone the indicator takes a row of its own under the bar's
+     controls, so neither squeezes the other off the screen. */
+  @media (max-width: 640px) {
+    .book-bar[data-has-progress] {
+      flex-wrap: wrap;
+      row-gap: 0.35rem;
+    }
+
+    .book-bar[data-has-progress] .book-bar-middle {
+      order: 3;
+      flex: 1 0 100%;
+      max-width: none;
+    }
+
+    .book-bar[data-has-progress] .cp-keys {
+      display: none;
+    }
+
+    .book-bar[data-has-progress] .book-look-label {
+      display: none;
+    }
+
+    .book-content h2[id] {
+      scroll-margin-top: 10.5rem;
+    }
+  }
+
   /* ---------- The plain look ---------- */
   html[data-book-look='plain'] {
     --plain-bg: #fbfbf9;
@@ -332,6 +447,24 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
     padding: 0.4rem 1rem;
     background: var(--plain-bg);
     border-bottom: 1px solid var(--plain-line);
+  }
+
+  html[data-book-look='plain'] .book-bar-middle {
+    max-width: 34rem;
+    margin: 0 auto;
+  }
+
+  /* Two rows on a phone: the bar is that much taller, and everything that
+     sits under it (the drawer, the scrim, the shell's pinned columns, a
+     heading brought into view) reads the height from this one variable. */
+  @media (max-width: 640px) {
+    html[data-book-look='plain']:has(.book-bar[data-has-progress]) {
+      --plain-bar-height: 5.1rem;
+    }
+
+    html[data-book-look='plain'] .book-bar[data-has-progress] .book-bar-title {
+      display: none;
+    }
   }
 
   html[data-book-look='plain'] .book-bar-button {

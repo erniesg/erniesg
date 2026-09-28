@@ -59,6 +59,8 @@ type Service = {
   holdDeletes: Promise<void> | null
   /** While true, GET /prefs answers 500. */
   failPrefs: boolean
+  /** While true, GET /prefs answers 404, as with no service mounted. */
+  missingPrefs: boolean
   /** While true, every PATCH is refused with a 500. */
   failPatches: boolean
   setPrefs(
@@ -103,6 +105,7 @@ async function mountService(page: Page): Promise<Service> {
     holdLists: null,
     holdDeletes: null,
     failPrefs: false,
+    missingPrefs: false,
     failPatches: false,
     async setPrefs(principal, defaultVisibility) {
       await call(
@@ -170,6 +173,10 @@ async function mountService(page: Page): Promise<Service> {
       await service.holdPrefs
     }
     if (method === 'DELETE' && service.holdDeletes) await service.holdDeletes
+    if (method === 'GET' && path.endsWith('/prefs') && service.missingPrefs) {
+      await route.fulfill({ status: 404, body: 'Not Found' })
+      return
+    }
     if (method === 'GET' && path.endsWith('/prefs') && service.failPrefs) {
       await route.fulfill({
         status: 500,
@@ -1033,6 +1040,53 @@ test.describe('the margin rail under slow or racing requests', () => {
     const notice = page.locator(`${RAIL} [data-margin-notice="transport"]`)
     await expect(notice).toContainText('margin settings')
     service.failPrefs = false
+    await reload()
+    await expect(notice).toHaveCount(0)
+  })
+
+  test('a recovered settings read clears the notice before the list arrives', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    const reload = () =>
+      page.evaluate(() => {
+        const rail = document.querySelector('margin-rail') as HTMLElement & {
+          transport: unknown
+        }
+        rail.transport = rail.transport
+      })
+    const notice = page.locator(`${RAIL} [data-margin-notice="transport"]`)
+    service.failPrefs = true
+    await reload()
+    await expect(notice).toContainText('margin settings')
+    service.failPrefs = false
+    const lists = gate()
+    service.holdLists = lists.promise
+    await reload()
+    // The list is still out; the settings already recovered.
+    await expect(notice).toHaveCount(0)
+    lists.open()
+  })
+
+  test('a settings 404 after a settings failure clears the warning', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    const reload = () =>
+      page.evaluate(() => {
+        const rail = document.querySelector('margin-rail') as HTMLElement & {
+          transport: unknown
+        }
+        rail.transport = rail.transport
+      })
+    const notice = page.locator(`${RAIL} [data-margin-notice="transport"]`)
+    service.failPrefs = true
+    await reload()
+    await expect(notice).toContainText('margin settings')
+    service.failPrefs = false
+    service.missingPrefs = true
     await reload()
     await expect(notice).toHaveCount(0)
   })

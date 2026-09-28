@@ -589,10 +589,11 @@ export class MarginRailElement extends ElementBase {
         if (prefs.status === 404) {
           // No service mounted here — the dev server, a static preview. The
           // list's 404 says the same, and neither is worth warning about.
+          this.#clearPrefsNotice()
         } else if (prefs.status === 401 || prefs.status === 403) {
           // Signed out, or refused: nobody here owns anything, whoever did before.
           this.#viewer = null
-          if (this.#notice === PREFS_FAILED) this.#notice = ''
+          this.#clearPrefsNotice()
         } else if (!isSuccess(prefs)) {
           // A 429 or a 500 says nothing about who is reading. Keep what is
           // known, say the settings did not load, and let the list go on.
@@ -604,7 +605,7 @@ export class MarginRailElement extends ElementBase {
           }
           this.#viewer = typeof body?.creator === 'string' ? body.creator : null
           // The settings did load this time; an earlier failure is old news.
-          if (this.#notice === PREFS_FAILED) this.#notice = ''
+          this.#clearPrefsNotice()
           if (
             body?.defaultVisibility === 'public' ||
             body?.defaultVisibility === 'private'
@@ -728,6 +729,16 @@ export class MarginRailElement extends ElementBase {
         error.responses.every((response) => response.status === 404)
       this.#reportTransportFailure(error, absent ? undefined : LOAD_FAILED)
     }
+  }
+
+  /**
+   * An earlier settings failure no longer holds. Drawn now: the list that
+   * follows may be slow, and until it lands the warning would stay on screen.
+   */
+  #clearPrefsNotice() {
+    if (this.#notice !== PREFS_FAILED) return
+    this.#notice = ''
+    this.#render()
   }
 
   async #publish(

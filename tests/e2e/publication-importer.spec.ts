@@ -157,7 +157,7 @@ async function installPublicationWorkerFault(
 test('explains the private source-page fallback for scans', async ({
   page,
 }) => {
-  await page.goto('/research/studio')
+  await page.goto('/library')
   await waitForImporter(page)
 
   await expect(page.getByText('Scanned pages stay local')).toBeVisible()
@@ -184,7 +184,7 @@ test('reloads once when the lazy PDF runtime became stale', async ({
   page.on('framenavigated', (frame) => {
     if (
       frame === page.mainFrame() &&
-      new URL(frame.url()).pathname === '/research/studio'
+      new URL(frame.url()).pathname === '/library'
     ) {
       studioNavigations += 1
     }
@@ -202,7 +202,7 @@ test('reloads once when the lazy PDF runtime became stale', async ({
     },
   )
 
-  await page.goto('/research/studio')
+  await page.goto('/library')
   await waitForImporter(page)
   await page
     .locator('#publication-pdf')
@@ -266,7 +266,7 @@ test('recognizes a scanned fixture with the real local browser OCR runtime', asy
     }
     await route.fallback()
   })
-  await page.goto('/research/studio')
+  await page.goto('/library')
   await waitForImporter(page)
 
   await page
@@ -321,7 +321,7 @@ test('recognizes a scanned fixture with the real local browser OCR runtime', asy
 
 async function uploadFixture(page: Page, name: string) {
   await expect(async () => {
-    await page.goto('/research/studio')
+    await page.goto('/library')
     await waitForImporter(page)
     await page.locator('#publication-pdf').setInputFiles(fixture(name))
     await expect(page.locator('.publication-result-bar')).toBeVisible({
@@ -870,7 +870,7 @@ test('adjudicates an unresolved line join with three explicit choices and replay
     })
   }
 
-  await page.goto('/research/studio')
+  await page.goto('/library')
   await waitForImporter(page)
   await upload()
   await expect(page.getByText('Review required', { exact: true })).toBeVisible()
@@ -955,7 +955,7 @@ test('does not let an unresolved stale profile build block the newest import', a
     marker: 'staleEpubBuildHeld',
     terminationMarker: 'staleEpubBuildTerminated',
   })
-  await page.goto('/research/studio', { waitUntil: 'networkidle' })
+  await page.goto('/library', { waitUntil: 'networkidle' })
   await waitForImporter(page)
 
   await page

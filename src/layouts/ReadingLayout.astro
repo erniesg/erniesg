@@ -12,6 +12,7 @@
  */
 import MarginMount from '@/components/margin/MarginMount.astro'
 import Layout from '@/layouts/Layout.astro'
+import type { SupportedLocale } from '@/lib/i18n'
 
 type Props = {
   title: string
@@ -21,6 +22,8 @@ type Props = {
   canonicalPath?: string
   image?: string
   noindex?: boolean
+  lang?: SupportedLocale
+  alternates?: Partial<Record<SupportedLocale, string>>
 }
 
 const {
@@ -30,6 +33,8 @@ const {
   canonicalPath,
   image,
   noindex = false,
+  lang,
+  alternates,
 } = Astro.props
 ---
 
@@ -39,6 +44,8 @@ const {
   image={image}
   canonicalPath={canonicalPath}
   noindex={noindex}
+  lang={lang}
+  alternates={alternates}
 >
   <slot name="head" slot="head" />
 

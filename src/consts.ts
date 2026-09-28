@@ -1,3 +1,5 @@
+import { papersListing, type PapersListing } from './lib/papers-listing'
+
 export type Site = {
   TITLE: string
   DESCRIPTION: string
@@ -38,18 +40,22 @@ export const SITE: Site = {
   SITEURL: 'https://ernie.sg',
 }
 
-const researchLinks: Link[] =
-  import.meta.env.DEV || import.meta.env.PUBLIC_RESEARCH_RELEASE === 'staging'
-    ? [{ href: '/research', label: 'research' }]
-    : []
+/**
+ * The four reading surfaces of ADR 010, then the rest. `/papers` always
+ * exists; `listing` decides only whether the nav points at it.
+ */
+export function navLinks(listing: PapersListing): Link[] {
+  return [
+    { href: '/blog', label: 'blog' },
+    { href: '/books', label: 'books' },
+    ...(listing === 'listed' ? [{ href: '/papers', label: 'papers' }] : []),
+    { href: '/library', label: 'library' },
+    { href: '/about', label: 'about' },
+    { href: '/tags', label: 'tags' },
+  ]
+}
 
-export const NAV_LINKS: Link[] = [
-  { href: '/blog', label: 'blog' },
-  { href: '/books', label: 'books' },
-  ...researchLinks,
-  { href: '/about', label: 'about' },
-  { href: '/tags', label: 'tags' },
-]
+export const NAV_LINKS: Link[] = navLinks(papersListing(import.meta.env))
 
 export const SOCIAL_LINKS: Link[] = [
   { href: 'https://github.com/erniesg', label: 'GitHub' },

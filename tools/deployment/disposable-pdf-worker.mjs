@@ -1050,7 +1050,7 @@ async function probeUrl(url) {
 async function waitForUrlAvailable(origin, nonce) {
   for (let attempt = 0; attempt < 12; attempt += 1) {
     const available = await probeUrl(
-      `${origin}/research/studio/?rucksack-disposable=${nonce}-${attempt}`,
+      `${origin}/library/?rucksack-disposable=${nonce}-${attempt}`,
     )
     if (available) return
     await delay(2_000)
@@ -1236,7 +1236,7 @@ async function verifyTeardown(client, paths, workerName, origin, nonce) {
     try {
       lastProbe = await probeOwnedResources(client, paths, workerName)
       urlUnavailable = !(await probeUrl(
-        `${origin}/research/studio/?rucksack-teardown=${nonce}-${attempt}`,
+        `${origin}/library/?rucksack-teardown=${nonce}-${attempt}`,
       ))
       const absent =
         lastProbe.deployments.absent &&

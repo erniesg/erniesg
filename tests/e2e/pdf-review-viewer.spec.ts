@@ -207,7 +207,7 @@ test('materializes one complete responsive EPUB page with matching PDF controls'
       body: bytes,
     })
   })
-  await page.goto('/research/pdf-review')
+  await page.goto('/library/pdf-review')
   const { stage, frame } = await waitForReviewPage(page)
 
   const assertCompletePage = async (
@@ -1362,7 +1362,7 @@ test('keeps the UI responsive and cancellation bounded during the 231-page stres
       body: requestUrl === stressFixtureUrl ? stressBytes : standardBytes,
     })
   })
-  await page.goto('/research/pdf-review')
+  await page.goto('/library/pdf-review')
   await waitForReviewPage(page)
   recordStressRequests = true
   await page.locator('.pdf-review-toolbar__controls select').selectOption('1')

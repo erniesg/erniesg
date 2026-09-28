@@ -1,25 +1,23 @@
 ---
 import Container from '@/components/Container.astro'
-import PublicationImporter from '@/components/research/PublicationImporter'
 import Layout from '@/layouts/Layout.astro'
 import { papers } from '@/research/papers'
 ---
 
 <Layout
-  title="Research"
-  description="Papers, prototypes, and a small tool for turning research PDFs into EPUBs."
+  title="Papers"
+  description="Research papers, ongoing and finished alike."
   noindex
 >
   <Container class="flex flex-col gap-y-12 pb-24">
     <header class="flex flex-col gap-y-3 border-b pb-6">
-      <h1 class="text-3xl font-bold">Research</h1>
+      <h1 class="text-3xl font-bold">Papers</h1>
       <p class="max-w-2xl text-sm leading-relaxed text-muted-foreground">
-        Papers, prototypes, and small tools for reading research across screens
-        and e-ink.
+        Research in progress and finished, for reading across screens and
+        e-ink. To read somebody else's paper, add it to the
+        <a class="underline underline-offset-4" href="/library/">library</a>.
       </p>
     </header>
-
-    <PublicationImporter client:load />
 
     <section class="flex flex-col gap-y-4" aria-labelledby="published-work">
       <h2 id="published-work" class="text-2xl font-semibold">Published work</h2>
@@ -29,7 +27,7 @@ import { papers } from '@/research/papers'
             <li class="border-b py-6">
               <a
                 class="group flex flex-col gap-y-2"
-                href={`/research/${paper.id}`}
+                href={`/papers/${paper.id}/`}
               >
                 <small class="text-xs text-muted-foreground">
                   {paper.status} · Updated {paper.updated}

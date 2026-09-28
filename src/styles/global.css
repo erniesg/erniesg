@@ -259,6 +259,11 @@
   .srt-stage {
     @apply grid min-h-[720px] lg:grid-cols-[1fr_260px];
   }
+  /* In the reading shell the studio is one text column wide, so its side
+     panel stacks under the viewport instead of taking a third of it. */
+  .reading-text .srt-stage {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .srt-viewport {
     @apply max-h-[780px] overflow-auto bg-muted/20 p-4 transition-all duration-500 sm:p-10;
   }

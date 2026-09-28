@@ -1288,7 +1288,7 @@ describe('PDF benchmark readiness registry', () => {
 
   it('accepts the repository-published EPUB profile', async () => {
     const published = await readFile(
-      'public/research/if-letters-home-could-sing/if-letters-home-could-sing.epub',
+      'public/papers/if-letters-home-could-sing/if-letters-home-could-sing.epub',
     )
     expect(pdfBenchmarkReadiness.validEpubPackage(published)).toBe(true)
   })

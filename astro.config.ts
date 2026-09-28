@@ -18,10 +18,63 @@ import remarkToc from 'remark-toc'
 import sectionize from '@hbsnow/rehype-sectionize'
 
 import icon from 'astro-icon'
+import type { AstroIntegration } from 'astro'
+import { fileURLToPath } from 'node:url'
 import type { Plugin } from 'vite'
+import rehypeBlockIds from './src/lib/rehype-block-ids'
+import { includeInSitemap, papersListing } from './src/lib/papers-listing'
+import {
+  legacyRedirectTarget,
+  REDIRECT_STATUS,
+  writeBuildRedirects,
+} from './tools/ia-redirects.mjs'
 import { LOCAL_OCR_ASSET_FILES } from './tools/local-ocr-assets'
 
-const includeResearch = process.env.PUBLIC_RESEARCH_RELEASE === 'staging'
+const SITE_URL = 'https://ernie.sg'
+
+const papersListingState = papersListing({
+  PUBLIC_PAPERS_LISTING: process.env.PUBLIC_PAPERS_LISTING,
+  PUBLIC_RESEARCH_RELEASE: process.env.PUBLIC_RESEARCH_RELEASE,
+})
+const productionRelease = process.env.PUBLIC_RESEARCH_RELEASE === 'production'
+
+/**
+ * The dev server's half of the ADR 010 redirects: a real 301 for every legacy
+ * `/research` and `/study` URL, pages and files alike, from the same rules the
+ * build turns into `_redirects` and static stubs.
+ */
+function legacyRedirectsDevPlugin(): Plugin {
+  return {
+    name: 'legacy-redirects-dev',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use((request, response, next) => {
+        const url = new URL(request.url ?? '/', 'http://localhost')
+        const target = legacyRedirectTarget(url.pathname)
+        if (target === null) return next()
+        response.statusCode = REDIRECT_STATUS
+        response.setHeader('Location', `${target}${url.search}`)
+        response.end()
+      })
+    },
+  }
+}
+
+/**
+ * The build's half: once Astro has emitted `/papers` and `/library`, write a
+ * redirect for every legacy URL that now lives there. Derived from the output,
+ * so a new page or asset cannot ship without its redirect.
+ */
+function legacyRedirectsBuild(): AstroIntegration {
+  return {
+    name: 'legacy-redirects-build',
+    hooks: {
+      'astro:build:done': async ({ dir }) => {
+        await writeBuildRedirects(fileURLToPath(dir), { site: SITE_URL })
+      },
+    },
+  }
+}
 
 function localOcrBuildAssetsPlugin(): Plugin {
   return {
@@ -71,7 +124,7 @@ function localOcrDevAssetsPlugin(): Plugin {
 
 // https://astro.build/config
 export default defineConfig({
-  site: 'https://ernie.sg',
+  site: SITE_URL,
   compressHTML: true,
   redirects: {
     // PubPub legacy slugs → new readable slugs (migrated 2026-05)
@@ -131,11 +184,15 @@ export default defineConfig({
   integrations: [
     sitemap({
       filter: (page) =>
-        includeResearch || !new URL(page).pathname.startsWith('/research'),
+        includeInSitemap(new URL(page).pathname.replace(/\/$/u, '') || '/', {
+          listing: papersListingState,
+          production: productionRelease,
+        }),
     }),
     mdx(),
     react(),
     icon(),
+    legacyRedirectsBuild(),
   ],
   markdown: {
     syntaxHighlight: false,
@@ -168,6 +225,8 @@ export default defineConfig({
             ],
           },
         ],
+        // Last, so it sees the final block structure every plugin above made.
+        rehypeBlockIds,
       ],
       remarkPlugins: [remarkToc, remarkMath, remarkEmoji],
     }),
@@ -180,7 +239,11 @@ export default defineConfig({
     enabled: false,
   },
   vite: {
-    plugins: [localOcrBuildAssetsPlugin(), localOcrDevAssetsPlugin()],
+    plugins: [
+      legacyRedirectsDevPlugin(),
+      localOcrBuildAssetsPlugin(),
+      localOcrDevAssetsPlugin(),
+    ],
     // The publication worker graph is loaded only after the reader chooses a
     // file. Pre-bundle both PDF.js import targets and the OCR adapter so Vite
     // cannot discover them later, reload the studio, and discard that

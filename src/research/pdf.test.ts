@@ -2112,7 +2112,7 @@ describe('PDF.js browser ingestion', () => {
   it('retains the published fellowship PDF as non-private local audit evidence', async () => {
     const bytes = await readFile(
       new URL(
-        '../../public/research/if-letters-home-could-sing/if-letters-home-could-sing.pdf',
+        '../../public/papers/if-letters-home-could-sing/if-letters-home-could-sing.pdf',
         import.meta.url,
       ),
     )

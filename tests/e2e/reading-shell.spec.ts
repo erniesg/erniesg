@@ -1,4 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
+import { existsSync } from 'node:fs'
+import path from 'node:path'
 import { installStaticRoutes } from './static-build'
 
 /**
@@ -17,7 +19,20 @@ test.beforeEach(async ({ page }) => {
 const BOOK = '/books/build-a-coding-agent/'
 const CHAPTER = '/books/build-a-coding-agent/ch12-hash-maps/'
 const DIRECTORY = '/books/'
+const LIBRARY = '/library/'
+const PAPER = '/papers/semantic-responsive-typesetting/'
+const POST = '/blog/a-i-art-and-anti-discrimination'
 const OVERFLOW_EPSILON_CSS_PX = 1
+
+/**
+ * The production release gate withholds `/papers` from the build it deploys,
+ * so a static run against that build has no paper to open. Every other run
+ * has one.
+ */
+const PAPERS_WITHHELD = Boolean(
+  process.env.SRT_STATIC_BUILD_DIR &&
+    !existsSync(path.resolve(process.env.SRT_STATIC_BUILD_DIR, 'papers')),
+)
 
 async function visibleColumns(page: Page): Promise<string[]> {
   return page.$$eval('[data-reading-column]', (elements) =>
@@ -104,5 +119,80 @@ test.describe('the reading shell', () => {
 
     expect(ids.length).toBeGreaterThan(0)
     expect(ids.every((id) => id.startsWith('block-ch12-hash-maps-'))).toBe(true)
+  })
+})
+
+async function textBlockIds(page: Page): Promise<string[]> {
+  return page.$$eval(
+    '[data-reading-column="text"] [data-block-kind]',
+    (blocks) => blocks.map((block) => block.id),
+  )
+}
+
+test.describe('the four reading surfaces of ADR 010', () => {
+  const SURFACES = [
+    ['the library', LIBRARY],
+    ['a book', BOOK],
+    ['a paper', PAPER],
+    ['a blog entry', POST],
+  ] as const
+
+  for (const [name, route] of SURFACES) {
+    test(`renders ${name} through the shell, with a margin mount`, async ({
+      page,
+    }) => {
+      test.skip(
+        route === PAPER && PAPERS_WITHHELD,
+        'The production release gate withholds /papers from this build.',
+      )
+      await page.setViewportSize({ width: 1440, height: 1000 })
+      await page.goto(route)
+
+      await expect(page.locator('[data-reading-shell]')).toHaveCount(1)
+      expect(await visibleColumns(page)).toEqual(['navigation', 'text', 'margin'])
+      await expect(
+        page.locator('[data-margin-mount] margin-rail'),
+      ).toHaveCount(1)
+      await expect(
+        page.locator('[data-reading-column="text"]'),
+      ).toHaveAttribute('data-document-uri', /^https:\/\/ernie\.sg\//u)
+    })
+  }
+
+  test('gives a blog entry stable, unique block ids', async ({ page }) => {
+    await page.goto(POST)
+    const ids = await textBlockIds(page)
+
+    expect(ids.length).toBeGreaterThan(3)
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(ids.every((id) => id.length > 0)).toBe(true)
+    expect(ids.some((id) => /^block-p-[0-9a-f]{12}$/u.test(id))).toBe(true)
+
+    await page.reload()
+    expect(await textBlockIds(page)).toEqual(ids)
+  })
+
+  test('gives a paper its authored node ids as block ids', async ({ page }) => {
+    test.skip(
+      PAPERS_WITHHELD,
+      'The production release gate withholds /papers from this build.',
+    )
+    await page.goto(PAPER)
+    const ids = await textBlockIds(page)
+
+    expect(ids).toContain('p-proposition-1')
+    expect(new Set(ids).size).toBe(ids.length)
+
+    await page.reload()
+    expect(await textBlockIds(page)).toEqual(ids)
+  })
+
+  test('does not scroll a blog entry sideways at 375px', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 800 })
+    await page.goto(POST)
+
+    expect(await horizontalOverflow(page)).toBeLessThanOrEqual(
+      OVERFLOW_EPSILON_CSS_PX,
+    )
   })
 })

@@ -7,6 +7,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { getStaticText, useSiteLocale } from '@/lib/use-site-locale'
 import {
+  THEME_CHANGE_EVENT,
   THEME_STORAGE_KEY,
   isSiteTheme,
   type SiteTheme,
@@ -20,8 +21,15 @@ export function ModeToggle() {
   const [theme, setThemeState] = React.useState<SiteTheme>('system')
 
   React.useEffect(() => {
-    const storedTheme = localStorage.getItem(THEME_STORAGE_KEY)
-    setThemeState(isSiteTheme(storedTheme) ? storedTheme : 'system')
+    const readStored = () => {
+      const storedTheme = localStorage.getItem(THEME_STORAGE_KEY)
+      setThemeState(isSiteTheme(storedTheme) ? storedTheme : 'system')
+    }
+    readStored()
+    // Another control (the book's plain bar) stored a theme: follow it, so a
+    // later choice here is never a no-op against stale state.
+    document.addEventListener(THEME_CHANGE_EVENT, readStored)
+    return () => document.removeEventListener(THEME_CHANGE_EVENT, readStored)
   }, [])
 
   React.useEffect(() => {

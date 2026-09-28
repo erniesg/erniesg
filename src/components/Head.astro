@@ -165,10 +165,25 @@ const structuredData = {
     targetDocument.documentElement.classList[isDark ? 'add' : 'remove']('dark')
   }
 
+  // The book's look (`src/lib/book-look.ts`). Set on every page so a
+  // navigation into a book never paints the wrong look first; only the book's
+  // own styles read it.
+  function setBookLook(targetDocument) {
+    let look = 'site'
+    try {
+      if (localStorage.getItem('book-look') === 'plain') look = 'plain'
+    } catch {
+      // Storage refused (private mode, blocked site data): the default look.
+    }
+    targetDocument.documentElement.setAttribute('data-book-look', look)
+  }
+
   setDarkMode(document)
+  setBookLook(document)
 
   document.addEventListener('astro:before-swap', (ev) => {
     setDarkMode(ev.newDocument)
+    setBookLook(ev.newDocument)
   })
 
   window

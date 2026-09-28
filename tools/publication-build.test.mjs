@@ -260,6 +260,25 @@ describe('publication:build CLI', () => {
     expect(canonicalRouteBodyFingerprint('<article><h1>Heading</h1><p>Changed</p></article>')).not.toEqual(expected)
   })
 
+  it('reads a post body inside the reading shell, not the shell around it', () => {
+    const graph = {
+      nodes: [
+        { type: 'heading', level: 1, text: 'Heading' },
+        { type: 'paragraph', text: 'Body proof' },
+      ],
+    }
+    // ReadingLayout makes the text column the <article>, so the post's own
+    // breadcrumb, title and navigation sit beside its prose. The prose is the
+    // element marked `data-post-content`.
+    const shell = `<article class="reading-text"><nav>Blog › Post</nav>
+      <h1>The post title</h1><p>February 10, 2025</p>
+      <div class="prose" data-post-content><h1>Heading</h1><p>Body proof</p></div>
+      <nav><p>Next post</p></nav></article>`
+    expect(canonicalRouteBodyFingerprint(shell)).toEqual(
+      publicationGraphBodyFingerprint(graph),
+    )
+  })
+
   it('treats Astro typographic apostrophes as the same authored body text', () => {
     const graph = {
       nodes: [{ type: 'paragraph', text: "Author's proof" }],

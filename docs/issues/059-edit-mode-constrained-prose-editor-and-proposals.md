@@ -28,6 +28,16 @@ instead.
   fences, the figure attributes or the front matter, producing a proposal that
   cannot be applied.
 - Nothing currently lets a reader propose any change at all.
+- **The page does not say what it was built from.** `<margin-rail>` carries
+  only `document-uri` (checked on the workers.dev preview, 2026-09-28).
+  Nothing on the page names the node's source file or the commit it was
+  rendered from, so criterion 4's base commit has no source until the build
+  stamps one.
+- **What already exists; extend it, never duplicate it.** A `proposal` kind is
+  in `packages/margin/src/anchor.ts` (`body: string`, no base commit yet), and
+  `GET /proposals` in `src/worker/margin/routes.ts` lists `editing` rows. Add
+  the base commit and the CriticMarkup patch to that record. Do not add a
+  second proposal shape.
 
 ## Success criteria
 
@@ -41,6 +51,10 @@ instead.
 4. A saved proposal is an `editing` annotation carrying a **Markdown patch
    against a named base commit** of the node's source file, expressed in
    CriticMarkup (`{--deleted--}`, `{++added++}`, `{~~old~>new~~}`).
+   CriticMarkup is the only stored form. One shared converter,
+   `toUnifiedDiff(criticMarkup, baseSource, sourcePath)` in
+   `src/annotations/criticmarkup.ts`, turns it into a unified diff; 060's
+   adapter uses the same function, so what is tested here is what gets applied.
 5. **The round trip is proven, not assumed.** For every one of the 46 nodes, a
    test parses the source to the editor schema and serializes it back, and
    asserts the Markdown is byte-identical when nothing was edited. Any node
@@ -49,9 +63,30 @@ instead.
 6. A proposal records its base commit. When the source has moved on, the
    proposal is marked stale and shown as such rather than applied blindly.
 7. A reader may save, reopen and revise their own pending proposal, and
-   withdraw it. Reviewing and applying belong to 060.
+   withdraw it. Every revision increments the proposal's `revision` number,
+   which 060 binds an approval to. Reviewing and applying belong to 060.
 8. Edit mode is keyboard-complete and announces its state to assistive
    technology.
+9. The build stamps each node's page with its repo-relative source path and
+   `source-commit`, the last commit that touched that file
+   (`git log -1 --format=%H -- <file>`), as attributes on `<margin-rail>`.
+   A proposal takes its base commit from these, never from the client's clock
+   or a guess. **The build refuses incomplete history**: it fails and names
+   the fix if `git rev-parse --is-shallow-repository` prints `true`, or if
+   any remote is a promisor (`git config --get-regexp '^remote\..*\.promisor$'`
+   prints anything, meaning a partial clone whose history objects may be
+   missing). Any git error while stamping fails the build rather than
+   emitting a page, because in a one-commit or partial clone
+   `git log -1 -- <file>` can be empty or can fail for files HEAD did not touch. Every build and deploy path that runs it
+   (`.github/workflows/ci.yml`, `agent-evidence.yml`, and any deploy
+   workflow) checks out with `fetch-depth: 0`.
+10. Edit mode covers ordinary editing, not only one-word fixes. Deleting a
+    word, a sentence, a whole paragraph or a list item, replacing text,
+    retyping a passage, and splitting or joining paragraphs all work, with
+    undo and redo inside the session. Before saving, the change shows inline
+    as tracked changes (deletions struck, insertions marked). The owner uses
+    this same mode; applying their change belongs to 060, and this issue gives
+    nobody a direct write.
 
 ## Acceptance tests
 
@@ -63,11 +98,22 @@ instead.
 - A proposal against an outdated base commit is marked stale, not applied.
 - A locked block cannot be edited by keyboard, paste or drag.
 - Withdrawing a proposal removes it from review without deleting its thread.
+- For three nodes, the stamped `source-commit` equals
+  `git log -1 --format=%H -- <file>` at the build commit, and the stamped
+  path exists.
+- The build run in a `git clone --depth 1` checkout fails with a message
+  naming the shallow clone, and emits no page.
+- Deleting a whole paragraph and joining two paragraphs each produce a
+  CriticMarkup patch that, converted by `toUnifiedDiff`, `git apply`s cleanly
+  to the base commit; undo restores a byte-identical document.
+- The build fails in a `--filter=blob:none` partial clone as well as a
+  depth-1 clone.
 
 ## Definition of done
 
 Every node round-trips clean, the paste-sanitization tests pass, and a saved
-proposal applies cleanly to its base commit with `git apply` in a test.
+proposal, converted by `toUnifiedDiff`, applies cleanly to its base commit
+with `git apply` in a test.
 
 ## Validation command
 
@@ -76,7 +122,7 @@ npm run test:margin
 npx vitest run src/worker/margin
 python3 books/tools/validate.py
 npm test
-SRT_E2E_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')
+export SRT_E2E_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')
 npx playwright test tests/e2e/margin-edit-mode.spec.ts
 ```
 

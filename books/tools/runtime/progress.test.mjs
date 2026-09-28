@@ -111,3 +111,17 @@ describe('browserStore', () => {
     expect(browserStore('b', storage).load()).toEqual(emptyProgress('b'))
   })
 })
+
+describe('acknowledge', () => {
+  it('takes the stored time for the same code, so a clamped draft stops looking newer', async () => {
+    const { acknowledge } = await import('./progress.mjs')
+    const future = '2099-01-01T00:00:00.000Z'
+    const clamped = '2026-09-28T12:00:00.000Z'
+    const mine = setDraft(emptyProgress('b'), 'x', 'same', future)
+    const stored = setDraft(emptyProgress('b'), 'x', 'same', clamped)
+    expect(acknowledge(mine, stored).drafts.x).toEqual({ code: 'same', updatedAt: clamped })
+    // Different code is a real competing edit: the ordinary merge decides.
+    const other = setDraft(emptyProgress('b'), 'x', 'theirs', clamped)
+    expect(acknowledge(mine, other).drafts.x.code).toBe('same')
+  })
+})

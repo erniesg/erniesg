@@ -4,9 +4,8 @@
  *
  * Moved out of `preview.py`'s page script so the published site runs the very
  * same code: the preview serves this file as a module, the site bundles it.
- * `wireExercises` tells its host when a check finishes and when an editor
- * changes, which is how progress is recorded without this file knowing where
- * progress is kept.
+ * `wireExercises` tells its host when a check finishes, which is how a solve is
+ * recorded without this file knowing where progress is kept.
  */
 
 const exerciseId = section => (section.id || '').replace(/^ex-/, '');
@@ -124,7 +123,7 @@ function results(produced, expected, error) {
     + (error ? `<pre class="case-error">${escapeHtml(error.trim())}</pre>` : '') };
 }
 
-export function wireExercises(root = document, { onResult, onEdit } = {}) {
+export function wireExercises(root = document, { onResult } = {}) {
 root.querySelectorAll('.exercise').forEach(ex => {
   const button = ex.querySelector('.check');
   const editor = ex.querySelector('.editor');
@@ -145,7 +144,6 @@ root.querySelectorAll('.exercise').forEach(ex => {
     button.disabled = false; button.classList.remove('busy');
     onResult?.({ id: exerciseId(ex), section: ex, code: editor.value, allOk });
   };
-  if (onEdit) editor.addEventListener('input', () => onEdit({ id: exerciseId(ex), section: ex, code: editor.value }));
 });
 }
 

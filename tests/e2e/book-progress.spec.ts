@@ -89,3 +89,16 @@ test('a failing check after a solve does not un-solve it', async ({ page }) => {
   const progress = await (await page.request.get('/api/progress')).json()
   expect(progress.solved).toContain(SOLVE)
 })
+
+test('code typed into a graded challenge survives a reload', async ({ page }) => {
+  await page.goto('/sum-of-two-digits')
+  const editor = page.locator('.desk .editor')
+  const code = 'def solve(n):\n    return 0  # still working'
+  const saved = page.waitForResponse(
+    (r) => r.url().endsWith('/api/progress') && r.request().method() === 'POST',
+  )
+  await editor.fill(code)
+  await saved
+  await page.reload()
+  await expect(page.locator('.desk .editor')).toHaveValue(code)
+})

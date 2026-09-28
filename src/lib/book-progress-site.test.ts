@@ -6,7 +6,7 @@ import {
   storageKey,
   type Progress,
 } from '../../books/tools/runtime/progress.mjs'
-import { changesSince, siteBackend } from './book-progress-site'
+import { changesSince, chunks, siteBackend } from './book-progress-site'
 
 const BOOK = 'build-a-coding-agent'
 const SITE = 'https://ernie.sg'
@@ -50,6 +50,13 @@ function fakeSite(options: { me?: unknown; server?: unknown; fail?: boolean } = 
 }
 
 describe('changesSince', () => {
+  it('sends an earlier time for a solve the account already has', () => {
+    const base = markSolved(emptyProgress(BOOK), 'a', T2)
+    const next = markSolved(emptyProgress(BOOK), 'a', T1)
+    expect(changesSince(next, base)?.solvedAt).toEqual({ a: T1 })
+    expect(changesSince(base, next)).toBeNull()
+  })
+
   it('sends only new solves and newer drafts, and nothing when nothing changed', () => {
     const base = setDraft(markSolved(emptyProgress(BOOK), 'a', T1), 'b', 'old', T1)
     expect(changesSince(base, base)).toBeNull()
@@ -112,10 +119,63 @@ describe('siteBackend', () => {
     expect(JSON.parse(storage.map.get(storageKey(BOOK))!).solved).toEqual(['a'])
   })
 
-  it('works with no browser storage at all', async () => {
+  it('works with no browser storage at all, and says progress is not being kept', async () => {
     const site = fakeSite()
     const backend = siteBackend({ book: BOOK, site: SITE, storage: undefined, fetchImpl: site.fetchImpl })
     expect(await backend.load()).toEqual(emptyProgress(BOOK))
     expect(await backend.save(markSolved(emptyProgress(BOOK), 'a', T1))).toBeNull()
+    expect(backend.describe()).toBe(
+      'Not saved: this browser is not keeping site data. Export progress to keep it.',
+    )
+  })
+
+  it('keeps an edit saved while the account was loading', async () => {
+    const storage = memory()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const site = fakeSite({ me: { authenticated: true, canWrite: true } })
+    const slowFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).startsWith('/api/margin/v1/progress') && (init?.method ?? 'GET') === 'GET') await gate
+      return site.fetchImpl(input, init)
+    }) as typeof fetch
+    const backend = siteBackend({ book: BOOK, site: SITE, storage, fetchImpl: slowFetch })
+    const loading = backend.load()
+    // The page saves a draft while the account read is still out.
+    await backend.save(setDraft(emptyProgress(BOOK), 'a', 'typed meanwhile', T2))
+    release()
+    const loaded = (await loading) as Progress
+    expect(loaded.drafts.a?.code).toBe('typed meanwhile')
+    expect(JSON.parse(storage.map.get(storageKey(BOOK))!).drafts.a.code).toBe('typed meanwhile')
+  })
+
+  it('adopts the account time for a draft it clamped, so it is not resent forever', async () => {
+    const future = '2099-01-01T00:00:00.000Z'
+    const clamped = '2026-09-28T12:00:00.000Z'
+    const storage = memory()
+    storage.setItem(storageKey(BOOK), JSON.stringify(setDraft(emptyProgress(BOOK), 'a', 'same', future)))
+    const site = fakeSite({
+      me: { authenticated: true, canWrite: true },
+      server: setDraft(emptyProgress(BOOK), 'a', 'same', clamped),
+    })
+    const backend = siteBackend({ book: BOOK, site: SITE, storage, fetchImpl: site.fetchImpl })
+    const loaded = (await backend.load()) as Progress
+    expect(loaded.drafts.a.updatedAt).toBe(clamped)
+    expect(site.calls.filter((c) => c.method === 'PATCH')).toEqual([])
+  })
+})
+
+describe('chunks', () => {
+  it('splits by size as well as by count, so every request fits the service', () => {
+    let change = emptyProgress(BOOK)
+    for (let index = 0; index < 150; index += 1) {
+      change = setDraft(change, `d-${index}`, 'x'.repeat(19_000), T1)
+    }
+    const parts = chunks(change)
+    expect(parts.length).toBeGreaterThan(1)
+    for (const part of parts) {
+      expect(new TextEncoder().encode(JSON.stringify(part)).length).toBeLessThan(2 * 1024 * 1024)
+      expect(Object.keys(part.drafts).length).toBeLessThanOrEqual(200)
+    }
+    expect(parts.flatMap((part) => Object.keys(part.drafts)).sort()).toEqual(Object.keys(change.drafts).sort())
   })
 })

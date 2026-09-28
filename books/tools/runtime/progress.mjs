@@ -113,6 +113,20 @@ export function merge(a, b) {
   return merged
 }
 
+/**
+ * `mine`, after a store has confirmed it: where the store holds the same code
+ * for a draft, its time is the one that counts. A store clamps a time from a
+ * clock running ahead, and keeping the unclamped time would make the same
+ * draft look newer than the store forever, resent and re-clamped each save.
+ */
+export function acknowledge(mine, stored) {
+  const drafts = { ...mine.drafts }
+  for (const [id, draft] of Object.entries(stored.drafts || {})) {
+    if (drafts[id] && drafts[id].code === draft.code) drafts[id] = draft
+  }
+  return merge({ ...mine, drafts }, stored)
+}
+
 /** Solved is monotonic: a second solve keeps the first time. */
 export function markSolved(progress, id, now) {
   if (!isItemId(id)) return progress

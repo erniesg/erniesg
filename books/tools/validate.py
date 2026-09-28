@@ -43,6 +43,10 @@ REQUIRED_BLOCKS = {
 EDGE_KEYS = ["requires", "assessed-by", "harder-variant-of", "motivates"]
 
 problems: list[str] = []
+# Reading progress keys exercises and nodes in one namespace per book, so an id
+# must fit the progress grammar and name one thing only.
+PROGRESS_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,127}$")
+exercise_ids: dict[str, list[Path]] = {}
 
 
 def fail(where: Path, message: str) -> None:
@@ -94,6 +98,8 @@ def check_exercises(path: Path, body: str) -> None:
         elif exercise_id in seen:
             fail(path, f"{where} is declared twice")
         seen.add(exercise_id)
+        if exercise_id:
+            exercise_ids.setdefault(exercise_id, []).append(path)
         parts = parse_exercise(inner)
         missing = [part for part in EXERCISE_PARTS if part not in parts]
         if missing:
@@ -104,6 +110,22 @@ def check_exercises(path: Path, body: str) -> None:
             fail(path, f"{where}: the answer prints {produced.strip()!r}, not the expected output")
         if same_output(run_python(parts["starter"]), parts["output"]):
             fail(path, f"{where}: the starter already prints the answer, so there is nothing to do")
+
+
+def check_progress_ids(nodes: dict[str, dict]) -> None:
+    """Every exercise and node id is a progress key: well formed and unique book-wide."""
+    for exercise_id, paths in sorted(exercise_ids.items()):
+        where = f"exercise `{exercise_id}`"
+        if not PROGRESS_ID.match(exercise_id):
+            fail(paths[0], f"{where}: ids are lowercase letters, digits and hyphens")
+        if len(set(paths)) > 1:
+            others = ", ".join(sorted({p.name for p in paths}))
+            fail(paths[0], f"{where} is also declared in another node ({others})")
+        if exercise_id in nodes:
+            fail(paths[0], f"{where} has the same id as a node, so they would share progress")
+    for node_id in sorted(nodes):
+        if not PROGRESS_ID.match(str(node_id)):
+            fail(BOOKS, f"node `{node_id}`: ids are lowercase letters, digits and hyphens")
 
 
 def check_node(path: Path, meta: dict, body: str) -> None:
@@ -307,6 +329,7 @@ def main() -> int:
     check_figures()
     check_graph(nodes)
     check_paths(nodes)
+    check_progress_ids(nodes)
 
     if problems:
         print(f"\n{len(problems)} problem(s):\n")

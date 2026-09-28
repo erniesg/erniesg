@@ -21,7 +21,7 @@
  *   [data-progress-import]         opens `[data-progress-import-file]`, then merges it
  */
 import { wireExercises } from './exercises.mjs'
-import { counts, emptyProgress, markSolved, merge, normalize, setDraft } from './progress.mjs'
+import { acknowledge, counts, emptyProgress, markSolved, merge, normalize, setDraft } from './progress.mjs'
 
 const DRAFT_SAVE_DELAY_MS = 800
 
@@ -29,6 +29,25 @@ const words = (value) => (value || '').split(/\s+/).filter(Boolean)
 
 function exerciseId(section) {
   return (section.id || '').replace(/^ex-/, '')
+}
+
+/**
+ * Every editor whose code is kept, by the id progress keys it under: an
+ * inline exercise by its id, a graded challenge (the local preview's desk) by
+ * its node id.
+ */
+function trackedEditors(root) {
+  const found = []
+  root.querySelectorAll('.exercise').forEach((section) => {
+    const editor = section.querySelector('.editor')
+    const id = exerciseId(section)
+    if (editor && id) found.push({ id, editor })
+  })
+  root.querySelectorAll('.desk[data-node]').forEach((desk) => {
+    const editor = desk.querySelector('.editor')
+    if (editor && desk.dataset.node) found.push({ id: desk.dataset.node, editor })
+  })
+  return found
 }
 
 function paintSolved(root, progress) {
@@ -54,14 +73,15 @@ function paintSolved(root, progress) {
 }
 
 /**
- * Put saved code back, but only into an editor the reader has not touched:
- * progress can arrive after they have started typing, and their keystrokes win.
+ * Put saved code back, but only into an editor the reader has not typed in on
+ * this page: progress can arrive after they have started, and their keystrokes
+ * win. Code this page put there itself (an earlier restore) is not theirs, so a
+ * newer draft from an import still replaces it.
  */
-function restoreDrafts(root, progress, guard) {
-  root.querySelectorAll('.exercise').forEach((section) => {
-    const editor = section.querySelector('.editor')
-    const draft = progress.drafts[exerciseId(section)]
-    if (!editor || !draft || editor.value !== editor.defaultValue || draft.code === editor.value) return
+function restoreDrafts(editors, progress, typed, guard) {
+  editors.forEach(({ id, editor }) => {
+    const draft = progress.drafts[id]
+    if (!draft || typed.has(editor) || draft.code === editor.value) return
     guard(() => {
       editor.value = draft.code
       // The highlighter and line numbers repaint on input.
@@ -89,6 +109,9 @@ export async function startProgress({
   // straight away is never ignored; what loads later is merged in.
   let progress = emptyProgress(book)
   let restoring = false
+  const editors = trackedEditors(root)
+  // Editors the reader has typed in on this page.
+  const typed = new WeakSet()
   let timer = null
   const statusLines = [...root.querySelectorAll('[data-progress-status]')]
   const describe = () => backend.describe?.() ?? ''
@@ -109,7 +132,7 @@ export async function startProgress({
     timer = null
     const stored = await backend.save(progress)
     if (stored) {
-      progress = merge(progress, stored)
+      progress = acknowledge(progress, normalize(stored, book))
       paintSolved(root, progress)
     }
     show()
@@ -128,11 +151,14 @@ export async function startProgress({
       note = ''
       if (allOk) update(markSolved(progress, id, now()), { soon: true })
     },
-    onEdit: ({ id, code }) => {
+  })
+  editors.forEach(({ id, editor }) => {
+    editor.addEventListener('input', () => {
       if (restoring) return
+      typed.add(editor)
       note = ''
-      update(setDraft(progress, id, code, now()))
-    },
+      update(setDraft(progress, id, editor.value, now()))
+    })
   })
 
   root.querySelectorAll('[data-progress-export]').forEach((button) => {
@@ -159,7 +185,7 @@ export async function startProgress({
       const before = progress.solved.length
       const next = merge(progress, imported)
       update(next, { soon: true })
-      restoreDrafts(root, progress, guard)
+      restoreDrafts(editors, progress, typed, guard)
       note = `Imported: ${progress.solved.length - before} newly solved.`
       show()
     })
@@ -167,7 +193,7 @@ export async function startProgress({
 
   progress = merge(progress, normalize(await backend.load(), book))
   paintSolved(root, progress)
-  restoreDrafts(root, progress, guard)
+  restoreDrafts(editors, progress, typed, guard)
   show()
 
   return { current: () => progress }

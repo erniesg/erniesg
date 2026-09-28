@@ -64,6 +64,25 @@ class ExerciseTests(unittest.TestCase):
         self.assertNotIn("<details", html)
         self.assertIn("print(max(values))", html)
 
+    def test_progress_ids_are_well_formed_and_unique_book_wide(self):
+        validate.problems.clear()
+        validate.exercise_ids.clear()
+        a, b = validate.BOOKS / "a.md", validate.BOOKS / "b.md"
+        validate.exercise_ids.update({
+            "good-one": [a],
+            "Bad_Id": [a],
+            "twice": [a, b],
+            "same-as-node": [b],
+        })
+        validate.check_progress_ids({"same-as-node": {}, "fine-node": {}})
+        found = "\n".join(validate.problems)
+        validate.exercise_ids.clear()
+        validate.problems.clear()
+        self.assertNotIn("good-one", found)
+        self.assertIn("Bad_Id", found)
+        self.assertIn("`twice` is also declared in another node", found)
+        self.assertIn("same id as a node", found)
+
     def test_validator_accepts_a_good_exercise(self):
         self.assertEqual(problems_for(block(GOOD)), [])
 

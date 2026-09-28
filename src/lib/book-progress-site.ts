@@ -11,6 +11,7 @@
  * module the local preview runs; this file is only the site's `backend`.
  */
 import {
+  acknowledge,
   browserStore,
   merge,
   normalize,
@@ -22,6 +23,9 @@ const PROGRESS_ROUTE = '/api/margin/v1/progress'
 const AUTH_ME = '/auth/me'
 /** The service refuses larger requests; split rather than fail. */
 const ITEMS_PER_REQUEST = 200
+/** Well under the service's 2 MiB body cap, leaving room for the envelope. */
+const BYTES_PER_REQUEST = 1_500_000
+const encoder = new TextEncoder()
 
 type Mode = 'browser' | 'account' | 'account-unreachable'
 
@@ -30,7 +34,14 @@ type Mode = 'browser' | 'account' | 'account-unreachable'
  * when there is nothing to send.
  */
 export function changesSince(next: Progress, base: Progress): Progress | null {
-  const solved = next.solved.filter((id) => !base.solved.includes(id))
+  // A solve the base lacks, or one this copy knows happened earlier.
+  const solved = next.solved.filter(
+    (id) =>
+      !base.solved.includes(id) ||
+      (next.solvedAt[id] !== undefined &&
+        (base.solvedAt[id] === undefined ||
+          Date.parse(next.solvedAt[id]) < Date.parse(base.solvedAt[id]))),
+  )
   const drafts: Progress['drafts'] = {}
   for (const [id, draft] of Object.entries(next.drafts)) {
     const known = base.drafts[id]
@@ -42,12 +53,32 @@ export function changesSince(next: Progress, base: Progress): Progress | null {
   return { version: 1, book: next.book, solved, solvedAt, drafts }
 }
 
-/** Split a change into requests the service accepts. */
-function chunks(change: Progress): Progress[] {
+/** What one item adds to a request body, generously. */
+function itemBytes(change: Progress, id: string): number {
+  const draft = change.drafts[id]
+  return encoder.encode(JSON.stringify({ id, at: change.solvedAt[id], draft })).length + 64
+}
+
+/** Split a change into requests the service accepts: by item count and by size. */
+export function chunks(change: Progress): Progress[] {
   const ids = [...new Set([...change.solved, ...Object.keys(change.drafts)])].sort()
+  const groups: string[][] = []
+  let group: string[] = []
+  let bytes = 0
+  for (const id of ids) {
+    const cost = itemBytes(change, id)
+    if (group.length > 0 && (group.length >= ITEMS_PER_REQUEST || bytes + cost > BYTES_PER_REQUEST)) {
+      groups.push(group)
+      group = []
+      bytes = 0
+    }
+    group.push(id)
+    bytes += cost
+  }
+  if (group.length > 0) groups.push(group)
   const out: Progress[] = []
-  for (let start = 0; start < ids.length; start += ITEMS_PER_REQUEST) {
-    const slice = new Set(ids.slice(start, start + ITEMS_PER_REQUEST))
+  for (const members of groups) {
+    const slice = new Set(members)
     out.push({
       version: 1,
       book: change.book,
@@ -75,6 +106,9 @@ export function siteBackend({
   const route = `${PROGRESS_ROUTE}?${new URLSearchParams({ site, book })}`
   let mode: Mode = 'browser'
   let account: Progress | null = null
+  // Whether the last write to this browser's storage took. When it did not
+  // and there is no account either, progress lives only in this page.
+  let browserWrites = true
 
   async function send(change: Progress | null): Promise<Progress | null> {
     if (!change || !account) return null
@@ -95,7 +129,7 @@ export function siteBackend({
 
   return {
     async load(): Promise<Progress> {
-      const local = store.load()
+      let local = store.load()
       try {
         const me = (await (await fetchImpl(AUTH_ME, { credentials: 'same-origin' })).json()) as {
           authenticated?: boolean
@@ -108,8 +142,10 @@ export function siteBackend({
         if (!response.ok) throw new Error(`progress answered ${response.status}`)
         account = normalize(await response.json(), book)
         mode = 'account'
-        const merged = merge(local, account)
-        store.save(merged)
+        // Re-read: the page may have saved an edit while the account loaded.
+        local = store.load()
+        const merged = acknowledge(merge(local, account), account)
+        browserWrites = store.save(merged)
         await send(changesSince(merged, account))
         return merged
       } catch {
@@ -119,7 +155,7 @@ export function siteBackend({
     },
 
     async save(progress: Progress): Promise<Progress | null> {
-      store.save(progress)
+      browserWrites = store.save(progress)
       if (!account) return null
       try {
         const stored = await send(changesSince(progress, account))
@@ -132,6 +168,10 @@ export function siteBackend({
     },
 
     describe(): string {
+      if (!browserWrites) {
+        if (mode === 'account') return 'Saved to your account. This browser is not keeping a copy.'
+        return 'Not saved: this browser is not keeping site data. Export progress to keep it.'
+      }
       if (mode === 'account') return 'Saved in this browser and to your account.'
       if (mode === 'account-unreachable') {
         return 'Saved in this browser. Your account could not be reached; it will catch up next time.'

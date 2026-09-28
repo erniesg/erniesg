@@ -180,6 +180,51 @@ passes through without `targetTexts`; legacy stored wire anchors remain
 readable through that explicit unit. For `@document`, provide the complete
 ordered nonfigure text stream and the client omits the structural selector.
 
+### Threads
+
+A reply is a `commenting` annotation whose `margin:parentId` names another
+`commenting` annotation: a note, or another reply. That is how the W3C model
+expresses a reply, so threads need no table of their own. The service returns
+a document's replies in the same list as its annotations, from one query, and
+`flattenThread` builds the tree in memory. Siblings are ordered by creation
+time, with ties broken by id. Depth is not limited, but `indent` stops at
+`MAX_THREAD_INDENT`. A reply drawn at the cap says which reply it answers.
+
+`<margin-rail>` draws each note's thread under its entry. A signed-in reader
+can reply to the note or to any reply, and can edit or delete their own
+replies. Each reply is an element with the id `margin-reply-<id>`, and a page
+URL ending in that fragment scrolls to the reply and focuses it. Every control
+is a native button or link, so the whole thread can be reached with the Tab
+key. Escape closes a reply field.
+
+Visibility composes through the service rather than in the browser:
+
+- A reply to a public note may be private. A reply to a private note must be
+  private, and the service refuses a public one.
+- Replying to a note the caller cannot read is a `404`, identical to replying
+  to a note that does not exist.
+- A note cannot be made private while a reply that someone else can read
+  hangs from it. So no reply ever outlives its readers' access to the passage
+  its parent quotes.
+- Each participant is named by `margin:creatorName`, a stable pseudonym
+  derived from their principal key. The service never sends an email address.
+- Editing a reply you can see but did not write is a `403`. A reply you cannot
+  see is a `404`.
+
+**Deleting a note that has replies tombstones it.** The row stays in place. Its
+body is removed and it comes back with `margin:deleted: true`, so the thread
+under it stays readable and in order. Other readers' replies are never deleted
+along with it. A conversation that loses its root is still worth reading, and a
+cascade would let one reader delete everyone else's replies. A tombstone can
+still be replied to but cannot be edited. Once nothing hangs from it, deleting
+it again removes it for good. A note with no replies is deleted outright, as
+before.
+
+The response says which happened: `204` for a removal, `200` with the
+tombstoned annotation for a tombstone. A client must go by that, not by the
+replies it can see, because a private reply from another reader keeps the note
+and is invisible to its author.
+
 ## Building and testing
 
 ```bash

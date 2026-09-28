@@ -116,7 +116,12 @@ export function recordFromWebAnnotation(
                 : 'key',
           },
         }
-      : { body: typeof body?.value === 'string' ? body.value : '' }),
+      : {
+          body: typeof body?.value === 'string' ? body.value : '',
+          ...(kind === 'note' && typeof annotation['margin:color'] === 'string'
+            ? { appearance: { color: annotation['margin:color'] } }
+            : {}),
+        }),
     geometryCache: [],
   })
   if (!parsed.success) return null

@@ -64,7 +64,7 @@ export type WebAnnotationBody = {
 
 type AnnotationKindInput =
   | { kind: 'highlight'; body?: never; color?: string }
-  | { kind: 'note'; body: string; color?: never }
+  | { kind: 'note'; body: string; color?: string }
   | { kind: 'proposal'; body: string; color?: never }
 
 type AnnotationRequestCommon = {
@@ -179,7 +179,7 @@ export function toWebAnnotation(
       input.targetText,
     ),
     ...(input.visibility ? { 'margin:visibility': input.visibility } : {}),
-    ...(input.kind === 'highlight' && input.color
+    ...(input.kind !== 'proposal' && input.color
       ? { 'margin:color': input.color }
       : {}),
     ...(input.parentId ? { 'margin:parentId': input.parentId } : {}),

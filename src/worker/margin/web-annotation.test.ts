@@ -97,6 +97,34 @@ describe('the W3C wire format', () => {
     expect(roundTrip(coloured)['margin:color']).toBe('amber')
   })
 
+  it('puts a note’s role into the record’s annotation, and never on a proposal', () => {
+    const assigned = {
+      id: 'a1',
+      creator: CREATOR,
+      visibility: 'private' as const,
+      created: CREATED,
+      modified: CREATED,
+    }
+    const tagged = webAnnotationToRecord(
+      canonicalWire('commenting', { 'margin:color': 'question' }),
+      assigned,
+    )
+    if (!tagged.ok) throw new Error(tagged.error.code)
+    expect(tagged.value.color).toBe('question')
+    expect(tagged.value.annotation).toMatchObject({
+      kind: 'note',
+      appearance: { color: 'question' },
+    })
+
+    const plain = webAnnotationToRecord(canonicalWire('commenting'), assigned)
+    if (!plain.ok) throw new Error(plain.error.code)
+    expect(plain.value.annotation).not.toHaveProperty('appearance')
+
+    const proposal = webAnnotationToRecord(canonicalWire('editing'), assigned)
+    if (!proposal.ok) throw new Error(proposal.error.code)
+    expect(proposal.value.annotation).not.toHaveProperty('appearance')
+  })
+
   it('round-trips a reply, keeping margin:parentId', () => {
     const wire = canonicalWire('commenting', { 'margin:parentId': 'a0' })
     expect(roundTrip(wire)['margin:parentId']).toBe('a0')

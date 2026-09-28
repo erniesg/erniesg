@@ -53,3 +53,22 @@ evidence. GitHub tracking issue: #290.
 Stop before adding hosted private-document upload, an API-key path, Cloudflare
 resource provisioning, paper-specific parser branches, holdout replacement,
 or any promotion claim based only on package/browser validity.
+
+## Human clarification protocol
+
+None needed: this was delivered by #291 and #290 is closed. If a later corpus
+run shows the gap again, open a new spec and don't reopen this one.
+
+## Recommended response
+
+None. Delivered by #291 (fail closed without grounded evidence). These
+sections exist so the ledger's reconcile can parse every spec in this
+directory.
+
+## Trade-offs
+
+None beyond those recorded in #291.
+
+## Free-form response
+
+Kept for provenance. Issue #290 was closed on 2026-09-24.

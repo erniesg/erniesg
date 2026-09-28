@@ -60,6 +60,19 @@ test('Run (⌘\') runs every sample with its prints, and grades nothing', async 
   await expect(cases.nth(2).locator('.case-none')).toHaveText('Printed nothing.')
 })
 
+test('in side by side the cases sit in the code pane, and the page itself does not scroll', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto(CHALLENGE)
+  await page.evaluate(() => { try { localStorage.setItem('book-challenge-view', 'split') } catch {} })
+  await page.reload()
+  const desk = page.locator('.desk')
+  await desk.locator('.editor').fill(ATTEMPT)
+  await desk.locator('.sample').click()
+  await expect(page.locator('.split-work .call-case')).toHaveCount(4, { timeout: 90_000 })
+  expect(await page.evaluate(() => window.scrollY)).toBe(0)
+})
+
 test('a flood of prints is cut short with a count, and the page stays usable', async ({ page }) => {
   test.setTimeout(120_000)
   await page.goto(CHALLENGE)

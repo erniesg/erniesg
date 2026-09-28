@@ -67,12 +67,16 @@ instead.
    CriticMarkup, with line numbers against the base commit. Hunks never
    overlap and are ordered. **Wire encoding:** the W3C `body` stays one
    `TextualBody` string, so 054's lossless round trip and the existing
-   `proposalAnnotationSchema` are unchanged. The string is a canonical
-   concatenation, one block per hunk, each a header line
-   `@@ margin <baseStartLine>,<baseEndLine> @@` followed by that hunk's
-   CriticMarkup, with blocks separated by a blank line. `parseHunks` and
-   `formatHunks` in `src/annotations/criticmarkup.ts` convert it, and a test
-   proves they round-trip. One shared converter,
+   `proposalAnnotationSchema` are unchanged. The string is canonical JSON:
+   `{"v":1,"hunks":[{"baseStartLine":N,"baseEndLine":N,"criticMarkup":"..."}]}`
+   with keys in that order and no insignificant whitespace. JSON string
+   escaping makes it self-delimiting, so a hunk may contain blank lines, a line
+   that looks like a header, or any other text. There is no textual framing to
+   collide with. `parseHunks` (JSON parse plus a zod schema that rejects
+   unknown keys, overlaps and out-of-order hunks) and `formatHunks` in
+   `src/annotations/criticmarkup.ts` convert it. A property test proves
+   `parseHunks(formatHunks(h))` equals `h`, including hunks with blank lines,
+   literal `@@` lines and CriticMarkup delimiters inside code spans. One shared converter,
    `toUnifiedDiff(hunks, baseSource, sourcePath)` in
    `src/annotations/criticmarkup.ts`, turns them into a unified diff; 060's
    adapter uses the same function, so what is tested here is what gets applied.
@@ -114,7 +118,11 @@ instead.
    names the file. A dev server (`npm run dev`) instead stamps
    `source-commit="dirty"`, and edit mode on that page is disabled with a
    visible reason, so no proposal is ever made against text that does not
-   exist at its base commit.
+   exist at its base commit. The service enforces the same rule, whatever the
+   client does: `POST` and `PATCH` of an `editing` annotation accept only a
+   full commit identifier (40 lowercase hex characters, or 64 for a SHA-256
+   repository) as the base commit, and answer `400 invalid_base_commit` for
+   `dirty`, an abbreviated SHA or anything else. A direct-API test covers it.
 10. Edit mode covers ordinary editing, not only one-word fixes. Deleting a
     word, a sentence, a whole paragraph or a list item, replacing text,
     retyping a passage, and splitting or joining paragraphs all work, with
@@ -168,7 +176,7 @@ npm run test:margin
 npx vitest run src/worker/margin
 python3 books/tools/validate.py
 npm test
-if [ -f tools/e2e-port.mjs ]; then export SRT_E2E_PORT=$(node tools/e2e-port.mjs); else export SRT_E2E_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()'); fi
+if [ -f tools/e2e-port.mjs ]; then SRT_E2E_PORT=$(node tools/e2e-port.mjs) || exit 1; else SRT_E2E_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()') || exit 1; fi; [ -n "$SRT_E2E_PORT" ] || exit 1; export SRT_E2E_PORT
 npx playwright test tests/e2e/margin-edit-mode.spec.ts
 ```
 

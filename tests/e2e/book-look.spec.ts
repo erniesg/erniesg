@@ -103,13 +103,15 @@ test.describe('the book look switch', () => {
     expect(await look(page)).toBe('site')
   })
 
-  test('the remembered look is set before first paint', async ({
-    page,
-    request,
-  }) => {
+  test('the remembered look is set before first paint', async ({ page }) => {
     // A parser-blocking inline script in <head> runs before <body> is
-    // parsed, so nothing can paint in the wrong look first.
-    const html = await (await request.get(CHAPTER)).text()
+    // parsed, so nothing can paint in the wrong look first. Fetched from the
+    // page, so a static-build run's routes answer it too.
+    await page.goto(CHAPTER)
+    const html = await page.evaluate(async (path) => {
+      const response = await fetch(path)
+      return response.text()
+    }, CHAPTER)
     const setter = html.indexOf("setAttribute('data-book-look'")
     const body = html.search(/<body[\s>]/)
     expect(setter).toBeGreaterThan(-1)
@@ -180,6 +182,26 @@ test.describe('the book look switch', () => {
     expect(await page.evaluate(() => localStorage.getItem('theme'))).toBe(
       'system',
     )
+  })
+
+  test('the plain theme button follows a theme change made elsewhere', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => localStorage.setItem('book-look', 'plain'))
+    await page.goto(CHAPTER)
+    const button = page.locator('[data-book-theme-toggle]')
+    await expect(button).toHaveAttribute('aria-label', 'Switch to dark theme')
+    await page.evaluate(() => document.documentElement.classList.add('dark'))
+    await expect(button).toHaveAttribute('aria-label', 'Switch to light theme')
+  })
+
+  test('printing hides the open contents drawer', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('book-look', 'plain'))
+    await page.goto(CHAPTER)
+    await page.locator('[data-book-contents-toggle]').click()
+    await expect(page.locator('#reading-navigation')).toBeVisible()
+    await page.emulateMedia({ media: 'print' })
+    await expect(page.locator('#reading-navigation')).toBeHidden()
   })
 
   test('the margin popup still opens in Plain', async ({ page }) => {

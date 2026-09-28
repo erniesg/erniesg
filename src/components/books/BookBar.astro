@@ -199,6 +199,12 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
     setDrawer(false)
     syncControls()
   })
+  // The root's theme class also changes without this bar: the site menu, or
+  // Head.astro following the OS while the stored theme is `system`.
+  new MutationObserver(syncControls).observe(root, {
+    attributes: true,
+    attributeFilter: ['class', BOOK_LOOK_ATTRIBUTE],
+  })
   syncControls()
 </script>
 
@@ -548,7 +554,8 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
 
   @media print {
     .book-bar,
-    .book-scrim {
+    .book-scrim,
+    html[data-book-look='plain'] .reading-navigation {
       display: none !important;
     }
   }

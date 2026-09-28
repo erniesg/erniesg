@@ -42,7 +42,11 @@ test('focus stays visible on the dark surface', async ({ page }) => {
   await page.goto(CHAPTER)
   const cell = page.locator('.cell-run').first()
   await cell.locator('.editor').focus()
+  // A light ring on the dark terminal (#7dd3fc on #1e1f24, over 9:1); the
+  // button fill stays deep so its white label still reads.
   expect(await cell.locator('.desk-actions').evaluate(el => getComputedStyle(el).borderTopColor))
+    .toBe('rgb(125, 211, 252)')
+  expect(await cell.locator('.exec').evaluate(el => getComputedStyle(el).backgroundColor))
     .toBe('rgb(3, 105, 161)')
   await cell.locator('.exec').focus()
   await page.keyboard.press('Shift+Tab'); await page.keyboard.press('Tab') // make focus keyboard-visible

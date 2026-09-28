@@ -920,6 +920,15 @@ KEYS_HINT = (
     '</span></span>'
 )
 
+# A challenge desk has two runs. \u2318' is the sample run because it is the
+# conventional "run" beside a "\u2318\u21b5 submit" in coding-practice sites, it
+# needs no shift on any common layout, and nothing in the editor types it.
+DESK_KEYS_HINT = KEYS_HINT.replace(
+    '<span class="keys-row"><span><kbd>\u2318\u21b5</kbd></span><span>run</span></span>',
+    "<span class=\"keys-row\"><span><kbd>\u2318'</kbd></span><span>run the samples</span></span>"
+    '<span class="keys-row"><span><kbd>\u2318\u21b5</kbd></span><span>run all tiers</span></span>',
+)
+
 
 def _runnable(rendered: str) -> str:
     """Only blocks the author marked ```python run get a Run button."""
@@ -954,14 +963,21 @@ def _desk(node: dict, attrs: dict, target: str, runnable: bool = True) -> str:
             '<h2>Your turn</h2><pre><code>' + html.escape(starter) + "</code></pre>"
             f'<p class="figure-note">{where}</p>'
         )
-    starter = GRADE_LINE.sub("    Press Run (\u2318\u21b5) to grade it.\n", starter)
+    starter = GRADE_LINE.sub(
+        "    Press Run (\u2318') to try the samples, Run all tiers (\u2318\u21b5) to grade it.\n",
+        starter,
+    )
     return (
         f'<section class="desk" data-node="{html.escape(node["id"])}">'
         f'<textarea class="editor" spellcheck="false">{html.escape(starter)}</textarea>'
-        '<div class="desk-actions"><button class="run">Run all tiers <kbd>\u2318\u21b5</kbd></button>'
-        f'{HINT_BUTTON}<span class="status"></span>{KEYS_HINT}</div>'
+        '<div class="desk-actions">'
+        '<button class="sample" title="Run your code on the statement\'s samples. Not graded.">'
+        "Run <kbd>\u2318'</kbd></button>"
+        '<button class="run">Run all tiers <kbd>\u2318\u21b5</kbd></button>'
+        f'{HINT_BUTTON}<span class="status"></span>{DESK_KEYS_HINT}</div>'
         f'{HINT_PANEL}<div class="tiers"></div><p class="desk-verdict" role="status" hidden></p>'
-        '<details class="full-output" hidden><summary>Full test output</summary>'
+        '<div class="cases" aria-live="polite"></div>'
+        '<details class="full-output" hidden><summary>Test runner output</summary>'
         '<pre class="output"></pre></details></section>'
     )
 
@@ -1126,6 +1142,27 @@ details.solution { border:0; border-top:2px solid var(--ink); border-radius:0; b
   border:1px solid var(--term-line); color:var(--term-ink); }
 .tier.pass { color:#86efac; border-color:#166534; } .tier.pass::before { content:"✓ "; }
 .tier.fail { color:#fca5a5; border-color:#7f1d1d; } .tier.fail::before { content:"✗ "; }
+.desk-actions .sample { background:none; border:1px solid var(--term-focus); color:var(--term-focus); }
+.cases:empty { display:none; }
+.cases { border-top:1px solid var(--term-line); padding:6px 0; color:var(--term-ink);
+  font:.82rem ui-sans-serif,system-ui; }
+.cases-head { margin:4px 14px 6px; color:var(--term-dim); font:600 .7rem ui-sans-serif,system-ui;
+  letter-spacing:.06em; text-transform:uppercase; }
+.call-case { display:block; margin:0 10px 8px; padding:8px 10px 8px 12px; border:1px solid var(--term-line);
+  border-radius:6px; }
+.call-case.bad { border-color:#7f1d1d; box-shadow:inset 3px 0 #f87171; }
+.call-case.good { box-shadow:inset 3px 0 #22c55e; }
+.case-call { font:.8rem ui-monospace,monospace; overflow-wrap:anywhere; }
+.case-call .mark { margin-right:6px; }
+.call-case.bad .mark { color:#fca5a5; } .call-case.good .mark { color:#86efac; }
+.call-case.plain .mark { color:var(--term-dim); }
+.case-got { margin-top:4px; font:.78rem ui-monospace,monospace; color:var(--term-dim); overflow-wrap:anywhere; }
+.case-got b { color:var(--term-ink); font-weight:600; }
+.case-prints > summary { margin-top:6px; color:var(--term-dim); font:600 .72rem ui-sans-serif,system-ui; cursor:pointer; }
+.case-prints pre { margin:4px 0 0; padding:6px 8px; max-height:16rem; overflow:auto; white-space:pre-wrap;
+  background:rgba(0,0,0,.25); border-radius:4px; color:var(--term-ink); font:.78rem/1.45 ui-monospace,monospace; }
+.case-prints .dropped { color:var(--term-dim); font-style:italic; }
+.case-none { margin-top:4px; color:var(--term-dim); font:italic .74rem ui-sans-serif,system-ui; }
 .results { padding:10px 14px 12px; border-top:1px solid var(--term-line); color:var(--term-ink);
   font:.84rem ui-sans-serif,system-ui; }
 .results-head { margin:0 0 6px; font-weight:600; }

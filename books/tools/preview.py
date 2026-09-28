@@ -483,21 +483,74 @@ runnableCells.forEach((cell, index) => {
   };
 });
 
+// One call the tests made into the reader's code: what was called, what came
+// back against what was expected, and what the reader printed during it. The
+// prints are open by default on a wrong answer (that is when they are read)
+// and one click away on a right one.
+function caseHtml(call, isFailing) {
+  const verdictClass = call.match === true ? 'good' : (call.match === false || call.raised) ? 'bad' : 'plain';
+  const mark = verdictClass === 'good' ? '&#10003;' : verdictClass === 'bad' ? '&#10007;' : '&#8226;';
+  const answer = call.raised
+    ? `raised <b>${escapeHtml(call.raised)}</b>`
+    : `returned <b>${escapeHtml(call.returned ?? '')}</b>`;
+  const expected = call.expected !== undefined && call.match !== true
+    ? `, expected <b>${escapeHtml(call.expected)}</b>` : '';
+  const printed = (call.out || '') + (call.err || '');
+  const dropped = (call.out_dropped_lines || 0) + (call.err_dropped_lines || 0);
+  const prints = printed || dropped
+    ? `<details class="case-prints"${verdictClass === 'bad' || isFailing ? ' open' : ''}>`
+      + `<summary>Your output</summary><pre>${escapeHtml(printed)}`
+      + (dropped ? `<span class="dropped">…truncated, ${dropped} more line${dropped === 1 ? '' : 's'}</span>` : '')
+      + '</pre></details>'
+    : '<p class="case-none">Printed nothing.</p>';
+  return `<div class="call-case ${verdictClass}" data-test="${escapeHtml(call.test || '')}">`
+    + `<div class="case-call"><span class="mark">${mark}</span>${escapeHtml(call.call)}</div>`
+    + `<div class="case-got">${answer}${expected}</div>${prints}</div>`;
+}
+
+// Past this many calls a tier shows the first few and the failing one: a
+// stress tier makes hundreds, and the reader needs the one that went wrong.
+const CASES_SHOWN = 12;
+function casesHtml(groups) {
+  return groups.map(group => {
+    const calls = group.calls || [];
+    // The call that went wrong is the one with a wrong verdict, not the last
+    // one: a failing test method does not stop the ones after it.
+    const wrong = calls.find(call => call.match === false || (call.raised && call.match !== true));
+    const failing = group.outcome && group.outcome !== 'pass' ? (wrong || calls[calls.length - 1]) : null;
+    let shown = calls.slice(0, CASES_SHOWN);
+    if (failing && !shown.includes(failing)) shown = [...shown.slice(0, CASES_SHOWN - 1), failing];
+    // `total` is how many calls were made; only some were kept to show
+    const total = Math.max(group.total ?? calls.length, calls.length);
+    const more = total - shown.length;
+    const head = group.label || `${group.tier} · ${total} call${total === 1 ? '' : 's'}`;
+    return `<p class="cases-head">${escapeHtml(head)}</p>`
+      + shown.map(call => caseHtml(call, call === failing)).join('')
+      + (more > 0 ? `<p class="cases-head">…and ${more} more</p>` : '');
+  }).join('');
+}
+
 document.querySelectorAll('.desk').forEach(desk => {
   const button = desk.querySelector('.run');
+  const sample = desk.querySelector('.sample');
   const status = desk.querySelector('.status');
   const tiers = desk.querySelector('.tiers');
   const output = desk.querySelector('.output');
   const verdict = desk.querySelector('.desk-verdict');
   const details = desk.querySelector('.full-output');
-  button.onclick = async () => {
-    button.disabled = true;
-    status.textContent = 'Running public, edge, stress, perf...';
-    // Everything the last run left is cleared before this one starts, so a
-    // stale red verdict never sits beside a run that has not finished (and a
-    // request error cannot leave one up indefinitely).
-    tiers.innerHTML = ''; output.textContent = '';
+  const cases = desk.querySelector('.cases');
+  // Everything the last run left is cleared before the next one starts, so a
+  // stale red verdict never sits beside a run that has not finished (and a
+  // request error cannot leave one up indefinitely).
+  const clear = () => {
+    tiers.innerHTML = ''; output.textContent = ''; if (cases) cases.innerHTML = '';
     verdict.hidden = true; verdict.innerHTML = ''; details.hidden = true;
+  };
+  const busy = on => { button.disabled = on; if (sample) sample.disabled = on; };
+  button.onclick = async () => {
+    busy(true);
+    status.textContent = 'Running public, edge, stress, perf...';
+    clear();
     try {
       const response = await fetch('/api/grade', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -511,10 +564,32 @@ document.querySelectorAll('.desk').forEach(desk => {
       verdict.hidden = result.ok;
       verdict.innerHTML = result.ok ? '' :
         `<span class="mark">&#10007;</span> ` + escapeHtml(result.summary || `${result.stopped_at} is red.`);
+      if (cases) cases.innerHTML = casesHtml(result.cases || []);
       output.textContent = result.output || '';
       details.hidden = !result.output;
     } catch (error) { status.textContent = String(error); }
-    finally { button.disabled = false; }
+    finally { busy(false); }
+  };
+  if (sample) sample.onclick = async () => {
+    busy(true);
+    status.textContent = 'Running the samples...';
+    clear();
+    try {
+      const response = await fetch('/api/sample', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ node: desk.dataset.node, source: desk.querySelector('.editor').value }),
+      });
+      const result = await response.json();
+      const calls = result.calls || [];
+      status.textContent = calls.length ? 'Samples only. Not graded.' : '';
+      if (result.error) {
+        verdict.hidden = false;
+        verdict.innerHTML = `<span class="mark">&#10007;</span> ` + escapeHtml(result.error);
+      }
+      const total = result.total ?? calls.length;
+      if (cases) cases.innerHTML = casesHtml([{ label: `Samples · ${total}`, calls, total }]);
+    } catch (error) { status.textContent = String(error); }
+    finally { busy(false); }
   };
 });
 
@@ -818,6 +893,10 @@ document.querySelectorAll('.editor').forEach(editor => {
     if (key === 'Enter' && command) {
       event.preventDefault();
       runCell(editor, shiftKey);
+    } else if (command && (key === "'" || event.code === 'Quote')) {
+      // The sample run, on a challenge desk only; elsewhere the key is left alone.
+      const sample = editor.closest('.desk')?.querySelector('.sample');
+      if (sample) { event.preventDefault(); sample.click(); }
     } else if (key === 'Enter') {
       event.preventDefault();
       let indent = (before.match(/^ */) || [''])[0];
@@ -1170,7 +1249,7 @@ class Handler(BaseHTTPRequestHandler):
                 )
             result = run_cell(payload.get("earlier", []), payload.get("source", ""))
             return self._send(json.dumps(result).encode(), kind="application/json")
-        if route != "/api/grade":
+        if route not in ("/api/grade", "/api/sample"):
             return self._send(b"{}", HTTPStatus.NOT_FOUND, "application/json")
         # The same contract as /api/exec: a request that cannot be graded still
         # answers with the shape the client reads, `ok` false and a reason.
@@ -1194,13 +1273,33 @@ class Handler(BaseHTTPRequestHandler):
         workspace.mkdir(parents=True, exist_ok=True)
         (workspace / f"{meta['module']}.py").write_text(payload.get("source", ""))
 
-        results, output, stopped_at, summary = [], "", None, ""
+        if route == "/api/sample":
+            # Run is not grading: the statement's rows, every one of them, with
+            # what each printed. Nothing here is ever recorded as solved.
+            config = meta.get("tiers", {}).get(grader.SAMPLE_TIER, {})
+            sample = grader.run_samples(node_dir, workspace, config.get("timeout", 60))
+            return self._send(
+                json.dumps({"ok": not sample["error"], "calls": sample["calls"],
+                            "total": sample["total"],
+                            "error": strip_roots(sample["error"])}).encode(),
+                kind="application/json",
+            )
+
+        # The public tier's calls are always shown (they are the statement's
+        # rows, where a reader's prints make sense); a failing tier's are shown
+        # too, since the failing call is the one whose prints the reader needs.
+        results, output, stopped_at, summary, cases = [], "", None, "", []
         for tier in grader.TIERS:
             config = meta.get("tiers", {}).get(tier, {})
+            tier_calls: list[dict] = []
+            counts: dict = {}
             outcome, tier_output = grader.run_tier(
-                node_dir, tier, workspace, config.get("timeout", 60)
+                node_dir, tier, workspace, config.get("timeout", 60), calls=tier_calls, counts=counts
             )
             results.append({"tier": tier, "outcome": outcome})
+            if tier_calls and (tier == grader.SAMPLE_TIER or outcome != "pass"):
+                cases.append({"tier": tier, "outcome": outcome, "calls": tier_calls,
+                              "total": counts.get("total", len(tier_calls))})
             if outcome != "pass":
                 output, stopped_at = tier_output, tier
                 summary = grader.summarize(tier_output, node_dir / "tests" / f"{tier}.py")
@@ -1214,6 +1313,7 @@ class Handler(BaseHTTPRequestHandler):
             {"ok": stopped_at is None, "tiers": results, "stopped_at": stopped_at,
              # the reader needs the test's name and line, not this machine's folders
              "output": strip_roots(output),
+             "cases": cases,
              "summary": summary if stopped_at else ""}
         ).encode()
         self._send(body, kind="application/json")

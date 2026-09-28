@@ -514,7 +514,10 @@ const CASES_SHOWN = 12;
 function casesHtml(groups) {
   return groups.map(group => {
     const calls = group.calls || [];
-    const failing = group.outcome && group.outcome !== 'pass' ? calls[calls.length - 1] : null;
+    // The call that went wrong is the one with a wrong verdict, not the last
+    // one: a failing test method does not stop the ones after it.
+    const wrong = calls.find(call => call.match === false || (call.raised && call.match !== true));
+    const failing = group.outcome && group.outcome !== 'pass' ? (wrong || calls[calls.length - 1]) : null;
     let shown = calls.slice(0, CASES_SHOWN);
     if (failing && !shown.includes(failing)) shown = [...shown.slice(0, CASES_SHOWN - 1), failing];
     const more = calls.length - shown.length;

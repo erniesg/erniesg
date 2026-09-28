@@ -75,7 +75,7 @@ def load_solution(module_name: str):
 # every sample row runs even when the first is wrong.
 
 OUTPUT_LIMIT_BYTES = 20_000  # per call; a print in a hot loop must not flood the page
-KEEP_FIRST, KEEP_LAST = 40, 10  # the failing call is always the most recent one
+KEEP_FIRST, KEEP_LAST, KEEP_BAD = 40, 10, 10  # and every wrong answer up to KEEP_BAD
 
 _short = reprlib.Repr()
 _short.maxlist = _short.maxtuple = _short.maxset = _short.maxdict = 12
@@ -103,11 +103,21 @@ class _BoundedBuffer(io.StringIO):
         self.dropped_lines = 0
 
     def write(self, text):
-        if self.size > OUTPUT_LIMIT_BYTES:
+        # Only what fits in the remaining budget is ever stored, so one huge
+        # write (print("x" * 10**8)) costs no more memory than many small ones.
+        room = OUTPUT_LIMIT_BYTES + 1 - self.size
+        if room <= 0:
             self.dropped_lines += text.count("\n")
             return len(text)
-        self.size += len(text.encode())
-        return super().write(text)
+        data = text.encode()
+        if len(data) > room:
+            kept = data[:room].decode(errors="ignore")
+            self.dropped_lines += text.count("\n") - kept.count("\n")
+            text = kept
+            data = kept.encode()
+        self.size += len(data)
+        super().write(text)
+        return len(text)
 
 
 class _Recorder:
@@ -118,6 +128,8 @@ class _Recorder:
         self.last: deque[dict] = deque(maxlen=KEEP_LAST)
         self.total = 0
         self.latest: dict | None = None
+        self.expecting_raise = False  # inside a test's `with self.assertRaises(...)`
+        self.bad: list[dict] = []
         atexit.register(self.flush)
 
     def keep(self, record: dict) -> None:
@@ -129,8 +141,18 @@ class _Recorder:
         else:
             self.last.append(record)
 
+    def mark_bad(self, record: dict) -> None:
+        """A call that answered wrong or raised is kept wherever it fell."""
+        if len(self.bad) < KEEP_BAD and not any(r is record for r in self.bad):
+            self.bad.append(record)
+
     def flush(self) -> None:
-        calls = self.first + list(self.last)
+        seen: set[int] = set()
+        calls = []
+        for record in sorted(self.first + list(self.last) + self.bad, key=lambda r: r["index"]):
+            if record["index"] not in seen:
+                seen.add(record["index"])
+                calls.append(record)
         for record in calls:
             record.pop("_result_id", None)
         try:
@@ -185,7 +207,9 @@ def _wrap(function, recorder: _Recorder):
         except Exception as error:  # the reader's code raised; it belongs to this call
             record["raised"] = f"{type(error).__name__}: {error}".rstrip(": ")
             _finish(record, out, err, recorder)
-            if recorder.sample:
+            # A sample row that expects a raise must see it; any other raise in
+            # sample mode is recorded and swallowed, so the next row still runs.
+            if recorder.sample and not recorder.expecting_raise:
                 return _NoAnswer()
             raise
         record["returned"] = _short.repr(result)

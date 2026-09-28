@@ -205,6 +205,57 @@ class ReaderOutputTests(unittest.TestCase):
         self.assertEqual(result["calls"][2]["out"], "")
         self.assertEqual([c["match"] for c in result["calls"]], [False, False, True, False])
 
+    def test_one_huge_write_is_bounded_as_it_arrives(self):
+        import bookgrader
+
+        buffer = bookgrader._BoundedBuffer()
+        buffer.write("x" * 5_000_000 + "\n" + "y\n" * 10)
+        self.assertLessEqual(len(buffer.getvalue().encode()), grade.OUTPUT_LIMIT_BYTES + 1)
+        self.assertEqual(buffer.dropped_lines, 11)
+
+    def test_samples_that_expect_a_raise_see_it_and_every_row_runs(self):
+        node_dir, meta = grade.load_node("change-owed")
+        solution = Path(self.tmp.name) / "change"
+        solution.mkdir()
+        (solution / f"{meta['module']}.py").write_text(
+            (node_dir / "solution.py").read_text())
+        result = grade.run_samples(node_dir, solution, 60)
+        raising = [c for c in result["calls"] if "raised" in c]
+        self.assertEqual(len(raising), 4, "both wrong-kind rows run, not just the first")
+        self.assertTrue(all(c["match"] is True for c in raising))
+        self.assertTrue(all(c["expected"].startswith("raises ") for c in raising))
+
+    def test_a_missing_raise_is_a_wrong_answer(self):
+        node_dir, meta = grade.load_node("change-owed")
+        solution = Path(self.tmp.name) / "change"
+        solution.mkdir()
+        (solution / f"{meta['module']}.py").write_text("def change_owed(price, paid):\n    return paid - price\n")
+        result = grade.run_samples(node_dir, solution, 60)
+        underpaid = next(c for c in result["calls"] if c["call"] == "change_owed(250, 200)")
+        self.assertIs(underpaid["match"], False)
+        self.assertEqual(underpaid["expected"], "raises ValueError")
+
+    def test_a_none_sample_gets_a_verdict(self):
+        node_dir, meta = grade.load_node("parse-setting")
+        solution = Path(self.tmp.name) / "setting"
+        solution.mkdir()
+        (solution / f"{meta['module']}.py").write_text((node_dir / "solution.py").read_text())
+        result = grade.run_samples(node_dir, solution, 60)
+        nones = [c for c in result["calls"] if c.get("expected") == "None"]
+        self.assertEqual(len(nones), 2)
+        self.assertTrue(all(c["match"] is True for c in nones))
+
+    def test_the_wrong_call_is_kept_even_in_the_middle_of_a_long_tier(self):
+        # wrong only on n == 3 of a long log: many right calls before and after
+        self.write(
+            "def recent(readings, n):\n"
+            "    if n == 3 and len(readings) == 6:\n        return ['wrong']\n"
+            "    return readings[-n:] if n else []\n")
+        calls: list[dict] = []
+        outcome, _ = grade.run_tier(self.node_dir, "stress", self.solution, 60, calls=calls)
+        self.assertEqual(outcome, "fail")
+        self.assertTrue(any(c.get("match") is False and c["returned"] == "['wrong']" for c in calls))
+
     def test_the_perf_tier_is_never_instrumented(self):
         self.write("def recent(readings, n):\n    return readings[len(readings) - n:] if n else []\n")
         calls: list[dict] = []

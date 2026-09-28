@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import type { Principal } from '../principal'
-import { marginWriteGate } from '../index'
+import { marginWriteGate } from '../gate'
 import { requireAdmin, requireWriter } from './authorize'
 import { jwksUrl, readWorkosConfig, type WorkosConfig } from './config'
 import {

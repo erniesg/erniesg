@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { MARGIN_API_PREFIX, MARGIN_HEALTH_PATH, WORKER_FIRST_PREFIXES } from './index'
+import { MARGIN_API_PREFIX, MARGIN_HEALTH_PATH, WORKER_FIRST_PREFIXES } from './gate'
 
 /** Minimal JSONC reader: drops comments and trailing commas, string-aware. */
 function readJsonc(file: string): Record<string, any> {

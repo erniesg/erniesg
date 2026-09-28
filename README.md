@@ -60,6 +60,59 @@ npm run build
 npm run preview
 ```
 
+### Run the book with margin locally
+
+`npm run dev` serves the pages but not the margin API or auth, which live in
+the Worker. To use highlights, notes and the rail locally, run the Worker over
+a built site with a local D1 and the development principal stub instead of
+WorkOS:
+
+```bash
+# 1. Development identity (.dev.vars is git-ignored). The stub is honoured only
+#    when MARGIN_ENVIRONMENT is exactly `development` and the request is on
+#    loopback.
+cat > .dev.vars <<'VARS'
+MARGIN_ENVIRONMENT=development
+MARGIN_DEV_PRINCIPAL={"provider":"dev","issuer":"urn:margin:dev","subject":"owner","email":"hello@ernie.sg"}
+VARS
+
+# 2. Local database and a built site for the Worker's assets.
+npx wrangler d1 migrations apply margin-db-stg --local
+npm run build:astro
+
+# 3. Serve Worker + assets.
+npx wrangler dev --local --ip 127.0.0.1 --port 8787
+```
+
+Open <http://127.0.0.1:8787/books/build-a-coding-agent/>. `GET /auth/me`
+should report the stub principal.
+
+Writing needs an allowlist row. In a deployed environment the admin row is
+bound once, on the first verified WorkOS sign-in with the admin email
+(`recordSignIn` in `src/worker/margin/auth-routes.ts`). The stub never passes
+through that callback, so locally the row is added by hand. The identity and
+allowlist tables are created by that same sign-in path, not by a migration, so
+the statement creates them too:
+
+```bash
+NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+npx wrangler d1 execute margin-db-stg --local --command "
+CREATE TABLE IF NOT EXISTS margin_identity (id INTEGER PRIMARY KEY AUTOINCREMENT, provider TEXT NOT NULL, issuer TEXT NOT NULL, subject TEXT NOT NULL, email TEXT, first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, UNIQUE (provider, issuer, subject));
+CREATE TABLE IF NOT EXISTS margin_allowlist (identity_id INTEGER PRIMARY KEY REFERENCES margin_identity(id) ON DELETE CASCADE, role TEXT NOT NULL CHECK (role IN ('writer', 'admin')), added_at TEXT NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS margin_allowlist_single_admin ON margin_allowlist (role) WHERE role = 'admin';
+INSERT INTO margin_identity (provider, issuer, subject, email, first_seen_at, last_seen_at) VALUES ('dev', 'urn:margin:dev', 'owner', 'hello@ernie.sg', '$NOW', '$NOW') ON CONFLICT (provider, issuer, subject) DO NOTHING;
+INSERT INTO margin_allowlist (identity_id, role, added_at) SELECT id, 'admin', '$NOW' FROM margin_identity WHERE provider = 'dev' AND subject = 'owner' ON CONFLICT (identity_id) DO UPDATE SET role = 'admin';"
+```
+
+`/auth/me` then reports `"canWrite": true, "isAdmin": true`. The schema is
+`SCHEMA_STATEMENTS` in `src/worker/margin/identity.ts`; keep this block in step
+with it.
+
+The Worker entry (`src/worker/index.ts`) exports only `default`. Local
+`wrangler dev` treats every named runtime export of `main` as an entrypoint and
+refuses to start on a constant, so shared paths and the write gate live in
+`src/worker/gate.ts`.
+
 ### Publication build runtime
 
 `npm run publication:build` publishes its output matrix with an atomic

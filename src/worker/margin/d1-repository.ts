@@ -7,6 +7,7 @@ import {
   getPrefsQuery,
   insertAnnotationQuery,
   listAnnotationsQuery,
+  tombstoneAnnotationQuery,
   updateAnnotationQuery,
   upsertPrefsQuery,
   type Query,
@@ -24,6 +25,7 @@ import {
   DEFAULT_HIGHLIGHT_COLOR,
   kindForMotivation,
   motivationForKind,
+  TOMBSTONE_BODY,
   type MarginAnnotationRecord,
   type MarginVisibility,
   type Motivation,
@@ -184,6 +186,18 @@ export class D1MarginRepository implements MarginRepository {
       replies: number
     }>()
     return Number(row?.replies ?? 0)
+  }
+
+  async tombstoneAnnotation(
+    scope: TenantScope,
+    id: string,
+    owner: string,
+    modified: string,
+  ): Promise<boolean> {
+    const result = await this.statement(
+      tombstoneAnnotationQuery(scope, id, owner, TOMBSTONE_BODY, modified),
+    ).run()
+    return (result.meta?.changes ?? 0) > 0
   }
 
   async deleteAnnotation(

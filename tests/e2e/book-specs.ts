@@ -10,6 +10,7 @@ export const BOOK_SPECS = [
   'exercise-worker.spec.ts',
   'hint-ladder.spec.ts',
   'inline-exercise.spec.ts',
+  'reader-prints.spec.ts',
   'rerun-clears-results.spec.ts',
   'run-cell.spec.ts',
 ]

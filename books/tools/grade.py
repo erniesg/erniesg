@@ -12,11 +12,13 @@ Stdlib only; needs Python 3.11+ for tomllib.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 if sys.version_info < (3, 11):  # tomllib arrived in 3.11
@@ -26,6 +28,7 @@ import tomllib
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from render import BOOKS, CHALLENGES, WORKSPACE as WORKSPACE_DIR, report_legacy_workspace
+from bookgrader import OUTPUT_LIMIT_BYTES  # noqa: F401  (the cap the page is told about)
 TIERS = ["public", "edge", "stress", "perf"]
 
 GREEN, RED, DIM, RESET = "\033[32m", "\033[31m", "\033[2m", "\033[0m"
@@ -62,7 +65,22 @@ def start(node_id: str, force: bool) -> int:
     return 0
 
 
-def run_tier(node_dir: Path, tier: str, solution_dir: Path, timeout: int) -> tuple[str, str]:
+# The perf tier times the reader's function, so it never runs with calls
+# recorded: capturing output per call would change what it measures.
+UNRECORDED_TIERS = {"perf"}
+SAMPLE_TIER = "public"  # the public tier holds exactly the rows printed in the statement
+
+
+def run_tier(
+    node_dir: Path,
+    tier: str,
+    solution_dir: Path,
+    timeout: int,
+    calls: list[dict] | None = None,
+    sample: bool = False,
+) -> tuple[str, str]:
+    """Run one tier. With `calls`, also collect each call the tests made into
+    the reader's code: its arguments, its answer, and what it printed."""
     test_file = node_dir / "tests" / f"{tier}.py"
     if not test_file.is_file():
         return "missing", f"No test file at {test_file}"
@@ -72,19 +90,47 @@ def run_tier(node_dir: Path, tier: str, solution_dir: Path, timeout: int) -> tup
         "PYTHONPATH": str(BOOKS / "tools"),
         "PYTHONDONTWRITEBYTECODE": "1",
     }
-    try:
-        done = subprocess.run(
-            [sys.executable, str(test_file)],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env=env,
-            cwd=node_dir,
-        )
-    except subprocess.TimeoutExpired:
-        return "timeout", f"exceeded the {timeout}s limit"
+    env.pop("BOOK_CALL_LOG", None)
+    env.pop("BOOK_SAMPLE_MODE", None)
+    record = calls is not None and tier not in UNRECORDED_TIERS
+    with tempfile.TemporaryDirectory() as scratch:
+        log = Path(scratch) / "calls.json"
+        if record:
+            env["BOOK_CALL_LOG"] = str(log)
+            if sample:
+                env["BOOK_SAMPLE_MODE"] = "1"
+        try:
+            done = subprocess.run(
+                [sys.executable, str(test_file)],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=env,
+                cwd=node_dir,
+            )
+        except subprocess.TimeoutExpired:
+            return "timeout", f"exceeded the {timeout}s limit"
+        if record and log.is_file():
+            try:
+                calls.extend(json.loads(log.read_text()).get("calls", []))
+            except (OSError, ValueError):
+                pass
     output = (done.stdout + done.stderr).strip()
     return ("pass" if done.returncode == 0 else "fail"), output
+
+
+def run_samples(node_dir: Path, solution_dir: Path, timeout: int) -> dict:
+    """Call the reader's code on the statement's samples, without grading.
+
+    Every row runs even when an earlier one is wrong or raises; each comes back
+    with its answer, the expected answer, and what it printed. Nothing is
+    recorded as solved. A reader whose file cannot even be imported gets that
+    error, summarized, instead of an empty list.
+    """
+    calls: list[dict] = []
+    _, output = run_tier(node_dir, SAMPLE_TIER, solution_dir, timeout, calls=calls, sample=True)
+    error = "" if calls else summarize(output, node_dir / "tests" / f"{SAMPLE_TIER}.py")
+    return {"calls": calls, "error": error}
 
 
 def harness_frame(path: str) -> bool:
@@ -102,6 +148,7 @@ def harness_frame(path: str) -> bool:
 FRAME = re.compile(r'^\s*File "([^"]+)", line (\d+)', re.MULTILINE)
 ASSERTION = re.compile(r"^AssertionError: (.*?)(?: : (.*))?$", re.MULTILINE)
 EXCEPTION = re.compile(r"^(\w+(?:Error|Exception|Exit|Interrupt)|NotImplementedError)(?::\s?(.*))?$", re.MULTILINE)
+DIFFER = re.compile(r"^(?:Lists|Tuples|Sets|Dicts|Sequences|Strings?) differ: ")
 SOLVE_CALL = re.compile(r"self\.solve\((.*)\)\s*,")
 FUNCTION = re.compile(r'load_solution\([^)]*\)\.(\w+)')
 
@@ -129,6 +176,8 @@ def summarize(output: str, test_file: Path | None = None) -> str:
     failure = ASSERTION.search(output)
     if failure and not user_frames:
         comparison, message = failure.group(1), failure.group(2)
+        # unittest says "Lists differ: [1, 1] != [9, 4]"; the reader needs the values
+        comparison = DIFFER.sub("", comparison)
         # the source lines unittest printed between the test frame and the error
         shown = output[: failure.start()].rsplit('File "', 1)[-1]
         call = SOLVE_CALL.search(" ".join(line.strip() for line in shown.splitlines()))

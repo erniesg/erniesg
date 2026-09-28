@@ -168,6 +168,13 @@ export async function startProgress({
       if (allOk) update(markSolved(progress, id, now()), { soon: true })
     },
   })
+  // A challenge whose four tiers went green, from whichever grader the host
+  // runs (the preview's server, or Python in the site's browser).
+  root.addEventListener('book:challenge-graded', (event) => {
+    const { id, ok } = event.detail || {}
+    note = ''
+    if (ok && id) update(markSolved(progress, id, now()), { soon: true })
+  }, { signal: listening.signal })
   editors.forEach(({ id, editor }) => {
     editor.addEventListener('input', () => {
       if (restoring) return

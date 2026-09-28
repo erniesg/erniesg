@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { readFileSync } from 'node:fs'
 import { D1MarginRepository } from '../../src/worker/margin/d1-repository'
 import { handleMarginRequest } from '../../src/worker/margin/routes'
 import { SqliteD1Database } from '../../src/worker/margin/sqlite-database'
@@ -15,6 +16,7 @@ import { installStaticRoutes } from './static-build'
 const CHAPTER = '/books/build-a-coding-agent/ch07-strings/'
 const NEXT_CHAPTER = '/books/build-a-coding-agent/ch08-errors/'
 const CHALLENGE = '/books/build-a-coding-agent/pool-ticket-price/'
+const CELLS = '/books/build-a-coding-agent/ch02-conditionals/'
 
 function fakePython() {
   const source = `
@@ -31,7 +33,7 @@ self.loadPyodide = () => Promise.resolve({
 }
 
 /** An anonymous reader: the margin service answers, nobody is signed in. */
-async function mount(page: Page) {
+async function mount(page: Page, python: 'fake' | 'real' = 'fake') {
   await installStaticRoutes(page)
   const repository = new D1MarginRepository(SqliteD1Database.inMemory())
   await page.route('**/auth/me', (route) =>
@@ -59,9 +61,15 @@ async function mount(page: Page) {
     )
     await route.fulfill({ status: response.status, contentType: 'application/json', body: await response.text() })
   })
-  await page.addInitScript((url) => {
-    ;(window as unknown as { __bookPyodideUrl: string }).__bookPyodideUrl = url
-  }, fakePython())
+  // The desk runs the real grader (unittest, bookgrader, grader_observe), which
+  // no stand-in can fake, so those tests load real Pyodide: from the CDN the
+  // page uses, or from BOOK_PYODIDE_URL where there is no network.
+  const url = python === 'fake' ? fakePython() : process.env.BOOK_PYODIDE_URL
+  if (url) {
+    await page.addInitScript((pyodide) => {
+      ;(window as unknown as { __bookPyodideUrl: string }).__bookPyodideUrl = pyodide
+    }, url)
+  }
 }
 
 async function answer(page: Page, sectionId: string) {
@@ -152,13 +160,73 @@ test('editors and Check still work after the site swaps pages without a reload',
   await expect(section.locator('.results')).toHaveClass(/pass/, { timeout: 30_000 })
 })
 
-test('a published challenge offers no button it cannot back, and says where to grade', async ({ page }) => {
-  await mount(page)
+// A starter that prints, and is wrong only for the over-65s.
+const PRINTING = `def ticket_price(age: int) -> int:
+    print("checking", age)
+    if age < 5:
+        return 0
+    if age < 18:
+        return 350
+    return 620
+`
+
+test('Run on a published challenge calls every sample and shows each print under its own call', async ({ page }) => {
+  test.slow()
+  await mount(page, 'real')
   await page.goto(CHALLENGE)
-  await expect(page.locator('.book-content button.run, .book-content button.exec')).toHaveCount(0)
-  await expect(page.locator('.book-content')).toContainText("from a terminal with the book's grader")
-  // Every Check button a published page does show is one the page can run.
-  for (const button of await page.locator('.book-content .exercise .check').all()) {
-    await expect(button).toBeEnabled()
-  }
+  const desk = page.locator('.desk').first()
+  await desk.locator('.editor').fill(PRINTING)
+  await desk.locator('.editor').focus()
+  await page.keyboard.press("ControlOrMeta+'")
+  await expect(desk.locator('.status')).toHaveText('Samples only. Not graded.', { timeout: 120_000 })
+  await expect(desk.locator('.call-case')).toHaveCount(6)
+  // Every row ran, though the last is wrong; nothing was graded.
+  await expect(desk.locator('.tiers .tier')).toHaveCount(0)
+  const wrong = desk.locator('.call-case.bad')
+  await expect(wrong).toHaveCount(1)
+  await expect(wrong.locator('.case-call')).toContainText('ticket_price(65)')
+  await expect(wrong.locator('.case-got')).toContainText('returned 620, expected 400')
+  await expect(wrong.locator('.case-prints')).toHaveAttribute('open', '')
+  await expect(wrong.locator('.case-prints pre')).toHaveText('checking 65')
+  // A right call keeps its own print, one click away.
+  const first = desk.locator('.call-case').first()
+  await expect(first.locator('.case-call')).toContainText('ticket_price(4)')
+  await expect(first.locator('.case-prints pre')).toHaveText('checking 4')
+})
+
+test('Run all tiers grades a published challenge in the browser and records the solve', async ({ page }) => {
+  test.slow()
+  await mount(page, 'real')
+  await page.goto(CHALLENGE)
+  const desk = page.locator('.desk').first()
+  await desk.locator('.editor').fill(PRINTING)
+  await desk.locator('.run').click()
+  await expect(desk.locator('.tiers .tier')).toHaveText(['public - fail'], { timeout: 120_000 })
+  await expect(desk.locator('.desk-verdict')).toContainText('ticket_price(65) returned 620, expected 400')
+  await expect(desk.locator('.call-case.bad .case-prints pre')).toHaveText('checking 65')
+  await expect(page.locator('[data-progress-count]')).toContainText('0/30 challenges solved')
+
+  await desk.locator('.editor').fill(readFileSync('books/challenges/pool-ticket-price/solution.py', 'utf8'))
+  await desk.locator('.run').click()
+  await expect(desk.locator('.status')).toHaveText('All four tiers green.', { timeout: 120_000 })
+  await expect(desk.locator('.tiers .tier')).toHaveText([
+    'public - pass',
+    'edge - pass',
+    'stress - pass',
+    'perf - pass',
+  ])
+  await expect(page.locator('[data-progress-count]')).toContainText('1/30 challenges solved')
+})
+
+test('a published runnable cell runs after the cells before it', async ({ page }) => {
+  test.slow()
+  await mount(page, 'real')
+  await page.goto(CELLS)
+  const cells = page.locator('.cell-run')
+  await cells.first().locator('.editor').fill('greeting = "hello from an earlier cell"')
+  const second = cells.nth(1)
+  await second.locator('.editor').fill('print(greeting)')
+  await second.locator('.exec').click()
+  await expect(second.locator('.output')).toHaveText('hello from an earlier cell', { timeout: 120_000 })
+  await expect(second.locator('.output')).not.toHaveClass(/error/)
 })

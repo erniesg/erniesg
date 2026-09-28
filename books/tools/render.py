@@ -1020,6 +1020,18 @@ td code, th code { white-space:nowrap; }
 figcaption { font:.85rem/1.5 ui-sans-serif,system-ui; color:#555; margin:0; }
 .figure-steps { font-size:.9rem; margin:.3rem 0 .3rem 1.1rem; }
 .walk-note { font:.88rem/1.45 ui-sans-serif,system-ui; margin:.5rem 0 0; min-height:2.6em; }
+/* A steppable figure, driven by runtime/interactive.mjs in every web edition. */
+.walk-row, .walk-state { display:flex; gap:6px; align-items:center; margin:6px 0; }
+.walk-item, .slot { min-width:34px; text-align:center; padding:5px 6px; border:1px solid var(--line);
+  border-radius:5px; font:.9rem ui-monospace,monospace; background:var(--bg, #fbfbf9); }
+.walk-item.on { background:#fde68a; border-color:#d97706; }
+.walk-label { width:72px; font:.72rem ui-sans-serif,system-ui; color:var(--dim); }
+.slot { visibility:hidden; }
+.slot.on { visibility:visible; }
+.walk-controls { display:flex; gap:10px; align-items:center; margin-top:10px;
+  font:.8rem ui-sans-serif,system-ui; color:var(--dim); }
+.walk-controls button { font:inherit; padding:3px 9px; border:1px solid var(--line);
+  border-radius:5px; background:#fff; cursor:pointer; }
 .figure-note { font:.85rem ui-sans-serif,system-ui; color:var(--dim); margin:.4rem 0 0; }
 .figure-table { margin-top:.6rem; font-size:.85rem; }
 .links { width:100%; height:auto; }

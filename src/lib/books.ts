@@ -38,6 +38,15 @@ export type BookNode = {
   outline: BookOutlineEntry[]
   /** The inline exercises on this node, by the id reading progress keys them under. */
   exercises: string[]
+  /** A challenge's tiers, for the grader that runs in the reader's browser. */
+  grading: BookGrading | null
+}
+
+export type BookGrading = {
+  /** The name the tests import the reader's file by. */
+  module: string
+  /** In the order `grade.py` runs them; `timeout` is its limit in seconds. */
+  tiers: { tier: string; timeout: number; source: string }[]
 }
 
 export type BookPart = { id: string; title: string; nodes: string[] }

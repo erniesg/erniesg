@@ -168,17 +168,6 @@ main.wide { grid-template-columns:minmax(0,60rem); }
 .rail-more a { color:var(--accent); text-decoration:none; }
 .lede { font-size:1.1rem; color:#333; }
 .edition { font:.85rem ui-sans-serif,system-ui; color:var(--dim); }
-.walk-row, .walk-state { display:flex; gap:6px; align-items:center; margin:6px 0; }
-.walk-item, .slot { min-width:34px; text-align:center; padding:5px 6px; border:1px solid var(--line);
-  border-radius:5px; font:.9rem ui-monospace,monospace; background:var(--bg); }
-.walk-item.on { background:#fde68a; border-color:#d97706; }
-.walk-label { width:72px; font:.72rem ui-sans-serif,system-ui; color:var(--dim); }
-.slot { visibility:hidden; }
-.slot.on { visibility:visible; }
-.walk-controls { display:flex; gap:10px; align-items:center; margin-top:10px;
-  font:.8rem ui-sans-serif,system-ui; color:var(--dim); }
-.walk-controls button { font:inherit; padding:3px 9px; border:1px solid var(--line);
-  border-radius:5px; background:#fff; cursor:pointer; }
 .map-tools { display:flex; gap:14px; align-items:center; flex-wrap:wrap; margin:14px 0 10px;
   font:.78rem ui-sans-serif,system-ui; color:var(--dim); }
 #map-search { font:inherit; padding:5px 10px; border:1px solid var(--line); border-radius:6px;
@@ -451,214 +440,8 @@ def page(title: str, inner: str, book_title: str, order: list[dict], current: st
 
 
 SCRIPT = r"""
-document.querySelectorAll('.walk').forEach(walk => {
-  const steps = Number(walk.dataset.steps) || 1;
-  let step = 0;
-  const paint = () => {
-    walk.querySelectorAll('.walk-item').forEach(el =>
-      el.classList.toggle('on', Number(el.dataset.index) === step));
-    walk.querySelectorAll('.slot').forEach(el =>
-      el.classList.toggle('on', Number(el.dataset.step) <= step));
-    walk.querySelector('.walk-step b').textContent = step + 1;
-    walk.querySelectorAll('.walk-note').forEach(el => { el.hidden = Number(el.dataset.index) !== step; });
-    const answer = walk.querySelector('.walk-answer');
-    if (answer) answer.hidden = step !== steps - 1;
-  };
-  walk.querySelector('[data-walk="next"]').onclick = () => { step = Math.min(step + 1, steps - 1); paint(); };
-  walk.querySelector('[data-walk="back"]').onclick = () => { step = Math.max(step - 1, 0); paint(); };
-  paint();
-});
-
-const runnableCells = [...document.querySelectorAll('.cell-run')];
-runnableCells.forEach((cell, index) => {
-  const button = cell.querySelector('.exec');
-  const status = cell.querySelector('.status');
-  const output = cell.querySelector('.output');
-  button.onclick = async () => {
-    button.disabled = true; button.classList.add('busy'); status.textContent = 'Running';
-    output.textContent = ''; output.classList.remove('error');
-    const earlier = runnableCells.slice(0, index)
-      .map((c, cellIndex) => ({
-        index: cellIndex + 1,
-        source: c.querySelector('.editor').value,
-      }));
-    try {
-      const response = await fetch('/api/exec', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ source: cell.querySelector('.editor').value, earlier }),
-      });
-      const result = await response.json();
-      output.textContent = result.output;
-      output.classList.toggle('error', result.ok === false);
-      status.textContent = '';
-    } catch (error) { status.textContent = String(error); }
-    finally { button.disabled = false; button.classList.remove('busy'); }
-  };
-});
-
-// One call the tests made into the reader's code: what was called, what came
-// back against what was expected, and what the reader printed during it. The
-// prints are open by default on a wrong answer (that is when they are read)
-// and one click away on a right one.
-function caseHtml(call, isFailing) {
-  const verdictClass = call.match === true ? 'good' : (call.match === false || call.raised) ? 'bad' : 'plain';
-  const mark = verdictClass === 'good' ? '&#10003;' : verdictClass === 'bad' ? '&#10007;' : '&#8226;';
-  const answer = call.raised
-    ? `raised <b>${escapeHtml(call.raised)}</b>`
-    : `returned <b>${escapeHtml(call.returned ?? '')}</b>`;
-  const expected = call.expected !== undefined && call.match !== true
-    ? `, expected <b>${escapeHtml(call.expected)}</b>` : '';
-  const printed = (call.out || '') + (call.err || '');
-  const dropped = (call.out_dropped_lines || 0) + (call.err_dropped_lines || 0);
-  const prints = printed || dropped
-    ? `<details class="case-prints"${verdictClass === 'bad' || isFailing ? ' open' : ''}>`
-      + `<summary>Your output</summary><pre>${escapeHtml(printed)}`
-      + (dropped ? `<span class="dropped">…truncated, ${dropped} more line${dropped === 1 ? '' : 's'}</span>` : '')
-      + '</pre></details>'
-    : '<p class="case-none">Printed nothing.</p>';
-  return `<div class="call-case ${verdictClass}" data-test="${escapeHtml(call.test || '')}">`
-    + `<div class="case-call"><span class="mark">${mark}</span>${escapeHtml(call.call)}</div>`
-    + `<div class="case-got">${answer}${expected}</div>${prints}</div>`;
-}
-
-// Past this many calls a tier shows the first few and the failing one: a
-// stress tier makes hundreds, and the reader needs the one that went wrong.
-const CASES_SHOWN = 12;
-function casesHtml(groups) {
-  return groups.map(group => {
-    const calls = group.calls || [];
-    // The call that went wrong is the one with a wrong verdict, not the last
-    // one: a failing test method does not stop the ones after it.
-    const wrong = calls.find(call => call.match === false || (call.raised && call.match !== true));
-    const failing = group.outcome && group.outcome !== 'pass' ? (wrong || calls[calls.length - 1]) : null;
-    let shown = calls.slice(0, CASES_SHOWN);
-    if (failing && !shown.includes(failing)) shown = [...shown.slice(0, CASES_SHOWN - 1), failing];
-    // `total` is how many calls were made; only some were kept to show
-    const total = Math.max(group.total ?? calls.length, calls.length);
-    const more = total - shown.length;
-    const head = group.label || `${group.tier} · ${total} call${total === 1 ? '' : 's'}`;
-    return `<p class="cases-head">${escapeHtml(head)}</p>`
-      + shown.map(call => caseHtml(call, call === failing)).join('')
-      + (more > 0 ? `<p class="cases-head">…and ${more} more</p>` : '');
-  }).join('');
-}
-
-document.querySelectorAll('.desk').forEach(desk => {
-  const button = desk.querySelector('.run');
-  const sample = desk.querySelector('.sample');
-  const status = desk.querySelector('.status');
-  const tiers = desk.querySelector('.tiers');
-  const output = desk.querySelector('.output');
-  const verdict = desk.querySelector('.desk-verdict');
-  const details = desk.querySelector('.full-output');
-  const cases = desk.querySelector('.cases');
-  // Everything the last run left is cleared before the next one starts, so a
-  // stale red verdict never sits beside a run that has not finished (and a
-  // request error cannot leave one up indefinitely).
-  const clear = () => {
-    tiers.innerHTML = ''; output.textContent = ''; if (cases) cases.innerHTML = '';
-    verdict.hidden = true; verdict.innerHTML = ''; details.hidden = true;
-  };
-  const busy = on => { button.disabled = on; if (sample) sample.disabled = on; };
-  button.onclick = async () => {
-    busy(true);
-    status.textContent = 'Running public, edge, stress, perf...';
-    clear();
-    try {
-      const response = await fetch('/api/grade', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ node: desk.dataset.node, source: desk.querySelector('.editor').value }),
-      });
-      const result = await response.json();
-      tiers.innerHTML = result.tiers.map(t =>
-        `<span class="tier ${t.outcome === 'pass' ? 'pass' : 'fail'}">${t.tier} - ${t.outcome}</span>`
-      ).join('');
-      status.textContent = result.ok ? 'All four tiers green.' : '';
-      verdict.hidden = result.ok;
-      verdict.innerHTML = result.ok ? '' :
-        `<span class="mark">&#10007;</span> ` + escapeHtml(result.summary || `${result.stopped_at} is red.`);
-      if (cases) cases.innerHTML = casesHtml(result.cases || []);
-      output.textContent = result.output || '';
-      details.hidden = !result.output;
-    } catch (error) { status.textContent = String(error); }
-    finally { busy(false); }
-  };
-  if (sample) sample.onclick = async () => {
-    busy(true);
-    status.textContent = 'Running the samples...';
-    clear();
-    try {
-      const response = await fetch('/api/sample', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ node: desk.dataset.node, source: desk.querySelector('.editor').value }),
-      });
-      const result = await response.json();
-      const calls = result.calls || [];
-      status.textContent = calls.length ? 'Samples only. Not graded.' : '';
-      if (result.error) {
-        verdict.hidden = false;
-        verdict.innerHTML = `<span class="mark">&#10007;</span> ` + escapeHtml(result.error);
-      }
-      const total = result.total ?? calls.length;
-      if (cases) cases.innerHTML = casesHtml([{ label: `Samples · ${total}`, calls, total }]);
-    } catch (error) { status.textContent = String(error); }
-    finally { busy(false); }
-  };
-});
-
-// Inline exercises live in runtime/exercises.mjs, shared with the published site.
-const escapeHtml = text => text.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
-
-// Hints live in the terminal. The bulb shows the next one; a read hint's dot
-// shows it again. Spending is per challenge, for the session, and never falls.
-document.querySelectorAll('.hint-panel').forEach(panel => {
-  const desk = panel.closest('.desk');
-  const button = desk.querySelector('.hint-button');
-  const total = Number(panel.dataset.total);
-  const key = 'hints:' + panel.dataset.ladder;
-  let spent = 0;
-  try { spent = Math.min(total, Number(JSON.parse(sessionStorage.getItem(key) || '0')) || 0); } catch {}
-  let current = spent;
-  const next = panel.querySelector('.hint-next');
-  const paint = () => {
-    if (button) button.querySelector('.hint-count').textContent = `${spent}/${total}`;
-    panel.querySelectorAll('.hint-dot').forEach(dot => {
-      const n = Number(dot.dataset.rung);
-      dot.classList.toggle('spent', n <= spent);
-      dot.classList.toggle('current', n === current);
-      dot.disabled = n > spent;
-      dot.setAttribute('aria-label', `Hint ${n}` + (n <= spent ? ', read' : ', not read yet'));
-    });
-    panel.querySelectorAll('.hint-body').forEach(body => { body.hidden = Number(body.dataset.rung) !== current; });
-    const shown = panel.querySelector(`.hint-body[data-rung="${current}"]`);
-    panel.querySelector('.hint-title').textContent = shown ? shown.dataset.title : '';
-    next.hidden = spent >= total;
-    next.textContent = spent ? 'Next hint' : 'Show hint 1';
-  };
-  const open = () => {
-    panel.hidden = false;
-    panel.style.animation = 'none'; void panel.offsetWidth; panel.style.animation = '';
-    if (button) button.setAttribute('aria-expanded', 'true');
-  };
-  const spend = () => {
-    if (spent < total) spent += 1;
-    current = spent;
-    try { sessionStorage.setItem(key, JSON.stringify(spent)); } catch {}
-    paint(); open();
-  };
-  if (button) button.onclick = () => {
-    if (!panel.hidden) { panel.hidden = true; button.setAttribute('aria-expanded', 'false'); return; }
-    if (!spent) spend(); else { current = current || spent; paint(); open(); }
-  };
-  next.onclick = spend;
-  panel.querySelector('.hint-close').onclick = () => {
-    panel.hidden = true; if (button) { button.setAttribute('aria-expanded', 'false'); button.focus(); }
-  };
-  panel.querySelectorAll('.hint-dot').forEach(dot => dot.onclick = () => {
-    current = Number(dot.dataset.rung); paint(); open();
-  });
-  paint();
-});
+// Figures, cells, the desk and the hints live in runtime/interactive.mjs,
+// shared with the published site.
 
 // Editors (colour, line numbers, Python keys) live in runtime/editor.mjs,
 // shared with the published site.
@@ -697,6 +480,17 @@ if (scrollBar) {
 PROGRESS_SCRIPT = r"""
 import { startProgress } from '/runtime/book-progress.mjs';
 import { wireEditors } from '/runtime/editor.mjs';
+import { wireInteractive } from '/runtime/interactive.mjs';
+// The preview runs the reader's code on this server: cells in a subprocess,
+// challenges through grade.py.
+const post = (route, body) => fetch(route, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+}).then(response => response.json());
+wireInteractive(document, {
+  exec: body => post('/api/exec', body),
+  grade: body => post('/api/grade', body),
+  sample: body => post('/api/sample', body),
+});
 wireEditors(document);
 // Whether the last write reached the file, so the status never claims a save
 // the server refused.
@@ -857,34 +651,8 @@ cy.ready(() => { cy.fit(undefined, 30); summary(); });
 # How long one runnable cell may take on the local preview.
 EXEC_TIMEOUT_SECONDS = 15
 
-RUNNER = r'''import contextlib, io, traceback
-def _run_cells(_earlier_cells, _own_source):
-    _namespace = globals()
-    _execute = exec
-    _compile = compile
-    _string_io = io.StringIO
-    _redirect_stdout = contextlib.redirect_stdout
-    _redirect_stderr = contextlib.redirect_stderr
-    _format_exception = traceback.format_exc
-    _first_earlier_failure = None
-    for _cell in _earlier_cells:
-        _quiet = _string_io()
-        try:
-            with _redirect_stdout(_quiet), _redirect_stderr(_quiet):
-                _execute(_compile(_cell['source'], '<earlier cell>', 'exec'), _namespace, _namespace)
-        except Exception:
-            if _first_earlier_failure is None:
-                _first_earlier_failure = (_cell, _format_exception())
-    try:
-        _execute(_compile(_own_source, '<current cell>', 'exec'), _namespace, _namespace)
-    except Exception:
-        if _first_earlier_failure is not None:
-            _cell, _trace = _first_earlier_failure
-            print(f"Earlier cell {_cell['index']} failed; shared state may be incomplete.")
-            print('Source:\n' + _cell['source'])
-            print(_trace)
-        raise
-'''
+# One file for both hosts: the preview's subprocess and the site's Pyodide.
+RUNNER = (Path(__file__).resolve().parent / "cell_runner.py").read_text()
 
 
 def strip_roots(output: str, roots: tuple[PurePath, ...] | None = None) -> str:

@@ -26,6 +26,10 @@ const index = book.nodes.findIndex((entry) => entry.id === nodeId)
 const node = book.nodes[index]
 if (!node) throw new Error(`\`${slug}\` has no node \`${nodeId}\``)
 
+// A challenge's tiers, for the grader in the reader's browser. `<` is escaped
+// so a test file that mentions a closing script tag cannot end this one early.
+const grading = node.grading ? JSON.stringify(node.grading).replace(/</g, '\\u003c') : null
+
 const previous = index > 0 ? book.nodes[index - 1] : undefined
 const next = index + 1 < book.nodes.length ? book.nodes[index + 1] : undefined
 const uri = documentUri(node.path)
@@ -123,6 +127,11 @@ const style = `<style>${scopeContentCss(manifest.contentCss, '.book-content')}${
 
   <div class="book-content" data-node={node.id} set:html={node.html} />
   <script is:inline set:html={manifest.splitScript} />
+  {
+    grading && (
+      <script type="application/json" data-book-grading={node.id} set:html={grading} />
+    )
+  }
 
   <nav
     class="mt-12 flex justify-between gap-x-6 border-t pt-6 text-sm"
@@ -152,10 +161,39 @@ const style = `<style>${scopeContentCss(manifest.contentCss, '.book-content')}${
 </ReadingLayout>
 
 <script>
-  // The book's editors, the same page code the local preview runs (#380). The
-  // site swaps pages without a reload, so this runs on every page view; an
-  // editor already taught is left alone.
+  // Everything on a book page that runs, as the local preview runs it (#380):
+  // the editors, figures, cells, the challenge desk and its hints. The code
+  // runs in the reader's own browser, in Python (Pyodide), graded by the same
+  // Python files `grade.py` uses. The site swaps pages without a reload, so
+  // this runs on every page view; anything already wired is left alone.
   import { wireEditors } from '../../../../books/tools/runtime/editor.mjs'
+  import { wireInteractive } from '../../../../books/tools/runtime/interactive.mjs'
+  import {
+    browserBackend,
+    type BookGradingData,
+  } from '../../../../books/tools/runtime/browser-backend.mjs'
+  import bookgrader from '../../../../books/tools/bookgrader.py?raw'
+  import graderObserve from '../../../../books/tools/grader_observe.py?raw'
+  import gradingPy from '../../../../books/tools/grading.py?raw'
+  import gradeInprocess from '../../../../books/tools/grade_inprocess.py?raw'
+  import cellRunner from '../../../../books/tools/cell_runner.py?raw'
 
-  document.addEventListener('astro:page-load', () => wireEditors(document))
+  const backend = browserBackend({
+    sources: {
+      'bookgrader.py': bookgrader,
+      'grader_observe.py': graderObserve,
+      'grading.py': gradingPy,
+      'grade_inprocess.py': gradeInprocess,
+      'cell_runner.py': cellRunner,
+    },
+    grading: (node) => {
+      const data = document.querySelector(`script[data-book-grading="${CSS.escape(node)}"]`)
+      return data?.textContent ? (JSON.parse(data.textContent) as BookGradingData) : null
+    },
+  })
+
+  document.addEventListener('astro:page-load', () => {
+    wireInteractive(document, backend)
+    wireEditors(document)
+  })
 </script>

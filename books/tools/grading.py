@@ -1,0 +1,123 @@
+"""What grading shares between the local grader and the browser's.
+
+Stdlib only and free of the book's paths, so the published site can run it
+inside Pyodide exactly as `grade.py` runs it on the reader's machine: the tier
+order, which tiers record calls, and the one-line summary of a failing tier.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+TIERS = ["public", "edge", "stress", "perf"]
+
+# The perf tier times the reader's function, so it never runs with calls
+# recorded: capturing output per call would change what it measures.
+UNRECORDED_TIERS = {"perf"}
+SAMPLE_TIER = "public"  # the public tier holds exactly the rows printed in the statement
+
+
+
+def harness_frame(path: str) -> bool:
+    """Whether a traceback frame belongs to the grader rather than the reader.
+
+    Decided on path components, never on a separator-bearing substring: a
+    Windows traceback says `\\tests\\`, not `/tests/`, and a reader's folder
+    that merely contains the word "unittest" is still theirs.
+    """
+    parts = [part for part in re.split(r"[\\/]+", path) if part]
+    folders, name = parts[:-1], (parts[-1] if parts else path)
+    return "tests" in folders or "unittest" in folders or name == "bookgrader.py"
+
+
+FRAME = re.compile(r'^\s*File "([^"]+)", line (\d+)', re.MULTILINE)
+ASSERTION = re.compile(r"^AssertionError: (.*?)(?: : (.*))?$", re.MULTILINE)
+EXCEPTION = re.compile(r"^(\w+(?:Error|Exception|Exit|Interrupt)|NotImplementedError)(?::\s?(.*))?$", re.MULTILINE)
+DIFFER = re.compile(r"^(?:Lists|Tuples|Sets|Dicts|Sequences|Strings?) differ: ")
+SOLVE_CALL = re.compile(r"self\.solve\((.*)\)\s*,")
+FUNCTION = re.compile(r'load_solution\([^)]*\)\.(\w+)')
+
+
+def summarize(output: str, test_file: Path | None = None) -> str:
+    """The one line a reader needs from a failing tier, not the unittest dump.
+
+    An assertion becomes `f(args) returned X, expected Y`, with the test's own
+    message (usually the failing input) when it has one. An exception raised
+    in the reader's code names the error and the line of their file it came
+    from. Anything else falls back to the last line of the output.
+    """
+    if not output:
+        return ""
+    if output.startswith("exceeded the"):
+        return f"too slow: {output} on the biggest allowed input. Look for work you repeat."
+    name = "your function"
+    if test_file and test_file.is_file():
+        found = FUNCTION.search(test_file.read_text())
+        if found:
+            name = found.group(1)
+
+    frames = FRAME.findall(output)
+    user_frames = [(path, line) for path, line in frames if not harness_frame(path)]
+    failure = ASSERTION.search(output)
+    if failure and not user_frames:
+        comparison, message = failure.group(1), failure.group(2)
+        # unittest says "Lists differ: [1, 1] != [9, 4]"; the reader needs the values
+        comparison = DIFFER.sub("", comparison)
+        # the source lines unittest printed between the test frame and the error
+        shown = output[: failure.start()].rsplit('File "', 1)[-1]
+        call = SOLVE_CALL.search(" ".join(line.strip() for line in shown.splitlines()))
+        if " != " in comparison:
+            got, expected = comparison.split(" != ", 1)
+            subject = f"{name}({call.group(1)})" if call else name
+            text = f"{subject} returned {got}, expected {expected}"
+            return f"{text} \u2014 {message}" if message and not call else text
+        return message or comparison
+
+    exception = None
+    for match in EXCEPTION.finditer(output):
+        exception = match
+    if exception:
+        what = exception.group(1) + (f": {exception.group(2)}" if exception.group(2) else "")
+        if user_frames:
+            return f"your code raised {what} on line {user_frames[-1][1]}"
+        return what
+    return output.strip().splitlines()[-1]
+
+
+def grade(node_id: str, use_solution: bool) -> int:
+    node_dir, meta = load_node(node_id)
+    if use_solution:
+        solution_dir = WORKSPACE_DIR / ".reference" / node_id
+        solution_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(node_dir / "solution.py", solution_dir / f"{meta['module']}.py")
+    else:
+        solution_dir = WORKSPACE_DIR / node_id
+        if not (solution_dir / f"{meta['module']}.py").is_file():
+            print(f"Nothing to grade yet. Run: grade.py start {node_id}")
+            return 1
+
+    print(f"\n{meta['title']}  {DIM}({node_id}){RESET}")
+    print(f"{DIM}grading {solution_dir}{RESET}\n")
+
+    earned = 0
+    for tier in TIERS:
+        config = meta.get("tiers", {}).get(tier, {})
+        outcome, output = run_tier(node_dir, tier, solution_dir, config.get("timeout", 60))
+        if outcome == "pass":
+            xp = config.get("xp", 0)
+            earned += xp
+            print(f"  {GREEN}✔ {tier:<7}{RESET} passed  (+{xp} XP)")
+            continue
+        label = {"fail": "failed", "timeout": "TIME LIMIT EXCEEDED", "missing": "missing"}[outcome]
+        print(f"  {RED}✘ {tier:<7} {label}{RESET}")
+        summary = summarize(output, node_dir / "tests" / f"{tier}.py")
+        if summary:
+            print(f"\n    {summary}")
+        if output:
+            print("\n" + "\n".join("    " + line for line in output.splitlines()[-25:]))
+        print(f"\n  {DIM}Tiers stop at the first failure. Fix this one first.{RESET}")
+        return 1
+
+    print(f"\n  {GREEN}all four tiers green{RESET}  (+{earned} XP)\n")
+    return 0

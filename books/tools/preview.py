@@ -212,13 +212,11 @@ nav.turn a { color:var(--accent); text-decoration:none; }
 @media (max-width:1279px) { main { grid-template-columns:minmax(0,40rem); } .rail { display:none; } }
 @media (max-width:1100px) { .map-wrap { grid-template-columns:minmax(0,1fr); } }
 @media (max-width:480px) { body { font-size:16px; } main { padding:20px 16px 60px; } }
-:root { --split-top:62px; }
+:root { --split-top:45px; --split-surface:var(--bg); --split-ink:var(--ink); }
 """ + SPLIT_CSS + (
-    # Side by side needs the page's width: the challenge column widens and the
-    # "Connected" rail steps aside (the drawer and the map still reach it).
-    "@media (min-width:%dpx) {"
-    ' html[data-challenge-view="split"] main:has([data-challenge-split])'
-    " { grid-template-columns:minmax(0,96rem); }"
+    # Split covers the page below the top bar; the "Connected" rail under it
+    # steps aside (the drawer and the map still reach it).
+    "@media screen and (min-width:%dpx) {"
     ' html[data-challenge-view="split"] main:has([data-challenge-split]) > .rail'
     " { display:none; } }" % CHALLENGE_SPLIT_MIN_WIDTH
 )

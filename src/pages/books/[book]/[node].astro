@@ -79,20 +79,15 @@ const RESTORED = `
 .book-content figure.figure { overflow-x: auto; }
 .book-content img, .book-content svg { max-width: 100%; }
 `
-// A challenge's side-by-side view. The panes' own rules come from the
-// renderer (shared with the local preview); these widen the shell to make room
-// and fold the margin rail into its narrow-screen overlay (fixed, zero-sized,
-// drawn from inside), which the shared script switches the rail to as well.
+// A challenge's side-by-side view. The panes come from the renderer (shared
+// with the local preview): split, they are a fixed layer below the top bar,
+// each scrolling on its own. The site says where its bar ends and which
+// surface to paint in each look, and keeps the margin's collapsed overlay
+// above the panes (the shared script collapses the rail while split).
 const SPLIT_LAYOUT = `
-@media (min-width: 1000px) {
-  html[data-challenge-view='split'] .reading-shell:has([data-challenge-split]) {
-    grid-template-columns: 13rem minmax(0, 1fr);
-    max-width: 112rem;
-    --split-top: var(--reading-pin);
-  }
-  html[data-book-look='plain'][data-challenge-view='split'] .reading-shell:has([data-challenge-split]) {
-    grid-template-columns: minmax(0, 100rem);
-  }
+html { --split-top: 4rem; --split-surface: hsl(var(--background)); --split-ink: hsl(var(--foreground)); }
+html[data-book-look='plain'] { --split-top: var(--plain-bar-height); --split-surface: var(--plain-bg); --split-ink: var(--plain-ink); }
+@media screen and (min-width: 1000px) {
   html[data-challenge-view='split'] .reading-shell:has([data-challenge-split]) .reading-margin {
     position: fixed;
     top: auto;

@@ -114,7 +114,7 @@ class ChallengeSplit(unittest.TestCase):
                 with self.subTest(node=node["id"], runnable=runnable):
                     self.assertIn("data-challenge-split", markup)
                     self.assertIn("data-challenge-view-toggle", markup)
-                    question, work = markup.split('<div class="split-work">', 1)
+                    question, work = markup.split('split-work"', 1)
                     self.assertNotIn('data-block-kind="desk"', question)
                     self.assertIn('data-block-kind="desk"', work)
                     self.assertIn('data-block-kind="card"', question)
@@ -123,7 +123,7 @@ class ChallengeSplit(unittest.TestCase):
         tag = re.compile(r'<div class="block" data-block-kind="(\w+)" data-block-digest="(\w+)" id="([^"]+)">')
         for node in self.challenges():
             markup = render.render_node(node, "web", runnable=False, reveal="reader")
-            pieces = markup.split('<div class="challenge-split" data-challenge-split>', 1)
+            pieces = markup.split('data-challenge-split>', 1)
             with self.subTest(node=node["id"]):
                 self.assertEqual(len(pieces), 2)
                 blocks = tag.findall(markup)
@@ -145,7 +145,7 @@ class ChallengeSplit(unittest.TestCase):
         self.assertIn(render.CHALLENGE_VIEW_ATTRIBUTE, render.CHALLENGE_VIEW_HEAD_SCRIPT)
         self.assertIn(render.CHALLENGE_VIEW_KEY, render.SPLIT_SCRIPT)
         self.assertIn(f"min-width: {render.CHALLENGE_SPLIT_MIN_WIDTH}px", render.SPLIT_SCRIPT)
-        self.assertIn(f"min-width:{render.CHALLENGE_SPLIT_MIN_WIDTH}px", render.SPLIT_CSS)
+        self.assertIn(f"screen and (min-width:{render.CHALLENGE_SPLIT_MIN_WIDTH}px)", render.SPLIT_CSS)
         self.assertNotRegex(render.SPLIT_CSS + render.SPLIT_SCRIPT, r"%\(\w+\)s")
         site_head = (Path(__file__).resolve().parents[2] / "src/components/Head.astro").read_text()
         self.assertIn(f"localStorage.getItem('{render.CHALLENGE_VIEW_KEY}')", site_head)

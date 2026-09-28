@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { expectIndependentPanes } from './split-panes'
 import { installStaticRoutes } from './static-build'
 
 /**
@@ -61,18 +62,33 @@ test.describe('the challenge side-by-side view', () => {
     expect(sideBySide(await panes(page))).toBe(false)
   })
 
-  test('the work stays in view while the question scrolls', async ({ page }) => {
+  for (const bookLook of ['site', 'plain']) {
+    test(`split panes scroll independently and the page does not (${bookLook} look)`, async ({
+      page,
+    }) => {
+      await remember(page, { 'book-look': bookLook, 'book-challenge-view': 'split' })
+      await page.setViewportSize({ width: 1440, height: 900 })
+      await page.goto(CHALLENGE)
+      await expect(page.locator('html')).toHaveAttribute('data-book-look', bookLook)
+      await expectIndependentPanes(page)
+    })
+  }
+
+  test('printing a split page prints the whole challenge in normal flow', async ({ page }) => {
     await remember(page, { 'book-challenge-view': 'split' })
-    await page.setViewportSize({ width: 1440, height: 800 })
+    await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto(CHALLENGE)
-    const before = await panes(page)
-    await page.mouse.wheel(0, 900)
-    await expect
-      .poll(async () => (await panes(page)).question.y)
-      .toBeLessThan(before.question.y - 300)
-    const after = await panes(page)
-    expect(after.work.y).toBeGreaterThanOrEqual(0)
-    expect(after.work.y).toBeLessThan(200)
+    await page.emulateMedia({ media: 'print' })
+    const layout = await page.evaluate(() => {
+      const view = document.querySelector('.challenge-view') as HTMLElement
+      const work = document.querySelector('.split-work') as HTMLElement
+      return {
+        position: getComputedStyle(view).position,
+        overflow: getComputedStyle(work).overflowY,
+        clipped: work.scrollHeight > work.clientHeight + 1,
+      }
+    })
+    expect(layout).toEqual({ position: 'static', overflow: 'visible', clipped: false })
   })
 
   test('below 1000px it is stacked, and the toggle says why it is off', async ({ page }) => {

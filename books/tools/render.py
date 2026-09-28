@@ -754,11 +754,14 @@ def challenge_split(pieces: list[str]) -> str:
     if desk is None:
         return "".join(pieces)
     return (
+        '<div class="challenge-view" data-challenge-split>'
         f'<div class="split-toolbar">{VIEW_TOGGLE}</div>'
-        '<div class="challenge-split" data-challenge-split>'
-        f'<div class="split-question">{"".join(pieces[:desk])}</div>'
-        f'<div class="split-work">{"".join(pieces[desk:])}</div>'
-        "</div>"
+        '<div class="challenge-split">'
+        '<div class="split-pane split-question" role="region" aria-label="The question">'
+        f'{"".join(pieces[:desk])}</div>'
+        '<div class="split-pane split-work" role="region" aria-label="Your code">'
+        f'{"".join(pieces[desk:])}</div>'
+        "</div></div>"
     )
 
 
@@ -1153,8 +1156,11 @@ details summary { cursor:pointer; font:600 .85rem ui-sans-serif,system-ui; }
 # at-rules live here instead, and every target that owns its whole document
 # (the preview and the EPUB) appends them straight after CONTENT_CSS.
 # The side-by-side view. Rooted on <html>, so a host includes it unscoped;
-# `.challenge-split` exists only in a challenge's markup. A host sets
-# `--split-top` to where its sticky header ends and widens its own column.
+# `.challenge-view` exists only in a challenge's markup. Split, the view is a
+# fixed layer from the host's top bar (`--split-top`, which the host sets) to
+# the bottom of the window, and each pane is its own scroll container: the page
+# itself does not scroll, so scrolling the question never moves the code and
+# scrolling the code never moves the question.
 SPLIT_CSS = """
 .split-toolbar { display:flex; justify-content:flex-end; margin:0 0 .5rem; }
 .view-toggle { display:inline-flex; align-items:center; gap:6px; padding:5px 10px;
@@ -1165,12 +1171,20 @@ SPLIT_CSS = """
   border-color:currentColor; }
 .view-toggle[aria-disabled="true"] { opacity:.5; cursor:not-allowed; }
 .view-toggle:focus-visible { outline:2px solid #0369a1; outline-offset:2px; }
-@media (min-width:%(wide)spx) {
-  html[data-challenge-view="split"] .challenge-split { display:grid;
-    grid-template-columns:minmax(0,1fr) minmax(0,1fr); column-gap:2rem; align-items:start; }
-  html[data-challenge-view="split"] .split-work { position:sticky; top:var(--split-top, 1rem);
-    max-height:calc(100vh - var(--split-top, 1rem) - 1rem); overflow:auto;
-    overscroll-behavior:contain; padding-bottom:1rem; }
+@media screen and (min-width:%(wide)spx) {
+  html[data-challenge-view="split"]:has(.challenge-view),
+  html[data-challenge-view="split"]:has(.challenge-view) body { overflow:hidden; }
+  html[data-challenge-view="split"] .challenge-view { position:fixed; z-index:12;
+    top:var(--split-top, 0px); left:0; right:0; bottom:0; display:grid;
+    grid-template-rows:auto minmax(0,1fr); background:var(--split-surface, Canvas);
+    color:var(--split-ink, CanvasText); padding:.6rem 1.5rem 0; }
+  html[data-challenge-view="split"] .split-toolbar { margin:0 0 .6rem; }
+  html[data-challenge-view="split"] .challenge-split { display:grid; min-height:0;
+    grid-template-columns:minmax(0,1fr) minmax(0,1fr); column-gap:1.5rem; }
+  html[data-challenge-view="split"] .split-pane { min-height:0; height:100%%; overflow-y:auto;
+    overscroll-behavior:contain; padding:0 .75rem 2rem 0; }
+  html[data-challenge-view="split"] .split-pane:focus-visible { outline:2px solid #0369a1;
+    outline-offset:-2px; }
   html[data-challenge-view="split"] .split-work .desk .editor { min-height:45vh; }
 }
 """ % {"wide": CHALLENGE_SPLIT_MIN_WIDTH}
@@ -1192,6 +1206,12 @@ SPLIT_SCRIPT = r"""
     const split = root.getAttribute(ATTR) === 'split';
     const room = wide.matches;
     const onChallenge = !!document.querySelector('[data-challenge-split]');
+    // Split, each pane is a scroll container the keyboard can reach, so Page
+    // Up/Down and Space scroll the pane that has focus and nothing else.
+    document.querySelectorAll('.split-pane').forEach(pane => {
+      if (split && room) pane.setAttribute('tabindex', '0');
+      else pane.removeAttribute('tabindex');
+    });
     document.querySelectorAll('[data-challenge-view-toggle]').forEach(button => {
       button.setAttribute('aria-pressed', String(split));
       button.setAttribute('aria-disabled', String(!room));

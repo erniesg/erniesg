@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { expectIndependentPanes } from './split-panes'
 
 /**
  * The local preview's challenge side by side: the question on the left, the
@@ -31,17 +32,41 @@ test('the question and the live desk sit side by side, remembered across a reloa
   await expect(page.locator('.split-work .desk .editor')).toBeInViewport()
   await expect(page.locator('.split-work .desk .run')).toBeInViewport()
 
-  // The question scrolls; the desk does not leave the screen.
-  await page.mouse.wheel(0, 900)
-  await expect
-    .poll(async () => (await panes(page)).question.y)
-    .toBeLessThan(question.y - 300)
-  await expect(page.locator('.split-work .desk .run')).toBeInViewport()
 
   await page.reload()
   await expect(page.locator(TOGGLE)).toHaveAttribute('aria-pressed', 'true')
   const again = await panes(page)
   expect(again.work.x).toBeGreaterThanOrEqual(again.question.x + again.question.width - 1)
+})
+
+test('split panes scroll independently and the page does not', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('book-challenge-view', 'split'))
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto(CHALLENGE)
+  await expectIndependentPanes(page)
+})
+
+test('a run keeps both panes where they were', async ({ page }) => {
+  await page.route('**/api/grade', (route) =>
+    route.fulfill({
+      json: {
+        ok: false,
+        tiers: [{ tier: 'public', outcome: 'fail' }],
+        stopped_at: 'public',
+        output: 'Traceback: not written yet',
+        summary: 'not written yet',
+      },
+    }),
+  )
+  await page.addInitScript(() => localStorage.setItem('book-challenge-view', 'split'))
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto(CHALLENGE)
+  await page.locator('.split-question').evaluate((element) => { element.scrollTop = 400 })
+  await page.locator('.split-work .desk .editor').click()
+  await page.keyboard.press('ControlOrMeta+Enter')
+  await expect(page.locator('.split-work .desk-verdict')).toBeVisible()
+  expect(await page.locator('.split-question').evaluate((element) => element.scrollTop)).toBe(400)
+  expect(await page.evaluate(() => document.scrollingElement?.scrollTop ?? 0)).toBe(0)
 })
 
 test('Run all tiers grades from the split desk', async ({ page }) => {

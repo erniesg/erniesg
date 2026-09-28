@@ -577,7 +577,7 @@ describe('review findings', () => {
       `/annotations/${bareId(parent)}${scopeQuery(CHAPTER_ONE)}`,
       { as: ADA },
     )
-    expect(tombstoned.status).toBe(204)
+    expect(tombstoned.status).toBe(200)
 
     // Both rows are still there, Bob's untouched and Ada's without its body.
     const remaining = await list(CHAPTER_ONE, BOB)
@@ -1132,7 +1132,7 @@ describe('review findings, round three', () => {
       { as: ADA },
     )
 
-    expect(response.status).toBe(204)
+    expect(response.status).toBe(200)
     const remaining = await list(CHAPTER_ONE, BOB)
     expect(remaining.map((entry) => entry.body?.value)).toEqual([
       undefined,

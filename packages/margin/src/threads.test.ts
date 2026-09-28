@@ -161,6 +161,24 @@ describe('flattenThread', () => {
     expect(entries[7].inReplyTo?.serverId).toBe('d7')
   })
 
+  it('walks a chain deeper than the call stack without recursing', () => {
+    // An allowlisted writer can build any depth through ordinary requests; a
+    // recursive walk would throw RangeError and take the whole rail down.
+    const depth = 50_000
+    const replies: ThreadReply[] = []
+    let parent = 'root'
+    for (let level = 1; level <= depth; level += 1) {
+      const id = `n${level}`
+      replies.push(reply(id, parent, '2026-09-28T00:00:01.000Z'))
+      parent = id
+    }
+    const entries = flattenThread('root', replies)
+    expect(entries).toHaveLength(depth)
+    expect(entries[depth - 1].depth).toBe(depth)
+    expect(entries[depth - 1].indent).toBe(MAX_THREAD_INDENT)
+    expect(entries[depth - 1].inReplyTo?.serverId).toBe(`n${depth - 1}`)
+  })
+
   it('survives a cycle in a malformed response', () => {
     const entries = flattenThread('root', [
       reply('x', 'root', '2026-09-28T00:00:01.000Z'),

@@ -63,10 +63,10 @@ import {
 } from './records.js'
 import {
   flattenThread,
-  hasReplies,
   REPLY_FRAGMENT_PREFIX,
   replyFragment,
   replyFromWebAnnotation,
+  UNNAMED_PARTICIPANT,
   type ThreadEntry,
   type ThreadReply,
 } from './threads.js'
@@ -1285,6 +1285,10 @@ export class MarginRailElement extends ElementBase {
     // A delete that overtakes its own create would remove the entry here while
     // the create went on to store it — possibly public — to reappear on the
     // next load. It waits for the create, and for any earlier write.
+    // Whether the service tombstoned the note rather than removing it. Only its
+    // answer can say: a private reply from another reader keeps the note, and
+    // this reader cannot see that reply to infer it.
+    let tombstoned = false
     const deleted = await this.#enqueue(record, 'delete', async () => {
       if (transport !== this.#transport) return false // switched away; gone anyway
       const client = this.#clientFor(transport)
@@ -1300,6 +1304,11 @@ export class MarginRailElement extends ElementBase {
             [response],
           )
         }
+        tombstoned =
+          response.status === 200 &&
+          (response.body as { 'margin:deleted'?: unknown } | null)?.[
+            'margin:deleted'
+          ] === true
         return true
       } catch (error) {
         const replies =
@@ -1320,14 +1329,17 @@ export class MarginRailElement extends ElementBase {
       return
     }
     // A note with replies is tombstoned by the service, not removed: the
-    // thread under it stays, so its entry does too, without its text.
-    if (
-      record.serverId &&
-      record.annotation.kind === 'note' &&
-      hasReplies(record.serverId, this.#replies)
-    ) {
+    // thread under it stays, so its entry does too, without its text. The text
+    // goes locally too, as it has on the service: out of `annotations`, out of
+    // search, the same as a tombstone loaded fresh.
+    if (tombstoned && record.annotation.kind === 'note') {
       this.#deleting.delete(record)
       record.deleted = true
+      record.annotation = { ...record.annotation, body: DELETED_NOTE_TEXT }
+      this.#confirmed.set(record, {
+        visibility: record.visibility,
+        annotation: record.annotation,
+      })
       if (this.#editing === id) this.#editing = null
       const hadFocus =
         this.#shadow.activeElement?.getAttribute('data-focus-key') ===
@@ -2010,6 +2022,19 @@ export class MarginRailElement extends ElementBase {
       )
     }
 
+    // A note starts a conversation, so it names who started it, the way every
+    // reply under it does: by display name, never by address.
+    if (annotation.kind === 'note' && record.serverId) {
+      item.append(
+        el(
+          doc,
+          'span',
+          { class: 'meta author', 'data-margin-author': '' },
+          record.mine ? 'You' : (record.creatorName ?? UNNAMED_PARTICIPANT),
+        ),
+      )
+    }
+
     const quoteText = annotation.target.quote.exact
     if (orphaned) {
       item.append(el(doc, 'span', { class: 'quote' }, quoteText))
@@ -2088,9 +2113,12 @@ export class MarginRailElement extends ElementBase {
       { class: 'meta', 'data-margin-visibility': record.visibility },
       record.visibility === 'public' ? 'Public' : 'Private',
     )
-    if (record.mine && !record.deleted) {
+    if (record.mine) {
       const busy = this.#deleting.has(record) ? 'true' : undefined
       if (busy) item.setAttribute('aria-busy', 'true')
+      // A tombstone takes no edit and no visibility change, but keeps Delete:
+      // once nothing hangs from it, deleting it again removes it for good.
+      if (record.deleted) controls.append(visibility)
       const next: MarginVisibility =
         record.visibility === 'public' ? 'private' : 'public'
       const toggle = el(
@@ -2106,8 +2134,8 @@ export class MarginRailElement extends ElementBase {
         record.visibility === 'public' ? 'Public' : 'Private',
       )
       toggle.addEventListener('click', () => void this.setVisibility(id, next))
-      controls.append(toggle)
-      if (annotation.kind === 'note' && this.#editing !== id) {
+      if (!record.deleted) controls.append(toggle)
+      if (!record.deleted && annotation.kind === 'note' && this.#editing !== id) {
         const edit = el(
           doc,
           'button',
@@ -2235,7 +2263,20 @@ export class MarginRailElement extends ElementBase {
     const documentUri = this.documentUri
     const parent = this.#replyParent(parentId)
     if (!text || !documentUri || !parent || !this.#canReply()) return false
+    const transport = this.#transport
     await this.#prefsSettledNow()
+    // As `#publish` does: the page or the service may have changed while this
+    // waited, and the parent and document it names belong to the old ones.
+    // Sending them through the new transport could write under the wrong
+    // connection, so nothing is sent; the draft stays for the reader.
+    if (documentUri !== this.documentUri) return false
+    if (transport !== this.#transport) {
+      this.#reportTransportFailure(
+        new Error('the margin transport changed before this reply was sent'),
+        'Not sent: the connection changed. Your reply is still here.',
+      )
+      return false
+    }
     const visibility: MarginVisibility =
       parent.visibility === 'private' ? 'private' : this.#defaultVisibility
     const targetText =
@@ -2561,7 +2602,9 @@ export class MarginRailElement extends ElementBase {
       'Link',
     )
     controls.append(link)
-    if (reply.mine && !reply.deleted && this.#editingReply !== id) {
+    // A tombstoned reply keeps Delete, not Edit: once nothing answers it,
+    // deleting it again removes it for good.
+    if (reply.mine && this.#editingReply !== id) {
       const busy = this.#threadBusy ? 'true' : undefined
       const edit = el(
         doc,
@@ -2597,7 +2640,8 @@ export class MarginRailElement extends ElementBase {
         if (this.#threadBusy) return
         void this.deleteReply(id)
       })
-      controls.append(edit, remove)
+      if (reply.deleted) controls.append(remove)
+      else controls.append(edit, remove)
     }
     item.append(controls)
     const form = this.#replyForm(id)

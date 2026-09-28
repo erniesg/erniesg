@@ -126,23 +126,31 @@ export function flattenThread(
   }
   for (const siblings of children.values()) siblings.sort(compareReplies)
 
+  // An explicit stack, not recursion: depth is unlimited and a writer can make
+  // a chain deeper than the call stack. Children are pushed in reverse so they
+  // pop in creation order, which keeps the walk depth first.
   const entries: ThreadEntry[] = []
   const seen = new Set<string>([rootId])
-  const visit = (parentId: string, parent: ThreadReply | null, depth: number) => {
-    for (const reply of children.get(parentId) ?? []) {
-      // A cycle cannot be stored, but a malformed response must not hang a tab.
-      if (seen.has(reply.serverId)) continue
-      seen.add(reply.serverId)
-      entries.push({
-        reply,
-        depth,
-        indent: Math.min(depth, MAX_THREAD_INDENT),
-        inReplyTo: parent,
-      })
-      visit(reply.serverId, reply, depth + 1)
+  const stack: { reply: ThreadReply; parent: ThreadReply | null; depth: number }[] =
+    (children.get(rootId) ?? [])
+      .map((reply) => ({ reply, parent: null, depth: 1 }))
+      .reverse()
+  while (stack.length > 0) {
+    const { reply, parent, depth } = stack.pop()!
+    // A cycle cannot be stored, but a malformed response must not hang a tab.
+    if (seen.has(reply.serverId)) continue
+    seen.add(reply.serverId)
+    entries.push({
+      reply,
+      depth,
+      indent: Math.min(depth, MAX_THREAD_INDENT),
+      inReplyTo: parent,
+    })
+    const next = children.get(reply.serverId) ?? []
+    for (let index = next.length - 1; index >= 0; index -= 1) {
+      stack.push({ reply: next[index], parent: reply, depth: depth + 1 })
     }
   }
-  visit(rootId, null, 1)
   return entries
 }
 

@@ -410,7 +410,13 @@ describe('deleting a note with replies', () => {
     )
 
     const deleted = await harness.request('DELETE', item(root.id), { as: ADA })
-    expect(deleted.status).toBe(204)
+    // A tombstone is not a removal, and the response says so: 200 with the
+    // tombstoned annotation, where an outright delete is a bare 204.
+    expect(deleted.status).toBe(200)
+    const tombstone = (await deleted.json()) as Wire
+    expect(tombstone.id).toBe(root.id)
+    expect(tombstone['margin:deleted']).toBe(true)
+    expect(JSON.stringify(tombstone)).not.toContain('the question')
 
     for (const reader of [null, BOB, ADA]) {
       const thread = await list(reader)
@@ -442,7 +448,7 @@ describe('deleting a note with replies', () => {
     // Deleting it again changes nothing while the thread hangs from it.
     expect(
       (await harness.request('DELETE', item(root.id), { as: ADA })).status,
-    ).toBe(204)
+    ).toBe(200)
     expect(await list(null)).toHaveLength(4)
   })
 
@@ -454,7 +460,7 @@ describe('deleting a note with replies', () => {
     )
     expect(
       (await harness.request('DELETE', item(root.id), { as: ADA })).status,
-    ).toBe(204)
+    ).toBe(200)
     expect(
       (await harness.request('DELETE', item(reply.id), { as: BOB })).status,
     ).toBe(204)

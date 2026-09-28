@@ -45,6 +45,10 @@ type Service = {
   lists: number
   /** Every list response body, as the browser received it. */
   bodies: string[]
+  /** Hold every GET /prefs on this until it resolves. */
+  holdPrefs: Promise<void> | null
+  /** How many POST /annotations the page has made. */
+  posts: number
   call(
     method: string,
     path: string,
@@ -76,6 +80,8 @@ async function mountService(page: Page): Promise<Service> {
   const service: Service = {
     as: ADA,
     lists: 0,
+    holdPrefs: null,
+    posts: 0,
     bodies: [],
     call: (method, path, principal, body) =>
       handle(
@@ -95,6 +101,11 @@ async function mountService(page: Page): Promise<Service> {
   await page.route('**/api/margin/v1/**', async (route) => {
     const incoming = route.request()
     const method = incoming.method()
+    const path = new URL(incoming.url()).pathname
+    if (method === 'GET' && path.endsWith('/prefs') && service.holdPrefs) {
+      await service.holdPrefs
+    }
+    if (method === 'POST' && path.endsWith('/annotations')) service.posts += 1
     const response = await handle(
       new Request(incoming.url(), {
         method,
@@ -366,5 +377,133 @@ test.describe('threaded comments in the margin', () => {
       undefined,
       'still here',
     ])
+  })
+
+  test('a reply the owner cannot see still tombstones the note, and its text is purged locally', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await service.call('PATCH', '/prefs', ADA, { defaultVisibility: 'public' })
+    service.as = ADA
+    await open(page)
+    const note = await noteAsReader(page, service, 'secret words')
+    // Bob answers privately: Ada's rail never sees it, but the service does.
+    await reply(service, note, 'bob, privately', BOB, 'private')
+    await page.reload()
+    await expect(page.locator(REPLY)).toHaveCount(0)
+
+    await page.locator(`${ENTRY} [data-margin-action="delete"]`).click()
+    // The service tombstoned it, so the entry stays, as a tombstone, now.
+    await expect(page.locator(`${ENTRY} > .body`)).toHaveText(
+      'This note was deleted.',
+    )
+    const local = await page.locator(RAIL).evaluate((rail) => {
+      const element = rail as HTMLElement & {
+        annotations: readonly { kind: string; body?: string }[]
+      }
+      return JSON.stringify(element.annotations)
+    })
+    expect(local).not.toContain('secret words')
+    // Search no longer finds the deleted text either.
+    await page.locator(`${RAIL} [data-margin-search]`).fill('secret')
+    await expect(page.locator(ENTRY)).toHaveCount(0)
+    await page.locator(`${RAIL} [data-margin-search]`).fill('')
+    // And a reload agrees with what was shown.
+    await page.reload()
+    await expect(page.locator(`${ENTRY} > .body`)).toHaveText(
+      'This note was deleted.',
+    )
+  })
+
+  test('a root note shows its author by display name', async ({ page }) => {
+    const service = await mountService(page)
+    await service.call('PATCH', '/prefs', ADA, { defaultVisibility: 'public' })
+    service.as = ADA
+    await open(page)
+    await noteAsReader(page, service, 'started by ada')
+
+    service.as = BOB
+    await page.reload()
+    const author = page.locator(`${ENTRY} [data-margin-author]`)
+    await expect(author).toHaveText(/^Reader [0-9A-Z]{5}$/)
+    service.as = ADA
+    await page.reload()
+    await expect(author).toHaveText('You')
+  })
+
+  test('a reply waiting on preferences is not sent through a connection that changed', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await service.call('PATCH', '/prefs', ADA, { defaultVisibility: 'public' })
+    service.as = ADA
+    await open(page)
+    const note = await noteAsReader(page, service, 'answer me')
+    await page.reload()
+    await expect(page.locator(ENTRY)).toHaveCount(1)
+
+    let release!: () => void
+    service.holdPrefs = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    // A reload of the same connection starts a new preferences read, which
+    // the reply below has to wait for.
+    await page.locator(RAIL).evaluate((rail) => {
+      const element = rail as HTMLElement & { transport: unknown }
+      element.transport = element.transport
+    })
+    const postsBefore = service.posts
+    const sent = page.locator(RAIL).evaluate(
+      (rail, parentId) =>
+        (rail as HTMLElement & {
+          reply(id: string, body: string): Promise<boolean>
+        }).reply(parentId, 'sent to the wrong place?'),
+      bare(note.id),
+    )
+    // The connection changes while the reply waits.
+    await page.locator(RAIL).evaluate((rail) => {
+      rail.setAttribute('api-base', '/api/margin/v1/')
+    })
+    release()
+    service.holdPrefs = null
+    expect(await sent).toBe(false)
+    expect(service.posts).toBe(postsBefore)
+    expect((await rows(service)).map((row) => row.body?.value)).toEqual([
+      'answer me',
+    ])
+  })
+
+  test('a tombstone can be deleted for good once its replies are gone', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await service.call('PATCH', '/prefs', ADA, { defaultVisibility: 'public' })
+    service.as = ADA
+    await open(page)
+    const note = await noteAsReader(page, service, 'soon a tombstone')
+    const answer = await reply(service, note, 'short-lived', BOB)
+    await page.reload()
+    await page.locator(`${ENTRY} [data-margin-action="delete"]`).click()
+    await expect(page.locator(`${ENTRY} > .body`)).toHaveText(
+      'This note was deleted.',
+    )
+    // A tombstone takes no edits and no visibility change, but keeps Delete.
+    await expect(
+      page.locator(`${ENTRY} [data-margin-action="edit"]`),
+    ).toHaveCount(0)
+    await expect(
+      page.locator(`${ENTRY} [data-margin-action="visibility"]`),
+    ).toHaveCount(0)
+    await expect(
+      page.locator(`${ENTRY} [data-margin-action="delete"]`),
+    ).toHaveCount(1)
+
+    expect(
+      (await service.call('DELETE', `/annotations/${bare(answer.id)}?source=${encodeURIComponent(documentUri)}`, BOB)).status,
+    ).toBe(204)
+    await page.reload()
+    await page.locator(`${ENTRY} [data-margin-action="delete"]`).click()
+    await expect(page.locator(ENTRY)).toHaveCount(0)
+    expect(await rows(service)).toEqual([])
   })
 })

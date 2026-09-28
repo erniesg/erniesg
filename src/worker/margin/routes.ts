@@ -34,8 +34,8 @@ import {
  *   GET    /annotations              list, scoped and visibility-filtered
  *   POST   /annotations              create
  *   PATCH  /annotations/:id          owner-scoped update; 403 on another's
- *   DELETE /annotations/:id          owner-scoped delete; tombstones a note
- *                                    that has replies (issue 058)
+ *   DELETE /annotations/:id          owner-scoped delete (204); a note with
+ *                                    replies is tombstoned instead (200 + body)
  *   GET    /prefs                    read the caller's default visibility
  *   PATCH  /prefs                    set it; existing rows are never rewritten
  *   GET    /proposals                list, restricted to `editing`
@@ -669,7 +669,14 @@ async function tombstoneOrRefuse(
   ) {
     return problem(404, 'not_found', 'no annotation of yours has that id here')
   }
-  return new Response(null, { status: 204, headers: JSON_HEADERS })
+  // 200 with the tombstone, where an outright delete is a bare 204. The caller
+  // cannot tell the two apart from the replies it can see: a private reply
+  // from another reader is invisible to it and still keeps the note.
+  const tombstoned = await context.repository.findAnnotation(scope, own.id, owner)
+  if (!tombstoned) {
+    return problem(404, 'not_found', 'no annotation of yours has that id here')
+  }
+  return json(present(tombstoned))
 }
 
 const prefsPatchSchema = z

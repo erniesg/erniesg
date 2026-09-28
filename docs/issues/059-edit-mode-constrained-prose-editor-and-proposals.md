@@ -61,15 +61,23 @@ instead.
 4. A saved proposal is an `editing` annotation carrying a **Markdown patch
    against a named base commit** of the node's source file, expressed in
    CriticMarkup (`{--deleted--}`, `{++added++}`, `{~~old~>new~~}`).
-   CriticMarkup is the only stored form. The body is a list of **hunks**, each
-   `{ baseStartLine, baseEndLine, criticMarkup }`: the changed lines of the
-   base file plus two lines of unchanged context either side, marked up in
+   CriticMarkup is the only stored form. The proposal is a list of **hunks**,
+   each `{ baseStartLine, baseEndLine, criticMarkup }`: the changed lines of
+   the base file plus two lines of unchanged context either side, marked up in
    CriticMarkup, with line numbers against the base commit. Hunks never
-   overlap and are ordered. One shared converter,
+   overlap and are ordered. **Wire encoding:** the W3C `body` stays one
+   `TextualBody` string, so 054's lossless round trip and the existing
+   `proposalAnnotationSchema` are unchanged. The string is a canonical
+   concatenation, one block per hunk, each a header line
+   `@@ margin <baseStartLine>,<baseEndLine> @@` followed by that hunk's
+   CriticMarkup, with blocks separated by a blank line. `parseHunks` and
+   `formatHunks` in `src/annotations/criticmarkup.ts` convert it, and a test
+   proves they round-trip. One shared converter,
    `toUnifiedDiff(hunks, baseSource, sourcePath)` in
    `src/annotations/criticmarkup.ts`, turns them into a unified diff; 060's
    adapter uses the same function, so what is tested here is what gets applied.
-   The body cap rises to 64,000 characters for `editing` rows only (a full
+   The body cap, counted in characters of that `body` string, rises to 64,000
+   for `editing` rows only (a full
    retype of the largest node in CriticMarkup is about twice its 16,138
    bytes); highlights and notes keep 8,000. A body over the cap is refused
    with a clear 413, never truncated.
@@ -142,8 +150,10 @@ instead.
   64,000-character `editing` cap, converts with `toUnifiedDiff` and
   `git apply`s cleanly; a body one character over the cap is refused with
   413. A note over 8,000 characters is still refused.
-- `tools/e2e-port.mjs`: two concurrent calls never print the same port, and a
-  lock whose owning process has exited is reclaimed.
+- `tools/e2e-port.mjs`: two concurrent calls never print the same port, a
+  lock whose owning process has exited is reclaimed, and any failure (an
+  unwritable `$TMPDIR`, a corrupt lock) exits non-zero rather than printing an
+  unlocked port.
 
 ## Definition of done
 
@@ -158,7 +168,7 @@ npm run test:margin
 npx vitest run src/worker/margin
 python3 books/tools/validate.py
 npm test
-export SRT_E2E_PORT=$(node tools/e2e-port.mjs 2>/dev/null || python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')
+if [ -f tools/e2e-port.mjs ]; then export SRT_E2E_PORT=$(node tools/e2e-port.mjs); else export SRT_E2E_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()'); fi
 npx playwright test tests/e2e/margin-edit-mode.spec.ts
 ```
 
@@ -183,8 +193,9 @@ create (`O_EXCL`), writing the PID of the calling shell (`process.ppid`). If
 the lock already exists and its PID is alive, it asks for another port. If the
 PID is dead, it reclaims the lock. It prints the port and exits. The lock
 lives as long as the validation shell does, which covers Playwright's server.
-The validation line in every e2e spec falls back to the old one-liner while
-this file does not exist, so specs that run before this issue lands still work.
+The validation line in every e2e spec uses the old one-liner **only while
+this file does not exist**. Once it exists, a failure of the helper fails the
+validation run and never falls back to the racy allocator.
 
 ## Allowed secrets
 

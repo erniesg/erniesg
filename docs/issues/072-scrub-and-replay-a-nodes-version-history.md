@@ -47,6 +47,10 @@ needs no new storage, no new endpoint and no credential.
    link's destination, list type), replay compares the rendered elements and
    attributes as well as the text, and marks the change with a visible
    "format changed" marker that names what changed.
+   A **tombstone** version (060: the node was deleted in that commit) is a
+   step of its own, shown as "deleted in <commit>" with no rendered chapter,
+   and it is excluded from rendering and diffing. The step after it diffs
+   against the last version that had content.
 3. Step back, step forward and play (auto-advance at a readable pace, with
    pause). Play respects `prefers-reduced-motion`, which steps without
    animation.
@@ -80,6 +84,10 @@ needs no new storage, no new endpoint and no credential.
   destination each shows a "format changed" marker naming the change.
 - The built history and version assets contain no proposal ID. A commit from
   a private proposal returns nothing to another reader's `mergeCommit` query.
+- A delete-and-restore fixture shows the tombstone as its own step, keeps the
+  git-log order, and renders the restored version.
+- A version from before the `challenges/` to `books/` rename renders from its
+  historical path.
 - A fixture in which a referenced figure JSON changes in a later commit,
   without the chapter changing, renders each version with the figure as it
   was at that version's commit.
@@ -105,7 +113,7 @@ npx vitest run src/worker/margin
 python3 books/tools/validate.py
 npm test
 npm run build
-export SRT_E2E_PORT=$(node tools/e2e-port.mjs 2>/dev/null || python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')
+if [ -f tools/e2e-port.mjs ]; then export SRT_E2E_PORT=$(node tools/e2e-port.mjs); else export SRT_E2E_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()'); fi
 npx playwright test tests/e2e/margin-history-replay.spec.ts
 ```
 
@@ -151,8 +159,11 @@ beside 060's history asset. Do not write a second renderer for the browser.
 **Render each version against its own commit's tree, not HEAD's.**
 `render.py` reads figure JSON (`figure()`) and challenge starters (`_desk()`)
 from the working tree, so render each version from a complete snapshot of its
-commit (`git archive <commit> books | tar -x` into a temporary directory),
-never with the current `books/figures` or starters. The client aligns blocks
+commit, using the **whole commit tree** (`git archive <commit> | tar -x` into
+a temporary directory) and rendering the node at the path 060 recorded for
+that commit. The history has renames from `challenges/` to `books/`, so an
+archive limited to `books` would miss older versions. Never render with the
+current `books/figures` or starters. The client aligns blocks
 by digest as in criterion 2 and word-diffs the paired blocks. Diffing
 rendered blocks keeps figures, `:::` blocks and code intact, with changes
 inside them shown at block level.

@@ -48,8 +48,12 @@ stay at each owning adapter boundary.
    document and state, visible only to the admin identity from 055. It is
    served by an **admin-only review listing**
    (`GET /proposals?scope=review`), whose query includes private proposals
-   from every creator within the admin's site. The exception is in the query,
-   gated on the admin identity from 055. The ordinary `GET /annotations` and
+   from every creator within the admin's site. 055's `admin` role is global
+   today, so this issue adds an explicit **site-admin mapping**
+   (`margin_site_admins(site, identity)`, a D1 migration). The listing's SQL
+   predicate requires `site IN (sites this identity administers)`, never a
+   site the caller supplies. `ernie.sg`'s owner is seeded as its only site
+   admin. The exception is in the query. The ordinary `GET /annotations` and
    `GET /proposals` visibility rules are unchanged, and a non-admin asking for
    `scope=review` gets 403.
 2. Each proposal renders as a diff with additions and deletions distinctly
@@ -81,7 +85,9 @@ stay at each owning adapter boundary.
    `git show <commit>:<path-at-that-commit>`. A commit whose status for the
    file is `D` (deleted) is recorded as a **tombstone**, with no content and no
    `git show`, so a node that was deleted and later restored keeps building.
-   The page reads that asset, so history needs no credential and no GitHub API
+   A tombstone is a history entry and keeps its place in the git-log order,
+   but it is never rendered or diffed; 072 shows it as a "deleted in this
+   commit" step. The page reads that asset, so history needs no credential and no GitHub API
    rate limit, and it always matches the deployed build. Like 059's stamp, it
    refuses a shallow or partial checkout, and any other git error fails the
    build rather than emitting partial history. The asset holds no proposal IDs
@@ -131,8 +137,13 @@ stay at each owning adapter boundary.
     shows the exact `/rucksack merge <full-current-head-sha>` command, filled
     with the head SHA the adapter last reported. The policy forbids a PR with
     no linked issue, so for each approved proposal the adapter opens one
-    tracking issue (title from the proposal, body linking it, carrying the
-    `margin-proposal:<id>` marker) and puts `Closes #<issue>` in the PR body.
+    tracking issue and puts `Closes #<issue>` in the PR body. **The tracking
+    issue carries nothing private:** the title is `Margin proposal for
+    <node-id>`, the body names the node and the PR, and the marker is an
+    opaque `margin-proposal:<hmac>`, an HMAC of the proposal ID under a
+    service-held key, which cannot be reversed to the ID. No proposal title,
+    text, author or link to the proposal goes into GitHub for a private
+    proposal. A public proposal may link to itself.
 11. The adapter runs as a GitHub Actions workflow in `erniesg/erniesg`
     (`schedule` plus `workflow_dispatch`) that **pulls** approved proposals
     from the service. The Worker never calls GitHub, so it holds no GitHub
@@ -177,6 +188,10 @@ stay at each owning adapter boundary.
   `coordinator/margin-proposal-<id>`.
 - A private proposal from another reader appears in the admin's
   `scope=review` listing and nowhere else; a non-admin's `scope=review` is 403.
+  An admin of one site given a second site's scope gets none of that site's
+  private proposals.
+- The tracking issue and PR for a private proposal contain no proposal ID,
+  title, text or author, only the node, the PR and the opaque marker.
 - A fixture node that is deleted and later restored builds, with the
   deletion shown as a tombstone.
 - A second fake adapter registered for another site gets its own
@@ -220,7 +235,7 @@ npm run test:margin
 python3 books/tools/validate.py
 npm test
 npm run build
-export SRT_E2E_PORT=$(node tools/e2e-port.mjs 2>/dev/null || python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')
+if [ -f tools/e2e-port.mjs ]; then export SRT_E2E_PORT=$(node tools/e2e-port.mjs); else export SRT_E2E_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()'); fi
 npx playwright test tests/e2e/margin-review.spec.ts
 ```
 

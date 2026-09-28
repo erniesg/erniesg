@@ -1,0 +1,554 @@
+---
+/**
+ * The book's look switch, and the plain reader's top bar.
+ *
+ * Two looks share one server-rendered page. `site` is the reading shell inside
+ * the personal site's header and footer; `plain` is the quiet reader that
+ * `books/tools/preview.py` draws: a thin bar with a Contents button, the book's
+ * title and where you are, a serif column on an off-white page, and no site
+ * chrome. `Head.astro` sets `data-book-look` on <html> before first paint from
+ * localStorage (`book-look`), so a remembered choice never flashes the other
+ * look; this component draws the switch and restyles the page for `plain`.
+ *
+ * In `site` only the switch shows, right-aligned above the shell. In `plain`
+ * the whole bar shows, and the switch lives in it, because the site header is
+ * hidden there.
+ */
+import type { Book } from '@/lib/books'
+
+type Props = {
+  book: Book
+  /** The node being read, for the "where you are" counter. */
+  currentId?: string
+}
+
+const { book, currentId } = Astro.props
+const total = book.nodes.length
+const index = currentId
+  ? book.nodes.findIndex((node) => node.id === currentId)
+  : -1
+const place = index + 1
+const through = total > 0 ? Math.round((place / total) * 100) : 0
+---
+
+<div class="book-bar" data-book-bar>
+  <div class="book-bar-start book-bar-plain-only">
+    <button
+      type="button"
+      class="book-bar-button"
+      aria-expanded="false"
+      aria-controls="reading-navigation"
+      data-book-contents-toggle
+    >
+      Contents
+    </button>
+    <a class="book-bar-title" href={book.path}>{book.title}</a>
+  </div>
+
+  <div class="book-bar-end">
+    <div class="book-look" role="group" aria-label="Look">
+      <span class="book-look-label" aria-hidden="true">Look</span>
+      <button
+        type="button"
+        class="book-look-choice"
+        data-book-look-choice="site"
+        aria-pressed="true">Site</button
+      >
+      <button
+        type="button"
+        class="book-look-choice"
+        data-book-look-choice="plain"
+        aria-pressed="false">Plain</button
+      >
+    </div>
+    <button
+      type="button"
+      class="book-bar-button book-bar-theme book-bar-plain-only"
+      data-book-theme-toggle
+      aria-label="Switch to dark theme"
+      title="Theme"
+    >
+      <span class="book-theme-icon" aria-hidden="true"></span>
+    </button>
+    {
+      place > 0 && (
+        <div
+          class="book-progress book-bar-plain-only"
+          title={`${place} of ${total} in this book`}
+        >
+          <div class="book-progress-bar" aria-hidden="true">
+            <i style={`width:${through}%`} />
+          </div>
+          <span class="book-progress-text">
+            {place}/{total}
+          </span>
+        </div>
+      )
+    }
+  </div>
+</div>
+<div class="book-scrim" data-book-scrim hidden></div>
+
+<script>
+  import {
+    BOOK_LOOK_ATTRIBUTE,
+    BOOK_LOOK_STORAGE_KEY,
+    DEFAULT_BOOK_LOOK,
+    isBookLook,
+    type BookLook,
+  } from '@/lib/book-look'
+  import { THEME_STORAGE_KEY } from '@/lib/site-preferences'
+
+  const root = document.documentElement
+
+  function currentLook(): BookLook {
+    const value = root.getAttribute(BOOK_LOOK_ATTRIBUTE)
+    return isBookLook(value) ? value : DEFAULT_BOOK_LOOK
+  }
+
+  function setDrawer(open: boolean) {
+    if (open) root.setAttribute('data-book-drawer', 'open')
+    else root.removeAttribute('data-book-drawer')
+    for (const toggle of document.querySelectorAll(
+      '[data-book-contents-toggle]',
+    )) {
+      toggle.setAttribute('aria-expanded', String(open))
+    }
+    const scrim = document.querySelector<HTMLElement>('[data-book-scrim]')
+    if (scrim) scrim.hidden = !open
+  }
+
+  function syncControls() {
+    const look = currentLook()
+    for (const choice of document.querySelectorAll(
+      '[data-book-look-choice]',
+    )) {
+      choice.setAttribute(
+        'aria-pressed',
+        String(choice.getAttribute('data-book-look-choice') === look),
+      )
+    }
+    const dark = root.classList.contains('dark')
+    for (const toggle of document.querySelectorAll(
+      '[data-book-theme-toggle]',
+    )) {
+      toggle.setAttribute(
+        'aria-label',
+        dark ? 'Switch to light theme' : 'Switch to dark theme',
+      )
+    }
+  }
+
+  function setLook(look: BookLook) {
+    root.setAttribute(BOOK_LOOK_ATTRIBUTE, look)
+    try {
+      localStorage.setItem(BOOK_LOOK_STORAGE_KEY, look)
+    } catch {
+      // Storage refused: the choice holds for this page only.
+    }
+    setDrawer(false)
+    syncControls()
+  }
+
+  function toggleTheme() {
+    const dark = !root.classList.contains('dark')
+    root.classList.toggle('dark', dark)
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, dark ? 'dark' : 'theme-light')
+    } catch {
+      // Storage refused: the theme holds for this page only.
+    }
+    syncControls()
+  }
+
+  // Delegated once for the whole session: the client router swaps the page
+  // but keeps this module, so per-element listeners would be lost.
+  document.addEventListener('click', (event) => {
+    const target = event.target as Element | null
+    const choice = target?.closest('[data-book-look-choice]')
+    if (choice) {
+      const look = choice.getAttribute('data-book-look-choice')
+      if (isBookLook(look)) setLook(look)
+      return
+    }
+    if (target?.closest('[data-book-contents-toggle]')) {
+      setDrawer(root.getAttribute('data-book-drawer') !== 'open')
+      return
+    }
+    if (target?.closest('[data-book-theme-toggle]')) {
+      toggleTheme()
+      return
+    }
+    if (target?.closest('[data-book-scrim]')) {
+      setDrawer(false)
+      return
+    }
+    // Following a link in the drawer closes it.
+    if (target?.closest('#reading-navigation a')) setDrawer(false)
+  })
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return
+    if (root.getAttribute('data-book-drawer') !== 'open') return
+    setDrawer(false)
+    document.querySelector<HTMLElement>('[data-book-contents-toggle]')?.focus()
+  })
+
+  document.addEventListener('astro:page-load', () => {
+    setDrawer(false)
+    syncControls()
+  })
+  syncControls()
+</script>
+
+<style is:global>
+  /* ---------- Both looks: the switch ---------- */
+  .book-bar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    width: 100%;
+    max-width: 90rem;
+    margin: 0 auto 0.75rem;
+    padding: 0 1rem;
+  }
+
+  .book-bar-start,
+  .book-bar-end {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-width: 0;
+  }
+
+  .book-look {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font:
+      0.75rem/1 ui-sans-serif,
+      system-ui,
+      sans-serif;
+  }
+
+  .book-look-label {
+    margin-right: 0.25rem;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .book-look-choice {
+    padding: 0.3rem 0.6rem;
+    border: 1px solid hsl(var(--border));
+    border-radius: 6px;
+    background: transparent;
+    color: hsl(var(--muted-foreground));
+    cursor: pointer;
+  }
+
+  .book-look-choice[aria-pressed='true'] {
+    border-color: hsl(var(--foreground));
+    color: hsl(var(--foreground));
+    font-weight: 600;
+  }
+
+  .book-look-choice:focus-visible,
+  .book-bar-button:focus-visible,
+  .book-bar-title:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+  }
+
+  /* The plain-only controls exist in both looks so the bar never re-renders;
+     in `site` they take no space. */
+  .book-bar-plain-only {
+    display: none !important;
+  }
+
+  .book-scrim[hidden] {
+    display: none;
+  }
+
+  /* ---------- The plain look ---------- */
+  html[data-book-look='plain'] {
+    --plain-bg: #fbfbf9;
+    --plain-ink: #1a1a1a;
+    --plain-dim: #666;
+    --plain-line: #e2e2e2;
+    --plain-accent: #0369a1;
+    --plain-panel: #fff;
+    --plain-hover: #f0efe9;
+    --plain-here: #e6f1f7;
+    --plain-bar-height: 2.75rem;
+    background: var(--plain-bg);
+    color: var(--plain-ink);
+  }
+
+  html.dark[data-book-look='plain'] {
+    --plain-bg: #161614;
+    --plain-ink: #e8e6e1;
+    --plain-dim: #9a9894;
+    --plain-line: #34332f;
+    --plain-accent: #7dd3fc;
+    --plain-panel: #1c1c1a;
+    --plain-hover: #25241f;
+    --plain-here: #1d2d38;
+  }
+
+  html[data-book-look='plain'] body {
+    background: var(--plain-bg);
+    color: var(--plain-ink);
+  }
+
+  /* No personal-site chrome: the reader gets the book and its own bar. */
+  html[data-book-look='plain'] body > div > header,
+  html[data-book-look='plain'] body > div > footer {
+    display: none;
+  }
+
+  html[data-book-look='plain'] body > div {
+    gap: 0;
+  }
+
+  html[data-book-look='plain'] .book-bar-plain-only {
+    display: flex !important;
+  }
+
+  html[data-book-look='plain'] .book-bar {
+    position: sticky;
+    top: 0;
+    z-index: 16;
+    justify-content: space-between;
+    max-width: none;
+    min-height: var(--plain-bar-height);
+    margin: 0;
+    padding: 0.4rem 1rem;
+    background: var(--plain-bg);
+    border-bottom: 1px solid var(--plain-line);
+  }
+
+  html[data-book-look='plain'] .book-bar-button {
+    align-items: center;
+    justify-content: center;
+    padding: 0.25rem 0.7rem;
+    border: 1px solid var(--plain-line);
+    border-radius: 6px;
+    background: var(--plain-panel);
+    color: var(--plain-ink);
+    font:
+      600 0.8rem/1.2 ui-sans-serif,
+      system-ui,
+      sans-serif;
+    cursor: pointer;
+  }
+
+  html[data-book-look='plain'] .book-bar-title {
+    overflow: hidden;
+    color: var(--plain-accent);
+    font:
+      600 0.9rem/1.2 ui-sans-serif,
+      system-ui,
+      sans-serif;
+    text-decoration: none;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  html[data-book-look='plain'] .book-look-label {
+    color: var(--plain-dim);
+  }
+
+  html[data-book-look='plain'] .book-look-choice {
+    border-color: var(--plain-line);
+    background: var(--plain-panel);
+    color: var(--plain-dim);
+  }
+
+  html[data-book-look='plain'] .book-look-choice[aria-pressed='true'] {
+    border-color: var(--plain-accent);
+    color: var(--plain-ink);
+  }
+
+  html[data-book-look='plain'] .book-bar-theme {
+    width: 2rem;
+    height: 1.9rem;
+    padding: 0;
+  }
+
+  /* A sun in the dark theme (the way out), a moon in the light one. */
+  .book-theme-icon::before {
+    content: '\263E';
+    font-size: 0.95rem;
+  }
+
+  html.dark .book-theme-icon::before {
+    content: '\2600';
+  }
+
+  html[data-book-look='plain'] .book-progress {
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .book-progress-bar {
+    width: 7.5rem;
+    height: 5px;
+    overflow: hidden;
+    border-radius: 3px;
+    background: var(--plain-line);
+  }
+
+  .book-progress-bar i {
+    display: block;
+    height: 100%;
+    background: var(--plain-accent);
+  }
+
+  .book-progress-text {
+    color: var(--plain-dim);
+    font:
+      0.72rem ui-sans-serif,
+      system-ui,
+      sans-serif;
+    white-space: nowrap;
+  }
+
+  /* One serif column on the off-white page, the margin beside it when there
+     is room. The contents column leaves the grid and becomes a drawer. */
+  html[data-book-look='plain'] .reading-shell {
+    --reading-header: var(--plain-bar-height);
+    --reading-gap: 1.25rem;
+    grid-template-columns: minmax(0, 40rem);
+    justify-content: center;
+    gap: 3rem;
+    max-width: none;
+    padding: 28px 24px 80px;
+  }
+
+  @media (min-width: 1280px) {
+    html[data-book-look='plain'] .reading-shell {
+      grid-template-columns: minmax(0, 40rem) 17rem;
+    }
+  }
+
+  html[data-book-look='plain'] .reading-text {
+    font:
+      17px/1.65 'Iowan Old Style',
+      'Palatino Linotype',
+      Georgia,
+      serif;
+  }
+
+  html[data-book-look='plain'] .reading-text :is(h1, h2, h3, h4) {
+    font-family: inherit;
+  }
+
+  html[data-book-look='plain'] .reading-text a {
+    color: var(--plain-accent);
+  }
+
+  /* The book's code panels are near-black in both themes; on the dark plain
+     page they would lose their edge without a hairline. */
+  html.dark[data-book-look='plain'] .reading-text pre {
+    border: 1px solid var(--plain-line);
+  }
+
+  html[data-book-look='plain'] .reading-navigation {
+    position: fixed;
+    top: var(--plain-bar-height);
+    bottom: 0;
+    left: 0;
+    z-index: 15;
+    width: 270px;
+    max-height: none;
+    overflow-y: auto;
+    padding: 16px 14px 50px;
+    background: var(--plain-panel);
+    border-right: 1px solid var(--plain-line);
+    visibility: hidden;
+    transform: translateX(-100%);
+    transition:
+      transform 0.18s ease,
+      visibility 0.18s;
+  }
+
+  html[data-book-look='plain'][data-book-drawer='open'] .reading-navigation {
+    visibility: visible;
+    transform: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html[data-book-look='plain'] .reading-navigation {
+      transition: none;
+    }
+  }
+
+  html[data-book-look='plain'] .reading-contents {
+    display: block;
+    max-height: none;
+    overflow: visible;
+  }
+
+  html[data-book-look='plain'] .reading-contents::details-content {
+    content-visibility: visible;
+    display: contents;
+  }
+
+  html[data-book-look='plain'] .reading-contents > summary {
+    display: none;
+  }
+
+  html[data-book-look='plain'] .reading-navigation :is(a, p, span) {
+    font-family: ui-sans-serif, system-ui, sans-serif;
+  }
+
+  html[data-book-look='plain'] .reading-navigation a {
+    color: var(--plain-ink);
+    text-decoration: none;
+  }
+
+  html[data-book-look='plain'] .reading-navigation a:hover {
+    background: var(--plain-hover);
+  }
+
+  html[data-book-look='plain'] .reading-navigation a[aria-current='page'] {
+    background: var(--plain-here);
+  }
+
+  html[data-book-look='plain'] .book-scrim:not([hidden]) {
+    position: fixed;
+    inset: var(--plain-bar-height) 0 0 0;
+    z-index: 14;
+    background: transparent;
+  }
+
+  html[data-book-look='plain'] .reading-margin margin-rail {
+    --margin-surface: var(--plain-bg);
+    --margin-ink: var(--plain-ink);
+  }
+
+  @media (max-width: 480px) {
+    html[data-book-look='plain'] .reading-shell {
+      padding: 20px 16px 60px;
+    }
+
+    html[data-book-look='plain'] .reading-text {
+      font-size: 16px;
+    }
+
+    html[data-book-look='plain'] .book-progress {
+      display: none !important;
+    }
+
+    html[data-book-look='plain'] .book-look-label {
+      display: none;
+    }
+  }
+
+  @media print {
+    .book-bar,
+    .book-scrim {
+      display: none !important;
+    }
+  }
+</style>

@@ -55,6 +55,18 @@ const RESTORED = `
 .dark .book-content .cell,
 .dark .book-content .hint,
 .dark .book-content .solution { --ink: #1a1a1a; --dim: #666; --line: #e2e2e2; --accent: #0369a1; }
+/* The exercise card is a tinted panel, not a light one: in dark mode it takes
+   a dark tint and keeps the site's foreground, instead of the light green
+   CONTENT_CSS gives it, which left the prompt near-white on near-white. */
+.dark .book-content .exercise { background: #0f1c14; border-left-color: #22c55e; }
+.dark .book-content .exercise-title { color: #4ade80; }
+/* The site's article rule strips horizontal padding from every \`pre\` for the
+   blog's highlighted blocks, whose lines pad themselves. The book's blocks do
+   not, so their own padding comes back — per kind, as CONTENT_CSS sets it. */
+.book-content pre { padding-left: 16px !important; padding-right: 16px !important; }
+.book-content pre.output { padding-left: 14px !important; padding-right: 14px !important; }
+.book-content pre.code-hl { padding-left: 3.6em !important; padding-right: 12px !important; }
+.book-content pre.code-gutter { padding-left: 0 !important; padding-right: 0 !important; }
 .book-content h1, .book-content h2, .book-content h3 { font-weight: 700; }
 .book-content p { margin: 1rem 0; }
 .book-content ul { list-style: disc; margin: 1rem 0; padding-left: 1.4rem; }

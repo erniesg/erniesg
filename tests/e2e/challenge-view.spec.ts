@@ -74,6 +74,49 @@ test.describe('the challenge side-by-side view', () => {
     })
   }
 
+  test('what split covers leaves the tab order, and stacked gives it back', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto(CHALLENGE)
+    const inert = (selector: string) =>
+      page.locator(selector).first().evaluate((element) => !!element.closest('[inert]'))
+    const READING_ORDER = 'nav[aria-label="Reading order"]'
+    await page.locator(TOGGLE).click()
+    expect(await inert('[data-book-look-choice="plain"]')).toBe(true)
+    expect(await inert(READING_ORDER)).toBe(true)
+    expect(await inert('#reading-navigation')).toBe(true)
+    expect(await inert(TOGGLE)).toBe(false)
+    expect(await inert('body > div > header')).toBe(false)
+    expect(await inert('.split-work .desk, .split-work')).toBe(false)
+
+    // Tabbing forward from the toggle stays in the view.
+    await page.locator(TOGGLE).focus()
+    for (let i = 0; i < 5; i++) {
+      await page.keyboard.press('Tab')
+      const covered = await page.evaluate(() => {
+        const active = document.activeElement
+        return !!active && !active.closest('[data-challenge-split]') && !active.closest('header')
+          && !active.closest('.reading-margin')
+      })
+      expect(covered).toBe(false)
+    }
+
+    await page.locator(TOGGLE).click()
+    expect(await inert(READING_ORDER)).toBe(false)
+    expect(await inert('[data-book-look-choice="plain"]')).toBe(false)
+    expect(await page.locator('[data-split-inert]').count()).toBe(0)
+  })
+
+  test('in the plain look the bar stays usable while split', async ({ page }) => {
+    await remember(page, { 'book-look': 'plain', 'book-challenge-view': 'split' })
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto(CHALLENGE)
+    const inert = (selector: string) =>
+      page.locator(selector).first().evaluate((element) => !!element.closest('[inert]'))
+    expect(await inert('[data-book-bar]')).toBe(false)
+    expect(await inert('[data-book-contents-toggle]')).toBe(false)
+    expect(await inert('nav[aria-label="Reading order"]')).toBe(true)
+  })
+
   test('printing a split page prints the whole challenge in normal flow', async ({ page }) => {
     await remember(page, { 'book-challenge-view': 'split' })
     await page.setViewportSize({ width: 1440, height: 900 })

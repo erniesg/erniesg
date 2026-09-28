@@ -1219,6 +1219,46 @@ SPLIT_SCRIPT = r"""
         : split ? 'Show the question above the code'
         : 'Show the question and the code side by side';
     });
+    // Split covers the page below the top bar, so what it covers leaves the tab
+    // order and the accessibility tree: every sibling on the way up from the
+    // view, except what stays drawn above it (a sticky or fixed bar that ends
+    // above the panes, a drawer or overlay stacked over them, the margin).
+    const view = document.querySelector('[data-challenge-split]');
+    document.querySelectorAll('[data-split-inert]').forEach(element => {
+      element.removeAttribute('inert');
+      element.removeAttribute('data-split-inert');
+    });
+    if (view) view.style.removeProperty('--split-top');
+    if (split && room && view) {
+      const siblings = [];
+      for (let node = view; node && node !== document.body; node = node.parentElement) {
+        for (const sibling of node.parentElement ? node.parentElement.children : []) {
+          if (sibling === node || /^(SCRIPT|STYLE|LINK|TEMPLATE)$/.test(sibling.tagName)) continue;
+          siblings.push(sibling);
+        }
+      }
+      // A top bar is pinned to the top of the window; the view starts below the
+      // lowest one, measured, so no bar is ever partly covered.
+      const pinned = element => {
+        const style = getComputedStyle(element);
+        return (style.position === 'fixed' || style.position === 'sticky')
+          && element.getBoundingClientRect().top <= 1;
+      };
+      const bars = siblings.filter(element => pinned(element) && element.getBoundingClientRect().height < 200);
+      const barBottom = Math.max(0, ...bars.map(element => element.getBoundingClientRect().bottom));
+      if (barBottom > 0) view.style.setProperty('--split-top', Math.ceil(barBottom) + 'px');
+      const staysAbove = element => {
+        if (bars.includes(element)) return true;
+        if (element.matches('margin-rail') || element.querySelector('margin-rail')) return true;
+        const style = getComputedStyle(element);
+        return (style.position === 'fixed' || style.position === 'sticky') && Number(style.zIndex) > 12;
+      };
+      for (const sibling of siblings) {
+        if (sibling.hasAttribute('inert') || staysAbove(sibling)) continue;
+        sibling.setAttribute('inert', '');
+        sibling.setAttribute('data-split-inert', '');
+      }
+    }
     document.querySelectorAll('margin-rail').forEach(rail => {
       if (!rail.hasAttribute('data-collapse-below-default')) {
         rail.setAttribute('data-collapse-below-default', rail.getAttribute('collapse-below') || '');

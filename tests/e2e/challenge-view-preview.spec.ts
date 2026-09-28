@@ -100,3 +100,18 @@ test('narrow windows stay stacked and the toggle says why', async ({ page }) => 
   const { question, work } = await panes(page)
   expect(work.y).toBeGreaterThanOrEqual(question.y + question.height - 1)
 })
+
+test('split leaves the top bar usable and takes the covered page out of the tab order', async ({
+  page,
+}) => {
+  await page.addInitScript(() => localStorage.setItem('book-challenge-view', 'split'))
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto(CHALLENGE)
+  const inert = (selector: string) =>
+    page.locator(selector).first().evaluate((element) => !!element.closest('[inert]'))
+  expect(await inert('header.top')).toBe(false)
+  expect(await inert('.contents-button')).toBe(false)
+  expect(await inert('nav.turn')).toBe(true)
+  await page.locator(TOGGLE).click()
+  expect(await page.locator('[data-split-inert]').count()).toBe(0)
+})

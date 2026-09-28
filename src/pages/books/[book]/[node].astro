@@ -125,3 +125,12 @@ const style = `<style>${scopeContentCss(bookManifest().contentCss, '.book-conten
 
   <BookProgress book={book} />
 </ReadingLayout>
+
+<script>
+  // The book's editors, the same page code the local preview runs (#380). The
+  // site swaps pages without a reload, so this runs on every page view; an
+  // editor already taught is left alone.
+  import { wireEditors } from '../../../../books/tools/runtime/editor.mjs'
+
+  document.addEventListener('astro:page-load', () => wireEditors(document))
+</script>

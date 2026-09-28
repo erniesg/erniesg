@@ -34,6 +34,10 @@ import grade as grader
 from markdown import render_markdown
 from render import (
     BOOKS,
+    CHALLENGE_SPLIT_MIN_WIDTH,
+    CHALLENGE_VIEW_HEAD_SCRIPT,
+    SPLIT_CSS,
+    SPLIT_SCRIPT,
     WORKSPACE,
     all_nodes,
     load_topics,
@@ -208,7 +212,16 @@ nav.turn a { color:var(--accent); text-decoration:none; }
 @media (max-width:1279px) { main { grid-template-columns:minmax(0,40rem); } .rail { display:none; } }
 @media (max-width:1100px) { .map-wrap { grid-template-columns:minmax(0,1fr); } }
 @media (max-width:480px) { body { font-size:16px; } main { padding:20px 16px 60px; } }
-"""
+:root { --split-top:62px; }
+""" + SPLIT_CSS + (
+    # Side by side needs the page's width: the challenge column widens and the
+    # "Connected" rail steps aside (the drawer and the map still reach it).
+    "@media (min-width:%dpx) {"
+    ' html[data-challenge-view="split"] main:has([data-challenge-split])'
+    " { grid-template-columns:minmax(0,96rem); }"
+    ' html[data-challenge-view="split"] main:has([data-challenge-split]) > .rail'
+    " { display:none; } }" % CHALLENGE_SPLIT_MIN_WIDTH
+)
 
 
 def contents_html(order: list[dict], current: str = "") -> str:
@@ -405,7 +418,7 @@ def page(title: str, inner: str, book_title: str, order: list[dict], current: st
     through = int(place / max(len(positions), 1) * 100)
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{html.escape(title)} — {html.escape(book_title)}</title><style>{STYLE}</style></head>
+<title>{html.escape(title)} — {html.escape(book_title)}</title><script>{CHALLENGE_VIEW_HEAD_SCRIPT}</script><style>{STYLE}</style></head>
 <body>
 <div class="scroll-progress"><i></i></div>
 <header class="top">
@@ -423,7 +436,7 @@ def page(title: str, inner: str, book_title: str, order: list[dict], current: st
   {contents_html(order, current)}
 </div></aside>
 <main class="{'wide' if wide else ''}"><article>{inner}</article>{(rail if rail is not None else render_rail(inner, node)) if not wide else ''}</main>
-<script>{SCRIPT}</script></body></html>""".encode()
+<script>{SPLIT_SCRIPT}</script><script>{SCRIPT}</script></body></html>""".encode()
 
 
 SCRIPT = r"""

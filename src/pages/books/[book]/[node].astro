@@ -67,7 +67,36 @@ const RESTORED = `
 .book-content figure.figure { overflow-x: auto; }
 .book-content img, .book-content svg { max-width: 100%; }
 `
-const style = `<style>${scopeContentCss(bookManifest().contentCss, '.book-content')}${RESTORED}</style>`
+// A challenge's side-by-side view. The panes' own rules come from the
+// renderer (shared with the local preview); these widen the shell to make room
+// and fold the margin rail into its narrow-screen overlay (fixed, zero-sized,
+// drawn from inside), which the shared script switches the rail to as well.
+const SPLIT_LAYOUT = `
+@media (min-width: 1000px) {
+  html[data-challenge-view='split'] .reading-shell:has([data-challenge-split]) {
+    grid-template-columns: 13rem minmax(0, 1fr);
+    max-width: 112rem;
+    --split-top: var(--reading-pin);
+  }
+  html[data-book-look='plain'][data-challenge-view='split'] .reading-shell:has([data-challenge-split]) {
+    grid-template-columns: minmax(0, 100rem);
+  }
+  html[data-challenge-view='split'] .reading-shell:has([data-challenge-split]) .reading-margin {
+    position: fixed;
+    top: auto;
+    right: 0;
+    bottom: 0;
+    width: 0;
+    height: 0;
+    min-height: 0;
+    max-height: none;
+    overflow: visible;
+    z-index: 30;
+  }
+}
+`
+const manifest = bookManifest()
+const style = `<style>${scopeContentCss(manifest.contentCss, '.book-content')}${RESTORED}${manifest.splitCss}${SPLIT_LAYOUT}</style>`
 ---
 
 <ReadingLayout
@@ -85,6 +114,7 @@ const style = `<style>${scopeContentCss(bookManifest().contentCss, '.book-conten
   </Fragment>
 
   <div class="book-content" data-node={node.id} set:html={node.html} />
+  <script is:inline set:html={manifest.splitScript} />
 
   <nav
     class="mt-12 flex justify-between gap-x-6 border-t pt-6 text-sm"

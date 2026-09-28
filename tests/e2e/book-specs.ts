@@ -5,6 +5,7 @@
  * spec means adding it here and nowhere else.
  */
 export const BOOK_SPECS = [
+  'challenge-view-preview.spec.ts',
   'editor-keys.spec.ts',
   'exercise-worker.spec.ts',
   'hint-ladder.spec.ts',

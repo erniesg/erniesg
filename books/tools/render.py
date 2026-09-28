@@ -732,7 +732,60 @@ def render_node(
         elif name == "exercise":
             emit("exercise", exercise(attrs.get("id", ""), inner, target))
     flush_hints()
-    return "".join(out).replace(HINT_BUTTON, "").replace(HINT_PANEL, "")
+    body = "".join(out)
+    if node.get("kind") == "challenge" and target == "web":
+        body = challenge_split(out)
+    return body.replace(HINT_BUTTON, "").replace(HINT_PANEL, "")
+
+
+def challenge_split(pieces: list[str]) -> str:
+    """The challenge in two panes: the question, and the work.
+
+    Everything before the desk is the question; the desk and everything after
+    it (hints, the worked solution) is the work. Stacked, the two panes read in
+    exactly the order the blocks were written, so the page is unchanged until
+    the reader asks for the side-by-side view. The wrappers carry no block ids,
+    so every margin anchor stays where it was.
+    """
+    desk = next(
+        (i for i, piece in enumerate(pieces) if 'data-block-kind="desk"' in piece),
+        None,
+    )
+    if desk is None:
+        return "".join(pieces)
+    return (
+        f'<div class="split-toolbar">{VIEW_TOGGLE}</div>'
+        '<div class="challenge-split" data-challenge-split>'
+        f'<div class="split-question">{"".join(pieces[:desk])}</div>'
+        f'<div class="split-work">{"".join(pieces[desk:])}</div>'
+        "</div>"
+    )
+
+
+# The reader's choice of view on a challenge page, remembered per browser.
+# Both hosts (`preview.py` and the site) read the same key and attribute, and
+# set the attribute before first paint so a remembered view never jumps.
+CHALLENGE_VIEW_KEY = "book-challenge-view"
+CHALLENGE_VIEW_ATTRIBUTE = "data-challenge-view"
+# Narrower than this there is no room for two readable panes.
+CHALLENGE_SPLIT_MIN_WIDTH = 1000
+
+VIEW_TOGGLE = (
+    '<button type="button" class="view-toggle" data-challenge-view-toggle '
+    'aria-pressed="false" title="Show the question and the code side by side">'
+    '<svg viewBox="0 0 18 14" width="16" height="13" aria-hidden="true">'
+    '<rect x=".75" y=".75" width="16.5" height="12.5" rx="1.8" fill="none" '
+    'stroke="currentColor" stroke-width="1.3"/>'
+    '<path d="M9 1v12" stroke="currentColor" stroke-width="1.3"/></svg>'
+    "<span>Side by side</span></button>"
+)
+
+# Before first paint. Anything but a stored "split" is the stacked default.
+CHALLENGE_VIEW_HEAD_SCRIPT = (
+    "try{if(localStorage.getItem('%s')==='split')"
+    "document.documentElement.setAttribute('%s','split')}catch(e){}"
+    % (CHALLENGE_VIEW_KEY, CHALLENGE_VIEW_ATTRIBUTE)
+)
 
 
 HINT_BUTTON = "<!--hint-button-->"
@@ -1096,6 +1149,84 @@ details summary { cursor:pointer; font:600 .85rem ui-sans-serif,system-ui; }
 # src/lib/books.ts), and that refuses any at-rule it cannot scope safely. The
 # at-rules live here instead, and every target that owns its whole document
 # (the preview and the EPUB) appends them straight after CONTENT_CSS.
+# The side-by-side view. Rooted on <html>, so a host includes it unscoped;
+# `.challenge-split` exists only in a challenge's markup. A host sets
+# `--split-top` to where its sticky header ends and widens its own column.
+SPLIT_CSS = """
+.split-toolbar { display:flex; justify-content:flex-end; margin:0 0 .5rem; }
+.view-toggle { display:inline-flex; align-items:center; gap:6px; padding:5px 10px;
+  font:600 .75rem/1 ui-sans-serif,system-ui,sans-serif; color:inherit; background:transparent;
+  border:1px solid color-mix(in srgb, currentColor 35%%, transparent); border-radius:6px;
+  cursor:pointer; }
+.view-toggle[aria-pressed="true"] { background:color-mix(in srgb, currentColor 12%%, transparent);
+  border-color:currentColor; }
+.view-toggle[aria-disabled="true"] { opacity:.5; cursor:not-allowed; }
+.view-toggle:focus-visible { outline:2px solid #0369a1; outline-offset:2px; }
+@media (min-width:%(wide)spx) {
+  html[data-challenge-view="split"] .challenge-split { display:grid;
+    grid-template-columns:minmax(0,1fr) minmax(0,1fr); column-gap:2rem; align-items:start; }
+  html[data-challenge-view="split"] .split-work { position:sticky; top:var(--split-top, 1rem);
+    max-height:calc(100vh - var(--split-top, 1rem) - 1rem); overflow:auto;
+    overscroll-behavior:contain; padding-bottom:1rem; }
+  html[data-challenge-view="split"] .split-work .desk .editor { min-height:45vh; }
+}
+""" % {"wide": CHALLENGE_SPLIT_MIN_WIDTH}
+
+# The toggle's behaviour, for both hosts. Bound once per page lifetime (the
+# site's client router re-runs inline scripts on every navigation) and synced
+# again on each navigation. On the site it also folds the margin rail into its
+# narrow-screen overlay while the two panes show: three columns do not fit,
+# and the overlay keeps every annotation feature.
+SPLIT_SCRIPT = r"""
+(() => {
+  const KEY = '%(key)s', ATTR = '%(attr)s', root = document.documentElement;
+  const wide = window.matchMedia('(min-width: %(wide)spx)');
+  const stored = () => {
+    try { return localStorage.getItem(KEY) === 'split' ? 'split' : 'stacked'; }
+    catch (e) { return 'stacked'; }
+  };
+  const sync = () => {
+    const split = root.getAttribute(ATTR) === 'split';
+    const room = wide.matches;
+    const onChallenge = !!document.querySelector('[data-challenge-split]');
+    document.querySelectorAll('[data-challenge-view-toggle]').forEach(button => {
+      button.setAttribute('aria-pressed', String(split));
+      button.setAttribute('aria-disabled', String(!room));
+      button.title = !room ? 'Side by side needs a wider window'
+        : split ? 'Show the question above the code'
+        : 'Show the question and the code side by side';
+    });
+    document.querySelectorAll('margin-rail').forEach(rail => {
+      if (!rail.hasAttribute('data-collapse-below-default')) {
+        rail.setAttribute('data-collapse-below-default', rail.getAttribute('collapse-below') || '');
+      }
+      const base = rail.getAttribute('data-collapse-below-default');
+      const next = split && room && onChallenge ? '100000' : base;
+      if ((rail.getAttribute('collapse-below') || '') === next) return;
+      if (next) rail.setAttribute('collapse-below', next);
+      else rail.removeAttribute('collapse-below');
+    });
+  };
+  if (!root.hasAttribute(ATTR)) root.setAttribute(ATTR, stored());
+  if (!window.__challengeViewBound) {
+    window.__challengeViewBound = true;
+    document.addEventListener('click', event => {
+      const button = event.target instanceof Element
+        && event.target.closest('[data-challenge-view-toggle]');
+      if (!button || button.getAttribute('aria-disabled') === 'true') return;
+      const next = root.getAttribute(ATTR) === 'split' ? 'stacked' : 'split';
+      root.setAttribute(ATTR, next);
+      try { localStorage.setItem(KEY, next); } catch (e) { /* this page only */ }
+      sync();
+    });
+    wide.addEventListener('change', sync);
+    document.addEventListener('astro:page-load', sync);
+  }
+  sync();
+})();
+""" % {"key": CHALLENGE_VIEW_KEY, "attr": CHALLENGE_VIEW_ATTRIBUTE, "wide": CHALLENGE_SPLIT_MIN_WIDTH}
+
+
 CONTENT_AT_RULES = """
 @media (max-width:520px) { .pairs { grid-template-columns:1fr; } .pairs dd { margin-bottom:6px; } }
 @keyframes hint-in { from { background:#4a3f16; opacity:.4; } to { background:#26241d; opacity:1; } }

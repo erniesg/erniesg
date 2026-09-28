@@ -33,6 +33,8 @@ from render import (
     COLLECTION_FILE,
     CONTENT_CSS,
     PART_NAMES,
+    SPLIT_CSS,
+    SPLIT_SCRIPT,
     all_nodes,
     book_files,
     load_book,
@@ -179,6 +181,10 @@ def build_manifest() -> dict:
         "collection": collection.get("collection", ""),
         "poolNodeCount": len(all_nodes()),
         "contentCss": CONTENT_CSS,
+        # The side-by-side view: rooted on <html>, so the site includes it
+        # unscoped, and the same toggle script the local preview runs.
+        "splitCss": SPLIT_CSS,
+        "splitScript": SPLIT_SCRIPT,
         "books": books,
     }
 

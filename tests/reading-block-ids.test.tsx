@@ -98,10 +98,13 @@ function expectAnchorSurvives(
       : { id: block.structId! },
   )
 
+  // The digest fast path needs a digest on both sides (anchor.ts, selector 1).
+  // A host with stable ids but no digest, like the paper renderer, falls
+  // through to the context selectors and must still land on the same block.
   expect(resolveAnchorInDocument(anchor, second)).toMatchObject({
     status: 'anchored',
     nodeId: block.id,
-    matchedBy: 'struct-id',
+    matchedBy: block.structDigest ? 'struct-id' : 'position-and-context',
   })
 }
 

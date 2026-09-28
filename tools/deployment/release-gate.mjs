@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { readFile, rm } from 'node:fs/promises'
+import { readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import {
   isFilePath,
@@ -33,7 +33,69 @@ export async function applyReleaseGate(outDir) {
   for (const withheld of WITHHELD_IN_PRODUCTION) {
     await rm(path.join(outDir, withheld), { recursive: true, force: true })
   }
+  await dropRedirectsIntoWithheld(outDir)
   return verifyPostGate(outDir)
+}
+
+/**
+ * True when `to` lands inside a tree this gate withholds.
+ * @param {string} to
+ */
+function intoWithheld(to) {
+  return WITHHELD_IN_PRODUCTION.some(
+    (withheld) => to === `/${withheld}` || to.startsWith(`/${withheld}/`),
+  )
+}
+
+/**
+ * A redirect into a withheld tree would 301 a reader onto a 404 and name what
+ * production withholds, so the gate drops it with its stub. That legacy URL
+ * is then a plain 404, which is what it was before these trees moved.
+ * @param {string} outDir
+ */
+async function dropRedirectsIntoWithheld(outDir) {
+  const redirectsPath = path.join(outDir, REDIRECTS_FILE)
+  if (!existsSync(redirectsPath)) return
+  const kept = []
+  for (const line of (await readFile(redirectsPath, 'utf8')).split('\n')) {
+    const [entry] = parseRedirectsFile(line)
+    if (!entry || !intoWithheld(entry.to)) {
+      kept.push(line)
+      continue
+    }
+    if (!entry.from.includes('*') && !isFilePath(entry.from)) {
+      const stub = stubPath(outDir, entry.from)
+      await rm(stub, { force: true })
+      await removeEmptyParents(path.dirname(stub), outDir)
+    }
+  }
+  await writeFile(redirectsPath, kept.join('\n'))
+}
+
+/**
+ * @param {string} directory
+ * @param {string} stopAt
+ */
+async function removeEmptyParents(directory, stopAt) {
+  let current = directory
+  while (current.startsWith(stopAt) && current !== stopAt) {
+    if ((await readdir(current).catch(() => ['?'])).length > 0) return
+    await rm(current, { recursive: true, force: true })
+    current = path.dirname(current)
+  }
+}
+
+/**
+ * Whether the artifact serves `to`: a page target needs its `index.html`, a
+ * file target the file itself.
+ * @param {string} outDir
+ * @param {string} to
+ */
+function serves(outDir, to) {
+  const segments = to.split('/').filter(Boolean)
+  return isFilePath(to)
+    ? existsSync(path.join(outDir, ...segments))
+    : existsSync(path.join(outDir, ...segments, 'index.html'))
 }
 
 /**
@@ -57,7 +119,13 @@ export async function verifyPostGate(outDir) {
     if (status !== REDIRECT_STATUS) {
       problems.push(`${from} redirects with ${status}, not ${REDIRECT_STATUS}`)
     }
+    if (intoWithheld(to)) {
+      problems.push(`${from} redirects into ${to}, which production withholds`)
+    }
     if (from.includes('*')) continue
+    if (!serves(outDir, to)) {
+      problems.push(`${from} redirects to ${to}, which the artifact does not serve`)
+    }
     const expected = legacyRedirectTarget(from)
     if (expected !== to) {
       problems.push(`${from} redirects to ${to}, expected ${expected}`)

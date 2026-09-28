@@ -161,7 +161,14 @@ describe('the production release gate', () => {
     expect(entries.every((entry) => entry.status === 301)).toBe(true)
   })
 
-  it('withholds the papers and keeps every redirect after the gate', async () => {
+  /** True when `to` lands inside a tree the production gate withholds. */
+  const intoWithheld = (to: string) =>
+    WITHHELD_IN_PRODUCTION.some(
+      (withheld) =>
+        to === `/${withheld}` || to.startsWith(`/${withheld}/`),
+    )
+
+  it('withholds the papers and keeps only the redirects that still land', async () => {
     outDir = await builtSite()
 
     expect(await applyReleaseGate(outDir)).toEqual([])
@@ -170,11 +177,27 @@ describe('the production release gate', () => {
       expect(existsSync(path.join(outDir, withheld)), withheld).toBe(false)
     }
     expect(existsSync(path.join(outDir, 'library', 'index.html'))).toBe(true)
-    for (const { from, kind } of table) {
-      if (kind === 'page') {
-        expect(existsSync(stubPath(outDir, from)), from).toBe(true)
-      }
+    const entries = parseRedirectsFile(
+      await readFile(path.join(outDir, '_redirects'), 'utf8'),
+    )
+    // A redirect into a withheld tree would 301 a reader onto a 404, and name
+    // what production withholds. The legacy URL stays a plain 404, as before.
+    expect(entries.filter(({ to }) => intoWithheld(to))).toEqual([])
+    for (const { from, to, kind } of table) {
+      if (kind !== 'page') continue
+      expect(existsSync(stubPath(outDir, from)), from).toBe(!intoWithheld(to))
     }
+    expect(entries.some(({ from }) => from === '/research/studio')).toBe(true)
+    expect(entries.some(({ from }) => from === '/study')).toBe(true)
+  })
+
+  it('refuses an artifact that redirects to a page it does not serve', async () => {
+    outDir = await builtSite()
+    await rm(path.join(outDir, 'library'), { recursive: true, force: true })
+
+    const problems = await verifyPostGate(outDir)
+
+    expect(problems).toContain('/research/studio redirects to /library/, which the artifact does not serve')
   })
 
   it('refuses an artifact whose legacy stubs were deleted', async () => {
@@ -185,8 +208,10 @@ describe('the production release gate', () => {
 
     const problems = await applyReleaseGate(outDir)
 
+    // `/research` itself redirects into withheld `/papers/`, so the gate drops
+    // it; `/research/studio` lands on `/library/`, which ships, so it must keep
+    // its stub.
     expect(problems).toContain('/research/studio lost its redirect stub')
-    expect(problems).toContain('/research lost its redirect stub')
   })
 
   it('refuses an artifact with no redirect table', async () => {

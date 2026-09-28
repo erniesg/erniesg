@@ -100,6 +100,22 @@ test('published editors get the preview editor: colour, line numbers and the Pyt
   await expect(editor).toHaveValue('for x in range(2):\n    print(x)')
   await expect(section.locator('.code-hl .kw').first()).toHaveText('for')
   await expect(section.locator('.code-gutter')).toHaveText('1\n2')
+  // The coloured copy sits exactly under the typed text, clear of the line
+  // numbers. The site's own `pre` styles must not reach the editor's layers.
+  const layers = await section.evaluate((ex) => {
+    const px = (sel: string, prop: string) =>
+      parseFloat(getComputedStyle(ex.querySelector(sel) as Element).getPropertyValue(prop))
+    return {
+      editorLeft: px('.editor', 'padding-left'),
+      hlLeft: px('.code-hl', 'padding-left'),
+      editorTop: px('.editor', 'padding-top'),
+      hlTop: px('.code-hl', 'padding-top'),
+      gutter: (ex.querySelector('.code-gutter') as HTMLElement).getBoundingClientRect().width,
+    }
+  })
+  expect(layers.hlLeft).toBeCloseTo(layers.editorLeft, 0)
+  expect(layers.hlTop).toBeCloseTo(layers.editorTop, 0)
+  expect(layers.hlLeft).toBeGreaterThan(layers.gutter)
   // Tab indents to the next four-space stop instead of leaving the editor.
   await page.keyboard.press('Enter')
   await page.keyboard.press('Tab')

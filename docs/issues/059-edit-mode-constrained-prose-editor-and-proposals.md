@@ -38,6 +38,16 @@ instead.
   `GET /proposals` in `src/worker/margin/routes.ts` lists `editing` rows. Add
   the base commit and the CriticMarkup patch to that record. Do not add a
   second proposal shape.
+- **The body cap is smaller than the book.** `MAX_BODY_LENGTH` in
+  `src/worker/margin/web-annotation.ts` (and the PATCH schema in `routes.ts`)
+  is 8,000 characters. 12 of the 46 source files are larger than that, and the
+  largest is 16,138 bytes, so a proposal that carries enough context to apply
+  unambiguously cannot be stored today.
+- **Private proposals are invisible to the reviewer.** `listAnnotationsQuery`
+  in `src/worker/margin/queries.ts` returns a private row only when
+  `creator = viewer`, so a reader whose default is private saves proposals the
+  admin can never list. 060 adds the admin-only review listing; this issue
+  must not work around it by forcing proposals public.
 
 ## Success criteria
 
@@ -51,10 +61,18 @@ instead.
 4. A saved proposal is an `editing` annotation carrying a **Markdown patch
    against a named base commit** of the node's source file, expressed in
    CriticMarkup (`{--deleted--}`, `{++added++}`, `{~~old~>new~~}`).
-   CriticMarkup is the only stored form. One shared converter,
-   `toUnifiedDiff(criticMarkup, baseSource, sourcePath)` in
-   `src/annotations/criticmarkup.ts`, turns it into a unified diff; 060's
+   CriticMarkup is the only stored form. The body is a list of **hunks**, each
+   `{ baseStartLine, baseEndLine, criticMarkup }`: the changed lines of the
+   base file plus two lines of unchanged context either side, marked up in
+   CriticMarkup, with line numbers against the base commit. Hunks never
+   overlap and are ordered. One shared converter,
+   `toUnifiedDiff(hunks, baseSource, sourcePath)` in
+   `src/annotations/criticmarkup.ts`, turns them into a unified diff; 060's
    adapter uses the same function, so what is tested here is what gets applied.
+   The body cap rises to 64,000 characters for `editing` rows only (a full
+   retype of the largest node in CriticMarkup is about twice its 16,138
+   bytes); highlights and notes keep 8,000. A body over the cap is refused
+   with a clear 413, never truncated.
 5. **The round trip is proven, not assumed.** For every one of the 46 nodes, a
    test parses the source to the editor schema and serializes it back, and
    asserts the Markdown is byte-identical when nothing was edited. Any node
@@ -77,9 +95,18 @@ instead.
    prints anything, meaning a partial clone whose history objects may be
    missing). Any git error while stamping fails the build rather than
    emitting a page, because in a one-commit or partial clone
-   `git log -1 -- <file>` can be empty or can fail for files HEAD did not touch. Every build and deploy path that runs it
+   `git log -1 -- <file>` can be empty or can fail for files HEAD did not
+   touch. Every build and deploy path that runs it
    (`.github/workflows/ci.yml`, `agent-evidence.yml`, and any deploy
    workflow) checks out with `fetch-depth: 0`.
+   **The stamp must describe the text on the page.** Before stamping, the
+   build compares each rendered source file with
+   `git show <source-commit>:<path>`. If they differ (an uncommitted edit), a
+   production or preview build (`npm run build`, `build:staging`) fails and
+   names the file. A dev server (`npm run dev`) instead stamps
+   `source-commit="dirty"`, and edit mode on that page is disabled with a
+   visible reason, so no proposal is ever made against text that does not
+   exist at its base commit.
 10. Edit mode covers ordinary editing, not only one-word fixes. Deleting a
     word, a sentence, a whole paragraph or a list item, replacing text,
     retyping a passage, and splitting or joining paragraphs all work, with
@@ -108,6 +135,15 @@ instead.
   to the base commit; undo restores a byte-identical document.
 - The build fails in a `--filter=blob:none` partial clone as well as a
   depth-1 clone.
+- With an uncommitted edit to one chapter, `npm run build` fails naming that
+  file, and `npm run dev` serves the page with edit mode disabled and
+  `source-commit="dirty"`.
+- Retyping the whole of the largest node saves as one proposal under the
+  64,000-character `editing` cap, converts with `toUnifiedDiff` and
+  `git apply`s cleanly; a body one character over the cap is refused with
+  413. A note over 8,000 characters is still refused.
+- `tools/e2e-port.mjs`: two concurrent calls never print the same port, and a
+  lock whose owning process has exited is reclaimed.
 
 ## Definition of done
 
@@ -122,7 +158,7 @@ npm run test:margin
 npx vitest run src/worker/margin
 python3 books/tools/validate.py
 npm test
-export SRT_E2E_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')
+export SRT_E2E_PORT=$(node tools/e2e-port.mjs 2>/dev/null || python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')
 npx playwright test tests/e2e/margin-edit-mode.spec.ts
 ```
 
@@ -137,6 +173,18 @@ Playwright is the trap worth naming: `playwright.config.ts` reads
 variable per run rather than inventing a new name for it. Ask the kernel
 for a free port rather than sampling a range: with up to 16 workers,
 `$RANDOM % 200` collides often enough to fail a correct run.
+
+**This issue builds the port helper every e2e spec now calls.** Asking the
+kernel for port 0 and closing the socket leaves a gap in which another worker
+can be handed the same port before Playwright binds it. `tools/e2e-port.mjs`
+closes that gap between workers: it asks the kernel for a free port, then
+claims it by creating `$TMPDIR/srt-e2e-ports/<port>.lock` with an exclusive
+create (`O_EXCL`), writing the PID of the calling shell (`process.ppid`). If
+the lock already exists and its PID is alive, it asks for another port. If the
+PID is dead, it reclaims the lock. It prints the port and exits. The lock
+lives as long as the validation shell does, which covers Playwright's server.
+The validation line in every e2e spec falls back to the old one-liner while
+this file does not exist, so specs that run before this issue lands still work.
 
 ## Allowed secrets
 

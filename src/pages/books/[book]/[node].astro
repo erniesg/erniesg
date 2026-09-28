@@ -84,9 +84,10 @@ const RESTORED = `
 // above the panes (the shared script collapses the rail while split).
 //
 // In `site` the book bar carrying the chapter progress is pinned under the
-// site header; while split it is fixed there at a known height and the panes
-// start below it, so the indicator stays in view. In `plain` the indicator is
-// inside the plain bar, which the panes already start below.
+// site header; while split it is fixed there whatever the scroll position, and
+// the shared script, which measures the stack of pinned bars, starts the panes
+// below it. In `plain` the indicator is inside the plain bar, which the panes
+// already start below.
 const SPLIT_LAYOUT = `
 html { --split-top: 4rem; --split-surface: hsl(var(--background)); --split-ink: hsl(var(--foreground)); }
 html[data-book-look='plain'] { --split-top: var(--plain-bar-height); --split-surface: var(--plain-bg); --split-ink: var(--plain-ink); }
@@ -103,15 +104,11 @@ html[data-book-look='plain'] { --split-top: var(--plain-bar-height); --split-sur
     overflow: visible;
     z-index: 30;
   }
-  html[data-challenge-view='split']:not([data-book-look='plain']):has([data-challenge-split]):has(.book-bar[data-has-progress]) {
-    --split-top: 7rem;
-  }
   html[data-challenge-view='split']:not([data-book-look='plain']):has([data-challenge-split]) .book-bar[data-has-progress] {
     position: fixed;
-    top: 4rem;
+    top: 4.25rem;
     right: 0;
     left: 0;
-    height: 3rem;
     margin: 0;
   }
 }

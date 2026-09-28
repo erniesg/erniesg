@@ -63,6 +63,37 @@ test('the indicator stays in view after scrolling 2000px', async ({ page }) => {
   expect(box!.y).toBeLessThan(60)
 })
 
+test('in split view the indicator stays above the panes and live', async ({ page }) => {
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem('book-challenge-view', 'split')
+    } catch {
+      // Without storage the view stays stacked, which the test notices.
+    }
+  })
+  await page.goto('/pool-ticket-price')
+  expect(
+    await page.evaluate(() => document.documentElement.getAttribute('data-challenge-view')),
+  ).toBe('split')
+  const layout = await page.evaluate(() => {
+    const cp = document.querySelector('header.top [data-chapter-progress]')!
+    const box = cp.getBoundingClientRect()
+    const hit = document.elementFromPoint(box.left + 20, box.top + box.height / 2)
+    const panes = [...document.querySelectorAll('[data-challenge-split] .split-pane')]
+    return {
+      covered: !(hit && cp.contains(hit)),
+      inert: Boolean(cp.closest('[inert]')),
+      bottom: box.bottom,
+      paneTop: Math.min(...panes.map((pane) => pane.getBoundingClientRect().top)),
+    }
+  })
+  expect(layout.covered).toBe(false)
+  expect(layout.inert).toBe(false)
+  expect(layout.paneTop).toBeGreaterThanOrEqual(layout.bottom)
+  await page.keyboard.press(']')
+  await expect(page).toHaveURL(/\/fridge-alarm$/)
+})
+
 test('j moves to the next heading and ? lists the shortcuts', async ({ page }) => {
   await page.goto('/ch02-conditionals')
   const headings = page.locator('main article h2[id]')

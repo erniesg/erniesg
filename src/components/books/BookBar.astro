@@ -337,9 +337,10 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
     justify-content: space-between;
   }
 
+  /* 4.25rem is the site header's measured height (68px at every width). */
   html:not([data-book-look='plain']) .book-bar[data-has-progress] {
     position: sticky;
-    top: 4rem;
+    top: 4.25rem;
     z-index: 9;
     max-width: none;
     margin: 0 0 0.75rem;

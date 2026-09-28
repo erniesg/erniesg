@@ -1237,15 +1237,23 @@ SPLIT_SCRIPT = r"""
           siblings.push(sibling);
         }
       }
-      // A top bar is pinned to the top of the window; the view starts below the
-      // lowest one, measured, so no bar is ever partly covered.
-      const pinned = element => {
+      // Top bars are pinned to the top of the window, possibly stacked: a site
+      // header, then a bar pinned just under it (the chapter progress). The
+      // view starts below the lowest bar of that stack, measured, so no bar is
+      // ever partly covered, and every bar in it stays reachable.
+      const candidates = siblings.filter(element => {
         const style = getComputedStyle(element);
         return (style.position === 'fixed' || style.position === 'sticky')
-          && element.getBoundingClientRect().top <= 1;
-      };
-      const bars = siblings.filter(element => pinned(element) && element.getBoundingClientRect().height < 200);
-      const barBottom = Math.max(0, ...bars.map(element => element.getBoundingClientRect().bottom));
+          && element.getBoundingClientRect().height < 200;
+      }).sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+      const bars = [];
+      let barBottom = 0;
+      for (const element of candidates) {
+        const box = element.getBoundingClientRect();
+        if (box.top > barBottom + 1) break;
+        bars.push(element);
+        barBottom = Math.max(barBottom, box.bottom);
+      }
       if (barBottom > 0) view.style.setProperty('--split-top', Math.ceil(barBottom) + 'px');
       const staysAbove = element => {
         if (bars.includes(element)) return true;

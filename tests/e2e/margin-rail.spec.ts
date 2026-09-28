@@ -59,6 +59,8 @@ type Service = {
   holdDeletes: Promise<void> | null
   /** While true, GET /prefs answers 500. */
   failPrefs: boolean
+  /** While true, GET /prefs answers 404, as with no service mounted. */
+  missingPrefs: boolean
   /** While true, every PATCH is refused with a 500. */
   failPatches: boolean
   setPrefs(
@@ -67,6 +69,8 @@ type Service = {
   ): Promise<void>
   /** Every list response the service sent, as the browser received it. */
   listed: { as: string | null; annotations: WireAnnotation[] }[]
+  /** `METHOD path` of every request, in order, once its session is bound. */
+  arrivals: string[]
   rows(): Promise<WireAnnotation[]>
   prefs(principal: Principal): Promise<{ defaultVisibility: string }>
   post(body: unknown, principal: Principal): Promise<Response>
@@ -101,6 +105,7 @@ async function mountService(page: Page): Promise<Service> {
     holdLists: null,
     holdDeletes: null,
     failPrefs: false,
+    missingPrefs: false,
     failPatches: false,
     async setPrefs(principal, defaultVisibility) {
       await call(
@@ -113,6 +118,7 @@ async function mountService(page: Page): Promise<Service> {
       )
     },
     listed: [],
+    arrivals: [],
     async rows() {
       // Every row, whoever owns it: read as each owner and merge.
       const seen = new Map<string, WireAnnotation>()
@@ -159,10 +165,18 @@ async function mountService(page: Page): Promise<Service> {
         : { body: incoming.postData() ?? undefined }),
     })
     const path = new URL(incoming.url()).pathname
+    // The session a request was sent with, not whoever is signed in by the time
+    // a held request is let through.
+    const as = service.as
+    service.arrivals.push(`${method} ${path}`)
     if (method === 'GET' && path.endsWith('/prefs') && service.holdPrefs) {
       await service.holdPrefs
     }
     if (method === 'DELETE' && service.holdDeletes) await service.holdDeletes
+    if (method === 'GET' && path.endsWith('/prefs') && service.missingPrefs) {
+      await route.fulfill({ status: 404, body: 'Not Found' })
+      return
+    }
     if (method === 'GET' && path.endsWith('/prefs') && service.failPrefs) {
       await route.fulfill({
         status: 500,
@@ -203,7 +217,7 @@ async function mountService(page: Page): Promise<Service> {
     ) {
       await service.holdPosts
     }
-    const response = await call(request, service.as)
+    const response = await call(request, as)
     const text = await response.text()
     if (
       method === 'GET' &&
@@ -211,7 +225,7 @@ async function mountService(page: Page): Promise<Service> {
       response.ok
     ) {
       service.listed.push({
-        as: service.as ? principalKey(service.as) : null,
+        as: as ? principalKey(as) : null,
         annotations: JSON.parse(text).annotations,
       })
     }
@@ -863,6 +877,290 @@ test.describe('the margin rail under slow or racing requests', () => {
     await expect(page.locator(ENTRY)).toHaveCount(230)
   })
 
+  // #358 item 1
+  test('a create whose follow-up toggle is refused rolls back to what the create stored', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    const [block] = await proseBlocks(page)
+    const posts = gate()
+    service.holdPosts = posts.promise
+    const sent = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' && request.url().endsWith('/annotations'),
+    )
+    await highlight(page, block, 0, 20)
+    await sent // the create left as private
+    const entry = page.locator(ENTRY)
+    service.failPatches = true
+    await entry.locator('[data-margin-action="visibility"]').click()
+    await expect(entry).toHaveAttribute('data-visibility', 'public')
+    posts.open()
+    await expect
+      .poll(async () => (await service.rows())[0]?.['margin:visibility'])
+      .toBe('private')
+    await expect(entry).toHaveAttribute('data-visibility', 'private')
+  })
+
+  // #358 item 2
+  test('an old connection’s late default write does not become the new one’s baseline', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (
+              document.querySelector('margin-rail') as HTMLElement & {
+                defaultVisibility: string
+              }
+            ).defaultVisibility,
+        ),
+      )
+      .toBe('private')
+    const first = gate()
+    service.holdNextPatch = first.promise
+    const patched = page.waitForRequest(
+      (request) => request.method() === 'PATCH' && request.url().endsWith('/prefs'),
+    )
+    // Ada changes her default; the write is held on her connection.
+    void page.evaluate(() => {
+      const rail = document.querySelector('margin-rail') as HTMLElement & {
+        setDefaultVisibility(v: string): Promise<void>
+      }
+      void rail.setDefaultVisibility('public')
+    })
+    await patched
+    await expect
+      .poll(() => service.arrivals.some((entry) => /^PATCH .*\/prefs$/.test(entry)))
+      .toBe(true)
+    // The host switches to another session: Bob, whose default is private.
+    service.as = BOB
+    await page.evaluate(() => {
+      const rail = document.querySelector('margin-rail') as HTMLElement & {
+        transport: { request(r: unknown): Promise<unknown> }
+      }
+      const previous = rail.transport
+      rail.transport = { request: (r: unknown) => previous.request(r) }
+    })
+    await expect
+      .poll(() => service.listed.filter((entry) => entry.as !== null).length)
+      .toBeGreaterThan(0)
+    await expect
+      .poll(() => service.listed.at(-1)?.as)
+      .toBe(principalKey(BOB))
+    first.open()
+    await expect
+      .poll(async () => (await service.prefs(ADA)).defaultVisibility)
+      .toBe('public')
+    // Bob's own change is refused: the rail must fall back to Bob's stored
+    // default, not to the value Ada's old connection wrote.
+    service.failPatches = true
+    const bobDefault = await page.evaluate(async () => {
+      const rail = document.querySelector('margin-rail') as HTMLElement & {
+        setDefaultVisibility(v: string): Promise<void>
+        defaultVisibility: string
+      }
+      await rail.setDefaultVisibility('public')
+      return rail.defaultVisibility
+    })
+    expect(bobDefault).toBe('private')
+    expect((await service.prefs(BOB)).defaultVisibility).toBe('private')
+  })
+
+  // #358 item 3
+  test('a host record matched by a load rolls back to the service’s body, not the host’s', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    const [block] = await proseBlocks(page)
+    expect((await service.post(orphanNote(1, block), ADA)).status).toBe(201)
+    const [row] = await service.rows()
+    const id = row.id.replace('urn:margin:annotation:', '')
+    const prefs = gate()
+    service.holdPrefs = prefs.promise
+    await page.reload()
+    await page.evaluate(
+      ({ id, block }) => {
+        const quote = 'unanchored passage number 1'
+        const rail = document.querySelector('margin-rail') as HTMLElement & {
+          annotations: unknown
+        }
+        rail.annotations = [
+          {
+            id,
+            kind: 'note',
+            target: {
+              nodeId: block,
+              position: { start: 0, end: quote.length },
+              quote: { exact: quote, prefix: '', suffix: '' },
+            },
+            body: 'the host copy',
+            geometryCache: [],
+          },
+        ]
+      },
+      { id, block },
+    )
+    prefs.open()
+    await expect
+      .poll(() => service.listed.length)
+      .toBeGreaterThan(0)
+    await expect(page.locator(ENTRY)).toHaveCount(1)
+    service.failPatches = true
+    await page.evaluate(async (id) => {
+      const rail = document.querySelector('margin-rail') as HTMLElement & {
+        editNote(id: string, body: string): Promise<void>
+      }
+      await rail.editNote(id, 'an edit the service refuses')
+    }, id)
+    await expect(page.locator(ENTRY)).toContainText('note 1')
+    await expect(page.locator(ENTRY)).not.toContainText('the host copy')
+  })
+
+  // #358 item 4
+  test('a settings notice clears once a later load reads the settings', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    const reload = () =>
+      page.evaluate(() => {
+        const rail = document.querySelector('margin-rail') as HTMLElement & {
+          transport: unknown
+        }
+        rail.transport = rail.transport
+      })
+    service.failPrefs = true
+    await reload()
+    const notice = page.locator(`${RAIL} [data-margin-notice="transport"]`)
+    await expect(notice).toContainText('margin settings')
+    service.failPrefs = false
+    await reload()
+    await expect(notice).toHaveCount(0)
+  })
+
+  test('a recovered settings read clears the notice before the list arrives', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    const reload = () =>
+      page.evaluate(() => {
+        const rail = document.querySelector('margin-rail') as HTMLElement & {
+          transport: unknown
+        }
+        rail.transport = rail.transport
+      })
+    const notice = page.locator(`${RAIL} [data-margin-notice="transport"]`)
+    service.failPrefs = true
+    await reload()
+    await expect(notice).toContainText('margin settings')
+    service.failPrefs = false
+    const lists = gate()
+    service.holdLists = lists.promise
+    await reload()
+    // The list is still out; the settings already recovered.
+    await expect(notice).toHaveCount(0)
+    lists.open()
+  })
+
+  test('a recovered settings read shows the stored default before the list arrives', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    const reload = () =>
+      page.evaluate(() => {
+        const rail = document.querySelector('margin-rail') as HTMLElement & {
+          transport: unknown
+        }
+        rail.transport = rail.transport
+      })
+    const notice = page.locator(`${RAIL} [data-margin-notice="transport"]`)
+    service.failPrefs = true
+    await reload()
+    await expect(notice).toContainText('margin settings')
+    await service.setPrefs(ADA, 'public')
+    service.failPrefs = false
+    const lists = gate()
+    service.holdLists = lists.promise
+    await reload()
+    await expect(
+      page.locator(`${RAIL} [data-margin-default-visibility]`),
+    ).toHaveAttribute('data-margin-default-visibility', 'public')
+    lists.open()
+  })
+
+  test('a settings 404 after a settings failure clears the warning', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    const reload = () =>
+      page.evaluate(() => {
+        const rail = document.querySelector('margin-rail') as HTMLElement & {
+          transport: unknown
+        }
+        rail.transport = rail.transport
+      })
+    const notice = page.locator(`${RAIL} [data-margin-notice="transport"]`)
+    service.failPrefs = true
+    await reload()
+    await expect(notice).toContainText('margin settings')
+    service.failPrefs = false
+    service.missingPrefs = true
+    await reload()
+    await expect(notice).toHaveCount(0)
+  })
+
+  // #358 item 6
+  test('a page with no margin service behind it shows no settings warning', async ({
+    page,
+  }) => {
+    // The dev server and static previews: every service path is a 404.
+    await page.route('**/api/margin/v1/**', (route) =>
+      route.fulfill({ status: 404, body: 'Not Found' }),
+    )
+    await open(page)
+    await page.waitForTimeout(300)
+    // Anything that redraws the rail shows a notice that was set quietly.
+    const [block] = await proseBlocks(page)
+    await selectWithin(page, block, 0, 20)
+    await expect(
+      page.locator(`${RAIL} [data-margin-action="highlight"]`),
+    ).toBeEnabled()
+    await expect(
+      page.locator(`${RAIL} [data-margin-notice="transport"]`),
+    ).toHaveCount(0)
+  })
+
+  // #358 item 7
+  test('a new api-base forgets the previous backend at once', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    const [block] = await proseBlocks(page)
+    await highlight(page, block, 0, 20)
+    await expect.poll(async () => (await service.rows()).length).toBe(1)
+    await expect(
+      page.locator(`${ENTRY} [data-margin-action="delete"]`),
+    ).toHaveCount(1)
+    const lists = gate()
+    service.holdLists = lists.promise
+    await page.evaluate(() => {
+      document.querySelector('margin-rail')!.setAttribute('api-base', '/elsewhere/')
+    })
+    // While the new backend's list is out, nothing from the old one remains.
+    await expect(page.locator(ENTRY)).toHaveCount(0)
+    lists.open()
+  })
+
   test('a host update to a known annotation renders', async ({ page }) => {
     await mountService(page)
     await open(page)
@@ -1066,6 +1364,28 @@ test.describe('the margin rail', () => {
     await expect
       .poll(async () => (await service.rows())[0]?.motivation)
       .toBe('commenting')
+  })
+
+  // #358 item 5
+  test('a selection made without a pointer or Shift can still open the popup', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    const [block] = await proseBlocks(page)
+    // A screen reader's selection: selectionchange, no pointerup, no Shift keyup.
+    await selectWithin(page, block, 0, 24)
+    const annotate = page.locator(`${RAIL} [data-margin-action="annotate"]`)
+    await expect(annotate).toBeEnabled()
+    await annotate.click()
+    await expect(page.locator(POPUP)).toBeVisible()
+    await page.locator(`${POPUP} [data-margin-swatch="question"]`).click()
+    await page.locator(`${POPUP} [data-margin-note]`).fill('why this order?')
+    await page.locator(`${POPUP} [data-margin-action="save"]`).click()
+    await expect.poll(async () => (await service.rows()).length).toBe(1)
+    const [row] = await service.rows()
+    expect(row.motivation).toBe('commenting')
+    expect(row['margin:color']).toBe('question')
   })
 
   test('picking a role saves nothing until Save, and Save needs a role or a note', async ({

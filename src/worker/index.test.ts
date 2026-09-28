@@ -10,7 +10,8 @@ import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import type { WorkerEnv } from './env'
-import worker, { MARGIN_HEALTH_PATH } from './index'
+import worker from './index'
+import { MARGIN_HEALTH_PATH } from './gate'
 import {
   createFakeProvider,
   sessionCookieHeader,

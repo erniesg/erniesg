@@ -93,3 +93,32 @@ class StripRoots(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ChallengeView(unittest.TestCase):
+    """The preview hosts the side-by-side view the site does: same markup,
+    the view set in <head> before first paint, the shared toggle script."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), preview.Handler)
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+        cls.base = f"http://127.0.0.1:{cls.server.server_address[1]}"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+
+    def get(self, route: str) -> str:
+        with urllib.request.urlopen(self.base + route, timeout=30) as response:
+            return response.read().decode()
+
+    def test_a_challenge_page_can_split_and_sets_the_view_before_first_paint(self):
+        page = self.get("/pool-ticket-price")
+        self.assertIn("data-challenge-split", page)
+        head, body = page.split("<body", 1)
+        self.assertIn(preview.CHALLENGE_VIEW_HEAD_SCRIPT, head)
+        self.assertIn(preview.SPLIT_SCRIPT, body)
+        self.assertIn(".challenge-split", head)

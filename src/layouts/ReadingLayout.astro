@@ -24,6 +24,12 @@ type Props = {
   noindex?: boolean
   lang?: SupportedLocale
   alternates?: Partial<Record<SupportedLocale, string>>
+  /**
+   * Start the contents folded below the rail breakpoint. A post's reader came
+   * for the text; a long contents list above it pushes the title off the
+   * first screen on a phone. Wide viewports always show the rail.
+   */
+  contentsClosedOnNarrow?: boolean
 }
 
 const {
@@ -35,6 +41,7 @@ const {
   noindex = false,
   lang,
   alternates,
+  contentsClosedOnNarrow = false,
 } = Astro.props
 ---
 
@@ -71,6 +78,22 @@ const {
         <summary>Contents</summary>
         <slot name="navigation" />
       </details>
+      {
+        contentsClosedOnNarrow && (
+          <script is:inline data-reading-contents-fold>
+            ;(() => {
+              const details = document.currentScript?.previousElementSibling
+              if (!(details instanceof HTMLDetailsElement)) return
+              const wide = matchMedia('(min-width: 900px)')
+              if (!wide.matches) details.open = false
+              // Widening must never leave the rail folded with no summary.
+              wide.addEventListener?.('change', () => {
+                if (wide.matches) details.open = true
+              })
+            })()
+          </script>
+        )
+      }
     </nav>
 
     <article

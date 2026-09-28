@@ -93,6 +93,31 @@ test.describe('the reading shell', () => {
     }
   })
 
+  test('opens a post on its title on a phone, with the contents folded', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 800 })
+    await page.goto(POST)
+
+    const contents = page.locator('#reading-navigation details.reading-contents')
+    await expect(contents).not.toHaveAttribute('open', '')
+    await expect(page.locator('h1').first()).toBeInViewport()
+
+    // Widening turns the folded disclosure back into the rail.
+    await page.setViewportSize({ width: 1440, height: 1000 })
+    await expect(contents).toHaveAttribute('open', '')
+    expect(await visibleColumns(page)).toEqual(['navigation', 'text', 'margin'])
+  })
+
+  test('keeps a chapter contents list open on a phone', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 800 })
+    await page.goto(CHAPTER)
+
+    await expect(
+      page.locator('#reading-navigation details.reading-contents'),
+    ).toHaveAttribute('open', '')
+  })
+
   test('is the same shell on a page that is not a book', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 1000 })
 

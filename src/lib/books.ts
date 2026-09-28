@@ -36,6 +36,8 @@ export type BookNode = {
   html: string
   blocks: BookBlock[]
   outline: BookOutlineEntry[]
+  /** The inline exercises on this node, by the id reading progress keys them under. */
+  exercises: string[]
 }
 
 export type BookPart = { id: string; title: string; nodes: string[] }

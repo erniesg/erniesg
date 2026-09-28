@@ -989,6 +989,8 @@ details.solution { border:0; border-top:2px solid var(--ink); border-radius:0; b
 .exercise-title { font:700 .72rem/1 ui-sans-serif,system-ui; letter-spacing:.09em;
   text-transform:uppercase; color:#15803d; margin:0 0 .5rem; }
 .exercise .answer { margin-top:.6rem; }
+/* Marked by the page code once the reader has passed it, in any edition that runs it. */
+.exercise.solved .exercise-title::after { content:" · solved ✓"; }
 /* A runnable cell is one terminal: code, a hairline, the action row, output. */
 .cell-run, .exercise-run, .desk { --term:#1e1f24; --term-line:#33353d; --term-ink:#d4d4d4;
   --term-dim:#a3a8b3; background:var(--term); border:1px solid #2b2d34; border-radius:8px;

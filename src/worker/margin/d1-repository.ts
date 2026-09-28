@@ -7,10 +7,13 @@ import {
   getPrefsQuery,
   insertAnnotationQuery,
   listAnnotationsQuery,
+  listProgressQuery,
+  mergeProgressQuery,
   updateAnnotationQuery,
   upsertPrefsQuery,
   type Query,
 } from './queries'
+import type { ProgressItem, ProgressRow, ProgressScope } from './progress'
 import {
   DEFAULT_VISIBILITY,
   type AnnotationPatch,
@@ -223,4 +226,40 @@ export class D1MarginRepository implements MarginRepository {
     await this.statement(upsertPrefsQuery(owner, defaultVisibility, now)).run()
     return this.getPrefs(owner)
   }
+
+  async listProgress(owner: string, scope: ProgressScope): Promise<ProgressRow[]> {
+    const { results } = await this.statement(
+      listProgressQuery(owner, scope.site, scope.book),
+    ).all<ProgressDbRow>()
+    return (results ?? []).map((row) => ({
+      item: row.item,
+      solved: row.solved === 1,
+      solvedAt: row.solved_at,
+      draft: row.draft,
+      draftUpdated: row.draft_updated,
+    }))
+  }
+
+  async mergeProgress(
+    owner: string,
+    scope: ProgressScope,
+    items: ProgressItem[],
+    now: string,
+  ): Promise<void> {
+    // No batch on this binding's interface: one upsert per item. A client sends
+    // only what changed, and the route caps a request at a few hundred.
+    for (const item of items) {
+      await this.statement(
+        mergeProgressQuery(owner, scope.site, scope.book, item, now),
+      ).run()
+    }
+  }
+}
+
+type ProgressDbRow = {
+  item: string
+  solved: number
+  solved_at: string | null
+  draft: string | null
+  draft_updated: string | null
 }

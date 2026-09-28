@@ -74,6 +74,81 @@ class JsonRoutes(unittest.TestCase):
                 self.assertEqual(result.get("tiers"), [])
 
 
+class ProgressRoutes(unittest.TestCase):
+    """The page code the site runs is served here, and progress round-trips by merging."""
+
+    def setUp(self):
+        import tempfile
+
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        patcher = mock.patch.object(preview, "PROGRESS_PATH", Path(self.directory.name) / "progress.json")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), preview.Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def fetch(self, route: str, body: bytes | None = None) -> tuple[int, bytes, str]:
+        request = urllib.request.Request(
+            self.base + route, data=body, headers={"Content-Type": "application/json"}
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return response.status, response.read(), response.headers.get("Content-Type", "")
+        except urllib.error.HTTPError as error:
+            return error.code, error.read(), error.headers.get("Content-Type", "")
+
+    def test_the_runtime_modules_are_served_and_nothing_else_is(self):
+        for name in ("progress.mjs", "exercises.mjs", "book-progress.mjs"):
+            with self.subTest(name):
+                status, body, kind = self.fetch(f"/runtime/{name}")
+                self.assertEqual(status, 200)
+                self.assertIn("javascript", kind)
+                self.assertEqual(body, (preview.RUNTIME / name).read_bytes())
+        for route in ("/runtime/../preview.py", "/runtime/progress-fixtures.json", "/runtime/nope.mjs"):
+            with self.subTest(route):
+                self.assertEqual(self.fetch(route)[0], 404)
+
+    def test_progress_merges_and_never_forgets_a_solve(self):
+        preview.PROGRESS_PATH.write_text(json.dumps({"solved": ["sum-of-two-digits"]}))
+        status, body, _ = self.fetch("/api/progress")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["solved"], ["sum-of-two-digits"])
+
+        upload = {
+            "version": 1, "book": "build-a-coding-agent", "solved": ["ch03-last-three"],
+            "solvedAt": {"ch03-last-three": "2026-09-28T09:00:00.000Z"},
+            "drafts": {"ch03-one-copy": {"code": "print(1)", "updatedAt": "2026-09-28T09:00:00.000Z"}},
+        }
+        status, body, _ = self.fetch("/api/progress", json.dumps(upload).encode())
+        self.assertEqual(status, 200)
+        merged = json.loads(body)
+        self.assertEqual(merged["solved"], ["ch03-last-three", "sum-of-two-digits"])
+        on_disk = json.loads(preview.PROGRESS_PATH.read_text())
+        self.assertEqual(on_disk, merged)
+        self.assertEqual(on_disk["drafts"]["ch03-one-copy"]["code"], "print(1)")
+
+        # An upload that knows less removes nothing.
+        status, body, _ = self.fetch("/api/progress", json.dumps({"solved": []}).encode())
+        self.assertEqual(json.loads(body)["solved"], ["ch03-last-three", "sum-of-two-digits"])
+
+    def test_an_unreadable_upload_is_refused_and_changes_nothing(self):
+        preview.PROGRESS_PATH.write_text(json.dumps({"solved": ["sum-of-two-digits"]}))
+        for body in (b"{not json", b"[1, 2]"):
+            with self.subTest(body):
+                self.assertEqual(self.fetch("/api/progress", body)[0], 400)
+        self.assertEqual(json.loads(preview.PROGRESS_PATH.read_text()), {"solved": ["sum-of-two-digits"]})
+
+    def test_every_page_loads_the_shared_progress_module_for_this_book(self):
+        status, body, _ = self.fetch("/ch03-lists")
+        self.assertEqual(status, 200)
+        self.assertIn(b"import { startProgress } from '/runtime/book-progress.mjs'", body)
+        self.assertIn(b'book: "build-a-coding-agent"', body)
+
+
 class StripRoots(unittest.TestCase):
     """Rule: this machine's folders leave grader output on either separator."""
 

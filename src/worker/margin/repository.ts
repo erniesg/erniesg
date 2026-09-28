@@ -3,6 +3,7 @@ import type {
   MarginVisibility,
   Motivation,
 } from './web-annotation'
+import type { ProgressItem, ProgressRow, ProgressScope } from './progress'
 
 /**
  * The storage seam. Route handlers depend on this interface and never on D1,
@@ -106,6 +107,17 @@ export interface MarginRepository {
     defaultVisibility: MarginVisibility,
     now: string,
   ): Promise<MarginPrefs>
+
+  /** The owner's own progress in one book. Nobody else's is reachable. */
+  listProgress(owner: string, scope: ProgressScope): Promise<ProgressRow[]>
+
+  /** Merge items into the owner's progress; never removes or un-solves. */
+  mergeProgress(
+    owner: string,
+    scope: ProgressScope,
+    items: ProgressItem[],
+    now: string,
+  ): Promise<void>
 }
 
 /** Applied when a user has never set a preference. */

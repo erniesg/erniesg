@@ -43,6 +43,7 @@ from render import (
 SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 HEADING = re.compile(r'<h([23]) id="([^"]+)">(.*?)</h\1>', re.DOTALL)
 TAGS = re.compile(r"<[^>]+>")
+EXERCISE_ID = re.compile(r'<section class="exercise" id="ex-([a-z0-9-]+)"')
 
 
 def path_ids() -> list[str]:
@@ -93,6 +94,9 @@ def node_entry(node: dict, slug: str) -> dict:
             {"level": int(level), "id": anchor, "text": TAGS.sub("", text).strip()}
             for level, anchor, text in HEADING.findall(markup)
         ],
+        # The ids reading progress keys an exercise by, so the site can count
+        # them without parsing a node itself.
+        "exercises": EXERCISE_ID.findall(markup),
     }
 
 

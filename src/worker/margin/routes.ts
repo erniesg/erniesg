@@ -2,6 +2,13 @@ import { z } from 'zod'
 import type { Principal } from '../principal'
 import { principalKey } from './identity'
 import {
+  MAX_PROGRESS_ITEMS_PER_BOOK,
+  parseProgressBody,
+  progressToWire,
+  readProgressScope,
+  type ProgressScope,
+} from './progress'
+import {
   DEFAULT_PAGE_SIZE,
   MAX_PAGE_SIZE,
   type ListCursor,
@@ -35,6 +42,8 @@ import {
  *   DELETE /annotations/:id          owner-scoped delete
  *   GET    /prefs                    read the caller's default visibility
  *   PATCH  /prefs                    set it; existing rows are never rewritten
+ *   GET    /progress?site&book       the caller's own progress in a book
+ *   PATCH  /progress?site&book       merge into it; never removes or un-solves
  *   GET    /proposals                list, restricted to `editing`
  *   POST   /proposals/:id/apply      501 — issue 060
  *   GET    /documents/:id/history    501 — issue 059
@@ -613,6 +622,49 @@ async function writePrefs(
   return json({ defaultVisibility: prefs.defaultVisibility, creator: owner })
 }
 
+async function readProgress(
+  url: URL,
+  context: MarginRouteContext,
+  owner: string,
+): Promise<Response> {
+  const scope = readProgressScope(url)
+  if ('status' in scope) return problem(scope.status, scope.code, scope.message)
+  const rows = await context.repository.listProgress(owner, scope)
+  return json(progressToWire(scope.book, rows))
+}
+
+async function writeProgress(
+  request: Request,
+  url: URL,
+  context: MarginRouteContext,
+  owner: string,
+): Promise<Response> {
+  const scope: ProgressScope | { status: 400 | 413; code: string; message: string } =
+    readProgressScope(url)
+  if ('status' in scope) return problem(scope.status, scope.code, scope.message)
+  const now = context.now()
+  const items = parseProgressBody(await request.text(), now)
+  if ('status' in items) return problem(items.status, items.code, items.message)
+
+  // Bounded per reader and book. An item already held can always change; only
+  // new ones count against the cap, so a full book still records solves.
+  const held = new Set(
+    (await context.repository.listProgress(owner, scope)).map((row) => row.item),
+  )
+  const added = items.filter((item) => !held.has(item.item)).length
+  if (held.size + added > MAX_PROGRESS_ITEMS_PER_BOOK) {
+    return problem(
+      413,
+      'too_many_items',
+      `a book holds at most ${MAX_PROGRESS_ITEMS_PER_BOOK} items of progress`,
+    )
+  }
+
+  await context.repository.mergeProgress(owner, scope, items, now)
+  const rows = await context.repository.listProgress(owner, scope)
+  return json(progressToWire(scope.book, rows))
+}
+
 function notImplemented(issue: string): Response {
   return json(
     {
@@ -695,6 +747,14 @@ export async function handleMarginRequest(
     if (!owner) return unauthenticated()
     if (method === 'GET') return readPrefs(context, owner)
     if (method === 'PATCH') return writePrefs(request, context, owner)
+    return methodNotAllowed(['GET', 'HEAD', 'PATCH'])
+  }
+
+  if (path.length === 1 && path[0] === 'progress') {
+    // Private by construction: there is no way to name another reader.
+    if (!owner) return unauthenticated()
+    if (method === 'GET') return readProgress(url, context, owner)
+    if (method === 'PATCH') return writeProgress(request, url, context, owner)
     return methodNotAllowed(['GET', 'HEAD', 'PATCH'])
   }
 

@@ -276,3 +276,69 @@ ON CONFLICT (creator) DO UPDATE SET default_visibility = excluded.default_visibi
     params: [owner, defaultVisibility, now, now],
   }
 }
+
+/* Reading progress. Every statement is keyed by the caller as `creator`. */
+
+export function listProgressQuery(owner: string, site: string, book: string): Query {
+  return {
+    sql: `SELECT item, solved, solved_at, draft, draft_updated
+FROM margin_progress WHERE creator = ? AND site = ? AND book = ?
+ORDER BY item LIMIT 2000`,
+    params: [owner, site, book],
+  }
+}
+
+/**
+ * The merge, in one statement per item: `solved` only goes up, `solved_at`
+ * keeps the earliest time, and a draft is replaced only by a newer one. Times
+ * share one ISO spelling, so comparing them as text orders them.
+ */
+export function mergeProgressQuery(
+  owner: string,
+  site: string,
+  book: string,
+  item: {
+    item: string
+    solved: boolean
+    solvedAt: string | null
+    draft: string | null
+    draftUpdated: string | null
+  },
+  now: string,
+): Query {
+  return {
+    sql: `INSERT INTO margin_progress
+  (creator, site, book, item, solved, solved_at, draft, draft_updated, modified)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (creator, site, book, item) DO UPDATE SET
+  solved = MAX(margin_progress.solved, excluded.solved),
+  solved_at = CASE
+    WHEN margin_progress.solved_at IS NULL THEN excluded.solved_at
+    WHEN excluded.solved_at IS NULL THEN margin_progress.solved_at
+    WHEN excluded.solved_at < margin_progress.solved_at THEN excluded.solved_at
+    ELSE margin_progress.solved_at
+  END,
+  draft = CASE
+    WHEN excluded.draft_updated IS NOT NULL
+      AND (margin_progress.draft_updated IS NULL OR excluded.draft_updated > margin_progress.draft_updated)
+    THEN excluded.draft ELSE margin_progress.draft
+  END,
+  draft_updated = CASE
+    WHEN excluded.draft_updated IS NOT NULL
+      AND (margin_progress.draft_updated IS NULL OR excluded.draft_updated > margin_progress.draft_updated)
+    THEN excluded.draft_updated ELSE margin_progress.draft_updated
+  END,
+  modified = excluded.modified`,
+    params: [
+      owner,
+      site,
+      book,
+      item.item,
+      item.solved ? 1 : 0,
+      item.solved ? item.solvedAt : null,
+      item.draft,
+      item.draft === null ? null : item.draftUpdated,
+      now,
+    ],
+  }
+}

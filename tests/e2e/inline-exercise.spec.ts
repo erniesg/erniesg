@@ -14,7 +14,8 @@ async function check(page: Page, id: string, source: string) {
 test('a partial answer says how many tests passed and what failed', async ({ page }) => {
   test.setTimeout(90_000) // the first check downloads Pyodide
   let serverRan = false
-  page.on('request', r => { if (r.url().includes('/api/')) serverRan = true })
+  // Saving progress may reach the server; running the reader's code may not.
+  page.on('request', r => { if (/\/api\/(exec|grade)\b/.test(r.url())) serverRan = true })
   await page.goto(CHAPTER)
   const ex = await check(page, 'ch06-price-or-zero',
     'prices = {"rice": 3, "oil": 7}\nprint(prices.get("tea", 0))')

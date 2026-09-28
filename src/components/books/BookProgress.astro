@@ -1,0 +1,91 @@
+---
+/**
+ * Reading progress for a published book: how much is solved, where it is kept,
+ * and a file to carry it between the site and the local preview.
+ *
+ * Markup only. `books/tools/runtime/book-progress.mjs`, the same page code the
+ * local preview runs, finds these elements by their `data-progress-*`
+ * attributes, records solves and drafts, and fills them in. The site's
+ * storage is `src/lib/book-progress-site.ts`: the browser always, and the
+ * reader's margin account when they are signed in and may write.
+ *
+ * Quiet on purpose: plain text and two small buttons, in the reading column
+ * below the text, so it reads the same in every look of the book.
+ */
+import type { Book } from '@/lib/books'
+import { SITE } from '@/consts'
+
+type Props = { book: Book }
+
+const { book } = Astro.props
+const exercises = book.nodes.flatMap((node) => node.exercises)
+const challenges = book.nodes
+  .filter((node) => node.kind === 'challenge')
+  .map((node) => node.id)
+const site = new URL(SITE.SITEURL).origin
+---
+
+<section
+  class="book-progress mt-10 flex flex-col gap-y-2 border-t pt-6 text-sm text-muted-foreground"
+  aria-label="Your progress"
+  data-book-progress
+  data-book={book.slug}
+  data-site={site}
+>
+  <p
+    class="font-medium text-foreground"
+    data-progress-count
+    data-exercise-ids={exercises.join(' ')}
+    data-challenge-ids={challenges.join(' ')}
+  >
+  </p>
+  <p data-progress-status role="status"></p>
+  <p class="flex flex-wrap items-center gap-x-3 gap-y-2">
+    <button
+      type="button"
+      class="rounded border px-2 py-1 hover:bg-muted"
+      data-progress-export>Export progress</button
+    >
+    <button
+      type="button"
+      class="rounded border px-2 py-1 hover:bg-muted"
+      data-progress-import>Import progress</button
+    >
+    <input
+      type="file"
+      accept="application/json,.json"
+      hidden
+      data-progress-import-file
+    />
+    <span class="text-xs"
+      >The same file the local preview keeps in <code
+        >books/workspace/progress.json</code
+      >.</span
+    >
+  </p>
+</section>
+
+<script>
+  import { startProgress } from '../../../books/tools/runtime/book-progress.mjs'
+  import { siteBackend } from '@/lib/book-progress-site'
+
+  function safeStorage(): Storage | undefined {
+    try {
+      return window.localStorage
+    } catch {
+      return undefined
+    }
+  }
+
+  // The site swaps pages without a reload, so this runs on every page view.
+  document.addEventListener('astro:page-load', () => {
+    const root = document.querySelector<HTMLElement>('[data-book-progress]')
+    if (!root) return
+    const book = root.dataset.book ?? ''
+    const site = root.dataset.site ?? window.location.origin
+    void startProgress({
+      book,
+      backend: siteBackend({ book, site, storage: safeStorage() }),
+    })
+  })
+</script>

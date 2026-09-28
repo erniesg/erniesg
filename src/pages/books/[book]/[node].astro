@@ -1,5 +1,6 @@
 ---
 import BookContents from '@/components/books/BookContents.astro'
+import BookProgress from '@/components/books/BookProgress.astro'
 import ReadingLayout from '@/layouts/ReadingLayout.astro'
 import {
   bookBySlug,
@@ -106,4 +107,6 @@ const style = `<style>${scopeContentCss(bookManifest().contentCss, '.book-conten
       )
     }
   </nav>
+
+  <BookProgress book={book} />
 </ReadingLayout>

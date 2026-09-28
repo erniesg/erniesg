@@ -1,0 +1,109 @@
+{
+  "comment": "Shared by progress.test.mjs and test_progress.py so the browser and the local preview merge the same way.",
+  "normalize": [
+    {
+      "name": "the legacy local file is a list of solved ids",
+      "input": { "solved": ["sum-of-two-digits", "ch03-last-three"] },
+      "book": "build-a-coding-agent",
+      "output": {
+        "version": 1,
+        "book": "build-a-coding-agent",
+        "solved": ["ch03-last-three", "sum-of-two-digits"],
+        "solvedAt": {},
+        "drafts": {}
+      }
+    },
+    {
+      "name": "unknown ids, junk values and oversized drafts are dropped, not repaired",
+      "input": {
+        "version": 1,
+        "book": "build-a-coding-agent",
+        "solved": ["ok-id", "Not An Id", 7, "ok-id"],
+        "solvedAt": { "ok-id": "2026-09-28T10:00:00.000Z", "other": "not a date" },
+        "drafts": {
+          "ok-id": { "code": "print(1)", "updatedAt": "2026-09-28T10:00:00.000Z" },
+          "big": { "code": "__OVERSIZED__", "updatedAt": "2026-09-28T10:00:00.000Z" },
+          "bad-time": { "code": "x", "updatedAt": "yesterday" }
+        }
+      },
+      "book": "build-a-coding-agent",
+      "output": {
+        "version": 1,
+        "book": "build-a-coding-agent",
+        "solved": ["ok-id"],
+        "solvedAt": { "ok-id": "2026-09-28T10:00:00.000Z" },
+        "drafts": {
+          "ok-id": { "code": "print(1)", "updatedAt": "2026-09-28T10:00:00.000Z" }
+        }
+      }
+    },
+    {
+      "name": "garbage is an empty record, never a throw",
+      "input": "not an object",
+      "book": "build-a-coding-agent",
+      "output": {
+        "version": 1,
+        "book": "build-a-coding-agent",
+        "solved": [],
+        "solvedAt": {},
+        "drafts": {}
+      }
+    }
+  ],
+  "merge": [
+    {
+      "name": "solved is a union and the earliest solve time wins; drafts are last write wins",
+      "a": {
+        "version": 1,
+        "book": "build-a-coding-agent",
+        "solved": ["ch03-last-three", "sum-of-two-digits"],
+        "solvedAt": { "ch03-last-three": "2026-09-28T09:00:00.000Z" },
+        "drafts": {
+          "ch03-last-three": { "code": "old", "updatedAt": "2026-09-28T08:00:00.000Z" },
+          "ch03-one-copy": { "code": "mine", "updatedAt": "2026-09-28T12:00:00.000Z" }
+        }
+      },
+      "b": {
+        "version": 1,
+        "book": "build-a-coding-agent",
+        "solved": ["ch03-last-three", "ch06-price-or-zero"],
+        "solvedAt": {
+          "ch03-last-three": "2026-09-28T07:00:00.000Z",
+          "ch06-price-or-zero": "2026-09-28T11:00:00.000Z"
+        },
+        "drafts": {
+          "ch03-last-three": { "code": "new", "updatedAt": "2026-09-28T10:00:00.000Z" },
+          "ch03-one-copy": { "code": "theirs", "updatedAt": "2026-09-28T11:00:00.000Z" }
+        }
+      },
+      "output": {
+        "version": 1,
+        "book": "build-a-coding-agent",
+        "solved": ["ch03-last-three", "ch06-price-or-zero", "sum-of-two-digits"],
+        "solvedAt": {
+          "ch03-last-three": "2026-09-28T07:00:00.000Z",
+          "ch06-price-or-zero": "2026-09-28T11:00:00.000Z"
+        },
+        "drafts": {
+          "ch03-last-three": { "code": "new", "updatedAt": "2026-09-28T10:00:00.000Z" },
+          "ch03-one-copy": { "code": "mine", "updatedAt": "2026-09-28T12:00:00.000Z" }
+        }
+      }
+    },
+    {
+      "name": "a tie keeps the first side, so merging is deterministic",
+      "a": {
+        "version": 1, "book": "b", "solved": [], "solvedAt": {},
+        "drafts": { "x": { "code": "a", "updatedAt": "2026-09-28T10:00:00.000Z" } }
+      },
+      "b": {
+        "version": 1, "book": "b", "solved": [], "solvedAt": {},
+        "drafts": { "x": { "code": "b", "updatedAt": "2026-09-28T10:00:00.000Z" } }
+      },
+      "output": {
+        "version": 1, "book": "b", "solved": [], "solvedAt": {},
+        "drafts": { "x": { "code": "a", "updatedAt": "2026-09-28T10:00:00.000Z" } }
+      }
+    }
+  ]
+}

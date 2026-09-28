@@ -9,6 +9,16 @@ type Props = {
 
 const { book, currentId } = Astro.props
 
+/**
+ * What must be solved for an entry to count as done: a challenge itself, or
+ * every exercise in a chapter. Entries with neither never show a tick. The
+ * page code (`books/tools/runtime/book-progress.mjs`) sets `data-progress-done`.
+ */
+function progressItems(node: BookNode): string | undefined {
+  if (node.kind === 'challenge') return node.id
+  return node.exercises.length > 0 ? node.exercises.join(' ') : undefined
+}
+
 const byId = new Map<string, BookNode>(
   book.nodes.map((node) => [node.id, node]),
 )
@@ -46,8 +56,11 @@ const parts = book.parts.map((part) => ({
                 ]}
                 href={node.path}
                 aria-current={node.id === currentId ? 'page' : undefined}
+                data-progress-items={progressItems(node)}
               >
                 {node.title}
+                <span class="progress-tick" aria-hidden="true">✓</span>
+                <span class="progress-solved sr-only">(solved)</span>
               </a>
             </li>
           ))}
@@ -73,9 +86,12 @@ const parts = book.parts.map((part) => ({
                 ]}
                 href={node.path}
                 aria-current={node.id === currentId ? 'page' : undefined}
+                data-progress-items={progressItems(node)}
               >
                 <span class="tabular-nums opacity-70">{node.number}</span>
                 <span>{node.title}</span>
+                <span class="progress-tick" aria-hidden="true">✓</span>
+                <span class="progress-solved sr-only">(solved)</span>
               </a>
             </li>
           ))}
@@ -84,3 +100,21 @@ const parts = book.parts.map((part) => ({
     ))
   }
 </ol>
+
+<style>
+  /* Shown once the page code marks an entry done; nothing to see before then. */
+  .progress-tick,
+  .progress-solved {
+    display: none;
+  }
+  [data-progress-done] .progress-tick {
+    display: inline;
+    color: #15803d;
+  }
+  :global(.dark) [data-progress-done] .progress-tick {
+    color: #4ade80;
+  }
+  [data-progress-done] .progress-solved {
+    display: inline;
+  }
+</style>

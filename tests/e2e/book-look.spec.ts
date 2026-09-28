@@ -155,6 +155,33 @@ test.describe('the book look switch', () => {
     await expect(toggle).toBeFocused()
   })
 
+  test('a theme set in Plain keeps the site theme menu in step', async ({
+    page,
+  }) => {
+    // The page's colour scheme is light, so System means light.
+    await page.addInitScript(() => {
+      if (!sessionStorage.getItem('seeded')) {
+        localStorage.setItem('theme', 'system')
+        localStorage.setItem('book-look', 'plain')
+        sessionStorage.setItem('seeded', '1')
+      }
+    })
+    await page.goto(CHAPTER)
+    const isDark = () =>
+      page.evaluate(() => document.documentElement.classList.contains('dark'))
+
+    await page.locator('[data-book-theme-toggle]').click()
+    expect(await isDark()).toBe(true)
+
+    await page.locator('[data-book-look-choice="site"]').click()
+    await page.locator(`${SITE_HEADER} button[title]`).last().click()
+    await page.getByRole('menuitem', { name: /system/i }).click()
+    await expect.poll(isDark).toBe(false)
+    expect(await page.evaluate(() => localStorage.getItem('theme'))).toBe(
+      'system',
+    )
+  })
+
   test('the margin popup still opens in Plain', async ({ page }) => {
     await mountMargin(page)
     await page.addInitScript(() => localStorage.setItem('book-look', 'plain'))

@@ -4,6 +4,8 @@ export const SITE_LOCALE_CHANGE_EVENT = 'site-language-change'
 export const LEGACY_BLOG_LOCALE_CHANGE_EVENT = 'blog-language-change'
 
 export const THEME_STORAGE_KEY = 'theme'
+/** Fired on `document` when something other than ModeToggle stores a theme. */
+export const THEME_CHANGE_EVENT = 'site-theme-change'
 export const SITE_THEME_VALUES = ['theme-light', 'dark', 'system'] as const
 export type SiteTheme = (typeof SITE_THEME_VALUES)[number]
 

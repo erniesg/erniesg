@@ -97,7 +97,7 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
     isBookLook,
     type BookLook,
   } from '@/lib/book-look'
-  import { THEME_STORAGE_KEY } from '@/lib/site-preferences'
+  import { THEME_CHANGE_EVENT, THEME_STORAGE_KEY } from '@/lib/site-preferences'
 
   const root = document.documentElement
 
@@ -158,6 +158,7 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
     } catch {
       // Storage refused: the theme holds for this page only.
     }
+    document.dispatchEvent(new CustomEvent(THEME_CHANGE_EVENT))
     syncControls()
   }
 

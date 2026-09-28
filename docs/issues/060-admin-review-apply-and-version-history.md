@@ -32,11 +32,30 @@ stay at each owning adapter boundary.
   never merge. The adapter must open PRs with the repo-scoped credential below.
 - No adapter exists, so there is no path from an approved proposal to
   `books/chapters/<node>.md`.
+- **The reviewer cannot see private proposals.** `listAnnotationsQuery`
+  (`src/worker/margin/queries.ts`) returns a private row only to its creator,
+  so a proposal saved under a private default never reaches the admin.
+- **`.agent/merge-policy.yaml` only merges branches named `codex/*`,
+  `claude/*` or `coordinator/*`**, requires a linked issue, and does not list
+  `books/**` as automatic. The policy file itself is a sensitive path that
+  needs the owner's opt-in to change, and rucksack's generator refuses to
+  overwrite an operator-edited policy (`--reset-merge-policy` is required), so
+  a hand edit survives regeneration.
 
 ## Success criteria
 
 1. A review queue lists pending proposals across documents, filterable by
-   document and state, visible only to the admin identity from 055.
+   document and state, visible only to the admin identity from 055. It is
+   served by an **admin-only review listing**
+   (`GET /proposals?scope=review`), whose query includes private proposals
+   from every creator within the admin's site. 055's `admin` role is global
+   today, so this issue adds an explicit **site-admin mapping**
+   (`margin_site_admins(site, identity)`, a D1 migration). The listing's SQL
+   predicate requires `site IN (sites this identity administers)`, never a
+   site the caller supplies. `ernie.sg`'s owner is seeded as its only site
+   admin. The exception is in the query. The ordinary `GET /annotations` and
+   `GET /proposals` visibility rules are unchanged, and a non-admin asking for
+   `scope=review` gets 403.
 2. Each proposal renders as a diff with additions and deletions distinctly
    marked, from the CriticMarkup patch, alongside the reviewer's own view of
    the rendered result.
@@ -63,36 +82,68 @@ stay at each owning adapter boundary.
    static history asset from `git log --follow --name-status -- <file>`,
    holding each commit's metadata, **the file's path at that commit** (so a
    renamed node keeps its pre-rename versions), and the content read with
-   `git show <commit>:<path-at-that-commit>`. The page and the endpoint read
-   that asset, so history needs no credential and no GitHub API rate limit,
-   and it always matches the deployed build. Like 059's stamp, it refuses a
-   shallow or partial checkout, and any git error fails the build rather than
-   emitting partial history.
-9. Applying is idempotent: a retried apply does not open a second pull request.
+   `git show <commit>:<path-at-that-commit>`. A commit whose status for the
+   file is `D` (deleted) is recorded as a **tombstone**, with no content and no
+   `git show`, so a node that was deleted and later restored keeps building.
+   A tombstone is a history entry and keeps its place in the git-log order,
+   but it is never rendered or diffed; 072 shows it as a "deleted in this
+   commit" step. The page reads that asset, so history needs no credential and no GitHub API
+   rate limit, and it always matches the deployed build. Like 059's stamp, it
+   refuses a shallow or partial checkout, and any other git error fails the
+   build rather than emitting partial history. The asset holds no proposal IDs
+   (see 072).
+   **History is site-owned.** Each consuming site builds and serves its own
+   history asset. When the site registers its adapter with the service, it
+   declares a `historyLocation` URL template. `GET /documents/:id/history`
+   answers with that site's locator (and, for the co-deployed `ernie.sg`
+   site, the asset itself from `ASSETS`). It never reads another site's
+   repository.
+9. Applying is idempotent across runs, not just within one. Each proposal
+   has one deterministic branch, `coordinator/margin-proposal-<proposal-id>`,
+   which `.agent/merge-policy.yaml` accepts. Before creating anything, a run
+   looks for an existing tracking issue (by a `margin-proposal:<id>` marker)
+   and an open or merged PR from that branch, and adopts them. So an
+   overlapping scheduled and manual run, or a run that crashed after creating
+   the PR but before reporting, never produces a second issue or PR. The
+   workflow also sets a `concurrency` group so two runs never overlap.
 10. **Apply is one action, bound to what was reviewed; merging follows the
     repository's merge policy.** `POST /proposals/:id/apply` carries the
     `revision` (from 059) the admin reviewed. In one transaction it refuses
-    with `409` if the proposal has moved past that revision, and otherwise
-    snapshots that revision's CriticMarkup and base commit as the approved
-    change and returns `202` with state `approved`. Later revisions never alter
+    with `409` unless the proposal is still `pending` (not withdrawn) **and**
+    still at that revision, and otherwise snapshots that revision's
+    CriticMarkup and base commit as the approved change and returns `202` with
+    state `approved`. Later revisions never alter
     an approved snapshot. It never waits on the adapter.
-    The adapter's feed is rows in `approved`, plus rows in `apply_failed` whose
-    attempt count is under the limit (3), so a failed apply is retried on the
-    next run. The adapter reports back, and the queue shows every state:
+    The adapter's feed is rows in `approved`, rows in `pr_open` or `conflict`
+    (so every run can refresh them until they reach `merged` or `closed`), and
+    rows in `apply_failed` whose attempt count is under the limit (3), so a
+    failed apply is retried on the next run. The adapter reports back, and the queue shows every state:
     `pr_open` (PR number, URL and full head SHA), `conflict` (the rebase
     conflict, shown to the admin), `merged` (the merge commit SHA), `closed`,
     or `apply_failed` (reason and attempt count). While a PR is open, each
     adapter run refreshes its head SHA and check state from GitHub and reports
     them.
-    `.agent/merge-policy.yaml` is authoritative for merging. Today `books/**`
-    is not an automatic path, so an applied PR waits for the owner's
-    `/rucksack merge <full-current-head-sha>`. The queue shows that exact
-    command, filled with the head SHA the adapter last reported. The policy also
-    forbids a PR with no linked issue, so for each approved proposal the adapter
-    opens one tracking issue (title from the proposal, body linking it) and puts
-    `Closes #<issue>` in the PR body. Adding book paths to automatic merge is an
-    owner policy decision made through the guarded policy process, outside this
-    issue. Do not arm GitHub auto-merge around it.
+    **Owner decision (2026-09-28): applied proposals merge automatically when
+    green.** The owner's Apply is the review; the required checks and issue
+    linkage still gate every merge. This issue's PR adds `books/chapters/**`
+    and `books/challenges/*/challenge.md` to `automatic_path_patterns` in
+    `.agent/merge-policy.yaml`. Because that file is a sensitive path, that PR
+    needs the owner's `/rucksack merge` opt-in, which is the guarded process.
+    Keep the edit so rucksack's generator preserves it (it refuses to overwrite
+    an operator policy without `--reset-merge-policy`). `.agent/merge-policy.yaml`
+    stays authoritative: rucksack merges an eligible adapter PR, and the
+    adapter never arms GitHub auto-merge itself. If a PR is not eligible (a
+    path outside the automatic list, or a failed gate), the queue says why and
+    shows the exact `/rucksack merge <full-current-head-sha>` command, filled
+    with the head SHA the adapter last reported. The policy forbids a PR with
+    no linked issue, so for each approved proposal the adapter opens one
+    tracking issue and puts `Closes #<issue>` in the PR body. **The tracking
+    issue carries nothing private:** the title is `Margin proposal for
+    <node-id>`, the body names the node and the PR, and the marker is an
+    opaque `margin-proposal:<hmac>`, an HMAC of the proposal ID under a
+    service-held key, which cannot be reversed to the ID. No proposal title,
+    text, author or link to the proposal goes into GitHub for a private
+    proposal. A public proposal may link to itself.
 11. The adapter runs as a GitHub Actions workflow in `erniesg/erniesg`
     (`schedule` plus `workflow_dispatch`) that **pulls** approved proposals
     from the service. The Worker never calls GitHub, so it holds no GitHub
@@ -103,10 +154,12 @@ stay at each owning adapter boundary.
     read the feed and report results. Proposals from another site are
     invisible to it. A second consuming repository gets its own token without
     any change to this contract.
-    Every adapter PR puts a `Margin-Proposal: <proposal-id>` trailer in its
-    body and in the squash commit message, and the reported merge commit SHA
-    is stored on the proposal. 072 resolves a history commit to its proposal
-    through either one.
+    When the PR merges, the adapter reports the merge commit SHA, and the
+    service stores it on the proposal. That stored SHA is the only
+    commit-to-proposal link. It does not depend on the merge actor copying a
+    trailer into the squash commit, and it never appears in a public asset.
+    072 resolves a history commit to its proposal through the service, keyed
+    by that SHA.
 12. The page has a history panel: the node's versions, newest first, and any
     two picked to show a rendered diff. Replay over time is 072.
 
@@ -124,8 +177,26 @@ stay at each owning adapter boundary.
 - A row that failed once is in the next run's feed and ends with exactly one
   PR; after three failures it leaves the feed and stays `apply_failed`.
 - The adapter's reports move a row through `pr_open`, `conflict`, `merged` and
-  `closed`, and the queue shows `/rucksack merge <full-head-sha>` with the
-  last reported head SHA.
+  `closed` across **separate runs**: a row reported `pr_open` in one run is in
+  the next run's feed and reaches `merged` with its merge commit SHA stored.
+- For a PR that is not merge-eligible, the queue shows
+  `/rucksack merge <full-head-sha>` with the last reported head SHA.
+- Apply on a proposal withdrawn after the admin loaded it is refused with
+  `409`, even at the same revision.
+- A run that crashes after creating the PR but before reporting, followed by
+  a second run, leaves exactly one tracking issue and one PR, on
+  `coordinator/margin-proposal-<id>`.
+- A private proposal from another reader appears in the admin's
+  `scope=review` listing and nowhere else; a non-admin's `scope=review` is 403.
+  An admin of one site given a second site's scope gets none of that site's
+  private proposals.
+- The tracking issue and PR for a private proposal contain no proposal ID,
+  title, text or author, only the node, the PR and the opaque marker.
+- A fixture node that is deleted and later restored builds, with the
+  deletion shown as a tombstone.
+- A second fake adapter registered for another site gets its own
+  `historyLocation` back from `GET /documents/:id/history`, and the service
+  never reads that site's repository.
 - An admin's own edit produces the same artifact as a reader's proposal.
 - A proposal whose base commit is behind `main` but conflict-free rebases and
   applies; one that conflicts is refused with the conflict surfaced.
@@ -141,9 +212,10 @@ stay at each owning adapter boundary.
   from its feed, reporting on them is 403, and every other route is 403.
 - A non-admin calling apply is 403.
 - The adapter's pull-request step uses the repo-scoped credential, never
-  `GITHUB_TOKEN` (a workflow-boundary test greps the adapter workflow), and it
-  never arms auto-merge on a PR touching a path that
-  `.agent/merge-policy.yaml` does not list as automatic.
+  `GITHUB_TOKEN` (a workflow-boundary test greps the adapter workflow). It
+  never arms GitHub auto-merge, and every branch it creates matches
+  `coordinator/margin-proposal-*`, which a policy-boundary test checks against
+  `.agent/merge-policy.yaml`'s `head_branch_patterns`.
 - The build's history asset for a node lists the same commits as
   `git log --follow --format=%H -- <file>`, and the content at each commit
   equals `git show <commit>:<path-at-that-commit>`. A fixture that renames a
@@ -163,7 +235,7 @@ npm run test:margin
 python3 books/tools/validate.py
 npm test
 npm run build
-export SRT_E2E_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')
+if [ -f tools/e2e-port.mjs ]; then export SRT_E2E_PORT=$(node tools/e2e-port.mjs); else export SRT_E2E_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()'); fi
 npx playwright test tests/e2e/margin-review.spec.ts
 ```
 
@@ -187,8 +259,9 @@ bindings must contain no repository token at all.
 
 Two secrets, both by name only:
 - `MARGIN_ADAPTER_GITHUB_TOKEN`: a GitHub Actions secret on `erniesg/erniesg`,
-  a fine-grained token for this repository only, with contents and pull
-  requests write. It opens the adapter's PRs, so their checks run.
+  a fine-grained token for this repository only, with **Contents, Pull
+  requests and Issues: write** (Issues for the tracking issue the merge policy
+  requires). It opens the adapter's PRs, so their checks run.
 - `MARGIN_ADAPTER_TOKEN`: a GitHub Actions secret holding this repository's
   adapter token for the `ernie.sg` site. The Worker holds only its SHA-256,
   bound to `(site, adapter)`, never the token itself.
@@ -202,8 +275,9 @@ history endpoint; the credential-boundary test.
 ## Stop conditions
 
 Stop before putting a git credential in the Worker, before letting an admin
-edit bypass the proposal path, before applying a stale proposal, and before
-copying commit history into D1.
+edit bypass the proposal path, before applying a stale or withdrawn proposal,
+before copying commit history into D1, before putting a proposal ID in a
+public asset, and before arming GitHub auto-merge from the adapter.
 
 ## Human clarification protocol
 

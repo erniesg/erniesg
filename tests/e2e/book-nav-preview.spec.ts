@@ -54,6 +54,22 @@ test('a solved challenge is ticked and counted as it happens', async ({ page }) 
   expect(Number(solvedAtLoad)).toBeLessThanOrEqual(2)
 })
 
+test('a green grade ticks the challenge without a reload', async ({ page }) => {
+  // The grader's answer, stubbed: no real run, and progress.json untouched.
+  await page.route('**/api/grade', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, tiers: [], output: '' }),
+    }),
+  )
+  await page.goto('/pool-ticket-price')
+  const segment = page.locator(`${INDICATOR} [data-cp-practice="pool-ticket-price"]`)
+  const before = await segment.getAttribute('data-progress-done')
+  await page.locator('.desk-actions button.run').first().click()
+  await expect(segment).toHaveAttribute('data-progress-done', '')
+  expect(before === null || before === '').toBe(true)
+})
+
 test('the indicator stays in view after scrolling 2000px', async ({ page }) => {
   await page.goto('/ch02-conditionals')
   await page.mouse.wheel(0, 2000)

@@ -524,6 +524,11 @@ document.querySelectorAll('.desk').forEach(desk => {
         `<span class="tier ${t.outcome === 'pass' ? 'pass' : 'fail'}">${t.tier} - ${t.outcome}</span>`
       ).join('');
       status.textContent = result.ok ? 'All four tiers green.' : '';
+      // The grader has written it to progress.json; the chapter indicator
+      // ticks it now rather than on the next page load.
+      if (result.ok) document.querySelectorAll('[data-progress-items]').forEach(item => {
+        if (item.dataset.progressItems === desk.dataset.node) item.setAttribute('data-progress-done', '');
+      });
       verdict.hidden = result.ok;
       verdict.innerHTML = result.ok ? '' :
         `<span class="mark">&#10007;</span> ` + escapeHtml(result.summary || `${result.stopped_at} is red.`);

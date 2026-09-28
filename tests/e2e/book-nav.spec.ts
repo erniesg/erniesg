@@ -191,6 +191,38 @@ for (const look of ['site', 'plain'] as const) {
       await expect(sheet).toBeHidden()
     })
 
+    test('the shortcut list keeps focus inside and the page behind inert', async ({
+      page,
+    }) => {
+      await page.goto(CHAPTER)
+      await page.keyboard.press('?')
+      const close = page.locator('[data-book-keys-close]')
+      await expect(close).toBeFocused()
+      for (const key of ['Tab', 'Shift+Tab', 'Tab']) {
+        await page.keyboard.press(key)
+        await expect(close).toBeFocused()
+      }
+      expect(
+        await page.locator('.book-content').evaluate((element) => !!element.closest('[inert]')),
+      ).toBe(true)
+      await page.keyboard.press('Escape')
+      await expect(page.locator('[data-book-keys-inert]')).toHaveCount(0)
+    })
+
+    test('the shortcuts stand down on a page that is not the book', async ({
+      page,
+    }) => {
+      await page.goto(CHAPTER)
+      // What a client-router swap to another page leaves: the listener, and
+      // no chapter indicator.
+      await page.evaluate(() => document.querySelector('[data-chapter-progress]')?.remove())
+      await page.keyboard.press('?')
+      await expect(page.locator('[data-book-keys]:not([hidden])')).toHaveCount(0)
+      await page.keyboard.press(']')
+      await page.waitForTimeout(400)
+      await expect(page).toHaveTitle(/^Choosing with if/)
+    })
+
     test('in split view the indicator stays above the panes and live', async ({
       page,
     }) => {

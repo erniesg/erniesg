@@ -302,15 +302,32 @@ function helpSheet(doc) {
 
 let returnFocus = null
 
+/** While the sheet is open everything else on the page is inert, so it is a real modal. */
+function setBackgroundInert(doc, sheet, inert) {
+  for (const element of doc.body.children) {
+    if (element === sheet) continue
+    if (inert) {
+      if (element.hasAttribute('inert')) continue
+      element.setAttribute('inert', '')
+      element.setAttribute('data-book-keys-inert', '')
+    } else if (element.hasAttribute('data-book-keys-inert')) {
+      element.removeAttribute('inert')
+      element.removeAttribute('data-book-keys-inert')
+    }
+  }
+}
+
 function setHelp(doc, open) {
   const sheet = helpSheet(doc)
   if (open === !sheet.hidden) return
   if (open) {
     returnFocus = doc.activeElement
     sheet.hidden = false
+    setBackgroundInert(doc, sheet, true)
     sheet.querySelector('[data-book-keys-close]')?.focus()
   } else {
     sheet.hidden = true
+    setBackgroundInert(doc, sheet, false)
     if (returnFocus && typeof returnFocus.focus === 'function' && returnFocus.isConnected) {
       returnFocus.focus()
     }
@@ -371,11 +388,20 @@ export function installBookKeys(doc = document) {
   doc.documentElement.setAttribute('data-book-keys-installed', '')
   doc.addEventListener('keydown', (event) => {
     const sheet = doc.querySelector('[data-book-keys]')
-    if (event.key === 'Escape' && sheet && !sheet.hidden) {
-      event.preventDefault()
-      setHelp(doc, false)
+    if (sheet && !sheet.hidden) {
+      if (event.key === 'Escape' || event.key === '?') {
+        event.preventDefault()
+        setHelp(doc, false)
+      } else if (event.key === 'Tab') {
+        // One control inside: focus stays on it.
+        event.preventDefault()
+        sheet.querySelector('[data-book-keys-close]')?.focus()
+      }
       return
     }
+    // The listener outlives a client-router swap to a page that is not the
+    // book; there, it is not ours to take any key.
+    if (!doc.querySelector('[data-chapter-progress]')) return
     const action = shortcutFor(event)
     if (!action) return
     if (isTypingContext(event, doc)) return

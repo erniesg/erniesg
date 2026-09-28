@@ -125,3 +125,13 @@ describe('acknowledge', () => {
     expect(acknowledge(mine, other).drafts.x.code).toBe('same')
   })
 })
+
+describe('draft ties', () => {
+  it('pick the same draft whichever copy comes first', () => {
+    const at = '2026-09-28T10:00:00.000Z'
+    const a = setDraft(emptyProgress('b'), 'x', 'alpha', at)
+    const b = setDraft(emptyProgress('b'), 'x', 'beta', at)
+    expect(merge(a, b).drafts.x.code).toBe('beta')
+    expect(merge(b, a).drafts.x.code).toBe('beta')
+  })
+})

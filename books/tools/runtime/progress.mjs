@@ -19,7 +19,9 @@
  *
  * Merging two copies never loses a solve and never picks a draft by accident:
  * solved is the union with the earliest known time, and a draft is the one
- * written last, the first argument winning a tie. `books/tools/progress.py`
+ * written last. Two drafts with the same time are ordered by their code, by
+ * code point, so every copy and the service pick the same one whatever order
+ * they meet in. `books/tools/progress.py`
  * mirrors these rules and `progress-fixtures.json` holds both to them.
  *
  * Plain JavaScript with no imports, because two very different hosts load it:
@@ -91,7 +93,24 @@ function earlier(left, right) {
   return Date.parse(right) < Date.parse(left) ? right : left
 }
 
-/** Both copies, combined. `a` wins a draft tie. The book is `a`'s. */
+/** Code-point order, the order SQLite and Python compare text in. */
+function compareCode(a, b) {
+  const left = [...a]
+  const right = [...b]
+  for (let index = 0; index < Math.min(left.length, right.length); index += 1) {
+    const difference = left[index].codePointAt(0) - right[index].codePointAt(0)
+    if (difference !== 0) return difference
+  }
+  return left.length - right.length
+}
+
+/** Positive when `a` should win over `b`: later, or the same time and the larger code. */
+export function compareDrafts(a, b) {
+  const time = Date.parse(a.updatedAt) - Date.parse(b.updatedAt)
+  return time !== 0 ? time : compareCode(a.code, b.code)
+}
+
+/** Both copies, combined. The book is `a`'s. */
 export function merge(a, b) {
   const left = normalize(a, isRecord(a) && typeof a.book === 'string' ? a.book : '')
   const right = normalize(b, left.book)
@@ -106,7 +125,7 @@ export function merge(a, b) {
     const mine = left.drafts[id]
     const theirs = right.drafts[id]
     merged.drafts[id] =
-      mine && (!theirs || Date.parse(mine.updatedAt) >= Date.parse(theirs.updatedAt))
+      mine && (!theirs || compareDrafts(mine, theirs) >= 0)
         ? mine
         : theirs
   }

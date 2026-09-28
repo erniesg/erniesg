@@ -12,4 +12,4 @@ export function startProgress(options: {
   book: string
   backend: ProgressBackend
   now?: () => string
-}): Promise<{ current(): Progress }>
+}): Promise<{ current(): Progress; flush(): void; stop(): void }>

@@ -77,13 +77,19 @@ const site = new URL(SITE.SITEURL).origin
     }
   }
 
-  // The site swaps pages without a reload, so this runs on every page view.
-  document.addEventListener('astro:page-load', () => {
+  // The site swaps pages without a reload, so this runs on every page view,
+  // and a pending save is written before the next page replaces this one.
+  let running: { stop(): void } | null = null
+  document.addEventListener('astro:before-preparation', () => {
+    running?.stop()
+    running = null
+  })
+  document.addEventListener('astro:page-load', async () => {
     const root = document.querySelector<HTMLElement>('[data-book-progress]')
     if (!root) return
     const book = root.dataset.book ?? ''
     const site = root.dataset.site ?? window.location.origin
-    void startProgress({
+    running = await startProgress({
       book,
       backend: siteBackend({ book, site, storage: safeStorage() }),
     })

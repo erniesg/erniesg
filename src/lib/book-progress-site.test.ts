@@ -50,6 +50,13 @@ function fakeSite(options: { me?: unknown; server?: unknown; fail?: boolean } = 
 }
 
 describe('changesSince', () => {
+  it('sends a draft that wins a tie in time, so account and browser agree', () => {
+    const base = setDraft(emptyProgress(BOOK), 'a', 'alpha', T1)
+    const next = setDraft(emptyProgress(BOOK), 'a', 'beta', T1)
+    expect(changesSince(next, base)?.drafts).toEqual({ a: { code: 'beta', updatedAt: T1 } })
+    expect(changesSince(base, next)).toBeNull()
+  })
+
   it('sends an earlier time for a solve the account already has', () => {
     const base = markSolved(emptyProgress(BOOK), 'a', T2)
     const next = markSolved(emptyProgress(BOOK), 'a', T1)
@@ -78,7 +85,7 @@ describe('siteBackend', () => {
     const backend = siteBackend({ book: BOOK, site: SITE, storage, fetchImpl: site.fetchImpl })
     expect(await backend.load()).toEqual(emptyProgress(BOOK))
     const solved = markSolved(emptyProgress(BOOK), 'a', T1)
-    expect(await backend.save(solved)).toBeNull()
+    expect(await backend.save(solved)).toEqual(solved)
     expect(JSON.parse(storage.map.get(storageKey(BOOK))!).solved).toEqual(['a'])
     expect(site.calls.filter((c) => c.url.includes('/progress'))).toEqual([])
     expect(backend.describe()).toBe('Saved in this browser.')
@@ -115,7 +122,7 @@ describe('siteBackend', () => {
     const site = fakeSite({ fail: true })
     const backend = siteBackend({ book: BOOK, site: SITE, storage, fetchImpl: site.fetchImpl })
     expect(await backend.load()).toEqual(emptyProgress(BOOK))
-    expect(await backend.save(markSolved(emptyProgress(BOOK), 'a', T1))).toBeNull()
+    expect((await backend.save(markSolved(emptyProgress(BOOK), 'a', T1)))?.solved).toEqual(['a'])
     expect(JSON.parse(storage.map.get(storageKey(BOOK))!).solved).toEqual(['a'])
   })
 
@@ -123,7 +130,7 @@ describe('siteBackend', () => {
     const site = fakeSite()
     const backend = siteBackend({ book: BOOK, site: SITE, storage: undefined, fetchImpl: site.fetchImpl })
     expect(await backend.load()).toEqual(emptyProgress(BOOK))
-    expect(await backend.save(markSolved(emptyProgress(BOOK), 'a', T1))).toBeNull()
+    expect((await backend.save(markSolved(emptyProgress(BOOK), 'a', T1)))?.solved).toEqual(['a'])
     expect(backend.describe()).toBe(
       'Not saved: this browser is not keeping site data. Export progress to keep it.',
     )
@@ -177,5 +184,40 @@ describe('chunks', () => {
       expect(Object.keys(part.drafts).length).toBeLessThanOrEqual(200)
     }
     expect(parts.flatMap((part) => Object.keys(part.drafts)).sort()).toEqual(Object.keys(change.drafts).sort())
+  })
+})
+
+describe('two tabs', () => {
+  it('a save keeps what another tab stored since this one loaded', async () => {
+    const storage = memory()
+    const site = fakeSite()
+    const first = siteBackend({ book: BOOK, site: SITE, storage, fetchImpl: site.fetchImpl })
+    const second = siteBackend({ book: BOOK, site: SITE, storage, fetchImpl: site.fetchImpl })
+    const start = await first.load()
+    await second.load()
+    await first.save(markSolved(start, 'from-first', T1))
+    const after = await second.save(setDraft(start, 'from-second', 'x', T2))
+    expect(after?.solved).toEqual(['from-first'])
+    const stored = JSON.parse(storage.map.get(storageKey(BOOK))!)
+    expect(stored.solved).toEqual(['from-first'])
+    expect(stored.drafts['from-second'].code).toBe('x')
+  })
+
+  it('adopts the time the account clamped an upload to, even on the first load', async () => {
+    const future = '2099-01-01T00:00:00.000Z'
+    const storage = memory()
+    storage.setItem(storageKey(BOOK), JSON.stringify(setDraft(emptyProgress(BOOK), 'a', 'mine', future)))
+    const site = fakeSite({ me: { authenticated: true, canWrite: true } })
+    const clamp = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const response = await site.fetchImpl(input, init)
+      if (!String(input).startsWith('/api/margin/v1/progress')) return response
+      const body = (await response.json()) as Progress
+      for (const draft of Object.values(body.drafts)) if (draft.updatedAt > T2) draft.updatedAt = T2
+      return new Response(JSON.stringify(body), { status: 200 })
+    }) as typeof fetch
+    const backend = siteBackend({ book: BOOK, site: SITE, storage, fetchImpl: clamp })
+    const loaded = (await backend.load()) as Progress
+    expect(loaded.drafts.a).toEqual({ code: 'mine', updatedAt: T2 })
+    expect(JSON.parse(storage.map.get(storageKey(BOOK))!).drafts.a.updatedAt).toBe(T2)
   })
 })

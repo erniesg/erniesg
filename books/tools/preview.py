@@ -744,6 +744,9 @@ if (scrollBar) {
 # /api/progress; the page code is the same module the published site runs.
 PROGRESS_SCRIPT = r"""
 import { startProgress } from '/runtime/book-progress.mjs';
+// Whether the last write reached the file, so the status never claims a save
+// the server refused.
+let saved = true;
 startProgress({
   book: __BOOK__,
   backend: {
@@ -751,14 +754,21 @@ startProgress({
       try { const r = await fetch('/api/progress'); return r.ok ? await r.json() : {}; } catch { return {}; }
     },
     async save(progress) {
+      const body = JSON.stringify(progress);
       try {
+        // keepalive lets a save started as the page unloads still arrive; it
+        // only takes small bodies, which every ordinary save is.
         const r = await fetch('/api/progress', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(progress),
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
+          keepalive: body.length < 60000,
         });
+        saved = r.ok;
         return r.ok ? await r.json() : null;
-      } catch { return null; }
+      } catch { saved = false; return null; }
     },
-    describe: () => 'Saved to books/workspace/progress.json',
+    describe: () => saved
+      ? 'Saved to books/workspace/progress.json'
+      : 'Not saved: the preview could not write books/workspace/progress.json.',
   },
 });
 """

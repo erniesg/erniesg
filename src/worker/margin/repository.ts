@@ -111,13 +111,18 @@ export interface MarginRepository {
   /** The owner's own progress in one book. Nobody else's is reachable. */
   listProgress(owner: string, scope: ProgressScope): Promise<ProgressRow[]>
 
-  /** Merge items into the owner's progress; never removes or un-solves. */
+  /**
+   * Merge items into the owner's progress; never removes or un-solves. A new
+   * item is refused once the book holds `cap` items, atomically. Returns how
+   * many items were refused.
+   */
   mergeProgress(
     owner: string,
     scope: ProgressScope,
     items: ProgressItem[],
     now: string,
-  ): Promise<void>
+    cap: number,
+  ): Promise<number>
 }
 
 /** Applied when a user has never set a preference. */

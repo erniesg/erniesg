@@ -202,3 +202,31 @@ describe('one shape, one set of limits', () => {
     expect(migration).toContain(`length(draft) <= ${MAX_PROGRESS_DRAFT_LENGTH}`)
   })
 })
+
+describe('the cap under concurrency', () => {
+  it('holds inside the statement, not only in the route check', async () => {
+    const { ADA_KEY } = await import('./fixtures')
+    const scope = { site: 'https://ernie.sg', book: 'build-a-coding-agent' }
+    const item = (id: string) => ({ item: id, solved: true, solvedAt: null, draft: null, draftUpdated: null })
+    const now = '2026-09-22T00:00:00.000Z'
+    // Two requests that both passed the route check see the book at cap - 1.
+    const filled = Array.from({ length: MAX_PROGRESS_ITEMS_PER_BOOK - 1 }, (_, index) => item(`fill-${index}`))
+    expect(await harness.repository.mergeProgress(ADA_KEY, scope, filled, now, MAX_PROGRESS_ITEMS_PER_BOOK)).toBe(0)
+    const [first, second] = await Promise.all([
+      harness.repository.mergeProgress(ADA_KEY, scope, [item('first')], now, MAX_PROGRESS_ITEMS_PER_BOOK),
+      harness.repository.mergeProgress(ADA_KEY, scope, [item('second')], now, MAX_PROGRESS_ITEMS_PER_BOOK),
+    ])
+    expect(first + second).toBe(1)
+    expect((await harness.repository.listProgress(ADA_KEY, scope)).length).toBe(MAX_PROGRESS_ITEMS_PER_BOOK)
+    // An item already held still updates at the cap.
+    expect(await harness.repository.mergeProgress(ADA_KEY, scope, [item('fill-0')], now, MAX_PROGRESS_ITEMS_PER_BOOK)).toBe(0)
+  })
+
+  it('breaks a draft tie by code, the same way the page code does', async () => {
+    await patch(progress({ drafts: { x: { code: 'alpha', updatedAt: EARLY } } }))
+    const after = await patch(progress({ drafts: { x: { code: 'beta', updatedAt: EARLY } } }))
+    expect(((await after.json()) as Progress).drafts.x.code).toBe('beta')
+    const again = await patch(progress({ drafts: { x: { code: 'alpha', updatedAt: EARLY } } }))
+    expect(((await again.json()) as Progress).drafts.x.code).toBe('beta')
+  })
+})

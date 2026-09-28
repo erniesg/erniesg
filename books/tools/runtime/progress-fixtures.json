@@ -91,7 +91,7 @@
       }
     },
     {
-      "name": "a tie keeps the first side, so merging is deterministic",
+      "name": "a tie in time goes to the larger code, whichever side it is on",
       "a": {
         "version": 1, "book": "b", "solved": [], "solvedAt": {},
         "drafts": { "x": { "code": "a", "updatedAt": "2026-09-28T10:00:00.000Z" } }
@@ -102,7 +102,7 @@
       },
       "output": {
         "version": 1, "book": "b", "solved": [], "solvedAt": {},
-        "drafts": { "x": { "code": "a", "updatedAt": "2026-09-28T10:00:00.000Z" } }
+        "drafts": { "x": { "code": "b", "updatedAt": "2026-09-28T10:00:00.000Z" } }
       }
     }
   ]

@@ -13,6 +13,7 @@
 import {
   acknowledge,
   browserStore,
+  compareDrafts,
   merge,
   normalize,
   type Progress,
@@ -45,7 +46,7 @@ export function changesSince(next: Progress, base: Progress): Progress | null {
   const drafts: Progress['drafts'] = {}
   for (const [id, draft] of Object.entries(next.drafts)) {
     const known = base.drafts[id]
-    if (!known || Date.parse(draft.updatedAt) > Date.parse(known.updatedAt)) drafts[id] = draft
+    if (!known || compareDrafts(draft, known) > 0) drafts[id] = draft
   }
   if (solved.length === 0 && Object.keys(drafts).length === 0) return null
   const solvedAt: Progress['solvedAt'] = {}
@@ -144,9 +145,12 @@ export function siteBackend({
         mode = 'account'
         // Re-read: the page may have saved an edit while the account loaded.
         local = store.load()
-        const merged = acknowledge(merge(local, account), account)
+        let merged = acknowledge(merge(local, account), account)
+        const stored = await send(changesSince(merged, account))
+        // Adopt what the account made of the upload (a clamped time, say)
+        // before keeping it, or the browser copy would differ from it forever.
+        if (stored) merged = acknowledge(merged, stored)
         browserWrites = store.save(merged)
-        await send(changesSince(merged, account))
         return merged
       } catch {
         if (account) mode = 'account-unreachable'
@@ -155,15 +159,23 @@ export function siteBackend({
     },
 
     async save(progress: Progress): Promise<Progress | null> {
-      browserWrites = store.save(progress)
-      if (!account) return null
+      // Another tab may have saved since this one loaded: keep what it wrote.
+      // The browser write happens before any await, so a save started as the
+      // page unloads still lands.
+      let merged = merge(progress, store.load())
+      browserWrites = store.save(merged)
+      if (!account) return merged
       try {
-        const stored = await send(changesSince(progress, account))
+        const stored = await send(changesSince(merged, account))
         mode = 'account'
-        return stored
+        if (stored) {
+          merged = acknowledge(merge(merged, stored), stored)
+          browserWrites = store.save(merged)
+        }
+        return merged
       } catch {
         mode = 'account-unreachable'
-        return null
+        return merged
       }
     },
 

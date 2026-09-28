@@ -245,14 +245,18 @@ export class D1MarginRepository implements MarginRepository {
     scope: ProgressScope,
     items: ProgressItem[],
     now: string,
-  ): Promise<void> {
+    cap: number,
+  ): Promise<number> {
     // No batch on this binding's interface: one upsert per item. A client sends
     // only what changed, and the route caps a request at a few hundred.
+    let refused = 0
     for (const item of items) {
-      await this.statement(
-        mergeProgressQuery(owner, scope.site, scope.book, item, now),
+      const result = await this.statement(
+        mergeProgressQuery(owner, scope.site, scope.book, item, now, cap),
       ).run()
+      if ((result.meta?.changes ?? 0) === 0) refused += 1
     }
+    return refused
   }
 }
 

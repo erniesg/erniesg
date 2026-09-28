@@ -24,6 +24,7 @@ export function emptyProgress(book: string): Progress
 export function normalize(raw: unknown, book: string): Progress
 export function merge(a: unknown, b: unknown): Progress
 export function acknowledge(mine: Progress, stored: Progress): Progress
+export function compareDrafts(a: Draft, b: Draft): number
 export function markSolved(progress: Progress, id: string, now: string): Progress
 export function setDraft(progress: Progress, id: string, code: string, now: string): Progress
 export function isSolved(progress: Progress, id: string): boolean

@@ -660,7 +660,22 @@ async function writeProgress(
     )
   }
 
-  await context.repository.mergeProgress(owner, scope, items, now)
+  // The check above answers the common case with nothing written; this one is
+  // what holds under concurrent requests, inside each statement.
+  const refused = await context.repository.mergeProgress(
+    owner,
+    scope,
+    items,
+    now,
+    MAX_PROGRESS_ITEMS_PER_BOOK,
+  )
+  if (refused > 0) {
+    return problem(
+      413,
+      'too_many_items',
+      `a book holds at most ${MAX_PROGRESS_ITEMS_PER_BOOK} items of progress; ${refused} new item(s) were not stored`,
+    )
+  }
   const rows = await context.repository.listProgress(owner, scope)
   return json(progressToWire(scope.book, rows))
 }

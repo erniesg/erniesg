@@ -161,6 +161,16 @@ test('export and import carry progress, merged, never replaced', async ({ page }
   await expect(page.locator('[data-progress-status]')).toHaveText(
     'Imported: 1 newly solved. Saved in this browser.',
   )
+  // A file that belongs to another book is refused, not re-keyed.
+  await page.locator('[data-progress-import-file]').setInputFiles({
+    name: 'other.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({ version: 1, book: 'another-book', solved: ['ch07-receipt-line'] })),
+  })
+  await expect(page.locator('[data-progress-status]')).toContainText(
+    'That file is progress for another book (another-book).',
+  )
+  await expect(page.locator('#ex-ch07-receipt-line')).not.toHaveClass(/solved/)
   await expect(page.locator('[data-progress-count]')).toHaveText('1/55 exercises · 1/30 challenges solved')
   await expect(page.locator(`#ex-${SOLVE}`)).toHaveClass(/solved/)
   await expect(page.locator('a[data-progress-items="sum-of-two-digits"]')).toHaveAttribute('data-progress-done', '')
@@ -178,4 +188,13 @@ test('the page works with browser storage blocked', async ({ page }) => {
   await open(page)
   await solve(page, SOLVE)
   await expect(page.locator('[data-progress-count]')).toHaveText('1/55 exercises · 0/30 challenges solved')
+})
+
+test('a draft typed just before a reload is still there', async ({ page }) => {
+  await mountAccount(page, { principal: null, canWrite: false, patches: [] })
+  await open(page)
+  const code = '# typed then reloaded at once'
+  await page.locator(`#ex-${DRAFT} .editor`).fill(code)
+  await page.reload()
+  await expect(page.locator(`#ex-${DRAFT} .editor`)).toHaveValue(code)
 })

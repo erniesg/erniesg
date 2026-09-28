@@ -102,3 +102,13 @@ test('code typed into a graded challenge survives a reload', async ({ page }) =>
   await page.reload()
   await expect(page.locator('.desk .editor')).toHaveValue(code)
 })
+
+test('a draft typed just before leaving the page is still saved', async ({ page }) => {
+  await openChapter(page)
+  const code = '# typed then straight away left'
+  await page.locator(`#ex-${DRAFT} .editor`).fill(code)
+  // Well inside the save delay: the page must write it on the way out.
+  await page.goto('/ch06-dicts-sets')
+  await page.goto(CHAPTER)
+  await expect(page.locator(`#ex-${DRAFT} .editor`)).toHaveValue(code)
+})

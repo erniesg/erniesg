@@ -7,7 +7,8 @@ interchangeable. `runtime/progress-fixtures.json` holds both halves to the
 same rules:
 
 - `solved` is the union of both copies, with the earliest known solve time;
-- a draft is whichever was written last, the first copy winning a tie;
+- a draft is whichever was written last; a tie in time goes to the larger
+  code by code point, so every copy and the service agree;
 - anything invalid is dropped rather than repaired, and unreadable input is
   empty progress, never an exception.
 """
@@ -83,6 +84,10 @@ def _earlier(left, right):
     return right if _moment(right) < _moment(left) else left
 
 
+def _draft_key(draft: dict):
+    return (_moment(draft["updatedAt"]), draft["code"])
+
+
 def merge(a, b) -> dict:
     book = a.get("book", "") if isinstance(a, dict) and isinstance(a.get("book"), str) else ""
     left, right = normalize(a, book), normalize(b, book)
@@ -94,7 +99,7 @@ def merge(a, b) -> dict:
             merged["solvedAt"][item] = at
     for item in sorted(set(left["drafts"]) | set(right["drafts"])):
         mine, theirs = left["drafts"].get(item), right["drafts"].get(item)
-        if mine and (not theirs or _moment(mine["updatedAt"]) >= _moment(theirs["updatedAt"])):
+        if mine and (not theirs or _draft_key(mine) >= _draft_key(theirs)):
             merged["drafts"][item] = mine
         else:
             merged["drafts"][item] = theirs

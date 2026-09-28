@@ -305,11 +305,22 @@ export function mergeProgressQuery(
     draftUpdated: string | null
   },
   now: string,
+  cap: number,
 ): Query {
+  // One statement, so the cap holds under concurrent requests: a new item is
+  // inserted only while the book holds fewer than `cap`; an item already held
+  // always updates. A refused insert changes no row, which the caller reads.
   return {
     sql: `INSERT INTO margin_progress
   (creator, site, book, item, solved, solved_at, draft, draft_updated, modified)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+WHERE EXISTS (
+    SELECT 1 FROM margin_progress
+    WHERE creator = ? AND site = ? AND book = ? AND item = ?
+  )
+  OR (
+    SELECT COUNT(*) FROM margin_progress WHERE creator = ? AND site = ? AND book = ?
+  ) < ?
 ON CONFLICT (creator, site, book, item) DO UPDATE SET
   solved = MAX(margin_progress.solved, excluded.solved),
   solved_at = CASE
@@ -320,12 +331,18 @@ ON CONFLICT (creator, site, book, item) DO UPDATE SET
   END,
   draft = CASE
     WHEN excluded.draft_updated IS NOT NULL
-      AND (margin_progress.draft_updated IS NULL OR excluded.draft_updated > margin_progress.draft_updated)
+      AND (margin_progress.draft_updated IS NULL
+        OR excluded.draft_updated > margin_progress.draft_updated
+        OR (excluded.draft_updated = margin_progress.draft_updated
+          AND excluded.draft > margin_progress.draft))
     THEN excluded.draft ELSE margin_progress.draft
   END,
   draft_updated = CASE
     WHEN excluded.draft_updated IS NOT NULL
-      AND (margin_progress.draft_updated IS NULL OR excluded.draft_updated > margin_progress.draft_updated)
+      AND (margin_progress.draft_updated IS NULL
+        OR excluded.draft_updated > margin_progress.draft_updated
+        OR (excluded.draft_updated = margin_progress.draft_updated
+          AND excluded.draft > margin_progress.draft))
     THEN excluded.draft_updated ELSE margin_progress.draft_updated
   END,
   modified = excluded.modified`,
@@ -339,6 +356,14 @@ ON CONFLICT (creator, site, book, item) DO UPDATE SET
       item.draft,
       item.draft === null ? null : item.draftUpdated,
       now,
+      owner,
+      site,
+      book,
+      item.item,
+      owner,
+      site,
+      book,
+      cap,
     ],
   }
 }

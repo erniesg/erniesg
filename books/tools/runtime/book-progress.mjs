@@ -134,9 +134,25 @@ export async function startProgress({
     if (stored) {
       progress = acknowledge(progress, normalize(stored, book))
       paintSolved(root, progress)
+      restoreDrafts(editors, progress, typed, guard)
     }
     show()
   }
+
+  // A save waiting on its short delay is written now, before the page goes:
+  // a reload, a closed tab or a link followed straight after typing.
+  const listening = new AbortController()
+  function flush() {
+    if (!timer) return
+    clearTimeout(timer)
+    void persist()
+  }
+  window.addEventListener('pagehide', flush, { signal: listening.signal })
+  document.addEventListener(
+    'visibilitychange',
+    () => { if (document.visibilityState === 'hidden') flush() },
+    { signal: listening.signal },
+  )
 
   function update(next, { soon = false } = {}) {
     if (next === progress) return
@@ -174,14 +190,23 @@ export async function startProgress({
       const [file] = input.files || []
       input.value = ''
       if (!file) return
-      let imported
+      let raw
       try {
-        imported = normalize(JSON.parse(await file.text()), book)
+        raw = JSON.parse(await file.text())
       } catch {
         note = 'That file is not a progress file.'
         show()
         return
       }
+      // A file that names another book is refused, not re-keyed: ids can
+      // overlap between books. A file naming no book (the preview's older
+      // format) is taken as this one's.
+      if (raw && typeof raw.book === 'string' && raw.book && raw.book !== book) {
+        note = `That file is progress for another book (${raw.book}).`
+        show()
+        return
+      }
+      const imported = normalize(raw, book)
       const before = progress.solved.length
       const next = merge(progress, imported)
       update(next, { soon: true })
@@ -196,5 +221,14 @@ export async function startProgress({
   restoreDrafts(editors, progress, typed, guard)
   show()
 
-  return { current: () => progress }
+  return {
+    current: () => progress,
+    /** Write any pending save now; for hosts that change page without unloading. */
+    flush,
+    /** Flush, then stop listening; the page is being replaced. */
+    stop() {
+      flush()
+      listening.abort()
+    },
+  }
 }

@@ -17,7 +17,7 @@ describe('the /papers listing flag', () => {
     expect(
       papersListing({
         PUBLIC_PAPERS_LISTING: 'listed',
-        PUBLIC_RESEARCH_RELEASE: 'production',
+        PUBLIC_RESEARCH_RELEASE: 'staging',
       }),
     ).toBe('listed')
     expect(
@@ -26,6 +26,16 @@ describe('the /papers listing flag', () => {
     expect(papersListing({ PUBLIC_PAPERS_LISTING: 'yes', DEV: true })).toBe(
       'listed',
     )
+  })
+
+  it('never lists /papers in a production build, which withholds it', () => {
+    // The release gate deletes dist/papers, so a listed nav link would be a 404.
+    expect(
+      papersListing({
+        PUBLIC_PAPERS_LISTING: 'listed',
+        PUBLIC_RESEARCH_RELEASE: 'production',
+      }),
+    ).toBe('unlisted')
   })
 
   it('keeps /papers out of the nav and the sitemap when off', () => {

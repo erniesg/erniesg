@@ -107,6 +107,23 @@ test.describe('the reading shell', () => {
     await page.setViewportSize({ width: 1440, height: 1000 })
     await expect(contents).toHaveAttribute('open', '')
     expect(await visibleColumns(page)).toEqual(['navigation', 'text', 'margin'])
+
+    // And narrowing again folds it, so the text still leads.
+    await page.setViewportSize({ width: 390, height: 800 })
+    await expect(contents).not.toHaveAttribute('open', '')
+  })
+
+  test('prints the text alone, without the shell chrome', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 })
+    await page.goto(POST)
+    await page.emulateMedia({ media: 'print' })
+
+    await expect(page.locator('#reading-navigation')).toBeHidden()
+    expect(
+      await page
+        .locator('[data-reading-shell]')
+        .evaluate((shell) => getComputedStyle(shell).display),
+    ).toBe('block')
   })
 
   test('keeps a chapter contents list open on a phone', async ({ page }) => {

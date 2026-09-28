@@ -10,6 +10,7 @@ import {
   sourceRouteManifest,
   stubPath,
 } from '../../tools/ia-redirects.mjs'
+import { WITHHELD_IN_PRODUCTION } from '../../tools/deployment/release-gate.mjs'
 import { installStaticRoutes } from './static-build'
 
 /**
@@ -125,8 +126,24 @@ test.describe('in the built site, after the release gate', () => {
       readFileSync(path.join(directory, '_redirects'), 'utf8'),
     )
     const byFrom = new Map(entries.map((entry) => [entry.from, entry]))
+    // A production artifact has had its withheld trees removed, and with them
+    // every redirect into them: those legacy URLs are plain 404s by design.
+    const gated = WITHHELD_IN_PRODUCTION.every(
+      (withheld) => !existsSync(path.join(directory, withheld)),
+    )
+    const intoWithheld = (to: string) =>
+      WITHHELD_IN_PRODUCTION.some(
+        (withheld) => to === `/${withheld}/` || to.startsWith(`/${withheld}/`),
+      )
 
     for (const { from, to, kind } of table) {
+      if (gated && intoWithheld(to)) {
+        expect(byFrom.has(from), from).toBe(false)
+        if (kind === 'page') {
+          expect(existsSync(stubPath(directory, from)), from).toBe(false)
+        }
+        continue
+      }
       expect(byFrom.get(from), from).toEqual({ from, to, status: 301 })
       if (kind === 'page') {
         expect(byFrom.get(`${from}/`), `${from}/`).toEqual({

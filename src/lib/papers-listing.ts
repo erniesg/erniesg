@@ -7,7 +7,8 @@
  * call (ADR 010), so the default is exactly what `/research` did before it
  * was renamed: listed in dev and on staging, unlisted everywhere else.
  *
- * `PUBLIC_PAPERS_LISTING=listed` or `=unlisted` overrides that default.
+ * `PUBLIC_PAPERS_LISTING=listed` or `=unlisted` overrides that default,
+ * except in a production build, which withholds `/papers` and never lists it.
  */
 export type PapersListing = 'listed' | 'unlisted'
 
@@ -18,6 +19,9 @@ export type PapersListingEnv = {
 }
 
 export function papersListing(env: PapersListingEnv): PapersListing {
+  // A production build withholds /papers entirely (release-gate.mjs), so no
+  // override can list it: the link would be a 404.
+  if (env.PUBLIC_RESEARCH_RELEASE === 'production') return 'unlisted'
   if (
     env.PUBLIC_PAPERS_LISTING === 'listed' ||
     env.PUBLIC_PAPERS_LISTING === 'unlisted'

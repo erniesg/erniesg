@@ -85,11 +85,14 @@ const {
               const details = document.currentScript?.previousElementSibling
               if (!(details instanceof HTMLDetailsElement)) return
               const wide = matchMedia('(min-width: 900px)')
-              if (!wide.matches) details.open = false
-              // Widening must never leave the rail folded with no summary.
-              wide.addEventListener?.('change', () => {
-                if (wide.matches) details.open = true
-              })
+              // Wide: the rail, always unfolded (it has no summary to reopen
+              // it). Narrow: folded, so the text leads, whichever way the
+              // viewport got there.
+              const sync = () => {
+                details.open = wide.matches
+              }
+              sync()
+              wide.addEventListener?.('change', sync)
             })()
           </script>
         )
@@ -233,9 +236,19 @@ const {
   }
 
   /* The rail is interactive; a printed page gets the text, not its controls. */
+  /* Printed, the page is the text alone: no contents column, no annotation
+     layer, and no shell grid or padding constraining a document that brings
+     its own print layout (the fellowship paper sets up A4). */
   @media print {
-    .reading-margin {
+    .reading-margin,
+    .reading-navigation {
       display: none;
+    }
+
+    .reading-shell {
+      display: block;
+      max-width: none;
+      padding: 0;
     }
   }
 </style>

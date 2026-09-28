@@ -220,6 +220,11 @@ still be replied to but cannot be edited. Once nothing hangs from it, deleting
 it again removes it for good. A note with no replies is deleted outright, as
 before.
 
+The response says which happened: `204` for a removal, `200` with the
+tombstoned annotation for a tombstone. A client must go by that, not by the
+replies it can see, because a private reply from another reader keeps the note
+and is invisible to its author.
+
 ## Building and testing
 
 ```bash

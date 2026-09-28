@@ -6,10 +6,14 @@ turns into "f(args) returned X, expected Y". That is why this lives apart from
 ``bookgrader``: its call wrapper must stay visible, since a reader's exception
 passes through it and the reader needs their own line numbers.
 
-Every assertion a test makes about the reader's latest answer records a verdict
-on that call: what was expected, and whether it held. Grading is unchanged:
-the original assertion still runs and still fails. In sample mode a failing
-assertion is recorded and not raised, so every sample row runs.
+Every assertion a test makes records a verdict on the reader's latest call in
+that test: what was expected, and whether it held. A passing assertion only
+speaks for the call whose answer it examined; a failing one speaks for the
+latest call in the same test whatever it examined (a test that checks the
+input was left alone, or one part of a returned tuple, is still judging that
+call), and a failure always overrides an earlier pass. Grading is unchanged:
+the original assertion runs and fails exactly as before. In sample mode a
+failure is recorded and not raised, so every sample row runs.
 """
 
 from __future__ import annotations
@@ -17,6 +21,12 @@ from __future__ import annotations
 import unittest
 
 __unittest = True
+
+
+def _name(kind) -> str:
+    kinds = kind if isinstance(kind, tuple) else (kind,)
+    return " or ".join(getattr(k, "__name__", str(k)) for k in kinds)
+
 
 # Assertions about one value, and what the verdict should say was expected.
 ONE_VALUE = {
@@ -43,36 +53,41 @@ TWO_VALUES = {
 
 
 def observe(recorder, shorten) -> None:
-    def about_latest(first):
-        """The latest call, if this assertion is about its answer and has no verdict yet."""
+    def latest_in(test) -> dict | None:
         latest = recorder.latest
-        if latest is None or "match" in latest:
+        if latest is None or latest.get("test") != getattr(test, "_testMethodName", None):
             return None
-        if latest.get("_result_id") == id(first) or "raised" in latest:
-            return latest
-        return None
+        return latest
+
+    def verdict(latest: dict, held: bool, expected: str) -> None:
+        if not held:
+            latest["expected"] = expected
+            latest["match"] = False
+            recorder.mark_bad(latest)
+        elif "match" not in latest:
+            latest["expected"] = expected
+            latest["match"] = True
 
     def checked(name, expected_text):
         original = getattr(unittest.TestCase, name)
 
         def assertion(self, first, *rest, **kwargs):
-            latest = about_latest(first)
+            latest = latest_in(self)
+            # a pass only vouches for the call whose answer it looked at (or,
+            # after a raise, for a test that caught the raise and expected it)
+            about_answer = latest is not None and (
+                latest.get("_result_id") == id(first) or "raised" in latest
+            )
             try:
                 original(self, first, *rest, **kwargs)
             except self.failureException:
                 if latest is not None:
-                    latest["expected"] = expected_text(rest)
-                    latest["match"] = False
-                    recorder.mark_bad(latest)
+                    verdict(latest, False, expected_text(rest))
                 if recorder.sample:
                     return None
                 raise
-            if latest is not None:
-                # It held. After a call that raised, that means the test itself
-                # caught the raise and found it expected (a test may compare
-                # ("raised", "TypeError") tuples), so the call was right.
-                latest["expected"] = expected_text(rest)
-                latest["match"] = True
+            if about_answer:
+                verdict(latest, True, expected_text(rest))
             return None
 
         setattr(unittest.TestCase, name, assertion)
@@ -81,18 +96,44 @@ def observe(recorder, shorten) -> None:
         checked(name, lambda rest, text=text: text())
     for name, prefix in TWO_VALUES.items():
         checked(name, lambda rest, prefix=prefix: prefix + (shorten(rest[0]) if rest else ""))
+    checked("assertIsInstance", lambda rest: "an instance of " + (_name(rest[0]) if rest else "?"))
+    checked("assertNotIsInstance", lambda rest: "not an instance of " + (_name(rest[0]) if rest else "?"))
 
-    # `with self.assertRaises(E): solve(...)`: the reader's exception must reach
-    # the context manager, so in sample mode the call re-raises it (see
-    # `raising`), and the verdict is whether the right kind came out.
+    # assertRaises, in both forms. The reader's exception must reach unittest,
+    # so while one is expected the recorder re-raises even in sample mode; the
+    # verdict is whether the right kind came out. In sample mode a missing or
+    # wrong-kind raise is recorded and swallowed, so the next row still runs.
     original_raises = unittest.TestCase.assertRaises
 
+    def judge_raise(test, kinds, kind) -> bool:
+        raised_right = kind is not None and issubclass(kind, kinds)
+        latest = latest_in(test)
+        if latest is not None:
+            verdict(latest, raised_right, f"raises {_name(kinds)}")
+        return raised_right
+
     def assertRaises(self, expected, *args, **kwargs):
-        if args:  # the callable form; not used by the samples, left exactly as is
-            return original_raises(self, expected, *args, **kwargs)
-        context = original_raises(self, expected, **kwargs)
         kinds = expected if isinstance(expected, tuple) else (expected,)
-        wanted = " or ".join(getattr(kind, "__name__", str(kind)) for kind in kinds)
+        if args:  # assertRaises(E, function, *arguments)
+            function, *arguments = args
+            recorder.expecting_raise = True
+            try:
+                function(*arguments, **kwargs)
+            except BaseException as error:  # judged below, exactly as unittest would
+                recorder.expecting_raise = False
+                if judge_raise(self, kinds, type(error)):
+                    return None
+                if recorder.sample:
+                    return None
+                raise
+            finally:
+                recorder.expecting_raise = False
+            judge_raise(self, kinds, None)
+            if recorder.sample:
+                return None
+            raise self.failureException(f"{_name(kinds)} not raised by {getattr(function, '__name__', function)}")
+
+        context = original_raises(self, expected, **kwargs)
 
         class Watching:
             def __enter__(self_inner):
@@ -101,19 +142,16 @@ def observe(recorder, shorten) -> None:
 
             def __exit__(self_inner, kind, value, trace):
                 recorder.expecting_raise = False
-                latest = recorder.latest
-                raised_right = kind is not None and issubclass(kind, kinds)
-                if latest is not None and "match" not in latest:
-                    latest["expected"] = f"raises {wanted}"
-                    latest["match"] = raised_right
-                    if not raised_right:
-                        recorder.mark_bad(latest)
+                raised_right = judge_raise(self, kinds, kind)
                 try:
-                    return context.__exit__(kind, value, trace)
+                    handled = context.__exit__(kind, value, trace)
                 except self.failureException:
                     if recorder.sample:
-                        return True  # recorded; the rest of the samples still run
+                        return True  # nothing was raised: recorded, and the rows go on
                     raise
+                if not raised_right and recorder.sample:
+                    return True  # the wrong kind: recorded, and swallowed so the rows go on
+                return handled
 
         return Watching()
 

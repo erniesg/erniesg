@@ -9,7 +9,6 @@ node's reference solution (``verify``), so the same tests grade both.
 from __future__ import annotations
 
 import atexit
-import functools
 import importlib.util
 import io
 import json
@@ -193,18 +192,17 @@ def _finish(record: dict, out: _BoundedBuffer, err: _BoundedBuffer, recorder: _R
     recorder.keep(record)
 
 
-def _wrap(function, recorder: _Recorder):
-    @functools.wraps(function)
+def _wrap(function, name: str, recorder: _Recorder):
     def call(*args, **kwargs):
         shown = ", ".join(
             [_short.repr(a) for a in args] + [f"{k}={_short.repr(v)}" for k, v in kwargs.items()]
         )
-        record = {"test": _current_test(), "call": f"{function.__name__}({shown})"}
+        record = {"test": _current_test(), "call": f"{name}({shown})"}
         out, err = _BoundedBuffer(), _BoundedBuffer()
         try:
             with redirect_stdout(out), redirect_stderr(err):
                 result = function(*args, **kwargs)
-        except Exception as error:  # the reader's code raised; it belongs to this call
+        except (Exception, SystemExit) as error:  # the reader's code raised; it belongs to this call
             record["raised"] = f"{type(error).__name__}: {error}".rstrip(": ")
             _finish(record, out, err, recorder)
             # A sample row that expects a raise must see it; any other raise in
@@ -234,9 +232,12 @@ class _Recorded(types.ModuleType):
 
     def __getattr__(self, name):
         value = getattr(self._module, name)
-        if isinstance(value, types.FunctionType) and value.__module__ == self._module.__name__:
+        # Whatever the reader exports that the tests call: a def, a lambda, an
+        # import (`from operator import add as f`) or a functools.partial. A
+        # class is left alone, since a test may check isinstance against it.
+        if callable(value) and not isinstance(value, (type, types.ModuleType)):
             if name not in self._cache:
-                self._cache[name] = _wrap(value, _RECORDER)
+                self._cache[name] = _wrap(value, name, _RECORDER)
             return self._cache[name]
         return value
 

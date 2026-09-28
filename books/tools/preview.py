@@ -520,8 +520,10 @@ function casesHtml(groups) {
     const failing = group.outcome && group.outcome !== 'pass' ? (wrong || calls[calls.length - 1]) : null;
     let shown = calls.slice(0, CASES_SHOWN);
     if (failing && !shown.includes(failing)) shown = [...shown.slice(0, CASES_SHOWN - 1), failing];
-    const more = calls.length - shown.length;
-    const head = group.label || `${group.tier} · ${calls.length} call${calls.length === 1 ? '' : 's'}`;
+    // `total` is how many calls were made; only some were kept to show
+    const total = Math.max(group.total ?? calls.length, calls.length);
+    const more = total - shown.length;
+    const head = group.label || `${group.tier} · ${total} call${total === 1 ? '' : 's'}`;
     return `<p class="cases-head">${escapeHtml(head)}</p>`
       + shown.map(call => caseHtml(call, call === failing)).join('')
       + (more > 0 ? `<p class="cases-head">…and ${more} more</p>` : '');
@@ -584,7 +586,8 @@ document.querySelectorAll('.desk').forEach(desk => {
         verdict.hidden = false;
         verdict.innerHTML = `<span class="mark">&#10007;</span> ` + escapeHtml(result.error);
       }
-      if (cases) cases.innerHTML = casesHtml([{ label: `Samples · ${calls.length}`, calls }]);
+      const total = result.total ?? calls.length;
+      if (cases) cases.innerHTML = casesHtml([{ label: `Samples · ${total}`, calls, total }]);
     } catch (error) { status.textContent = String(error); }
     finally { busy(false); }
   };
@@ -1277,6 +1280,7 @@ class Handler(BaseHTTPRequestHandler):
             sample = grader.run_samples(node_dir, workspace, config.get("timeout", 60))
             return self._send(
                 json.dumps({"ok": not sample["error"], "calls": sample["calls"],
+                            "total": sample["total"],
                             "error": strip_roots(sample["error"])}).encode(),
                 kind="application/json",
             )
@@ -1288,12 +1292,14 @@ class Handler(BaseHTTPRequestHandler):
         for tier in grader.TIERS:
             config = meta.get("tiers", {}).get(tier, {})
             tier_calls: list[dict] = []
+            counts: dict = {}
             outcome, tier_output = grader.run_tier(
-                node_dir, tier, workspace, config.get("timeout", 60), calls=tier_calls
+                node_dir, tier, workspace, config.get("timeout", 60), calls=tier_calls, counts=counts
             )
             results.append({"tier": tier, "outcome": outcome})
             if tier_calls and (tier == grader.SAMPLE_TIER or outcome != "pass"):
-                cases.append({"tier": tier, "outcome": outcome, "calls": tier_calls})
+                cases.append({"tier": tier, "outcome": outcome, "calls": tier_calls,
+                              "total": counts.get("total", len(tier_calls))})
             if outcome != "pass":
                 output, stopped_at = tier_output, tier
                 summary = grader.summarize(tier_output, node_dir / "tests" / f"{tier}.py")

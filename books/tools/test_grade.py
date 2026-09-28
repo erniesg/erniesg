@@ -256,6 +256,90 @@ class ReaderOutputTests(unittest.TestCase):
         self.assertEqual(outcome, "fail")
         self.assertTrue(any(c.get("match") is False and c["returned"] == "['wrong']" for c in calls))
 
+    def reference(self, node_id: str) -> tuple[Path, Path]:
+        node_dir, meta = grade.load_node(node_id)
+        solution = Path(self.tmp.name) / node_id
+        solution.mkdir()
+        (solution / f"{meta['module']}.py").write_text((node_dir / "solution.py").read_text())
+        return node_dir, solution
+
+    def test_an_expected_raise_is_green_on_a_correct_solution(self):
+        node_dir, solution = self.reference("bad-row-report")
+        calls: list[dict] = []
+        outcome, _ = grade.run_tier(node_dir, "public", solution, 60, calls=calls)
+        self.assertEqual(outcome, "pass")
+        raised = [c for c in calls if "raised" in c]
+        self.assertEqual(len(raised), 1)
+        self.assertIs(raised[0]["match"], True)
+        self.assertEqual(raised[0]["expected"], "raises TypeError")
+
+    def test_a_wrong_kind_of_raise_is_recorded_and_every_row_still_runs(self):
+        node_dir, meta = grade.load_node("change-owed")
+        solution = Path(self.tmp.name) / "wrong-kind"
+        solution.mkdir()
+        (solution / f"{meta['module']}.py").write_text(
+            "def change_owed(price, paid):\n"
+            "    if not isinstance(price, int) or not isinstance(paid, int):\n"
+            "        raise RuntimeError('bad kind')\n"
+            "    if paid < 0 or paid < price:\n        raise ValueError('no')\n"
+            "    return paid - price\n")
+        result = grade.run_samples(node_dir, solution, 60)
+        kinds = [c for c in result["calls"] if c.get("expected") == "raises TypeError"]
+        self.assertEqual(len(kinds), 2, "both wrong-kind rows ran")
+        self.assertTrue(all(c["match"] is False for c in kinds))
+
+    def test_a_postcondition_failure_marks_the_call_that_broke_it(self):
+        node_dir, meta = grade.load_node("buy-low-sell-later")
+        solution = Path(self.tmp.name) / "mutates"
+        solution.mkdir()
+        source = (node_dir / "solution.py").read_text()
+        function = "best_gain"
+        (solution / f"{meta['module']}.py").write_text(
+            source + f"\n\n_original = {function}\n\ndef {function}(prices, *rest):\n"
+            "    answer = _original(prices, *rest)\n    prices.sort()\n    return answer\n")
+        calls: list[dict] = []
+        outcome, _ = grade.run_tier(node_dir, "edge", solution, 60, calls=calls)
+        self.assertEqual(outcome, "fail")
+        self.assertTrue(any(c.get("match") is False for c in calls))
+
+    def test_an_isinstance_failure_overrides_an_earlier_pass(self):
+        node_dir, meta = grade.load_node("pool-ticket-price")
+        solution = Path(self.tmp.name) / "floats"
+        solution.mkdir()
+        (solution / f"{meta['module']}.py").write_text(
+            (node_dir / "solution.py").read_text()
+            + "\n\n_int_price = ticket_price\n\ndef ticket_price(age):\n    return float(_int_price(age))\n")
+        calls: list[dict] = []
+        outcome, _ = grade.run_tier(node_dir, "edge", solution, 60, calls=calls)
+        self.assertEqual(outcome, "fail")
+        self.assertTrue(any(c.get("match") is False and "instance" in c.get("expected", "") for c in calls))
+
+    def test_the_true_number_of_calls_survives_the_cap(self):
+        self.write("def recent(readings, n):\n    return readings[-n:] if n else []\n")
+        calls: list[dict] = []
+        counts: dict = {}
+        grade.run_tier(self.node_dir, "stress", self.solution, 60, calls=calls, counts=counts)
+        self.assertGreater(counts["total"], len(calls))
+
+    def test_sys_exit_in_the_readers_code_is_recorded_with_its_prints(self):
+        self.write("import sys\n\ndef recent(readings, n):\n    print('leaving')\n    sys.exit(3)\n")
+        calls: list[dict] = []
+        outcome, _ = grade.run_tier(self.node_dir, "public", self.solution, 60, calls=calls)
+        self.assertEqual(outcome, "fail")
+        self.assertEqual(calls[0]["out"], "leaving\n")
+        self.assertTrue(calls[0]["raised"].startswith("SystemExit"))
+
+    def test_an_imported_or_partial_function_is_still_recorded(self):
+        self.write(
+            "import functools\n\ndef _tail(readings, n, *, keep):\n"
+            "    return readings[-n:] if n else []\n\n"
+            "recent = functools.partial(_tail, keep=True)\n")
+        calls: list[dict] = []
+        outcome, _ = grade.run_tier(self.node_dir, "public", self.solution, 60, calls=calls)
+        self.assertEqual(outcome, "pass")
+        self.assertEqual(len(calls), 4)
+        self.assertTrue(calls[0]["call"].startswith("recent("))
+
     def test_the_perf_tier_is_never_instrumented(self):
         self.write("def recent(readings, n):\n    return readings[len(readings) - n:] if n else []\n")
         calls: list[dict] = []

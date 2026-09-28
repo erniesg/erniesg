@@ -78,9 +78,12 @@ def run_tier(
     timeout: int,
     calls: list[dict] | None = None,
     sample: bool = False,
+    counts: dict | None = None,
 ) -> tuple[str, str]:
     """Run one tier. With `calls`, also collect each call the tests made into
-    the reader's code: its arguments, its answer, and what it printed."""
+    the reader's code: its arguments, its answer, and what it printed. Only
+    some calls are kept (the first, the last, and every wrong one up to a
+    cap); `counts["total"]` gets how many were actually made."""
     test_file = node_dir / "tests" / f"{tier}.py"
     if not test_file.is_file():
         return "missing", f"No test file at {test_file}"
@@ -112,8 +115,11 @@ def run_tier(
             return "timeout", f"exceeded the {timeout}s limit"
         if record and log.is_file():
             try:
-                calls.extend(json.loads(log.read_text()).get("calls", []))
-            except (OSError, ValueError):
+                logged = json.loads(log.read_text())
+                calls.extend(logged.get("calls", []))
+                if counts is not None:
+                    counts["total"] = int(logged.get("total", len(calls)))
+            except (OSError, ValueError, TypeError):
                 pass
     output = (done.stdout + done.stderr).strip()
     return ("pass" if done.returncode == 0 else "fail"), output
@@ -128,9 +134,12 @@ def run_samples(node_dir: Path, solution_dir: Path, timeout: int) -> dict:
     error, summarized, instead of an empty list.
     """
     calls: list[dict] = []
-    _, output = run_tier(node_dir, SAMPLE_TIER, solution_dir, timeout, calls=calls, sample=True)
+    counts: dict = {}
+    _, output = run_tier(
+        node_dir, SAMPLE_TIER, solution_dir, timeout, calls=calls, sample=True, counts=counts
+    )
     error = "" if calls else summarize(output, node_dir / "tests" / f"{SAMPLE_TIER}.py")
-    return {"calls": calls, "error": error}
+    return {"calls": calls, "total": counts.get("total", len(calls)), "error": error}
 
 
 def harness_frame(path: str) -> bool:

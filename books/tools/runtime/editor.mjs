@@ -127,6 +127,10 @@ function teachKeys(editor) {
     if (key === 'Enter' && command) {
       event.preventDefault();
       runCell(editor, shiftKey);
+    } else if (command && (key === "'" || event.code === 'Quote')) {
+      // The sample run, on a challenge desk only; elsewhere the key is left alone.
+      const sample = editor.closest('.desk')?.querySelector('.sample');
+      if (sample) { event.preventDefault(); sample.click(); }
     } else if (key === 'Enter') {
       event.preventDefault();
       let indent = (before.match(/^ */) || [''])[0];

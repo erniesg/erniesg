@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -93,3 +94,59 @@ class LegacyWorkspace(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ChallengeSplit(unittest.TestCase):
+    """A challenge's web markup is two panes: the question, then the work.
+
+    Stacked, it must read exactly as before the panes existed, and every
+    addressable block keeps its id: the margin anchors to those.
+    """
+
+    def challenges(self):
+        _, order = render.load_book()
+        return [node for node in order if node.get("kind") == "challenge"]
+
+    def test_every_challenge_splits_at_its_desk_on_both_web_hosts(self):
+        for node in self.challenges():
+            for runnable, reveal in ((True, "grader"), (False, "reader")):
+                markup = render.render_node(node, "web", runnable=runnable, reveal=reveal)
+                with self.subTest(node=node["id"], runnable=runnable):
+                    self.assertIn("data-challenge-split", markup)
+                    self.assertIn("data-challenge-view-toggle", markup)
+                    question, work = markup.split('split-work"', 1)
+                    self.assertNotIn('data-block-kind="desk"', question)
+                    self.assertIn('data-block-kind="desk"', work)
+                    self.assertIn('data-block-kind="card"', question)
+
+    def test_the_panes_keep_every_block_in_its_written_order(self):
+        tag = re.compile(r'<div class="block" data-block-kind="(\w+)" data-block-digest="(\w+)" id="([^"]+)">')
+        for node in self.challenges():
+            markup = render.render_node(node, "web", runnable=False, reveal="reader")
+            pieces = markup.split('data-challenge-split>', 1)
+            with self.subTest(node=node["id"]):
+                self.assertEqual(len(pieces), 2)
+                blocks = tag.findall(markup)
+                self.assertTrue(blocks)
+                # The wrappers add no ids and drop none.
+                self.assertEqual(len({identifier for *_, identifier in blocks}), len(blocks))
+                kinds = [kind for kind, *_ in blocks]
+                self.assertLess(kinds.index("card"), kinds.index("desk"))
+
+    def test_print_and_chapters_are_not_split(self):
+        _, order = render.load_book()
+        chapter = next(node for node in order if node.get("kind") != "challenge")
+        self.assertNotIn("data-challenge-split", render.render_node(chapter, "web"))
+        challenge = self.challenges()[0]
+        self.assertNotIn("data-challenge-split", render.render_node(challenge, "print"))
+
+    def test_the_view_contract_is_one_key_and_one_attribute(self):
+        self.assertIn(render.CHALLENGE_VIEW_KEY, render.CHALLENGE_VIEW_HEAD_SCRIPT)
+        self.assertIn(render.CHALLENGE_VIEW_ATTRIBUTE, render.CHALLENGE_VIEW_HEAD_SCRIPT)
+        self.assertIn(render.CHALLENGE_VIEW_KEY, render.SPLIT_SCRIPT)
+        self.assertIn(f"min-width: {render.CHALLENGE_SPLIT_MIN_WIDTH}px", render.SPLIT_SCRIPT)
+        self.assertIn(f"screen and (min-width:{render.CHALLENGE_SPLIT_MIN_WIDTH}px)", render.SPLIT_CSS)
+        self.assertNotRegex(render.SPLIT_CSS + render.SPLIT_SCRIPT, r"%\(\w+\)s")
+        site_head = (Path(__file__).resolve().parents[2] / "src/components/Head.astro").read_text()
+        self.assertIn(f"localStorage.getItem('{render.CHALLENGE_VIEW_KEY}')", site_head)
+        self.assertIn(f"setAttribute('{render.CHALLENGE_VIEW_ATTRIBUTE}'", site_head)

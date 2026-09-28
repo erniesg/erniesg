@@ -77,6 +77,10 @@ export type BookManifest = {
   collection: string
   poolNodeCount: number
   contentCss: string
+  /** The challenge side-by-side view's CSS, rooted on <html>; include unscoped. */
+  splitCss: string
+  /** The side-by-side toggle's behaviour, shared with `books/tools/preview.py`. */
+  splitScript: string
   books: Book[]
 }
 

@@ -81,6 +81,22 @@ export const DEFAULT_HIGHLIGHT_COLOR = 'yellow'
 
 export const MAX_BODY_LENGTH = 8_000
 
+/**
+ * What a deleted note's body becomes when other people have replied to it.
+ *
+ * Issue 058 chose tombstoning over cascade: a conversation that loses its root
+ * is still worth reading, and a cascade would let one owner delete other
+ * people's replies. The row stays, so the thread keeps its shape, and the body
+ * is replaced by this value, which no client may send (`reserved_body`). It is
+ * a stored value rather than a column so threads need no migration; on the
+ * wire it becomes `margin:deleted: true` and no body at all.
+ */
+export const TOMBSTONE_BODY = '⁠margin:deleted⁠'
+
+export function isTombstoneBody(body: string | null | undefined): boolean {
+  return body === TOMBSTONE_BODY
+}
+
 export const MOTIVATIONS = ['highlighting', 'commenting', 'editing'] as const
 export type Motivation = (typeof MOTIVATIONS)[number]
 
@@ -230,6 +246,8 @@ export const webAnnotationSchema = z.object({
   'margin:visibility': z.enum(VISIBILITIES).optional(),
   'margin:parentId': z.string().min(1).max(256).optional(),
   'margin:color': z.string().min(1).max(64).optional(),
+  /** Output only: set on a tombstone. Ignored on the way in. */
+  'margin:deleted': z.boolean().optional(),
 })
 
 export type WebAnnotation = z.infer<typeof webAnnotationSchema>
@@ -392,6 +410,9 @@ export function webAnnotationToRecord(
       'an annotation motivated by highlighting carries no body',
     )
   }
+  if (isTombstoneBody(bodyValue)) {
+    return fail('reserved_body', 'that body value is reserved for deleted notes')
+  }
   if (kind !== 'highlight' && bodyValue === null) {
     return fail(
       'missing_body',
@@ -466,6 +487,8 @@ export function recordToWebAnnotation(
 ): WebAnnotation {
   const { annotation } = record
   const anchor = annotation.target
+  const tombstone =
+    annotation.kind === 'note' && isTombstoneBody(annotation.body)
   const selector: z.infer<typeof selectorSchema>[] = [
     {
       type: 'TextQuoteSelector',
@@ -493,7 +516,7 @@ export function recordToWebAnnotation(
     id: annotationIri(record.id),
     type: ANNOTATION_TYPE,
     motivation: motivationForKind(annotation.kind),
-    ...(annotation.kind === 'highlight'
+    ...(annotation.kind === 'highlight' || tombstone
       ? {}
       : {
           body: {
@@ -511,6 +534,7 @@ export function recordToWebAnnotation(
     modified: record.modified,
     'margin:visibility': record.visibility,
     ...(record.parentId ? { 'margin:parentId': record.parentId } : {}),
-    ...(record.color ? { 'margin:color': record.color } : {}),
+    ...(record.color && !tombstone ? { 'margin:color': record.color } : {}),
+    ...(tombstone ? { 'margin:deleted': true as const } : {}),
   }
 }

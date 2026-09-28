@@ -91,6 +91,17 @@ export interface MarginRepository {
    */
   countReplies(scope: TenantScope, id: string): Promise<number>
 
+  /**
+   * Owner-scoped. Keeps a `commenting` row that has replies and replaces its
+   * body with the tombstone. `false` when no row matched.
+   */
+  tombstoneAnnotation(
+    scope: TenantScope,
+    id: string,
+    owner: string,
+    modified: string,
+  ): Promise<boolean>
+
   /** Owner-scoped. `false` when no row matched. */
   deleteAnnotation(
     scope: TenantScope,

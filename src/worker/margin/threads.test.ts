@@ -487,6 +487,19 @@ describe('deleting a note with replies', () => {
       error: { code: 'reserved_body' },
     })
   })
+
+  it('refuses the tombstone value as an edit, so a note cannot fake its own deletion', async () => {
+    const own = await create(note({ body: 'ada notes' }), ADA)
+    const response = await harness.request('PATCH', item(own.id), {
+      as: ADA,
+      body: { body: TOMBSTONE_BODY },
+    })
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'reserved_body' },
+    })
+    expect(await listText(ADA)).toContain('ada notes')
+  })
 })
 
 describe('participants', () => {

@@ -533,6 +533,15 @@ async function patchAnnotation(
   if (isTombstone(existing)) {
     return problem(409, 'deleted', 'this note was deleted and cannot be changed')
   }
+  // The tombstone is only ever written by DELETE; an edit that sends it would
+  // let a note fake its own deletion, as creation already refuses.
+  if (isTombstoneBody(parsed.data.body)) {
+    return problem(
+      400,
+      'reserved_body',
+      'that body value is reserved for deleted notes',
+    )
+  }
   const isHighlight = existing.annotation.kind === 'highlight'
   if (isHighlight && parsed.data.body !== undefined) {
     return problem(

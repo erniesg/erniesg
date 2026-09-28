@@ -401,7 +401,9 @@ export class MarginRailElement extends ElementBase {
     if (name === 'api-base') {
       // Only a transport this element made itself: one that was injected through
       // the `transport` setter belongs to the caller and is not ours to replace.
-      if (this.#ownsTransport) this.#transport = null
+      // Through the setter, so the old backend's rows, reader and saved default
+      // go now rather than when the new one's list arrives.
+      if (this.#ownsTransport) this.transport = null
     }
     this.#detach()
     this.#attach()
@@ -584,9 +586,14 @@ export class MarginRailElement extends ElementBase {
       try {
         const prefs = await client.readPrefs()
         if (generation !== this.#loadGeneration) return
-        if (prefs.status === 401 || prefs.status === 403) {
+        if (prefs.status === 404) {
+          // No service mounted here — the dev server, a static preview. The
+          // list's 404 says the same, and neither is worth warning about.
+          this.#clearPrefsNotice()
+        } else if (prefs.status === 401 || prefs.status === 403) {
           // Signed out, or refused: nobody here owns anything, whoever did before.
           this.#viewer = null
+          this.#clearPrefsNotice()
         } else if (!isSuccess(prefs)) {
           // A 429 or a 500 says nothing about who is reading. Keep what is
           // known, say the settings did not load, and let the list go on.
@@ -597,6 +604,7 @@ export class MarginRailElement extends ElementBase {
             creator?: string
           }
           this.#viewer = typeof body?.creator === 'string' ? body.creator : null
+          const shown = this.#defaultVisibility
           if (
             body?.defaultVisibility === 'public' ||
             body?.defaultVisibility === 'private'
@@ -614,6 +622,12 @@ export class MarginRailElement extends ElementBase {
               this.#defaultVisibility = body.defaultVisibility
             }
           }
+          // The settings did load this time; an earlier failure is old news.
+          // Drawn once the default is applied, so the controls never show the
+          // fallback while the list that follows is still out.
+          const cleared = this.#notice === PREFS_FAILED
+          if (cleared) this.#notice = ''
+          if (cleared || this.#defaultVisibility !== shown) this.#render()
         }
       } finally {
         settlePrefs()
@@ -682,9 +696,11 @@ export class MarginRailElement extends ElementBase {
           record.serverId = match.serverId
           record.visibility = match.visibility
           record.mine = match.mine
+          // The service's copy is the baseline, not the host's: a refused
+          // write must roll back to what is stored.
           this.#confirmed.set(record, {
             visibility: match.visibility,
-            annotation: record.annotation,
+            annotation: match.annotation,
           })
         }
       }
@@ -718,6 +734,16 @@ export class MarginRailElement extends ElementBase {
         error.responses.every((response) => response.status === 404)
       this.#reportTransportFailure(error, absent ? undefined : LOAD_FAILED)
     }
+  }
+
+  /**
+   * An earlier settings failure no longer holds. Drawn now: the list that
+   * follows may be slow, and until it lands the warning would stay on screen.
+   */
+  #clearPrefsNotice() {
+    if (this.#notice !== PREFS_FAILED) return
+    this.#notice = ''
+    this.#render()
   }
 
   async #publish(
@@ -806,22 +832,25 @@ export class MarginRailElement extends ElementBase {
           )
           break
         }
+        // What this request carries is what the service will hold: the record
+        // may change while it is out, and that change is not stored yet.
+        const sent = {
+          visibility: record.visibility,
+          annotation: record.annotation,
+        }
         const [response] = await client.createAnnotations({
           documentUri: source.documentUri,
-          visibility: record.visibility,
+          visibility: sent.visibility,
           targets: [record.annotation.target],
           targetTexts: [source.targetTexts[index]],
-          ...kindOf(record.annotation),
+          ...kindOf(sent.annotation),
         })
         responses.push(response)
         const id = (response.body as { id?: unknown } | null)?.id
         if (isSuccess(response) && typeof id === 'string') {
           const serverId = serverIdFromIri(id)
           record.serverId = serverId
-          this.#confirmed.set(record, {
-            visibility: record.visibility,
-            annotation: record.annotation,
-          })
+          this.#confirmed.set(record, sent)
           // A load whose snapshot already held this row, merged before the id
           // arrived, left a second copy of it in the rail.
           const before = this.#records.length
@@ -1113,9 +1142,11 @@ export class MarginRailElement extends ElementBase {
             [response],
           )
         }
-        this.#savedDefault = visibility
+        // Only this connection's baseline: a write that finishes after the host
+        // switched says nothing about the new connection's reader.
+        if (transport === this.#transport) this.#savedDefault = visibility
       } catch (error) {
-        if (revision === this.#prefsRevision) {
+        if (revision === this.#prefsRevision && transport === this.#transport) {
           this.#defaultVisibility = this.#savedDefault ?? DEFAULT_VISIBILITY
           this.#render()
         }
@@ -1287,6 +1318,18 @@ export class MarginRailElement extends ElementBase {
       capture.anchors,
       selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null,
     )
+  }
+
+  /** The popup for the captured selection, however it was made. */
+  #openPopupForCapture() {
+    const capture = this.#capture
+    if (capture.status !== 'captured' || this.#popup) return
+    const selection = this.ownerDocument.getSelection()
+    const range =
+      selection?.rangeCount && !selection.isCollapsed
+        ? selection.getRangeAt(0).cloneRange()
+        : null
+    this.#openPopup(capture.anchors, range)
   }
 
   #openPopup(
@@ -1704,6 +1747,21 @@ export class MarginRailElement extends ElementBase {
     )
     highlight.disabled = this.#capture.status !== 'captured'
     highlight.addEventListener('click', () => this.highlightSelection())
+    // A selection made without a pointer or Shift — a screen reader's, say —
+    // reports only `selectionchange`, which opens nothing. This opens the same
+    // popup, with its roles and note, for whatever is captured.
+    const annotate = el(
+      doc,
+      'button',
+      {
+        type: 'button',
+        'data-margin-action': 'annotate',
+        'data-focus-key': 'annotate',
+      },
+      'Annotate selection',
+    )
+    annotate.disabled = this.#capture.status !== 'captured'
+    annotate.addEventListener('click', () => this.#openPopupForCapture())
     const keyboard = el(
       doc,
       'button',
@@ -1722,7 +1780,7 @@ export class MarginRailElement extends ElementBase {
       { id: 'keyboard-help', class: 'sr-only' },
       'Arrow up and down move between paragraphs. Shift and arrow keys select; add Alt to select by word. Enter annotates the selection, Escape leaves.',
     )
-    actions.append(highlight, keyboard, help)
+    actions.append(highlight, annotate, keyboard, help)
     if (this.#compact) {
       const close = el(
         doc,

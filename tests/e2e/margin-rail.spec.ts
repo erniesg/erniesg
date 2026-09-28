@@ -1069,6 +1069,33 @@ test.describe('the margin rail under slow or racing requests', () => {
     lists.open()
   })
 
+  test('a recovered settings read shows the stored default before the list arrives', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    const reload = () =>
+      page.evaluate(() => {
+        const rail = document.querySelector('margin-rail') as HTMLElement & {
+          transport: unknown
+        }
+        rail.transport = rail.transport
+      })
+    const notice = page.locator(`${RAIL} [data-margin-notice="transport"]`)
+    service.failPrefs = true
+    await reload()
+    await expect(notice).toContainText('margin settings')
+    await service.setPrefs(ADA, 'public')
+    service.failPrefs = false
+    const lists = gate()
+    service.holdLists = lists.promise
+    await reload()
+    await expect(
+      page.locator(`${RAIL} [data-margin-default-visibility]`),
+    ).toHaveAttribute('data-margin-default-visibility', 'public')
+    lists.open()
+  })
+
   test('a settings 404 after a settings failure clears the warning', async ({
     page,
   }) => {

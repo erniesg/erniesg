@@ -604,8 +604,7 @@ export class MarginRailElement extends ElementBase {
             creator?: string
           }
           this.#viewer = typeof body?.creator === 'string' ? body.creator : null
-          // The settings did load this time; an earlier failure is old news.
-          this.#clearPrefsNotice()
+          const shown = this.#defaultVisibility
           if (
             body?.defaultVisibility === 'public' ||
             body?.defaultVisibility === 'private'
@@ -623,6 +622,12 @@ export class MarginRailElement extends ElementBase {
               this.#defaultVisibility = body.defaultVisibility
             }
           }
+          // The settings did load this time; an earlier failure is old news.
+          // Drawn once the default is applied, so the controls never show the
+          // fallback while the list that follows is still out.
+          const cleared = this.#notice === PREFS_FAILED
+          if (cleared) this.#notice = ''
+          if (cleared || this.#defaultVisibility !== shown) this.#render()
         }
       } finally {
         settlePrefs()

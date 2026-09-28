@@ -123,8 +123,10 @@ def check_progress_ids(nodes: dict[str, dict]) -> None:
             fail(paths[0], f"{where} is also declared in another node ({others})")
         if exercise_id in nodes:
             fail(paths[0], f"{where} has the same id as a node, so they would share progress")
-    for node_id in sorted(nodes):
-        if not PROGRESS_ID.match(str(node_id)):
+    # A node id that is not a string at all is reported where front matter is
+    # read; here it would only break the sort.
+    for node_id in sorted((key for key in nodes if isinstance(key, str))):
+        if not PROGRESS_ID.match(node_id):
             fail(BOOKS, f"node `{node_id}`: ids are lowercase letters, digits and hyphens")
 
 

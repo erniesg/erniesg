@@ -1020,6 +1020,18 @@ td code, th code { white-space:nowrap; }
 figcaption { font:.85rem/1.5 ui-sans-serif,system-ui; color:#555; margin:0; }
 .figure-steps { font-size:.9rem; margin:.3rem 0 .3rem 1.1rem; }
 .walk-note { font:.88rem/1.45 ui-sans-serif,system-ui; margin:.5rem 0 0; min-height:2.6em; }
+/* A steppable figure, driven by runtime/interactive.mjs in every web edition. */
+.walk-row, .walk-state { display:flex; gap:6px; align-items:center; margin:6px 0; }
+.walk-item, .slot { min-width:34px; text-align:center; padding:5px 6px; border:1px solid var(--line);
+  border-radius:5px; font:.9rem ui-monospace,monospace; background:var(--bg, #fbfbf9); }
+.walk-item.on { background:#fde68a; border-color:#d97706; }
+.walk-label { width:72px; font:.72rem ui-sans-serif,system-ui; color:var(--dim); }
+.slot { visibility:hidden; }
+.slot.on { visibility:visible; }
+.walk-controls { display:flex; gap:10px; align-items:center; margin-top:10px;
+  font:.8rem ui-sans-serif,system-ui; color:var(--dim); }
+.walk-controls button { font:inherit; padding:3px 9px; border:1px solid var(--line);
+  border-radius:5px; background:#fff; cursor:pointer; }
 .figure-note { font:.85rem ui-sans-serif,system-ui; color:var(--dim); margin:.4rem 0 0; }
 .figure-table { margin-top:.6rem; font-size:.85rem; }
 .links { width:100%; height:auto; }
@@ -1071,6 +1083,10 @@ details.solution { border:0; border-top:2px solid var(--ink); border-radius:0; b
   --term-dim:#a3a8b3; --term-button:#0369a1; --term-focus:#7dd3fc; background:var(--term); border:1px solid #2b2d34; border-radius:8px;
   overflow:hidden; margin:1.6rem 0; }
 .exercise-run { margin:.8rem 0 0; }
+/* The editor stacks its textarea over a highlighted copy (z-index 1). Each
+   terminal isolates that, so it never paints above the page's own overlays,
+   such as a popup drawn over the text from a neighbouring column. */
+.cell-run, .exercise-run, .desk { isolation:isolate; }
 .code-wrap { position:relative; background:var(--term); overflow:hidden; }
 .editor, .code-hl, .code-gutter { font:.86rem/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;
   tab-size:4; white-space:pre; margin:0; }

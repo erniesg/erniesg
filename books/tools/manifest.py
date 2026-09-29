@@ -75,12 +75,36 @@ def book_slug(path_id: str, data: dict) -> str:
     return slug
 
 
+TIER_ORDER = ("public", "edge", "stress", "perf")
+
+
+def grading_entry(node: dict) -> dict | None:
+    """What the browser needs to grade a challenge as `grade.py` does.
+
+    The site has no server to grade on, so the reader's browser runs the
+    tiers in Python itself (`runtime/browser-backend.mjs`): each tier's test
+    file and time limit, and the module name the tests import the reader's
+    code by. The tests are in the public repository already; nothing is
+    shipped here that a reader could not read on GitHub.
+    """
+    folder = node.get("dir")
+    if node.get("kind") != "challenge" or not folder or not node.get("module"):
+        return None
+    tiers = []
+    for tier in TIER_ORDER:
+        test_file = folder / "tests" / f"{tier}.py"
+        if test_file.is_file():
+            limit = node.get("tiers", {}).get(tier, {}).get("timeout", 60)
+            tiers.append({"tier": tier, "timeout": int(limit), "source": test_file.read_text()})
+    return {"module": node["module"], "tiers": tiers} if tiers else None
+
+
 def node_entry(node: dict, slug: str) -> dict:
-    # The published site is a static host: it cannot run the reader's code, so
-    # it asks for the listings the print edition gets rather than dead buttons.
-    # It has no grader either, so the reader opens hints and solutions rather
-    # than waiting on tiers that will never turn green here.
-    markup = render_node(node, "web", runnable=False, reveal="reader")
+    # The published site runs the reader's code in their own browser (Pyodide):
+    # exercises, runnable cells, and each challenge's four tiers, so it gets the
+    # same runnable page the preview does. It has no one watching the tiers,
+    # though, so the reader opens hints and solutions themselves (`reveal`).
+    markup = render_node(node, "web", runnable=True, reveal="reader")
     return {
         "id": node["id"],
         "title": node["title"],
@@ -102,6 +126,7 @@ def node_entry(node: dict, slug: str) -> dict:
         # The ids reading progress keys an exercise by, so the site can count
         # them without parsing a node itself.
         "exercises": EXERCISE_ID.findall(markup),
+        "grading": grading_entry(node),
     }
 
 

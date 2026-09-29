@@ -38,6 +38,12 @@ export type AnnotationPatch = {
   body?: string
   visibility?: MarginVisibility
   color?: string
+  /** A proposal's new base commit, when a revision moves it. */
+  baseCommit?: string
+  /** A pre-migration proposal's source path, set when a revision upgrades it. */
+  sourcePath?: string
+  /** Bump a proposal's revision: its body or base changed. */
+  reviseProposal?: boolean
   modified: string
 }
 
@@ -51,6 +57,8 @@ export type ListOptions = {
   limit?: number
   /** Resume strictly after this row, in the collection's own order. */
   after?: ListCursor
+  /** Leave out withdrawn proposals: the review listing, not the thread view. */
+  pendingOnly?: boolean
 }
 
 /** The most rows one collection response may carry. */
@@ -101,6 +109,18 @@ export interface MarginRepository {
     id: string,
     owner: string,
     modified: string,
+  ): Promise<boolean>
+
+  /**
+   * Owner-scoped. Withdraws a pending `editing` row from review, keeping the
+   * row and its replies. `false` when no pending proposal of the owner's
+   * matched.
+   */
+  withdrawProposal(
+    scope: TenantScope,
+    id: string,
+    owner: string,
+    at: string,
   ): Promise<boolean>
 
   /** Owner-scoped. `false` when no row matched. */

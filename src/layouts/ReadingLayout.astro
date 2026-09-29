@@ -35,6 +35,8 @@ type Props = {
    * keeps it a floating toggle at every width and gives the text the room.
    */
   marginDefault?: 'column' | 'collapsed'
+  /** What the text was built from; passed through to the margin. */
+  source?: { path: string; commit: string; editDisabledReason?: string | null }
 }
 
 const {
@@ -48,6 +50,7 @@ const {
   alternates,
   contentsClosedOnNarrow = false,
   marginDefault = 'column',
+  source,
 } = Astro.props
 ---
 
@@ -129,6 +132,9 @@ const {
       <MarginMount
         documentUri={documentUri}
         collapseBelow={1280}
+        sourcePath={source?.path}
+        sourceCommit={source?.commit}
+        editDisabledReason={source?.editDisabledReason ?? undefined}
         collapsed={marginDefault === 'collapsed'}
       />
     </aside>

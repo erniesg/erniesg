@@ -10,6 +10,7 @@ import {
   listProgressQuery,
   mergeProgressQuery,
   tombstoneAnnotationQuery,
+  withdrawProposalQuery,
   updateAnnotationQuery,
   upsertPrefsQuery,
   type Query,
@@ -62,6 +63,10 @@ type AnnotationRow = {
   color: string | null
   created: string
   modified: string
+  base_commit: string | null
+  source_path: string | null
+  revision: number | null
+  withdrawn_at: string | null
 }
 
 type PrefsRow = {
@@ -109,6 +114,19 @@ export function rowToRecord(row: AnnotationRow): MarginAnnotationRecord {
     annotation,
     created: row.created,
     modified: row.modified,
+    // A proposal stored before migration 0003 has no base commit; it reads
+    // back without proposal fields rather than with invented ones.
+    ...(kind === 'proposal' && row.base_commit && row.source_path && row.revision
+      ? {
+          proposal: {
+            baseCommit: row.base_commit,
+            sourcePath: row.source_path,
+            revision: Number(row.revision),
+            withdrawnAt: row.withdrawn_at,
+          },
+        }
+      : {}),
+    ...(kind === 'proposal' ? { withdrawnAt: row.withdrawn_at } : {}),
   }
 }
 
@@ -134,6 +152,10 @@ export function recordToRow(record: MarginAnnotationRecord) {
     color: record.color,
     created: record.created,
     modified: record.modified,
+    baseCommit: record.proposal?.baseCommit ?? null,
+    sourcePath: record.proposal?.sourcePath ?? null,
+    revision: record.proposal?.revision ?? null,
+    withdrawnAt: record.proposal?.withdrawnAt ?? record.withdrawnAt ?? null,
   }
 }
 
@@ -199,6 +221,18 @@ export class D1MarginRepository implements MarginRepository {
   ): Promise<boolean> {
     const result = await this.statement(
       tombstoneAnnotationQuery(scope, id, owner, TOMBSTONE_BODY, modified),
+    ).run()
+    return (result.meta?.changes ?? 0) > 0
+  }
+
+  async withdrawProposal(
+    scope: TenantScope,
+    id: string,
+    owner: string,
+    at: string,
+  ): Promise<boolean> {
+    const result = await this.statement(
+      withdrawProposalQuery(scope, id, owner, at),
     ).run()
     return (result.meta?.changes ?? 0) > 0
   }

@@ -13,6 +13,7 @@ import {
   type Motivation,
   type WebAnnotation,
 } from './web-annotation'
+import { BASE_COMMIT, SOURCE_PATH, proposalBody } from './fixtures'
 
 const SOURCE = 'https://ernie.sg/challenges/chapter-1'
 const CREATOR = 'urn:margin:principal:dev:urn%3Amargin%3Adev:ada'
@@ -32,10 +33,22 @@ function canonicalWire(
       : {
           body: {
             type: 'TextualBody' as const,
-            value: 'the sentence carries the claim',
+            value:
+              motivation === 'editing'
+                ? proposalBody('the sentence {~~carries~>makes~~} the claim')
+                : 'the sentence carries the claim',
             format: 'text/plain',
           },
         }),
+    // An edit proposal names its base (issue 059); the revision is the
+    // server's, 1 on creation, and comes back on every read.
+    ...(motivation === 'editing'
+      ? {
+          'margin:baseCommit': BASE_COMMIT,
+          'margin:sourcePath': SOURCE_PATH,
+          'margin:revision': 1,
+        }
+      : {}),
     target: {
       source: SOURCE,
       selector: [

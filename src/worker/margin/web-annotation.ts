@@ -3,6 +3,7 @@ import {
   textAnnotationSchema,
   type TextAnnotation,
 } from '../../annotations/annotations'
+import { isFullCommitId, parseHunks } from '../../annotations/criticmarkup'
 
 /**
  * The wire format is a W3C Web Annotation. The internal model is the existing
@@ -263,6 +264,18 @@ export const webAnnotationSchema = z.object({
   'margin:color': z.string().min(1).max(64).optional(),
   /** Output only: set on a tombstone. Ignored on the way in. */
   'margin:deleted': z.boolean().optional(),
+  /**
+   * An edit proposal's base commit: the full id of the commit its hunks were
+   * made against, as the page's `source-commit` stamp names it (issue 059).
+   * Required on an `editing` annotation, refused on anything else.
+   */
+  'margin:baseCommit': z.string().min(1).max(128).optional(),
+  /** The repo-relative source file an edit proposal patches. */
+  'margin:sourcePath': z.string().min(1).max(512).optional(),
+  /** Output only: bumped on every revision, which a review approval binds to. */
+  'margin:revision': z.number().int().optional(),
+  /** Output only: when the author withdrew the proposal from review. */
+  'margin:withdrawnAt': z.string().optional(),
 }).superRefine((wire, context) => {
   const value = typeof wire.body === 'string' ? wire.body : wire.body?.value
   const cap = maxBodyLength(wire.motivation)
@@ -299,6 +312,35 @@ export type MarginAnnotationRecord = {
   annotation: TextAnnotation
   created: string
   modified: string
+  /** An `editing` annotation's proposal fields (issue 059); absent otherwise. */
+  proposal?: ProposalFields
+  /**
+   * When an `editing` annotation was withdrawn. Kept apart from `proposal`
+   * because a proposal from before migration 0003 can be withdrawn without
+   * ever having recorded its base.
+   */
+  withdrawnAt?: string | null
+}
+
+export type ProposalFields = {
+  /** Full id of the commit the hunks were made against. */
+  baseCommit: string
+  /** Repo-relative source file the proposal patches. */
+  sourcePath: string
+  /** 1 on creation, bumped by every revision of the body or base. */
+  revision: number
+  /** When the author withdrew it from review; `null` while it is pending. */
+  withdrawnAt: string | null
+}
+
+/**
+ * A repo-relative path: no leading slash, no `.` or `..` segment, no
+ * backslash, no empty segment. The adapter in 060 joins it to a checkout, so a
+ * path that could leave the checkout is refused here rather than there.
+ */
+export function isRepoRelativePath(value: string): boolean {
+  if (value.startsWith('/') || value.includes('\\') || value.includes('\0')) return false
+  return value.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..')
 }
 
 /* -------------------------------------------------------------------------- */
@@ -446,6 +488,41 @@ export function webAnnotationToRecord(
     )
   }
 
+  let proposal: ProposalFields | undefined
+  if (kind === 'proposal') {
+    const baseCommit = wire['margin:baseCommit']
+    if (baseCommit === undefined || !isFullCommitId(baseCommit)) {
+      return fail(
+        'invalid_base_commit',
+        'an edit proposal needs margin:baseCommit, the full id of the commit it was made against',
+      )
+    }
+    const sourcePath = wire['margin:sourcePath']
+    if (sourcePath === undefined || !isRepoRelativePath(sourcePath)) {
+      return fail(
+        'invalid_source_path',
+        'an edit proposal needs margin:sourcePath, the repo-relative file it patches',
+      )
+    }
+    try {
+      parseHunks(bodyValue ?? '')
+    } catch (error) {
+      return fail(
+        'invalid_proposal',
+        `an edit proposal's body must be its hunks: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+    proposal = { baseCommit, sourcePath, revision: 1, withdrawnAt: null }
+  } else if (
+    wire['margin:baseCommit'] !== undefined ||
+    wire['margin:sourcePath'] !== undefined
+  ) {
+    return fail(
+      'unexpected_base_commit',
+      'only an annotation motivated by editing names a base commit or source path',
+    )
+  }
+
   const candidate = {
     id: assigned.id,
     kind,
@@ -500,6 +577,7 @@ export function webAnnotationToRecord(
       annotation: parsed.data,
       created: assigned.created,
       modified: assigned.modified,
+      ...(proposal ? { proposal } : {}),
     },
   }
 }
@@ -562,5 +640,13 @@ export function recordToWebAnnotation(
     ...(record.parentId ? { 'margin:parentId': record.parentId } : {}),
     ...(record.color && !tombstone ? { 'margin:color': record.color } : {}),
     ...(tombstone ? { 'margin:deleted': true as const } : {}),
+    ...(record.proposal
+      ? {
+          'margin:baseCommit': record.proposal.baseCommit,
+          'margin:sourcePath': record.proposal.sourcePath,
+          'margin:revision': record.proposal.revision,
+        }
+      : {}),
+    ...(record.withdrawnAt ? { 'margin:withdrawnAt': record.withdrawnAt } : {}),
   }
 }

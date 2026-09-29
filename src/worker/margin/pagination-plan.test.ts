@@ -156,6 +156,10 @@ it('merges public and owner-private keyset pages through long other-owner privat
       color: null,
       created,
       modified: created,
+      // An editing row must name its base (migration 0003).
+      ...(motivation === 'editing'
+        ? { baseCommit: 'a'.repeat(40), sourcePath: 'books/chapters/ch01.md', revision: 1 }
+        : {}),
     })
     database.prepare(query.sql).run(...(query.params as never[]))
   }

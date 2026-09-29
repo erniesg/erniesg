@@ -24,17 +24,36 @@ type Props = {
   collapseBelow?: number
   /** A toggle and an overlay at every width: the rail starts out of the way. */
   collapsed?: boolean
+  /**
+   * What the page's text was built from: the repo-relative source file and the
+   * commit that last touched it (or `dirty` / `unavailable`). An edit proposal
+   * takes its base commit from these, never from a guess.
+   */
+  sourcePath?: string
+  sourceCommit?: string
+  /** Why editing is off on this page, shown to the reader. */
+  editDisabledReason?: string
 }
 
-const { documentUri, apiBase = '/', collapseBelow, collapsed = false } =
-  Astro.props
+const {
+  documentUri,
+  apiBase = '/',
+  collapseBelow,
+  collapsed = false,
+  sourcePath,
+  sourceCommit,
+  editDisabledReason,
+} = Astro.props
 ---
 
 <margin-rail
   document-uri={documentUri}
   api-base={apiBase}
   collapse-below={collapseBelow}
-  collapsed={collapsed || undefined}></margin-rail>
+  collapsed={collapsed || undefined}
+  source-path={sourcePath}
+  source-commit={sourceCommit}
+  edit-disabled-reason={editDisabledReason}></margin-rail>
 
 <script>
   import { defineMarginElements } from '../../../packages/margin/src/index'

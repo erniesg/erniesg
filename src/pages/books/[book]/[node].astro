@@ -8,6 +8,7 @@ import {
   bookManifest,
   books,
   documentUri,
+  nodeSourceStamp,
   scopeContentCss,
 } from '@/lib/books'
 
@@ -31,6 +32,14 @@ if (!node) throw new Error(`\`${slug}\` has no node \`${nodeId}\``)
 const grading = node.grading ? JSON.stringify(node.grading).replace(/</g, '\\u003c') : null
 
 const uri = documentUri(node.path)
+
+// What this page was built from, for edit proposals (issue 059). The source
+// text travels with the page so the editor diffs against exactly the commit it
+// names; `<` is escaped for the same reason as the grading data above.
+const stamp = nodeSourceStamp(node, import.meta.env.DEV)
+const sourceJson = stamp.source === null
+  ? null
+  : JSON.stringify({ path: stamp.sourcePath, commit: stamp.sourceCommit, text: stamp.source }).replace(/</g, '\\u003c')
 
 // The book's own stylesheet, confined to the rendered node. The site's reset
 // zeroes things a book assumes — list markers, heading weight, paragraph
@@ -127,6 +136,7 @@ const style = `<style>${scopeContentCss(manifest.contentCss, '.book-content')}${
   description={book.subtitle}
   documentUri={uri}
   canonicalPath={node.path}
+  source={{ path: stamp.sourcePath, commit: stamp.sourceCommit, editDisabledReason: stamp.reason }}
 >
   <Fragment slot="head" set:html={style} />
 
@@ -146,6 +156,12 @@ const style = `<style>${scopeContentCss(manifest.contentCss, '.book-content')}${
   {
     grading && (
       <script type="application/json" data-book-grading={node.id} set:html={grading} />
+    )
+  }
+
+  {
+    sourceJson && (
+      <script type="application/json" data-book-source={node.id} set:html={sourceJson} />
     )
   }
 

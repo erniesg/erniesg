@@ -1,3 +1,4 @@
+import { formatHunks, parseHunks } from '../../annotations/criticmarkup'
 import type { Principal } from '../principal'
 import { D1MarginRepository } from './d1-repository'
 import { principalKey } from './identity'
@@ -39,6 +40,35 @@ export const OTHER_SITE = 'https://berlayar.ai/challenges/chapter-1'
 
 const PASSAGE = 'meaning becomes coordinates'
 
+/** A full commit id an edit proposal can name as its base (issue 059). */
+export const BASE_COMMIT = 'a'.repeat(40)
+export const SOURCE_PATH = 'books/chapters/ch01-values.md'
+
+/** An edit proposal's body: canonical hunks, one hunk carrying `markup`. */
+export function proposalBody(markup = 'A {~~remark~>comment~~}.'): string {
+  return formatHunks([{ baseStartLine: 1, baseEndLine: 1, criticMarkup: markup }])
+}
+
+/** A valid proposal body exactly `length` characters long, for the caps. */
+export function proposalBodyOfLength(length: number): string {
+  const frame = proposalBody('').length
+  return proposalBody('x'.repeat(length - frame))
+}
+
+function bodyFor(motivation: Motivation, body: string | undefined): string {
+  if (motivation !== 'editing') return body ?? 'a remark'
+  if (body === undefined) return proposalBody()
+  // A test that names its own proposal body means it: already hunks, keep it;
+  // anything else becomes the text of one hunk, so only the body's meaning,
+  // not its format, is under test.
+  try {
+    parseHunks(body)
+    return body
+  } catch {
+    return proposalBody(body)
+  }
+}
+
 export function webAnnotation(options: {
   source: string
   motivation?: Motivation
@@ -47,15 +77,26 @@ export function webAnnotation(options: {
   parentId?: string
   nodeId?: string
   structId?: string
+  /** An edit proposal's base; defaults to `BASE_COMMIT`, `null` omits it. */
+  baseCommit?: string | null
+  sourcePath?: string | null
 }) {
   const motivation = options.motivation ?? 'commenting'
+  const baseCommit = options.baseCommit === undefined ? BASE_COMMIT : options.baseCommit
+  const sourcePath = options.sourcePath === undefined ? SOURCE_PATH : options.sourcePath
   return {
     '@context': MARGIN_CONTEXT,
     type: 'Annotation',
     motivation,
     ...(motivation === 'highlighting'
       ? {}
-      : { body: { type: 'TextualBody', value: options.body ?? 'a remark' } }),
+      : { body: { type: 'TextualBody', value: bodyFor(motivation, options.body) } }),
+    ...(motivation === 'editing' && baseCommit !== null
+      ? { 'margin:baseCommit': baseCommit }
+      : {}),
+    ...(motivation === 'editing' && sourcePath !== null
+      ? { 'margin:sourcePath': sourcePath }
+      : {}),
     target: {
       source: options.source,
       selector: [

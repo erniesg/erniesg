@@ -62,7 +62,7 @@ blocking is inspectable rather than being a raw line-count cutoff.
 Command:
 
 ```bash
-npm run pdf:corpus-audit -- --report-only tests/fixtures/pdf public/research/if-letters-home-could-sing/if-letters-home-could-sing.pdf
+npm run pdf:corpus-audit -- --report-only tests/fixtures/pdf public/papers/if-letters-home-could-sing/if-letters-home-could-sing.pdf
 ```
 
 Only stable basenames, SHA-256 hashes, and `AMBIGUOUS_READING_ORDER` counts are

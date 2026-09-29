@@ -66,7 +66,7 @@ export default defineConfig({
       ? undefined
       : {
           command: `ASTRO_DEV_BACKGROUND=0 npm run dev -- --host 127.0.0.1 --port ${devPort}`,
-          url: `${devBaseUrl}/research`,
+          url: `${devBaseUrl}/papers/`,
           reuseExistingServer: false,
           timeout: 120_000,
           stdout: 'pipe',

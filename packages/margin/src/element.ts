@@ -100,7 +100,7 @@ const STYLES = `
 @media print { :host { display: none; } }
 * { box-sizing: border-box; }
 .panel { display: grid; gap: 0.75rem; }
-.panel[data-overlay] { position: fixed; top: 0; right: 0; bottom: 0; z-index: 50; width: min(22rem, 100vw); overflow-y: auto; padding: 1rem; background: var(--margin-surface, Canvas); color: var(--margin-ink, CanvasText); box-shadow: -8px 0 24px rgb(0 0 0 / 0.18); }
+.panel[data-overlay] { position: fixed; top: 0; right: 0; bottom: 0; z-index: 50; align-content: start; width: min(22rem, 100vw); overflow-y: auto; padding: 1rem; background: var(--margin-surface, Canvas); color: var(--margin-ink, CanvasText); box-shadow: -8px 0 24px rgb(0 0 0 / 0.18); }
 .panel[data-overlay][data-closed] { display: none; }
 .toggle { position: fixed; right: 1rem; bottom: 1rem; z-index: 40; background: var(--margin-surface, Canvas); color: var(--margin-ink, CanvasText); box-shadow: 0 2px 10px rgb(0 0 0 / 0.2); }
 ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
@@ -199,6 +199,7 @@ export class MarginRailElement extends ElementBase {
     'text-selector',
     'api-base',
     'collapse-below',
+    'collapsed',
   ]
 
   #controller: MarginController | null = null
@@ -561,6 +562,12 @@ export class MarginRailElement extends ElementBase {
   }
 
   #watchLayout() {
+    // `collapsed`: the host wants the toggle and overlay at every width, so the
+    // text keeps the page. Selection still opens the popup, as when narrow.
+    if (this.hasAttribute('collapsed')) {
+      this.#compact = true
+      return
+    }
     const below = Number(this.getAttribute('collapse-below'))
     const view = this.ownerDocument.defaultView
     if (!below || !view?.matchMedia) {

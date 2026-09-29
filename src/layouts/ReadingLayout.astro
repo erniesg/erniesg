@@ -12,6 +12,7 @@
  */
 import MarginMount from '@/components/margin/MarginMount.astro'
 import Layout from '@/layouts/Layout.astro'
+import type { SupportedLocale } from '@/lib/i18n'
 
 type Props = {
   title: string
@@ -21,6 +22,19 @@ type Props = {
   canonicalPath?: string
   image?: string
   noindex?: boolean
+  lang?: SupportedLocale
+  alternates?: Partial<Record<SupportedLocale, string>>
+  /**
+   * Start the contents folded below the rail breakpoint. A post's reader came
+   * for the text; a long contents list above it pushes the title off the
+   * first screen on a phone. Wide viewports always show the rail.
+   */
+  contentsClosedOnNarrow?: boolean
+  /**
+   * `column` reserves the margin beside the text on wide screens. `collapsed`
+   * keeps it a floating toggle at every width and gives the text the room.
+   */
+  marginDefault?: 'column' | 'collapsed'
   /** What the text was built from; passed through to the margin. */
   source?: { path: string; commit: string; editDisabledReason?: string | null }
 }
@@ -32,6 +46,10 @@ const {
   canonicalPath,
   image,
   noindex = false,
+  lang,
+  alternates,
+  contentsClosedOnNarrow = false,
+  marginDefault = 'column',
   source,
 } = Astro.props
 ---
@@ -42,6 +60,8 @@ const {
   image={image}
   canonicalPath={canonicalPath}
   noindex={noindex}
+  lang={lang}
+  alternates={alternates}
 >
   <slot name="head" slot="head" />
 
@@ -49,7 +69,12 @@ const {
        shell itself stays surface-agnostic. -->
   <slot name="before" />
 
-  <div class="reading-shell" data-reading-shell data-document-uri={documentUri}>
+  <div
+    class="reading-shell"
+    data-reading-shell
+    data-document-uri={documentUri}
+    data-margin-default={marginDefault}
+  >
     <nav
       id="reading-navigation"
       class="reading-column reading-navigation"
@@ -67,6 +92,25 @@ const {
         <summary>Contents</summary>
         <slot name="navigation" />
       </details>
+      {
+        contentsClosedOnNarrow && (
+          <script is:inline data-reading-contents-fold>
+            ;(() => {
+              const details = document.currentScript?.previousElementSibling
+              if (!(details instanceof HTMLDetailsElement)) return
+              const wide = matchMedia('(min-width: 900px)')
+              // Wide: the rail, always unfolded (it has no summary to reopen
+              // it). Narrow: folded, so the text leads, whichever way the
+              // viewport got there.
+              const sync = () => {
+                details.open = wide.matches
+              }
+              sync()
+              wide.addEventListener?.('change', sync)
+            })()
+          </script>
+        )
+      }
     </nav>
 
     <article
@@ -91,6 +135,7 @@ const {
         sourcePath={source?.path}
         sourceCommit={source?.commit}
         editDisabledReason={source?.editDisabledReason ?? undefined}
+        collapsed={marginDefault === 'collapsed'}
       />
     </aside>
   </div>
@@ -209,12 +254,41 @@ const {
       max-height: calc(100vh - var(--reading-pin) - var(--reading-gap));
       overflow-y: auto;
     }
+
+    /* A collapsed margin reserves nothing: it stays the zero-sized floating
+       toggle of narrow screens, and the text takes a 48rem measure. */
+    .reading-shell[data-margin-default='collapsed'] {
+      grid-template-columns: 15rem minmax(0, 48rem);
+    }
+
+    .reading-shell[data-margin-default='collapsed'] .reading-margin {
+      position: fixed;
+      right: 0;
+      bottom: 0;
+      top: auto;
+      width: 0;
+      height: 0;
+      min-height: 0;
+      max-height: none;
+      overflow: visible;
+      z-index: 30;
+    }
   }
 
   /* The rail is interactive; a printed page gets the text, not its controls. */
+  /* Printed, the page is the text alone: no contents column, no annotation
+     layer, and no shell grid or padding constraining a document that brings
+     its own print layout (an A4 page setup, say). */
   @media print {
-    .reading-margin {
+    .reading-margin,
+    .reading-navigation {
       display: none;
+    }
+
+    .reading-shell {
+      display: block;
+      max-width: none;
+      padding: 0;
     }
   }
 </style>

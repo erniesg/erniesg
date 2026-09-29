@@ -3,23 +3,18 @@ import HeartLettersPrototype from '@/components/research/HeartLettersPrototype'
 import { Content as PaperContent } from '@/research/publications/if-letters-home-could-sing.md'
 import type { ResearchPaper } from '@/research/schema'
 
+/**
+ * Rendered inside the reading shell's text column. The shell's navigation
+ * column holds the contents (`IF_LETTERS_SECTIONS`) and its margin column
+ * holds the annotation layer, so this draws only the text: the paper's prose
+ * comes through the site's Markdown pipeline and carries stable block ids.
+ */
 type Props = { paper: ResearchPaper }
 
 const { paper } = Astro.props
-
-const sections = [
-  ['01', 'Introduction', 'introduction-the-politics-of-transnational-chinese-correspondence'],
-  ['02', 'New museology', 'new-museology-and-embodied-experience-applied'],
-  ['03', 'Methodology', 'methodology-from-content-to-experience---letters-heartbeats-and-sound'],
-  ['04', 'Implications', 'implications'],
-  ['05', 'Conclusion', 'conclusion-and-future-research'],
-  ['—', 'Acknowledgments', 'acknowledgments'],
-  ['—', 'References', 'references'],
-]
 ---
 
 <div class="letters-publication">
-  <a class="letters-back" href="/research">← Research</a>
 
   <header class="letters-hero">
     <div class="letters-hero__copy">
@@ -36,7 +31,7 @@ const sections = [
     <figure class="letters-hero__artifact">
       <div>
         <img
-          src="/research/if-letters-home-could-sing/media/image3.jpg"
+          src="/papers/if-letters-home-could-sing/media/image3.jpg"
           alt="Remittance letter from He Aifang to He Qinge, dated 2 March 1960"
         />
       </div>
@@ -65,12 +60,12 @@ const sections = [
   </section>
 
   <nav class="letters-actions" aria-label="Publication downloads and links">
-    <a href="/research/if-letters-home-could-sing/if-letters-home-could-sing.pdf" download>
+    <a href="/papers/if-letters-home-could-sing/if-letters-home-could-sing.pdf" download>
       <span>PDF</span>
       <strong>Print edition</strong>
       <i aria-hidden="true">↓</i>
     </a>
-    <a href="/research/if-letters-home-could-sing/if-letters-home-could-sing.epub" download>
+    <a href="/papers/if-letters-home-could-sing/if-letters-home-could-sing.epub" download>
       <span>EPUB</span>
       <strong>E-ink edition</strong>
       <i aria-hidden="true">↓</i>
@@ -80,7 +75,7 @@ const sections = [
       <strong>Hear the pulse</strong>
       <i aria-hidden="true">↘</i>
     </a>
-    <a href={`/research/${paper.id}/source.json`}>
+    <a href={`/papers/${paper.id}/source.json`}>
       <span>Source</span>
       <strong>Semantic record</strong>
       <i aria-hidden="true">↗</i>
@@ -107,24 +102,9 @@ const sections = [
   </section>
 
   <div class="letters-reading-layout">
-    <aside class="letters-toc">
-      <p>Contents</p>
-      <ol>
-        {sections.map(([number, title, anchor]) => (
-          <li>
-            <a href={`#${anchor}`}>
-              <span>{number}</span>
-              {title}
-            </a>
-          </li>
-        ))}
-      </ol>
-      <p class="letters-toc__note">Designed to reflow cleanly on phones and e-ink readers.</p>
-    </aside>
-
-    <article class="letters-paper">
+    <div class="letters-paper">
       <PaperContent />
-    </article>
+    </div>
   </div>
 
   <div id="prototype">
@@ -153,18 +133,6 @@ const sections = [
     --letters-muted: #6b5e51;
     --letters-rule: rgba(33, 26, 22, 0.24);
   }
-
-  .letters-back {
-    color: var(--letters-muted);
-    display: inline-block;
-    font-family: var(--font-mono, monospace);
-    font-size: 0.68rem;
-    letter-spacing: 0.12em;
-    padding: 1rem 0;
-    text-transform: uppercase;
-  }
-
-  .letters-back:hover { color: var(--letters-red); }
 
   .letters-hero {
     display: grid;
@@ -343,21 +311,6 @@ const sections = [
     max-width: 91rem;
   }
 
-  .letters-toc {
-    align-self: start;
-    border-top: 2px solid var(--letters-ink);
-    font-size: 0.63rem;
-    position: sticky;
-    top: 6rem;
-  }
-  .letters-toc > p:first-child { letter-spacing: 0.12em; margin: 0; padding: 0.9rem 0 1.5rem; text-transform: uppercase; }
-  .letters-toc ol { list-style: none; margin: 0; padding: 0; }
-  .letters-toc li { border-top: 1px solid var(--letters-rule); }
-  .letters-toc a { display: grid; gap: 0.8rem; grid-template-columns: 1.5rem 1fr; line-height: 1.35; padding: 0.72rem 0; }
-  .letters-toc a:hover { color: var(--letters-red); }
-  .letters-toc a span { color: var(--letters-muted); }
-  .letters-toc__note { color: var(--letters-muted); line-height: 1.55; margin-top: 1.8rem; }
-
   .letters-paper {
     font-family: Georgia, 'Songti SC', 'STSong', 'Noto Serif CJK SC', serif;
     font-size: clamp(1.03rem, 1.25vw, 1.16rem);
@@ -468,7 +421,30 @@ const sections = [
     .heart-prototype__letter { min-height: 32rem; }
   }
 
+  /* Inside the reading shell the publication is one text column wide at every
+     viewport, so it takes its single-column layout everywhere and its display
+     type scales to the column rather than to the window. */
+  .reading-text .letters-publication { margin-top: 0; padding-inline: clamp(1rem, 3vw, 2rem); }
+  .reading-text .letters-hero { grid-template-columns: 1fr; margin-top: 1rem; min-height: auto; }
+  .reading-text .letters-hero h1 { font-size: clamp(3.5rem, 6vw, 5.5rem); }
+  .reading-text .letters-hero__artifact { margin-left: 12%; max-width: 75%; }
+  .reading-text .letters-hero__pullquote { grid-column: 1; margin: 1rem 0 0 auto; }
+  .reading-text .letters-publication-note { grid-template-columns: 1fr; }
+  .reading-text .letters-actions { grid-template-columns: 1fr 1fr; }
+  .reading-text .letters-actions a:nth-child(3) { border-left: 1px solid var(--letters-rule); }
+  .reading-text .letters-abstract { gap: 1.5rem; grid-template-columns: 1fr; margin-block: 5rem; }
+  .reading-text .letters-abstract > p:not(.letters-keywords) { font-size: clamp(1.4rem, 2.4vw, 2rem); }
+  .reading-text .letters-keywords { grid-column: 1; }
+  .reading-text .letters-reading-layout { grid-template-columns: minmax(0, 1fr); }
+  .reading-text .letters-paper .system-diagram { margin-inline: 0; }
+  .reading-text .heart-prototype__intro,
+  .reading-text .heart-prototype__stage { grid-template-columns: 1fr; }
+  .reading-text .heart-prototype__letter { min-height: 32rem; }
+
   @media (max-width: 520px) {
+    .reading-text .letters-hero h1 { font-size: clamp(3rem, 16vw, 4.5rem); }
+    .reading-text .letters-actions { grid-template-columns: 1fr; }
+    .reading-text .heart-prototype__letter { min-height: 25rem; }
     .letters-publication { padding-inline: 1rem; }
     .letters-hero { margin-top: 1rem; }
     .letters-hero h1 { font-size: clamp(4rem, 22vw, 6.8rem); }

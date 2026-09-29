@@ -6,7 +6,8 @@ import TableOfContents from '@/components/TableOfContents.astro'
 import { badgeVariants } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
-import Layout from '@/layouts/Layout.astro'
+import { SITE } from '@/consts'
+import ReadingLayout from '@/layouts/ReadingLayout.astro'
 import { parseAuthors } from '@/lib/server-utils'
 import { formatDate, readingTime } from '@/lib/utils'
 import {
@@ -129,19 +130,36 @@ const localizedPaths = Object.fromEntries(
     return path ? [[locale, path]] : []
   }),
 ) as Partial<Record<SupportedLocale, string>>
+const canonicalPath = getPostLocalePath(post.id, currentLocale)
+// Each translation is its own document: the prose differs, so an anchor made
+// in one would not resolve in another.
+const documentUri = new URL(canonicalPath, SITE.SITEURL).toString()
 ---
 
-<Layout
+<ReadingLayout
   title={post.data.title}
   description={post.data.description}
   image={socialImage}
   lang={currentLocale}
-  canonicalPath={getPostLocalePath(post.id, currentLocale)}
+  canonicalPath={canonicalPath}
   alternates={alternates}
+  documentUri={documentUri}
+  contentsClosedOnNarrow
+  marginDefault="collapsed"
 >
-  <section
-    class="grid grid-cols-[minmax(0px,1fr)_min(768px,100%)_minmax(0px,1fr)] gap-y-6 *:px-4"
-  >
+  <Fragment slot="navigation">
+    {
+      headings.length > 0 ? (
+        <TableOfContents headings={headings} />
+      ) : (
+        <a class="text-sm hover:underline" href="/blog">
+          {getStaticTranslation('blog.title', currentLocale)}
+        </a>
+      )
+    }
+  </Fragment>
+
+  <section class="flex flex-col gap-y-6">
     <Breadcrumbs
       items={[
         {
@@ -152,7 +170,6 @@ const localizedPaths = Object.fromEntries(
         },
         { label: post.data.title, icon: 'lucide:file-text' },
       ]}
-      class="col-start-2"
     />
     {
       post.data.image && (
@@ -161,11 +178,11 @@ const localizedPaths = Object.fromEntries(
           alt={post.data.imageAlt ?? post.data.title}
           width={1200}
           height={630}
-          class="col-span-full mx-auto w-full max-w-[1000px] object-cover"
+          class="mx-auto w-full object-cover"
         />
       )
     }
-    <section class="col-start-2 flex flex-col gap-y-6 text-center">
+    <section class="flex flex-col gap-y-6 text-center">
       <div class="flex flex-col gap-y-4">
         <h1 class="text-4xl font-bold leading-tight sm:text-5xl">
           {post.data.title}
@@ -243,13 +260,14 @@ const localizedPaths = Object.fromEntries(
       />
     </section>
 
-    {headings.length > 0 && <TableOfContents headings={headings} />}
-
-    <article
-      class="prose prose-neutral col-start-2 max-w-none dark:prose-invert"
+    <!-- The shell's text column is the <article>; this is its prose. Every
+         block in it carries a stable id from `rehype-block-ids`. -->
+    <div
+      class="prose prose-neutral max-w-none dark:prose-invert"
+      data-post-content
     >
       <Content />
-    </article>
+    </div>
 
     <PostNavigation
       prevPost={prevPost}
@@ -261,7 +279,7 @@ const localizedPaths = Object.fromEntries(
   <Button
     variant="outline"
     size="icon"
-    className="group fixed bottom-8 right-8 z-50 hidden"
+    className="group fixed bottom-8 left-8 z-50 hidden"
     id="scroll-to-top"
     title={getStaticTranslation('ui.scrollToTop', currentLocale)}
     aria-label={getStaticTranslation('ui.scrollToTop', currentLocale)}
@@ -322,4 +340,4 @@ const localizedPaths = Object.fromEntries(
       }
     })
   </script>
-</Layout>
+</ReadingLayout>

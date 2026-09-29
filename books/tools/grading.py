@@ -7,7 +7,9 @@ order, which tiers record calls, and the one-line summary of a failing tier.
 
 from __future__ import annotations
 
+import io
 import re
+from collections import deque
 from pathlib import Path
 
 TIERS = ["public", "edge", "stress", "perf"]
@@ -16,6 +18,102 @@ TIERS = ["public", "edge", "stress", "perf"]
 # recorded: capturing output per call would change what it measures.
 UNRECORDED_TIERS = {"perf"}
 SAMPLE_TIER = "public"  # the public tier holds exactly the rows printed in the statement
+
+# A tier's combined output (what the reader printed outside a recorded call,
+# and the runner's report) keeps this many characters at each end.
+COMBINED_LIMIT_CHARS = 20_000
+
+
+class BoundedText(io.TextIOBase):
+    """Text kept only at both ends, bounded as it is written.
+
+    The first and the last `limit` characters are stored; everything between
+    is counted in lines and let go as it arrives. A print in a hot loop, or one
+    huge write, costs at most twice `limit` however long the run goes on. The
+    tail is kept because unittest reports last, and `summarize` reads it.
+    """
+
+    def __init__(self, limit: int = COMBINED_LIMIT_CHARS):
+        super().__init__()
+        self.limit = limit
+        self._head: list[str] = []
+        self._head_size = 0
+        self._tail: deque[str] = deque()
+        self._tail_size = 0
+        self.dropped_lines = 0
+        self._dropped_chars = 0
+        self._tail_starts_a_line = True  # whether the last character let go was a newline
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, text) -> int:
+        # Only bounded slices are ever copied: the discarded middle of a huge
+        # write is counted by index (str.count with bounds), never materialized.
+        text = text if isinstance(text, str) else str(text)
+        written = len(text)
+        start = 0
+        room = self.limit - self._head_size
+        if room > 0:
+            part = text[:room]
+            self._head.append(part)
+            self._head_size += len(part)
+            start = len(part)
+        rest = written - start
+        if rest <= 0:
+            return written
+        if rest >= self.limit:
+            # this write alone refills the tail: what the tail held goes, and so
+            # does this write's middle
+            while self._tail:
+                piece = self._tail.popleft()
+                self._drop(piece, 0, len(piece))
+            keep_from = written - self.limit
+            self._drop(text, start, keep_from)
+            self._tail.append(text[keep_from:])
+            self._tail_size = self.limit
+            return written
+        self._tail.append(text[start:])
+        self._tail_size += rest
+        while self._tail_size > self.limit:
+            excess = self._tail_size - self.limit
+            first = self._tail[0]
+            if len(first) <= excess:
+                self._tail.popleft()
+                self._drop(first, 0, len(first))
+                self._tail_size -= len(first)
+            else:
+                self._drop(first, 0, excess)
+                self._tail[0] = first[excess:]
+                self._tail_size -= excess
+        return written
+
+    def _drop(self, text: str, begin: int, end: int) -> None:
+        if end <= begin:
+            return
+        self._dropped_chars += end - begin
+        self.dropped_lines += text.count("\n", begin, end)
+        self._tail_starts_a_line = text[end - 1] == "\n"
+
+    @property
+    def stored_chars(self) -> int:
+        return self._head_size + self._tail_size
+
+    def getvalue(self) -> str:
+        head, tail = "".join(self._head), "".join(self._tail)
+        if not self._dropped_chars:
+            return head + tail
+        dropped = self.dropped_lines
+        cut = tail.find("\n")
+        if dropped and cut != -1 and not self._tail_starts_a_line:
+            tail, dropped = tail[cut + 1 :], dropped + 1  # no half line after the gap
+        if dropped:
+            marker = f"…truncated, {dropped} more line{'' if dropped == 1 else 's'}\n"
+        else:
+            # the cut fell inside one line: say how much of it went
+            chars = self._dropped_chars
+            marker = f"…truncated, {chars} more character{'' if chars == 1 else 's'} of a long line\n"
+        return head + ("" if head.endswith("\n") else "\n") + marker + tail
 
 
 

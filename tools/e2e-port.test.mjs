@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -79,15 +79,22 @@ describe('claimPort', () => {
     expect(readFileSync(lock, 'utf8').trim()).toBe(String(process.pid))
   })
 
-  it('stands down while another reclaimer holds the port, and clears a stale mutex', () => {
+  it('stands down while another reclaimer holds the port, and never deletes that mutex', () => {
     const directory = scratchDir()
     writeFileSync(path.join(directory, '4105.lock'), `${deadPid()}\n`)
     mkdirSync(path.join(directory, '4105.reclaim'))
-    expect(claimPort(4105, directory, process.pid)).toBe(false)
     const old = new Date(Date.now() - 60_000)
     utimesSync(path.join(directory, '4105.reclaim'), old, old)
     expect(claimPort(4105, directory, process.pid)).toBe(false)
-    expect(claimPort(4105, directory, process.pid)).toBe(true)
+    expect(claimPort(4105, directory, process.pid)).toBe(false)
+  })
+
+  it('never shows a lock without its owner: a reader never sees an empty lock', () => {
+    const directory = scratchDir()
+    expect(claimPort(4106, directory, process.pid)).toBe(true)
+    expect(readFileSync(path.join(directory, '4106.lock'), 'utf8')).toBe(`${process.pid}\n`)
+    // No staging files are left behind.
+    expect(readdirSync(directory).filter((name) => name.endsWith('.tmp'))).toEqual([])
   })
 
   it('refuses a corrupt lock rather than guessing', () => {

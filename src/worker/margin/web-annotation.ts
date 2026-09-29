@@ -314,6 +314,12 @@ export type MarginAnnotationRecord = {
   modified: string
   /** An `editing` annotation's proposal fields (issue 059); absent otherwise. */
   proposal?: ProposalFields
+  /**
+   * When an `editing` annotation was withdrawn. Kept apart from `proposal`
+   * because a proposal from before migration 0003 can be withdrawn without
+   * ever having recorded its base.
+   */
+  withdrawnAt?: string | null
 }
 
 export type ProposalFields = {
@@ -639,10 +645,8 @@ export function recordToWebAnnotation(
           'margin:baseCommit': record.proposal.baseCommit,
           'margin:sourcePath': record.proposal.sourcePath,
           'margin:revision': record.proposal.revision,
-          ...(record.proposal.withdrawnAt
-            ? { 'margin:withdrawnAt': record.proposal.withdrawnAt }
-            : {}),
         }
       : {}),
+    ...(record.withdrawnAt ? { 'margin:withdrawnAt': record.withdrawnAt } : {}),
   }
 }

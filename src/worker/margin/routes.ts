@@ -594,7 +594,7 @@ async function patchAnnotation(
     )
   }
   if (isProposal) {
-    if (existing.proposal?.withdrawnAt) {
+    if (existing.proposal?.withdrawnAt || existing.withdrawnAt) {
       return problem(
         409,
         'proposal_withdrawn',
@@ -627,6 +627,14 @@ async function patchAnnotation(
         400,
         'invalid_base_commit',
         'revising this proposal needs margin:baseCommit and margin:sourcePath',
+      )
+    }
+    // Its free-text body is not hunks, so the upgrade must replace it too.
+    if (!existing.proposal && baseCommit !== undefined && parsed.data.body === undefined) {
+      return problem(
+        400,
+        'invalid_proposal',
+        'upgrading this proposal needs a new body: its hunks against the named base',
       )
     }
     if (sourcePath !== undefined && !isRepoRelativePath(sourcePath)) {
@@ -699,6 +707,15 @@ async function patchAnnotation(
     throw error
   }
   if (!updated) {
+    // A revision refused by the pending check lost a race with a withdrawal.
+    const now = isProposal ? await context.repository.findAnnotation(scope, id, owner) : null
+    if (now?.withdrawnAt) {
+      return problem(
+        409,
+        'proposal_withdrawn',
+        'this proposal was withdrawn from review and cannot be revised',
+      )
+    }
     return problem(404, 'not_found', 'no annotation of yours has that id here')
   }
   return json(present(updated))
@@ -724,7 +741,7 @@ async function withdrawProposal(
   if (existing.creator !== owner) {
     return problem(403, 'forbidden', 'only its author can withdraw a proposal')
   }
-  if (existing.proposal?.withdrawnAt) {
+  if (existing.proposal?.withdrawnAt || existing.withdrawnAt) {
     return problem(409, 'proposal_withdrawn', 'this proposal is already withdrawn')
   }
   const withdrawn = await context.repository.withdrawProposal(

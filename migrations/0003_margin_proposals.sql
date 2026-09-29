@@ -46,11 +46,12 @@ END;
 -- a revision is never made against a guess. Any row that has left the legacy
 -- state must carry all three, validly.
 CREATE TRIGGER margin_annotations_proposal_fields_update
-BEFORE UPDATE OF base_commit, source_path, revision, withdrawn_at, body ON margin_annotations
+BEFORE UPDATE OF base_commit, source_path, revision, withdrawn_at, body, motivation ON margin_annotations
 WHEN (
   NEW.motivation = 'editing'
   AND NOT (
-    NEW.base_commit IS NULL
+    OLD.motivation = 'editing'
+    AND NEW.base_commit IS NULL
     AND NEW.source_path IS NULL
     AND NEW.revision IS NULL
     AND NEW.body IS OLD.body

@@ -257,9 +257,12 @@ export function updateAnnotationQuery(
     assignments.push('color = ?')
     params.push(patch.color)
   }
+  // A revision lands only on a proposal still pending: checked in the same
+  // statement, so a withdrawal between the route's read and this write wins.
+  const pending = patch.reviseProposal ? ' AND withdrawn_at IS NULL' : ''
   return {
     sql: `UPDATE margin_annotations SET ${assignments.join(', ')}
-WHERE site = ? AND document = ? AND id = ? AND creator = ?`,
+WHERE site = ? AND document = ? AND id = ? AND creator = ?${pending}`,
     params: [...params, scope.site, scope.document, id, owner],
   }
 }

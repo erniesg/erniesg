@@ -19,14 +19,12 @@
  * never proceeds on a port nobody holds.
  */
 import {
-  closeSync,
+  linkSync,
   mkdirSync,
-  openSync,
   readFileSync,
   rmdirSync,
-  statSync,
   unlinkSync,
-  writeSync,
+  writeFileSync,
 } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -35,8 +33,6 @@ import { fileURLToPath } from 'node:url'
 
 export const LOCK_DIRECTORY_NAME = 'srt-e2e-ports'
 const MAX_ATTEMPTS = 64
-/** A reclaim mutex older than this was left by a reclaimer that died holding it. */
-const STALE_MUTEX_MS = 30_000
 
 export class PortLockError extends Error {
   constructor(message) {
@@ -72,40 +68,43 @@ function readOwner(lockPath) {
   return Number(trimmed)
 }
 
+/**
+ * Create the lock only if it does not exist, and never let anyone see it
+ * empty: the owner is written to a private temporary file first, which is
+ * then published under the lock's name with `link` — atomic, and refused if
+ * the name exists.
+ */
 function createExclusive(lockPath, owner) {
-  let fd
+  const staging = `${lockPath}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`
+  writeFileSync(staging, `${owner}\n`, { flag: 'wx', mode: 0o644 })
   try {
-    fd = openSync(lockPath, 'wx', 0o644)
+    linkSync(staging, lockPath)
+    return true
   } catch (error) {
     if (error && error.code === 'EEXIST') return false
     throw error
-  }
-  try {
-    writeSync(fd, `${owner}\n`)
   } finally {
-    closeSync(fd)
+    unlinkSync(staging)
   }
-  return true
 }
 
 /**
  * Take the per-port reclaim mutex: an atomic `mkdir`. `false` when another
- * reclaimer holds it. A mutex a dead reclaimer left behind is cleared once it
- * is older than `STALE_MUTEX_MS`, so a port is never lost for good.
+ * reclaimer holds it.
+ *
+ * A mutex is never removed by anyone but its holder. One left by a reclaimer
+ * that died mid-reclaim retires that port number, and the allocator simply
+ * asks the kernel for another; removing it safely would need the very
+ * compare-and-delete a filesystem path cannot give.
  */
 function takeReclaimMutex(mutexPath) {
   try {
     mkdirSync(mutexPath)
     return true
   } catch (error) {
-    if (!(error && error.code === 'EEXIST')) throw error
+    if (error && error.code === 'EEXIST') return false
+    throw error
   }
-  try {
-    if (Date.now() - statSync(mutexPath).mtimeMs > STALE_MUTEX_MS) rmdirSync(mutexPath)
-  } catch (error) {
-    if (!(error && error.code === 'ENOENT')) throw error
-  }
-  return false
 }
 
 /**

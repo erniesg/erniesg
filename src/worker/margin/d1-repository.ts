@@ -126,6 +126,7 @@ export function rowToRecord(row: AnnotationRow): MarginAnnotationRecord {
           },
         }
       : {}),
+    ...(kind === 'proposal' ? { withdrawnAt: row.withdrawn_at } : {}),
   }
 }
 
@@ -154,7 +155,7 @@ export function recordToRow(record: MarginAnnotationRecord) {
     baseCommit: record.proposal?.baseCommit ?? null,
     sourcePath: record.proposal?.sourcePath ?? null,
     revision: record.proposal?.revision ?? null,
-    withdrawnAt: record.proposal?.withdrawnAt ?? null,
+    withdrawnAt: record.proposal?.withdrawnAt ?? record.withdrawnAt ?? null,
   }
 }
 

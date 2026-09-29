@@ -15,7 +15,6 @@ browser terminates the worker that runs this).
 from __future__ import annotations
 
 import atexit
-import io
 import json
 import os
 import runpy
@@ -29,7 +28,7 @@ TOOLS = Path(__file__).resolve().parent
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
-from grading import UNRECORDED_TIERS, summarize  # noqa: E402
+from grading import UNRECORDED_TIERS, BoundedText, summarize  # noqa: E402
 
 GRADER_MODULES = ("bookgrader", "grader_observe")
 GRADER_ENV = ("BOOK_SOLUTION_DIR", "BOOK_CALL_LOG", "BOOK_SAMPLE_MODE")
@@ -65,7 +64,9 @@ def run_tier(node_dir: Path, tier: str, solution_dir: Path, sample: bool = False
     for name in GRADER_MODULES:  # imported fresh, so they read this tier's environment
         sys.modules.pop(name, None)
 
-    buffer = io.StringIO()
+    # Bounded as it is written: the perf tier is never recorded, so a print in
+    # its hot loop lands here, and must not fill the tab before the time limit.
+    buffer = BoundedText()
     code = 0
     calls: list[dict] = []
     total = 0

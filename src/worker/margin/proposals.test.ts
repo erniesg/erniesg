@@ -339,6 +339,29 @@ describe('a proposal stored before migration 0003', () => {
     expect((await withdraw(id)).status).toBe(200)
   })
 
+  it('cannot be revised once withdrawn', async () => {
+    const id = await insertLegacy()
+    expect((await withdraw(id)).status).toBe(200)
+    expect((await withdraw(id)).status).toBe(409)
+    const upgrade = await patch(id, {
+      body: proposalBody('x'),
+      'margin:baseCommit': NEWER,
+      'margin:sourcePath': 'books/chapters/ch01-values.md',
+    })
+    expect(upgrade.status).toBe(409)
+    expect((await upgrade.json()).error.code).toBe('proposal_withdrawn')
+  })
+
+  it('refuses an upgrade that keeps its free-text body', async () => {
+    const id = await insertLegacy()
+    const metadataOnly = await patch(id, {
+      'margin:baseCommit': NEWER,
+      'margin:sourcePath': 'books/chapters/ch01-values.md',
+    })
+    expect(metadataOnly.status).toBe(400)
+    expect((await metadataOnly.json()).error.code).toBe('invalid_proposal')
+  })
+
   it('is upgraded by a revision that names both its base and its file, counting from revision 1', async () => {
     const id = await insertLegacy()
     const bodyOnly = await patch(id, { body: proposalBody('x') })
@@ -362,5 +385,38 @@ describe('a proposal stored before migration 0003', () => {
     const moved = await patch(id, { 'margin:sourcePath': 'books/chapters/other.md' })
     expect(moved.status).toBe(400)
     expect((await moved.json()).error.code).toBe('unexpected_source_path')
+  })
+})
+
+describe('a revision racing a withdrawal', () => {
+  it('lands only while the proposal is pending, checked in the write itself', async () => {
+    const id = bareId(await createProposal())
+    const scope = { site: 'https://ernie.sg', document: '/challenges/chapter-1' }
+    const { ADA_KEY } = await import('./fixtures')
+    // The withdrawal wins between the route's read and its write.
+    expect(await harness.repository.withdrawProposal(scope, id, ADA_KEY, '2026-09-29T00:00:00.000Z')).toBe(true)
+    const revised = await harness.repository.updateAnnotation(scope, id, ADA_KEY, {
+      body: proposalBody('late'),
+      reviseProposal: true,
+      modified: '2026-09-29T00:00:01.000Z',
+    })
+    expect(revised).toBeNull()
+    const read = await harness.request('GET', `/annotations/${id}${scopeQuery(CHAPTER_ONE)}`, { as: ADA })
+    expect((await read.json())['margin:revision']).toBe(1)
+  })
+})
+
+describe('the update trigger watches motivation too', () => {
+  it('refuses turning a note into a proposal without its fields, or a proposal into a note with them', async () => {
+    const note = await post(webAnnotation({ source: CHAPTER_ONE }))
+    const noteId = bareId((await note.json()) as Wire)
+    const proposalId = bareId(await createProposal())
+    const db = harness.database
+    await expect(
+      db.prepare("UPDATE margin_annotations SET motivation = 'editing' WHERE id = ?").bind(noteId).run(),
+    ).rejects.toThrow(/MARGIN_PROPOSAL_FIELDS/)
+    await expect(
+      db.prepare("UPDATE margin_annotations SET motivation = 'commenting' WHERE id = ?").bind(proposalId).run(),
+    ).rejects.toThrow(/MARGIN_PROPOSAL_FIELDS/)
   })
 })

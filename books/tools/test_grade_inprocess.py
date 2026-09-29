@@ -130,5 +130,20 @@ class InProcessMatchesSubprocess(unittest.TestCase):
                 self.assertEqual(grade_inprocess.run_tier(node, "public", work)["outcome"], "pass")
 
 
+class TheCommandLineStillGrades(unittest.TestCase):
+    """grade.py's own entry point, after its helpers moved to grading.py."""
+
+    def test_verify_runs_every_tier_green(self):
+        import subprocess
+
+        done = subprocess.run(
+            [sys.executable, str(Path(grade.__file__)), "verify", "pool-ticket-price"],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -139,6 +139,44 @@ def run_samples(node_dir: Path, solution_dir: Path, timeout: int) -> dict:
     return {"calls": calls, "total": counts.get("total", len(calls)), "error": error}
 
 
+def grade(node_id: str, use_solution: bool) -> int:
+    node_dir, meta = load_node(node_id)
+    if use_solution:
+        solution_dir = WORKSPACE_DIR / ".reference" / node_id
+        solution_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(node_dir / "solution.py", solution_dir / f"{meta['module']}.py")
+    else:
+        solution_dir = WORKSPACE_DIR / node_id
+        if not (solution_dir / f"{meta['module']}.py").is_file():
+            print(f"Nothing to grade yet. Run: grade.py start {node_id}")
+            return 1
+
+    print(f"\n{meta['title']}  {DIM}({node_id}){RESET}")
+    print(f"{DIM}grading {solution_dir}{RESET}\n")
+
+    earned = 0
+    for tier in TIERS:
+        config = meta.get("tiers", {}).get(tier, {})
+        outcome, output = run_tier(node_dir, tier, solution_dir, config.get("timeout", 60))
+        if outcome == "pass":
+            xp = config.get("xp", 0)
+            earned += xp
+            print(f"  {GREEN}✔ {tier:<7}{RESET} passed  (+{xp} XP)")
+            continue
+        label = {"fail": "failed", "timeout": "TIME LIMIT EXCEEDED", "missing": "missing"}[outcome]
+        print(f"  {RED}✘ {tier:<7} {label}{RESET}")
+        summary = summarize(output, node_dir / "tests" / f"{tier}.py")
+        if summary:
+            print(f"\n    {summary}")
+        if output:
+            print("\n" + "\n".join("    " + line for line in output.splitlines()[-25:]))
+        print(f"\n  {DIM}Tiers stop at the first failure. Fix this one first.{RESET}")
+        return 1
+
+    print(f"\n  {GREEN}all four tiers green{RESET}  (+{earned} XP)\n")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)

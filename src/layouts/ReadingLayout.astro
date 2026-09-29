@@ -21,6 +21,8 @@ type Props = {
   canonicalPath?: string
   image?: string
   noindex?: boolean
+  /** What the text was built from; passed through to the margin. */
+  source?: { path: string; commit: string; editDisabledReason?: string | null }
 }
 
 const {
@@ -30,6 +32,7 @@ const {
   canonicalPath,
   image,
   noindex = false,
+  source,
 } = Astro.props
 ---
 
@@ -82,7 +85,13 @@ const {
       data-document-uri={documentUri}
       aria-label="Margin"
     >
-      <MarginMount documentUri={documentUri} collapseBelow={1280} />
+      <MarginMount
+        documentUri={documentUri}
+        collapseBelow={1280}
+        sourcePath={source?.path}
+        sourceCommit={source?.commit}
+        editDisabledReason={source?.editDisabledReason ?? undefined}
+      />
     </aside>
   </div>
 </Layout>

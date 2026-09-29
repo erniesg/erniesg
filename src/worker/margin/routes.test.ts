@@ -9,6 +9,8 @@ import {
   createHarness,
   OTHER_SITE,
   scopeQuery,
+  proposalBody,
+  proposalBodyOfLength,
   webAnnotation,
   type MarginHarness,
 } from './fixtures'
@@ -543,7 +545,7 @@ describe('the wire format survives a POST and a GET', () => {
     const highlight = stored.find((a) => a.motivation === 'highlighting')
     const proposal = stored.find((a) => a.motivation === 'editing')
     expect(highlight?.body).toBeUndefined()
-    expect(proposal?.body?.value).toBe('a proposed replacement')
+    expect(proposal?.body?.value).toBe(proposalBody('a proposed replacement'))
   })
 })
 
@@ -1404,7 +1406,7 @@ describe('review findings, round six', () => {
       }),
     )
 
-    expect(bodies).toEqual(['a commenting body', 'a editing body'])
+    expect(bodies).toEqual(['a commenting body', proposalBody('a editing body')])
   })
 })
 
@@ -1626,7 +1628,7 @@ describe('body caps (issue 059)', () => {
       webAnnotation({
         source: CHAPTER_ONE,
         motivation: 'editing',
-        body: 'x'.repeat(MAX_PROPOSAL_BODY_LENGTH),
+        body: proposalBodyOfLength(MAX_PROPOSAL_BODY_LENGTH),
       }),
     )
     expect(response.status).toBe(201)
@@ -1639,7 +1641,7 @@ describe('body caps (issue 059)', () => {
       webAnnotation({
         source: CHAPTER_ONE,
         motivation: 'editing',
-        body: 'x'.repeat(MAX_PROPOSAL_BODY_LENGTH + 1),
+        body: proposalBodyOfLength(MAX_PROPOSAL_BODY_LENGTH + 1),
       }),
     )
     expect(response.status).toBe(413)
@@ -1678,11 +1680,11 @@ describe('body caps (issue 059)', () => {
       })
 
     expect(
-      (await patch(bareId(proposal), 'y'.repeat(MAX_PROPOSAL_BODY_LENGTH)))
+      (await patch(bareId(proposal), proposalBodyOfLength(MAX_PROPOSAL_BODY_LENGTH)))
         .status,
     ).toBe(200)
     expect(
-      (await patch(bareId(proposal), 'y'.repeat(MAX_PROPOSAL_BODY_LENGTH + 1)))
+      (await patch(bareId(proposal), proposalBodyOfLength(MAX_PROPOSAL_BODY_LENGTH + 1)))
         .status,
     ).toBe(413)
     expect(

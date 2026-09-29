@@ -40,6 +40,7 @@ from render import (
     book_files,
     load_book,
     load_topics,
+    node_path,
     reading_navigation,
     render_node,
     section_headings,
@@ -114,6 +115,9 @@ def node_entry(node: dict, slug: str) -> dict:
         "partNumber": node.get("part_number", ""),
         "number": node.get("number", ""),
         "path": f"/books/{slug}/{node['id']}/",
+        # The node's Markdown source, repo-relative. The site stamps the commit
+        # that last touched it, so an edit proposal names the text it changes.
+        "sourcePath": node_path(node["id"]).relative_to(BOOKS.parent).as_posix(),
         "html": markup,
         "blocks": [
             {"kind": kind, "id": identifier, "digest": digest}

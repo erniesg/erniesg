@@ -4,7 +4,14 @@ import worker from './index'
 import type { Principal } from './principal'
 import { ensureSchema, principalKey, recordIdentity } from './margin/identity'
 import { SqliteD1Database } from './margin/sqlite-database'
-import { CHAPTER_ONE, scopeQuery, webAnnotation } from './margin/fixtures'
+import {
+  BASE_COMMIT,
+  CHAPTER_ONE,
+  SOURCE_PATH,
+  proposalBody,
+  scopeQuery,
+  webAnnotation,
+} from './margin/fixtures'
 import {
   createFakeProvider,
   sessionCookieHeader,
@@ -165,7 +172,7 @@ describe('AuthKit and canonical service composition', () => {
     expect(await created.json()).toMatchObject({
       creator: principalKey(writer),
       motivation: 'editing',
-      body: { value: 'replacement' },
+      body: { value: proposalBody('replacement') },
     })
     const read = await h.request(`/proposals${scope}`, 'GET', stale)
     expect(read.status).toBe(200)
@@ -382,7 +389,9 @@ describe('AuthKit and canonical service composition', () => {
         '@context': 'http://www.w3.org/ns/anno.jsonld',
         type: 'Annotation',
         motivation: 'editing',
-        body: { type: 'TextualBody', value: `replacement ${i}` },
+        body: { type: 'TextualBody', value: proposalBody(`replacement ${i}`) },
+        'margin:baseCommit': BASE_COMMIT,
+        'margin:sourcePath': SOURCE_PATH,
         target: {
           source: CHAPTER_ONE,
           selector: [

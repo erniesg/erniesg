@@ -37,6 +37,10 @@ export const ANNOTATION_COLUMNS = [
   'color',
   'created',
   'modified',
+  'base_commit',
+  'source_path',
+  'revision',
+  'withdrawn_at',
 ].join(', ')
 
 /**
@@ -93,6 +97,10 @@ export function listAnnotationsQuery(
       publicParams.push(options.motivation)
       privateParams.push(options.motivation)
     }
+    if (options.pendingOnly) {
+      publicWhere.push('withdrawn_at IS NULL')
+      privateWhere.push('withdrawn_at IS NULL')
+    }
     if (options.after) {
       publicWhere.push('(created, id) > (?, ?)')
       privateWhere.push('(created, id) > (?, ?)')
@@ -122,6 +130,7 @@ ORDER BY created ASC, id ASC LIMIT ?`,
     extraSql.push('AND motivation = ?')
     extraParams.push(options.motivation)
   }
+  if (options.pendingOnly) extraSql.push('AND withdrawn_at IS NULL')
   // Keyset, not OFFSET: the collection is ordered by `(created, id)`, so
   // resuming after the last row the caller saw is one comparison and cannot
   // skip or repeat a row when something is inserted between pages.
@@ -165,10 +174,15 @@ export function insertAnnotationQuery(row: {
   color: string | null
   created: string
   modified: string
+  /** Proposal fields (migration 0003); absent on a highlight or a note. */
+  baseCommit?: string | null
+  sourcePath?: string | null
+  revision?: number | null
+  withdrawnAt?: string | null
 }): Query {
   return {
     sql: `INSERT INTO margin_annotations (${ANNOTATION_COLUMNS})
-VALUES (${new Array(19).fill('?').join(', ')})`,
+VALUES (${new Array(23).fill('?').join(', ')})`,
     params: [
       row.id,
       row.site,
@@ -189,6 +203,10 @@ VALUES (${new Array(19).fill('?').join(', ')})`,
       row.color,
       row.created,
       row.modified,
+      row.baseCommit ?? null,
+      row.sourcePath ?? null,
+      row.revision ?? null,
+      row.withdrawnAt ?? null,
     ],
   }
 }
@@ -205,11 +223,21 @@ export function updateAnnotationQuery(
     body?: string
     visibility?: string
     color?: string
+    baseCommit?: string
+    reviseProposal?: boolean
     modified: string
   },
 ): Query {
   const assignments = ['modified = ?']
   const params: unknown[] = [patch.modified]
+  if (patch.baseCommit !== undefined) {
+    assignments.push('base_commit = ?')
+    params.push(patch.baseCommit)
+  }
+  // A revision of a proposal's body or base is a new revision, which is what a
+  // review approval binds to (060). Counted in SQL so two revisions cannot both
+  // read the same number.
+  if (patch.reviseProposal) assignments.push('revision = revision + 1')
   if (patch.body !== undefined) {
     assignments.push('body = ?')
     params.push(patch.body)
@@ -261,6 +289,24 @@ export function tombstoneAnnotationQuery(
     sql: `UPDATE margin_annotations SET body = ?, color = NULL, modified = ?
 WHERE site = ? AND document = ? AND id = ? AND creator = ? AND motivation = 'commenting'`,
     params: [tombstone, modified, scope.site, scope.document, id, owner],
+  }
+}
+
+/**
+ * Withdraw a pending proposal from review. The row stays, so replies to it
+ * stay readable; the review listing leaves it out. Owner-scoped, `editing`
+ * only, and only once.
+ */
+export function withdrawProposalQuery(
+  scope: TenantScope,
+  id: string,
+  owner: string,
+  at: string,
+): Query {
+  return {
+    sql: `UPDATE margin_annotations SET withdrawn_at = ?, modified = ?
+WHERE site = ? AND document = ? AND id = ? AND creator = ? AND motivation = 'editing' AND withdrawn_at IS NULL`,
+    params: [at, at, scope.site, scope.document, id, owner],
   }
 }
 

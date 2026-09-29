@@ -12,6 +12,7 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 
 import { SITE } from '../consts'
+import { resolveStampMode, stampSource, type SourceStamp } from './book-source'
 
 /**
  * `digest` verifies the anchor. `id` is positional, so inserting a block
@@ -33,6 +34,8 @@ export type BookNode = {
   partNumber: string
   number: string
   path: string
+  /** The node's Markdown source, repo-relative, as `books/tools/manifest.py` names it. */
+  sourcePath: string
   html: string
   blocks: BookBlock[]
   outline: BookOutlineEntry[]
@@ -156,6 +159,16 @@ export function bookBySlug(slug: string): Book | undefined {
  */
 export function documentUri(pathname: string): string {
   return new URL(pathname, SITE.SITEURL).toString()
+}
+
+/**
+ * What a node's page was built from: its source file and the commit that last
+ * touched it (issue 059). A build fails rather than stamp a page wrongly; a dev
+ * server stamps an uncommitted file `dirty` and edit mode is off there. See
+ * `book-source.ts` for the modes.
+ */
+export function nodeSourceStamp(node: BookNode, dev: boolean): SourceStamp {
+  return stampSource(repoRoot(), node.sourcePath, resolveStampMode({ dev, env: process.env }))
 }
 
 /**

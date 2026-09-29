@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { isFullCommitId, parseHunks } from '../../annotations/criticmarkup'
 import type { Principal } from '../principal'
 import { principalKey } from './identity'
 import { displayNameFor } from './participants'
@@ -51,6 +52,7 @@ import {
  *   GET    /progress?site&book       the caller's own progress in a book
  *   PATCH  /progress?site&book       merge into it; never removes or un-solves
  *   GET    /proposals                list, restricted to `editing`
+ *   POST   /proposals/:id/withdraw   owner-scoped; keeps the row (059)
  *   POST   /proposals/:id/apply      501 — issue 060
  *   GET    /documents/:id/history    501 — issue 059
  *
@@ -323,7 +325,9 @@ async function listAnnotations(
   // One row more than asked for, so "is there another page" is an observation
   // rather than a second query.
   const records = await context.repository.listAnnotations(scope, viewer, {
-    ...(motivation ? { motivation } : {}),
+    // The review listing leaves withdrawn proposals out; the row, and any
+    // thread under it, stays readable through GET /annotations (issue 059).
+    ...(motivation ? { motivation, pendingOnly: true } : {}),
     limit: page.limit + 1,
     ...(page.after ? { after: page.after } : {}),
   })
@@ -503,6 +507,8 @@ const annotationPatchSchema = z
     body: z.string().min(1).optional(),
     'margin:visibility': z.enum(VISIBILITIES).optional(),
     'margin:color': z.string().min(1).max(64).optional(),
+    /** A revised proposal may move to the page's newer base commit. */
+    'margin:baseCommit': z.string().min(1).max(128).optional(),
   })
   .strict()
   .refine((patch) => Object.keys(patch).length > 0, {
@@ -574,6 +580,51 @@ async function patchAnnotation(
   ) {
     return problem(400, 'unexpected_color', COLOR_SCOPE_MESSAGE)
   }
+  const isProposal = existing.annotation.kind === 'proposal'
+  const baseCommit = parsed.data['margin:baseCommit']
+  if (!isProposal && baseCommit !== undefined) {
+    return problem(
+      400,
+      'unexpected_base_commit',
+      'only an annotation motivated by editing names a base commit',
+    )
+  }
+  if (isProposal) {
+    if (existing.proposal?.withdrawnAt) {
+      return problem(
+        409,
+        'proposal_withdrawn',
+        'this proposal was withdrawn from review and cannot be revised',
+      )
+    }
+    if (baseCommit !== undefined && !isFullCommitId(baseCommit)) {
+      return problem(
+        400,
+        'invalid_base_commit',
+        'margin:baseCommit must be the full id of the commit the proposal was made against',
+      )
+    }
+    // A proposal stored before its base was recorded can only be revised by
+    // naming one; a revision is never made against a guess.
+    if (!existing.proposal && baseCommit === undefined && parsed.data.body !== undefined) {
+      return problem(
+        400,
+        'invalid_base_commit',
+        'revising this proposal needs margin:baseCommit',
+      )
+    }
+    if (parsed.data.body !== undefined) {
+      try {
+        parseHunks(parsed.data.body)
+      } catch (error) {
+        return problem(
+          400,
+          'invalid_proposal',
+          `an edit proposal's body must be its hunks: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
+    }
+  }
   const motivation = motivationForKind(existing.annotation.kind)
   const cap = maxBodyLength(motivation)
   if (parsed.data.body !== undefined && parsed.data.body.length > cap) {
@@ -610,6 +661,12 @@ async function patchAnnotation(
       ...(parsed.data['margin:color'] !== undefined
         ? { color: parsed.data['margin:color'] }
         : {}),
+      ...(baseCommit !== undefined ? { baseCommit } : {}),
+      // Every change to what a proposal says is a new revision (issue 059), and
+      // a review approval binds to the revision it read (060).
+      ...(isProposal && (parsed.data.body !== undefined || baseCommit !== undefined)
+        ? { reviseProposal: true }
+        : {}),
       modified: context.now(),
     })
   } catch (error) {
@@ -621,6 +678,44 @@ async function patchAnnotation(
     return problem(404, 'not_found', 'no annotation of yours has that id here')
   }
   return json(present(updated))
+}
+
+/**
+ * Withdraw one of the caller's own pending proposals from review (issue 059).
+ * The row stays: replies to it remain readable, and it can no longer be
+ * revised. Answers the withdrawn proposal.
+ */
+async function withdrawProposal(
+  context: MarginRouteContext,
+  owner: string,
+  url: URL,
+  id: string,
+): Promise<Response> {
+  const scope = readScope(url)
+  if ('error' in scope) return scope.error
+  const existing = await context.repository.findAnnotation(scope, id, owner)
+  if (!existing || existing.annotation.kind !== 'proposal') {
+    return problem(404, 'not_found', 'no proposal of yours has that id here')
+  }
+  if (existing.creator !== owner) {
+    return problem(403, 'forbidden', 'only its author can withdraw a proposal')
+  }
+  if (existing.proposal?.withdrawnAt) {
+    return problem(409, 'proposal_withdrawn', 'this proposal is already withdrawn')
+  }
+  const withdrawn = await context.repository.withdrawProposal(
+    scope,
+    id,
+    owner,
+    context.now(),
+  )
+  if (!withdrawn) {
+    return problem(404, 'not_found', 'no proposal of yours has that id here')
+  }
+  const updated = await context.repository.findAnnotation(scope, id, owner)
+  return updated
+    ? json(present(updated))
+    : problem(404, 'not_found', 'no proposal of yours has that id here')
 }
 
 async function deleteAnnotation(
@@ -899,6 +994,12 @@ export async function handleMarginRequest(
   if (path.length === 1 && path[0] === 'proposals') {
     if (method !== 'GET') return methodNotAllowed(['GET', 'HEAD'])
     return listAnnotations(url, context, owner, 'editing')
+  }
+
+  if (path.length === 3 && path[0] === 'proposals' && path[2] === 'withdraw') {
+    if (method !== 'POST') return methodNotAllowed(['POST'])
+    if (!owner) return unauthenticated()
+    return withdrawProposal(context, owner, url, annotationIdFromIri(path[1]))
   }
 
   if (path.length === 3 && path[0] === 'proposals' && path[2] === 'apply') {

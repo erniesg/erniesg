@@ -224,7 +224,9 @@ describe('the node pool', () => {
 
 describe('one renderer', () => {
   it('embeds render.py output verbatim, byte for byte', SLOW, () => {
-    const direct = python(RENDER_ONE, [SAMPLE, 'web', 'no'])
+    // The site's render: runnable, since the reader's browser runs the code
+    // (#380), with the reader opening hints and solutions.
+    const direct = python(RENDER_ONE, [SAMPLE, 'web', 'yes', 'reader'])
     const node = book.nodes.find((entry) => entry.id === SAMPLE)!
 
     expect(Buffer.from(node.html)).toEqual(Buffer.from(direct))
@@ -474,20 +476,21 @@ describe('stable anchors', () => {
     expect(drifted.length, 'an insertion must be visible as digest drift').toBeGreaterThan(0)
   })
 
-  // The `data-walk` handler lives in books/tools/preview.py and is not
-  // shipped by the Astro routes, so controls on a published page are dead.
-  it('ships no figure controls it cannot drive', SLOW, () => {
+  // The `data-walk` handler lives in books/tools/runtime/interactive.mjs,
+  // which the book page loads (#380), so a published figure's controls work.
+  // A host that renders runnable=False still gets the static figure.
+  it('ships figure controls only with the controller that drives them', SLOW, () => {
     const withFigure: string[] = JSON.parse(python(FIGURE_IDS))
     expect(withFigure.length).toBeGreaterThan(0)
 
+    const page = readFileSync(path.join(ROOT, 'src/pages/books/[book]/[node].astro'), 'utf8')
+    expect(page, 'the book page loads the figure controller').toContain('runtime/interactive.mjs')
     for (const id of withFigure) {
-      const published = python(RENDER_ONE, [id, 'web', 'no', 'reader'])
-      expect(published, `${id} must not ship walk controls`).not.toContain('walk-controls')
-      expect(published, `${id} must not ship walk handlers`).not.toContain('data-walk')
+      const published = python(RENDER_ONE, [id, 'web', 'yes', 'reader'])
+      expect(published, `${id} ships its walk controls`).toContain('walk-controls')
+      const staticHost = python(RENDER_ONE, [id, 'web', 'no', 'reader'])
+      expect(staticHost, `${id} stays static without a controller`).not.toContain('data-walk')
     }
-
-    const preview = python(RENDER_ONE, [withFigure[0], 'web', 'yes'])
-    expect(preview, 'the runnable preview keeps its controls').toContain('walk-controls')
   })
 
   // The missing thing is the `data-walk` controller, not JavaScript: a cost

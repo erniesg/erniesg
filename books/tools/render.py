@@ -1083,6 +1083,10 @@ details.solution { border:0; border-top:2px solid var(--ink); border-radius:0; b
   --term-dim:#a3a8b3; --term-button:#0369a1; --term-focus:#7dd3fc; background:var(--term); border:1px solid #2b2d34; border-radius:8px;
   overflow:hidden; margin:1.6rem 0; }
 .exercise-run { margin:.8rem 0 0; }
+/* The editor stacks its textarea over a highlighted copy (z-index 1). Each
+   terminal isolates that, so it never paints above the page's own overlays,
+   such as a popup drawn over the text from a neighbouring column. */
+.cell-run, .exercise-run, .desk { isolation:isolate; }
 .code-wrap { position:relative; background:var(--term); overflow:hidden; }
 .editor, .code-hl, .code-gutter { font:.86rem/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;
   tab-size:4; white-space:pre; margin:0; }

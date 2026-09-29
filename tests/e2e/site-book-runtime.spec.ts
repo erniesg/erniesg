@@ -124,6 +124,13 @@ test('published editors get the preview editor: colour, line numbers and the Pyt
   expect(layers.hlLeft).toBeCloseTo(layers.editorLeft, 0)
   expect(layers.hlTop).toBeCloseTo(layers.editorTop, 0)
   expect(layers.hlLeft).toBeGreaterThan(layers.gutter)
+  // The editor's layers stack inside its own terminal, never above the page's
+  // overlays: the margin popup, drawn over the text, must win the click.
+  for (const terminal of ['.exercise-run', '.cell-run', '.desk']) {
+    for (const element of await page.locator(`.book-content ${terminal}`).all()) {
+      await expect(element).toHaveCSS('isolation', 'isolate')
+    }
+  }
   // Tab indents to the next four-space stop instead of leaving the editor.
   await page.keyboard.press('Enter')
   await page.keyboard.press('Tab')

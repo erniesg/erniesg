@@ -362,7 +362,7 @@ test('captures every paginated target and rejects invalid geometry', async ({
 }, testInfo) => {
   const source = await jsonFixture<{ nodes: SourceNode[] }>(
     request,
-    `/research/${PAPER_ID}/source.json`,
+    `/papers/${PAPER_ID}/source.json`,
   )
   const manifest = await jsonFixture<{
     renditions: Array<{
@@ -374,14 +374,14 @@ test('captures every paginated target and rejects invalid geometry', async ({
       }
       entries: Array<{ violations: unknown[] }>
     }>
-  }>(request, `/research/${PAPER_ID}/manifest.json`)
+  }>(request, `/papers/${PAPER_ID}/manifest.json`)
   const reports: GeometryReport[] = []
   const anchorNode = source.nodes.find((node) => node.id === 'p-proposition-1')
   const anchorStart = anchorNode?.text?.indexOf(ANCHOR_QUOTE) ?? -1
   expect(anchorStart).toBeGreaterThanOrEqual(0)
 
   for (const target of TARGET_PROFILE_IDS) {
-    await page.goto(`/research/${PAPER_ID}`)
+    await page.goto(`/papers/${PAPER_ID}`)
     await expectStudioHydrated(page)
     await page.locator('html').evaluate((element) => {
       element.classList.add('disable-transitions')
@@ -498,7 +498,7 @@ test('captures every paginated target and rejects invalid geometry', async ({
 test('keeps the semantic sentence and annotations through target, width, and font reflow', async ({
   page,
 }, testInfo) => {
-  await page.goto(`/research/${PAPER_ID}`)
+  await page.goto(`/papers/${PAPER_ID}`)
   await expectStudioHydrated(page)
   await page.locator('html').evaluate((element) => {
     element.classList.add('disable-transitions')
@@ -604,9 +604,9 @@ test('recomposes every finite profile in landscape without structural or geometr
 }) => {
   const source = await jsonFixture<{ nodes: SourceNode[] }>(
     request,
-    `/research/${PAPER_ID}/source.json`,
+    `/papers/${PAPER_ID}/source.json`,
   )
-  await page.goto(`/research/${PAPER_ID}`)
+  await page.goto(`/papers/${PAPER_ID}`)
   await expectStudioHydrated(page)
   await page.locator('html').evaluate((element) => {
     element.classList.add('disable-transitions')

@@ -178,7 +178,7 @@ export default function HeartLettersPrototype() {
       <div className="heart-prototype__stage" style={visualStyle}>
         <div className="heart-prototype__letter" aria-hidden="true">
           <img
-            src="/research/if-letters-home-could-sing/media/image3.jpg"
+            src="/papers/if-letters-home-could-sing/media/image3.jpg"
             alt=""
           />
           <div className="heart-prototype__pulse">

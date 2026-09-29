@@ -42,8 +42,8 @@ feature of one surface.**
 Four content surfaces:
 
 - **`/library`** — work by other people that the owner is reading. Documents
-  arrive through struct (PDF and other sources to `StructDocument` to
-  XHTML/EPUB) and are annotated with margin. Private by default.
+  arrive through the in-browser importer (PDF to EPUB, locally) and are
+  annotated with margin. Private by default.
 - **`/books`** — the owner's books, written in public. The first is
   "Build a Coding Agent" — data structures and algorithms from zero, by
   building one thing — at `/books/build-a-coding-agent/`. Note that
@@ -86,8 +86,14 @@ Two supporting decisions follow:
 The browser importer is **kept, not retired**, despite being superseded by
 struct's adapter for quality. It does one thing struct's deployed pipeline
 cannot: it never uploads the file. For reading other people's books that is a
-property worth keeping, so `/library` offers both paths — local, in-browser,
-private; or struct's pipeline for anything that needs the better extraction.
+property worth keeping, so `/library` offers the local, in-browser, private
+path.
+
+*Narrowed 2026-09-28 by issue 061.* This ADR originally promised `/library` a
+second ingestion path through struct's pipeline, for anything that needs the
+better extraction. No issue delivers that path, so `/library` promises only
+the local importer. Wiring struct's adapter into `/library` needs its own
+issue, with its own acceptance test, before this ADR can promise it again.
 
 `/research` is unhidden as `/papers`, with redirects from `/research/*`.
 Removing the `PUBLIC_RESEARCH_RELEASE` staging gate is a deliberate act of
@@ -117,3 +123,10 @@ EPUB pipeline, or alter `/blog`.
 
 It does not decide when `/papers` becomes publicly listed. It decides only
 that the surface exists and is no longer named `/research`.
+
+Issue 061 left both of those decisions as single switches that default to the
+old behaviour. `PUBLIC_PAPERS_LISTING=listed|unlisted` decides whether the nav
+and the sitemap point at `/papers` (by default, listed in dev and on staging
+only). `tools/deployment/release-gate.mjs` still withholds `/papers` from the
+production artifact, while keeping the `/research` redirect stubs and
+`_redirects`. Publishing means changing that gate.

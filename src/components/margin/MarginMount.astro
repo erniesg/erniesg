@@ -22,6 +22,8 @@ type Props = {
   apiBase?: string
   /** Below this width the rail is a toggle and an overlay, not a column. */
   collapseBelow?: number
+  /** A toggle and an overlay at every width: the rail starts out of the way. */
+  collapsed?: boolean
   /**
    * What the page's text was built from: the repo-relative source file and the
    * commit that last touched it (or `dirty` / `unavailable`). An edit proposal
@@ -37,6 +39,7 @@ const {
   documentUri,
   apiBase = '/',
   collapseBelow,
+  collapsed = false,
   sourcePath,
   sourceCommit,
   editDisabledReason,
@@ -47,6 +50,7 @@ const {
   document-uri={documentUri}
   api-base={apiBase}
   collapse-below={collapseBelow}
+  collapsed={collapsed || undefined}
   source-path={sourcePath}
   source-commit={sourceCommit}
   edit-disabled-reason={editDisabledReason}></margin-rail>

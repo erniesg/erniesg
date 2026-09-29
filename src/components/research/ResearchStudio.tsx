@@ -379,6 +379,19 @@ function fragmentData(
   }
 }
 
+/**
+ * Marks a node as a block the margin layer can anchor to: its authored id,
+ * which is stable across builds because it comes from the paper's source, and
+ * `data-block-kind`, which is what margin's block reader selects on. A node
+ * the paginator split across pages is left unmarked, because its fragments
+ * would share one id.
+ */
+function blockData(node: ResearchNode, fragmentCount: number) {
+  return fragmentCount === 1
+    ? { id: node.id, 'data-block-kind': node.type }
+    : {}
+}
+
 function PaperNode({
   node,
   captions,
@@ -405,7 +418,11 @@ function PaperNode({
 
   if (node.type === 'heading') {
     return (
-      <h2 {...data} data-variant={composition.chosenVariant}>
+      <h2
+        {...data}
+        {...blockData(node, fragmentCount)}
+        data-variant={composition.chosenVariant}
+      >
         <AnnotatedText
           text={node.text}
           range={{ start: 0, end: node.text.length }}
@@ -420,7 +437,11 @@ function PaperNode({
   }
   if (node.type === 'quote') {
     return (
-      <blockquote {...data} data-variant={composition.chosenVariant}>
+      <blockquote
+        {...data}
+        {...blockData(node, fragmentCount)}
+        data-variant={composition.chosenVariant}
+      >
         <AnnotatedText
           text={node.text}
           range={{ start: 0, end: node.text.length }}
@@ -439,6 +460,7 @@ function PaperNode({
     return (
       <aside
         {...data}
+        {...blockData(node, fragmentCount)}
         id={node.id}
         role="doc-footnote"
         data-note-kind={node.kind}
@@ -488,7 +510,11 @@ function PaperNode({
 
   const range = fragment.textRange ?? { start: 0, end: node.text.length }
   return (
-    <p {...data} data-variant={composition.chosenVariant}>
+    <p
+      {...data}
+      {...blockData(node, fragmentCount)}
+      data-variant={composition.chosenVariant}
+    >
       <AnnotatedText
         text={node.text}
         range={range}
@@ -1149,7 +1175,7 @@ export default function ResearchStudio({
               })}
             </ol>
           </section>
-          <a href={`/research/${paper.id}/manifest.json`}>View layout data →</a>
+          <a href={`/papers/${paper.id}/manifest.json`}>View layout data →</a>
         </aside>
       </div>
     </section>

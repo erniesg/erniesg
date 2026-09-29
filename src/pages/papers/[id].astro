@@ -1,0 +1,75 @@
+---
+import IfLettersPublication from '@/components/research/IfLettersPublication.astro'
+import ResearchPaperActions from '@/components/research/ResearchPaperActions'
+import ResearchStudio from '@/components/research/ResearchStudio'
+import { SITE } from '@/consts'
+import ReadingLayout from '@/layouts/ReadingLayout.astro'
+import { papers } from '@/research/papers'
+import { IF_LETTERS_SECTIONS } from '@/research/publications/if-letters-sections'
+
+export function getStaticPaths() {
+  return papers.map((paper) => ({ params: { id: paper.id }, props: { paper } }))
+}
+
+const { paper } = Astro.props
+const isFellowshipPaper = paper.id === 'if-letters-home-could-sing'
+const path = `/papers/${paper.id}/`
+const contents = isFellowshipPaper
+  ? IF_LETTERS_SECTIONS.map(([number, title, anchor]) => ({
+      href: `#${anchor}`,
+      label: number === '—' ? title : `${number} ${title}`,
+    }))
+  : paper.nodes.flatMap((node) =>
+      node.type === 'heading'
+        ? [{ href: `#${node.id}`, label: node.text }]
+        : [],
+    )
+---
+
+<ReadingLayout
+  title={paper.title}
+  description={paper.abstract}
+  documentUri={new URL(path, SITE.SITEURL).toString()}
+  canonicalPath={path}
+  noindex
+  image={isFellowshipPaper
+    ? '/papers/if-letters-home-could-sing/media/image3.jpg'
+    : undefined}
+>
+  <Fragment slot="navigation">
+    <div class="flex flex-col gap-y-3 text-sm">
+      <a class="text-muted-foreground hover:text-foreground" href="/papers/">
+        ← Papers
+      </a>
+      <ol class="flex flex-col gap-y-2">
+        {
+          contents.map(({ href, label }) => (
+            <li>
+              <a class="hover:underline" href={href}>
+                {label}
+              </a>
+            </li>
+          ))
+        }
+      </ol>
+    </div>
+  </Fragment>
+
+  {
+    isFellowshipPaper ? (
+      <IfLettersPublication paper={paper} />
+    ) : (
+      <>
+        <section class="research-paper-hero">
+          <div>
+            <p>Research paper · {paper.status}</p>
+            <h1>{paper.title}</h1>
+            <p>{paper.subtitle}</p>
+          </div>
+          <ResearchPaperActions paper={paper} />
+        </section>
+        <ResearchStudio paper={paper} client:load />
+      </>
+    )
+  }
+</ReadingLayout>

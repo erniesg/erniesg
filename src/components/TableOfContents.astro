@@ -1,6 +1,4 @@
 ---
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { Icon } from 'astro-icon/components'
 import TableOfContentsHeading from './TableOfContentsHeading.astro'
 
 export interface Heading {
@@ -10,7 +8,12 @@ export interface Heading {
   subheadings: Heading[]
 }
 
-const { headings } = Astro.props
+/**
+ * The contents of a post, for the reading shell's navigation column. The
+ * column is already the sticky sidebar on wide screens and the foldable
+ * disclosure on narrow ones, so this draws the list alone.
+ */
+const { headings } = Astro.props as { headings: Heading[] }
 const toc = buildToc(headings)
 
 function buildToc(headings: Heading[]): Heading[] {
@@ -37,48 +40,9 @@ function buildToc(headings: Heading[]): Heading[] {
 }
 ---
 
-<details
-  open
-  class="group col-start-2 mx-4 block rounded-xl border p-4 xl:hidden"
->
-  <summary
-    class="flex cursor-pointer items-center justify-between text-xl font-semibold group-open:pb-4"
-  >
-    Table of Contents
-    <Icon
-      name="lucide:chevron-down"
-      class="size-5 transition-transform group-open:rotate-180"
-    />
-  </summary>
-  <ScrollArea
-    client:load
-    className="flex max-h-64 flex-col overflow-y-auto"
-    type="always"
-  >
-    <nav>
-      <ul></ul>
-      {toc.map((heading) => <TableOfContentsHeading heading={heading} />)}
-    </nav>
-  </ScrollArea>
-</details>
-
-<nav
-  class="sticky top-[5.5rem] col-start-1 hidden h-[calc(100vh-5.5rem)] text-xs leading-4 xl:block"
->
-  <div class="flex justify-end">
-    <ScrollArea client:load className="max-h-[calc(100vh-8rem)]" type="always">
-      <ul
-        class="flex flex-col justify-end gap-y-2 overflow-y-auto px-8"
-        id="toc-container"
-      >
-        <li>
-          <h2 class="mb-2 text-lg font-semibold">Table of Contents</h2>
-        </li>
-        {toc.map((heading) => <TableOfContentsHeading heading={heading} />)}
-      </ul>
-    </ScrollArea>
-  </div>
-</nav>
+<ul class="flex flex-col gap-y-2 text-xs leading-4" id="toc-container">
+  {toc.map((heading) => <TableOfContentsHeading heading={heading} />)}
+</ul>
 
 <script>
   function setupToc() {

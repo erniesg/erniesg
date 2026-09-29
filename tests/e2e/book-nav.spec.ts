@@ -9,9 +9,8 @@ import { installStaticRoutes } from './static-build'
  * Reading order and chapter progress on the published book, in both looks.
  *
  * `[` and `]` follow the page's own rel=prev / rel=next links, so the client
- * router does the navigation. Assertions read the document title and the
- * indicator rather than the URL: on book pages the router currently swaps the
- * content without updating the URL (#382), which is not this feature's to fix.
+ * router does the navigation. Assertions here read the document title and the
+ * indicator; book-client-router.spec.ts covers the URL, Back and Forward (#382).
  */
 
 const BOOK = '/books/build-a-coding-agent/'

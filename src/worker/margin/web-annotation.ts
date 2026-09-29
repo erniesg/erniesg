@@ -97,8 +97,24 @@ export function isTombstoneBody(body: string | null | undefined): boolean {
   return body === TOMBSTONE_BODY
 }
 
+/**
+ * The cap for an `editing` body, which carries CriticMarkup hunks against a
+ * whole source file (issue 059). A full retype of the largest node is about
+ * twice its 16,138 bytes, so the note cap would refuse an ordinary proposal.
+ * Highlights and notes keep `MAX_BODY_LENGTH`.
+ */
+export const MAX_PROPOSAL_BODY_LENGTH = 64_000
+
+/** The issue `params.code` a body over its cap carries; the route answers 413. */
+export const BODY_TOO_LARGE = 'body_too_large'
+
 export const MOTIVATIONS = ['highlighting', 'commenting', 'editing'] as const
 export type Motivation = (typeof MOTIVATIONS)[number]
+
+/** Counted in characters of the `body` string, never truncated. */
+export function maxBodyLength(motivation: Motivation): number {
+  return motivation === 'editing' ? MAX_PROPOSAL_BODY_LENGTH : MAX_BODY_LENGTH
+}
 
 export const VISIBILITIES = ['private', 'public'] as const
 export type MarginVisibility = (typeof VISIBILITIES)[number]
@@ -203,15 +219,14 @@ const targetSchema = z
 const textualBodySchema = z
   .object({
     type: z.literal('TextualBody'),
-    value: z.string().min(1).max(MAX_BODY_LENGTH),
+    value: z.string().min(1),
     format: z.literal(BODY_FORMAT).optional(),
   })
   .strict()
 
-const bodySchema = z.union([
-  z.string().min(1).max(MAX_BODY_LENGTH),
-  textualBodySchema,
-])
+// The length cap depends on the motivation, so it is checked once the whole
+// annotation has parsed; see `maxBodyLength`.
+const bodySchema = z.union([z.string().min(1), textualBodySchema])
 
 /**
  * Unknown top-level properties are dropped rather than rejected: an annotation
@@ -248,6 +263,17 @@ export const webAnnotationSchema = z.object({
   'margin:color': z.string().min(1).max(64).optional(),
   /** Output only: set on a tombstone. Ignored on the way in. */
   'margin:deleted': z.boolean().optional(),
+}).superRefine((wire, context) => {
+  const value = typeof wire.body === 'string' ? wire.body : wire.body?.value
+  const cap = maxBodyLength(wire.motivation)
+  if (value !== undefined && value.length > cap) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['body'],
+      message: `a body motivated by ${wire.motivation} is at most ${cap} characters`,
+      params: { code: BODY_TOO_LARGE },
+    })
+  }
 })
 
 export type WebAnnotation = z.infer<typeof webAnnotationSchema>

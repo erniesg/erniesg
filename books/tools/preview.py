@@ -688,7 +688,6 @@ def strip_roots(output: str, roots: tuple[PurePath, ...] | None = None) -> str:
 
 def run_cell(earlier, own: str, timeout: float | None = None) -> dict:
     """Run one cell after the cells before it. Always `{"output", "ok"}`."""
-    import subprocess
     import tempfile
 
     # Older callers may still send one combined prelude string.
@@ -700,18 +699,13 @@ def run_cell(earlier, own: str, timeout: float | None = None) -> dict:
         # Earlier cells set the stage quietly. Keep their individual failures
         # so a failing current cell can identify broken context.
         script.write_text(RUNNER + f"_run_cells({earlier!r}, {own!r})\n")
-        try:
-            done = subprocess.run(
-                [sys.executable, str(script)],
-                capture_output=True,
-                text=True,
-                timeout=limit,
-                cwd=work,
-            )
-        except subprocess.TimeoutExpired:
+        # Bounded as it is written: a cell that prints in a loop must not hold
+        # this server's memory for its whole time limit.
+        code, stdout, stderr = grader.run_bounded([sys.executable, str(script)], limit, cwd=work)
+        if code is None:
             return {"output": f"stopped after {limit:g} seconds", "ok": False}
-    output = (done.stdout + done.stderr).strip() or "(no output)"
-    return {"output": output, "ok": done.returncode == 0}
+    output = (stdout + stderr).strip() or "(no output)"
+    return {"output": output, "ok": code == 0}
 
 
 class Handler(BaseHTTPRequestHandler):

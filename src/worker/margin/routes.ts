@@ -20,7 +20,10 @@ import {
 import {
   annotationIdFromIri,
   isTombstoneBody,
+  BODY_TOO_LARGE,
   joinSource,
+  maxBodyLength,
+  motivationForKind,
   recordToWebAnnotation,
   splitSource,
   VISIBILITIES,
@@ -346,6 +349,11 @@ async function createAnnotation(
 
   const parsed = webAnnotationSchema.safeParse(payload)
   if (!parsed.success) {
+    const tooLarge = parsed.error.issues.find(
+      (entry) =>
+        entry.code === 'custom' && entry.params?.code === BODY_TOO_LARGE,
+    )
+    if (tooLarge) return problem(413, BODY_TOO_LARGE, tooLarge.message)
     const issue = parsed.error.issues[0]
     return problem(
       400,
@@ -491,7 +499,8 @@ const COLOR_SCOPE_MESSAGE =
 
 const annotationPatchSchema = z
   .object({
-    body: z.string().min(1).max(8_000).optional(),
+    // Capped by the existing row's motivation below, with a 413.
+    body: z.string().min(1).optional(),
     'margin:visibility': z.enum(VISIBILITIES).optional(),
     'margin:color': z.string().min(1).max(64).optional(),
   })
@@ -564,6 +573,15 @@ async function patchAnnotation(
     parsed.data['margin:color'] !== undefined
   ) {
     return problem(400, 'unexpected_color', COLOR_SCOPE_MESSAGE)
+  }
+  const motivation = motivationForKind(existing.annotation.kind)
+  const cap = maxBodyLength(motivation)
+  if (parsed.data.body !== undefined && parsed.data.body.length > cap) {
+    return problem(
+      413,
+      BODY_TOO_LARGE,
+      `a body motivated by ${motivation} is at most ${cap} characters`,
+    )
   }
 
   if (

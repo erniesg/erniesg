@@ -146,6 +146,18 @@ test.describe('the reading shell', () => {
     const text = await page.locator('[data-reading-column="text"]').boundingBox()
     expect(text!.width).toBeGreaterThan(700)
     expect(text!.width).toBeLessThanOrEqual(768)
+    // Nothing in the post, the next/previous cards included, runs past it.
+    const overflow = await page.evaluate(() => {
+      const column = document
+        .querySelector('[data-reading-column="text"]')!
+        .getBoundingClientRect()
+      return [...document.querySelectorAll('[data-reading-column="text"] *')]
+        .map((element) => element.getBoundingClientRect())
+        .filter((box) => box.width > 0)
+        .map((box) => Math.round(box.right - column.right))
+        .reduce((most, over) => Math.max(most, over), 0)
+    })
+    expect(overflow).toBeLessThanOrEqual(1)
 
     await toggle.click()
     await expect(toggle).toHaveAttribute('aria-expanded', 'true')

@@ -451,8 +451,8 @@ def page(title: str, inner: str, book_title: str, order: list[dict], current: st
   {contents_html(order, current)}
 </div></aside>
 <main class="{'wide' if wide else ''}"><article>{inner}</article>{(rail if rail is not None else render_rail(inner, node)) if not wide else ''}</main>
-<script>{SPLIT_SCRIPT}</script><script>{SCRIPT}</script>
-<script type="module">{PROGRESS_SCRIPT.replace("__BOOK__", json.dumps(progress_book()))}</script>{nav_script() if progress else ''}</body></html>""".encode()
+<script>{SPLIT_SCRIPT}</script><script>{SCRIPT}</script>{nav_script() if progress else ''}
+<script type="module">{PROGRESS_SCRIPT.replace("__BOOK__", json.dumps(progress_book()))}</script></body></html>""".encode()
 
 
 SCRIPT = r"""

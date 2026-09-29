@@ -15,6 +15,7 @@ import { createHarness, webAnnotation } from '../worker/margin/fixtures'
 import { MAX_PROPOSAL_BODY_LENGTH } from '../worker/margin/web-annotation'
 import {
   acceptAll,
+  applyHunks,
   criticMarkupFor,
   formatHunks,
   isFullCommitId,
@@ -338,5 +339,30 @@ describe('base commits and staleness', () => {
     ['upper case', 'A'.repeat(40), false],
   ])('%s (%s) is a full commit id: expected %s', (_name, value, expected) => {
     expect(isFullCommitId(value)).toBe(expected)
+  })
+})
+
+describe('applyHunks', () => {
+  const base = 'one\ntwo\nthree\nfour\nfive\nsix\nseven\n'
+
+  it('rebuilds exactly the edited text a proposal was made from', () => {
+    for (const edited of [
+      'one\nTWO\nthree\nfour\nfive\nsix\nseven\n',
+      'one\ntwo\nthree\nfour\nfive\nsix\nseven, and more\n',
+      'one\nthree\nfour\nfive\nsix\nseven\n',
+      'zero\none\ntwo\nthree\nfour\nfive\nsix\nseven\n',
+      'one\ntwo\nthree\nfour\nFIVE\nsix\nseven\n',
+    ]) {
+      expect(applyHunks(proposeHunks(base, edited), base), edited).toBe(edited)
+    }
+  })
+
+  it('is the base itself when there are no hunks', () => {
+    expect(applyHunks([], base)).toBe(base)
+  })
+
+  it('refuses a base that has moved on', () => {
+    const hunks = proposeHunks(base, base.replace('two', 'TWO'))
+    expect(() => applyHunks(hunks, base.replace('two', '2'))).toThrow(StaleProposalError)
   })
 })

@@ -37,6 +37,8 @@ const TYPING =
 
 /** The margin's keyboard selection marks the block it is walking with this. */
 const MARGIN_KEYBOARD = '[data-margin-keyboard-cursor]'
+/** Edit mode (issue 059) owns the keyboard for as long as it is on. */
+const EDITING = 'html[data-book-editing]'
 
 /** What a key press asks for, or null when it is not ours to take. */
 export function shortcutFor(event) {
@@ -68,7 +70,7 @@ export function isTypingContext(event, doc) {
   while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement
   if (active && typeof active.closest === 'function' && active.closest(TYPING)) return true
   if (active && active.isContentEditable) return true
-  return Boolean(doc?.querySelector?.(MARGIN_KEYBOARD))
+  return Boolean(doc?.querySelector?.(MARGIN_KEYBOARD) || doc?.querySelector?.(EDITING))
 }
 
 /** The indicator's words, the same ones `render.py`'s `nav_status` writes. */

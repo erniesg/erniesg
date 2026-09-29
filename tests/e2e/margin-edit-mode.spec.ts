@@ -1,0 +1,366 @@
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { expect, test, type Page } from '@playwright/test'
+
+import {
+  applyHunks,
+  parseHunks,
+  toUnifiedDiff,
+} from '../../src/annotations/criticmarkup'
+import type { Principal } from '../../src/worker/principal'
+import { D1MarginRepository } from '../../src/worker/margin/d1-repository'
+import { handleMarginRequest } from '../../src/worker/margin/routes'
+import { SqliteD1Database } from '../../src/worker/margin/sqlite-database'
+
+/**
+ * Edit mode end to end (issue 059). `/api/margin/v1/*` is answered in this
+ * process by the production router over a fresh SQLite database built from
+ * every migration, and `/auth/me` says who is signed in. The page, its stamp
+ * and its embedded source are the dev server's own.
+ */
+
+const CHAPTER = '/books/build-a-coding-agent/ch03-lists/'
+const OWNER: Principal = { provider: 'dev', issuer: 'urn:margin:dev', subject: 'owner' }
+const SURFACE = '[data-edit-surface]'
+const EDITABLE = `${SURFACE} [contenteditable="true"]`
+
+type Stored = {
+  id: string
+  motivation: string
+  body?: { value: string }
+  'margin:baseCommit'?: string
+  'margin:sourcePath'?: string
+  'margin:revision'?: number
+  'margin:withdrawnAt'?: string
+}
+
+type Service = {
+  signedIn: boolean
+  rows(): Promise<Stored[]>
+  post(body: unknown): Promise<Response>
+}
+
+async function mountService(page: Page, documentUri: string): Promise<Service> {
+  const database = SqliteD1Database.inMemory()
+  const repository = new D1MarginRepository(database)
+  let clock = 0
+  let sequence = 0
+  const call = (request: Request) =>
+    handleMarginRequest(request, {
+      repository,
+      principal: service.signedIn ? OWNER : null,
+      now: () => new Date(Date.UTC(2026, 8, 29, 0, 0, 0, (clock += 1))).toISOString(),
+      newId: () => `proposal-${String((sequence += 1)).padStart(3, '0')}`,
+    })
+  const service: Service = {
+    signedIn: true,
+    async rows() {
+      const response = await call(
+        new Request(`https://ernie.sg/api/margin/v1/annotations?source=${encodeURIComponent(documentUri)}`),
+      )
+      return ((await response.json()) as { annotations: Stored[] }).annotations
+    },
+    post: (body) =>
+      call(
+        new Request('https://ernie.sg/api/margin/v1/annotations', {
+          method: 'POST',
+          body: JSON.stringify(body),
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+  }
+  await page.route('**/auth/me', (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(
+        service.signedIn
+          ? { authenticated: true, principal: OWNER, canWrite: true, isAdmin: true }
+          : { authenticated: false, canWrite: false, isAdmin: false },
+      ),
+    }),
+  )
+  await page.route('**/api/margin/v1/**', async (route) => {
+    const incoming = route.request()
+    const method = incoming.method()
+    const response = await call(
+      new Request(incoming.url(), {
+        method,
+        headers: { 'content-type': 'application/json' },
+        ...(method === 'GET' || method === 'HEAD' ? {} : { body: incoming.postData() ?? undefined }),
+      }),
+    )
+    await route.fulfill({
+      status: response.status,
+      headers: { 'content-type': 'application/json' },
+      body: await response.text(),
+    })
+  })
+  return service
+}
+
+type Source = { path: string; commit: string; text: string }
+
+async function pageSource(page: Page): Promise<Source> {
+  const json = await page.locator('script[data-book-source]').textContent()
+  return JSON.parse(json ?? 'null') as Source
+}
+
+/** Apply a stored proposal to its base with real `git apply`; return the file. */
+function gitApply(source: Source, body: string): string {
+  const hunks = parseHunks(body)
+  const repo = mkdtempSync(path.join(tmpdir(), 'edit-mode-apply-'))
+  try {
+    const file = path.join(repo, source.path)
+    mkdirSync(path.dirname(file), { recursive: true })
+    writeFileSync(file, source.text)
+    execFileSync('git', ['init', '-q'], { cwd: repo })
+    const patch = path.join(repo, 'proposal.patch')
+    writeFileSync(patch, toUnifiedDiff(hunks, source.text, source.path))
+    execFileSync('git', ['apply', 'proposal.patch'], { cwd: repo })
+    const applied = readFileSync(file, 'utf8')
+    expect(applied).toBe(applyHunks(hunks, source.text))
+    return applied
+  } finally {
+    rmSync(repo, { recursive: true, force: true })
+  }
+}
+
+async function openEditor(page: Page): Promise<{ service: Service; source: Source }> {
+  const documentUri = new URL(CHAPTER, 'https://ernie.sg').toString()
+  const service = await mountService(page, documentUri)
+  await page.goto(CHAPTER)
+  const source = await pageSource(page)
+  expect(source.commit).toMatch(/^[0-9a-f]{40}$/)
+  await expect(page.locator('margin-rail')).toHaveAttribute('source-commit', source.commit)
+  await expect(page.locator('margin-rail')).toHaveAttribute('source-path', source.path)
+  await page.getByRole('button', { name: 'Edit', exact: true }).click()
+  await expect(page.locator(SURFACE)).toBeVisible()
+  return { service, source }
+}
+
+/** Select the first occurrence of `word` in the first editable block holding it. */
+async function selectWord(page: Page, word: string): Promise<void> {
+  await page.evaluate(
+    ({ selector, word }) => {
+      for (const element of document.querySelectorAll<HTMLElement>(selector)) {
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          const at = node.textContent?.search(new RegExp(`\\b${word}\\b`)) ?? -1
+          if (at >= 0) {
+            element.focus()
+            const range = document.createRange()
+            range.setStart(node, at)
+            range.setEnd(node, at + word.length)
+            const selection = window.getSelection()!
+            selection.removeAllRanges()
+            selection.addRange(range)
+            return
+          }
+        }
+      }
+      throw new Error(`no editable text holds ${word}`)
+    },
+    { selector: EDITABLE, word },
+  )
+}
+
+/** A word that occurs exactly once in the source, inside an editable paragraph. */
+async function uniqueWord(page: Page, source: Source): Promise<string> {
+  const texts = await page.locator(`${SURFACE} p[contenteditable="true"]`).allTextContents()
+  for (const text of texts) {
+    for (const word of text.match(/\b[a-z]{7,}\b/g) ?? []) {
+      if (source.text.split(new RegExp(`\\b${word}\\b`)).length === 2) return word
+    }
+  }
+  throw new Error('no unique word to edit')
+}
+
+test.describe('edit mode', () => {
+  test('is not offered to a reader who may not write', async ({ page }) => {
+    const service = await mountService(page, new URL(CHAPTER, 'https://ernie.sg').toString())
+    service.signedIn = false
+    await page.goto(CHAPTER)
+    await expect(page.locator('[data-edit-mode]')).toBeHidden()
+  })
+
+  test('a one-word edit saves as a one-word proposal against the stamped commit, and applies with git apply', async ({ page }) => {
+    const { service, source } = await openEditor(page)
+    // Locked blocks are shown, and are not editable.
+    const locked = page.locator(`${SURFACE} .edit-locked`)
+    expect(await locked.count()).toBeGreaterThan(0)
+    await expect(locked.first()).toHaveAttribute('contenteditable', 'false')
+
+    const word = await uniqueWord(page, source)
+    await selectWord(page, word)
+    await page.keyboard.type('XYZZYQ')
+    await expect(page.locator('[data-edit-changes] ins')).toContainText('XYZZYQ')
+    await expect(page.locator('[data-edit-changes] del')).toContainText(word)
+    await page.getByRole('button', { name: 'Save proposal' }).click()
+    await expect(page.locator('[data-edit-status]')).toContainText('revision 1')
+
+    const [stored] = (await service.rows()).filter((row) => row.motivation === 'editing')
+    expect(stored['margin:baseCommit']).toBe(source.commit)
+    expect(stored['margin:sourcePath']).toBe(source.path)
+    const hunks = parseHunks(stored.body!.value)
+    const markers = hunks.map((hunk) => hunk.criticMarkup.match(/\{(~~|--|\+\+)/g)?.length ?? 0)
+    expect(markers.reduce((a, b) => a + b, 0)).toBe(1)
+    expect(hunks[0].criticMarkup).toContain(`{~~${word}~>XYZZYQ~~}`)
+    expect(gitApply(source, stored.body!.value)).toBe(source.text.replace(word, 'XYZZYQ'))
+  })
+
+  test('deleting a paragraph and joining two apply cleanly, and undo restores the text exactly', async ({ page }) => {
+    const { service, source } = await openEditor(page)
+    const paragraphs = page.locator(`${SURFACE} p[contenteditable="true"]`)
+    const before = await paragraphs.count()
+
+    // Delete a whole paragraph: select its text and remove it.
+    await paragraphs.nth(1).click()
+    await page.keyboard.press('ControlOrMeta+A')
+    await page.keyboard.press('Backspace')
+    await paragraphs.nth(0).click() // leaving the block commits it
+    await expect(paragraphs).toHaveCount(before - 1)
+    await page.getByRole('button', { name: 'Save proposal' }).click()
+    await expect(page.locator('[data-edit-status]')).toContainText('revision 1')
+    let [stored] = (await service.rows()).filter((row) => row.motivation === 'editing')
+    const deleted = gitApply(source, stored.body!.value)
+    expect(deleted.length).toBeLessThan(source.text.length)
+
+    // Undo restores the source byte for byte: nothing left to save.
+    await page.getByRole('button', { name: 'Undo', exact: true }).click()
+    await expect(paragraphs).toHaveCount(before)
+    await expect(page.getByRole('button', { name: 'Save proposal' })).toBeDisabled()
+
+    // Join two paragraphs: Backspace at the start of the second.
+    await paragraphs.nth(1).click()
+    await page.keyboard.press('ControlOrMeta+ArrowUp')
+    await page.evaluate((selector) => {
+      const element = document.querySelectorAll<HTMLElement>(selector)[1]
+      const range = document.createRange()
+      range.selectNodeContents(element)
+      range.collapse(true)
+      window.getSelection()!.removeAllRanges()
+      window.getSelection()!.addRange(range)
+    }, `${SURFACE} p[contenteditable="true"]`)
+    await page.keyboard.press('Backspace')
+    await expect(paragraphs).toHaveCount(before - 1)
+    await page.getByRole('button', { name: 'Save proposal' }).click()
+    await expect(page.locator('[data-edit-status]')).toContainText('revision 2')
+    ;[stored] = (await service.rows()).filter((row) => row.motivation === 'editing')
+    expect(stored['margin:revision']).toBe(2)
+    gitApply(source, stored.body!.value)
+  })
+
+  test('a locked block cannot be changed by keyboard or paste, and a paste keeps only permitted nodes', async ({ page }) => {
+    await openEditor(page)
+    const locked = page.locator(`${SURFACE} .edit-locked`).first()
+    const text = await locked.textContent()
+    await locked.click()
+    await page.keyboard.type('nope')
+    await page.evaluate(() => {
+      const figure = document.querySelector('[data-edit-surface] .edit-locked')!
+      const data = new DataTransfer()
+      data.setData('text/plain', 'pasted')
+      figure.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
+    })
+    await expect(locked).toHaveText(text ?? '')
+
+    // Rich paste into prose: tables, images, scripts and styles are not kept.
+    await page.locator(`${SURFACE} p[contenteditable="true"]`).first().click()
+    await page.evaluate(() => {
+      const target = document.querySelector<HTMLElement>('[data-edit-surface] p[contenteditable="true"]')!
+      target.focus()
+      const data = new DataTransfer()
+      data.setData(
+        'text/html',
+        '<table><tr><td>cell</td></tr></table><img src="x.png"><script>alert(1)</script><span style="color:red" onclick="x()">styled</span><em>kept</em>',
+      )
+      target.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
+    })
+    const html = await page.locator(`${SURFACE} p[contenteditable="true"]`).first().innerHTML()
+    expect(html).not.toMatch(/<(table|td|img|script|span)\b/)
+    expect(html).not.toMatch(/style=|onclick=/)
+    expect(html).toContain('<em>kept</em>')
+  })
+
+  test('a stale proposal is shown stale and cannot be reopened; withdrawing keeps the row', async ({ page }) => {
+    const documentUri = new URL(CHAPTER, 'https://ernie.sg').toString()
+    const service = await mountService(page, documentUri)
+    await page.goto(CHAPTER)
+    const source = await pageSource(page)
+    const make = (baseCommit: string) =>
+      service.post({
+        '@context': 'http://www.w3.org/ns/anno.jsonld',
+        type: 'Annotation',
+        motivation: 'editing',
+        body: {
+          type: 'TextualBody',
+          value: JSON.stringify({ v: 1, hunks: [{ baseStartLine: 1, baseEndLine: 1, criticMarkup: '{~~+++~>+++~~}\n' }] }),
+        },
+        target: {
+          source: documentUri,
+          selector: [
+            { type: 'TextQuoteSelector', exact: 'x' },
+            { type: 'TextPositionSelector', start: 0, end: 1 },
+          ],
+        },
+        'margin:baseCommit': baseCommit,
+        'margin:sourcePath': source.path,
+      })
+    expect((await make('b'.repeat(40))).status).toBe(201)
+    await page.reload()
+    const stale = page.locator('.edit-proposal[data-state="stale"]')
+    await expect(stale).toContainText('stale')
+    await expect(stale.getByRole('button', { name: 'Reopen' })).toBeDisabled()
+    await stale.getByRole('button', { name: 'Withdraw' }).click()
+    await expect(page.locator('[data-edit-status]')).toContainText('withdrawn')
+    await expect(page.locator('.edit-proposal')).toHaveCount(0)
+    const rows = await service.rows()
+    expect(rows.find((row) => row.motivation === 'editing')?.['margin:withdrawnAt']).toBeTruthy()
+  })
+
+  test('reopening a current proposal restores its edit, and saving revises it', async ({ page }) => {
+    const { service, source } = await openEditor(page)
+    const word = await uniqueWord(page, source)
+    await selectWord(page, word)
+    await page.keyboard.type('FIRSTDRAFT')
+    await page.getByRole('button', { name: 'Save proposal' }).click()
+    await expect(page.locator('[data-edit-status]')).toContainText('revision 1')
+    await page.reload()
+    const current = page.locator('.edit-proposal[data-state="current"]')
+    await current.getByRole('button', { name: 'Reopen' }).click()
+    await expect(page.locator(SURFACE)).toContainText('FIRSTDRAFT')
+    await selectWord(page, 'FIRSTDRAFT')
+    await page.keyboard.type('SECONDDRAFT')
+    await page.getByRole('button', { name: 'Save proposal' }).click()
+    await expect(page.locator('[data-edit-status]')).toContainText('revision 2')
+    const [stored] = (await service.rows()).filter((row) => row.motivation === 'editing')
+    expect(gitApply(source, stored.body!.value)).toBe(source.text.replace(word, 'SECONDDRAFT'))
+  })
+
+  test('book shortcuts stay off while editing, and the editor announces its state', async ({ page }) => {
+    await openEditor(page)
+    await expect(page.getByRole('button', { name: 'Stop editing' })).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('[data-edit-status]')).toContainText('Edit mode on')
+    await page.getByRole('button', { name: 'Undo', exact: true }).focus()
+    const url = page.url()
+    await page.keyboard.press(']')
+    await page.waitForTimeout(300)
+    expect(page.url()).toBe(url)
+    await page.getByRole('button', { name: 'Stop editing' }).click()
+    await expect(page.locator(SURFACE)).toBeHidden()
+    await expect(page.locator('.book-content')).toBeVisible()
+  })
+
+  test('works in the Plain look too', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('book-look', 'plain'))
+    const { source } = await openEditor(page)
+    await expect(page.locator('html')).toHaveAttribute('data-book-look', 'plain')
+    const word = await uniqueWord(page, source)
+    await selectWord(page, word)
+    await page.keyboard.type('PLAINLOOK')
+    await expect(page.getByRole('button', { name: 'Save proposal' })).toBeEnabled()
+  })
+})

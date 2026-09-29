@@ -1,0 +1,182 @@
+---
+/**
+ * Edit mode on a book page (issue 059). Hidden until the page knows the reader
+ * may write: anonymous readers and readers off the allowlist never see it.
+ * The behaviour is `src/lib/edit-mode/editor.ts`; this is the markup it drives.
+ */
+---
+
+<section class="edit-mode" data-edit-mode hidden aria-label="Edit this page">
+  <div class="edit-bar" role="toolbar" aria-label="Edit mode">
+    <button type="button" class="edit-toggle" data-edit-toggle aria-pressed="false">Edit</button>
+    <button type="button" data-edit-undo disabled aria-keyshortcuts="Meta+Z Control+Z">Undo</button>
+    <button type="button" data-edit-redo disabled aria-keyshortcuts="Meta+Shift+Z Control+Y">Redo</button>
+    <button type="button" class="edit-save" data-edit-save disabled aria-keyshortcuts="Meta+Enter Control+Enter">
+      Save proposal
+    </button>
+    <button type="button" data-edit-discard hidden>Discard</button>
+  </div>
+  <p class="edit-status" data-edit-status role="status" aria-live="polite"></p>
+  <p class="edit-reason" data-edit-disabled-reason hidden></p>
+  <div class="edit-proposals" data-edit-proposals hidden></div>
+  <section class="edit-changes" data-edit-changes hidden aria-label="Your changes, as tracked changes">
+    <p class="edit-changes-title">Your changes</p>
+    <div data-edit-changes-list></div>
+  </section>
+  <div class="edit-surface" data-edit-surface hidden></div>
+</section>
+
+<style is:global>
+  .edit-mode {
+    --edit-line: var(--line, #d4d4d4);
+    --edit-dim: var(--dim, #6b6b6b);
+    margin: 0 0 1.25rem;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+    font-size: 0.875rem;
+  }
+  .edit-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+  }
+  .edit-bar button,
+  .edit-proposal button {
+    border: 1px solid var(--edit-line);
+    border-radius: 6px;
+    padding: 0.25rem 0.7rem;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+  .edit-bar button:disabled,
+  .edit-proposal button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .edit-bar .edit-toggle[aria-pressed='true'],
+  .edit-bar .edit-save:not(:disabled) {
+    background: #0369a1;
+    border-color: #0369a1;
+    color: #fff;
+  }
+  .edit-bar button:focus-visible,
+  .edit-proposal button:focus-visible,
+  .edit-surface [contenteditable='true']:focus-visible {
+    outline: 2px solid #7dd3fc;
+    outline-offset: 2px;
+  }
+  .edit-status:empty,
+  .edit-reason[hidden] {
+    display: none;
+  }
+  .edit-status,
+  .edit-reason {
+    margin: 0.5rem 0 0;
+    color: var(--edit-dim);
+  }
+  .edit-proposals {
+    margin-top: 0.6rem;
+    display: grid;
+    gap: 0.4rem;
+  }
+  .edit-proposal {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid var(--edit-line);
+    border-radius: 6px;
+  }
+  .edit-proposal[data-state='stale'] {
+    border-style: dashed;
+  }
+  .edit-proposal span {
+    flex: 1 1 16rem;
+  }
+  .edit-changes {
+    margin-top: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    border-left: 3px solid #0369a1;
+    background: color-mix(in srgb, #0369a1 6%, transparent);
+  }
+  .edit-changes-title {
+    margin: 0 0 0.35rem;
+    font-weight: 600;
+  }
+  .edit-change-where {
+    margin: 0.4rem 0 0.15rem;
+    color: var(--edit-dim);
+    font-size: 0.8rem;
+  }
+  .edit-tracked {
+    margin: 0;
+    white-space: pre-wrap;
+    font: 0.85rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .edit-tracked del {
+    color: #b91c1c;
+    background: color-mix(in srgb, #b91c1c 12%, transparent);
+    text-decoration: line-through;
+  }
+  .edit-tracked ins {
+    color: #15803d;
+    background: color-mix(in srgb, #15803d 14%, transparent);
+    text-decoration: none;
+  }
+  .edit-surface {
+    margin-top: 1rem;
+    font-family: inherit;
+    font-size: 1rem;
+  }
+  .edit-surface [contenteditable='true'] {
+    white-space: pre-wrap;
+    border-radius: 4px;
+    padding: 0.1rem 0.25rem;
+    margin-left: -0.25rem;
+    margin-right: -0.25rem;
+    box-shadow: inset 0 0 0 1px transparent;
+  }
+  .edit-surface [contenteditable='true']:hover {
+    box-shadow: inset 0 0 0 1px var(--edit-line);
+  }
+  .edit-locked {
+    margin: 1rem 0;
+    padding: 0.5rem 0.75rem;
+    border: 1px dashed var(--edit-line);
+    border-radius: 6px;
+    color: var(--edit-dim);
+    user-select: none;
+  }
+  .edit-locked figcaption {
+    font: 600 0.75rem ui-sans-serif, system-ui, sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .edit-locked pre {
+    margin: 0.35rem 0 0;
+    white-space: pre-wrap;
+    font-size: 0.8rem;
+    max-height: 12rem;
+    overflow: hidden;
+  }
+</style>
+
+<script>
+  import { EditMode } from '../../lib/edit-mode/editor'
+
+  // The site swaps pages without a reload, so each page view wires its own.
+  function wire() {
+    const root = document.querySelector<HTMLElement>('[data-edit-mode]')
+    if (!root || root.dataset.wired) return
+    root.dataset.wired = 'true'
+    try {
+      void new EditMode(root).start()
+    } catch (error) {
+      console.error('edit mode', error)
+    }
+  }
+  document.addEventListener('astro:page-load', wire)
+  wire()
+</script>

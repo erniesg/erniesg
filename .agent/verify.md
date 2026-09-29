@@ -47,7 +47,7 @@ SRT_STATIC_BUILD_DIR=dist npx playwright test \
   tests/e2e/margin-anchoring.spec.ts tests/e2e/reading-shell.spec.ts
 ```
 
-A dev-server run of either spec needs `astro dev` to answer `/research`, the
+A dev-server run of either spec needs `astro dev` to answer `/papers/`, the
 readiness URL in `playwright.config.ts`, within 120 s. On a cold agent
 worktree it does not, and the run ends at `Timed out waiting 120000ms from
 config.webServer` before any test starts. The static-build invocation above

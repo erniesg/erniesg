@@ -22,15 +22,19 @@ type Props = {
   apiBase?: string
   /** Below this width the rail is a toggle and an overlay, not a column. */
   collapseBelow?: number
+  /** A toggle and an overlay at every width: the rail starts out of the way. */
+  collapsed?: boolean
 }
 
-const { documentUri, apiBase = '/', collapseBelow } = Astro.props
+const { documentUri, apiBase = '/', collapseBelow, collapsed = false } =
+  Astro.props
 ---
 
 <margin-rail
   document-uri={documentUri}
   api-base={apiBase}
-  collapse-below={collapseBelow}></margin-rail>
+  collapse-below={collapseBelow}
+  collapsed={collapsed || undefined}></margin-rail>
 
 <script>
   import { defineMarginElements } from '../../../packages/margin/src/index'

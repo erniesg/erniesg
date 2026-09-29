@@ -89,7 +89,7 @@ Our analysis of Hainanese women’s letters reveals themes and concerns that are
 Letter from He Aifang (何爱芳) to He Qinge (何庆娥) in Haikou, Hainan, dated March 2, 1960. National Museum of Singapore, Accession No. 2000-06963-004, “Remittance letters delivered by Shun Chen Rong Remittance House.”
 
 <figure class="archive-letter archive-letter--portrait">
-  <img src="/research/if-letters-home-could-sing/media/image3.jpg" alt="Historical remittance letter from He Aifang to He Qinge, handwritten vertically in Chinese" />
+  <img src="/papers/if-letters-home-could-sing/media/image3.jpg" alt="Historical remittance letter from He Aifang to He Qinge, handwritten vertically in Chinese" />
   <figcaption>Letter 1. From He Aifang to He Qinge (March 2, 1960). Source: National Museum of Singapore, Accession No. 2000-06963-004.</figcaption>
 </figure>
 
@@ -100,7 +100,7 @@ The letter acknowledges receipt of Hong Kong dollars and discusses the education
 Letter from a mother in Hainan to her son Fu Zhifeng (符致逢), dated March 10, 1954. National Museum of Singapore, Accession No. 2000-06965-002, “Letter to Fu Zhi Fong from mother in Hainan.”
 
 <figure class="archive-letter">
-  <img src="/research/if-letters-home-could-sing/media/image2.jpg" alt="Historical remittance letter from a mother in Hainan to Fu Zhifeng, handwritten vertically in Chinese" />
+  <img src="/papers/if-letters-home-could-sing/media/image2.jpg" alt="Historical remittance letter from a mother in Hainan to Fu Zhifeng, handwritten vertically in Chinese" />
   <figcaption>Letter 2. From a mother in Hainan to Fu Zhifeng (March 10, 1954). Source: National Museum of Singapore, Accession No. 2000-06965-002.</figcaption>
 </figure>
 
@@ -129,7 +129,7 @@ By using heart rate as the physiological bridge between visitor and historical m
 Our interactive prototype translates the emotional content of Hainanese women’s letters into sound experiences synchronised with visitors’ heart rates. The system architecture comprises primary components as detailed below:
 
 <figure class="system-diagram">
-  <img src="/research/if-letters-home-could-sing/media/image1.png" alt="System architecture connecting a Bluetooth heart-rate monitor, emotional analysis, musical pattern generation, visual elements, and sound output" />
+  <img src="/papers/if-letters-home-could-sing/media/image1.png" alt="System architecture connecting a Bluetooth heart-rate monitor, emotional analysis, musical pattern generation, visual elements, and sound output" />
   <figcaption>Figure 1. System diagram. Created by the author.</figcaption>
 </figure>
 

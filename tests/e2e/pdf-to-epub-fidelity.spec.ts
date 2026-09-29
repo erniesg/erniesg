@@ -452,8 +452,8 @@ function isLocalDevBrowser() {
 
 function studioPath() {
   return browserProofContext
-    ? `/research/studio/?rucksack-run=${browserProofContext.runNonce}`
-    : '/research/studio'
+    ? `/library/?rucksack-run=${browserProofContext.runNonce}`
+    : '/library'
 }
 
 function fullyDecoded(value: string) {
@@ -571,16 +571,16 @@ function allowedRequestTarget(url: URL) {
   if (isLocalDevBrowser()) return true
   const routeAllowed =
     url.pathname === '/' ||
-    url.pathname === '/research/studio' ||
-    url.pathname === '/research/studio/'
+    url.pathname === '/library' ||
+    url.pathname === '/library/'
   const assetAllowed = frozenAssetPaths?.has(url.pathname) === true
   if (!routeAllowed && !assetAllowed) return false
   if (!url.search) return true
   return (
     browserProofContext !== undefined &&
     routeAllowed &&
-    (url.pathname === '/research/studio' ||
-      url.pathname === '/research/studio/') &&
+    (url.pathname === '/library' ||
+      url.pathname === '/library/') &&
     url.searchParams.size === 1 &&
     url.searchParams.get('rucksack-run') === browserProofContext.runNonce
   )

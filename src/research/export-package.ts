@@ -36,28 +36,16 @@ import {
   type TargetProfile,
   type TargetProfileId,
 } from './targets'
+import {
+  EXPORT_PACKAGE_PATHS,
+  PAYLOAD_PATHS,
+  type ExportPackagePath,
+} from './export-package-paths'
+
+export { EXPORT_PACKAGE_PATHS, type ExportPackagePath }
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
-
-const PAYLOAD_PATHS = [
-  'source.json',
-  'layout-manifest.json',
-  'annotations.json',
-  'reflowable.html',
-  'publication.epub',
-  'publication-paperpro.epub',
-  'publication-papermove.epub',
-  'print.pdf',
-] as const
-
-export const EXPORT_PACKAGE_PATHS = [
-  ...PAYLOAD_PATHS,
-  'export-manifest.json',
-  'checksums.sha256',
-] as const
-
-export type ExportPackagePath = (typeof EXPORT_PACKAGE_PATHS)[number]
 
 export type ExportFile = {
   path: ExportPackagePath

@@ -617,8 +617,24 @@ function textContent(node) {
   return (node.childNodes ?? []).map(textContent).join('')
 }
 
+function findWithAttribute(root, name) {
+  if (!root) return undefined
+  if (root.attrs?.some((candidate) => candidate.name === name)) return root
+  for (const child of root.childNodes ?? []) {
+    const found = findWithAttribute(child, name)
+    if (found) return found
+  }
+  return undefined
+}
+
 export function canonicalRouteBodyFingerprint(html) {
-  const root = findTag(parse(html), 'article') ?? findTag(parse(html), 'main')
+  // A post inside the reading shell marks its prose `data-post-content`: the
+  // shell's <article> also holds the breadcrumb, title and post navigation.
+  const document = parse(html)
+  const root =
+    findWithAttribute(document, 'data-post-content') ??
+    findTag(document, 'article') ??
+    findTag(document, 'main')
   const fingerprint = []
   const visit = (node) => {
     const tag = node.tagName

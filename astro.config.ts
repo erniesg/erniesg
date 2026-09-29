@@ -23,7 +23,7 @@ import { fileURLToPath } from 'node:url'
 import type { Plugin } from 'vite'
 import rehypeBlockIds from './src/lib/rehype-block-ids'
 import { includeInSitemap, papersListing } from './src/lib/papers-listing'
-import { papersListingEnv } from './src/lib/papers-listing-env'
+import { astroMode, papersListingEnv } from './src/lib/papers-listing-env'
 import {
   legacyRedirectTarget,
   REDIRECT_STATUS,
@@ -36,7 +36,7 @@ const SITE_URL = 'https://ernie.sg'
 // The same inputs page modules see through `import.meta.env`, `.env` files
 // included, so the sitemap and the nav can never disagree.
 const listingEnv = papersListingEnv(
-  process.env.NODE_ENV === 'development' ? 'development' : 'production',
+  astroMode(),
   fileURLToPath(new URL('.', import.meta.url)),
 )
 const papersListingState = papersListing(listingEnv)

@@ -96,6 +96,8 @@ export const TOMBSTONE_BODY = '⁠margin:deleted⁠'
 export function isTombstoneBody(body: string | null | undefined): boolean {
   return body === TOMBSTONE_BODY
 }
+
+/**
  * The cap for an `editing` body, which carries CriticMarkup hunks against a
  * whole source file (issue 059). A full retype of the largest node is about
  * twice its 16,138 bytes, so the note cap would refuse an ordinary proposal.

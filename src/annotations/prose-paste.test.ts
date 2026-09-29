@@ -118,9 +118,9 @@ describe('pasting rich HTML', () => {
   })
 
   it('escapes pasted Markdown syntax instead of obeying it', () => {
-    const [block] = blocksFromHtml('<p>:::figure{x=1} **not bold** &lt;b&gt;</p>')
+    const [block] = blocksFromHtml('<p>:::aside{x=1} **not bold** &lt;b&gt;</p>')
     const markdown = serializeMarkdown({ type: 'doc', leading: '', blocks: [block] })
-    expect(markdown.startsWith('\\:::figure')).toBe(true)
+    expect(markdown.startsWith('\\:::aside')).toBe(true)
     expect(markdown).toContain('\\*\\*not bold\\*\\*')
     expect(markdown).toContain('\\<b\\>')
   })

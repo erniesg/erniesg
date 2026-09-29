@@ -336,7 +336,7 @@ describe('base commits and staleness', () => {
     ['dirty', 'dirty', false],
     ['an abbreviated SHA', 'abc1234', false],
     ['upper case', 'A'.repeat(40), false],
-  ])('%s is a full commit id: %s', (_name, value, expected) => {
+  ])('%s (%s) is a full commit id: expected %s', (_name, value, expected) => {
     expect(isFullCommitId(value)).toBe(expected)
   })
 })

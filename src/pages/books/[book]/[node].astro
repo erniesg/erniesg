@@ -2,6 +2,7 @@
 import BookBar from '@/components/books/BookBar.astro'
 import BookContents from '@/components/books/BookContents.astro'
 import BookProgress from '@/components/books/BookProgress.astro'
+import EditMode from '@/components/books/EditMode.astro'
 import ReadingLayout from '@/layouts/ReadingLayout.astro'
 import {
   bookBySlug,
@@ -151,6 +152,7 @@ const style = `<style>${scopeContentCss(manifest.contentCss, '.book-content')}${
     <BookContents book={book} currentId={node.id} />
   </Fragment>
 
+  <EditMode />
   <div class="book-content" data-node={node.id} set:html={node.html} />
   <script is:inline set:html={manifest.splitScript} />
   {

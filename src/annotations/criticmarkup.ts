@@ -446,6 +446,38 @@ export function toUnifiedDiff(
   return out
 }
 
+/**
+ * The edited file a proposal describes: `baseSource` with every hunk accepted.
+ * Reopening a saved proposal starts from this. Refuses, like `toUnifiedDiff`,
+ * when a hunk's rejected text is not what the base holds there.
+ */
+export function applyHunks(hunks: readonly Hunk[], baseSource: string): string {
+  const base = splitLines(baseSource)
+  let out = ''
+  let next = 0
+  for (const hunk of hunks) {
+    if (
+      hunk.baseStartLine - 1 < next ||
+      hunk.baseEndLine < hunk.baseStartLine ||
+      hunk.baseEndLine > base.length
+    ) {
+      throw new StaleProposalError(
+        `lines ${hunk.baseStartLine}-${hunk.baseEndLine} are not in order in the base`,
+      )
+    }
+    const oldLines = base.slice(hunk.baseStartLine - 1, hunk.baseEndLine).join('')
+    if (rejectAll(hunk.criticMarkup) !== oldLines) {
+      throw new StaleProposalError(
+        `lines ${hunk.baseStartLine}-${hunk.baseEndLine} have changed since the proposal`,
+      )
+    }
+    out += base.slice(next, hunk.baseStartLine - 1).join('')
+    out += acceptAll(hunk.criticMarkup)
+    next = hunk.baseEndLine
+  }
+  return out + base.slice(next).join('')
+}
+
 /* -------------------------------------------------------------------------- */
 /* Base commits                                                               */
 /* -------------------------------------------------------------------------- */

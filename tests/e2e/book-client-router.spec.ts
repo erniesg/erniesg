@@ -29,6 +29,15 @@ async function mountMargin(page: Page) {
   let sequence = 0
   const now = () => new Date(Date.UTC(2026, 8, 29)).toISOString()
   const newId = () => `annotation-${(sequence += 1)}`
+  // The service's session route answers alongside its API, as the Worker's
+  // does; the dev server alone has neither.
+  await page.route('**/auth/me', (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ authenticated: true, principal: READER, canWrite: false, isAdmin: false }),
+    }),
+  )
   await page.route('**/api/margin/v1/**', async (route) => {
     const incoming = route.request()
     const method = incoming.method()

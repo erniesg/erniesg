@@ -32,9 +32,13 @@ describe('shortcutFor', () => {
 
 describe('isTypingContext', () => {
   const element = (selector) => ({ matches: (s) => s.split(', ').includes(selector) })
-  const doc = (cursor = false, active = null) => ({
+  const doc = (cursor = false, active = null, editing = false) => ({
     activeElement: active,
-    querySelector: (s) => (cursor && s === '[data-margin-keyboard-cursor]' ? {} : null),
+    querySelector: (s) =>
+      (cursor && s === '[data-margin-keyboard-cursor]') ||
+      (editing && s === 'html[data-book-editing]')
+        ? {}
+        : null,
   })
 
   it('is true inside a field, the editor or the margin', () => {
@@ -45,6 +49,12 @@ describe('isTypingContext', () => {
 
   it('is true while the margin walks the text with the keyboard', () => {
     expect(isTypingContext({ composedPath: () => [] }, doc(true))).toBe(true)
+  })
+
+  it('is true anywhere on the page while edit mode is on', () => {
+    expect(
+      isTypingContext({ composedPath: () => [element('button')] }, doc(false, null, true)),
+    ).toBe(true)
   })
 
   it('is false on the page itself', () => {

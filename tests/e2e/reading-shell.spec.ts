@@ -103,10 +103,11 @@ test.describe('the reading shell', () => {
     await expect(contents).not.toHaveAttribute('open', '')
     await expect(page.locator('h1').first()).toBeInViewport()
 
-    // Widening turns the folded disclosure back into the rail.
+    // Widening turns the folded disclosure back into the rail. A post's
+    // margin stays collapsed, so there is no margin column.
     await page.setViewportSize({ width: 1440, height: 1000 })
     await expect(contents).toHaveAttribute('open', '')
-    expect(await visibleColumns(page)).toEqual(['navigation', 'text', 'margin'])
+    expect(await visibleColumns(page)).toEqual(['navigation', 'text'])
 
     // And narrowing again folds it, so the text still leads.
     await page.setViewportSize({ width: 390, height: 800 })
@@ -124,6 +125,55 @@ test.describe('the reading shell', () => {
         .locator('[data-reading-shell]')
         .evaluate((shell) => getComputedStyle(shell).display),
     ).toBe('block')
+  })
+
+  test('starts a post with the margin collapsed at 1440, and a chapter with the column', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 })
+    await page.goto(POST)
+
+    const toggle = page.locator('margin-rail [data-margin-action="toggle-rail"]')
+    const panel = page.locator('margin-rail .panel')
+    await expect(toggle).toBeVisible()
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    await expect(panel).toBeHidden()
+    // The text takes the freed width: no column is reserved for the margin.
+    const margin = await page
+      .locator('[data-reading-column="margin"]')
+      .boundingBox()
+    expect(margin?.width ?? 0).toBe(0)
+    const text = await page.locator('[data-reading-column="text"]').boundingBox()
+    expect(text!.width).toBeGreaterThan(700)
+    expect(text!.width).toBeLessThanOrEqual(768)
+
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    await expect(panel).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(panel).toBeHidden()
+
+    // Selecting prose still offers the popup while the rail is collapsed.
+    const block = page.locator('[data-post-content] p[id]').first()
+    const id = await block.getAttribute('id')
+    await page.evaluate((blockId) => {
+      const node = document.getElementById(blockId)!.firstChild!
+      const range = document.createRange()
+      range.setStart(node, 0)
+      range.setEnd(node, Math.min(24, node.textContent!.length))
+      const selection = window.getSelection()!
+      selection.removeAllRanges()
+      selection.addRange(range)
+    }, id!)
+    await block.dispatchEvent('pointerup')
+    await expect(page.locator('margin-rail [data-margin-popup]')).toBeVisible()
+
+    // A book page keeps the full margin column.
+    await page.goto(CHAPTER)
+    expect(await visibleColumns(page)).toEqual(['navigation', 'text', 'margin'])
+    await expect(
+      page.locator('margin-rail [data-margin-action="toggle-rail"]'),
+    ).toHaveCount(0)
   })
 
   test('keeps a chapter contents list open on a phone', async ({ page }) => {
@@ -191,7 +241,11 @@ test.describe('the four reading surfaces of ADR 010', () => {
       await page.goto(route)
 
       await expect(page.locator('[data-reading-shell]')).toHaveCount(1)
-      expect(await visibleColumns(page)).toEqual(['navigation', 'text', 'margin'])
+      // A post starts with its margin collapsed to a toggle (the owner's call
+      // on #390); every other surface reserves the column.
+      expect(await visibleColumns(page)).toEqual(
+        route === POST ? ['navigation', 'text'] : ['navigation', 'text', 'margin'],
+      )
       await expect(
         page.locator('[data-margin-mount] margin-rail'),
       ).toHaveCount(1)

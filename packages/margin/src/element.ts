@@ -199,6 +199,7 @@ export class MarginRailElement extends ElementBase {
     'text-selector',
     'api-base',
     'collapse-below',
+    'collapsed',
   ]
 
   #controller: MarginController | null = null
@@ -561,6 +562,12 @@ export class MarginRailElement extends ElementBase {
   }
 
   #watchLayout() {
+    // `collapsed`: the host wants the toggle and overlay at every width, so the
+    // text keeps the page. Selection still opens the popup, as when narrow.
+    if (this.hasAttribute('collapsed')) {
+      this.#compact = true
+      return
+    }
     const below = Number(this.getAttribute('collapse-below'))
     const view = this.ownerDocument.defaultView
     if (!below || !view?.matchMedia) {

@@ -30,6 +30,11 @@ type Props = {
    * first screen on a phone. Wide viewports always show the rail.
    */
   contentsClosedOnNarrow?: boolean
+  /**
+   * `column` reserves the margin beside the text on wide screens. `collapsed`
+   * keeps it a floating toggle at every width and gives the text the room.
+   */
+  marginDefault?: 'column' | 'collapsed'
 }
 
 const {
@@ -42,6 +47,7 @@ const {
   lang,
   alternates,
   contentsClosedOnNarrow = false,
+  marginDefault = 'column',
 } = Astro.props
 ---
 
@@ -60,7 +66,12 @@ const {
        shell itself stays surface-agnostic. -->
   <slot name="before" />
 
-  <div class="reading-shell" data-reading-shell data-document-uri={documentUri}>
+  <div
+    class="reading-shell"
+    data-reading-shell
+    data-document-uri={documentUri}
+    data-margin-default={marginDefault}
+  >
     <nav
       id="reading-navigation"
       class="reading-column reading-navigation"
@@ -115,7 +126,11 @@ const {
       data-document-uri={documentUri}
       aria-label="Margin"
     >
-      <MarginMount documentUri={documentUri} collapseBelow={1280} />
+      <MarginMount
+        documentUri={documentUri}
+        collapseBelow={1280}
+        collapsed={marginDefault === 'collapsed'}
+      />
     </aside>
   </div>
 </Layout>
@@ -232,6 +247,25 @@ const {
       min-height: 6rem;
       max-height: calc(100vh - var(--reading-pin) - var(--reading-gap));
       overflow-y: auto;
+    }
+
+    /* A collapsed margin reserves nothing: it stays the zero-sized floating
+       toggle of narrow screens, and the text takes a 48rem measure. */
+    .reading-shell[data-margin-default='collapsed'] {
+      grid-template-columns: 15rem minmax(0, 48rem);
+    }
+
+    .reading-shell[data-margin-default='collapsed'] .reading-margin {
+      position: fixed;
+      right: 0;
+      bottom: 0;
+      top: auto;
+      width: 0;
+      height: 0;
+      min-height: 0;
+      max-height: none;
+      overflow: visible;
+      z-index: 30;
     }
   }
 

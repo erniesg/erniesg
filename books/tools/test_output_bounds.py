@@ -10,6 +10,7 @@ that used to buffer a whole run in memory before trimming nothing at all.
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 import tempfile
@@ -81,6 +82,60 @@ class TheWriterKeepsOnlyBothEnds(unittest.TestCase):
         marker = next(line for line in sink.getvalue().splitlines() if line.startswith("…"))
         dropped = int(marker.split(",")[1].split()[0])
         self.assertEqual(len(kept) + dropped, 1000)
+
+
+class HugeWritesAreCountedNotCopied(unittest.TestCase):
+    def test_one_huge_write_without_newlines_says_how_much_went(self):
+        sink = BoundedText(limit=1000)
+        sink.write("x" * 100_000)
+        text = sink.getvalue()
+        self.assertIn("…truncated, 98000 more characters of a long line", text)
+        self.assertNotIn("0 more lines", text)
+        self.assertLessEqual(sink.stored_chars, 2000)
+
+    def test_a_huge_write_costs_little_beyond_the_string_itself(self):
+        import tracemalloc
+
+        huge = "x" * 20_000_000  # made before tracing: the reader's own string
+        tracemalloc.start()
+        try:
+            sink = BoundedText()
+            sink.write(huge)
+            sink.write(huge)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertLess(peak, 1_000_000)  # not tens of MB of copies
+        self.assertEqual(sink.stored_chars, 2 * COMBINED_LIMIT_CHARS)
+
+
+@unittest.skipUnless(os.name == "posix", "process groups are POSIX")
+class ATimeoutIsATimeout(unittest.TestCase):
+    def test_a_child_holding_the_pipes_does_not_outlive_the_limit(self):
+        import time
+
+        script = (
+            "import subprocess, sys, time\n"
+            "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+            "time.sleep(60)\n"
+        )
+        started = time.monotonic()
+        code, _, _ = grade.run_bounded([sys.executable, "-c", script], 1)
+        self.assertIsNone(code)
+        self.assertLess(time.monotonic() - started, 10)
+
+    def test_a_child_left_behind_after_a_normal_exit_does_not_hold_the_result(self):
+        import time
+
+        script = (
+            "import subprocess, sys\n"
+            "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+            "print('done')\n"
+        )
+        started = time.monotonic()
+        code, out, _ = grade.run_bounded([sys.executable, "-c", script], 30)
+        self.assertEqual((code, out.strip()), (0, "done"))
+        self.assertLess(time.monotonic() - started, 10)
 
 
 class EveryPathIsBounded(unittest.TestCase):

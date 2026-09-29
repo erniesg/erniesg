@@ -17,7 +17,7 @@ const tidy = text => text.replace(/^\n+|\n+$/g, '').split('\n').map(l => l.trimE
 const escapeHtml = text => text.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
 
 // Each line the exercise expects is one test, read like a grader's report.
-function results(produced, expected, error) {
+export function results(produced, expected, error) {
   const want = tidy(expected).split('\n');
   const got = tidy(produced) ? tidy(produced).split('\n') : [];
   const code = text => `<code>${escapeHtml(text.length > 200 ? text.slice(0, 200) + '…' : text)}</code>`;
@@ -34,7 +34,9 @@ function results(produced, expected, error) {
   let extras = got.slice(want.length);
   let more = 0;
   const last = extras[extras.length - 1] || '';
-  const cut = /^…truncated, (\d+) more lines?$/.exec(last);
+  // The worker only ever reports a positive count; a zero is the reader's own
+  // print, and stays an extra line like any other.
+  const cut = /^…truncated, ([1-9]\d*) more lines?$/.exec(last);
   const partial = last === '…truncated, the rest of the last line';
   if (cut) { more += Number(cut[1]); extras = extras.slice(0, -1); }
   if (partial) extras = extras.slice(0, -1);

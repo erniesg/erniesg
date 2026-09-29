@@ -17,6 +17,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -79,8 +80,22 @@ def run_bounded(command: list[str], timeout: float, **options) -> tuple[int | No
     in a hot loop costs this process a bounded amount of memory, where
     `capture_output=True` would have kept every byte until the run ended.
     """
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **options)
+    # Its own process group (on POSIX), so a child the run started, which holds
+    # the output pipes open, goes too when the run ends or runs out of time.
+    group = os.name == "posix"
+    process = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=group, **options
+    )
     sinks = (BoundedText(), BoundedText())
+
+    def end_group() -> None:
+        if group:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+        else:
+            process.kill()
 
     def drain(stream, sink: BoundedText) -> None:
         with io.TextIOWrapper(stream, errors="replace") as text:
@@ -96,11 +111,13 @@ def run_bounded(command: list[str], timeout: float, **options) -> tuple[int | No
     try:
         code = process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait()
         code = None
+    end_group()  # anything the run left behind, whether it finished or not
+    process.wait()
+    # The pipes close once every holder is gone; a holder that escaped the
+    # group (or Windows, with no group) is given a moment, never forever.
     for reader in readers:
-        reader.join()
+        reader.join(timeout=2)
     if code is None:
         return None, "", ""
     return code, sinks[0].getvalue(), sinks[1].getvalue()

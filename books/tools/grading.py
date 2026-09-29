@@ -48,34 +48,52 @@ class BoundedText(io.TextIOBase):
         return True
 
     def write(self, text) -> int:
+        # Only bounded slices are ever copied: the discarded middle of a huge
+        # write is counted by index (str.count with bounds), never materialized.
         text = text if isinstance(text, str) else str(text)
         written = len(text)
+        start = 0
         room = self.limit - self._head_size
         if room > 0:
             part = text[:room]
             self._head.append(part)
             self._head_size += len(part)
-            text = text[room:]
-        if text:
-            self._tail.append(text)
-            self._tail_size += len(text)
-            while self._tail_size > self.limit:
-                excess = self._tail_size - self.limit
-                first = self._tail[0]
-                if len(first) <= excess:
-                    self._tail.popleft()
-                    self._drop(first)
-                    self._tail_size -= len(first)
-                else:
-                    self._tail[0] = first[excess:]
-                    self._drop(first[:excess])
-                    self._tail_size -= excess
+            start = len(part)
+        rest = written - start
+        if rest <= 0:
+            return written
+        if rest >= self.limit:
+            # this write alone refills the tail: what the tail held goes, and so
+            # does this write's middle
+            while self._tail:
+                piece = self._tail.popleft()
+                self._drop(piece, 0, len(piece))
+            keep_from = written - self.limit
+            self._drop(text, start, keep_from)
+            self._tail.append(text[keep_from:])
+            self._tail_size = self.limit
+            return written
+        self._tail.append(text[start:])
+        self._tail_size += rest
+        while self._tail_size > self.limit:
+            excess = self._tail_size - self.limit
+            first = self._tail[0]
+            if len(first) <= excess:
+                self._tail.popleft()
+                self._drop(first, 0, len(first))
+                self._tail_size -= len(first)
+            else:
+                self._drop(first, 0, excess)
+                self._tail[0] = first[excess:]
+                self._tail_size -= excess
         return written
 
-    def _drop(self, text: str) -> None:
-        self._dropped_chars += len(text)
-        self.dropped_lines += text.count("\n")
-        self._tail_starts_a_line = text.endswith("\n")
+    def _drop(self, text: str, begin: int, end: int) -> None:
+        if end <= begin:
+            return
+        self._dropped_chars += end - begin
+        self.dropped_lines += text.count("\n", begin, end)
+        self._tail_starts_a_line = text[end - 1] == "\n"
 
     @property
     def stored_chars(self) -> int:
@@ -87,9 +105,14 @@ class BoundedText(io.TextIOBase):
             return head + tail
         dropped = self.dropped_lines
         cut = tail.find("\n")
-        if cut != -1 and not self._tail_starts_a_line:
+        if dropped and cut != -1 and not self._tail_starts_a_line:
             tail, dropped = tail[cut + 1 :], dropped + 1  # no half line after the gap
-        marker = f"…truncated, {dropped} more line{'' if dropped == 1 else 's'}\n"
+        if dropped:
+            marker = f"…truncated, {dropped} more line{'' if dropped == 1 else 's'}\n"
+        else:
+            # the cut fell inside one line: say how much of it went
+            chars = self._dropped_chars
+            marker = f"…truncated, {chars} more character{'' if chars == 1 else 's'} of a long line\n"
         return head + ("" if head.endswith("\n") else "\n") + marker + tail
 
 

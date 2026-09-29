@@ -301,6 +301,26 @@ export function criticMarkupFor(before: string, after: string): string {
  * changed stretch, with `CONTEXT_LINES` of context, merged where contexts meet.
  */
 export function proposeHunks(baseSource: string, editedSource: string): Hunk[] {
+  // Unchanged context that itself contains CriticMarkup syntax (a code fence
+  // demonstrating it, say) can make a hunk ambiguous. Context is only there
+  // for the reader, so retry with less of it before giving up.
+  let failure: unknown
+  for (let context = CONTEXT_LINES; context >= 0; context -= 1) {
+    try {
+      return proposeHunksWith(baseSource, editedSource, context)
+    } catch (error) {
+      if (!(error instanceof ProposalFormatError)) throw error
+      failure = error
+    }
+  }
+  throw failure
+}
+
+function proposeHunksWith(
+  baseSource: string,
+  editedSource: string,
+  contextLines: number,
+): Hunk[] {
   const a = splitLines(baseSource)
   const b = splitLines(editedSource)
 
@@ -335,8 +355,10 @@ export function proposeHunks(baseSource: string, editedSource: string): Hunk[] {
   type Region = { aFrom: number; aTo: number; bFrom: number; bTo: number }
   const regions: Region[] = []
   for (const run of runs) {
-    const aFrom = Math.max(0, run.aStart - CONTEXT_LINES)
-    const aTo = Math.min(a.length, run.aEnd + CONTEXT_LINES)
+    // A pure insertion still needs one base line to anchor it.
+    const lines = run.aEnd === run.aStart ? Math.max(1, contextLines) : contextLines
+    const aFrom = Math.max(0, run.aStart - lines)
+    const aTo = Math.min(a.length, run.aEnd + lines)
     const region = {
       aFrom,
       aTo,

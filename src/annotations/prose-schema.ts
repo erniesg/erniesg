@@ -101,8 +101,10 @@ export function isEditable(block: Block): block is EditableBlock {
 /* -------------------------------------------------------------------------- */
 
 const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})/
-const DIRECTIVE_OPEN = /^ {0,3}:{3,}[A-Za-z]/
-const DIRECTIVE_CLOSE = /^ {0,3}:{3,}\s*$/
+// The renderer's own grammar (books/tools/render.py BLOCK and CLOSING): a
+// directive opens with exactly `:::name` and closes on a line of exactly `:::`.
+const DIRECTIVE_OPEN = /^:::\w/
+const DIRECTIVE_CLOSE = /^:::\s*$/
 const DIRECTIVE_ANY = /^ {0,3}:{3,}/
 const HEADING = /^( {0,3}(#{1,6})[ \t]+)(.*)$/
 const LIST_MARKER = /^( {0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+)(.*)$/
@@ -503,6 +505,9 @@ export function parseInline(s: string): Inline[] {
  * never as structure. Unedited text is written from `raw` instead.
  */
 export function escapeText(text: string, atLineStart: boolean): string {
+  // Leading spaces or a tab at the start of a block would read back as
+  // indented code, and Markdown drops leading indentation anyway.
+  if (atLineStart) text = text.replace(/^[ \t]+/, '')
   const escaped = text.replace(/[\\`*_[\]<>$~&|]/g, '\\$&')
   return escaped.replace(
     atLineStart ? /(^|\n)([ \t]*)(?:([#>+=:-])|(\d+)([.)]))/g : /(\n)([ \t]*)(?:([#>+=:-])|(\d+)([.)]))/g,
@@ -599,6 +604,15 @@ const KEYS: Record<string, readonly string[]> = {
   locked: ['type', 'reason', 'raw', 'after'],
 }
 
+const LIST_MARKER_ONLY = /^ {0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+$/
+
+/** The gap after a block may only be whitespace, or it could carry structure. */
+function gapViolations(after: unknown, path: string): string[] {
+  return typeof after === 'string' && /^\s*$/.test(after)
+    ? []
+    : [`${path}.after: not whitespace`]
+}
+
 /** Link targets an edit may introduce. Anything else is dropped on paste. */
 export function isPermittedHref(href: string): boolean {
   return /^(?:https?:\/\/|mailto:|\/|#)/i.test(href) && !/[\s()<>\\]/.test(href)
@@ -640,19 +654,44 @@ export function schemaViolations(value: unknown, path = '$'): string[] {
       }
       break
     case 'link':
-      if (typeof node.href !== 'string' || /[\s()<>\\]/.test(node.href)) {
+      if (typeof node.href !== 'string' || !isPermittedHref(node.href)) {
         problems.push(`${path}.href: not a permitted destination`)
       }
       problems.push(...schemaViolations(node.content, `${path}.content`))
       break
     case 'em':
     case 'strong':
-    case 'paragraph':
-    case 'heading':
+      if (!(node.type === 'em' ? ['*', '_'] : ['**', '__']).includes(node.marker as string)) {
+        problems.push(`${path}.marker: not a permitted marker`)
+      }
+      problems.push(...schemaViolations(node.content, `${path}.content`))
+      break
     case 'list_item':
+      if (typeof node.marker !== 'string' || !LIST_MARKER_ONLY.test(node.marker)) {
+        problems.push(`${path}.marker: not a list marker`)
+      }
+      if (typeof node.indent !== 'string' || !/^[ \t]*$/.test(node.indent)) {
+        problems.push(`${path}.indent: not whitespace`)
+      }
+      problems.push(...schemaViolations(node.content, `${path}.content`))
+      break
+    case 'heading': {
+      const level = node.level
+      if (!Number.isInteger(level) || (level as number) < 1 || (level as number) > 6) {
+        problems.push(`${path}.level: not 1 to 6`)
+      } else if (typeof node.prefix !== 'string' || !new RegExp(`^ {0,3}#{${level}}[ \\t]+$`).test(node.prefix)) {
+        problems.push(`${path}.prefix: not a heading prefix for its level`)
+      }
+      problems.push(...gapViolations(node.after, path))
+      problems.push(...schemaViolations(node.content, `${path}.content`))
+      break
+    }
+    case 'paragraph':
+      problems.push(...gapViolations(node.after, path))
       problems.push(...schemaViolations(node.content, `${path}.content`))
       break
     case 'list':
+      problems.push(...gapViolations(node.after, path))
       problems.push(...schemaViolations(node.items, `${path}.items`))
       break
     case 'locked':
@@ -692,9 +731,16 @@ function replaceInInlines(
       // A run with no escapes keeps its source spelling around the edit, so a
       // one-word change is a one-word patch rather than a re-escaped run.
       const lineStart = at === 0 || before.endsWith('\n')
+      // The unedited suffix keeps its spelling only if the edit leaves it where
+      // it was relative to a line start; moved to one, `# title` would become
+      // a heading, so the run is re-escaped whole instead.
+      const head = before + replacement
+      const suffixNowAtLineStart = head === '' || head.endsWith('\n')
+      const suffixWasAtLineStart = (before + search).endsWith('\n')
+      const keepsContext = !suffixNowAtLineStart || suffixWasAtLineStart || rest === ''
       const next: TextNode | null = !text
         ? null
-        : node.raw === node.text
+        : node.raw === node.text && keepsContext
           ? {
               type: 'text',
               text,
@@ -710,7 +756,9 @@ function replaceInInlines(
       const content = replaceInInlines(node.content, search, replacement)
       if (content) {
         const copy = nodes.slice()
-        copy[index] = { ...node, content }
+        // Deleting all of a mark's text removes the mark, not just its text.
+        if (content.length === 0) copy.splice(index, 1)
+        else copy[index] = { ...node, content }
         return copy
       }
     }
@@ -810,6 +858,36 @@ export function joinParagraphs(doc: ProseDoc, index: number): ProseDoc {
   return { ...doc, blocks }
 }
 
+/**
+ * Split inline content before the first occurrence of `before`, descending
+ * into emphasis, strong text and links so each side keeps its marks.
+ */
+function splitInlines(nodes: Inline[], before: string): [Inline[], Inline[]] | null {
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index]
+    if (node.type === 'text' && node.text.includes(before)) {
+      const offset = node.text.indexOf(before)
+      const head = node.text.slice(0, offset).replace(/[ \t\n]+$/, '')
+      const tail = node.text.slice(offset)
+      return [
+        [...nodes.slice(0, index), ...(head ? [{ type: 'text' as const, text: head }] : [])],
+        [{ type: 'text', text: tail }, ...nodes.slice(index + 1)],
+      ]
+    }
+    if (node.type === 'em' || node.type === 'strong' || node.type === 'link') {
+      const inner = splitInlines(node.content, before)
+      if (inner) {
+        const [left, right] = inner
+        return [
+          [...nodes.slice(0, index), ...(left.length ? [{ ...node, content: left }] : [])],
+          [...(right.length ? [{ ...node, content: right }] : []), ...nodes.slice(index + 1)],
+        ]
+      }
+    }
+  }
+  return null
+}
+
 /** Split a paragraph into two before the first occurrence of `before`. */
 export function splitParagraph(
   doc: ProseDoc,
@@ -818,22 +896,9 @@ export function splitParagraph(
 ): ProseDoc {
   const block = editable(doc, index)
   if (block.type !== 'paragraph') throw new Error('only a paragraph splits')
-  const at = block.content.findIndex(
-    (node) => node.type === 'text' && node.text.includes(before),
-  )
-  if (at < 0) throw new Error(`"${before}" is not in block ${index}`)
-  const node = block.content[at] as TextNode
-  const offset = node.text.indexOf(before)
-  const head = node.text.slice(0, offset).replace(/[ \t\n]+$/, '')
-  const tail = node.text.slice(offset)
-  const left: Inline[] = [
-    ...block.content.slice(0, at),
-    ...(head ? [{ type: 'text' as const, text: head }] : []),
-  ]
-  const right: Inline[] = [
-    { type: 'text', text: tail },
-    ...block.content.slice(at + 1),
-  ]
+  const split = splitInlines(block.content, before)
+  if (!split) throw new Error(`"${before}" is not in block ${index}`)
+  const [left, right] = split
   if (left.length === 0) throw new Error('nothing before the split')
   const blocks = doc.blocks.slice()
   blocks.splice(

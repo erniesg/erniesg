@@ -18,15 +18,38 @@ const pyodideUrl = () => window.__bookPyodideUrl || PYODIDE_DEFAULT;
 export const RUN_BUDGET_MS = 8000;
 const LOAD_BUDGET_MS = 60000;
 export const TIMED_OUT = 'Stopped after a few seconds: is there a loop that never ends?';
+// Characters of printed output kept per stream, as the grader caps each call.
+export const OUTPUT_CAP_CHARS = 20000;
 
 const workerSource = () => `importScripts('${pyodideUrl()}');
 const ready = loadPyodide();
 ready.then(() => postMessage({ ready: true }), err => postMessage({ ready: false, error: String(err) }));
+// What the reader prints is kept up to a cap as it arrives: a print in a loop
+// that runs to the time limit must not fill the tab's memory first.
+const OUTPUT_CAP = ${OUTPUT_CAP_CHARS};
+function capped() {
+  const sink = { text: '', dropped: 0, cut: false };
+  sink.add = line => {
+    const room = OUTPUT_CAP - sink.text.length;
+    if (room <= 0) { sink.dropped += 1; return; }
+    if (line.length > room) sink.cut = true; // one long line: keep its start, and say it was cut
+    sink.text += line.slice(0, room) + '\\n';
+  };
+  sink.value = () => {
+    if (!sink.dropped && !sink.cut) return sink.text;
+    const more = sink.dropped
+      ? sink.dropped + ' more line' + (sink.dropped === 1 ? '' : 's')
+      : 'the rest of the last line';
+    return sink.text + '…truncated, ' + more + '\\n';
+  };
+  return sink;
+}
 onmessage = async ({ data }) => {
   const py = await ready;
+  const stdout = capped(), stderr = capped();
   let out = '', error = '', value = null;
-  py.setStdout({ batched: s => { out += s + '\\n'; } });
-  py.setStderr({ batched: s => { error += s + '\\n'; } });
+  py.setStdout({ batched: s => stdout.add(s) });
+  py.setStderr({ batched: s => stderr.add(s) });
   try {
     for (const [path, text] of Object.entries(data.files || {})) {
       py.FS.mkdirTree(path.slice(0, path.lastIndexOf('/')) || '/');
@@ -39,6 +62,8 @@ onmessage = async ({ data }) => {
     const where = [...String(err.message).matchAll(/File "<exec>", line (\\d+)/g)].pop();
     error += (where ? 'Crashed on line ' + where[1] + ' · ' : '') + lines[lines.length - 1];
   }
+  out = stdout.value() + out;
+  error = stderr.value() + error;
   postMessage({ id: data.id, out, error, value });
 };`;
 

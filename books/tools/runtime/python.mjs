@@ -28,14 +28,20 @@ ready.then(() => postMessage({ ready: true }), err => postMessage({ ready: false
 // that runs to the time limit must not fill the tab's memory first.
 const OUTPUT_CAP = ${OUTPUT_CAP_CHARS};
 function capped() {
-  const sink = { text: '', dropped: 0 };
+  const sink = { text: '', dropped: 0, cut: false };
   sink.add = line => {
-    if (sink.text.length < OUTPUT_CAP) sink.text += line.slice(0, OUTPUT_CAP - sink.text.length) + '\\n';
-    else sink.dropped += 1;
+    const room = OUTPUT_CAP - sink.text.length;
+    if (room <= 0) { sink.dropped += 1; return; }
+    if (line.length > room) sink.cut = true; // one long line: keep its start, and say it was cut
+    sink.text += line.slice(0, room) + '\\n';
   };
-  sink.value = () => sink.text + (sink.dropped
-    ? '…truncated, ' + sink.dropped + ' more line' + (sink.dropped === 1 ? '' : 's') + '\\n'
-    : '');
+  sink.value = () => {
+    if (!sink.dropped && !sink.cut) return sink.text;
+    const more = sink.dropped
+      ? sink.dropped + ' more line' + (sink.dropped === 1 ? '' : 's')
+      : 'the rest of the last line';
+    return sink.text + '…truncated, ' + more + '\\n';
+  };
   return sink;
 }
 onmessage = async ({ data }) => {

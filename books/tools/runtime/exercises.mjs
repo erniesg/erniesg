@@ -20,7 +20,7 @@ const escapeHtml = text => text.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&l
 function results(produced, expected, error) {
   const want = tidy(expected).split('\n');
   const got = tidy(produced) ? tidy(produced).split('\n') : [];
-  const code = text => `<code>${escapeHtml(text)}</code>`;
+  const code = text => `<code>${escapeHtml(text.length > 200 ? text.slice(0, 200) + '…' : text)}</code>`;
   const rows = want.map((line, i) => {
     const ok = got[i] === line;
     const detail = ok ? code(line)
@@ -33,15 +33,19 @@ function results(produced, expected, error) {
   // loop is one row instead of thousands.
   let extras = got.slice(want.length);
   let more = 0;
-  const cut = /^…truncated, (\d+) more lines?$/.exec(extras[extras.length - 1] || '');
+  const last = extras[extras.length - 1] || '';
+  const cut = /^…truncated, (\d+) more lines?$/.exec(last);
+  const partial = last === '…truncated, the rest of the last line';
   if (cut) { more += Number(cut[1]); extras = extras.slice(0, -1); }
+  if (partial) extras = extras.slice(0, -1);
   more += Math.max(0, extras.length - MAX_EXTRA_ROWS);
   extras.slice(0, MAX_EXTRA_ROWS).forEach(line => rows.push({ ok: false, extra: true,
     html: `<li class="case fail"><span class="mark">&#10007;</span><span class="case-n">Extra</span>`
       + `<span>printed ${code(line)}, which no test asked for</span></li>` }));
-  if (more) rows.push({ ok: false, extra: true,
+  if (more || partial) rows.push({ ok: false, extra: true,
     html: `<li class="case fail"><span class="mark">&#10007;</span><span class="case-n">Extra</span>`
-      + `<span>…and ${more} more line${more === 1 ? '' : 's'} no test asked for</span></li>` });
+      + `<span>…and ${more ? `${more} more line${more === 1 ? '' : 's'}` : 'the rest of a long line'}`
+      + ` no test asked for</span></li>` });
   const passed = rows.filter(r => r.ok).length;
   const allOk = passed === want.length && rows.length === want.length && !error;
   const head = allOk

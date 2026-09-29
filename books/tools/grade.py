@@ -12,6 +12,7 @@ Stdlib only; needs Python 3.11+ for tomllib.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import re
@@ -19,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 if sys.version_info < (3, 11):  # tomllib arrived in 3.11
@@ -31,7 +33,7 @@ from render import BOOKS, CHALLENGES, WORKSPACE as WORKSPACE_DIR, report_legacy_
 from bookgrader import OUTPUT_LIMIT_BYTES  # noqa: F401  (the cap the page is told about)
 from grading import (  # noqa: F401  (grade.summarize and friends stay importable from here)
     ASSERTION, DIFFER, EXCEPTION, FRAME, FUNCTION, SAMPLE_TIER, SOLVE_CALL, TIERS,
-    UNRECORDED_TIERS, harness_frame, summarize,
+    UNRECORDED_TIERS, BoundedText, harness_frame, summarize,
 )
 
 GREEN, RED, DIM, RESET = "\033[32m", "\033[31m", "\033[2m", "\033[0m"
@@ -68,6 +70,42 @@ def start(node_id: str, force: bool) -> int:
     return 0
 
 
+
+def run_bounded(command: list[str], timeout: float, **options) -> tuple[int | None, str, str]:
+    """Run `command`, keeping only both ends of what it prints.
+
+    `(returncode, stdout, stderr)`, or `(None, "", "")` past `timeout`. Each
+    stream is read as it is written into a `BoundedText`, so a reader's print
+    in a hot loop costs this process a bounded amount of memory, where
+    `capture_output=True` would have kept every byte until the run ended.
+    """
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **options)
+    sinks = (BoundedText(), BoundedText())
+
+    def drain(stream, sink: BoundedText) -> None:
+        with io.TextIOWrapper(stream, errors="replace") as text:
+            for chunk in iter(lambda: text.read(65536), ""):
+                sink.write(chunk)
+
+    readers = [
+        threading.Thread(target=drain, args=(stream, sink), daemon=True)
+        for stream, sink in zip((process.stdout, process.stderr), sinks)
+    ]
+    for reader in readers:
+        reader.start()
+    try:
+        code = process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+        code = None
+    for reader in readers:
+        reader.join()
+    if code is None:
+        return None, "", ""
+    return code, sinks[0].getvalue(), sinks[1].getvalue()
+
+
 def run_tier(
     node_dir: Path,
     tier: str,
@@ -99,16 +137,8 @@ def run_tier(
             env["BOOK_CALL_LOG"] = str(log)
             if sample:
                 env["BOOK_SAMPLE_MODE"] = "1"
-        try:
-            done = subprocess.run(
-                [sys.executable, str(test_file)],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                env=env,
-                cwd=node_dir,
-            )
-        except subprocess.TimeoutExpired:
+        code, stdout, stderr = run_bounded([sys.executable, str(test_file)], timeout, env=env, cwd=node_dir)
+        if code is None:
             return "timeout", f"exceeded the {timeout}s limit"
         if record and log.is_file():
             try:
@@ -118,8 +148,8 @@ def run_tier(
                     counts["total"] = int(logged.get("total", len(calls)))
             except (OSError, ValueError, TypeError):
                 pass
-    output = (done.stdout + done.stderr).strip()
-    return ("pass" if done.returncode == 0 else "fail"), output
+    output = (stdout + stderr).strip()
+    return ("pass" if code == 0 else "fail"), output
 
 
 def run_samples(node_dir: Path, solution_dir: Path, timeout: int) -> dict:

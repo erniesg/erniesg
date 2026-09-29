@@ -12,6 +12,7 @@ const exerciseId = section => (section.id || '').replace(/^ex-/, '');
 
 import { pythonLoaded, runPython } from './python.mjs';
 
+const MAX_EXTRA_ROWS = 5;
 const tidy = text => text.replace(/^\n+|\n+$/g, '').split('\n').map(l => l.trimEnd()).join('\n').trimEnd();
 const escapeHtml = text => text.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
 
@@ -27,9 +28,20 @@ function results(produced, expected, error) {
     return { ok, html: `<li class="case ${ok ? 'pass' : 'fail'}"><span class="mark">${ok ? '&#10003;' : '&#10007;'}</span>`
       + `<span class="case-n">Test ${i + 1}</span><span>${detail}</span></li>` };
   });
-  got.slice(want.length).forEach(line => rows.push({ ok: false, extra: true,
+  // Extra lines are shown up to a few; the rest, and any the worker let go
+  // (its "…truncated, N more lines" line), are one count, so a print in a
+  // loop is one row instead of thousands.
+  let extras = got.slice(want.length);
+  let more = 0;
+  const cut = /^…truncated, (\d+) more lines?$/.exec(extras[extras.length - 1] || '');
+  if (cut) { more += Number(cut[1]); extras = extras.slice(0, -1); }
+  more += Math.max(0, extras.length - MAX_EXTRA_ROWS);
+  extras.slice(0, MAX_EXTRA_ROWS).forEach(line => rows.push({ ok: false, extra: true,
     html: `<li class="case fail"><span class="mark">&#10007;</span><span class="case-n">Extra</span>`
       + `<span>printed ${code(line)}, which no test asked for</span></li>` }));
+  if (more) rows.push({ ok: false, extra: true,
+    html: `<li class="case fail"><span class="mark">&#10007;</span><span class="case-n">Extra</span>`
+      + `<span>…and ${more} more line${more === 1 ? '' : 's'} no test asked for</span></li>` });
   const passed = rows.filter(r => r.ok).length;
   const allOk = passed === want.length && rows.length === want.length && !error;
   const head = allOk

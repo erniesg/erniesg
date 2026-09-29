@@ -23,6 +23,8 @@ self.loadPyodide = () => new Promise(resolve => setTimeout(() => resolve({
   async runPythonAsync(code) {
     const delay = Number((code.match(/# delay (\\d+)/) || [0, 0])[1])
     if (delay) await new Promise(done => setTimeout(done, delay))
+    const flood = Number((code.match(/# flood (\\d+)/) || [0, 0])[1])
+    for (let i = 0; i < flood; i += 1) self.__out("flood line " + i)
     for (const found of code.matchAll(/print\\("([^"]*)"\\)/g)) self.__out(found[1])
   },
 }), ${loadMs}))
@@ -52,6 +54,22 @@ test('a slow Python load does not spend the run budget', async ({ page }) => {
   await expect(ex.locator('.results')).toBeVisible({ timeout: 30_000 })
   await expect(ex.locator('.results')).toContainText('loaded-then-ran')
   await expect(ex.locator('.results')).not.toContainText('Stopped after')
+})
+
+test('a print in a loop is kept up to the cap, not in full (#398)', async ({ page }) => {
+  test.setTimeout(60_000)
+  await useFakePython(page, 100)
+  await page.goto(CHAPTER)
+  const ex = await check(page, FIRST, '# flood 200000\nprint("after-the-flood")')
+  const results = ex.locator('.results')
+  await expect(results).toBeVisible({ timeout: 30_000 })
+  await expect(results).toContainText('flood line 0')
+  // the worker kept 20,000 characters; the rest arrive as one count, and the
+  // extra lines beyond it are one row, not thousands
+  await expect(results).toContainText(/…and \d+ more lines no test asked for/)
+  expect(await results.locator('li.case').count()).toBeLessThanOrEqual(2 + 5 + 1)
+  const text = (await results.textContent()) ?? ''
+  expect(text.length).toBeLessThan(2_000)
 })
 
 test('two checks at once each get their own output', async ({ page }) => {

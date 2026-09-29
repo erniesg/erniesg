@@ -83,3 +83,14 @@ describe('splitAt and replaceBlock', () => {
     expect(serializeMarkdown(withoutList).endsWith('A second paragraph.\n')).toBe(true)
   })
 })
+
+describe('withItems keeps each item its own marker', () => {
+  it('when an earlier item of a numbered list is emptied', () => {
+    const doc = parseMarkdown('1. one\n2. two\n3. three\n')
+    const list = doc.blocks[0]
+    if (list.type !== 'list') throw new Error('no list')
+    const edited = withItems(list, [[{ type: 'text', text: '' }], list.items[1].content, list.items[2].content])
+    expect(edited?.items.map((item) => item.marker)).toEqual(['2. ', '3. '])
+    expect(edited?.items[0]).toBe(list.items[1])
+  })
+})

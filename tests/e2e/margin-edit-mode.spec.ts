@@ -354,6 +354,59 @@ test.describe('edit mode', () => {
     await expect(page.locator('.book-content')).toBeVisible()
   })
 
+  test('an unsaved draft survives a reload, and Discard clears it', async ({ page }) => {
+    const { source } = await openEditor(page)
+    const word = await uniqueWord(page, source)
+    await selectWord(page, word)
+    await page.keyboard.type('DRAFTWORD')
+    await page.getByRole('button', { name: 'Stop editing' }).click()
+    page.once('dialog', (dialog) => void dialog.accept())
+    await page.reload()
+    await expect(page.locator('[data-edit-status]')).toContainText('unsaved changes')
+    await page.getByRole('button', { name: 'Edit', exact: true }).click()
+    await expect(page.locator(SURFACE)).toContainText('DRAFTWORD')
+    await page.getByRole('button', { name: 'Discard' }).click()
+    await expect(page.locator(SURFACE)).not.toContainText('DRAFTWORD')
+    await page.getByRole('button', { name: 'Stop editing' }).click()
+    await page.reload()
+    await expect(page.locator('[data-edit-status]')).not.toContainText('unsaved changes')
+  })
+
+  test('two quick saves make one proposal, anchored beside the changed line', async ({ page }) => {
+    const { service, source } = await openEditor(page)
+    const word = await uniqueWord(page, source)
+    await selectWord(page, word)
+    await page.keyboard.type('ONCEONLY')
+    await page.locator(`${SURFACE} [contenteditable="true"]`).first().click()
+    await page.locator(`${SURFACE} [contenteditable="true"]`).first().press('ControlOrMeta+Enter')
+    await page.locator(`${SURFACE} [contenteditable="true"]`).first().press('ControlOrMeta+Enter')
+    await expect(page.locator('[data-edit-status]')).toContainText('revision')
+    const proposals = (await service.rows()).filter((row) => row.motivation === 'editing')
+    expect(proposals).toHaveLength(1)
+    // The anchor quotes the line that holds the edited word, not its context.
+    const quote = (proposals[0] as unknown as {
+      target: { selector: { type: string; exact?: string }[] }
+    }).target.selector.find((selector) => selector.type === 'TextQuoteSelector')?.exact ?? ''
+    const line = source.text.split('\n').find((text) => new RegExp(`\\b${word}\\b`).test(text)) ?? ''
+    expect(line.replace(/[*_`]/g, '').trim()).toContain(quote.slice(0, 20))
+  })
+
+  test('a link title survives an edit elsewhere in its paragraph', async ({ page }) => {
+    const { source } = await openEditor(page)
+    const paragraph = page.locator(`${SURFACE} p[contenteditable="true"]`).first()
+    await paragraph.evaluate((element) => {
+      const link = document.createElement('a')
+      link.href = 'https://example.com/'
+      link.title = 'a title'
+      link.textContent = 'linked'
+      element.append(' ', link)
+      element.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    })
+    await page.locator(`${SURFACE} p[contenteditable="true"]`).nth(1).click()
+    await expect(page.locator('[data-edit-changes]')).toContainText('"a title"')
+    void source
+  })
+
   test('works in the Plain look too', async ({ page }) => {
     await page.addInitScript(() => localStorage.setItem('book-look', 'plain'))
     const { source } = await openEditor(page)

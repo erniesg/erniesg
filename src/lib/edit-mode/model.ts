@@ -71,14 +71,15 @@ export function withContent(block: EditableBlock, content: Inline[]): EditableBl
 
 /** A list whose items were edited: unchanged items keep their spelling. */
 export function withItems(block: ListBlock, contents: Inline[][]): ListBlock | null {
-  const kept = contents.filter((content) => inlineText(content).trim().length > 0)
+  // Pair each edited item with the item it came from before dropping emptied
+  // ones, so a survivor keeps its own marker and indent, never a neighbour's.
+  const kept = contents
+    .map((content, index) => ({ content, original: block.items[index] ?? block.items[block.items.length - 1] }))
+    .filter(({ content }) => inlineText(content).trim().length > 0)
   if (kept.length === 0) return null
-  const items: ListItem[] = kept.map((content, index) => {
-    const original = block.items[index] ?? block.items[block.items.length - 1]
-    return inlineSignature(content) === inlineSignature(original.content)
-      ? original
-      : { ...original, content }
-  })
+  const items: ListItem[] = kept.map(({ content, original }) =>
+    inlineSignature(content) === inlineSignature(original.content) ? original : { ...original, content },
+  )
   const same =
     items.length === block.items.length && items.every((item, index) => item === block.items[index])
   return same ? block : { ...block, items }

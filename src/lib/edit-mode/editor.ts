@@ -22,7 +22,6 @@ import {
   parseHunks,
   proposalState,
   proposeHunks,
-  rejectAll,
   type Hunk,
 } from '../../annotations/criticmarkup'
 import { blocksFromHtml } from '../../annotations/prose-paste'
@@ -85,7 +84,7 @@ export function inlinesToHtml(nodes: readonly Inline[]): string {
         case 'strong':
           return `<strong>${inlinesToHtml(node.content)}</strong>`
         case 'link':
-          return `<a href="${escapeHtml(node.href)}">${inlinesToHtml(node.content)}</a>`
+          return `<a href="${escapeHtml(node.href)}"${node.title === undefined ? '' : ` title="${escapeHtml(node.title)}"`}>${inlinesToHtml(node.content)}</a>`
       }
     })
     .join('')
@@ -125,8 +124,11 @@ export function domToInlines(root: Node): Inline[] {
       if (text) into.push({ type: 'code', text })
     } else if (name === 'a') {
       const href = element.getAttribute('href') ?? ''
+      const title = element.getAttribute('title')
       const content = children()
-      if (href && isPermittedHref(href)) into.push({ type: 'link', href, content })
+      if (href && isPermittedHref(href)) {
+        into.push({ type: 'link', href, ...(title === null ? {} : { title }), content })
+      }
       else into.push(...content)
     } else if (name === 'div' || name === 'p') {
       // A browser's own line break inside an editable block.
@@ -209,6 +211,9 @@ export class EditMode {
   #me: string | null = null
   #pending = new Map<HTMLElement, number>()
   #restoreView: string | null = null
+  #saving = false
+  /** The id of the proposal a restored draft was revising, if any. */
+  #draftRevising: string | null = null
 
   constructor(root: HTMLElement) {
     this.#root = root
@@ -248,6 +253,55 @@ export class EditMode {
     this.#discard = find('[data-edit-discard]')
   }
 
+  /* ---------------------------------------------------------------- drafts */
+
+  /** Where this page's unsaved draft lives: per file and per base commit. */
+  #draftKey(): string | null {
+    return this.#stamp ? `book-edit-draft:v1:${this.#stamp.path}:${this.#stamp.commit}` : null
+  }
+
+  /** Keep the unsaved edit in this browser, so navigation cannot lose it. */
+  #storeDraft(): void {
+    const key = this.#draftKey()
+    if (!key) return
+    try {
+      const edited = this.#edited()
+      if (edited !== null && edited !== this.#stamp?.text) {
+        localStorage.setItem(
+          key,
+          JSON.stringify({ text: edited, revising: this.#revising ? this.#revising.id : null }),
+        )
+      } else {
+        localStorage.removeItem(key)
+      }
+    } catch {
+      // Storage unavailable: the beforeunload guard still warns.
+    }
+  }
+
+  #clearDraft(): void {
+    const key = this.#draftKey()
+    if (!key) return
+    try {
+      localStorage.removeItem(key)
+    } catch {}
+  }
+
+  #loadDraft(): { text: string; revising: string | null } | null {
+    const key = this.#draftKey()
+    if (!key) return null
+    try {
+      const raw = localStorage.getItem(key)
+      if (!raw) return null
+      const draft = JSON.parse(raw) as { text?: unknown; revising?: unknown }
+      return typeof draft.text === 'string'
+        ? { text: draft.text, revising: typeof draft.revising === 'string' ? draft.revising : null }
+        : null
+    } catch {
+      return null
+    }
+  }
+
   /** Show edit mode to a reader who may write, and wire it. */
   async start(): Promise<void> {
     const me = await this.#whoami()
@@ -259,6 +313,26 @@ export class EditMode {
       this.#reason.hidden = false
       this.#reason.textContent = `Edit mode is off here: ${this.#disabledReason}`
     }
+    // An unsaved draft from an earlier visit comes back with the next Edit.
+    const draft = this.#loadDraft()
+    if (draft && this.#stamp && draft.text !== this.#stamp.text) {
+      this.#session = new EditSession(parseMarkdown(draft.text))
+      this.#draftRevising = draft.revising
+      this.#announce('You have unsaved changes on this page. Press Edit to continue them, or Discard.')
+      this.#discard.hidden = false
+    }
+    // Leaving with unsaved changes asks first, whether or not storage works.
+    window.addEventListener('beforeunload', (event) => {
+      this.#flush()
+      if (!this.#hasChanges()) return
+      this.#storeDraft()
+      event.preventDefault()
+      event.returnValue = ''
+    })
+    document.addEventListener('astro:before-preparation', () => {
+      this.#flush()
+      this.#storeDraft()
+    })
     this.#toggle.addEventListener('click', () => (this.#editing ? this.exit() : this.enter()))
     this.#undo.addEventListener('click', () => this.#history('undo'))
     this.#redo.addEventListener('click', () => this.#history('redo'))
@@ -334,8 +408,11 @@ export class EditMode {
   }
 
   discard(): void {
-    this.#session = this.#base ? new EditSession(this.#base) : null
+    this.#session = this.#stamp ? new EditSession(parseMarkdown(this.#stamp.text)) : null
     this.#revising = null
+    this.#draftRevising = null
+    this.#clearDraft()
+    this.#discard.hidden = true
     if (this.#editing) this.#render()
     this.#announce('Changes discarded.')
   }
@@ -609,7 +686,8 @@ export class EditMode {
     } catch (error) {
       problem = error instanceof Error ? error.message : String(error)
     }
-    this.#save.disabled = hunks.length === 0 || Boolean(problem)
+    this.#save.disabled = this.#saving || hunks.length === 0 || Boolean(problem)
+    this.#storeDraft()
     this.#discard.hidden = !this.#hasChanges() && !this.#revising
     this.#changes.hidden = !this.#editing || (hunks.length === 0 && !problem)
     if (problem) {
@@ -638,32 +716,57 @@ export class EditMode {
   /* ---------------------------------------------------------------- saving */
 
   /**
-   * Anchor the proposal to the first passage it changes, as the page shows it:
-   * the first line of that hunk's base text with Markdown punctuation removed.
-   * The hunks and base commit are the proposal; the anchor only places it in
-   * the margin, so a passage the page renders differently falls back to the
-   * page's opening words.
+   * Anchor the proposal beside the passage it changes: the base line holding
+   * the first changed CriticMarkup segment (context lines are skipped), with
+   * Markdown punctuation removed, as the page shows it. The hunks and base
+   * commit are the proposal; the anchor only places it in the margin, so a
+   * line the page renders differently falls back to the next line of the
+   * changed stretch, then to the page's opening words.
    */
   #anchor(hunks: Hunk[]): { exact: string; start: number } {
     const pageText = this.#content.textContent ?? ''
-    const base = hunks[0] ? rejectAll(hunks[0].criticMarkup) : ''
+    const clean = (text: string) =>
+      text
+        .replace(/^\s*(#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s*)/, '')
+        .replace(/[*_`]/g, '')
+        .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+        .trim()
+    const candidates: string[] = []
+    const hunk = hunks[0]
+    if (hunk) {
+      let before = ''
+      let changed = ''
+      let seenChange = false
+      for (const segment of parseCriticMarkup(hunk.criticMarkup)) {
+        if (!seenChange && segment.kind === 'equal') {
+          before += segment.text
+          continue
+        }
+        seenChange = true
+        if (segment.kind === 'equal') {
+          changed += segment.text
+          if (changed.includes('\n')) break
+        } else if (segment.kind === 'delete') changed += segment.text
+        else if (segment.kind === 'substitute') changed += segment.old
+      }
+      // The whole line the change starts on, then what the change touched.
+      const lineStart = before.lastIndexOf('\n') + 1
+      candidates.push(before.slice(lineStart) + changed.split('\n')[0])
+      candidates.push(...changed.split('\n'))
+      // A pure insertion anchors to the line it follows.
+      candidates.push(before.slice(0, lineStart).split('\n').reverse().find((line) => line.trim()) ?? '')
+    }
     const line =
-      base
-        .split('\n')
-        .map((text) =>
-          text
-            .replace(/^\s*(#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s*)/, '')
-            .replace(/[*_`]/g, '')
-            .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-            .trim(),
-        )
-        .find((text) => text.length > 0 && pageText.includes(text)) ?? ''
+      candidates.map(clean).find((text) => text.length >= 3 && pageText.includes(text)) ?? ''
     const exact = (line || pageText.trim().slice(0, 80) || 'this page').slice(0, 200)
     const at = pageText.indexOf(exact)
     return { exact, start: at < 0 ? 0 : [...pageText.slice(0, at)].length }
   }
 
   async save(): Promise<void> {
+    // One save at a time: a second Cmd/Ctrl+Enter before the first answers
+    // would otherwise POST a duplicate proposal.
+    if (this.#saving) return
     this.#flush()
     if (!this.#stamp) return
     let hunks: Hunk[]
@@ -678,6 +781,7 @@ export class EditMode {
       return
     }
     const body = formatHunks(hunks)
+    this.#saving = true
     this.#save.disabled = true
     this.#announce('Saving your proposal…')
     try {
@@ -721,6 +825,7 @@ export class EditMode {
       }
       const saved = (await response.json()) as WireProposal
       this.#revising = saved
+      this.#clearDraft()
       this.#announce(
         `Proposal saved (revision ${saved['margin:revision'] ?? 1}). It waits for review; the page is unchanged.`,
       )
@@ -728,6 +833,7 @@ export class EditMode {
     } catch (error) {
       this.#announce(`Could not save the proposal: ${error instanceof Error ? error.message : String(error)}`)
     } finally {
+      this.#saving = false
       this.#update()
     }
   }
@@ -738,16 +844,26 @@ export class EditMode {
     if (!this.#me) return
     let mine: WireProposal[] = []
     try {
-      const response = await fetch(
-        `${API}/proposals?source=${encodeURIComponent(this.#documentUri)}&limit=50`,
-        { credentials: 'include', headers: { accept: 'application/json' } },
-      )
-      if (response.ok) {
-        const page = (await response.json()) as { annotations: WireProposal[] }
-        mine = page.annotations.filter((proposal) => proposal.creator === this.#me)
+      // The listing pages over every visible proposal on the document; the
+      // reader's own may be on any page, so follow the cursor to the end.
+      let cursor: string | undefined
+      for (let page = 0; page < 50; page += 1) {
+        const response = await fetch(
+          `${API}/proposals?source=${encodeURIComponent(this.#documentUri)}&limit=200` +
+            (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''),
+          { credentials: 'include', headers: { accept: 'application/json' } },
+        )
+        if (!response.ok) break
+        const body = (await response.json()) as { annotations: WireProposal[]; nextCursor?: string }
+        mine.push(...body.annotations.filter((proposal) => proposal.creator === this.#me))
+        cursor = body.nextCursor
+        if (!cursor) break
       }
     } catch {
       mine = []
+    }
+    if (this.#draftRevising && !this.#revising) {
+      this.#revising = mine.find((proposal) => proposal.id === this.#draftRevising) ?? null
     }
     this.#proposalsList.replaceChildren(...mine.map((proposal) => this.#proposalItem(proposal)))
     this.#proposalsList.hidden = mine.length === 0

@@ -258,7 +258,15 @@ async function proseBlocks(page: Page, minimum = 120): Promise<string[]> {
       Array.from(
         document.querySelectorAll('.book-content [data-block-kind="prose"]'),
       )
-        .filter((block) => (block.textContent ?? '').length > minimum)
+        .filter((block) => {
+          // A runnable cell renders inside a prose block, but its code is an
+          // editor, not text a reader selects: only the prose around it counts.
+          const text = Array.from(block.childNodes)
+            .filter((child) => !(child instanceof Element && child.matches('.cell-run')))
+            .map((child) => child.textContent ?? '')
+            .join('')
+          return text.length > minimum
+        })
         .map((block) => block.id),
     minimum,
   )
@@ -274,7 +282,13 @@ async function selectWithin(
     ({ blockId, start, end }) => {
       const block = document.getElementById(blockId)!
       const point = (offset: number) => {
-        const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT)
+        // Prose only: a runnable cell's code is an editor, not selectable text.
+        const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, {
+          acceptNode: (text) =>
+            text.parentElement?.closest('.cell-run')
+              ? NodeFilter.FILTER_REJECT
+              : NodeFilter.FILTER_ACCEPT,
+        })
         let seen = 0
         let node = walker.nextNode() as Text | null
         while (node) {
@@ -340,6 +354,11 @@ async function focusedKey(page: Page): Promise<string | null> {
 async function tabTo(page: Page, key: string, limit = 800) {
   for (let presses = 0; presses < limit; presses += 1) {
     if ((await focusedKey(page)) === key) return
+    // A book editor keeps Tab for indenting; Escape, then Tab, leaves it, as
+    // its keyboard hint says.
+    if (await page.evaluate(() => document.activeElement?.classList.contains('editor'))) {
+      await page.keyboard.press('Escape')
+    }
     await page.keyboard.press('Tab')
   }
   throw new Error(`Tab never reached ${key}`)

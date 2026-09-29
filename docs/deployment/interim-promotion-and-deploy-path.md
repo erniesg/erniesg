@@ -187,7 +187,7 @@ and these commands run with the owner's broad-scope Wrangler login. If
    3. Check the tooling. Both must hold, or stop:
       - `node -p "require('$ART/tooling/package-lock.json').packages['node_modules/wrangler'].version"`
         prints the version that `"$WR" --version` prints (`4.135.0` at
-        `fb60bce`);
+        `fb60bce`; `4.144.0` since the undici advisory fix);
       - `"$ART/tooling/node_modules/wrangler/package.json"` has that same
         `version`.
 6. **Bundle the Worker once, before the ask**, with that binary. From the

@@ -109,3 +109,36 @@ describe('proposals next to literal CriticMarkup (PR #395 review)', () => {
     expect(diff).toContain('+Changed it here.')
   })
 })
+
+describe('list items stay flat prose (PR #395 review round 2)', () => {
+  it('pasted or retyped block markers at the start of an item are escaped', () => {
+    let edited = parseMarkdown('- one\n- two\n- three\n')
+    for (const [from, to] of [['one', '- nested'], ['two', '# head'], ['three', '1. x']] as const) {
+      edited = replaceText(edited, 0, from, to)
+    }
+    const markdown = serializeMarkdown(edited)
+    expect(markdown).not.toMatch(/^- (?:- |# |1\. )/m)
+    const reread = parseMarkdown(markdown)
+    expect(reread.blocks).toHaveLength(1)
+    expect(reread.blocks[0]).toMatchObject({ type: 'list' })
+    expect(serializeMarkdown(reread)).toBe(markdown)
+  })
+
+  it('pasted item text with no source spelling is escaped at the item start', () => {
+    const doc = parseMarkdown('- a\n- b\n- c\n')
+    const list = doc.blocks[0] as { type: 'list'; items: { content: unknown[] }[] }
+    const texts = ['- nested', '# head', '1. x']
+    const items = list.items.map((item, i) => ({ ...item, content: [{ type: 'text', text: texts[i] }] }))
+    const markdown = serializeMarkdown({ ...doc, blocks: [{ ...list, items } as never] })
+    expect(markdown).toBe('- \\- nested\n- \\# head\n- 1\\. x\n')
+    expect(isEditable(parseMarkdown(markdown).blocks[0])).toBe(true)
+  })
+
+  it('a source list whose item starts with block syntax is locked, not offered as flat', () => {
+    for (const source of ['- - x\n', '- # head\n', '- 1. x\n', '- > quote\n']) {
+      const [block] = parseMarkdown(source).blocks
+      expect(isEditable(block)).toBe(false)
+      expect(roundTrip(source)).toBe(source)
+    }
+  })
+})

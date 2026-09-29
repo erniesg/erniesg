@@ -240,12 +240,17 @@ function buildGroup(groupLines: string[]): Block {
   return serializeBlock(block) === raw ? block : locked('round_trip', raw)
 }
 
+const ITEM_BLOCK_START = /^(?:[-*+](?:[ \t]|$)|\d{1,9}[.)](?:[ \t]|$)|#{1,6}(?:[ \t]|$)|>|`{3,}|~{3,}|:::)/
+
 function parseListItems(groupLines: string[]): ListItem[] | null {
   const items: { marker: string; lines: string[]; indent: string | null }[] =
     []
   for (const line of groupLines) {
     const marker = LIST_MARKER.exec(line)
     if (marker) {
+      // Block syntax as an item's first text (`- - x`, `- # h`, `- > q`) is
+      // a nested block, outside the flat prose subset.
+      if (ITEM_BLOCK_START.test(marker[2])) return null
       items.push({ marker: marker[1], lines: [marker[2]], indent: null })
       continue
     }
@@ -571,7 +576,8 @@ export function serializeBlock(block: Block): string {
         .map(
           (item) =>
             item.marker +
-            serializeInline(item.content, false).replaceAll(
+            // An item's text starts a line: `- # x` would be a heading.
+            serializeInline(item.content, true).replaceAll(
               '\n',
               `\n${item.indent}`,
             ),

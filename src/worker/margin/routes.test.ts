@@ -13,7 +13,9 @@ import {
   type MarginHarness,
 } from './fixtures'
 import {
+  MAX_BODY_LENGTH,
   MAX_CONTEXT_LENGTH,
+  MAX_PROPOSAL_BODY_LENGTH,
   MAX_QUOTE_LENGTH,
   STRUCT_SELECTOR_TYPE,
 } from './web-annotation'
@@ -1608,5 +1610,83 @@ describe('reply visibility boundaries', () => {
       error: { code: 'has_visible_replies' },
     })
     expect(await list(CHAPTER_ONE, null)).toHaveLength(2)
+  })
+})
+
+describe('body caps (issue 059)', () => {
+  function rowCount(): number {
+    const rows = harness.database.query(
+      'SELECT count(*) AS total FROM margin_annotations',
+    ) as { total: number }[]
+    return rows[0].total
+  }
+
+  it('stores an editing body up to 64,000 characters', async () => {
+    const response = await post(
+      webAnnotation({
+        source: CHAPTER_ONE,
+        motivation: 'editing',
+        body: 'x'.repeat(MAX_PROPOSAL_BODY_LENGTH),
+      }),
+    )
+    expect(response.status).toBe(201)
+    const created = (await response.json()) as WireAnnotation
+    expect(created.body?.value).toHaveLength(MAX_PROPOSAL_BODY_LENGTH)
+  })
+
+  it('refuses an editing body one character over with 413, storing nothing', async () => {
+    const response = await post(
+      webAnnotation({
+        source: CHAPTER_ONE,
+        motivation: 'editing',
+        body: 'x'.repeat(MAX_PROPOSAL_BODY_LENGTH + 1),
+      }),
+    )
+    expect(response.status).toBe(413)
+    expect((await response.json()).error.code).toBe('body_too_large')
+    expect(rowCount()).toBe(0)
+  })
+
+  it('still refuses a note over 8,000 characters with 413', async () => {
+    const response = await post(
+      webAnnotation({
+        source: CHAPTER_ONE,
+        body: 'x'.repeat(MAX_BODY_LENGTH + 1),
+      }),
+    )
+    expect(response.status).toBe(413)
+    expect(rowCount()).toBe(0)
+  })
+
+  it('applies the same caps to PATCH, by the row’s motivation', async () => {
+    const proposal = (await (
+      await post(
+        webAnnotation({
+          source: CHAPTER_ONE,
+          motivation: 'editing',
+          body: 'first draft',
+        }),
+      )
+    ).json()) as WireAnnotation
+    const note = (await (
+      await post(webAnnotation({ source: CHAPTER_ONE, body: 'a note' }))
+    ).json()) as WireAnnotation
+
+    const patch = (id: string, body: string) =>
+      harness.request('PATCH', `/annotations/${id}${scopeQuery(CHAPTER_ONE)}`, {
+        body: { body },
+      })
+
+    expect(
+      (await patch(bareId(proposal), 'y'.repeat(MAX_PROPOSAL_BODY_LENGTH)))
+        .status,
+    ).toBe(200)
+    expect(
+      (await patch(bareId(proposal), 'y'.repeat(MAX_PROPOSAL_BODY_LENGTH + 1)))
+        .status,
+    ).toBe(413)
+    expect(
+      (await patch(bareId(note), 'y'.repeat(MAX_BODY_LENGTH + 1))).status,
+    ).toBe(413)
   })
 })

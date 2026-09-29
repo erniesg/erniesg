@@ -6,7 +6,7 @@
  */
 ---
 
-<section class="edit-mode" data-edit-mode hidden aria-label="Edit this page">
+<section class="edit-mode" data-edit-mode data-split-keep hidden aria-label="Edit this page">
   <div class="edit-bar" role="toolbar" aria-label="Edit mode">
     <button type="button" class="edit-toggle" data-edit-toggle aria-pressed="false">Edit</button>
     <button type="button" data-edit-undo disabled aria-keyshortcuts="Meta+Z Control+Z">Undo</button>
@@ -153,6 +153,22 @@
     font: 600 0.75rem ui-sans-serif, system-ui, sans-serif;
     text-transform: uppercase;
     letter-spacing: 0.04em;
+  }
+  /* Over a challenge's side-by-side view, only the bar shows, floating where
+     it stays reachable; entering edit mode returns the page to stacked. */
+  html[data-challenge-view='split'] .edit-mode:not([hidden]) {
+    position: fixed;
+    left: 1rem;
+    bottom: 1rem;
+    z-index: 30;
+    margin: 0;
+    padding: 0.4rem;
+    border-radius: 8px;
+    background: var(--background, #fff);
+    box-shadow: 0 2px 10px rgb(0 0 0 / 0.18);
+  }
+  html[data-challenge-view='split'] .edit-mode > :not(.edit-bar) {
+    display: none;
   }
   .edit-locked pre {
     margin: 0.35rem 0 0;

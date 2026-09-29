@@ -1313,6 +1313,8 @@ SPLIT_SCRIPT = r"""
       const staysAbove = element => {
         if (bars.includes(element)) return true;
         if (element.matches('margin-rail') || element.querySelector('margin-rail')) return true;
+        // A control the page marks as needed over the split view (edit mode's bar).
+        if (element.matches('[data-split-keep]') || element.querySelector('[data-split-keep]')) return true;
         const style = getComputedStyle(element);
         return (style.position === 'fixed' || style.position === 'sticky') && Number(style.zIndex) > 12;
       };

@@ -91,6 +91,39 @@ export function inlinesToHtml(nodes: readonly Inline[]): string {
 }
 
 /**
+ * Whitespace at the inner edge of emphasis, strong text or a link is outside
+ * it in Markdown (`* first*` is not emphasis), so it is moved out: the mark
+ * keeps its words, and the space sits beside it.
+ */
+function hoistEdges(
+  make: (content: Inline[]) => Inline,
+  content: Inline[],
+): Inline[] {
+  const inner = content.slice()
+  let lead = ''
+  let trail = ''
+  const first = inner[0]
+  if (first?.type === 'text') {
+    const text = first.text.replace(/^\s+/, '')
+    lead = first.text.slice(0, first.text.length - text.length)
+    if (text) inner[0] = { type: 'text', text }
+    else inner.shift()
+  }
+  const last = inner[inner.length - 1]
+  if (last?.type === 'text') {
+    const text = last.text.replace(/\s+$/, '')
+    trail = last.text.slice(text.length)
+    if (text) inner[inner.length - 1] = { type: 'text', text }
+    else inner.pop()
+  }
+  const out: Inline[] = []
+  if (lead) out.push({ type: 'text', text: lead })
+  if (inner.length) out.push(make(inner))
+  if (trail) out.push({ type: 'text', text: trail })
+  return out
+}
+
+/**
  * What the reader typed, as schema nodes and nothing else. Elements outside
  * the schema contribute their text; `<br>` and block breaks a browser inserts
  * are soft line breaks.
@@ -114,11 +147,9 @@ export function domToInlines(root: Node): Inline[] {
     if (name === 'br') {
       into.push({ type: 'text', text: '\n' })
     } else if (name === 'em' || name === 'i') {
-      const content = children()
-      if (content.length) into.push({ type: 'em', marker: '*', content })
+      into.push(...hoistEdges((content) => ({ type: 'em', marker: '*', content }), children()))
     } else if (name === 'strong' || name === 'b') {
-      const content = children()
-      if (content.length) into.push({ type: 'strong', marker: '**', content })
+      into.push(...hoistEdges((content) => ({ type: 'strong', marker: '**', content }), children()))
     } else if (name === 'code') {
       const text = element.textContent ?? ''
       if (text) into.push({ type: 'code', text })
@@ -127,7 +158,12 @@ export function domToInlines(root: Node): Inline[] {
       const title = element.getAttribute('title')
       const content = children()
       if (href && isPermittedHref(href)) {
-        into.push({ type: 'link', href, ...(title === null ? {} : { title }), content })
+        into.push(
+          ...hoistEdges(
+            (inner) => ({ type: 'link', href, ...(title === null ? {} : { title }), content: inner }),
+            content,
+          ),
+        )
       }
       else into.push(...content)
     } else if (name === 'div' || name === 'p') {
@@ -212,6 +248,10 @@ export class EditMode {
   #pending = new Map<HTMLElement, number>()
   #restoreView: string | null = null
   #saving = false
+  /** The text there is nothing unsaved against: the page, or the last save. */
+  #cleanText: string | null = null
+  /** Unregisters this page's window and document listeners on navigation. */
+  #abort = new AbortController()
   /** The id of the proposal a restored draft was revising, if any. */
   #draftRevising: string | null = null
 
@@ -257,7 +297,10 @@ export class EditMode {
 
   /** Where this page's unsaved draft lives: per file and per base commit. */
   #draftKey(): string | null {
-    return this.#stamp ? `book-edit-draft:v1:${this.#stamp.path}:${this.#stamp.commit}` : null
+    // Per reader too: two writers sharing a browser never see each other's.
+    return this.#stamp && this.#me
+      ? `book-edit-draft:v2:${encodeURIComponent(this.#me)}:${this.#stamp.path}:${this.#stamp.commit}`
+      : null
   }
 
   /** Keep the unsaved edit in this browser, so navigation cannot lose it. */
@@ -266,7 +309,7 @@ export class EditMode {
     if (!key) return
     try {
       const edited = this.#edited()
-      if (edited !== null && edited !== this.#stamp?.text) {
+      if (edited !== null && edited !== this.#clean()) {
         localStorage.setItem(
           key,
           JSON.stringify({ text: edited, revising: this.#revising ? this.#revising.id : null }),
@@ -322,17 +365,36 @@ export class EditMode {
       this.#discard.hidden = false
     }
     // Leaving with unsaved changes asks first, whether or not storage works.
-    window.addEventListener('beforeunload', (event) => {
-      this.#flush()
-      if (!this.#hasChanges()) return
-      this.#storeDraft()
-      event.preventDefault()
-      event.returnValue = ''
-    })
-    document.addEventListener('astro:before-preparation', () => {
-      this.#flush()
-      this.#storeDraft()
-    })
+    const signal = this.#abort.signal
+    window.addEventListener(
+      'beforeunload',
+      (event) => {
+        this.#flush()
+        if (!this.#hasChanges()) return
+        this.#storeDraft()
+        event.preventDefault()
+        event.returnValue = ''
+      },
+      { signal },
+    )
+    document.addEventListener(
+      'astro:before-preparation',
+      () => {
+        this.#flush()
+        this.#storeDraft()
+      },
+      { signal },
+    )
+    // The site swaps pages without a reload; this controller's page is gone
+    // after the swap, so it stops listening, and stops warning, there.
+    document.addEventListener(
+      'astro:after-swap',
+      () => {
+        document.documentElement.removeAttribute('data-book-editing')
+        this.#abort.abort()
+      },
+      { signal },
+    )
     this.#toggle.addEventListener('click', () => (this.#editing ? this.exit() : this.enter()))
     this.#undo.addEventListener('click', () => this.#history('undo'))
     this.#redo.addEventListener('click', () => this.#history('redo'))
@@ -411,6 +473,7 @@ export class EditMode {
     this.#session = this.#stamp ? new EditSession(parseMarkdown(this.#stamp.text)) : null
     this.#revising = null
     this.#draftRevising = null
+    this.#cleanText = null
     this.#clearDraft()
     this.#discard.hidden = true
     if (this.#editing) this.#render()
@@ -464,6 +527,9 @@ export class EditMode {
     block.items.forEach((item, position) => {
       const li = editable(document.createElement('li'), item.content)
       li.dataset.item = String(position)
+      // Show the number the Markdown will say, not a renumbering.
+      const number = /^\s*(\d+)/.exec(item.marker)
+      if (ordered && number) (li as HTMLLIElement).value = Number(number[1])
       list.append(li)
     })
     return list
@@ -552,9 +618,10 @@ export class EditMode {
     if (!block) return
 
     if (event.key === 'Enter' && event.shiftKey) {
-      // A soft line break inside the paragraph.
+      // A soft line break, inside a paragraph only: in a heading or a list
+      // item a newline would end the block in Markdown.
       event.preventDefault()
-      document.execCommand('insertText', false, '\n')
+      if (block.type === 'paragraph') document.execCommand('insertText', false, '\n')
       return
     }
     if (event.key === 'Enter') {
@@ -671,8 +738,15 @@ export class EditMode {
     return proposeHunks(this.#stamp.text, edited)
   }
 
+  /** Nothing is unsaved against this: the page's text, or the last save. */
+  #clean(): string | undefined {
+    return this.#cleanText ?? this.#stamp?.text
+  }
+
+  /** Unsaved: differs from the last saved or opened text. */
   #hasChanges(): boolean {
-    return this.#edited() !== null && this.#edited() !== this.#stamp?.text
+    const edited = this.#edited()
+    return edited !== null && edited !== this.#clean()
   }
 
   #update(): void {
@@ -783,6 +857,25 @@ export class EditMode {
     const body = formatHunks(hunks)
     this.#saving = true
     this.#save.disabled = true
+    // A restored draft that was revising a proposal PATCHes that proposal:
+    // resolve it first, and refuse to save rather than POST a second one.
+    if (this.#draftRevising && !this.#revising) {
+      try {
+        const found = await fetch(
+          `${API}/annotations/${encodeURIComponent(bareId(this.#draftRevising))}?source=${encodeURIComponent(this.#documentUri)}`,
+          { credentials: 'include', headers: { accept: 'application/json' } },
+        )
+        if (!found.ok) throw new Error(`the service answered ${found.status}`)
+        this.#revising = (await found.json()) as WireProposal
+      } catch (error) {
+        this.#saving = false
+        this.#update()
+        this.#announce(
+          `Could not find the proposal this draft was revising, so nothing was saved: ${error instanceof Error ? error.message : String(error)}`,
+        )
+        return
+      }
+    }
     this.#announce('Saving your proposal…')
     try {
       let response: Response
@@ -825,6 +918,8 @@ export class EditMode {
       }
       const saved = (await response.json()) as WireProposal
       this.#revising = saved
+      this.#draftRevising = null
+      this.#cleanText = this.#edited()
       this.#clearDraft()
       this.#announce(
         `Proposal saved (revision ${saved['margin:revision'] ?? 1}). It waits for review; the page is unchanged.`,
@@ -895,6 +990,13 @@ export class EditMode {
 
   reopen(proposal: WireProposal): void {
     if (!this.#stamp || !proposal.body) return
+    this.#flush()
+    if (
+      this.#hasChanges() &&
+      !window.confirm('You have unsaved changes on this page. Discard them and open this proposal instead?')
+    ) {
+      return
+    }
     let edited: string
     try {
       edited = applyHunks(parseHunks(proposal.body.value), this.#stamp.text)
@@ -904,6 +1006,9 @@ export class EditMode {
     }
     if (this.#editing) this.exit()
     this.#revising = proposal
+    this.#draftRevising = null
+    this.#cleanText = edited
+    this.#clearDraft()
     this.enter(edited)
   }
 

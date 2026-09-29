@@ -38,6 +38,7 @@ type Stored = {
 
 type Service = {
   signedIn: boolean
+  as: Principal
   rows(): Promise<Stored[]>
   post(body: unknown): Promise<Response>
 }
@@ -50,12 +51,13 @@ async function mountService(page: Page, documentUri: string): Promise<Service> {
   const call = (request: Request) =>
     handleMarginRequest(request, {
       repository,
-      principal: service.signedIn ? OWNER : null,
+      principal: service.signedIn ? service.as : null,
       now: () => new Date(Date.UTC(2026, 8, 29, 0, 0, 0, (clock += 1))).toISOString(),
       newId: () => `proposal-${String((sequence += 1)).padStart(3, '0')}`,
     })
   const service: Service = {
     signedIn: true,
+    as: OWNER,
     async rows() {
       const response = await call(
         new Request(`https://ernie.sg/api/margin/v1/annotations?source=${encodeURIComponent(documentUri)}`),
@@ -77,7 +79,7 @@ async function mountService(page: Page, documentUri: string): Promise<Service> {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(
         service.signedIn
-          ? { authenticated: true, principal: OWNER, canWrite: true, isAdmin: true }
+          ? { authenticated: true, principal: service.as, canWrite: true, isAdmin: true }
           : { authenticated: false, canWrite: false, isAdmin: false },
       ),
     }),
@@ -405,6 +407,99 @@ test.describe('edit mode', () => {
     await page.locator(`${SURFACE} p[contenteditable="true"]`).nth(1).click()
     await expect(page.locator('[data-edit-changes]')).toContainText('"a title"')
     void source
+  })
+
+  test('a saved proposal leaves no draft behind; another reader never sees a draft', async ({ page }) => {
+    const { service, source } = await openEditor(page)
+    const word = await uniqueWord(page, source)
+    await selectWord(page, word)
+    await page.keyboard.type('SAVEDONE')
+    await page.getByRole('button', { name: 'Save proposal' }).click()
+    await expect(page.locator('[data-edit-status]')).toContainText('revision 1')
+    await page.getByRole('button', { name: 'Stop editing' }).click()
+    await page.reload()
+    await expect(page.locator('[data-edit-status]')).not.toContainText('unsaved changes')
+
+    // A second writer in the same browser gets no draft of the first's.
+    await page.getByRole('button', { name: 'Edit', exact: true }).click()
+    await selectWord(page, word)
+    await page.keyboard.type('UNSAVEDBYOWNER')
+    await page.getByRole('button', { name: 'Stop editing' }).click()
+    service.as = { provider: 'dev', issuer: 'urn:margin:dev', subject: 'someone-else' }
+    page.once('dialog', (dialog) => void dialog.accept())
+    await page.reload()
+    await expect(page.locator('[data-edit-status]')).not.toContainText('unsaved changes')
+    await page.getByRole('button', { name: 'Edit', exact: true }).click()
+    await expect(page.locator(SURFACE)).not.toContainText('UNSAVEDBYOWNER')
+  })
+
+  test('Reopen asks before it drops unsaved changes', async ({ page }) => {
+    const { source } = await openEditor(page)
+    const word = await uniqueWord(page, source)
+    await selectWord(page, word)
+    await page.keyboard.type('FIRSTSAVED')
+    await page.getByRole('button', { name: 'Save proposal' }).click()
+    await expect(page.locator('[data-edit-status]')).toContainText('revision 1')
+    await selectWord(page, 'FIRSTSAVED')
+    await page.keyboard.type('KEEPME')
+    await page.locator(`${SURFACE} [contenteditable="true"]`).first().click()
+    page.once('dialog', (dialog) => void dialog.dismiss())
+    await page.locator('.edit-proposal').getByRole('button', { name: 'Reopen' }).click()
+    await expect(page.locator(SURFACE)).toContainText('KEEPME')
+  })
+
+  test('Shift+Enter in a heading adds no line; boundary spaces leave emphasis; list numbers stay', async ({ page }) => {
+    await openEditor(page)
+    const heading = page.locator(`${SURFACE} h2[contenteditable="true"], ${SURFACE} h3[contenteditable="true"]`).first()
+    const before = await heading.textContent()
+    await heading.click()
+    await page.keyboard.press('Shift+Enter')
+    await expect(heading).toHaveText(before ?? '')
+
+    const inlines = await page.evaluate(() => {
+      const p = document.querySelector<HTMLElement>('[data-edit-surface] p[contenteditable="true"]')!
+      p.innerHTML = 'plain <em> spaced </em> text'
+      p.dispatchEvent(new InputEvent('input', { bubbles: true }))
+      return p.innerHTML
+    })
+    void inlines
+    await page.locator(`${SURFACE} p[contenteditable="true"]`).nth(1).click()
+    await expect(page.locator('[data-edit-changes]')).toContainText('*spaced*')
+    await expect(page.locator('[data-edit-changes]')).not.toContainText('* spaced')
+  })
+
+  test('the Edit bar stays usable over a challenge in side-by-side view', async ({ page }) => {
+    const documentUri = new URL('/books/build-a-coding-agent/recent-readings/', 'https://ernie.sg').toString()
+    await mountService(page, documentUri)
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.addInitScript(() => localStorage.setItem('book-challenge-view', 'split'))
+    await page.goto('/books/build-a-coding-agent/recent-readings/')
+    await expect(page.locator('html')).toHaveAttribute('data-challenge-view', 'split')
+    const toggle = page.getByRole('button', { name: 'Edit', exact: true })
+    await expect(toggle).toBeVisible()
+    await toggle.click()
+    await expect(page.locator(SURFACE)).toBeVisible()
+    await expect(page.locator('html')).not.toHaveAttribute('data-challenge-view', 'split')
+  })
+
+  test('a restored draft revising a proposal PATCHes it, never a second POST', async ({ page }) => {
+    const { service, source } = await openEditor(page)
+    const word = await uniqueWord(page, source)
+    await selectWord(page, word)
+    await page.keyboard.type('REVONE')
+    await page.getByRole('button', { name: 'Save proposal' }).click()
+    await expect(page.locator('[data-edit-status]')).toContainText('revision 1')
+    await selectWord(page, 'REVONE')
+    await page.keyboard.type('REVTWO')
+    await page.getByRole('button', { name: 'Stop editing' }).click()
+    page.once('dialog', (dialog) => void dialog.accept())
+    // The listing never answers, so only the direct lookup can resolve it.
+    await page.route('**/api/margin/v1/proposals?*', () => {})
+    await page.reload()
+    await page.getByRole('button', { name: 'Edit', exact: true }).click()
+    await page.getByRole('button', { name: 'Save proposal' }).click()
+    await expect(page.locator('[data-edit-status]')).toContainText('revision 2')
+    expect((await service.rows()).filter((row) => row.motivation === 'editing')).toHaveLength(1)
   })
 
   test('works in the Plain look too', async ({ page }) => {

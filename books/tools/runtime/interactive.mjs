@@ -149,6 +149,10 @@ export function wireInteractive(root, backend) {
         desk.dispatchEvent(new CustomEvent('book:challenge-graded', {
           bubbles: true, detail: { id: desk.dataset.node, ok: Boolean(result.ok) },
         }));
+        // The chapter indicator ticks it now rather than on the next page load.
+        if (result.ok) root.querySelectorAll('[data-progress-items]').forEach(item => {
+          if (item.dataset.progressItems === desk.dataset.node) item.setAttribute('data-progress-done', '');
+        });
         verdict.hidden = result.ok;
         verdict.innerHTML = result.ok ? '' :
           `<span class="mark">&#10007;</span> ` + escapeHtml(result.summary || `${result.stopped_at} is red.`);

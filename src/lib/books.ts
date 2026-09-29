@@ -40,6 +40,10 @@ export type BookNode = {
   exercises: string[]
   /** A challenge's tiers, for the grader that runs in the reader's browser. */
   grading: BookGrading | null
+  /** Previous and next in reading order, as `render.py` writes them. */
+  pager: string
+  /** The chapter progress indicator, as `render.py` writes it. */
+  progress: string
 }
 
 export type BookGrading = {
@@ -90,6 +94,8 @@ export type BookManifest = {
   splitCss: string
   /** The side-by-side toggle's behaviour, shared with `books/tools/preview.py`. */
   splitScript: string
+  /** The indicator, pager and shortcut sheet; unscoped, their classes are their own. */
+  navCss: string
   books: Book[]
 }
 

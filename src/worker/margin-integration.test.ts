@@ -360,13 +360,23 @@ describe('AuthKit and canonical service composition', () => {
     const cookie = await h.cookie()
     for (const body of [
       webAnnotation({ source: 'https://user:password@ernie.sg/chapter' }),
-      webAnnotation({ source: CHAPTER_ONE, body: 'x'.repeat(8001) }),
       webAnnotation({ source: 'https://ernie.sg/' + '🌊'.repeat(200) }),
     ]) {
       expect(
         (await h.request('/annotations', 'POST', cookie, body)).status,
       ).toBe(400)
     }
+    // An oversized body is refused whole, with 413 (issue 059), never cut.
+    expect(
+      (
+        await h.request(
+          '/annotations',
+          'POST',
+          cookie,
+          webAnnotation({ source: CHAPTER_ONE, body: 'x'.repeat(8001) }),
+        )
+      ).status,
+    ).toBe(413)
     for (let i = 0; i < 3; i++) {
       const body = {
         '@context': 'http://www.w3.org/ns/anno.jsonld',

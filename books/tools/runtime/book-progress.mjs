@@ -223,7 +223,10 @@ export async function startProgress({
     })
   })
 
-  progress = merge(progress, normalize(await backend.load(), book))
+  // Loaded first, merged after: whatever was solved while the load was in
+  // flight is in `progress` by then, and must not be merged away.
+  const stored = normalize(await backend.load(), book)
+  progress = merge(progress, stored)
   paintSolved(root, progress)
   restoreDrafts(editors, progress, typed, guard)
   show()

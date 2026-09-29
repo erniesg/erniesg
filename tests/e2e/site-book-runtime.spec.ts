@@ -225,6 +225,25 @@ test('Run all tiers grades a published challenge in the browser and records the 
   await expect(page.locator('[data-progress-count]')).toContainText('1/30 challenges solved')
 })
 
+test("a page's unfinished run does not hold up the next page's", async ({ page }) => {
+  test.slow()
+  await mount(page, 'real')
+  await page.goto(CELLS)
+  const cell = page.locator('.cell-run').first()
+  await cell.locator('.editor').fill('while True:\n    pass')
+  await cell.locator('.exec').click()
+  // Leave while it loops, through the site's own router.
+  await page.locator(`a[href="${CHALLENGE}"]`).first().evaluate((a) => (a as HTMLAnchorElement).click())
+  await expect(page).toHaveURL(new RegExp(`${CHALLENGE}$`))
+  const desk = page.locator('.desk').first()
+  await desk.locator('.editor').fill(PRINTING)
+  const started = Date.now()
+  await desk.locator('.sample').click()
+  await expect(desk.locator('.status')).toHaveText('Samples only. Not graded.', { timeout: 60_000 })
+  // The looping cell had 30 seconds left to run; the new page did not wait for it.
+  expect(Date.now() - started).toBeLessThan(20_000)
+})
+
 test('a published runnable cell runs after the cells before it', async ({ page }) => {
   test.slow()
   await mount(page, 'real')
@@ -236,4 +255,13 @@ test('a published runnable cell runs after the cells before it', async ({ page }
   await second.locator('.exec').click()
   await expect(second.locator('.output')).toHaveText('hello from an earlier cell', { timeout: 120_000 })
   await expect(second.locator('.output')).not.toHaveClass(/error/)
+
+  // A print in a loop is kept to the grader's per-call cap as it is produced,
+  // and says how much it dropped, rather than filling the tab's memory.
+  await second.locator('.editor').fill('for i in range(200_000):\n    print(i)')
+  await second.locator('.exec').click()
+  await expect(second.locator('.output')).toContainText('truncated', { timeout: 120_000 })
+  const shown = await second.locator('.output').innerText()
+  expect(shown.length).toBeLessThan(25_000)
+  expect(shown.startsWith('0\n1\n2')).toBe(true)
 })

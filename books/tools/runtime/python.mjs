@@ -80,7 +80,7 @@ function stopWorker() {
 /** Whether Python is already loaded, so a caller can say "first time only". */
 export const pythonLoaded = () => pyWorker !== null;
 
-function runOnce({ source, files, budgetMs }) {
+function runOnce({ source, files, budgetMs }, mine) {
   return (async () => {
     try {
       await (pyReady ?? startWorker());
@@ -88,6 +88,8 @@ function runOnce({ source, files, budgetMs }) {
       stopWorker();
       return { out: '', error: err.message, value: null, timedOut: false };
     }
+    // The page may have changed while Python was loading.
+    if (mine !== generation) return CANCELLED;
     const worker = pyWorker;
     const id = ++nextRunId;
     return new Promise(resolve => {
@@ -103,13 +105,38 @@ function runOnce({ source, files, budgetMs }) {
   })();
 }
 
+// Bumped by cancelPython: a job queued under an older generation belongs to a
+// page that is gone, and never starts.
+let generation = 0;
+const CANCELLED = { out: '', error: 'Cancelled: the page changed.', value: null, timedOut: false, cancelled: true };
+
 /**
  * Run `source` (optionally after writing `files`, path to text) and resolve
  * `{ out, error, value, timedOut }`. `value` is the run's last expression when
  * it is a string, which is how a caller gets JSON back.
  */
 export function runPython(job) {
-  const run = queue.then(() => runOnce(typeof job === 'string' ? { source: job } : job));
+  const mine = generation;
+  const run = queue.then(() =>
+    mine === generation ? runOnce(typeof job === 'string' ? { source: job } : job, mine) : CANCELLED);
   queue = run.catch(() => {});
   return run;
+}
+
+/**
+ * Abandon every run this page started: the one in progress is stopped (its
+ * worker terminated, so a loop ends now rather than at its time limit) and
+ * the queued ones never start. The site calls this as it swaps pages, so the
+ * next page's first run is not held up behind the last page's.
+ */
+export function cancelPython() {
+  generation += 1;
+  const running = pending.size > 0;
+  for (const job of pending.values()) {
+    clearTimeout(job.timer);
+    job.resolve(CANCELLED);
+  }
+  pending.clear();
+  if (running) stopWorker();
+  queue = Promise.resolve();
 }

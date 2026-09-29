@@ -5,3 +5,4 @@ export function pythonLoaded(): boolean
 export function runPython(
   job: string | { source: string; files?: Record<string, string>; budgetMs?: number },
 ): Promise<{ out: string; error: string; value: string | null; timedOut: boolean }>
+export function cancelPython(): void

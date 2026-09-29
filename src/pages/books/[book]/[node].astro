@@ -162,6 +162,7 @@ const style = `<style>${scopeContentCss(manifest.contentCss, '.book-content')}${
   // this runs on every page view; anything already wired is left alone.
   import { wireEditors } from '../../../../books/tools/runtime/editor.mjs'
   import { wireInteractive } from '../../../../books/tools/runtime/interactive.mjs'
+  import { cancelPython } from '../../../../books/tools/runtime/python.mjs'
   import {
     browserBackend,
     type BookGradingData,
@@ -190,4 +191,6 @@ const style = `<style>${scopeContentCss(manifest.contentCss, '.book-content')}${
     wireInteractive(document, backend)
     wireEditors(document)
   })
+  // Python outlives a page swap; the last page's runs must not hold up this one's.
+  document.addEventListener('astro:before-preparation', () => cancelPython())
 </script>

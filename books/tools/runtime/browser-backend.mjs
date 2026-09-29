@@ -51,18 +51,28 @@ export function browserBackend({ sources, grading }) {
     const run = await runPython({
       files: tools,
       budgetMs: EXEC_TIMEOUT_SECONDS * 1000 * BROWSER_SLOWDOWN,
+      // The output is kept to the grader's per-call cap as it is written
+      // (bookgrader's bounded buffer), so a print in a loop cannot fill the
+      // tab's memory before the time limit stops it.
       source: [
-        'import contextlib, io, json, traceback',
+        'import contextlib, json, sys, traceback',
+        `sys.path.insert(0, '${TOOLS}') if '${TOOLS}' not in sys.path else None`,
+        'from bookgrader import _BoundedBuffer, _clip',
         `ns = {'__name__': '__main__'}`,
         `exec(compile(open('${TOOLS}/cell_runner.py').read(), '<runner>', 'exec'), ns)`,
-        'buffer, ok = io.StringIO(), True',
+        'buffer, ok = _BoundedBuffer(), True',
         'with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):',
         '    try:',
         `        ns['_run_cells'](${literal(earlier || [])}, ${literal(source || '')})`,
         '    except BaseException:',
         '        traceback.print_exc()',
         '        ok = False',
-        `json.dumps({'output': buffer.getvalue().strip() or '(no output)', 'ok': ok})`,
+        'text, dropped = _clip(buffer.getvalue())',
+        'dropped += buffer.dropped_lines',
+        "output = text.strip() or '(no output)'",
+        'if dropped:',
+        "    output += f\"\\n…truncated, {dropped} more line{'' if dropped == 1 else 's'}\"",
+        `json.dumps({'output': output, 'ok': ok})`,
       ].join('\n'),
     });
     if (run.timedOut) return { output: `stopped after ${EXEC_TIMEOUT_SECONDS} seconds`, ok: false };

@@ -55,6 +55,13 @@ const siteLocaleChangeEvent = SITE_LOCALE_CHANGE_EVENT
             ))
           }
         </nav>
+        {/*
+          No transition:persist here: the header above persists, and these
+          travel with it. Astro moves every persisted element on its own, so a
+          persisted island inside a persisted header was moved into the new
+          header's discarded copy; Chromium's moveBefore rejects that and the
+          swap aborts before the URL changes (#382).
+        */}
         <MobileMenu client:load />
         <LanguageToggle client:load />
         <ModeToggle client:load />

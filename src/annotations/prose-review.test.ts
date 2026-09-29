@@ -69,8 +69,8 @@ describe('schemaViolations validates structure, not only content (PR #395 review
   })
 
   it('rejects structure smuggled through after, prefix, level, marker and indent', () => {
-    expect(schemaViolations(para({ after: '\n:::solution\nx\n:::\n' }))).not.toEqual([])
-    const heading = { type: 'heading', level: 2, prefix: ':::solution\n## ', content: [{ type: 'text', text: 'h' }], after: '\n' }
+    expect(schemaViolations(para({ after: '\n:::aside\nx\n:::\n' }))).not.toEqual([])
+    const heading = { type: 'heading', level: 2, prefix: ':::aside\n## ', content: [{ type: 'text', text: 'h' }], after: '\n' }
     expect(schemaViolations(heading)).not.toEqual([])
     expect(schemaViolations({ ...heading, prefix: '## ', level: 9 })).not.toEqual([])
     expect(schemaViolations({ ...heading, prefix: '### ', level: 2 })).not.toEqual([])
@@ -90,7 +90,7 @@ describe('schemaViolations validates structure, not only content (PR #395 review
 
 describe('directive blocks close exactly as the renderer does (PR #395 review)', () => {
   it('a line of four colons inside a directive does not close it', () => {
-    const source = ':::statement\nIntro\n::::\nStill inside.\n:::\n\nAfter.\n'
+    const source = ':::aside\nIntro\n::::\nStill inside.\n:::\n\nAfter.\n'
     const doc = parseMarkdown(source)
     expect(serializeMarkdown(doc)).toBe(source)
     const editable = doc.blocks.filter(isEditable).map((b) => serializeMarkdown({ ...doc, leading: '', blocks: [b] }))

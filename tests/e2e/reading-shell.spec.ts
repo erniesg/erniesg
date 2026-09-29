@@ -162,6 +162,12 @@ test.describe('the reading shell', () => {
     await toggle.click()
     await expect(toggle).toHaveAttribute('aria-expanded', 'true')
     await expect(panel).toBeVisible()
+    // The full-height overlay packs its rows at the top instead of stretching
+    // every control to share the window's height.
+    const close = await page
+      .locator('margin-rail [data-margin-action="highlight"]')
+      .boundingBox()
+    expect(close!.height).toBeLessThan(60)
     await page.keyboard.press('Escape')
     await expect(panel).toBeHidden()
 

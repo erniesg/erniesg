@@ -732,7 +732,63 @@ def render_node(
         elif name == "exercise":
             emit("exercise", exercise(attrs.get("id", ""), inner, target))
     flush_hints()
-    return "".join(out).replace(HINT_BUTTON, "").replace(HINT_PANEL, "")
+    body = "".join(out)
+    if node.get("kind") == "challenge" and target == "web":
+        body = challenge_split(out)
+    return body.replace(HINT_BUTTON, "").replace(HINT_PANEL, "")
+
+
+def challenge_split(pieces: list[str]) -> str:
+    """The challenge in two panes: the question, and the work.
+
+    Everything before the desk is the question; the desk and everything after
+    it (hints, the worked solution) is the work. Stacked, the two panes read in
+    exactly the order the blocks were written, so the page is unchanged until
+    the reader asks for the side-by-side view. The wrappers carry no block ids,
+    so every margin anchor stays where it was.
+    """
+    desk = next(
+        (i for i, piece in enumerate(pieces) if 'data-block-kind="desk"' in piece),
+        None,
+    )
+    if desk is None:
+        return "".join(pieces)
+    return (
+        '<div class="challenge-view" data-challenge-split>'
+        f'<div class="split-toolbar">{VIEW_TOGGLE}</div>'
+        '<div class="challenge-split">'
+        '<div class="split-pane split-question" role="region" aria-label="The question">'
+        f'{"".join(pieces[:desk])}</div>'
+        '<div class="split-pane split-work" role="region" aria-label="Your code">'
+        f'{"".join(pieces[desk:])}</div>'
+        "</div></div>"
+    )
+
+
+# The reader's choice of view on a challenge page, remembered per browser.
+# Both hosts (`preview.py` and the site) read the same key and attribute, and
+# set the attribute before first paint so a remembered view never jumps.
+CHALLENGE_VIEW_KEY = "book-challenge-view"
+CHALLENGE_VIEW_ATTRIBUTE = "data-challenge-view"
+# Narrower than this there is no room for two readable panes.
+CHALLENGE_SPLIT_MIN_WIDTH = 1000
+
+VIEW_TOGGLE = (
+    '<button type="button" class="view-toggle" data-challenge-view-toggle '
+    'aria-pressed="false" title="Show the question and the code side by side">'
+    '<svg viewBox="0 0 18 14" width="16" height="13" aria-hidden="true">'
+    '<rect x=".75" y=".75" width="16.5" height="12.5" rx="1.8" fill="none" '
+    'stroke="currentColor" stroke-width="1.3"/>'
+    '<path d="M9 1v12" stroke="currentColor" stroke-width="1.3"/></svg>'
+    "<span>Side by side</span></button>"
+)
+
+# Before first paint. Anything but a stored "split" is the stacked default.
+CHALLENGE_VIEW_HEAD_SCRIPT = (
+    "try{if(localStorage.getItem('%s')==='split')"
+    "document.documentElement.setAttribute('%s','split')}catch(e){}"
+    % (CHALLENGE_VIEW_KEY, CHALLENGE_VIEW_ATTRIBUTE)
+)
 
 
 HINT_BUTTON = "<!--hint-button-->"
@@ -864,6 +920,15 @@ KEYS_HINT = (
     '</span></span>'
 )
 
+# A challenge desk has two runs. \u2318' is the sample run because it is the
+# conventional "run" beside a "\u2318\u21b5 submit" in coding-practice sites, it
+# needs no shift on any common layout, and nothing in the editor types it.
+DESK_KEYS_HINT = KEYS_HINT.replace(
+    '<span class="keys-row"><span><kbd>\u2318\u21b5</kbd></span><span>run</span></span>',
+    "<span class=\"keys-row\"><span><kbd>\u2318'</kbd></span><span>run the samples</span></span>"
+    '<span class="keys-row"><span><kbd>\u2318\u21b5</kbd></span><span>run all tiers</span></span>',
+)
+
 
 def _runnable(rendered: str) -> str:
     """Only blocks the author marked ```python run get a Run button."""
@@ -898,14 +963,21 @@ def _desk(node: dict, attrs: dict, target: str, runnable: bool = True) -> str:
             '<h2>Your turn</h2><pre><code>' + html.escape(starter) + "</code></pre>"
             f'<p class="figure-note">{where}</p>'
         )
-    starter = GRADE_LINE.sub("    Press Run (\u2318\u21b5) to grade it.\n", starter)
+    starter = GRADE_LINE.sub(
+        "    Press Run (\u2318') to try the samples, Run all tiers (\u2318\u21b5) to grade it.\n",
+        starter,
+    )
     return (
         f'<section class="desk" data-node="{html.escape(node["id"])}">'
         f'<textarea class="editor" spellcheck="false">{html.escape(starter)}</textarea>'
-        '<div class="desk-actions"><button class="run">Run all tiers <kbd>\u2318\u21b5</kbd></button>'
-        f'{HINT_BUTTON}<span class="status"></span>{KEYS_HINT}</div>'
+        '<div class="desk-actions">'
+        '<button class="sample" title="Run your code on the statement\'s samples. Not graded.">'
+        "Run <kbd>\u2318'</kbd></button>"
+        '<button class="run">Run all tiers <kbd>\u2318\u21b5</kbd></button>'
+        f'{HINT_BUTTON}<span class="status"></span>{DESK_KEYS_HINT}</div>'
         f'{HINT_PANEL}<div class="tiers"></div><p class="desk-verdict" role="status" hidden></p>'
-        '<details class="full-output" hidden><summary>Full test output</summary>'
+        '<div class="cases" aria-live="polite"></div>'
+        '<details class="full-output" hidden><summary>Test runner output</summary>'
         '<pre class="output"></pre></details></section>'
     )
 
@@ -1072,6 +1144,27 @@ details.solution { border:0; border-top:2px solid var(--ink); border-radius:0; b
   border:1px solid var(--term-line); color:var(--term-ink); }
 .tier.pass { color:#86efac; border-color:#166534; } .tier.pass::before { content:"✓ "; }
 .tier.fail { color:#fca5a5; border-color:#7f1d1d; } .tier.fail::before { content:"✗ "; }
+.desk-actions .sample { background:none; border:1px solid var(--term-focus); color:var(--term-focus); }
+.cases:empty { display:none; }
+.cases { border-top:1px solid var(--term-line); padding:6px 0; color:var(--term-ink);
+  font:.82rem ui-sans-serif,system-ui; }
+.cases-head { margin:4px 14px 6px; color:var(--term-dim); font:600 .7rem ui-sans-serif,system-ui;
+  letter-spacing:.06em; text-transform:uppercase; }
+.call-case { display:block; margin:0 10px 8px; padding:8px 10px 8px 12px; border:1px solid var(--term-line);
+  border-radius:6px; }
+.call-case.bad { border-color:#7f1d1d; box-shadow:inset 3px 0 #f87171; }
+.call-case.good { box-shadow:inset 3px 0 #22c55e; }
+.case-call { font:.8rem ui-monospace,monospace; overflow-wrap:anywhere; }
+.case-call .mark { margin-right:6px; }
+.call-case.bad .mark { color:#fca5a5; } .call-case.good .mark { color:#86efac; }
+.call-case.plain .mark { color:var(--term-dim); }
+.case-got { margin-top:4px; font:.78rem ui-monospace,monospace; color:var(--term-dim); overflow-wrap:anywhere; }
+.case-got b { color:var(--term-ink); font-weight:600; }
+.case-prints > summary { margin-top:6px; color:var(--term-dim); font:600 .72rem ui-sans-serif,system-ui; cursor:pointer; }
+.case-prints pre { margin:4px 0 0; padding:6px 8px; max-height:16rem; overflow:auto; white-space:pre-wrap;
+  background:rgba(0,0,0,.25); border-radius:4px; color:var(--term-ink); font:.78rem/1.45 ui-monospace,monospace; }
+.case-prints .dropped { color:var(--term-dim); font-style:italic; }
+.case-none { margin-top:4px; color:var(--term-dim); font:italic .74rem ui-sans-serif,system-ui; }
 .results { padding:10px 14px 12px; border-top:1px solid var(--term-line); color:var(--term-ink);
   font:.84rem ui-sans-serif,system-ui; }
 .results-head { margin:0 0 6px; font-weight:600; }
@@ -1101,6 +1194,149 @@ details summary { cursor:pointer; font:600 .85rem ui-sans-serif,system-ui; }
 # src/lib/books.ts), and that refuses any at-rule it cannot scope safely. The
 # at-rules live here instead, and every target that owns its whole document
 # (the preview and the EPUB) appends them straight after CONTENT_CSS.
+# The side-by-side view. Rooted on <html>, so a host includes it unscoped;
+# `.challenge-view` exists only in a challenge's markup. Split, the view is a
+# fixed layer from the host's top bar (`--split-top`, which the host sets) to
+# the bottom of the window, and each pane is its own scroll container: the page
+# itself does not scroll, so scrolling the question never moves the code and
+# scrolling the code never moves the question.
+SPLIT_CSS = """
+.split-toolbar { display:flex; justify-content:flex-end; margin:0 0 .5rem; }
+.view-toggle { display:inline-flex; align-items:center; gap:6px; padding:5px 10px;
+  font:600 .75rem/1 ui-sans-serif,system-ui,sans-serif; color:inherit; background:transparent;
+  border:1px solid color-mix(in srgb, currentColor 35%%, transparent); border-radius:6px;
+  cursor:pointer; }
+.view-toggle[aria-pressed="true"] { background:color-mix(in srgb, currentColor 12%%, transparent);
+  border-color:currentColor; }
+.view-toggle[aria-disabled="true"] { opacity:.5; cursor:not-allowed; }
+.view-toggle:focus-visible { outline:2px solid #0369a1; outline-offset:2px; }
+@media screen and (min-width:%(wide)spx) {
+  html[data-challenge-view="split"]:has(.challenge-view),
+  html[data-challenge-view="split"]:has(.challenge-view) body { overflow:hidden; }
+  html[data-challenge-view="split"] .challenge-view { position:fixed; z-index:12;
+    top:var(--split-top, 0px); left:0; right:0; bottom:0; display:grid;
+    grid-template-rows:auto minmax(0,1fr); background:var(--split-surface, Canvas);
+    color:var(--split-ink, CanvasText); padding:.6rem 1.5rem 0; }
+  html[data-challenge-view="split"] .split-toolbar { margin:0 0 .6rem; }
+  html[data-challenge-view="split"] .challenge-split { display:grid; min-height:0;
+    grid-template-columns:minmax(0,1fr) minmax(0,1fr); column-gap:1.5rem; }
+  html[data-challenge-view="split"] .split-pane { min-height:0; height:100%%; overflow-y:auto;
+    overscroll-behavior:contain; padding:0 .75rem 2rem 0; }
+  html[data-challenge-view="split"] .split-pane:focus-visible { outline:2px solid #0369a1;
+    outline-offset:-2px; }
+  html[data-challenge-view="split"] .split-work .desk .editor { min-height:45vh; }
+}
+""" % {"wide": CHALLENGE_SPLIT_MIN_WIDTH}
+
+# The toggle's behaviour, for both hosts. Bound once per page lifetime (the
+# site's client router re-runs inline scripts on every navigation) and synced
+# again on each navigation. On the site it also folds the margin rail into its
+# narrow-screen overlay while the two panes show: three columns do not fit,
+# and the overlay keeps every annotation feature.
+SPLIT_SCRIPT = r"""
+(() => {
+  const KEY = '%(key)s', ATTR = '%(attr)s', root = document.documentElement;
+  const wide = window.matchMedia('(min-width: %(wide)spx)');
+  const stored = () => {
+    try { return localStorage.getItem(KEY) === 'split' ? 'split' : 'stacked'; }
+    catch (e) { return 'stacked'; }
+  };
+  const sync = () => {
+    const split = root.getAttribute(ATTR) === 'split';
+    const room = wide.matches;
+    const onChallenge = !!document.querySelector('[data-challenge-split]');
+    // Split, each pane is a scroll container the keyboard can reach, so Page
+    // Up/Down and Space scroll the pane that has focus and nothing else.
+    document.querySelectorAll('.split-pane').forEach(pane => {
+      if (split && room) pane.setAttribute('tabindex', '0');
+      else pane.removeAttribute('tabindex');
+    });
+    document.querySelectorAll('[data-challenge-view-toggle]').forEach(button => {
+      button.setAttribute('aria-pressed', String(split));
+      button.setAttribute('aria-disabled', String(!room));
+      button.title = !room ? 'Side by side needs a wider window'
+        : split ? 'Show the question above the code'
+        : 'Show the question and the code side by side';
+    });
+    // Split covers the page below the top bar, so what it covers leaves the tab
+    // order and the accessibility tree: every sibling on the way up from the
+    // view, except what stays drawn above it (a sticky or fixed bar that ends
+    // above the panes, a drawer or overlay stacked over them, the margin).
+    const view = document.querySelector('[data-challenge-split]');
+    document.querySelectorAll('[data-split-inert]').forEach(element => {
+      element.removeAttribute('inert');
+      element.removeAttribute('data-split-inert');
+    });
+    if (view) view.style.removeProperty('--split-top');
+    if (split && room && view) {
+      const siblings = [];
+      for (let node = view; node && node !== document.body; node = node.parentElement) {
+        for (const sibling of node.parentElement ? node.parentElement.children : []) {
+          if (sibling === node || /^(SCRIPT|STYLE|LINK|TEMPLATE)$/.test(sibling.tagName)) continue;
+          siblings.push(sibling);
+        }
+      }
+      // Top bars are pinned to the top of the window, possibly stacked: a site
+      // header, then a bar pinned just under it (the chapter progress). The
+      // view starts below the lowest bar of that stack, measured, so no bar is
+      // ever partly covered, and every bar in it stays reachable.
+      const candidates = siblings.filter(element => {
+        const style = getComputedStyle(element);
+        return (style.position === 'fixed' || style.position === 'sticky')
+          && element.getBoundingClientRect().height < 200;
+      }).sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+      const bars = [];
+      let barBottom = 0;
+      for (const element of candidates) {
+        const box = element.getBoundingClientRect();
+        if (box.top > barBottom + 1) break;
+        bars.push(element);
+        barBottom = Math.max(barBottom, box.bottom);
+      }
+      if (barBottom > 0) view.style.setProperty('--split-top', Math.ceil(barBottom) + 'px');
+      const staysAbove = element => {
+        if (bars.includes(element)) return true;
+        if (element.matches('margin-rail') || element.querySelector('margin-rail')) return true;
+        const style = getComputedStyle(element);
+        return (style.position === 'fixed' || style.position === 'sticky') && Number(style.zIndex) > 12;
+      };
+      for (const sibling of siblings) {
+        if (sibling.hasAttribute('inert') || staysAbove(sibling)) continue;
+        sibling.setAttribute('inert', '');
+        sibling.setAttribute('data-split-inert', '');
+      }
+    }
+    document.querySelectorAll('margin-rail').forEach(rail => {
+      if (!rail.hasAttribute('data-collapse-below-default')) {
+        rail.setAttribute('data-collapse-below-default', rail.getAttribute('collapse-below') || '');
+      }
+      const base = rail.getAttribute('data-collapse-below-default');
+      const next = split && room && onChallenge ? '100000' : base;
+      if ((rail.getAttribute('collapse-below') || '') === next) return;
+      if (next) rail.setAttribute('collapse-below', next);
+      else rail.removeAttribute('collapse-below');
+    });
+  };
+  if (!root.hasAttribute(ATTR)) root.setAttribute(ATTR, stored());
+  if (!window.__challengeViewBound) {
+    window.__challengeViewBound = true;
+    document.addEventListener('click', event => {
+      const button = event.target instanceof Element
+        && event.target.closest('[data-challenge-view-toggle]');
+      if (!button || button.getAttribute('aria-disabled') === 'true') return;
+      const next = root.getAttribute(ATTR) === 'split' ? 'stacked' : 'split';
+      root.setAttribute(ATTR, next);
+      try { localStorage.setItem(KEY, next); } catch (e) { /* this page only */ }
+      sync();
+    });
+    wide.addEventListener('change', sync);
+    document.addEventListener('astro:page-load', sync);
+  }
+  sync();
+})();
+""" % {"key": CHALLENGE_VIEW_KEY, "attr": CHALLENGE_VIEW_ATTRIBUTE, "wide": CHALLENGE_SPLIT_MIN_WIDTH}
+
+
 CONTENT_AT_RULES = """
 @media (max-width:520px) { .pairs { grid-template-columns:1fr; } .pairs dd { margin-bottom:6px; } }
 @keyframes hint-in { from { background:#4a3f16; opacity:.4; } to { background:#26241d; opacity:1; } }
@@ -1116,4 +1352,234 @@ p, li { max-width:none; }
 pre { background:#f4f4f1; color:#111; font-size:.82em; white-space:pre-wrap;
   word-wrap:break-word; border:1px solid #e4e4e0; }
 .figure, .hint, .solution { background:#fff; }
+"""
+
+
+# ---------------------------------------------------------------------------
+# Reading order: the pager at the end of a node, and the chapter progress
+# indicator every surface keeps in view. One author for both, like the block
+# markup: the preview and the site hand these strings over verbatim and supply
+# only how a node id becomes a URL. `books/tools/runtime/book-nav.mjs` is the
+# behaviour (shortcuts, the section in view, solved ticks); it reads these
+# attributes and nothing else.
+
+NAV_SECTION = re.compile(r'<h2 id="([^"]+)">(.*?)</h2>', re.DOTALL)
+_NAV_TAGS = re.compile(r"<[^>]+>")
+
+
+def section_headings(markup: str) -> list[tuple[str, str]]:
+    """The sections of one rendered node: its h2s, as (anchor, plain text)."""
+    return [
+        (anchor, html.unescape(_NAV_TAGS.sub("", text)).strip())
+        for anchor, text in NAV_SECTION.findall(markup)
+    ]
+
+
+def chapter_of(order: list[dict], node_id: str) -> dict | None:
+    """The numbered chapter a node belongs to.
+
+    A chapter is itself; a practice challenge belongs to the chapter it
+    follows (`load_book` records that as `chapter_number`); the front matter
+    belongs to none.
+    """
+    node = next((n for n in order if n["id"] == node_id), None)
+    if node is None:
+        return None
+    number = node.get("chapter_number")
+    if number is None:
+        return node if node.get("number") else None
+    return next((n for n in order if n.get("number") == number), None)
+
+
+def _nav_link(rel: str, target: dict, url: str) -> str:
+    direction = "← Previous" if rel == "prev" else "Next →"
+    return (
+        f'<a class="pager-{rel}" rel="{rel}" href="{html.escape(url)}" data-book-{rel}>'
+        f'<span class="pager-dir">{direction}</span>'
+        f'<span class="pager-title">{html.escape(target["title"])}</span></a>'
+    )
+
+
+def nav_status(kind: str, section: int, sections: int, practice: int, total: int,
+               solved: int) -> str:
+    """The indicator's words. `book-nav.mjs` writes the same ones as they change."""
+    parts: list[str] = []
+    if kind == "concept" and sections:
+        parts.append(f"Section {section} of {sections}")
+    if kind == "challenge":
+        parts.append(f"Practice {practice} of {total}")
+    if total:
+        lead = "practice " if kind == "concept" and sections else ""
+        parts.append(f"{lead}{solved}/{total} solved")
+    return " · ".join(parts)
+
+
+def reading_navigation(
+    order: list[dict],
+    node_id: str,
+    href,
+    sections,
+    solved=frozenset(),
+) -> dict[str, str]:
+    """The pager and the chapter progress indicator for one node.
+
+    `href(node_id)` is the URL of a node on this surface. `sections(node_id)`
+    is that node's `section_headings`; it is only asked about the chapter.
+    `solved` is what the reader has solved, when the surface knows it at
+    render time (the preview does, from `progress.json`). A surface that
+    learns it later marks `[data-progress-items]` itself, and the indicator
+    follows.
+    """
+    ids = [n["id"] for n in order]
+    index = ids.index(node_id)
+    node = order[index]
+    previous = order[index - 1] if index > 0 else None
+    following = order[index + 1] if index + 1 < len(order) else None
+
+    pager = '<nav class="book-pager" aria-label="Reading order">'
+    pager += _nav_link("prev", previous, href(previous["id"])) if previous else "<span></span>"
+    pager += _nav_link("next", following, href(following["id"])) if following else "<span></span>"
+    pager += "</nav>"
+
+    def step(rel: str, target: dict | None) -> str:
+        if target is None:
+            return '<span class="cp-step" aria-hidden="true"></span>'
+        label = ("Previous: " if rel == "prev" else "Next: ") + target["title"]
+        key = "[" if rel == "prev" else "]"
+        glyph = "‹" if rel == "prev" else "›"
+        return (
+            f'<a class="cp-step" rel="{rel}" href="{html.escape(href(target["id"]))}" '
+            f'aria-label="{html.escape(label)}" title="{html.escape(label)} ({key})" '
+            f'aria-keyshortcuts="{key}">{glyph}</a>'
+        )
+
+    keys = (
+        '<button type="button" class="cp-keys" data-book-keys-toggle '
+        'aria-keyshortcuts="?" aria-label="Keyboard shortcuts" '
+        'title="Keyboard shortcuts (?)">?</button>'
+    )
+    chapter = chapter_of(order, node_id)
+    if chapter is None:
+        return {
+            "pager": pager,
+            "progress": (
+                '<nav class="chapter-progress" data-chapter-progress data-kind="none" '
+                'aria-label="Where you are">'
+                f'{step("prev", previous)}<div class="cp-body"><div class="cp-head">'
+                f'<span class="cp-chapter">{html.escape(node["title"])}</span></div></div>'
+                f'{step("next", following)}{keys}</nav>'
+            ),
+        }
+
+    kind = "challenge" if node.get("chapter_number") is not None else "concept"
+    on_chapter = node["id"] == chapter["id"]
+    heads = sections(chapter["id"])
+    practice_ids = [p for p in chapter.get("practice", []) if p in ids]
+    done = [p for p in practice_ids if p in solved]
+    practice_at = practice_ids.index(node_id) + 1 if node_id in practice_ids else 0
+
+    segments: list[str] = []
+    for position, (anchor, text) in enumerate(heads, start=1):
+        url = f"#{anchor}" if on_chapter else f"{href(chapter['id'])}#{anchor}"
+        current = ' aria-current="location"' if on_chapter and position == 1 else ""
+        segments.append(
+            f'<li><a class="cp-seg" data-cp-section="{html.escape(anchor)}" '
+            f'href="{html.escape(url)}" title="{html.escape(text)}"{current}>'
+            f'<span class="cp-sr">Section {position} of {len(heads)}: {html.escape(text)}</span>'
+            '</a></li>'
+        )
+    by_id = {n["id"]: n for n in order}
+    for position, practice_id in enumerate(practice_ids, start=1):
+        title = by_id[practice_id]["title"]
+        state = " data-progress-done" if practice_id in solved else ""
+        current = ' aria-current="page"' if practice_id == node_id else ""
+        note = " (solved)" if practice_id in solved else ""
+        segments.append(
+            f'<li><a class="cp-seg cp-practice" data-cp-practice="{html.escape(practice_id)}" '
+            f'data-progress-items="{html.escape(practice_id)}"{state} '
+            f'href="{html.escape(href(practice_id))}" '
+            f'title="Practice {position}: {html.escape(title)}"{current}>'
+            f'<span class="cp-sr">Practice {position} of {len(practice_ids)}: '
+            f'{html.escape(title)}<span data-cp-solved-note>{note}</span></span></a></li>'
+        )
+
+    label = f"Ch {chapter['number']} · {chapter['title']}"
+    status = nav_status(kind, 1, len(heads), practice_at, len(practice_ids), len(done))
+    progress = (
+        f'<nav class="chapter-progress" data-chapter-progress data-kind="{kind}" '
+        f'data-chapter="{html.escape(chapter["id"])}" aria-label="Chapter progress">'
+        f'{step("prev", previous)}'
+        '<div class="cp-body"><div class="cp-head">'
+        f'<a class="cp-chapter" href="{html.escape(href(chapter["id"]))}">{html.escape(label)}</a>'
+        f'<span class="cp-status" data-cp-status>{status}</span></div>'
+        f'<ol class="cp-track" aria-label="{html.escape(label)}: sections and practice">'
+        f'{"".join(segments)}</ol></div>'
+        f'{step("next", following)}{keys}</nav>'
+    )
+    return {"pager": pager, "progress": progress}
+
+
+# The indicator, the pager and the shortcut sheet, for every surface. Colours
+# come from `--nav-*` when a surface sets them and otherwise from the book's
+# own variables, so the preview needs nothing and the site maps its themes.
+NAV_CSS = """
+.chapter-progress { --cp-ink: var(--nav-ink, var(--ink, currentColor));
+  --cp-dim: var(--nav-dim, var(--dim, #666)); --cp-line: var(--nav-line, var(--line, #e2e2e2));
+  --cp-accent: var(--nav-accent, var(--accent, #0369a1)); --cp-done: var(--nav-done, #16a34a);
+  display:flex; align-items:center; gap:.4rem; min-width:0; flex:1 1 auto;
+  font:.75rem/1.2 ui-sans-serif,system-ui,sans-serif; color:var(--cp-ink); }
+.cp-body { display:flex; flex-direction:column; gap:4px; min-width:0; flex:1 1 auto; }
+.cp-head { display:flex; align-items:baseline; gap:.5rem; min-width:0; white-space:nowrap; }
+.cp-chapter { flex:0 3 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; font-weight:600;
+  color:var(--cp-ink); text-decoration:none; }
+a.cp-chapter:hover { text-decoration:underline; }
+.cp-status { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; color:var(--cp-dim); }
+.cp-track { display:flex; gap:3px; margin:0; padding:0; list-style:none; }
+.cp-track li { flex:1 1 0; min-width:6px; max-width:44px; margin:0; padding:0; }
+.cp-track li:has(.cp-practice) { flex:0 0 14px; }
+.cp-seg { position:relative; display:block; height:8px; border-radius:2px; background:var(--cp-line); }
+.cp-seg[data-cp-read] { background:color-mix(in srgb, var(--cp-accent) 40%, var(--cp-line)); }
+.cp-seg[aria-current] { background:var(--cp-accent); }
+.cp-seg.cp-practice { box-sizing:border-box; height:12px; margin-top:-2px;
+  border:1.5px solid var(--cp-dim); background:transparent; }
+.cp-seg.cp-practice[aria-current] { border-color:var(--cp-accent); box-shadow:0 0 0 1.5px var(--cp-accent); }
+.cp-seg.cp-practice[data-progress-done] { border-color:var(--cp-done); background:var(--cp-done); }
+.cp-seg.cp-practice[data-progress-done]::after { content:'\\2713'; position:absolute; inset:0;
+  color:#fff; font:700 8px/9px ui-sans-serif,system-ui,sans-serif; text-align:center; }
+.cp-seg:not(.cp-practice):hover { background:color-mix(in srgb, var(--cp-accent) 60%, var(--cp-line)); }
+.cp-seg:focus-visible, .cp-step:focus-visible, .cp-keys:focus-visible, .cp-chapter:focus-visible,
+.book-pager a:focus-visible { outline:2px solid var(--nav-accent, var(--accent, currentColor)); outline-offset:2px; }
+.cp-step { flex:none; display:inline-flex; align-items:center; justify-content:center; width:1.6rem;
+  height:1.6rem; border-radius:6px; color:var(--cp-accent); font-size:1.15rem; line-height:1;
+  text-decoration:none; }
+a.cp-step:hover { background:color-mix(in srgb, var(--cp-accent) 12%, transparent); }
+.cp-keys { flex:none; width:1.5rem; height:1.5rem; padding:0; border:1px solid var(--cp-line);
+  border-radius:50%; background:transparent; color:var(--cp-dim);
+  font:600 .72rem/1 ui-sans-serif,system-ui,sans-serif; cursor:pointer; }
+.cp-sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+.book-pager { --pg-ink: var(--nav-ink, var(--ink, currentColor)); --pg-dim: var(--nav-dim, var(--dim, #666));
+  --pg-line: var(--nav-line, var(--line, #e2e2e2)); --pg-accent: var(--nav-accent, var(--accent, #0369a1));
+  display:flex; justify-content:space-between; gap:1rem; margin:3rem 0 1rem; padding-top:1.25rem;
+  border-top:1px solid var(--pg-line); font:.9rem/1.35 ui-sans-serif,system-ui,sans-serif; }
+.book-pager a { display:flex; flex-direction:column; gap:.2rem; max-width:48%; color:var(--pg-ink);
+  text-decoration:none; }
+.book-pager a:hover .pager-title { text-decoration:underline; }
+.book-pager .pager-next { margin-left:auto; text-align:right; }
+.pager-dir { color:var(--pg-dim); font-size:.72rem; letter-spacing:.06em; text-transform:uppercase; }
+.pager-title { color:var(--pg-accent); font-weight:600; }
+.book-keys { position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center;
+  background:rgb(0 0 0 / .35); }
+.book-keys[hidden] { display:none; }
+.book-keys-panel { min-width:17rem; max-width:calc(100vw - 2rem); padding:1rem 1.25rem; border-radius:10px;
+  background:var(--nav-panel, #fff); color:var(--nav-ink, #1a1a1a);
+  box-shadow:0 10px 30px rgb(0 0 0 / .25); font:.85rem/1.5 ui-sans-serif,system-ui,sans-serif; }
+.book-keys-panel h2 { margin:0 0 .6rem; font-size:.95rem; }
+.book-keys-panel dl { display:grid; grid-template-columns:auto 1fr; gap:.35rem .9rem; margin:0; }
+.book-keys-panel dt { text-align:right; }
+.book-keys-panel dd { margin:0; }
+.book-keys-panel kbd { display:inline-block; min-width:1.4em; padding:.05rem .35rem; border:1px solid currentColor;
+  border-radius:4px; font:600 .78rem/1.3 ui-monospace,monospace; text-align:center; }
+.book-keys-panel button { margin-top:.9rem; padding:.3rem .7rem; border:1px solid currentColor; border-radius:6px;
+  background:transparent; color:inherit; font:inherit; cursor:pointer; }
+@media print { .chapter-progress, .book-pager, .book-keys { display:none !important; } }
 """

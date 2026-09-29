@@ -178,12 +178,27 @@ const structuredData = {
     targetDocument.documentElement.setAttribute('data-book-look', look)
   }
 
+  // A challenge's view (`CHALLENGE_VIEW_KEY` in books/tools/render.py): the
+  // question and the code stacked, or side by side. Before first paint for
+  // the same reason as the look.
+  function setChallengeView(targetDocument) {
+    let view = 'stacked'
+    try {
+      if (localStorage.getItem('book-challenge-view') === 'split') view = 'split'
+    } catch {
+      // Storage refused: the stacked default.
+    }
+    targetDocument.documentElement.setAttribute('data-challenge-view', view)
+  }
+
   setDarkMode(document)
   setBookLook(document)
+  setChallengeView(document)
 
   document.addEventListener('astro:before-swap', (ev) => {
     setDarkMode(ev.newDocument)
     setBookLook(ev.newDocument)
+    setChallengeView(ev.newDocument)
   })
 
   window

@@ -32,12 +32,17 @@ from render import (
     BOOKS,
     COLLECTION_FILE,
     CONTENT_CSS,
+    NAV_CSS,
     PART_NAMES,
+    SPLIT_CSS,
+    SPLIT_SCRIPT,
     all_nodes,
     book_files,
     load_book,
     load_topics,
+    reading_navigation,
     render_node,
+    section_headings,
 )
 
 SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
@@ -143,6 +148,26 @@ def topic_entries(order: list[dict]) -> list[dict]:
     ]
 
 
+def with_navigation(order: list[dict], entries: list[dict]) -> list[dict]:
+    """Each node's pager and chapter indicator, as `render.py` writes them.
+
+    The site knows the reader's solved challenges only in the browser, so
+    nothing is solved here; the progress runtime marks the segments later.
+    """
+    markup = {entry["id"]: entry["html"] for entry in entries}
+    paths = {entry["id"]: entry["path"] for entry in entries}
+    for entry in entries:
+        nav = reading_navigation(
+            order,
+            entry["id"],
+            paths.__getitem__,
+            lambda node_id: section_headings(markup[node_id]),
+        )
+        entry["pager"] = nav["pager"]
+        entry["progress"] = nav["progress"]
+    return entries
+
+
 def book_entry(path_id: str, collection: dict) -> dict:
     data = read_path(path_id)
     slug = book_slug(path_id, data)
@@ -166,7 +191,7 @@ def book_entry(path_id: str, collection: dict) -> dict:
             }
             for part in data.get("parts", [])
         ],
-        "nodes": [node_entry(node, slug) for node in order],
+        "nodes": with_navigation(order, [node_entry(node, slug) for node in order]),
         "topics": topic_entries(order),
     }
 
@@ -183,6 +208,11 @@ def build_manifest() -> dict:
         "collection": collection.get("collection", ""),
         "poolNodeCount": len(all_nodes()),
         "contentCss": CONTENT_CSS,
+        # The side-by-side view: rooted on <html>, so the site includes it
+        # unscoped, and the same toggle script the local preview runs.
+        "splitCss": SPLIT_CSS,
+        "splitScript": SPLIT_SCRIPT,
+        "navCss": NAV_CSS,
         "books": books,
     }
 

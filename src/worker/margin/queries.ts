@@ -244,6 +244,26 @@ WHERE site = ? AND document = ? AND parent_id = ?`,
   }
 }
 
+/**
+ * Replace a note's body with the tombstone, keeping the row and its place in
+ * the thread. Owner-scoped like every write, and limited to `commenting` rows:
+ * a highlight has no body to replace. `visibility` is not touched, so the
+ * parent-visibility triggers have nothing to decide.
+ */
+export function tombstoneAnnotationQuery(
+  scope: TenantScope,
+  id: string,
+  owner: string,
+  tombstone: string,
+  modified: string,
+): Query {
+  return {
+    sql: `UPDATE margin_annotations SET body = ?, color = NULL, modified = ?
+WHERE site = ? AND document = ? AND id = ? AND creator = ? AND motivation = 'commenting'`,
+    params: [tombstone, modified, scope.site, scope.document, id, owner],
+  }
+}
+
 export function deleteAnnotationQuery(
   scope: TenantScope,
   id: string,

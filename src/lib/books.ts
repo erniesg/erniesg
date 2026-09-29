@@ -38,6 +38,10 @@ export type BookNode = {
   outline: BookOutlineEntry[]
   /** The inline exercises on this node, by the id reading progress keys them under. */
   exercises: string[]
+  /** Previous and next in reading order, as `render.py` writes them. */
+  pager: string
+  /** The chapter progress indicator, as `render.py` writes it. */
+  progress: string
 }
 
 export type BookPart = { id: string; title: string; nodes: string[] }
@@ -77,6 +81,12 @@ export type BookManifest = {
   collection: string
   poolNodeCount: number
   contentCss: string
+  /** The challenge side-by-side view's CSS, rooted on <html>; include unscoped. */
+  splitCss: string
+  /** The side-by-side toggle's behaviour, shared with `books/tools/preview.py`. */
+  splitScript: string
+  /** The indicator, pager and shortcut sheet; unscoped, their classes are their own. */
+  navCss: string
   books: Book[]
 }
 

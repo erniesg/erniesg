@@ -5,11 +5,14 @@
  * spec means adding it here and nowhere else.
  */
 export const BOOK_SPECS = [
+  'book-nav-preview.spec.ts',
   'book-progress.spec.ts',
+  'challenge-view-preview.spec.ts',
   'editor-keys.spec.ts',
   'exercise-worker.spec.ts',
   'hint-ladder.spec.ts',
   'inline-exercise.spec.ts',
+  'reader-prints.spec.ts',
   'rerun-clears-results.spec.ts',
   'run-cell.spec.ts',
 ]

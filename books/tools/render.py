@@ -1061,6 +1061,8 @@ details.solution { border:0; border-top:2px solid var(--ink); border-radius:0; b
 .exercise-title { font:700 .72rem/1 ui-sans-serif,system-ui; letter-spacing:.09em;
   text-transform:uppercase; color:#15803d; margin:0 0 .5rem; }
 .exercise .answer { margin-top:.6rem; }
+/* Marked by the page code once the reader has passed it, in any edition that runs it. */
+.exercise.solved .exercise-title::after { content:" · solved ✓"; }
 /* A runnable cell is one terminal: code, a hairline, the action row, output.
    It is dark on every page, so its colours do not follow the page's theme: a
    deep button fill that holds a white label, and a light focus ring that

@@ -21,6 +21,15 @@ export default defineConfig({
     command: `${python} books/tools/preview.py --port ${port} --no-open`,
     url: `http://127.0.0.1:${port}/`,
     reuseExistingServer: false,
+    // Specs type into editors, and every edit is a saved draft: keep them out
+    // of the reader's own books/workspace/progress.json.
+    env: {
+      BOOK_PROGRESS_PATH: path.resolve(
+        process.env.AGENT_EVIDENCE_DIR ?? '.agent/evidence',
+        'playwright-book-progress',
+        `progress-${port}.json`,
+      ),
+    },
     timeout: 30_000,
   },
 })

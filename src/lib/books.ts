@@ -36,6 +36,8 @@ export type BookNode = {
   html: string
   blocks: BookBlock[]
   outline: BookOutlineEntry[]
+  /** The inline exercises on this node, by the id reading progress keys them under. */
+  exercises: string[]
   /** Previous and next in reading order, as `render.py` writes them. */
   pager: string
   /** The chapter progress indicator, as `render.py` writes it. */

@@ -1,6 +1,7 @@
 ---
 import BookBar from '@/components/books/BookBar.astro'
 import BookContents from '@/components/books/BookContents.astro'
+import BookProgress from '@/components/books/BookProgress.astro'
 import ReadingLayout from '@/layouts/ReadingLayout.astro'
 import {
   bookBySlug,
@@ -140,4 +141,6 @@ const style = `<style>${scopeContentCss(manifest.contentCss, '.book-content')}${
   <script is:inline set:html={manifest.splitScript} />
 
   <Fragment set:html={node.pager} />
+
+  <BookProgress book={book} />
 </ReadingLayout>

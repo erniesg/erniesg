@@ -6,6 +6,7 @@
  */
 export const BOOK_SPECS = [
   'book-nav-preview.spec.ts',
+  'book-progress.spec.ts',
   'challenge-view-preview.spec.ts',
   'editor-keys.spec.ts',
   'exercise-worker.spec.ts',

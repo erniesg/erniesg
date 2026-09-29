@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -60,6 +60,34 @@ describe('claimPort', () => {
     writeFileSync(path.join(directory, '4102.lock'), `${deadPid()}\n`)
     expect(claimPort(4102, directory, process.pid)).toBe(true)
     expect(readFileSync(path.join(directory, '4102.lock'), 'utf8').trim()).toBe(String(process.pid))
+  })
+
+  it('lets only one of two reclaimers that saw the same dead owner win the port', () => {
+    const directory = scratchDir()
+    const lock = path.join(directory, '4104.lock')
+    writeFileSync(lock, `${deadPid()}\n`)
+    // The slow reclaimer has read the dead owner and is about to reclaim. At
+    // that moment the fast one reclaims the port completely.
+    let fast = null
+    const slow = claimPort(4104, directory, 999_998, {
+      beforeReclaim: () => {
+        fast = claimPort(4104, directory, process.pid)
+      },
+    })
+    expect(fast).toBe(true)
+    expect(slow).toBe(false)
+    expect(readFileSync(lock, 'utf8').trim()).toBe(String(process.pid))
+  })
+
+  it('stands down while another reclaimer holds the port, and clears a stale mutex', () => {
+    const directory = scratchDir()
+    writeFileSync(path.join(directory, '4105.lock'), `${deadPid()}\n`)
+    mkdirSync(path.join(directory, '4105.reclaim'))
+    expect(claimPort(4105, directory, process.pid)).toBe(false)
+    const old = new Date(Date.now() - 60_000)
+    utimesSync(path.join(directory, '4105.reclaim'), old, old)
+    expect(claimPort(4105, directory, process.pid)).toBe(false)
+    expect(claimPort(4105, directory, process.pid)).toBe(true)
   })
 
   it('refuses a corrupt lock rather than guessing', () => {

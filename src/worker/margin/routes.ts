@@ -21,6 +21,7 @@ import {
 import {
   annotationIdFromIri,
   isTombstoneBody,
+  isRepoRelativePath,
   BODY_TOO_LARGE,
   joinSource,
   maxBodyLength,
@@ -509,6 +510,8 @@ const annotationPatchSchema = z
     'margin:color': z.string().min(1).max(64).optional(),
     /** A revised proposal may move to the page's newer base commit. */
     'margin:baseCommit': z.string().min(1).max(128).optional(),
+    /** Names the file of a proposal stored before its base was recorded. */
+    'margin:sourcePath': z.string().min(1).max(512).optional(),
   })
   .strict()
   .refine((patch) => Object.keys(patch).length > 0, {
@@ -582,7 +585,8 @@ async function patchAnnotation(
   }
   const isProposal = existing.annotation.kind === 'proposal'
   const baseCommit = parsed.data['margin:baseCommit']
-  if (!isProposal && baseCommit !== undefined) {
+  const sourcePath = parsed.data['margin:sourcePath']
+  if (!isProposal && (baseCommit !== undefined || sourcePath !== undefined)) {
     return problem(
       400,
       'unexpected_base_commit',
@@ -604,13 +608,32 @@ async function patchAnnotation(
         'margin:baseCommit must be the full id of the commit the proposal was made against',
       )
     }
-    // A proposal stored before its base was recorded can only be revised by
-    // naming one; a revision is never made against a guess.
-    if (!existing.proposal && baseCommit === undefined && parsed.data.body !== undefined) {
+    // A proposal stored before its base was recorded is upgraded by its first
+    // revision, which names both the base commit and the file; a revision is
+    // never made against a guess. A recorded proposal's file never changes.
+    if (existing.proposal && sourcePath !== undefined) {
+      return problem(
+        400,
+        'unexpected_source_path',
+        'a proposal keeps the source file it was made against',
+      )
+    }
+    if (
+      !existing.proposal &&
+      (parsed.data.body !== undefined || baseCommit !== undefined || sourcePath !== undefined) &&
+      (baseCommit === undefined || sourcePath === undefined)
+    ) {
       return problem(
         400,
         'invalid_base_commit',
-        'revising this proposal needs margin:baseCommit',
+        'revising this proposal needs margin:baseCommit and margin:sourcePath',
+      )
+    }
+    if (sourcePath !== undefined && !isRepoRelativePath(sourcePath)) {
+      return problem(
+        400,
+        'invalid_source_path',
+        'margin:sourcePath must be the repo-relative file the proposal patches',
       )
     }
     if (parsed.data.body !== undefined) {
@@ -662,6 +685,7 @@ async function patchAnnotation(
         ? { color: parsed.data['margin:color'] }
         : {}),
       ...(baseCommit !== undefined ? { baseCommit } : {}),
+      ...(sourcePath !== undefined ? { sourcePath } : {}),
       // Every change to what a proposal says is a new revision (issue 059), and
       // a review approval binds to the revision it read (060).
       ...(isProposal && (parsed.data.body !== undefined || baseCommit !== undefined)

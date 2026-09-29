@@ -6,9 +6,9 @@
 -- row is never deleted by a withdrawal: replies to it stay readable, and the
 -- review listing simply leaves it out.
 --
--- None of these apply to a highlight or a note, and an `editing` row must carry
--- all of them. The triggers say so in the database, so no code path can store
--- a proposal against a guess.
+-- None of these apply to a highlight or a note, and a new `editing` row must
+-- carry all of them. The triggers say so in the database, so no code path can
+-- store a proposal against a guess.
 
 ALTER TABLE margin_annotations ADD COLUMN base_commit TEXT;
 ALTER TABLE margin_annotations ADD COLUMN source_path TEXT;
@@ -39,16 +39,28 @@ BEGIN
   SELECT RAISE(ABORT, 'MARGIN_PROPOSAL_FIELDS');
 END;
 
--- A proposal stored before this migration has no base commit; it stays
--- readable, but it can only be revised by supplying one.
+-- A proposal stored before this migration has none of the three fields. It
+-- stays readable and may still be withdrawn or have its visibility changed,
+-- but its text can change only by upgrading it: a revision supplies the base
+-- commit and source path together (the route counts the revision from 0), so
+-- a revision is never made against a guess. Any row that has left the legacy
+-- state must carry all three, validly.
 CREATE TRIGGER margin_annotations_proposal_fields_update
 BEFORE UPDATE OF base_commit, source_path, revision, withdrawn_at, body ON margin_annotations
 WHEN (
-  NEW.motivation = 'editing' AND (
+  NEW.motivation = 'editing'
+  AND NOT (
+    NEW.base_commit IS NULL
+    AND NEW.source_path IS NULL
+    AND NEW.revision IS NULL
+    AND NEW.body IS OLD.body
+  )
+  AND (
     NEW.base_commit IS NULL
     OR length(NEW.base_commit) NOT IN (40, 64)
     OR NEW.base_commit GLOB '*[^0-9a-f]*'
     OR NEW.source_path IS NULL
+    OR length(NEW.source_path) = 0
     OR NEW.revision IS NULL
     OR NEW.revision < 1
   )

@@ -224,6 +224,7 @@ export function updateAnnotationQuery(
     visibility?: string
     color?: string
     baseCommit?: string
+    sourcePath?: string
     reviseProposal?: boolean
     modified: string
   },
@@ -234,10 +235,16 @@ export function updateAnnotationQuery(
     assignments.push('base_commit = ?')
     params.push(patch.baseCommit)
   }
+  if (patch.sourcePath !== undefined) {
+    assignments.push('source_path = ?')
+    params.push(patch.sourcePath)
+  }
   // A revision of a proposal's body or base is a new revision, which is what a
   // review approval binds to (060). Counted in SQL so two revisions cannot both
   // read the same number.
-  if (patch.reviseProposal) assignments.push('revision = revision + 1')
+  // A proposal from before migration 0003 has no revision; its first counted
+  // revision is 1.
+  if (patch.reviseProposal) assignments.push('revision = COALESCE(revision, 0) + 1')
   if (patch.body !== undefined) {
     assignments.push('body = ?')
     params.push(patch.body)

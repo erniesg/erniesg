@@ -18,7 +18,16 @@
  * directory, a corrupt lock, no port after many tries — so a validation line
  * never proceeds on a port nobody holds.
  */
-import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeSync } from 'node:fs'
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmdirSync,
+  statSync,
+  unlinkSync,
+  writeSync,
+} from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -26,6 +35,8 @@ import { fileURLToPath } from 'node:url'
 
 export const LOCK_DIRECTORY_NAME = 'srt-e2e-ports'
 const MAX_ATTEMPTS = 64
+/** A reclaim mutex older than this was left by a reclaimer that died holding it. */
+const STALE_MUTEX_MS = 30_000
 
 export class PortLockError extends Error {
   constructor(message) {
@@ -78,23 +89,56 @@ function createExclusive(lockPath, owner) {
 }
 
 /**
- * Claim `port` for `owner` in `directory`. `true` when claimed, `false` when a
- * live run holds it. A dead owner's lock is reclaimed; a corrupt lock throws.
+ * Take the per-port reclaim mutex: an atomic `mkdir`. `false` when another
+ * reclaimer holds it. A mutex a dead reclaimer left behind is cleared once it
+ * is older than `STALE_MUTEX_MS`, so a port is never lost for good.
  */
-export function claimPort(port, directory, owner) {
+function takeReclaimMutex(mutexPath) {
+  try {
+    mkdirSync(mutexPath)
+    return true
+  } catch (error) {
+    if (!(error && error.code === 'EEXIST')) throw error
+  }
+  try {
+    if (Date.now() - statSync(mutexPath).mtimeMs > STALE_MUTEX_MS) rmdirSync(mutexPath)
+  } catch (error) {
+    if (!(error && error.code === 'ENOENT')) throw error
+  }
+  return false
+}
+
+/**
+ * Claim `port` for `owner` in `directory`. `true` when claimed, `false` when a
+ * live run holds it or another worker is reclaiming it. A dead owner's lock is
+ * reclaimed; a corrupt lock throws.
+ *
+ * Reclaiming is serialized by a per-port mutex, and the lock is read again
+ * inside it: two workers that both saw the same dead owner cannot both remove
+ * a lock, because the second finds the first's live lock and stands down.
+ */
+export function claimPort(port, directory, owner, hooks = {}) {
   const lockPath = path.join(directory, `${port}.lock`)
   if (createExclusive(lockPath, owner)) return true
   const holder = readOwner(lockPath)
   if (holder === null) return createExclusive(lockPath, owner)
   if (holder === owner || processAlive(holder)) return false
-  // The holder has exited. Remove its lock and race for a fresh exclusive
-  // create: two reclaimers cannot both win it.
+
+  hooks.beforeReclaim?.()
+  const mutexPath = path.join(directory, `${port}.reclaim`)
+  if (!takeReclaimMutex(mutexPath)) return false
   try {
-    unlinkSync(lockPath)
-  } catch (error) {
-    if (!(error && error.code === 'ENOENT')) throw error
+    const current = readOwner(lockPath)
+    if (current !== null && (current === owner || processAlive(current))) return false
+    try {
+      unlinkSync(lockPath)
+    } catch (error) {
+      if (!(error && error.code === 'ENOENT')) throw error
+    }
+    return createExclusive(lockPath, owner)
+  } finally {
+    rmdirSync(mutexPath)
   }
-  return createExclusive(lockPath, owner)
 }
 
 /** A port the kernel says is free right now. */

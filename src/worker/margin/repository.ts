@@ -40,6 +40,8 @@ export type AnnotationPatch = {
   color?: string
   /** A proposal's new base commit, when a revision moves it. */
   baseCommit?: string
+  /** A pre-migration proposal's source path, set when a revision upgrades it. */
+  sourcePath?: string
   /** Bump a proposal's revision: its body or base changed. */
   reviseProposal?: boolean
   modified: string

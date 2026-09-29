@@ -294,3 +294,73 @@ describe('the database enforces the proposal fields', () => {
     await expect(insert({ motivation: 'commenting' })).rejects.toThrow(/MARGIN_PROPOSAL_FIELDS/)
   })
 })
+
+describe('a proposal stored before migration 0003', () => {
+  // A legacy row: an editing annotation with none of the proposal fields. The
+  // insert trigger refuses that shape now, so it is dropped and recreated
+  // around the one insert, exactly as the row existed before the migration.
+  async function insertLegacy(): Promise<string> {
+    const db = harness.database
+    await db.prepare('DROP TRIGGER margin_annotations_proposal_fields_insert').run()
+    const query = insertAnnotationQuery({
+      id: 'legacy',
+      site: 'https://ernie.sg',
+      document: '/challenges/chapter-1',
+      creator: (await import('./fixtures')).ADA_KEY,
+      visibility: 'private',
+      motivation: 'editing',
+      parentId: null,
+      structId: null,
+      nodeId: 'p-1',
+      positionStart: 0,
+      positionEnd: 1,
+      positionUnit: 'codepoint',
+      quoteExact: 'a',
+      quotePrefix: '',
+      quoteSuffix: '',
+      body: 'an old free-text proposal',
+      color: null,
+      created: '2026-09-01T00:00:00.000Z',
+      modified: '2026-09-01T00:00:00.000Z',
+    })
+    await db.prepare(query.sql).bind(...query.params).run()
+    const migration = (await import('node:fs')).readFileSync('migrations/0003_margin_proposals.sql', 'utf8')
+    const create = migration.slice(
+      migration.indexOf('CREATE TRIGGER margin_annotations_proposal_fields_insert'),
+      migration.indexOf('END;') + 'END;'.length,
+    )
+    await db.prepare(create).run()
+    return 'legacy'
+  }
+
+  it('stays readable, and can still be withdrawn', async () => {
+    const id = await insertLegacy()
+    expect((await patch(id, { 'margin:visibility': 'public' })).status).toBe(200)
+    expect((await withdraw(id)).status).toBe(200)
+  })
+
+  it('is upgraded by a revision that names both its base and its file, counting from revision 1', async () => {
+    const id = await insertLegacy()
+    const bodyOnly = await patch(id, { body: proposalBody('x') })
+    expect(bodyOnly.status).toBe(400)
+    expect((await bodyOnly.json()).error.code).toBe('invalid_base_commit')
+    const baseOnly = await patch(id, { body: proposalBody('x'), 'margin:baseCommit': NEWER })
+    expect(baseOnly.status).toBe(400)
+
+    const upgraded = await patch(id, {
+      body: proposalBody('x'),
+      'margin:baseCommit': NEWER,
+      'margin:sourcePath': 'books/chapters/ch01-values.md',
+    })
+    expect(upgraded.status).toBe(200)
+    expect(await upgraded.json()).toMatchObject({
+      'margin:baseCommit': NEWER,
+      'margin:sourcePath': 'books/chapters/ch01-values.md',
+      'margin:revision': 1,
+    })
+    // Once recorded, its file is fixed.
+    const moved = await patch(id, { 'margin:sourcePath': 'books/chapters/other.md' })
+    expect(moved.status).toBe(400)
+    expect((await moved.json()).error.code).toBe('unexpected_source_path')
+  })
+})

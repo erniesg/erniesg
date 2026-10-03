@@ -1691,6 +1691,9 @@ NAV_CSS = """
   display:flex; align-items:center; gap:.4rem; min-width:0; flex:1 1 auto;
   font:.75rem/1.2 ui-sans-serif,system-ui,sans-serif; color:var(--cp-ink); }
 .cp-body { display:flex; flex-direction:column; gap:4px; min-width:0; flex:1 1 auto; }
+/* A page with no chapter track (the front page, the map, a page outside any
+   chapter) has only its name: the arrows sit beside it, not across the bar. */
+.chapter-progress:is([data-kind="book"], [data-kind="none"]) .cp-body { flex:0 1 auto; }
 .cp-head { display:flex; align-items:baseline; gap:.5rem; min-width:0; white-space:nowrap; }
 .cp-chapter { flex:0 3 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; font-weight:600;
   color:var(--cp-ink); text-decoration:none; }

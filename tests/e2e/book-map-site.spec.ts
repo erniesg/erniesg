@@ -191,6 +191,14 @@ test('the front page, the map and a chapter share one bar, and [ ] walk between 
       await expect(bar.locator('.cp-keys')).toBeVisible()
     }
   }
+  // With no chapter track to show, the › sits beside the title, not across the bar.
+  for (const path of [BOOK, MAP]) {
+    await page.goto(path)
+    const bar = page.locator('[data-book-bar] [data-chapter-progress]')
+    const title = await bar.locator('.cp-chapter').boundingBox()
+    const next = await bar.locator('a.cp-step[rel="next"]').boundingBox()
+    expect(next!.x - (title!.x + title!.width), `${path} gap before ›`).toBeLessThan(40)
+  }
   // The keys follow the arrows on the book's own pages too.
   await page.goto(BOOK)
   await page.keyboard.press(']')

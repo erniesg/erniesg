@@ -1,4 +1,9 @@
-import { seal, validDocument } from '../../../src/struct/codec-test-fixtures'
+import {
+  digestInput,
+  seal,
+  validDocument,
+} from '../../../src/struct/codec-test-fixtures'
+import { legacyStructDigest } from '../../../src/struct/ids'
 import type { StructDocument } from '@erniesg/struct/document'
 
 type FixtureDocument = StructDocument
@@ -12,8 +17,20 @@ function currentDocument(documentId: string): FixtureDocument {
   return seal(document)
 }
 
+/**
+ * The 0.1.0 digest sorts keys with the host's collation, so `seal()` builds a
+ * different receipt under, say, LC_ALL=haw. Readers accept the digest from any
+ * locale; the frozen fixture is sealed with an explicit one so it is the same
+ * document on every host.
+ */
+function legacyFixture(): FixtureDocument {
+  const document = validDocument() as unknown as FixtureDocument
+  document.receipt.generatedSha256 = legacyStructDigest(digestInput(document), 'en')
+  return document
+}
+
 export const structPackageParityFixtures = {
-  legacy: validDocument() as unknown as FixtureDocument,
+  legacy: legacyFixture(),
   current: currentDocument('fixture-current'),
   recoverable: (() => {
     const document = currentDocument('fixture-recoverable')

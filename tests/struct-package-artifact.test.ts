@@ -97,6 +97,11 @@ describe('exact standalone Struct artifact', () => {
     const installedPath = fileURLToPath(
       new URL('node_modules/@erniesg/struct/', root),
     )
-    expect(installedPath).toContain('/node_modules/@erniesg/struct/')
+    // Compared by segment, so a Windows path (backslashes) passes too.
+    expect(installedPath.split(/[\\/]/u).filter(Boolean).slice(-3)).toEqual([
+      'node_modules',
+      '@erniesg',
+      'struct',
+    ])
   })
 })

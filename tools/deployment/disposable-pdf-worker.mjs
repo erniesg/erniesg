@@ -25,6 +25,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   DISPOSABLE_PDF_FIXTURE_PIN,
   createSanitizedReceipt,
+  localTarballDependencies,
   parseDisposablePdfWorkerArguments,
   resolveCloudflareCredentials,
   validateBrowserReceipt,
@@ -451,6 +452,19 @@ async function installTrustedWrangler(tempRoot, tempHome) {
       mode: 0o600,
     }),
   ])
+  // The lockfile may install repository tarballs (`file:vendor/...tgz`); copy
+  // each beside the manifest, checked against its lockfile integrity here and
+  // again by npm ci.
+  for (const tarball of localTarballDependencies(
+    JSON.parse(lockfileBytes.toString('utf8')),
+  )) {
+    const bytes = await readPinnedFile(tarball.path, 16 * 1024 * 1024)
+    const integrity = `sha512-${createHash('sha512').update(bytes).digest('base64')}`
+    if (integrity !== tarball.integrity) fail('FIXTURE_PIN_MISMATCH')
+    const target = path.join(trustedRoot, tarball.path)
+    await mkdir(path.dirname(target), { recursive: true, mode: 0o700 })
+    await writeFile(target, bytes, { flag: 'wx', mode: 0o600 })
+  }
   await runChecked(
     process.platform === 'win32' ? 'npm.cmd' : 'npm',
     ['ci', '--ignore-scripts', '--no-audit', '--fund=false'],

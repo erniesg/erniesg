@@ -70,7 +70,14 @@ describe('packed Struct public API parity', () => {
           .update(JSON.stringify(packageEncode(packaged)))
           .digest('hex'),
       ).toBe(frozen.canonicalJsonSha256)
-      expect(packageReceiptDigest(packaged)).toBe(frozen.receiptSha256)
+      // A 0.1.0 receipt digest is recomputed with the host's collation, so on
+      // other locales it is compared with the local implementation on the
+      // same host; the stored digest stays frozen (sealed with 'en').
+      expect(packageReceiptDigest(packaged)).toBe(
+        name === 'legacy'
+          ? legacyStructDigest(localReceiptInput(fixture))
+          : frozen.receiptSha256,
+      )
       expect(local.receipt.generatedSha256).toBe(frozen.receiptSha256)
       expect(packageVerifyReceipt(packaged)).toBe(true)
       expect(packageDecodeCompatible(fixture)).toEqual(

@@ -11,6 +11,7 @@ import {
   type ProgressScope,
 } from './progress'
 import {
+  DEFAULT_VISIBILITY,
   DEFAULT_PAGE_SIZE,
   MAX_PAGE_SIZE,
   type ListCursor,
@@ -293,21 +294,25 @@ function idempotencyKey(request: Request): string | { error: Response } | null {
   return key
 }
 
-/** Only user-requested annotation content participates in retry equivalence. */
-function sameIdempotentAnnotation(
-  existing: MarginAnnotationRecord,
-  candidate: MarginAnnotationRecord,
-): boolean {
-  const semantic = (record: MarginAnnotationRecord) => ({
+/** A hash of canonical user input, deliberately independent of server state. */
+async function idempotencyFingerprint(
+  record: MarginAnnotationRecord,
+  explicitVisibility: MarginVisibility | undefined,
+): Promise<string> {
+  const semantic = {
     site: record.site,
     document: record.document,
-    creator: record.creator,
-    visibility: record.visibility,
+    visibility: explicitVisibility ?? null,
     parentId: record.parentId,
     structId: record.structId,
     color: record.color,
     kind: record.annotation.kind,
-    target: record.annotation.target,
+    target: {
+      nodeId: record.annotation.target.nodeId,
+      positionUnit: record.annotation.target.positionUnit ?? 'utf16',
+      position: record.annotation.target.position,
+      quote: record.annotation.target.quote,
+    },
     ...(record.annotation.kind === 'highlight'
       ? {}
       : { body: record.annotation.body }),
@@ -317,8 +322,14 @@ function sameIdempotentAnnotation(
           sourcePath: record.proposal.sourcePath,
         }
       : null,
-  })
-  return JSON.stringify(semantic(existing)) === JSON.stringify(semantic(candidate))
+  }
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(JSON.stringify(semantic)),
+  )
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
 }
 
 async function findOwnIdempotentAnnotation(
@@ -329,6 +340,37 @@ async function findOwnIdempotentAnnotation(
 ): Promise<MarginAnnotationRecord | null> {
   const found = await context.repository.findAnnotation(scope, id, owner)
   return found?.creator === owner ? found : null
+}
+
+async function replayIdempotencyReceipt(
+  context: MarginRouteContext,
+  scope: TenantScope,
+  owner: string,
+  key: string,
+  fingerprint: string,
+): Promise<Response | null> {
+  const receipt = await context.repository.findIdempotencyReceipt(scope, owner, key)
+  if (!receipt) return null
+  if (receipt.fingerprint !== fingerprint) {
+    return problem(
+      409,
+      'idempotency_conflict',
+      'Idempotency-Key was already used for a different annotation',
+    )
+  }
+  const annotation = await findOwnIdempotentAnnotation(
+    context,
+    scope,
+    receipt.annotationId,
+    owner,
+  )
+  return annotation
+    ? json(present(annotation))
+    : problem(
+        409,
+        'idempotency_consumed',
+        'Idempotency-Key was already consumed by a deleted annotation',
+      )
 }
 
 async function readJsonBody(request: Request): Promise<unknown> {
@@ -445,33 +487,21 @@ async function createAnnotation(
 
   const requestKey = idempotencyKey(request)
   if (requestKey && typeof requestKey !== 'string') return requestKey.error
-
-  // Visibility is the caller's stored default unless this annotation names
-  // one. The default is read now and copied onto the row, so changing it later
-  // cannot reach back and rewrite anything.
-  const prefs = await context.repository.getPrefs(owner)
-  const visibility: MarginVisibility =
-    parsed.data['margin:visibility'] ?? prefs.defaultVisibility
-
   const now = context.now()
-  const mapped = webAnnotationToRecord(parsed.data, {
-    // Mapping owns source canonicalization. A keyed record receives its
-    // scope-bound id immediately after this mapping succeeds.
-    id: context.newId(),
+  const canonical = webAnnotationToRecord(parsed.data, {
+    id: 'canonical-idempotency-input',
     creator: owner,
-    visibility,
+    visibility: parsed.data['margin:visibility'] ?? DEFAULT_VISIBILITY,
     created: now,
     modified: now,
   })
-  if (!mapped.ok) {
-    return problem(400, mapped.error.code, mapped.error.message)
+  if (!canonical.ok) {
+    return problem(400, canonical.error.code, canonical.error.message)
   }
-  const record = mapped.value
-  const scope: TenantScope = { site: record.site, document: record.document }
-
-  if (requestKey !== null) {
-    record.id = await idempotentAnnotationId(owner, scope, requestKey)
-    record.annotation.id = record.id
+  const canonicalRecord = canonical.value
+  const scope: TenantScope = {
+    site: canonicalRecord.site,
+    document: canonicalRecord.document,
   }
 
   // A highlight or a note may carry a role colour (a note tagged "question",
@@ -479,7 +509,7 @@ async function createAnnotation(
   // Refused rather than stored as null, so nothing the client sent goes
   // missing from the 201 body or a later GET. PATCH applies the same rule.
   if (
-    record.annotation.kind === 'proposal' &&
+    canonicalRecord.annotation.kind === 'proposal' &&
     parsed.data['margin:color'] !== undefined
   ) {
     return problem(400, 'unexpected_color', COLOR_SCOPE_MESSAGE)
@@ -487,7 +517,10 @@ async function createAnnotation(
 
   // A reply is a note answering a note (issue 058). Checked before the parent
   // lookup, so it says nothing about whether the parent exists.
-  if (record.parentId !== null && record.annotation.kind !== 'note') {
+  if (
+    canonicalRecord.parentId !== null &&
+    canonicalRecord.annotation.kind !== 'note'
+  ) {
     return problem(
       400,
       'invalid_reply',
@@ -495,23 +528,33 @@ async function createAnnotation(
     )
   }
 
-  // A reply must point at an annotation the caller can see in the same
-  // tenancy. The lookup is scoped, so a parent id from another site or another
-  // document simply does not resolve and the row is never written.
-  //
-  // 404, and the same 404 `GET /annotations/:id` gives for an id that was
-  // never issued: replying to a note the caller cannot read must be
-  // indistinguishable from replying to one that does not exist. A 403 or a
-  // distinct code here would confirm the note is there.
-  if (record.parentId !== null) {
+  if (requestKey !== null) {
+    const key = requestKey.toLowerCase()
+    const fingerprint = await idempotencyFingerprint(
+      canonicalRecord,
+      parsed.data['margin:visibility'],
+    )
+    const replay = await replayIdempotencyReceipt(
+      context,
+      scope,
+      owner,
+      key,
+      fingerprint,
+    )
+    if (replay) return replay
+  }
+
+  // A fresh reply must point at an annotation the caller can see in the same
+  // tenancy. A durable receipt is checked first: its owner-scoped result may
+  // have been deleted together with its parent, and is then consumed rather
+  // than misreported as a new missing-parent request.
+  if (canonicalRecord.parentId !== null) {
     const parent = await context.repository.findAnnotation(
       scope,
-      record.parentId,
+      canonicalRecord.parentId,
       owner,
     )
-    if (!parent) {
-      return problem(404, 'not_found', NOT_VISIBLE_MESSAGE)
-    }
+    if (!parent) return problem(404, 'not_found', NOT_VISIBLE_MESSAGE)
     if (parent.annotation.kind !== 'note') {
       return problem(
         400,
@@ -519,28 +562,32 @@ async function createAnnotation(
         'margin:parentId must name an annotation motivated by commenting',
       )
     }
-    // Author access does not imply access for everyone who can see the reply.
-    if (record.visibility === 'public' && parent.visibility !== 'public') {
-      return parentVisibilityConflict(400)
-    }
   }
 
+  // Only a fresh request observes the caller's mutable default preference.
+  const prefs = await context.repository.getPrefs(owner)
+  const visibility: MarginVisibility =
+    parsed.data['margin:visibility'] ?? prefs.defaultVisibility
+  const mapped = webAnnotationToRecord(parsed.data, {
+    id: context.newId(),
+    creator: owner,
+    visibility,
+    created: now,
+    modified: now,
+  })
+  if (!mapped.ok) return problem(400, mapped.error.code, mapped.error.message)
+  const record = mapped.value
   if (requestKey !== null) {
-    const existing = await findOwnIdempotentAnnotation(
-      context,
-      scope,
-      record.id,
-      owner,
-    )
-    if (existing) {
-      if (!sameIdempotentAnnotation(existing, record)) {
-        return problem(
-          409,
-          'idempotency_conflict',
-          'Idempotency-Key was already used for a different annotation',
-        )
-      }
-      return json(present(existing))
+    record.id = await idempotentAnnotationId(owner, scope, requestKey)
+    record.annotation.id = record.id
+  }
+  if (record.parentId !== null) {
+    const parent = await context.repository.findAnnotation(scope, record.parentId, owner)
+    // The first lookup above is the authorization check. If deletion wins the
+    // gap before this fresh write, leave the database constraint to translate
+    // that race into the established `unknown_parent` conflict below.
+    if (parent && record.visibility === 'public' && parent.visibility !== 'public') {
+      return parentVisibilityConflict(400)
     }
   }
 
@@ -549,28 +596,30 @@ async function createAnnotation(
   // healthy — the parent simply went away — so this is the same answer the
   // caller would have got a moment earlier, not a 503.
   try {
-    await context.repository.insertAnnotation(record)
+    if (requestKey === null) {
+      await context.repository.insertAnnotation(record)
+    } else {
+      await context.repository.insertAnnotationWithReceipt(record, {
+        key: requestKey.toLowerCase(),
+        fingerprint: await idempotencyFingerprint(
+          canonicalRecord,
+          parsed.data['margin:visibility'],
+        ),
+      })
+    }
   } catch (error) {
     if (requestKey !== null) {
-      // A concurrent identical request is expected to lose the primary-key
-      // race. Re-read through the owner and tenant boundary; an unrelated
-      // insert failure must keep its original error if no matching row exists.
-      const existing = await findOwnIdempotentAnnotation(
+      const replay = await replayIdempotencyReceipt(
         context,
         scope,
-        record.id,
         owner,
+        requestKey.toLowerCase(),
+        await idempotencyFingerprint(
+          canonicalRecord,
+          parsed.data['margin:visibility'],
+        ),
       )
-      if (existing) {
-        if (!sameIdempotentAnnotation(existing, record)) {
-          return problem(
-            409,
-            'idempotency_conflict',
-            'Idempotency-Key was already used for a different annotation',
-          )
-        }
-        return json(present(existing))
-      }
+      if (replay) return replay
     }
     const conflict = replyVisibilityConflict(error)
     if (conflict) {

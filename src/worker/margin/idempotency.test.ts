@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { handleMarginRequest, MARGIN_API_PREFIX } from './routes'
 import {
   ADA,
+  ADA_KEY,
   BOB,
   CHAPTER_ONE,
   OTHER_SITE,
@@ -57,6 +58,13 @@ function annotationCount(harness: MarginHarness): number {
   )
 }
 
+function receiptCount(harness: MarginHarness): number {
+  return Number(
+    harness.database.query('SELECT COUNT(*) AS count FROM margin_idempotency_receipts')[0]
+      .count,
+  )
+}
+
 describe('annotation creation idempotency', () => {
   it('returns the existing row when a committed response is lost and retried', async () => {
     const harness = createHarness()
@@ -66,13 +74,30 @@ describe('annotation creation idempotency', () => {
     const first = await request('POST', '/annotations', { body, key: KEY })
     // Simulate the client losing this successful response before it can read it.
     expect(first.status).toBe(201)
-    const retry = await request('POST', '/annotations', { body, key: KEY })
+    expect(
+      (
+        await request('PATCH', '/prefs', {
+          body: { defaultVisibility: 'public' },
+        })
+      ).status,
+    ).toBe(200)
+    // JSON member order is not part of a request's semantics.
+    const reordered = {
+      target: body.target,
+      body: body.body,
+      motivation: body.motivation,
+      type: body.type,
+      '@context': body['@context'],
+      'margin:visibility': body['margin:visibility'],
+    }
+    const retry = await request('POST', '/annotations', { body: reordered, key: KEY })
 
     expect(retry.status).toBe(200)
     expect(await retry.json()).toMatchObject({
       id: expect.stringMatching(/^urn:margin:annotation:request-[a-f0-9]{64}$/),
     })
     expect(annotationCount(harness)).toBe(1)
+    expect(receiptCount(harness)).toBe(1)
   })
 
   it('atomically converges simultaneous retries on one row', async () => {
@@ -84,12 +109,14 @@ describe('annotation creation idempotency', () => {
     })
     const repository = new Proxy(harness.repository, {
       get(target, property, receiver) {
-        if (property === 'insertAnnotation') {
-          return async (...args: Parameters<MarginRepository['insertAnnotation']>) => {
+        if (property === 'insertAnnotationWithReceipt') {
+          return async (
+            ...args: Parameters<MarginRepository['insertAnnotationWithReceipt']>
+          ) => {
             entered += 1
             if (entered === 2) release()
             await gate
-            return target.insertAnnotation(...args)
+            return target.insertAnnotationWithReceipt(...args)
           }
         }
         const value = Reflect.get(target, property, receiver)
@@ -106,6 +133,7 @@ describe('annotation creation idempotency', () => {
 
     expect(responses.map((response) => response.status).sort()).toEqual([200, 201])
     expect(annotationCount(harness)).toBe(1)
+    expect(receiptCount(harness)).toBe(1)
   })
 
   it('refuses a changed request body for a previously used key', async () => {
@@ -125,6 +153,73 @@ describe('annotation creation idempotency', () => {
       error: { code: 'idempotency_conflict' },
     })
     expect(annotationCount(harness)).toBe(1)
+  })
+
+  it('consumes a key permanently when its annotation is deleted', async () => {
+    const harness = createHarness()
+    const request = requestFor(harness)
+    const body = webAnnotation({ source: CHAPTER_ONE, body: 'first' })
+    const created = await request('POST', '/annotations', { body, key: KEY })
+    const { id } = (await created.json()) as { id: string }
+    const deleted = await request(
+      'DELETE',
+      `/annotations/${encodeURIComponent(id)}?source=${encodeURIComponent(CHAPTER_ONE)}`,
+    )
+    expect(deleted.status).toBe(204)
+
+    const replay = await request('POST', '/annotations', { body, key: KEY })
+    expect(replay.status).toBe(409)
+    await expect(replay.json()).resolves.toMatchObject({
+      error: { code: 'idempotency_consumed' },
+    })
+    const changed = await request('POST', '/annotations', {
+      body: webAnnotation({ source: CHAPTER_ONE, body: 'changed' }),
+      key: KEY,
+    })
+    expect(changed.status).toBe(409)
+    await expect(changed.json()).resolves.toMatchObject({
+      error: { code: 'idempotency_conflict' },
+    })
+    expect(annotationCount(harness)).toBe(0)
+  })
+
+  it('rolls back the annotation when receipt insertion fails in its batch', async () => {
+    const harness = createHarness()
+    const request = requestFor(harness)
+    const created = await request('POST', '/annotations', {
+      body: webAnnotation({ source: CHAPTER_ONE }),
+    })
+    const { id } = (await created.json()) as { id: string }
+    const scope = { site: 'https://ernie.sg', document: '/challenges/chapter-1' }
+    const stored = await harness.repository.findAnnotation(
+      scope,
+      id.replace('urn:margin:annotation:', ''),
+      ADA_KEY,
+    )
+    expect(stored).not.toBeNull()
+    const rollbackId = 'receipt-batch-rollback'
+    const candidate = {
+      ...stored!,
+      id: rollbackId,
+      annotation: { ...stored!.annotation, id: rollbackId },
+    }
+    harness.database.execute(
+      `INSERT INTO margin_idempotency_receipts
+      (creator, site, document, request_key, fingerprint, annotation_id, created)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [ADA_KEY, scope.site, scope.document, KEY, 'earlier', 'earlier-id', stored!.created],
+    )
+
+    await expect(
+      harness.repository.insertAnnotationWithReceipt(candidate, {
+        key: KEY,
+        fingerprint: 'new-fingerprint',
+      }),
+    ).rejects.toThrow()
+    expect(
+      harness.database.query('SELECT id FROM margin_annotations WHERE id = ?', [rollbackId]),
+    ).toEqual([])
+    expect(receiptCount(harness)).toBe(1)
   })
 
   it('keeps reused keys isolated by owner and canonical source', async () => {

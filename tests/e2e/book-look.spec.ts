@@ -13,6 +13,8 @@ import { installStaticRoutes } from './static-build'
  */
 
 const CHAPTER = '/books/build-a-coding-agent/ch07-strings/'
+// Has a figure (with a caption and a definition list), inline code and exercises.
+const FIGURE_CHAPTER = '/books/build-a-coding-agent/ch05-functions/'
 const SITE_HEADER = 'body > div > header'
 const PLAIN_BAR = '[data-book-bar]'
 
@@ -244,4 +246,68 @@ test.describe('the book look switch', () => {
     )
     expect(overflow).toBeLessThanOrEqual(1)
   })
+
+  for (const choice of ['site', 'plain'] as const) {
+    test(`in the dark theme, ${choice} paints the book's panels dark and legible`, async ({
+      page,
+    }) => {
+      await page.addInitScript((value) => {
+        localStorage.setItem('theme', 'dark')
+        localStorage.setItem('book-look', value)
+      }, choice)
+      await page.goto(FIGURE_CHAPTER)
+      expect(await page.evaluate(() => document.documentElement.classList.contains('dark'))).toBe(true)
+
+      const samples = await page.evaluate(() => {
+        // The colour actually behind an element: the first opaque background up
+        // its ancestors, so a transparent element is judged against its panel.
+        const parse = (value: string) => {
+          const match = value.match(/rgba?\(([^)]+)\)/)
+          if (!match) return null
+          const [r, g, b, a = 1] = match[1].split(/[ ,/]+/).filter(Boolean).map(Number)
+          return { r, g, b, a }
+        }
+        const behind = (element: Element) => {
+          for (let node: Element | null = element; node; node = node.parentElement) {
+            const colour = parse(getComputedStyle(node).backgroundColor)
+            if (colour && colour.a > 0.5) return colour
+          }
+          return parse(getComputedStyle(document.body).backgroundColor)!
+        }
+        const luminance = ({ r, g, b }: { r: number; g: number; b: number }) => {
+          const channel = (value: number) => {
+            const v = value / 255
+            return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
+          }
+          return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+        }
+        const contrast = (a: number, b: number) =>
+          (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+        const sample = (name: string, selector: string) => {
+          const element = document.querySelector(selector)
+          if (!element) return { name, missing: true }
+          const background = luminance(behind(element))
+          const ink = luminance(parse(getComputedStyle(element).color)!)
+          return { name, background, contrast: contrast(background, ink) }
+        }
+        return [
+          sample('figure', '.book-content .figure'),
+          sample('figure title', '.book-content .figure-title'),
+          sample('figure caption', '.book-content figcaption'),
+          sample('figure definition', '.book-content .pairs dd'),
+          sample('figure term', '.book-content .pairs dt'),
+          sample('inline code', '.book-content p > code'),
+          sample('exercise', '.book-content .exercise'),
+        ]
+      })
+
+      for (const entry of samples) {
+        expect(entry, `${entry.name} is on the page`).not.toHaveProperty('missing')
+        // Dark: no white card or chip on the dark page.
+        expect(entry.background, `${entry.name} background`).toBeLessThan(0.1)
+        expect(entry.contrast, `${entry.name} contrast`).toBeGreaterThanOrEqual(4.5)
+      }
+    })
+  }
 })
+

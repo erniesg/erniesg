@@ -48,12 +48,10 @@ const sourceJson = stamp.source === null
 // stay here rather than in the renderer.
 const RESTORED = `
 /* The container itself keeps the site's foreground over the site's background,
-   in either theme. Only the panels CONTENT_CSS gives a hard-coded light
-   background pin a dark foreground to go with it: pinning it on the container
-   would put near-black prose on the near-black page in dark mode, and leaving
-   it off the panels would put near-white text on a white panel. Inline code is
-   one of those panels; code inside a \`pre\` is not, because \`pre\` carries its
-   own pair. */
+   in either theme. In the light theme the panels CONTENT_CSS gives a
+   hard-coded light background pin a dark foreground to go with it: inline code
+   is one of those panels; code inside a \`pre\` is not, because \`pre\`
+   carries its own pair. */
 .book-content { overflow-wrap: anywhere; }
 .book-content .figure,
 .book-content .cell,
@@ -63,12 +61,21 @@ const RESTORED = `
 /* CONTENT_CSS's greys, its rules and its link colour are all chosen against a
    light page — --ink draws the rules above and below a challenge card, so at
    #1a1a1a on the dark page the card loses its boundary entirely. They get dark
-   values on the container; the light panels take the light ones back. */
-.dark .book-content { --ink: #ededed; --dim: #9a9a9a; --line: #3f3f3f; --accent: #7dd3fc; }
+   values on the container, and so do the panels: a white figure card or code
+   chip on the dark page glares, so in the dark theme each panel is a dark
+   card (the plain look's panel colour where it has one) with the page's own
+   light foreground. A walk figure's highlighted step keeps its amber fill and
+   takes a dark foreground to go with it. */
+.dark .book-content { --ink: #ededed; --dim: #a3a19c; --line: #3f3f3f; --accent: #7dd3fc; --bg: #232320; }
 .dark .book-content .figure,
 .dark .book-content .cell,
 .dark .book-content .hint,
-.dark .book-content .solution { --ink: #1a1a1a; --dim: #666; --line: #e2e2e2; --accent: #0369a1; }
+.dark .book-content .solution { background: var(--plain-panel, #1c1c1a); color: #e8e6e1; }
+.dark .book-content :not(pre) > code { background: #2c2b27; color: #ece9e2; }
+.dark .book-content figcaption,
+.dark .book-content .pairs dd { color: #b9b6af; }
+.dark .book-content .walk-controls button { background: #26251f; color: #e8e6e1; }
+.dark .book-content .walk-item.on { color: #1a1a1a; }
 /* The exercise card is a tinted panel, not a light one: in dark mode it takes
    a dark tint and keeps the site's foreground, instead of the light green
    CONTENT_CSS gives it, which left the prompt near-white on near-white. */

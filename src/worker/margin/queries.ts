@@ -1,6 +1,7 @@
 import {
   MAX_PAGE_SIZE,
   type ListOptions,
+  type OwnListOptions,
   type TenantScope,
   type ViewerKey,
 } from './repository'
@@ -144,6 +145,38 @@ ORDER BY created ASC, id ASC LIMIT ?`,
     extraParams.push(options.limit)
   }
   return scopedRead(scope, viewer, extraSql, extraParams)
+}
+
+/**
+ * The owner's own annotations on every document of `site` whose path starts
+ * with `prefix` (issue 073), in `(document, created, id)` order.
+ *
+ * `creator = ?` is the whole visibility rule here: it is the first column of
+ * `margin_annotations_owner (creator, site, document)`, so another creator's
+ * row is never read, public or not. The prefix is a range on `document` rather
+ * than a `LIKE`, so the same index serves it: every path starting with `prefix`
+ * sorts at or after it and before its successor. The route only accepts a
+ * prefix ending in `/`, so the successor is the same string ending in `0`.
+ */
+export function listOwnAnnotationsQuery(
+  site: string,
+  prefix: string,
+  creator: string,
+  options: OwnListOptions,
+): Query {
+  const upper = `${prefix.slice(0, -1)}${String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1)}`
+  const where = ['creator = ? AND site = ? AND document >= ? AND document < ?']
+  const params: unknown[] = [creator, site, prefix, upper]
+  if (options.after) {
+    where.push('(document, created, id) > (?, ?, ?)')
+    params.push(options.after.document, options.after.created, options.after.id)
+  }
+  return {
+    sql: `SELECT ${ANNOTATION_COLUMNS} FROM margin_annotations INDEXED BY margin_annotations_owner
+WHERE ${where.join(' AND ')}
+ORDER BY document ASC, created ASC, id ASC LIMIT ?`,
+    params: [...params, Math.min(options.limit, MAX_PAGE_SIZE + 1)],
+  }
 }
 
 export function findAnnotationQuery(

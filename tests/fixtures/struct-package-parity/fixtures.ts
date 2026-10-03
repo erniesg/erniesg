@@ -1,11 +1,10 @@
 import { seal, validDocument } from '../../../src/struct/codec-test-fixtures'
+import type { StructDocument } from '@erniesg/struct/document'
 
-type FixtureDocument = ReturnType<typeof validDocument> & {
-  documentId?: string
-}
+type FixtureDocument = StructDocument
 
 function currentDocument(documentId: string): FixtureDocument {
-  const document = validDocument() as FixtureDocument
+  const document = validDocument() as unknown as FixtureDocument
   document.schemaVersion = '0.2.0'
   document.documentId = documentId
   document.receipt.schemaVersion = '0.2.0'
@@ -14,7 +13,7 @@ function currentDocument(documentId: string): FixtureDocument {
 }
 
 export const structPackageParityFixtures = {
-  legacy: validDocument(),
+  legacy: validDocument() as unknown as FixtureDocument,
   current: currentDocument('fixture-current'),
   recoverable: (() => {
     const document = currentDocument('fixture-recoverable')

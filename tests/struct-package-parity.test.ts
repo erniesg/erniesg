@@ -59,7 +59,10 @@ describe('packed Struct public API parity', () => {
     (name, fixture) => {
       const local = localDecode(fixture)
       const packaged = packageDecode(fixture)
-      const frozen = frozenStructPackageParity.documents[name]
+      const frozen =
+        frozenStructPackageParity.documents[
+          name as keyof typeof frozenStructPackageParity.documents
+        ]
 
       expect(packageEncode(packaged)).toEqual(localEncode(local))
       expect(
@@ -118,6 +121,9 @@ describe('packed Struct public API parity', () => {
     tampered.receipt.generatedSha256 = 'b'.repeat(64)
     expect(() => packageDecode(tampered)).toThrow()
     expect(() => localDecode(tampered)).toThrow()
+
+    expect(packageValidateReceipt(validConsultationReceipt)).toBe(true)
+    expect(localValidateReceipt(validConsultationReceipt)).toBe(true)
 
     const secretBearing = {
       ...validConsultationReceipt,

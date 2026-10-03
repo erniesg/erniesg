@@ -343,7 +343,8 @@ test.describe('the book look switch', () => {
         const against = (value: string) => contrast(card, luminance(parse(value)!))
         return {
           labels: [...chart.querySelectorAll('text')].map((t) => against(getComputedStyle(t).fill)),
-          lines: [...chart.querySelectorAll('polyline')].map((l) => against(getComputedStyle(l).stroke)),
+          // Series and axis are both graphics: every stroke the chart draws.
+          lines: [...chart.querySelectorAll('polyline, line')].map((l) => against(getComputedStyle(l).stroke)),
         }
       })
       expect(result, 'a cost chart is on the page').not.toBeNull()
@@ -351,7 +352,7 @@ test.describe('the book look switch', () => {
       expect(result!.lines.length).toBeGreaterThan(0)
       for (const value of result!.labels) expect(value, 'tick label contrast').toBeGreaterThanOrEqual(4.5)
       // Lines are graphics, not text: 3:1 is the bar for those.
-      for (const value of result!.lines) expect(value, 'series line contrast').toBeGreaterThanOrEqual(3)
+      for (const value of result!.lines) expect(value, 'series and axis contrast').toBeGreaterThanOrEqual(3)
     })
   }
 })

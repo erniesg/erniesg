@@ -118,7 +118,10 @@ chapter in book order, and each entry links back to its exact spot.
     two documents (no row skipped or repeated);
   - another creator's private and public rows are excluded;
   - 401 when signed out, 400 on a bad `prefix`;
-  - rows on another site, or outside the prefix, are excluded.
+  - rows on another site, or outside the prefix, are excluded;
+  - `EXPLAIN QUERY PLAN` for the `/mine` query (first page and a cursor
+    page) uses `margin_annotations_owner` and never scans
+    `margin_annotations`, following `pagination-plan.test.ts`.
 - `tests/e2e/margin-annotations-overview.spec.ts`, with the same in-process
   router pattern as `tests/e2e/margin-edit-mode.spec.ts`, served from the
   static build through `installStaticRoutes` (as `book-look.spec.ts` does):
@@ -126,13 +129,26 @@ chapter in book order, and each entry links back to its exact spot.
     proposal; each shows only the fields its kind carries (no body on the
     highlight, no colour on the proposal);
   - the overview lists all four under the right chapters in book order;
-  - a note on the book's front page appears under "Book front page";
+  - a note on the book's front page appears under "Book front page", and a
+    note on another non-manifest path under the prefix under "Other pages";
+  - the reader's reply to their own note shows nested under it;
   - a reply to another reader's public note shows under that note, marked as
-    theirs;
+    theirs; when that parent lookup fails (the route answers 500), the reply
+    shows on its own with its link;
+  - a note whose body starts with the sketch prefix but does not decode shows
+    as a plain note, and a valid sketch shows its preview;
+  - proposals show "Pending" and, once withdrawn, "Withdrawn"; a stubbed
+    `/mine` response with `margin:proposalState` set to each 060 state shows
+    each mapped label (criterion 2);
   - a deleted note with a reply shows as "Deleted note" with the reply
     nested under it;
-  - a note made on `/books/<slug>/map/` links back to `/map/?annotation=<id>`;
+  - a note made on `/books/<slug>/map/` links back to `/map/?annotation=<id>`,
+    and one whose stored source is `/books/<slug>/map/?view=all#topic` links
+    to `/books/<slug>/map/?view=all&annotation=<id>#topic`: the existing
+    parameter and the fragment both survive;
   - signed out, the prompt links to `/auth/login?return_to=` this page;
+    signed in with no annotations, the page says so and links to the first
+    chapter;
   - clicking one lands on the chapter with that annotation focused in the
     rail;
   - an annotation whose quote no longer matches shows "text changed" in both
@@ -146,8 +162,9 @@ chapter in book order, and each entry links back to its exact spot.
 
 ## Definition of done
 
-Every success criterion is covered by a passing test, and the validation
-command exits 0 on a clean tree. Screenshots of the overview are attached to
+Every clause of every success criterion is covered by at least one
+acceptance case above, the PR body lists that mapping clause by clause, and
+the validation command exits 0 on a clean tree. Screenshots of the overview are attached to
 the PR at 390 px and 1280 px, with no horizontal overflow at 390 px (070).
 
 ## Validation command

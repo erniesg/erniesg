@@ -98,7 +98,7 @@ describe('GET /mine', () => {
     const sketch = await post({
       source: CH2,
       visibility: 'private',
-      body: `${SKETCH_PREFIX}${JSON.stringify({ version: 1, note: 'a drawing', anchor: { blockId: 'p-1', quote: 'x' }, region: { x: 0, y: 0, width: 10, height: 10 }, strokes: [[[0, 0], [1, 1]]] })}`,
+      body: `${SKETCH_PREFIX}${JSON.stringify({ version: 1, note: 'a drawing', anchor: { blockId: 'p-1', quote: 'x' }, region: { x: 0, y: 0, width: 1, height: 1 }, strokes: [[[0, 0], [1, 1]]] })}`,
     })
     // Bob's, public and private, on the same documents: never Ada's to list.
     await post({ source: CH1, visibility: 'public', body: 'bob public' }, BOB)
@@ -192,6 +192,40 @@ describe('GET /mine', () => {
       mineQuery({ site: SITE, prefix: BOOK, cursor: 'nonsense' }),
     )
     expect(badCursor.status).toBe(400)
+  })
+
+  it('carries the document in the cursor: a page boundary between two documents skips and repeats nothing', async () => {
+    // The later document's rows are the older ones. A cursor of (created, id)
+    // alone, after the last row of ch01, would seek past every one of them.
+    const ch02 = [
+      (await post({ source: CH2, body: 'ch02 first' })).id,
+      (await post({ source: CH2, body: 'ch02 second' })).id,
+    ]
+    const ch01 = [
+      (await post({ source: CH1, body: 'ch01 first' })).id,
+      (await post({ source: CH1, body: 'ch01 second' })).id,
+    ]
+
+    const first = await mine({ site: SITE, prefix: BOOK, limit: '2' })
+    expect(first.annotations.map((row) => row.id)).toEqual(ch01)
+    expect(first.nextCursor).toBeDefined()
+    // The boundary row of ch01 is newer than both rows of ch02.
+    expect(first.nextCursor).toContain(`${BOOK}ch01-values/`)
+
+    const second = await mine({ site: SITE, prefix: BOOK, limit: '2', cursor: first.nextCursor! })
+    expect(second.annotations.map((row) => row.id)).toEqual(ch02)
+    expect(second.nextCursor).toBeUndefined()
+  })
+
+  it('seeks on (document, created, id), not on (created, id)', () => {
+    const query = listOwnAnnotationsQuery(SITE, BOOK, ADA_KEY, {
+      limit: 3,
+      after: { document: `${BOOK}ch01-values/`, created: '2026-09-22T00:00:09.000Z', id: 'x' },
+    })
+    expect(query.sql).toContain('(document, created, id) > (?, ?, ?)')
+    expect(query.params).toEqual(
+      expect.arrayContaining([`${BOOK}ch01-values/`, '2026-09-22T00:00:09.000Z', 'x']),
+    )
   })
 
   it('is 401 when signed out', async () => {

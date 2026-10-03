@@ -263,14 +263,94 @@ jobs:
         run: |
           set -eu
           if [ -f package-lock.json ] && [ ! -f pnpm-lock.yaml ] && [ ! -f yarn.lock ]; then
-            npm audit --audit-level=high
+            if [ -f .agent/audit.json ]; then
+              echo "Full npm audit (report only; .agent/audit.json scopes the blocking gate):"
+              npm audit --audit-level=high || echo "::warning::npm audit reports advisories; only those in the .agent/audit.json scope block"
+              node - <<'NODE'
+          const fs = require('fs');
+          const { spawnSync } = require('child_process');
+          const LEVELS = ['info', 'low', 'moderate', 'high', 'critical'];
+          let failed = false;
+          const fail = (message) => { console.log(`::error::${message}`); failed = true; };
+          const unevaluated = (message) => { console.log(`::error::npm audit could not be evaluated: ${message}`); process.exit(1); };
+          let policy;
+          try {
+            policy = JSON.parse(fs.readFileSync('.agent/audit.json', 'utf8'));
+          } catch (error) {
+            unevaluated(`.agent/audit.json is not valid JSON (${error.message})`);
+          }
+          if (!policy || typeof policy !== 'object' || Array.isArray(policy)) unevaluated('.agent/audit.json must be an object');
+          const scope = policy.scope ?? 'all';
+          const level = policy.level ?? 'high';
+          const allow = policy.allow ?? [];
+          if (!['all', 'runtime'].includes(scope)) unevaluated(`unknown scope "${scope}"; use "all" or "runtime"`);
+          if (!LEVELS.includes(level)) unevaluated(`unknown level "${level}"; use one of ${LEVELS.join(', ')}`);
+          if (!Array.isArray(allow)) unevaluated('allow must be a list');
+          const today = new Date().toISOString().slice(0, 10);
+          const entries = [];
+          allow.forEach((entry, index) => {
+            const where = `.agent/audit.json allow[${index}]`;
+            const problems = [];
+            if (!entry || typeof entry !== 'object') return fail(`${where} must be an object`);
+            if (typeof entry.id !== 'string' || !/^GHSA(-[0-9a-z]{4}){3}$/i.test(entry.id)) problems.push('id must be a GHSA identifier');
+            if (typeof entry.package !== 'string' || !entry.package) problems.push('package is required');
+            if (typeof entry.reason !== 'string' || !entry.reason.trim()) problems.push('reason is required');
+            // Round-trip the date: Date.parse rolls 2026-02-30 over into March instead of failing.
+            const realDate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
+            if (typeof entry.expires !== 'string' || !realDate(entry.expires)) problems.push('expires must be a real YYYY-MM-DD date');
+            if (problems.length) return fail(`${where}: ${problems.join('; ')}`);
+            if (entry.expires < today) return fail(`${where} ${entry.id} (${entry.package}) expired on ${entry.expires}; review it: ${entry.reason}`);
+            entries.push({ ...entry, used: false });
+          });
+          const args = ['audit', '--json'];
+          if (scope === 'runtime') args.push('--omit=dev');
+          const run = spawnSync('npm', args, { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+          let report;
+          try {
+            report = JSON.parse(run.stdout);
+          } catch {
+            unevaluated(`npm ${args.join(' ')} did not print JSON (exit ${run.status}): ${(run.stderr || '').trim()}`);
+          }
+          if (report.error) unevaluated(report.error.summary || JSON.stringify(report.error));
+          if (!report.vulnerabilities || typeof report.vulnerabilities !== 'object') unevaluated('the report has no vulnerabilities map');
+          const advisories = new Map();
+          for (const vulnerability of Object.values(report.vulnerabilities)) {
+            for (const via of vulnerability.via ?? []) {
+              if (!via || typeof via !== 'object') continue;
+              const id = (String(via.url ?? '').match(/GHSA(-[0-9a-z]{4}){3}/i) ?? [`npm-advisory-${via.source}`])[0];
+              advisories.set(`${id} ${via.name}`, { id, package: via.name, severity: via.severity, title: via.title, url: via.url });
+            }
+          }
+          let blocking = 0;
+          let allowed = 0;
+          for (const advisory of advisories.values()) {
+            const rank = LEVELS.indexOf(advisory.severity);
+            if (rank !== -1 && rank < LEVELS.indexOf(level)) continue;
+            const entry = entries.find((candidate) => candidate.id.toLowerCase() === advisory.id.toLowerCase() && candidate.package === advisory.package);
+            if (entry) {
+              entry.used = true;
+              allowed += 1;
+              console.log(`::notice::allowed until ${entry.expires}: ${advisory.id} ${advisory.package} (${advisory.severity}): ${entry.reason}`);
+            } else {
+              blocking += 1;
+              fail(`${advisory.id} ${advisory.package} (${advisory.severity}): ${advisory.title} ${advisory.url ?? ''}`.trim());
+            }
+          }
+          for (const entry of entries.filter((candidate) => !candidate.used)) {
+            console.log(`::warning::.agent/audit.json allows ${entry.id} (${entry.package}) but the audit no longer reports it; remove the entry`);
+          }
+          console.log(`npm audit (${scope}, level ${level}): ${blocking} blocking, ${allowed} allowed`);
+          process.exit(failed ? 1 : 0);
+          NODE
+            else
+              npm audit --audit-level=high
+            fi
           elif [ -f pnpm-lock.yaml ] || [ -f yarn.lock ]; then
             echo "non-npm lockfile present; skipping npm audit"
           fi
           if [ -f pyproject.toml ] || [ -f requirements.txt ]; then
             python -m pip check || true
           fi
-
       - name: OpenTofu/Terraform validation
         run: |
           set -eu

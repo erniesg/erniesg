@@ -69,7 +69,7 @@ describe('annotation creation idempotency', () => {
   it('returns the existing row when a committed response is lost and retried', async () => {
     const harness = createHarness()
     const request = requestFor(harness)
-    const body = webAnnotation({ source: CHAPTER_ONE, visibility: 'private' })
+    const body = webAnnotation({ source: CHAPTER_ONE })
 
     const first = await request('POST', '/annotations', { body, key: KEY })
     // Simulate the client losing this successful response before it can read it.
@@ -95,6 +95,7 @@ describe('annotation creation idempotency', () => {
     expect(retry.status).toBe(200)
     expect(await retry.json()).toMatchObject({
       id: expect.stringMatching(/^urn:margin:annotation:request-[a-f0-9]{64}$/),
+      'margin:visibility': 'private',
     })
     expect(annotationCount(harness)).toBe(1)
     expect(receiptCount(harness)).toBe(1)
@@ -181,6 +182,32 @@ describe('annotation creation idempotency', () => {
       error: { code: 'idempotency_conflict' },
     })
     expect(annotationCount(harness)).toBe(0)
+  })
+
+  it('treats a deleted note retained for its replies as a consumed request', async () => {
+    const harness = createHarness()
+    const request = requestFor(harness)
+    const body = webAnnotation({ source: CHAPTER_ONE, body: 'original note' })
+    const created = await request('POST', '/annotations', { body, key: KEY })
+    const { id } = (await created.json()) as { id: string }
+    const reply = await request('POST', '/annotations', {
+      body: webAnnotation({ source: CHAPTER_ONE, body: 'reply', parentId: id }),
+    })
+    expect(reply.status).toBe(201)
+    const item = `/annotations/${encodeURIComponent(id)}?source=${encodeURIComponent(CHAPTER_ONE)}`
+    const deleted = await request('DELETE', item)
+    expect(deleted.status).toBe(200)
+    await expect(deleted.json()).resolves.toMatchObject({ 'margin:deleted': true })
+
+    const replay = await request('POST', '/annotations', { body, key: KEY })
+    expect(replay.status).toBe(409)
+    await expect(replay.json()).resolves.toMatchObject({
+      error: { code: 'idempotency_consumed' },
+    })
+    const retained = await request('GET', item)
+    await expect(retained.json()).resolves.toMatchObject({ 'margin:deleted': true })
+    expect(annotationCount(harness)).toBe(2)
+    expect(receiptCount(harness)).toBe(1)
   })
 
   it('rolls back the annotation when receipt insertion fails in its batch', async () => {

@@ -364,7 +364,7 @@ async function replayIdempotencyReceipt(
     receipt.annotationId,
     owner,
   )
-  return annotation
+  return annotation && !isTombstone(annotation)
     ? json(present(annotation))
     : problem(
         409,

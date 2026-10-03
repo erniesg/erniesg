@@ -623,31 +623,46 @@ test.describe('sketch annotations in edit mode', () => {
     expect(await service.rows()).toHaveLength(1)
   })
 
-  test('a stale draft cannot recreate a deleted annotation after a lost response', async ({ page }) => {
-    const { service } = await openEditor(page)
-    await page.getByRole('button', { name: 'Sketch', exact: true }).click()
-    await area(page)
-    await page.getByLabel('Sketch annotation').fill('Deleted annotation')
-    await page.route('**/api/margin/v1/annotations', async (route) => {
-      if (route.request().method() !== 'POST') return route.fallback()
-      const response = await service.post(JSON.parse(route.request().postData()!), route.request().headers()['idempotency-key'])
-      await route.fulfill({ status: response.status, body: 'truncated-response' })
+  for (const keepReplies of [false, true]) {
+    test(`a stale draft cannot recreate a ${keepReplies ? 'tombstoned' : 'deleted'} annotation after a lost response`, async ({ page }) => {
+      const { service } = await openEditor(page)
+      await page.getByRole('button', { name: 'Sketch', exact: true }).click()
+      await area(page)
+      await page.getByLabel('Sketch annotation').fill('Deleted annotation')
+      let originalRequest: Record<string, unknown> = {}
+      await page.route('**/api/margin/v1/annotations', async (route) => {
+        if (route.request().method() !== 'POST') return route.fallback()
+        originalRequest = JSON.parse(route.request().postData()!)
+        const response = await service.post(originalRequest, route.request().headers()['idempotency-key'])
+        await route.fulfill({ status: response.status, body: 'truncated-response' })
+      })
+      await page.getByRole('button', { name: 'Save annotation', exact: true }).click()
+      await expect(page.locator('[data-sketch-status]')).toContainText('Could not save')
+      await page.unroute('**/api/margin/v1/annotations')
+      if (keepReplies) {
+        const [parent] = await service.rows()
+        const reply = await service.post({
+          ...originalRequest,
+          body: { type: 'TextualBody', value: 'Reply to preserve the thread', format: 'text/plain' },
+          'margin:parentId': parent.id,
+        })
+        expect(reply.status).toBe(201)
+      }
+      await page.reload()
+      const marginToggle = page.getByRole('button', { name: 'Margin', exact: true })
+      if (await marginToggle.isVisible()) await marginToggle.click()
+      await page.locator('margin-rail [data-margin-action=delete]').first().click()
+      await expect(page.locator('[data-sketch-saved]')).toHaveCount(0)
+      await page.locator('[data-edit-toggle]').click()
+      await page.getByRole('button', { name: 'Sketch', exact: true }).click()
+      await page.getByRole('button', { name: 'Save annotation', exact: true }).click()
+      await expect(page.locator('[data-sketch-status]')).toContainText('409')
+      await expect(page.getByLabel('Sketch annotation')).toHaveValue('Deleted annotation')
+      const retained = await service.rows()
+      expect(retained).toHaveLength(keepReplies ? 2 : 0)
+      if (keepReplies) expect(retained[0]).toMatchObject({ 'margin:deleted': true })
     })
-    await page.getByRole('button', { name: 'Save annotation', exact: true }).click()
-    await expect(page.locator('[data-sketch-status]')).toContainText('Could not save')
-    await page.unroute('**/api/margin/v1/annotations')
-    await page.reload()
-    const marginToggle = page.getByRole('button', { name: 'Margin', exact: true })
-    if (await marginToggle.isVisible()) await marginToggle.click()
-    await page.locator('margin-rail [data-margin-action=delete]').click()
-    await expect(page.locator('[data-sketch-saved]')).toHaveCount(0)
-    await page.locator('[data-edit-toggle]').click()
-    await page.getByRole('button', { name: 'Sketch', exact: true }).click()
-    await page.getByRole('button', { name: 'Save annotation', exact: true }).click()
-    await expect(page.locator('[data-sketch-status]')).toContainText('409')
-    await expect(page.getByLabel('Sketch annotation')).toHaveValue('Deleted annotation')
-    expect(await service.rows()).toHaveLength(0)
-  })
+  }
 
   test('uses the configured annotation service path', async ({ page }) => {
     const { service } = await openEditor(page)

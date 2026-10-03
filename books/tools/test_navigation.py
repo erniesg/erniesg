@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from render import (  # noqa: E402
     chapter_of,
     load_book,
+    page_navigation,
     reading_navigation,
     render_node,
     section_headings,
@@ -103,6 +104,35 @@ class ReadingNavigation(unittest.TestCase):
         progress = self.nav("ch07-strings")["progress"]
         self.assertIn("data-book-keys-toggle", progress)
         self.assertIn('aria-keyshortcuts="?"', progress)
+
+
+class BookPageNavigation(unittest.TestCase):
+    """The front page and the map get the same bar as a chapter (`page_navigation`)."""
+
+    @classmethod
+    def setUpClass(cls):
+        _, cls.order = load_book()
+
+    def test_the_front_page_leads_into_the_first_page(self):
+        bar = page_navigation(self.order, href, title="Contents")
+        self.assertIn('data-chapter-progress data-kind="book"', bar)
+        self.assertIn(">Contents<", bar)
+        self.assertIn(f'rel="next" href="/{self.order[0]["id"]}"', bar)
+        self.assertNotIn('rel="prev"', bar)
+        self.assertIn("data-book-keys-toggle", bar)
+
+    def test_the_map_steps_back_to_the_front_page_and_on_to_the_first_page(self):
+        bar = page_navigation(self.order, href, title="The map", previous=("Contents", "/"))
+        self.assertIn(">The map<", bar)
+        self.assertIn('rel="prev" href="/"', bar)
+        self.assertIn('aria-label="Previous: Contents"', bar)
+        self.assertIn(f'rel="next" href="/{self.order[0]["id"]}"', bar)
+
+    def test_its_parts_are_the_chapter_bar_parts(self):
+        """Same classes, so one stylesheet and one runtime drive every page's bar."""
+        bar = page_navigation(self.order, href, title="Contents")
+        for part in ('class="chapter-progress"', 'class="cp-step"', 'class="cp-body"', 'class="cp-keys"'):
+            self.assertIn(part, bar)
 
 
 if __name__ == "__main__":

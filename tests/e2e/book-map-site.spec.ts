@@ -170,6 +170,36 @@ test('the plain bar keeps every control in view on a 320px phone', async ({ page
   }
 })
 
+test('the front page, the map and a chapter share one bar, and [ ] walk between them', async ({ page }) => {
+  await mount(page)
+  for (const look of ['site', 'plain']) {
+    await page.addInitScript((value) => {
+      try {
+        localStorage.setItem('book-look', value)
+      } catch {}
+    }, look)
+    for (const [path, name] of [
+      [BOOK, 'Contents'],
+      [MAP, 'The map'],
+      [`${BOOK}ch06-dicts-sets/`, 'Ch 6'],
+    ]) {
+      await page.goto(path)
+      const bar = page.locator('[data-book-bar] [data-chapter-progress]')
+      await expect(bar, `${look} ${path}`).toBeVisible()
+      await expect(bar.locator('.cp-chapter')).toContainText(name)
+      await expect(bar.locator('a.cp-step[rel="next"]')).toBeVisible()
+      await expect(bar.locator('.cp-keys')).toBeVisible()
+    }
+  }
+  // The keys follow the arrows on the book's own pages too.
+  await page.goto(BOOK)
+  await page.keyboard.press(']')
+  await expect(page).toHaveURL(/\/books\/build-a-coding-agent\/front-matter\/$/)
+  await page.goto(MAP)
+  await page.keyboard.press('[')
+  await expect(page).toHaveURL(new RegExp(`${BOOK}$`))
+})
+
 test('with no progress, the first topic is open and nothing is cleared', async ({ page }) => {
   await mount(page)
   await page.goto(MAP)

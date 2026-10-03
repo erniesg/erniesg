@@ -59,6 +59,7 @@ from render import (
     load_node,
     load_topics,
     map_markup,
+    page_navigation,
     problem_card as render_problem_card,
     reading_navigation,
     render_node,
@@ -539,8 +540,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(b"not found", HTTPStatus.NOT_FOUND, "text/plain")
             return self._send(path.read_bytes(), kind="text/javascript; charset=utf-8")
 
+        # The front page and the map carry the bar a chapter does, as on the site.
+        def preview_href(node_id: str) -> str:
+            return f"/{node_id}"
+
         if route in ("map", "graph"):
-            return self._send(page("The map", render_map(), title, order, wide=True))
+            bar = page_navigation(order, preview_href, title="The map", previous=("Contents", "/"))
+            return self._send(page("The map", render_map(), title, order, wide=True, progress=bar))
 
         if not route:
             inner = (
@@ -550,7 +556,8 @@ class Handler(BaseHTTPRequestHandler):
                 f'{html.escape(book.get("author", ""))}</p>'
                 f'{contents_html(order)}'
             )
-            return self._send(page("Contents", inner, title, order))
+            bar = page_navigation(order, preview_href, title="Contents")
+            return self._send(page("Contents", inner, title, order, progress=bar))
 
         found = next((index for index, n in enumerate(order) if n["id"] == route), None)
         if found is None:

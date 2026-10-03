@@ -42,7 +42,7 @@ const STACKED =
   '.dark .book-map { --ink: #ededed; --dim: #a3a3a3; --line: #3f3f3f; --accent: #7dd3fc; color: var(--ink); }' +
   `.book-map :is(#map, .map-detail, .map-controls) { ${LIGHT} color: var(--ink); }` +
   '.book-map .map-wrap { grid-template-columns: minmax(0, 1fr); }'
-const style = `<style>${scopeContentCss(manifest.mapCss, '.book-map')}${manifest.mapAtRules}${STACKED}</style>`
+const style = `<style>${scopeContentCss(manifest.mapCss, '.book-map')}${manifest.mapAtRules}${STACKED}${manifest.navCss}</style>`
 ---
 
 <ReadingLayout
@@ -53,7 +53,7 @@ const style = `<style>${scopeContentCss(manifest.mapCss, '.book-map')}${manifest
 >
   <Fragment slot="head" set:html={style} />
 
-  <BookBar slot="before" book={book} />
+  <BookBar slot="before" book={book} progress={book.mapProgress} />
 
   <Fragment slot="navigation">
     <BookContents book={book} />

@@ -54,8 +54,14 @@ chapter in book order, and each entry links back to its exact spot.
      rail too. Those rows go in a "Book front page" group first, and any
      other non-manifest path under the prefix goes in a final "Other pages"
      group. None is dropped.
-   - Each entry shows its kind (highlight, note, sketch, proposal), the quoted
-     text, the note body, the colour and the date.
+   - Each entry shows its kind, the quoted text and the date, plus only the
+     fields that kind carries on the wire. Nothing is invented for a missing
+     field:
+     - highlight: its colour (a highlight has no body);
+     - note: its body, and its colour if it has one;
+     - sketch: its note text and the preview below;
+     - proposal: a short summary of the proposed change and its state (a
+       proposal has no colour).
    - A sketch shows a small read-only SVG drawn with `decodeSketch` from
      `packages/margin`. A malformed sketch shows as a plain note, the same
      rule the rail uses.
@@ -63,9 +69,13 @@ chapter in book order, and each entry links back to its exact spot.
      (`docs/issues/060-admin-review-apply-and-version-history.md`, item 10):
      pending → "Pending", withdrawn → "Withdrawn", `approved` or `pr_open` →
      "Being applied", `merged` → "Applied", `conflict` or `apply_failed` →
-     "Needs attention", `closed` → "Closed". Until 060 lands only the first
-     two can occur. A unit test of the mapping covers every 060 state, so
-     nothing reads as pending once it has moved on.
+     "Needs attention", `closed` → "Closed". The overview reads the state
+     from a `margin:proposalState` field on the annotation response, which
+     060 adds for the proposal's author (see 060, item 13). Without that
+     field, the state is "Withdrawn" when `margin:withdrawnAt` is set and
+     "Pending" otherwise. Until 060 lands only those two can occur. A test
+     feeds the overview a `/mine` row for each 060 state through the real
+     data path, so nothing reads as pending once it has moved on.
    - Replies show under their parent when the parent is also the reader's.
      A reply to **someone else's** note must not pull that note into
      `/mine`, which stays owner-only. The page fetches each such parent
@@ -112,7 +122,8 @@ chapter in book order, and each entry links back to its exact spot.
   router pattern as `tests/e2e/margin-edit-mode.spec.ts`, served from the
   static build through `installStaticRoutes` (as `book-look.spec.ts` does):
   - seed a highlight on one chapter, a note and a sketch on another, and a
-    proposal;
+    proposal; each shows only the fields its kind carries (no body on the
+    highlight, no colour on the proposal);
   - the overview lists all four under the right chapters in book order;
   - a note on the book's front page appears under "Book front page";
   - a reply to another reader's public note shows under that note, marked as

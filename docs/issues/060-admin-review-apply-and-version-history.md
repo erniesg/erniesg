@@ -162,6 +162,12 @@ stay at each owning adapter boundary.
     by that SHA.
 12. The page has a history panel: the node's versions, newest first, and any
     two picked to show a rendered diff. Replay over time is 072.
+13. **A proposal's author can see its state.** The annotation response
+    (`present()`) carries `margin:proposalState` (`approved`, `pr_open`,
+    `conflict`, `merged`, `closed` or `apply_failed`) once a proposal has left
+    `pending`, but only for its creator and the admin. Nobody else gets it, so
+    a private proposal's progress is not disclosed. 073's overview reads this
+    field.
 
 ## Acceptance tests
 

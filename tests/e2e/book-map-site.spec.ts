@@ -233,6 +233,64 @@ test('in dark mode, inline code on the page is a dark chip, not a bright one', a
   }
 })
 
+test("in dark mode a challenge's worked solution reads on the dark page, stacked and side by side", async ({ page }) => {
+  await mount(page)
+  for (const view of ['stacked', 'split']) {
+    await page.addInitScript((value) => {
+      try {
+        localStorage.setItem('theme', 'dark')
+        localStorage.setItem('book-challenge-view', value)
+      } catch {}
+    }, view)
+    await page.goto(`${BOOK}pool-ticket-price/`)
+    const solution = page.locator('.book-content details.solution')
+    await solution.locator('summary').click()
+    const prose = solution.locator('p').filter({ hasText: 'Walk it through' }).first()
+    await expect(prose).toBeVisible()
+    const [text, chip] = await prose.evaluate((element) => [
+      getComputedStyle(element).color,
+      getComputedStyle(element.querySelector('code')!).backgroundColor,
+    ])
+    const level = (value: string) => {
+      const [r, g, b] = (value.match(/[\d.]+/g) ?? []).map(Number)
+      return (r + g + b) / 3
+    }
+    expect(level(text), `${view} solution text ${text}`).toBeGreaterThan(180)
+    expect(level(chip), `${view} solution chip ${chip}`).toBeLessThan(90)
+  }
+})
+
+test('side by side, the floating edit bar is opaque over the question, in both themes', async ({ page }) => {
+  await mount(page)
+  // Edit mode is for writers: this reader may write (registered last, so it wins).
+  await page.route('**/auth/me', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        authenticated: true,
+        canWrite: true,
+        isAdmin: true,
+        principal: { provider: 'dev', issuer: 'urn:margin:dev', subject: 'owner', email: 'hello@ernie.sg' },
+      }),
+    }),
+  )
+  for (const theme of ['light', 'dark']) {
+    await page.addInitScript((value) => {
+      try {
+        localStorage.setItem('theme', value)
+        localStorage.setItem('book-challenge-view', 'split')
+      } catch {}
+    }, theme)
+    await page.goto(`${BOOK}pool-ticket-price/`)
+    const bar = page.locator('[data-edit-mode]')
+    await expect(bar, `${theme}: edit bar shown to a writer`).toBeVisible()
+    const background = await bar.evaluate((element) => getComputedStyle(element).backgroundColor)
+    const alpha = Number((background.match(/[\d.]+/g) ?? [])[3] ?? 1)
+    expect(alpha, `${theme} edit bar ${background}`).toBeGreaterThan(0.9)
+  }
+})
+
 test('with no progress, the first topic is open and nothing is cleared', async ({ page }) => {
   await mount(page)
   await page.goto(MAP)

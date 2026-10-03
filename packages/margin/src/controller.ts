@@ -50,6 +50,23 @@ export type MarginController = {
   stop(): void
 }
 
+/**
+ * Whether an annotation's text is marked on the page. Painting and click
+ * targeting share this, so unmarked text is never a click target.
+ */
+export function isPaintedPlacement({
+  annotation,
+  placement,
+}: AnnotationPlacement): boolean {
+  return (
+    placement.status === 'anchored' &&
+    annotation.kind !== 'proposal' &&
+    // A sketch's quote only finds its block again; its drawing is the target,
+    // so painting the quote would mark text the reader never chose.
+    !(annotation.kind === 'note' && decodeSketch(annotation.body))
+  )
+}
+
 export function paintTargetsFor(
   placements: readonly AnnotationPlacement[],
 ): PaintTarget[] {
@@ -57,11 +74,10 @@ export function paintTargetsFor(
   // visible, and clickable, or the note is attached to nothing the reader can
   // see. Proposals are 060's and paint as their own diff, not here.
   return placements.flatMap(({ annotation, placement }) =>
+    isPaintedPlacement({ annotation, placement } as AnnotationPlacement) &&
+    // Repeated from the predicate so TypeScript narrows both for the target.
     placement.status === 'anchored' &&
-    annotation.kind !== 'proposal' &&
-    // A sketch's quote only finds its block again; its drawing is the target,
-    // so painting the quote would mark text the reader never chose.
-    !(annotation.kind === 'note' && decodeSketch(annotation.body))
+    annotation.kind !== 'proposal'
       ? [
           {
             id: annotation.id,

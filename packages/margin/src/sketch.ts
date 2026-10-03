@@ -50,6 +50,27 @@ function invalidSketch(): never {
   throw new TypeError('Invalid sketch')
 }
 
+/**
+ * Whether a region is one a drag could have produced. The drawing tool asks
+ * before it builds a draft, and decoding asks of every stored sketch.
+ */
+export function regionWithinBounds(
+  region: Record<string, unknown>,
+): region is Sketch['region'] {
+  return (
+    isFiniteNumber(region.x) &&
+    isFiniteNumber(region.y) &&
+    isFiniteNumber(region.width) &&
+    isFiniteNumber(region.height) &&
+    Math.abs(region.x) <= REGION_MAX_X &&
+    Math.abs(region.y) <= REGION_MAX_Y &&
+    region.width >= REGION_MIN_SIDE &&
+    region.width <= REGION_MAX_WIDTH &&
+    region.height >= REGION_MIN_SIDE &&
+    region.height <= REGION_MAX_HEIGHT
+  )
+}
+
 /** Validate and copy data at the envelope boundary. */
 function normalizeSketch(value: unknown): Sketch {
   if (!isRecord(value) || value.version !== 1) invalidSketch()
@@ -66,22 +87,7 @@ function normalizeSketch(value: unknown): Sketch {
     invalidSketch()
 
   const region = value.region
-  if (
-    !isRecord(region) ||
-    !isFiniteNumber(region.x) ||
-    !isFiniteNumber(region.y) ||
-    !isFiniteNumber(region.width) ||
-    !isFiniteNumber(region.height) ||
-    region.x < -REGION_MAX_X ||
-    region.x > REGION_MAX_X ||
-    region.y < -REGION_MAX_Y ||
-    region.y > REGION_MAX_Y ||
-    region.width < REGION_MIN_SIDE ||
-    region.width > REGION_MAX_WIDTH ||
-    region.height < REGION_MIN_SIDE ||
-    region.height > REGION_MAX_HEIGHT
-  )
-    invalidSketch()
+  if (!isRecord(region) || !regionWithinBounds(region)) invalidSketch()
 
   if (!Array.isArray(value.strokes) || value.strokes.length > MAX_STROKES)
     invalidSketch()

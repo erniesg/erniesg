@@ -7,6 +7,7 @@ import {
   createSketchSvg,
   decodeSketch,
   encodeSketch,
+  regionWithinBounds,
   type Sketch,
 } from '../../../packages/margin/src/sketch'
 import type { TextAnnotation } from '../../../packages/margin/src/anchor'
@@ -327,17 +328,26 @@ export class SketchController {
         }
         const host = this.#content.getBoundingClientRect()
         const anchor = block.element.getBoundingClientRect()
+        const region = {
+          x: (rect.x - (anchor.left - host.left)) / anchor.width,
+          y: (rect.y - (anchor.top - host.top)) / anchor.width,
+          width: rect.width / anchor.width,
+          height: rect.height / anchor.width,
+        }
+        // The same bounds every stored sketch is decoded against: an area no
+        // reader could be shown is refused here, with the selection kept.
+        if (!regionWithinBounds(region)) {
+          start = null
+          this.#status.textContent =
+            'That area is too large to keep beside one passage. Drag a smaller one.'
+          return
+        }
         this.#requestKey = crypto.randomUUID()
         this.#draft = {
           version: 1,
           note: '',
           anchor: { blockId: block.id, quote: block.text.slice(0, 160) },
-          region: {
-            x: (rect.x - (anchor.left - host.left)) / anchor.width,
-            y: (rect.y - (anchor.top - host.top)) / anchor.width,
-            width: rect.width / anchor.width,
-            height: rect.height / anchor.width,
-          },
+          region,
           strokes: [],
         }
         this.#selection?.remove()

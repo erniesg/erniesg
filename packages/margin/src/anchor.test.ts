@@ -8,7 +8,7 @@ import {
   withStructSelector,
   type AnchorableNode,
 } from './anchor'
-import { annotationsFromAnchors, paintTargetsFor } from './controller'
+import { annotationsFromAnchors, isPaintedPlacement, paintTargetsFor } from './controller'
 import { NOTE_PAINT_KEY } from './palette'
 
 const PROSE =
@@ -225,6 +225,9 @@ describe('a note tagged with a role', () => {
       { annotation: note, placement },
     ] as never).map((target) => target.id)
     expect(ids).toEqual(['n'])
+    // Painting and clicking share one rule: unmarked text is never a click target.
+    expect(isPaintedPlacement({ annotation: sketchNote, placement } as never)).toBe(false)
+    expect(isPaintedPlacement({ annotation: note, placement } as never)).toBe(true)
   })
 })
 

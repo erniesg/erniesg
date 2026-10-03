@@ -6,6 +6,7 @@ import {
   encodeSketch,
   noteText,
   previewAspectRatio,
+  regionWithinBounds,
   sketchPathData,
   updateSketchNote,
   type Sketch,
@@ -153,6 +154,9 @@ describe('sketch notes', () => {
       expect(decodeSketch(envelope(region)), JSON.stringify(region)).toBeNull()
     }
     expect(decodeSketch(envelope({ x: -0.2, y: 4, width: 1.2, height: 4.5 }))).not.toBeNull()
+    // The drag code asks the same question before it builds a draft.
+    expect(regionWithinBounds({ x: 0, y: 0, width: 1, height: 100 })).toBe(false)
+    expect(regionWithinBounds({ x: -0.2, y: 4, width: 1.2, height: 4.5 })).toBe(true)
   })
 
   it('keeps the rail preview between 1:4 and 4:1', () => {

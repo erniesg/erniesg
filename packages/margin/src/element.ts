@@ -32,6 +32,7 @@ import type { TextAnnotation } from './anchor.js'
 import {
   annotationsFromAnchors,
   createMarginController,
+  isPaintedPlacement,
   type MarginController,
 } from './controller.js'
 import type { AnnotationPlacement } from './document.js'
@@ -1701,14 +1702,15 @@ export class MarginRailElement extends ElementBase {
     const offset = offsetForPoint(block.index, caret.node, caret.offset)
     const hits = this.#placements
       .filter(
-        ({ annotation, placement }) =>
-          // Only what is painted can be clicked: proposals paint as 060's diff,
-          // not here, and must not capture a click on unmarked prose.
-          annotation.kind !== 'proposal' &&
-          placement.status === 'anchored' &&
-          placement.nodeId === block.id &&
-          placement.start <= offset &&
-          offset < placement.end,
+        (entry) =>
+          // Only what is painted can be clicked: proposals paint as 060's diff
+          // and a sketch's relocation quote not at all, so neither may capture
+          // a click on unmarked prose.
+          isPaintedPlacement(entry) &&
+          entry.placement.status === 'anchored' &&
+          entry.placement.nodeId === block.id &&
+          entry.placement.start <= offset &&
+          offset < entry.placement.end,
       )
       .sort((a, b) => span(a) - span(b))
     if (hits.length === 0) return

@@ -13,6 +13,12 @@ import { installStaticRoutes } from './static-build'
  */
 
 const CHAPTER = '/books/build-a-coding-agent/ch07-strings/'
+// Has a figure (with a caption and a definition list), inline code and exercises.
+const FIGURE_CHAPTER = '/books/build-a-coding-agent/ch05-functions/'
+// Has a cost chart: an SVG drawn with fixed colours.
+const CHART_CHAPTER = '/books/build-a-coding-agent/ch06-dicts-sets/'
+// Has a walk figure: step boxes and back/next buttons.
+const WALK_CHAPTER = '/books/build-a-coding-agent/ch04-loops/'
 const SITE_HEADER = 'body > div > header'
 const PLAIN_BAR = '[data-book-bar]'
 
@@ -244,4 +250,162 @@ test.describe('the book look switch', () => {
     )
     expect(overflow).toBeLessThanOrEqual(1)
   })
+
+  for (const choice of ['site', 'plain'] as const) {
+    test(`in the dark theme, ${choice} paints the book's panels dark and legible`, async ({
+      page,
+    }) => {
+      await page.addInitScript((value) => {
+        localStorage.setItem('theme', 'dark')
+        localStorage.setItem('book-look', value)
+      }, choice)
+      await page.goto(FIGURE_CHAPTER)
+      expect(await page.evaluate(() => document.documentElement.classList.contains('dark'))).toBe(true)
+
+      const samples = await page.evaluate(() => {
+        // The colour actually behind an element: the first opaque background up
+        // its ancestors, so a transparent element is judged against its panel.
+        const parse = (value: string) => {
+          const match = value.match(/rgba?\(([^)]+)\)/)
+          if (!match) return null
+          const [r, g, b, a = 1] = match[1].split(/[ ,/]+/).filter(Boolean).map(Number)
+          return { r, g, b, a }
+        }
+        const behind = (element: Element) => {
+          for (let node: Element | null = element; node; node = node.parentElement) {
+            const colour = parse(getComputedStyle(node).backgroundColor)
+            if (colour && colour.a > 0.5) return colour
+          }
+          return parse(getComputedStyle(document.body).backgroundColor)!
+        }
+        const luminance = ({ r, g, b }: { r: number; g: number; b: number }) => {
+          const channel = (value: number) => {
+            const v = value / 255
+            return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
+          }
+          return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+        }
+        const contrast = (a: number, b: number) =>
+          (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+        const sample = (name: string, selector: string) => {
+          const element = document.querySelector(selector)
+          if (!element) return { name, missing: true }
+          const background = luminance(behind(element))
+          const ink = luminance(parse(getComputedStyle(element).color)!)
+          return { name, background, contrast: contrast(background, ink) }
+        }
+        return [
+          sample('figure', '.book-content .figure'),
+          sample('figure title', '.book-content .figure-title'),
+          sample('figure caption', '.book-content figcaption'),
+          sample('figure definition', '.book-content .pairs dd'),
+          sample('figure term', '.book-content .pairs dt'),
+          sample('inline code', '.book-content p > code'),
+          sample('exercise', '.book-content .exercise'),
+        ]
+      })
+
+      for (const entry of samples) {
+        expect(entry, `${entry.name} is on the page`).not.toHaveProperty('missing')
+        // Dark: no white card or chip on the dark page.
+        expect(entry.background, `${entry.name} background`).toBeLessThan(0.1)
+        expect(entry.contrast, `${entry.name} contrast`).toBeGreaterThanOrEqual(4.5)
+      }
+    })
+  }
+
+  for (const choice of ['site', 'plain'] as const) {
+    test(`in the dark theme, ${choice} redraws a chart's labels and lines for the dark card`, async ({
+      page,
+    }) => {
+      await page.addInitScript((value) => {
+        localStorage.setItem('theme', 'dark')
+        localStorage.setItem('book-look', value)
+      }, choice)
+      await page.goto(CHART_CHAPTER)
+      const result = await page.evaluate(() => {
+        const parse = (value: string) => {
+          const match = value.match(/rgba?\(([^)]+)\)/)
+          if (!match) return null
+          const [r, g, b] = match[1].split(/[ ,/]+/).filter(Boolean).map(Number)
+          return { r, g, b }
+        }
+        const luminance = ({ r, g, b }: { r: number; g: number; b: number }) => {
+          const channel = (value: number) => {
+            const v = value / 255
+            return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
+          }
+          return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+        }
+        const contrast = (a: number, b: number) =>
+          (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+        const chart = document.querySelector('.book-content svg.cost')
+        if (!chart) return null
+        const card = luminance(parse(getComputedStyle(chart.closest('.figure')!).backgroundColor)!)
+        const against = (value: string) => contrast(card, luminance(parse(value)!))
+        return {
+          labels: [...chart.querySelectorAll('text')].map((t) => against(getComputedStyle(t).fill)),
+          // Series and axis are both graphics: every stroke the chart draws.
+          lines: [...chart.querySelectorAll('polyline, line')].map((l) => against(getComputedStyle(l).stroke)),
+        }
+      })
+      expect(result, 'a cost chart is on the page').not.toBeNull()
+      expect(result!.labels.length).toBeGreaterThan(0)
+      expect(result!.lines.length).toBeGreaterThan(0)
+      for (const value of result!.labels) expect(value, 'tick label contrast').toBeGreaterThanOrEqual(4.5)
+      // Lines are graphics, not text: 3:1 is the bar for those.
+      for (const value of result!.lines) expect(value, 'series and axis contrast').toBeGreaterThanOrEqual(3)
+    })
+  }
+
+  for (const choice of ['site', 'plain'] as const) {
+    test(`in the dark theme, ${choice} keeps every outline inside a figure at 3:1`, async ({
+      page,
+    }) => {
+      await page.addInitScript((value) => {
+        localStorage.setItem('theme', 'dark')
+        localStorage.setItem('book-look', value)
+      }, choice)
+      // Table borders, walk-step boxes and the step buttons: graphics, so 3:1.
+      for (const chapter of [FIGURE_CHAPTER, WALK_CHAPTER]) {
+        await page.goto(chapter)
+        const weak = await page.evaluate(() => {
+          const parse = (value: string) => {
+            const match = value.match(/rgba?\(([^)]+)\)/)
+            if (!match) return null
+            const [r, g, b, a = 1] = match[1].split(/[ ,/]+/).filter(Boolean).map(Number)
+            return a === 0 ? null : { r, g, b }
+          }
+          const luminance = ({ r, g, b }: { r: number; g: number; b: number }) => {
+            const channel = (value: number) => {
+              const v = value / 255
+              return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
+            }
+            return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+          }
+          const contrast = (a: number, b: number) =>
+            (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+          const found: string[] = []
+          for (const figure of document.querySelectorAll('.book-content .figure')) {
+            const card = luminance(parse(getComputedStyle(figure).backgroundColor)!)
+            for (const element of figure.querySelectorAll('*')) {
+              const style = getComputedStyle(element)
+              if (style.display === 'none' || style.visibility === 'hidden') continue
+              for (const side of ['Top', 'Right', 'Bottom', 'Left']) {
+                if (style[`border${side}Style` as 'borderTopStyle'] === 'none') continue
+                if (parseFloat(style[`border${side}Width` as 'borderTopWidth']) === 0) continue
+                const colour = parse(style[`border${side}Color` as 'borderTopColor'])
+                if (!colour) continue
+                const ratio = contrast(card, luminance(colour))
+                if (ratio < 3) found.push(`${element.tagName.toLowerCase()}.${element.className} ${side} ${ratio.toFixed(2)}`)
+              }
+            }
+          }
+          return found
+        })
+        expect(weak, chapter).toEqual([])
+      }
+    })
+  }
 })
+

@@ -30,6 +30,7 @@ import {
   validateFixturePin,
   validateOwnedWorkerName,
   validateTeardownProof,
+  localTarballDependencies,
 } from './disposable-pdf-worker-lib.mjs'
 import {
   bindExecutable,
@@ -975,3 +976,35 @@ describe('cleanup-on-failure lifecycle', () => {
     expect(JSON.stringify(error)).not.toMatch(/private source|SECRET/u)
   })
 })
+
+describe('isolated Wrangler install', () => {
+  // The isolated install copies the manifest and lockfile into an empty tree;
+  // a `file:` tarball they name has to come with them, or npm ci cannot resolve it.
+  it('lists the vendored tarballs the lockfile installs from the repository', async () => {
+    const lockfile = JSON.parse(
+      await readFile(new URL('../../package-lock.json', import.meta.url), 'utf8'),
+    )
+    const tarballs = localTarballDependencies(lockfile)
+    expect(tarballs.map((entry) => entry.path)).toContain(
+      'vendor/struct/erniesg-struct-0.0.0-10116f4726da89ebabc823cb25706f2de5386f40.tgz',
+    )
+    for (const entry of tarballs) expect(entry.integrity).toMatch(/^sha512-/)
+  })
+
+  it('refuses local dependencies it cannot copy safely', () => {
+    const lock = (resolved, integrity = 'sha512-x') => ({
+      packages: { '': {}, 'node_modules/p': { resolved, integrity } },
+    })
+    expect(localTarballDependencies(lock('https://registry.npmjs.org/p/-/p-1.tgz'))).toEqual([])
+    for (const resolved of [
+      'file:../outside.tgz',
+      'file:/abs/p.tgz',
+      'file:vendor/p',
+      'file:src/p.tgz',
+    ]) {
+      expect(() => localTarballDependencies(lock(resolved)), resolved).toThrow()
+    }
+    expect(() => localTarballDependencies(lock('file:vendor/p.tgz', ''))).toThrow()
+  })
+})
+

@@ -248,6 +248,33 @@ export function parseDisposablePdfWorkerArguments(argv) {
   }
 }
 
+/**
+ * The repository tarballs the lockfile installs (`file:vendor/...tgz`). The
+ * isolated Wrangler install copies only the manifest and lockfile into an
+ * empty tree, so each of these has to be copied with them. Anything else
+ * local (a directory, a path outside vendor/, an entry without integrity) is
+ * refused: it could not be verified after copying.
+ */
+export function localTarballDependencies(lockfile) {
+  if (!isRecord(lockfile) || !isRecord(lockfile.packages)) fail('PREFLIGHT_FAILED')
+  const tarballs = new Map()
+  for (const entry of Object.values(lockfile.packages)) {
+    if (!isRecord(entry) || typeof entry.resolved !== 'string') continue
+    if (!entry.resolved.startsWith('file:')) continue
+    const relative = entry.resolved.slice('file:'.length)
+    if (
+      !/^vendor\/(?:[A-Za-z0-9._@-]+\/)*[A-Za-z0-9._@-]+\.tgz$/u.test(relative) ||
+      relative.split('/').includes('..') ||
+      typeof entry.integrity !== 'string' ||
+      !entry.integrity.startsWith('sha512-')
+    ) {
+      fail('PREFLIGHT_FAILED')
+    }
+    tarballs.set(relative, { path: relative, integrity: entry.integrity })
+  }
+  return [...tarballs.values()]
+}
+
 export function validateFixturePin(candidate) {
   if (
     !isRecord(candidate) ||

@@ -8,9 +8,9 @@ claude
 
 Built on #408 (the Map link in the book bar) and #411 (sketches and
 `decodeSketch` in `packages/margin`). Both are merged, so it needs no spec
-dependency. The "applied" proposal state needs issue 060
+dependency. The later proposal states come from issue 060
 (`POST /proposals/:id/apply` still answers 501). Until 060 lands, proposals
-show only pending or withdrawn; see criterion 2.
+are only pending or withdrawn; see criterion 2.
 
 ## Goal
 
@@ -59,26 +59,41 @@ chapter in book order, and each entry links back to its exact spot.
    - A sketch shows a small read-only SVG drawn with `decodeSketch` from
      `packages/margin`. A malformed sketch shows as a plain note, the same
      rule the rail uses.
-   - A proposal shows its state: pending or withdrawn. It shows "applied"
-     too once issue 060 records that state; until then nothing can be
-     applied.
+   - A proposal shows its state, using issue 060's state machine
+     (`docs/issues/060-admin-review-apply-and-version-history.md`, item 10):
+     pending → "Pending", withdrawn → "Withdrawn", `approved` or `pr_open` →
+     "Being applied", `merged` → "Applied", `conflict` or `apply_failed` →
+     "Needs attention", `closed` → "Closed". Until 060 lands only the first
+     two can occur. A unit test of the mapping covers every 060 state, so
+     nothing reads as pending once it has moved on.
    - Replies show under their parent when the parent is also the reader's.
      A reply to **someone else's** note must not pull that note into
      `/mine`, which stays owner-only. The page fetches each such parent
-     through the existing visibility-scoped `GET /annotations/:id`. If the
-     parent is visible, the reply shows under it, marked as someone else's.
-     If it is not, the reply shows on its own as "Reply to a note you can no
-     longer see", with its link back to the spot.
-3. **Back to the spot.** Each entry links to
-   `<chapter URL>?annotation=<id>`. On load, the chapter's margin element
+     through the existing visibility-scoped `GET /annotations/:id`, and the
+     reply shows under it, marked as someone else's. (A parent cannot become
+     invisible to a reply's author: migration 0001's triggers refuse a reply
+     to someone else's private note and refuse making a replied-to note
+     private.) If the lookup fails, for example offline, the reply shows on
+     its own with its link back to the spot.
+   - A note the reader deleted while replies still hang from it is kept as a
+     tombstone (`margin:deleted`, no body). It shows as "Deleted note", with
+     no body, and its replies stay nested under it.
+3. **Back to the spot.** Each entry links to its own stored document
+   (`target.source`) with `annotation=<id>` added through `URL`
+   `searchParams`, so an existing query or fragment survives. That is the
+   chapter URL for chapter rows, and the front page, `/map/` or wherever it
+   was made for the others. On load, the chapter's margin element
    scrolls to that annotation, focuses it in the rail and highlights its
    anchor. When the anchor no longer resolves because the text changed, the
    rail says so and still shows the annotation. The overview marks it as
    "text changed".
 4. **Book bar.** An "Annotations" link sits next to "Map" in both the Site and
    Plain looks. It is shown only to signed-in readers.
-5. **Empty and signed-out states.** Signed out, the page shows the existing
-   sign-in prompt. Signed in with no annotations, it says so and points to the
+5. **Empty and signed-out states.** Signed out (`/auth/me` reports no
+   principal), the page shows "Sign in to see your annotations" with a link
+   to `/auth/login?return_to=<this page's path>`. The Worker already accepts
+   and sanitises `return_to`. No such prompt exists elsewhere yet, so this
+   one is new. Signed in with no annotations, it says so and points to the
    first chapter.
 6. Filters on the page, client-side only: kind (highlight, note, sketch,
    proposal) and chapter. Nothing new is stored.
@@ -100,9 +115,12 @@ chapter in book order, and each entry links back to its exact spot.
     proposal;
   - the overview lists all four under the right chapters in book order;
   - a note on the book's front page appears under "Book front page";
-  - a reply to another reader's public note shows under that note, and a
-    reply whose parent is private to someone else shows as "Reply to a note
-    you can no longer see";
+  - a reply to another reader's public note shows under that note, marked as
+    theirs;
+  - a deleted note with a reply shows as "Deleted note" with the reply
+    nested under it;
+  - a note made on `/books/<slug>/map/` links back to `/map/?annotation=<id>`;
+  - signed out, the prompt links to `/auth/login?return_to=` this page;
   - clicking one lands on the chapter with that annotation focused in the
     rail;
   - an annotation whose quote no longer matches shows "text changed" in both
@@ -147,7 +165,9 @@ links into the rail, and the book-bar link.
 ## Stop conditions
 
 - Stop before adding a migration or a new table.
-- Stop before listing any annotation the viewer did not create.
+- Stop before `/mine` returns any annotation the viewer did not create.
+  Showing a foreign parent fetched through the visibility-scoped
+  `GET /annotations/:id` (criterion 2) is not listing it.
 - Stop before adding a cross-book or cross-site view.
 - Stop before building the page on the server at request time; it stays a
   static page that fetches the API.

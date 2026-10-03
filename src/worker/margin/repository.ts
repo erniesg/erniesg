@@ -34,6 +34,12 @@ export type MarginPrefs = {
   modified: string
 }
 
+/** Durable result of a keyed create, retained after its annotation is deleted. */
+export type IdempotencyReceipt = {
+  fingerprint: string
+  annotationId: string
+}
+
 export type AnnotationPatch = {
   body?: string
   visibility?: MarginVisibility
@@ -83,6 +89,19 @@ export interface MarginRepository {
   ): Promise<MarginAnnotationRecord | null>
 
   insertAnnotation(record: MarginAnnotationRecord): Promise<void>
+
+  /** Owner- and tenant-scoped; never exposes a different caller's receipt. */
+  findIdempotencyReceipt(
+    scope: TenantScope,
+    owner: string,
+    key: string,
+  ): Promise<IdempotencyReceipt | null>
+
+  /** Atomically records a keyed result with its newly-created annotation. */
+  insertAnnotationWithReceipt(
+    record: MarginAnnotationRecord,
+    receipt: { key: string; fingerprint: string },
+  ): Promise<void>
 
   /** Owner-scoped. Returns `null` when no row matched, which is a 404. */
   updateAnnotation(

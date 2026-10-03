@@ -27,6 +27,10 @@ export interface D1PreparedStatement {
 
 export interface D1Database {
   prepare(query: string): D1PreparedStatement
+  /** D1 executes a batch atomically: all statements commit, or none do. */
+  batch?<T = Record<string, unknown>>(
+    statements: D1PreparedStatement[],
+  ): Promise<D1Result<T>[]>
 }
 
 export function isD1Database(value: unknown): value is D1Database {

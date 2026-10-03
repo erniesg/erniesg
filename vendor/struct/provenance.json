@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "packageName": "@erniesg/struct",
+  "packageVersion": "0.0.0",
+  "state": "implemented-unreleased",
+  "sourceRepository": "https://github.com/erniesg/struct",
+  "sourceCommit": "10116f4726da89ebabc823cb25706f2de5386f40",
+  "sourceBaseCommit": "f662957a19ba7f63d5c7256f6b343243e9ced8b4",
+  "sourceLockfileSha256": "e5a55e1945960825905c4b92d90d16be9b78409f34e033b11e5d6149c5f9c7fc",
+  "artifact": "erniesg-struct-0.0.0-10116f4726da89ebabc823cb25706f2de5386f40.tgz",
+  "sha256": "e18d743de5e2c8431b64a830974bd1180299f21cc8ab8cf70a9b184c36ab1374",
+  "integrity": "sha512-aHjPlaZKOe8AEb4sOe+CqE+kTdT+R32Azsd8pUjGzfEMn9s7DePyDrGxJgQY+2OIZeaGypaRxoIb6DxIBpyu7w==",
+  "toolchain": {
+    "node": "24.14.1",
+    "npm": "11.11.0"
+  },
+  "buildCommands": [
+    "npm ci",
+    "npm run test:package",
+    "npm pack --json"
+  ]
+}

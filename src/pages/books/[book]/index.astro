@@ -44,6 +44,14 @@ const written = book.topics.filter((topic) => topic.nodes.length > 0).length
     <p class="max-w-2xl text-base leading-relaxed text-muted-foreground">
       {book.subtitle}
     </p>
+    <p class="text-sm">
+      <a class="underline underline-offset-4" href={`${book.path}map/`}
+        >Open the map →</a
+      >
+      <span class="text-muted-foreground">
+        every topic, what it needs first, and where you stand</span
+      >
+    </p>
   </header>
 
   <section class="mt-10 flex flex-col gap-y-6" aria-labelledby="contents">

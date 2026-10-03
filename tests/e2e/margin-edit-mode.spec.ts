@@ -40,7 +40,7 @@ type Service = {
   signedIn: boolean
   as: Principal
   rows(): Promise<Stored[]>
-  post(body: unknown): Promise<Response>
+  post(body: unknown, key?: string): Promise<Response>
 }
 
 async function mountService(page: Page, documentUri: string): Promise<Service> {
@@ -64,12 +64,12 @@ async function mountService(page: Page, documentUri: string): Promise<Service> {
       )
       return ((await response.json()) as { annotations: Stored[] }).annotations
     },
-    post: (body) =>
+    post: (body, key) =>
       call(
         new Request('https://ernie.sg/api/margin/v1/annotations', {
           method: 'POST',
           body: JSON.stringify(body),
-          headers: { 'content-type': 'application/json' },
+          headers: { 'content-type': 'application/json', ...(key ? { 'Idempotency-Key': key } : {}) },
         }),
       ),
   }
@@ -88,9 +88,9 @@ async function mountService(page: Page, documentUri: string): Promise<Service> {
     const incoming = route.request()
     const method = incoming.method()
     const response = await call(
-      new Request(incoming.url(), {
+      new Request(incoming.url().replace('/proxy/api/margin/', '/api/margin/'), {
         method,
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...(incoming.headers()['idempotency-key'] ? { 'Idempotency-Key': incoming.headers()['idempotency-key'] } : {}) },
         ...(method === 'GET' || method === 'HEAD' ? {} : { body: incoming.postData() ?? undefined }),
       }),
     )
@@ -510,5 +510,231 @@ test.describe('edit mode', () => {
     await selectWord(page, word)
     await page.keyboard.type('PLAINLOOK')
     await expect(page.getByRole('button', { name: 'Save proposal' })).toBeEnabled()
+  })
+})
+
+test.describe('sketch annotations in edit mode', () => {
+  async function area(page: Page) {
+    const block = page
+      .locator('.book-content [data-block-kind=prose]')
+      .filter({ hasText: 'list' })
+      .first()
+    await block.scrollIntoViewIfNeeded()
+    const box = (await block.boundingBox())!
+    await page.mouse.move(box.x + 5, box.y + 5)
+    await page.mouse.down()
+    await page.mouse.move(
+      box.x + Math.min(box.width - 5, 200),
+      box.y + Math.min(box.height - 5, 60),
+      { steps: 5 },
+    )
+    await page.mouse.up()
+    const canvas = page.locator('[data-sketch-canvas]')
+    await expect(canvas).toBeVisible()
+    const region = (await canvas.boundingBox())!
+    await page.mouse.move(region.x + 10, region.y + 10)
+    await page.mouse.down()
+    await page.mouse.move(
+      region.x + region.width - 10,
+      region.y + region.height - 10,
+      { steps: 10 },
+    )
+    await page.mouse.up()
+  }
+
+  test('saves sketch and note through the real annotation service, and reloads it', async ({
+    page,
+  }) => {
+    const { service } = await openEditor(page)
+    await page.getByRole('button', { name: 'Sketch', exact: true }).click()
+    await expect(page.locator('.book-content')).toBeVisible()
+    await area(page)
+    await page
+      .getByLabel('Sketch annotation')
+      .fill('Explain this list with a diagram')
+    await page.screenshot({ path: '.agent/evidence/book-sketch-ui.png' })
+    await page
+      .getByRole('button', { name: 'Save annotation', exact: true })
+      .click()
+    await expect(page.locator('[data-sketch-status]')).toContainText('saved')
+    const rows = await service.rows()
+    expect(rows).toHaveLength(1)
+    expect(rows[0].motivation).toBe('commenting')
+    expect(rows[0].body?.value).toContain('Explain this list with a diagram')
+    expect(rows[0]['margin:baseCommit']).toBeUndefined()
+    await expect(page.locator('[data-sketch-saved] path')).toHaveCount(1)
+    await page.reload()
+    await expect(page.locator('[data-sketch-saved] path')).toHaveCount(1)
+    const marginToggle = page.getByRole('button', { name: 'Margin', exact: true })
+    if (await marginToggle.isVisible()) await marginToggle.click()
+    await expect(page.locator('margin-rail')).toContainText(
+      'Explain this list with a diagram',
+    )
+    await expect(page.locator('margin-rail')).not.toContainText('margin:sketch:v1')
+    const rail = page.locator('margin-rail')
+    await rail.getByRole('button', { name: 'Edit', exact: true }).click()
+    await rail.getByLabel('Edit note', { exact: true }).fill('Revised diagram note')
+    await rail.getByRole('button', { name: 'Save', exact: true }).click()
+    await expect(rail).toContainText('Revised diagram note')
+    await expect(page.locator('[data-sketch-saved]')).toHaveAttribute('aria-label', 'Sketch: Revised diagram note')
+    const changed = await service.rows()
+    expect(JSON.parse(changed[0].body!.value.split('\n').slice(1).join('\n')).strokes).toEqual(JSON.parse(rows[0].body!.value.split('\n').slice(1).join('\n')).strokes)
+    await rail.locator('[data-margin-action=delete]').click()
+    await expect(page.locator('[data-sketch-saved]')).toHaveCount(0)
+
+  })
+
+  test('restores an unsaved sketch after reload and keeps it when exiting edit mode', async ({ page }) => {
+    await openEditor(page)
+    await page.getByRole('button', { name: 'Sketch', exact: true }).click()
+    await area(page)
+    await page.getByLabel('Sketch annotation').fill('Draft note')
+    await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: 'Stop editing' }).click()
+    await page.reload()
+    await page.locator('[data-edit-toggle]').click()
+    await page.getByRole('button', { name: 'Sketch', exact: true }).click()
+    await expect(page.getByLabel('Sketch annotation')).toHaveValue('Draft note')
+    await expect(page.locator('[data-sketch-canvas] path')).toHaveCount(1)
+    await page.getByRole('button', { name: 'Undo stroke', exact: true }).click()
+    await expect(page.locator('[data-sketch-canvas] path')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Save annotation', exact: true })).toBeDisabled()
+  })
+
+  test('retry after a lost save response creates just one annotation, including after reload', async ({ page }) => {
+    const { service } = await openEditor(page)
+    await page.getByRole('button', { name: 'Sketch', exact: true }).click()
+    await area(page)
+    await page.getByLabel('Sketch annotation').fill('One annotation only')
+    // Fulfill the persisted request with invalid JSON, as if its body was lost in transit.
+    await page.route('**/api/margin/v1/annotations', async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback()
+      const response = await service.post(JSON.parse(route.request().postData()!), route.request().headers()['idempotency-key'])
+      await route.fulfill({ status: response.status, body: 'truncated-response' })
+    })
+    await page.getByRole('button', { name: 'Save annotation', exact: true }).click()
+    await expect(page.locator('[data-sketch-status]')).toContainText('Could not save')
+    await page.unroute('**/api/margin/v1/annotations')
+    await page.reload()
+    await page.locator('[data-edit-toggle]').click()
+    await page.getByRole('button', { name: 'Sketch', exact: true }).click()
+    await page.getByRole('button', { name: 'Save annotation', exact: true }).click()
+    await expect(page.locator('[data-sketch-status]')).toContainText('saved')
+    expect(await service.rows()).toHaveLength(1)
+  })
+
+  for (const keepReplies of [false, true]) {
+    test(`a stale draft cannot recreate a ${keepReplies ? 'tombstoned' : 'deleted'} annotation after a lost response`, async ({ page }) => {
+      const { service } = await openEditor(page)
+      await page.getByRole('button', { name: 'Sketch', exact: true }).click()
+      await area(page)
+      await page.getByLabel('Sketch annotation').fill('Deleted annotation')
+      let originalRequest: Record<string, unknown> = {}
+      await page.route('**/api/margin/v1/annotations', async (route) => {
+        if (route.request().method() !== 'POST') return route.fallback()
+        originalRequest = JSON.parse(route.request().postData()!)
+        const response = await service.post(originalRequest, route.request().headers()['idempotency-key'])
+        await route.fulfill({ status: response.status, body: 'truncated-response' })
+      })
+      await page.getByRole('button', { name: 'Save annotation', exact: true }).click()
+      await expect(page.locator('[data-sketch-status]')).toContainText('Could not save')
+      await page.unroute('**/api/margin/v1/annotations')
+      if (keepReplies) {
+        const [parent] = await service.rows()
+        const reply = await service.post({
+          ...originalRequest,
+          body: { type: 'TextualBody', value: 'Reply to preserve the thread', format: 'text/plain' },
+          'margin:parentId': parent.id,
+        })
+        expect(reply.status).toBe(201)
+      }
+      await page.reload()
+      const marginToggle = page.getByRole('button', { name: 'Margin', exact: true })
+      if (await marginToggle.isVisible()) await marginToggle.click()
+      await page.locator('margin-rail [data-margin-action=delete]').first().click()
+      await expect(page.locator('[data-sketch-saved]')).toHaveCount(0)
+      await page.locator('[data-edit-toggle]').click()
+      await page.getByRole('button', { name: 'Sketch', exact: true }).click()
+      await page.getByRole('button', { name: 'Save annotation', exact: true }).click()
+      await expect(page.locator('[data-sketch-status]')).toContainText('409')
+      await expect(page.getByLabel('Sketch annotation')).toHaveValue('Deleted annotation')
+      const retained = await service.rows()
+      expect(retained).toHaveLength(keepReplies ? 2 : 0)
+      if (keepReplies) expect(retained[0]).toMatchObject({ 'margin:deleted': true })
+    })
+  }
+
+  test('uses the configured annotation service path', async ({ page }) => {
+    const { service } = await openEditor(page)
+    await page.locator('margin-rail').evaluate((rail) => rail.setAttribute('api-base', '/proxy'))
+    await page.getByRole('button', { name: 'Sketch', exact: true }).click()
+    await area(page)
+    await page.getByLabel('Sketch annotation').fill('Proxy annotation')
+    const posted = page.waitForRequest((request) => request.method() === 'POST' && request.url().endsWith('/proxy/api/margin/v1/annotations'))
+    await page.getByRole('button', { name: 'Save annotation', exact: true }).click()
+    await posted
+    await expect(page.locator('[data-sketch-status]')).toContainText('saved')
+    expect(await service.rows()).toHaveLength(1)
+  })
+
+  test('drawing controls fit on a phone and preserve a stroke through resizing', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await openEditor(page)
+    await page.getByRole('button', { name: 'Sketch', exact: true }).click()
+    await area(page)
+    await page.getByLabel('Sketch annotation').fill('Mobile note')
+    const toolbar = (await page.locator('[data-sketch-toolbar]').boundingBox())!
+    expect(toolbar.x).toBeGreaterThanOrEqual(0)
+    expect(toolbar.x + toolbar.width).toBeLessThanOrEqual(390)
+    const before = await page.locator('[data-sketch-canvas] path').getAttribute('d')
+    await page.setViewportSize({ width: 1280, height: 1000 })
+    await expect(page.locator('[data-sketch-canvas] path')).toHaveAttribute('d', before!)
+    await expect(page.getByLabel('Sketch annotation')).toHaveValue('Mobile note')
+    await page.keyboard.press('Escape')
+    await expect(page.locator(SURFACE)).toBeVisible()
+  })
+
+  test('shortcut switches tools without changing prose, Escape returns to editing', async ({
+    page,
+  }) => {
+    await openEditor(page)
+    const text = await page.locator(SURFACE).textContent()
+    await page.locator(EDITABLE).first().press('Control+Shift+D')
+    await expect(page.locator('[data-sketch-toolbar]')).toBeVisible()
+    await expect(page.locator('.book-content')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.locator(SURFACE)).toBeVisible()
+    expect(await page.locator(SURFACE).textContent()).toBe(text)
+    await expect(
+      page.getByRole('button', { name: 'Save proposal' }),
+    ).toBeDisabled()
+  })
+
+  test('failed save retains sketch and note for retry and prevents duplicate submits', async ({
+    page,
+  }) => {
+    const { service } = await openEditor(page)
+    await page.getByRole('button', { name: 'Sketch', exact: true }).click()
+    await area(page)
+    await page.getByLabel('Sketch annotation').fill('Retry me')
+    await page.route('**/api/margin/v1/annotations', async (route) => {
+      if (route.request().method() === 'POST')
+        await route.fulfill({ status: 503, body: '{}' })
+      else await route.fallback()
+    })
+    await page
+      .getByRole('button', { name: 'Save annotation', exact: true })
+      .click()
+    await expect(page.locator('[data-sketch-status]')).toContainText(
+      'Could not save',
+    )
+    await expect(page.getByLabel('Sketch annotation')).toHaveValue('Retry me')
+    await expect(page.locator('[data-sketch-canvas] path')).toHaveCount(1)
+    await page.unroute('**/api/margin/v1/annotations')
+    await page
+      .getByRole('button', { name: 'Save annotation', exact: true })
+      .dblclick()
+    await expect(page.locator('[data-sketch-status]')).toContainText('saved')
+    expect(await service.rows()).toHaveLength(1)
   })
 })

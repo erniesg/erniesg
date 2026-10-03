@@ -1363,6 +1363,118 @@ CONTENT_AT_RULES = """
 @media (prefers-reduced-motion: reduce) { .desk-actions button.busy::after { animation:none; } }
 """
 
+# The book's map (runtime/map.mjs draws it): every topic, what it needs first,
+# and where the reader stands. The preview serves it at /map, the site at
+# /books/<slug>/map/; both draw the same markup with the same stylesheet.
+# Each pinned to its exact bytes (Subresource Integrity): a CDN that served
+# anything else would have it refused, not run with the page's privileges.
+# Changing a version means recomputing its hash (sha384, base64).
+MAP_LIBRARIES = (
+    {
+        "url": "https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.2/cytoscape.min.js",
+        "integrity": "sha384-IWROdLKRsN1UuJywMlWl7/blXQ8GEooN2n7dzTxfEPd7ybYIKCUJ2Ol/1Gpf3YV4",
+    },
+    {
+        "url": "https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js",
+        "integrity": "sha384-2IH3T69EIKYC4c+RXZifZRvaH5SRUdacJW7j6HtE5rQbvLhKKdawxq6vpIzJ7j9M",
+    },
+    {
+        "url": "https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js",
+        "integrity": "sha384-EHCdyFVbhtbpgI+4x7ETlZUvJwOkxJublmhTpH114NSk3fqfiUgcLl6pQm8JQwg9",
+    },
+)
+
+MAP_CSS = """
+.map-title { font-size:2rem; font-weight:700; line-height:1.2; margin:0 0 .5rem; }
+.map-lede { font-size:1.05rem; line-height:1.55; margin:0 0 .4rem; color:var(--dim, #666); }
+.map-counts { font:.85rem ui-sans-serif,system-ui; color:var(--dim, #666); margin:0; }
+.map-topics { margin-top:1.6rem; font:.87rem/1.5 ui-sans-serif,system-ui; }
+.map-topics-title { font:600 1rem ui-sans-serif,system-ui; margin:0 0 .4rem; }
+.map-topics-part { font:600 .68rem ui-sans-serif,system-ui; letter-spacing:.09em; text-transform:uppercase;
+  color:var(--dim, #666); margin:1rem 0 .3rem; }
+.map-topics ul { list-style:none; margin:0; padding:0; display:flex; flex-wrap:wrap; gap:6px; }
+.map-topics button { font:inherit; padding:4px 9px; border:1px solid var(--line, #e2e2e2); border-radius:6px;
+  background:transparent; color:inherit; cursor:pointer; }
+.map-topics button:hover, .map-topics button[aria-current="true"] { border-color:var(--ink, #1a1a1a); }
+.map-topics button:focus-visible { outline:2px solid var(--accent, #0369a1); outline-offset:2px; }
+.map-topic-state { margin-left:.4rem; color:var(--dim, #666); font-size:.75rem; }
+.map-detail:focus { outline:none; }
+.map-detail:focus-visible { outline:2px solid var(--accent, #0369a1); outline-offset:2px; }
+.map-detail .rail-title { font:600 .68rem ui-sans-serif,system-ui; letter-spacing:.09em;
+  text-transform:uppercase; color:var(--dim); }
+.map-tools { display:flex; gap:14px; align-items:center; flex-wrap:wrap; margin:14px 0 10px;
+  font:.78rem ui-sans-serif,system-ui; color:var(--dim); }
+#map-search { font:inherit; padding:5px 10px; border:1px solid var(--line); border-radius:6px;
+  min-width:180px; }
+.legend-item { display:flex; align-items:center; gap:5px; }
+.swatch { width:12px; height:12px; border-radius:3px; display:inline-block; border:1.5px solid; }
+.swatch.cleared { background:#dcfce7; border-color:#15803d; }
+.swatch.open { background:#e0f2fe; border-color:#0369a1; }
+.swatch.locked { background:#f1f1ef; border-color:#9ca3af; }
+.swatch.empty { background:#fafaf8; border-color:#d4d4d4; border-style:dashed; }
+.map-wrap { display:grid; grid-template-columns:minmax(0,1fr) 19rem; gap:1.2rem; align-items:start; }
+.map-stage { position:relative; }
+#map { height:70vh; min-height:460px; border:1px solid var(--line); border-radius:10px; background:#fff; }
+.map-controls { position:absolute; left:12px; bottom:12px; display:flex; gap:6px;
+  background:rgba(255,255,255,.94); border:1px solid var(--line); border-radius:8px; padding:4px; }
+.map-controls button { font:600 .8rem ui-sans-serif,system-ui; min-width:30px; padding:4px 8px;
+  border:0; border-radius:5px; background:transparent; cursor:pointer; color:var(--ink); }
+.map-controls button:hover { background:#f0efe9; }
+.map-detail { border:1px solid var(--line); border-radius:10px; background:#fff; padding:14px 16px;
+  font:.87rem/1.5 ui-sans-serif,system-ui; max-height:70vh; overflow:auto; }
+.detail-empty { color:var(--dim); font-size:.82rem; }
+.detail-state { display:inline-block; font:600 .7rem ui-sans-serif,system-ui; letter-spacing:.06em;
+  text-transform:uppercase; padding:3px 8px; border-radius:20px; margin:0 0 .5rem; }
+.detail-state.cleared { background:#dcfce7; color:#14532d; }
+.detail-state.open { background:#e0f2fe; color:#0c4a6e; }
+.detail-state.locked { background:#f1f1ef; color:#4b5563; }
+.detail-state.empty { background:#fafaf8; color:#6b7280; }
+.detail-title { font:600 1.05rem ui-sans-serif,system-ui; margin:.1rem 0; }
+.detail-part { color:var(--dim); font-size:.82rem; margin:.1rem 0 .4rem; }
+.detail-agent { margin:.5rem 0 .35rem; }
+.detail-progress { margin:.35rem 0 .2rem; color:var(--dim); font-size:.82rem; }
+.detail-list { margin:.35rem 0 1.15rem; padding-left:1.15rem; }
+.detail-list li { margin:.22rem 0; }
+.detail-list a { color:var(--accent); text-decoration:none; }
+.detail-kind { color:var(--dim); font-size:.75rem; margin-left:.4rem; }
+.map-detail .rail-title { margin:1.15rem 0 0; padding-top:.9rem; border-top:1px solid var(--line); }
+.map-detail .rail-title:first-of-type { border-top:0; padding-top:0; }
+.tick { color:#15803d; }
+"""
+
+# Kept apart, as CONTENT_AT_RULES is: the site scopes MAP_CSS by selector
+# prefix, which an at-rule would defeat. `.map-wrap` exists only on the map.
+MAP_AT_RULES = """
+@media (max-width:1100px) { .map-wrap { grid-template-columns:minmax(0,1fr); } }
+"""
+
+
+def map_markup() -> str:
+    """The map page's body. The counts line and the panel fill in from progress."""
+    return '''<h1 class="map-title">The map</h1>
+<p class="lede map-lede">Every topic in the book and what it needs first. Click one to see
+what it unlocks and what is written for it.</p>
+<p class="edition map-counts" data-map-counts></p>
+<div class="map-tools">
+  <input id="map-search" type="search" placeholder="Find a topic" autocomplete="off" aria-label="Find a topic">
+  <span class="legend-item"><i class="swatch cleared"></i>cleared</span>
+  <span class="legend-item"><i class="swatch open"></i>open now</span>
+  <span class="legend-item"><i class="swatch locked"></i>locked</span>
+  <span class="legend-item"><i class="swatch empty"></i>not written</span>
+</div>
+<div class="map-wrap"><div class="map-stage"><div id="map"></div>
+  <div class="map-controls">
+    <button type="button" data-zoom="in" title="Zoom in">+</button>
+    <button type="button" data-zoom="out" title="Zoom out">−</button>
+    <button type="button" data-zoom="fit" title="Fit to screen">Fit</button>
+    <button type="button" data-zoom="reset" title="Back to the start">Reset</button>
+  </div></div><aside id="map-detail" class="map-detail" tabindex="-1" aria-live="polite"></aside></div>
+<nav class="map-topics" aria-labelledby="map-topics-title">
+  <h2 id="map-topics-title" class="map-topics-title">All topics</h2>
+  <div id="map-topics"></div>
+</nav>'''
+
+
 PRINT_CSS = CONTENT_CSS + CONTENT_AT_RULES + """
 body { font-family: Georgia, serif; line-height:1.55; margin:0 6%; background:#fff; color:#111; }
 h1 { font-size:1.6em; } h2 { font-size:1.2em; } h3 { font-size:1.02em; }

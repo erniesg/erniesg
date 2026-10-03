@@ -630,10 +630,17 @@ describe('every node reaches the web', () => {
   })
 
   it.skipIf(!builtSite)('builds a page for each of them', () => {
-    const emitted = readdirSync(bookDist).filter((entry) =>
-      statSync(path.join(bookDist, entry)).isDirectory(),
+    // Pages the book has besides its nodes; a node may never take one's name.
+    const bookRoutes = ['map']
+    const emitted = readdirSync(bookDist).filter(
+      (entry) =>
+        statSync(path.join(bookDist, entry)).isDirectory() && !bookRoutes.includes(entry),
     )
 
+    expect(book.nodes.map((node) => node.id)).not.toContain('map')
+    for (const route of bookRoutes) {
+      expect(existsSync(path.join(bookDist, route, 'index.html')), route).toBe(true)
+    }
     expect(emitted.sort()).toEqual(book.nodes.map((node) => node.id).sort())
     expect(emitted.length).toBe(manifest.poolNodeCount)
     expect(existsSync(path.join(bookDist, 'index.html'))).toBe(true)

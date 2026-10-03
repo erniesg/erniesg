@@ -15,6 +15,8 @@ import { installStaticRoutes } from './static-build'
 const CHAPTER = '/books/build-a-coding-agent/ch07-strings/'
 // Has a figure (with a caption and a definition list), inline code and exercises.
 const FIGURE_CHAPTER = '/books/build-a-coding-agent/ch05-functions/'
+// Has a cost chart: an SVG drawn with fixed colours.
+const CHART_CHAPTER = '/books/build-a-coding-agent/ch06-dicts-sets/'
 const SITE_HEADER = 'body > div > header'
 const PLAIN_BAR = '[data-book-bar]'
 
@@ -307,6 +309,49 @@ test.describe('the book look switch', () => {
         expect(entry.background, `${entry.name} background`).toBeLessThan(0.1)
         expect(entry.contrast, `${entry.name} contrast`).toBeGreaterThanOrEqual(4.5)
       }
+    })
+  }
+
+  for (const choice of ['site', 'plain'] as const) {
+    test(`in the dark theme, ${choice} redraws a chart's labels and lines for the dark card`, async ({
+      page,
+    }) => {
+      await page.addInitScript((value) => {
+        localStorage.setItem('theme', 'dark')
+        localStorage.setItem('book-look', value)
+      }, choice)
+      await page.goto(CHART_CHAPTER)
+      const result = await page.evaluate(() => {
+        const parse = (value: string) => {
+          const match = value.match(/rgba?\(([^)]+)\)/)
+          if (!match) return null
+          const [r, g, b] = match[1].split(/[ ,/]+/).filter(Boolean).map(Number)
+          return { r, g, b }
+        }
+        const luminance = ({ r, g, b }: { r: number; g: number; b: number }) => {
+          const channel = (value: number) => {
+            const v = value / 255
+            return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
+          }
+          return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+        }
+        const contrast = (a: number, b: number) =>
+          (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+        const chart = document.querySelector('.book-content svg.cost')
+        if (!chart) return null
+        const card = luminance(parse(getComputedStyle(chart.closest('.figure')!).backgroundColor)!)
+        const against = (value: string) => contrast(card, luminance(parse(value)!))
+        return {
+          labels: [...chart.querySelectorAll('text')].map((t) => against(getComputedStyle(t).fill)),
+          lines: [...chart.querySelectorAll('polyline')].map((l) => against(getComputedStyle(l).stroke)),
+        }
+      })
+      expect(result, 'a cost chart is on the page').not.toBeNull()
+      expect(result!.labels.length).toBeGreaterThan(0)
+      expect(result!.lines.length).toBeGreaterThan(0)
+      for (const value of result!.labels) expect(value, 'tick label contrast').toBeGreaterThanOrEqual(4.5)
+      // Lines are graphics, not text: 3:1 is the bar for those.
+      for (const value of result!.lines) expect(value, 'series line contrast').toBeGreaterThanOrEqual(3)
     })
   }
 })

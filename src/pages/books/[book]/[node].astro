@@ -76,6 +76,20 @@ const RESTORED = `
 .dark .book-content .pairs dd { color: #b9b6af; }
 .dark .book-content .walk-controls button { background: #26251f; color: #e8e6e1; }
 .dark .book-content .walk-item.on { color: #1a1a1a; }
+/* The renderer draws its SVG figures with fixed light-theme colours as
+   presentation attributes, which CSS overrides: a cost chart's tick labels,
+   axis and series, and a links diagram's boxes, labels and edges. Series
+   keep their order and hue, lightened for the dark card. */
+.dark .book-content svg.cost text { fill: #b9b6af; }
+.dark .book-content svg.cost line { stroke: #55534e; }
+.dark .book-content svg.cost polyline:nth-of-type(3n + 1) { stroke: #fb923c; }
+.dark .book-content svg.cost polyline:nth-of-type(3n + 2) { stroke: #7dd3fc; }
+.dark .book-content svg.cost polyline:nth-of-type(3n + 3) { stroke: #4ade80; }
+.dark .book-content svg.links rect { fill: #26251f; stroke: #55534e; }
+.dark .book-content svg.links text { fill: #e8e6e1; }
+.dark .book-content svg.links line,
+.dark .book-content svg.links path { stroke: #8a8780; }
+.dark .book-content svg.links marker path { fill: #8a8780; stroke: none; }
 /* The exercise card is a tinted panel, not a light one: in dark mode it takes
    a dark tint and keeps the site's foreground, instead of the light green
    CONTENT_CSS gives it, which left the prompt near-white on near-white. */

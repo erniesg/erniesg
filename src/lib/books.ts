@@ -67,6 +67,8 @@ export type BookTopic = {
   partName: string
   agent: string
   requires: string[]
+  /** The same requirements by topic id: the map's edges. */
+  requiresIds: string[]
   unlocks: string[]
   nodes: BookTopicNode[]
 }
@@ -99,6 +101,14 @@ export type BookManifest = {
   splitScript: string
   /** The indicator, pager and shortcut sheet; unscoped, their classes are their own. */
   navCss: string
+  /** The map page's markup, drawn by `books/tools/runtime/map.mjs`. */
+  mapHtml: string
+  /** The map's stylesheet; scoped to the map's container. */
+  mapCss: string
+  /** The map's at-rules, which only touch map classes; include unscoped. */
+  mapAtRules: string
+  /** Cytoscape and its dagre layout, which the map draws with. */
+  mapLibraries: { url: string; integrity: string }[]
   books: Book[]
 }
 

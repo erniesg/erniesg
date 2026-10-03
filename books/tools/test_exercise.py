@@ -139,6 +139,19 @@ print(seats_left(40, 31) + seats_left(12, 12))
         )
         self.assertEqual(problems_for(block(strong)), [])
 
+    def test_validator_mutates_every_arithmetic_form(self):
+        # Division, powers and augmented assignment are operators a reader can
+        # get wrong too: `2 ** 2` and `2 * 2` both print 4.
+        cases = {
+            "power": ("print(...)", "print(2 ** 2)", "4"),
+            "augmented": ("total = 2\n...\nprint(total)", "total = 2\ntotal *= 2\nprint(total)", "4"),
+        }
+        for name, (starter, answer, output) in cases.items():
+            with self.subTest(form=name):
+                inner = f"Compute it.\n\n```python\n{starter}\n```\n\n```output\n{output}\n```\n\n```answer\n{answer}\n```\n"
+                found = problems_for(block(inner))
+                self.assertTrue(any("also prints" in p for p in found), found)
+
     def test_exercises_do_not_enter_the_counters(self):
         # Counters count nodes and challenges; an exercise is neither.
         before = len(render.all_nodes())

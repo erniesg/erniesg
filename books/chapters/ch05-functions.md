@@ -17,8 +17,8 @@ portions and has to be ordered whole. Tonight they expect 180 people, tomorrow
 Saturday is where it goes wrong. 310 divided by 12 is 25.83, someone writes
 down 25, and 25 trays feed only 300 people. Ten are turned away.
 
-The sum is easy; doing it by hand three times is what lets the mistake in.
-Write it once and give it a name.
+The calculation is easy; doing it by hand three times is what lets the
+mistake in. Write it once and give it a name.
 
 ## def gives a calculation a name
 
@@ -206,7 +206,7 @@ print(add_shortfall(25))
 ```
 
 The second call got no list, so it used the default, which is the same list
-the first call appended to. Every call shares it.
+the first call appended to. Every call that leaves out `log` shares it.
 
 The usual fix:
 

@@ -131,39 +131,42 @@ def run_many(sources: list[str], timeout: float) -> list[str]:
         return [run_python(source, timeout=timeout) for source in sources]
 
 
-ARITHMETIC = {"Add": "+", "Sub": "-", "Mult": "*", "FloorDiv": "//", "Mod": "%"}
+ARITHMETIC = {
+    "Add": "+", "Sub": "-", "Mult": "*", "Div": "/", "FloorDiv": "//", "Mod": "%", "Pow": "**",
+}
 
 
 def arithmetic_mutants(answer: str, starter: str):
     """Each copy of `answer` with one operator swapped, in the lines the reader writes.
 
-    Lines the starter already has (the call and print that check the work) are
-    left alone: the question is whether a reader's wrong operator still passes.
+    Every arithmetic operator counts, in an expression (`a * b`) or an
+    augmented assignment (`total += b`). Lines the starter already has (the
+    call and print that check the work) are left alone: the question is
+    whether a reader's wrong operator still passes.
     """
     import ast
 
     given = {line.strip() for line in starter.splitlines()}
     lines = answer.splitlines()
+
+    def sites_in(tree):
+        return [
+            node for node in ast.walk(tree)
+            if isinstance(node, (ast.BinOp, ast.AugAssign))
+            and type(node.op).__name__ in ARITHMETIC
+            and lines[node.lineno - 1].strip() not in given
+        ]
+
     try:
-        tree = ast.parse(answer)
+        sites = sites_in(ast.parse(answer))
     except SyntaxError:
         return
-    sites = [
-        node for node in ast.walk(tree)
-        if isinstance(node, ast.BinOp) and type(node.op).__name__ in ARITHMETIC
-        and lines[node.lineno - 1].strip() not in given
-    ]
     for index, site in enumerate(sites):
         for name, symbol in ARITHMETIC.items():
             if type(site.op).__name__ == name:
                 continue
             copy = ast.parse(answer)
-            target = [
-                node for node in ast.walk(copy)
-                if isinstance(node, ast.BinOp) and type(node.op).__name__ in ARITHMETIC
-                and lines[node.lineno - 1].strip() not in given
-            ][index]
-            target.op = getattr(ast, name)()
+            sites_in(copy)[index].op = getattr(ast, name)()
             yield ARITHMETIC[type(site.op).__name__], symbol, site.lineno, ast.unparse(copy)
 
 

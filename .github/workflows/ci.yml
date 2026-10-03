@@ -295,7 +295,9 @@ jobs:
             if (typeof entry.id !== 'string' || !/^GHSA(-[0-9a-z]{4}){3}$/i.test(entry.id)) problems.push('id must be a GHSA identifier');
             if (typeof entry.package !== 'string' || !entry.package) problems.push('package is required');
             if (typeof entry.reason !== 'string' || !entry.reason.trim()) problems.push('reason is required');
-            if (typeof entry.expires !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(entry.expires) || Number.isNaN(Date.parse(entry.expires))) problems.push('expires must be a YYYY-MM-DD date');
+            // Round-trip the date: Date.parse rolls 2026-02-30 over into March instead of failing.
+            const realDate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
+            if (typeof entry.expires !== 'string' || !realDate(entry.expires)) problems.push('expires must be a real YYYY-MM-DD date');
             if (problems.length) return fail(`${where}: ${problems.join('; ')}`);
             if (entry.expires < today) return fail(`${where} ${entry.id} (${entry.package}) expired on ${entry.expires}; review it: ${entry.reason}`);
             entries.push({ ...entry, used: false });
@@ -349,7 +351,6 @@ jobs:
           if [ -f pyproject.toml ] || [ -f requirements.txt ]; then
             python -m pip check || true
           fi
-
       - name: OpenTofu/Terraform validation
         run: |
           set -eu

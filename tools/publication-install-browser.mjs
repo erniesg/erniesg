@@ -5,6 +5,27 @@ import { pathToFileURL } from 'node:url'
 import { publicationPlatformKey } from '../src/publication/platform.mjs'
 
 const build = 'chrome@150.0.7871.115'
+const runAsScript =
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(resolve(process.argv[1])).href
+
+// A production-only install (`npm ci --omit=dev`, or NODE_ENV=production
+// without `--include=dev`) still runs postinstall, but the browser tooling is a
+// devDependency and is absent, and nothing such an install runs renders
+// publications. Decide before anything below resolves that tooling.
+function devDependenciesOmitted(env = process.env) {
+  const listed = (value) => (value ?? '').split(/[\s,]+/).includes('dev')
+  if (listed(env.npm_config_omit)) return true
+  return env.NODE_ENV === 'production' && !listed(env.npm_config_include)
+}
+
+if (runAsScript && devDependenciesOmitted()) {
+  process.stdout.write(
+    'Publication browser: dev dependencies omitted; skipping the browser install.\n',
+  )
+  process.exit(0)
+}
+
 const require = createRequire(import.meta.url)
 const playwrightRoot = dirname(require.resolve('playwright/package.json'))
 const nodeModulesRoot = resolve(playwrightRoot, '..')
@@ -35,10 +56,7 @@ export function publicationBrowserInstallInvocation(
   }
 }
 
-if (
-  process.argv[1] &&
-  import.meta.url === pathToFileURL(resolve(process.argv[1])).href
-) {
+if (runAsScript) {
   const invocation = publicationBrowserInstallInvocation()
   execFileSync(invocation.playwright.command, invocation.playwright.args, {
     stdio: 'inherit',

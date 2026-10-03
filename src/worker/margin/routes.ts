@@ -255,6 +255,82 @@ function replyVisibilityConflict(error: unknown): Response | null {
 
 const MALFORMED_JSON = Symbol('malformed-json')
 
+const IDEMPOTENCY_KEY = 'Idempotency-Key'
+const UUID_IDEMPOTENCY_KEY =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * A client-generated key binds one create attempt to one owner and canonical
+ * annotation scope. The stored id is opaque: it never exposes either the
+ * principal key or the document the request addressed.
+ */
+async function idempotentAnnotationId(
+  owner: string,
+  scope: TenantScope,
+  key: string,
+): Promise<string> {
+  const input = new TextEncoder().encode(
+    JSON.stringify([owner, scope.site, scope.document, key.toLowerCase()]),
+  )
+  const digest = await crypto.subtle.digest('SHA-256', input)
+  return `request-${[...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')}`
+}
+
+function idempotencyKey(request: Request): string | { error: Response } | null {
+  const key = request.headers.get(IDEMPOTENCY_KEY)
+  if (key === null) return null
+  if (!UUID_IDEMPOTENCY_KEY.test(key)) {
+    return {
+      error: problem(
+        400,
+        'invalid_idempotency_key',
+        'Idempotency-Key must be a UUID',
+      ),
+    }
+  }
+  return key
+}
+
+/** Only user-requested annotation content participates in retry equivalence. */
+function sameIdempotentAnnotation(
+  existing: MarginAnnotationRecord,
+  candidate: MarginAnnotationRecord,
+): boolean {
+  const semantic = (record: MarginAnnotationRecord) => ({
+    site: record.site,
+    document: record.document,
+    creator: record.creator,
+    visibility: record.visibility,
+    parentId: record.parentId,
+    structId: record.structId,
+    color: record.color,
+    kind: record.annotation.kind,
+    target: record.annotation.target,
+    ...(record.annotation.kind === 'highlight'
+      ? {}
+      : { body: record.annotation.body }),
+    proposal: record.proposal
+      ? {
+          baseCommit: record.proposal.baseCommit,
+          sourcePath: record.proposal.sourcePath,
+        }
+      : null,
+  })
+  return JSON.stringify(semantic(existing)) === JSON.stringify(semantic(candidate))
+}
+
+async function findOwnIdempotentAnnotation(
+  context: MarginRouteContext,
+  scope: TenantScope,
+  id: string,
+  owner: string,
+): Promise<MarginAnnotationRecord | null> {
+  const found = await context.repository.findAnnotation(scope, id, owner)
+  return found?.creator === owner ? found : null
+}
+
 async function readJsonBody(request: Request): Promise<unknown> {
   try {
     return await request.json()
@@ -367,6 +443,9 @@ async function createAnnotation(
     )
   }
 
+  const requestKey = idempotencyKey(request)
+  if (requestKey && typeof requestKey !== 'string') return requestKey.error
+
   // Visibility is the caller's stored default unless this annotation names
   // one. The default is read now and copied onto the row, so changing it later
   // cannot reach back and rewrite anything.
@@ -376,6 +455,8 @@ async function createAnnotation(
 
   const now = context.now()
   const mapped = webAnnotationToRecord(parsed.data, {
+    // Mapping owns source canonicalization. A keyed record receives its
+    // scope-bound id immediately after this mapping succeeds.
     id: context.newId(),
     creator: owner,
     visibility,
@@ -387,6 +468,11 @@ async function createAnnotation(
   }
   const record = mapped.value
   const scope: TenantScope = { site: record.site, document: record.document }
+
+  if (requestKey !== null) {
+    record.id = await idempotentAnnotationId(owner, scope, requestKey)
+    record.annotation.id = record.id
+  }
 
   // A highlight or a note may carry a role colour (a note tagged "question",
   // say); a proposal may not, since review shows it as a diff, not a role.
@@ -439,6 +525,25 @@ async function createAnnotation(
     }
   }
 
+  if (requestKey !== null) {
+    const existing = await findOwnIdempotentAnnotation(
+      context,
+      scope,
+      record.id,
+      owner,
+    )
+    if (existing) {
+      if (!sameIdempotentAnnotation(existing, record)) {
+        return problem(
+          409,
+          'idempotency_conflict',
+          'Idempotency-Key was already used for a different annotation',
+        )
+      }
+      return json(present(existing))
+    }
+  }
+
   // The mirror of the delete race: the parent can be deleted between the lookup
   // above and this insert, and `parent_id` then refuses the row. The store is
   // healthy — the parent simply went away — so this is the same answer the
@@ -446,6 +551,27 @@ async function createAnnotation(
   try {
     await context.repository.insertAnnotation(record)
   } catch (error) {
+    if (requestKey !== null) {
+      // A concurrent identical request is expected to lose the primary-key
+      // race. Re-read through the owner and tenant boundary; an unrelated
+      // insert failure must keep its original error if no matching row exists.
+      const existing = await findOwnIdempotentAnnotation(
+        context,
+        scope,
+        record.id,
+        owner,
+      )
+      if (existing) {
+        if (!sameIdempotentAnnotation(existing, record)) {
+          return problem(
+            409,
+            'idempotency_conflict',
+            'Idempotency-Key was already used for a different annotation',
+          )
+        }
+        return json(present(existing))
+      }
+    }
     const conflict = replyVisibilityConflict(error)
     if (conflict) {
       // A deleted parent and one that became unreadable must remain

@@ -36,6 +36,7 @@ import {
   type ProseDoc,
 } from '../../annotations/prose-schema'
 import { inlineText, replaceBlock, splitAt, withContent, withItems } from './model'
+import { SketchController } from './sketch-controller'
 
 const API = '/api/margin/v1'
 const AUTH_ME = '/auth/me'
@@ -240,6 +241,7 @@ export class EditMode {
   readonly #redo: HTMLButtonElement
   readonly #save: HTMLButtonElement
   readonly #discard: HTMLButtonElement
+  #sketch: SketchController | null = null
   #session: EditSession | null = null
   #base: ProseDoc | null = null
   #editing = false
@@ -351,6 +353,16 @@ export class EditMode {
     if (!me) return // Anonymous, or not on the allowlist: no edit mode at all.
     this.#me = me
     this.#root.hidden = false
+    this.#sketch = new SketchController(
+      this.#root, this.#content, me, this.#stamp?.commit ?? 'unstamped', this.#abort.signal,
+      (drawing) => {
+        this.#flush()
+        this.#content.hidden = !drawing && this.#editing
+        this.#surface.hidden = drawing || !this.#editing
+        if (drawing) this.#changes.hidden = true
+        else this.#update()
+      },
+    )
     if (this.#disabledReason) {
       this.#toggle.disabled = true
       this.#reason.hidden = false
@@ -442,6 +454,7 @@ export class EditMode {
     this.#surface.hidden = false
     this.#toggle.setAttribute('aria-pressed', 'true')
     this.#toggle.textContent = 'Stop editing'
+    this.#sketch?.setEnabled(true)
     this.#render()
     this.#announce(
       this.#revising
@@ -454,6 +467,7 @@ export class EditMode {
   exit(): void {
     if (!this.#editing) return
     this.#flush()
+    this.#sketch?.setEnabled(false)
     this.#editing = false
     document.documentElement.removeAttribute('data-book-editing')
     if (this.#restoreView) {

@@ -79,6 +79,12 @@ import {
   type MarginResponse,
   type MarginTransport,
 } from './transport.js'
+import {
+  createSketchSvg,
+  decodeSketch,
+  noteText,
+  updateSketchNote,
+} from './sketch.js'
 
 export const MARGIN_RAIL_TAG = 'margin-rail'
 
@@ -111,6 +117,7 @@ li:focus-within { outline: 1px dotted currentColor; outline-offset: 2px; }
 .quote { display: block; text-align: left; width: 100%; border: 0; padding: 0; font-style: italic; }
 button.quote:hover { text-decoration: underline; }
 .body { display: block; margin: 0.25rem 0 0; white-space: pre-wrap; }
+.sketch { display: block; width: min(100%, 12rem); aspect-ratio: 1; margin-top: 0.35rem; border: 1px solid currentColor; border-radius: 0.25rem; }
 .controls { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.35rem; }
 .empty, .notice { font-size: 0.8125rem; margin: 0; }
 .notice { font-size: 0.75rem; }
@@ -191,6 +198,14 @@ function el<K extends keyof HTMLElementTagNameMap>(
   }
   if (text !== undefined) node.textContent = text
   return node
+}
+
+/** Give the normalized drawing its saved region's proportions in the rail. */
+function sketchPreview(doc: Document, sketch: NonNullable<ReturnType<typeof decodeSketch>>): SVGSVGElement {
+  const svg = createSketchSvg(sketch, doc)
+  svg.setAttribute('class', 'sketch')
+  svg.style.aspectRatio = `${sketch.region.width} / ${sketch.region.height}`
+  return svg
 }
 
 export class MarginRailElement extends ElementBase {
@@ -354,6 +369,11 @@ export class MarginRailElement extends ElementBase {
       }
     })
     this.#paint()
+  }
+
+  /** Ask the configured transport for the document's current annotations. */
+  async refreshFromService(): Promise<void> {
+    await this.#load()
   }
 
   /** What the rail holds, with visibility and ownership. */
@@ -1254,7 +1274,15 @@ export class MarginRailElement extends ElementBase {
       !text
     )
       return
-    const edited = { ...record.annotation, body: text }
+    let storedBody: string
+    try {
+      storedBody = updateSketchNote(record.annotation.body, text)
+    } catch {
+      this.#notice = 'The sketch note is too long to save.'
+      this.#render()
+      return
+    }
+    const edited = { ...record.annotation, body: storedBody }
     record.annotation = edited
     this.#editing = null
     this.#paint()
@@ -1269,7 +1297,7 @@ export class MarginRailElement extends ElementBase {
         const response = await client.updateAnnotation(
           record.serverId,
           documentUri,
-          { body: text },
+          { body: storedBody },
         )
         if (!isSuccess(response)) {
           throw new MarginTransportError(
@@ -1754,7 +1782,9 @@ export class MarginRailElement extends ElementBase {
       .filter((record) => {
         if (!query) return true
         const body =
-          record.annotation.kind === 'highlight' ? '' : record.annotation.body
+          record.annotation.kind === 'highlight'
+            ? ''
+            : noteText(record.annotation.body)
         return `${record.annotation.target.quote.exact}\n${body}`
           .toLocaleLowerCase()
           .includes(query)
@@ -1785,6 +1815,14 @@ export class MarginRailElement extends ElementBase {
       : null
 
     container.replaceChildren(...this.#build())
+
+    this.dispatchEvent(
+      new CustomEvent('margin-annotations-changed', {
+        detail: { annotations: this.annotations },
+        bubbles: true,
+        composed: true,
+      }),
+    )
 
     if (activeKey) {
       const next = this.#shadow.querySelector<HTMLElement>(
@@ -2079,6 +2117,9 @@ export class MarginRailElement extends ElementBase {
       item.append(quote)
     }
 
+    const sketch =
+      annotation.kind === 'highlight' ? null : decodeSketch(annotation.body)
+    const note = annotation.kind === 'highlight' ? '' : noteText(annotation.body)
     if (record.deleted) {
       item.dataset.deleted = ''
       item.append(el(doc, 'p', { class: 'body deleted' }, DELETED_NOTE_TEXT))
@@ -2087,6 +2128,7 @@ export class MarginRailElement extends ElementBase {
         const label = el(doc, 'label', {}, 'Edit note')
         const field = el(doc, 'textarea', {
           'data-focus-key': `edit-field:${id}`,
+          ...(sketch ? { maxlength: '2000' } : {}),
         })
         field.value = this.#editDraft
         field.addEventListener('input', () => {
@@ -2127,7 +2169,8 @@ export class MarginRailElement extends ElementBase {
         controls.append(save, cancel)
         item.append(label, controls)
       } else {
-        item.append(el(doc, 'p', { class: 'body' }, annotation.body))
+        if (sketch) item.append(sketchPreview(doc, sketch))
+        item.append(el(doc, 'p', { class: 'body' }, note))
       }
     }
 
@@ -2175,7 +2218,7 @@ export class MarginRailElement extends ElementBase {
         edit.addEventListener('click', () => {
           if (busy) return
           this.#editing = id
-          this.#editDraft = annotation.body
+          this.#editDraft = noteText(annotation.body)
           this.#render()
           this.#focusKey(`edit-field:${id}`)
         })

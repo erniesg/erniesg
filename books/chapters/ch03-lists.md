@@ -15,12 +15,12 @@ and fifth along — are past their date. A volunteer walks the shelf, taking out
 the bad ones as she goes.
 
 She pulls out the third tin. Everything behind it slides one place forward, so
-the next tin she looks at is the one that used to be fifth. The fourth is now
-behind her, and it goes out in somebody's food parcel.
+the next tin she looks at is the one that used to be fifth. She has skipped the
+fourth tin, and it goes out in somebody's food parcel.
 
-Nine things in a row is a list. That bug is one of the two this chapter is
-really about; the other one quietly shares a list between two people who each
-think they have their own.
+Nine things in a row is a list. This chapter covers how lists work, then two
+common bugs: changing a list while walking through it, and two names that
+share one list.
 
 ## Values in a row, counted from 0
 
@@ -31,11 +31,10 @@ print(tins[2])
 print(len(tins))
 ```
 
-The first position is 0, not 1, so the last position is always `len` minus
-one. Reach past the end — `tins[4]` here — and Python raises `IndexError`
-rather than inventing something.
+The first position is 0, not 1, so the last position is `len` minus one.
+Asking for a position past the end, like `tins[4]` here, raises `IndexError`.
 
-Counting from the far end is written with a minus sign:
+A minus sign counts from the end:
 
 ```python run
 print(tins[-1])     # the last one
@@ -71,9 +70,9 @@ print(readings[-3:])    # the last three
 print(readings[2:99])   # slicing never complains about running off the end
 ```
 
-A slice is always a **new** list. The original is untouched, which makes
-`readings[:]` — every position, from start to end — the short way to ask for a
-copy. Hold on to that; it comes back at the end of the chapter.
+A slice is always a **new** list, and the original is unchanged. So
+`readings[:]`, every position from start to end, is a short way to make a
+copy. The end of the chapter uses it.
 
 :::exercise{id="ch03-last-three"}
 Two slices: print the last three readings, then every reading except the
@@ -106,7 +105,7 @@ shelf.insert(0, "milk")          # squeeze in at a position
 print(shelf)
 ```
 
-`append` and `extend` are not interchangeable, and the difference is visible:
+`append` adds one item. `extend` adds each item from another list:
 
 ```python run
 a = ["beans"]
@@ -117,8 +116,8 @@ print(a)
 print(b)
 ```
 
-`insert` shifts everything after it along by one place, so inserting at the
-front of a long list is real work. Appending to the end is not.
+`insert` moves everything after the new item along by one place. On a long
+list, inserting at the front takes much longer than appending to the end.
 
 ## Shrinking a list
 
@@ -130,13 +129,12 @@ print(last, first)
 print(shelf)
 ```
 
-`remove` takes a value and deletes the first match — one copy, not all of
-them — and raises `ValueError` if there is no match at all. `pop` takes a
-position and returns what it removed.
+`remove` deletes the first item equal to the value, not every copy, and
+raises `ValueError` if nothing matches. `pop` takes a position and returns the
+item it removed.
 
-These methods change the list where it stands and hand back `None`. So
-`shelf = shelf.append("tea")` does not give you a longer shelf; it gives you
-`None` and loses the shelf.
+These methods change the list itself and return `None`. So
+`shelf = shelf.append("tea")` sets `shelf` to `None`, and the list is lost.
 
 :::exercise{id="ch03-one-copy"}
 Take **one** tin of beans off the shelf — the first — and print what is
@@ -167,9 +165,9 @@ print("milk" in shelf)
 print(len(shelf))
 ```
 
-`in` walks the list until it finds a match, so on a list of 200,000 items it
-does up to 200,000 comparisons. Fine once. Inside a loop over another long
-list, it is the slowest line you will ever write, and Part II replaces it.
+`in` checks the items one by one until it finds a match, so a list of 200,000
+items can take 200,000 comparisons. Inside a loop over another long list that
+gets slow. Part II shows a faster way.
 
 ## The first trap: changing a list while you walk it
 
@@ -185,12 +183,11 @@ for tin in tins:
 print(tins)
 ```
 
-A zero survived. `for` keeps a position counter, not a memory of the items: it
-hands you position 0, then 1, then 2. Removing the tin at position 2 slides
-everything after it down one, so the next tin — now sitting at position 2 —
-never gets shown to you, because the counter has already moved to 3.
+A zero is still there. `for` gives you position 0, then 1, then 2. Removing
+the tin at position 2 moves everything after it down one place. The next tin
+is now at position 2, but the loop moves on to 3, so it skips that tin.
 
-Two ways out. Walk a copy and change the original:
+There are two fixes. The first walks a copy and changes the original:
 
 ```python run
 tins = [1, 1, 0, 0, 0, 1, 1, 1, 1]
@@ -202,8 +199,8 @@ for tin in tins[:]:
 print(tins)
 ```
 
-Or build the list you want and never edit the one you are reading, which is
-usually the better habit and always the easier one to read:
+The second builds a new list and leaves the one you are reading alone. It is
+usually easier to read:
 
 ```python run
 tins = [1, 1, 0, 0, 0, 1, 1, 1, 1]
@@ -256,9 +253,9 @@ shelf.pop()
 print(backup)
 ```
 
-The backup lost the soup, because there was never a backup. `backup = shelf`
-copies the *name*, not the list — one list with two labels on it. Chapter 2's
-`is` is how you check:
+The backup lost the soup too. `backup = shelf` gives the same list a second
+name; it does not copy it. Chapter 2's `is` shows whether two names share one
+list:
 
 ```python run
 shelf = ["beans", "rice", "soup"]
@@ -269,11 +266,10 @@ print(backup)
 print(backup is shelf)
 ```
 
-Now there really are two lists, and only one of them lost a tin.
+Now there are two lists, and only one of them lost a tin.
 
-This is not a beginner's mistake you grow out of. It arrives whenever a list
-is passed into a function, stored somewhere, and changed later by whoever else
-is holding it.
+The same sharing happens when a list is passed into a function or stored
+somewhere: a change made through one name shows up through every other.
 
 :::figure{id="two-names-one-list"}
 One list can answer to several names. A slice makes a second list.
@@ -304,19 +300,18 @@ print(backup)
 
 ## What this buys the agent
 
-Almost everything the agent handles is a list: the files in a directory, the
-lines that matched a search, the failures from a test run, the steps of a
-plan. It takes slices of them — the last 40 lines of a log, the top 10 hits —
-and it filters them, dropping files it has already read.
+Most of what the agent handles is a list: the files in a directory, the lines
+that matched a search, the failures from a test run, the steps of a plan. It
+slices them, taking the last 40 lines of a log or the top 10 hits. It filters
+them, dropping files it has already read.
 
-So both traps are its traps. Remove-while-looping is how a plan silently loses
-a step, and nothing crashes to tell you. Aliasing is worse: the planner and
-the executor end up holding one list, one of them filters it, and the other's
-work disappears. Passing `steps[:]` instead of `steps` is a keystroke, and it
-is the difference between a bug you can see and a bug you cannot.
+Both bugs can happen there. Removing items while looping can drop a step from
+a plan with no error. If the planner and the executor share one list and one
+filters it, the other loses items too. Passing `steps[:]` instead of `steps`
+gives each its own list.
 
 ## Your turn
 
-Two challenges. The first walks through taking the last few items off a list,
-where one awkward number does something you will not expect. The second hands
-you a list you are not allowed to change.
+Two challenges. The first walks through taking the last few items off a
+list, including one count that needs its own case. The second
+gives you a list you are not allowed to change.

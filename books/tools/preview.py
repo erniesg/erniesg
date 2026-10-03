@@ -296,7 +296,10 @@ def render_map() -> str:
     return (
         map_markup()
         + f'<script id="map-data" type="application/json">{data}</script>'
-        + "".join(f'<script src="{url}"></script>' for url in MAP_LIBRARIES)
+        + "".join(
+            f'<script src="{lib["url"]}" integrity="{lib["integrity"]}" crossorigin="anonymous"></script>'
+            for lib in MAP_LIBRARIES
+        )
         + "<script type=\"module\">import { drawMap } from '/runtime/map.mjs';"
         "const { topics, solved } = JSON.parse(document.getElementById('map-data').textContent);"
         "drawMap(document, { topics, solved, href: (id) => '/' + id });</script>"

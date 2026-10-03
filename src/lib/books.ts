@@ -108,7 +108,7 @@ export type BookManifest = {
   /** The map's at-rules, which only touch map classes; include unscoped. */
   mapAtRules: string
   /** Cytoscape and its dagre layout, which the map draws with. */
-  mapLibraries: string[]
+  mapLibraries: { url: string; integrity: string }[]
   books: Book[]
 }
 

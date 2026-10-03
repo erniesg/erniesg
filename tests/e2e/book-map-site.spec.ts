@@ -73,6 +73,38 @@ test("the map is coloured by the reader's progress and leads to the chapters", a
   await expect(page).toHaveURL(new RegExp(`${BOOK}shop-total/$`))
 })
 
+test('every topic can be reached from the keyboard, not only by tapping the canvas', async ({ page }) => {
+  test.slow()
+  await mount(page, ['sum-of-two-digits'])
+  await page.goto(MAP)
+  const topics = page.locator('#map-topics button[data-topic]')
+  await expect(topics).toHaveCount(36, { timeout: 30_000 })
+  // A locked topic, which the summary's "open now" list never links.
+  const locked = page.locator('#map-topics button[data-topic="loops"]')
+  await expect(locked).toContainText('locked')
+  await locked.focus()
+  await page.keyboard.press('Enter')
+  const detail = page.locator('#map-detail')
+  await expect(detail.locator('.detail-state')).toHaveText('Needs something first')
+  await expect(detail).toBeFocused()
+  await expect(detail.locator('.detail-title')).toHaveText('Repeating with loops')
+})
+
+test('a new search replaces the last one rather than adding to it', async ({ page }) => {
+  await mount(page)
+  await page.goto(MAP)
+  await expect(page.locator('#map-detail')).toContainText('Where you are', { timeout: 30_000 })
+  const lit = () =>
+    page.evaluate(() =>
+      (window as unknown as { __bookMap: { nodes(selector: string): { length: number } } }).__bookMap.nodes('.lit').length,
+    )
+  await page.locator('#map-search').fill('loop')
+  const first = await lit()
+  expect(first).toBeGreaterThan(0)
+  await page.locator('#map-search').fill('zzz-no-such-topic')
+  expect(await lit()).toBe(0)
+})
+
 test('with no progress, the first topic is open and nothing is cleared', async ({ page }) => {
   await mount(page)
   await page.goto(MAP)

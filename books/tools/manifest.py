@@ -104,7 +104,14 @@ def grading_entry(node: dict) -> dict | None:
     return {"module": node["module"], "tiers": tiers} if tiers else None
 
 
+# Pages a book has besides its nodes (src/pages/books/[book]/). A node by one
+# of these names would be shadowed by it, so it is refused.
+BOOK_ROUTES = frozenset({"map"})
+
+
 def node_entry(node: dict, slug: str) -> dict:
+    if node["id"] in BOOK_ROUTES:
+        raise SystemExit(f"node `{node['id']}` would collide with the book's /{node['id']}/ page")
     # The published site runs the reader's code in their own browser (Pyodide):
     # exercises, runnable cells, and each challenge's four tiers, so it gets the
     # same runnable page the preview does. It has no one watching the tiers,

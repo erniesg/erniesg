@@ -1366,16 +1366,40 @@ CONTENT_AT_RULES = """
 # The book's map (runtime/map.mjs draws it): every topic, what it needs first,
 # and where the reader stands. The preview serves it at /map, the site at
 # /books/<slug>/map/; both draw the same markup with the same stylesheet.
+# Each pinned to its exact bytes (Subresource Integrity): a CDN that served
+# anything else would have it refused, not run with the page's privileges.
+# Changing a version means recomputing its hash (sha384, base64).
 MAP_LIBRARIES = (
-    "https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.2/cytoscape.min.js",
-    "https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js",
-    "https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js",
+    {
+        "url": "https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.2/cytoscape.min.js",
+        "integrity": "sha384-IWROdLKRsN1UuJywMlWl7/blXQ8GEooN2n7dzTxfEPd7ybYIKCUJ2Ol/1Gpf3YV4",
+    },
+    {
+        "url": "https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js",
+        "integrity": "sha384-2IH3T69EIKYC4c+RXZifZRvaH5SRUdacJW7j6HtE5rQbvLhKKdawxq6vpIzJ7j9M",
+    },
+    {
+        "url": "https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js",
+        "integrity": "sha384-EHCdyFVbhtbpgI+4x7ETlZUvJwOkxJublmhTpH114NSk3fqfiUgcLl6pQm8JQwg9",
+    },
 )
 
 MAP_CSS = """
 .map-title { font-size:2rem; font-weight:700; line-height:1.2; margin:0 0 .5rem; }
 .map-lede { font-size:1.05rem; line-height:1.55; margin:0 0 .4rem; color:var(--dim, #666); }
 .map-counts { font:.85rem ui-sans-serif,system-ui; color:var(--dim, #666); margin:0; }
+.map-topics { margin-top:1.6rem; font:.87rem/1.5 ui-sans-serif,system-ui; }
+.map-topics-title { font:600 1rem ui-sans-serif,system-ui; margin:0 0 .4rem; }
+.map-topics-part { font:600 .68rem ui-sans-serif,system-ui; letter-spacing:.09em; text-transform:uppercase;
+  color:var(--dim, #666); margin:1rem 0 .3rem; }
+.map-topics ul { list-style:none; margin:0; padding:0; display:flex; flex-wrap:wrap; gap:6px; }
+.map-topics button { font:inherit; padding:4px 9px; border:1px solid var(--line, #e2e2e2); border-radius:6px;
+  background:transparent; color:inherit; cursor:pointer; }
+.map-topics button:hover, .map-topics button[aria-current="true"] { border-color:var(--ink, #1a1a1a); }
+.map-topics button:focus-visible { outline:2px solid var(--accent, #0369a1); outline-offset:2px; }
+.map-topic-state { margin-left:.4rem; color:var(--dim, #666); font-size:.75rem; }
+.map-detail:focus { outline:none; }
+.map-detail:focus-visible { outline:2px solid var(--accent, #0369a1); outline-offset:2px; }
 .map-detail .rail-title { font:600 .68rem ui-sans-serif,system-ui; letter-spacing:.09em;
   text-transform:uppercase; color:var(--dim); }
 .map-tools { display:flex; gap:14px; align-items:center; flex-wrap:wrap; margin:14px 0 10px;
@@ -1444,7 +1468,11 @@ what it unlocks and what is written for it.</p>
     <button type="button" data-zoom="out" title="Zoom out">−</button>
     <button type="button" data-zoom="fit" title="Fit to screen">Fit</button>
     <button type="button" data-zoom="reset" title="Back to the start">Reset</button>
-  </div></div><aside id="map-detail" class="map-detail"></aside></div>'''
+  </div></div><aside id="map-detail" class="map-detail" tabindex="-1" aria-live="polite"></aside></div>
+<nav class="map-topics" aria-labelledby="map-topics-title">
+  <h2 id="map-topics-title" class="map-topics-title">All topics</h2>
+  <div id="map-topics"></div>
+</nav>'''
 
 
 PRINT_CSS = CONTENT_CSS + CONTENT_AT_RULES + """

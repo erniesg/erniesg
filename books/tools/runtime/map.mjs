@@ -213,12 +213,48 @@ export function drawMap(doc, { topics, solved, href, cytoscape = globalThis.cyto
 
   doc.getElementById('map-search')?.addEventListener('input', (event) => {
     const term = event.target.value.trim().toLowerCase()
-    if (!term) { clearHighlight(); return }
+    // Each search replaces the last: the previous term's matches go first.
+    clearHighlight()
+    if (!term) return
     const hits = cy.nodes().filter((n) => n.data('label').toLowerCase().includes(term))
     cy.elements().addClass('faded')
     hits.removeClass('faded').addClass('lit')
     if (hits.length) cy.fit(hits, 60)
   })
+
+  // Every topic as a button, by part: the keyboard's and the screen reader's
+  // way into the map, which the canvas alone cannot offer.
+  const stateWords = { cleared: 'cleared', open: 'open now', locked: 'locked', empty: 'not written' }
+  const topicList = doc.getElementById('map-topics')
+  if (topicList) {
+    const parts = new Map()
+    topics.forEach((topic) => {
+      const key = `${topic.part}`
+      if (!parts.has(key)) parts.set(key, { name: topic.partName, part: topic.part, topics: [] })
+      parts.get(key).topics.push(topic)
+    })
+    topicList.innerHTML = [...parts.values()].map((group) =>
+      `<p class="map-topics-part">Part ${group.part} - ${escapeHtml(group.name)}</p><ul>` +
+      group.topics.map((topic) => {
+        const state = cy.$id(topic.id).data('state')
+        return `<li><button type="button" data-topic="${escapeHtml(topic.id)}">${escapeHtml(topic.title)}` +
+          `<span class="map-topic-state">${stateWords[state] || ''}</span></button></li>`
+      }).join('') + '</ul>').join('')
+    topicList.querySelectorAll('[data-topic]').forEach((button) => {
+      button.onclick = () => {
+        const node = cy.$id(button.dataset.topic)
+        topicList.querySelectorAll('[aria-current]').forEach((b) => b.removeAttribute('aria-current'))
+        button.setAttribute('aria-current', 'true')
+        highlight(node)
+        showDetail(node)
+        cy.animate({ center: { eles: node } }, { duration: 200 })
+        detail.focus({ preventScroll: true })
+      }
+    })
+  }
+
+  // For tests and for a reader's devtools; the page itself never reads it.
+  if (doc.defaultView) doc.defaultView.__bookMap = cy
 
   // Fit the whole book when it reads at that size; otherwise start legible,
   // on where the reader can go next, with Fit one click away.

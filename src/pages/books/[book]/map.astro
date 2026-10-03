@@ -70,7 +70,7 @@ const style = `<style>${scopeContentCss(manifest.mapCss, '.book-map')}${manifest
     book: string
     base: string
     site: string
-    libraries: string[]
+    libraries: { url: string; integrity: string }[]
     topics: Parameters<typeof drawMap>[1]['topics']
   }
 
@@ -82,32 +82,43 @@ const style = `<style>${scopeContentCss(manifest.mapCss, '.book-map')}${manifest
     }
   }
 
-  // Cytoscape and its layout, from the CDN, once per visit, in order.
+  // Cytoscape and its layout, from the CDN, once per visit, in order, each
+  // checked against its pinned hash: anything else is refused, not run.
   let libraries: Promise<void> | null = null
-  function loadLibraries(urls: string[]): Promise<void> {
-    libraries ??= urls.reduce(
-      (previous, url) =>
+  function loadLibraries(list: MapData['libraries']): Promise<void> {
+    libraries ??= list.reduce(
+      (previous, { url, integrity }) =>
         previous.then(
           () =>
             new Promise<void>((resolve, reject) => {
               const script = document.createElement('script')
               script.src = url
+              script.integrity = integrity
+              script.crossOrigin = 'anonymous'
               script.onload = () => resolve()
               script.onerror = () => reject(new Error(`could not load ${url}`))
               document.head.append(script)
             }),
         ),
       Promise.resolve(),
-    )
+    ).catch((error) => {
+      libraries = null // a failed load may be retried on the next visit
+      throw error
+    })
     return libraries
   }
 
+  // Each page view draws at most once, and only onto its own page: a load
+  // that finishes after the reader has moved on is dropped.
+  let visit = 0
   let drawn: { destroy(): void } | null = null
   document.addEventListener('astro:before-preparation', () => {
+    visit += 1
     drawn?.destroy()
     drawn = null
   })
   document.addEventListener('astro:page-load', async () => {
+    const mine = ++visit
     const holder = document.querySelector<HTMLScriptElement>('[data-book-map-data]')
     if (!holder?.textContent) return
     const data = JSON.parse(holder.textContent) as MapData
@@ -127,6 +138,8 @@ const style = `<style>${scopeContentCss(manifest.mapCss, '.book-map')}${manifest
     } catch {
       // drawMap says so in its panel when Cytoscape is missing.
     }
+    if (mine !== visit) return
+    drawn?.destroy()
     drawn = drawMap(document, {
       topics: data.topics,
       solved,

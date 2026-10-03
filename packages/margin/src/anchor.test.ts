@@ -202,4 +202,29 @@ describe('a note tagged with a role', () => {
     ] as never).map((target) => target.color)
     expect(colours).toEqual(['question', NOTE_PAINT_KEY])
   })
+
+  it('does not paint a sketch note over its block\'s opening text', () => {
+    // A sketch's quote only finds its block again; the drawing is the target.
+    const placement = {
+      status: 'anchored',
+      nodeId: 'block-intro-prose-1',
+      start: anchor.position.start,
+      end: anchor.position.end,
+    }
+    const sketchNote = {
+      id: 's',
+      kind: 'note',
+      body: 'margin:sketch:v1\n' + JSON.stringify({
+        version: 1, note: 'see', anchor: { blockId: 'block-intro-prose-1', quote: 'A page' },
+        region: { x: 0, y: 0, width: 0.5, height: 0.2 }, strokes: [],
+      }),
+    }
+    const note = { id: 'n', kind: 'note', body: 'plain note' }
+    const ids = paintTargetsFor([
+      { annotation: sketchNote, placement },
+      { annotation: note, placement },
+    ] as never).map((target) => target.id)
+    expect(ids).toEqual(['n'])
+  })
 })
+

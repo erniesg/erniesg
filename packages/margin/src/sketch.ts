@@ -22,6 +22,18 @@ const MAX_STROKES = 100
 const MAX_POINTS = 1000
 const MAX_ENCODED_LENGTH = 8000
 
+// A region is measured in widths of its anchor block. A drag is at least 12px
+// a side and at most one viewport, so these bound every drawable region with
+// room to spare: a full-height drag on a narrow phone is about 4.4 widths. A
+// stored sketch is untrusted, and anything outside them would stretch the page
+// for every reader who receives it, so it decodes as malformed.
+const REGION_MIN_SIDE = 0.01
+const REGION_MAX_WIDTH = 2
+const REGION_MAX_HEIGHT = 5
+const REGION_MAX_X = 2
+const REGION_MAX_Y = 10
+const PREVIEW_MAX_RATIO = 4
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
@@ -60,14 +72,14 @@ function normalizeSketch(value: unknown): Sketch {
     !isFiniteNumber(region.y) ||
     !isFiniteNumber(region.width) ||
     !isFiniteNumber(region.height) ||
-    region.x < -100 ||
-    region.x > 100 ||
-    region.y < -100 ||
-    region.y > 100 ||
-    region.width <= 0 ||
-    region.width > 100 ||
-    region.height <= 0 ||
-    region.height > 100
+    region.x < -REGION_MAX_X ||
+    region.x > REGION_MAX_X ||
+    region.y < -REGION_MAX_Y ||
+    region.y > REGION_MAX_Y ||
+    region.width < REGION_MIN_SIDE ||
+    region.width > REGION_MAX_WIDTH ||
+    region.height < REGION_MIN_SIDE ||
+    region.height > REGION_MAX_HEIGHT
   )
     invalidSketch()
 
@@ -183,4 +195,12 @@ export function createSketchSvg(sketch: Sketch, doc: Document): SVGSVGElement {
     svg.append(path)
   }
   return svg
+}
+
+/** The rail preview's CSS aspect ratio: the region's own, kept within 1:4 to 4:1. */
+export function previewAspectRatio(region: Sketch['region']): string {
+  const ratio = region.width / region.height
+  if (ratio > PREVIEW_MAX_RATIO) return `${PREVIEW_MAX_RATIO} / 1`
+  if (ratio < 1 / PREVIEW_MAX_RATIO) return `1 / ${PREVIEW_MAX_RATIO}`
+  return `${region.width} / ${region.height}`
 }

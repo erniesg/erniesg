@@ -11,6 +11,7 @@ import {
   type TextAnnotation,
 } from './anchor.js'
 import { NOTE_PAINT_KEY } from './palette.js'
+import { decodeSketch } from './sketch.js'
 import { placeAnnotations, type AnnotationPlacement } from './document.js'
 import {
   readAnchorableBlocks,
@@ -56,7 +57,11 @@ export function paintTargetsFor(
   // visible, and clickable, or the note is attached to nothing the reader can
   // see. Proposals are 060's and paint as their own diff, not here.
   return placements.flatMap(({ annotation, placement }) =>
-    placement.status === 'anchored' && annotation.kind !== 'proposal'
+    placement.status === 'anchored' &&
+    annotation.kind !== 'proposal' &&
+    // A sketch's quote only finds its block again; its drawing is the target,
+    // so painting the quote would mark text the reader never chose.
+    !(annotation.kind === 'note' && decodeSketch(annotation.body))
       ? [
           {
             id: annotation.id,

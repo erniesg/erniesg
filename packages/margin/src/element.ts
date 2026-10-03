@@ -83,6 +83,7 @@ import {
   createSketchSvg,
   decodeSketch,
   noteText,
+  previewAspectRatio,
   updateSketchNote,
 } from './sketch.js'
 
@@ -204,7 +205,7 @@ function el<K extends keyof HTMLElementTagNameMap>(
 function sketchPreview(doc: Document, sketch: NonNullable<ReturnType<typeof decodeSketch>>): SVGSVGElement {
   const svg = createSketchSvg(sketch, doc)
   svg.setAttribute('class', 'sketch')
-  svg.style.aspectRatio = `${sketch.region.width} / ${sketch.region.height}`
+  svg.style.aspectRatio = previewAspectRatio(sketch.region)
   return svg
 }
 

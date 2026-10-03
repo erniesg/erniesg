@@ -5,6 +5,7 @@ import {
   decodeSketch,
   encodeSketch,
   noteText,
+  previewAspectRatio,
   sketchPathData,
   updateSketchNote,
   type Sketch,
@@ -14,7 +15,7 @@ const sketch: Sketch = {
   version: 1,
   note: 'Circle the conclusion.',
   anchor: { blockId: 'chapter-1-p-4', quote: 'The conclusion.' },
-  region: { x: 12.5, y: -4, width: 50, height: 20 },
+  region: { x: 0.125, y: -0.04, width: 0.5, height: 0.2 },
   strokes: [
     [
       [0, 0],
@@ -94,7 +95,7 @@ describe('sketch notes', () => {
       version: 1,
       note: 'Underline this instead.',
       anchor: { blockId: 'chapter-1-p-4', quote: 'The conclusion.' },
-      region: { x: 12.5, y: -4, width: 50, height: 20 },
+      region: { x: 0.125, y: -0.04, width: 0.5, height: 0.2 },
       strokes: [
         [
           [0, 0],
@@ -134,4 +135,32 @@ describe('sketch notes', () => {
     )
     expect(svg.children[0]?.attributes.get('stroke')).toBe('#0369a1')
   })
+
+  // Regions are fractions of the anchor block's width. A stored sketch is
+  // untrusted: one out of any drawable range, or a sliver, must not stretch
+  // the page or the rail for every reader who receives it.
+  it('treats geometry no drag could produce as malformed', () => {
+    const envelope = (region: Record<string, number>) =>
+      `margin:sketch:v1\n${JSON.stringify({ ...sketch, region })}`
+    for (const region of [
+      { x: 0, y: 0, width: 0.000001, height: 1 },
+      { x: 0, y: 0, width: 1, height: 0.000001 },
+      { x: 0, y: 0, width: 1, height: 100 },
+      { x: 0, y: 0, width: 3, height: 1 },
+      { x: 0, y: 99, width: 1, height: 1 },
+      { x: 50, y: 0, width: 1, height: 1 },
+    ]) {
+      expect(decodeSketch(envelope(region)), JSON.stringify(region)).toBeNull()
+    }
+    expect(decodeSketch(envelope({ x: -0.2, y: 4, width: 1.2, height: 4.5 }))).not.toBeNull()
+  })
+
+  it('keeps the rail preview between 1:4 and 4:1', () => {
+    const ratio = (width: number, height: number) =>
+      previewAspectRatio({ x: 0, y: 0, width, height })
+    expect(ratio(0.5, 0.2)).toBe('0.5 / 0.2')
+    expect(ratio(0.01, 5)).toBe('1 / 4')
+    expect(ratio(2, 0.01)).toBe('4 / 1')
+  })
 })
+

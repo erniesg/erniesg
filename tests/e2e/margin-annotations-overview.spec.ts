@@ -319,6 +319,27 @@ test.describe('the Annotations page', () => {
     await expect(page.locator('margin-rail')).toHaveAttribute('data-flashing', '')
   })
 
+  test('on a phone the link opens the rail overlay on its entry, and a reply lands on the reply', async ({ page }) => {
+    const service = await mountService(page)
+    const ids = await seed(page, service)
+    await page.setViewportSize({ width: 390, height: 844 })
+
+    await page.goto(`${VALUES}?annotation=${ids.sketch}`)
+    const target = railEntry(page, ids.sketch)
+    await expect(target).toHaveAttribute('data-margin-target', '')
+    await expect(target).toBeVisible()
+    await expect.poll(() =>
+      target.evaluate((node) => node.contains((node.getRootNode() as ShadowRoot).activeElement)),
+    ).toBe(true)
+
+    await page.goto(`${VALUES}?annotation=${ids.reply}`)
+    const reply = page.locator('margin-rail').locator(`#margin-reply-${ids.reply}`)
+    await expect(reply).toBeVisible()
+    await expect.poll(() =>
+      reply.evaluate((node) => (node.getRootNode() as ShadowRoot).activeElement === node),
+    ).toBe(true)
+  })
+
   test('an annotation whose text changed says so on the page and in the rail', async ({ page }) => {
     const service = await mountService(page)
     const ids = await seed(page, service)

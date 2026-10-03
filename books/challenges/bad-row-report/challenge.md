@@ -37,11 +37,11 @@ Someone typed 312 donations into a text file, one amount in cents per line.
 Some lines are not amounts: a word, a stray decimal point, a minus sign, a
 blank line where they hit Enter twice.
 
-Add up the ones that are amounts, and hand back a list of the ones that are
-not, each with the line number it came from. Crashing on the first bad line is
-not allowed — the whole point is to get through all 312 and report at the end.
+Add up the lines that are amounts. Return a list of the ones that are not,
+each with its line number. Don't stop at the first bad line; report them all
+at the end.
 
-- Line numbers start at 1, counting every entry you were given, blanks
+- Line numbers start at 1 and count every entry you were given, blanks
   included.
 - A line that is empty, or only spaces, is neither an amount nor a problem.
   Skip it.
@@ -50,10 +50,9 @@ not allowed — the whole point is to get through all 312 and report at the end.
   arrived)`.
 - Surrounding spaces are fine: `"  42  "` is 42.
 
-One thing *is* worth raising for. Handed something that is not a list at all,
-raise `TypeError`. A messy row is expected and gets reported; a caller passing
-`None` because a file failed to open is a broken call, and it should stop
-there.
+If you are given something that is not a list, raise `TypeError`. A messy row
+is expected, so it gets reported. `None` from a file that failed to open is a
+broken call, so it should stop there.
 :::
 
 :::io
@@ -66,7 +65,7 @@ output: a pair — the total of the good lines, and a list of `(line_number, tex
 - Every entry in `lines` is a string. It may contain anything.
 - A good line, once its surrounding spaces are gone, is one `int()` accepts
   and whose value is not negative.
-- `parse_amounts(None)` raises `TypeError`. Nothing else raises, ever.
+- `parse_amounts(None)` raises `TypeError`. Nothing else raises.
 :::
 
 :::sample
@@ -80,7 +79,8 @@ output: a pair — the total of the good lines, and a list of `(line_number, tex
 :::
 
 :::figure{id="reading-a-traceback"}
-A report with line numbers beats a traceback that stops at the first bad row.
+A report with line numbers is more useful than a traceback that stops at the
+first bad row.
 :::
 
 :::run{starter="starter.py"}
@@ -110,25 +110,22 @@ def parse_amounts(lines):
     return (total, problems)
 ```
 
-**Two different ways to be bad, one report.** `int("twelve")` raises and
-`int("-5")` does not, so one is caught and the other is tested. Both end up in
-the same list, because the person fixing the file does not care which kind of
-wrong it was — they care which line to open.
+**Two kinds of bad line, one report.** `int("twelve")` raises and `int("-5")`
+does not, so the first is caught and the second is tested. Both go in the same
+list, because the person fixing the file only needs to know which line to
+open.
 
-**`enumerate(lines, start=1)` before the blank check, not after.** The line
-number has to count blank lines, or every number after the first blank is off
-by one and points at the wrong row. That is the bug this problem is really
-about, and the edge tier has a case for it.
+**`enumerate(lines, start=1)` counts before the blank check.** The line number
+has to count blank lines. If it doesn't, every number after the first blank is
+off by one. The edge tier has a case for this.
 
-**`continue`, not `else`.** Each bad case ends the work on that line. Reaching
-for `else` here nests the good path two levels deep for no gain.
+**`continue`, not `else`.** Each bad case ends the work on that line. Using
+`else` instead would nest the good path two levels deep.
 
-**Report the line as it arrived, not stripped.** `(3, "twelve")` is what the
-file says. If you report `"12"` when the file holds `" 12 "`, the person goes
+**Report the line as it arrived, not stripped.** If you report `"12"` when the file holds `" 12 "`, the person goes
 looking for something that is not there.
 
-**Why `TypeError` for `None` is not inconsistent.** Everything else this
-function meets is *expected* mess, and expected mess gets counted and reported.
-`None` is not mess; it means the caller never had any lines and did not notice.
+**Why `None` raises when bad rows don't.** Bad rows are expected, so they are
+reported. `None` means the caller never had any lines and did not notice.
 Reporting it as a bad row would hide a bug somewhere else in the program.
 :::

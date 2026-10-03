@@ -1544,6 +1544,51 @@ def nav_status(kind: str, section: int, sections: int, practice: int, total: int
     return " · ".join(parts)
 
 
+def _cp_step(rel: str, target: tuple[str, str] | None) -> str:
+    """One end of the indicator: ‹ or ›, to `(title, url)`, or an empty spacer."""
+    if target is None:
+        return '<span class="cp-step" aria-hidden="true"></span>'
+    title, url = target
+    label = ("Previous: " if rel == "prev" else "Next: ") + title
+    key = "[" if rel == "prev" else "]"
+    glyph = "‹" if rel == "prev" else "›"
+    return (
+        f'<a class="cp-step" rel="{rel}" href="{html.escape(url)}" '
+        f'aria-label="{html.escape(label)}" title="{html.escape(label)} ({key})" '
+        f'aria-keyshortcuts="{key}">{glyph}</a>'
+    )
+
+
+_CP_KEYS = (
+    '<button type="button" class="cp-keys" data-book-keys-toggle '
+    'aria-keyshortcuts="?" aria-label="Keyboard shortcuts" '
+    'title="Keyboard shortcuts (?)">?</button>'
+)
+
+
+def page_navigation(
+    order: list[dict],
+    href,
+    title: str,
+    previous: tuple[str, str] | None = None,
+) -> str:
+    """The indicator for a book page that is not a node: the front page, the map.
+
+    The same bar a chapter gets, so every page of the book is navigated the
+    same way: ‹ to `previous` (`(title, url)`, or nothing), the page's name,
+    › into the book's first page, and the shortcut sheet. `[` and `]` follow
+    the arrows here too, since the shortcuts read the bar.
+    """
+    following = (order[0]["title"], href(order[0]["id"])) if order else None
+    return (
+        '<nav class="chapter-progress" data-chapter-progress data-kind="book" '
+        f'aria-label="Where you are">{_cp_step("prev", previous)}'
+        '<div class="cp-body"><div class="cp-head">'
+        f'<span class="cp-chapter">{html.escape(title)}</span></div></div>'
+        f'{_cp_step("next", following)}{_CP_KEYS}</nav>'
+    )
+
+
 def reading_navigation(
     order: list[dict],
     node_id: str,
@@ -1572,22 +1617,9 @@ def reading_navigation(
     pager += "</nav>"
 
     def step(rel: str, target: dict | None) -> str:
-        if target is None:
-            return '<span class="cp-step" aria-hidden="true"></span>'
-        label = ("Previous: " if rel == "prev" else "Next: ") + target["title"]
-        key = "[" if rel == "prev" else "]"
-        glyph = "‹" if rel == "prev" else "›"
-        return (
-            f'<a class="cp-step" rel="{rel}" href="{html.escape(href(target["id"]))}" '
-            f'aria-label="{html.escape(label)}" title="{html.escape(label)} ({key})" '
-            f'aria-keyshortcuts="{key}">{glyph}</a>'
-        )
+        return _cp_step(rel, (target["title"], href(target["id"])) if target else None)
 
-    keys = (
-        '<button type="button" class="cp-keys" data-book-keys-toggle '
-        'aria-keyshortcuts="?" aria-label="Keyboard shortcuts" '
-        'title="Keyboard shortcuts (?)">?</button>'
-    )
+    keys = _CP_KEYS
     chapter = chapter_of(order, node_id)
     if chapter is None:
         return {
@@ -1659,6 +1691,9 @@ NAV_CSS = """
   display:flex; align-items:center; gap:.4rem; min-width:0; flex:1 1 auto;
   font:.75rem/1.2 ui-sans-serif,system-ui,sans-serif; color:var(--cp-ink); }
 .cp-body { display:flex; flex-direction:column; gap:4px; min-width:0; flex:1 1 auto; }
+/* A page with no chapter track (the front page, the map, a page outside any
+   chapter) has only its name: the arrows sit beside it, not across the bar. */
+.chapter-progress:is([data-kind="book"], [data-kind="none"]) .cp-body { flex:0 1 auto; }
 .cp-head { display:flex; align-items:baseline; gap:.5rem; min-width:0; white-space:nowrap; }
 .cp-chapter { flex:0 3 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; font-weight:600;
   color:var(--cp-ink); text-decoration:none; }

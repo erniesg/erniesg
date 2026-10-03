@@ -48,6 +48,7 @@ from render import (
     render_node,
     section_headings,
     map_markup,
+    page_navigation,
 )
 
 SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
@@ -214,6 +215,10 @@ def book_entry(path_id: str, collection: dict) -> dict:
     data = read_path(path_id)
     slug = book_slug(path_id, data)
     book, order = load_book(path_id)
+
+    def node_href(node_id: str) -> str:
+        return f"/books/{slug}/{node_id}/"
+
     return {
         "pathId": path_id,
         "slug": slug,
@@ -235,6 +240,11 @@ def book_entry(path_id: str, collection: dict) -> dict:
         ],
         "nodes": with_navigation(order, [node_entry(node, slug) for node in order]),
         "topics": topic_entries(order),
+        # The bar on the book's own pages, the same one a chapter gets.
+        "frontProgress": page_navigation(order, node_href, title="Contents"),
+        "mapProgress": page_navigation(
+            order, node_href, title="The map", previous=("Contents", f"/books/{slug}/")
+        ),
     }
 
 

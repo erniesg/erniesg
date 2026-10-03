@@ -53,10 +53,17 @@ class NodePages(unittest.TestCase):
         self.assertIn("export function installBookKeys", page)
         self.assertIn("installBookKeys(document); trackChapterProgress(document);", page)
 
-    def test_the_contents_page_has_no_indicator(self):
-        page = self.get("/", [])
-        self.assertNotIn("data-chapter-progress", page)
-        self.assertNotIn("installBookKeys(document)", page)
+    def test_the_contents_page_and_the_map_carry_the_same_bar(self):
+        """Every page of the book is navigated the same way, front page and map included."""
+        first = self.get("/", [])
+        self.assertIn('data-chapter-progress data-kind="book"', first)
+        self.assertIn(">Contents<", first)
+        self.assertIn("installBookKeys(document)", first)
+        self.assertNotIn('rel="prev"', first)
+        found = self.get("/map", [])
+        self.assertIn(">The map<", found)
+        self.assertIn('rel="prev" href="/"', found)
+        self.assertIn("installBookKeys(document)", found)
 
 
 if __name__ == "__main__":

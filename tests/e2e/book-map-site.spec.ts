@@ -170,6 +170,127 @@ test('the plain bar keeps every control in view on a 320px phone', async ({ page
   }
 })
 
+test('the front page, the map and a chapter share one bar, and [ ] walk between them', async ({ page }) => {
+  await mount(page)
+  for (const look of ['site', 'plain']) {
+    await page.addInitScript((value) => {
+      try {
+        localStorage.setItem('book-look', value)
+      } catch {}
+    }, look)
+    for (const [path, name] of [
+      [BOOK, 'Contents'],
+      [MAP, 'The map'],
+      [`${BOOK}ch06-dicts-sets/`, 'Ch 6'],
+    ]) {
+      await page.goto(path)
+      const bar = page.locator('[data-book-bar] [data-chapter-progress]')
+      await expect(bar, `${look} ${path}`).toBeVisible()
+      await expect(bar.locator('.cp-chapter')).toContainText(name)
+      await expect(bar.locator('a.cp-step[rel="next"]')).toBeVisible()
+      await expect(bar.locator('.cp-keys')).toBeVisible()
+    }
+  }
+  // With no chapter track to show, the › sits beside the title, not across the bar.
+  for (const path of [BOOK, MAP]) {
+    await page.goto(path)
+    const bar = page.locator('[data-book-bar] [data-chapter-progress]')
+    const title = await bar.locator('.cp-chapter').boundingBox()
+    const next = await bar.locator('a.cp-step[rel="next"]').boundingBox()
+    expect(next!.x - (title!.x + title!.width), `${path} gap before ›`).toBeLessThan(40)
+  }
+  // The keys follow the arrows on the book's own pages too.
+  await page.goto(BOOK)
+  await page.keyboard.press(']')
+  await expect(page).toHaveURL(/\/books\/build-a-coding-agent\/front-matter\/$/)
+  await page.goto(MAP)
+  await page.keyboard.press('[')
+  await expect(page).toHaveURL(new RegExp(`${BOOK}$`))
+})
+
+test('in dark mode, inline code on the page is a dark chip, not a bright one', async ({ page }) => {
+  await mount(page)
+  for (const look of ['site', 'plain']) {
+    await page.addInitScript((value) => {
+      try {
+        localStorage.setItem('theme', 'dark')
+        localStorage.setItem('book-look', value)
+      } catch {}
+    }, look)
+    await page.goto(`${BOOK}pool-ticket-price/`)
+    const chip = page.locator('.book-content .io-row code').first()
+    await expect(chip).toBeVisible()
+    const [background, color] = await chip.evaluate((element) => {
+      const style = getComputedStyle(element)
+      return [style.backgroundColor, style.color]
+    })
+    const level = (value: string) => {
+      const [r, g, b] = (value.match(/[\d.]+/g) ?? []).map(Number)
+      return (r + g + b) / 3
+    }
+    expect(level(background), `${look} chip background ${background}`).toBeLessThan(90)
+    expect(level(color), `${look} chip text ${color}`).toBeGreaterThan(180)
+  }
+})
+
+test("in dark mode a challenge's worked solution reads on the dark page, stacked and side by side", async ({ page }) => {
+  await mount(page)
+  for (const view of ['stacked', 'split']) {
+    await page.addInitScript((value) => {
+      try {
+        localStorage.setItem('theme', 'dark')
+        localStorage.setItem('book-challenge-view', value)
+      } catch {}
+    }, view)
+    await page.goto(`${BOOK}pool-ticket-price/`)
+    const solution = page.locator('.book-content details.solution')
+    await solution.locator('summary').click()
+    const prose = solution.locator('p').filter({ hasText: 'Walk it through' }).first()
+    await expect(prose).toBeVisible()
+    const [text, chip] = await prose.evaluate((element) => [
+      getComputedStyle(element).color,
+      getComputedStyle(element.querySelector('code')!).backgroundColor,
+    ])
+    const level = (value: string) => {
+      const [r, g, b] = (value.match(/[\d.]+/g) ?? []).map(Number)
+      return (r + g + b) / 3
+    }
+    expect(level(text), `${view} solution text ${text}`).toBeGreaterThan(180)
+    expect(level(chip), `${view} solution chip ${chip}`).toBeLessThan(90)
+  }
+})
+
+test('side by side, the floating edit bar is opaque over the question, in both themes', async ({ page }) => {
+  await mount(page)
+  // Edit mode is for writers: this reader may write (registered last, so it wins).
+  await page.route('**/auth/me', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        authenticated: true,
+        canWrite: true,
+        isAdmin: true,
+        principal: { provider: 'dev', issuer: 'urn:margin:dev', subject: 'owner', email: 'hello@ernie.sg' },
+      }),
+    }),
+  )
+  for (const theme of ['light', 'dark']) {
+    await page.addInitScript((value) => {
+      try {
+        localStorage.setItem('theme', value)
+        localStorage.setItem('book-challenge-view', 'split')
+      } catch {}
+    }, theme)
+    await page.goto(`${BOOK}pool-ticket-price/`)
+    const bar = page.locator('[data-edit-mode]')
+    await expect(bar, `${theme}: edit bar shown to a writer`).toBeVisible()
+    const background = await bar.evaluate((element) => getComputedStyle(element).backgroundColor)
+    const alpha = Number((background.match(/[\d.]+/g) ?? [])[3] ?? 1)
+    expect(alpha, `${theme} edit bar ${background}`).toBeGreaterThan(0.9)
+  }
+})
+
 test('with no progress, the first topic is open and nothing is cleared', async ({ page }) => {
   await mount(page)
   await page.goto(MAP)

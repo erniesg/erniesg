@@ -87,6 +87,9 @@ export type Book = {
   parts: BookPart[]
   nodes: BookNode[]
   topics: BookTopic[]
+  /** The bar on the front page and on the map: the one a chapter gets, by `render.py`. */
+  frontProgress: string
+  mapProgress: string
 }
 
 export type BookManifest = {

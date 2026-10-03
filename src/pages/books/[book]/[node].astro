@@ -69,6 +69,13 @@ const RESTORED = `
 .dark .book-content .cell,
 .dark .book-content .hint,
 .dark .book-content .solution { --ink: #1a1a1a; --dim: #666; --line: #e2e2e2; --accent: #0369a1; }
+/* Inline code on the dark page is a dark chip; a bright one reads as a hole in
+   the page. Inside the light panels it keeps the light chip. */
+.dark .book-content :not(pre) > code { background: #2a2b30; color: #e6e6e6; }
+.dark .book-content :is(.figure, .cell, .hint, .solution) :not(pre) > code {
+  background: #f0efe9;
+  color: #1a1a1a;
+}
 /* The exercise card is a tinted panel, not a light one: in dark mode it takes
    a dark tint and keeps the site's foreground, instead of the light green
    CONTENT_CSS gives it, which left the prompt near-white on near-white. */

@@ -200,6 +200,31 @@ test('the front page, the map and a chapter share one bar, and [ ] walk between 
   await expect(page).toHaveURL(new RegExp(`${BOOK}$`))
 })
 
+test('in dark mode, inline code on the page is a dark chip, not a bright one', async ({ page }) => {
+  await mount(page)
+  for (const look of ['site', 'plain']) {
+    await page.addInitScript((value) => {
+      try {
+        localStorage.setItem('theme', 'dark')
+        localStorage.setItem('book-look', value)
+      } catch {}
+    }, look)
+    await page.goto(`${BOOK}pool-ticket-price/`)
+    const chip = page.locator('.book-content .io-row code').first()
+    await expect(chip).toBeVisible()
+    const [background, color] = await chip.evaluate((element) => {
+      const style = getComputedStyle(element)
+      return [style.backgroundColor, style.color]
+    })
+    const level = (value: string) => {
+      const [r, g, b] = (value.match(/[\d.]+/g) ?? []).map(Number)
+      return (r + g + b) / 3
+    }
+    expect(level(background), `${look} chip background ${background}`).toBeLessThan(90)
+    expect(level(color), `${look} chip text ${color}`).toBeGreaterThan(180)
+  }
+})
+
 test('with no progress, the first topic is open and nothing is cleared', async ({ page }) => {
   await mount(page)
   await page.goto(MAP)

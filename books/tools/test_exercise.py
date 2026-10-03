@@ -106,6 +106,52 @@ class ExerciseTests(unittest.TestCase):
         found = problems_for(block(GOOD.replace("print(...)", "print(max(values))")))
         self.assertTrue(any("already prints" in p for p in found), found)
 
+    def test_validator_rejects_a_check_that_wrong_arithmetic_also_passes(self):
+        # A reader wrote `capacity % booked` and it printed 9 too: 40 % 31 is 9
+        # and 12 % 12 is 0, the same as 9 + 0. A check that a swapped operator
+        # in the reader's part also satisfies cannot tell them they are wrong.
+        weak = """The last line adds two answers together.
+
+```python
+def seats_left(capacity, booked):
+    ...
+
+
+print(seats_left(40, 31) + seats_left(12, 12))
+```
+
+```output
+9
+```
+
+```answer
+def seats_left(capacity, booked):
+    return capacity - booked
+
+
+print(seats_left(40, 31) + seats_left(12, 12))
+```
+"""
+        found = problems_for(block(weak))
+        self.assertTrue(any("also prints" in p and "%" in p for p in found), found)
+        strong = weak.replace("seats_left(12, 12)", "seats_left(30, 12)").replace(
+            "```output\n9\n", "```output\n27\n"
+        )
+        self.assertEqual(problems_for(block(strong)), [])
+
+    def test_validator_mutates_every_arithmetic_form(self):
+        # Division, powers and augmented assignment are operators a reader can
+        # get wrong too: `2 ** 2` and `2 * 2` both print 4.
+        cases = {
+            "power": ("print(...)", "print(2 ** 2)", "4"),
+            "augmented": ("total = 2\n...\nprint(total)", "total = 2\ntotal *= 2\nprint(total)", "4"),
+        }
+        for name, (starter, answer, output) in cases.items():
+            with self.subTest(form=name):
+                inner = f"Compute it.\n\n```python\n{starter}\n```\n\n```output\n{output}\n```\n\n```answer\n{answer}\n```\n"
+                found = problems_for(block(inner))
+                self.assertTrue(any("also prints" in p for p in found), found)
+
     def test_exercises_do_not_enter_the_counters(self):
         # Counters count nodes and challenges; an exercise is neither.
         before = len(render.all_nodes())

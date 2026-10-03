@@ -230,7 +230,6 @@ const data = JSON.stringify({
 
     const meta = el('p', { class: 'annotations-meta' })
     meta.append(el('span', { class: 'annotations-kind', 'data-entry-kind': '' }, KIND_LABELS[entry.kind]))
-    if (entry.isReply) meta.append(el('span', {}, 'Reply'))
     if (entry.color) {
       meta.append(el('span', { class: 'annotations-swatch', 'data-entry-color': '' }, entry.color.label))
     }

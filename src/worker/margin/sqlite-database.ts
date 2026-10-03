@@ -53,6 +53,10 @@ class SqlitePreparedStatement implements D1PreparedStatement {
   }
 
   async run(): Promise<D1Result<never>> {
+    return this.runSynchronously()
+  }
+
+  runSynchronously(): D1Result<never> {
     const changes = this.owner.execute(this.sql, this.params)
     return { results: [], success: true, meta: { changes } }
   }
@@ -72,6 +76,25 @@ export class SqliteD1Database implements D1Database {
 
   prepare(query: string): D1PreparedStatement {
     return new SqlitePreparedStatement(this, query, [])
+  }
+
+  async batch<T = Record<string, unknown>>(
+    statements: D1PreparedStatement[],
+  ): Promise<D1Result<T>[]> {
+    this.database.exec('BEGIN')
+    try {
+      const results = statements.map((statement) => {
+        if (!(statement instanceof SqlitePreparedStatement)) {
+          throw new Error('SQLite batches require SQLite prepared statements')
+        }
+        return statement.runSynchronously() as D1Result<T>
+      })
+      this.database.exec('COMMIT')
+      return results
+    } catch (error) {
+      this.database.exec('ROLLBACK')
+      throw error
+    }
   }
 
   /** Statements run outside the repository, for seeding and for assertions. */

@@ -1,0 +1,12 @@
+{
+  "scope": "runtime",
+  "level": "high",
+  "allow": [
+    {
+      "id": "GHSA-ch52-4w7c-c8xp",
+      "package": "http-cache-semantics",
+      "reason": "astro build-time remote image cache; not in shipped bundles (#415, verified from Worker and client source maps in #416)",
+      "expires": "2026-11-02"
+    }
+  ]
+}

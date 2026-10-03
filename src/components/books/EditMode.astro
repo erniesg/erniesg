@@ -4,6 +4,7 @@
  * may write: anonymous readers and readers off the allowlist never see it.
  * The behaviour is `src/lib/edit-mode/editor.ts`; this is the markup it drives.
  */
+import SketchTools from './SketchTools.astro'
 ---
 
 <section class="edit-mode" data-edit-mode data-split-keep hidden aria-label="Edit this page">
@@ -24,6 +25,7 @@
     <div data-edit-changes-list></div>
   </section>
   <div class="edit-surface" data-edit-surface hidden></div>
+  <SketchTools />
 </section>
 
 <style is:global>

@@ -10,6 +10,7 @@ import {
   regionWithinBounds,
   type Sketch,
 } from '../../../packages/margin/src/sketch'
+import { prefixByCodePoints } from '../../../packages/margin/src/text'
 import type { TextAnnotation } from '../../../packages/margin/src/anchor'
 
 const API = '/api/margin/v1/annotations'
@@ -346,7 +347,7 @@ export class SketchController {
         this.#draft = {
           version: 1,
           note: '',
-          anchor: { blockId: block.id, quote: block.text.slice(0, 160) },
+          anchor: { blockId: block.id, quote: prefixByCodePoints(block.text, 160) },
           region,
           strokes: [],
         }

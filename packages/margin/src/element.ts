@@ -87,6 +87,7 @@ import {
   previewAspectRatio,
   updateSketchNote,
 } from './sketch.js'
+import { prefixByCodePoints } from './text.js'
 
 export const MARGIN_RAIL_TAG = 'margin-rail'
 
@@ -2729,7 +2730,7 @@ export class MarginRailElement extends ElementBase {
   #buildPopup(popup: PopupState): HTMLElement {
     const doc = this.ownerDocument
     const quote = popup.anchors.map((anchor) => anchor.quote.exact).join(' … ')
-    const short = quote.length > 80 ? `${quote.slice(0, 77)}…` : quote
+    const short = quote.length > 80 ? `${prefixByCodePoints(quote, 77)}…` : quote
     const dialog = el(doc, 'div', {
       class: 'popup',
       role: 'dialog',

@@ -37,6 +37,7 @@ import {
 } from '../../annotations/prose-schema'
 import { inlineText, replaceBlock, splitAt, withContent, withItems } from './model'
 import { SketchController } from './sketch-controller'
+import { prefixByCodePoints } from '../../../packages/margin/src/text'
 
 const API = '/api/margin/v1'
 const AUTH_ME = '/auth/me'
@@ -846,7 +847,7 @@ export class EditMode {
     }
     const line =
       candidates.map(clean).find((text) => text.length >= 3 && pageText.includes(text)) ?? ''
-    const exact = (line || pageText.trim().slice(0, 80) || 'this page').slice(0, 200)
+    const exact = prefixByCodePoints(line || prefixByCodePoints(pageText.trim(), 80) || 'this page', 200)
     const at = pageText.indexOf(exact)
     return { exact, start: at < 0 ? 0 : [...pageText.slice(0, at)].length }
   }

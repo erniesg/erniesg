@@ -1,0 +1,153 @@
+---
+import BookBar from '@/components/books/BookBar.astro'
+import BookContents from '@/components/books/BookContents.astro'
+import ReadingLayout from '@/layouts/ReadingLayout.astro'
+import { SITE } from '@/consts'
+import {
+  bookBySlug,
+  bookManifest,
+  books,
+  documentUri,
+  scopeContentCss,
+} from '@/lib/books'
+
+export function getStaticPaths() {
+  return books().map((book) => ({ params: { book: book.slug } }))
+}
+
+const slug = Astro.params.book!
+const book = bookBySlug(slug)
+if (!book) throw new Error(`no book path declares the slug \`${slug}\``)
+
+const manifest = bookManifest()
+const path = `${book.path}map/`
+// Everything the shared map module needs, as the preview hands it over. `<`
+// is escaped so no title can end this script early.
+const data = JSON.stringify({
+  book: book.slug,
+  base: book.path,
+  site: new URL(SITE.SITEURL).origin,
+  libraries: manifest.mapLibraries,
+  topics: book.topics,
+}).replace(/</g, '\\u003c')
+// The book's column is narrower than the preview's page, so the panel goes
+// under the map rather than beside it, and the map gets the column's width.
+// Its colours are the book's own (a chapter gets them from the content
+// stylesheet). The text around the map follows the page's theme; the map and
+// its detail panel are white cards in both themes, as figures are, so they
+// keep the light palette.
+const LIGHT = '--ink: #1a1a1a; --dim: #666; --line: #e2e2e2; --accent: #0369a1;'
+const STACKED =
+  `.book-map { ${LIGHT} }` +
+  '.dark .book-map { --ink: #ededed; --dim: #a3a3a3; --line: #3f3f3f; --accent: #7dd3fc; color: var(--ink); }' +
+  `.book-map :is(#map, .map-detail, .map-controls) { ${LIGHT} color: var(--ink); }` +
+  '.book-map .map-wrap { grid-template-columns: minmax(0, 1fr); }'
+const style = `<style>${scopeContentCss(manifest.mapCss, '.book-map')}${manifest.mapAtRules}${STACKED}</style>`
+---
+
+<ReadingLayout
+  title={`The map — ${book.title}`}
+  description={`Every topic in ${book.title}, what it needs first, and where you stand.`}
+  documentUri={documentUri(path)}
+  canonicalPath={path}
+>
+  <Fragment slot="head" set:html={style} />
+
+  <BookBar slot="before" book={book} />
+
+  <Fragment slot="navigation">
+    <BookContents book={book} />
+  </Fragment>
+
+  <div class="book-map" data-book-map set:html={manifest.mapHtml} />
+  <script type="application/json" data-book-map-data set:html={data} />
+</ReadingLayout>
+
+<script>
+  // The map, drawn by the same module the local preview uses, coloured from
+  // this reader's progress: this browser's, merged with their account's when
+  // they are signed in.
+  import { drawMap } from '../../../../books/tools/runtime/map.mjs'
+  import { siteBackend } from '@/lib/book-progress-site'
+
+  type MapData = {
+    book: string
+    base: string
+    site: string
+    libraries: { url: string; integrity: string }[]
+    topics: Parameters<typeof drawMap>[1]['topics']
+  }
+
+  function safeStorage(): Storage | undefined {
+    try {
+      return window.localStorage
+    } catch {
+      return undefined
+    }
+  }
+
+  // Cytoscape and its layout, from the CDN, once per visit, in order, each
+  // checked against its pinned hash: anything else is refused, not run.
+  let libraries: Promise<void> | null = null
+  function loadLibraries(list: MapData['libraries']): Promise<void> {
+    libraries ??= list.reduce(
+      (previous, { url, integrity }) =>
+        previous.then(
+          () =>
+            new Promise<void>((resolve, reject) => {
+              const script = document.createElement('script')
+              script.src = url
+              script.integrity = integrity
+              script.crossOrigin = 'anonymous'
+              script.onload = () => resolve()
+              script.onerror = () => reject(new Error(`could not load ${url}`))
+              document.head.append(script)
+            }),
+        ),
+      Promise.resolve(),
+    ).catch((error) => {
+      libraries = null // a failed load may be retried on the next visit
+      throw error
+    })
+    return libraries
+  }
+
+  // Each page view draws at most once, and only onto its own page: a load
+  // that finishes after the reader has moved on is dropped.
+  let visit = 0
+  let drawn: { destroy(): void } | null = null
+  document.addEventListener('astro:before-preparation', () => {
+    visit += 1
+    drawn?.destroy()
+    drawn = null
+  })
+  document.addEventListener('astro:page-load', async () => {
+    const mine = ++visit
+    const holder = document.querySelector<HTMLScriptElement>('[data-book-map-data]')
+    if (!holder?.textContent) return
+    const data = JSON.parse(holder.textContent) as MapData
+    let solved: string[] = []
+    try {
+      const progress = await siteBackend({
+        book: data.book,
+        site: data.site,
+        storage: safeStorage(),
+      }).load()
+      solved = progress?.solved ?? []
+    } catch {
+      // No progress to colour by: the map still shows the book's shape.
+    }
+    try {
+      await loadLibraries(data.libraries)
+    } catch {
+      // drawMap says so in its panel when Cytoscape is missing.
+    }
+    if (mine !== visit) return
+    drawn?.destroy()
+    drawn = drawMap(document, {
+      topics: data.topics,
+      solved,
+      href: (id: string) => `${data.base}${id}/`,
+    })
+  })
+</script>

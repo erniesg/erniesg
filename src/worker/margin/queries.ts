@@ -211,6 +211,43 @@ VALUES (${new Array(23).fill('?').join(', ')})`,
   }
 }
 
+export function findIdempotencyReceiptQuery(
+  scope: TenantScope,
+  owner: string,
+  key: string,
+): Query {
+  return {
+    sql: `SELECT fingerprint, annotation_id FROM margin_idempotency_receipts
+WHERE creator = ? AND site = ? AND document = ? AND request_key = ? LIMIT 1`,
+    params: [owner, scope.site, scope.document, key],
+  }
+}
+
+export function insertIdempotencyReceiptQuery(receipt: {
+  creator: string
+  site: string
+  document: string
+  key: string
+  fingerprint: string
+  annotationId: string
+  created: string
+}): Query {
+  return {
+    sql: `INSERT INTO margin_idempotency_receipts
+(creator, site, document, request_key, fingerprint, annotation_id, created)
+VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    params: [
+      receipt.creator,
+      receipt.site,
+      receipt.document,
+      receipt.key,
+      receipt.fingerprint,
+      receipt.annotationId,
+      receipt.created,
+    ],
+  }
+}
+
 /**
  * Writes are owner-scoped in SQL for the same reason reads are viewer-scoped:
  * `creator = ?` is the authorization check, so a handler cannot skip it.

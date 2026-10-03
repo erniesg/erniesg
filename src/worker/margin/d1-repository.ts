@@ -4,8 +4,10 @@ import {
   countRepliesQuery,
   deleteAnnotationQuery,
   findAnnotationQuery,
+  findIdempotencyReceiptQuery,
   getPrefsQuery,
   insertAnnotationQuery,
+  insertIdempotencyReceiptQuery,
   listAnnotationsQuery,
   listProgressQuery,
   mergeProgressQuery,
@@ -19,6 +21,7 @@ import type { ProgressItem, ProgressRow, ProgressScope } from './progress'
 import {
   DEFAULT_VISIBILITY,
   type AnnotationPatch,
+  type IdempotencyReceipt,
   type ListOptions,
   type MarginPrefs,
   type MarginRepository,
@@ -191,6 +194,42 @@ export class D1MarginRepository implements MarginRepository {
 
   async insertAnnotation(record: MarginAnnotationRecord): Promise<void> {
     await this.statement(insertAnnotationQuery(recordToRow(record))).run()
+  }
+
+  async findIdempotencyReceipt(
+    scope: TenantScope,
+    owner: string,
+    key: string,
+  ): Promise<IdempotencyReceipt | null> {
+    const row = await this.statement(
+      findIdempotencyReceiptQuery(scope, owner, key),
+    ).first<{ fingerprint: string; annotation_id: string }>()
+    return row
+      ? { fingerprint: row.fingerprint, annotationId: row.annotation_id }
+      : null
+  }
+
+  async insertAnnotationWithReceipt(
+    record: MarginAnnotationRecord,
+    receipt: { key: string; fingerprint: string },
+  ): Promise<void> {
+    if (!this.database.batch) {
+      throw new Error('MARGIN_DB does not support atomic D1 batches')
+    }
+    await this.database.batch([
+      this.statement(insertAnnotationQuery(recordToRow(record))),
+      this.statement(
+        insertIdempotencyReceiptQuery({
+          creator: record.creator,
+          site: record.site,
+          document: record.document,
+          key: receipt.key,
+          fingerprint: receipt.fingerprint,
+          annotationId: record.id,
+          created: record.created,
+        }),
+      ),
+    ])
   }
 
   async updateAnnotation(

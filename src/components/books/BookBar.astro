@@ -54,6 +54,7 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
   {progress && <div class="book-bar-middle" set:html={progress} />}
 
   <div class="book-bar-end">
+    <a class="book-bar-map" href={`${book.path}map/`} data-book-map-link>Map</a>
     <div class="book-look" role="group" aria-label="Look">
       <span class="book-look-label" aria-hidden="true">Look</span>
       <button
@@ -281,8 +282,26 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
     font-weight: 600;
   }
 
+  /* The map, in both looks: the book's whole shape is one click away. */
+  .book-bar-map {
+    font:
+      0.75rem/1 ui-sans-serif,
+      system-ui,
+      sans-serif;
+    padding: 0.3rem 0.6rem;
+    border: 1px solid hsl(var(--border));
+    border-radius: 6px;
+    color: hsl(var(--foreground));
+    text-decoration: none;
+  }
+
+  .book-bar-map:hover {
+    border-color: hsl(var(--foreground));
+  }
+
   .book-look-choice:focus-visible,
   .book-bar-button:focus-visible,
+  .book-bar-map:focus-visible,
   .book-bar-title:focus-visible {
     outline: 2px solid currentColor;
     outline-offset: 2px;

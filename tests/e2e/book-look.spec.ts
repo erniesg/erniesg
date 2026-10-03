@@ -245,3 +245,184 @@ test.describe('the book look switch', () => {
     expect(overflow).toBeLessThanOrEqual(1)
   })
 })
+
+/**
+ * Plain is the preview's reader: the chapter rail beside the text ("In this
+ * chapter", "Connected"), Map and Print in the bar, the counter "n/46 · m/30
+ * solved", and the margin as its small button. The front page carries a bar
+ * of its own in both looks.
+ */
+const BOOK = '/books/build-a-coding-agent/'
+const RAIL = '[data-reading-companion] [data-book-rail]'
+
+test.describe('Plain matches the preview', () => {
+  test('the column beside the text is the chapter rail, and the margin is its button', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => localStorage.setItem('book-look', 'plain'))
+    await page.setViewportSize({ width: 1440, height: 1000 })
+    await page.goto(`${BOOK}ch03-lists/`)
+
+    const rail = page.locator(RAIL)
+    await expect(rail).toBeVisible()
+    await expect(rail.getByText('In this chapter')).toBeVisible()
+    await expect(rail.getByText('Connected')).toBeVisible()
+    await expect(rail.getByRole('link', { name: /Open the map/ })).toHaveAttribute(
+      'href',
+      `${BOOK}map/`,
+    )
+    await expect(rail.locator('[data-rail-section]').first()).toHaveAttribute(
+      'aria-current',
+      'location',
+    )
+    // The annotation panel is not in that column: the margin is collapsed.
+    await expect(page.locator('margin-rail')).toHaveAttribute('collapsed', '')
+    await expect(
+      page.locator('margin-rail [data-margin-action="keyboard-select"]'),
+    ).toBeHidden()
+
+    // Back in Site, the margin column returns and the rail steps aside.
+    await page.locator('[data-book-look-choice="site"]').click()
+    await expect(rail).toBeHidden()
+    await expect(page.locator('margin-rail')).not.toHaveAttribute('collapsed', '')
+  })
+
+  test('the bar has Map, Print and the solved count', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('book-look', 'plain'))
+    await page.goto(`${BOOK}ch03-lists/`)
+    const bar = page.locator(PLAIN_BAR)
+    await expect(bar.getByRole('link', { name: 'Map' })).toHaveAttribute('href', `${BOOK}map/`)
+    await expect(bar.getByRole('link', { name: 'Print' })).toHaveAttribute(
+      'href',
+      `${BOOK}print/#print-ch03-lists`,
+    )
+    await expect(bar.locator('.book-bar-progress-text')).toHaveText(/^\s*\d+\/46\s*·\s*0\/30 solved\s*$/)
+  })
+
+  test('the map and the print edition are pages of the book', async ({ page }) => {
+    await page.goto(`${BOOK}map/`)
+    // Counted by the map's own script, before the graph library draws.
+    await expect(page.locator('[data-map-counts]')).toHaveText(
+      /^\d+ topics · \d+ cleared · \d+ with content written$/,
+    )
+    await page.goto(`${BOOK}print/`)
+    await expect(page.locator('[data-book-print] .print-page')).toHaveCount(46)
+    await expect(page.locator('#print-ch03-lists')).toBeAttached()
+  })
+
+  for (const choice of ['site', 'plain'] as const) {
+    test(`in ${choice}, the map and the print edition get a full reading width`, async ({
+      page,
+    }) => {
+      await page.addInitScript((value) => localStorage.setItem('book-look', value), choice)
+      await page.setViewportSize({ width: 1440, height: 1000 })
+      const width = (css: string) =>
+        page.evaluate((selector) => document.querySelector(selector)!.getBoundingClientRect().width, css)
+      await page.goto(`${BOOK}print/`)
+      expect(await width('[data-book-print]')).toBeGreaterThan(550)
+      await page.goto(`${BOOK}map/`)
+      expect(await width('[data-book-map]')).toBeGreaterThan(900)
+    })
+  }
+
+  test('the edit toolbar waits for Edit in the plain bar', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('book-look', 'plain'))
+    await page.goto(`${BOOK}ch03-lists/`)
+    const proxy = page.locator('[data-book-edit]')
+    // Nobody may write yet, so there is no Edit at all.
+    await expect(proxy).toBeHidden()
+
+    // A writer gets the page's edit mode; in Plain only the bar's button shows.
+    await page.evaluate(() => {
+      document.querySelector<HTMLElement>('[data-edit-mode]')!.hidden = false
+    })
+    await expect(proxy).toBeVisible()
+    await expect(page.locator('.edit-bar')).toBeHidden()
+
+    // While editing, the toolbar is there, and the button says so.
+    await page.evaluate(() => {
+      document.documentElement.setAttribute('data-book-editing', '')
+      document.querySelector('[data-edit-toggle]')!.setAttribute('aria-pressed', 'true')
+    })
+    await expect(page.locator('.edit-bar')).toBeVisible()
+    await expect(proxy).toHaveAttribute('aria-pressed', 'true')
+
+    // In Site the toolbar shows as it always has.
+    await page.evaluate(() => {
+      document.documentElement.removeAttribute('data-book-editing')
+      document.querySelector('[data-edit-toggle]')!.setAttribute('aria-pressed', 'false')
+    })
+    await page.locator('[data-book-look-choice="site"]').click()
+    await expect(page.locator('.edit-bar')).toBeVisible()
+  })
+
+  test('p switches the look, but not while typing', async ({ page }) => {
+    await page.goto(`${BOOK}ch03-lists/`)
+    expect(await look(page)).toBe('site')
+    await page.locator('body').press('p')
+    expect(await look(page)).toBe('plain')
+    await page.locator('body').press('p')
+    expect(await look(page)).toBe('site')
+
+    await page.locator('.book-content textarea.editor').first().click()
+    await page.keyboard.press('p')
+    expect(await look(page)).toBe('site')
+
+    await page.locator('[data-book-keys-toggle]').first().click()
+    await expect(page.locator('[data-book-keys]')).toContainText('Switch between the Site and Plain looks')
+  })
+
+  test('the switch sits beside the theme button in both looks', async ({ page }) => {
+    await page.goto(`${BOOK}ch03-lists/`)
+    const near = async () =>
+      page.evaluate(() => {
+        const look = document.querySelector('.book-look')!.getBoundingClientRect()
+        const theme = document.querySelector('[data-book-theme-toggle]')!.getBoundingClientRect()
+        return theme.width > 0 && Math.abs(theme.left - look.right) < 40 && Math.abs(theme.top - look.top) < 20
+      })
+    expect(await near()).toBe(true)
+    await page.locator('[data-book-look-choice="plain"]').click()
+    expect(await near()).toBe(true)
+  })
+})
+
+test.describe('the front page', () => {
+  for (const choice of ['site', 'plain'] as const) {
+    test(`in ${choice}, a bar says Contents and how much is solved, and › starts the book`, async ({
+      page,
+    }) => {
+      await page.addInitScript((value) => localStorage.setItem('book-look', value), choice)
+      await page.goto(BOOK)
+      const bar = page.locator('[data-chapter-progress][data-kind="front"]')
+      await expect(bar).toBeVisible()
+      await expect(bar.locator('.cp-chapter')).toHaveText('Contents')
+      await expect(bar.locator('[data-progress-solved]')).toHaveText('0/30 solved')
+      await expect(bar.locator('a[rel="next"]')).toHaveAttribute('href', `${BOOK}front-matter/`)
+      if (choice === 'plain') {
+        await expect(page.locator('.book-bar-progress-text')).toHaveText(/^\s*0\/46\s*·\s*0\/30 solved\s*$/)
+      }
+      await page.locator('body').press(']')
+      await expect(page).toHaveURL(new RegExp(`${BOOK}front-matter/$`))
+    })
+
+    test(`in ${choice}, its contents read like the contents column`, async ({ page }) => {
+      await page.addInitScript((value) => localStorage.setItem('book-look', value), choice)
+      await page.setViewportSize({ width: 1440, height: 1000 })
+      await page.goto(BOOK)
+      const colour = (selector: string) =>
+        page.evaluate(
+          (css) => getComputedStyle(document.querySelector(css)!).color,
+          selector,
+        )
+      const front = '[data-book-front-contents] a[href$="/ch03-lists/"]'
+      const column = '#reading-navigation a[href$="/ch03-lists/"]'
+      await expect(page.locator(front)).toBeVisible()
+      expect(await colour(front)).toBe(await colour(column))
+      const underline = await page.evaluate(
+        (css) => getComputedStyle(document.querySelector(css)!).textDecorationLine,
+        front,
+      )
+      expect(underline).toBe('none')
+    })
+  }
+})

@@ -35,6 +35,12 @@ const index = currentId
   : -1
 const place = index + 1
 const through = total > 0 ? Math.round((place / total) * 100) : 0
+// Solved challenges, as preview.py counts them: the page code fills the count
+// in from the reader's progress (`[data-progress-solved]`).
+const challenges = book.nodes
+  .filter((node) => node.kind === 'challenge')
+  .map((node) => node.id)
+const printHref = `${book.path}print/${currentId ? `#print-${currentId}` : ''}`
 ---
 
 <div class="book-bar" data-book-bar data-has-progress={progress ? '' : undefined}>
@@ -49,50 +55,69 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
       Contents
     </button>
     <a class="book-bar-title" href={book.path}>{book.title}</a>
+    <a class="book-bar-link" href={`${book.path}map/`} data-astro-reload>Map</a>
+    <a class="book-bar-link" href={printHref} data-astro-reload>Print</a>
   </div>
 
   {progress && <div class="book-bar-middle" set:html={progress} />}
 
   <div class="book-bar-end">
-    <div class="book-look" role="group" aria-label="Look">
+    <button
+      type="button"
+      class="book-bar-button book-bar-edit book-bar-plain-only"
+      data-book-edit
+      aria-pressed="false"
+      hidden
+    >
+      Edit
+    </button>
+    <div class="book-look" role="group" aria-label="Look" title="Look (p)">
       <span class="book-look-label" aria-hidden="true">Look</span>
       <button
         type="button"
         class="book-look-choice"
         data-book-look-choice="site"
+        aria-keyshortcuts="p"
         aria-pressed="true">Site</button
       >
       <button
         type="button"
         class="book-look-choice"
         data-book-look-choice="plain"
+        aria-keyshortcuts="p"
         aria-pressed="false">Plain</button
       >
     </div>
     <button
       type="button"
-      class="book-bar-button book-bar-theme book-bar-plain-only"
+      class="book-bar-button book-bar-theme"
       data-book-theme-toggle
       aria-label="Switch to dark theme"
       title="Theme"
     >
       <span class="book-theme-icon" aria-hidden="true"></span>
     </button>
-    {
-      place > 0 && (
-        <div
-          class="book-progress book-bar-plain-only"
-          title={`${place} of ${total} in this book`}
-        >
-          <div class="book-progress-bar" aria-hidden="true">
-            <i style={`width:${through}%`} />
-          </div>
-          <span class="book-progress-text">
-            {place}/{total}
-          </span>
-        </div>
-      )
-    }
+    <div
+      class="book-bar-progress book-bar-plain-only"
+      title={place > 0 ? `${place} of ${total} in this book` : `${total} in this book`}
+    >
+      <div class="book-bar-progress-bar" aria-hidden="true">
+        <i style={`width:${through}%`}></i>
+      </div>
+      <span class="book-bar-progress-text">
+        {place}/{total}
+        {
+          challenges.length > 0 && (
+            <>
+              {' · '}
+              <span data-progress-solved data-challenge-ids={challenges.join(' ')}>
+                0/{challenges.length} solved
+              </span>
+            </>
+          )
+        }
+      </span>
+    </div>
   </div>
 </div>
 <div class="book-scrim" data-book-scrim hidden></div>
@@ -161,6 +186,84 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
     }
   }
 
+  // In `plain` the margin is its small "Margin" button (the collapsed mode, as
+  // on a blog post), and the column beside the text holds the chapter rail.
+  // A surface that asked for a collapsed margin keeps it in both looks.
+  function syncMargin() {
+    const keep =
+      document.querySelector<HTMLElement>('[data-reading-shell]')?.dataset
+        .marginDefault === 'collapsed'
+    const collapsed = keep || currentLook() === 'plain'
+    for (const rail of document.querySelectorAll('margin-rail')) {
+      if (rail.hasAttribute('collapsed') !== collapsed) {
+        rail.toggleAttribute('collapsed', collapsed)
+      }
+    }
+  }
+
+  // Plain shows one quiet Edit button in its bar, which drives the page's own
+  // edit toggle; the toolbar appears only while editing (see the styles).
+  function syncEdit() {
+    const mode = document.querySelector<HTMLElement>('[data-edit-mode]')
+    const toggle = document.querySelector('[data-edit-toggle]')
+    const available = Boolean(mode && !mode.hidden)
+    const pressed = toggle?.getAttribute('aria-pressed') === 'true'
+    for (const proxy of document.querySelectorAll<HTMLElement>(
+      '[data-book-edit]',
+    )) {
+      proxy.hidden = !available
+      proxy.setAttribute('aria-pressed', String(pressed))
+    }
+  }
+
+  let editWatch: MutationObserver | null = null
+  function watchEdit() {
+    editWatch?.disconnect()
+    const mode = document.querySelector('[data-edit-mode]')
+    if (mode) {
+      editWatch = new MutationObserver(syncEdit)
+      editWatch.observe(mode, {
+        attributes: true,
+        subtree: true,
+        attributeFilter: ['hidden', 'aria-pressed'],
+      })
+    }
+    syncEdit()
+  }
+
+  // "In this chapter": the section being read is marked, as on the preview.
+  let stopRail = () => {}
+  function trackRail() {
+    stopRail()
+    const links = [
+      ...document.querySelectorAll<HTMLElement>('[data-rail-section]'),
+    ]
+    const headings = links
+      .map((link) => document.getElementById(link.dataset.railSection ?? ''))
+      .filter((heading): heading is HTMLElement => Boolean(heading))
+    if (!headings.length) return
+    let frame = 0
+    const paint = () => {
+      frame = 0
+      const line = window.innerHeight * 0.35
+      let current = headings[0]
+      for (const heading of headings) {
+        if (heading.getBoundingClientRect().top <= line) current = heading
+      }
+      for (const link of links) {
+        if (link.dataset.railSection === current.id) {
+          link.setAttribute('aria-current', 'location')
+        } else link.removeAttribute('aria-current')
+      }
+    }
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(paint)
+    }
+    window.addEventListener('scroll', schedule, { passive: true })
+    paint()
+    stopRail = () => window.removeEventListener('scroll', schedule)
+  }
+
   function setLook(look: BookLook) {
     root.setAttribute(BOOK_LOOK_ATTRIBUTE, look)
     try {
@@ -170,6 +273,7 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
     }
     setDrawer(false)
     syncControls()
+    syncMargin()
   }
 
   function toggleTheme() {
@@ -202,6 +306,10 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
       toggleTheme()
       return
     }
+    if (target?.closest('[data-book-edit]')) {
+      document.querySelector<HTMLElement>('[data-edit-toggle]')?.click()
+      return
+    }
     if (target?.closest('[data-book-scrim]')) {
       setDrawer(false)
       return
@@ -220,14 +328,21 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
   document.addEventListener('astro:page-load', () => {
     setDrawer(false)
     syncControls()
+    syncMargin()
+    watchEdit()
+    trackRail()
   })
   // The root's theme class also changes without this bar: the site menu, or
   // Head.astro following the OS while the stored theme is `system`.
-  new MutationObserver(syncControls).observe(root, {
+  new MutationObserver(() => {
+    syncControls()
+    syncMargin()
+  }).observe(root, {
     attributes: true,
     attributeFilter: ['class', BOOK_LOOK_ATTRIBUTE],
   })
   syncControls()
+  syncMargin()
 </script>
 
 <style is:global>
@@ -281,8 +396,25 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
     font-weight: 600;
   }
 
+  /* The theme button sits beside the look switch in both looks, so the two
+     choices about how the page looks are found in one place. */
+  .book-bar-theme {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 1.9rem;
+    padding: 0;
+    border: 1px solid hsl(var(--border));
+    border-radius: 6px;
+    background: transparent;
+    color: hsl(var(--foreground));
+    cursor: pointer;
+  }
+
   .book-look-choice:focus-visible,
   .book-bar-button:focus-visible,
+  .book-bar-link:focus-visible,
   .book-bar-title:focus-visible {
     outline: 2px solid currentColor;
     outline-offset: 2px;
@@ -437,6 +569,71 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
     display: flex !important;
   }
 
+  html[data-book-look='plain'] .book-bar-plain-only[hidden] {
+    display: none !important;
+  }
+
+  /* Map and Print, as the preview's bar has them. */
+  html[data-book-look='plain'] .book-bar-link {
+    color: var(--plain-accent);
+    font:
+      1.05rem/1.2 'Iowan Old Style',
+      'Palatino Linotype',
+      Georgia,
+      serif;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    white-space: nowrap;
+  }
+
+  html[data-book-look='plain'] .book-bar-edit[aria-pressed='true'] {
+    border-color: var(--plain-accent);
+    background: var(--plain-accent);
+    color: #fff;
+  }
+
+  /* Plain keeps the page quiet: the edit toolbar shows only while editing,
+     started from the bar's one Edit button. */
+  html[data-book-look='plain']:not([data-book-editing]) .edit-mode {
+    display: none;
+  }
+
+  /* In plain the margin is its floating "Margin" button at every width; the
+     column beside the text holds the chapter rail, as on the preview. */
+  html[data-book-look='plain'] .reading-margin {
+    position: fixed;
+    top: auto;
+    right: 0;
+    bottom: 0;
+    width: 0;
+    height: 0;
+    min-height: 0;
+    max-height: none;
+    overflow: visible;
+    z-index: 30;
+  }
+
+  @media (min-width: 1280px) {
+    html[data-book-look='plain'] .reading-companion {
+      --ink: var(--plain-ink);
+      --dim: var(--plain-dim);
+      --line: var(--plain-line);
+      --accent: var(--plain-accent);
+      display: block;
+      position: sticky;
+      top: calc(var(--plain-bar-height) + 20px);
+      align-self: start;
+      max-height: calc(100vh - var(--plain-bar-height) - 46px);
+      overflow-y: auto;
+    }
+
+    html[data-book-look='plain'] .reading-companion .rail {
+      position: static;
+      max-height: none;
+      overflow: visible;
+    }
+  }
+
   html[data-book-look='plain'] .book-bar {
     position: sticky;
     top: 0;
@@ -526,12 +723,12 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
     content: '\2600';
   }
 
-  html[data-book-look='plain'] .book-progress {
+  html[data-book-look='plain'] .book-bar-progress {
     align-items: center;
     gap: 0.5rem;
   }
 
-  .book-progress-bar {
+  .book-bar-progress-bar {
     width: 7.5rem;
     height: 5px;
     overflow: hidden;
@@ -539,13 +736,13 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
     background: var(--plain-line);
   }
 
-  .book-progress-bar i {
+  .book-bar-progress-bar i {
     display: block;
     height: 100%;
     background: var(--plain-accent);
   }
 
-  .book-progress-text {
+  .book-bar-progress-text {
     color: var(--plain-dim);
     font:
       0.72rem ui-sans-serif,
@@ -554,9 +751,12 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
     white-space: nowrap;
   }
 
-  /* One serif column on the off-white page, the margin beside it when there
-     is room. The contents column leaves the grid and becomes a drawer. */
-  html[data-book-look='plain'] .reading-shell {
+  /* One serif column on the off-white page, the chapter rail beside it when
+     there is room. The contents column leaves the grid and becomes a drawer,
+     and the margin is its floating button. `[data-margin-default]` so a shell
+     that asked for a collapsed margin (the map, the print edition) still
+     takes this grid rather than the site's. */
+  html[data-book-look='plain'] .reading-shell[data-margin-default] {
     --reading-header: var(--plain-bar-height);
     --reading-gap: 1.25rem;
     grid-template-columns: minmax(0, 40rem);
@@ -567,7 +767,7 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
   }
 
   @media (min-width: 1280px) {
-    html[data-book-look='plain'] .reading-shell {
+    html[data-book-look='plain'] .reading-shell[data-margin-default] {
       grid-template-columns: minmax(0, 40rem) 17rem;
     }
   }
@@ -656,6 +856,20 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
     background: var(--plain-here);
   }
 
+  /* The front page's contents list reads like the contents drawer. */
+  html[data-book-look='plain'] .book-front-contents :is(a, p, span) {
+    font-family: ui-sans-serif, system-ui, sans-serif;
+  }
+
+  html[data-book-look='plain'] .book-front-contents a {
+    color: var(--plain-ink);
+    text-decoration: none;
+  }
+
+  html[data-book-look='plain'] .book-front-contents a:hover {
+    background: var(--plain-hover);
+  }
+
   html[data-book-look='plain'] .book-scrim:not([hidden]) {
     position: fixed;
     inset: var(--plain-bar-height) 0 0 0;
@@ -669,7 +883,7 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
   }
 
   @media (max-width: 480px) {
-    html[data-book-look='plain'] .reading-shell {
+    html[data-book-look='plain'] .reading-shell[data-margin-default] {
       padding: 20px 16px 60px;
     }
 
@@ -677,7 +891,7 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
       font-size: 16px;
     }
 
-    html[data-book-look='plain'] .book-progress {
+    html[data-book-look='plain'] .book-bar-progress {
       display: none !important;
     }
 

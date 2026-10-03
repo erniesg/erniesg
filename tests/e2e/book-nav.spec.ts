@@ -107,6 +107,10 @@ for (const look of ['site', 'plain'] as const) {
       page,
     }) => {
       await page.goto(CHAPTER)
+      // Plain keeps the margin to its button, as the preview has no margin
+      // column; the keyboard selection is one click further in.
+      const toggle = page.locator('margin-rail [data-margin-action="toggle-rail"]')
+      if (await toggle.isVisible()) await toggle.click()
       await page.locator('margin-rail [data-margin-action="keyboard-select"]').click()
       await expect(page.locator('[data-margin-keyboard-cursor]')).toHaveCount(1)
       await page.keyboard.press(']')

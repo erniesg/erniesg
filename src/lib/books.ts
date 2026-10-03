@@ -47,6 +47,8 @@ export type BookNode = {
   pager: string
   /** The chapter progress indicator, as `render.py` writes it. */
   progress: string
+  /** The plain look's right column: "In this chapter" and "Connected" (`chrome.py`). */
+  rail: string
 }
 
 export type BookGrading = {
@@ -85,6 +87,12 @@ export type Book = {
   parts: BookPart[]
   nodes: BookNode[]
   topics: BookTopic[]
+  /** The front page's bar: "Contents · x/y solved" and › to the first page. */
+  front: string
+  /** The map page's body; it calls `window.bookMap(solved)` once defined. */
+  mapHtml: string
+  /** Every node in reading order, rendered for print. */
+  printHtml: string
 }
 
 export type BookManifest = {
@@ -99,6 +107,10 @@ export type BookManifest = {
   splitScript: string
   /** The indicator, pager and shortcut sheet; unscoped, their classes are their own. */
   navCss: string
+  /** The plain look's rail; unscoped, its classes are its own. */
+  railCss: string
+  /** The map page and the print edition. */
+  mapCss: string
   books: Book[]
 }
 

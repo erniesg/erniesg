@@ -43,4 +43,21 @@ describe('startProgress', () => {
     expect(saves.at(-1).solved).toContain('pool-ticket-price')
     running.stop()
   })
+
+  it('fills the bars\' short count from the challenges solved', async () => {
+    const count = { dataset: { challengeIds: 'pool-ticket-price recent-readings' }, textContent: '' }
+    const root = fakeRoot()
+    root.querySelectorAll = (selector) => (selector === '[data-progress-solved]' ? [count] : [])
+    const running = await startProgress({
+      root,
+      book: 'build-a-coding-agent',
+      now: () => '2026-09-29T00:00:00.000Z',
+      backend: {
+        load: async () => ({ solved: ['pool-ticket-price', 'some-exercise'] }),
+        save: async () => null,
+      },
+    })
+    expect(count.textContent).toBe('1/2 solved')
+    running.stop()
+  })
 })

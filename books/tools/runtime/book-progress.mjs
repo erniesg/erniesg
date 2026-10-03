@@ -16,6 +16,7 @@
  *   [data-progress-items="id id"]  gets `data-progress-done` once every id is solved
  *   [data-progress-count]          reads "3/55 exercises · 1/30 challenges solved",
  *                                  from `data-exercise-ids` and `data-challenge-ids`
+ *   [data-progress-solved]         reads "1/30 solved", from `data-challenge-ids`
  *   [data-progress-status]         says where progress is kept
  *   [data-progress-export]         downloads the progress file
  *   [data-progress-import]         opens `[data-progress-import-file]`, then merges it
@@ -69,6 +70,11 @@ function paintSolved(root, progress) {
     if (tally.exercises.total) parts.push(`${tally.exercises.solved}/${tally.exercises.total} exercises`)
     if (tally.challenges.total) parts.push(`${tally.challenges.solved}/${tally.challenges.total} challenges`)
     element.textContent = parts.length ? `${parts.join(' · ')} solved` : ''
+  })
+  // The bars' short count, as the preview's top bar reads: challenges only.
+  root.querySelectorAll('[data-progress-solved]').forEach((element) => {
+    const tally = counts(progress, { challenges: words(element.dataset.challengeIds) })
+    element.textContent = `${tally.challenges.solved}/${tally.challenges.total} solved`
   })
 }
 

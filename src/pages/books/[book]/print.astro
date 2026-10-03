@@ -1,0 +1,61 @@
+---
+/**
+ * The print edition: every page of the book in reading order, laid out as the
+ * EPUB lays it out, the same markup as the local preview's /print.
+ */
+import BookBar from '@/components/books/BookBar.astro'
+import BookContents from '@/components/books/BookContents.astro'
+import BookProgress from '@/components/books/BookProgress.astro'
+import ReadingLayout from '@/layouts/ReadingLayout.astro'
+import { BOOK_CHROME_VARIABLES, RESTORED_BOOK_CSS } from '@/lib/book-page-css'
+import {
+  bookBySlug,
+  bookManifest,
+  books,
+  documentUri,
+  scopeContentCss,
+} from '@/lib/books'
+
+export function getStaticPaths() {
+  return books().map((book) => ({ params: { book: book.slug } }))
+}
+
+const slug = Astro.params.book!
+const book = bookBySlug(slug)
+if (!book) throw new Error(`no book path declares the slug \`${slug}\``)
+
+const manifest = bookManifest()
+const path = `${book.path}print/`
+const PRINTED = `
+.book-print .print-page { break-after: page; }
+@media print { .book-print .print-page { border-bottom: 0; } [data-book-progress] { display: none !important; } }
+`
+const style = `<style>${scopeContentCss(manifest.contentCss, '.book-content')}${RESTORED_BOOK_CSS}${BOOK_CHROME_VARIABLES}${manifest.mapCss}${PRINTED}</style>`
+---
+
+<ReadingLayout
+  title={`Print edition — ${book.title}`}
+  description={book.subtitle}
+  documentUri={documentUri(path)}
+  canonicalPath={path}
+  marginDefault="collapsed"
+>
+  <Fragment slot="head" set:html={style} />
+
+  <BookBar slot="before" book={book} />
+
+  <Fragment slot="navigation">
+    <BookContents book={book} />
+  </Fragment>
+
+  <div class="book-chrome">
+    <h1 class="text-3xl font-bold">Print edition</h1>
+    <p class="lede">
+      Every page of the book in reading order, laid out for paper. Use your
+      browser's Print to keep a copy.
+    </p>
+  </div>
+  <div class="book-content book-print" data-book-print set:html={book.printHtml} />
+
+  <BookProgress book={book} />
+</ReadingLayout>

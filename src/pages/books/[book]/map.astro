@@ -1,0 +1,88 @@
+---
+/**
+ * The topic map: every topic in the book, what it needs first, and what is
+ * written for it, coloured by what the reader has solved. The markup and the
+ * drawing are `books/tools/chrome.py`'s, the same as the local preview's /map.
+ */
+import BookBar from '@/components/books/BookBar.astro'
+import BookContents from '@/components/books/BookContents.astro'
+import BookProgress from '@/components/books/BookProgress.astro'
+import ReadingLayout from '@/layouts/ReadingLayout.astro'
+import { BOOK_CHROME_VARIABLES } from '@/lib/book-page-css'
+import { bookBySlug, bookManifest, books, documentUri } from '@/lib/books'
+
+export function getStaticPaths() {
+  return books().map((book) => ({ params: { book: book.slug } }))
+}
+
+const slug = Astro.params.book!
+const book = bookBySlug(slug)
+if (!book) throw new Error(`no book path declares the slug \`${slug}\``)
+
+const manifest = bookManifest()
+const path = `${book.path}map/`
+// The map wants the width the margin would take: the margin stays its button.
+const WIDE = `
+@media (min-width: 1280px) {
+  html .reading-shell[data-margin-default]:has(.book-map) { grid-template-columns: 15rem minmax(0, 72rem); }
+  html[data-book-look='plain'] .reading-shell[data-margin-default]:has(.book-map) { grid-template-columns: minmax(0, 72rem); }
+}
+.book-map h1 { font-size: 2rem; font-weight: 700; margin: 0 0 .5rem; }
+`
+const style = `<style>${BOOK_CHROME_VARIABLES}${manifest.railCss}${manifest.mapCss}${WIDE}</style>`
+---
+
+<ReadingLayout
+  title={`The map — ${book.title}`}
+  description={book.subtitle}
+  documentUri={documentUri(path)}
+  canonicalPath={path}
+  marginDefault="collapsed"
+>
+  <Fragment slot="head" set:html={style} />
+
+  <BookBar slot="before" book={book} />
+
+  <Fragment slot="navigation">
+    <BookContents book={book} />
+  </Fragment>
+
+  <div
+    class="book-map book-chrome"
+    data-book-map={book.slug}
+    set:html={book.mapHtml}
+  />
+
+  <BookProgress book={book} />
+</ReadingLayout>
+
+<script>
+  import { browserStore } from '../../../../books/tools/runtime/progress.mjs'
+
+  // What the reader has solved colours the map. It is read from the browser's
+  // copy, which the book pages keep in step with the reader's account.
+  function solved(book: string): string[] {
+    let storage: Storage | undefined
+    try {
+      storage = window.localStorage
+    } catch {
+      storage = undefined
+    }
+    return browserStore(book, storage).load().solved
+  }
+
+  function draw() {
+    const map = document.querySelector<HTMLElement>('[data-book-map]')
+    const render = (window as unknown as { bookMap?: (solved: string[]) => void })
+      .bookMap
+    if (!map || !render) return false
+    render(solved(map.dataset.bookMap ?? ''))
+    return true
+  }
+
+  // The graph library loads as ordinary scripts in the page; wait for it.
+  let tries = 0
+  const timer = setInterval(() => {
+    if (draw() || ++tries > 100) clearInterval(timer)
+  }, 100)
+</script>

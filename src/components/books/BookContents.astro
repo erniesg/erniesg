@@ -5,9 +5,11 @@ import type { Book, BookNode } from '@/lib/books'
 type Props = {
   book: Book
   currentId?: string
+  /** The "Contents" label and the book's title above the list; off where the page already says both. */
+  heading?: boolean
 }
 
-const { book, currentId } = Astro.props
+const { book, currentId, heading = true } = Astro.props
 
 /**
  * What must be solved for an entry to count as done: a challenge itself, or
@@ -31,14 +33,21 @@ const parts = book.parts.map((part) => ({
 }))
 ---
 
-<p class="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-  Contents
-</p>
-
-<a
-  class="mb-4 block text-sm font-semibold hover:underline hover:underline-offset-4"
-  href={book.path}>{book.title}</a
->
+{
+  heading && (
+    <>
+      <p class="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        Contents
+      </p>
+      <a
+        class="mb-4 block text-sm font-semibold hover:underline hover:underline-offset-4"
+        href={book.path}
+      >
+        {book.title}
+      </a>
+    </>
+  )
+}
 
 <ol class="flex flex-col gap-y-4 text-sm">
   {

@@ -138,6 +138,21 @@ const {
         collapsed={marginDefault === 'collapsed'}
       />
     </aside>
+
+    <!-- A surface's own column beside the text, for a look that puts its own
+         navigation there instead of the margin. Hidden unless a surface's
+         styles give it a place in the grid. -->
+    {
+      Astro.slots.has('companion') && (
+        <aside
+          class="reading-companion"
+          data-reading-companion
+          aria-label="On this page"
+        >
+          <slot name="companion" />
+        </aside>
+      )
+    }
   </div>
 </Layout>
 
@@ -193,6 +208,10 @@ const {
     height: 0;
     overflow: visible;
     z-index: 30;
+  }
+
+  .reading-companion {
+    display: none;
   }
 
   .reading-margin margin-rail {

@@ -19,6 +19,12 @@ describe('shortcutFor', () => {
     expect(shortcutFor(key('?', { shiftKey: true }))).toBe('help')
   })
 
+  it('maps p to switching the look, and only lower-case p', () => {
+    expect(shortcutFor(key('p'))).toBe('look')
+    expect(shortcutFor(key('P'))).toBeNull()
+    expect(shortcutFor(key('p', { metaKey: true }))).toBeNull()
+  })
+
   it('stands down for chords, handled events and composition', () => {
     for (const modifier of ['ctrlKey', 'metaKey', 'altKey']) {
       expect(shortcutFor(key(']', { [modifier]: true }))).toBeNull()

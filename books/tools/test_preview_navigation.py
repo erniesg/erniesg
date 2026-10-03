@@ -53,10 +53,14 @@ class NodePages(unittest.TestCase):
         self.assertIn("export function installBookKeys", page)
         self.assertIn("installBookKeys(document); trackChapterProgress(document);", page)
 
-    def test_the_contents_page_has_no_indicator(self):
-        page = self.get("/", [])
-        self.assertNotIn("data-chapter-progress", page)
-        self.assertNotIn("installBookKeys(document)", page)
+    def test_the_contents_page_has_the_front_bar_not_a_chapter_indicator(self):
+        # "Contents · x/y solved" and › to the first page, as on the site; no
+        # chapter, so no track of sections.
+        page = self.get("/", ["pool-ticket-price"])
+        self.assertIn('data-kind="front"', page)
+        self.assertIn(">1/30 solved<", page)
+        self.assertNotIn('class="cp-track"', page)
+        self.assertIn("installBookKeys(document); trackChapterProgress(document);", page)
 
 
 if __name__ == "__main__":

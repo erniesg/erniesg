@@ -10,6 +10,7 @@
  *             rel=prev / rel=next link, so the site's client router keeps the
  *             look, the theme and the split view)
  *   j and k   next and previous section heading on this page
+ *   p         switch between the site's Site and Plain looks (where it has them)
  *   ?         the list of shortcuts
  *
  * `[` and `]` rather than Alt with the arrows: Alt+Left is the browser's Back
@@ -28,9 +29,13 @@ export const SHORTCUTS = [
   [']', 'Next page'],
   ['j', 'Next section'],
   ['k', 'Previous section'],
+  ['p', 'Switch between the Site and Plain looks'],
   ['?', 'Show or hide these shortcuts'],
   ['Esc', 'Close this list'],
 ]
+
+/** A page with the look switch (the site) takes `p`; the preview has none. */
+const LOOK_CHOICE = '[data-book-look-choice]'
 
 const TYPING =
   'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], .cm-editor, margin-rail, [data-margin-popup]'
@@ -55,6 +60,8 @@ export function shortcutFor(event) {
       return 'section-prev'
     case '?':
       return 'help'
+    case 'p':
+      return 'look'
     default:
       return null
   }
@@ -279,7 +286,9 @@ function helpSheet(doc) {
   title.id = 'book-keys-title'
   title.textContent = 'Keyboard shortcuts'
   const list = doc.createElement('dl')
+  const hasLooks = Boolean(doc.querySelector(LOOK_CHOICE))
   for (const [key, action] of SHORTCUTS) {
+    if (key === 'p' && !hasLooks) continue
     const term = doc.createElement('dt')
     const kbd = doc.createElement('kbd')
     kbd.textContent = key
@@ -414,6 +423,13 @@ export function installBookKeys(doc = document) {
     else if (action === 'help') {
       setHelp(doc, Boolean(doc.querySelector('[data-book-keys]')?.hidden ?? true))
       handled = true
+    } else if (action === 'look') {
+      // The choice that is not the current look: clicking it is the switch.
+      const other = doc.querySelector(`${LOOK_CHOICE}[aria-pressed="false"]`)
+      if (other) {
+        other.click()
+        handled = true
+      }
     }
     if (handled) event.preventDefault()
   })

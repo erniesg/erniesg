@@ -4,6 +4,14 @@
 
 claude
 
+## Prerequisites
+
+Built on #408 (the Map link in the book bar) and #411 (sketches and
+`decodeSketch` in `packages/margin`). Both are merged, so it needs no spec
+dependency. The "applied" proposal state needs issue 060
+(`POST /proposals/:id/apply` still answers 501). Until 060 lands, proposals
+show only pending or withdrawn; see criterion 2.
+
 ## Goal
 
 The owner wants every highlight, note, sketch and edit proposal they have made
@@ -27,8 +35,11 @@ chapter in book order, and each entry links back to its exact spot.
    the signed-in viewer's own annotations (private and public, every
    motivation), whose `document` is on `site` and whose path starts with
    `prefix`. They come back in the existing `present()` shape, ordered by
-   `(document, created, id)`, with the existing cursor pagination and page
-   cap.
+   `(document, created, id)`, with the existing page cap.
+   - **The cursor carries `document` as well as `created` and `id`.** The
+     existing cursor holds only `{created, id}` (`repository.ts`), and with
+     a document-first order it would skip older rows in a later document.
+     The seek is `(document, created, id) > (?, ?, ?)`.
    - Signed out: 401. It never returns another creator's row, whatever its
      visibility.
    - `prefix` must be an absolute path that starts and ends with `/`.
@@ -38,13 +49,26 @@ chapter in book order, and each entry links back to its exact spot.
 2. **Page.** `/books/<slug>/annotations/` is a static page that fetches item 1
    with `prefix=/books/<slug>/`.
    - Chapters are grouped and ordered by the book manifest, not by URL.
+   - Rows on pages that are not manifest nodes are still shown. The prefix
+     also matches the book's front page (`/books/<slug>/`), which mounts the
+     rail too. Those rows go in a "Book front page" group first, and any
+     other non-manifest path under the prefix goes in a final "Other pages"
+     group. None is dropped.
    - Each entry shows its kind (highlight, note, sketch, proposal), the quoted
      text, the note body, the colour and the date.
    - A sketch shows a small read-only SVG drawn with `decodeSketch` from
      `packages/margin`. A malformed sketch shows as a plain note, the same
      rule the rail uses.
-   - A proposal shows its state: pending, withdrawn or applied.
-   - Replies show under their parent, not as separate entries.
+   - A proposal shows its state: pending or withdrawn. It shows "applied"
+     too once issue 060 records that state; until then nothing can be
+     applied.
+   - Replies show under their parent when the parent is also the reader's.
+     A reply to **someone else's** note must not pull that note into
+     `/mine`, which stays owner-only. The page fetches each such parent
+     through the existing visibility-scoped `GET /annotations/:id`. If the
+     parent is visible, the reply shows under it, marked as someone else's.
+     If it is not, the reply shows on its own as "Reply to a note you can no
+     longer see", with its link back to the spot.
 3. **Back to the spot.** Each entry links to
    `<chapter URL>?annotation=<id>`. On load, the chapter's margin element
    scrolls to that annotation, focuses it in the rail and highlights its
@@ -64,15 +88,21 @@ chapter in book order, and each entry links back to its exact spot.
 - Worker unit tests (`src/worker/margin`) against `SqliteD1Database` built
   from every migration:
   - `/mine` returns only the viewer's rows across several documents, in
-    order, with pagination;
+    order, with pagination, including a page boundary that falls between
+    two documents (no row skipped or repeated);
   - another creator's private and public rows are excluded;
   - 401 when signed out, 400 on a bad `prefix`;
   - rows on another site, or outside the prefix, are excluded.
 - `tests/e2e/margin-annotations-overview.spec.ts`, with the same in-process
-  router pattern as `tests/e2e/margin-edit-mode.spec.ts`:
+  router pattern as `tests/e2e/margin-edit-mode.spec.ts`, served from the
+  static build through `installStaticRoutes` (as `book-look.spec.ts` does):
   - seed a highlight on one chapter, a note and a sketch on another, and a
     proposal;
   - the overview lists all four under the right chapters in book order;
+  - a note on the book's front page appears under "Book front page";
+  - a reply to another reader's public note shows under that note, and a
+    reply whose parent is private to someone else shows as "Reply to a note
+    you can no longer see";
   - clicking one lands on the chapter with that annotation focused in the
     rail;
   - an annotation whose quote no longer matches shows "text changed" in both
@@ -94,7 +124,8 @@ npx vitest run src/worker/margin
 npm test
 npm run build
 if [ -f tools/e2e-port.mjs ]; then SRT_E2E_PORT=$(node tools/e2e-port.mjs) || exit 1; else SRT_E2E_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()') || exit 1; fi; [ -n "$SRT_E2E_PORT" ] || exit 1; export SRT_E2E_PORT
-npx playwright test tests/e2e/margin-annotations-overview.spec.ts
+# The static-build lane: astro dev often times out on a cold worktree (.agent/verify.md).
+SRT_STATIC_BUILD_DIR=dist npx playwright test tests/e2e/margin-annotations-overview.spec.ts
 ```
 
 ## Concurrency

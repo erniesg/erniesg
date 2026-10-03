@@ -15,17 +15,17 @@ tomorrow's list. The addresses were typed in from paper sign-up sheets, and 38
 of them arrived with a capital letter or a space on the end: `"Ada@Example.ORG "`
 where the booking system holds `"ada@example.org"`.
 
-Nothing in that system is broken. It compared two pieces of text, the two were
-different, and 38 people are not told about their appointment.
+Nothing in the system is broken. It compared two pieces of text, they were
+different, and 38 people get no reminder.
 
-Text is where a program meets the world, and the world types badly. This
-chapter is about handling that on purpose.
+Text typed by people is messy. This chapter shows how to clean it up before
+you use it.
 
 ## A string is a sequence of characters
 
-Everything you learned about reaching into a list works on text. Position `0`
-is the first character, negative counts back from the end, and a slice takes a
-run of them:
+Indexing and slicing work on text the way they work on lists. Position `0` is
+the first character, negative positions count back from the end, and a slice
+takes a run of characters:
 
 ```python run
 name = "readme.md"
@@ -35,8 +35,8 @@ print(name[-3:])
 print(len(name), "characters")
 ```
 
-`name[:6]` is "up to but not including position 6", the same half-open rule
-lists use. It is worth reading `[-3:]` out loud as "the last three".
+`name[:6]` means "up to but not including position 6", the same rule lists
+use. Read `[-3:]` as "the last three".
 
 :::exercise{id="ch07-name-and-extension"}
 Print the extension without its dot, then the file name without the
@@ -61,14 +61,15 @@ print(name[:-4])
 
 ## You never edit a string
 
-Try to change one character and Python refuses:
+Python won't let you change one character:
 
 ```python
 name[0] = "R"
 ```
 
-`TypeError: 'str' object does not support item assignment`. Strings are
-**immutable**: fixed once made. You do not edit them, you build new ones:
+That raises `TypeError: 'str' object does not support item assignment`.
+Strings are **immutable**: fixed once made. Instead of editing one, you build a
+new one:
 
 ```python run
 capital = "R" + name[1:]
@@ -76,8 +77,8 @@ print(capital)
 print(name)
 ```
 
-The original is untouched, and that is the part people trip over. Every string
-method hands back a *new* string and leaves yours where it was:
+The original is unchanged. String methods work the same way: each returns a
+*new* string and leaves the original alone:
 
 ```python run
 print(name.replace(".md", ".txt"))
@@ -85,13 +86,13 @@ print(name.upper())
 print(name)
 ```
 
-If you want to keep the result, give it a name. `name.replace(...)` on a line
-by itself does nothing at all, and does it silently.
+To keep the result, assign it to a name. `name.replace(...)` on a line by
+itself changes nothing.
 
 ## Four workhorses
 
-`strip`, `split`, `join`, `replace`. Nearly all text handling is these four in
-some order:
+Most text handling uses four methods: `strip`, `split`, `join` and
+`replace`:
 
 ```python run
 line = "  rice , beans ,  salt  "
@@ -105,13 +106,12 @@ print(items)
 print(" + ".join(items))
 ```
 
-Three things to take from that. `strip` only touches the two ends, never the
-middle. `split` cuts on the separator you name and keeps whatever is left
-either side of it, spaces included, which is why each part needed stripping.
-`join` is backwards from how people expect to write it: the glue goes first,
-and the list it glues must hold strings.
+`strip` removes whitespace from the two ends only, never the middle. `split`
+cuts on the separator you name and keeps everything either side of it, spaces
+included, so each part needed stripping. `join` is called on the glue, not the
+list: the glue goes first, and the list must hold strings.
 
-`split` with nothing in the brackets behaves differently, and usefully:
+`split` with nothing in the brackets works differently:
 
 ```python run
 messy = "  two   pointers \n"
@@ -119,8 +119,8 @@ print(messy.split())
 print(messy.split(" "))
 ```
 
-No argument means "split on any run of whitespace and throw the empties away".
-That single difference is the whole of the first challenge below.
+With no argument, `split` cuts on any run of whitespace and drops the empty
+strings. The first challenge below is built on this difference.
 
 :::exercise{id="ch07-tidy-the-order"}
 Split the order on commas, strip each item, and print them joined with
@@ -146,8 +146,8 @@ print(" | ".join(items))
 
 ## f-strings
 
-Putting values into text by hand is fiddly. An `f` before the quote lets you
-drop them in where they belong:
+An `f` before the quote makes an f-string. Values in braces are placed into
+the text:
 
 ```python run
 who = "grace"
@@ -156,9 +156,9 @@ print(f"{who} visited {visits} times")
 print(f"{who.title()} averaged {visits / 7:.2f} visits a day")
 ```
 
-Anything inside the braces is ordinary Python. After a colon comes formatting:
-`.2f` means "a number with two digits after the point", which is how you stop a
-report printing `0.42857142857142855`.
+Anything inside the braces is ordinary Python. After a colon comes formatting.
+`.2f` means "a number with two digits after the point", so the report shows
+`0.43`, not `0.42857142857142855`.
 
 :::exercise{id="ch07-receipt-line"}
 Print one receipt line with an f-string, the price to two decimal places:
@@ -185,7 +185,7 @@ print(f"{quantity} x {item} = {quantity * price:.2f}")
 
 ## Comparing without caring about case
 
-Back to the clinic. Two addresses that a person would call the same:
+Back to the clinic. A person would call these two addresses the same:
 
 ```python run
 typed = "  Ada@Example.ORG "
@@ -194,17 +194,16 @@ print(typed == stored)
 print(typed.strip().lower() == stored)
 ```
 
-`==` on strings is exact, character for character. When you want a human's idea
-of equal, normalise both sides first — strip the ends, force one case — then
-compare. Both sides. Lowercasing only the typed one leaves you with the same
-bug against a stored address that came in shouting.
+`==` on strings compares character for character. To compare the way a person
+would, normalise first: strip the ends and force one case. Do it to both
+sides, since a stored address can have capitals too.
 
 :::figure{id="text-pipeline"}
 :::
 
 :::exercise{id="ch07-same-address"}
-Count how many typed addresses are the stored one once you normalise them —
-strip the ends and force one case.
+Count how many typed addresses match the stored one once you strip the ends
+and force one case.
 
 ```python
 typed = ["Ada@Example.org ", "ada@example.org", " ADA@EXAMPLE.ORG", "ada@example.com"]
@@ -231,7 +230,7 @@ print(matches)
 
 ## A character is not always a byte
 
-One honest complication, because it bites later:
+Characters and bytes are not the same thing:
 
 ```python run
 word = "café"
@@ -240,15 +239,14 @@ print(len(word.encode("utf-8")), "bytes")
 print(len("🙂"), len("🙂".encode("utf-8")))
 ```
 
-`len` on a string counts characters. On disk and down a network those
-characters are stored as bytes, and outside plain English one character often
-takes two, three or four of them. So a file that is 5,000 bytes is not
-necessarily 5,000 characters, and cutting a byte count in half can slice a
-letter down the middle.
+`len` on a string counts characters. On disk and over a network, characters
+are stored as bytes. Outside plain English, one character often takes two,
+three or four bytes. So a 5,000-byte file is not necessarily 5,000 characters,
+and cutting a byte count in half can split a character in two.
 
-Work in characters in Python and this stays out of your way. It comes back when
-you count what fits in a budget, where the unit is neither characters nor bytes
-but tokens. Later.
+If you work in characters in Python, this doesn't come up. It returns later,
+when you measure what fits in a budget in tokens, which are neither characters
+nor bytes.
 
 :::exercise{id="ch07-reads-both-ways"}
 A word reads the same both ways if it equals itself reversed. Ignoring case,
@@ -282,19 +280,17 @@ print(same_both_ways("river"))
 
 ## What this buys the agent
 
-The agent's whole world is text. A source file arrives as one long string; it
-splits on newlines to quote line 214, and joins a list of lines back together
-after changing one of them. The model's reply comes back wrapped in code fences
-that have to be stripped before anything can run. A path the model typed gets
-compared against a path on disk, and on a Mac those two differ in case more
-often than you would like.
+The agent works almost entirely with text. A source file arrives as one long
+string. The agent splits it on newlines to quote line 214, and joins the lines
+back together after changing one. The model's reply comes wrapped in code
+fences, which have to be stripped before the code can run. A path the model
+typed is compared with a path on disk, and on a Mac the two can differ in case.
 
-Every one of those is this chapter. Immutability in particular: the agent never
-edits a file in place. It builds the new text, then writes it, which is also
-why it can always show you what the old text was.
+The agent also never edits a file in place. It builds the new text, then
+writes it, so it can always show you the old text.
 
 ## Your turn
 
-Two challenges. The first turns titles into file names and hints as you go. The
-second reads one line of a settings file, and it is fussier than it looks: the
-hints stay, and the worked solution is the last thing to open.
+Two challenges. The first turns titles into file names, with hints as you go.
+The second reads one line of a settings file. It has hints; try to finish
+before opening the worked solution.

@@ -13,14 +13,13 @@ powers = ["agent-tool-arguments"]
 A club runs a coach trip at 5 pounds a head. The booking form asks how many
 seats and someone types 3. The screen says the total is 53.
 
-Nothing in the computer went wrong. The 5 and the 3 arrived as text, and
-joining text end to end is exactly what `+` does to text. As numbers they add
-to 8, or multiply to 15. As text they join to 53. One symbol, three answers,
-and the difference is what kind of thing you handed it.
+The 5 and the 3 arrived as text, and `+` joins text end to end. As numbers
+they add to 8, or multiply to 15. As text they join to 53. What `+` does
+depends on the kind of value it is given.
 
 ## Values have types, and the type decides what happens
 
-Type a value into Python and it has a kind:
+Every value in Python has a kind, called its type:
 
 ```python run
 print(7)          # a whole number: int
@@ -29,19 +28,17 @@ print("7")        # text that happens to look like a number: str
 print(True)       # yes or no: bool
 ```
 
-The type is not decoration. It decides what an operation *means*:
+The type decides what an operation does:
 
 ```python run
 print(2 + 3)        # 5   — numbers add
 print("2" + "3")    # 23  — text joins end to end
 ```
 
-Nothing is broken in the second line. `+` means "add" for numbers and "join"
-for text, and Python cannot read your mind about which you wanted. Most
-beginner bugs are this: a value is text when you thought it was a number,
-usually because it came from a file, a form, or `input()`.
+`+` means "add" for numbers and "join" for text. A value that comes from a
+file, a form or `input()` is text, even when it looks like a number.
 
-When the two kinds meet, Python refuses rather than guessing:
+When a number and text meet, Python raises an error instead of guessing:
 
 ```python run
 try:
@@ -50,11 +47,10 @@ except TypeError as error:
     print("TypeError:", error)
 ```
 
-Read that error. `TypeError: can only concatenate str (not "int") to str` is
-Python telling you exactly which two kinds it was asked to mix. You will see
-this message for the rest of your life, so it is worth recognising now.
+`TypeError: can only concatenate str (not "int") to str` names the two types
+Python was asked to mix.
 
-To cross between kinds, say so:
+To convert from one type to another, call the type by name:
 
 ```python run
 print(int("2") + 3)      # 5
@@ -63,7 +59,7 @@ print(float("7.5") + 1)  # 8.5
 ```
 
 :::exercise{id="ch01-coach-trip"}
-The booking form handed you both numbers as text. Turn them into numbers and
+The booking form gave you both numbers as text. Turn them into numbers and
 print the total the club should charge: 15, not 53.
 
 ```python
@@ -96,11 +92,9 @@ total = price * quantity
 print(total)
 ```
 
-Two things people expect that are not true.
-
-**A name is not a box that remembers arithmetic.** `total` is 12 because
-`price * quantity` was 12 *at that moment*. Change `price` afterwards and
-`total` does not move:
+**A name holds a value, not a calculation.** `total` is 12 because
+`price * quantity` was 12 when that line ran. Changing `price` afterwards does
+not change `total`:
 
 ```python run
 price = 4
@@ -110,10 +104,10 @@ price = 10
 print(total)      # still 12
 ```
 
-If you want the new answer, work it out again. This catches everyone once.
+To get the new answer, work it out again.
 
-**A name can be re-pointed at any time**, including at a different kind of
-value. That is legal and occasionally the bug:
+**A name can be given a new value at any time**, including a value of a
+different type:
 
 ```python run
 count = 5
@@ -150,8 +144,7 @@ print(total)
 
 ## Integer division, and the two slashes
 
-Two kinds of division exist, and choosing the wrong one quietly changes your
-answer:
+Python has two kinds of division, and they give different answers:
 
 ```python run
 print(7 / 2)    # 3.5  — ordinary division, always a float
@@ -159,9 +152,9 @@ print(7 // 2)   # 3    — floor division, throws away the remainder
 print(7 % 2)    # 1    — the remainder itself
 ```
 
-`//` and `%` come back constantly: splitting things into rows, telling odd from
-even, wrapping around a clock. They are not exotic; they are how you say "how
-many whole ones fit, and what is left over".
+`//` says how many whole ones fit, and `%` says what is left over. They are
+used for splitting things into rows, telling odd from even, and wrapping around
+a clock.
 
 :::figure{id="three-kinds"}
 Three kinds of value, and what the same symbol does to each.
@@ -203,8 +196,8 @@ print(score != 7)     # False — is it not seven?
 print(score > 10)     # False
 ```
 
-The answer to a question is a `bool`: `True` or `False`. You will hand those to
-`if` in the next chapter, and the whole of branching rests on them.
+The answer to a question is a `bool`: `True` or `False`. In the next chapter
+you pass these to `if` to choose what runs.
 
 :::exercise{id="ch01-is-it-odd"}
 Ask the question with `%` and `==`: print whether 17 is odd. The answer is a
@@ -230,12 +223,12 @@ print(is_odd)
 ## What this buys the agent
 
 Every tool the agent calls takes arguments, and every argument has a type. A
-line number that arrives as `"42"` instead of `42`, a path that is `None`
-because a lookup failed, a count that silently became a float — that is where
-a tool call breaks. The agent you build spends a lot of its life checking that
-what arrived is what it expected, which is this chapter, repeated at scale.
+tool call breaks when a line number arrives as `"42"` instead of `42`, when a
+path is `None` because a lookup failed, or when a count has become a float. The
+agent you build spends much of its time checking that each value has the type
+it expected.
 
 ## Your turn
 
-Two challenges. The first walks you through it. The second gives you hints but
-no walkthrough, and its tests are less forgiving about the awkward cases.
+Two challenges. The first walks you through it. The second gives hints but no
+walkthrough, and its tests include more awkward cases.

@@ -15,8 +15,9 @@ const runAsScript =
 // publications. Decide before anything below resolves that tooling.
 function devDependenciesOmitted(env = process.env) {
   const listed = (value) => (value ?? '').split(/[\s,]+/).includes('dev')
-  if (listed(env.npm_config_omit)) return true
-  return env.NODE_ENV === 'production' && !listed(env.npm_config_include)
+  // npm includes a type named in both lists, whatever the flag order.
+  if (listed(env.npm_config_include)) return false
+  return listed(env.npm_config_omit) || env.NODE_ENV === 'production'
 }
 
 if (runAsScript && devDependenciesOmitted()) {

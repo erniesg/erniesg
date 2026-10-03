@@ -57,6 +57,11 @@ describe('publication browser installer', () => {
       const production = run({ NODE_ENV: 'production' })
       expect(production.status).toBe(0)
 
+      // npm: a type in both lists is included, whichever flag came first.
+      const included = run({ npm_config_omit: 'dev', npm_config_include: 'dev' })
+      expect(included.status).not.toBe(0)
+      expect(included.stdout).not.toMatch(/skipping/)
+
       // A full install with the tooling missing is a real fault: it still fails.
       const full = run({})
       expect(full.status).not.toBe(0)

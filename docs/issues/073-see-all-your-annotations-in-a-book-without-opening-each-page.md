@@ -73,9 +73,10 @@ chapter in book order, and each entry links back to its exact spot.
      from a `margin:proposalState` field on the annotation response, which
      060 adds for the proposal's author (see 060, item 13). Without that
      field, the state is "Withdrawn" when `margin:withdrawnAt` is set and
-     "Pending" otherwise. Until 060 lands only those two can occur. A test
-     feeds the overview a `/mine` row for each 060 state through the real
-     data path, so nothing reads as pending once it has moved on.
+     "Pending" otherwise. Until 060 lands only those two can occur, so the
+     test for the other states stubs the `/mine` response: rows carrying
+     `margin:proposalState` for every 060 state, each shown with its label.
+     Producing those rows for real is 060's work, and 060's tests cover it.
    - Replies show under their parent when the parent is also the reader's.
      A reply to **someone else's** note must not pull that note into
      `/mine`, which stays owner-only. The page fetches each such parent
@@ -137,7 +138,11 @@ chapter in book order, and each entry links back to its exact spot.
   - an annotation whose quote no longer matches shows "text changed" in both
     places;
   - the Annotations link appears in both looks when signed in, and not when
-    signed out.
+    signed out;
+  - with more rows than the endpoint's page cap (seed the cap plus a few),
+    every row appears: the overview follows `nextCursor` to the end;
+  - the kind filter shows only the chosen kind, the chapter filter only the
+    chosen chapter's group, and clearing both brings every row back.
 
 ## Definition of done
 

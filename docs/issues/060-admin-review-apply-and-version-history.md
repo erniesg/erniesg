@@ -171,6 +171,11 @@ stay at each owning adapter boundary.
 
 ## Acceptance tests
 
+- `margin:proposalState` (item 13): a public proposal in `pr_open` is read
+  by its creator and by the admin, who both get the field, and by an
+  unrelated signed-in reader and an anonymous reader, who both get the
+  proposal without it.
+
 - A pending proposal renders a diff whose additions and deletions match the
   CriticMarkup exactly.
 - Save leaves the proposal pending and writes nothing to the repository;

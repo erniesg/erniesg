@@ -643,8 +643,8 @@ describe('every node reaches the web', () => {
     expect(emitted.length).toBe(manifest.poolNodeCount)
     for (const own of OWN_PAGES) {
       expect(book.nodes.map((node) => node.id)).not.toContain(own)
-      expect(existsSync(path.join(bookDist, own, 'index.html'))).toBe(true)
     }
+    expect(existsSync(path.join(bookDist, 'print', 'index.html'))).toBe(true)
     expect(existsSync(path.join(bookDist, 'index.html'))).toBe(true)
     expect(existsSync(path.join(DIST, 'books', 'index.html'))).toBe(true)
   })

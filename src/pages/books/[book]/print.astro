@@ -30,7 +30,7 @@ const PRINTED = `
 .book-print .print-page { break-after: page; }
 @media print { .book-print .print-page { border-bottom: 0; } [data-book-progress] { display: none !important; } }
 `
-const style = `<style>${scopeContentCss(manifest.contentCss, '.book-content')}${RESTORED_BOOK_CSS}${BOOK_CHROME_VARIABLES}${manifest.mapCss}${PRINTED}</style>`
+const style = `<style>${scopeContentCss(manifest.contentCss, '.book-content')}${RESTORED_BOOK_CSS}${BOOK_CHROME_VARIABLES}${manifest.printCss}${PRINTED}</style>`
 ---
 
 <ReadingLayout

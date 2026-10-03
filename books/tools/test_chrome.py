@@ -55,18 +55,15 @@ class FrontNavigation(unittest.TestCase):
         self.assertIn("data-chapter-progress", bar)
 
 
-class MapPayload(unittest.TestCase):
-    def test_every_topic_names_what_it_needs_by_id_and_what_is_written(self):
-        _, order = load_book()
-        payload = chrome.map_payload(order)
-        ids = {topic["id"] for topic in payload["topics"]}
-        for topic in payload["topics"]:
-            self.assertTrue(set(topic["requires"]) <= ids)
-            for node in topic["nodes"]:
-                self.assertIn(node["id"], {n["id"] for n in order})
-        markup = chrome.map_markup(payload, "/books/b/{id}/")
-        self.assertIn('data-href="/books/b/{id}/"', markup)
-        self.assertIn("window.bookMap", markup)
+class PrintMarkup(unittest.TestCase):
+    def test_every_node_in_reading_order_with_the_previews_anchors(self):
+        order = [{"id": "a"}, {"id": "b"}]
+        markup = chrome.print_markup(order, lambda node: f"<p>{node['id']}</p>")
+        self.assertEqual(
+            markup,
+            "<article class='print-page' id='print-a'><p>a</p></article>"
+            "<article class='print-page' id='print-b'><p>b</p></article>",
+        )
 
 
 if __name__ == "__main__":

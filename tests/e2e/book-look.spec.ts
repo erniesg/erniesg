@@ -299,29 +299,21 @@ test.describe('Plain matches the preview', () => {
     await expect(bar.locator('.book-bar-progress-text')).toHaveText(/^\s*\d+\/46\s*·\s*0\/30 solved\s*$/)
   })
 
-  test('the map and the print edition are pages of the book', async ({ page }) => {
-    await page.goto(`${BOOK}map/`)
-    // Counted by the map's own script, before the graph library draws.
-    await expect(page.locator('[data-map-counts]')).toHaveText(
-      /^\d+ topics · \d+ cleared · \d+ with content written$/,
-    )
+  test('the print edition is a page of the book, every node in order', async ({ page }) => {
     await page.goto(`${BOOK}print/`)
     await expect(page.locator('[data-book-print] .print-page')).toHaveCount(46)
     await expect(page.locator('#print-ch03-lists')).toBeAttached()
   })
 
   for (const choice of ['site', 'plain'] as const) {
-    test(`in ${choice}, the map and the print edition get a full reading width`, async ({
-      page,
-    }) => {
+    test(`in ${choice}, the print edition gets a full reading width`, async ({ page }) => {
       await page.addInitScript((value) => localStorage.setItem('book-look', value), choice)
       await page.setViewportSize({ width: 1440, height: 1000 })
-      const width = (css: string) =>
-        page.evaluate((selector) => document.querySelector(selector)!.getBoundingClientRect().width, css)
       await page.goto(`${BOOK}print/`)
-      expect(await width('[data-book-print]')).toBeGreaterThan(550)
-      await page.goto(`${BOOK}map/`)
-      expect(await width('[data-book-map]')).toBeGreaterThan(900)
+      const width = await page.evaluate(
+        () => document.querySelector('[data-book-print]')!.getBoundingClientRect().width,
+      )
+      expect(width).toBeGreaterThan(550)
     })
   }
 

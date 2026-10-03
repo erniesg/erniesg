@@ -27,15 +27,7 @@ if sys.version_info < (3, 11):
 
 import tomllib
 
-from chrome import (
-    MAP_CSS,
-    RAIL_CSS,
-    chapter_rail,
-    front_navigation,
-    map_markup,
-    map_payload,
-    print_markup,
-)
+from chrome import PRINT_CSS, RAIL_CSS, chapter_rail, front_navigation, print_markup
 from render import (
     BLOCK_TAG,
     BOOKS,
@@ -241,10 +233,9 @@ def book_entry(path_id: str, collection: dict) -> dict:
         ],
         "nodes": entries,
         "topics": topic_entries(order),
-        # The front page's bar, the map page and the print edition, drawn by
-        # the same code as the local preview's.
+        # The front page's bar and the print edition, drawn by the same code as
+        # the local preview's.
         "front": front_navigation(order, href),
-        "mapHtml": map_markup(map_payload(order), f"{base}{{id}}/"),
         "printHtml": print_markup(order, lambda node: render_node(node, "print")),
     }
 
@@ -266,9 +257,9 @@ def build_manifest() -> dict:
         "splitCss": SPLIT_CSS,
         "splitScript": SPLIT_SCRIPT,
         "navCss": NAV_CSS,
-        # The plain look's rail, and the map and print pages.
+        # The plain look's rail, and the print edition.
         "railCss": RAIL_CSS,
-        "mapCss": MAP_CSS,
+        "printCss": PRINT_CSS,
         "books": books,
     }
 

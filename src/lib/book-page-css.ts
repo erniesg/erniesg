@@ -53,9 +53,9 @@ export const RESTORED_BOOK_CSS = `
 `
 
 /**
- * The plain look's rail, the map and the print edition share the book's
- * variables (`--ink`, `--dim`, `--line`, `--accent`, `--panel`). These map
- * them onto each look's palette for chrome that sits outside `.book-content`.
+ * The plain look's rail and the print edition share the book's variables
+ * (`--ink`, `--dim`, `--line`, `--accent`, `--panel`). These map them onto
+ * each look's palette for chrome that sits outside `.book-content`.
  */
 export const BOOK_CHROME_VARIABLES = `
 .book-chrome { --ink: hsl(var(--foreground)); --dim: hsl(var(--muted-foreground)); --line: hsl(var(--border)); --accent: #0369a1; --panel: hsl(var(--background)); }

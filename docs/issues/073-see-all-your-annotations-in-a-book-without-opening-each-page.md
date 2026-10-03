@@ -121,6 +121,26 @@ links into the rail, and the book-bar link.
 - Stop before building the page on the server at request time; it stays a
   static page that fetches the API.
 
+## Human clarification protocol
+
+If the margin element has no way to focus one annotation by id, add
+`?annotation=<id>` handling to it rather than scrolling from outside the
+element, and say so in the PR. If `present()` lacks a field the overview needs
+(for example the chapter title), take it from the book manifest on the page,
+not by widening the API.
+
+## Recommended response
+
+Add `listOwnAnnotationsQuery(site, prefix, creator, page)` beside
+`listAnnotationsQuery` in `src/worker/margin/queries.ts`. Use
+`creator = ? AND site = ? AND document >= ? AND document < ?`, with the
+prefix's upper bound made by incrementing its last character, so the
+`margin_annotations_owner` index serves it, and order by
+`(document, created, id)`. Route it as `GET /mine` in `routes.ts` with the
+existing `readPage` and `encodeCursor`. The page is an Astro route,
+`src/pages/books/[book]/annotations.astro`, beside 408's `map.astro`, with a
+small client script that pages through `/mine` and renders it.
+
 ## Trade-offs
 
 - **Own annotations only.** Others' public annotations stay on their pages.
@@ -130,3 +150,8 @@ links into the rail, and the book-bar link.
   prefix.
 - **Ordering:** the endpoint orders by document, and the page re-orders by
   the manifest. So the API does not need to know book structure.
+
+## Free-form response
+
+The data is already per owner and indexed by owner. This is a listing and a
+link back, not a new store.

@@ -13,6 +13,10 @@
  * In `site` only the switch shows, right-aligned above the shell. In `plain`
  * the whole bar shows, and the switch lives in it, because the site header is
  * hidden there.
+ *
+ * Map and Annotations sit together in both looks. Annotations (issue 073) is
+ * the reader's own, so it ships hidden and shows once `/auth/me` says somebody
+ * is signed in.
  */
 import type { Book } from '@/lib/books'
 
@@ -55,6 +59,14 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
 
   <div class="book-bar-end">
     <a class="book-bar-map" href={`${book.path}map/`} data-book-map-link>Map</a>
+    <a
+      class="book-bar-map book-bar-annotations"
+      href={`${book.path}annotations/`}
+      aria-label="Annotations"
+      title="Your annotations in this book"
+      data-book-annotations-link
+      hidden><span class="book-bar-annotations-text">Annotations</span></a
+    >
     <div class="book-look" role="group" aria-label="Look">
       <span class="book-look-label" aria-hidden="true">Look</span>
       <button
@@ -113,6 +125,38 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
   } from '../../../books/tools/runtime/book-nav.mjs'
 
   const root = document.documentElement
+
+  // Who is reading, asked once per session; only a "yes" is kept, so a
+  // failed or signed-out probe is asked again on the next page.
+  let signedIn: Promise<boolean> | null = null
+  function isSignedIn(): Promise<boolean> {
+    const probe =
+      signedIn ??
+      fetch('/auth/me', {
+        credentials: 'include',
+        headers: { accept: 'application/json' },
+      })
+        .then(async (response) => {
+          if (!response.ok) return false
+          const me = (await response.json()) as { authenticated?: unknown }
+          return me.authenticated === true
+        })
+        .catch(() => false)
+    signedIn = probe
+    void probe.then((yes) => {
+      if (!yes && signedIn === probe) signedIn = null
+    })
+    return probe
+  }
+
+  async function showAnnotationsLink() {
+    const show = await isSignedIn()
+    for (const link of document.querySelectorAll<HTMLElement>(
+      '[data-book-annotations-link]',
+    )) {
+      link.hidden = !show
+    }
+  }
 
   // `[`/`]`, `j`/`k` and `?`, once per session; they read the page at the key
   // press, so the client router's swaps need nothing more. The indicator's
@@ -221,6 +265,7 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
   document.addEventListener('astro:page-load', () => {
     setDrawer(false)
     syncControls()
+    void showAnnotationsLink()
   })
   // The root's theme class also changes without this bar: the site menu, or
   // Head.astro following the OS while the stored theme is `system`.
@@ -297,6 +342,10 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
 
   .book-bar-map:hover {
     border-color: hsl(var(--foreground));
+  }
+
+  .book-bar-map[hidden] {
+    display: none;
   }
 
   .book-look-choice:focus-visible,
@@ -504,6 +553,19 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
     }
   }
 
+  /* On the narrowest phones the plain bar has no room for the word: the link
+     keeps its name and shows a pencil, so Contents, Map, the look switch and
+     the theme still fit at 320px. */
+  @media (max-width: 400px) {
+    html[data-book-look='plain'] .book-bar-annotations-text {
+      display: none;
+    }
+
+    html[data-book-look='plain'] .book-bar-annotations::before {
+      content: '\270E';
+    }
+  }
+
   html[data-book-look='plain'] .book-bar-button {
     align-items: center;
     justify-content: center;
@@ -603,7 +665,7 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
   }
 
   @media (min-width: 1280px) {
-    html[data-book-look='plain'] .reading-shell {
+    html[data-book-look='plain'] .reading-shell:not([data-margin-default='none']) {
       grid-template-columns: minmax(0, 40rem) 17rem;
     }
   }

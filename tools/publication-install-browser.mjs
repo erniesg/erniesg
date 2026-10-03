@@ -9,25 +9,38 @@ const runAsScript =
   process.argv[1] &&
   import.meta.url === pathToFileURL(resolve(process.argv[1])).href
 
-// A production-only install (`npm ci --omit=dev`, or NODE_ENV=production
-// without `--include=dev`) still runs postinstall, but the browser tooling is a
-// devDependency and is absent, and nothing such an install runs renders
-// publications. Decide before anything below resolves that tooling.
+const require = createRequire(import.meta.url)
+
+// A production-only install (`npm ci --omit=dev`, NODE_ENV=production) still
+// runs postinstall, but the browser tooling is a devDependency and is absent,
+// and nothing such an install runs renders publications. What is on disk
+// decides: npm has more ways to override omission (--include=dev,
+// --production=false, config files) than its lifecycle environment shows, so
+// installed tooling is always used, and the environment is consulted only to
+// tell a deliberate omission from a broken full install.
+function toolingInstalled() {
+  try {
+    require.resolve('playwright/package.json')
+    return true
+  } catch {
+    return false
+  }
+}
+
 function devDependenciesOmitted(env = process.env) {
   const listed = (value) => (value ?? '').split(/[\s,]+/).includes('dev')
-  // npm includes a type named in both lists, whatever the flag order.
+  // Dev dependencies asked for and still missing is a broken install, not an omission.
   if (listed(env.npm_config_include)) return false
   return listed(env.npm_config_omit) || env.NODE_ENV === 'production'
 }
 
-if (runAsScript && devDependenciesOmitted()) {
+if (runAsScript && !toolingInstalled() && devDependenciesOmitted()) {
   process.stdout.write(
     'Publication browser: dev dependencies omitted; skipping the browser install.\n',
   )
   process.exit(0)
 }
 
-const require = createRequire(import.meta.url)
 const playwrightRoot = dirname(require.resolve('playwright/package.json'))
 const nodeModulesRoot = resolve(playwrightRoot, '..')
 const cacheRoot = resolve(nodeModulesRoot, '.cache/publication-browsers')

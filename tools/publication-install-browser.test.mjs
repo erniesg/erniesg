@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -61,6 +61,29 @@ describe('publication browser installer', () => {
       const included = run({ npm_config_omit: 'dev', npm_config_include: 'dev' })
       expect(included.status).not.toBe(0)
       expect(included.stdout).not.toMatch(/skipping/)
+
+      // Whatever npm was told (--production=false, --include=dev, an omit
+      // inherited from config), tooling that is installed gets used.
+      for (const [file, body] of [
+        ['node_modules/playwright/package.json', '{"name":"playwright"}'],
+        ['node_modules/playwright/cli.js', 'console.log("fake playwright install")'],
+        ['node_modules/@puppeteer/browsers/package.json', '{"name":"@puppeteer/browsers"}'],
+        ['node_modules/@puppeteer/browsers/lib/main-cli.js', 'console.log("fake puppeteer install")'],
+      ]) {
+        mkdirSync(join(root, file, '..'), { recursive: true })
+        writeFileSync(join(root, file), body)
+      }
+      for (const env of [
+        { npm_config_omit: 'dev' },
+        { NODE_ENV: 'production' },
+        { NODE_ENV: 'production', npm_config_omit: 'dev' },
+      ]) {
+        const present = run(env)
+        expect(present.status, JSON.stringify(env)).toBe(0)
+        expect(present.stdout).toMatch(/fake playwright install/)
+        expect(present.stdout).not.toMatch(/skipping/)
+      }
+      rmSync(join(root, 'node_modules'), { recursive: true, force: true })
 
       // A full install with the tooling missing is a real fault: it still fails.
       const full = run({})

@@ -514,7 +514,8 @@ function readOwnPage(
   const withoutCursor = new URL(url)
   withoutCursor.searchParams.delete('cursor')
   const page = readPage(withoutCursor)
-  if ('error' in page || cursor === null) return page
+  if ('error' in page) return page
+  if (cursor === null) return { limit: page.limit }
   // `created` and `id` hold no space; a stored document is a parsed URL path,
   // in which a space is always escaped.
   const [created, id, document, ...rest] = cursor.split(' ')

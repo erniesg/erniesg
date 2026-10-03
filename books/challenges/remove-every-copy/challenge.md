@@ -34,15 +34,13 @@ timeout = 5
 
 :::statement
 Back to the food bank shelf. One product has been recalled, and every tin of
-it has to come off — however many there are, wherever they sit.
+it has to come off.
 
-Given `items`, the shelf as a list of labels, and `unwanted`, the label that
-has been recalled, hand back a new list holding everything else in the order
-it was already in.
+Given `items`, the shelf as a list of labels, and `unwanted`, the recalled
+label, return a new list holding everything else in its original order.
 
-The shelf you were given must be exactly as you found it when you finish, and
-the list you hand back must be a different list — even when nothing was
-recalled off it.
+The shelf you were given must be unchanged. The list you return must be a new
+list, even when nothing was removed.
 :::
 
 :::io
@@ -68,30 +66,29 @@ output: a new list, in the original order, with every copy of `unwanted` gone
 :::
 
 :::figure{id="two-names-one-list"}
-Edit the list you were handed and you have edited the caller's list. There is
-only one.
+The list you were given is the caller's list. If you edit it, you edit theirs.
 :::
 
 :::run{starter="starter.py"}
 :::
 
 :::hint{level=1}
-Removing items from a list while you walk that same list slides the rest
-along, and the walk skips whatever moved into the place you just emptied. Two
-recalled tins side by side is where it shows.
+Removing items from a list while you loop over it moves each later item down
+one place. The loop then skips the item that moved into the emptied place. Two
+recalled tins side by side show it.
 :::
 
 :::hint{level=2}
-Do not edit a shelf at all. Start with an empty list, walk `items` once, and
-append the labels that are not `unwanted`. Both rules — order kept, original
-untouched — come out of that for free.
+Don't edit a list at all. Start with an empty list, loop over `items` once,
+and append each label that is not `unwanted`. That keeps the order and leaves
+the original unchanged.
 :::
 
 :::hint{level=3}
 `items.remove(unwanted)` deletes one copy and raises `ValueError` when there
-are none left, so "repeat it until it complains" rewrites the caller's shelf —
-and every single removal shuffles the whole tail of the list along. The perf
-tier runs 200,000 items with half of them recalled.
+are none left. Calling it until it raises edits the caller's shelf, and each
+removal moves every item after it. The perf tier runs 200,000 items with half
+of them recalled.
 :::
 
 :::solution
@@ -105,23 +102,21 @@ def without(items, unwanted):
 ```
 
 **Reading and writing are kept apart.** The loop only reads `items`, and every
-change lands in `kept`, a list this function made. Nothing slides underneath
-the walk, so nothing gets skipped, and the caller's shelf is untouched without
-having to be protected.
+change goes into `kept`, a list this function made. Nothing moves under the
+loop, so nothing is skipped, and the caller's shelf is never touched.
 
-**Order is free.** Items are appended in the order they were met, so whatever
-survives keeps its old sequence. Anything built by repeated removal has to
-work to keep that true.
+**The order comes for free.** Items are appended in the order they were met,
+so the ones kept stay in their old order. Code that removes items one at a
+time has to work to keep that true.
 
-**Why not `remove` in a loop.** Two problems, and they are different ones.
-It edits the caller's list, which the statement forbids and the edge tier
-checks. And every `remove` has to slide everything behind the hole down one
-place, so 100,000 recalled tins on a 200,000-item shelf move billions of
-labels between them — the perf tier stops it. One pass and one append per
-survivor is the whole job.
+**Why not `remove` in a loop.** It has two problems. First, it edits the
+caller's list, which the statement forbids and the edge tier checks. Second,
+each `remove` moves every item after the gap down one place. With 100,000
+recalled tins on a 200,000-item shelf, that is billions of moves, and the perf
+tier stops it. One pass with one append per kept item does the job.
 
-**The empty-but-new case.** When nothing is recalled, `kept` is a brand new
-list that happens to hold the same labels. Returning `items` itself would look
-identical to `==` and be wrong: the shelf and the answer would be one list,
-and the next thing to touch either would change both.
+**The nothing-removed case.** When nothing is recalled, `kept` is a new list
+with the same labels. Returning `items` itself would pass an `==` check but be
+wrong. The shelf and the answer would be one list, so changing either would
+change both.
 :::

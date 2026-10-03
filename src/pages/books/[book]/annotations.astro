@@ -29,19 +29,20 @@ if (!book) throw new Error(`no book path declares the slug \`${slug}\``)
 
 const path = `${book.path}annotations/`
 const first = book.nodes[0]
-// Every page of the book a reader can annotate, in reading order: the front
-// page, the nodes, then the map.
-const pages: OverviewPage[] = [
-  { id: 'book', title: `${book.title}: the front page`, path: book.path },
-  ...book.nodes.map((node) => ({ id: node.id, title: node.title, path: node.path })),
-  { id: 'map', title: 'The map', path: `${book.path}map/` },
-]
+// The book's shape: its front page, and its nodes in reading order. Anything
+// else under the prefix (the map, a page since removed) is "Other pages".
+const nodes: OverviewPage[] = book.nodes.map((node) => ({
+  id: node.id,
+  title: node.title,
+  path: node.path,
+}))
 // `<` is escaped so no title can end this script early.
 const data = JSON.stringify({
   site: new URL(SITE.SITEURL).origin,
   prefix: book.path,
   path,
-  pages,
+  frontPage: book.path,
+  nodes,
   first: first ? { title: first.title, path: first.path } : null,
 }).replace(/</g, '\\u003c')
 ---
@@ -104,9 +105,13 @@ const data = JSON.stringify({
   import {
     buildOverview,
     fetchMine,
+    HIDDEN_PARENT_TEXT,
     KIND_LABELS,
     matchesFilter,
+    OTHER_PAGES_ID,
+    parentRequestUrl,
     PROPOSAL_STATE_LABELS,
+    resolveForeignParent,
     type OverviewEntry,
     type OverviewFilter,
     type OverviewGroup,
@@ -116,13 +121,14 @@ const data = JSON.stringify({
   import { readAnchorableBlocks } from '../../../../packages/margin/src/dom/blocks'
   import { ROLE_PALETTE } from '../../../../packages/margin/src/palette'
   import { recordFromWebAnnotation } from '../../../../packages/margin/src/records'
-  import { createSketchSvg } from '../../../../packages/margin/src/sketch'
+  import { createSketchSvg, previewAspectRatio } from '../../../../packages/margin/src/sketch'
 
   type PageData = {
     site: string
     prefix: string
     path: string
-    pages: OverviewPage[]
+    frontPage: string
+    nodes: OverviewPage[]
     first: { title: string; path: string } | null
   }
 
@@ -146,7 +152,75 @@ const data = JSON.stringify({
     return time
   }
 
-  function renderEntry(entry: OverviewEntry): HTMLLIElement {
+  /**
+   * Somebody else's note with the reader's replies under it. Drawn once the
+   * page has asked the service for the note: as that note, marked as someone
+   * else's, when it can be read, and otherwise as a reply to a note the reader
+   * can no longer see. Either way the reader's own replies are listed, and the
+   * link goes to the first of them.
+   */
+  function renderForeign(entry: OverviewEntry): HTMLLIElement {
+    const parent = entry.foreign!
+    const item = el('li', {
+      class: 'annotations-entry',
+      'data-annotation-entry': entry.id,
+      'data-kind': entry.kind,
+      'data-foreign-parent': parent.state,
+    })
+    const meta = el('p', { class: 'annotations-meta' })
+    meta.append(el('span', { class: 'annotations-kind', 'data-entry-kind': '' }, KIND_LABELS[entry.kind]))
+    if (parent.state === 'visible') {
+      meta.append(
+        el('span', { class: 'annotations-someone', 'data-someone-elses': '' }, `${parent.creatorName}'s, not yours`),
+      )
+    }
+    item.append(meta)
+    if (parent.state === 'visible') {
+      if (parent.quote) item.append(el('blockquote', {}, parent.quote))
+      item.append(
+        el(
+          'p',
+          { class: parent.deleted ? 'annotations-body annotations-deleted' : 'annotations-body', 'data-entry-body': '' },
+          parent.body,
+        ),
+      )
+    } else {
+      item.append(
+        el(
+          'p',
+          { class: 'annotations-body annotations-hidden-parent', 'data-hidden-parent': '' },
+          parent.state === 'unavailable'
+            ? 'Reply to another reader’s note, which could not be loaded just now'
+            : HIDDEN_PARENT_TEXT,
+        ),
+      )
+      if (entry.quote) item.append(el('blockquote', {}, entry.quote))
+    }
+    const replies = el('ol', {
+      class: 'annotations-replies',
+      'data-entry-replies': '',
+      'aria-label': 'Your replies',
+    })
+    for (const reply of entry.replies) {
+      replies.append(el('li', { 'data-reply': reply.id, title: reply.created }, reply.body))
+    }
+    item.append(replies)
+    item.append(el('a', { href: entry.href, 'data-annotation-link': '' }, 'Go to your reply →'))
+    return item
+  }
+
+  function renderEntry(entry: OverviewEntry, showPage: boolean): HTMLLIElement {
+    const item = entry.foreign ? renderForeign(entry) : renderOwn(entry)
+    // In "Other pages" the group does not say which page; the entry does.
+    if (showPage) {
+      item
+        .querySelector('.annotations-meta')
+        ?.append(el('a', { href: entry.path, 'data-entry-page': '' }, entry.path))
+    }
+    return item
+  }
+
+  function renderOwn(entry: OverviewEntry): HTMLLIElement {
     const item = el('li', {
       class: 'annotations-entry',
       'data-annotation-entry': entry.id,
@@ -177,7 +251,8 @@ const data = JSON.stringify({
     if (entry.sketch) {
       const svg = createSketchSvg(entry.sketch, document)
       svg.setAttribute('class', 'annotations-sketch')
-      svg.style.aspectRatio = `${entry.sketch.region.width} / ${entry.sketch.region.height}`
+      // The rail's own rule, so a stored region cannot stretch this page either.
+      svg.style.aspectRatio = previewAspectRatio(entry.sketch.region)
       item.append(svg)
     }
     if (entry.body) {
@@ -208,9 +283,11 @@ const data = JSON.stringify({
           'data-annotations-chapter': group.page.id,
         })
         const heading = el('h2')
-        heading.append(el('a', { href: group.page.path }, group.page.title))
+        if (group.page.path) heading.append(el('a', { href: group.page.path }, group.page.title))
+        else heading.textContent = group.page.title
+        const other = group.page.id === OTHER_PAGES_ID
         const entries = el('ol', { class: 'annotations-entries' })
-        entries.append(...group.entries.map(renderEntry))
+        entries.append(...group.entries.map((entry) => renderEntry(entry, other)))
         section.append(heading, entries)
         return section
       }),
@@ -260,6 +337,42 @@ const data = JSON.stringify({
               ),
             )
         }
+      }),
+    )
+  }
+
+  /**
+   * Ask for each foreign parent through the visibility-scoped read, once per
+   * note, and redraw its entry with the answer. `/mine` itself stays the
+   * reader's own rows only.
+   */
+  async function resolveForeign(groups: OverviewGroup[], isCurrent: () => boolean) {
+    const entries = groups.flatMap((group) =>
+      group.entries
+        .filter((entry) => entry.foreign)
+        .map((entry) => ({ entry, other: group.page.id === OTHER_PAGES_ID })),
+    )
+    await Promise.all(
+      entries.map(async ({ entry, other }) => {
+        let answer: { status: number; body: unknown } | null = null
+        try {
+          const response = await fetch(parentRequestUrl(entry), {
+            credentials: 'include',
+            headers: { accept: 'application/json' },
+          })
+          answer = { status: response.status, body: await response.json().catch(() => null) }
+        } catch {
+          answer = null
+        }
+        if (!isCurrent()) return
+        resolveForeignParent(entry, answer)
+        const current = document.querySelector(
+          `[data-annotation-entry="${CSS.escape(entry.id)}"]`,
+        )
+        if (!current) return
+        const next = renderEntry(entry, other)
+        next.hidden = (current as HTMLElement).hidden
+        current.replaceWith(next)
       }),
     )
   }
@@ -317,7 +430,10 @@ const data = JSON.stringify({
       return
     }
 
-    const groups = buildOverview(result.annotations, data.pages)
+    const groups = buildOverview(result.annotations, {
+      frontPage: data.frontPage,
+      nodes: data.nodes,
+    })
     if (groups.length === 0) {
       status.replaceChildren('You have no annotations in this book yet.')
       if (data.first) {
@@ -349,6 +465,9 @@ const data = JSON.stringify({
     filters.hidden = false
     update()
 
+    // The parents first: a redrawn entry would otherwise lose its marker.
+    await resolveForeign(groups, isCurrent)
+    if (!isCurrent()) return
     await markChangedText(groups, isCurrent)
   })
 </script>
@@ -497,6 +616,15 @@ const data = JSON.stringify({
     padding: 0.05rem 0.4rem;
     border: 1px solid currentColor;
     border-radius: 999px;
+  }
+
+  .annotations-someone {
+    font-style: italic;
+  }
+
+  .annotations-hidden-parent {
+    font-style: italic;
+    color: hsl(var(--muted-foreground));
   }
 
   .annotations-changed {

@@ -7,12 +7,15 @@ import type { Principal } from '../../src/worker/principal'
 import { D1MarginRepository } from '../../src/worker/margin/d1-repository'
 import { handleMarginRequest } from '../../src/worker/margin/routes'
 import { SqliteD1Database } from '../../src/worker/margin/sqlite-database'
+import { installStaticRoutes } from './static-build'
 
 /**
  * The per-book Annotations page (issue 073). `/api/margin/v1/*` is answered in
  * this process by the production router over a fresh SQLite database built
  * from every migration, and `/auth/me` says who is signed in, as in
- * `margin-edit-mode.spec.ts`. The pages are the dev server's own.
+ * `margin-edit-mode.spec.ts`. The pages are the static build's
+ * (`SRT_STATIC_BUILD_DIR=dist`, served by `installStaticRoutes` as in
+ * `book-look.spec.ts`); without it, the dev server's.
  *
  * The chapters are picked so that URL order and book order differ:
  * `ch00-the-loop`, `sum-of-two-digits`, `ch01-values` in the book, but
@@ -37,9 +40,13 @@ type Service = {
   signedIn: boolean
   as: Principal
   post(body: unknown, as?: Principal): Promise<Wire>
+  /** A statement straight against the database, for states no route makes. */
+  sql(statement: string, params?: unknown[]): number
 }
 
 async function mountService(page: Page): Promise<Service> {
+  // First, so the routes below are asked before the static files are.
+  await installStaticRoutes(page)
   const database = SqliteD1Database.inMemory()
   const repository = new D1MarginRepository(database)
   let clock = 0
@@ -66,6 +73,7 @@ async function mountService(page: Page): Promise<Service> {
       expect(response.status).toBe(201)
       return (await response.json()) as Wire
     },
+    sql: (statement, params = []) => database.execute(statement, params),
   }
   await page.route('**/auth/me', (route) =>
     route.fulfill({
@@ -187,7 +195,7 @@ async function seed(page: Page, service: Service): Promise<Seeded> {
         version: 1,
         note: 'Circled the total',
         anchor: { blockId: values.nodeId, quote: values.quote },
-        region: { x: 0, y: 0, width: 40, height: 20 },
+        region: { x: 0, y: 0, width: 0.8, height: 0.4 },
         strokes: [[[0.1, 0.1], [0.5, 0.9], [0.9, 0.2]]],
       }),
     }),
@@ -213,6 +221,67 @@ async function seed(page: Page, service: Service): Promise<Seeded> {
     reply: bare(reply),
     sketch: bare(sketch),
     changed: bare(changed),
+  }
+}
+
+type Edges = {
+  front: string
+  map: string
+  theirs: string
+  replyToTheirs: string
+  hidden: string
+  replyToHidden: string
+}
+
+/**
+ * The cases at the edge of "your annotations in this book": a note on the
+ * book's front page, one on a page that is not a node, and replies of the
+ * reader's to two notes of someone else's, one public and one the reader can
+ * no longer read.
+ */
+async function seedEdges(page: Page, service: Service): Promise<Edges> {
+  await page.goto(BOOK)
+  const values = await anchorIn(page, VALUES, 'block-ch01-values-prose-1', 8)
+  // The front page and the map have no anchorable blocks: their notes keep
+  // their quote and show as orphaned, which is what the rail does there too.
+  const front = await service.post(
+    annotation(
+      { path: BOOK, nodeId: 'block-front', quote: 'Build a Coding Agent', start: 0 },
+      { motivation: 'commenting', body: 'A note on the front page.' },
+    ),
+  )
+  const map = await service.post(
+    annotation(
+      { path: `${BOOK}map/`, nodeId: 'block-map', quote: 'The map', start: 0 },
+      { motivation: 'commenting', body: 'A note on the map.' },
+    ),
+  )
+  const theirs = await service.post(
+    annotation(values, { motivation: 'commenting', body: 'Their public note.', visibility: 'public' }),
+    OTHER,
+  )
+  const replyToTheirs = await service.post(
+    annotation(values, { motivation: 'commenting', body: 'My reply to their note.', parentId: bare(theirs) }),
+  )
+  const hidden = await service.post(
+    annotation(values, { motivation: 'commenting', body: 'Their note, later private.', visibility: 'public' }),
+    OTHER,
+  )
+  const replyToHidden = await service.post(
+    annotation(values, { motivation: 'commenting', body: 'My reply to a note that went away.', parentId: bare(hidden) }),
+  )
+  // No route can do this: the database refuses to hide a note from a reply's
+  // author. The page must still cope with a row from before that rule, so
+  // the rule is lifted in this test's own database to make one.
+  service.sql('DROP TRIGGER margin_annotations_parent_downgrade')
+  expect(service.sql("UPDATE margin_annotations SET visibility = 'private' WHERE id = ?", [bare(hidden)])).toBe(1)
+  return {
+    front: bare(front),
+    map: bare(map),
+    theirs: bare(theirs),
+    replyToTheirs: bare(replyToTheirs),
+    hidden: bare(hidden),
+    replyToHidden: bare(replyToHidden),
   }
 }
 
@@ -378,6 +447,64 @@ test.describe('the Annotations page', () => {
         fullPage: true,
       })
     }
+  })
+
+  test('a note on the book front page is under "Book front page", and other pages last', async ({ page }) => {
+    const service = await mountService(page)
+    const ids = await seedEdges(page, service)
+    await page.goto(OVERVIEW)
+
+    const groups = page.locator('[data-annotations-chapter]')
+    await expect(groups).toHaveCount(3)
+    expect(await groups.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-annotations-chapter')))).toEqual([
+      'book',
+      'ch01-values',
+      'other',
+    ])
+    await expect(groups.nth(0).locator('h2')).toHaveText('Book front page')
+    await expect(groups.nth(2).locator('h2')).toHaveText('Other pages')
+    await expect(groups.nth(0).locator(`[data-annotation-entry="${ids.front}"] [data-entry-body]`)).toHaveText(
+      'A note on the front page.',
+    )
+    const map = groups.nth(2).locator(`[data-annotation-entry="${ids.map}"]`)
+    await expect(map.locator('[data-entry-page]')).toHaveText(`${BOOK}map/`)
+    await expect(map.locator('a[data-annotation-link]')).toHaveAttribute('href', `${BOOK}map/?annotation=${ids.map}`)
+    await expect(page.getByLabel('Chapter').locator('option')).toHaveText([
+      'All chapters',
+      'Book front page',
+      'Values, names, and types',
+      'Other pages',
+    ])
+  })
+
+  test("a reply to someone else's note shows under it when it is visible, and says so when it is not", async ({ page }) => {
+    const service = await mountService(page)
+    const ids = await seedEdges(page, service)
+    await page.goto(OVERVIEW)
+
+    const visible = entry(page, ids.theirs)
+    await expect(visible).toHaveAttribute('data-foreign-parent', 'visible')
+    await expect(visible.locator('[data-someone-elses]')).toContainText('not yours')
+    await expect(visible.locator('[data-entry-body]')).toHaveText('Their public note.')
+    await expect(visible.locator('[data-entry-replies] li')).toHaveText(['My reply to their note.'])
+    await expect(visible.locator('a[data-annotation-link]')).toHaveAttribute(
+      'href',
+      `${VALUES}?annotation=${ids.replyToTheirs}`,
+    )
+    // The reply is under the note, not an entry of its own.
+    await expect(entry(page, ids.replyToTheirs)).toHaveCount(0)
+
+    const hidden = entry(page, ids.hidden)
+    await expect(hidden).toHaveAttribute('data-foreign-parent', 'hidden')
+    await expect(hidden.locator('[data-hidden-parent]')).toHaveText('Reply to a note you can no longer see')
+    await expect(hidden.locator('[data-entry-replies] li')).toHaveText(['My reply to a note that went away.'])
+    await expect(hidden.locator('a[data-annotation-link]')).toHaveAttribute(
+      'href',
+      `${VALUES}?annotation=${ids.replyToHidden}`,
+    )
+    // What the reader may not read stays unread.
+    await expect(page.getByText('Their note, later private.')).toHaveCount(0)
+    await expect(hidden.locator('[data-someone-elses]')).toHaveCount(0)
   })
 
   test('signed in with nothing yet, it says so and points to the first chapter', async ({ page }) => {

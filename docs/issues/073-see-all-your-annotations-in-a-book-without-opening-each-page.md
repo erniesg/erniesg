@@ -131,6 +131,8 @@ chapter in book order, and each entry links back to its exact spot.
   - the overview lists all four under the right chapters in book order;
   - a note on the book's front page appears under "Book front page", and a
     note on another non-manifest path under the prefix under "Other pages";
+    "Book front page" is the first group and "Other pages" the last, with
+    the chapter groups between them in manifest order;
   - the reader's reply to their own note shows nested under it;
   - a reply to another reader's public note shows under that note, marked as
     theirs; when that parent lookup fails (the route answers 500), the reply
@@ -142,15 +144,17 @@ chapter in book order, and each entry links back to its exact spot.
     each mapped label (criterion 2);
   - a deleted note with a reply shows as "Deleted note" with the reply
     nested under it;
-  - a note made on `/books/<slug>/map/` links back to `/map/?annotation=<id>`,
+  - a note made on `/books/<slug>/map/` links back to
+    `/books/<slug>/map/?annotation=<id>`,
     and one whose stored source is `/books/<slug>/map/?view=all#topic` links
     to `/books/<slug>/map/?view=all&annotation=<id>#topic`: the existing
     parameter and the fragment both survive;
   - signed out, the prompt links to `/auth/login?return_to=` this page;
     signed in with no annotations, the page says so and links to the first
     chapter;
-  - clicking one lands on the chapter with that annotation focused in the
-    rail;
+  - clicking one lands on the chapter scrolled so the annotation's anchor is
+    in the viewport, with the anchor painted as highlighted and the
+    annotation focused in the rail;
   - an annotation whose quote no longer matches shows "text changed" in both
     places;
   - the Annotations link appears in both looks when signed in, and not when

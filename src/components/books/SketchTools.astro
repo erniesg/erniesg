@@ -1,0 +1,201 @@
+<div class="sketch-launcher" data-sketch-launcher hidden>
+  <button
+    type="button"
+    data-sketch-toggle
+    aria-label="Sketch"
+    aria-keyshortcuts="Control+Shift+D Meta+Shift+D"
+    title="Sketch (⌘/Ctrl Shift D)"
+  >
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.8"
+      aria-hidden="true"
+      ><path d="m16 3 5 5-12 12-6 1 1-6Z M14 5l5 5"></path></svg
+    >
+    Sketch <kbd>⌘/Ctrl ⇧ D</kbd>
+  </button>
+</div>
+<section
+  class="sketch-toolbar"
+  data-sketch-toolbar
+  hidden
+  aria-label="Sketch tools"
+  data-margin-annotatable="false"
+>
+  <div class="sketch-actions" role="toolbar" aria-label="Drawing tools">
+    <strong data-sketch-instruction>Drag over an area to sketch</strong>
+    <button type="button" data-sketch-new disabled>New area</button>
+    <button type="button" data-sketch-undo disabled>Undo stroke</button>
+    <button type="button" data-sketch-clear disabled>Clear</button>
+    <button type="button" data-sketch-done title="Return to prose editing (Esc)"
+      >Done <kbd>Esc</kbd></button
+    >
+  </div>
+  <div class="sketch-note" data-sketch-note-panel hidden>
+    <label for="sketch-annotation">Sketch annotation</label>
+    <textarea
+      id="sketch-annotation"
+      data-sketch-note
+      rows="2"
+      maxlength="2000"
+      placeholder="What would you like to point out?"></textarea>
+    <button type="button" data-sketch-save disabled>Save annotation</button>
+  </div>
+  <p class="sketch-status" data-sketch-status role="status" aria-live="polite">
+    Private annotation · drag with a mouse, touch or pen.
+  </p>
+</section>
+
+<style is:global>
+  .book-content {
+    position: relative;
+  }
+  .sketch-launcher,
+  .sketch-toolbar {
+    position: fixed;
+    bottom: max(1rem, env(safe-area-inset-bottom));
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 60;
+    border: 1px solid hsl(var(--border));
+    border-radius: 10px;
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    box-shadow: 0 6px 28px rgb(0 0 0 / 0.16);
+    font:
+      0.875rem/1.4 ui-sans-serif,
+      system-ui,
+      sans-serif;
+  }
+  .sketch-launcher[hidden],
+  .sketch-toolbar[hidden],
+  .sketch-note[hidden] {
+    display: none;
+  }
+  .sketch-toolbar {
+    padding: 0.75rem;
+    width: min(42rem, calc(100vw - 2rem));
+    max-height: 45vh;
+    overflow: auto;
+  }
+  .sketch-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+  .sketch-actions strong {
+    flex: 1 1 12rem;
+    font-size: 0.8rem;
+    font-weight: 500;
+  }
+  .sketch-launcher button,
+  .sketch-toolbar button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.65rem;
+    min-height: 2.5rem;
+    border-radius: 6px;
+    border: 1px solid hsl(var(--border));
+    cursor: pointer;
+    color: inherit;
+    background: transparent;
+  }
+  .sketch-launcher button {
+    border: none;
+  }
+  .sketch-toolbar button:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .sketch-toolbar [data-sketch-save] {
+    background: #0369a1;
+    color: white;
+    border-color: #0369a1;
+  }
+  .sketch-launcher button:focus-visible,
+  .sketch-toolbar button:focus-visible,
+  .sketch-toolbar textarea:focus-visible {
+    outline: 2px solid #7dd3fc;
+    outline-offset: 2px;
+  }
+  .sketch-launcher kbd,
+  .sketch-toolbar kbd {
+    font-size: 0.7rem;
+    opacity: 0.65;
+  }
+  .sketch-note {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.4rem 0.6rem;
+    margin-top: 0.65rem;
+  }
+  .sketch-note label {
+    grid-column: 1 / -1;
+    font-size: 0.75rem;
+  }
+  .sketch-note textarea {
+    width: 100%;
+    padding: 0.5rem;
+    border: 1px solid hsl(var(--border));
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    resize: vertical;
+  }
+  .sketch-status {
+    margin: 0.5rem 0 0;
+    font-size: 0.75rem;
+    color: hsl(var(--muted-foreground));
+  }
+  .sketch-selection,
+  .sketch-layer {
+    position: absolute;
+    z-index: 15;
+  }
+  .sketch-selection {
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    touch-action: none;
+    cursor: crosshair;
+    background: rgb(3 105 161 / 0.025);
+  }
+  .sketch-layer {
+    pointer-events: none;
+    overflow: visible;
+    color: #0369a1;
+  }
+  .sketch-layer[data-sketch-canvas] {
+    pointer-events: auto;
+    touch-action: none;
+    cursor: crosshair;
+    border: 1px dashed #0369a1;
+    background: rgb(3 105 161 / 0.03);
+  }
+  @media (max-width: 540px) {
+    .sketch-note {
+      grid-template-columns: 1fr;
+    }
+    .sketch-note button {
+      justify-self: end;
+    }
+    .sketch-launcher kbd {
+      display: none;
+    }
+  }
+  @media print {
+    .sketch-launcher,
+    .sketch-toolbar,
+    .sketch-layer,
+    .sketch-selection {
+      display: none !important;
+    }
+  }
+</style>

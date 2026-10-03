@@ -33,10 +33,14 @@ const data = JSON.stringify({
 // The book's column is narrower than the preview's page, so the panel goes
 // under the map rather than beside it, and the map gets the column's width.
 // Its colours are the book's own (a chapter gets them from the content
-// stylesheet); the map's cards are light in both themes, as figures are.
+// stylesheet). The text around the map follows the page's theme; the map and
+// its detail panel are white cards in both themes, as figures are, so they
+// keep the light palette.
+const LIGHT = '--ink: #1a1a1a; --dim: #666; --line: #e2e2e2; --accent: #0369a1;'
 const STACKED =
-  '.book-map { --ink: #1a1a1a; --dim: #666; --line: #e2e2e2; --accent: #0369a1; }' +
-  '.book-map .map-detail, .book-map .map-detail a:not([href]) { color: var(--ink); }' +
+  `.book-map { ${LIGHT} }` +
+  '.dark .book-map { --ink: #ededed; --dim: #a3a3a3; --line: #3f3f3f; --accent: #7dd3fc; color: var(--ink); }' +
+  `.book-map :is(#map, .map-detail, .map-controls) { ${LIGHT} color: var(--ink); }` +
   '.book-map .map-wrap { grid-template-columns: minmax(0, 1fr); }'
 const style = `<style>${scopeContentCss(manifest.mapCss, '.book-map')}${manifest.mapAtRules}${STACKED}</style>`
 ---

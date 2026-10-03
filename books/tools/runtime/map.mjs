@@ -233,7 +233,10 @@ export function drawMap(doc, { topics, solved, href, cytoscape = globalThis.cyto
       if (!parts.has(key)) parts.set(key, { name: topic.partName, part: topic.part, topics: [] })
       parts.get(key).topics.push(topic)
     })
-    topicList.innerHTML = [...parts.values()].map((group) =>
+    // In book order: topics are listed as the manifest found them, which is
+    // not always part order.
+    const ordered = [...parts.values()].sort((a, b) => Number(a.part) - Number(b.part))
+    topicList.innerHTML = ordered.map((group) =>
       `<p class="map-topics-part">Part ${group.part} - ${escapeHtml(group.name)}</p><ul>` +
       group.topics.map((topic) => {
         const state = cy.$id(topic.id).data('state')

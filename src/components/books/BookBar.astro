@@ -485,6 +485,23 @@ const through = total > 0 ? Math.round((place / total) * 100) : 0
     html[data-book-look='plain'] .book-bar[data-has-progress] .book-bar-title {
       display: none;
     }
+
+    /* A bar with no chapter indicator (the front page, the map) keeps one
+       row, so the title gives way there too, with the Look label and some
+       padding: Contents, Map, the look switch and the theme still fit at
+       320px. */
+    html[data-book-look='plain'] .book-bar:not([data-has-progress]) .book-bar-title,
+    html[data-book-look='plain'] .book-bar:not([data-has-progress]) .book-look-label {
+      display: none;
+    }
+
+    html[data-book-look='plain'] .book-bar:not([data-has-progress]) {
+      gap: 0.4rem;
+    }
+
+    html[data-book-look='plain'] .book-bar:not([data-has-progress]) :is(.book-bar-map, .book-look-choice) {
+      padding: 0.3rem 0.45rem;
+    }
   }
 
   html[data-book-look='plain'] .book-bar-button {

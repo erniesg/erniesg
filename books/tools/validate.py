@@ -75,15 +75,99 @@ def front_matter_ids() -> set[str]:
     return ids
 
 
-def run_python(source: str) -> str:
+def run_python(source: str, timeout: float = 10) -> str:
     import subprocess
     try:
         done = subprocess.run(
-            [sys.executable, "-c", source], capture_output=True, text=True, timeout=10
+            [sys.executable, "-c", source], capture_output=True, text=True, timeout=timeout
         )
     except subprocess.TimeoutExpired:
         return "<timed out>"
     return done.stdout + done.stderr
+
+
+# Runs many small programs in one child process, each under its own timer, so
+# checking an exercise's mutants costs one interpreter start, not one each.
+BATCH_RUNNER = r"""
+import contextlib, io, json, signal, sys
+class Late(Exception):
+    pass
+def late(*_):
+    raise Late()
+signal.signal(signal.SIGALRM, late)
+outputs = []
+for source in json.load(sys.stdin):
+    buffer = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
+            signal.setitimer(signal.ITIMER_REAL, float(sys.argv[1]))
+            exec(compile(source, "<exercise>", "exec"), {"__name__": "__main__"})
+    except Late:
+        buffer.write("<timed out>")
+    except BaseException as error:
+        buffer.write(f"<{type(error).__name__}>")
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    outputs.append(buffer.getvalue())
+json.dump(outputs, sys.stdout)
+"""
+
+
+def run_many(sources: list[str], timeout: float) -> list[str]:
+    import json
+    import subprocess
+
+    if not sources:
+        return []
+    try:
+        done = subprocess.run(
+            [sys.executable, "-c", BATCH_RUNNER, str(timeout)],
+            input=json.dumps(sources), capture_output=True, text=True,
+            timeout=timeout * len(sources) + 10,
+        )
+        return json.loads(done.stdout)
+    except (subprocess.TimeoutExpired, ValueError):
+        # Fall back to one process per program rather than skip the check.
+        return [run_python(source, timeout=timeout) for source in sources]
+
+
+ARITHMETIC = {
+    "Add": "+", "Sub": "-", "Mult": "*", "Div": "/", "FloorDiv": "//", "Mod": "%", "Pow": "**",
+}
+
+
+def arithmetic_mutants(answer: str, starter: str):
+    """Each copy of `answer` with one operator swapped, in the lines the reader writes.
+
+    Every arithmetic operator counts, in an expression (`a * b`) or an
+    augmented assignment (`total += b`). Lines the starter already has (the
+    call and print that check the work) are left alone: the question is
+    whether a reader's wrong operator still passes.
+    """
+    import ast
+
+    given = {line.strip() for line in starter.splitlines()}
+    lines = answer.splitlines()
+
+    def sites_in(tree):
+        return [
+            node for node in ast.walk(tree)
+            if isinstance(node, (ast.BinOp, ast.AugAssign))
+            and type(node.op).__name__ in ARITHMETIC
+            and lines[node.lineno - 1].strip() not in given
+        ]
+
+    try:
+        sites = sites_in(ast.parse(answer))
+    except SyntaxError:
+        return
+    for index, site in enumerate(sites):
+        for name, symbol in ARITHMETIC.items():
+            if type(site.op).__name__ == name:
+                continue
+            copy = ast.parse(answer)
+            sites_in(copy)[index].op = getattr(ast, name)()
+            yield ARITHMETIC[type(site.op).__name__], symbol, site.lineno, ast.unparse(copy)
 
 
 def check_exercises(path: Path, body: str) -> None:
@@ -110,6 +194,19 @@ def check_exercises(path: Path, body: str) -> None:
             fail(path, f"{where}: the answer prints {produced.strip()!r}, not the expected output")
         if same_output(run_python(parts["starter"]), parts["output"]):
             fail(path, f"{where}: the starter already prints the answer, so there is nothing to do")
+        mutants = list(arithmetic_mutants(parts["answer"], parts["starter"]))
+        # A swapped operator can loop forever; one that does not finish has not
+        # printed the expected output, so a short limit (answers take milliseconds)
+        # is enough: a timeout can only miss a weak check, never fail a good one.
+        outputs = run_many([mutant for *_, mutant in mutants], timeout=0.1)
+        for (was, swapped, line, _), produced in zip(mutants, outputs):
+            if same_output(produced, parts["output"]):
+                fail(
+                    path,
+                    f"{where}: the answer with `{was}` swapped for `{swapped}` on line {line} "
+                    f"also prints the expected output, so the check cannot catch that mistake",
+                )
+                break
 
 
 def check_progress_ids(nodes: dict[str, dict]) -> None:

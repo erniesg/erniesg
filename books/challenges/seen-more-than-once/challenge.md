@@ -33,14 +33,14 @@ timeout = 15
 +++
 
 :::statement
-A car park barrier photographs every number plate that drives in. A month of
-that is up to 200,000 reads, in the order the cars arrived.
+A car park barrier photographs every number plate that drives in. A month
+gives up to 200,000 reads, in the order the cars arrived.
 
-The council is deciding whether to sell monthly passes, so it wants one
-number: how many **different** vehicles came in more than once.
+The council is deciding whether to sell monthly passes. It wants one number:
+how many **different** vehicles came in more than once.
 
-A plate read five times counts once, not five times, and not four. A plate
-read exactly once does not count at all.
+A plate read five times counts once, not five or four times. A plate read
+only once does not count.
 :::
 
 :::io
@@ -64,7 +64,7 @@ output: how many distinct plates appear two or more times
 :::
 
 :::figure{id="four-shapes"}
-Counting a plate by searching the list for it puts you on the bottom row.
+Searching the list for each plate puts you on the bottom row.
 Counting every plate in one pass puts you on the second.
 :::
 
@@ -81,32 +81,32 @@ def count_repeat_visitors(plates):
 ```
 
 **The count that decides it.** The obvious answer asks, for each plate, how
-many times that plate appears in the list — and asking that question means
-walking the list. 200,000 plates, each searching 200,000 reads, is 40 billion
-comparisons. The ten-million rule calls that 4,000 seconds.
+many times it appears in the list. Answering that means walking the list.
+200,000 plates, each searching 200,000 reads, is 40 billion comparisons. The
+ten-million rule puts that at 4,000 seconds.
 
-Timed, it comes out nearer 500, because `plates.count(...)` does its walking
-inside Python's own machinery rather than in a loop you wrote, which is
-several times quicker per step. The rule was out by a factor of eight and it
-did not matter in the slightest: 500 seconds is eight minutes, and the tier
-gives you three seconds. That is what the rule is for. It is wrong about the
-number and right about the decision.
+Timed, it comes out nearer 500 seconds. `plates.count(...)` walks the list
+inside Python's own machinery, not in a loop you wrote, and that is several
+times faster per step. So the rule was out by a factor of eight. That did not
+change the decision: 500 seconds is eight minutes, and the tier gives you three
+seconds. The rule got the number wrong and the decision right,
+which is what it is for.
 
-One pass instead. Each plate is looked at once and dropped into a dictionary
-that remembers how many times it has turned up. 200,000 steps, then a walk
-over the distinct plates to count the ones above 1. Two hundredths of a
-second, and the arithmetic said so before anything ran.
+The alternative is one pass. Each plate is looked at once and added to a
+dictionary that counts how many times it has turned up. That is 200,000 steps,
+then a walk over the distinct plates to count the ones above 1. It takes about
+two hundredths of a second, and the arithmetic predicted that before anything
+ran.
 
 **Why a dictionary and not a list of seen plates.** `if plate in seen_list` is
-a loop wearing a disguise: it walks the list until it finds a match. Put
-200,000 plates in a list and check each new one against it and you are back to
-the 40 billion. `plate in seen` for a dictionary — or a set — does not depend
-on how much is already in there. Choosing between a list and a dict is not
-housekeeping; here it is the whole difference between two hundredths of a
-second and eight minutes.
+also a loop: it walks the list until it finds a match. If you keep 200,000
+plates in a list and check each new one against it, you are back to 40 billion
+comparisons. `plate in seen` on a dictionary or a set takes the same time
+however much is already in it. Here, that choice is the difference between two
+hundredths of a second and eight minutes.
 
-**Two ways to write the same one pass.** If counting feels heavier than you
-need, two sets do the job with no arithmetic at all:
+**Two ways to write the same one pass.** Two sets do the job without any
+counting:
 
 ```python
 def count_repeat_visitors(plates):
@@ -119,14 +119,12 @@ def count_repeat_visitors(plates):
     return len(came_back)
 ```
 
-Same shape, same cost, and the answer is a size rather than a sum. Both pass.
-The first one leaves you holding the counts, which is the version to keep if
-anybody is ever going to ask a second question about the same data — and
-somebody always does.
+Same shape and same cost, but the answer is a size rather than a sum. Both
+pass. The first one keeps the counts, so use it if someone may later ask
+another question about the same data.
 
-**The off-by-one that the samples hide.** `["AB1", "AB1", "AB1"]` is one
-vehicle, and an answer that counts extra reads rather than extra vehicles says
-2. Both of the versions above count each plate once, because sets and
-dictionary keys cannot hold the same plate twice. That is not a lucky
-accident; it is the property you picked the structure for.
+**Counting vehicles, not reads.** `["AB1", "AB1", "AB1"]` is one vehicle. An
+answer that counts extra reads instead of extra vehicles says 2. Both versions
+above count each plate once, because a set or a dictionary can't hold the same
+key twice. That is why these structures fit the job.
 :::

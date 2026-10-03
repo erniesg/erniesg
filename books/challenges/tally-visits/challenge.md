@@ -33,12 +33,11 @@ timeout = 20
 +++
 
 :::statement
-The front desk writes down a name every time someone walks in, in order, all
-day. At closing time the surgery wants to know how many times each person came.
+The front desk writes down a name, in order, each time someone walks in. At
+closing time the surgery wants to know how many times each person came.
 
-Given the day's log as a list of names, return a dict: every name that appears,
-pointing at how many times it appears. A name nobody wrote down is simply not
-in the dict.
+Given the day's log as a list of names, return a dict from each name in the log
+to how many times it appears. Names not in the log are not in the dict.
 :::
 
 :::io
@@ -49,9 +48,8 @@ output: a dict from each name to how many times it appears
 :::constraints
 - The log holds 0 to 200,000 names.
 - Each name is 1 to 20 lowercase letters.
-- Names repeat freely, and an empty log gives an empty dict, `{}`.
-- The whole log has to be counted inside the time limit, so re-reading the list
-  once per name is too slow to pass.
+- Names can repeat. An empty log gives an empty dict, `{}`.
+- Searching the list again for each name is too slow to pass.
 :::
 
 :::sample
@@ -64,7 +62,7 @@ output: a dict from each name to how many times it appears
 :::
 
 :::figure{id="lookup-vs-scan"}
-Counting by name is a lookup for every name in the log. Do it in a dict, not by
+Counting needs one lookup per name in the log. Look up in a dict, not by
 searching the list again.
 :::
 
@@ -72,14 +70,13 @@ searching the list again.
 :::
 
 :::hint{level=1}
-One pass over the log. Keep a dict as you go: the key is a name, the value is
-how many times you have seen it so far.
+Make one pass over the log, keeping a dict: each key is a name, and its value
+is how many times you have seen it so far.
 :::
 
 :::hint{level=2}
-The first time a name turns up there is nothing to add to, and
-`counts[name] + 1` raises `KeyError`. `counts.get(name, 0)` answers `0`
-instead.
+The first time a name turns up, `counts[name] + 1` raises `KeyError`.
+`counts.get(name, 0)` returns `0` instead.
 :::
 
 :::hint{level=3}
@@ -96,28 +93,25 @@ def tally_visits(names):
     return counts
 ```
 
-**Why `get` and not an `if`.** `counts.get(name, 0)` is "the count so far, or
-zero if this is the first time". Writing it with `if name in counts:` works and
-takes three lines to say the same thing. Either way, the point is that the
-first visit and the thirtieth run the same code.
+**Why `get` and not an `if`.** `counts.get(name, 0)` means "the count so far,
+or zero the first time". `if name in counts:` also works, but takes three
+lines. Either way, the first visit and the thirtieth run the same code.
 
-**Why the empty log needs no special case.** The loop body never runs, `counts`
-is still `{}`, and that is the answer the statement asked for. A test for
-emptiness here would only be a place for a bug to live.
+**Why the empty log needs no special case.** The loop body never runs, so
+`counts` stays `{}`, which is the right answer.
 
-**Why the obvious other version fails.** This is the tempting one:
+**Why the shorter version fails.**
 
 ```python
 def tally_visits(names):
     return {name: names.count(name) for name in names}   # do not do this
 ```
 
-It gives correct answers. It also searches the whole list once per name in the
-list. At the stated limit that is 200,000 × 200,000 = 40 billion comparisons,
-which is hours, and the perf tier stops it in seconds. The dict version reads
-each name once: 200,000 steps.
+It gives correct answers, but `names.count(name)` searches the whole list once
+for every name. At the stated limit that is 200,000 × 200,000 = 40 billion
+comparisons. That takes minutes, and the perf tier allows 2 seconds. The dict
+version reads each name once: 200,000 steps.
 
 **Order does not matter.** Two dicts are equal when they hold the same keys
-with the same values, whatever order they were built in, so the tests do not
-care which name you met first.
+and values, in any order. So the tests do not care which name came first.
 :::

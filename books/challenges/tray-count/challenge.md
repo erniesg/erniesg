@@ -34,14 +34,14 @@ timeout = 5
 
 :::statement
 A kitchen serves portions out of trays. A tray holds a fixed number of
-portions and has to be ordered whole, so 310 portions out of trays of 12 means
-26 trays. Order 25 and 300 people are fed while ten are turned away.
+portions and has to be ordered whole. For 310 portions in trays of 12 you need
+26 trays. Order 25 and only 300 people are fed.
 
 Return two numbers: how many trays to order, and how many portions go spare in
 the last tray.
 
-Trays hold 12 portions unless the caller says otherwise, so `per_tray` has a
-default of 12 and most calls will pass only the portions.
+Most trays hold 12, so `per_tray` has a default of 12. Most calls pass only
+the portions.
 :::
 
 :::io
@@ -73,20 +73,19 @@ output: a pair — trays to order, and spare portions
 :::
 
 :::hint{level=1}
-Work out the trays first. The spare falls straight out of it: the trays bring
-`trays * per_tray` portions and `portions` of them leave.
+Work out the trays first. The spare follows from it: the trays hold
+`trays * per_tray` portions, and `portions` of them are used.
 :::
 
 :::hint{level=2}
-`310 / 12` is `25.83`, and nobody can order 0.83 of a tray. `//` rounds down,
-which is the wrong direction here. You want to round up.
+`310 / 12` is `25.83`, and you can't order 0.83 of a tray. `//` rounds down,
+but here you need to round up.
 :::
 
 :::hint{level=3}
-`(portions + per_tray - 1) // per_tray` rounds up without a single `if`:
-adding one less than a full tray pushes any remainder over the line, and adds
-nothing when the division was already exact. Check it against `portions = 0`
-before you trust it.
+`(portions + per_tray - 1) // per_tray` rounds up without an `if`. Adding one
+less than a full tray pushes any leftover into the next tray. When the
+division is exact, it adds nothing. Check it with `portions = 0`.
 :::
 
 :::solution
@@ -96,28 +95,26 @@ def trays_needed(portions, per_tray=12):
     return (trays, trays * per_tray - portions)
 ```
 
-**Rounding up with floor division.** `//` always rounds down, so you nudge the
-numerator first. Adding `per_tray - 1` is exactly enough to push any leftover —
-one portion or eleven — up to the next whole tray, and never enough to invent
-a tray when the division came out even. 310 + 11 is 321, and 321 // 12 is 26.
-180 + 11 is 191, and 191 // 12 is still 15.
+**Rounding up with floor division.** `//` always rounds down, so you add to the
+number being divided first. Adding `per_tray - 1` pushes any leftover, from one
+portion to eleven, into the next tray. It never adds a tray when the division
+is exact. 310 + 11 is 321, and 321 // 12 is 26. 180 + 11 is 191, and 191 // 12
+is still 15.
 
 **Zero needs no special case.** `(0 + 11) // 12` is 0, and the spare is
-`0 * 12 - 0`. An `if portions == 0` here is a sign the rounding is being done
-by hand somewhere.
+`0 * 12 - 0`, also 0.
 
-**Why the spare is derived, not counted.** The two numbers are not independent:
-once you know the trays, the spare is fixed. Working both out separately is two
-chances to be wrong and two places to change if a tray size ever moves.
+**The spare comes from the trays.** Once you know the trays, the spare is
+fixed. Working the two out separately gives two places to make a mistake, and
+two places to change if the tray size changes.
 
-**Why `per_tray` has a default and `portions` does not.** Arguments with
-defaults come last, and only the argument that is usually the same should have
-one. Every call knows its own portions; most calls do not care about tray size.
-That is the whole test for whether something deserves a default.
+**Why `per_tray` has a default and `portions` does not.** A parameter with a
+default goes after the ones without. Only a value that is usually the same
+should get a default. Every call has its own portions, but most calls use
+trays of 12.
 
-**Counting up is correct and far too slow.** Adding `per_tray` to a running
-total until it reaches `portions` gives the right answer and reads clearly. At
-the size limit — a million portions in trays of one — it is a million times
-round the loop for a single call, and the perf tier makes 50,000 calls. The
-arithmetic does the same job in one step, whatever the numbers are.
+**Counting up is correct but slow.** You could add `per_tray` to a running
+total until it reaches `portions`. At the size limit, a million portions in
+trays of one, that loop runs a million times for one call, and the perf tier
+makes 50,000 calls. The arithmetic takes one step whatever the numbers are.
 :::

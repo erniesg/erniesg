@@ -165,16 +165,17 @@ stay at each owning adapter boundary.
 13. **A proposal's author can see its state.** The annotation response
     (`present()`) carries `margin:proposalState` (`approved`, `pr_open`,
     `conflict`, `merged`, `closed` or `apply_failed`) once a proposal has left
-    `pending`, but only for its creator and the admin. Nobody else gets it, so
-    a private proposal's progress is not disclosed. 073's overview reads this
-    field.
+    `pending`, but only for its creator and an admin of the proposal's own
+    `site` (item 1's `margin_site_admins`). Nobody else gets it, including an
+    admin of a different site, so a proposal's progress never crosses
+    tenants. 073's overview reads this field.
 
 ## Acceptance tests
 
 - `margin:proposalState` (item 13): a public proposal in `pr_open` is read
-  by its creator and by the admin, who both get the field, and by an
-  unrelated signed-in reader and an anonymous reader, who both get the
-  proposal without it.
+  by its creator and by its site's admin, who both get the field, and by an
+  unrelated signed-in reader, an anonymous reader and an admin of a
+  different site, who all get the proposal without it.
 
 - A pending proposal renders a diff whose additions and deletions match the
   CriticMarkup exactly.

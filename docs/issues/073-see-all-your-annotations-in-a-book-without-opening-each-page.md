@@ -86,6 +86,11 @@ chapter in book order, and each entry links back to its exact spot.
      to someone else's private note and refuse making a replied-to note
      private.) If the lookup fails, for example offline, the reply shows on
      its own with its link back to the spot.
+   - **Everything from storage is inserted as text** (`textContent` or
+     equivalent), never as HTML: quotes, note bodies, sketch notes, and
+     above all a foreign parent's body and quote, which another reader
+     wrote. The Worker checks their shape and length but does not sanitise
+     markup.
    - A note the reader deleted while replies still hang from it is kept as a
      tombstone (`margin:deleted`, no body). It shows as "Deleted note", with
      no body, and its replies stay nested under it.
@@ -95,7 +100,11 @@ chapter in book order, and each entry links back to its exact spot.
    chapter URL for chapter rows, and the front page, `/map/` or wherever it
    was made for the others. On load, the chapter's margin element
    scrolls to that annotation, focuses it in the rail and highlights its
-   anchor. When the anchor no longer resolves because the text changed, the
+   anchor. Notes and highlights paint their anchor. A sketch shows its
+   overlay instead (its quote only locates the block and is not painted),
+   and a proposal opens its diff in edit mode for its author, as the rail
+   does; neither is text-highlighted. When the anchor no longer resolves
+   because the text changed, the
    rail says so and still shows the annotation. The overview marks it as
    "text changed".
 4. **Book bar.** An "Annotations" link sits next to "Map" in both the Site and
@@ -117,7 +126,9 @@ chapter in book order, and each entry links back to its exact spot.
     order, with pagination, including a page boundary that falls between
     two documents (no row skipped or repeated);
   - another creator's private and public rows are excluded;
-  - 401 when signed out, 400 on a bad `prefix`;
+  - 401 when signed out; 400 on a `prefix` missing its leading slash and on
+    one missing its trailing slash, with rows under `/books/<slug>bar/`
+    seeded to show a sibling book can never match;
   - rows on another site, or outside the prefix, are excluded;
   - `EXPLAIN QUERY PLAN` for the `/mine` query (first page and a cursor
     page) uses `margin_annotations_owner` and never scans
@@ -126,8 +137,11 @@ chapter in book order, and each entry links back to its exact spot.
   router pattern as `tests/e2e/margin-edit-mode.spec.ts`, served from the
   static build through `installStaticRoutes` (as `book-look.spec.ts` does):
   - seed a highlight on one chapter, a note and a sketch on another, and a
-    proposal; each shows only the fields its kind carries (no body on the
-    highlight, no colour on the proposal);
+    proposal; each shows its seeded quoted text and date, and only the
+    fields its kind carries (no body on the highlight, no colour on the
+    proposal);
+  - a foreign public parent whose body is `<img src=x onerror="window.__xss=1">`
+    renders that text literally, and `window.__xss` stays undefined;
   - the overview lists all four under the right chapters in book order;
   - a note on the book's front page appears under "Book front page", and a
     note on another non-manifest path under the prefix under "Other pages";
@@ -152,9 +166,10 @@ chapter in book order, and each entry links back to its exact spot.
   - signed out, the prompt links to `/auth/login?return_to=` this page;
     signed in with no annotations, the page says so and links to the first
     chapter;
-  - clicking one lands on the chapter scrolled so the annotation's anchor is
-    in the viewport, with the anchor painted as highlighted and the
-    annotation focused in the rail;
+  - clicking a note lands on the chapter scrolled so its anchor is in the
+    viewport, painted as highlighted, with the note focused in the rail;
+    clicking a sketch lands with its overlay in the viewport and its entry
+    focused, and no text painted;
   - an annotation whose quote no longer matches shows "text changed" in both
     places;
   - the Annotations link appears in both looks when signed in, and not when

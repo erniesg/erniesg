@@ -22,6 +22,9 @@
  *   A default decides the visibility of *new* annotations only.
  * - An annotation whose text is gone stays in the rail, marked, readable,
  *   editable and deletable. It is never hidden and never dropped.
+ * - `?annotation=<id>` in the page URL names one annotation: once loaded, the
+ *   rail scrolls to and flashes its passage, marks and focuses its entry, and
+ *   says so when the text it was on has changed.
  *
  * The visibility control is only half of the feature. The service's query is
  * the other half — a private annotation is never sent to anyone else — and the
@@ -93,6 +96,8 @@ export const MARGIN_RAIL_TAG = 'margin-rail'
 
 /** How many pages of annotations a load follows before it stops asking. */
 const FLASH_MS = 1200
+/** A reader arriving from a link has to find the passage first. */
+const TARGET_FLASH_MS = 4000
 const LOAD_FAILED = 'Could not load annotations for this page.'
 const PREFS_FAILED =
   'Could not load your margin settings; your annotations may show without their controls. Reload to try again.'
@@ -115,6 +120,8 @@ const STYLES = `
 ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
 li { border-left: 3px solid var(--swatch, currentColor); padding: 0.25rem 0 0.25rem 0.6rem; font-size: 0.8125rem; line-height: 1.45; }
 li[data-orphaned] { border-left-style: dashed; }
+li[data-margin-target] { background: color-mix(in srgb, var(--swatch) 35%, transparent); }
+.target-notice { display: block; margin: 0 0 0.25rem; font-size: 0.75rem; font-weight: 600; }
 li:focus-within { outline: 1px dotted currentColor; outline-offset: 2px; }
 .reason, .meta { display: block; font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.04em; }
 .quote { display: block; text-align: left; width: 100%; border: 0; padding: 0; font-style: italic; }
@@ -153,6 +160,18 @@ button.primary:not([disabled]) { font-weight: 600; }
 .deleted { font-style: italic; opacity: 0.75; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 `
+
+/** Said in the named annotation's entry when its passage cannot be found. */
+const TARGET_TEXT_CHANGED =
+  'Text changed: the passage this annotation was on is no longer here as it was.'
+const TARGET_MISSING = 'The annotation this link names is not on this page.'
+
+/** The `?annotation=<id>` the page was opened with, if any. */
+function targetFromLocation(doc: Document): string | null {
+  const search = doc.defaultView?.location.search ?? ''
+  const id = new URLSearchParams(search).get('annotation')
+  return id ? serverIdFromIri(id) : null
+}
 
 const ORPHAN_LABELS: Record<string, string> = {
   ambiguous: 'orphaned — the quote is no longer unique',
@@ -315,6 +334,11 @@ export class MarginRailElement extends ElementBase {
   #deletedIds = new Set<string>()
   /** Default-visibility writes not yet finished. */
   #prefsWritesPending = new Map<MarginTransport | null, number>()
+  /** The server id `?annotation=` names, until the first load has shown it. */
+  #target: string | null = null
+  /** The entry that link landed on, marked for as long as the page lives. */
+  #targeted: string | null = null
+  #targetNotice: string | null = null
   #flashTimer = 0
   #unflash: (() => void) | null = null
   #listeners: (() => void)[] = []
@@ -431,6 +455,8 @@ export class MarginRailElement extends ElementBase {
   #started = false
 
   connectedCallback() {
+    // Read once: a later reload of the same page's rail is not a new arrival.
+    if (!this.#started) this.#target = targetFromLocation(this.ownerDocument)
     this.#started = true
     this.#attach()
   }
@@ -825,6 +851,7 @@ export class MarginRailElement extends ElementBase {
       if (this.#notice === LOAD_FAILED) this.#notice = ''
       this.#paint()
       this.#revealHash()
+      this.#revealTarget()
     } catch (error) {
       // A superseded load's failure belongs to state that is gone.
       if (generation !== this.#loadGeneration) return
@@ -1607,10 +1634,26 @@ export class MarginRailElement extends ElementBase {
 
   /** Scroll a passage into view and flash it, without touching its markup. */
   #goTo(id: string) {
+    const shown = this.#showPassage(id)
+    if (!shown) return
+    const { block, ranges } = shown
+    if (this.#compact) {
+      // The overlay closes, and the control that had focus goes with it; focus
+      // goes to the passage, which is what the reader asked to go to.
+      this.#overlayOpen = false
+      this.#render()
+      if (block) returnFocusToText(block.element, ranges[0] ?? null)
+      return
+    }
+    this.#render()
+  }
+
+  /** Bring an anchored passage into view and flash it; `null` for an orphan. */
+  #showPassage(id: string, flashMs = FLASH_MS) {
     const entry = this.#placements.find((item) => item.annotation.id === id)
-    if (!entry || entry.placement.status !== 'anchored') return
+    if (!entry || entry.placement.status !== 'anchored') return null
     const block = this.#blockFor(entry.placement.nodeId)
-    if (!block) return
+    if (!block) return null
     const ranges = rangesForOffsets(
       block.index,
       entry.placement.start,
@@ -1624,20 +1667,52 @@ export class MarginRailElement extends ElementBase {
       block: 'center',
       behavior: reduced ? 'auto' : 'smooth',
     })
-    this.#flash({
-      nodeId: entry.placement.nodeId,
-      start: entry.placement.start,
-      end: entry.placement.end,
-    })
-    if (this.#compact) {
-      // The overlay closes, and the control that had focus goes with it; focus
-      // goes to the passage, which is what the reader asked to go to.
-      this.#overlayOpen = false
+    this.#flash(
+      {
+        nodeId: entry.placement.nodeId,
+        start: entry.placement.start,
+        end: entry.placement.end,
+      },
+      flashMs,
+    )
+    return { block, ranges }
+  }
+
+  /**
+   * Land on the annotation `?annotation=<id>` names (issue 073), once, after
+   * the first load that could contain it. Its passage is scrolled to and
+   * flashed when it still resolves; when it does not, the entry says the text
+   * changed. Either way the entry is marked and focused, and a narrow rail
+   * opens its overlay to show it. A reply's id lands on the reply.
+   */
+  #revealTarget() {
+    const id = this.#target
+    if (!id) return
+    this.#target = null
+    const record = this.#records.find(
+      (entry) => entry.serverId === id || entry.annotation.id === id,
+    )
+    if (!record) {
+      const reply = this.#replies.find((entry) => entry.serverId === id)
+      if (this.#compact) this.#overlayOpen = true
+      if (!reply) this.#notice = TARGET_MISSING
       this.#render()
-      if (block) returnFocusToText(block.element, ranges[0] ?? null)
+      if (reply) this.#focusReply(reply.serverId)
       return
     }
+    const annotationId = record.annotation.id
+    this.#targeted = annotationId
+    // A search typed before the load must not hide what the link points to.
+    this.#query = ''
+    this.#targetNotice = this.#showPassage(annotationId, TARGET_FLASH_MS)
+      ? null
+      : TARGET_TEXT_CHANGED
+    if (this.#compact) this.#overlayOpen = true
     this.#render()
+    this.#focusEntry(annotationId)
+    this.#shadow
+      .querySelector(`li[data-margin-annotation="${CSS.escape(annotationId)}"]`)
+      ?.scrollIntoView({ block: 'nearest' })
   }
 
   /**
@@ -1645,7 +1720,10 @@ export class MarginRailElement extends ElementBase {
    * registry namespace, so it gets the same fallback: where the Custom
    * Highlight API is missing it draws an overlay rather than nothing.
    */
-  #flash(target: { nodeId: string; start: number; end: number }) {
+  #flash(
+    target: { nodeId: string; start: number; end: number },
+    ms = FLASH_MS,
+  ) {
     this.#clearFlash()
     this.setAttribute('data-flashing', '')
     const blocks = this.#controller?.blocks() ?? []
@@ -1660,7 +1738,7 @@ export class MarginRailElement extends ElementBase {
     const view = this.ownerDocument.defaultView ?? globalThis
     this.#flashTimer = view.setTimeout(
       () => this.#clearFlash(),
-      FLASH_MS,
+      ms,
     ) as unknown as number
   }
 
@@ -2062,6 +2140,20 @@ export class MarginRailElement extends ElementBase {
       '--swatch',
       role ? `var(--margin-role-${role})` : 'var(--margin-role-note)',
     )
+
+    if (id === this.#targeted) {
+      item.dataset.marginTarget = ''
+      if (this.#targetNotice) {
+        item.append(
+          el(
+            doc,
+            'span',
+            { class: 'target-notice', 'data-margin-target-notice': '', role: 'status' },
+            this.#targetNotice,
+          ),
+        )
+      }
+    }
 
     const orphaned = placement?.status === 'orphaned' ? placement : null
     if (orphaned) {

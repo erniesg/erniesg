@@ -16,6 +16,7 @@ import {
   MAX_PAGE_SIZE,
   type ListCursor,
   type MarginRepository,
+  type OwnListCursor,
   type TenantScope,
   type ViewerKey,
 } from './repository'
@@ -49,6 +50,8 @@ import {
  *   PATCH  /annotations/:id          owner-scoped update; 403 on another's
  *   DELETE /annotations/:id          owner-scoped delete (204); a note with
  *                                    replies is tombstoned instead (200 + body)
+ *   GET    /mine?site&prefix         the caller's own annotations under a path
+ *                                    prefix, across documents (issue 073)
  *   GET    /prefs                    read the caller's default visibility
  *   PATCH  /prefs                    set it; existing rows are never rewritten
  *   GET    /progress?site&book       the caller's own progress in a book
@@ -457,6 +460,102 @@ async function listAnnotations(
   return json({
     annotations: rows.map(present),
     ...(more && last ? { nextCursor: encodeCursor(last) } : {}),
+  })
+}
+
+/**
+ * `?site=&prefix=` for `GET /mine`: an origin, and an absolute path that starts
+ * and ends with `/` and is already spelled the way a stored document is (no
+ * dot segments, no query, no fragment, escapes as the URL parser writes them).
+ * Anything else would match nothing useful or, worse, something unintended.
+ */
+function readOwnScope(url: URL): { site: string; prefix: string } | { error: Response } {
+  const site = canonicalOrigin(url.searchParams.get('site') ?? '')
+  const prefix = url.searchParams.get('prefix') ?? ''
+  let canonical = false
+  if (
+    site &&
+    prefix.startsWith('/') &&
+    !prefix.startsWith('//') &&
+    prefix.endsWith('/') &&
+    prefix.length <= MAX_PREFIX_LENGTH
+  ) {
+    try {
+      const parsed = new URL(prefix, site)
+      canonical =
+        parsed.origin === site && parsed.pathname === prefix && !parsed.search && !parsed.hash
+    } catch {
+      canonical = false
+    }
+  }
+  if (!site || !canonical) {
+    return {
+      error: problem(
+        400,
+        'invalid_scope',
+        'site must be a URL origin and prefix an absolute path that starts and ends with /',
+      ),
+    }
+  }
+  return { site, prefix }
+}
+
+const MAX_PREFIX_LENGTH = 1024
+
+/** The `/mine` cursor: the `(created, id)` cursor, then the row's document. */
+function encodeOwnCursor(record: OwnListCursor): string {
+  return `${encodeCursor(record)} ${record.document}`
+}
+
+function readOwnPage(
+  url: URL,
+): { limit: number; after?: OwnListCursor } | { error: Response } {
+  const cursor = url.searchParams.get('cursor')
+  const withoutCursor = new URL(url)
+  withoutCursor.searchParams.delete('cursor')
+  const page = readPage(withoutCursor)
+  if ('error' in page) return page
+  if (cursor === null) return { limit: page.limit }
+  // `created` and `id` hold no space; a stored document is a parsed URL path,
+  // in which a space is always escaped.
+  const [created, id, document, ...rest] = cursor.split(' ')
+  if (!created || !id || !document?.startsWith('/') || rest.length > 0) {
+    return {
+      error: problem(400, 'invalid_cursor', 'cursor must be one this API returned'),
+    }
+  }
+  return { limit: page.limit, after: { created, id, document } }
+}
+
+/**
+ * The caller's own annotations under one path prefix of one site, every
+ * motivation and visibility, in `(document, created, id)` order (issue 073).
+ * A client groups and orders them by its own structure; this route knows
+ * nothing about books.
+ */
+async function listOwnAnnotations(
+  url: URL,
+  context: MarginRouteContext,
+  owner: string,
+): Promise<Response> {
+  const scope = readOwnScope(url)
+  if ('error' in scope) return scope.error
+  const page = readOwnPage(url)
+  if ('error' in page) return page.error
+
+  const records = await context.repository.listOwnAnnotations(
+    scope.site,
+    scope.prefix,
+    owner,
+    { limit: page.limit + 1, ...(page.after ? { after: page.after } : {}) },
+  )
+  const rows = records.slice(0, page.limit)
+  const more = records.length > page.limit
+  const last = rows[rows.length - 1]
+
+  return json({
+    annotations: rows.map(present),
+    ...(more && last ? { nextCursor: encodeOwnCursor(last) } : {}),
   })
 }
 
@@ -1190,6 +1289,13 @@ export async function handleMarginRequest(
       return deleteAnnotation(context, owner, url, id)
     }
     return methodNotAllowed(['GET', 'PATCH', 'DELETE'])
+  }
+
+  if (path.length === 1 && path[0] === 'mine') {
+    // Only ever the caller's own rows, so there is nothing to show a stranger.
+    if (method !== 'GET') return methodNotAllowed(['GET', 'HEAD'])
+    if (!owner) return unauthenticated()
+    return listOwnAnnotations(url, context, owner)
   }
 
   if (path.length === 1 && path[0] === 'prefs') {

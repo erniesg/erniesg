@@ -9,6 +9,7 @@ import {
   insertAnnotationQuery,
   insertIdempotencyReceiptQuery,
   listAnnotationsQuery,
+  listOwnAnnotationsQuery,
   listProgressQuery,
   mergeProgressQuery,
   tombstoneAnnotationQuery,
@@ -23,6 +24,7 @@ import {
   type AnnotationPatch,
   type IdempotencyReceipt,
   type ListOptions,
+  type OwnListOptions,
   type MarginPrefs,
   type MarginRepository,
   type TenantScope,
@@ -177,6 +179,18 @@ export class D1MarginRepository implements MarginRepository {
   ): Promise<MarginAnnotationRecord[]> {
     const { results } = await this.statement(
       listAnnotationsQuery(scope, viewer, options),
+    ).all<AnnotationRow>()
+    return results.map(rowToRecord)
+  }
+
+  async listOwnAnnotations(
+    site: string,
+    prefix: string,
+    owner: string,
+    options: OwnListOptions,
+  ): Promise<MarginAnnotationRecord[]> {
+    const { results } = await this.statement(
+      listOwnAnnotationsQuery(site, prefix, owner, options),
     ).all<AnnotationRow>()
     return results.map(rowToRecord)
   }

@@ -1,0 +1,686 @@
+---
+/**
+ * Every annotation the signed-in reader has made in one book, on one page
+ * (issue 073), grouped by chapter in the book's order, each linking back to
+ * its spot with `?annotation=<id>`.
+ *
+ * Static, like every book page: what is built here is the book's shape (its
+ * pages, titles and order, from the manifest); the reader's annotations are
+ * fetched in the browser from `GET /api/margin/v1/mine`, which returns only
+ * the caller's own. Filtering is in the browser too; nothing new is stored.
+ *
+ * The page mounts no margin of its own: it is about annotations, not
+ * something to annotate.
+ */
+import BookBar from '@/components/books/BookBar.astro'
+import BookContents from '@/components/books/BookContents.astro'
+import ReadingLayout from '@/layouts/ReadingLayout.astro'
+import { SITE } from '@/consts'
+import { bookBySlug, books, documentUri } from '@/lib/books'
+import type { OverviewPage } from '@/lib/annotations-overview'
+
+export function getStaticPaths() {
+  return books().map((book) => ({ params: { book: book.slug } }))
+}
+
+const slug = Astro.params.book!
+const book = bookBySlug(slug)
+if (!book) throw new Error(`no book path declares the slug \`${slug}\``)
+
+const path = `${book.path}annotations/`
+const first = book.nodes[0]
+// The book's shape: its front page, and its nodes in reading order. Anything
+// else under the prefix (the map, a page since removed) is "Other pages".
+const nodes: OverviewPage[] = book.nodes.map((node) => ({
+  id: node.id,
+  title: node.title,
+  path: node.path,
+}))
+// `<` is escaped so no title can end this script early.
+const data = JSON.stringify({
+  site: new URL(SITE.SITEURL).origin,
+  prefix: book.path,
+  path,
+  frontPage: book.path,
+  nodes,
+  first: first ? { title: first.title, path: first.path } : null,
+}).replace(/</g, '\\u003c')
+---
+
+<ReadingLayout
+  title={`Your annotations — ${book.title}`}
+  description={`Every highlight, note, sketch and edit proposal you have made in ${book.title}.`}
+  documentUri={documentUri(path)}
+  canonicalPath={path}
+  marginDefault="none"
+  noindex
+>
+  <BookBar slot="before" book={book} />
+
+  <Fragment slot="navigation">
+    <BookContents book={book} />
+  </Fragment>
+
+  <section class="annotations-overview" data-annotations-overview>
+    <header class="annotations-head">
+      <h1>Your annotations</h1>
+      <p>
+        Everything you have highlighted, noted, sketched or proposed in
+        <a href={book.path}>{book.title}</a>, chapter by chapter. Only you see
+        this list.
+      </p>
+    </header>
+
+    <div class="annotations-filters" data-annotations-filters hidden>
+      <label>
+        <span>Kind</span>
+        <select name="kind" data-filter-kind>
+          <option value="all">Everything</option>
+          <option value="highlight">Highlights</option>
+          <option value="note">Notes</option>
+          <option value="sketch">Sketches</option>
+          <option value="proposal">Proposals</option>
+        </select>
+      </label>
+      <label>
+        <span>Chapter</span>
+        <select name="chapter" data-filter-chapter>
+          <option value="all">All chapters</option>
+        </select>
+      </label>
+    </div>
+
+    <p class="annotations-status" data-annotations-status role="status">
+      Loading your annotations…
+    </p>
+    <p class="annotations-status" data-annotations-filter-empty hidden>
+      Nothing here matches those filters.
+    </p>
+    <div data-annotations-list></div>
+  </section>
+  <script type="application/json" data-annotations-data set:html={data} />
+</ReadingLayout>
+
+<script>
+  import {
+    buildOverview,
+    fetchMine,
+    HIDDEN_PARENT_TEXT,
+    KIND_LABELS,
+    matchesFilter,
+    OTHER_PAGES_ID,
+    parentRequestUrl,
+    PROPOSAL_STATE_LABELS,
+    resolveForeignParent,
+    type OverviewEntry,
+    type OverviewFilter,
+    type OverviewGroup,
+    type OverviewPage,
+  } from '@/lib/annotations-overview'
+  import { placeAnnotations } from '../../../../packages/margin/src/document'
+  import { readAnchorableBlocks } from '../../../../packages/margin/src/dom/blocks'
+  import { ROLE_PALETTE } from '../../../../packages/margin/src/palette'
+  import { recordFromWebAnnotation } from '../../../../packages/margin/src/records'
+  import { createSketchSvg, previewAspectRatio } from '../../../../packages/margin/src/sketch'
+
+  type PageData = {
+    site: string
+    prefix: string
+    path: string
+    frontPage: string
+    nodes: OverviewPage[]
+    first: { title: string; path: string } | null
+  }
+
+  function el<K extends keyof HTMLElementTagNameMap>(
+    tag: K,
+    attributes: Record<string, string> = {},
+    text?: string,
+  ): HTMLElementTagNameMap[K] {
+    const node = document.createElement(tag)
+    for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, value)
+    if (text !== undefined) node.textContent = text
+    return node
+  }
+
+  const DATE = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' })
+
+  function when(iso: string): HTMLTimeElement {
+    const time = el('time', { datetime: iso })
+    const date = new Date(iso)
+    time.textContent = Number.isNaN(date.getTime()) ? iso : DATE.format(date)
+    return time
+  }
+
+  /**
+   * Somebody else's note with the reader's replies under it. Drawn once the
+   * page has asked the service for the note: as that note, marked as someone
+   * else's, when it can be read, and otherwise as a reply to a note the reader
+   * can no longer see. Either way the reader's own replies are listed, and the
+   * link goes to the first of them.
+   */
+  function renderForeign(entry: OverviewEntry): HTMLLIElement {
+    const parent = entry.foreign!
+    const item = el('li', {
+      class: 'annotations-entry',
+      'data-annotation-entry': entry.id,
+      'data-kind': entry.kind,
+      'data-foreign-parent': parent.state,
+    })
+    const meta = el('p', { class: 'annotations-meta' })
+    meta.append(el('span', { class: 'annotations-kind', 'data-entry-kind': '' }, KIND_LABELS[entry.kind]))
+    if (parent.state === 'visible') {
+      meta.append(
+        el('span', { class: 'annotations-someone', 'data-someone-elses': '' }, `${parent.creatorName}'s, not yours`),
+      )
+    }
+    item.append(meta)
+    if (parent.state === 'visible') {
+      if (parent.quote) item.append(el('blockquote', {}, parent.quote))
+      item.append(
+        el(
+          'p',
+          { class: parent.deleted ? 'annotations-body annotations-deleted' : 'annotations-body', 'data-entry-body': '' },
+          parent.body,
+        ),
+      )
+    } else {
+      item.append(
+        el(
+          'p',
+          { class: 'annotations-body annotations-hidden-parent', 'data-hidden-parent': '' },
+          parent.state === 'unavailable'
+            ? 'Reply to another reader’s note, which could not be loaded just now'
+            : HIDDEN_PARENT_TEXT,
+        ),
+      )
+      if (entry.quote) item.append(el('blockquote', {}, entry.quote))
+    }
+    const replies = el('ol', {
+      class: 'annotations-replies',
+      'data-entry-replies': '',
+      'aria-label': 'Your replies',
+    })
+    for (const reply of entry.replies) {
+      replies.append(el('li', { 'data-reply': reply.id, title: reply.created }, reply.body))
+    }
+    item.append(replies)
+    item.append(el('a', { href: entry.href, 'data-annotation-link': '' }, 'Go to your reply →'))
+    return item
+  }
+
+  function renderEntry(entry: OverviewEntry, showPage: boolean): HTMLLIElement {
+    const item = entry.foreign ? renderForeign(entry) : renderOwn(entry)
+    // In "Other pages" the group does not say which page; the entry does.
+    if (showPage) {
+      item
+        .querySelector('.annotations-meta')
+        ?.append(el('a', { href: entry.path, 'data-entry-page': '' }, entry.path))
+    }
+    return item
+  }
+
+  function renderOwn(entry: OverviewEntry): HTMLLIElement {
+    const item = el('li', {
+      class: 'annotations-entry',
+      'data-annotation-entry': entry.id,
+      'data-kind': entry.kind,
+    })
+    if (entry.color) item.style.setProperty('--swatch', ROLE_PALETTE[entry.color.role])
+
+    const meta = el('p', { class: 'annotations-meta' })
+    meta.append(el('span', { class: 'annotations-kind', 'data-entry-kind': '' }, KIND_LABELS[entry.kind]))
+    if (entry.color) {
+      meta.append(el('span', { class: 'annotations-swatch', 'data-entry-color': '' }, entry.color.label))
+    }
+    if (entry.proposalState) {
+      meta.append(
+        el(
+          'span',
+          { class: 'annotations-state', 'data-proposal-state': entry.proposalState },
+          PROPOSAL_STATE_LABELS[entry.proposalState],
+        ),
+      )
+    }
+    meta.append(el('span', {}, entry.visibility === 'public' ? 'Public' : 'Private'))
+    meta.append(when(entry.created))
+    item.append(meta)
+
+    if (entry.quote) item.append(el('blockquote', {}, entry.quote))
+    if (entry.sketch) {
+      const svg = createSketchSvg(entry.sketch, document)
+      svg.setAttribute('class', 'annotations-sketch')
+      // The rail's own rule, so a stored region cannot stretch this page either.
+      svg.style.aspectRatio = previewAspectRatio(entry.sketch.region)
+      item.append(svg)
+    }
+    if (entry.body) {
+      item.append(
+        el(
+          entry.kind === 'proposal' ? 'pre' : 'p',
+          { class: entry.deleted ? 'annotations-body annotations-deleted' : 'annotations-body', 'data-entry-body': '' },
+          entry.body,
+        ),
+      )
+    }
+    if (entry.replies.length > 0) {
+      const replies = el('ol', { class: 'annotations-replies', 'data-entry-replies': '', 'aria-label': 'Replies' })
+      for (const reply of entry.replies) {
+        replies.append(el('li', { 'data-reply': reply.id, title: reply.created }, reply.body))
+      }
+      item.append(replies)
+    }
+    item.append(el('a', { href: entry.href, 'data-annotation-link': '' }, 'Go to it →'))
+    return item
+  }
+
+  function renderGroups(list: HTMLElement, groups: OverviewGroup[]) {
+    list.replaceChildren(
+      ...groups.map((group) => {
+        const section = el('section', {
+          class: 'annotations-chapter',
+          'data-annotations-chapter': group.page.id,
+        })
+        const heading = el('h2')
+        if (group.page.path) heading.append(el('a', { href: group.page.path }, group.page.title))
+        else heading.textContent = group.page.title
+        const other = group.page.id === OTHER_PAGES_ID
+        const entries = el('ol', { class: 'annotations-entries' })
+        entries.append(...group.entries.map((entry) => renderEntry(entry, other)))
+        section.append(heading, entries)
+        return section
+      }),
+    )
+  }
+
+  /**
+   * Whether each entry still finds its text, by the same resolver the rail
+   * runs, over the chapter as published. One fetch per chapter with entries.
+   * A chapter that cannot be fetched says nothing rather than guess.
+   */
+  async function markChangedText(groups: OverviewGroup[], isCurrent: () => boolean) {
+    await Promise.all(
+      groups.map(async (group) => {
+        let html: string
+        try {
+          const response = await fetch(group.page.path, { headers: { accept: 'text/html' } })
+          if (!response.ok) return
+          html = await response.text()
+        } catch {
+          return
+        }
+        if (!isCurrent()) return
+        const doc = new DOMParser().parseFromString(html, 'text/html')
+        const root = doc.querySelector('[data-reading-column="text"]')
+        if (!root) return
+        const blocks = readAnchorableBlocks(root)
+        for (const entry of group.entries) {
+          const record = recordFromWebAnnotation(entry.wire, null)
+          if (!record) continue
+          const [placed] = placeAnnotations([record.annotation], blocks)
+          if (placed?.placement.status !== 'orphaned') continue
+          const item = document.querySelector(`[data-annotation-entry="${CSS.escape(entry.id)}"]`)
+          if (!item || item.querySelector('[data-text-changed]')) continue
+          item.setAttribute('data-orphaned', '')
+          item
+            .querySelector('.annotations-meta')
+            ?.append(
+              el(
+                'span',
+                {
+                  class: 'annotations-changed',
+                  'data-text-changed': '',
+                  title: 'The passage it was on is no longer in the chapter as it was.',
+                },
+                'Text changed',
+              ),
+            )
+        }
+      }),
+    )
+  }
+
+  /**
+   * Ask for each foreign parent through the visibility-scoped read, once per
+   * note, and redraw its entry with the answer. `/mine` itself stays the
+   * reader's own rows only.
+   */
+  async function resolveForeign(groups: OverviewGroup[], isCurrent: () => boolean) {
+    const entries = groups.flatMap((group) =>
+      group.entries
+        .filter((entry) => entry.foreign)
+        .map((entry) => ({ entry, other: group.page.id === OTHER_PAGES_ID })),
+    )
+    await Promise.all(
+      entries.map(async ({ entry, other }) => {
+        let answer: { status: number; body: unknown } | null = null
+        try {
+          const response = await fetch(parentRequestUrl(entry), {
+            credentials: 'include',
+            headers: { accept: 'application/json' },
+          })
+          answer = { status: response.status, body: await response.json().catch(() => null) }
+        } catch {
+          answer = null
+        }
+        if (!isCurrent()) return
+        resolveForeignParent(entry, answer)
+        const current = document.querySelector(
+          `[data-annotation-entry="${CSS.escape(entry.id)}"]`,
+        )
+        if (!current) return
+        const next = renderEntry(entry, other)
+        next.hidden = (current as HTMLElement).hidden
+        current.replaceWith(next)
+      }),
+    )
+  }
+
+  function applyFilter(root: HTMLElement, groups: OverviewGroup[], filter: OverviewFilter) {
+    let shown = 0
+    for (const group of groups) {
+      const section = root.querySelector<HTMLElement>(
+        `[data-annotations-chapter="${CSS.escape(group.page.id)}"]`,
+      )
+      let inSection = 0
+      for (const entry of group.entries) {
+        const item = section?.querySelector<HTMLElement>(
+          `[data-annotation-entry="${CSS.escape(entry.id)}"]`,
+        )
+        const visible = matchesFilter(entry, group.page, filter)
+        if (item) item.hidden = !visible
+        if (visible) inSection += 1
+      }
+      if (section) section.hidden = inSection === 0
+      shown += inSection
+    }
+    const empty = root.querySelector<HTMLElement>('[data-annotations-filter-empty]')
+    if (empty) empty.hidden = shown > 0
+  }
+
+  // Each page view renders at most once, onto its own page.
+  let visit = 0
+  document.addEventListener('astro:before-preparation', () => {
+    visit += 1
+  })
+  document.addEventListener('astro:page-load', async () => {
+    const root = document.querySelector<HTMLElement>('[data-annotations-overview]')
+    const holder = document.querySelector<HTMLScriptElement>('[data-annotations-data]')
+    if (!root || !holder?.textContent) return
+    const mine = ++visit
+    const isCurrent = () => mine === visit
+    const data = JSON.parse(holder.textContent) as PageData
+    const status = root.querySelector<HTMLElement>('[data-annotations-status]')!
+    const list = root.querySelector<HTMLElement>('[data-annotations-list]')!
+    const filters = root.querySelector<HTMLElement>('[data-annotations-filters]')!
+
+    const result = await fetchMine(data.site, data.prefix)
+    if (!isCurrent()) return
+
+    if (result.status === 'signed-out') {
+      status.replaceChildren(
+        el('a', { href: `/auth/login?return_to=${encodeURIComponent(data.path)}` }, 'Sign in'),
+        ' to see the highlights, notes, sketches and proposals you have made in this book.',
+      )
+      return
+    }
+    if (result.status === 'failed') {
+      status.textContent = 'Could not load your annotations. Reload to try again.'
+      return
+    }
+
+    const groups = buildOverview(result.annotations, {
+      frontPage: data.frontPage,
+      nodes: data.nodes,
+    })
+    if (groups.length === 0) {
+      status.replaceChildren('You have no annotations in this book yet.')
+      if (data.first) {
+        status.append(
+          ' Start with ',
+          el('a', { href: data.first.path }, data.first.title),
+          ': select any passage to highlight it or add a note.',
+        )
+      }
+      return
+    }
+
+    const count = groups.reduce((total, group) => total + group.entries.length, 0)
+    status.textContent = `${count} ${count === 1 ? 'annotation' : 'annotations'} in ${groups.length} ${groups.length === 1 ? 'place' : 'places'}.`
+    renderGroups(list, groups)
+
+    const kind = filters.querySelector<HTMLSelectElement>('[data-filter-kind]')!
+    const chapter = filters.querySelector<HTMLSelectElement>('[data-filter-chapter]')!
+    chapter.append(
+      ...groups.map((group) => el('option', { value: group.page.id }, group.page.title)),
+    )
+    const update = () =>
+      applyFilter(root, groups, {
+        kind: kind.value as OverviewFilter['kind'],
+        page: chapter.value,
+      })
+    kind.addEventListener('change', update)
+    chapter.addEventListener('change', update)
+    filters.hidden = false
+    update()
+
+    // The parents first: a redrawn entry would otherwise lose its marker.
+    await resolveForeign(groups, isCurrent)
+    if (!isCurrent()) return
+    await markChangedText(groups, isCurrent)
+  })
+</script>
+
+<style is:global>
+  .annotations-overview {
+    display: grid;
+    gap: 1.25rem;
+    overflow-wrap: anywhere;
+  }
+
+  .annotations-head h1 {
+    font-size: 1.875rem;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+
+  .annotations-head p {
+    margin-top: 0.5rem;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .annotations-overview a {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .annotations-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 1.25rem;
+  }
+
+  .annotations-filters[hidden] {
+    display: none;
+  }
+
+  .annotations-filters label {
+    display: grid;
+    gap: 0.25rem;
+    min-width: 0;
+    font-size: 0.8125rem;
+  }
+
+  .annotations-filters select {
+    max-width: 100%;
+    padding: 0.3rem 0.5rem;
+    border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+  }
+
+  .annotations-filters option {
+    color: initial;
+  }
+
+  .annotations-status {
+    font-size: 0.9375rem;
+  }
+
+  .annotations-status[hidden],
+  .annotations-chapter[hidden],
+  .annotations-entry[hidden] {
+    display: none;
+  }
+
+  [data-annotations-list] {
+    display: grid;
+    gap: 2rem;
+  }
+
+  .annotations-chapter h2 {
+    margin-bottom: 0.75rem;
+    font-size: 1.25rem;
+    font-weight: 600;
+  }
+
+  .annotations-chapter h2 a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .annotations-chapter h2 a:hover {
+    text-decoration: underline;
+  }
+
+  .annotations-entries {
+    display: grid;
+    gap: 1rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .annotations-entry {
+    display: grid;
+    gap: 0.5rem;
+    min-width: 0;
+    padding: 0.75rem 0.9rem;
+    border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+    border-left: 4px solid var(--swatch, color-mix(in srgb, currentColor 35%, transparent));
+    border-radius: 6px;
+    font-size: 0.9375rem;
+    line-height: 1.5;
+  }
+
+  .annotations-entry[data-orphaned] {
+    border-left-style: dashed;
+  }
+
+  .annotations-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem 0.75rem;
+    font-size: 0.75rem;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .annotations-kind {
+    color: hsl(var(--foreground));
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .annotations-swatch {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+
+  .annotations-swatch::before {
+    content: '';
+    width: 0.75rem;
+    height: 0.75rem;
+    border: 1px solid currentColor;
+    border-radius: 999px;
+    background: var(--swatch);
+  }
+
+  .annotations-state,
+  .annotations-changed {
+    padding: 0.05rem 0.4rem;
+    border: 1px solid currentColor;
+    border-radius: 999px;
+  }
+
+  .annotations-someone {
+    font-style: italic;
+  }
+
+  .annotations-hidden-parent {
+    font-style: italic;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .annotations-changed {
+    color: #b45309;
+    font-weight: 600;
+  }
+
+  html.dark .annotations-changed {
+    color: #fbbf24;
+  }
+
+  .annotations-entry blockquote {
+    margin: 0;
+    padding-left: 0.75rem;
+    border-left: 2px solid color-mix(in srgb, currentColor 25%, transparent);
+    font-style: italic;
+  }
+
+  .annotations-body {
+    margin: 0;
+    white-space: pre-wrap;
+  }
+
+  pre.annotations-body {
+    overflow-x: auto;
+    max-width: 100%;
+    padding: 0.5rem 0.6rem;
+    border-radius: 4px;
+    background: color-mix(in srgb, currentColor 6%, transparent);
+    font-size: 0.8125rem;
+  }
+
+  .annotations-deleted {
+    font-style: italic;
+    opacity: 0.75;
+  }
+
+  .annotations-sketch {
+    display: block;
+    width: min(100%, 14rem);
+    border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+    border-radius: 4px;
+  }
+
+  .annotations-replies {
+    display: grid;
+    gap: 0.35rem;
+    margin: 0;
+    padding: 0 0 0 0.75rem;
+    border-left: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+    list-style: none;
+    font-size: 0.875rem;
+    white-space: pre-wrap;
+  }
+
+  [data-annotation-link] {
+    justify-self: start;
+    font-size: 0.8125rem;
+  }
+</style>

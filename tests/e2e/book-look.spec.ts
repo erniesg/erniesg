@@ -17,6 +17,8 @@ const CHAPTER = '/books/build-a-coding-agent/ch07-strings/'
 const FIGURE_CHAPTER = '/books/build-a-coding-agent/ch05-functions/'
 // Has a cost chart: an SVG drawn with fixed colours.
 const CHART_CHAPTER = '/books/build-a-coding-agent/ch06-dicts-sets/'
+// Has a walk figure: step boxes and back/next buttons.
+const WALK_CHAPTER = '/books/build-a-coding-agent/ch04-loops/'
 const SITE_HEADER = 'body > div > header'
 const PLAIN_BAR = '[data-book-bar]'
 
@@ -353,6 +355,56 @@ test.describe('the book look switch', () => {
       for (const value of result!.labels) expect(value, 'tick label contrast').toBeGreaterThanOrEqual(4.5)
       // Lines are graphics, not text: 3:1 is the bar for those.
       for (const value of result!.lines) expect(value, 'series and axis contrast').toBeGreaterThanOrEqual(3)
+    })
+  }
+
+  for (const choice of ['site', 'plain'] as const) {
+    test(`in the dark theme, ${choice} keeps every outline inside a figure at 3:1`, async ({
+      page,
+    }) => {
+      await page.addInitScript((value) => {
+        localStorage.setItem('theme', 'dark')
+        localStorage.setItem('book-look', value)
+      }, choice)
+      // Table borders, walk-step boxes and the step buttons: graphics, so 3:1.
+      for (const chapter of [FIGURE_CHAPTER, WALK_CHAPTER]) {
+        await page.goto(chapter)
+        const weak = await page.evaluate(() => {
+          const parse = (value: string) => {
+            const match = value.match(/rgba?\(([^)]+)\)/)
+            if (!match) return null
+            const [r, g, b, a = 1] = match[1].split(/[ ,/]+/).filter(Boolean).map(Number)
+            return a === 0 ? null : { r, g, b }
+          }
+          const luminance = ({ r, g, b }: { r: number; g: number; b: number }) => {
+            const channel = (value: number) => {
+              const v = value / 255
+              return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
+            }
+            return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+          }
+          const contrast = (a: number, b: number) =>
+            (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+          const found: string[] = []
+          for (const figure of document.querySelectorAll('.book-content .figure')) {
+            const card = luminance(parse(getComputedStyle(figure).backgroundColor)!)
+            for (const element of figure.querySelectorAll('*')) {
+              const style = getComputedStyle(element)
+              if (style.display === 'none' || style.visibility === 'hidden') continue
+              for (const side of ['Top', 'Right', 'Bottom', 'Left']) {
+                if (style[`border${side}Style` as 'borderTopStyle'] === 'none') continue
+                if (parseFloat(style[`border${side}Width` as 'borderTopWidth']) === 0) continue
+                const colour = parse(style[`border${side}Color` as 'borderTopColor'])
+                if (!colour) continue
+                const ratio = contrast(card, luminance(colour))
+                if (ratio < 3) found.push(`${element.tagName.toLowerCase()}.${element.className} ${side} ${ratio.toFixed(2)}`)
+              }
+            }
+          }
+          return found
+        })
+        expect(weak, chapter).toEqual([])
+      }
     })
   }
 })

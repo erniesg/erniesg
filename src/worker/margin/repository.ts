@@ -13,6 +13,8 @@ import type { ProgressItem, ProgressRow, ProgressScope } from './progress'
  * Two rules are the interface's job, not the caller's:
  *
  * 1. Every read takes a `TenantScope`. There is no "all annotations" method.
+ *    The one cross-document read, `listOwnAnnotations`, is bounded by a site
+ *    and a path prefix and returns only the caller's own rows.
  * 2. Every read takes a `viewer` and filters on it. A method cannot return a
  *    row the viewer may not see, so a handler cannot forget to filter.
  */
@@ -67,6 +69,16 @@ export type ListOptions = {
   pendingOnly?: boolean
 }
 
+/** A page boundary in `(document, created, id)` order, for `GET /mine`. */
+export type OwnListCursor = ListCursor & { document: string }
+
+export type OwnListOptions = {
+  /** At most this many rows. */
+  limit: number
+  /** Resume strictly after this row. */
+  after?: OwnListCursor
+}
+
 /** The most rows one collection response may carry. */
 export const MAX_PAGE_SIZE = 200
 
@@ -79,6 +91,18 @@ export interface MarginRepository {
     scope: TenantScope,
     viewer: ViewerKey,
     options?: ListOptions,
+  ): Promise<MarginAnnotationRecord[]>
+
+  /**
+   * The owner's own rows on `site` under the path `prefix`, across documents,
+   * in `(document, created, id)` order (issue 073). Owner-scoped in SQL: there
+   * is no viewer parameter, because nobody else's row is ever a candidate.
+   */
+  listOwnAnnotations(
+    site: string,
+    prefix: string,
+    owner: string,
+    options: OwnListOptions,
   ): Promise<MarginAnnotationRecord[]>
 
   /** One row in `scope`, or `null` when it is absent or not readable. */

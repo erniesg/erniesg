@@ -33,8 +33,10 @@ type Props = {
   /**
    * `column` reserves the margin beside the text on wide screens. `collapsed`
    * keeps it a floating toggle at every width and gives the text the room.
+   * `none` mounts no margin: a page about annotations (issue 073) is not
+   * itself something to annotate.
    */
-  marginDefault?: 'column' | 'collapsed'
+  marginDefault?: 'column' | 'collapsed' | 'none'
   /** What the text was built from; passed through to the margin. */
   source?: { path: string; commit: string; editDisabledReason?: string | null }
 }
@@ -121,23 +123,27 @@ const {
       <slot />
     </article>
 
-    <aside
-      id="margin-root"
-      class="reading-column reading-margin"
-      data-reading-column="margin"
-      data-margin-mount
-      data-document-uri={documentUri}
-      aria-label="Margin"
-    >
-      <MarginMount
-        documentUri={documentUri}
-        collapseBelow={1280}
-        sourcePath={source?.path}
-        sourceCommit={source?.commit}
-        editDisabledReason={source?.editDisabledReason ?? undefined}
-        collapsed={marginDefault === 'collapsed'}
-      />
-    </aside>
+    {
+      marginDefault !== 'none' && (
+        <aside
+          id="margin-root"
+          class="reading-column reading-margin"
+          data-reading-column="margin"
+          data-margin-mount
+          data-document-uri={documentUri}
+          aria-label="Margin"
+        >
+          <MarginMount
+            documentUri={documentUri}
+            collapseBelow={1280}
+            sourcePath={source?.path}
+            sourceCommit={source?.commit}
+            editDisabledReason={source?.editDisabledReason ?? undefined}
+            collapsed={marginDefault === 'collapsed'}
+          />
+        </aside>
+      )
+    }
   </div>
 </Layout>
 
@@ -257,7 +263,7 @@ const {
 
     /* A collapsed margin reserves nothing: it stays the zero-sized floating
        toggle of narrow screens, and the text takes a 48rem measure. */
-    .reading-shell[data-margin-default='collapsed'] {
+    .reading-shell:is([data-margin-default='collapsed'], [data-margin-default='none']) {
       grid-template-columns: 15rem minmax(0, 48rem);
     }
 

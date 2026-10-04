@@ -128,8 +128,10 @@ chapter in book order, and each entry links back to its exact spot.
    scrolls to that annotation, focuses it in the rail and highlights its
    anchor. Notes and highlights paint their anchor. A sketch shows its
    overlay instead (its quote only locates the block and is not painted),
-   and a proposal opens its diff in edit mode for its author, as the rail
-   does; neither is text-highlighted. A reply's link focuses that reply in
+   and a pending proposal opens its diff in edit mode for its author, as
+   the rail does (059 lets only pending proposals reopen). A withdrawn or
+   later-state proposal lands read-only, its rail entry focused with its
+   state shown, and is never reopened for editing; neither is text-highlighted. A reply's link focuses that reply in
    its thread. When the anchor no longer resolves because the text changed,
    the rail says so and still shows the annotation. The overview does not
    try to tell: `/mine` carries stored selectors, not placements, and
@@ -200,6 +202,9 @@ chapter in book order, and each entry links back to its exact spot.
   - proposals show "Pending" and, once withdrawn, "Withdrawn"; a stubbed
     `/mine` response with `margin:proposalState` set to each 060 state shows
     each mapped label (criterion 2);
+  - if issue 060 has already landed when this is built, a worker route test
+    also reads real `approved`, `pr_open` and `merged` proposals through
+    `/mine` with their `margin:proposalState` (otherwise 060 adds it);
   - a deleted note with a reply shows as "Deleted note" with the reply
     nested under it;
   - a note made on `/books/<slug>/map/` links back to
@@ -219,7 +224,9 @@ chapter in book order, and each entry links back to its exact spot.
   - an annotation whose quote no longer matches still lands on its chapter,
     where the rail says the text changed;
   - clicking the reader's own reply lands with that reply focused in its
-    thread; clicking a proposal lands with its diff open in edit mode;
+    thread; clicking a pending proposal lands with its diff open in edit
+    mode, and clicking a withdrawn one lands read-only with its entry
+    focused and no editor open;
   - the clicked annotation sits past the destination rail's first page of
     `/annotations`, and still ends up focused once the rail has paged to it;
   - an owned thread three replies deep shows every level, in the rail's

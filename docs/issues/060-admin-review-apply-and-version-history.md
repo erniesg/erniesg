@@ -177,8 +177,10 @@ stay at each owning adapter boundary.
   unrelated signed-in reader, an anonymous reader and an admin of a
   different site, who all get the proposal without it.
 - The same field comes through 073's `GET /mine` for a creator's own
-  proposal in each state, so the overview shows real states through its
-  own endpoint (a route test seeds `approved`, `pr_open` and `merged`).
+  proposal in each state (a route test seeds `approved`, `pr_open` and
+  `merged`). This test belongs to whichever of 060 and 073 lands second:
+  if 073's `/mine` already exists when 060 is built, 060 adds it;
+  otherwise 073 adds it when it lands.
 
 - A pending proposal renders a diff whose additions and deletions match the
   CriticMarkup exactly.

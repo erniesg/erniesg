@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { highlightRole } from './palette.js'
-import { recordFromWebAnnotation } from './records.js'
+import {
+  PROPOSAL_STATE_LABELS,
+  PROPOSAL_STATES,
+  proposalStateOf,
+  recordFromWebAnnotation,
+} from './records.js'
 import {
   createMarginClient,
   MARGIN_API_PREFIX,
@@ -226,5 +231,50 @@ describe('the client’s owner-scoped calls', () => {
     expect(() => client.updateAnnotation('a', SOURCE, {})).toThrow(
       /must change something/,
     )
+  })
+})
+
+describe('proposal states', () => {
+  it('read margin:proposalState, falling back to margin:withdrawnAt', () => {
+    for (const state of PROPOSAL_STATES) {
+      expect(proposalStateOf({ 'margin:proposalState': state })).toBe(state)
+    }
+    expect(proposalStateOf({})).toBe('pending')
+    expect(proposalStateOf({ 'margin:withdrawnAt': '2026-10-03T00:00:00.000Z' })).toBe('withdrawn')
+    // A state 060 does not define says nothing; nor does an inherited key.
+    expect(proposalStateOf({ 'margin:proposalState': 'toString' })).toBe('pending')
+    expect(proposalStateOf(null)).toBe('pending')
+  })
+
+  it('label every state 060 defines', () => {
+    expect(PROPOSAL_STATE_LABELS).toEqual({
+      pending: 'Pending',
+      withdrawn: 'Withdrawn',
+      approved: 'Being applied',
+      pr_open: 'Being applied',
+      merged: 'Applied',
+      conflict: 'Needs attention',
+      apply_failed: 'Needs attention',
+      closed: 'Closed',
+    })
+  })
+
+  it('are carried on a proposal record, and on nothing else', () => {
+    const wire = (motivation: string, extra: Record<string, unknown> = {}) => ({
+      id: 'urn:margin:annotation:p',
+      motivation,
+      ...(motivation === 'highlighting' ? {} : { body: { value: 'x' } }),
+      target: {
+        source: 'https://example.test/doc',
+        selector: [
+          { type: 'TextQuoteSelector', exact: 'quote' },
+          { type: 'TextPositionSelector', start: 0, end: 5 },
+        ],
+      },
+      ...extra,
+    })
+    expect(recordFromWebAnnotation(wire('editing', { 'margin:withdrawnAt': 't' }), null)?.proposalState).toBe('withdrawn')
+    expect(recordFromWebAnnotation(wire('editing'), null)?.proposalState).toBe('pending')
+    expect(recordFromWebAnnotation(wire('commenting'), null)).not.toHaveProperty('proposalState')
   })
 })

@@ -42,6 +42,7 @@ import {
   MARGIN_TARGET_EVENT,
   type MarginTarget,
 } from '../../../packages/margin/src/element'
+import { proposalStateOf } from '../../../packages/margin/src/records'
 
 const API = '/api/margin/v1'
 const AUTH_ME = '/auth/me'
@@ -428,16 +429,18 @@ export class EditMode {
       this.#surface.addEventListener(type, (event) => event.preventDefault())
     }
     await this.refreshProposals()
-    // A link to one of the reader's own proposals (issue 073) opens it as the
-    // Reopen button does: its diff, in edit mode. The rail scrolled to it and
-    // painted nothing; this is the rest of landing on a proposal.
+    // A link to one of the reader's own *pending* proposals (issue 073) opens
+    // it as the Reopen button does: its diff, in edit mode. The rail scrolled
+    // to it and painted nothing; this is the rest of landing on a proposal.
+    // A withdrawn or later-state one is never reopened: it lands read-only,
+    // its rail entry focused and saying where it stands.
     const rail = document.querySelector('margin-rail') as
       | (HTMLElement & { readonly target?: MarginTarget | null })
       | null
     const landed = (target: MarginTarget | null | undefined) => {
       if (target?.kind !== 'proposal') return
       const proposal = this.#proposals.find((entry) => bareId(entry.id) === target.id)
-      if (proposal) this.reopen(proposal)
+      if (proposal && proposalStateOf(proposal) === 'pending') this.reopen(proposal)
     }
     rail?.addEventListener(
       MARGIN_TARGET_EVENT,

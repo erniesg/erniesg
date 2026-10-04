@@ -272,6 +272,37 @@ async function flashedText(page: Page): Promise<string[]> {
   }, highlightRegistryName('flash'))
 }
 
+/**
+ * One of the reader's proposals against the page's real source and stamped
+ * commit, so the editor can reopen it: it needs a strict build's stamp.
+ */
+async function realProposal(page: Page, service: Service): Promise<Wire> {
+  await page.goto(BOOK)
+  const stamp = await page.evaluate(async (at) => {
+    const html = await (await fetch(at)).text()
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    return JSON.parse(doc.querySelector('script[data-book-source]')?.textContent ?? 'null') as {
+      path: string
+      commit: string
+      text: string
+    } | null
+  }, VALUES)
+  expect(stamp, 'the build stamps book pages with their source (a strict build)').not.toBeNull()
+  expect(stamp!.commit).toMatch(/^[0-9a-f]{40}$/)
+  expect(stamp!.text).toContain('coach')
+  return service.post(
+    annotation(
+      { path: VALUES, nodeId: 'block-ch01-values-prose-1', quote: 'coach', start: 0 },
+      {
+        motivation: 'editing',
+        body: formatHunks(proposeHunks(stamp!.text, stamp!.text.replace('coach', 'XYZZYQ'))),
+        baseCommit: stamp!.commit,
+        sourcePath: stamp!.path,
+      },
+    ),
+  )
+}
+
 async function openOverview(page: Page): Promise<void> {
   await page.goto(OVERVIEW)
   await expect(page.locator('[data-annotations-overview]')).toHaveAttribute('data-annotations-state', /complete|incomplete/)
@@ -307,6 +338,11 @@ test.describe('the Annotations page lists', () => {
     ] as const) {
       const item = page.locator(`[data-annotations-chapter="${group}"] [data-annotation-entry="${bare(wire)}"]`)
       await expect(item).toHaveAttribute('data-kind', kind)
+      // A kind label the reader can see, not only the attribute.
+      await expect(item.locator('[data-entry-kind]')).toBeVisible()
+      await expect(item.locator('[data-entry-kind]')).toHaveText(
+        { highlight: 'Highlight', note: 'Note', sketch: 'Sketch', proposal: 'Proposal' }[kind],
+      )
       // Its seeded quote and date, every kind.
       await expect(item.locator('[data-entry-quote]')).toHaveText(quote)
       await expect(item.locator('time')).toHaveAttribute('datetime', wire.created)
@@ -636,41 +672,41 @@ test.describe('an entry links back to its spot', () => {
     expect(await flashedText(page)).toEqual([])
   })
 
-  test('a proposal: its diff open in edit mode, for its author', async ({ page }) => {
+  test('a pending proposal: its diff open in edit mode, for its author', async ({ page }) => {
     const service = await mountService(page)
-    await anchors(page)
-    const stamp = await page.evaluate(async (at) => {
-      const html = await (await fetch(at)).text()
-      const doc = new DOMParser().parseFromString(html, 'text/html')
-      return JSON.parse(doc.querySelector('script[data-book-source]')?.textContent ?? 'null') as {
-        path: string
-        commit: string
-        text: string
-      } | null
-    }, VALUES)
-    expect(stamp, 'the build stamps book pages with their source (a strict build)').not.toBeNull()
-    expect(stamp!.commit).toMatch(/^[0-9a-f]{40}$/)
-    expect(stamp!.text).toContain('coach')
-    const edited = stamp!.text.replace('coach', 'XYZZYQ')
-    const proposal = await service.post(
-      annotation(
-        { path: VALUES, nodeId: 'block-ch01-values-prose-1', quote: 'coach', start: 0 },
-        {
-          motivation: 'editing',
-          body: formatHunks(proposeHunks(stamp!.text, edited)),
-          baseCommit: stamp!.commit,
-          sourcePath: stamp!.path,
-        },
-      ),
-    )
+    const proposal = await realProposal(page, service)
     await openOverview(page)
     await expect(entry(page, proposal).locator('[data-proposal-summary]')).toHaveText('XYZZYQ')
+    await expect(entry(page, proposal).locator('[data-proposal-state]')).toHaveText('Pending')
 
     await entry(page, proposal).locator('a[data-annotation-link]').click()
     await expect(page.locator('html')).toHaveAttribute('data-book-editing', '')
     await expect(page.locator('[data-edit-surface]')).toBeVisible()
     await expect(page.locator('[data-edit-surface]')).toContainText('XYZZYQ')
     await expect(railEntry(page, bare(proposal))).toHaveAttribute('data-margin-target', '')
+    expect(await flashedText(page)).toEqual([])
+  })
+
+  test('a withdrawn proposal: lands read-only, its entry focused and saying so, never reopened', async ({ page }) => {
+    const service = await mountService(page)
+    const proposal = await realProposal(page, service)
+    const withdrawn = await service.call(
+      'POST',
+      `/api/margin/v1/proposals/${bare(proposal)}/withdraw?source=${encodeURIComponent(`${SITE}${VALUES}`)}`,
+    )
+    expect(withdrawn.status).toBe(200)
+    await openOverview(page)
+    await expect(entry(page, proposal).locator('[data-proposal-state]')).toHaveText('Withdrawn')
+
+    await entry(page, proposal).locator('a[data-annotation-link]').click()
+    const target = railEntry(page, bare(proposal))
+    await expect(target).toHaveAttribute('data-margin-target', '')
+    await expect.poll(() => focusedInRail(target)).toBe(true)
+    await expect(target.locator('[data-proposal-state]')).toHaveText('Withdrawn')
+    // The edit controls have started (the reader may write), and stay shut.
+    await expect(page.locator('[data-edit-mode]')).toBeVisible()
+    await expect(page.locator('html')).not.toHaveAttribute('data-book-editing', '')
+    await expect(page.locator('[data-edit-surface]')).toBeHidden()
     expect(await flashedText(page)).toEqual([])
   })
 

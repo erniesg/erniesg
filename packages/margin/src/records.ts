@@ -34,6 +34,45 @@ export type RailRecord = {
   deleted?: boolean
   /** How the service names its author: a display name, never an address. */
   creatorName?: string
+  /** A proposal's state, from `proposalStateOf`; absent on anything else. */
+  proposalState?: ProposalState
+}
+
+/**
+ * A proposal's states, as issue 060's state machine names them (its item
+ * 10), and how a reader is told. Until 060 lands only `pending` and
+ * `withdrawn` occur; the rest are read from `margin:proposalState` the day
+ * 060 sends it.
+ */
+export const PROPOSAL_STATE_LABELS = {
+  pending: 'Pending',
+  withdrawn: 'Withdrawn',
+  approved: 'Being applied',
+  pr_open: 'Being applied',
+  merged: 'Applied',
+  conflict: 'Needs attention',
+  apply_failed: 'Needs attention',
+  closed: 'Closed',
+} as const
+
+export type ProposalState = keyof typeof PROPOSAL_STATE_LABELS
+
+export const PROPOSAL_STATES = Object.keys(PROPOSAL_STATE_LABELS) as ProposalState[]
+
+/**
+ * A proposal's state from the service's response: `margin:proposalState`
+ * when it carries one, otherwise withdrawn when `margin:withdrawnAt` is set
+ * and pending if not. Only a pending proposal may be reopened for editing.
+ */
+export function proposalStateOf(wire: unknown): ProposalState {
+  const annotation =
+    wire && typeof wire === 'object' ? (wire as Record<string, unknown>) : {}
+  const stated = annotation['margin:proposalState']
+  if (typeof stated === 'string' && Object.hasOwn(PROPOSAL_STATE_LABELS, stated)) {
+    return stated as ProposalState
+  }
+  const withdrawn = annotation['margin:withdrawnAt']
+  return typeof withdrawn === 'string' && withdrawn ? 'withdrawn' : 'pending'
 }
 
 /**
@@ -152,5 +191,6 @@ export function recordFromWebAnnotation(
     ...(typeof annotation['margin:creatorName'] === 'string'
       ? { creatorName: annotation['margin:creatorName'] }
       : {}),
+    ...(kind === 'proposal' ? { proposalState: proposalStateOf(annotation) } : {}),
   }
 }

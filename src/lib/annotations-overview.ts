@@ -26,7 +26,13 @@ import {
   highlightRole,
   type HighlightRole,
 } from '../../packages/margin/src/palette'
-import { serverIdFromIri } from '../../packages/margin/src/records'
+import {
+  PROPOSAL_STATE_LABELS,
+  PROPOSAL_STATES,
+  proposalStateOf,
+  serverIdFromIri,
+  type ProposalState,
+} from '../../packages/margin/src/records'
 import { decodeSketch, noteText, type Sketch } from '../../packages/margin/src/sketch'
 import { prefixByCodePoints } from '../../packages/margin/src/text'
 import {
@@ -68,34 +74,9 @@ export const DELETED_NOTE_LABEL = 'Deleted note'
 export const UNPARSED_PROPOSAL = 'Proposed change'
 export const SUMMARY_LENGTH = 120
 
-/**
- * Issue 060's proposal states (its item 10) and how this page names them.
- * Until 060 lands only `pending` and `withdrawn` occur; the rest are read
- * from `margin:proposalState` the day 060 sends it.
- */
-export const PROPOSAL_STATE_LABELS = {
-  pending: 'Pending',
-  withdrawn: 'Withdrawn',
-  approved: 'Being applied',
-  pr_open: 'Being applied',
-  merged: 'Applied',
-  conflict: 'Needs attention',
-  apply_failed: 'Needs attention',
-  closed: 'Closed',
-} as const
-
-export type ProposalState = keyof typeof PROPOSAL_STATE_LABELS
-
-export const PROPOSAL_STATES = Object.keys(PROPOSAL_STATE_LABELS) as ProposalState[]
-
-/** The wire's state, or, before 060, the withdrawal timestamp's. */
-export function proposalStateOf(wire: WireAnnotation): ProposalState {
-  const stated = wire['margin:proposalState']
-  if (typeof stated === 'string' && stated in PROPOSAL_STATE_LABELS) {
-    return stated as ProposalState
-  }
-  return text(wire['margin:withdrawnAt']) ? 'withdrawn' : 'pending'
-}
+// Proposal states and their labels are the rail's (`records.ts`), so the
+// two never disagree about where a proposal stands.
+export { PROPOSAL_STATE_LABELS, PROPOSAL_STATES, proposalStateOf, type ProposalState }
 
 /**
  * What a proposal changes, in a line: the text it inserts (`{++…++}` and the

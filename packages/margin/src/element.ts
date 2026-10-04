@@ -60,6 +60,7 @@ import {
 import {
   DEFAULT_VISIBILITY,
   DELETED_NOTE_TEXT,
+  PROPOSAL_STATE_LABELS,
   recordFromWebAnnotation,
   serverIdFromIri,
   type MarginVisibility,
@@ -2242,6 +2243,17 @@ export class MarginRailElement extends ElementBase {
             : annotation.kind === 'note'
               ? 'Note'
               : 'Proposal',
+        ),
+      )
+    }
+    // A proposal says where it stands: a withdrawn one is read-only.
+    if (annotation.kind === 'proposal' && record.proposalState) {
+      item.append(
+        el(
+          doc,
+          'span',
+          { class: 'meta', 'data-proposal-state': record.proposalState },
+          PROPOSAL_STATE_LABELS[record.proposalState],
         ),
       )
     }

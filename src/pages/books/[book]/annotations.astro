@@ -423,10 +423,11 @@ const data = JSON.stringify({
   }
 
   /**
-   * Who is reading. Only a successful `/auth/me` that names nobody is signed
-   * out; an error status, a timeout or a body that is not the expected JSON
-   * is a failure to find out, which the page says, with Retry, rather than
-   * asking someone who may well be signed in to sign in.
+   * Who is reading. Only a successful `/auth/me` that says, in the Worker's
+   * own shape, that nobody is signed in is signed out; an error status, a
+   * timeout or a body that is not that shape is a failure to find out, which
+   * the page says, with Retry, rather than asking someone who may well be
+   * signed in to sign in.
    */
   async function reader(): Promise<'signed-in' | 'signed-out' | 'failed'> {
     const abort = new AbortController()
@@ -440,7 +441,14 @@ const data = JSON.stringify({
       if (!response.ok) return 'failed'
       const me = (await response.json()) as unknown
       if (!me || typeof me !== 'object' || Array.isArray(me)) return 'failed'
-      return (me as { principal?: unknown }).principal ? 'signed-in' : 'signed-out'
+      // The Worker's two answers (auth-routes.ts): `authenticated: false` and
+      // no principal for nobody, `authenticated: true` with a principal for
+      // somebody. Anything else is a body this page cannot read, not a reader
+      // to send to the sign-in page.
+      const { authenticated, principal } = me as { authenticated?: unknown; principal?: unknown }
+      if (authenticated === false && principal === undefined) return 'signed-out'
+      if (authenticated === true && principal && typeof principal === 'object') return 'signed-in'
+      return 'failed'
     } catch {
       return 'failed'
     } finally {

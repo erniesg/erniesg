@@ -54,8 +54,15 @@ type Answer = { status: number; body: unknown }
 
 type Service = {
   signedIn: boolean
-  /** Make `/auth/me` fail instead of answering: an error, a timeout, or a body that is not JSON. */
-  authFailure: 'error' | 'timeout' | 'malformed' | null
+  /**
+   * Make `/auth/me` fail instead of answering: an error, a timeout, a body
+   * that is not JSON, or JSON in neither of the Worker's two shapes.
+   */
+  authFailure: 'error' | 'timeout' | 'malformed' | 'no-principal' | null
+  /** What `/auth/me` says about writing; reading needs only a principal. */
+  canWrite: boolean
+  /** Rewrite every annotation the API sends, e.g. to add a field 060 will. */
+  decorate: ((wire: Record<string, unknown>) => Record<string, unknown>) | null
   as: Principal
   post(body: unknown, as?: Principal): Promise<Wire>
   call(method: string, pathAndQuery: string, as?: Principal, body?: unknown): Promise<Response>
@@ -82,6 +89,8 @@ async function mountService(page: Page): Promise<Service> {
   const service: Service = {
     signedIn: true,
     authFailure: null,
+    canWrite: true,
+    decorate: null,
     as: OWNER,
     requests: [],
     override: null,
@@ -107,14 +116,17 @@ async function mountService(page: Page): Promise<Service> {
       return route.fulfill({ status: 500, headers: { 'content-type': 'application/json' }, body: '{"error":"down"}' })
     }
     if (service.authFailure === 'malformed') {
-      return route.fulfill({ status: 200, headers: { 'content-type': 'text/html' }, body: '<html>a proxy page</html>' })
+      return route.fulfill({ status: 200, headers: { 'content-type': 'application/json' }, body: '{"authenticated": tru' })
+    }
+    if (service.authFailure === 'no-principal') {
+      return route.fulfill({ status: 200, headers: { 'content-type': 'application/json' }, body: '{"authenticated":true,"canWrite":true}' })
     }
     return route.fulfill({
       status: 200,
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(
         service.signedIn
-          ? { authenticated: true, principal: service.as, canWrite: true, isAdmin: false }
+          ? { authenticated: true, principal: service.as, canWrite: service.canWrite, isAdmin: false }
           : { authenticated: false, canWrite: false, isAdmin: false },
       ),
     })
@@ -141,10 +153,21 @@ async function mountService(page: Page): Promise<Service> {
       }),
       service.signedIn ? service.as : null,
     )
+    let body = await response.text()
+    if (service.decorate && response.headers.get('content-type')?.includes('json')) {
+      const json = JSON.parse(body) as { annotations?: Record<string, unknown>[] } & Record<string, unknown>
+      body = JSON.stringify(
+        Array.isArray(json.annotations)
+          ? { ...json, annotations: json.annotations.map(service.decorate) }
+          : typeof json.id === 'string'
+            ? service.decorate(json)
+            : json,
+      )
+    }
     await route.fulfill({
       status: response.status,
       headers: { 'content-type': 'application/json' },
-      body: await response.text(),
+      body,
     })
   })
   return service
@@ -472,6 +495,30 @@ test.describe('the Annotations page lists', () => {
     expect(service.requests.filter((request) => request.startsWith(`GET /api/margin/v1/annotations/${bare(theirs)}?`))).toHaveLength(1)
   })
 
+  test('a deleted foreign parent as "Deleted note", the reader’s reply nested under it', async ({ page }) => {
+    const service = await mountService(page)
+    const at = await anchors(page)
+    const theirs = await service.post(
+      annotation(at.values, { motivation: 'commenting', body: 'Their note, deleted later.', visibility: 'public' }),
+      OTHER,
+    )
+    await service.post(annotation(at.values, { motivation: 'commenting', body: 'My reply keeps it.', parentId: bare(theirs) }))
+    const deleted = await service.call(
+      'DELETE',
+      `/api/margin/v1/annotations/${bare(theirs)}?source=${encodeURIComponent(`${SITE}${VALUES}`)}`,
+      OTHER,
+    )
+    expect(deleted.status).toBe(200)
+    await openOverview(page)
+
+    const parent = entry(page, theirs)
+    await expect(parent).toHaveAttribute('data-foreign-parent', 'visible')
+    await expect(parent.locator('[data-entry-kind]')).toHaveText('Deleted note')
+    await expect(parent.locator('[data-entry-body]')).toHaveCount(0)
+    await expect(page.getByText('Their note, deleted later.')).toHaveCount(0)
+    await expect(parent.locator('[data-entry-replies] [data-reply-body]')).toHaveText(['My reply keeps it.'])
+  })
+
   test('a reply on its own, with its link, when the parent lookup fails', async ({ page }) => {
     const service = await mountService(page)
     const at = await anchors(page)
@@ -536,12 +583,15 @@ test.describe('the Annotations page lists', () => {
     )
     // Accepted by the service (the hunk envelope is valid), unreadable as CriticMarkup.
     const malformed = await service.post(annotation(at.loop, { motivation: 'editing', body: hunks('An {++unclosed insertion.') }))
+    // Parsed fine, but it inserts and deletes nothing: no blank summary either.
+    const unchanged = await service.post(annotation(at.loop, { motivation: 'editing', body: hunks('Every challenge in this book.') }))
     const after = await service.post(annotation(at.values, { motivation: 'commenting', body: 'Still rendered.' }))
     await openOverview(page)
 
     await expect(entry(page, deletion).locator('[data-proposal-summary]')).toHaveText('Deletes: in this book')
     await expect(entry(page, malformed).locator('[data-proposal-summary]')).toHaveText('Proposed change')
     await expect(entry(page, malformed).locator('[data-proposal-state]')).toHaveText('Pending')
+    await expect(entry(page, unchanged).locator('[data-proposal-summary]')).toHaveText('Proposed change')
     await expect(entry(page, after).locator('[data-entry-body]')).toHaveText('Still rendered.')
   })
 
@@ -710,6 +760,24 @@ test.describe('an entry links back to its spot', () => {
     expect(await flashedText(page)).toEqual([])
   })
 
+  test('a proposal 060 has moved on (approved): lands read-only, no editor open', async ({ page }) => {
+    const service = await mountService(page)
+    const proposal = await realProposal(page, service)
+    // 060 will send margin:proposalState; until then the API is decorated with it.
+    service.decorate = (wire) => (wire.id === proposal.id ? { ...wire, 'margin:proposalState': 'approved' } : wire)
+    await openOverview(page)
+    await expect(entry(page, proposal).locator('[data-proposal-state]')).toHaveText('Being applied')
+
+    await entry(page, proposal).locator('a[data-annotation-link]').click()
+    const target = railEntry(page, bare(proposal))
+    await expect(target).toHaveAttribute('data-margin-target', '')
+    await expect.poll(() => focusedInRail(target)).toBe(true)
+    await expect(target.locator('[data-proposal-state]')).toHaveText('Being applied')
+    await expect(page.locator('[data-edit-mode]')).toBeVisible()
+    await expect(page.locator('html')).not.toHaveAttribute('data-book-editing', '')
+    await expect(page.locator('[data-edit-surface]')).toBeHidden()
+  })
+
   test("the reader's own reply: focused in its thread", async ({ page }) => {
     const service = await mountService(page)
     const at = await anchors(page)
@@ -811,7 +879,7 @@ test.describe('loading the list', () => {
     expect(query.get('site')).toBe(SITE)
   })
 
-  for (const failure of ['error', 'timeout', 'malformed'] as const) {
+  for (const failure of ['error', 'timeout', 'malformed', 'no-principal'] as const) {
     test(`a failed /auth/me (${failure}) is a retryable load error, not the sign-in prompt`, async ({ page }) => {
       const service = await mountService(page)
       const at = await anchors(page)
@@ -994,6 +1062,20 @@ test.describe('the book bar', () => {
         expect(box!.x + box!.width, `${at} ${control} is clipped`).toBeLessThanOrEqual(320)
       }
     }
+  })
+
+  test('a signed-in reader who may not write still gets the link and their overview', async ({ page }) => {
+    const service = await mountService(page)
+    const at = await anchors(page)
+    const note = await service.post(annotation(at.values, { motivation: 'commenting', body: 'Written while I could.' }))
+    service.canWrite = false
+    await page.goto(VALUES)
+    const link = page.locator('[data-book-annotations-link]')
+    await expect(link).toBeVisible()
+    await link.click()
+    await expect(page).toHaveURL(new RegExp(`${OVERVIEW}$`))
+    await expect(page.locator('[data-annotations-overview]')).toHaveAttribute('data-annotations-state', 'complete')
+    await expect(entry(page, note)).toBeVisible()
   })
 
   for (const look of ['site', 'plain'] as const) {

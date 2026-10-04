@@ -248,6 +248,11 @@ describe('proposal summaries', () => {
     expect(proposalSummary(hunks(`{--${'x'.repeat(200)}--}`))).toBe(`Deletes: ${'x'.repeat(120)}`)
   })
 
+  it('are absent when the markup changes no text, so the row falls back', () => {
+    expect(proposalSummary(hunks('Equal text only, no change in it.'))).toBeNull()
+    expect(proposalSummary(hunks('{++   ++}'))).toBeNull()
+  })
+
   it('are absent when the markup cannot be parsed', () => {
     expect(proposalSummary(hunks('An {++unclosed insertion.'))).toBeNull()
     expect(proposalSummary('free text from before hunks')).toBeNull()

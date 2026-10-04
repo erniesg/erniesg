@@ -38,6 +38,10 @@ import {
 import { inlineText, replaceBlock, splitAt, withContent, withItems } from './model'
 import { SketchController } from './sketch-controller'
 import { prefixByCodePoints } from '../../../packages/margin/src/text'
+import {
+  MARGIN_TARGET_EVENT,
+  type MarginTarget,
+} from '../../../packages/margin/src/element'
 
 const API = '/api/margin/v1'
 const AUTH_ME = '/auth/me'
@@ -248,6 +252,8 @@ export class EditMode {
   #editing = false
   #revising: WireProposal | null = null
   #me: string | null = null
+  /** The reader's own proposals on this page, as the last listing found them. */
+  #proposals: WireProposal[] = []
   #pending = new Map<HTMLElement, number>()
   #restoreView: string | null = null
   #saving = false
@@ -422,6 +428,23 @@ export class EditMode {
       this.#surface.addEventListener(type, (event) => event.preventDefault())
     }
     await this.refreshProposals()
+    // A link to one of the reader's own proposals (issue 073) opens it as the
+    // Reopen button does: its diff, in edit mode. The rail scrolled to it and
+    // painted nothing; this is the rest of landing on a proposal.
+    const rail = document.querySelector('margin-rail') as
+      | (HTMLElement & { readonly target?: MarginTarget | null })
+      | null
+    const landed = (target: MarginTarget | null | undefined) => {
+      if (target?.kind !== 'proposal') return
+      const proposal = this.#proposals.find((entry) => bareId(entry.id) === target.id)
+      if (proposal) this.reopen(proposal)
+    }
+    rail?.addEventListener(
+      MARGIN_TARGET_EVENT,
+      (event) => landed((event as CustomEvent<MarginTarget>).detail),
+      { signal: this.#abort.signal },
+    )
+    landed(rail?.target)
   }
 
   async #whoami(): Promise<string | null> {
@@ -975,6 +998,7 @@ export class EditMode {
     if (this.#draftRevising && !this.#revising) {
       this.#revising = mine.find((proposal) => proposal.id === this.#draftRevising) ?? null
     }
+    this.#proposals = mine
     this.#proposalsList.replaceChildren(...mine.map((proposal) => this.#proposalItem(proposal)))
     this.#proposalsList.hidden = mine.length === 0
   }

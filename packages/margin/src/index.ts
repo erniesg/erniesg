@@ -21,5 +21,7 @@ export * from './dom/text-index.js'
 export {
   MarginRailElement,
   MARGIN_RAIL_TAG,
+  MARGIN_TARGET_EVENT,
   defineMarginElements,
+  type MarginTarget,
 } from './element.js'

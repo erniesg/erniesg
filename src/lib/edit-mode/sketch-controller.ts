@@ -12,12 +12,18 @@ import {
 } from '../../../packages/margin/src/sketch'
 import { prefixByCodePoints } from '../../../packages/margin/src/text'
 import type { TextAnnotation } from '../../../packages/margin/src/anchor'
+import {
+  MARGIN_TARGET_EVENT,
+  type MarginTarget,
+} from '../../../packages/margin/src/element'
 
 const API = '/api/margin/v1/annotations'
 const MAX_POINTS = 300 // Leaves room for the note inside the existing 8,000-character body.
 type Rail = HTMLElement & {
   annotations: readonly TextAnnotation[]
   refreshFromService(): Promise<void>
+  /** Where a `?annotation=` link landed (issue 073), once it has. */
+  readonly target?: MarginTarget | null
 }
 type Point = [number, number]
 
@@ -48,6 +54,10 @@ export class SketchController {
   #stroke: Point[] | null = null
   #saved: { id: string; sketch: Sketch }[] = []
   #frame = 0
+  /** A saved sketch to bring into view after the next layout. */
+  #revealing: string | null = null
+  /** The sketch a link landed on, marked on every redraw. */
+  #landed: string | null = null
 
   constructor(
     root: HTMLElement,
@@ -155,6 +165,17 @@ export class SketchController {
       signal,
     })
     changed()
+    // A link to a sketch lands here: the rail paints no text for it, so the
+    // drawing itself is what comes into view.
+    const landed = (target: MarginTarget | null | undefined) => {
+      if (target?.kind === 'sketch') this.#reveal(target.id)
+    }
+    this.#rail.addEventListener(
+      MARGIN_TARGET_EVENT,
+      (event) => landed((event as CustomEvent<MarginTarget>).detail),
+      { signal },
+    )
+    landed(this.#rail.target)
     const observer = new ResizeObserver(() => this.#scheduleLayout())
     observer.observe(content)
     for (const block of this.#blocks()) observer.observe(block.element)
@@ -173,6 +194,13 @@ export class SketchController {
       { once: true },
     )
     this.#restore()
+  }
+
+  /** Scroll a saved sketch's overlay into view, once the layout has drawn it. */
+  #reveal(id: string): void {
+    this.#revealing = id
+    this.#landed = id
+    this.#scheduleLayout()
   }
 
   setEnabled(enabled: boolean): void {
@@ -531,11 +559,22 @@ export class SketchController {
         svg.classList.add('sketch-layer')
         svg.dataset.sketchSaved = id
         svg.dataset.marginAnnotatable = 'false'
+        if (id === this.#landed) svg.dataset.sketchTarget = ''
         svg.setAttribute('aria-label', `Sketch: ${sketch.note}`)
         this.#content.append(svg)
         this.#position(svg, sketch)
       }
       if (this.#canvas && this.#draft) this.#position(this.#canvas, this.#draft)
+      const revealing = this.#revealing
+      if (revealing) {
+        const overlay = this.#content.querySelector<SVGSVGElement>(
+          `[data-sketch-saved="${CSS.escape(revealing)}"]`,
+        )
+        if (overlay && overlay.style.display !== 'none') {
+          this.#revealing = null
+          overlay.scrollIntoView({ block: 'center' })
+        }
+      }
     })
   }
 

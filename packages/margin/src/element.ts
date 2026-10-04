@@ -166,6 +166,20 @@ const TARGET_TEXT_CHANGED =
   'Text changed: the passage this annotation was on is no longer here as it was.'
 const TARGET_MISSING = 'The annotation this link names is not on this page.'
 
+/**
+ * Where a `?annotation=<id>` link landed, for the host page: a host that draws
+ * sketches or opens proposals in its own UI does that part, since the rail
+ * paints neither. `anchored` is false when the text it was on has changed.
+ */
+export type MarginTarget = {
+  id: string
+  kind: 'highlight' | 'note' | 'sketch' | 'proposal' | 'reply'
+  anchored: boolean
+}
+
+/** Dispatched once a `?annotation=` link has landed; `detail` is a `MarginTarget`. */
+export const MARGIN_TARGET_EVENT = 'margin-target'
+
 /** The `?annotation=<id>` the page was opened with, if any. */
 function targetFromLocation(doc: Document): string | null {
   const search = doc.defaultView?.location.search ?? ''
@@ -338,6 +352,7 @@ export class MarginRailElement extends ElementBase {
   #target: string | null = null
   /** The entry that link landed on, marked for as long as the page lives. */
   #targeted: string | null = null
+  #landed: MarginTarget | null = null
   #targetNotice: string | null = null
   #flashTimer = 0
   #unflash: (() => void) | null = null
@@ -363,6 +378,14 @@ export class MarginRailElement extends ElementBase {
 
   get documentUri(): string {
     return this.getAttribute('document-uri') ?? ''
+  }
+
+  /**
+   * Where `?annotation=<id>` landed, once it has. A host that starts after the
+   * rail's first load reads this instead of waiting for `margin-target`.
+   */
+  get target(): MarginTarget | null {
+    return this.#landed
   }
 
   get annotations(): readonly TextAnnotation[] {
@@ -1650,9 +1673,30 @@ export class MarginRailElement extends ElementBase {
 
   /** Bring an anchored passage into view and flash it; `null` for an orphan. */
   #showPassage(id: string, flashMs = FLASH_MS) {
+    const shown = this.#scrollToPassage(id)
+    if (!shown) return null
+    const { entry } = shown
+    this.#flash(
+      {
+        nodeId: entry.nodeId,
+        start: entry.start,
+        end: entry.end,
+      },
+      flashMs,
+    )
+    return shown
+  }
+
+  /**
+   * Bring an anchored passage into view, painting nothing; `null` for an
+   * orphan. `block: true` scrolls the whole block instead: a sketch's quote
+   * only locates its block, and the drawing sits over the block, not the words.
+   */
+  #scrollToPassage(id: string, options: { block?: boolean } = {}) {
     const entry = this.#placements.find((item) => item.annotation.id === id)
     if (!entry || entry.placement.status !== 'anchored') return null
-    const block = this.#blockFor(entry.placement.nodeId)
+    const placement = entry.placement
+    const block = this.#blockFor(placement.nodeId)
     if (!block) return null
     const ranges = rangesForOffsets(
       block.index,
@@ -1663,19 +1707,14 @@ export class MarginRailElement extends ElementBase {
     const reduced = view?.matchMedia?.(
       '(prefers-reduced-motion: reduce)',
     ).matches
-    ;(ranges[0]?.startContainer.parentElement ?? block.element).scrollIntoView({
+    ;(options.block
+      ? block.element
+      : (ranges[0]?.startContainer.parentElement ?? block.element)
+    ).scrollIntoView({
       block: 'center',
       behavior: reduced ? 'auto' : 'smooth',
     })
-    this.#flash(
-      {
-        nodeId: entry.placement.nodeId,
-        start: entry.placement.start,
-        end: entry.placement.end,
-      },
-      flashMs,
-    )
-    return { block, ranges }
+    return { block, ranges, entry: placement }
   }
 
   /**
@@ -1697,22 +1736,48 @@ export class MarginRailElement extends ElementBase {
       if (this.#compact) this.#overlayOpen = true
       if (!reply) this.#notice = TARGET_MISSING
       this.#render()
-      if (reply) this.#focusReply(reply.serverId)
+      if (reply) {
+        this.#focusReply(reply.serverId)
+        this.#land({ id: reply.serverId, kind: 'reply', anchored: true })
+      }
       return
     }
-    const annotationId = record.annotation.id
+    const { annotation } = record
+    const annotationId = annotation.id
     this.#targeted = annotationId
     // A search typed before the load must not hide what the link points to.
     this.#query = ''
-    this.#targetNotice = this.#showPassage(annotationId, TARGET_FLASH_MS)
-      ? null
-      : TARGET_TEXT_CHANGED
+    // Kind-aware, as the rail paints: a highlight or a note flashes its
+    // passage; a sketch is a drawing over its block, and a proposal is shown
+    // as its diff by the host, so for those the text is scrolled to and left
+    // unpainted.
+    const kind: MarginTarget['kind'] =
+      annotation.kind === 'note' && decodeSketch(annotation.body)
+        ? 'sketch'
+        : annotation.kind
+    const anchored =
+      kind === 'highlight' || kind === 'note'
+        ? Boolean(this.#showPassage(annotationId, TARGET_FLASH_MS))
+        : Boolean(this.#scrollToPassage(annotationId, { block: kind === 'sketch' }))
+    this.#targetNotice = anchored ? null : TARGET_TEXT_CHANGED
     if (this.#compact) this.#overlayOpen = true
     this.#render()
     this.#focusEntry(annotationId)
     this.#shadow
       .querySelector(`li[data-margin-annotation="${CSS.escape(annotationId)}"]`)
       ?.scrollIntoView({ block: 'nearest' })
+    this.#land({ id: record.serverId ?? annotationId, kind, anchored })
+  }
+
+  #land(target: MarginTarget) {
+    this.#landed = target
+    this.dispatchEvent(
+      new CustomEvent<MarginTarget>(MARGIN_TARGET_EVENT, {
+        detail: target,
+        bubbles: true,
+        composed: true,
+      }),
+    )
   }
 
   /**

@@ -98,7 +98,8 @@ chapter in book order, and each entry links back to its exact spot.
    - Replies show under their parent when the parent is also the reader's.
      A reply to **someone else's** note must not pull that note into
      `/mine`, which stays owner-only. The page fetches each such parent
-     through the existing visibility-scoped
+     once per `(source, parentId)` (cached, so many replies to one parent
+     cost one request) through the existing visibility-scoped
      `GET /annotations/:id?source=<the reply's target.source>` (the item
      route needs a scope; without one it answers 400), and the
      reply shows under it, marked as someone else's. (A parent cannot become
@@ -119,7 +120,9 @@ chapter in book order, and each entry links back to its exact spot.
      no body, and its replies stay nested under it.
 3. **Back to the spot.** Each entry links to its own stored document
    (`target.source`) with `annotation=<id>` added through `URL`
-   `searchParams`, so an existing query or fragment survives. That is the
+   `searchParams`. Every page mounts the rail with its canonical
+   `documentUri(path)`, so a stored source has no query or fragment, and
+   the link lands on exactly the scope the destination rail loads. That is the
    chapter URL for chapter rows, and the front page, `/map/` or wherever it
    was made for the others. On load, the chapter's margin element
    scrolls to that annotation, focuses it in the rail and highlights its
@@ -133,7 +136,10 @@ chapter in book order, and each entry links back to its exact spot.
    resolving them needs the chapter's live text (see Trade-offs).
 4. **Book bar.** An "Annotations" link sits next to "Map" in both the Site and
    Plain looks. It is shown only to signed-in readers.
-5. **Failure is not emptiness.** If the first `/mine` request fails, the
+5. **Failure is not emptiness, and not signed-out.** If `/auth/me` fails
+   (an error status, a timeout or a malformed body), the page shows a
+   retryable load error, not the sign-in prompt: only a successful response
+   with no principal means signed out. If the first `/mine` request fails, the
    page says it could not load your annotations and offers Retry. It never
    shows the empty state. If a later page fails, the rows already loaded
    stay, marked as incomplete, with Retry continuing from the failed
@@ -197,10 +203,12 @@ chapter in book order, and each entry links back to its exact spot.
   - a deleted note with a reply shows as "Deleted note" with the reply
     nested under it;
   - a note made on `/books/<slug>/map/` links back to
-    `/books/<slug>/map/?annotation=<id>`,
-    and one whose stored source is `/books/<slug>/map/?view=all#topic` links
-    to `/books/<slug>/map/?view=all&annotation=<id>#topic`: the existing
-    parameter and the fragment both survive;
+    `/books/<slug>/map/?annotation=<id>` and lands focused in that page's
+    rail;
+  - two of the reader's replies to the same foreign parent cause exactly one
+    parent request, and the parent shows once with both replies under it;
+  - when `/auth/me` fails (500 or a timeout), the page shows a retryable
+    load error, not the signed-out prompt;
   - signed out, the prompt links to `/auth/login?return_to=` this page;
     signed in with no annotations, the page says so and links to the first
     chapter;

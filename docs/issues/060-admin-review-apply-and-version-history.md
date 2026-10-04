@@ -162,8 +162,25 @@ stay at each owning adapter boundary.
     by that SHA.
 12. The page has a history panel: the node's versions, newest first, and any
     two picked to show a rendered diff. Replay over time is 072.
+13. **A proposal's author can see its state.** The annotation response
+    (`present()`) carries `margin:proposalState` (`approved`, `pr_open`,
+    `conflict`, `merged`, `closed` or `apply_failed`) once a proposal has left
+    `pending`, but only for its creator and an admin of the proposal's own
+    `site` (item 1's `margin_site_admins`). Nobody else gets it, including an
+    admin of a different site, so a proposal's progress never crosses
+    tenants. 073's overview reads this field.
 
 ## Acceptance tests
+
+- `margin:proposalState` (item 13): a public proposal in `pr_open` is read
+  by its creator and by its site's admin, who both get the field, and by an
+  unrelated signed-in reader, an anonymous reader and an admin of a
+  different site, who all get the proposal without it.
+- The same field comes through 073's `GET /mine` for a creator's own
+  proposal in each state (a route test seeds `approved`, `pr_open` and
+  `merged`). This test belongs to whichever of 060 and 073 lands second:
+  if 073's `/mine` already exists when 060 is built, 060 adds it;
+  otherwise 073 adds it when it lands.
 
 - A pending proposal renders a diff whose additions and deletions match the
   CriticMarkup exactly.

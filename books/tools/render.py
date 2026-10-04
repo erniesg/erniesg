@@ -728,6 +728,16 @@ def render_node(
                 )
         elif name == "run":
             emit("desk", _desk(node, attrs, target, runnable))
+        elif name == "details":
+            content = render_markdown(inner)
+            markup = content if target == "print" else (
+                '<details class="book-example"><summary>'
+                + html.escape(attrs.get("title", "Example").replace("-", " "))
+                + '</summary>' + content + '</details>'
+            )
+            emit("details", markup)
+        elif name == "debugger":
+            emit("debugger", debugger_demo(attrs.get("id", ""), inner, target))
         elif name == "exercise":
             emit("exercise", exercise(attrs.get("id", ""), inner, target))
     flush_hints()
@@ -873,6 +883,34 @@ def same_output(produced: str, expected: str) -> bool:
     return tidy(produced) == tidy(expected)
 
 
+def debugger_demo(demo_id: str, inner: str, target: str) -> str:
+    fallback = render_markdown(inner)
+    if target == "print":
+        return fallback
+    if demo_id != "ch09-pdb":
+        raise ValueError(f"Unknown debugger demo: {demo_id}")
+    return (
+        '<section class="pdb-demo" data-pdb-demo data-margin-annotatable="false" '
+        'aria-label="Practice Python debugger">'
+        '<h3>Try the debugger</h3>'
+        '<p class="pdb-intro">A practice simulation of this example. '
+        'The highlighted line runs next. Hover or tap a line for a short explanation.</p>'
+        '<p class="pdb-help"><code>n</code> runs the next line; '
+        '<code>s</code> goes inside a function it calls.</p>'
+        '<div class="pdb-code" data-pdb-code></div>'
+        '<div class="pdb-controls" data-pdb-controls></div>'
+        '<p class="pdb-status" data-pdb-status aria-live="polite">Loading the practice debugger…</p>'
+        '<form class="pdb-prompt" data-pdb-command-form>'
+        '<label>(Pdb) <input data-pdb-command aria-label="Debugger command" '
+        'placeholder="p first_day, last_day" autocomplete="off" spellcheck="false"></label>'
+        '<button type="submit">Send</button>'
+        '<button type="button" data-pdb-reset>Reset</button></form>'
+        '<pre class="pdb-output" data-pdb-output aria-label="Debugger output" role="log"></pre>'
+        '<details class="pdb-reference"><summary>Command guide and real session</summary>'
+        f'{fallback}</details></section>'
+    )
+
+
 def exercise(exercise_id: str, inner: str, target: str) -> str:
     parts = parse_exercise(inner)
     missing = [name for name in EXERCISE_PARTS if name not in parts]
@@ -894,8 +932,10 @@ def exercise(exercise_id: str, inner: str, target: str) -> str:
         f'<p class="exercise-title">Try it</p>{prompt}'
         '<div class="exercise-run">'
         f'<textarea class="editor small" spellcheck="false">{html.escape(parts["starter"])}</textarea>'
-        '<div class="desk-actions"><button class="check">Check <kbd>\u2318\u21b5</kbd></button>'
+        '<div class="desk-actions"><button class="run-exercise" type="button">Run</button><button class="check">Check <kbd>\u2318\u21b5</kbd></button>'
         f'<span class="status"></span>{KEYS_HINT}</div>'
+        '<div class="exercise-output" data-exercise-output hidden>'
+        '<p class="figure-note">Output</p><pre></pre></div>'
         '<div class="results" role="status" hidden></div></div>'
         "<details class='answer'><summary>Show the answer</summary>"
         f'<pre><code>{html.escape(parts["answer"])}</code></pre></details></section>'
@@ -1019,6 +1059,34 @@ td code, th code { white-space:nowrap; }
 figcaption { font:.85rem/1.5 ui-sans-serif,system-ui; color:#555; margin:0; }
 .figure-steps { font-size:.9rem; margin:.3rem 0 .3rem 1.1rem; }
 .walk-note { font:.88rem/1.45 ui-sans-serif,system-ui; margin:.5rem 0 0; min-height:2.6em; }
+.exercise-output { padding:0 12px; color:var(--term-ink); }
+.exercise-output .figure-note { color:var(--term-dim); }
+.exercise-output pre { max-height:16rem; overflow:auto; margin:.4rem 0; }
+/* Practice debugger: retain the book's code and reading palette. */
+.pdb-demo { margin:1.5rem 0; border:1px solid var(--line); border-radius:6px; padding:1rem; min-width:0; }
+.pdb-demo h3 { margin:0 0 .5rem; }
+.pdb-intro, .pdb-help, .pdb-status { font:.88rem/1.5 ui-sans-serif,system-ui; margin:.5rem 0; }
+.pdb-code { background:#15161a; color:#eee; padding:.65rem; border-radius:5px; overflow-x:auto; }
+.pdb-code-button { display:block; width:100%; min-width:max-content; text-align:left;
+  white-space:pre; background:transparent; color:inherit; border:0; padding:.2rem .4rem;
+  font:.83rem/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; cursor:pointer; }
+.pdb-code-button.is-current { background:#fde68a; color:#1a1a1a; box-shadow:inset 3px 0 #d97706; }
+.pdb-code-button:focus-visible { outline:2px solid #7dd3fc; outline-offset:-2px; }
+.pdb-line-note { display:block; padding:.35rem .5rem; color:#bae6fd; font:.82rem/1.45 ui-sans-serif,system-ui; }
+.pdb-line-note[hidden] { display:none; }
+.pdb-controls { display:flex; flex-wrap:wrap; gap:.4rem; margin:.75rem 0 .5rem; }
+.pdb-controls button, .pdb-prompt button { font:.83rem ui-sans-serif,system-ui; color:var(--ink);
+  background:var(--bg); border:1px solid var(--line); border-radius:4px; padding:.45rem .6rem; cursor:pointer; }
+.pdb-controls button:disabled, .pdb-prompt button:disabled { opacity:.5; cursor:default; }
+.pdb-prompt { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem; margin:.5rem 0; }
+.pdb-prompt label { display:flex; align-items:center; gap:.4rem; flex:1 1 14rem; min-width:0;
+  font:.85rem ui-monospace,monospace; }
+.pdb-prompt input { min-width:0; width:100%; color:var(--ink); background:var(--bg); border:1px solid var(--line);
+  border-radius:4px; padding:.5rem; font:inherit; }
+.pdb-output { font:.83rem/1.5 ui-monospace,monospace; max-height:14rem; overflow:auto; margin:.5rem 0; }
+.pdb-output:empty { display:none; }
+.pdb-reference { font:.88rem/1.5 ui-sans-serif,system-ui; margin:.75rem 0 0; }
+.pdb-reference summary { cursor:pointer; }
 /* A steppable figure, driven by runtime/interactive.mjs in every web edition. */
 .walk-row, .walk-state { display:flex; gap:6px; align-items:center; margin:6px 0; }
 .walk-item, .slot { min-width:34px; text-align:center; padding:5px 6px; border:1px solid var(--line);

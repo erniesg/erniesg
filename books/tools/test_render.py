@@ -53,6 +53,19 @@ class PrintSupportNotes(unittest.TestCase):
                     self.assertNotIn("No hints on this one", markup)
                     self.assertNotIn("tells you whether it stuck", markup)
 
+    def test_debugger_has_a_print_fallback_and_condensed_web_examples(self):
+        node = render.load_node("ch09-stepping")
+        web = render.render_node(node, "web", reveal="reader")
+        printed = render.render_node(node, "print")
+        self.assertIn("data-pdb-demo", web)
+        self.assertIn('data-margin-annotatable="false"', web)
+        self.assertIn('data-pdb-command-form', web)
+        self.assertIn('<details class="book-example">', web)
+        self.assertNotIn("data-pdb-demo", printed)
+        self.assertNotIn("data-pdb-command-form", printed)
+        self.assertIn("(Pdb) p day", printed)
+        self.assertIn("22985", printed)
+
     def test_reader_shortens_contract_support_but_print_keeps_it(self):
         _, order = render.load_book()
         contract = next(node for node in order if node["id"] == "meter-days")

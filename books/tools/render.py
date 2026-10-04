@@ -140,8 +140,7 @@ FIGURE_TYPES = ("cells", "walk", "links", "table", "cost")
 # telling the reader the solution "waits until you pass" contradicts the
 # disclosure holding it two lines below.
 SUPPORT_NOTES_READER = {
-    "contract": "You get the contract and the tests. The hints are here, and "
-                "the worked solution is below when you want it.",
+    "contract": "The worked solution is below.",
     # `validate.py` refuses a hint block on an unaided challenge, so this one
     # must not offer any: there is a worked solution below and nothing else.
     "unaided": "No hints on this one — that is what makes it the one that "
@@ -152,11 +151,14 @@ SUPPORT_NOTES_READER = {
 # What print says. Spec 066 drops the `worked` and `guided` notes on the web,
 # where the hint bulb and the solution disclosure show the same thing; a page
 # has neither, so print keeps a note for every level, as it did before 066.
-# `contract` and `unaided` use the reader's wording: print has no grader.
+# Print also keeps the contract note: paper has neither the tests nor a hint
+# disclosure. Its unaided wording remains the reader's wording.
 SUPPORT_NOTES_PRINT = {
     "worked": "Worked through step by step, then hints, then the full solution.",
     "guided": "Hints if you want them, and a worked solution behind them.",
     **SUPPORT_NOTES_READER,
+    "contract": "You get the contract and the tests. The hints are here, and "
+                "the worked solution is below when you want it.",
 }
 
 # Figure kinds whose web body needs JavaScript. `walk` draws back/next buttons

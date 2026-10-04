@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { expect, test, type Locator, type Page } from '@playwright/test'
 
+import { highlightRegistryName } from '../../packages/margin/src/dom/paint'
 import { DEFAULT_HIGHLIGHT_ROLE, highlightRole } from '../../packages/margin/src/palette'
 import { encodeSketch, SKETCH_PREFIX } from '../../packages/margin/src/sketch'
 import { flattenThread, replyFromWebAnnotation } from '../../packages/margin/src/threads'
@@ -251,12 +252,13 @@ async function focusedInRail(locator: Locator): Promise<boolean> {
 
 /** The text the rail's landing flash paints, from the Custom Highlight registry. */
 async function flashedText(page: Page): Promise<string[]> {
-  return page.evaluate(() => {
+  // The painter's own name for the `flash` colour, before any namespace suffix.
+  return page.evaluate((prefix) => {
     const registry = (CSS as unknown as { highlights: Map<string, Iterable<Range>> }).highlights
     return [...registry.entries()]
-      .filter(([name]) => name.startsWith('erniesg-margin-cflash'))
+      .filter(([name]) => name.startsWith(prefix))
       .flatMap(([, highlight]) => [...highlight].map((range) => range.toString()))
-  })
+  }, highlightRegistryName('flash'))
 }
 
 async function openOverview(page: Page): Promise<void> {

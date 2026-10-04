@@ -44,8 +44,12 @@ chapter in book order, and each entry links back to its exact spot.
      visibility.
    - `prefix` must be an absolute path that starts and ends with `/`.
      Anything else is 400.
-   - The query uses the existing `margin_annotations_owner` index
-     `(creator, site, document)`. No migration.
+   - The query is served by an index on
+     `(creator, site, document, created, id)`, added by one migration,
+     `0005_margin_owner_keyset_index.sql`. The existing
+     `margin_annotations_owner` index ends at `document`, so the keyset order
+     would need a temporary sort of every matching row on each page. The
+     migration only adds an index.
 2. **Page.** `/books/<slug>/annotations/` is a static page that fetches item 1
    with `prefix=/books/<slug>/`.
    - Chapters are grouped and ordered by the book manifest, not by URL.
@@ -57,11 +61,17 @@ chapter in book order, and each entry links back to its exact spot.
    - Each entry shows its kind, the quoted text and the date, plus only the
      fields that kind carries on the wire. Nothing is invented for a missing
      field:
-     - highlight: its colour (a highlight has no body);
+     - highlight: its colour; a highlight saved without `margin:color` shows
+       the default the rail paints it with (`DEFAULT_HIGHLIGHT_ROLE` in
+       `packages/margin/src/palette.ts`), so it looks the same in both places.
+       It has no body;
      - note: its body, and its colour if it has one;
      - sketch: its note text and the preview below;
-     - proposal: a short summary of the proposed change and its state (a
-       proposal has no colour).
+     - proposal: a summary of the proposed change and its state. The summary
+       is the proposal body's CriticMarkup reduced to its inserted text
+       (`{++…++}` and the new side of `{~~old~>new~~}`, using the existing
+       parser in `src/annotations/criticmarkup.ts`), cut to 120 characters on
+       code-point boundaries. A proposal has no colour.
    - A sketch shows a small read-only SVG drawn with `decodeSketch` from
      `packages/margin`. A malformed sketch shows as a plain note, the same
      rule the rail uses.
@@ -80,7 +90,9 @@ chapter in book order, and each entry links back to its exact spot.
    - Replies show under their parent when the parent is also the reader's.
      A reply to **someone else's** note must not pull that note into
      `/mine`, which stays owner-only. The page fetches each such parent
-     through the existing visibility-scoped `GET /annotations/:id`, and the
+     through the existing visibility-scoped
+     `GET /annotations/:id?source=<the reply's target.source>` (the item
+     route needs a scope; without one it answers 400), and the
      reply shows under it, marked as someone else's. (A parent cannot become
      invisible to a reply's author: migration 0001's triggers refuse a reply
      to someone else's private note and refuse making a replied-to note
@@ -103,10 +115,11 @@ chapter in book order, and each entry links back to its exact spot.
    anchor. Notes and highlights paint their anchor. A sketch shows its
    overlay instead (its quote only locates the block and is not painted),
    and a proposal opens its diff in edit mode for its author, as the rail
-   does; neither is text-highlighted. When the anchor no longer resolves
-   because the text changed, the
-   rail says so and still shows the annotation. The overview marks it as
-   "text changed".
+   does; neither is text-highlighted. A reply's link focuses that reply in
+   its thread. When the anchor no longer resolves because the text changed,
+   the rail says so and still shows the annotation. The overview does not
+   try to tell: `/mine` carries stored selectors, not placements, and
+   resolving them needs the chapter's live text (see Trade-offs).
 4. **Book bar.** An "Annotations" link sits next to "Map" in both the Site and
    Plain looks. It is shown only to signed-in readers.
 5. **Empty and signed-out states.** Signed out (`/auth/me` reports no
@@ -131,15 +144,17 @@ chapter in book order, and each entry links back to its exact spot.
     seeded to show a sibling book can never match;
   - rows on another site, or outside the prefix, are excluded;
   - `EXPLAIN QUERY PLAN` for the `/mine` query (first page and a cursor
-    page) uses `margin_annotations_owner` and never scans
-    `margin_annotations`, following `pagination-plan.test.ts`.
+    page) uses the 0005 index, never scans `margin_annotations`, and has no
+    `USE TEMP B-TREE`, following `pagination-plan.test.ts`.
 - `tests/e2e/margin-annotations-overview.spec.ts`, with the same in-process
   router pattern as `tests/e2e/margin-edit-mode.spec.ts`, served from the
   static build through `installStaticRoutes` (as `book-look.spec.ts` does):
   - seed a highlight on one chapter, a note and a sketch on another, and a
     proposal; each shows its seeded quoted text and date, and only the
     fields its kind carries (no body on the highlight, no colour on the
-    proposal);
+    proposal); the proposal shows its expected summary (the seeded
+    insertion text); a highlight saved without a colour shows the default
+    swatch;
   - a foreign public parent whose body is `<img src=x onerror="window.__xss=1">`
     renders that text literally, and `window.__xss` stays undefined;
   - the overview lists all four under the right chapters in book order;
@@ -148,6 +163,8 @@ chapter in book order, and each entry links back to its exact spot.
     "Book front page" is the first group and "Other pages" the last, with
     the chapter groups between them in manifest order;
   - the reader's reply to their own note shows nested under it;
+  - a reply to another reader's public note fetches the parent with
+    `?source=` set to the reply's own source, as checked on the request;
   - a reply to another reader's public note shows under that note, marked as
     theirs; when that parent lookup fails (the route answers 500), the reply
     shows on its own with its link;
@@ -170,8 +187,10 @@ chapter in book order, and each entry links back to its exact spot.
     viewport, painted as highlighted, with the note focused in the rail;
     clicking a sketch lands with its overlay in the viewport and its entry
     focused, and no text painted;
-  - an annotation whose quote no longer matches shows "text changed" in both
-    places;
+  - an annotation whose quote no longer matches still lands on its chapter,
+    where the rail says the text changed;
+  - clicking the reader's own reply lands with that reply focused in its
+    thread;
   - the Annotations link appears in both looks when signed in, and not when
     signed out;
   - with more rows than the endpoint's page cap (seed the cap plus a few),
@@ -216,7 +235,7 @@ links into the rail, and the book-bar link.
 
 ## Stop conditions
 
-- Stop before adding a migration or a new table.
+- Stop before adding any migration other than 0005's index, or any table.
 - Stop before `/mine` returns any annotation the viewer did not create.
   Showing a foreign parent fetched through the visibility-scoped
   `GET /annotations/:id` (criterion 2) is not listing it.
@@ -237,14 +256,20 @@ not by widening the API.
 Add `listOwnAnnotationsQuery(site, prefix, creator, page)` beside
 `listAnnotationsQuery` in `src/worker/margin/queries.ts`. Use
 `creator = ? AND site = ? AND document >= ? AND document < ?`, with the
-prefix's upper bound made by incrementing its last character, so the
-`margin_annotations_owner` index serves it, and order by
-`(document, created, id)`. Route it as `GET /mine` in `routes.ts` with the
-existing `readPage` and `encodeCursor`. The page is an Astro route,
+prefix's upper bound made by incrementing its last character, so 0005's
+`(creator, site, document, created, id)` index serves both the range and the
+order `(document, created, id)`. Route it as `GET /mine` in `routes.ts` with
+the existing `readPage`, and a cursor encoder that carries `document`. The page is an Astro route,
 `src/pages/books/[book]/annotations.astro`, beside 408's `map.astro`, with a
 small client script that pages through `/mine` and renders it.
 
 ## Trade-offs
+
+- **No "text changed" mark in the overview.** Telling would mean resolving
+  each anchor against the chapter's current text, so fetching every chapter
+  or shipping block text with the manifest. The rail already says so on
+  landing, which is where the reader can act on it. A later issue can add
+  it with a defined data path.
 
 - **Own annotations only.** Others' public annotations stay on their pages.
   A "public notes by others" view is a separate decision.

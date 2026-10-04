@@ -66,14 +66,17 @@ chapter in book order, and each entry links back to its exact spot.
        (`packages/margin/src/palette.ts`), so a missing, legacy or unknown
        `margin:color` shows exactly the swatch the rail paints. It has no
        body;
-     - note: its body, and its colour if it has one;
+     - note: its body, and its colour if it has one, through the same
+       `highlightRole()`;
      - sketch: its note text and the preview below;
      - proposal: a summary of the proposed change and its state. The summary
        is the proposal body's CriticMarkup reduced to its inserted text
        (`{++…++}` and the new side of `{~~old~>new~~}`, using the existing
        parser in `src/annotations/criticmarkup.ts`), cut to 120 characters on
        code-point boundaries. A proposal that only deletes shows "Deletes:"
-       and the deleted text, cut the same way. A proposal has no colour.
+       and the deleted text, cut the same way. If its markup cannot be parsed,
+       the row shows "Proposed change" with no summary rather than breaking
+       the page. A proposal has no colour.
    - A sketch shows a small read-only SVG drawn with `decodeSketch` from
      `packages/margin`. A malformed sketch shows as a plain note, the same
      rule the rail uses.
@@ -130,13 +133,18 @@ chapter in book order, and each entry links back to its exact spot.
    resolving them needs the chapter's live text (see Trade-offs).
 4. **Book bar.** An "Annotations" link sits next to "Map" in both the Site and
    Plain looks. It is shown only to signed-in readers.
-5. **Empty and signed-out states.** Signed out (`/auth/me` reports no
+5. **Failure is not emptiness.** If the first `/mine` request fails, the
+   page says it could not load your annotations and offers Retry. It never
+   shows the empty state. If a later page fails, the rows already loaded
+   stay, marked as incomplete, with Retry continuing from the failed
+   cursor.
+6. **Empty and signed-out states.** Signed out (`/auth/me` reports no
    principal), the page shows "Sign in to see your annotations" with a link
    to `/auth/login?return_to=<this page's path>`. The Worker already accepts
    and sanitises `return_to`. No such prompt exists elsewhere yet, so this
    one is new. Signed in with no annotations, it says so and points to the
    first chapter.
-6. Filters on the page, client-side only: kind (highlight, note, sketch,
+7. Filters on the page, client-side only: kind (highlight, note, sketch,
    proposal) and chapter. Nothing new is stored.
 
 ## Acceptance tests
@@ -203,7 +211,17 @@ chapter in book order, and each entry links back to its exact spot.
   - an annotation whose quote no longer matches still lands on its chapter,
     where the rail says the text changed;
   - clicking the reader's own reply lands with that reply focused in its
-    thread;
+    thread; clicking a proposal lands with its diff open in edit mode;
+  - the clicked annotation sits past the destination rail's first page of
+    `/annotations`, and still ends up focused once the rail has paged to it;
+  - an owned thread three replies deep shows every level, in the rail's
+    flattened order;
+  - a note with a legacy colour shows the `highlightRole()` swatch;
+  - an accepted proposal whose hunk markup is malformed shows "Proposed
+    change" and the rest of the page renders;
+  - a first `/mine` failure shows the load error with Retry and not the
+    empty state; a failure on page two keeps page one, marked incomplete,
+    and Retry completes it;
   - the Annotations link appears in both looks when signed in, and not when
     signed out;
   - with more rows than the endpoint's page cap (seed the cap plus a few),

@@ -78,7 +78,7 @@ export function createDebuggerModel() {
     const dayExists = Number.isInteger(state.day)
     const helperFrame = state.frame === 'steps_on'
     const helperHelp = 'Try day, readings[day], or len(readings).'
-    const outerName = expressionText === 'total' ? 'total'
+    const outerName = /\btotal\b/.test(expressionText) ? 'total'
       : expressionText.includes('first_day') ? 'first_day'
         : expressionText.includes('last_day') ? 'last_day' : null
     if (helperFrame && outerName) return `NameError: name '${outerName}' is not defined. ${helperHelp}`

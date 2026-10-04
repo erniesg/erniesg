@@ -901,7 +901,7 @@ def debugger_demo(demo_id: str, inner: str, target: str) -> str:
         '<div class="pdb-controls" data-pdb-controls></div>'
         '<p class="pdb-status" data-pdb-status aria-live="polite">Loading the practice debugger…</p>'
         '<form class="pdb-prompt" data-pdb-command-form>'
-        '<label>(Pdb) <input data-pdb-command aria-label="Debugger command" '
+        '<label><span class="pdb-prefix" aria-hidden="true">(Pdb)</span> <input data-pdb-command aria-label="Debugger command" '
         'placeholder="p first_day, last_day" autocomplete="off" spellcheck="false"></label>'
         '<button type="submit">Send</button>'
         '<button type="button" data-pdb-reset>Reset</button></form>'
@@ -1081,7 +1081,8 @@ figcaption { font:.85rem/1.5 ui-sans-serif,system-ui; color:#555; margin:0; }
 .pdb-prompt { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem; margin:.5rem 0; }
 .pdb-prompt label { display:flex; align-items:center; gap:.4rem; flex:1 1 14rem; min-width:0;
   font:.85rem ui-monospace,monospace; }
-.pdb-prompt input { min-width:0; width:100%; color:var(--ink); background:var(--bg); border:1px solid var(--line);
+.pdb-prefix { flex-shrink:0; white-space:nowrap; }
+.pdb-prompt input { min-width:0; width:0; flex:1; color:var(--ink); background:var(--bg); border:1px solid var(--line);
   border-radius:4px; padding:.5rem; font:inherit; }
 .pdb-output { font:.83rem/1.5 ui-monospace,monospace; max-height:14rem; overflow:auto; margin:.5rem 0; }
 .pdb-output:empty { display:none; }

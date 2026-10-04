@@ -35,10 +35,14 @@ describe('the chapter 9 debugger model', () => {
   it('keeps local names in their own function and returns from a stepped-in call', () => {
     const debuggerModel = createDebuggerModel()
     debuggerModel.command('n')
+    debuggerModel.command('p total + steps_on(day)')
+    expect(debuggerModel.getState().output.at(-1)).toBe('6610')
     debuggerModel.command('s')
     debuggerModel.command('p total')
     expect(debuggerModel.getState().output.at(-1)).toContain("NameError: name 'total' is not defined")
     expect(debuggerModel.getState().output.at(-1)).toContain('Try day, readings[day], or len(readings).')
+    debuggerModel.command('p total + steps_on(day)')
+    expect(debuggerModel.getState().output.at(-1)).toContain("NameError: name 'total' is not defined")
     debuggerModel.command('p readings[day]')
     expect(debuggerModel.getState().output.at(-1)).toBe("'6610'")
 

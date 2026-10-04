@@ -68,9 +68,8 @@ print(total_between(3, 7))
 The corrected loop prints 27,385. Printing intermediate values shows where
 the calculation went wrong.
 
-Two rules keep it useful. **Label every print** — five bare numbers down the
-screen tell you nothing about which is which. **Delete them when you are
-done** so they do not clutter the output.
+**Label debugging prints** so you can identify each value. **Remove them
+when you finish** to keep the output clear.
 
 :::exercise{id="ch09-last-two-days"}
 This should total the last two days, 6610 and 5240, and it does not. Print
@@ -113,10 +112,9 @@ print(last_n_total(2))
 
 ## Then `breakpoint()`
 
-Prints get tedious when you don't yet know what to print. Then you want to
-pause the program and check its variables.
+Use a debugger to pause the program and inspect its variables.
 
-Put `breakpoint()` on the line before the part you doubt:
+Put `breakpoint()` before the code you want to inspect:
 
 ```python
 def total_between(first_day, last_day):
@@ -127,9 +125,8 @@ def total_between(first_day, last_day):
     return total
 ```
 
-When the program reaches that line it stops and hands you a prompt called
-**pdb** — the debugger built into Python. From there you can look at any name
-and move forward one line at a time.
+At `breakpoint()`, Python pauses and opens **pdb**, its built-in debugger.
+You can inspect variables and run one line at a time.
 
 Try the practice debugger below to learn the commands. To debug your own code,
 save it as `steps.py` and run it in your computer’s Terminal:
@@ -217,8 +214,7 @@ IndexError: list index out of range
 The error says a list index is out of range. Use the debugger to find
 the index and the length of the list.
 
-You do not have to re-run it with a `breakpoint()` guessed into the right
-place. Run it under pdb and tell pdb to start by just letting it go:
+Run the program with pdb to inspect variables after a crash:
 
 ```text
 python3 -m pdb -c continue steps.py
@@ -271,8 +267,7 @@ names the error.
 len(readings)` says 10, so the last valid position is 9 and day 10 does not
 exist. The requested range must fit within the list.
 
-`q` at that prompt says the program "will be restarted" and offers a fresh
-prompt at line 1; a second `q` leaves for good.
+The first `q` restarts the program at line 1. Enter `q` again to exit.
 
 :::exercise{id="ch09-lowest-balance"}
 The lowest balance should be 35, but this prints 0. Print `balance` and
@@ -307,20 +302,13 @@ print(lowest)
 ```
 :::
 
-## What this buys the agent
+## How an agent uses this
 
-The agent gets a red test and a traceback, and its first job is to turn "this
-is broken" into "*this line*, with *these values*, is broken". Reading harder
-does not do that. Making the program say what it holds does.
-
-So the agent adds a print, runs the test, reads the output, removes the print.
-Unglamorous and cheap, and it works in a subprocess with no terminal — which
-is exactly the situation the agent is always in. When it cannot get a terminal,
-post-mortem is out and prints are all there is. That is why you learned them
-first.
+When a test fails, the agent uses the traceback to locate the error. It can
+add temporary prints to inspect values, rerun the test, and remove the prints
+after fixing the bug. Print output is useful when an interactive debugger is
+unavailable.
 
 ## Your turn
 
-Two challenges, and both ship you code that is already broken. Your job is to
-find out where, which is the whole skill. The first has hints. The second has
-none — a print in the right place will be faster than staring at it.
+Fix the bugs in two challenges. The first has hints; the second does not.

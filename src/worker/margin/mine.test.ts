@@ -161,8 +161,10 @@ describe('GET /mine', () => {
   it('excludes rows on another site, and rows outside the prefix', async () => {
     const inside = await post({ source: CH1, body: 'inside' })
     await post({ source: `https://berlayar.ai${BOOK}ch01-values/`, body: 'other site' })
-    // A sibling book whose slug starts with this one's.
+    // Sibling books whose slugs start with this one's.
     await post({ source: `${SITE}/books/build-a-coding-agent-2/ch01/`, body: 'sibling book' })
+    await post({ source: `${SITE}/books/build-a-coding-agentbar/ch01/`, body: 'sibling bar' })
+    await post({ source: `${SITE}/books/build-a-coding-agentbar/`, body: 'sibling bar front page' })
     // The book path without its trailing slash is not under the prefix.
     await post({ source: `${SITE}/books/build-a-coding-agent`, body: 'no slash' })
     await post({ source: `${SITE}/challenges/chapter-1`, body: 'elsewhere' })
@@ -228,6 +230,23 @@ describe('GET /mine', () => {
     )
   })
 
+  it('refuses a cursor whose document is outside the prefix, so a later page cannot leave it', async () => {
+    // Ada's own row, below the book's prefix in document order.
+    await post({ source: `${SITE}/books/aaa/ch01/`, body: 'another book of hers' })
+    await post({ source: CH1, body: 'in the book' })
+    for (const cursor of [
+      '2026-01-01T00:00:00.000Z x /books/aaa/',
+      '2026-01-01T00:00:00.000Z x /',
+      '2026-01-01T00:00:00.000Z x /books/build-a-coding-agent',
+    ]) {
+      const response = await harness.request(
+        'GET',
+        mineQuery({ site: SITE, prefix: BOOK, cursor }),
+      )
+      expect(response.status, cursor).toBe(400)
+    }
+  })
+
   it('is 401 when signed out', async () => {
     await post({ source: CH1, visibility: 'public', body: 'public' })
     const response = await harness.request('GET', mineQuery({ site: SITE, prefix: BOOK }), {
@@ -286,14 +305,38 @@ describe('the /mine query', () => {
       .join('\n')
   }
 
-  it('is served by the existing owner index, as a range over document', () => {
+  it('is served by the owner-keyset index from 0005: no table scan, no temporary sort', () => {
     for (const plan of [
       planFor(),
       planFor({ document: `${BOOK}ch01/`, created: '2026-09-22T00:00:00.000Z', id: 'a' }),
     ]) {
-      expect(plan).toContain('margin_annotations_owner')
-      expect(plan).toContain('USING INDEX margin_annotations_owner (creator=? AND site=? AND document>? AND document<?)')
+      expect(plan).toContain('USING INDEX margin_annotations_owner_keyset (creator=? AND site=?')
+      expect(plan).toContain('document<?)')
+      expect(plan).not.toMatch(/SCAN margin_annotations\b/)
+      expect(plan).not.toContain('TEMP B-TREE')
     }
+  })
+
+  it('seeks a later page from its cursor rather than filtering up to it', () => {
+    expect(
+      planFor({ document: `${BOOK}ch01/`, created: '2026-09-22T00:00:00.000Z', id: 'a' }),
+    ).toContain('(document,created,id)>(?,?,?)')
+  })
+
+  it('a prefix range alone, without the index, would need that sort', () => {
+    // What 0005 fixes: the 0001 owner index ends at `document`.
+    const database = new DatabaseSync(':memory:')
+    applyMigrations(database)
+    const query = listOwnAnnotationsQuery(SITE, BOOK, ADA_KEY, { limit: 101 })
+    const sql = query.sql.replace('margin_annotations_owner_keyset', 'margin_annotations_owner')
+    const plan = (
+      database.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...(query.params as never[])) as {
+        detail: string
+      }[]
+    )
+      .map((row) => row.detail)
+      .join('\n')
+    expect(plan).toContain('TEMP B-TREE')
   })
 
   it("bounds the range by the prefix's successor", () => {

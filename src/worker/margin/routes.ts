@@ -509,6 +509,7 @@ function encodeOwnCursor(record: OwnListCursor): string {
 
 function readOwnPage(
   url: URL,
+  prefix: string,
 ): { limit: number; after?: OwnListCursor } | { error: Response } {
   const cursor = url.searchParams.get('cursor')
   const withoutCursor = new URL(url)
@@ -519,7 +520,10 @@ function readOwnPage(
   // `created` and `id` hold no space; a stored document is a parsed URL path,
   // in which a space is always escaped.
   const [created, id, document, ...rest] = cursor.split(' ')
-  if (!created || !id || !document?.startsWith('/') || rest.length > 0) {
+  // The cursor's document is where a later page starts its range, so it has
+  // to be under this prefix: one that sorts before it would reach the
+  // caller's rows outside the prefix.
+  if (!created || !id || !document?.startsWith(prefix) || rest.length > 0) {
     return {
       error: problem(400, 'invalid_cursor', 'cursor must be one this API returned'),
     }
@@ -540,7 +544,7 @@ async function listOwnAnnotations(
 ): Promise<Response> {
   const scope = readOwnScope(url)
   if ('error' in scope) return scope.error
-  const page = readOwnPage(url)
+  const page = readOwnPage(url, scope.prefix)
   if ('error' in page) return page.error
 
   const records = await context.repository.listOwnAnnotations(

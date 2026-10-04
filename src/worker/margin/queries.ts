@@ -152,10 +152,12 @@ ORDER BY created ASC, id ASC LIMIT ?`,
  * with `prefix` (issue 073), in `(document, created, id)` order.
  *
  * `creator = ?` is the whole visibility rule here: it is the first column of
- * `margin_annotations_owner (creator, site, document)`, so another creator's
- * row is never read, public or not. The prefix is a range on `document` rather
- * than a `LIKE`, so the same index serves it: every path starting with `prefix`
- * sorts at or after it and before its successor. The route only accepts a
+ * `margin_annotations_owner_keyset (creator, site, document, created, id)`
+ * (migration 0005), so another creator's row is never read, public or not.
+ * The prefix is a range on `document` rather than a `LIKE`, so the same index
+ * serves it, and its trailing `(created, id)` gives the page order without a
+ * sort: every path starting with `prefix` sorts at or after it and before its
+ * successor. The route only accepts a
  * prefix ending in `/`, so the successor is the same string ending in `0`.
  */
 export function listOwnAnnotationsQuery(
@@ -165,14 +167,17 @@ export function listOwnAnnotationsQuery(
   options: OwnListOptions,
 ): Query {
   const upper = `${prefix.slice(0, -1)}${String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1)}`
-  const where = ['creator = ? AND site = ? AND document >= ? AND document < ?']
-  const params: unknown[] = [creator, site, prefix, upper]
-  if (options.after) {
-    where.push('(document, created, id) > (?, ?, ?)')
-    params.push(options.after.document, options.after.created, options.after.id)
-  }
+  // A later page starts at its cursor rather than at the prefix: the cursor
+  // row is under the prefix already, so the row value is the lower bound and
+  // the index seeks straight to it instead of filtering the rows before it.
+  const where = options.after
+    ? ['creator = ? AND site = ? AND (document, created, id) > (?, ?, ?) AND document < ?']
+    : ['creator = ? AND site = ? AND document >= ? AND document < ?']
+  const params: unknown[] = options.after
+    ? [creator, site, options.after.document, options.after.created, options.after.id, upper]
+    : [creator, site, prefix, upper]
   return {
-    sql: `SELECT ${ANNOTATION_COLUMNS} FROM margin_annotations INDEXED BY margin_annotations_owner
+    sql: `SELECT ${ANNOTATION_COLUMNS} FROM margin_annotations INDEXED BY margin_annotations_owner_keyset
 WHERE ${where.join(' AND ')}
 ORDER BY document ASC, created ASC, id ASC LIMIT ?`,
     params: [...params, Math.min(options.limit, MAX_PAGE_SIZE + 1)],

@@ -161,8 +161,8 @@ key into the bigger table as it goes. You never see it happen, and it is why
 Run that cell twice and the two numbers move slightly. Python picks a random
 seed for hashing text each time it starts, so the same word lands in a
 different slot in a different program. That is deliberate: it stops someone
-sending you a few thousand keys chosen to land in one slot and quietly turning
-your dictionary back into a list.
+sending you a few thousand keys chosen to land in one slot, which would make
+dictionary lookup scan a long collision chain.
 
 ## The rule has to spread, or none of this works
 
@@ -319,8 +319,8 @@ print(sorted(readings), "— and this puts them all in order from scratch")
 ```
 
 Three keys, so it does not matter. Three hundred thousand, asked a thousand
-times, and it is the only thing that matters. Ordered questions want an ordered
-structure, which is the next two chapters.
+times, and the repeated full scan dominates the work. Ordered questions need an
+ordered structure, which is the next two chapters.
 
 **It costs memory.** The empty slots are not free:
 

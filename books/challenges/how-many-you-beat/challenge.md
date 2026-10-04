@@ -97,11 +97,9 @@ def riders_you_beat(times):
     return [chalk[value] for value in times]
 ```
 
-**Count it before anything else.** Asking "how many are below this one?" for
-each rider means reading the whole board for each rider: 200,000 × 200,000 =
-40 billion comparisons. The ten-million rule says 4,000 seconds; measured, it
-is around twelve minutes. The tier gives three seconds. So the per-rider scan
-is out before you have typed it.
+**Do not scan the board for each rider.** That would make 40 billion
+comparisons for 200,000 riders. The tier allows three seconds; the scan takes
+about twelve minutes.
 
 **The idea.** Chalk a patch of grass for every time from 0 up to the slowest on
 the board, and count how many ascents landed on each. Then walk along the chalk

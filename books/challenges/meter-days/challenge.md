@@ -131,24 +131,14 @@ thousand.
 trips the meter is back at `usage[0]`, exactly where it started. There is no
 offset to work out.
 
-**`break`, not `return`.** The first day the leftover cannot pay for ends the
-count, but the answer is `days`, which already holds the trips. Leaving the
-loop and returning once is clearer than returning from two places, and it makes
-the case where the leftover covers the *whole* pattern impossible to get wrong
-— the loop simply finishes on its own. That case cannot actually happen here,
-since the leftover is always less than a full trip, but code that only works
-because of a fact two lines away is code that breaks when the fact moves.
+**Use `break` when the leftover cannot pay.** `days` already holds the answer
+for all full trips. The leftover is less than one full trip, so the loop can
+only add part of one cycle.
 
-**The zero pattern is not an edge case, it is a different question.** With
-`cycle` at 0 there is no number of days that exhausts the credit, so there is
-nothing for the arithmetic to compute and nothing for a loop to count down. It
-has to be answered before the division, because `credit // 0` raises rather
-than returning something useless. This is the `while` rule from the chapter
-wearing a different coat: if nothing moves the question towards false, the loop
-is not the answer — an `if` in front of it is.
+**Handle a zero-cost pattern first.** When `cycle` is 0, the credit never runs
+out and the answer is `-1`. This check must come before `credit // cycle`,
+which raises `ZeroDivisionError` for zero.
 
-**What the day-by-day version is good for.** It is not wasted work. It is
-simple enough to be obviously right, which makes it the perfect referee, and
-the stress tier uses precisely that: small credits, small patterns, your
-arithmetic against a meter that really does tick over one day at a time.
+**The stress tier uses a day-by-day reference.** It compares this arithmetic
+against a direct simulation on small credits and patterns.
 :::

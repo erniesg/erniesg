@@ -19,9 +19,8 @@ Same list, same staff. That whole difference is what data structures and
 algorithms are — ways of arranging what you have so the answer comes back in
 time. DSA, if you meet the initials somewhere.
 
-Code delivers outcomes like that at volumes people can't. Coding agents write
-the code. Both are only as good as the methods inside them, so you build one
-here, piece by piece, because that is how the intuition sticks.
+Code delivers outcomes like that at volumes people cannot. Coding agents write
+the code. This book builds one piece by piece, using the methods it needs.
 
 ## What you build
 
@@ -67,8 +66,8 @@ the next carry hints, and the last are yours alone: no hints, and a worked
 solution meant for after you have written your own. The book ends the same way,
 with a capstone that needs everything at once.
 
-The first run is meant to be red. Hints are staged and free; read the solution
-only once you have a failing test you understand — that order is the method, and
-keeping to it is yours to do. Where the tiers can run, they will hold you to it:
+The first run should fail its checks. Hints are staged and free. Read the
+solution after you understand a failing test. Where the tiers can run, they
+enforce that order:
 `python3 books/tools/preview.py` serves this same book with the grader
 behind it.

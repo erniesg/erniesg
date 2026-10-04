@@ -95,13 +95,11 @@ print("801 is in the list:", 801 in shuffled)
 print("halving finds it at:", position_of(shuffled, 801))
 ```
 
-It reports -1 for a value sitting at index 2. Nothing raised, nothing warned.
-This is the failure mode to fear: a binary search on unsorted data does not
-crash, it lies, and it lies quietly. If you are not certain the input is
-sorted, sort it first — and remember from the last chapter what that costs, so
-you sort once and search many times, not the other way round.
+It reports -1 for a value at index 2 and raises no error. A binary search on
+unsorted data can return a wrong answer. If the input is not known to be sorted,
+sort it first. Sort once and search many times when possible.
 
-## Three names, and only one of them is interesting
+## The search window
 
 `low` and `high` are the ends of the part you have not ruled out. `mid` is the
 middle of them. Every turn of the loop does the same three things:
@@ -110,8 +108,8 @@ middle of them. Every turn of the loop does the same three things:
 2. Decide which half cannot contain the answer.
 3. Move `low` or `high` past `mid` so that half is gone.
 
-The whole of binary search is step 3. Move the wrong bound and you get the
-wrong answer; move it by the wrong amount and you get no answer at all.
+Step 3 controls binary search. Move the wrong bound and you get the wrong
+answer; move it by the wrong amount and the search may not finish.
 
 :::figure{id="halving-the-log"}
 :::
@@ -120,7 +118,7 @@ Watch the last row of that figure. Six looks take 2,400,000 lines down to
 37,499, and the halving does not slow down as the numbers get big: doubling the
 file adds exactly one look. A hundred million lines would cost 27.
 
-## The off-by-one that never finishes
+## An off-by-one that prevents progress
 
 Here is the loop again with one character changed — `low = mid` instead of
 `low = mid + 1` — and a counter to stop it, because otherwise it runs until you
@@ -147,21 +145,18 @@ Read the repeated line. `low=0`, `high=1`, so `mid` is 0; `values[0]` is 1,
 which is less than 4, so `low` becomes 0. It already was 0. Nothing shrank, so
 the next turn is identical, and so is the one after that.
 
-That is the rule underneath the rule: **every turn must make the window
-strictly smaller.** `mid` has been looked at and judged, so `mid` itself must
-end up outside the window — `low = mid + 1` or `high = mid - 1`. A hanging
-program is almost always this. If you ever find yourself staring at a loop that
-will not end, print `low`, `high` and `mid` each turn, as above, and the
-unchanging pair will tell you which line to fix.
+Every turn must make the window strictly smaller. `mid` has already been
+checked, so it must end up outside the window: `low = mid + 1` or
+`high = mid - 1`. If a loop does not end, print `low`, `high` and `mid` each
+turn. An unchanged pair identifies the line that needs fixing.
 
-## When it is not there, you still want to know where
+## Finding the insertion point
 
 `-1` is rarely the answer anyone wants. The engineer does not care whether a
 line is stamped exactly 03:14:00; she wants the first line at or after it. Your
 timetable does not have a train at 06:50; you want the next one.
 
-The loop already worked that out. When it ends, `low` is sitting exactly where
-the missing value would have gone:
+When the loop ends, `low` is the position where the missing value would go:
 
 ```python run
 def insertion_point(values, wanted):
@@ -368,7 +363,7 @@ smallest one: you write it down before you go looking for a better one. When
 the window closes, `best` holds the smallest cap that ever answered yes.
 
 `low` starts at `max(pages)` and not at 1, and that is not an optimisation. Cap
-a day at 30 pages when one chapter is 52 and `days_needed` will still hand back
+a day at 30 pages when one chapter is 52 and `days_needed` will still return
 a number — it puts the chapter in a day by itself and blows the cap — so the
 test would answer "yes, that fits" about a cap that is impossible to keep. A
 check that lies below some point puts the boundary in the wrong place. Start

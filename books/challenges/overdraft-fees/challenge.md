@@ -120,10 +120,9 @@ sample returns `(0, -4200)`: every payment set a new low, so the charge branch
 was never reached even once. Two questions about the same value are two `if`
 statements.
 
-**The slow version that looks tidy.** Working out the balance after payment `i`
+**A slow version.** Working out the balance after payment `i`
 as `start - sum(payments[:i])` is correct and reads well. It also rebuilds and
 re-adds a growing slice every time round: at 100,000 payments that is about
-five billion additions. The perf tier is one call at the size limit, and it is
-there to find exactly this. A running total is the fix, and it is the whole
-point of the chapter.
+five billion additions. The perf tier uses one call at the size limit. Keep a
+running total instead.
 :::

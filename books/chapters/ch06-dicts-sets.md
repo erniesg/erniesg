@@ -92,8 +92,8 @@ print(prices.get("rice", 0))
 
 ## Counting is what dicts are best at
 
-Here is the pattern you will write for the rest of your life. One pass, one
-dict, the name as the key and the count so far as the value:
+A common counting pattern uses one pass and one dict: the name is the key and
+the count so far is the value.
 
 ```python run
 visits = ["ada", "grace", "ada", "alan", "ada"]
@@ -136,7 +136,7 @@ print(counts)
 
 ## Walking a dict
 
-Looping over a dict hands you its keys:
+Looping over a dict gives you its keys:
 
 ```python run
 for name in counts:

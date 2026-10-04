@@ -195,7 +195,7 @@ print(total)
 ```
 :::
 
-## A bare except is a trap
+## Why bare except hides bugs
 
 You can leave the error name off and catch everything. Do not.
 

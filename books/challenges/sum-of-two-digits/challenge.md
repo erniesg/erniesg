@@ -69,8 +69,6 @@ def sum_of_two_digits(a, b):
     return a + b
 ```
 
-The whole lesson is above the code. The statement fixes what arrives (two
-numbers, each 0 to 9) and what must leave (one number). Nothing has to guard
-against huge values or text input, because the constraints rule them out — and
-nothing may decorate the answer, because the output line says a number.
+The statement gives two numbers, each 0 to 9, and asks for one number. The
+constraints rule out huge values and text input. Return only the number.
 :::

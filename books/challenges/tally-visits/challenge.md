@@ -101,11 +101,10 @@ zero if this is the first time". Writing it with `if name in counts:` works and
 takes three lines to say the same thing. Either way, the point is that the
 first visit and the thirtieth run the same code.
 
-**Why the empty log needs no special case.** The loop body never runs, `counts`
-is still `{}`, and that is the answer the statement asked for. A test for
-emptiness here would only be a place for a bug to live.
+**An empty log needs no special case.** The loop does not run, so `counts`
+stays `{}`.
 
-**Why the obvious other version fails.** This is the tempting one:
+**A slower version:**
 
 ```python
 def tally_visits(names):

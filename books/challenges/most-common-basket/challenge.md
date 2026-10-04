@@ -76,8 +76,8 @@ A basket is a list, and a list cannot be turned into a slot. Freeze it first.
 :::
 
 :::hint{level=1}
-One pass over the log, counting as you go, exactly like counting names in
-Chapter 6. The only new problem is what to count *by*.
+Make one pass over the log and count each basket. Convert each basket to a
+tuple before using it as a dictionary key.
 :::
 
 :::hint{level=2}
@@ -124,8 +124,8 @@ till, not what the list holds now.
 
 **Why the tie rule needs no code.** A dict remembers the order keys were first
 inserted. `max` walks the keys in that order and keeps the first one that
-reaches the highest count, so a tie is settled by which basket appeared
-earliest. Writing an explicit tie-break here is three lines that do nothing.
+reaches the highest count. A tie therefore goes to the basket that appeared
+first.
 
 **The version that fails the clock.** This is the natural first draft:
 
@@ -145,9 +145,7 @@ comparison compares up to eight item names. Measured, it takes about fifteen
 minutes; the perf tier allows three seconds. The dict version reads each basket
 once — 200,000 steps, under three hundredths of a second.
 
-**Where the time actually went.** Both versions do the same *comparisons*; the
-difference is how many. Counting by searching asks "is this basket equal to
-that one" 40 billion times. Counting by hashing turns each basket into a number
-once and lets the number say where to look. That is the whole of Chapter 12
-applied to one line of code.
+**Why the dictionary is faster.** Counting by searching asks "is this basket
+equal to that one" 40 billion times. A dictionary counts each basket in one
+pass.
 :::

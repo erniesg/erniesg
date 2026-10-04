@@ -6,27 +6,36 @@
  * `(document, created, id)` order. This module turns those rows into what the
  * page draws: the book's front page first, then one group per manifest node in
  * the book's own order, then everything else under the prefix in one "Other
- * pages" group, so no row is dropped. Each entry carries its kind, quote,
- * note, colour, date and a link back to its spot, with replies under their
- * parent rather than beside it.
+ * pages" group, so no row is dropped.
  *
- * Kinds follow the rail: a `commenting` body that decodes as a sketch is a
- * sketch, and one that does not is a plain note, whatever it starts with.
+ * Anything the rail already derives is derived here with the rail's own
+ * functions, so the two never disagree: colours through `highlightRole()`,
+ * sketches through `decodeSketch()`, threads through `replyFromWebAnnotation`
+ * and `indexThreads`. Each entry carries only the fields its kind has on the
+ * wire; nothing is invented for a missing one.
  *
  * A reply to somebody else's note is the reader's, but its parent is not, and
  * `/mine` never returns it. Such replies are gathered per parent into a
  * `foreign` entry; the page asks for the parent through the visibility-scoped
- * `GET /annotations/:id` and records the answer with `resolveForeignParent`.
+ * `GET /annotations/:id?source=<the reply's source>` and records the answer
+ * with `resolveForeignParent`.
  */
-import { parseHunks } from '../annotations/criticmarkup'
+import { parseCriticMarkup, parseHunks } from '../annotations/criticmarkup'
 import {
   HIGHLIGHT_ROLE_LABELS,
   highlightRole,
   type HighlightRole,
 } from '../../packages/margin/src/palette'
-import { DELETED_NOTE_TEXT, serverIdFromIri } from '../../packages/margin/src/records'
+import { serverIdFromIri } from '../../packages/margin/src/records'
 import { decodeSketch, noteText, type Sketch } from '../../packages/margin/src/sketch'
-import { DELETED_REPLY_TEXT, UNNAMED_PARTICIPANT } from '../../packages/margin/src/threads'
+import { prefixByCodePoints } from '../../packages/margin/src/text'
+import {
+  indexThreads,
+  replyFromWebAnnotation,
+  UNNAMED_PARTICIPANT,
+  type ThreadEntry,
+  type ThreadReply,
+} from '../../packages/margin/src/threads'
 
 export const MARGIN_ROUTE = '/api/margin/v1'
 export const MINE_ROUTE = `${MARGIN_ROUTE}/mine`
@@ -55,41 +64,102 @@ export const KIND_LABELS: Record<OverviewKind, string> = {
   proposal: 'Proposal',
 }
 
-/**
- * Only the states the service records. "Applied" waits for issue 060, which
- * is what would record it; nothing can be applied before then.
- */
-export type ProposalState = 'pending' | 'withdrawn'
+export const DELETED_NOTE_LABEL = 'Deleted note'
+export const UNPARSED_PROPOSAL = 'Proposed change'
+export const SUMMARY_LENGTH = 120
 
-export const PROPOSAL_STATE_LABELS: Record<ProposalState, string> = {
+/**
+ * Issue 060's proposal states (its item 10) and how this page names them.
+ * Until 060 lands only `pending` and `withdrawn` occur; the rest are read
+ * from `margin:proposalState` the day 060 sends it.
+ */
+export const PROPOSAL_STATE_LABELS = {
   pending: 'Pending',
   withdrawn: 'Withdrawn',
-}
+  approved: 'Being applied',
+  pr_open: 'Being applied',
+  merged: 'Applied',
+  conflict: 'Needs attention',
+  apply_failed: 'Needs attention',
+  closed: 'Closed',
+} as const
 
-export const HIDDEN_PARENT_TEXT = 'Reply to a note you can no longer see'
+export type ProposalState = keyof typeof PROPOSAL_STATE_LABELS
 
-export type OverviewReply = {
-  id: string
-  body: string
-  created: string
-  deleted: boolean
+export const PROPOSAL_STATES = Object.keys(PROPOSAL_STATE_LABELS) as ProposalState[]
+
+/** The wire's state, or, before 060, the withdrawal timestamp's. */
+export function proposalStateOf(wire: WireAnnotation): ProposalState {
+  const stated = wire['margin:proposalState']
+  if (typeof stated === 'string' && stated in PROPOSAL_STATE_LABELS) {
+    return stated as ProposalState
+  }
+  return text(wire['margin:withdrawnAt']) ? 'withdrawn' : 'pending'
 }
 
 /**
- * Somebody else's note the reader replied to. `pending` until the page has
- * asked; `visible` with the note, `hidden` when the service says it is not
- * there for this reader (gone, or not theirs to read), `unavailable` when the
- * question could not be answered.
+ * What a proposal changes, in a line: the text it inserts (`{++…++}` and the
+ * new side of `{~~old~>new~~}`); for one that only deletes, "Deletes:" and
+ * what it deletes. Cut to `SUMMARY_LENGTH` code points. `null` when the markup
+ * cannot be parsed, which the page shows as "Proposed change".
+ */
+export function proposalSummary(body: string): string | null {
+  const inserted: string[] = []
+  const deleted: string[] = []
+  try {
+    for (const hunk of parseHunks(body)) {
+      for (const segment of parseCriticMarkup(hunk.criticMarkup)) {
+        if (segment.kind === 'insert') inserted.push(segment.text)
+        else if (segment.kind === 'delete') deleted.push(segment.text)
+        else if (segment.kind === 'substitute') {
+          inserted.push(segment.new)
+          deleted.push(segment.old)
+        }
+      }
+    }
+  } catch {
+    return null
+  }
+  const squash = (parts: string[]) => parts.join(' ').replace(/\s+/g, ' ').trim()
+  const insertedText = squash(inserted)
+  if (insertedText) return prefixByCodePoints(insertedText, SUMMARY_LENGTH)
+  const deletedText = squash(deleted)
+  if (deletedText) return `Deletes: ${prefixByCodePoints(deletedText, SUMMARY_LENGTH)}`
+  return null
+}
+
+export type OverviewColor = { role: HighlightRole; label: string }
+
+function colorFor(stored: unknown): OverviewColor {
+  const role = highlightRole(typeof stored === 'string' ? stored : null)
+  return { role, label: HIGHLIGHT_ROLE_LABELS[role] }
+}
+
+/** Fields by kind: each kind has exactly what the wire gives it. */
+export type OverviewFields =
+  | { kind: 'highlight'; color: OverviewColor }
+  | { kind: 'note'; body: string; color: OverviewColor | null; deleted: false }
+  | { kind: 'note'; deleted: true }
+  | { kind: 'sketch'; note: string; sketch: Sketch }
+  | { kind: 'proposal'; summary: string | null; state: ProposalState }
+
+/**
+ * Somebody else's annotation the reader replied to. `pending` until the page
+ * has asked; `visible` with what the service returned; `failed` when it could
+ * not be read (offline, an error), and the reader's replies stand on their own.
  */
 export type ForeignParent =
-  | { id: string; state: 'pending' | 'hidden' | 'unavailable' }
+  | { id: string; state: 'pending' | 'failed' }
   | {
       id: string
       state: 'visible'
       creatorName: string
       quote: string
-      body: string
+      body: string | null
       deleted: boolean
+      /** Set when the parent is itself a reply: its thread lives at `threadHref`. */
+      isReply: boolean
+      threadHref: string
     }
 
 export type OverviewEntry = {
@@ -97,22 +167,17 @@ export type OverviewEntry = {
   id: string
   kind: OverviewKind
   quote: string
-  /** The note's text, a sketch's caption, or a proposal's CriticMarkup; '' for a highlight. */
-  body: string
-  sketch: Sketch | null
-  color: { role: HighlightRole; label: string } | null
   created: string
-  visibility: 'public' | 'private'
-  proposalState: ProposalState | null
-  deleted: boolean
-  /** Set when the entry is somebody else's note holding the reader's replies. */
+  /** Absent on a foreign entry: the reader's rows are its replies. */
+  fields: OverviewFields | null
   foreign: ForeignParent | null
-  replies: OverviewReply[]
-  /** The page the annotation is on. */
+  /** The reader's replies under it, in the rail's flattened order. */
+  thread: ThreadEntry[]
+  /** The stored document's path. */
   path: string
-  /** That page, with `?annotation=<id>` of the reader's own row: the rail lands on it. */
+  /** Its stored document with `annotation=<id>` of the reader's own row. */
   href: string
-  /** The reader's row as the service sent it, for re-anchoring and for the parent lookup. */
+  /** The reader's row this entry links to, as the service sent it. */
   wire: WireAnnotation
 }
 
@@ -130,6 +195,7 @@ export type WireAnnotation = {
   'margin:parentId'?: unknown
   'margin:deleted'?: unknown
   'margin:withdrawnAt'?: unknown
+  'margin:proposalState'?: unknown
   'margin:creatorName'?: unknown
 }
 
@@ -155,78 +221,40 @@ export function documentPath(wire: WireAnnotation): string | null {
   }
 }
 
-/** A proposal's change as a reader writes it: each hunk's CriticMarkup. */
-function proposalText(body: string): string {
-  try {
-    return parseHunks(body)
-      .map((hunk) => hunk.criticMarkup)
-      .join('\n\n')
-  } catch {
-    // A proposal from before hunks were stored is free text already.
-    return body
-  }
+/**
+ * The stored document with `annotation=<id>` added, as a same-site link: an
+ * existing query and fragment survive. `/mine` is scoped to this site, so the
+ * origin is this page's.
+ */
+export function linkTo(source: string, id: string): string {
+  const url = new URL(source)
+  url.searchParams.set('annotation', id)
+  return `${url.pathname}${url.search}${url.hash}`
 }
 
-function replyFor(wire: WireAnnotation, id: string): OverviewReply {
-  const deleted = wire['margin:deleted'] === true
-  return {
-    id,
-    body: deleted ? DELETED_REPLY_TEXT : noteText(text(wire.body?.value)),
-    created: text(wire.created),
-    deleted,
-  }
-}
-
-function entryFor(wire: WireAnnotation, path: string, id: string): OverviewEntry | null {
+function fieldsFor(wire: WireAnnotation): OverviewFields | null {
   const motivation = text(wire.motivation)
-  const deleted = wire['margin:deleted'] === true
-  const raw = text(wire.body?.value)
-  const sketch = motivation === 'commenting' && !deleted ? decodeSketch(raw) : null
-  const kind: OverviewKind | null =
-    motivation === 'highlighting'
-      ? 'highlight'
-      : motivation === 'editing'
-        ? 'proposal'
-        : motivation === 'commenting'
-          ? sketch
-            ? 'sketch'
-            : 'note'
-          : null
-  if (!kind) return null
-  const stored = text(wire['margin:color'])
-  const color =
-    kind === 'highlight' || (kind !== 'proposal' && stored)
-      ? { role: highlightRole(stored), label: HIGHLIGHT_ROLE_LABELS[highlightRole(stored)] }
-      : null
-  return {
-    id,
-    kind,
-    quote: quoteOf(wire),
-    body:
-      kind === 'highlight'
-        ? ''
-        : deleted
-          ? DELETED_NOTE_TEXT
-          : kind === 'proposal'
-            ? proposalText(raw)
-            : noteText(raw),
-    sketch,
-    color,
-    created: text(wire.created),
-    visibility: wire['margin:visibility'] === 'public' ? 'public' : 'private',
-    proposalState:
-      kind === 'proposal' ? (text(wire['margin:withdrawnAt']) ? 'withdrawn' : 'pending') : null,
-    deleted,
-    foreign: null,
-    replies: [],
-    path,
-    href: hrefFor(path, id),
-    wire,
+  if (motivation === 'highlighting') {
+    return { kind: 'highlight', color: colorFor(wire['margin:color']) }
   }
-}
-
-function hrefFor(path: string, id: string): string {
-  return `${path}?annotation=${encodeURIComponent(id)}`
+  if (motivation === 'editing') {
+    return {
+      kind: 'proposal',
+      summary: proposalSummary(text(wire.body?.value)),
+      state: proposalStateOf(wire),
+    }
+  }
+  if (motivation !== 'commenting') return null
+  if (wire['margin:deleted'] === true) return { kind: 'note', deleted: true }
+  const raw = text(wire.body?.value)
+  const sketch = decodeSketch(raw)
+  if (sketch) return { kind: 'sketch', note: sketch.note, sketch }
+  return {
+    kind: 'note',
+    body: noteText(raw),
+    color: wire['margin:color'] === undefined ? null : colorFor(wire['margin:color']),
+    deleted: false,
+  }
 }
 
 /**
@@ -251,72 +279,75 @@ export function buildOverview(
   for (const group of nodes) byPath.set(group.page.path, group)
   const groupFor = (path: string) => byPath.get(path) ?? other
 
-  const byId = new Map<string, OverviewEntry>()
-  const replies: { wire: WireAnnotation; id: string; parentId: string; path: string }[] = []
+  const roots = new Map<string, OverviewEntry>()
+  const replies: { reply: ThreadReply; wire: WireAnnotation; path: string }[] = []
 
   for (const wire of wires) {
     const id = serverIdFromIri(text(wire.id))
     const path = documentPath(wire)
     if (!id || !path) continue
-    const parent = text(wire['margin:parentId'])
-    if (parent) {
-      replies.push({ wire, id, parentId: serverIdFromIri(parent), path })
+    // The rail's own reading of a reply.
+    const reply = replyFromWebAnnotation(wire, null)
+    if (reply) {
+      replies.push({ reply, wire, path })
       continue
     }
-    const entry = entryFor(wire, path, id)
-    if (!entry) continue
-    byId.set(id, entry)
+    // A row that names a parent but that the rail cannot read as a reply is
+    // still the reader's: it stands as an entry of its own, never dropped.
+    const fields = fieldsFor(wire)
+    if (!fields) continue
+    const entry: OverviewEntry = {
+      id,
+      kind: fields.kind,
+      quote: quoteOf(wire),
+      created: text(wire.created),
+      fields,
+      foreign: null,
+      thread: [],
+      path,
+      href: linkTo(text(wire.target?.source), id),
+      wire,
+    }
+    roots.set(id, entry)
     groupFor(path).entries.push(entry)
   }
 
-  // A reply goes under the first of the reader's own annotations up its
-  // chain, however deep the thread. A chain that leaves the reader's rows
-  // ends at somebody else's note: one foreign entry per such note holds every
-  // reply of the reader's under it.
-  const parentOf = new Map(replies.map((reply) => [reply.id, reply.parentId]))
+  // The rail's index over every reply of the reader's. A reply chain that
+  // reaches one of the reader's own roots is that root's thread; one that
+  // leaves the reader's rows ends at somebody else's annotation, and one
+  // foreign entry per such annotation holds the reader's replies under it.
+  const index = indexThreads(replies.map(({ reply }) => reply))
+  const parentOf = new Map(replies.map(({ reply }) => [reply.serverId, reply.parentId]))
   const foreign = new Map<string, OverviewEntry>()
-  for (const reply of replies) {
+  for (const { reply, wire, path } of replies) {
     let rootId = reply.parentId
     const seen = new Set<string>()
-    while (!byId.has(rootId) && parentOf.has(rootId) && !seen.has(rootId)) {
+    while (!roots.has(rootId) && parentOf.has(rootId) && !seen.has(rootId)) {
       seen.add(rootId)
       rootId = parentOf.get(rootId)!
     }
-    const own = byId.get(rootId)
-    if (own) {
-      own.replies.push(replyFor(reply.wire, reply.id))
-      continue
+    if (roots.has(rootId) || foreign.has(rootId)) continue
+    const thread: OverviewEntry = {
+      id: rootId,
+      kind: 'note',
+      quote: quoteOf(wire),
+      created: text(wire.created),
+      fields: null,
+      foreign: { id: rootId, state: 'pending' },
+      thread: [],
+      path,
+      href: linkTo(text(wire.target?.source), reply.serverId),
+      wire,
     }
-    let thread = foreign.get(rootId)
-    if (!thread) {
-      thread = {
-        id: rootId,
-        kind: 'note',
-        quote: quoteOf(reply.wire),
-        body: '',
-        sketch: null,
-        color: null,
-        created: text(reply.wire.created),
-        visibility: reply.wire['margin:visibility'] === 'public' ? 'public' : 'private',
-        proposalState: null,
-        deleted: false,
-        foreign: { id: rootId, state: 'pending' },
-        replies: [],
-        path: reply.path,
-        href: hrefFor(reply.path, reply.id),
-        wire: reply.wire,
-      }
-      foreign.set(rootId, thread)
-      groupFor(reply.path).entries.push(thread)
-    }
-    thread.replies.push(replyFor(reply.wire, reply.id))
+    foreign.set(rootId, thread)
+    groupFor(path).entries.push(thread)
+  }
+  for (const entry of [...roots.values(), ...foreign.values()]) {
+    entry.thread = index.flatten(entry.id)
   }
 
   const groups = [front, ...nodes, other]
-  for (const group of groups) {
-    group.entries.sort(byCreated)
-    for (const entry of group.entries) entry.replies.sort(byCreated)
-  }
+  for (const group of groups) group.entries.sort(byCreated)
   return groups.filter((group) => group.entries.length > 0)
 }
 
@@ -324,39 +355,38 @@ function byCreated(a: { created: string; id: string }, b: { created: string; id:
   return a.created < b.created ? -1 : a.created > b.created ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0
 }
 
-/** The visibility-scoped read of one annotation: the reader's or anybody's public one. */
+/**
+ * The visibility-scoped read of a foreign parent. The item route needs a
+ * scope; the parent is on the same document as the reader's reply, so the
+ * reply's own source is it.
+ */
 export function parentRequestUrl(entry: OverviewEntry): string {
   return `${MARGIN_ROUTE}/annotations/${encodeURIComponent(entry.foreign?.id ?? entry.id)}?source=${encodeURIComponent(text(entry.wire.target?.source))}`
 }
 
-/**
- * What the service said about a foreign parent. A 404 is the same answer for
- * a note that is gone and one this reader may not read, and the page says the
- * same thing for both.
- */
+/** What the service said about a foreign parent. */
 export function resolveForeignParent(
   entry: OverviewEntry,
   response: { status: number; body: unknown } | null,
 ): void {
   if (!entry.foreign) return
   const id = entry.foreign.id
-  if (!response || (response.status >= 500 && response.status <= 599)) {
-    entry.foreign = { id, state: 'unavailable' }
-    return
-  }
-  if (response.status < 200 || response.status > 299) {
-    entry.foreign = { id, state: 'hidden' }
+  if (!response || response.status < 200 || response.status > 299) {
+    entry.foreign = { id, state: 'failed' }
     return
   }
   const wire = (response.body ?? {}) as WireAnnotation
   const deleted = wire['margin:deleted'] === true
+  const source = text(wire.target?.source) || text(entry.wire.target?.source)
   entry.foreign = {
     id,
     state: 'visible',
     creatorName: text(wire['margin:creatorName']) || UNNAMED_PARTICIPANT,
     quote: quoteOf(wire),
-    body: deleted ? DELETED_NOTE_TEXT : noteText(text(wire.body?.value)),
+    body: deleted ? null : noteText(text(wire.body?.value)),
     deleted,
+    isReply: Boolean(text(wire['margin:parentId'])),
+    threadHref: linkTo(source, id),
   }
   if (entry.foreign.quote) entry.quote = entry.foreign.quote
 }
@@ -374,17 +404,31 @@ export function matchesFilter(
   )
 }
 
-/** Every row under `prefix`, following `nextCursor`, with the same loop guard as the rail. */
+export type MineResult =
+  | { status: 'ok'; annotations: WireAnnotation[] }
+  | { status: 'signed-out' }
+  /** The first request failed: nothing is known, which is not "nothing". */
+  | { status: 'failed' }
+  /** A later page failed: `annotations` is what loaded; resume at `cursor`. */
+  | { status: 'partial'; annotations: WireAnnotation[]; cursor: string }
+
+/**
+ * Every row under `prefix`, following `nextCursor`, with the same loop guard
+ * as the rail. `from` resumes after a partial load, at its failed cursor.
+ */
 export async function fetchMine(
   site: string,
   prefix: string,
   fetchImpl: typeof fetch = (...args) => fetch(...args),
-): Promise<{ status: 'ok'; annotations: WireAnnotation[] } | { status: 'signed-out' } | { status: 'failed' }> {
+  from?: string,
+): Promise<MineResult> {
   const annotations: WireAnnotation[] = []
   const cursors = new Set<string>()
-  let cursor: string | undefined
+  let cursor: string | undefined = from
   for (;;) {
     const query = new URLSearchParams({ site, prefix, limit: '200', ...(cursor ? { cursor } : {}) })
+    const failed = (): MineResult =>
+      cursor ? { status: 'partial', annotations, cursor } : { status: 'failed' }
     let response: Response
     try {
       response = await fetchImpl(`${MINE_ROUTE}?${query}`, {
@@ -392,15 +436,17 @@ export async function fetchMine(
         headers: { accept: 'application/json' },
       })
     } catch {
-      return { status: 'failed' }
+      return failed()
     }
-    if (response.status === 401 || response.status === 403) return { status: 'signed-out' }
-    if (!response.ok) return { status: 'failed' }
+    if (!cursor && (response.status === 401 || response.status === 403)) {
+      return { status: 'signed-out' }
+    }
+    if (!response.ok) return failed()
     const body = (await response.json().catch(() => null)) as {
       annotations?: WireAnnotation[]
       nextCursor?: string
     } | null
-    if (!body) return { status: 'failed' }
+    if (!body) return failed()
     annotations.push(...(body.annotations ?? []))
     if (!body.nextCursor || cursors.has(body.nextCursor)) break
     cursors.add(body.nextCursor)

@@ -2,12 +2,16 @@
 /**
  * Every annotation the signed-in reader has made in one book, on one page
  * (issue 073), grouped by chapter in the book's order, each linking back to
- * its spot with `?annotation=<id>`.
+ * its spot with `annotation=<id>`.
  *
  * Static, like every book page: what is built here is the book's shape (its
  * pages, titles and order, from the manifest); the reader's annotations are
  * fetched in the browser from `GET /api/margin/v1/mine`, which returns only
  * the caller's own. Filtering is in the browser too; nothing new is stored.
+ *
+ * Everything that came from storage is inserted as text, never as markup:
+ * quotes, bodies, sketch notes, names, and above all a foreign parent's
+ * quote and body, which another reader wrote.
  *
  * The page mounts no margin of its own: it is about annotations, not
  * something to annotate.
@@ -93,6 +97,10 @@ const data = JSON.stringify({
     <p class="annotations-status" data-annotations-status role="status">
       Loading your annotations…
     </p>
+    <div class="annotations-problem" data-annotations-problem role="alert" hidden>
+      <p data-annotations-problem-text></p>
+      <button type="button" data-annotations-retry>Retry</button>
+    </div>
     <p class="annotations-status" data-annotations-filter-empty hidden>
       Nothing here matches those filters.
     </p>
@@ -104,23 +112,23 @@ const data = JSON.stringify({
 <script>
   import {
     buildOverview,
+    DELETED_NOTE_LABEL,
     fetchMine,
-    HIDDEN_PARENT_TEXT,
     KIND_LABELS,
+    linkTo,
     matchesFilter,
     OTHER_PAGES_ID,
     parentRequestUrl,
     PROPOSAL_STATE_LABELS,
     resolveForeignParent,
+    UNPARSED_PROPOSAL,
     type OverviewEntry,
     type OverviewFilter,
     type OverviewGroup,
     type OverviewPage,
+    type WireAnnotation,
   } from '@/lib/annotations-overview'
-  import { placeAnnotations } from '../../../../packages/margin/src/document'
-  import { readAnchorableBlocks } from '../../../../packages/margin/src/dom/blocks'
   import { ROLE_PALETTE } from '../../../../packages/margin/src/palette'
-  import { recordFromWebAnnotation } from '../../../../packages/margin/src/records'
   import { createSketchSvg, previewAspectRatio } from '../../../../packages/margin/src/sketch'
 
   type PageData = {
@@ -132,6 +140,11 @@ const data = JSON.stringify({
     first: { title: string; path: string } | null
   }
 
+  const LOAD_FAILED = 'Could not load your annotations.'
+  const LOAD_INCOMPLETE =
+    'Some of your annotations could not be loaded, so this list is incomplete.'
+
+  /** Every node this page makes holds text, set as text: nothing is parsed as markup. */
   function el<K extends keyof HTMLElementTagNameMap>(
     tag: K,
     attributes: Record<string, string> = {},
@@ -152,12 +165,109 @@ const data = JSON.stringify({
     return time
   }
 
+  function source(entry: OverviewEntry): string {
+    const value = entry.wire.target?.source
+    return typeof value === 'string' ? value : ''
+  }
+
+  /** The reader's replies, in the rail's flattened order, each linking to itself. */
+  function renderThread(entry: OverviewEntry): HTMLOListElement | null {
+    if (entry.thread.length === 0) return null
+    const list = el('ol', {
+      class: 'annotations-replies',
+      'data-entry-replies': '',
+      'aria-label': 'Your replies',
+    })
+    for (const { reply, indent } of entry.thread) {
+      const item = el('li', { 'data-reply': reply.serverId, 'data-depth': String(indent) })
+      item.style.setProperty('--indent', String(indent))
+      item.append(
+        el('span', { class: reply.deleted ? 'annotations-deleted' : '', 'data-reply-body': '' }, reply.body),
+        ' ',
+        el('a', { href: linkTo(source(entry), reply.serverId), 'data-reply-link': '' }, 'Go to it'),
+      )
+      list.append(item)
+    }
+    return list
+  }
+
+  function swatch(color: { role: string; label: string }): HTMLSpanElement {
+    const span = el(
+      'span',
+      { class: 'annotations-swatch', 'data-entry-color': '', 'data-role': color.role },
+      color.label,
+    )
+    span.style.setProperty('--swatch', ROLE_PALETTE[color.role as keyof typeof ROLE_PALETTE])
+    return span
+  }
+
+  function renderOwn(entry: OverviewEntry): HTMLLIElement {
+    const fields = entry.fields!
+    const deleted = fields.kind === 'note' && fields.deleted
+    const item = el('li', {
+      class: 'annotations-entry',
+      'data-annotation-entry': entry.id,
+      'data-kind': entry.kind,
+    })
+    const meta = el('p', { class: 'annotations-meta' })
+    meta.append(
+      el(
+        'span',
+        { class: 'annotations-kind', 'data-entry-kind': '' },
+        deleted ? DELETED_NOTE_LABEL : KIND_LABELS[entry.kind],
+      ),
+    )
+    if (fields.kind === 'highlight') {
+      item.style.setProperty('--swatch', ROLE_PALETTE[fields.color.role])
+      meta.append(swatch(fields.color))
+    }
+    if (fields.kind === 'note' && !fields.deleted && fields.color) {
+      item.style.setProperty('--swatch', ROLE_PALETTE[fields.color.role])
+      meta.append(swatch(fields.color))
+    }
+    if (fields.kind === 'proposal') {
+      meta.append(
+        el(
+          'span',
+          { class: 'annotations-state', 'data-proposal-state': fields.state },
+          PROPOSAL_STATE_LABELS[fields.state],
+        ),
+      )
+    }
+    meta.append(when(entry.created))
+    item.append(meta)
+
+    if (entry.quote) item.append(el('blockquote', { 'data-entry-quote': '' }, entry.quote))
+    if (fields.kind === 'sketch') {
+      const svg = createSketchSvg(fields.sketch, document)
+      svg.setAttribute('class', 'annotations-sketch')
+      // The rail's own rule, so a stored region cannot stretch this page either.
+      svg.style.aspectRatio = previewAspectRatio(fields.sketch.region)
+      item.append(svg, el('p', { class: 'annotations-body', 'data-entry-body': '' }, fields.note))
+    }
+    if (fields.kind === 'note' && !fields.deleted) {
+      item.append(el('p', { class: 'annotations-body', 'data-entry-body': '' }, fields.body))
+    }
+    if (fields.kind === 'proposal') {
+      item.append(
+        el(
+          'p',
+          { class: 'annotations-body', 'data-proposal-summary': fields.summary === null ? 'none' : '' },
+          fields.summary ?? UNPARSED_PROPOSAL,
+        ),
+      )
+    }
+    const thread = renderThread(entry)
+    if (thread) item.append(thread)
+    item.append(el('a', { href: entry.href, 'data-annotation-link': '' }, 'Go to it →'))
+    return item
+  }
+
   /**
-   * Somebody else's note with the reader's replies under it. Drawn once the
-   * page has asked the service for the note: as that note, marked as someone
-   * else's, when it can be read, and otherwise as a reply to a note the reader
-   * can no longer see. Either way the reader's own replies are listed, and the
-   * link goes to the first of them.
+   * Somebody else's annotation with the reader's replies under it: once the
+   * page has asked for it, shown as theirs; if it could not be read, the
+   * reader's replies stand on their own. Only the one parent is shown; a
+   * parent that is itself a reply links to its whole thread at its spot.
    */
   function renderForeign(entry: OverviewEntry): HTMLLIElement {
     const parent = entry.foreign!
@@ -168,43 +278,39 @@ const data = JSON.stringify({
       'data-foreign-parent': parent.state,
     })
     const meta = el('p', { class: 'annotations-meta' })
-    meta.append(el('span', { class: 'annotations-kind', 'data-entry-kind': '' }, KIND_LABELS[entry.kind]))
     if (parent.state === 'visible') {
       meta.append(
-        el('span', { class: 'annotations-someone', 'data-someone-elses': '' }, `${parent.creatorName}'s, not yours`),
-      )
-    }
-    item.append(meta)
-    if (parent.state === 'visible') {
-      if (parent.quote) item.append(el('blockquote', {}, parent.quote))
-      item.append(
+        el('span', { class: 'annotations-kind', 'data-entry-kind': '' }, parent.deleted ? DELETED_NOTE_LABEL : KIND_LABELS.note),
         el(
-          'p',
-          { class: parent.deleted ? 'annotations-body annotations-deleted' : 'annotations-body', 'data-entry-body': '' },
-          parent.body,
+          'span',
+          { class: 'annotations-someone', 'data-someone-elses': '' },
+          `${parent.creatorName}'s ${parent.isReply ? 'reply' : 'note'}, not yours`,
         ),
       )
     } else {
+      meta.append(el('span', { class: 'annotations-kind', 'data-entry-kind': '' }, 'Your reply'))
+    }
+    meta.append(when(entry.created))
+    item.append(meta)
+    if (entry.quote) item.append(el('blockquote', { 'data-entry-quote': '' }, entry.quote))
+    if (parent.state === 'visible') {
+      if (parent.body !== null) {
+        item.append(el('p', { class: 'annotations-body', 'data-entry-body': '' }, parent.body))
+      }
+      if (parent.isReply) {
+        item.append(el('a', { href: parent.threadHref, 'data-thread-link': '' }, 'See the whole thread →'))
+      }
+    } else if (parent.state === 'failed') {
       item.append(
         el(
           'p',
-          { class: 'annotations-body annotations-hidden-parent', 'data-hidden-parent': '' },
-          parent.state === 'unavailable'
-            ? 'Reply to another reader’s note, which could not be loaded just now'
-            : HIDDEN_PARENT_TEXT,
+          { class: 'annotations-body annotations-quiet', 'data-foreign-failed': '' },
+          'The note this answers could not be loaded just now.',
         ),
       )
-      if (entry.quote) item.append(el('blockquote', {}, entry.quote))
     }
-    const replies = el('ol', {
-      class: 'annotations-replies',
-      'data-entry-replies': '',
-      'aria-label': 'Your replies',
-    })
-    for (const reply of entry.replies) {
-      replies.append(el('li', { 'data-reply': reply.id, title: reply.created }, reply.body))
-    }
-    item.append(replies)
+    const thread = renderThread(entry)
+    if (thread) item.append(thread)
     item.append(el('a', { href: entry.href, 'data-annotation-link': '' }, 'Go to your reply →'))
     return item
   }
@@ -217,60 +323,6 @@ const data = JSON.stringify({
         .querySelector('.annotations-meta')
         ?.append(el('a', { href: entry.path, 'data-entry-page': '' }, entry.path))
     }
-    return item
-  }
-
-  function renderOwn(entry: OverviewEntry): HTMLLIElement {
-    const item = el('li', {
-      class: 'annotations-entry',
-      'data-annotation-entry': entry.id,
-      'data-kind': entry.kind,
-    })
-    if (entry.color) item.style.setProperty('--swatch', ROLE_PALETTE[entry.color.role])
-
-    const meta = el('p', { class: 'annotations-meta' })
-    meta.append(el('span', { class: 'annotations-kind', 'data-entry-kind': '' }, KIND_LABELS[entry.kind]))
-    if (entry.color) {
-      meta.append(el('span', { class: 'annotations-swatch', 'data-entry-color': '' }, entry.color.label))
-    }
-    if (entry.proposalState) {
-      meta.append(
-        el(
-          'span',
-          { class: 'annotations-state', 'data-proposal-state': entry.proposalState },
-          PROPOSAL_STATE_LABELS[entry.proposalState],
-        ),
-      )
-    }
-    meta.append(el('span', {}, entry.visibility === 'public' ? 'Public' : 'Private'))
-    meta.append(when(entry.created))
-    item.append(meta)
-
-    if (entry.quote) item.append(el('blockquote', {}, entry.quote))
-    if (entry.sketch) {
-      const svg = createSketchSvg(entry.sketch, document)
-      svg.setAttribute('class', 'annotations-sketch')
-      // The rail's own rule, so a stored region cannot stretch this page either.
-      svg.style.aspectRatio = previewAspectRatio(entry.sketch.region)
-      item.append(svg)
-    }
-    if (entry.body) {
-      item.append(
-        el(
-          entry.kind === 'proposal' ? 'pre' : 'p',
-          { class: entry.deleted ? 'annotations-body annotations-deleted' : 'annotations-body', 'data-entry-body': '' },
-          entry.body,
-        ),
-      )
-    }
-    if (entry.replies.length > 0) {
-      const replies = el('ol', { class: 'annotations-replies', 'data-entry-replies': '', 'aria-label': 'Replies' })
-      for (const reply of entry.replies) {
-        replies.append(el('li', { 'data-reply': reply.id, title: reply.created }, reply.body))
-      }
-      item.append(replies)
-    }
-    item.append(el('a', { href: entry.href, 'data-annotation-link': '' }, 'Go to it →'))
     return item
   }
 
@@ -294,61 +346,14 @@ const data = JSON.stringify({
   }
 
   /**
-   * Whether each entry still finds its text, by the same resolver the rail
-   * runs, over the chapter as published. One fetch per chapter with entries.
-   * A chapter that cannot be fetched says nothing rather than guess.
-   */
-  async function markChangedText(groups: OverviewGroup[], isCurrent: () => boolean) {
-    await Promise.all(
-      groups.map(async (group) => {
-        let html: string
-        try {
-          const response = await fetch(group.page.path, { headers: { accept: 'text/html' } })
-          if (!response.ok) return
-          html = await response.text()
-        } catch {
-          return
-        }
-        if (!isCurrent()) return
-        const doc = new DOMParser().parseFromString(html, 'text/html')
-        const root = doc.querySelector('[data-reading-column="text"]')
-        if (!root) return
-        const blocks = readAnchorableBlocks(root)
-        for (const entry of group.entries) {
-          const record = recordFromWebAnnotation(entry.wire, null)
-          if (!record) continue
-          const [placed] = placeAnnotations([record.annotation], blocks)
-          if (placed?.placement.status !== 'orphaned') continue
-          const item = document.querySelector(`[data-annotation-entry="${CSS.escape(entry.id)}"]`)
-          if (!item || item.querySelector('[data-text-changed]')) continue
-          item.setAttribute('data-orphaned', '')
-          item
-            .querySelector('.annotations-meta')
-            ?.append(
-              el(
-                'span',
-                {
-                  class: 'annotations-changed',
-                  'data-text-changed': '',
-                  title: 'The passage it was on is no longer in the chapter as it was.',
-                },
-                'Text changed',
-              ),
-            )
-        }
-      }),
-    )
-  }
-
-  /**
-   * Ask for each foreign parent through the visibility-scoped read, once per
-   * note, and redraw its entry with the answer. `/mine` itself stays the
-   * reader's own rows only.
+   * Ask for each foreign parent through the visibility-scoped read, scoped by
+   * the reader's own reply's source, once per parent, and redraw its entry
+   * with the answer. `/mine` itself stays the reader's own rows only.
    */
   async function resolveForeign(groups: OverviewGroup[], isCurrent: () => boolean) {
     const entries = groups.flatMap((group) =>
       group.entries
-        .filter((entry) => entry.foreign)
+        .filter((entry) => entry.foreign?.state === 'pending')
         .map((entry) => ({ entry, other: group.page.id === OTHER_PAGES_ID })),
     )
     await Promise.all(
@@ -365,12 +370,12 @@ const data = JSON.stringify({
         }
         if (!isCurrent()) return
         resolveForeignParent(entry, answer)
-        const current = document.querySelector(
+        const current = document.querySelector<HTMLElement>(
           `[data-annotation-entry="${CSS.escape(entry.id)}"]`,
         )
         if (!current) return
         const next = renderEntry(entry, other)
-        next.hidden = (current as HTMLElement).hidden
+        next.hidden = current.hidden
         current.replaceWith(next)
       }),
     )
@@ -398,6 +403,22 @@ const data = JSON.stringify({
     if (empty) empty.hidden = shown > 0
   }
 
+  /** Signed out is `/auth/me` naming nobody; an unreachable `/auth/me` decides nothing. */
+  async function signedOut(): Promise<boolean> {
+    try {
+      const response = await fetch('/auth/me', {
+        credentials: 'include',
+        headers: { accept: 'application/json' },
+      })
+      if (response.status === 401 || response.status === 403) return true
+      if (!response.ok) return false
+      const me = (await response.json().catch(() => null)) as { principal?: unknown } | null
+      return !me?.principal
+    } catch {
+      return false
+    }
+  }
+
   // Each page view renders at most once, onto its own page.
   let visit = 0
   document.addEventListener('astro:before-preparation', () => {
@@ -411,65 +432,102 @@ const data = JSON.stringify({
     const isCurrent = () => mine === visit
     const data = JSON.parse(holder.textContent) as PageData
     const status = root.querySelector<HTMLElement>('[data-annotations-status]')!
+    const problem = root.querySelector<HTMLElement>('[data-annotations-problem]')!
+    const problemText = root.querySelector<HTMLElement>('[data-annotations-problem-text]')!
+    const retry = root.querySelector<HTMLButtonElement>('[data-annotations-retry]')!
     const list = root.querySelector<HTMLElement>('[data-annotations-list]')!
     const filters = root.querySelector<HTMLElement>('[data-annotations-filters]')!
-
-    const result = await fetchMine(data.site, data.prefix)
-    if (!isCurrent()) return
-
-    if (result.status === 'signed-out') {
-      status.replaceChildren(
-        el('a', { href: `/auth/login?return_to=${encodeURIComponent(data.path)}` }, 'Sign in'),
-        ' to see the highlights, notes, sketches and proposals you have made in this book.',
-      )
-      return
-    }
-    if (result.status === 'failed') {
-      status.textContent = 'Could not load your annotations. Reload to try again.'
-      return
-    }
-
-    const groups = buildOverview(result.annotations, {
-      frontPage: data.frontPage,
-      nodes: data.nodes,
-    })
-    if (groups.length === 0) {
-      status.replaceChildren('You have no annotations in this book yet.')
-      if (data.first) {
-        status.append(
-          ' Start with ',
-          el('a', { href: data.first.path }, data.first.title),
-          ': select any passage to highlight it or add a note.',
-        )
-      }
-      return
-    }
-
-    const count = groups.reduce((total, group) => total + group.entries.length, 0)
-    status.textContent = `${count} ${count === 1 ? 'annotation' : 'annotations'} in ${groups.length} ${groups.length === 1 ? 'place' : 'places'}.`
-    renderGroups(list, groups)
-
     const kind = filters.querySelector<HTMLSelectElement>('[data-filter-kind]')!
     const chapter = filters.querySelector<HTMLSelectElement>('[data-filter-chapter]')!
-    chapter.append(
-      ...groups.map((group) => el('option', { value: group.page.id }, group.page.title)),
-    )
+
+    const showSignIn = () => {
+      problem.hidden = true
+      status.replaceChildren(
+        el('a', { href: `/auth/login?return_to=${encodeURIComponent(data.path)}` }, 'Sign in to see your annotations'),
+        '.',
+      )
+    }
+
+    if (await signedOut()) {
+      if (isCurrent()) showSignIn()
+      return
+    }
+
+    // What has loaded so far, and where a partial load stopped.
+    let rows: WireAnnotation[] = []
+    let resumeAt: string | undefined
+    let groups: OverviewGroup[] = []
+
     const update = () =>
-      applyFilter(root, groups, {
-        kind: kind.value as OverviewFilter['kind'],
-        page: chapter.value,
-      })
+      applyFilter(root, groups, { kind: kind.value as OverviewFilter['kind'], page: chapter.value })
     kind.addEventListener('change', update)
     chapter.addEventListener('change', update)
-    filters.hidden = false
-    update()
 
-    // The parents first: a redrawn entry would otherwise lose its marker.
-    await resolveForeign(groups, isCurrent)
-    if (!isCurrent()) return
-    await markChangedText(groups, isCurrent)
+    const render = async () => {
+      groups = buildOverview(rows, { frontPage: data.frontPage, nodes: data.nodes })
+      if (groups.length === 0) {
+        list.replaceChildren()
+        filters.hidden = true
+        status.replaceChildren('You have no annotations in this book yet.')
+        if (data.first) {
+          status.append(
+            ' Start with ',
+            el('a', { href: data.first.path }, data.first.title),
+            ': select any passage to highlight it or add a note.',
+          )
+        }
+        return
+      }
+      const count = groups.reduce((total, group) => total + group.entries.length, 0)
+      status.textContent = `${count} ${count === 1 ? 'annotation' : 'annotations'} in ${groups.length} ${groups.length === 1 ? 'place' : 'places'}.`
+      renderGroups(list, groups)
+      const chosen = chapter.value
+      chapter.replaceChildren(
+        el('option', { value: 'all' }, 'All chapters'),
+        ...groups.map((group) => el('option', { value: group.page.id }, group.page.title)),
+      )
+      chapter.value = groups.some((group) => group.page.id === chosen) ? chosen : 'all'
+      filters.hidden = false
+      update()
+      await resolveForeign(groups, isCurrent)
+    }
+
+    const load = async () => {
+      retry.disabled = true
+      const result = await fetchMine(data.site, data.prefix, undefined, resumeAt)
+      retry.disabled = false
+      if (!isCurrent()) return
+      if (result.status === 'signed-out') {
+        showSignIn()
+        return
+      }
+      if (result.status === 'failed') {
+        // Nothing is known, which is not the same as nothing there.
+        status.textContent = ''
+        problemText.textContent = LOAD_FAILED
+        problem.hidden = false
+        root.setAttribute('data-annotations-state', 'failed')
+        return
+      }
+      rows = [...rows, ...result.annotations]
+      if (result.status === 'partial') {
+        resumeAt = result.cursor
+        problemText.textContent = LOAD_INCOMPLETE
+        problem.hidden = false
+        root.setAttribute('data-annotations-state', 'incomplete')
+      } else {
+        resumeAt = undefined
+        problem.hidden = true
+        root.setAttribute('data-annotations-state', 'complete')
+      }
+      await render()
+    }
+
+    retry.addEventListener('click', () => void load())
+    await load()
   })
 </script>
+
 
 <style is:global>
   .annotations-overview {
@@ -575,10 +633,6 @@ const data = JSON.stringify({
     line-height: 1.5;
   }
 
-  .annotations-entry[data-orphaned] {
-    border-left-style: dashed;
-  }
-
   .annotations-meta {
     display: flex;
     flex-wrap: wrap;
@@ -610,8 +664,7 @@ const data = JSON.stringify({
     background: var(--swatch);
   }
 
-  .annotations-state,
-  .annotations-changed {
+  .annotations-state {
     padding: 0.05rem 0.4rem;
     border: 1px solid currentColor;
     border-radius: 999px;
@@ -619,20 +672,6 @@ const data = JSON.stringify({
 
   .annotations-someone {
     font-style: italic;
-  }
-
-  .annotations-hidden-parent {
-    font-style: italic;
-    color: hsl(var(--muted-foreground));
-  }
-
-  .annotations-changed {
-    color: #b45309;
-    font-weight: 600;
-  }
-
-  html.dark .annotations-changed {
-    color: #fbbf24;
   }
 
   .annotations-entry blockquote {
@@ -679,7 +718,46 @@ const data = JSON.stringify({
     white-space: pre-wrap;
   }
 
-  [data-annotation-link] {
+  .annotations-problem {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.75rem;
+    padding: 0.6rem 0.8rem;
+    border: 1px solid #b45309;
+    border-radius: 6px;
+    font-size: 0.9375rem;
+  }
+
+  .annotations-problem[hidden] {
+    display: none;
+  }
+
+  .annotations-problem button {
+    padding: 0.2rem 0.7rem;
+    border: 1px solid currentColor;
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .annotations-quiet {
+    font-style: italic;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .annotations-replies li {
+    margin-left: calc((var(--indent, 1) - 1) * 0.75rem);
+  }
+
+  .annotations-replies [data-reply-link] {
+    font-size: 0.8125rem;
+  }
+
+  [data-annotation-link],
+  [data-thread-link] {
     justify-self: start;
     font-size: 0.8125rem;
   }

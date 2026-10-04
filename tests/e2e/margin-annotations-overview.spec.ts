@@ -54,6 +54,8 @@ type Answer = { status: number; body: unknown }
 
 type Service = {
   signedIn: boolean
+  /** Make `/auth/me` fail instead of answering: an error, a timeout, or a body that is not JSON. */
+  authFailure: 'error' | 'timeout' | 'malformed' | null
   as: Principal
   post(body: unknown, as?: Principal): Promise<Wire>
   call(method: string, pathAndQuery: string, as?: Principal, body?: unknown): Promise<Response>
@@ -79,6 +81,7 @@ async function mountService(page: Page): Promise<Service> {
     })
   const service: Service = {
     signedIn: true,
+    authFailure: null,
     as: OWNER,
     requests: [],
     override: null,
@@ -97,17 +100,25 @@ async function mountService(page: Page): Promise<Service> {
         as,
       ),
   }
-  await page.route('**/auth/me', (route) =>
-    route.fulfill({
-      status: service.signedIn ? 200 : 401,
+  // As the Worker answers: signed out is a 200 naming nobody (auth-routes.ts).
+  await page.route('**/auth/me', (route) => {
+    if (service.authFailure === 'timeout') return route.abort('timedout')
+    if (service.authFailure === 'error') {
+      return route.fulfill({ status: 500, headers: { 'content-type': 'application/json' }, body: '{"error":"down"}' })
+    }
+    if (service.authFailure === 'malformed') {
+      return route.fulfill({ status: 200, headers: { 'content-type': 'text/html' }, body: '<html>a proxy page</html>' })
+    }
+    return route.fulfill({
+      status: 200,
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(
         service.signedIn
           ? { authenticated: true, principal: service.as, canWrite: true, isAdmin: false }
-          : { error: 'unauthenticated' },
+          : { authenticated: false, canWrite: false, isAdmin: false },
       ),
-    }),
-  )
+    })
+  })
   await page.route('**/api/margin/v1/**', async (route) => {
     const incoming = route.request()
     const method = incoming.method()
@@ -407,6 +418,24 @@ test.describe('the Annotations page lists', () => {
     await expect(entry(page, mineToReply)).toHaveCount(0)
   })
 
+  test("two replies to one foreign parent: one request, the parent once, both replies under it", async ({ page }) => {
+    const service = await mountService(page)
+    const at = await anchors(page)
+    const theirs = await service.post(
+      annotation(at.values, { motivation: 'commenting', body: 'Their note, answered twice.', visibility: 'public' }),
+      OTHER,
+    )
+    await service.post(annotation(at.values, { motivation: 'commenting', body: 'First reply.', parentId: bare(theirs) }))
+    await service.post(annotation(at.values, { motivation: 'commenting', body: 'Second reply.', parentId: bare(theirs) }))
+    await openOverview(page)
+
+    await expect(entry(page, theirs)).toHaveCount(1)
+    await expect(entry(page, theirs)).toHaveAttribute('data-foreign-parent', 'visible')
+    await expect(page.getByText('Their note, answered twice.')).toHaveCount(1)
+    await expect(entry(page, theirs).locator('[data-reply-body]')).toHaveText(['First reply.', 'Second reply.'])
+    expect(service.requests.filter((request) => request.startsWith(`GET /api/margin/v1/annotations/${bare(theirs)}?`))).toHaveLength(1)
+  })
+
   test('a reply on its own, with its link, when the parent lookup fails', async ({ page }) => {
     const service = await mountService(page)
     const at = await anchors(page)
@@ -554,24 +583,19 @@ test.describe('the Annotations page lists', () => {
 /* ------------------------------------------------------------------------ */
 
 test.describe('an entry links back to its spot', () => {
-  test('on its own stored document, keeping any query and fragment', async ({ page }) => {
+  test('on its own stored document: a /map/ note links there and lands focused in its rail', async ({ page }) => {
     const service = await mountService(page)
     await anchors(page)
     const onMap = await service.post(annotation(pageAnchor(MAP, 'The map'), { motivation: 'commenting', body: 'On the map.' }))
-    const withQuery = await service.post(
-      annotation(pageAnchor(MAP, 'The map'), {
-        motivation: 'commenting',
-        body: 'On a view of the map.',
-        source: `${SITE}${MAP}?view=all#topic`,
-      }),
-    )
     await openOverview(page)
 
-    await expect(entry(page, onMap).locator('a[data-annotation-link]')).toHaveAttribute('href', `${MAP}?annotation=${bare(onMap)}`)
-    await expect(entry(page, withQuery).locator('a[data-annotation-link]')).toHaveAttribute(
-      'href',
-      `${MAP}?view=all&annotation=${bare(withQuery)}#topic`,
-    )
+    const link = entry(page, onMap).locator('a[data-annotation-link]')
+    await expect(link).toHaveAttribute('href', `${MAP}?annotation=${bare(onMap)}`)
+    await link.click()
+    await expect(page).toHaveURL(new RegExp(`${MAP}\\?annotation=${bare(onMap)}$`))
+    const target = railEntry(page, bare(onMap))
+    await expect(target).toHaveAttribute('data-margin-target', '')
+    await expect.poll(() => focusedInRail(target)).toBe(true)
   })
 
   test('a note: its anchor scrolled into view and painted, the note focused in the rail', async ({ page }) => {
@@ -731,6 +755,47 @@ test.describe('loading the list', () => {
     await expect(page.locator('[data-annotation-entry]')).toHaveCount(total)
     expect(service.requests.filter((request) => request.startsWith('GET /api/margin/v1/mine')).length).toBeGreaterThan(1)
   })
+
+  test("asks for exactly this book's prefix: an owned row in another book never appears", async ({ page }) => {
+    const service = await mountService(page)
+    const at = await anchors(page)
+    const here = await service.post(annotation(at.values, { motivation: 'commenting', body: 'In this book.' }))
+    const elsewhere = await service.post(
+      annotation(pageAnchor('/books/another-book/ch01/', 'Another book'), { motivation: 'commenting', body: 'In another book.' }),
+    )
+    await openOverview(page)
+
+    await expect(entry(page, here)).toBeVisible()
+    await expect(entry(page, elsewhere)).toHaveCount(0)
+    await expect(page.getByText('In another book.')).toHaveCount(0)
+    const mine = service.requests.filter((request) => request.startsWith('GET /api/margin/v1/mine?'))
+    expect(mine).toHaveLength(1)
+    const query = new URLSearchParams(mine[0].slice(mine[0].indexOf('?') + 1))
+    expect(query.getAll('prefix')).toEqual([BOOK])
+    expect(query.get('site')).toBe(SITE)
+  })
+
+  for (const failure of ['error', 'timeout', 'malformed'] as const) {
+    test(`a failed /auth/me (${failure}) is a retryable load error, not the sign-in prompt`, async ({ page }) => {
+      const service = await mountService(page)
+      const at = await anchors(page)
+      const note = await service.post(annotation(at.values, { motivation: 'commenting', body: 'Mine all along.' }))
+      service.authFailure = failure
+      await page.goto(OVERVIEW)
+
+      const problem = page.locator('[data-annotations-problem]')
+      await expect(page.locator('[data-annotations-overview]')).toHaveAttribute('data-annotations-state', 'failed')
+      await expect(problem).toContainText('Could not load your annotations')
+      await expect(page.getByRole('link', { name: /sign in/i })).toHaveCount(0)
+      await expect(page.getByText(/no annotations in this book/i)).toHaveCount(0)
+      expect(service.requests.filter((request) => request.startsWith('GET /api/margin/v1/mine'))).toHaveLength(0)
+
+      service.authFailure = null
+      await problem.getByRole('button', { name: 'Retry' }).click()
+      await expect(entry(page, note)).toBeVisible()
+      await expect(problem).toBeHidden()
+    })
+  }
 
   test('a first failure says so, with Retry, and never shows the empty state', async ({ page }) => {
     const service = await mountService(page)

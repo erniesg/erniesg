@@ -141,6 +141,8 @@ const data = JSON.stringify({
   }
 
   const LOAD_FAILED = 'Could not load your annotations.'
+  /** How long `/auth/me` may take before the page stops waiting and says so. */
+  const AUTH_TIMEOUT_MS = 10_000
   const LOAD_INCOMPLETE =
     'Some of your annotations could not be loaded, so this list is incomplete.'
 
@@ -346,9 +348,35 @@ const data = JSON.stringify({
   }
 
   /**
+   * Parent lookups, cached per `(source, parentId)` for the page's life, so
+   * any number of replies to one parent, and any number of redraws, cost one
+   * request.
+   */
+  const parentLookups = new Map<string, Promise<{ status: number; body: unknown } | null>>()
+
+  function lookUpParent(entry: OverviewEntry): Promise<{ status: number; body: unknown } | null> {
+    const key = `${source(entry)}\n${entry.foreign?.id ?? entry.id}`
+    let lookup = parentLookups.get(key)
+    if (!lookup) {
+      lookup = fetch(parentRequestUrl(entry), {
+        credentials: 'include',
+        headers: { accept: 'application/json' },
+      })
+        .then(async (response) => ({ status: response.status, body: await response.json().catch(() => null) }))
+        .catch(() => null)
+      parentLookups.set(key, lookup)
+      // A failure is not remembered: Retry, or the next render, asks again.
+      void lookup.then((answer) => {
+        if (!answer || answer.status < 200 || answer.status > 299) parentLookups.delete(key)
+      })
+    }
+    return lookup
+  }
+
+  /**
    * Ask for each foreign parent through the visibility-scoped read, scoped by
-   * the reader's own reply's source, once per parent, and redraw its entry
-   * with the answer. `/mine` itself stays the reader's own rows only.
+   * the reader's own reply's source, and redraw its entry with the answer.
+   * `/mine` itself stays the reader's own rows only.
    */
   async function resolveForeign(groups: OverviewGroup[], isCurrent: () => boolean) {
     const entries = groups.flatMap((group) =>
@@ -358,16 +386,7 @@ const data = JSON.stringify({
     )
     await Promise.all(
       entries.map(async ({ entry, other }) => {
-        let answer: { status: number; body: unknown } | null = null
-        try {
-          const response = await fetch(parentRequestUrl(entry), {
-            credentials: 'include',
-            headers: { accept: 'application/json' },
-          })
-          answer = { status: response.status, body: await response.json().catch(() => null) }
-        } catch {
-          answer = null
-        }
+        const answer = await lookUpParent(entry)
         if (!isCurrent()) return
         resolveForeignParent(entry, answer)
         const current = document.querySelector<HTMLElement>(
@@ -403,19 +422,29 @@ const data = JSON.stringify({
     if (empty) empty.hidden = shown > 0
   }
 
-  /** Signed out is `/auth/me` naming nobody; an unreachable `/auth/me` decides nothing. */
-  async function signedOut(): Promise<boolean> {
+  /**
+   * Who is reading. Only a successful `/auth/me` that names nobody is signed
+   * out; an error status, a timeout or a body that is not the expected JSON
+   * is a failure to find out, which the page says, with Retry, rather than
+   * asking someone who may well be signed in to sign in.
+   */
+  async function reader(): Promise<'signed-in' | 'signed-out' | 'failed'> {
+    const abort = new AbortController()
+    const timer = window.setTimeout(() => abort.abort(), AUTH_TIMEOUT_MS)
     try {
       const response = await fetch('/auth/me', {
         credentials: 'include',
         headers: { accept: 'application/json' },
+        signal: abort.signal,
       })
-      if (response.status === 401 || response.status === 403) return true
-      if (!response.ok) return false
-      const me = (await response.json().catch(() => null)) as { principal?: unknown } | null
-      return !me?.principal
+      if (!response.ok) return 'failed'
+      const me = (await response.json()) as unknown
+      if (!me || typeof me !== 'object' || Array.isArray(me)) return 'failed'
+      return (me as { principal?: unknown }).principal ? 'signed-in' : 'signed-out'
     } catch {
-      return false
+      return 'failed'
+    } finally {
+      window.clearTimeout(timer)
     }
   }
 
@@ -448,9 +477,12 @@ const data = JSON.stringify({
       )
     }
 
-    if (await signedOut()) {
-      if (isCurrent()) showSignIn()
-      return
+    const showFailure = () => {
+      // Nothing is known, which is not the same as nothing there.
+      status.textContent = ''
+      problemText.textContent = LOAD_FAILED
+      problem.hidden = false
+      root.setAttribute('data-annotations-state', 'failed')
     }
 
     // What has loaded so far, and where a partial load stopped.
@@ -492,23 +524,30 @@ const data = JSON.stringify({
       await resolveForeign(groups, isCurrent)
     }
 
+    // Whether `/auth/me` has said who is reading yet.
+    let known = false
+
     const load = async () => {
       retry.disabled = true
-      const result = await fetchMine(data.site, data.prefix, undefined, resumeAt)
-      retry.disabled = false
-      if (!isCurrent()) return
-      if (result.status === 'signed-out') {
-        showSignIn()
-        return
+      try {
+        if (!known) {
+          const who = await reader()
+          if (!isCurrent()) return
+          if (who === 'failed') return showFailure()
+          if (who === 'signed-out') return showSignIn()
+          known = true
+        }
+        const result = await fetchMine(data.site, data.prefix, undefined, resumeAt)
+        if (!isCurrent()) return
+        if (result.status === 'signed-out') return showSignIn()
+        if (result.status === 'failed') return showFailure()
+        await settle(result)
+      } finally {
+        retry.disabled = false
       }
-      if (result.status === 'failed') {
-        // Nothing is known, which is not the same as nothing there.
-        status.textContent = ''
-        problemText.textContent = LOAD_FAILED
-        problem.hidden = false
-        root.setAttribute('data-annotations-state', 'failed')
-        return
-      }
+    }
+
+    const settle = async (result: Exclude<Awaited<ReturnType<typeof fetchMine>>, { status: 'failed' | 'signed-out' }>) => {
       rows = [...rows, ...result.annotations]
       if (result.status === 'partial') {
         resumeAt = result.cursor

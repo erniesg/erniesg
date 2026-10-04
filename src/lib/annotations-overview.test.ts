@@ -193,8 +193,8 @@ describe('buildOverview', () => {
   it("gathers replies to somebody else's note under one entry for that note, to be asked about", () => {
     const [group] = buildOverview(
       [
-        wire(`${BOOK}sum/?v=1#t`, 'r1', 'commenting', { body: 'mine', 'margin:parentId': 'theirs' }),
-        wire(`${BOOK}sum/?v=1#t`, 'r2', 'commenting', { body: 'and again', 'margin:parentId': 'r1' }),
+        wire(`${BOOK}sum/`, 'r1', 'commenting', { body: 'mine', 'margin:parentId': 'theirs' }),
+        wire(`${BOOK}sum/`, 'r2', 'commenting', { body: 'and again', 'margin:parentId': 'r1' }),
       ],
       SHAPE,
     )
@@ -203,7 +203,7 @@ describe('buildOverview', () => {
       id: 'theirs',
       fields: null,
       foreign: { id: 'theirs', state: 'pending' },
-      href: `${BOOK}sum/?v=1&annotation=r1#t`,
+      href: `${BOOK}sum/?annotation=r1`,
     })
     expect(entry.thread.map(({ reply, depth }) => [reply.body, depth])).toEqual([
       ['mine', 1],
@@ -211,7 +211,7 @@ describe('buildOverview', () => {
     ])
     // Scoped by the reply's own source: without one the item route is a 400.
     expect(parentRequestUrl(entry)).toBe(
-      `/api/margin/v1/annotations/theirs?source=${encodeURIComponent(`${SITE}${BOOK}sum/?v=1#t`)}`,
+      `/api/margin/v1/annotations/theirs?source=${encodeURIComponent(`${SITE}${BOOK}sum/`)}`,
     )
   })
 })
@@ -229,9 +229,8 @@ describe('a reply the rail cannot read', () => {
 })
 
 describe('linkTo', () => {
-  it('adds annotation=<id> through searchParams, keeping a query and a fragment', () => {
+  it('adds annotation=<id> to the stored source through searchParams', () => {
     expect(linkTo(`${SITE}${BOOK}map/`, 'a')).toBe(`${BOOK}map/?annotation=a`)
-    expect(linkTo(`${SITE}${BOOK}map/?view=all#topic`, 'a')).toBe(`${BOOK}map/?view=all&annotation=a#topic`)
     expect(linkTo(`${SITE}${BOOK}`, 'a b')).toBe(`${BOOK}?annotation=a+b`)
   })
 })

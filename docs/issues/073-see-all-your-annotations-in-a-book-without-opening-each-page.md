@@ -74,9 +74,10 @@ chapter in book order, and each entry links back to its exact spot.
        (`{++…++}` and the new side of `{~~old~>new~~}`, using the existing
        parser in `src/annotations/criticmarkup.ts`), cut to 120 characters on
        code-point boundaries. A proposal that only deletes shows "Deletes:"
-       and the deleted text, cut the same way. If its markup cannot be parsed,
-       the row shows "Proposed change" with no summary rather than breaking
-       the page. A proposal has no colour.
+       and the deleted text, cut the same way. If its markup cannot be
+       parsed, or yields no inserted or deleted text, the row shows
+       "Proposed change" with no summary rather than a blank entry or a
+       broken page. A proposal has no colour.
    - A sketch shows a small read-only SVG drawn with `decodeSketch` from
      `packages/margin`. A malformed sketch shows as a plain note, the same
      rule the rail uses.
@@ -115,9 +116,10 @@ chapter in book order, and each entry links back to its exact spot.
      above all a foreign parent's body and quote, which another reader
      wrote. The Worker checks their shape and length but does not sanitise
      markup.
-   - A note the reader deleted while replies still hang from it is kept as a
-     tombstone (`margin:deleted`, no body). It shows as "Deleted note", with
-     no body, and its replies stay nested under it.
+   - A deleted note with replies is kept as a tombstone (`margin:deleted`,
+     no body), whoever wrote it. It shows as "Deleted note", with no body,
+     and its replies stay nested under it. That covers the reader's own
+     notes and a fetched foreign parent alike.
 3. **Back to the spot.** Each entry links to its own stored document
    (`target.source`) with `annotation=<id>` added through `URL`
    `searchParams`. Every page mounts the rail with its canonical

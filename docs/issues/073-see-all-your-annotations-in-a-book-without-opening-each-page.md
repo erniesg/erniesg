@@ -45,8 +45,9 @@ chapter in book order, and each entry links back to its exact spot.
    - `prefix` must be an absolute path that starts and ends with `/`.
      Anything else is 400.
    - The query is served by an index on
-     `(creator, site, document, created, id)`, added by one migration,
-     `0005_margin_owner_keyset_index.sql`. The existing
+     `(creator, site, document, created, id)`, added by one migration with
+     the next free number in `migrations/` (`NNNN_margin_owner_keyset_index.sql`;
+     0005 today, later if 060's migration lands first). The existing
      `margin_annotations_owner` index ends at `document`, so the keyset order
      would need a temporary sort of every matching row on each page. The
      migration only adds an index.
@@ -61,17 +62,18 @@ chapter in book order, and each entry links back to its exact spot.
    - Each entry shows its kind, the quoted text and the date, plus only the
      fields that kind carries on the wire. Nothing is invented for a missing
      field:
-     - highlight: its colour; a highlight saved without `margin:color` shows
-       the default the rail paints it with (`DEFAULT_HIGHLIGHT_ROLE` in
-       `packages/margin/src/palette.ts`), so it looks the same in both places.
-       It has no body;
+     - highlight: its colour, passed through the rail's own `highlightRole()`
+       (`packages/margin/src/palette.ts`), so a missing, legacy or unknown
+       `margin:color` shows exactly the swatch the rail paints. It has no
+       body;
      - note: its body, and its colour if it has one;
      - sketch: its note text and the preview below;
      - proposal: a summary of the proposed change and its state. The summary
        is the proposal body's CriticMarkup reduced to its inserted text
        (`{++…++}` and the new side of `{~~old~>new~~}`, using the existing
        parser in `src/annotations/criticmarkup.ts`), cut to 120 characters on
-       code-point boundaries. A proposal has no colour.
+       code-point boundaries. A proposal that only deletes shows "Deletes:"
+       and the deleted text, cut the same way. A proposal has no colour.
    - A sketch shows a small read-only SVG drawn with `decodeSketch` from
      `packages/margin`. A malformed sketch shows as a plain note, the same
      rule the rail uses.
@@ -87,6 +89,9 @@ chapter in book order, and each entry links back to its exact spot.
      test for the other states stubs the `/mine` response: rows carrying
      `margin:proposalState` for every 060 state, each shown with its label.
      Producing those rows for real is 060's work, and 060's tests cover it.
+   - Threads are built with the rail's own `packages/margin/src/threads.ts`
+     (`replyFromWebAnnotation`, `indexThreads`, `flattenThread`), so the
+     overview nests replies exactly as the rail does, at any depth.
    - Replies show under their parent when the parent is also the reader's.
      A reply to **someone else's** note must not pull that note into
      `/mine`, which stays owner-only. The page fetches each such parent
@@ -97,7 +102,10 @@ chapter in book order, and each entry links back to its exact spot.
      invisible to a reply's author: migration 0001's triggers refuse a reply
      to someone else's private note and refuse making a replied-to note
      private.) If the lookup fails, for example offline, the reply shows on
-     its own with its link back to the spot.
+     its own with its link back to the spot. When the fetched parent is
+     itself a reply, the overview shows just that one parent above the
+     reader's reply, with a link to the full thread at its spot. It does not
+     walk the rest of a foreign thread.
    - **Everything from storage is inserted as text** (`textContent` or
      equivalent), never as HTML: quotes, note bodies, sketch notes, and
      above all a foreign parent's body and quote, which another reader
@@ -144,7 +152,7 @@ chapter in book order, and each entry links back to its exact spot.
     seeded to show a sibling book can never match;
   - rows on another site, or outside the prefix, are excluded;
   - `EXPLAIN QUERY PLAN` for the `/mine` query (first page and a cursor
-    page) uses the 0005 index, never scans `margin_annotations`, and has no
+    page) uses the owner-keyset index, never scans `margin_annotations`, and has no
     `USE TEMP B-TREE`, following `pagination-plan.test.ts`.
 - `tests/e2e/margin-annotations-overview.spec.ts`, with the same in-process
   router pattern as `tests/e2e/margin-edit-mode.spec.ts`, served from the
@@ -165,6 +173,11 @@ chapter in book order, and each entry links back to its exact spot.
   - the reader's reply to their own note shows nested under it;
   - a reply to another reader's public note fetches the parent with
     `?source=` set to the reply's own source, as checked on the request;
+    a reply to another reader's public *reply* shows that one parent reply
+    above it, with the thread link;
+  - a highlight stored with a legacy colour (`amber`) and one with an
+    unknown value show the swatches `highlightRole()` gives them;
+  - a deletion-only proposal shows "Deletes:" and its deleted text;
   - a reply to another reader's public note shows under that note, marked as
     theirs; when that parent lookup fails (the route answers 500), the reply
     shows on its own with its link;
@@ -235,7 +248,8 @@ links into the rail, and the book-bar link.
 
 ## Stop conditions
 
-- Stop before adding any migration other than 0005's index, or any table.
+- Stop before adding any migration other than the one owner-keyset index,
+  or any table.
 - Stop before `/mine` returns any annotation the viewer did not create.
   Showing a foreign parent fetched through the visibility-scoped
   `GET /annotations/:id` (criterion 2) is not listing it.
@@ -256,7 +270,7 @@ not by widening the API.
 Add `listOwnAnnotationsQuery(site, prefix, creator, page)` beside
 `listAnnotationsQuery` in `src/worker/margin/queries.ts`. Use
 `creator = ? AND site = ? AND document >= ? AND document < ?`, with the
-prefix's upper bound made by incrementing its last character, so 0005's
+prefix's upper bound made by incrementing its last character, so the new
 `(creator, site, document, created, id)` index serves both the range and the
 order `(document, created, id)`. Route it as `GET /mine` in `routes.ts` with
 the existing `readPage`, and a cursor encoder that carries `document`. The page is an Astro route,

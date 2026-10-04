@@ -129,8 +129,7 @@ SUPPORT_NOTES = {
     "worked": "",
     "guided": "",
     "contract": "",
-    "unaided": "No hints on this one, on purpose: it tells you whether the chapter stuck. "
-               "The worked solution unlocks when all four tiers are green.",
+    "unaided": "Try it before viewing the solution.",
 }
 RUNG_LABELS = ("a nudge", "a direction", "the shape of it", "most of the way")
 FIGURE_TYPES = ("cells", "walk", "links", "table", "cost")
@@ -143,9 +142,7 @@ SUPPORT_NOTES_READER = {
     "contract": "The worked solution is below.",
     # `validate.py` refuses a hint block on an unaided challenge, so this one
     # must not offer any: there is a worked solution below and nothing else.
-    "unaided": "No hints on this one — that is what makes it the one that "
-               "tells you whether it stuck. The worked solution is below, for "
-               "after yours runs.",
+    "unaided": "Try it before viewing the solution.",
 }
 
 # What print says. Spec 066 drops the `worked` and `guided` notes on the web,
@@ -1009,7 +1006,7 @@ td code, th code { white-space:nowrap; }
   padding:12px 0 14px; margin:1.6rem 0 1.2rem; }
 .problem-name { font:600 1rem ui-sans-serif,system-ui; margin:0 0 .2rem; }
 .problem-summary { margin:0 0 .7rem; font-style:italic; }
-.io-row { margin:.15rem 0 .15rem 1.2rem; }
+.io-row { max-width:36rem; margin:.15rem 0; }
 .io-key { font-weight:600; }
 .labelled { margin:.9rem 0; }
 .labelled > p:first-child { display:inline; }

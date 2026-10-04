@@ -89,9 +89,9 @@ test('a figure explains itself above, not below', async ({ page }) => {
   expect(lead!.y).toBeLessThan(body!.y)
 })
 
-test('an unaided challenge says up front that it has no hints', async ({ page }) => {
+test('an unaided challenge uses a short solution reminder', async ({ page }) => {
   await page.goto('/cut-them-all-the-same')
-  await expect(page.locator('.support-unaided')).toContainText('No hints on this one')
+  await expect(page.locator('.support-unaided')).toHaveText('Try it before viewing the solution.')
 })
 
 test('contents list chapters with their practice nested under them', async ({ page }) => {

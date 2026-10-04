@@ -41,6 +41,18 @@ class PrintSupportNotes(unittest.TestCase):
         for level in render.SUPPORT_LEVELS:
             self.assertTrue(render.SUPPORT_NOTES_PRINT.get(level, "").strip(), level)
 
+    def test_unaided_reminder_is_short_in_every_output(self):
+        _, order = render.load_book()
+        for node in order:
+            if node.get("support") != "unaided":
+                continue
+            for target, reveal in (("web", "reader"), ("web", "grader"), ("print", "reader")):
+                with self.subTest(node=node["id"], target=target, reveal=reveal):
+                    markup = render.render_node(node, target, reveal=reveal)
+                    self.assertIn("Try it before viewing the solution.", markup)
+                    self.assertNotIn("No hints on this one", markup)
+                    self.assertNotIn("tells you whether it stuck", markup)
+
     def test_reader_shortens_contract_support_but_print_keeps_it(self):
         _, order = render.load_book()
         contract = next(node for node in order if node["id"] == "meter-days")

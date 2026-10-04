@@ -68,6 +68,7 @@ solution is for reading after you have written your own. The book ends the same
 way, with a capstone that uses everything.
 
 Your first run will usually fail some tests. Hints are revealed one at a time
-and cost nothing. Read the solution once you have a failing test you
-understand. `python3 books/tools/preview.py` serves this book with the grader
-running behind it.
+and cost nothing. Read the solution only once you have a failing test you
+understand. Where the tiers can run, they hold you to that order:
+`python3 books/tools/preview.py` serves this book with the grader running
+behind it.

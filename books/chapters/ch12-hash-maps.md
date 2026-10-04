@@ -162,7 +162,7 @@ Run that cell twice and the two numbers move slightly. Python picks a random
 seed for hashing text each time it starts, so the same word lands in a
 different slot in a different program. That is deliberate: it stops someone
 sending you a few thousand keys chosen to land in one slot, which would make
-dictionary lookup scan a long collision chain.
+dictionary lookup do many table probes and become slow.
 
 ## The rule has to spread, or none of this works
 

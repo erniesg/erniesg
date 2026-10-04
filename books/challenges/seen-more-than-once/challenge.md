@@ -80,7 +80,7 @@ def count_repeat_visitors(plates):
     return sum(1 for count in seen.values() if count > 1)
 ```
 
-**Count each plate once.** Searching the list for every plate makes 40 billion
+**Process all reads in one pass.** Searching the list for every plate makes 40 billion
 comparisons for 200,000 plates.
 
 Timed, it comes out nearer 500, because `plates.count(...)` does its walking

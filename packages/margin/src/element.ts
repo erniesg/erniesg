@@ -127,6 +127,7 @@ button.quote:hover { text-decoration: underline; }
 .controls { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.35rem; }
 .empty, .notice { font-size: 0.8125rem; margin: 0; }
 .notice { font-size: 0.75rem; }
+.floating-notice { position: fixed; right: 1rem; bottom: 4rem; z-index: 55; width: min(24rem, calc(100vw - 2rem)); padding: 0.75rem; border: 1px solid currentColor; border-radius: 0.4rem; background: var(--margin-surface, Canvas); color: var(--margin-ink, CanvasText); box-shadow: 0 2px 10px rgb(0 0 0 / 0.2); }
 button, input, textarea { font: inherit; color: inherit; }
 button { font-size: 0.8125rem; cursor: pointer; background: none; border: 1px solid currentColor; border-radius: 0.25rem; padding: 0.2rem 0.55rem; }
 button.quote { border: 0; padding: 0; font-size: inherit; }
@@ -332,13 +333,15 @@ export class MarginRailElement extends ElementBase {
   static #rails = 0
   readonly #namespace = `rail-${(MarginRailElement.#rails += 1)}`
   #shadow: ShadowRoot
+  readonly #container: HTMLDivElement
 
   constructor() {
     super()
     this.#shadow = this.attachShadow({ mode: 'open' })
     const style = document.createElement('style')
     style.textContent = STYLES
-    this.#shadow.append(style, document.createElement('div'))
+    this.#container = document.createElement('div')
+    this.#shadow.append(style, this.#container)
   }
 
   get documentUri(): string {
@@ -1829,8 +1832,9 @@ export class MarginRailElement extends ElementBase {
    * toggled a visibility would find focus thrown back to the page.
    */
   #render() {
-    const container = this.#shadow.lastElementChild
-    if (!container) return
+    // Extensions can append stylesheets to the open shadow root. Always
+    // redraw our own container rather than whichever node happens to be last.
+    const container = this.#container
     const active = this.#shadow.activeElement as HTMLElement | null
     const activeKey = active?.getAttribute('data-focus-key') ?? null
     const caret = isTextField(active)
@@ -1914,7 +1918,7 @@ export class MarginRailElement extends ElementBase {
           'data-margin-action': 'close-rail',
           'data-focus-key': 'close-rail',
         },
-        'Close ×',
+        '×',
       )
       close.addEventListener('click', () => {
         this.#overlayOpen = false
@@ -1981,7 +1985,12 @@ export class MarginRailElement extends ElementBase {
       'data-margin-notice': this.#notice ? 'transport' : undefined,
     })
     live.textContent = this.#notice
-    panel.append(live)
+    if (this.#notice && this.#compact && !this.#overlayOpen) {
+      live.classList.add('floating-notice')
+      nodes.push(live)
+    } else {
+      panel.append(live)
+    }
 
     if (this.#capture.status === 'non-annotatable') {
       panel.append(
@@ -2787,7 +2796,7 @@ export class MarginRailElement extends ElementBase {
         'data-margin-action': 'close-popup',
         'data-focus-key': 'popup-close',
       },
-      '× Close',
+      '×',
     )
     close.addEventListener('click', () =>
       this.#closePopup({ restoreFocus: true }),

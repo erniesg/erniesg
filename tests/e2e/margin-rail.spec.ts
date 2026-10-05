@@ -1414,6 +1414,41 @@ test.describe('the margin rail', () => {
     await expect(page.locator(ENTRY)).toContainText('Save and close.')
   })
 
+  test('a stylesheet added to the shadow root does not trap Save or lose a saved note', async ({ page }) => {
+    const service = await mountService(page)
+    await open(page)
+    const [block] = await proseBlocks(page)
+    await openPopupOn(page, block)
+    await page.locator(`${POPUP} [data-margin-note]`).fill('Keep this after reload.')
+    await page.locator(RAIL).evaluate((rail) => {
+      const link = document.createElement('link')
+      link.rel = 'stylesheet'
+      link.setAttribute('data-extension-stylesheet', '')
+      rail.shadowRoot!.append(link)
+    })
+    await page.locator(`${POPUP} [data-margin-action="save"]`).click()
+    await expect(page.locator(POPUP)).toHaveCount(0)
+    await expect.poll(async () => (await service.rows()).length).toBe(1)
+    expect((await service.rows())[0].body?.value).toBe('Keep this after reload.')
+    await expect(page.locator(`${RAIL} [data-extension-stylesheet]`)).toHaveJSProperty('childElementCount', 0)
+    await page.reload()
+    await page.locator(`${RAIL} [data-margin-action="toggle-rail"]`).click()
+    await expect(page.locator(ENTRY)).toContainText('Keep this after reload.')
+  })
+
+  test('a refused save is visible even with the annotation sidebar closed', async ({ page }) => {
+    const service = await mountService(page)
+    service.as = null
+    await open(page)
+    const [block] = await proseBlocks(page)
+    await openPopupOn(page, block)
+    await page.locator(`${POPUP} [data-margin-note]`).fill('Unsaved note.')
+    await page.locator(`${POPUP} [data-margin-action="save"]`).click()
+    await expect(page.locator(POPUP)).toHaveCount(0)
+    await expect(page.locator(`${RAIL} [data-margin-notice="transport"]:visible`)).toContainText('Not saved: sign in')
+    expect(await service.rows()).toHaveLength(0)
+  })
+
   test('a selection change while the popup is open does not replace its Cancel control', async ({
     page,
   }) => {

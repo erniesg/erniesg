@@ -1438,7 +1438,8 @@ test.describe('the margin rail', () => {
   test('a refused save is visible even with the annotation sidebar closed', async ({ page }) => {
     const service = await mountService(page)
     service.as = null
-    await open(page)
+    await open(page, 375)
+    await expect(page.locator(`${RAIL} .panel[data-overlay]`)).toBeHidden()
     const [block] = await proseBlocks(page)
     await openPopupOn(page, block)
     await page.locator(`${POPUP} [data-margin-note]`).fill('Unsaved note.')

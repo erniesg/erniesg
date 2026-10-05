@@ -89,10 +89,8 @@ out, and the only other shape in your hands that beats it is a sort.
 :::
 
 :::hint{level=2}
-Here is the fact that makes sorting worth its 3.4 million steps. If two times
-are the closest pair on the board, then once the times are in order there is
-nothing that can sit between them. Which means they end up **next to each
-other**, and you only ever have to look at neighbours.
+After sorting, the closest two times must be **next to each other**. A time
+between them would be closer to one of them. Check only neighbouring times.
 :::
 
 :::hint{level=3}
@@ -124,15 +122,13 @@ not have been the closest pair. So nothing can be between them: in the sorted
 list they are side by side. Checking 199,999 neighbouring pairs answers a
 question that looked like it needed 20 billion.
 
-This is the shape to remember from this chapter. Sorting did not find the
-answer. It made a stupid question cheap, and it is worth its n log n whenever
-it does that.
+Sorting does not find the answer. It puts the closest pair next to each other,
+so one scan can find it.
 
 **Counting it.** Sorting 200,000 numbers is about 3.4 million comparison-steps
 and measures at three hundredths of a second, all of it inside C. The walk
-afterwards is 200,000 subtractions. Total: under a twentieth of a second,
-against twenty minutes for the every-pair version — which is correct, and is
-still running.
+afterwards is 200,000 subtractions. The every-pair version takes about twenty
+minutes.
 
 **The rider numbers are the trap, and they are deliberate.** `sorted(ascents)`
 compiles perfectly and returns a list in rider-number order. It then reports

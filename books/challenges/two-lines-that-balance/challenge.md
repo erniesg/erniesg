@@ -122,14 +122,12 @@ would have to be — `target - amount`, one subtraction — and ask whether you
 have met it. That turns "find something" into "is this in here", which is the
 one question a hash set answers without looking at its contents.
 
-This is worth naming, because it comes up constantly: **a key you look up does
-not have to be a key you deliberately stored.** Anything you can compute is a
-key. Here the computed key is the missing half of a sum.
+**A lookup key can be computed.** Here, `target - amount` is the missing half
+of the sum. The set can look it up even though the code did not store that
+specific value.
 
-**Why one pass is enough for "earliest".** Walking top to bottom, the first
-time the question comes back yes is by definition the first line that completes
-a pair. There is nothing to compare afterwards and nothing to keep track of but
-the set.
+**One pass finds the earliest line.** Walking top to bottom, the first `True`
+result is the first line that completes a pair.
 
 **The order of those two lines.** `if` first, `add` second. Reverse them and
 the current line is already in the set when you ask about it, so a line worth
@@ -138,8 +136,7 @@ whole test, and it is the reason the edge tier holds it.
 
 **Counting it.** One subtraction, one set lookup and one set insert per line.
 At 200,000 lines that is under a million steps and measures at under two
-hundredths of a second. The every-pair version, run on the same file, is still
-going nine minutes later.
+hundredths of a second. The every-pair version takes about nine minutes.
 
 **What the negative amounts are doing in the constraints.** They stop you
 pruning. With only positive amounts you could skip any line above the target
@@ -147,8 +144,6 @@ and the every-pair version might scrape through. With refunds in the file there
 is nothing to skip, and the shape of the answer has to be right rather than
 lucky.
 
-**A near miss worth knowing about.** A dict instead of a set gives you more for
-the same pass — store `amount: position` and you can report *both* lines, not
-just the later one. Same cost, same shape. If anybody is ever going to ask
-which two lines, that is the version to have written.
+**A dictionary can keep both positions.** Store `amount: position` to report
+both lines instead of only the later one. It has the same cost as the set.
 :::

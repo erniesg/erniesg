@@ -41,6 +41,86 @@ class PrintSupportNotes(unittest.TestCase):
         for level in render.SUPPORT_LEVELS:
             self.assertTrue(render.SUPPORT_NOTES_PRINT.get(level, "").strip(), level)
 
+    def test_unaided_reminder_is_short_in_every_output(self):
+        _, order = render.load_book()
+        for node in order:
+            if node.get("support") != "unaided":
+                continue
+            for target, reveal in (("web", "reader"), ("web", "grader"), ("print", "reader")):
+                with self.subTest(node=node["id"], target=target, reveal=reveal):
+                    markup = render.render_node(node, target, reveal=reveal)
+                    self.assertIn("Try it before viewing the solution.", markup)
+                    self.assertNotIn("No hints on this one", markup)
+                    self.assertNotIn("tells you whether it stuck", markup)
+
+    def test_debugger_has_a_print_fallback_and_condensed_web_examples(self):
+        node = render.load_node("ch09-stepping")
+        web = render.render_node(node, "web", reveal="reader")
+        printed = render.render_node(node, "print")
+        self.assertIn("data-pdb-demo", web)
+        self.assertIn('data-margin-annotatable="false"', web)
+        self.assertIn('data-pdb-command-form', web)
+        self.assertIn('<details class="book-example">', web)
+        self.assertNotIn("data-pdb-demo", printed)
+        self.assertNotIn("data-pdb-command-form", printed)
+        self.assertIn("(Pdb) p day", printed)
+        self.assertIn("22985", printed)
+
+    def test_reader_shortens_contract_support_but_print_keeps_it(self):
+        _, order = render.load_book()
+        contract = next(node for node in order if node["id"] == "meter-days")
+
+        reader = render.render_node(contract, "web", runnable=False, reveal="reader")
+        printed = render.render_node(contract, "print")
+
+        self.assertIn('class="support support-contract"', reader)
+        self.assertIn("The worked solution is below.", reader)
+        self.assertNotIn("You get the contract and the tests.", reader)
+        self.assertIn("<details class='hint'>", reader)
+        self.assertIn("<details class='solution'>", reader)
+        self.assertIn('class="support support-contract"', printed)
+        self.assertIn("You get the contract and the tests.", printed)
+        ids = lambda markup: re.findall(r' id="(block-meter-days-[^"]+)"', markup)
+        self.assertEqual(ids(reader), [
+            "block-meter-days-eyebrow-1",
+            "block-meter-days-title-1",
+            "block-meter-days-support-1",
+            "block-meter-days-card-1",
+            "block-meter-days-figure-1",
+            "block-meter-days-desk-1",
+            "block-meter-days-hints-1",
+            "block-meter-days-solution-1",
+        ])
+        previous = render.SUPPORT_NOTES_READER
+        try:
+            render.SUPPORT_NOTES_READER = {
+                **previous,
+                "contract": "You get the contract and the tests. The hints are here, and "
+                            "the worked solution is below when you want it.",
+            }
+            verbose_reader = render.render_node(contract, "web", runnable=False, reveal="reader")
+        finally:
+            render.SUPPORT_NOTES_READER = previous
+        blocks = lambda markup: {
+            (kind, identifier): digest
+            for kind, digest, identifier in re.findall(
+                r'data-block-kind="(\w+)" data-block-digest="([0-9a-f]{12})" '
+                r'id="([^"]+)"',
+                markup,
+            )
+        }
+        concise_blocks = blocks(reader)
+        verbose_blocks = blocks(verbose_reader)
+        self.assertEqual(set(concise_blocks), set(verbose_blocks))
+        self.assertNotEqual(
+            concise_blocks[("support", "block-meter-days-support-1")],
+            verbose_blocks[("support", "block-meter-days-support-1")],
+        )
+        self.assertEqual(
+            {key: digest for key, digest in concise_blocks.items() if key[0] != "support"},
+            {key: digest for key, digest in verbose_blocks.items() if key[0] != "support"},
+        )
+
 
 class LegacyWorkspace(unittest.TestCase):
     """Rule: attempts saved before the rename stay visible after it."""

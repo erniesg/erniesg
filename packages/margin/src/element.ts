@@ -111,6 +111,9 @@ const STYLES = `
 .panel { display: grid; gap: 0.75rem; }
 .panel[data-overlay] { position: fixed; top: 0; right: 0; bottom: 0; z-index: 50; align-content: start; width: min(22rem, 100vw); overflow-y: auto; padding: 1rem; background: var(--margin-surface, Canvas); color: var(--margin-ink, CanvasText); box-shadow: -8px 0 24px rgb(0 0 0 / 0.18); }
 .panel[data-overlay][data-closed] { display: none; }
+.panel-header, .popup-header { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.panel-header { border-bottom: 1px solid currentColor; padding-bottom: 0.5rem; }
+.panel-title { margin: 0; font-size: 1rem; }
 .toggle { position: fixed; right: 1rem; bottom: 1rem; z-index: 40; background: var(--margin-surface, Canvas); color: var(--margin-ink, CanvasText); box-shadow: 0 2px 10px rgb(0 0 0 / 0.2); }
 ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
 li { border-left: 3px solid var(--swatch, currentColor); padding: 0.25rem 0 0.25rem 0.6rem; font-size: 0.8125rem; line-height: 1.45; }
@@ -124,9 +127,11 @@ button.quote:hover { text-decoration: underline; }
 .controls { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.35rem; }
 .empty, .notice { font-size: 0.8125rem; margin: 0; }
 .notice { font-size: 0.75rem; }
+.floating-notice { position: fixed; right: 1rem; bottom: 4rem; z-index: 55; width: min(24rem, calc(100vw - 2rem)); padding: 0.75rem; border: 1px solid currentColor; border-radius: 0.4rem; background: var(--margin-surface, Canvas); color: var(--margin-ink, CanvasText); box-shadow: 0 2px 10px rgb(0 0 0 / 0.2); }
 button, input, textarea { font: inherit; color: inherit; }
 button { font-size: 0.8125rem; cursor: pointer; background: none; border: 1px solid currentColor; border-radius: 0.25rem; padding: 0.2rem 0.55rem; }
 button.quote { border: 0; padding: 0; font-size: inherit; }
+button.dismiss { font-weight: 600; white-space: nowrap; }
 button[disabled], button[aria-disabled='true'] { cursor: default; opacity: 0.55; }
 button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
@@ -328,13 +333,15 @@ export class MarginRailElement extends ElementBase {
   static #rails = 0
   readonly #namespace = `rail-${(MarginRailElement.#rails += 1)}`
   #shadow: ShadowRoot
+  readonly #container: HTMLDivElement
 
   constructor() {
     super()
     this.#shadow = this.attachShadow({ mode: 'open' })
     const style = document.createElement('style')
     style.textContent = STYLES
-    this.#shadow.append(style, document.createElement('div'))
+    this.#container = document.createElement('div')
+    this.#shadow.append(style, this.#container)
   }
 
   get documentUri(): string {
@@ -496,6 +503,21 @@ export class MarginRailElement extends ElementBase {
       // available and unused.
       registryNamespace: this.#namespace,
       onSelection: (capture) => {
+        // A popup owns a snapshot of the reader's range, and the rail's own
+        // controls can take focus while a pointer gesture is in progress. That
+        // focus move can also change the document selection; rebuilding here
+        // replaces the very button receiving the gesture. Keep the capture and
+        // current controls stable until focus returns to the reading text.
+        if (this.#popup || this.#shadow.activeElement) {
+          this.dispatchEvent(
+            new CustomEvent('margin-selection', {
+              detail: capture,
+              bubbles: true,
+              composed: true,
+            }),
+          )
+          return
+        }
         // Focusing one of the rail's own controls fires `selectionchange` too,
         // and a redraw re-focuses — so redrawing on every report is a loop that
         // never lets the rail settle. Only a different capture is news.
@@ -1810,8 +1832,9 @@ export class MarginRailElement extends ElementBase {
    * toggled a visibility would find focus thrown back to the page.
    */
   #render() {
-    const container = this.#shadow.lastElementChild
-    if (!container) return
+    // Extensions can append stylesheets to the open shadow root. Always
+    // redraw our own container rather than whichever node happens to be last.
+    const container = this.#container
     const active = this.#shadow.activeElement as HTMLElement | null
     const activeKey = active?.getAttribute('data-focus-key') ?? null
     const caret = isTextField(active)
@@ -1883,6 +1906,27 @@ export class MarginRailElement extends ElementBase {
         this.#render()
         this.#focusKey('toggle-rail')
       })
+      const header = el(doc, 'div', { class: 'panel-header' })
+      header.append(el(doc, 'h2', { class: 'panel-title' }, 'Annotations'))
+      const close = el(
+        doc,
+        'button',
+        {
+          type: 'button',
+          class: 'dismiss',
+          'aria-label': 'Close annotations',
+          'data-margin-action': 'close-rail',
+          'data-focus-key': 'close-rail',
+        },
+        '×',
+      )
+      close.addEventListener('click', () => {
+        this.#overlayOpen = false
+        this.#render()
+        this.#focusKey('toggle-rail')
+      })
+      header.append(close)
+      panel.append(header)
     }
     nodes.push(panel)
 
@@ -1933,20 +1977,6 @@ export class MarginRailElement extends ElementBase {
       'Arrow up and down move between paragraphs. Shift and arrow keys select; add Alt to select by word. Enter annotates the selection, Escape leaves.',
     )
     actions.append(highlight, annotate, keyboard, help)
-    if (this.#compact) {
-      const close = el(
-        doc,
-        'button',
-        { type: 'button', 'data-focus-key': 'close-rail' },
-        'Close',
-      )
-      close.addEventListener('click', () => {
-        this.#overlayOpen = false
-        this.#render()
-        this.#focusKey('toggle-rail')
-      })
-      actions.append(close)
-    }
     panel.append(actions)
 
     const live = el(doc, 'p', {
@@ -1955,7 +1985,12 @@ export class MarginRailElement extends ElementBase {
       'data-margin-notice': this.#notice ? 'transport' : undefined,
     })
     live.textContent = this.#notice
-    panel.append(live)
+    if (this.#notice && this.#compact && !this.#overlayOpen) {
+      live.classList.add('floating-notice')
+      nodes.push(live)
+    } else {
+      panel.append(live)
+    }
 
     if (this.#capture.status === 'non-annotatable') {
       panel.append(
@@ -2742,7 +2777,8 @@ export class MarginRailElement extends ElementBase {
     dialog.style.top = `${top}px`
     dialog.style.left = `${left}px`
 
-    dialog.append(
+    const header = el(doc, 'div', { class: 'popup-header' })
+    header.append(
       el(
         doc,
         'p',
@@ -2750,6 +2786,23 @@ export class MarginRailElement extends ElementBase {
         `Annotate “${short}”`,
       ),
     )
+    const close = el(
+      doc,
+      'button',
+      {
+        type: 'button',
+        class: 'dismiss',
+        'aria-label': 'Close annotation',
+        'data-margin-action': 'close-popup',
+        'data-focus-key': 'popup-close',
+      },
+      '×',
+    )
+    close.addEventListener('click', () =>
+      this.#closePopup({ restoreFocus: true }),
+    )
+    header.append(close)
+    dialog.append(header)
 
     // Picking a role only marks it. The reader may still write a note, and
     // one Save stores whichever they made: a highlight in that role, or a

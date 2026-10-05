@@ -56,7 +56,8 @@ export const DEFAULT_PALETTE: Record<string, string> = {
 const REGISTRY_PREFIX = 'erniesg-margin-'
 const STYLE_ATTRIBUTE = 'data-erniesg-margin-highlights'
 const OVERLAY_ATTRIBUTE = 'data-erniesg-margin-overlay'
-const OVERLAY_SELECTOR = `[${OVERLAY_ATTRIBUTE}]`
+const NOTE_CUES_ATTRIBUTE = 'data-erniesg-margin-note-cues'
+const OVERLAY_SELECTOR = `[${OVERLAY_ATTRIBUTE}], [${NOTE_CUES_ATTRIBUTE}]`
 
 type HighlightRegistry = {
   set(name: string, highlight: unknown): void
@@ -120,7 +121,11 @@ function ensureStyles(
       (color) =>
         `::highlight(${REGISTRY_PREFIX}c${encodeNamePart(color)}${suffix}) { background-color: ${
           palette[color] ?? palette.default ?? DEFAULT_PALETTE.default
-        }; color: inherit; }`,
+        }; color: inherit;${
+          color === NOTE_PAINT_KEY
+            ? ' text-decoration-line: underline; text-decoration-thickness: 2px; text-decoration-color: currentColor; text-underline-offset: 2px;'
+            : ''
+        } }`,
     )
     .join('\n')
 }
@@ -175,6 +180,15 @@ function paintWithOverlay(
   overlay.style.cssText =
     'position:absolute;top:0;left:0;width:0;height:0;pointer-events:none;z-index:0;'
   host.append(overlay)
+  const noteCues = painted.some(({ target }) => target.color === NOTE_PAINT_KEY)
+    ? doc.createElement('div')
+    : null
+  if (noteCues) {
+    noteCues.setAttribute(NOTE_CUES_ATTRIBUTE, '')
+    noteCues.style.cssText =
+      'position:absolute;top:0;left:0;width:0;height:0;pointer-events:none;z-index:1;'
+    host.append(noteCues)
+  }
 
   const view = doc.defaultView
   const draw = () => {
@@ -182,25 +196,45 @@ function paintWithOverlay(
     const scrollY = view?.scrollY ?? 0
     const origin = overlayOrigin(overlay, scrollX, scrollY)
     const boxes: Element[] = []
+    const cues: Element[] = []
     for (const { target, ranges } of painted) {
       for (const range of ranges) {
         for (const rect of Array.from(range.getClientRects())) {
           const box = doc.createElement('div')
           box.dataset.marginHighlight = target.id
-          box.style.cssText = [
+          const noteCue = target.color === NOTE_PAINT_KEY
+          const position = [
             'position:absolute',
             `left:${rect.left + scrollX - origin.x}px`,
             `top:${rect.top + scrollY - origin.y}px`,
             `width:${rect.width}px`,
             `height:${rect.height}px`,
+          ]
+          box.style.cssText = [
+            ...position,
             `background-color:${palette[target.color] ?? palette.default ?? DEFAULT_PALETTE.default}`,
             'pointer-events:none',
           ].join(';')
           boxes.push(box)
+          if (noteCue && noteCues) {
+            const cue = doc.createElement('div')
+            const textColor = range.startContainer.parentElement
+              ? view?.getComputedStyle(range.startContainer.parentElement).color
+              : 'currentColor'
+            cue.style.cssText = [
+              ...position,
+              'z-index:1',
+              'background-color:transparent',
+              `border-bottom:2px solid ${textColor}`,
+              'pointer-events:none',
+            ].join(';')
+            cues.push(cue)
+          }
         }
       }
     }
     overlay.replaceChildren(...boxes)
+    noteCues?.replaceChildren(...cues)
   }
   draw()
 
@@ -248,6 +282,7 @@ function paintWithOverlay(
     resize?.disconnect()
     mutation?.disconnect()
     overlay.remove()
+    noteCues?.remove()
   }
 }
 

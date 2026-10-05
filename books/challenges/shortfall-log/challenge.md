@@ -151,8 +151,6 @@ logged against the earlier one. The position is a fact about where you are in
 the walk, not a fact about the value, and `enumerate` is how you keep hold of
 it.
 
-**One thing, so it composes.** The function records and returns; it does not
-print, and it does not decide what a bad night means. That is why the same
-function serves a single week and a whole year's rolling log — the caller
-passes the log along, and the function never needs to know which it is in.
+**Return the log without printing.** The caller can use the function for one
+week or a longer rolling log.
 :::

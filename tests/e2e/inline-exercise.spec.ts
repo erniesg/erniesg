@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 
 // Spec 064, with results read like a grader's report: one test per expected line.
 const CHAPTER = '/ch06-dicts-sets'
+const STEPPING_CHAPTER = '/ch09-stepping'
 
 async function check(page: Page, id: string, source: string) {
   const ex = page.locator(`#ex-${id}`)
@@ -56,6 +57,40 @@ test('revealing the answer is a click and runs nothing', async ({ page }) => {
   await ex.locator('.answer > summary').click()
   await expect(ex.locator('.answer code')).toBeVisible()
   await expect(ex.locator('.results')).toBeHidden()
+})
+
+test('Run shows debugging prints without grading them; Check still requires exact output', async ({ page }) => {
+  test.setTimeout(90_000)
+  await page.goto(STEPPING_CHAPTER)
+  const ex = page.locator('#ex-ch09-last-two-days')
+  const debugging = `readings = [3120, 4890, 2075, 6610, 5240]
+
+def last_n_total(n):
+    total = 0
+    for day in range(len(readings) - n, len(readings) - 1):
+        print(day)
+        total += readings[day]
+    return total
+
+print(last_n_total(2))`
+  await ex.locator('.editor').fill(debugging)
+  await ex.locator('.run-exercise').click()
+  await expect(ex.locator('[data-exercise-output]')).toBeVisible({ timeout: 60_000 })
+  await expect(ex.locator('[data-exercise-output]')).toContainText('3\n6610')
+  await expect(ex.locator('.results')).toBeHidden()
+
+  await ex.locator('.check').click()
+  await expect(ex.locator('.results')).toBeVisible({ timeout: 60_000 })
+  await expect(ex.locator('.results-head')).toHaveText(/0 of 1 test passed/)
+  await expect(ex.locator('[data-exercise-output]')).toContainText('3\n6610')
+
+  const answer = await ex.locator('.answer code').textContent()
+  await ex.locator('.editor').fill(answer ?? '')
+  await ex.locator('.run-exercise').click()
+  await expect(ex.locator('[data-exercise-output]')).toContainText('11850')
+  await expect(ex.locator('.results')).toBeHidden()
+  await ex.locator('.check').click()
+  await expect(ex.locator('.results-head')).toHaveText(/All 1 test passed/)
 })
 
 test('print renders the prompt, starter and answer with no editor', async ({ page }) => {

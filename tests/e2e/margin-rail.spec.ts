@@ -1269,9 +1269,10 @@ test.describe('the margin rail', () => {
     await expect(page.locator(POPUP)).toBeVisible()
     expect(await focusedKey(page)).toBe('swatch:key')
 
-    // Focus is trapped: Shift+Tab from the first control wraps to the last.
+    // Focus is trapped: Shift+Tab from the first tag reaches the explicit
+    // popup close control, then Tab returns to the first tag.
     await page.keyboard.press('Shift+Tab')
-    expect(await focusedKey(page)).toBe('popup-cancel')
+    expect(await focusedKey(page)).toBe('popup-close')
     await page.keyboard.press('Tab')
     expect(await focusedKey(page)).toBe('swatch:key')
     await page.keyboard.press('Tab')
@@ -1383,6 +1384,92 @@ test.describe('the margin rail', () => {
     await expect
       .poll(async () => (await service.rows())[0]?.motivation)
       .toBe('commenting')
+  })
+
+  test('explicit popup close and Cancel discard a draft, while Save closes it', async ({
+    page,
+  }) => {
+    const service = await mountService(page)
+    await open(page)
+    const [block] = await proseBlocks(page)
+
+    await openPopupOn(page, block)
+    const close = page.locator(`${POPUP} [data-margin-action="close-popup"]`)
+    await expect(close).toBeVisible()
+    await expect(close).toHaveAccessibleName('Close annotation')
+    await close.click()
+    await expect(page.locator(POPUP)).toHaveCount(0)
+    expect(await service.rows()).toHaveLength(0)
+
+    await openPopupOn(page, block)
+    await page.locator(`${POPUP} [data-margin-note]`).fill('Do not save this.')
+    await page.locator(`${POPUP} [data-margin-action="cancel"]`).click()
+    await expect(page.locator(POPUP)).toHaveCount(0)
+    expect(await service.rows()).toHaveLength(0)
+
+    await openPopupOn(page, block)
+    await page.locator(`${POPUP} [data-margin-note]`).fill('Save and close.')
+    await page.locator(`${POPUP} [data-margin-action="save"]`).click()
+    await expect(page.locator(POPUP)).toHaveCount(0)
+    await expect(page.locator(ENTRY)).toContainText('Save and close.')
+  })
+
+  test('a stylesheet added to the shadow root does not trap Save or lose a saved note', async ({ page }) => {
+    const service = await mountService(page)
+    await open(page)
+    const [block] = await proseBlocks(page)
+    await openPopupOn(page, block)
+    await page.locator(`${POPUP} [data-margin-note]`).fill('Keep this after reload.')
+    await page.locator(RAIL).evaluate((rail) => {
+      const link = document.createElement('link')
+      link.rel = 'stylesheet'
+      link.setAttribute('data-extension-stylesheet', '')
+      rail.shadowRoot!.append(link)
+    })
+    await page.locator(`${POPUP} [data-margin-action="save"]`).click()
+    await expect(page.locator(POPUP)).toHaveCount(0)
+    await expect.poll(async () => (await service.rows()).length).toBe(1)
+    expect((await service.rows())[0].body?.value).toBe('Keep this after reload.')
+    await expect(page.locator(`${RAIL} [data-extension-stylesheet]`)).toHaveJSProperty('childElementCount', 0)
+    await page.reload()
+    await expect(page.locator(ENTRY)).toContainText('Keep this after reload.')
+  })
+
+  test('a refused save is visible even with the annotation sidebar closed', async ({ page }) => {
+    const service = await mountService(page)
+    service.as = null
+    await open(page, 375)
+    await expect(page.locator(`${RAIL} .panel[data-overlay]`)).toBeHidden()
+    const [block] = await proseBlocks(page)
+    await openPopupOn(page, block)
+    await page.locator(`${POPUP} [data-margin-note]`).fill('Unsaved note.')
+    await page.locator(`${POPUP} [data-margin-action="save"]`).click()
+    await expect(page.locator(POPUP)).toHaveCount(0)
+    await expect(page.locator(`${RAIL} [data-margin-notice="transport"]:visible`)).toContainText('Not saved: sign in')
+    expect(await service.rows()).toHaveLength(0)
+  })
+
+  test('a selection change while the popup is open does not replace its Cancel control', async ({
+    page,
+  }) => {
+    await mountService(page)
+    await open(page)
+    const [block] = await proseBlocks(page)
+    await openPopupOn(page, block)
+
+    const retained = await page
+      .locator(`${POPUP} [data-margin-action="cancel"]`)
+      .evaluate(async (cancel) => {
+        document.getSelection()?.removeAllRanges()
+        // `watchSelection` reports at the next animation frame. Wait for it
+        // before checking the actual button a pointer would have pressed.
+        await new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        )
+        return cancel.isConnected
+      })
+
+    expect(retained).toBe(true)
   })
 
   // #358 item 5
@@ -1723,7 +1810,18 @@ test.describe('the margin rail', () => {
     await expect(page.locator(`${RAIL} [data-margin-search]`)).toBeVisible()
     await expect(toggle).toHaveAttribute('aria-expanded', 'true')
     expect(await text.boundingBox()).toEqual(before)
-    await page.keyboard.press('Escape')
+    const close = page.locator(`${RAIL} [data-margin-action="close-rail"]`)
+    await expect(close).toBeVisible()
+    await expect(close).toHaveAccessibleName('Close annotations')
+    const retained = await close.evaluate(async (button) => {
+      document.getSelection()?.removeAllRanges()
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      )
+      return button.isConnected
+    })
+    expect(retained).toBe(true)
+    await close.click()
     await expect(page.locator(`${RAIL} [data-margin-search]`)).toBeHidden()
     expect(await focusedKey(page)).toBe('toggle-rail')
   })

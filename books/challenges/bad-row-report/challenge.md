@@ -37,9 +37,8 @@ Someone typed 312 donations into a text file, one amount in cents per line.
 Some lines are not amounts: a word, a stray decimal point, a minus sign, a
 blank line where they hit Enter twice.
 
-Add up the ones that are amounts, and hand back a list of the ones that are
-not, each with the line number it came from. Crashing on the first bad line is
-not allowed — the whole point is to get through all 312 and report at the end.
+Add the amounts and return the other lines with their line numbers. Process all
+312 lines before returning the report.
 
 - Line numbers start at 1, counting every entry you were given, blanks
   included.
@@ -50,10 +49,8 @@ not allowed — the whole point is to get through all 312 and report at the end.
   arrived)`.
 - Surrounding spaces are fine: `"  42  "` is 42.
 
-One thing *is* worth raising for. Handed something that is not a list at all,
-raise `TypeError`. A messy row is expected and gets reported; a caller passing
-`None` because a file failed to open is a broken call, and it should stop
-there.
+Raise `TypeError` if `lines` is not a list. Bad rows are reported. `None`, for
+example, means the caller did not supply any lines.
 :::
 
 :::io
@@ -110,25 +107,20 @@ def parse_amounts(lines):
     return (total, problems)
 ```
 
-**Two different ways to be bad, one report.** `int("twelve")` raises and
-`int("-5")` does not, so one is caught and the other is tested. Both end up in
-the same list, because the person fixing the file does not care which kind of
-wrong it was — they care which line to open.
+**Two bad rows, one report.** `int("twelve")` raises and `int("-5")` does not,
+so the code handles them separately. Both go in the same list with their line
+numbers.
 
-**`enumerate(lines, start=1)` before the blank check, not after.** The line
-number has to count blank lines, or every number after the first blank is off
-by one and points at the wrong row. That is the bug this problem is really
-about, and the edge tier has a case for it.
+**Number every line before checking for blanks.** Blank lines still count. If
+you skip them first, later line numbers are wrong.
 
-**`continue`, not `else`.** Each bad case ends the work on that line. Reaching
-for `else` here nests the good path two levels deep for no gain.
+**Use `continue` after each bad row.** It moves to the next line without
+nesting the good path.
 
-**Report the line as it arrived, not stripped.** `(3, "twelve")` is what the
-file says. If you report `"12"` when the file holds `" 12 "`, the person goes
-looking for something that is not there.
+**Report the original line.** The function strips spaces only to decide whether
+the line is valid. It returns the text exactly as it received it.
 
-**Why `TypeError` for `None` is not inconsistent.** Everything else this
-function meets is *expected* mess, and expected mess gets counted and reported.
-`None` is not mess; it means the caller never had any lines and did not notice.
-Reporting it as a bad row would hide a bug somewhere else in the program.
+**`None` is a caller error.** The function can report bad rows only after it
+receives a list. `None` does not provide lines to process, so it raises
+`TypeError`.
 :::

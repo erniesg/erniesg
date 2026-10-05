@@ -88,8 +88,8 @@ answer, and it depends on one thing you have already seen.
 :::
 
 :::hint{level=3}
-The thing to remember as you go is the cheapest price so far. Today's best
-possible gain is today's price minus that. Keep the largest gain you have
+Keep the cheapest price so far. Today's best possible gain is today's price
+minus that. Keep the largest gain you have
 seen, and update the cheapest price afterwards — or you will let yourself buy
 and sell in the same minute.
 :::
@@ -117,10 +117,9 @@ def best_gain(prices):
     return best
 ```
 
-**The idea.** For any reading you might sell at, the best partner is the
-cheapest reading anywhere before it. You do not have to search for it: walk
-forwards and it is already in your hand. That turns 20 billion comparisons into
-200,000, which is the whole lesson of this chapter in one function.
+**Keep the cheapest earlier price.** For any reading you might sell at, the
+best partner is the cheapest earlier reading. A forward pass keeps that value
+available, reducing 20 billion comparisons to 200,000.
 
 **Why the order of those last two `if`s matters.** Score the sale first, then
 update the cheapest. Do it the other way round and a new low price becomes
@@ -129,10 +128,9 @@ harm on this problem, but on the next variant it is the bug where you buy and
 sell in the same minute. Get into the habit of asking which readings a step is
 allowed to see.
 
-**Counting it.** One pass, two comparisons and at most two assignments per
-reading. At 200,000 readings that is well under a million steps, and it
-measures at a few thousandths of a second. The every-pair version is right
-too, and it does not finish.
+**Counting it.** One pass uses two comparisons and at most two assignments per
+reading. At 200,000 readings that is well under a million steps. Checking every
+pair takes too long.
 
 **What the tiers are checking.** Edge holds `[9, 1]` and a list where the
 highest price comes before the lowest, because `max - min` passes the public

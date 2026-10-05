@@ -1432,7 +1432,6 @@ test.describe('the margin rail', () => {
     expect((await service.rows())[0].body?.value).toBe('Keep this after reload.')
     await expect(page.locator(`${RAIL} [data-extension-stylesheet]`)).toHaveJSProperty('childElementCount', 0)
     await page.reload()
-    await page.locator(`${RAIL} [data-margin-action="toggle-rail"]`).click()
     await expect(page.locator(ENTRY)).toContainText('Keep this after reload.')
   })
 

@@ -565,6 +565,36 @@ test.describe('the Annotations page lists', () => {
     expect(await page.evaluate(() => (window as unknown as { __xss?: unknown }).__xss)).toBeUndefined()
   })
 
+  for (const { kind, field } of [
+    { kind: 'highlight', field: 'quote' },
+    { kind: 'note', field: 'quote' },
+    { kind: 'proposal', field: 'quote' },
+    { kind: 'sketch', field: 'quote' },
+    { kind: 'sketch', field: 'sketch-note' },
+  ] as const) {
+    test(`stored literal text: ${kind} ${field} preserves markup-shaped text`, async ({ page }) => {
+      const service = await mountService(page)
+      const at = await anchors(page)
+      const literal = '<em data-literal-sentinel="stored">Quotation &amp; note</em>'
+      const storedAnchor = { ...at.values, quote: field === 'quote' ? literal : at.values.quote }
+      const body = kind === 'sketch'
+        ? sketchBody(storedAnchor, field === 'sketch-note' ? literal : 'Stored sketch note.')
+        : kind === 'proposal' ? hunks('A {++stored proposal++}.')
+          : kind === 'note' ? 'Stored note.' : undefined
+      const stored = await service.post(annotation(storedAnchor, {
+        motivation: kind === 'highlight' ? 'highlighting' : kind === 'proposal' ? 'editing' : 'commenting',
+        body,
+      }))
+      await openOverview(page)
+
+      const item = entry(page, stored)
+      await expect(item).toHaveAttribute('data-kind', kind)
+      await expect(item.locator(field === 'quote' ? '[data-entry-quote]' : '[data-entry-body]')).toHaveText(literal)
+      await expect(item.locator('[data-literal-sentinel], em')).toHaveCount(0)
+      if (kind === 'sketch') await expect(item.locator('svg.annotations-sketch')).toBeVisible()
+    })
+  }
+
   test("colours as the rail's highlightRole() gives them: legacy, unknown, and on a note", async ({ page }) => {
     const service = await mountService(page)
     const at = await anchors(page)
@@ -697,6 +727,24 @@ test.describe('an entry links back to its spot', () => {
     await entry(page, note).locator('a[data-annotation-link]').click()
     await expect(page).toHaveURL(new RegExp(`${VALUES}\\?annotation=${bare(note)}$`))
     const target = railEntry(page, bare(note))
+    await expect(target).toHaveAttribute('data-margin-target', '')
+    await expect.poll(() => focusedInRail(target)).toBe(true)
+    await expect(page.locator(`#${at.values.nodeId}`)).toBeInViewport()
+    await expect(page.locator('margin-rail')).toHaveAttribute('data-flashing', '')
+    await expect.poll(() => flashedText(page)).toEqual([at.values.quote])
+  })
+
+  test('a highlight: overview links to its anchor, focused in the rail and painted', async ({ page }) => {
+    const service = await mountService(page)
+    const at = await anchors(page)
+    const highlight = await service.post(annotation(at.values, { motivation: 'highlighting', color: 'question' }))
+    await openOverview(page)
+
+    const link = entry(page, highlight).locator('a[data-annotation-link]')
+    await expect(link).toHaveAttribute('href', `${VALUES}?annotation=${bare(highlight)}`)
+    await link.click()
+    await expect(page).toHaveURL(new RegExp(`${VALUES}\\?annotation=${bare(highlight)}$`))
+    const target = railEntry(page, bare(highlight))
     await expect(target).toHaveAttribute('data-margin-target', '')
     await expect.poll(() => focusedInRail(target)).toBe(true)
     await expect(page.locator(`#${at.values.nodeId}`)).toBeInViewport()
@@ -1061,7 +1109,7 @@ test.describe('loading the list', () => {
     expect(service.requests.length).toBe(before)
   })
 
-  test('fits a 390px phone without sideways scrolling, and a 1280px window', async ({ page }) => {
+  test('fits 390px, 1280px and 2560px windows without sideways scrolling', async ({ page }) => {
     const service = await mountService(page)
     const at = await anchors(page)
     await service.post(annotation(at.loop, { motivation: 'editing', body: hunks('Every {~~challenge~>exercise~~} in this book.') }))
@@ -1075,7 +1123,7 @@ test.describe('loading the list', () => {
     )
     await service.post(annotation(at.values, { motivation: 'commenting', body: 'My reply to theirs.', parentId: bare(theirs) }))
     await service.post(annotation(pageAnchor(MAP, 'The map'), { motivation: 'commenting', body: 'A note on the map.' }))
-    for (const width of [390, 1280]) {
+    for (const width of [390, 1280, 2560]) {
       await page.setViewportSize({ width, height: 900 })
       await openOverview(page)
       await expect(page.locator('[data-annotation-entry]')).toHaveCount(6)

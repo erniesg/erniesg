@@ -561,18 +561,31 @@ jobs:
             cat > "$RUNNER_TEMP/provider-claim.py" <<'RUCKSACK_PROVIDER_CLAIM'
           """One reading of an issue body's Markdown, used by every marker, section, provider and title check.
 
-          An issue body is read three ways, and all three come from `markdown_views`, so
-          no check can disagree with another about what is quoted:
+          An issue body has three display views and a restrictive dependency view, all
+          produced together by `markdown_views`:
 
-          - `markers`: fenced code blanked. Rucksack's markers are HTML comments, so
-            comments are kept here; a marker counts only on a line of its own.
-          - `prose`: fenced code blanked and HTML comments removed. This is what a
-            reader of the rendered issue sees, and it is where sections, the provider
-            and the title are read. A comment can neither supply nor hide one of them.
+          - `markers`: fenced and multiline inline code blanked. Rucksack's markers
+            are HTML comments; standalone markers are retained, while lines inside an
+            enclosing comment are blanked.
+          - `prose`: fenced and multiline inline code blanked and HTML comments
+            removed. Sections, provider and title are read from this control view.
+            Quoted text cannot supply a control heading.
           - `readable`: HTML comments removed, code kept. Evidence is scanned here: a
             path in a quoted stack trace is still a path.
+          - `dependency_markers`: explicit fences and enclosing comments blanked, but
+            standalone dependency declarations within multiline inline spans retained.
+            Ambiguous quoting may add a prerequisite; it must never remove one.
 
-          Fences follow CommonMark: an opening fence is 3+ backticks or 3+ tildes
+          This is a restricted control-claim grammar, not a complete CommonMark block
+          parser. Matched multiline backticks within one nonblank paragraph are treated
+          as quote envelopes even across heading/list/fence-looking lines. They cannot
+          supply spec or provider authority. Because a rendered block parser may end
+          an inline span earlier, dependency declarations inside that envelope remain
+          restrictive requirements. Use an explicit fenced block or enclosing HTML
+          comment outside an inline envelope for a dependency example with no effect.
+
+          Outside inline quote envelopes, fence syntax follows CommonMark: an opening
+          fence is 3+ backticks or 3+ tildes
           indented at most 3 spaces (a backtick fence's info string may not contain a
           backtick); it closes only on a line of the same character, at least as long,
           indented at most 3 spaces, with nothing after it but spaces; an unclosed
@@ -606,20 +619,23 @@ jobs:
               markers: str
               prose: str
               readable: str
+              dependency_markers: str = ""
 
 
           def _code_span_end(line: str, start: int) -> int:
-              """End of the backtick code span opening at `start`, or -1 when it does not close on this line.
+              """End of the backtick code span opening at `start`, or -1 when it does not close in the text.
 
               A span closes on a backtick run of exactly the opening length (CommonMark
-              6.1). Spans are matched within a line: a span continued onto the next line
-              is left as text, which can only expose a comment opener, never hide text.
+              6.1). The caller may supply multiple lines; quoted control claims remain
+              quoted across line boundaries.
               """
 
               run = len(line[start:]) - len(line[start:].lstrip("`"))
               position = start + run
+              paragraph_end = re.search(r"\n[ \t]*\n", line[start:])
+              limit = start + paragraph_end.start() if paragraph_end else len(line)
               while True:
-                  found = line.find("`" * run, position)
+                  found = line.find("`" * run, position, limit)
                   if found < 0:
                       return -1
                   end = found + run
@@ -646,66 +662,85 @@ jobs:
               return end + len(_COMMENT_CLOSE) if end >= 0 else -1
 
 
-          def _strip_comments(line: str, in_comment: bool) -> tuple[str, bool]:
-              kept: list[str] = []
-              position = 0
-              if in_comment:
-                  end = line.find(_COMMENT_CLOSE)
-                  if end < 0:
-                      return "", True
-                  position = end + len(_COMMENT_CLOSE)
-              while position < len(line):
-                  comment = line.find(_COMMENT_OPEN, position)
-                  tick = line.find("`", position)
-                  if comment < 0 and tick < 0:
-                      kept.append(line[position:])
-                      break
-                  if tick >= 0 and (comment < 0 or tick < comment):
-                      end = _code_span_end(line, tick)
-                      if end < 0:
-                          run_end = tick + len(line[tick:]) - len(line[tick:].lstrip("`"))
-                          kept.append(line[position:run_end])
-                          position = run_end
-                      else:
-                          kept.append(line[position:end])
-                          position = end
-                      continue
-                  kept.append(line[position:comment])
-                  end = _comment_end(line, comment)
-                  if end < 0:
-                      return "".join(kept), True
-                  position = end
-              return "".join(kept), False
-
-
           def markdown_views(text: str) -> MarkdownViews:
               markers: list[str] = []
               prose: list[str] = []
               readable: list[str] = []
+              dependency_markers: list[str] = []
               fence = ""
               in_comment = False
-              for line in (text or "").splitlines():
+              source = "\n".join((text or "").splitlines())
+              offset = 0
+              span_end = -1
+              for line in source.split("\n"):
+                  line_end = offset + len(line)
+                  comment_line = in_comment
+                  quoted_line = in_comment or span_end > offset
                   if fence:
                       closing = _FENCE_CLOSE_RE.match(line)
                       if closing and closing.group(1)[0] == fence[0] and len(closing.group(1)) >= len(fence):
                           fence = ""
                       markers.append("")
+                      dependency_markers.append("")
                       prose.append("")
                       readable.append(line)
+                      offset = line_end + 1
                       continue
-                  if not in_comment:
+                  if not in_comment and span_end <= offset:
                       opening = _FENCE_OPEN_RE.match(line)
                       if opening and not (opening.group(2)[0] == "`" and "`" in opening.group(3)):
                           fence = opening.group(2)
                           markers.append("")
+                          dependency_markers.append("")
                           prose.append("")
                           readable.append(line)
+                          offset = line_end + 1
                           continue
-                  visible, in_comment = _strip_comments(line, in_comment)
-                  markers.append(line)
-                  prose.append(visible)
-                  readable.append(visible)
-              return MarkdownViews("\n".join(markers), "\n".join(prose), "\n".join(readable))
+                  visible: list[str] = []
+                  evidence: list[str] = []
+                  position = offset
+                  while position < line_end:
+                      if span_end > position:
+                          end = min(span_end, line_end)
+                          visible.append(" " * (end - position))
+                          evidence.append(source[position:end])
+                          position = end
+                          continue
+                      if in_comment:
+                          end = source.find(_COMMENT_CLOSE, position, line_end)
+                          if end < 0:
+                              break
+                          position = end + len(_COMMENT_CLOSE)
+                          in_comment = False
+                          continue
+                      if source.startswith(_COMMENT_OPEN, position):
+                          end = _comment_end(source[position:line_end], 0)
+                          if end < 0:
+                              in_comment = True
+                              break
+                          position += end
+                          continue
+                      if source[position] == "`":
+                          end = _code_span_end(source, position)
+                          if end > line_end:
+                              span_end = end
+                              quoted_line = True
+                              continue
+                          if end < 0:
+                              end = position + len(source[position:]) - len(source[position:].lstrip("`"))
+                          visible.append(source[position:end])
+                          evidence.append(source[position:end])
+                          position = end
+                          continue
+                      visible.append(source[position])
+                      evidence.append(source[position])
+                      position += 1
+                  markers.append("" if quoted_line else line)
+                  dependency_markers.append("" if comment_line else line)
+                  prose.append("".join(visible))
+                  readable.append("".join(evidence))
+                  offset = line_end + 1
+              return MarkdownViews("\n".join(markers), "\n".join(prose), "\n".join(readable), "\n".join(dependency_markers))
 
 
           def marker_line_pattern(inner: str) -> re.Pattern[str]:
@@ -715,11 +750,11 @@ jobs:
 
 
           def has_marker(text: str, pattern: re.Pattern[str]) -> bool:
-              return bool(pattern.search(markdown_views(text).markers))
+              return bool(find_markers(text, pattern))
 
 
           def marker_values(text: str, pattern: re.Pattern[str]) -> list[str]:
-              return [match.group(1) for match in pattern.finditer(markdown_views(text).markers)]
+              return [match.group(1) for match in find_markers(text, pattern)]
 
 
           def first_heading_title(text: str) -> str:
@@ -870,7 +905,11 @@ jobs:
 
 
           def find_markers(text: str, pattern: re.Pattern[str]) -> list[re.Match[str]]:
-              return list(pattern.finditer(markdown_views(text).markers))
+              views = markdown_views(text)
+              # Dependencies only restrict authority: every public marker reader must
+              # preserve them even in ambiguous multiline inline-code envelopes.
+              is_dependency = (pattern.pattern, pattern.flags) == (DEPENDS_ON_MARKER.pattern, DEPENDS_ON_MARKER.flags)
+              return list(pattern.finditer(views.dependency_markers if is_dependency else views.markers))
 
 
           def has_marker_text(text: str, marker: str) -> bool:
@@ -887,7 +926,7 @@ jobs:
           # queue's routing, the lease check, review repair, orchestration and the
           # hosted workflow (which embeds this module's source) all read it.
 
-          _SECTION_HEADING_RE = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
+          _SECTION_HEADING_RE = re.compile(r"^ {0,3}##[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$", re.MULTILINE)
           _METADATA_RE_TEMPLATE = r"(?im)^\s*{field}\s*:\s*(.*?)\s*$"
 
 
@@ -897,8 +936,8 @@ jobs:
 
               The `rucksack-autopilot-provider` marker is read from the marker view; the
               `## Provider` section (or a `provider:` line between the title and the
-              first section) from what a reader sees. When they disagree, or two markers
-              disagree, the claim is a conflict and names no provider.
+              first section) from what a reader sees. When they disagree, two markers
+              disagree, or the Provider section is repeated, the claim is a conflict.
               """
 
               provider: str
@@ -907,23 +946,24 @@ jobs:
               conflict: str = ""
 
 
-          def _section_text(prose: str, name: str) -> str:
+          def _section_texts(prose: str, name: str) -> list[str]:
+              sections: list[str] = []
               headings = list(_SECTION_HEADING_RE.finditer(prose))
               for index, match in enumerate(headings):
                   if match.group(1).strip().lower() != name.lower():
                       continue
                   end = headings[index + 1].start() if index + 1 < len(headings) else len(prose)
-                  return prose[match.end() : end].strip()
-              return ""
+                  sections.append(prose[match.end() : end].strip())
+              return sections
 
 
           def _metadata_value(prose: str, field: str) -> str:
               lines: list[str] = []
               seen_title = False
               for line in prose.splitlines():
-                  if line.startswith("## "):
+                  if _SECTION_HEADING_RE.match(line):
                       break
-                  if line.startswith("# "):
+                  if _TITLE_RE.match(line):
                       seen_title = True
                       continue
                   if seen_title:
@@ -935,7 +975,10 @@ jobs:
           def provider_claim(text: str) -> ProviderClaim:
               views = markdown_views(text or "")
               markers = list(dict.fromkeys(match.group(1).strip().lower() for match in PROVIDER_MARKER.finditer(views.markers)))
-              section = (_section_text(views.prose, "Provider") or _metadata_value(views.prose, "provider")).lower()
+              sections = _section_texts(views.prose, "Provider")
+              if len(sections) > 1:
+                  return ProviderClaim(provider="", marker=",".join(markers), section="", conflict="repeated ## Provider sections")
+              section = ((sections[0] if sections else "") or _metadata_value(views.prose, "provider")).lower()
               values = list(dict.fromkeys([*markers, *([section] if section else [])]))
               if len(values) > 1:
                   return ProviderClaim(
@@ -945,6 +988,43 @@ jobs:
                       conflict="provider markers and ## Provider disagree: " + ", ".join(values),
                   )
               return ProviderClaim(provider=values[0] if values else "", marker=markers[0] if len(markers) == 1 else "", section=section)
+
+
+          def issue_spec_claims(body: str) -> tuple[str, ...]:
+              """All visible spec claims, retaining duplicates so ambiguity is detectable."""
+              matches = find_markers(body, SPEC_MARKER) or find_markers(body, FALLBACK_SPEC_MARKER)
+              return tuple(match.group(1).strip() for match in matches)
+
+
+          def issue_spec_id(body: str) -> str:
+              claims = issue_spec_claims(body)
+              return claims[0] if len(claims) == 1 else ""
+
+
+          def issue_dependencies(body: str) -> tuple[str, ...]:
+              """Conserve visible and ambiguously inline-quoted constraints, in order."""
+              dependencies: list[str] = []
+              for match in find_markers(body, DEPENDS_ON_MARKER):
+                  for item in match.group(1).split(","):
+                      value = item.strip().removeprefix("#").strip()
+                      if value and value not in dependencies:
+                          dependencies.append(value)
+              return tuple(dependencies)
+
+
+          def ambiguous_spec_claims(bodies: list[str]) -> set[str]:
+              """Reject repeated claims, both within one body and across issue bodies."""
+              seen: set[str] = set()
+              ambiguous: set[str] = set()
+              for body in bodies:
+                  claims = issue_spec_claims(body)
+                  if len(claims) != 1:
+                      ambiguous.update(claims)
+                  for claim in claims:
+                      if claim in seen:
+                          ambiguous.add(claim)
+                      seen.add(claim)
+              return ambiguous
 
 
           def _provider_claim_main() -> None:
@@ -967,18 +1047,31 @@ jobs:
           cat > "$RUNNER_TEMP/check-dependencies.py" <<'RUCKSACK_CHECK_DEPENDENCIES'
           """One reading of an issue body's Markdown, used by every marker, section, provider and title check.
 
-          An issue body is read three ways, and all three come from `markdown_views`, so
-          no check can disagree with another about what is quoted:
+          An issue body has three display views and a restrictive dependency view, all
+          produced together by `markdown_views`:
 
-          - `markers`: fenced code blanked. Rucksack's markers are HTML comments, so
-            comments are kept here; a marker counts only on a line of its own.
-          - `prose`: fenced code blanked and HTML comments removed. This is what a
-            reader of the rendered issue sees, and it is where sections, the provider
-            and the title are read. A comment can neither supply nor hide one of them.
+          - `markers`: fenced and multiline inline code blanked. Rucksack's markers
+            are HTML comments; standalone markers are retained, while lines inside an
+            enclosing comment are blanked.
+          - `prose`: fenced and multiline inline code blanked and HTML comments
+            removed. Sections, provider and title are read from this control view.
+            Quoted text cannot supply a control heading.
           - `readable`: HTML comments removed, code kept. Evidence is scanned here: a
             path in a quoted stack trace is still a path.
+          - `dependency_markers`: explicit fences and enclosing comments blanked, but
+            standalone dependency declarations within multiline inline spans retained.
+            Ambiguous quoting may add a prerequisite; it must never remove one.
 
-          Fences follow CommonMark: an opening fence is 3+ backticks or 3+ tildes
+          This is a restricted control-claim grammar, not a complete CommonMark block
+          parser. Matched multiline backticks within one nonblank paragraph are treated
+          as quote envelopes even across heading/list/fence-looking lines. They cannot
+          supply spec or provider authority. Because a rendered block parser may end
+          an inline span earlier, dependency declarations inside that envelope remain
+          restrictive requirements. Use an explicit fenced block or enclosing HTML
+          comment outside an inline envelope for a dependency example with no effect.
+
+          Outside inline quote envelopes, fence syntax follows CommonMark: an opening
+          fence is 3+ backticks or 3+ tildes
           indented at most 3 spaces (a backtick fence's info string may not contain a
           backtick); it closes only on a line of the same character, at least as long,
           indented at most 3 spaces, with nothing after it but spaces; an unclosed
@@ -1012,20 +1105,23 @@ jobs:
               markers: str
               prose: str
               readable: str
+              dependency_markers: str = ""
 
 
           def _code_span_end(line: str, start: int) -> int:
-              """End of the backtick code span opening at `start`, or -1 when it does not close on this line.
+              """End of the backtick code span opening at `start`, or -1 when it does not close in the text.
 
               A span closes on a backtick run of exactly the opening length (CommonMark
-              6.1). Spans are matched within a line: a span continued onto the next line
-              is left as text, which can only expose a comment opener, never hide text.
+              6.1). The caller may supply multiple lines; quoted control claims remain
+              quoted across line boundaries.
               """
 
               run = len(line[start:]) - len(line[start:].lstrip("`"))
               position = start + run
+              paragraph_end = re.search(r"\n[ \t]*\n", line[start:])
+              limit = start + paragraph_end.start() if paragraph_end else len(line)
               while True:
-                  found = line.find("`" * run, position)
+                  found = line.find("`" * run, position, limit)
                   if found < 0:
                       return -1
                   end = found + run
@@ -1052,66 +1148,85 @@ jobs:
               return end + len(_COMMENT_CLOSE) if end >= 0 else -1
 
 
-          def _strip_comments(line: str, in_comment: bool) -> tuple[str, bool]:
-              kept: list[str] = []
-              position = 0
-              if in_comment:
-                  end = line.find(_COMMENT_CLOSE)
-                  if end < 0:
-                      return "", True
-                  position = end + len(_COMMENT_CLOSE)
-              while position < len(line):
-                  comment = line.find(_COMMENT_OPEN, position)
-                  tick = line.find("`", position)
-                  if comment < 0 and tick < 0:
-                      kept.append(line[position:])
-                      break
-                  if tick >= 0 and (comment < 0 or tick < comment):
-                      end = _code_span_end(line, tick)
-                      if end < 0:
-                          run_end = tick + len(line[tick:]) - len(line[tick:].lstrip("`"))
-                          kept.append(line[position:run_end])
-                          position = run_end
-                      else:
-                          kept.append(line[position:end])
-                          position = end
-                      continue
-                  kept.append(line[position:comment])
-                  end = _comment_end(line, comment)
-                  if end < 0:
-                      return "".join(kept), True
-                  position = end
-              return "".join(kept), False
-
-
           def markdown_views(text: str) -> MarkdownViews:
               markers: list[str] = []
               prose: list[str] = []
               readable: list[str] = []
+              dependency_markers: list[str] = []
               fence = ""
               in_comment = False
-              for line in (text or "").splitlines():
+              source = "\n".join((text or "").splitlines())
+              offset = 0
+              span_end = -1
+              for line in source.split("\n"):
+                  line_end = offset + len(line)
+                  comment_line = in_comment
+                  quoted_line = in_comment or span_end > offset
                   if fence:
                       closing = _FENCE_CLOSE_RE.match(line)
                       if closing and closing.group(1)[0] == fence[0] and len(closing.group(1)) >= len(fence):
                           fence = ""
                       markers.append("")
+                      dependency_markers.append("")
                       prose.append("")
                       readable.append(line)
+                      offset = line_end + 1
                       continue
-                  if not in_comment:
+                  if not in_comment and span_end <= offset:
                       opening = _FENCE_OPEN_RE.match(line)
                       if opening and not (opening.group(2)[0] == "`" and "`" in opening.group(3)):
                           fence = opening.group(2)
                           markers.append("")
+                          dependency_markers.append("")
                           prose.append("")
                           readable.append(line)
+                          offset = line_end + 1
                           continue
-                  visible, in_comment = _strip_comments(line, in_comment)
-                  markers.append(line)
-                  prose.append(visible)
-                  readable.append(visible)
-              return MarkdownViews("\n".join(markers), "\n".join(prose), "\n".join(readable))
+                  visible: list[str] = []
+                  evidence: list[str] = []
+                  position = offset
+                  while position < line_end:
+                      if span_end > position:
+                          end = min(span_end, line_end)
+                          visible.append(" " * (end - position))
+                          evidence.append(source[position:end])
+                          position = end
+                          continue
+                      if in_comment:
+                          end = source.find(_COMMENT_CLOSE, position, line_end)
+                          if end < 0:
+                              break
+                          position = end + len(_COMMENT_CLOSE)
+                          in_comment = False
+                          continue
+                      if source.startswith(_COMMENT_OPEN, position):
+                          end = _comment_end(source[position:line_end], 0)
+                          if end < 0:
+                              in_comment = True
+                              break
+                          position += end
+                          continue
+                      if source[position] == "`":
+                          end = _code_span_end(source, position)
+                          if end > line_end:
+                              span_end = end
+                              quoted_line = True
+                              continue
+                          if end < 0:
+                              end = position + len(source[position:]) - len(source[position:].lstrip("`"))
+                          visible.append(source[position:end])
+                          evidence.append(source[position:end])
+                          position = end
+                          continue
+                      visible.append(source[position])
+                      evidence.append(source[position])
+                      position += 1
+                  markers.append("" if quoted_line else line)
+                  dependency_markers.append("" if comment_line else line)
+                  prose.append("".join(visible))
+                  readable.append("".join(evidence))
+                  offset = line_end + 1
+              return MarkdownViews("\n".join(markers), "\n".join(prose), "\n".join(readable), "\n".join(dependency_markers))
 
 
           def marker_line_pattern(inner: str) -> re.Pattern[str]:
@@ -1121,11 +1236,11 @@ jobs:
 
 
           def has_marker(text: str, pattern: re.Pattern[str]) -> bool:
-              return bool(pattern.search(markdown_views(text).markers))
+              return bool(find_markers(text, pattern))
 
 
           def marker_values(text: str, pattern: re.Pattern[str]) -> list[str]:
-              return [match.group(1) for match in pattern.finditer(markdown_views(text).markers)]
+              return [match.group(1) for match in find_markers(text, pattern)]
 
 
           def first_heading_title(text: str) -> str:
@@ -1276,7 +1391,11 @@ jobs:
 
 
           def find_markers(text: str, pattern: re.Pattern[str]) -> list[re.Match[str]]:
-              return list(pattern.finditer(markdown_views(text).markers))
+              views = markdown_views(text)
+              # Dependencies only restrict authority: every public marker reader must
+              # preserve them even in ambiguous multiline inline-code envelopes.
+              is_dependency = (pattern.pattern, pattern.flags) == (DEPENDS_ON_MARKER.pattern, DEPENDS_ON_MARKER.flags)
+              return list(pattern.finditer(views.dependency_markers if is_dependency else views.markers))
 
 
           def has_marker_text(text: str, marker: str) -> bool:
@@ -1293,7 +1412,7 @@ jobs:
           # queue's routing, the lease check, review repair, orchestration and the
           # hosted workflow (which embeds this module's source) all read it.
 
-          _SECTION_HEADING_RE = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
+          _SECTION_HEADING_RE = re.compile(r"^ {0,3}##[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$", re.MULTILINE)
           _METADATA_RE_TEMPLATE = r"(?im)^\s*{field}\s*:\s*(.*?)\s*$"
 
 
@@ -1303,8 +1422,8 @@ jobs:
 
               The `rucksack-autopilot-provider` marker is read from the marker view; the
               `## Provider` section (or a `provider:` line between the title and the
-              first section) from what a reader sees. When they disagree, or two markers
-              disagree, the claim is a conflict and names no provider.
+              first section) from what a reader sees. When they disagree, two markers
+              disagree, or the Provider section is repeated, the claim is a conflict.
               """
 
               provider: str
@@ -1313,23 +1432,24 @@ jobs:
               conflict: str = ""
 
 
-          def _section_text(prose: str, name: str) -> str:
+          def _section_texts(prose: str, name: str) -> list[str]:
+              sections: list[str] = []
               headings = list(_SECTION_HEADING_RE.finditer(prose))
               for index, match in enumerate(headings):
                   if match.group(1).strip().lower() != name.lower():
                       continue
                   end = headings[index + 1].start() if index + 1 < len(headings) else len(prose)
-                  return prose[match.end() : end].strip()
-              return ""
+                  sections.append(prose[match.end() : end].strip())
+              return sections
 
 
           def _metadata_value(prose: str, field: str) -> str:
               lines: list[str] = []
               seen_title = False
               for line in prose.splitlines():
-                  if line.startswith("## "):
+                  if _SECTION_HEADING_RE.match(line):
                       break
-                  if line.startswith("# "):
+                  if _TITLE_RE.match(line):
                       seen_title = True
                       continue
                   if seen_title:
@@ -1341,7 +1461,10 @@ jobs:
           def provider_claim(text: str) -> ProviderClaim:
               views = markdown_views(text or "")
               markers = list(dict.fromkeys(match.group(1).strip().lower() for match in PROVIDER_MARKER.finditer(views.markers)))
-              section = (_section_text(views.prose, "Provider") or _metadata_value(views.prose, "provider")).lower()
+              sections = _section_texts(views.prose, "Provider")
+              if len(sections) > 1:
+                  return ProviderClaim(provider="", marker=",".join(markers), section="", conflict="repeated ## Provider sections")
+              section = ((sections[0] if sections else "") or _metadata_value(views.prose, "provider")).lower()
               values = list(dict.fromkeys([*markers, *([section] if section else [])]))
               if len(values) > 1:
                   return ProviderClaim(
@@ -1353,6 +1476,43 @@ jobs:
               return ProviderClaim(provider=values[0] if values else "", marker=markers[0] if len(markers) == 1 else "", section=section)
 
 
+          def issue_spec_claims(body: str) -> tuple[str, ...]:
+              """All visible spec claims, retaining duplicates so ambiguity is detectable."""
+              matches = find_markers(body, SPEC_MARKER) or find_markers(body, FALLBACK_SPEC_MARKER)
+              return tuple(match.group(1).strip() for match in matches)
+
+
+          def issue_spec_id(body: str) -> str:
+              claims = issue_spec_claims(body)
+              return claims[0] if len(claims) == 1 else ""
+
+
+          def issue_dependencies(body: str) -> tuple[str, ...]:
+              """Conserve visible and ambiguously inline-quoted constraints, in order."""
+              dependencies: list[str] = []
+              for match in find_markers(body, DEPENDS_ON_MARKER):
+                  for item in match.group(1).split(","):
+                      value = item.strip().removeprefix("#").strip()
+                      if value and value not in dependencies:
+                          dependencies.append(value)
+              return tuple(dependencies)
+
+
+          def ambiguous_spec_claims(bodies: list[str]) -> set[str]:
+              """Reject repeated claims, both within one body and across issue bodies."""
+              seen: set[str] = set()
+              ambiguous: set[str] = set()
+              for body in bodies:
+                  claims = issue_spec_claims(body)
+                  if len(claims) != 1:
+                      ambiguous.update(claims)
+                  for claim in claims:
+                      if claim in seen:
+                          ambiguous.add(claim)
+                      seen.add(claim)
+              return ambiguous
+
+
           def _check_dependencies_main() -> None:
               import json
               import sys
@@ -1361,18 +1521,17 @@ jobs:
                   all_issues = json.load(handle)
               with open(sys.argv[2], encoding="utf-8") as handle:
                   body = handle.read()
-              declared = find_markers(body, DEPENDS_ON_MARKER)
-              if not declared:
-                  print("ready")
-                  return
-              dependencies = [item.strip().lstrip("#").strip() for item in declared[0].group(1).split(",")]
+              dependencies = issue_dependencies(body)
               by_spec = {}
+              ambiguous = ambiguous_spec_claims([str(issue.get("body") or "") for issue in all_issues])
               for issue in all_issues:
-                  text = str(issue.get("body") or "")
-                  marker = find_markers(text, SPEC_MARKER) or find_markers(text, FALLBACK_SPEC_MARKER)
-                  if marker:
-                      by_spec[marker[0].group(1).strip()] = issue
-              for dependency in [item for item in dependencies if item]:
+                  spec = issue_spec_id(str(issue.get("body") or ""))
+                  if spec:
+                      by_spec[spec] = issue
+              for dependency in dependencies:
+                  if dependency in ambiguous:
+                      print(f"dependency_ambiguous:{dependency}")
+                      return
                   issue = by_spec.get(dependency)
                   if issue is None:
                       print(f"dependency_not_found:{dependency}")
@@ -1567,18 +1726,31 @@ jobs:
             cat > "$RUNNER_TEMP/provider-claim.py" <<'RUCKSACK_PROVIDER_CLAIM'
           """One reading of an issue body's Markdown, used by every marker, section, provider and title check.
 
-          An issue body is read three ways, and all three come from `markdown_views`, so
-          no check can disagree with another about what is quoted:
+          An issue body has three display views and a restrictive dependency view, all
+          produced together by `markdown_views`:
 
-          - `markers`: fenced code blanked. Rucksack's markers are HTML comments, so
-            comments are kept here; a marker counts only on a line of its own.
-          - `prose`: fenced code blanked and HTML comments removed. This is what a
-            reader of the rendered issue sees, and it is where sections, the provider
-            and the title are read. A comment can neither supply nor hide one of them.
+          - `markers`: fenced and multiline inline code blanked. Rucksack's markers
+            are HTML comments; standalone markers are retained, while lines inside an
+            enclosing comment are blanked.
+          - `prose`: fenced and multiline inline code blanked and HTML comments
+            removed. Sections, provider and title are read from this control view.
+            Quoted text cannot supply a control heading.
           - `readable`: HTML comments removed, code kept. Evidence is scanned here: a
             path in a quoted stack trace is still a path.
+          - `dependency_markers`: explicit fences and enclosing comments blanked, but
+            standalone dependency declarations within multiline inline spans retained.
+            Ambiguous quoting may add a prerequisite; it must never remove one.
 
-          Fences follow CommonMark: an opening fence is 3+ backticks or 3+ tildes
+          This is a restricted control-claim grammar, not a complete CommonMark block
+          parser. Matched multiline backticks within one nonblank paragraph are treated
+          as quote envelopes even across heading/list/fence-looking lines. They cannot
+          supply spec or provider authority. Because a rendered block parser may end
+          an inline span earlier, dependency declarations inside that envelope remain
+          restrictive requirements. Use an explicit fenced block or enclosing HTML
+          comment outside an inline envelope for a dependency example with no effect.
+
+          Outside inline quote envelopes, fence syntax follows CommonMark: an opening
+          fence is 3+ backticks or 3+ tildes
           indented at most 3 spaces (a backtick fence's info string may not contain a
           backtick); it closes only on a line of the same character, at least as long,
           indented at most 3 spaces, with nothing after it but spaces; an unclosed
@@ -1612,20 +1784,23 @@ jobs:
               markers: str
               prose: str
               readable: str
+              dependency_markers: str = ""
 
 
           def _code_span_end(line: str, start: int) -> int:
-              """End of the backtick code span opening at `start`, or -1 when it does not close on this line.
+              """End of the backtick code span opening at `start`, or -1 when it does not close in the text.
 
               A span closes on a backtick run of exactly the opening length (CommonMark
-              6.1). Spans are matched within a line: a span continued onto the next line
-              is left as text, which can only expose a comment opener, never hide text.
+              6.1). The caller may supply multiple lines; quoted control claims remain
+              quoted across line boundaries.
               """
 
               run = len(line[start:]) - len(line[start:].lstrip("`"))
               position = start + run
+              paragraph_end = re.search(r"\n[ \t]*\n", line[start:])
+              limit = start + paragraph_end.start() if paragraph_end else len(line)
               while True:
-                  found = line.find("`" * run, position)
+                  found = line.find("`" * run, position, limit)
                   if found < 0:
                       return -1
                   end = found + run
@@ -1652,66 +1827,85 @@ jobs:
               return end + len(_COMMENT_CLOSE) if end >= 0 else -1
 
 
-          def _strip_comments(line: str, in_comment: bool) -> tuple[str, bool]:
-              kept: list[str] = []
-              position = 0
-              if in_comment:
-                  end = line.find(_COMMENT_CLOSE)
-                  if end < 0:
-                      return "", True
-                  position = end + len(_COMMENT_CLOSE)
-              while position < len(line):
-                  comment = line.find(_COMMENT_OPEN, position)
-                  tick = line.find("`", position)
-                  if comment < 0 and tick < 0:
-                      kept.append(line[position:])
-                      break
-                  if tick >= 0 and (comment < 0 or tick < comment):
-                      end = _code_span_end(line, tick)
-                      if end < 0:
-                          run_end = tick + len(line[tick:]) - len(line[tick:].lstrip("`"))
-                          kept.append(line[position:run_end])
-                          position = run_end
-                      else:
-                          kept.append(line[position:end])
-                          position = end
-                      continue
-                  kept.append(line[position:comment])
-                  end = _comment_end(line, comment)
-                  if end < 0:
-                      return "".join(kept), True
-                  position = end
-              return "".join(kept), False
-
-
           def markdown_views(text: str) -> MarkdownViews:
               markers: list[str] = []
               prose: list[str] = []
               readable: list[str] = []
+              dependency_markers: list[str] = []
               fence = ""
               in_comment = False
-              for line in (text or "").splitlines():
+              source = "\n".join((text or "").splitlines())
+              offset = 0
+              span_end = -1
+              for line in source.split("\n"):
+                  line_end = offset + len(line)
+                  comment_line = in_comment
+                  quoted_line = in_comment or span_end > offset
                   if fence:
                       closing = _FENCE_CLOSE_RE.match(line)
                       if closing and closing.group(1)[0] == fence[0] and len(closing.group(1)) >= len(fence):
                           fence = ""
                       markers.append("")
+                      dependency_markers.append("")
                       prose.append("")
                       readable.append(line)
+                      offset = line_end + 1
                       continue
-                  if not in_comment:
+                  if not in_comment and span_end <= offset:
                       opening = _FENCE_OPEN_RE.match(line)
                       if opening and not (opening.group(2)[0] == "`" and "`" in opening.group(3)):
                           fence = opening.group(2)
                           markers.append("")
+                          dependency_markers.append("")
                           prose.append("")
                           readable.append(line)
+                          offset = line_end + 1
                           continue
-                  visible, in_comment = _strip_comments(line, in_comment)
-                  markers.append(line)
-                  prose.append(visible)
-                  readable.append(visible)
-              return MarkdownViews("\n".join(markers), "\n".join(prose), "\n".join(readable))
+                  visible: list[str] = []
+                  evidence: list[str] = []
+                  position = offset
+                  while position < line_end:
+                      if span_end > position:
+                          end = min(span_end, line_end)
+                          visible.append(" " * (end - position))
+                          evidence.append(source[position:end])
+                          position = end
+                          continue
+                      if in_comment:
+                          end = source.find(_COMMENT_CLOSE, position, line_end)
+                          if end < 0:
+                              break
+                          position = end + len(_COMMENT_CLOSE)
+                          in_comment = False
+                          continue
+                      if source.startswith(_COMMENT_OPEN, position):
+                          end = _comment_end(source[position:line_end], 0)
+                          if end < 0:
+                              in_comment = True
+                              break
+                          position += end
+                          continue
+                      if source[position] == "`":
+                          end = _code_span_end(source, position)
+                          if end > line_end:
+                              span_end = end
+                              quoted_line = True
+                              continue
+                          if end < 0:
+                              end = position + len(source[position:]) - len(source[position:].lstrip("`"))
+                          visible.append(source[position:end])
+                          evidence.append(source[position:end])
+                          position = end
+                          continue
+                      visible.append(source[position])
+                      evidence.append(source[position])
+                      position += 1
+                  markers.append("" if quoted_line else line)
+                  dependency_markers.append("" if comment_line else line)
+                  prose.append("".join(visible))
+                  readable.append("".join(evidence))
+                  offset = line_end + 1
+              return MarkdownViews("\n".join(markers), "\n".join(prose), "\n".join(readable), "\n".join(dependency_markers))
 
 
           def marker_line_pattern(inner: str) -> re.Pattern[str]:
@@ -1721,11 +1915,11 @@ jobs:
 
 
           def has_marker(text: str, pattern: re.Pattern[str]) -> bool:
-              return bool(pattern.search(markdown_views(text).markers))
+              return bool(find_markers(text, pattern))
 
 
           def marker_values(text: str, pattern: re.Pattern[str]) -> list[str]:
-              return [match.group(1) for match in pattern.finditer(markdown_views(text).markers)]
+              return [match.group(1) for match in find_markers(text, pattern)]
 
 
           def first_heading_title(text: str) -> str:
@@ -1876,7 +2070,11 @@ jobs:
 
 
           def find_markers(text: str, pattern: re.Pattern[str]) -> list[re.Match[str]]:
-              return list(pattern.finditer(markdown_views(text).markers))
+              views = markdown_views(text)
+              # Dependencies only restrict authority: every public marker reader must
+              # preserve them even in ambiguous multiline inline-code envelopes.
+              is_dependency = (pattern.pattern, pattern.flags) == (DEPENDS_ON_MARKER.pattern, DEPENDS_ON_MARKER.flags)
+              return list(pattern.finditer(views.dependency_markers if is_dependency else views.markers))
 
 
           def has_marker_text(text: str, marker: str) -> bool:
@@ -1893,7 +2091,7 @@ jobs:
           # queue's routing, the lease check, review repair, orchestration and the
           # hosted workflow (which embeds this module's source) all read it.
 
-          _SECTION_HEADING_RE = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
+          _SECTION_HEADING_RE = re.compile(r"^ {0,3}##[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$", re.MULTILINE)
           _METADATA_RE_TEMPLATE = r"(?im)^\s*{field}\s*:\s*(.*?)\s*$"
 
 
@@ -1903,8 +2101,8 @@ jobs:
 
               The `rucksack-autopilot-provider` marker is read from the marker view; the
               `## Provider` section (or a `provider:` line between the title and the
-              first section) from what a reader sees. When they disagree, or two markers
-              disagree, the claim is a conflict and names no provider.
+              first section) from what a reader sees. When they disagree, two markers
+              disagree, or the Provider section is repeated, the claim is a conflict.
               """
 
               provider: str
@@ -1913,23 +2111,24 @@ jobs:
               conflict: str = ""
 
 
-          def _section_text(prose: str, name: str) -> str:
+          def _section_texts(prose: str, name: str) -> list[str]:
+              sections: list[str] = []
               headings = list(_SECTION_HEADING_RE.finditer(prose))
               for index, match in enumerate(headings):
                   if match.group(1).strip().lower() != name.lower():
                       continue
                   end = headings[index + 1].start() if index + 1 < len(headings) else len(prose)
-                  return prose[match.end() : end].strip()
-              return ""
+                  sections.append(prose[match.end() : end].strip())
+              return sections
 
 
           def _metadata_value(prose: str, field: str) -> str:
               lines: list[str] = []
               seen_title = False
               for line in prose.splitlines():
-                  if line.startswith("## "):
+                  if _SECTION_HEADING_RE.match(line):
                       break
-                  if line.startswith("# "):
+                  if _TITLE_RE.match(line):
                       seen_title = True
                       continue
                   if seen_title:
@@ -1941,7 +2140,10 @@ jobs:
           def provider_claim(text: str) -> ProviderClaim:
               views = markdown_views(text or "")
               markers = list(dict.fromkeys(match.group(1).strip().lower() for match in PROVIDER_MARKER.finditer(views.markers)))
-              section = (_section_text(views.prose, "Provider") or _metadata_value(views.prose, "provider")).lower()
+              sections = _section_texts(views.prose, "Provider")
+              if len(sections) > 1:
+                  return ProviderClaim(provider="", marker=",".join(markers), section="", conflict="repeated ## Provider sections")
+              section = ((sections[0] if sections else "") or _metadata_value(views.prose, "provider")).lower()
               values = list(dict.fromkeys([*markers, *([section] if section else [])]))
               if len(values) > 1:
                   return ProviderClaim(
@@ -1951,6 +2153,43 @@ jobs:
                       conflict="provider markers and ## Provider disagree: " + ", ".join(values),
                   )
               return ProviderClaim(provider=values[0] if values else "", marker=markers[0] if len(markers) == 1 else "", section=section)
+
+
+          def issue_spec_claims(body: str) -> tuple[str, ...]:
+              """All visible spec claims, retaining duplicates so ambiguity is detectable."""
+              matches = find_markers(body, SPEC_MARKER) or find_markers(body, FALLBACK_SPEC_MARKER)
+              return tuple(match.group(1).strip() for match in matches)
+
+
+          def issue_spec_id(body: str) -> str:
+              claims = issue_spec_claims(body)
+              return claims[0] if len(claims) == 1 else ""
+
+
+          def issue_dependencies(body: str) -> tuple[str, ...]:
+              """Conserve visible and ambiguously inline-quoted constraints, in order."""
+              dependencies: list[str] = []
+              for match in find_markers(body, DEPENDS_ON_MARKER):
+                  for item in match.group(1).split(","):
+                      value = item.strip().removeprefix("#").strip()
+                      if value and value not in dependencies:
+                          dependencies.append(value)
+              return tuple(dependencies)
+
+
+          def ambiguous_spec_claims(bodies: list[str]) -> set[str]:
+              """Reject repeated claims, both within one body and across issue bodies."""
+              seen: set[str] = set()
+              ambiguous: set[str] = set()
+              for body in bodies:
+                  claims = issue_spec_claims(body)
+                  if len(claims) != 1:
+                      ambiguous.update(claims)
+                  for claim in claims:
+                      if claim in seen:
+                          ambiguous.add(claim)
+                      seen.add(claim)
+              return ambiguous
 
 
           def _provider_claim_main() -> None:

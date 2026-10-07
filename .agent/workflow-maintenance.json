@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "repository": "erniesg/erniesg",
+  "repository_id": "R_kgDON227nQ",
+  "base_branch": "main",
+  "attestations": [
+    {
+      "pull_request": 435,
+      "reviewed_head": "348fca6d7281e694f170962f0df51d7b640a4020",
+      "workflows": [
+        {
+          "path": ".github/workflows/rucksack-autopilot.yml",
+          "before_blob": "d35b4284ffc30f95d3c7d3319fb07190d19701e7",
+          "after_blob": "473dae5ca1db8c8692dece33d421f987e3d9ca6f"
+        }
+      ],
+      "review": {
+        "kind": "existing-workflow-maintenance-v1",
+        "reviewer": "vm-coordinator-root",
+        "evidence_ref": "https://github.com/erniesg/erniesg/pull/435#issuecomment-6034618808",
+        "evidence_sha256": "c6f8c6216a08214168276042e42606c62636b37a171bd30754163ebe7d9e34fe"
+      }
+    }
+  ]
+}

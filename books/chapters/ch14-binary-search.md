@@ -258,9 +258,10 @@ the position just after the last copy. When the value is not there, both give
 the insertion point. `insort` finds the place and inserts in one call, so a
 list stays sorted as it grows.
 
-`bisect` only searches a list. To search something you cannot build a list of,
-you write the loop yourself. It also compares whole items. To search a list of
-rows by one field, pass `key=`, or keep a separate sorted list of that field.
+`bisect` searches a sorted sequence. For a yes-or-no test that switches only
+once, you can write the loop yourself. By default, `bisect` compares whole
+items. To search a list of rows by one field, pass `key=`, or keep a separate
+sorted list of that field.
 
 :::exercise{id="ch14-count-in-window"}
 With `bisect`, count the trains leaving from 700 to 830, both ends

@@ -35,8 +35,9 @@ print(2 + 3)        # 5   — numbers add
 print("2" + "3")    # 23  — text joins end to end
 ```
 
-`+` means "add" for numbers and "join" for text. A value that comes from a
-file, a form or `input()` is text, even when it looks like a number.
+`+` means "add" for numbers and "join" for text. `input()` returns text,
+even when it looks like a number. Values read from files or forms often
+arrive as text too.
 
 When a number and text meet, Python raises an error instead of guessing:
 

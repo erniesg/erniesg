@@ -2,9 +2,11 @@ import {
   MAX_PAGE_SIZE,
   type ListOptions,
   type OwnListOptions,
+  type ReviewListOptions,
   type TenantScope,
   type ViewerKey,
 } from './repository'
+import type { Principal } from '../principal'
 
 /**
  * Every SQL statement margin runs, as pure `(sql, params)` values.
@@ -180,6 +182,52 @@ export function listOwnAnnotationsQuery(
     sql: `SELECT ${ANNOTATION_COLUMNS} FROM margin_annotations INDEXED BY margin_annotations_owner_keyset
 WHERE ${where.join(' AND ')}
 ORDER BY document ASC, created ASC, id ASC LIMIT ?`,
+    params: [...params, Math.min(options.limit, MAX_PAGE_SIZE + 1)],
+  }
+}
+
+/**
+ * Authority and page share one SQLite/D1 statement snapshot. Returning tagged
+ * authority rows preserves forbidden versus authorized-empty without a second
+ * check that can race revocation. Private rows are gated inside the page CTE.
+ */
+export function listReviewProposalsQuery(principal: Principal, options: ReviewListOptions): Query {
+  const where = [
+    "motivation = 'editing' AND withdrawn_at IS NULL",
+    "EXISTS (SELECT 1 FROM review_authority WHERE review_role = 'admin' AND review_site = margin_annotations.site)",
+  ]
+  const params: unknown[] = [principal.provider, principal.issuer, principal.subject]
+  if (options.site !== undefined) {
+    where.push('site = ?')
+    params.push(options.site)
+  }
+  if (options.document !== undefined) {
+    where.push('document = ?')
+    params.push(options.document)
+  }
+  if (options.after) {
+    where.push('(created, id) > (?, ?)')
+    params.push(options.after.created, options.after.id)
+  }
+  return {
+    sql: `WITH review_authority AS (
+  SELECT identity.id AS review_identity_id, allowlist.role AS review_role, mapping.site AS review_site
+  FROM margin_identity AS identity
+  LEFT JOIN margin_allowlist AS allowlist ON allowlist.identity_id = identity.id
+  LEFT JOIN margin_site_admins AS mapping ON mapping.identity_id = identity.id
+  WHERE identity.provider = ? AND identity.issuer = ? AND identity.subject = ?
+), review_page AS (
+  SELECT ${ANNOTATION_COLUMNS} FROM margin_annotations
+  WHERE ${where.join(' AND ')}
+  ORDER BY created ASC, id ASC LIMIT ?
+)
+SELECT 'authority' AS review_kind, review_identity_id, review_role, review_site,
+  ${ANNOTATION_COLUMNS.split(', ').map(column => `NULL AS ${column}`).join(', ')}
+FROM review_authority
+UNION ALL
+SELECT 'annotation' AS review_kind, NULL, NULL, NULL, ${ANNOTATION_COLUMNS}
+FROM review_page
+ORDER BY review_kind DESC, created ASC, id ASC`,
     params: [...params, Math.min(options.limit, MAX_PAGE_SIZE + 1)],
   }
 }

@@ -11,6 +11,7 @@ import {
 import { listOwnAnnotationsQuery } from './queries'
 import { MAX_PAGE_SIZE } from './repository'
 import { applyMigrations } from './sqlite-database'
+import { ensureSchema } from './identity'
 import { SKETCH_PREFIX } from '../../../packages/margin/src/sketch'
 
 /**
@@ -89,6 +90,21 @@ async function allPages(limit: number): Promise<{ pages: Page[]; rows: Wire[] }>
 }
 
 describe('GET /mine', () => {
+  it('site-admin review mappings never expand the owner-only mine query', async () => {
+    await ensureSchema(harness.database)
+    harness.database.execute('INSERT INTO margin_identity(id,provider,issuer,subject,first_seen_at,last_seen_at) VALUES(1,?,?,?,?,?)',
+      [ADA.provider, ADA.issuer, ADA.subject, '2026-10-07T00:00:00.000Z', '2026-10-07T00:00:00.000Z'])
+    harness.database.execute("INSERT INTO margin_allowlist(identity_id,role,added_at) VALUES(1,'admin',?)", ['2026-10-07T00:00:00.000Z'])
+    harness.database.execute('INSERT INTO margin_site_admins(site,identity_id) VALUES(?,1)', [SITE])
+    const own = await post({ source: CH1, motivation: 'editing', visibility: 'private' })
+    const theirs = await post({ source: CH2, motivation: 'editing', visibility: 'private' }, BOB)
+    const review = await harness.request('GET', '/proposals?' + new URLSearchParams({ scope: 'review', site: SITE }))
+    expect((await review.json()).annotations.map((row: Wire) => row.id)).toEqual([own.id, theirs.id])
+    expect((await mine({ site: SITE, prefix: BOOK, scope: 'review' })).annotations.map(row => row.id)).toEqual([own.id])
+    const query = listOwnAnnotationsQuery(SITE, BOOK, ADA_KEY, { limit: 200 })
+    expect(harness.database.query(query.sql, query.params).map(row => row.creator)).toEqual([ADA_KEY])
+  })
+
   it("returns only the viewer's own rows across the book's documents, every motivation and visibility, in (document, created, id) order", async () => {
     // Written out of document order, so the response order is the query's.
     const c3 = await post({ source: CH3, visibility: 'public', body: 'ada ch3 public' })

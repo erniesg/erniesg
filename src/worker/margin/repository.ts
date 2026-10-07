@@ -4,6 +4,7 @@ import type {
   Motivation,
 } from './web-annotation'
 import type { ProgressItem, ProgressRow, ProgressScope } from './progress'
+import type { Principal } from '../principal'
 
 /**
  * The storage seam. Route handlers depend on this interface and never on D1,
@@ -13,8 +14,9 @@ import type { ProgressItem, ProgressRow, ProgressScope } from './progress'
  * Two rules are the interface's job, not the caller's:
  *
  * 1. Every read takes a `TenantScope`. There is no "all annotations" method.
- *    The one cross-document read, `listOwnAnnotations`, is bounded by a site
- *    and a path prefix and returns only the caller's own rows.
+ *    `listOwnAnnotations` is bounded by site/prefix and the caller's own rows.
+ *    `listReviewProposals` is the explicit cross-document exception: SQL
+ *    requires the authenticated identity's global admin role AND site mapping.
  * 2. Every read takes a `viewer` and filters on it. A method cannot return a
  *    row the viewer may not see, so a handler cannot forget to filter.
  */
@@ -79,6 +81,10 @@ export type OwnListOptions = {
   after?: OwnListCursor
 }
 
+export type ReviewFilters = { site?: string; document?: string }
+export type ReviewListOptions = ReviewFilters & { limit: number; after?: ListCursor }
+export type ReviewListResult = { authorized: boolean; records: MarginAnnotationRecord[] }
+
 /** The most rows one collection response may carry. */
 export const MAX_PAGE_SIZE = 200
 
@@ -86,6 +92,13 @@ export const MAX_PAGE_SIZE = 200
 export const DEFAULT_PAGE_SIZE = 100
 
 export interface MarginRepository {
+  /**
+   * Pending proposals on explicitly mapped sites only. Authorization and rows
+   * come from one SQL snapshot; an empty queue is distinct from lost authority.
+   * No viewer key, email, or caller-provided admin flag can authorize this read.
+   */
+  listReviewProposals(principal: Principal, options: ReviewListOptions): Promise<ReviewListResult>
+
   /** Rows in `scope` that `viewer` is allowed to read. Filtered in SQL. */
   listAnnotations(
     scope: TenantScope,

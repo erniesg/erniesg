@@ -1,4 +1,8 @@
 import { textAnnotationSchema } from '../../annotations/annotations'
+import { z } from 'zod'
+import { isFullCommitId } from '../../annotations/criticmarkup'
+import { principalSchema, type Principal } from '../principal'
+import { PRINCIPAL_IRI_PREFIX, principalKey } from './identity'
 import type { D1Database } from './d1'
 import {
   countRepliesQuery,
@@ -10,6 +14,8 @@ import {
   insertIdempotencyReceiptQuery,
   listAnnotationsQuery,
   listOwnAnnotationsQuery,
+  listReviewProposalsQuery,
+  ANNOTATION_COLUMNS,
   listProgressQuery,
   mergeProgressQuery,
   tombstoneAnnotationQuery,
@@ -21,10 +27,13 @@ import {
 import type { ProgressItem, ProgressRow, ProgressScope } from './progress'
 import {
   DEFAULT_VISIBILITY,
+  MAX_PAGE_SIZE,
   type AnnotationPatch,
   type IdempotencyReceipt,
   type ListOptions,
   type OwnListOptions,
+  type ReviewListOptions,
+  type ReviewListResult,
   type MarginPrefs,
   type MarginRepository,
   type TenantScope,
@@ -35,6 +44,11 @@ import {
   kindForMotivation,
   motivationForKind,
   TOMBSTONE_BODY,
+  isRepoRelativePath,
+  splitSource,
+  maxBodyLength,
+  MAX_QUOTE_LENGTH,
+  MAX_CONTEXT_LENGTH,
   type MarginAnnotationRecord,
   type MarginVisibility,
   type Motivation,
@@ -80,6 +94,72 @@ type PrefsRow = {
   created: string
   modified: string
 }
+
+const reviewSite = z.string().refine(value => {
+  const scope = splitSource(value)
+  return scope?.site === value && scope.document === '/'
+})
+const reviewKey = z.object({ created: z.string().datetime({ offset: true }), id: z.string().min(1).max(2048) }).strict()
+const reviewOptions = z.object({
+  site: reviewSite.optional(),
+  document: z.string().min(1).max(2048).optional(),
+  limit: z.number().int().min(1).max(MAX_PAGE_SIZE + 1),
+  after: reviewKey.optional(),
+}).strict().refine(value => {
+  if (value.document === undefined) return true
+  if (value.site === undefined || !value.document.startsWith('/')) return false
+  const scope = splitSource(value.site + value.document)
+  return scope?.site === value.site && scope.document === value.document
+})
+const reviewAuthority = z.object({
+  review_identity_id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  review_role: z.enum(['admin', 'writer']).nullable(),
+  review_site: reviewSite.nullable(),
+}).strict()
+
+function isStoredPrincipalKey(value: string): boolean {
+  if (!value.startsWith(PRINCIPAL_IRI_PREFIX)) return false
+  try {
+    const parts = value.slice(PRINCIPAL_IRI_PREFIX.length).split(':').map(decodeURIComponent)
+    if (parts.length !== 3 || parts.some(part => !part)) return false
+    return principalKey({ provider: parts[0], issuer: parts[1], subject: parts[2] }) === value
+  } catch {
+    return false
+  }
+}
+
+/** Validate the new privileged projection without changing legacy reads. */
+const reviewAnnotation = z.object({
+  id: z.string().min(1).max(2048),
+  site: reviewSite,
+  document: z.string().min(1).max(2048),
+  creator: z.string().refine(isStoredPrincipalKey),
+  visibility: z.enum(['private', 'public']),
+  motivation: z.literal('editing'),
+  parent_id: z.null(),
+  struct_id: z.string().min(1).max(256).nullable(),
+  node_id: z.string().min(1).max(256),
+  position_start: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  position_end: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  position_unit: z.enum(['utf16', 'codepoint']),
+  quote_exact: z.string().min(1).max(MAX_QUOTE_LENGTH),
+  quote_prefix: z.string().max(MAX_CONTEXT_LENGTH),
+  quote_suffix: z.string().max(MAX_CONTEXT_LENGTH),
+  body: z.string().min(1).max(maxBodyLength('editing')),
+  color: z.string().min(1).max(64).nullable(),
+  created: reviewKey.shape.created,
+  modified: reviewKey.shape.created,
+  base_commit: z.string().refine(isFullCommitId).nullable(),
+  source_path: z.string().min(1).max(512).refine(isRepoRelativePath).nullable(),
+  revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullable(),
+  withdrawn_at: z.null(),
+}).strict().refine(row => {
+  const scope = splitSource(row.site + row.document)
+  const metadata = [row.base_commit, row.source_path, row.revision]
+  return row.document.startsWith('/') && scope?.site === row.site && scope.document === row.document
+    && row.position_end > row.position_start
+    && (metadata.every(value => value === null) || metadata.every(value => value !== null))
+})
 
 export function rowToRecord(row: AnnotationRow): MarginAnnotationRecord {
   const kind = kindForMotivation(row.motivation as Motivation)
@@ -170,6 +250,50 @@ export class D1MarginRepository implements MarginRepository {
   private statement({ sql, params }: Query) {
     const prepared = this.database.prepare(sql)
     return params.length > 0 ? prepared.bind(...params) : prepared
+  }
+
+  async listReviewProposals(principal: Principal, options: ReviewListOptions): Promise<ReviewListResult> {
+    principalSchema.parse(principal)
+    reviewOptions.parse(options)
+    const result = await this.statement(listReviewProposalsQuery(principal, options)).all()
+    const { results } = z.object({
+      success: z.literal(true), results: z.array(z.record(z.unknown())),
+    }).parse(result)
+    const authorities: z.infer<typeof reviewAuthority>[] = []
+    const rows: z.infer<typeof reviewAnnotation>[] = []
+    for (const item of results) {
+      const { review_kind, review_identity_id, review_role, review_site, ...row } = item
+      if (review_kind === 'authority') {
+        authorities.push(reviewAuthority.parse({ review_identity_id, review_role, review_site }))
+        const columns = ANNOTATION_COLUMNS.split(', ')
+        if (Object.keys(row).length !== columns.length || columns.some(column => row[column] !== null)) {
+          throw new Error('invalid review authority projection')
+        }
+      } else if (review_kind === 'annotation') {
+        if (review_identity_id !== null || review_role !== null || review_site !== null) {
+          throw new Error('invalid review annotation projection')
+        }
+        rows.push(reviewAnnotation.parse(row))
+      } else {
+        throw new Error('invalid review result tag')
+      }
+    }
+    const first = authorities[0]
+    const seen = new Set<string | null>()
+    for (const authority of authorities) {
+      if (authority.review_identity_id !== first.review_identity_id || authority.review_role !== first.review_role
+          || seen.has(authority.review_site)) throw new Error('inconsistent review authority')
+      seen.add(authority.review_site)
+    }
+    if (seen.has(null) && seen.size > 1) throw new Error('inconsistent review mappings')
+    const sites = new Set(authorities.filter(authority => authority.review_role === 'admin'
+      && authority.review_site !== null
+      && (options.site === undefined || options.site === authority.review_site)).map(authority => authority.review_site))
+    if (rows.length > options.limit || rows.some(row => !sites.has(row.site)
+        || (options.document !== undefined && row.document !== options.document))) {
+      throw new Error('invalid review page scope or bound')
+    }
+    return { authorized: sites.size > 0, records: rows.map(rowToRecord) }
   }
 
   async listAnnotations(

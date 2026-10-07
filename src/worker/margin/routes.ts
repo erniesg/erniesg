@@ -17,6 +17,7 @@ import {
   type ListCursor,
   type MarginRepository,
   type OwnListCursor,
+  type ReviewFilters,
   type TenantScope,
   type ViewerKey,
 } from './repository'
@@ -57,6 +58,7 @@ import {
  *   GET    /progress?site&book       the caller's own progress in a book
  *   PATCH  /progress?site&book       merge into it; never removes or un-solves
  *   GET    /proposals                list, restricted to `editing`
+ *   GET    /proposals?scope=review   pending proposals on explicitly mapped admin sites
  *   POST   /proposals/:id/withdraw   owner-scoped; keeps the row (059)
  *   POST   /proposals/:id/apply      501 — issue 060
  *   GET    /documents/:id/history    501 — issue 059
@@ -431,6 +433,73 @@ function readPage(
 /** The opaque-ish cursor a client sends back. `created` cannot contain a space. */
 function encodeCursor(record: { created: string; id: string }): string {
   return `${record.created} ${record.id}`
+}
+
+const reviewCursorSchema = z.object({
+  version: z.literal(1),
+  site: z.string().nullable(),
+  document: z.string().nullable(),
+  created: z.string().datetime({ offset: true }),
+  id: z.string().min(1).max(2048),
+}).strict()
+
+function encodeReviewCursor(filters: ReviewFilters, row: ListCursor): string {
+  return JSON.stringify({ version: 1, site: filters.site ?? null, document: filters.document ?? null, created: row.created, id: row.id })
+}
+
+async function listReviewProposals(url: URL, context: MarginRouteContext): Promise<Response> {
+  if (!context.principal) return unauthenticated()
+  const state = url.searchParams.get('state')
+  if (state !== null && state !== 'pending') return problem(400, 'invalid_state', 'only pending proposals are supported')
+  for (const name of ['scope', 'state', 'site', 'document', 'limit', 'cursor']) {
+    if (url.searchParams.getAll(name).length > 1) return problem(400, 'invalid_review_query', 'review parameters must be unique')
+  }
+  if (url.searchParams.has('source')) return problem(400, 'invalid_review_query', 'review filters use site and document')
+  const filters: ReviewFilters = {}
+  const rawSite = url.searchParams.get('site')
+  if (rawSite !== null) {
+    const scope = splitSource(rawSite)
+    if (!scope || scope.document !== '/') return problem(400, 'invalid_scope', 'site must be an http(s) origin')
+    filters.site = scope.site
+  }
+  const document = url.searchParams.get('document')
+  if (document !== null) {
+    if (!filters.site || !document.startsWith('/')) return problem(400, 'invalid_scope', 'document requires site and must begin with /')
+    const scope = splitSource(filters.site + document)
+    if (!scope || scope.site !== filters.site) return problem(400, 'invalid_scope', 'invalid review document')
+    filters.document = scope.document
+  }
+  const withoutCursor = new URL(url)
+  withoutCursor.searchParams.delete('cursor')
+  const page = readPage(withoutCursor)
+  if ('error' in page) return page.error
+  let after: ListCursor | undefined
+  const cursor = url.searchParams.get('cursor')
+  if (cursor !== null) {
+    try {
+      if (cursor.length > 16_384) throw new Error('cursor too long')
+      const decoded = reviewCursorSchema.parse(JSON.parse(cursor))
+      // Canonical wire bytes reject duplicate members and extra representations;
+      // this is a page boundary, never a bearer token or authority claim.
+      if (encodeReviewCursor(filters, decoded) !== cursor
+          || decoded.site !== (filters.site ?? null) || decoded.document !== (filters.document ?? null)) {
+        throw new Error('cursor filter mismatch')
+      }
+      after = { created: decoded.created, id: decoded.id }
+    } catch {
+      return problem(400, 'invalid_cursor', 'cursor must be one this review query returned')
+    }
+  }
+  const result = await context.repository.listReviewProposals(context.principal, {
+    ...filters, limit: page.limit + 1, ...(after ? { after } : {}),
+  })
+  if (!result.authorized) return problem(403, 'review_forbidden', 'review requires global admin and an explicit site mapping')
+  const rows = result.records.slice(0, page.limit)
+  const last = rows.at(-1)
+  return json({
+    annotations: rows.map(present),
+    ...(result.records.length > page.limit && last ? { nextCursor: encodeReviewCursor(filters, last) } : {}),
+  })
 }
 
 async function listAnnotations(
@@ -1319,6 +1388,14 @@ export async function handleMarginRequest(
 
   if (path.length === 1 && path[0] === 'proposals') {
     if (method !== 'GET') return methodNotAllowed(['GET', 'HEAD'])
+    const scope = url.searchParams.get('scope')
+    if (scope !== null && scope !== 'review') return problem(400, 'invalid_scope', 'unknown proposal scope')
+    if (scope === 'review') {
+      const response = await listReviewProposals(url, context)
+      return request.method === 'HEAD' ? new Response(null, { status: response.status, headers: response.headers }) : response
+    }
+    const state = url.searchParams.get('state')
+    if (state !== null && state !== 'pending') return problem(400, 'invalid_state', 'only pending proposals are supported')
     return listAnnotations(url, context, owner, 'editing')
   }
 

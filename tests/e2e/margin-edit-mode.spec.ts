@@ -15,6 +15,7 @@ import type { Principal } from '../../src/worker/principal'
 import { D1MarginRepository } from '../../src/worker/margin/d1-repository'
 import { handleMarginRequest } from '../../src/worker/margin/routes'
 import { SqliteD1Database } from '../../src/worker/margin/sqlite-database'
+import { installStaticRoutes } from './static-build'
 
 /**
  * Edit mode end to end (issue 059). `/api/margin/v1/*` is answered in this
@@ -46,6 +47,7 @@ type Service = {
 }
 
 async function mountService(page: Page, documentUri: string): Promise<Service> {
+  await installStaticRoutes(page)
   const database = SqliteD1Database.inMemory()
   const repository = new D1MarginRepository(database)
   let clock = 0

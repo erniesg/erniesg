@@ -1,0 +1,194 @@
+---
+// Static shell only. Private proposals are requested in the browser; the
+// review service, not a client role flag, decides site-admin authorization.
+import { SITE } from '@/consts'
+import ReadingLayout from '@/layouts/ReadingLayout.astro'
+import { REVIEW_STATES } from '@/lib/margin-review'
+
+const path = '/margin/review/'
+const site = new URL(SITE.SITEURL).origin
+---
+
+<ReadingLayout
+  title="Proposal review"
+  description="Read current proposals and their marked changes."
+  documentUri={site + path}
+  canonicalPath={path}
+  marginDefault="none"
+  noindex
+>
+  <section
+    data-review-reader
+    data-review-site={site}
+    aria-labelledby="review-title"
+  >
+    <header>
+      <p class="eyebrow">Site-admin review</p>
+      <h1 id="review-title">Proposal review</h1>
+      <p>
+        Read current proposals for this site, including private proposals you
+        are authorized to review.
+      </p>
+      <p class="scope-note">
+        This reader shows marked current changes. It does not show the immutable
+        approved snapshot or a full rendered result. Saving reviews and
+        approving changes are not available here yet.
+      </p>
+    </header>
+    <form aria-label="Review filters">
+      <label
+        >State
+        <select name="state">
+          {
+            REVIEW_STATES.map((state) => (
+              <option value={state}>{state.replaceAll('_', ' ')}</option>
+            ))
+          }
+        </select>
+      </label>
+      <label class="document-filter"
+        >Document path (optional)
+        <input
+          name="document"
+          type="text"
+          maxlength="8192"
+          placeholder="/books/book/chapter/"
+          autocomplete="off"
+          spellcheck="false"
+        />
+      </label>
+      <button type="submit">Filter proposals</button>
+    </form>
+    <p class="legend">
+      <del>Deleted text</del>
+      <ins>Added text</ins> · Unmarked text is context from the current proposal.
+    </p>
+    <p data-review-status role="status" aria-live="polite"></p>
+    <a
+      data-review-sign-in
+      href="/auth/login?return_to=%2Fmargin%2Freview%2F"
+      hidden>Sign in</a
+    >
+    <button data-review-retry type="button" hidden>Try again</button>
+    <div data-review-rows></div>
+    <button data-review-more type="button" hidden>Load more proposals</button>
+    <noscript
+      >JavaScript is needed to request the private review queue. No proposals
+      are embedded in this page.</noscript
+    >
+  </section>
+</ReadingLayout>
+<script>
+  import { mountReviewReader } from '../../lib/margin-review'
+  const root = document.querySelector<HTMLElement>('[data-review-reader]')
+  if (root) {
+    let dispose = mountReviewReader(root)
+    window.addEventListener('pagehide', () => dispose())
+    window.addEventListener('pageshow', (event) => {
+      if (event.persisted) dispose = mountReviewReader(root)
+    })
+  }
+</script>
+<style>
+  [data-review-reader] {
+    max-width: 76rem;
+    margin-inline: auto;
+    padding: 1.5rem 0;
+    overflow-wrap: anywhere;
+  }
+  h1 {
+    font-size: 2rem;
+    font-weight: 650;
+    margin: 0.4rem 0 1rem;
+  }
+  header p {
+    margin-block: 0.7rem;
+  }
+  .eyebrow {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .scope-note {
+    border-left: 0.2rem solid currentColor;
+    padding-left: 0.9rem;
+  }
+  form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 0.8rem;
+    margin-block: 1.5rem;
+  }
+  label {
+    display: grid;
+    gap: 0.3rem;
+    min-width: 0;
+  }
+  .document-filter {
+    flex: 1 1 18rem;
+  }
+  input,
+  select,
+  button {
+    color: inherit;
+    background: transparent;
+    border: 1px solid currentColor;
+    border-radius: 0.3rem;
+    padding: 0.55rem 0.7rem;
+    max-width: 100%;
+  }
+  button {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: wait;
+    opacity: 0.6;
+  }
+  :is(input, select, button, a):focus-visible {
+    outline: 3px solid #0284c7;
+    outline-offset: 3px;
+  }
+  .legend {
+    font-size: 0.9rem;
+    margin-bottom: 1rem;
+  }
+  [data-review-status] {
+    min-height: 1.5em;
+    margin-block: 1rem;
+  }
+  [data-review-rows] :global(article) {
+    border-top: 1px solid #94a3b8;
+    padding-block: 1.25rem;
+  }
+  [data-review-rows] :global(h2) {
+    font-size: 1.1rem;
+    font-weight: 650;
+  }
+  [data-review-rows] :global(p),
+  [data-review-rows] :global(h3) {
+    margin-block: 0.5rem;
+    font-size: 0.9rem;
+  }
+  [data-review-rows] :global(pre) {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-family: ui-monospace, monospace;
+    padding: 0.8rem;
+    border: 1px solid #94a3b8;
+    border-radius: 0.3rem;
+  }
+  [data-review-reader] :global(del) {
+    color: #991b1b;
+    background: #fee2e2;
+    text-decoration: line-through;
+  }
+  [data-review-reader] :global(ins) {
+    color: #14532d;
+    background: #dcfce7;
+    text-decoration: underline;
+  }
+  [hidden] {
+    display: none !important;
+  }
+</style>

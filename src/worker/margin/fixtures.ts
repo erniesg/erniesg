@@ -1,7 +1,7 @@
 import { formatHunks, parseHunks } from '../../annotations/criticmarkup'
 import type { Principal } from '../principal'
 import { D1MarginRepository } from './d1-repository'
-import { principalKey } from './identity'
+import { principalKey, SCHEMA_STATEMENTS } from './identity'
 import { handleMarginRequest, MARGIN_API_PREFIX } from './routes'
 import { SqliteD1Database } from './sqlite-database'
 import {
@@ -130,8 +130,10 @@ export type MarginHarness = {
   ): Promise<Response>
 }
 
-export function createHarness(): MarginHarness {
+export function createHarness(options: { identitySchema?: boolean } = {}): MarginHarness {
   const database = SqliteD1Database.inMemory()
+  if (options.identitySchema !== false) for (const sql of SCHEMA_STATEMENTS) database.execute(sql)
+  database.executed.length = 0
   const repository = new D1MarginRepository(database)
   let clock = 0
   let sequence = 0

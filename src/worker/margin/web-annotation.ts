@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { ProposalState } from './repository'
 import {
   textAnnotationSchema,
   type TextAnnotation,
@@ -300,6 +301,11 @@ export type WebAnnotation = z.infer<typeof webAnnotationSchema>
  * other field is what margin adds on top of it.
  */
 export type MarginAnnotationRecord = {
+  /** Viewer-bound output only; never reconstructed from client input. */
+  proposalState?: ProposalState
+  /** Privileged review output: current revision may be newer than this. */
+  approvedRevision?: number
+
   id: string
   site: string
   document: string
@@ -588,7 +594,7 @@ export function webAnnotationToRecord(
 
 export function recordToWebAnnotation(
   record: MarginAnnotationRecord,
-): WebAnnotation {
+): WebAnnotation & { 'margin:proposalState'?: ProposalState; 'margin:approvedRevision'?: number } {
   const { annotation } = record
   const anchor = annotation.target
   const tombstone =
@@ -648,5 +654,7 @@ export function recordToWebAnnotation(
         }
       : {}),
     ...(record.withdrawnAt ? { 'margin:withdrawnAt': record.withdrawnAt } : {}),
+    ...(record.proposalState ? { 'margin:proposalState': record.proposalState } : {}),
+    ...(record.approvedRevision !== undefined ? { 'margin:approvedRevision': record.approvedRevision } : {}),
   }
 }

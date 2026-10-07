@@ -420,3 +420,21 @@ describe('the update trigger watches motivation too', () => {
     ).rejects.toThrow(/MARGIN_PROPOSAL_FIELDS/)
   })
 })
+
+describe('approved current proposals preserve creator mutation rules', () => {
+  it('current revision may advance after approval without resetting the immutable application', async () => {
+    const row = await createProposal()
+    const id = bareId(row)
+    harness.database.execute(`INSERT INTO margin_proposal_applications
+      (proposal_id,site,document,creator,visibility,body,base_commit,source_path,revision,approved_by,approved_at,state)
+      SELECT id,site,document,creator,visibility,body,base_commit,source_path,revision,creator,created,'approved'
+      FROM margin_annotations WHERE id=?`,[id])
+    const before = harness.database.query('SELECT * FROM margin_proposal_applications')
+    const revised = await patch(id,{body:proposalBody('A {++later++} proposal.'),'margin:baseCommit':NEWER})
+    expect(revised.status).toBe(200)
+    expect(await revised.json()).toMatchObject({'margin:revision':2,'margin:proposalState':'approved'})
+    expect(harness.database.query('SELECT * FROM margin_proposal_applications')).toEqual(before)
+    expect((await withdraw(id)).status).toBe(409)
+    expect((await patch(id,{body:proposalBody('Unrelated {++change++}.')},BOB)).status).toBe(404)
+  })
+})

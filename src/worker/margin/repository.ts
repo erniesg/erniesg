@@ -81,7 +81,17 @@ export type OwnListOptions = {
   after?: OwnListCursor
 }
 
-export type ReviewFilters = { site?: string; document?: string }
+export const PROPOSAL_STATES = ['approved', 'pr_open', 'conflict', 'merged', 'closed', 'apply_failed'] as const
+export type ProposalState = typeof PROPOSAL_STATES[number]
+export type ReviewFilters = { site?: string; document?: string; state?: 'pending' | ProposalState }
+export type ProposalReview = { revision: number; decision: string; comments: string; body?: string; baseCommit?: string }
+export type ReviewMutationResult =
+  | { status: 'saved'; record: MarginAnnotationRecord }
+  | { status: 'approved'; approvedRevision: number }
+  | { status: 'forbidden' }
+  | { status: 'missing' }
+  | { status: 'conflict' }
+
 export type ReviewListOptions = ReviewFilters & { limit: number; after?: ListCursor }
 export type ReviewListResult = { authorized: boolean; records: MarginAnnotationRecord[] }
 
@@ -92,6 +102,8 @@ export const MAX_PAGE_SIZE = 200
 export const DEFAULT_PAGE_SIZE = 100
 
 export interface MarginRepository {
+  reviewProposal(scope: TenantScope, id: string, principal: Principal, input: ProposalReview | { revision: number }, at: string, apply: boolean): Promise<ReviewMutationResult>
+
   /**
    * Pending proposals on explicitly mapped sites only. Authorization and rows
    * come from one SQL snapshot; an empty queue is distinct from lost authority.
@@ -104,6 +116,7 @@ export interface MarginRepository {
     scope: TenantScope,
     viewer: ViewerKey,
     options?: ListOptions,
+    principal?: Principal | null,
   ): Promise<MarginAnnotationRecord[]>
 
   /**
@@ -123,6 +136,7 @@ export interface MarginRepository {
     scope: TenantScope,
     id: string,
     viewer: ViewerKey,
+    principal?: Principal | null,
   ): Promise<MarginAnnotationRecord | null>
 
   insertAnnotation(record: MarginAnnotationRecord): Promise<void>

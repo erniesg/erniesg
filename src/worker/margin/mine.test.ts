@@ -361,3 +361,20 @@ describe('the /mine query', () => {
     expect(query.params).toContain('/books/build-a-coding-agent0')
   })
 })
+
+describe('creator projection of durable application state', () => {
+  it.each(['approved','pr_open','merged'])('mine returns %s only with the creator current proposal', async state => {
+    const proposal = await post({source:CH1,motivation:'editing'})
+    const id = proposal.id.replace('urn:margin:annotation:','')
+    harness.database.execute(`INSERT INTO margin_proposal_applications
+      (proposal_id,site,document,creator,visibility,body,base_commit,source_path,revision,approved_by,approved_at,state)
+      SELECT id,site,document,creator,visibility,body,base_commit,source_path,revision,creator,created,? FROM margin_annotations WHERE id=?`,[state,id])
+    const response = await harness.request('GET','/mine?'+new URLSearchParams({site:SITE,prefix:BOOK}))
+    expect(response.status).toBe(200)
+    const rows = (await response.json()).annotations
+    expect(rows[0]['margin:proposalState']).toBe(state)
+    expect(rows[0]['margin:approvedRevision']).toBeUndefined()
+    const other = await harness.request('GET','/mine?'+new URLSearchParams({site:SITE,prefix:BOOK}),{as:BOB})
+    expect((await other.json()).annotations).toEqual([])
+  })
+})

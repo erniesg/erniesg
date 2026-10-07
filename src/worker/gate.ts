@@ -35,7 +35,7 @@ export function json(body: unknown, status: number): Response {
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
 /** Match the service router's decoded segments, including repeated slashes. */
-function isProposalApply(pathname: string): boolean {
+function isProposalAdminAction(pathname: string): boolean {
   try {
     const parts = pathname
       .slice(MARGIN_API_PREFIX.length)
@@ -43,7 +43,7 @@ function isProposalApply(pathname: string): boolean {
       .filter(Boolean)
       .map(decodeURIComponent)
     return (
-      parts.length === 3 && parts[0] === 'proposals' && parts[2] === 'apply'
+      parts.length === 3 && parts[0] === 'proposals' && ['apply', 'review'].includes(parts[2])
     )
   } catch {
     return false
@@ -122,7 +122,7 @@ export async function marginWriteGate(
     return cookie ? { setCookie: cookie, forward: effective } : null
   }
 
-  const decision = isProposalApply(pathname)
+  const decision = isProposalAdminAction(pathname)
     ? await requireAdmin(effective, env, options)
     : await requireWriter(effective, env, options)
 

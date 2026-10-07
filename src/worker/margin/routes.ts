@@ -14,6 +14,7 @@ import {
   DEFAULT_VISIBILITY,
   DEFAULT_PAGE_SIZE,
   MAX_PAGE_SIZE,
+  PROPOSAL_STATES,
   type ListCursor,
   type MarginRepository,
   type OwnListCursor,
@@ -60,7 +61,8 @@ import {
  *   GET    /proposals                list, restricted to `editing`
  *   GET    /proposals?scope=review   pending proposals on explicitly mapped admin sites
  *   POST   /proposals/:id/withdraw   owner-scoped; keeps the row (059)
- *   POST   /proposals/:id/apply      501 — issue 060
+ *   POST   /proposals/:id/review     save pending admin review
+ *   POST   /proposals/:id/apply      snapshot approved revision
  *   GET    /documents/:id/history    501 — issue 059
  *
  * `GET /health` is answered by the Worker entry point instead, so that it
@@ -436,7 +438,8 @@ function encodeCursor(record: { created: string; id: string }): string {
 }
 
 const reviewCursorSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
+  state: z.enum(['pending', ...PROPOSAL_STATES]),
   site: z.string().nullable(),
   document: z.string().nullable(),
   created: z.string().datetime({ offset: true }),
@@ -444,18 +447,18 @@ const reviewCursorSchema = z.object({
 }).strict()
 
 function encodeReviewCursor(filters: ReviewFilters, row: ListCursor): string {
-  return JSON.stringify({ version: 1, site: filters.site ?? null, document: filters.document ?? null, created: row.created, id: row.id })
+  return JSON.stringify({ version: 2, state: filters.state ?? 'pending', site: filters.site ?? null, document: filters.document ?? null, created: row.created, id: row.id })
 }
 
 async function listReviewProposals(url: URL, context: MarginRouteContext): Promise<Response> {
   if (!context.principal) return unauthenticated()
   const state = url.searchParams.get('state')
-  if (state !== null && state !== 'pending') return problem(400, 'invalid_state', 'only pending proposals are supported')
+  if (state !== null && state !== 'pending' && !PROPOSAL_STATES.includes(state as typeof PROPOSAL_STATES[number])) return problem(400, 'invalid_state', 'unknown proposal state')
   for (const name of ['scope', 'state', 'site', 'document', 'limit', 'cursor']) {
     if (url.searchParams.getAll(name).length > 1) return problem(400, 'invalid_review_query', 'review parameters must be unique')
   }
   if (url.searchParams.has('source')) return problem(400, 'invalid_review_query', 'review filters use site and document')
-  const filters: ReviewFilters = {}
+  const filters: ReviewFilters = { state: (state ?? 'pending') as ReviewFilters['state'] }
   const rawSite = url.searchParams.get('site')
   if (rawSite !== null) {
     const scope = splitSource(rawSite)
@@ -482,7 +485,7 @@ async function listReviewProposals(url: URL, context: MarginRouteContext): Promi
       // Canonical wire bytes reject duplicate members and extra representations;
       // this is a page boundary, never a bearer token or authority claim.
       if (encodeReviewCursor(filters, decoded) !== cursor
-          || decoded.site !== (filters.site ?? null) || decoded.document !== (filters.document ?? null)) {
+          || decoded.site !== (filters.site ?? null) || decoded.document !== (filters.document ?? null) || decoded.state !== filters.state) {
         throw new Error('cursor filter mismatch')
       }
       after = { created: decoded.created, id: decoded.id }
@@ -500,6 +503,37 @@ async function listReviewProposals(url: URL, context: MarginRouteContext): Promi
     annotations: rows.map(present),
     ...(result.records.length > page.limit && last ? { nextCursor: encodeReviewCursor(filters, last) } : {}),
   })
+}
+
+async function reviewProposal(request: Request, url: URL, context: MarginRouteContext, id: string, apply: boolean): Promise<Response> {
+  if (!context.principal) return unauthenticated()
+  const scope = readScope(url)
+  if ('error' in scope) return scope.error
+  const payload = await readJsonBody(request)
+  if (payload === MALFORMED_JSON) return problem(400, 'malformed_json', 'the request body is not JSON')
+  const revision = z.number().int().positive().max(Number.MAX_SAFE_INTEGER - 1)
+  const schema = apply ? z.object({ revision }).strict() : z.object({
+    revision, decision: z.string().trim().min(1).max(200), comments: z.string().max(8000),
+    body: z.string().min(1).optional(), 'margin:baseCommit': z.string().refine(isFullCommitId).optional(),
+  }).strict()
+  const parsed = schema.safeParse(payload)
+  if (!parsed.success) return problem(400, 'invalid_review', parsed.error.issues[0]?.message ?? 'invalid review')
+  const data = parsed.data as { revision: number; decision?: string; comments?: string; body?: string; 'margin:baseCommit'?: string }
+  if (data.body !== undefined) {
+    if (data.body.length > maxBodyLength('editing')) return problem(413, BODY_TOO_LARGE, 'proposal body is too long')
+    try { parseHunks(data.body) } catch { return problem(400, 'invalid_proposal', 'body must be canonical CriticMarkup hunks') }
+  }
+  const input = apply ? { revision: data.revision } : {
+    revision: data.revision, decision: data.decision!, comments: data.comments!,
+    ...(data.body !== undefined ? { body: data.body } : {}),
+    ...(data['margin:baseCommit'] !== undefined ? { baseCommit: data['margin:baseCommit'] } : {}),
+  }
+  const result = await context.repository.reviewProposal(scope,id,context.principal,input,context.now(),apply)
+  if (result.status === 'forbidden') return problem(403, 'review_forbidden', 'review requires global admin and an explicit site mapping')
+  if (result.status === 'missing') return problem(404, 'not_found', 'no proposal has that id here')
+  if (result.status === 'conflict') return problem(409, 'proposal_conflict', 'proposal must be pending, not withdrawn, and at the reviewed revision with recorded source metadata')
+  if (result.status === 'approved') return json({ state: 'approved', approvedRevision: result.approvedRevision }, 202)
+  return json(present(result.record))
 }
 
 async function listAnnotations(
@@ -521,7 +555,7 @@ async function listAnnotations(
     ...(motivation ? { motivation, pendingOnly: true } : {}),
     limit: page.limit + 1,
     ...(page.after ? { after: page.after } : {}),
-  })
+  }, context.principal)
   const rows = records.slice(0, page.limit)
   const more = records.length > page.limit
   const last = rows[rows.length - 1]
@@ -839,7 +873,7 @@ async function readAnnotation(
   const scope = readScope(url)
   if ('error' in scope) return scope.error
 
-  const found = await context.repository.findAnnotation(scope, id, viewer)
+  const found = await context.repository.findAnnotation(scope, id, viewer, context.principal)
   if (!found) {
     return problem(404, 'not_found', NOT_VISIBLE_MESSAGE)
   }
@@ -1054,7 +1088,7 @@ async function patchAnnotation(
     throw error
   }
   if (!updated) {
-    // A revision refused by the pending check lost a race with a withdrawal.
+    // A revision refused by the withdrawal check lost that concurrent race.
     const now = isProposal ? await context.repository.findAnnotation(scope, id, owner) : null
     if (now?.withdrawnAt) {
       return problem(
@@ -1088,6 +1122,7 @@ async function withdrawProposal(
   if (existing.creator !== owner) {
     return problem(403, 'forbidden', 'only its author can withdraw a proposal')
   }
+  if (existing.proposalState) return problem(409, 'proposal_approved', 'an approved proposal cannot be withdrawn')
   if (existing.proposal?.withdrawnAt || existing.withdrawnAt) {
     return problem(409, 'proposal_withdrawn', 'this proposal is already withdrawn')
   }
@@ -1098,6 +1133,8 @@ async function withdrawProposal(
     context.now(),
   )
   if (!withdrawn) {
+    const current = await context.repository.findAnnotation(scope, id, owner)
+    if (current?.creator === owner && current.proposalState) return problem(409, 'proposal_approved', 'an approved proposal cannot be withdrawn')
     return problem(404, 'not_found', 'no proposal of yours has that id here')
   }
   const updated = await context.repository.findAnnotation(scope, id, owner)
@@ -1124,6 +1161,8 @@ async function deleteAnnotation(
     return problem(404, 'not_found', 'no annotation of yours has that id here')
   }
 
+  if (own.proposalState) return problem(409, 'proposal_approved', 'an approved proposal cannot be deleted')
+
   // A reply belongs to whoever wrote it. Cascading a parent's delete through
   // its children would let the parent's owner destroy other people's
   // annotations, which no owner-scoped delete should be able to do. A note with
@@ -1143,11 +1182,15 @@ async function deleteAnnotation(
     removed = await context.repository.deleteAnnotation(scope, id, owner)
   } catch (error) {
     if (isForeignKeyConflict(error)) {
+      const current = await context.repository.findAnnotation(scope, id, owner)
+      if (current?.creator === owner && current.proposalState) return problem(409, 'proposal_approved', 'an approved proposal cannot be deleted')
       return tombstoneOrRefuse(context, scope, own, owner)
     }
     throw error
   }
   if (!removed) {
+    const current = await context.repository.findAnnotation(scope, id, owner)
+    if (current?.creator === owner && current.proposalState) return problem(409, 'proposal_approved', 'an approved proposal cannot be deleted')
     return problem(404, 'not_found', 'no annotation of yours has that id here')
   }
   return new Response(null, { status: 204, headers: JSON_HEADERS })
@@ -1405,9 +1448,9 @@ export async function handleMarginRequest(
     return withdrawProposal(context, owner, url, annotationIdFromIri(path[1]))
   }
 
-  if (path.length === 3 && path[0] === 'proposals' && path[2] === 'apply') {
+  if (path.length === 3 && path[0] === 'proposals' && ['review', 'apply'].includes(path[2])) {
     if (method !== 'POST') return methodNotAllowed(['POST'])
-    return notImplemented('060')
+    return reviewProposal(request, url, context, annotationIdFromIri(path[1]), path[2] === 'apply')
   }
 
   if (path.length === 3 && path[0] === 'documents' && path[2] === 'history') {

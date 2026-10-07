@@ -18,7 +18,7 @@ type Page = { annotations: Wire[]; nextCursor?: string }
 let harness: MarginHarness
 
 beforeEach(() => {
-  harness = createHarness()
+  harness = createHarness({ identitySchema: false })
   vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network is outside this fixture')))
 })
 afterEach(() => vi.unstubAllGlobals())
@@ -112,7 +112,7 @@ describe('site-admin read-only proposal review', () => {
     expect(one.nextCursor).toBeTypeOf('string')
     expect((await page({ ...filters, cursor: one.nextCursor! })).annotations.map(row => row.id)).toEqual([second.id])
     expect((await harness.request('GET', review({ ...filters, document: '/books/chapter/', cursor: one.nextCursor! }))).status).toBe(400)
-    expect((await harness.request('GET', review({ state: 'approved' }))).status).toBe(400)
+    expect((await harness.request('GET', review({ state: 'approved' }))).status).toBe(200)
   })
 
   it('missing storage is unavailable while mapped empty and missing authority remain distinct', async () => {
@@ -262,7 +262,7 @@ describe('review filters and keyset boundaries', () => {
   it.each([
     { site: SITE + '/path' }, { site: SITE + '?' }, { site: SITE + '#' }, { site: 'https://reader@ernie.sg' },
     { site: '' }, { document: DOCUMENT }, { site: SITE, document: '' }, { site: SITE, document: 'relative' },
-    { state: '' }, { state: 'approved' }, { scope: 'all' }, { scope: '' }, { source: SOURCE },
+    { state: '' }, { state: 'unknown' }, { scope: 'all' }, { scope: '' }, { source: SOURCE },
     ...['0', '-1', '201', '1.5', 'Infinity', 'bad'].map(limit => ({ limit })),
   ] as Record<string, string>[])('rejects invalid review selectors %#', async params => {
     await grant()
@@ -316,10 +316,10 @@ describe('review filters and keyset boundaries', () => {
     const decoded = JSON.parse(cursor)
     for (const damaged of [
       '', 'bad', 'x'.repeat(16_385), '[]', 'null', JSON.stringify({ ...decoded, version: true }),
-      JSON.stringify({ ...decoded, version: 2 }), JSON.stringify({ ...decoded, extra: true }),
+      JSON.stringify({ ...decoded, version: 1 }), JSON.stringify({ ...decoded, extra: true }),
       JSON.stringify({ ...decoded, created: 'yesterday' }), JSON.stringify({ ...decoded, id: 1 }),
       JSON.stringify({ ...decoded, document: '/other' }), JSON.stringify({ ...decoded, site: OTHER_SITE }),
-      cursor.replace('"version":1', '"version":1,"version":1'),
+      cursor.replace('"version":2', '"version":2,"version":2'),
     ]) {
       expect((await harness.request('GET', review({ ...filters, cursor: damaged }))).status, damaged.slice(0, 70)).toBe(400)
     }
@@ -335,7 +335,7 @@ describe('review migration and SQL invariants', () => {
     try {
       database.exec('PRAGMA foreign_keys=ON')
       if (identityFirst) for (const statement of SCHEMA_STATEMENTS) database.exec(statement)
-      expect(applyMigrations(database).at(-1)).toBe('0006_margin_site_admins.sql')
+      expect(applyMigrations(database)).toContain('0006_margin_site_admins.sql')
       expect(database.prepare('SELECT * FROM margin_site_admins').all()).toEqual([])
       if (!identityFirst) for (const statement of SCHEMA_STATEMENTS) database.exec(statement)
       expect(database.prepare('SELECT * FROM margin_identity').all()).toEqual([])

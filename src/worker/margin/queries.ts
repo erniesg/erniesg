@@ -5,8 +5,10 @@ import {
   type ReviewListOptions,
   type TenantScope,
   type ViewerKey,
+  type ProposalReview,
 } from './repository'
 import type { Principal } from '../principal'
+import { principalKey } from './identity'
 
 /**
  * Every SQL statement margin runs, as pure `(sql, params)` values.
@@ -82,6 +84,7 @@ export function listAnnotationsQuery(
   scope: TenantScope,
   viewer: ViewerKey,
   options: ListOptions = {},
+  principal?: Principal | null,
 ): Query {
   if (viewer !== null) {
     // SQLite merges two index-ordered streams under one LIMIT. The disjoint
@@ -101,8 +104,8 @@ export function listAnnotationsQuery(
       privateParams.push(options.motivation)
     }
     if (options.pendingOnly) {
-      publicWhere.push('withdrawn_at IS NULL')
-      privateWhere.push('withdrawn_at IS NULL')
+      publicWhere.push('withdrawn_at IS NULL', noApplication)
+      privateWhere.push('withdrawn_at IS NULL', noApplication)
     }
     if (options.after) {
       publicWhere.push('(created, id) > (?, ?)')
@@ -116,7 +119,7 @@ export function listAnnotationsQuery(
     const privateIndex = options.motivation
       ? 'margin_annotations_private_proposal_page'
       : 'margin_annotations_private_page'
-    return {
+    return projectProposalState({
       sql: `SELECT ${ANNOTATION_COLUMNS} FROM margin_annotations INDEXED BY ${publicIndex}
 WHERE ${publicWhere.join(' AND ')}
 UNION ALL
@@ -124,7 +127,7 @@ SELECT ${ANNOTATION_COLUMNS} FROM margin_annotations INDEXED BY ${privateIndex}
 WHERE ${privateWhere.join(' AND ')}
 ORDER BY created ASC, id ASC LIMIT ?`,
       params: [...publicParams, ...privateParams, limit],
-    }
+    }, viewer, principal)
   }
 
   const extraSql: string[] = []
@@ -133,7 +136,7 @@ ORDER BY created ASC, id ASC LIMIT ?`,
     extraSql.push('AND motivation = ?')
     extraParams.push(options.motivation)
   }
-  if (options.pendingOnly) extraSql.push('AND withdrawn_at IS NULL')
+  if (options.pendingOnly) extraSql.push('AND withdrawn_at IS NULL', `AND ${noApplication}`)
   // Keyset, not OFFSET: the collection is ordered by `(created, id)`, so
   // resuming after the last row the caller saw is one comparison and cannot
   // skip or repeat a row when something is inserted between pages.
@@ -146,7 +149,7 @@ ORDER BY created ASC, id ASC LIMIT ?`,
     extraSql.push('LIMIT ?')
     extraParams.push(options.limit)
   }
-  return scopedRead(scope, viewer, extraSql, extraParams)
+  return projectProposalState(scopedRead(scope, viewer, extraSql, extraParams), viewer, principal)
 }
 
 /**
@@ -178,12 +181,12 @@ export function listOwnAnnotationsQuery(
   const params: unknown[] = options.after
     ? [creator, site, options.after.document, options.after.created, options.after.id, upper]
     : [creator, site, prefix, upper]
-  return {
+  return projectProposalState({
     sql: `SELECT ${ANNOTATION_COLUMNS} FROM margin_annotations INDEXED BY margin_annotations_owner_keyset
 WHERE ${where.join(' AND ')}
 ORDER BY document ASC, created ASC, id ASC LIMIT ?`,
     params: [...params, Math.min(options.limit, MAX_PAGE_SIZE + 1)],
-  }
+  }, creator, undefined, true)
 }
 
 /**
@@ -194,9 +197,10 @@ ORDER BY document ASC, created ASC, id ASC LIMIT ?`,
 export function listReviewProposalsQuery(principal: Principal, options: ReviewListOptions): Query {
   const where = [
     "motivation = 'editing' AND withdrawn_at IS NULL",
+    options.state && options.state !== 'pending' ? 'EXISTS (SELECT 1 FROM margin_proposal_applications WHERE proposal_id = margin_annotations.id AND state = ?)' : noApplication,
     "EXISTS (SELECT 1 FROM review_authority WHERE review_role = 'admin' AND review_site = margin_annotations.site)",
   ]
-  const params: unknown[] = [principal.provider, principal.issuer, principal.subject]
+  const params: unknown[] = [principal.provider, principal.issuer, principal.subject, ...(options.state && options.state !== 'pending' ? [options.state] : [])]
   if (options.site !== undefined) {
     where.push('site = ?')
     params.push(options.site)
@@ -217,15 +221,18 @@ export function listReviewProposalsQuery(principal: Principal, options: ReviewLi
   LEFT JOIN margin_site_admins AS mapping ON mapping.identity_id = identity.id
   WHERE identity.provider = ? AND identity.issuer = ? AND identity.subject = ?
 ), review_page AS (
-  SELECT ${ANNOTATION_COLUMNS} FROM margin_annotations
+  SELECT ${ANNOTATION_COLUMNS},
+    (SELECT state FROM margin_proposal_applications WHERE proposal_id = margin_annotations.id) AS proposal_state,
+    (SELECT revision FROM margin_proposal_applications WHERE proposal_id = margin_annotations.id) AS approved_revision
+  FROM margin_annotations
   WHERE ${where.join(' AND ')}
   ORDER BY created ASC, id ASC LIMIT ?
 )
 SELECT 'authority' AS review_kind, review_identity_id, review_role, review_site,
-  ${ANNOTATION_COLUMNS.split(', ').map(column => `NULL AS ${column}`).join(', ')}
+  ${ANNOTATION_COLUMNS.split(', ').map(column => `NULL AS ${column}`).join(', ')}, NULL AS proposal_state, NULL AS approved_revision
 FROM review_authority
 UNION ALL
-SELECT 'annotation' AS review_kind, NULL, NULL, NULL, ${ANNOTATION_COLUMNS}
+SELECT 'annotation' AS review_kind, NULL, NULL, NULL, ${ANNOTATION_COLUMNS}, proposal_state, approved_revision
 FROM review_page
 ORDER BY review_kind DESC, created ASC, id ASC`,
     params: [...params, Math.min(options.limit, MAX_PAGE_SIZE + 1)],
@@ -236,8 +243,9 @@ export function findAnnotationQuery(
   scope: TenantScope,
   id: string,
   viewer: ViewerKey,
+  principal?: Principal | null,
 ): Query {
-  return scopedRead(scope, viewer, ['AND id = ?', 'LIMIT 1'], [id])
+  return projectProposalState(scopedRead(scope, viewer, ['AND id = ?', 'LIMIT 1'], [id]), viewer, principal)
 }
 
 export function insertAnnotationQuery(row: {
@@ -380,8 +388,8 @@ export function updateAnnotationQuery(
     assignments.push('color = ?')
     params.push(patch.color)
   }
-  // A revision lands only on a proposal still pending: checked in the same
-  // statement, so a withdrawal between the route's read and this write wins.
+  // Current creator content remains mutable after approval; only withdrawal
+  // stops revision. The separate application snapshot is never updated here.
   const pending = patch.reviseProposal ? ' AND withdrawn_at IS NULL' : ''
   return {
     sql: `UPDATE margin_annotations SET ${assignments.join(', ')}
@@ -438,7 +446,7 @@ export function withdrawProposalQuery(
 ): Query {
   return {
     sql: `UPDATE margin_annotations SET withdrawn_at = ?, modified = ?
-WHERE site = ? AND document = ? AND id = ? AND creator = ? AND motivation = 'editing' AND withdrawn_at IS NULL`,
+WHERE site = ? AND document = ? AND id = ? AND creator = ? AND motivation = 'editing' AND withdrawn_at IS NULL AND ${noApplication}`,
     params: [at, at, scope.site, scope.document, id, owner],
   }
 }
@@ -450,7 +458,7 @@ export function deleteAnnotationQuery(
 ): Query {
   return {
     sql: `DELETE FROM margin_annotations
-WHERE site = ? AND document = ? AND id = ? AND creator = ?`,
+WHERE site = ? AND document = ? AND id = ? AND creator = ? AND ${noApplication}`,
     params: [scope.site, scope.document, id, owner],
   }
 }
@@ -564,5 +572,69 @@ ON CONFLICT (creator, site, book, item) DO UPDATE SET
       book,
       cap,
     ],
+  }
+}
+
+
+const noApplication = 'NOT EXISTS (SELECT 1 FROM margin_proposal_applications WHERE proposal_id = margin_annotations.id)'
+
+/** Principal is authenticated composition input; the viewer key alone grants no admin read. */
+function adminPredicate(site: string): string {
+  return `EXISTS (SELECT 1 FROM margin_identity AS identity
+    JOIN margin_allowlist AS allowlist ON allowlist.identity_id = identity.id AND allowlist.role = 'admin'
+    JOIN margin_site_admins AS mapping ON mapping.identity_id = identity.id
+    WHERE identity.provider = ? AND identity.issuer = ? AND identity.subject = ? AND mapping.site = ${site})`
+}
+
+export function projectProposalState(query: Query, viewer: ViewerKey, principal?: Principal | null, own = false): Query {
+  if (principal && principalKey(principal) !== viewer) throw new Error('viewer/principal mismatch')
+  const permission = principal ? `(visible.creator = ? OR ${adminPredicate('visible.site')})` : 'visible.creator = ?'
+  const context = principal ? [viewer, principal.provider, principal.issuer, principal.subject] : [viewer]
+  // Anonymous reads do not reference identity storage at all. Only state is projected;
+  // review metadata and snapshot contents never enter ordinary public rows.
+  return {
+    sql: `SELECT visible.*, application.state AS proposal_state
+      FROM (${query.sql}) AS visible
+      LEFT JOIN margin_proposal_applications AS application ON application.proposal_id = visible.id AND ${permission}
+      ORDER BY ${own ? 'visible.document ASC, ' : ''}visible.created ASC, visible.id ASC`,
+    params: [...query.params, ...context],
+  }
+}
+
+export function reviewMutationQuery(scope: TenantScope, id: string, principal: Principal,
+  input: ProposalReview | { revision: number }, at: string, apply: boolean): Query {
+  const binding = [scope.site, scope.document, id, input.revision, principal.provider, principal.issuer, principal.subject]
+  const where = `site = ? AND document = ? AND id = ? AND revision = ?
+    AND motivation = 'editing' AND withdrawn_at IS NULL AND ${noApplication}
+    AND ${adminPredicate('margin_annotations.site')}
+    AND base_commit IS NOT NULL AND source_path IS NOT NULL`
+  if (apply) return {
+    sql: `INSERT INTO margin_proposal_applications
+      (proposal_id,site,document,creator,visibility,body,base_commit,source_path,revision,approved_by,approved_at,state)
+      SELECT id,site,document,creator,visibility,body,base_commit,source_path,revision,?,?,'approved'
+      FROM margin_annotations WHERE ${where}
+      RETURNING proposal_id,site,document,creator,visibility,body,base_commit,source_path,revision,approved_by,approved_at,state`,
+    params: [principalKey(principal), at, ...binding],
+  }
+  const review = input as ProposalReview
+  const revised = review.body !== undefined || review.baseCommit !== undefined
+  return {
+    sql: `UPDATE margin_annotations SET review_decision=?, review_comments=?, reviewed_by=?, reviewed_at=?,
+      reviewed_revision=revision+?, modified=?, body=COALESCE(?,body), base_commit=COALESCE(?,base_commit), revision=revision+?
+      WHERE ${where}
+      RETURNING ${ANNOTATION_COLUMNS}`,
+    params: [review.decision,review.comments,principalKey(principal),at,Number(revised),at,review.body ?? null,review.baseCommit ?? null,Number(revised),...binding],
+  }
+}
+
+/** One snapshot distinguishes revoked authority from a missing/nonpending row. */
+export function reviewTargetQuery(scope: TenantScope, id: string, principal: Principal): Query {
+  return {
+    sql: `SELECT ${adminPredicate('?')} AS authorized,
+      (SELECT json_object(${ANNOTATION_COLUMNS.split(', ').map(column => `'${column}', ${column}`).join(', ')}, 'proposal_state', (SELECT state FROM margin_proposal_applications WHERE proposal_id=margin_annotations.id), 'approved_revision', (SELECT revision FROM margin_proposal_applications WHERE proposal_id=margin_annotations.id))
+       FROM margin_annotations WHERE site=? AND document=? AND id=? AND motivation='editing'
+       AND ${adminPredicate('margin_annotations.site')}) AS annotation`,
+    params: [principal.provider,principal.issuer,principal.subject,scope.site,
+      scope.site,scope.document,id,principal.provider,principal.issuer,principal.subject],
   }
 }

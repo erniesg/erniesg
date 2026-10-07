@@ -281,6 +281,9 @@ describe('AuthKit and canonical service composition', () => {
       '/proposals/id/apply',
       '/%70roposals/id/%61pply',
       '//proposals//id//apply/',
+      '/proposals/id/review',
+      '/%70roposals/id/%72eview',
+      '//proposals//id//review/',
     ]) {
       expect((await h.request(path, 'POST', cookie)).status).toBe(403)
     }
@@ -310,9 +313,39 @@ describe('AuthKit and canonical service composition', () => {
       '/proposals/id/apply',
       '/%70roposals/id/%61pply',
       '//proposals//id//apply/',
+      '/proposals/id/review',
+      '/%70roposals/id/%72eview',
+      '//proposals//id//review/',
     ]) {
-      expect((await h.request(path, 'POST', cookie)).status).toBe(501)
+      expect((await h.request(path, 'POST', cookie)).status).toBe(400)
     }
+    expect(h.assets).not.toHaveBeenCalled()
+  })
+
+  it('authenticates site-admin Save and Apply while preserving creator PATCH of current content', async () => {
+    const h = await setup()
+    const adminCookie = await h.cookie()
+    const creatorCookie = await h.cookie(other)
+    h.db.execute("UPDATE margin_allowlist SET role='admin' WHERE identity_id=(SELECT id FROM margin_identity WHERE subject=?)", [writer.subject])
+    h.db.execute('INSERT INTO margin_site_admins(site,identity_id) SELECT ?,id FROM margin_identity WHERE subject=?', ['https://ernie.sg',writer.subject])
+    const created = await h.request('/annotations','POST',creatorCookie,webAnnotation({source:CHAPTER_ONE,motivation:'editing'}))
+    expect(created.status).toBe(201)
+    const row = await created.json()
+    const id = row.id.replace('urn:margin:annotation:','')
+    const review = `/proposals/${id}/review${scope}`
+    const apply = `/proposals/${id}/apply${scope}`
+    const saved = {revision:1,decision:'ready',comments:'local review'}
+    for (const path of [review,apply]) {
+      expect((await h.request(path,'POST',adminCookie,path===review?saved:{revision:1},{origin:'https://sibling.ernie.sg'})).status).toBe(403)
+    }
+    expect((await h.request(review,'POST',adminCookie,saved)).status).toBe(200)
+    expect((await h.request(apply,'POST',adminCookie,{revision:1})).status).toBe(202)
+    const before = h.db.query('SELECT * FROM margin_proposal_applications')
+    const revised = await h.request(`/annotations/${id}${scope}`,'PATCH',creatorCookie,{body:proposalBody('A {++later++} version.')})
+    expect(revised.status).toBe(200)
+    expect(await revised.json()).toMatchObject({'margin:revision':2,'margin:proposalState':'approved'})
+    expect(h.db.query('SELECT * FROM margin_proposal_applications')).toEqual(before)
+    expect((await h.request(apply,'POST',adminCookie,{revision:2})).status).toBe(409)
     expect(h.assets).not.toHaveBeenCalled()
   })
 

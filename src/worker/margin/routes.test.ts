@@ -442,8 +442,11 @@ describe('proposals and the routes 059 and 060 will finish', () => {
     expect(annotations[0].motivation).toBe('editing')
   })
 
+  it('Apply requires a valid scope and revision instead of the historical stub', async () => {
+    expect((await harness.request('POST', '/proposals/annotation-001/apply')).status).toBe(400)
+  })
+
   it.each([
-    ['POST', '/proposals/annotation-001/apply', '060'],
     ['GET', '/documents/chapter-1/history', '059'],
   ])('answers %s %s with 501', async (method, path, issue) => {
     const response = await harness.request(method, path)

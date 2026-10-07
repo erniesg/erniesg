@@ -183,7 +183,7 @@ describe('the repository runs that statement and nothing wider', () => {
     // is another page without a second query. Same statement otherwise.
     const expected = listAnnotationsQuery(SCOPE, BOB_KEY, {
       limit: DEFAULT_PAGE_SIZE + 1,
-    })
+    }, BOB)
     const reads = harness.database.reads()
     expect(reads).toHaveLength(1)
     expect(reads[0].sql).toBe(expected.sql)

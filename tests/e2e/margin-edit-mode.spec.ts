@@ -6,6 +6,8 @@ import { expect, test, type Page } from '@playwright/test'
 
 import {
   applyHunks,
+  formatHunks,
+  proposeHunks,
   parseHunks,
   toUnifiedDiff,
 } from '../../src/annotations/criticmarkup'
@@ -321,6 +323,42 @@ test.describe('edit mode', () => {
     await expect(page.locator('.edit-proposal')).toHaveCount(0)
     const rows = await service.rows()
     expect(rows.find((row) => row.motivation === 'editing')?.['margin:withdrawnAt']).toBeTruthy()
+  })
+
+  test('a stale pending deep link preserves the draft and never bypasses the disabled Reopen button', async ({ page }) => {
+    const { service, source } = await openEditor(page)
+    const word = await uniqueWord(page, source)
+    await page.getByRole('button', { name: 'Stop editing' }).click()
+    const creator = `urn:margin:principal:${[OWNER.provider, OWNER.issuer, OWNER.subject].map(encodeURIComponent).join(':')}`
+    const key = `book-edit-draft:v2:${encodeURIComponent(creator)}:${source.path}:${source.commit}`
+    const draft = JSON.stringify({ text: source.text.replace(word, 'PRESERVEMYDRAFT'), revising: null })
+    await page.evaluate(({ key, draft }) => localStorage.setItem(key, draft), { key, draft })
+    const response = await service.post({
+      '@context': 'http://www.w3.org/ns/anno.jsonld', type: 'Annotation', motivation: 'editing',
+      body: { type: 'TextualBody', value: formatHunks(proposeHunks(source.text, source.text.replace(word, 'STALECHANGE'))) },
+      target: { source: new URL(CHAPTER, 'https://ernie.sg').toString(), selector: [
+        { type: 'TextQuoteSelector', exact: word }, { type: 'TextPositionSelector', start: 0, end: word.length },
+      ] },
+      'margin:baseCommit': source.commit === 'b'.repeat(40) ? 'c'.repeat(40) : 'b'.repeat(40),
+      'margin:sourcePath': source.path,
+    })
+    expect(response.status).toBe(201)
+    const proposal = await response.json() as Stored
+    const id = proposal.id.replace(/^urn:margin:annotation:/, '')
+    let confirms = 0
+    page.on('dialog', async (dialog) => { confirms += 1; await dialog.accept() })
+    const writes: string[] = []
+    page.on('request', (request) => {
+      if (request.url().includes('/api/margin/v1/') && ['POST', 'PATCH', 'DELETE'].includes(request.method())) writes.push(request.method())
+    })
+    await page.goto(`${CHAPTER}?annotation=${encodeURIComponent(id)}`)
+    await expect(page.locator(`margin-rail [data-margin-annotation="${id}"]`)).toHaveAttribute('data-margin-target', '')
+    await expect(page.locator('.edit-proposal[data-state="stale"]').getByRole('button', { name: 'Reopen' })).toBeDisabled()
+    await expect(page.locator('[data-edit-status]')).toContainText('unsaved changes')
+    await expect(page.locator('html')).not.toHaveAttribute('data-book-editing', '')
+    expect(await page.evaluate((key) => localStorage.getItem(key), key)).toBe(draft)
+    expect(confirms).toBe(0)
+    expect(writes).toEqual([])
   })
 
   test('reopening a current proposal restores its edit, and saving revises it', async ({ page }) => {

@@ -121,6 +121,8 @@ const data = JSON.stringify({
     parentRequestUrl,
     PROPOSAL_STATE_LABELS,
     resolveForeignParent,
+    readOverviewReader,
+    type OverviewReader,
     UNPARSED_PROPOSAL,
     type OverviewEntry,
     type OverviewFilter,
@@ -429,7 +431,7 @@ const data = JSON.stringify({
    * the page says, with Retry, rather than asking someone who may well be
    * signed in to sign in.
    */
-  async function reader(): Promise<'signed-in' | 'signed-out' | 'failed'> {
+  async function reader(): Promise<OverviewReader> {
     const abort = new AbortController()
     const timer = window.setTimeout(() => abort.abort(), AUTH_TIMEOUT_MS)
     try {
@@ -438,19 +440,10 @@ const data = JSON.stringify({
         headers: { accept: 'application/json' },
         signal: abort.signal,
       })
-      if (!response.ok) return 'failed'
-      const me = (await response.json()) as unknown
-      if (!me || typeof me !== 'object' || Array.isArray(me)) return 'failed'
-      // The Worker's two answers (auth-routes.ts): `authenticated: false` and
-      // no principal for nobody, `authenticated: true` with a principal for
-      // somebody. Anything else is a body this page cannot read, not a reader
-      // to send to the sign-in page.
-      const { authenticated, principal } = me as { authenticated?: unknown; principal?: unknown }
-      if (authenticated === false && principal === undefined) return 'signed-out'
-      if (authenticated === true && principal && typeof principal === 'object') return 'signed-in'
-      return 'failed'
+      if (!response.ok) return { status: 'failed' }
+      return readOverviewReader(await response.json())
     } catch {
-      return 'failed'
+      return { status: 'failed' }
     } finally {
       window.clearTimeout(timer)
     }
@@ -478,6 +471,14 @@ const data = JSON.stringify({
     const chapter = filters.querySelector<HTMLSelectElement>('[data-filter-chapter]')!
 
     const showSignIn = () => {
+      rows = []
+      resumeAt = undefined
+      completedCursors = []
+      readerIdentity = undefined
+      list.replaceChildren()
+      filters.hidden = true
+      root.querySelector<HTMLElement>('[data-annotations-filter-empty]')!.hidden = true
+      root.setAttribute('data-annotations-state', 'signed-out')
       problem.hidden = true
       status.replaceChildren(
         el('a', { href: `/auth/login?return_to=${encodeURIComponent(data.path)}` }, 'Sign in to see your annotations'),
@@ -488,14 +489,16 @@ const data = JSON.stringify({
     const showFailure = () => {
       // Nothing is known, which is not the same as nothing there.
       status.textContent = ''
-      problemText.textContent = LOAD_FAILED
+      problemText.textContent = rows.length ? LOAD_INCOMPLETE : LOAD_FAILED
       problem.hidden = false
-      root.setAttribute('data-annotations-state', 'failed')
+      root.setAttribute('data-annotations-state', rows.length ? 'incomplete' : 'failed')
     }
 
     // What has loaded so far, and where a partial load stopped.
     let rows: WireAnnotation[] = []
     let resumeAt: string | undefined
+    let completedCursors: string[] = []
+    let readerIdentity: string | undefined
     let groups: OverviewGroup[] = []
 
     const update = () =>
@@ -532,22 +535,28 @@ const data = JSON.stringify({
       await resolveForeign(groups, isCurrent)
     }
 
-    // Whether `/auth/me` has said who is reading yet.
-    let known = false
-
     const load = async () => {
+      if (retry.disabled) return
       retry.disabled = true
       try {
-        if (!known) {
-          const who = await reader()
-          if (!isCurrent()) return
-          if (who === 'failed') return showFailure()
-          if (who === 'signed-out') return showSignIn()
-          known = true
-        }
-        const result = await fetchMine(data.site, data.prefix, undefined, resumeAt)
+        // Retry checks the reader again: a session may have expired or changed
+        // while the first page remained visible. Never append another reader's
+        // response to the previous reader's partial list.
+        const who = await reader()
         if (!isCurrent()) return
-        if (result.status === 'signed-out') return showSignIn()
+        if (who.status === 'failed') return showFailure()
+        if (who.status === 'signed-out') return showSignIn()
+        if (readerIdentity !== who.identity) {
+          rows = []
+          resumeAt = undefined
+          completedCursors = []
+          list.replaceChildren()
+          filters.hidden = true
+          parentLookups.clear()
+          readerIdentity = who.identity
+        }
+        const result = await fetchMine(data.site, data.prefix, undefined, resumeAt, completedCursors)
+        if (!isCurrent()) return
         if (result.status === 'failed') return showFailure()
         await settle(result)
       } finally {
@@ -555,10 +564,11 @@ const data = JSON.stringify({
       }
     }
 
-    const settle = async (result: Exclude<Awaited<ReturnType<typeof fetchMine>>, { status: 'failed' | 'signed-out' }>) => {
+    const settle = async (result: Exclude<Awaited<ReturnType<typeof fetchMine>>, { status: 'failed' }>) => {
       rows = [...rows, ...result.annotations]
       if (result.status === 'partial') {
         resumeAt = result.cursor
+        completedCursors = result.completedCursors
         problemText.textContent = LOAD_INCOMPLETE
         problem.hidden = false
         root.setAttribute('data-annotations-state', 'incomplete')

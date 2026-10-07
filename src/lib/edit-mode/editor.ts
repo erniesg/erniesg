@@ -57,6 +57,7 @@ type WireProposal = {
   'margin:baseCommit'?: string
   'margin:revision'?: number
   'margin:withdrawnAt'?: string
+  'margin:proposalState'?: string
 }
 
 /** The same key `src/worker/margin/identity.ts` stores as `creator`. */
@@ -253,6 +254,7 @@ export class EditMode {
   #editing = false
   #revising: WireProposal | null = null
   #me: string | null = null
+  #canWrite = false
   /** The reader's own proposals on this page, as the last listing found them. */
   #proposals: WireProposal[] = []
   #pending = new Map<HTMLElement, number>()
@@ -308,7 +310,7 @@ export class EditMode {
   /** Where this page's unsaved draft lives: per file and per base commit. */
   #draftKey(): string | null {
     // Per reader too: two writers sharing a browser never see each other's.
-    return this.#stamp && this.#me
+    return this.#canWrite && this.#stamp && this.#me
       ? `book-edit-draft:v2:${encodeURIComponent(this.#me)}:${this.#stamp.path}:${this.#stamp.commit}`
       : null
   }
@@ -358,11 +360,11 @@ export class EditMode {
   /** Show edit mode to a reader who may write, and wire it. */
   async start(): Promise<void> {
     const me = await this.#whoami()
-    if (!me) return // Anonymous, or not on the allowlist: no edit mode at all.
-    this.#me = me
-    this.#root.hidden = false
+    if (!me) return // Anonymous or unavailable identity: no editor session.
+    this.#me = me.key
+    this.#canWrite = me.canWrite
     this.#sketch = new SketchController(
-      this.#root, this.#content, me, this.#stamp?.commit ?? 'unstamped', this.#abort.signal,
+      this.#root, this.#content, me.key, this.#stamp?.commit ?? 'unstamped', this.#abort.signal,
       (drawing) => {
         this.#flush()
         this.#content.hidden = !drawing && this.#editing
@@ -370,7 +372,20 @@ export class EditMode {
         if (drawing) this.#changes.hidden = true
         else this.#update()
       },
+      me.canWrite,
     )
+    // Saved drawings are readable without granting editing, draft access or
+    // writer event handlers. Their observers still end with this page visit.
+    document.addEventListener(
+      'astro:after-swap',
+      () => {
+        document.documentElement.removeAttribute('data-book-editing')
+        this.#abort.abort()
+      },
+      { signal: this.#abort.signal },
+    )
+    if (!me.canWrite) return
+    this.#root.hidden = false
     if (this.#disabledReason) {
       this.#toggle.disabled = true
       this.#reason.hidden = false
@@ -405,16 +420,6 @@ export class EditMode {
       },
       { signal },
     )
-    // The site swaps pages without a reload; this controller's page is gone
-    // after the swap, so it stops listening, and stops warning, there.
-    document.addEventListener(
-      'astro:after-swap',
-      () => {
-        document.documentElement.removeAttribute('data-book-editing')
-        this.#abort.abort()
-      },
-      { signal },
-    )
     this.#toggle.addEventListener('click', () => (this.#editing ? this.exit() : this.enter()))
     this.#undo.addEventListener('click', () => this.#history('undo'))
     this.#redo.addEventListener('click', () => this.#history('redo'))
@@ -440,7 +445,7 @@ export class EditMode {
     const landed = (target: MarginTarget | null | undefined) => {
       if (target?.kind !== 'proposal') return
       const proposal = this.#proposals.find((entry) => bareId(entry.id) === target.id)
-      if (proposal && proposalStateOf(proposal) === 'pending') this.reopen(proposal)
+      if (proposal) this.reopen(proposal)
     }
     rail?.addEventListener(
       MARGIN_TARGET_EVENT,
@@ -450,12 +455,15 @@ export class EditMode {
     landed(rail?.target)
   }
 
-  async #whoami(): Promise<string | null> {
+  async #whoami(): Promise<{ key: string; canWrite: boolean } | null> {
     try {
       const response = await fetch(AUTH_ME, { credentials: 'include', headers: { accept: 'application/json' } })
       if (!response.ok) return null
-      const me = (await response.json()) as { canWrite?: boolean; principal?: Principal }
-      return me.canWrite && me.principal ? principalKey(me.principal) : null
+      const me = (await response.json()) as { authenticated?: unknown; canWrite?: unknown; principal?: Principal } | null
+      const principal = me?.principal
+      if (me?.authenticated !== true || !principal || typeof principal !== 'object' || Array.isArray(principal)) return null
+      if (![principal.provider, principal.issuer, principal.subject].every((part) => typeof part === 'string' && part.length > 0)) return null
+      return { key: principalKey(principal), canWrite: me.canWrite === true }
     } catch {
       return null
     }
@@ -464,7 +472,7 @@ export class EditMode {
   /* ------------------------------------------------------------ lifecycle */
 
   enter(from?: string): void {
-    if (!this.#stamp || this.#editing) return
+    if (!this.#canWrite || this.#disabledReason || !this.#stamp || this.#editing) return
     this.#base ??= parseMarkdown(this.#stamp.text)
     if (!this.#session || from !== undefined) {
       this.#session = new EditSession(parseMarkdown(from ?? this.#stamp.text))
@@ -881,7 +889,7 @@ export class EditMode {
   async save(): Promise<void> {
     // One save at a time: a second Cmd/Ctrl+Enter before the first answers
     // would otherwise POST a duplicate proposal.
-    if (this.#saving) return
+    if (!this.#canWrite || this.#disabledReason || this.#saving) return
     this.#flush()
     if (!this.#stamp) return
     let hunks: Hunk[]
@@ -1020,7 +1028,7 @@ export class EditMode {
     const reopen = document.createElement('button')
     reopen.type = 'button'
     reopen.textContent = 'Reopen'
-    reopen.disabled = state === 'stale' || !this.#stamp
+    reopen.disabled = !this.#canReopen(proposal)
     reopen.addEventListener('click', () => this.reopen(proposal))
     const withdraw = document.createElement('button')
     withdraw.type = 'button'
@@ -1030,8 +1038,17 @@ export class EditMode {
     return item
   }
 
+  /** Both the button and a deep link must pass this before changing any draft. */
+  #canReopen(proposal: WireProposal): boolean {
+    return this.#canWrite && !this.#disabledReason && Boolean(this.#stamp) &&
+      proposal.creator === this.#me && proposalStateOf(proposal) === 'pending' &&
+      !proposal['margin:withdrawnAt'] &&
+      (proposal['margin:proposalState'] === undefined || proposal['margin:proposalState'] === 'pending') &&
+      proposal['margin:baseCommit'] === this.#stamp?.commit && typeof proposal.body?.value === 'string'
+  }
+
   reopen(proposal: WireProposal): void {
-    if (!this.#stamp || !proposal.body) return
+    if (!this.#canReopen(proposal) || !this.#stamp || !proposal.body) return
     this.#flush()
     if (
       this.#hasChanges() &&
@@ -1055,6 +1072,7 @@ export class EditMode {
   }
 
   async withdraw(proposal: WireProposal): Promise<void> {
+    if (!this.#canWrite || proposal.creator !== this.#me || proposalStateOf(proposal) !== 'pending') return
     try {
       const response = await fetch(
         `${API}/proposals/${encodeURIComponent(bareId(proposal.id))}/withdraw?source=${encodeURIComponent(this.#documentUri)}`,

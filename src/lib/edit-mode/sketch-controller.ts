@@ -44,6 +44,7 @@ export class SketchController {
   readonly #signal: AbortSignal
   readonly #onView: (drawing: boolean) => void
   readonly #key: string
+  readonly #canWrite: boolean
   #enabled = false
   #active = false
   #saving = false
@@ -66,8 +67,10 @@ export class SketchController {
     commit: string,
     signal: AbortSignal,
     onView: (drawing: boolean) => void,
+    canWrite: boolean,
   ) {
     this.#content = content
+    this.#canWrite = canWrite
     this.#signal = signal
     this.#onView = onView
     this.#rail = document.querySelector('margin-rail') as Rail
@@ -85,74 +88,76 @@ export class SketchController {
     this.#done = find('[data-sketch-done]')
     this.#status = find('[data-sketch-status]')
     this.#instruction = find('[data-sketch-instruction]')
-    find('[data-sketch-toggle]').addEventListener('click', () => this.open(), {
-      signal,
-    })
-    this.#done.addEventListener('click', () => this.close(), { signal })
-    this.#newArea.addEventListener(
-      'click',
-      () => {
-        this.#draft = null
-        this.#requestKey = crypto.randomUUID()
-        this.#canvas?.remove()
-        this.#canvas = null
-        this.#store()
-        this.#selectArea()
-        this.#update()
-      },
-      { signal },
-    )
-    this.#undo.addEventListener(
-      'click',
-      () => {
-        this.#draft?.strokes.pop()
-        this.#drawDraft()
-        this.#store()
-      },
-      { signal },
-    )
-    this.#clear.addEventListener(
-      'click',
-      () => {
-        if (this.#draft) this.#draft.strokes = []
-        this.#drawDraft()
-        this.#store()
-      },
-      { signal },
-    )
-    this.#note.addEventListener(
-      'input',
-      () => {
-        this.#store()
-        this.#update()
-      },
-      { signal },
-    )
-    this.#save.addEventListener('click', () => void this.#persist(), { signal })
-    // Capture before prose shortcuts: Escape leaves the tool, not edit mode.
-    document.addEventListener(
-      'keydown',
-      (event) => {
-        if (event.isComposing || event.repeat) return
-        if (
-          this.#enabled &&
-          (event.metaKey || event.ctrlKey) &&
-          event.shiftKey &&
-          !event.altKey &&
-          event.key.toLowerCase() === 'd'
-        ) {
-          event.preventDefault()
-          event.stopImmediatePropagation()
-          if (this.#active) this.close()
-          else this.open()
-        } else if (this.#active && event.key === 'Escape') {
-          event.preventDefault()
-          event.stopImmediatePropagation()
-          this.close()
-        }
-      },
-      { signal, capture: true },
-    )
+    if (canWrite) {
+      find('[data-sketch-toggle]').addEventListener('click', () => this.open(), {
+        signal,
+      })
+      this.#done.addEventListener('click', () => this.close(), { signal })
+      this.#newArea.addEventListener(
+        'click',
+        () => {
+          this.#draft = null
+          this.#requestKey = crypto.randomUUID()
+          this.#canvas?.remove()
+          this.#canvas = null
+          this.#store()
+          this.#selectArea()
+          this.#update()
+        },
+        { signal },
+      )
+      this.#undo.addEventListener(
+        'click',
+        () => {
+          this.#draft?.strokes.pop()
+          this.#drawDraft()
+          this.#store()
+        },
+        { signal },
+      )
+      this.#clear.addEventListener(
+        'click',
+        () => {
+          if (this.#draft) this.#draft.strokes = []
+          this.#drawDraft()
+          this.#store()
+        },
+        { signal },
+      )
+      this.#note.addEventListener(
+        'input',
+        () => {
+          this.#store()
+          this.#update()
+        },
+        { signal },
+      )
+      this.#save.addEventListener('click', () => void this.#persist(), { signal })
+      // Capture before prose shortcuts: Escape leaves the tool, not edit mode.
+      document.addEventListener(
+        'keydown',
+        (event) => {
+          if (event.isComposing || event.repeat) return
+          if (
+            this.#enabled &&
+            (event.metaKey || event.ctrlKey) &&
+            event.shiftKey &&
+            !event.altKey &&
+            event.key.toLowerCase() === 'd'
+          ) {
+            event.preventDefault()
+            event.stopImmediatePropagation()
+            if (this.#active) this.close()
+            else this.open()
+          } else if (this.#active && event.key === 'Escape') {
+            event.preventDefault()
+            event.stopImmediatePropagation()
+            this.close()
+          }
+        },
+        { signal, capture: true },
+      )
+    }
     const changed = () => {
       this.#saved = (this.#rail.annotations ?? []).flatMap((annotation) => {
         const sketch =
@@ -204,9 +209,9 @@ export class SketchController {
   }
 
   setEnabled(enabled: boolean): void {
-    this.#enabled = enabled
-    if (!enabled) this.close()
-    this.#launcher.hidden = !enabled || this.#active
+    this.#enabled = enabled && this.#canWrite
+    if (!this.#enabled) this.close()
+    this.#launcher.hidden = !this.#enabled || this.#active
     this.#scheduleLayout()
   }
 
@@ -599,6 +604,7 @@ export class SketchController {
   }
 
   #store(): void {
+    if (!this.#canWrite) return
     try {
       if (!this.#draft) {
         localStorage.removeItem(this.#key)
@@ -623,6 +629,7 @@ export class SketchController {
   }
 
   #restore(): void {
+    if (!this.#canWrite) return
     try {
       const raw = localStorage.getItem(this.#key)
       if (!raw || raw.length > 12_000) return
@@ -650,6 +657,7 @@ export class SketchController {
   }
 
   async #persist(): Promise<void> {
+    if (!this.#canWrite || !this.#enabled) return
     this.#finishStroke()
     if (
       this.#saving ||

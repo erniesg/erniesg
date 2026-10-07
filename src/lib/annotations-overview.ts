@@ -385,53 +385,90 @@ export function matchesFilter(
   )
 }
 
+export type OverviewReader =
+  | { status: 'signed-in'; identity: string }
+  | { status: 'signed-out' }
+  | { status: 'failed' }
+
+/** Interpret `/auth/me` for display only; the service still authorizes every read. */
+export function readOverviewReader(value: unknown): OverviewReader {
+  if (!isObject(value)) return { status: 'failed' }
+  const { authenticated, principal } = value
+  if (authenticated === false && (principal === undefined || principal === null)) {
+    return { status: 'signed-out' }
+  }
+  if (authenticated !== true || !isObject(principal)) return { status: 'failed' }
+  const identity = [principal.provider, principal.issuer, principal.subject]
+  if (!identity.every((part) => typeof part === 'string' && part.length > 0)) {
+    return { status: 'failed' }
+  }
+  return { status: 'signed-in', identity: JSON.stringify(identity) }
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+/** Minimum row shape that the overview can display, including its actual source. */
+function readableRow(value: unknown, site: string, prefix: string): value is WireAnnotation {
+  if (!isObject(value) || typeof value.id !== 'string' || !serverIdFromIri(value.id)) return false
+  if (typeof value.motivation !== 'string' || !['highlighting', 'commenting', 'editing'].includes(value.motivation)) return false
+  if (!isObject(value.target) || typeof value.target.source !== 'string') return false
+  try {
+    const source = new URL(value.target.source)
+    return source.origin === site && source.pathname.startsWith(prefix)
+  } catch {
+    return false
+  }
+}
+
 export type MineResult =
   | { status: 'ok'; annotations: WireAnnotation[] }
-  | { status: 'signed-out' }
   /** The first request failed: nothing is known, which is not "nothing". */
   | { status: 'failed' }
-  /** A later page failed: `annotations` is what loaded; resume at `cursor`. */
-  | { status: 'partial'; annotations: WireAnnotation[]; cursor: string }
+  /** Resume the uncommitted page; remember completed cursors across retries. */
+  | { status: 'partial'; annotations: WireAnnotation[]; cursor: string; completedCursors: string[] }
 
 /**
- * Every row under `prefix`, following `nextCursor`, with the same loop guard
- * as the rail. `from` resumes after a partial load, at its failed cursor.
+ * Read whole valid pages only. A malformed or looping page remains uncommitted,
+ * so Retry can fetch it again without duplicating rows already on screen.
+ * API errors are load errors; only `/auth/me` establishes the sign-in prompt.
  */
 export async function fetchMine(
   site: string,
   prefix: string,
   fetchImpl: typeof fetch = (...args) => fetch(...args),
   from?: string,
+  completedCursors: readonly string[] = [],
 ): Promise<MineResult> {
   const annotations: WireAnnotation[] = []
-  const cursors = new Set<string>()
-  let cursor: string | undefined = from
+  const completed = new Set(completedCursors)
+  let cursor = from
   for (;;) {
     const query = new URLSearchParams({ site, prefix, limit: '200', ...(cursor ? { cursor } : {}) })
     const failed = (): MineResult =>
-      cursor ? { status: 'partial', annotations, cursor } : { status: 'failed' }
-    let response: Response
+      cursor
+        ? { status: 'partial', annotations, cursor, completedCursors: [...completed] }
+        : { status: 'failed' }
+    let body: unknown
     try {
-      response = await fetchImpl(`${MINE_ROUTE}?${query}`, {
+      const response = await fetchImpl(`${MINE_ROUTE}?${query}`, {
         credentials: 'include',
         headers: { accept: 'application/json' },
       })
+      if (!response.ok) return failed()
+      body = await response.json()
     } catch {
       return failed()
     }
-    if (!cursor && (response.status === 401 || response.status === 403)) {
-      return { status: 'signed-out' }
-    }
-    if (!response.ok) return failed()
-    const body = (await response.json().catch(() => null)) as {
-      annotations?: WireAnnotation[]
-      nextCursor?: string
-    } | null
-    if (!body) return failed()
-    annotations.push(...(body.annotations ?? []))
-    if (!body.nextCursor || cursors.has(body.nextCursor)) break
-    cursors.add(body.nextCursor)
-    cursor = body.nextCursor
+    if (!isObject(body) || !Array.isArray(body.annotations) ||
+      !body.annotations.every((row) => readableRow(row, site, prefix))) return failed()
+    const next = body.nextCursor
+    if (next !== undefined && (typeof next !== 'string' || next.length === 0)) return failed()
+    if (typeof next === 'string' && (next === cursor || completed.has(next))) return failed()
+    annotations.push(...body.annotations)
+    if (cursor) completed.add(cursor)
+    if (next === undefined) return { status: 'ok', annotations }
+    cursor = next
   }
-  return { status: 'ok', annotations }
 }

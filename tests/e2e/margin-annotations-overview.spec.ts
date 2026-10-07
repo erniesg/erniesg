@@ -58,7 +58,7 @@ type Service = {
    * Make `/auth/me` fail instead of answering: an error, a timeout, a body
    * that is not JSON, or JSON in neither of the Worker's two shapes.
    */
-  authFailure: 'error' | 'timeout' | 'malformed' | 'no-principal' | null
+  authFailure: 'error' | 'timeout' | 'malformed' | 'no-principal' | 'array-principal' | 'empty-principal' | 'empty-subject' | null
   /** What `/auth/me` says about writing; reading needs only a principal. */
   canWrite: boolean
   /** Rewrite every annotation the API sends, e.g. to add a field 060 will. */
@@ -120,6 +120,10 @@ async function mountService(page: Page): Promise<Service> {
     }
     if (service.authFailure === 'no-principal') {
       return route.fulfill({ status: 200, headers: { 'content-type': 'application/json' }, body: '{"authenticated":true,"canWrite":true}' })
+    }
+    if (['array-principal', 'empty-principal', 'empty-subject'].includes(service.authFailure ?? '')) {
+      const principal = service.authFailure === 'array-principal' ? [] : service.authFailure === 'empty-principal' ? {} : { ...OWNER, subject: '' }
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ authenticated: true, principal }) })
     }
     return route.fulfill({
       status: 200,
@@ -700,27 +704,38 @@ test.describe('an entry links back to its spot', () => {
     await expect.poll(() => flashedText(page)).toEqual([at.values.quote])
   })
 
-  test('a sketch: its drawing in view and its entry focused, no text painted', async ({ page }) => {
-    const service = await mountService(page)
-    const at = await anchors(page)
-    const sketch = await service.post(
-      annotation(at.values, {
-        motivation: 'commenting',
-        body: sketchBody(at.values, 'Look at this drawing', { x: 0.1, y: 0.1, width: 0.5, height: 0.3 }),
-      }),
-    )
-    await openOverview(page)
+  for (const canWrite of [true, false]) {
+    test(`a sketch (canWrite=${canWrite}): its drawing in view and its entry focused, no text painted`, async ({ page }) => {
+      const service = await mountService(page)
+      const at = await anchors(page)
+      const sketch = await service.post(
+        annotation(at.values, {
+          motivation: 'commenting',
+          body: sketchBody(at.values, 'Look at this drawing', { x: 0.1, y: 0.1, width: 0.5, height: 0.3 }),
+        }),
+      )
+      service.canWrite = canWrite
+      await openOverview(page)
 
-    await entry(page, sketch).locator('a[data-annotation-link]').click()
-    const target = railEntry(page, bare(sketch))
-    await expect(target).toHaveAttribute('data-margin-target', '')
-    await expect.poll(() => focusedInRail(target)).toBe(true)
-    const overlay = page.locator(`[data-sketch-saved="${bare(sketch)}"]`)
-    await expect(overlay).toHaveAttribute('data-sketch-target', '')
-    await expect(overlay).toBeInViewport()
-    await expect(page.locator('margin-rail')).not.toHaveAttribute('data-flashing', '')
-    expect(await flashedText(page)).toEqual([])
-  })
+      await entry(page, sketch).locator('a[data-annotation-link]').click()
+      const target = railEntry(page, bare(sketch))
+      await expect(target).toHaveAttribute('data-margin-target', '')
+      await expect.poll(() => focusedInRail(target)).toBe(true)
+      const overlay = page.locator(`[data-sketch-saved="${bare(sketch)}"]`)
+      await expect(overlay).toHaveAttribute('data-sketch-target', '')
+      await expect(overlay).toBeInViewport()
+      await expect(page.locator('margin-rail')).not.toHaveAttribute('data-flashing', '')
+      expect(await flashedText(page)).toEqual([])
+      if (!canWrite) {
+        await expect(page.locator('[data-edit-mode]')).toBeHidden()
+        await page.keyboard.press('ControlOrMeta+Shift+D')
+        await expect(page.locator('[data-sketch-toolbar]')).toBeHidden()
+        await expect(page.locator('html')).not.toHaveAttribute('data-book-editing', '')
+        expect(service.requests.filter((request) => /^(POST|PATCH|DELETE) /.test(request))).toEqual([])
+      }
+    })
+
+  }
 
   test('a pending proposal: its diff open in edit mode, for its author', async ({ page }) => {
     const service = await mountService(page)
@@ -760,23 +775,27 @@ test.describe('an entry links back to its spot', () => {
     expect(await flashedText(page)).toEqual([])
   })
 
-  test('a proposal 060 has moved on (approved): lands read-only, no editor open', async ({ page }) => {
-    const service = await mountService(page)
-    const proposal = await realProposal(page, service)
-    // 060 will send margin:proposalState; until then the API is decorated with it.
-    service.decorate = (wire) => (wire.id === proposal.id ? { ...wire, 'margin:proposalState': 'approved' } : wire)
-    await openOverview(page)
-    await expect(entry(page, proposal).locator('[data-proposal-state]')).toHaveText('Being applied')
+  for (const state of ['approved', 'pr_open', 'merged', 'conflict', 'apply_failed', 'closed'] as const) {
+    test(`a proposal 060 has moved on (${state}): lands read-only, no editor open`, async ({ page }) => {
+      const service = await mountService(page)
+      const proposal = await realProposal(page, service)
+      // 060 will send margin:proposalState; until then the API is decorated with it.
+      service.decorate = (wire) => (wire.id === proposal.id ? { ...wire, 'margin:proposalState': state } : wire)
+      await openOverview(page)
+      await expect(entry(page, proposal).locator('[data-proposal-state]')).toHaveText(PROPOSAL_STATE_LABELS[state])
 
-    await entry(page, proposal).locator('a[data-annotation-link]').click()
-    const target = railEntry(page, bare(proposal))
-    await expect(target).toHaveAttribute('data-margin-target', '')
-    await expect.poll(() => focusedInRail(target)).toBe(true)
-    await expect(target.locator('[data-proposal-state]')).toHaveText('Being applied')
-    await expect(page.locator('[data-edit-mode]')).toBeVisible()
-    await expect(page.locator('html')).not.toHaveAttribute('data-book-editing', '')
-    await expect(page.locator('[data-edit-surface]')).toBeHidden()
-  })
+      await entry(page, proposal).locator('a[data-annotation-link]').click()
+      const target = railEntry(page, bare(proposal))
+      await expect(target).toHaveAttribute('data-margin-target', '')
+      await expect.poll(() => focusedInRail(target)).toBe(true)
+      await expect(target.locator('[data-proposal-state]')).toHaveText(PROPOSAL_STATE_LABELS[state])
+      await expect(page.locator('[data-edit-mode]')).toBeVisible()
+      await expect(page.locator('html')).not.toHaveAttribute('data-book-editing', '')
+      await expect(page.locator('[data-edit-surface]')).toBeHidden()
+      await expect(page.locator('.edit-proposal').getByRole('button', { name: 'Reopen' })).toBeDisabled()
+    })
+
+  }
 
   test("the reader's own reply: focused in its thread", async ({ page }) => {
     const service = await mountService(page)
@@ -879,7 +898,7 @@ test.describe('loading the list', () => {
     expect(query.get('site')).toBe(SITE)
   })
 
-  for (const failure of ['error', 'timeout', 'malformed', 'no-principal'] as const) {
+  for (const failure of ['error', 'timeout', 'malformed', 'no-principal', 'array-principal', 'empty-principal', 'empty-subject'] as const) {
     test(`a failed /auth/me (${failure}) is a retryable load error, not the sign-in prompt`, async ({ page }) => {
       const service = await mountService(page)
       const at = await anchors(page)
@@ -901,56 +920,96 @@ test.describe('loading the list', () => {
     })
   }
 
-  test('a first failure says so, with Retry, and never shows the empty state', async ({ page }) => {
-    const service = await mountService(page)
-    const at = await anchors(page)
-    const note = await service.post(annotation(at.values, { motivation: 'commenting', body: 'There all along.' }))
-    let failing = true
-    service.override = (url) =>
-      failing && url.pathname === '/api/margin/v1/mine' ? { status: 500, body: { error: { code: 'down' } } } : null
-    await page.goto(OVERVIEW)
+  for (const failure of [401, 403, 500, 'malformed'] as const) {
+    test(`a first failure (${failure}) says so, with Retry, and never shows the empty state`, async ({ page }) => {
+      const service = await mountService(page)
+      const at = await anchors(page)
+      const note = await service.post(annotation(at.values, { motivation: 'commenting', body: 'There all along.' }))
+      let failing = true
+      service.override = (url) =>
+        failing && url.pathname === '/api/margin/v1/mine' ? failure === 'malformed' ? { status: 200, body: {} } : { status: failure, body: { error: { code: 'down' } } } : null
+      await page.goto(OVERVIEW)
 
-    const problem = page.locator('[data-annotations-problem]')
-    await expect(problem).toBeVisible()
-    await expect(problem).toContainText('Could not load your annotations')
-    await expect(page.locator('[data-annotations-overview]')).toHaveAttribute('data-annotations-state', 'failed')
-    await expect(page.getByText(/no annotations in this book/i)).toHaveCount(0)
+      const problem = page.locator('[data-annotations-problem]')
+      await expect(problem).toBeVisible()
+      await expect(problem).toContainText('Could not load your annotations')
+      await expect(page.locator('[data-annotations-overview]')).toHaveAttribute('data-annotations-state', 'failed')
+      await expect(page.getByText(/no annotations in this book/i)).toHaveCount(0)
 
-    failing = false
-    await problem.getByRole('button', { name: 'Retry' }).click()
-    await expect(entry(page, note)).toBeVisible()
-    await expect(problem).toBeHidden()
-  })
+      failing = false
+      await problem.getByRole('button', { name: 'Retry' }).click()
+      await expect(entry(page, note)).toBeVisible()
+      await expect(problem).toBeHidden()
+    })
 
-  test('a failure on page two keeps page one, marked incomplete, and Retry completes it', async ({ page }) => {
-    const service = await mountService(page)
-    const at = await anchors(page)
-    const total = MAX_PAGE_SIZE + 3
-    for (let index = 0; index < total; index += 1) {
-      await service.post(annotation(at.values, { motivation: 'highlighting' }))
-    }
-    let failing = true
-    service.override = (url) =>
-      failing && url.pathname === '/api/margin/v1/mine' && url.searchParams.has('cursor')
-        ? { status: 503, body: { error: { code: 'down' } } }
+  }
+
+  for (const failure of ['unavailable', 'malformed', 'loop', 'unauthorized'] as const) {
+    test(`a failure on page two (${failure}) keeps page one, marked incomplete, and Retry completes it`, async ({ page }) => {
+      const service = await mountService(page)
+      const at = await anchors(page)
+      const total = MAX_PAGE_SIZE + 3
+      for (let index = 0; index < total; index += 1) {
+        await service.post(annotation(at.values, { motivation: 'highlighting' }))
+      }
+      let failing = true
+      service.override = (url) =>
+        failing && url.pathname === '/api/margin/v1/mine' && url.searchParams.has('cursor')
+          ? failure === 'malformed'
+            ? { status: 200, body: { annotations: [null] } }
+            : failure === 'loop'
+              ? { status: 200, body: { annotations: [], nextCursor: url.searchParams.get('cursor') } }
+              : { status: failure === 'unauthorized' ? 401 : 503, body: { error: { code: 'down' } } }
+          : null
+      await page.goto(OVERVIEW)
+
+      const overview = page.locator('[data-annotations-overview]')
+      await expect(overview).toHaveAttribute('data-annotations-state', 'incomplete')
+      await expect(page.locator('[data-annotation-entry]')).toHaveCount(MAX_PAGE_SIZE)
+      await expect(page.locator('[data-annotations-problem]')).toContainText('incomplete')
+
+      failing = false
+      const before = service.requests.length
+      await page.getByRole('button', { name: 'Retry' }).click()
+      await expect(overview).toHaveAttribute('data-annotations-state', 'complete')
+      await expect(page.locator('[data-annotation-entry]')).toHaveCount(total)
+      // It went on from the failed cursor, not from the start.
+      const resumed = service.requests.slice(before).filter((request) => request.startsWith('GET /api/margin/v1/mine'))
+      expect(resumed).toHaveLength(1)
+      expect(resumed[0]).toContain('cursor=')
+    })
+
+  }
+
+  for (const nextReader of ['other', 'signed-out'] as const) {
+    test(`retry rechecks identity (${nextReader}) before using a prior reader's cursor`, async ({ page }) => {
+      const service = await mountService(page)
+      const at = await anchors(page)
+      const mine = await service.post(annotation(at.values, { motivation: 'commenting', body: 'Previous reader only.' }))
+      const theirs = await service.post(annotation(at.values, { motivation: 'commenting', body: 'Next reader only.' }), OTHER)
+      service.override = (url) => url.pathname === '/api/margin/v1/mine'
+        ? url.searchParams.has('cursor') ? { status: 503, body: {} } : { status: 200, body: { annotations: [mine], nextCursor: 'held' } }
         : null
-    await page.goto(OVERVIEW)
-
-    const overview = page.locator('[data-annotations-overview]')
-    await expect(overview).toHaveAttribute('data-annotations-state', 'incomplete')
-    await expect(page.locator('[data-annotation-entry]')).toHaveCount(MAX_PAGE_SIZE)
-    await expect(page.locator('[data-annotations-problem]')).toContainText('incomplete')
-
-    failing = false
-    const before = service.requests.length
-    await page.getByRole('button', { name: 'Retry' }).click()
-    await expect(overview).toHaveAttribute('data-annotations-state', 'complete')
-    await expect(page.locator('[data-annotation-entry]')).toHaveCount(total)
-    // It went on from the failed cursor, not from the start.
-    const resumed = service.requests.slice(before).filter((request) => request.startsWith('GET /api/margin/v1/mine'))
-    expect(resumed).toHaveLength(1)
-    expect(resumed[0]).toContain('cursor=')
-  })
+      await page.goto(OVERVIEW)
+      await expect(entry(page, mine)).toBeVisible()
+      await expect(page.locator('[data-annotations-overview]')).toHaveAttribute('data-annotations-state', 'incomplete')
+      service.override = null
+      service.as = OTHER
+      service.signedIn = nextReader !== 'signed-out'
+      const before = service.requests.length
+      await page.getByRole('button', { name: 'Retry' }).click()
+      await expect(entry(page, mine)).toHaveCount(0)
+      const requested = () => service.requests.slice(before).filter((request) => request.startsWith('GET /api/margin/v1/mine'))
+      if (nextReader === 'signed-out') {
+        await expect(page.getByRole('link', { name: 'Sign in to see your annotations' })).toBeVisible()
+        expect(requested()).toEqual([])
+      } else {
+        await expect(entry(page, theirs)).toBeVisible()
+        expect(requested()).toHaveLength(1)
+        expect(requested()[0]).not.toContain('cursor=')
+      }
+    })
+  }
 
   test('signed in with nothing yet: it says so and points to the first chapter', async ({ page }) => {
     await mountService(page)

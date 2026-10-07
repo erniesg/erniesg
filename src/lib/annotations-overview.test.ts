@@ -6,6 +6,7 @@ import { formatHunks } from '../annotations/criticmarkup'
 import {
   buildOverview,
   fetchMine,
+  readOverviewReader,
   linkTo,
   matchesFilter,
   parentRequestUrl,
@@ -360,28 +361,32 @@ describe('matchesFilter', () => {
 })
 
 describe('fetchMine', () => {
+  const a = wire(NODES[0].path, 'a', 'highlighting')
+  const b = wire(NODES[0].path, 'b', 'highlighting')
+  const c = wire(NODES[0].path, 'c', 'highlighting')
+
   function respond(status: number, body: unknown): Response {
     return new Response(JSON.stringify(body), { status })
   }
 
-  it('follows every page and stops on a repeated cursor', async () => {
+  it('follows every page to an explicit end', async () => {
     const asked: string[] = []
     const pages = [
-      { annotations: [{ id: 'a' }], nextCursor: 'c1' },
-      { annotations: [{ id: 'b' }], nextCursor: 'c2' },
-      { annotations: [{ id: 'c' }], nextCursor: 'c1' },
+      { annotations: [a], nextCursor: 'c1' },
+      { annotations: [b], nextCursor: 'c2' },
+      { annotations: [c] },
     ]
     const result = await fetchMine(SITE, BOOK, async (input) => {
       asked.push(String(input))
       return respond(200, pages[asked.length - 1])
     })
-    expect(result).toEqual({ status: 'ok', annotations: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] })
+    expect(result).toEqual({ status: 'ok', annotations: [a, b, c] })
     expect(asked[0]).toBe(`/api/margin/v1/mine?site=${encodeURIComponent(SITE)}&prefix=${encodeURIComponent(BOOK)}&limit=200`)
     expect(asked[1]).toContain('cursor=c1')
   })
 
-  it('reads a first-page 401 as signed out and any other first-page failure as a failure, never as empty', async () => {
-    expect(await fetchMine(SITE, BOOK, async () => respond(401, {}))).toEqual({ status: 'signed-out' })
+  it('treats every first-page API failure as a load failure, not an auth verdict', async () => {
+    expect(await fetchMine(SITE, BOOK, async () => respond(401, {}))).toEqual({ status: 'failed' })
     expect(await fetchMine(SITE, BOOK, async () => respond(500, {}))).toEqual({ status: 'failed' })
     expect(
       await fetchMine(SITE, BOOK, async () => {
@@ -392,9 +397,9 @@ describe('fetchMine', () => {
 
   it('keeps what loaded when a later page fails, and resumes from the failed cursor', async () => {
     const partial = await fetchMine(SITE, BOOK, async (input) =>
-      String(input).includes('cursor=') ? respond(503, {}) : respond(200, { annotations: [{ id: 'a' }], nextCursor: 'c1' }),
+      String(input).includes('cursor=') ? respond(503, {}) : respond(200, { annotations: [a], nextCursor: 'c1' }),
     )
-    expect(partial).toEqual({ status: 'partial', annotations: [{ id: 'a' }], cursor: 'c1' })
+    expect(partial).toEqual({ status: 'partial', annotations: [a], cursor: 'c1', completedCursors: [] })
 
     const asked: string[] = []
     const resumed = await fetchMine(
@@ -402,12 +407,112 @@ describe('fetchMine', () => {
       BOOK,
       async (input) => {
         asked.push(String(input))
-        return respond(200, { annotations: [{ id: 'b' }] })
+        return respond(200, { annotations: [b] })
       },
       'c1',
     )
-    expect(resumed).toEqual({ status: 'ok', annotations: [{ id: 'b' }] })
+    expect(resumed).toEqual({ status: 'ok', annotations: [b] })
     expect(asked).toHaveLength(1)
     expect(asked[0]).toContain('cursor=c1')
+  })
+  it('refuses malformed page envelopes instead of reporting an empty complete list', async () => {
+    for (const body of [{}, [], 'not a page', { annotations: null }, { annotations: {} }, { annotations: [] , nextCursor: 7 }]) {
+      await expect(fetchMine(SITE, BOOK, async () => respond(200, body))).resolves.toEqual({ status: 'failed' })
+    }
+  })
+
+  it('retains earlier rows and retries a malformed later page without accepting its rows', async () => {
+    const result = await fetchMine(SITE, BOOK, async (input) =>
+      String(input).includes('cursor=')
+        ? respond(200, { annotations: [null] })
+        : respond(200, { annotations: [a], nextCursor: 'c1' }),
+    )
+    expect(result).toMatchObject({ status: 'partial', annotations: [a], cursor: 'c1', completedCursors: [] })
+  })
+
+  it('does not commit a looping page or call a loop a complete list', async () => {
+    let calls = 0
+    const result = await fetchMine(SITE, BOOK, async () => respond(200, [
+      { annotations: [a], nextCursor: 'c1' },
+      { annotations: [b], nextCursor: 'c2' },
+      { annotations: [c], nextCursor: 'c1' },
+    ][calls++]))
+    expect(calls).toBe(3)
+    expect(result).toMatchObject({ status: 'partial', annotations: [a, b], cursor: 'c2' })
+  })
+
+  it('preserves completed cursor history across retries and commits a repaired page only once', async () => {
+    let calls = 0
+    const first = await fetchMine(SITE, BOOK, async () => respond(200, [
+      { annotations: [a], nextCursor: 'c1' },
+      { annotations: [b], nextCursor: 'c2' },
+      { annotations: [c], nextCursor: 'c1' },
+    ][calls++]))
+    expect(first.status).toBe('partial')
+    if (first.status !== 'partial') throw new Error('expected partial page')
+    expect(first.completedCursors).toEqual(['c1'])
+    const again = await fetchMine(SITE, BOOK, async () => respond(200, { annotations: [c], nextCursor: 'c1' }), first.cursor, first.completedCursors)
+    expect(again).toEqual({ status: 'partial', annotations: [], cursor: 'c2', completedCursors: ['c1'] })
+    const fixed = await fetchMine(SITE, BOOK, async () => respond(200, { annotations: [c] }), first.cursor, first.completedCursors)
+    expect(fixed).toEqual({ status: 'ok', annotations: [c] })
+    if (fixed.status !== 'ok') throw new Error('expected complete page')
+    expect([...first.annotations, ...fixed.annotations]).toEqual([a, b, c])
+  })
+
+  it('refuses every unreadable row and malformed cursor on either initial or resumed pages', async () => {
+    const malformed = [
+      ...[null, [], true, 7, 'row', {}, { ...a, id: '' }, { ...a, id: 'urn:margin:annotation:' },
+        { ...a, motivation: ['highlighting'] }, { ...a, motivation: 'unknown' },
+        { ...a, target: null }, { ...a, target: { source: 'not a URL' } },
+        { ...a, target: { source: 'https://elsewhere.example/books/b/ch/' } },
+        { ...a, target: { source: `${SITE}/books/sibling/` } },
+      ].map((row) => ({ annotations: [row] })),
+      ...[null, '', false, 0, {}, [], ['cursor']].map((nextCursor) => ({ annotations: [b], nextCursor })),
+    ]
+    for (const body of malformed) {
+      expect(await fetchMine(SITE, BOOK, async () => respond(200, body))).toEqual({ status: 'failed' })
+      expect(await fetchMine(SITE, BOOK, async () => respond(200, body), 'c1')).toEqual({
+        status: 'partial', annotations: [], cursor: 'c1', completedCursors: [],
+      })
+    }
+    expect(await fetchMine(SITE, BOOK, async () => new Response('{'))).toEqual({ status: 'failed' })
+  })
+
+  it('accepts a legitimate empty end and source query/fragment while refusing a resumed self-loop', async () => {
+    expect(await fetchMine(SITE, BOOK, async () => respond(200, { annotations: [] }))).toEqual({ status: 'ok', annotations: [] })
+    const withQuery = { ...a, target: { ...a.target, source: `${SITE}${NODES[0].path}?q=1#note` } }
+    expect(await fetchMine(SITE, BOOK, async () => respond(200, { annotations: [withQuery] }))).toEqual({ status: 'ok', annotations: [withQuery] })
+    expect(await fetchMine(SITE, BOOK, async () => respond(200, { annotations: [b], nextCursor: 'c1' }), 'c1')).toEqual({
+      status: 'partial', annotations: [], cursor: 'c1', completedCursors: [],
+    })
+  })
+
+  it('keeps a first-page 403 distinct from confirmed signed-out', async () => {
+    expect(await fetchMine(SITE, BOOK, async () => respond(403, {}))).toEqual({ status: 'failed' })
+  })
+
+})
+
+
+describe('readOverviewReader', () => {
+  const principal = { provider: 'dev', issuer: 'urn:margin:dev', subject: 'owner' }
+
+  it('recognizes only explicit signed-out or a complete principal, independently of write permission', () => {
+    expect(readOverviewReader({ authenticated: false })).toEqual({ status: 'signed-out' })
+    expect(readOverviewReader({ authenticated: false, principal: null })).toEqual({ status: 'signed-out' })
+    for (const canWrite of [true, false]) {
+      expect(readOverviewReader({ authenticated: true, principal, canWrite })).toEqual({
+        status: 'signed-in', identity: JSON.stringify(['dev', 'urn:margin:dev', 'owner']),
+      })
+    }
+  })
+
+  it('refuses malformed and contradictory principal shapes rather than inventing a reader', () => {
+    for (const body of [null, [], {}, { authenticated: true }, { authenticated: 1, principal },
+      { authenticated: false, principal }, ...[[], {}, 'owner', null,
+        { ...principal, subject: '' }, { ...principal, provider: 7 }, { ...principal, issuer: null },
+      ].map((principal) => ({ authenticated: true, principal }))]) {
+      expect(readOverviewReader(body)).toEqual({ status: 'failed' })
+    }
   })
 })

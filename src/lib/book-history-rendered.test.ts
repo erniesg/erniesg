@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 vi.mock('node:child_process', async (original) => {
   const actual = await original<typeof import('node:child_process')>()
@@ -421,4 +421,74 @@ describe('optional absence excludes every occupied historical path', () => {
       vi.mocked(execFileSync).mockImplementation(realExec)
     }
   })
+})
+
+
+describe('bundled trusted renderer location', () => {
+  it('uses the Astro source-root binding after relocation, never the caller tree or cwd', async () => {
+    const { buildSync } = await import('esbuild')
+    const config = (await import('../../astro.config')).default
+    const source = 'books/chapters/one.md'
+    const root = fixture(source, document('Actual bundled renderer prose.\n'))
+    // Historical code is data, including a caller-tree renderer that must not run.
+    put(root, 'books/tools/history_render.py', 'raise RuntimeError("CALLER_RENDERER_MUST_NOT_RUN")\n')
+    commit(root, 'Caller renderer is untrusted data')
+    const outputRoot = mkdtempSync(path.join(tmpdir(), 'relocated-history-bundle-'))
+    roots.push(outputRoot)
+    const output = path.join(outputRoot, 'dist/.prerender/chunks/books.mjs')
+    mkdirSync(path.dirname(output), { recursive: true })
+    buildSync({
+      entryPoints: [path.join(ROOT, 'src/lib/book-history-rendered.ts')],
+      outfile: output, bundle: true, platform: 'node', format: 'esm',
+      target: 'node22', define: config.vite?.define ?? {},
+      logLevel: 'silent',
+    })
+    const before = preserved(root)
+    const code = `import { collectRenderedBookHistories } from ${JSON.stringify(pathToFileURL(output).href)};
+      const result = collectRenderedBookHistories(${JSON.stringify(root)}, ${JSON.stringify(SITE)}, () => ${JSON.stringify(nodes(source))});
+      console.log(JSON.stringify(result.documents[0].versions[0].render));`
+    const run = realSpawn(process.execPath, ['--input-type=module', '-e', code], {
+      // The historical checkout and cwd are both untrusted code locations.
+      cwd: root, env: { PATH: '/usr/bin:/bin', CHALLENGES_PYTHON: '/usr/bin/python3', LANG: 'C.UTF-8' },
+      encoding: 'utf8', timeout: 20_000, maxBuffer: 4 * 1024 * 1024,
+    })
+    expect(run.error).toBeUndefined()
+    expect(run.stderr).toBe('')
+    expect(run.status).toBe(0)
+    const result = JSON.parse(run.stdout.toString())
+    expect(result.html).toContain('Actual bundled renderer prose.')
+    expect(result.sourceSha256).toBe(sha(readFileSync(path.join(root, source))))
+    // Relocation must not weaken post-render lifetime checks. Only inert
+    // metadata returned inside this owned child changes; no source is edited.
+    const driftCode = `import fs from 'node:fs'; import cp from 'node:child_process';
+      import { syncBuiltinESMExports } from 'node:module';
+      const stat = fs.lstatSync, spawn = cp.spawnSync; let rendered = false;
+      fs.lstatSync = (...args) => { const value = stat(...args);
+        if (rendered && String(args[0]) === ${JSON.stringify(path.join(ROOT, 'books/tools/history_render.py'))}) value.ino += 1;
+        return value; };
+      cp.spawnSync = (...args) => { const value = spawn(...args); rendered = true; return value; };
+      syncBuiltinESMExports();
+      const { collectRenderedBookHistories } = await import(${JSON.stringify(pathToFileURL(output).href)});
+      try { collectRenderedBookHistories(${JSON.stringify(root)}, ${JSON.stringify(SITE)}, () => ${JSON.stringify(nodes(source))});
+        console.log(JSON.stringify({unexpectedSuccess:true})); }
+      catch (error) { console.log(JSON.stringify({message:error.message, rendered})); }`
+    const drift = realSpawn(process.execPath, ['--input-type=module', '-e', driftCode], {
+      cwd: root, env: { PATH: '/usr/bin:/bin', CHALLENGES_PYTHON: '/usr/bin/python3', LANG: 'C.UTF-8' },
+      encoding: 'utf8', timeout: 20_000, maxBuffer: 4 * 1024 * 1024,
+    })
+    expect(drift.status).toBe(0)
+    expect(drift.stderr).toBe('')
+    expect(JSON.parse(drift.stdout.toString())).toEqual({ message: 'trusted renderer input changed', rendered: true })
+    // A bundle built without the trusted config binding must not fall back to
+    // a convenient cwd, even when that cwd contains the genuine renderer.
+    buildSync({ entryPoints: [path.join(ROOT, 'src/lib/book-history-rendered.ts')],
+      outfile: output, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent' })
+    const unbound = realSpawn(process.execPath, ['--input-type=module', '-e', code], {
+      cwd: ROOT, env: { PATH: '/usr/bin:/bin', CHALLENGES_PYTHON: '/usr/bin/python3', LANG: 'C.UTF-8' },
+      encoding: 'utf8', timeout: 20_000, maxBuffer: 4 * 1024 * 1024,
+    })
+    expect(unbound.status).not.toBe(0)
+    expect(unbound.stderr).toContain(path.join(outputRoot, 'dist/src'))
+    expect(preserved(root)).toEqual(before)
+  }, 30_000)
 })

@@ -3,6 +3,7 @@ import {
   adapterSiteSchema,
   adapterIdSchema,
   approvedFeedOptionsSchema,
+  ADAPTER_PAGE_BYTES,
 } from './adapter'
 import { textAnnotationSchema } from '../../annotations/annotations'
 import { z } from 'zod'
@@ -11,6 +12,7 @@ import { principalSchema, type Principal } from '../principal'
 import { PRINCIPAL_IRI_PREFIX, principalKey } from './identity'
 import type { D1Database } from './d1'
 import {
+  adapterWorkQuery,
   adapterReportSnapshotQuery,
   insertAdapterReportQuery,
   adapterCredentialQuery,
@@ -46,6 +48,8 @@ import {
   type AdapterReportResult,
   type AdapterReportAck,
   type AdapterFeedRepository,
+  type AdapterWorkRepository,
+  type AdapterWorkCandidate,
   type AdapterCredential,
   type ApprovedFeedOptions,
   DEFAULT_VISIBILITY,
@@ -524,7 +528,29 @@ function checkReportCredential(c: AdapterCredential) {
   })
 }
 
-export class D1MarginRepository implements MarginRepository, AdapterFeedRepository, AdapterReportRepository {
+function validateExecutionTarget(target: z.infer<typeof reportTarget>) {
+  const e = target.execution
+  if (e) {
+    if (
+      e.site !== target.site ||
+      e.proposal_id !== target.proposal_id ||
+      e.approved_revision !== target.revision
+    )
+      throw Error('execution approval binding')
+    validReportTuple(e, target.state)
+    if (
+      e.state_version === 0
+        ? e.failed_apply_count !== 0 ||
+          e.bound_adapter !== null ||
+          e.last_event !== null ||
+          e.updated_at !== target.approved_at
+        : e.bound_adapter === null || e.last_event === null
+    )
+      throw Error('execution stamp binding')
+  }
+}
+
+export class D1MarginRepository implements MarginRepository, AdapterFeedRepository, AdapterReportRepository, AdapterWorkRepository {
   constructor(private readonly database: D1Database) {}
 
   private statement({ sql, params }: Query) {
@@ -569,25 +595,7 @@ export class D1MarginRepository implements MarginRepository, AdapterFeedReposito
     if (target) {
       if (target.site !== c.site || target.proposal_id !== proposalId)
         throw Error('report target binding')
-      const e = target.execution
-      if (e) {
-        if (
-          e.site !== target.site ||
-          e.proposal_id !== target.proposal_id ||
-          e.approved_revision !== target.revision
-        )
-          throw Error('execution approval binding')
-        validReportTuple(e, target.state)
-        if (
-          e.state_version === 0
-            ? e.failed_apply_count !== 0 ||
-              e.bound_adapter !== null ||
-              e.last_event !== null ||
-              e.updated_at !== target.approved_at
-            : e.bound_adapter === null || e.last_event === null
-        )
-          throw Error('execution stamp binding')
-      }
+      validateExecutionTarget(target)
     }
     return { authorized: true as const, receipt, target, rawTarget: row.target }
   }
@@ -800,6 +808,110 @@ export class D1MarginRepository implements MarginRepository, AdapterFeedReposito
       }
     })
     return { authorized: true, items }
+  }
+
+  async listAdapterWork(credential: AdapterCredential, options: ApprovedFeedOptions) {
+    checkReportCredential(credential)
+    approvedFeedOptionsSchema.parse(options)
+    const result = await this.statement(adapterWorkQuery(credential, options)).all()
+    if (
+      new TextEncoder().encode(JSON.stringify(result)).byteLength > ADAPTER_PAGE_BYTES
+    )
+      throw Error('work candidate byte bound')
+    const rows = adapterRows(result)
+    if (rows.length < 1 || rows.length > options.limit + 1)
+      throw Error('work cardinality')
+    const authority = z
+      .object({
+        kind: z.literal('authority'),
+        authorized: z.union([z.literal(0), z.literal(1)]),
+        ...Object.fromEntries(
+          [...Object.keys(feedColumns), 'execution'].map((key) => [key, z.null()]),
+        ),
+      })
+      .strict()
+      .parse(rows[0])
+    if (!authority.authorized) {
+      if (rows.length !== 1) throw Error('unauthorized work projection')
+      return { authorized: false, candidates: [] }
+    }
+    let previous = options.after
+    const candidates: AdapterWorkCandidate[] = rows.slice(1).map((raw) => {
+      const row = z
+        .object({
+          kind: z.literal('item'),
+          authorized: z.literal(1),
+          ...feedColumns,
+          state: z.enum(['approved', 'pr_open', 'conflict', 'apply_failed']),
+          execution: z.string().nullable(),
+        })
+        .strict()
+        .parse(raw)
+      const source = joinSource(row.site, row.document),
+        scope = splitSource(source)
+      if (
+        row.site !== credential.site ||
+        scope?.site !== row.site ||
+        scope.document !== row.document
+      )
+        throw Error('work snapshot scope')
+      parseHunks(row.body)
+      if (
+        previous &&
+        (binaryCompare(row.approved_at, previous.approvedAt) < 0 ||
+          (row.approved_at === previous.approvedAt &&
+            binaryCompare(row.proposal_id, previous.proposalId) <= 0))
+      )
+        throw Error('work candidate order')
+      previous = { approvedAt: row.approved_at, proposalId: row.proposal_id }
+      const execution =
+        row.execution === null
+          ? null
+          : reportExecution.parse(parseReportJSON(row.execution))
+      validateExecutionTarget({
+        proposal_id: row.proposal_id,
+        site: row.site,
+        revision: row.revision,
+        approved_at: row.approved_at,
+        state: row.state,
+        execution,
+      })
+      return {
+        proposalId: row.proposal_id,
+        site: row.site,
+        document: row.document,
+        source,
+        approvedRevision: row.revision,
+        body: row.body,
+        baseCommit: row.base_commit,
+        sourcePath: row.source_path,
+        visibility: row.visibility,
+        approvedAt: row.approved_at,
+        execution:
+          execution === null
+            ? null
+            : {
+                state: row.state,
+                stateVersion: execution.state_version,
+                failedApplyCount: execution.failed_apply_count,
+                boundAdapter: execution.bound_adapter,
+                pr:
+                  execution.pr_number === null
+                    ? null
+                    : {
+                        number: execution.pr_number,
+                        url: execution.pr_url!,
+                        head: execution.pr_head!,
+                      },
+                checks: execution.checks,
+                detail: execution.detail,
+                mergeCommit: execution.merge_commit,
+                lastEvent: execution.last_event,
+                updatedAt: execution.updated_at,
+              },
+      }
+    })
+    return { authorized: true, candidates }
   }
 
   async readReviewProposal(scope: TenantScope, id: string, principal: Principal): Promise<ReviewReadResult> {

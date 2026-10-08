@@ -31,8 +31,9 @@ const site = new URL(SITE.SITEURL).origin
       </p>
       <p class="scope-note">
         This reader shows marked current changes. It does not show the immutable
-        approved snapshot or a full rendered result. Saving reviews and
-        approving changes are not available here yet.
+        approved snapshot or a full rendered result. You can save decision and
+        comments for a pending proposal. Applying changes and editing proposal
+        content are not available here yet.
       </p>
     </header>
     <form aria-label="Review filters">
@@ -72,6 +73,25 @@ const site = new URL(SITE.SITEURL).origin
     <button data-review-retry type="button" hidden>Try again</button>
     <div data-review-rows></div>
     <button data-review-more type="button" hidden>Load more proposals</button>
+    <section data-review-session hidden aria-labelledby="selected-review-title">
+      <h2 id="selected-review-title">Selected proposal</h2>
+      <p data-review-session-status role="status" aria-live="polite"></p>
+      <div data-review-session-content></div>
+      <form data-review-save-form aria-label="Save proposal review">
+        <label
+          >Review decision
+          <input name="decision" maxlength="200" required autocomplete="off" />
+        </label>
+        <label
+          >Review comments
+          <textarea name="comments" maxlength="8000" rows="6" autocomplete="off"
+          ></textarea>
+        </label>
+        <button data-review-save type="submit" disabled>Save review</button>
+      </form>
+      <button data-review-refresh type="button">Refresh selected review</button>
+      <button data-review-close type="button">Close selected review</button>
+    </section>
     <noscript
       >JavaScript is needed to request the private review queue. No proposals
       are embedded in this page.</noscript
@@ -129,6 +149,7 @@ const site = new URL(SITE.SITEURL).origin
     flex: 1 1 18rem;
   }
   input,
+  textarea,
   select,
   button {
     color: inherit;
@@ -145,7 +166,7 @@ const site = new URL(SITE.SITEURL).origin
     cursor: wait;
     opacity: 0.6;
   }
-  :is(input, select, button, a):focus-visible {
+  :is(input, textarea, select, button, a):focus-visible {
     outline: 3px solid #0284c7;
     outline-offset: 3px;
   }
@@ -187,6 +208,18 @@ const site = new URL(SITE.SITEURL).origin
     color: #14532d;
     background: #dcfce7;
     text-decoration: underline;
+  }
+  [data-review-session] {
+    border: 1px solid #94a3b8;
+    padding: 1rem;
+    margin-block: 1rem;
+  }
+  [data-review-save-form] {
+    display: grid;
+  }
+  [data-review-session-content] :global(pre) {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
   [hidden] {
     display: none !important;

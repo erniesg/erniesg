@@ -1,7 +1,14 @@
-/** Read-only site-admin review reader. Only the server establishes authority.
+/** Site-admin review reader. Only the server establishes authority.
  * Rows contain CURRENT proposals, never an immutable approved snapshot.
  */
 import { z } from 'zod'
+import {
+  ReviewSession,
+  ReviewRequestError,
+  readReviewIdentity,
+  type ReviewTarget,
+  type SessionStatus,
+} from './margin-review-session'
 import {
   isFullCommitId,
   parseCriticMarkup,
@@ -325,15 +332,181 @@ export class ReviewQueue {
   }
 }
 
-/** No innerHTML, storage, writer controls, document fetches or auth bypass. */
+/** Fixed same-origin queue and Save controls; no HTML injection or persistence. */
 export function mountReviewReader(root: HTMLElement): () => void {
-  const doc = root.ownerDocument
+  const doc = root.ownerDocument,
+    win = doc.defaultView
   const form = root.querySelector<HTMLFormElement>('form')!
   const status = root.querySelector<HTMLElement>('[data-review-status]')!
   const list = root.querySelector<HTMLElement>('[data-review-rows]')!
   const more = root.querySelector<HTMLButtonElement>('[data-review-more]')!
   const retry = root.querySelector<HTMLButtonElement>('[data-review-retry]')!
   const signIn = root.querySelector<HTMLElement>('[data-review-sign-in]')!
+  const panel = root.querySelector<HTMLElement>('[data-review-session]')!
+  const panelStatus = root.querySelector<HTMLElement>(
+    '[data-review-session-status]',
+  )!
+  const content = root.querySelector<HTMLElement>(
+    '[data-review-session-content]',
+  )!
+  const saveForm = root.querySelector<HTMLFormElement>(
+    '[data-review-save-form]',
+  )!
+  const decision = saveForm.elements.namedItem('decision') as HTMLInputElement
+  const comments = saveForm.elements.namedItem(
+    'comments',
+  ) as HTMLTextAreaElement
+  const saveButton =
+    root.querySelector<HTMLButtonElement>('[data-review-save]')!
+  const refresh = root.querySelector<HTMLButtonElement>(
+    '[data-review-refresh]',
+  )!
+  const close = root.querySelector<HTMLButtonElement>('[data-review-close]')!
+  const site = root.dataset.reviewSite!
+  const fetcher: typeof fetch = (input, init) => fetch(input, init)
+  let epoch = 0,
+    principal: string | undefined,
+    selected: ReviewTarget | undefined
+  let queue: ReviewQueue
+  const element = (tag: string, text: string) => {
+    const node = doc.createElement(tag)
+    node.textContent = text
+    return node
+  }
+  const renderHunks = (into: HTMLElement, hunks: ReviewRow['hunks']) => {
+    for (const hunk of hunks) {
+      into.append(element('h3', `Base lines ${hunk.start}–${hunk.end}`))
+      const pre = doc.createElement('pre')
+      for (const token of hunk.tokens)
+        pre.append(
+          element(
+            token.kind === 'insert'
+              ? 'ins'
+              : token.kind === 'delete'
+                ? 'del'
+                : 'span',
+            token.text,
+          ),
+        )
+      into.append(pre)
+    }
+  }
+  const updateSave = () => {
+    saveButton.disabled =
+      !session.canSave ||
+      !decision.value.trim() ||
+      decision.value.trim().length > 200 ||
+      comments.value.length > 8000
+  }
+  const session = new ReviewSession(
+    site,
+    fetcher,
+    (view) => {
+      panel.hidden = view.status === 'idle'
+      content.replaceChildren()
+      const busy = ['loading', 'saving', 'reconciling'].includes(view.status)
+      panel.setAttribute('aria-busy', String(busy))
+      refresh.disabled = busy
+      decision.disabled = comments.disabled = !session.canSave
+      if (view.status === 'idle' || (!view.observed && !view.attempt)) {
+        decision.value = ''
+        comments.value = ''
+      }
+      if (view.observed && !view.attempt) {
+        decision.value = view.observed.savedReview?.decision ?? ''
+        comments.value = view.observed.savedReview?.comments ?? ''
+      }
+      const messages: Record<SessionStatus, string> = {
+        idle: '',
+        loading: 'Loading selected review…',
+        ready: 'Showing the current proposal and saved review.',
+        saving: 'Saving review…',
+        reconciling: 'Reading the current saved review…',
+        unauthenticated: 'Sign in to request review access.',
+        forbidden: 'This account does not have site-admin review access.',
+        missing: 'This proposal is unavailable.',
+        unavailable: 'The review service is unavailable.',
+        malformed: 'The review response could not be read safely.',
+        'session-changed':
+          'The account changed. Private review data was cleared.',
+      }
+      let message = messages[view.status]
+      if (view.outcome === 'acknowledged')
+        message = view.observed
+          ? 'Save acknowledged. Showing the currently stored review.'
+          : 'Save acknowledged; saved review could not be refreshed. No repeat Save was sent.'
+      if (view.outcome === 'uncertain')
+        message =
+          'Save outcome is uncertain. No repeat Save was sent. ' +
+          (view.observed
+            ? 'These are the currently stored values; matching values do not identify the earlier request. Refresh deliberately before another Save.'
+            : 'Current saved review could not be established. Refresh deliberately before another Save.')
+      if (view.outcome === 'conflict')
+        message =
+          'The proposal changed or is no longer editable. Showing refreshed state when available; refresh deliberately before another Save.'
+      if (view.outcome === 'rejected')
+        message = 'Save was refused. Refresh the review before another action.'
+      panelStatus.textContent = message
+      const row = view.observed
+      if (row) {
+        content.append(
+          element(
+            'p',
+            `Current revision ${row.revision ?? 'unavailable'} · ${row.state}`,
+          ),
+        )
+        if (row.approvedRevision !== undefined)
+          content.append(
+            element(
+              'p',
+              `Approved revision ${row.approvedRevision}. Showing current content, not the approved snapshot.`,
+            ),
+          )
+        if (row.revision === undefined) {
+          content.append(
+            element(
+              'p',
+              'Legacy proposal: recorded source is unavailable. This review is read-only.',
+            ),
+            element('pre', row.body),
+          )
+        } else renderHunks(content, markupTokens(row.body))
+        if (row.withdrawnAt)
+          content.append(
+            element('p', 'This proposal was withdrawn and is read-only.'),
+          )
+        if (row.savedReview) {
+          content.append(
+            element(
+              'p',
+              `Saved review for revision ${row.savedReview.revision} at ${row.savedReview.at}${row.savedReview.revision !== row.revision ? ' · Predates current content' : ''}`,
+            ),
+            element('p', `Decision: ${row.savedReview.decision}`),
+            element('pre', row.savedReview.comments),
+            element('p', `Reviewer: ${row.savedReview.reviewer}`),
+          )
+        } else content.append(element('p', 'No saved review.'))
+      }
+      updateSave()
+    },
+    () => {
+      epoch++
+      principal = undefined
+      selected = undefined
+      queue.dispose()
+      decision.value = ''
+      comments.value = ''
+      status.textContent =
+        'Review access changed or could not be established. Reload the queue.'
+    },
+  )
+  const clearPrivate = () => {
+    epoch++
+    principal = undefined
+    selected = undefined
+    session.close()
+    queue.dispose()
+  }
   const messages: Record<QueueStatus, string> = {
     idle: '',
     loading: 'Loading proposals…',
@@ -348,14 +521,40 @@ export function mountReviewReader(root: HTMLElement): () => void {
     limited:
       'Page limit reached (up to 250 proposals). Narrow the document or state filter to continue.',
   }
-  const element = (tag: string, text: string) => {
-    const node = doc.createElement(tag)
-    node.textContent = text
-    return node
-  }
-  const queue = new ReviewQueue(
-    root.dataset.reviewSite!,
-    (input, init) => fetch(input, init),
+  queue = new ReviewQueue(
+    site,
+    async (input, init) => {
+      const generation = epoch,
+        signal = init?.signal ?? new AbortController().signal
+      try {
+        const before = await readReviewIdentity(fetcher, signal)
+        if (principal !== undefined && before !== principal)
+          throw new ReviewRequestError('session-changed', true)
+        const response = await fetcher(input, init)
+        const after = await readReviewIdentity(fetcher, signal)
+        if (generation !== epoch || signal.aborted)
+          throw new ReviewRequestError('unavailable')
+        if (before !== after)
+          throw new ReviewRequestError('session-changed', true)
+        principal = before
+        return response
+      } catch (error) {
+        if (generation === epoch && !signal.aborted) {
+          clearPrivate()
+          const kind =
+            error instanceof ReviewRequestError ? error.kind : 'unavailable'
+          status.textContent =
+            kind === 'unauthenticated'
+              ? messages.unauthenticated
+              : kind === 'session-changed'
+                ? 'The account changed. Private review data was cleared. Reload the queue.'
+                : 'Review identity could not be established. Try again.'
+          signIn.hidden = kind !== 'unauthenticated'
+          retry.hidden = false
+        }
+        throw error
+      }
+    },
     (view) => {
       status.textContent = messages[view.status]
       root.setAttribute('aria-busy', String(view.status === 'loading'))
@@ -365,48 +564,47 @@ export function mountReviewReader(root: HTMLElement): () => void {
         view.status,
       )
       signIn.hidden = view.status !== 'unauthenticated'
+      if (
+        ['unauthenticated', 'forbidden', 'unavailable', 'malformed'].includes(
+          view.status,
+        )
+      ) {
+        selected = undefined
+        session.close()
+      }
       list.replaceChildren()
       for (const row of view.rows) {
         const article = doc.createElement('article')
         article.dataset.proposalId = row.id
+        const source = new URL(row.source)
         article.append(
-          element(
-            'h2',
-            new URL(row.source).pathname +
-              new URL(row.source).search +
-              new URL(row.source).hash,
-          ),
+          element('h2', source.pathname + source.search + source.hash),
           element('p', `${row.state} · ${revisionLabel(row)}`),
           element('p', `Created ${row.created}`),
         )
-        for (const hunk of row.hunks) {
-          article.append(element('h3', `Base lines ${hunk.start}–${hunk.end}`))
-          const pre = doc.createElement('pre')
-          for (const token of hunk.tokens)
-            pre.append(
-              element(
-                token.kind === 'insert'
-                  ? 'ins'
-                  : token.kind === 'delete'
-                    ? 'del'
-                    : 'span',
-                token.text,
-              ),
-            )
-          article.append(pre)
-        }
+        renderHunks(article, row.hunks)
+        const open = doc.createElement('button')
+        open.type = 'button'
+        open.textContent = 'Open review'
+        open.addEventListener('click', () => {
+          selected = { id: row.id, source: row.source }
+          void session.open(selected, principal)
+        })
+        article.append(open)
         list.append(article)
       }
     },
   )
-  const reset = () =>
-    queue.reset({
+  const reset = () => {
+    clearPrivate()
+    return queue.reset({
       state: (form.elements.namedItem('state') as HTMLSelectElement)
         .value as ReviewState,
       document: (
         form.elements.namedItem('document') as HTMLInputElement
       ).value.trim(),
     })
+  }
   const submit = (event: Event) => {
     event.preventDefault()
     void reset()
@@ -417,14 +615,46 @@ export function mountReviewReader(root: HTMLElement): () => void {
   const reload = () => {
     void reset()
   }
+  const save = (event: Event) => {
+    event.preventDefault()
+    void session.save(decision.value, comments.value)
+  }
+  const refreshSelected = () => {
+    if (selected) void session.open(selected, principal)
+  }
+  const closeSelected = () => {
+    selected = undefined
+    session.close()
+  }
+  const visibility = () => {
+    if (doc.visibilityState === 'hidden') clearPrivate()
+    else void reset()
+  }
+  const focus = () => {
+    void reset()
+  }
   form.addEventListener('submit', submit)
   more.addEventListener('click', loadMore)
   retry.addEventListener('click', reload)
+  saveForm.addEventListener('submit', save)
+  decision.addEventListener('input', updateSave)
+  comments.addEventListener('input', updateSave)
+  refresh.addEventListener('click', refreshSelected)
+  close.addEventListener('click', closeSelected)
+  doc.addEventListener('visibilitychange', visibility)
+  win?.addEventListener('focus', focus)
   void reset()
   return () => {
-    queue.dispose()
+    clearPrivate()
     form.removeEventListener('submit', submit)
     more.removeEventListener('click', loadMore)
     retry.removeEventListener('click', reload)
+    saveForm.removeEventListener('submit', save)
+    decision.removeEventListener('input', updateSave)
+    comments.removeEventListener('input', updateSave)
+    refresh.removeEventListener('click', refreshSelected)
+    close.removeEventListener('click', closeSelected)
+    doc.removeEventListener('visibilitychange', visibility)
+    win?.removeEventListener('focus', focus)
   }
 }

@@ -59,6 +59,7 @@ import {
   type ProposalReview,
   type ReviewMutationResult,
   type ReviewReadResult,
+  type ReviewExecution,
   type SavedProposalReview,
   MAX_PAGE_SIZE,
   type AnnotationPatch,
@@ -417,6 +418,9 @@ const reportTarget = z
     execution: reportExecution.nullable(),
   })
   .strict()
+const reviewProgressReadback = reviewReadback.extend({
+  application: reportTarget.extend({ document: proposalColumns.shape.document }).nullable(),
+})
 const reportReceipt = z
   .object({
     ...reportMetadata,
@@ -933,13 +937,13 @@ export class D1MarginRepository implements HistoryRegistrationRepository, Margin
     return { authorized: true, candidates }
   }
 
-  async readReviewProposal(scope: TenantScope, id: string, principal: Principal): Promise<ReviewReadResult> {
+  async readReviewProposal(scope: TenantScope, id: string, principal: Principal, includeExecution = false): Promise<ReviewReadResult> {
     principalSchema.parse(principal)
     reviewSite.parse(scope.site)
     const canonical = splitSource(scope.site + scope.document)
     if (canonical?.site !== scope.site || canonical.document !== scope.document) throw new Error('invalid review document')
     reviewKey.shape.id.parse(id)
-    const result = await this.statement(reviewReadbackQuery(scope,id,principal)).all()
+    const result = await this.statement(reviewReadbackQuery(scope,id,principal,includeExecution)).all()
     const rows = z.object({ success: z.literal(true), results: z.array(z.object({
       authorized: z.union([z.literal(0),z.literal(1)]), review: z.string().max(1_048_576).nullable(),
     }).strict()).length(1) }).parse(result).results
@@ -949,7 +953,9 @@ export class D1MarginRepository implements HistoryRegistrationRepository, Margin
       return { status: 'forbidden' }
     }
     if (row.review === null) return { status: 'missing' }
-    const { annotation, saved_review: saved } = reviewReadback.parse(JSON.parse(row.review))
+    const payload = JSON.parse(row.review)
+    const progress = includeExecution ? reviewProgressReadback.parse(payload) : undefined
+    const { annotation, saved_review: saved } = progress ?? reviewReadback.parse(payload)
     if (annotation.site !== scope.site || annotation.document !== scope.document || annotation.id !== id
         || (annotation.approved_revision !== null && (annotation.revision === null
           || annotation.approved_revision > annotation.revision || annotation.withdrawn_at !== null))) {
@@ -970,7 +976,26 @@ export class D1MarginRepository implements HistoryRegistrationRepository, Margin
       savedReview = { decision: saved.review_decision, comments: saved.review_comments, revision: saved.reviewed_revision,
         reviewer: saved.reviewed_by, at: saved.reviewed_at }
     }
-    return { status: 'found', record: rowToRecord(annotation), savedReview }
+    let execution: ReviewExecution | null = null
+    if (includeExecution) {
+      if (!progress) throw new Error('missing execution observation')
+      const target = progress.application
+      if (annotation.approved_revision === null ? target !== null :
+        target === null || target.proposal_id !== id || target.site !== scope.site ||
+        target.document !== scope.document || target.revision !== annotation.approved_revision ||
+        target.state !== annotation.proposal_state) throw new Error('invalid review application binding')
+      if (target) {
+        validateExecutionTarget(target)
+        const value = target.execution
+        if (value) execution = {
+          approvedRevision: target.revision, state: target.state,
+          stateVersion: value.state_version, failedApplyCount: value.failed_apply_count,
+          pr: value.pr_number === null ? null : { number: value.pr_number, url: value.pr_url!, head: value.pr_head! },
+          checks: value.checks, detail: value.detail, mergeCommit: value.merge_commit, updatedAt: value.updated_at,
+        }
+      }
+    }
+    return { status: 'found', record: rowToRecord(annotation), savedReview, ...(includeExecution ? { execution } : {}) }
   }
 
   async reviewProposal(scope: TenantScope, id: string, principal: Principal,

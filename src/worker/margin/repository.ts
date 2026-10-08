@@ -96,8 +96,20 @@ export type ReviewMutationResult =
 
 /** Privileged saved-review metadata, never an ordinary annotation field. */
 export type SavedProposalReview = { decision: string; comments: string; revision: number; reviewer: string; at: string }
+/** Privileged observation only; an absent historical execution is unknown. */
+export type ReviewExecution = {
+  approvedRevision: number
+  state: ProposalState
+  stateVersion: number
+  failedApplyCount: number
+  pr: AdapterReportPR | null
+  checks: 'pending' | 'passed' | 'failed' | 'not_evaluated' | null
+  detail: string | null
+  mergeCommit: string | null
+  updatedAt: string
+}
 export type ReviewReadResult =
-  | { status: 'found'; record: MarginAnnotationRecord; savedReview: SavedProposalReview | null }
+  | { status: 'found'; record: MarginAnnotationRecord; savedReview: SavedProposalReview | null; execution?: ReviewExecution | null }
   | { status: 'forbidden' }
   | { status: 'missing' }
 
@@ -112,7 +124,7 @@ export const DEFAULT_PAGE_SIZE = 100
 
 export interface MarginRepository {
   /** One snapshot binds current admin authority, current proposal and saved review. */
-  readReviewProposal(scope: TenantScope, id: string, principal: Principal): Promise<ReviewReadResult>
+  readReviewProposal(scope: TenantScope, id: string, principal: Principal, includeExecution?: boolean): Promise<ReviewReadResult>
 
   reviewProposal(scope: TenantScope, id: string, principal: Principal, input: ProposalReview | { revision: number }, at: string, apply: boolean): Promise<ReviewMutationResult>
 

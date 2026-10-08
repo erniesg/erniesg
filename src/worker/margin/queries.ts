@@ -640,7 +640,7 @@ export function reviewTargetQuery(scope: TenantScope, id: string, principal: Pri
 }
 
 /** Privileged readback only: review metadata never enters ordinary projections. */
-export function reviewReadbackQuery(scope: TenantScope, id: string, principal: Principal): Query {
+export function reviewReadbackQuery(scope: TenantScope, id: string, principal: Principal, includeExecution = false): Query {
   return {
     sql: `SELECT ${adminPredicate('?')} AS authorized,
       (SELECT json_object(
@@ -648,7 +648,10 @@ export function reviewReadbackQuery(scope: TenantScope, id: string, principal: P
           'proposal_state', (SELECT state FROM margin_proposal_applications WHERE proposal_id=margin_annotations.id),
           'approved_revision', (SELECT revision FROM margin_proposal_applications WHERE proposal_id=margin_annotations.id)),
         'saved_review', json_object('review_decision',review_decision,'review_comments',review_comments,
-          'reviewed_revision',reviewed_revision,'reviewed_by',reviewed_by,'reviewed_at',reviewed_at))
+          'reviewed_revision',reviewed_revision,'reviewed_by',reviewed_by,'reviewed_at',reviewed_at)${includeExecution ? `,
+        'application', (SELECT json_set(${reportTargetJson},'$.document',p.document)
+          FROM margin_proposal_applications p LEFT JOIN margin_proposal_execution e ON e.proposal_id=p.proposal_id
+          WHERE p.proposal_id=margin_annotations.id)` : ''})
        FROM margin_annotations WHERE site=? AND document=? AND id=? AND motivation='editing'
        AND ${adminPredicate('margin_annotations.site')}) AS review`,
     params: [principal.provider,principal.issuer,principal.subject,scope.site,

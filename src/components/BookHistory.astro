@@ -1,0 +1,159 @@
+---
+import type { HistoryPage } from '@/lib/book-history-view'
+interface Props {
+  page: HistoryPage
+}
+const { page } = Astro.props
+const id = `history-${page.book}-${page.node}`
+---
+
+<section
+  class="book-history"
+  data-book-history
+  data-history-page={JSON.stringify(page)}
+  aria-label="Public version history"
+>
+  <button
+    type="button"
+    data-history-toggle
+    aria-expanded="false"
+    aria-controls={id}>Version history</button
+  >
+  <div id={id} data-history-body hidden>
+    <p>
+      Compare public, read-only versions. Historical code and links are
+      inactive.
+    </p>
+    <p data-history-status role="status" aria-live="polite"></p>
+    <button type="button" data-history-retry hidden>Retry history</button>
+    <div data-history-controls hidden>
+      <div class="history-selectors">
+        <label
+          >Before <select data-history-before aria-label="Before version"
+          ></select></label
+        >
+        <label
+          >After <select data-history-after aria-label="After version"
+          ></select></label
+        >
+      </div>
+      <div class="history-frames">
+        <section aria-label="Before version">
+          <h3>Before</h3><iframe
+            data-history-frame-before
+            title="Before version, read-only"
+            sandbox=""
+            referrerpolicy="no-referrer"
+            hidden></iframe>
+        </section>
+        <section aria-label="After version">
+          <h3>After</h3><iframe
+            data-history-frame-after
+            title="After version, read-only"
+            sandbox=""
+            referrerpolicy="no-referrer"
+            hidden></iframe>
+        </section>
+      </div>
+    </div>
+    <h3>Recorded revisions</h3>
+    <ol data-history-list></ol>
+    <button type="button" data-history-more hidden>Show more revisions</button>
+  </div>
+</section>
+<style>
+  .book-history {
+    margin-block: 2rem;
+    padding: 1rem;
+    border: 1px solid currentColor;
+    border-radius: 0.5rem;
+    overflow-wrap: anywhere;
+  }
+  .book-history button {
+    padding: 0.5rem 0.8rem;
+    border: 1px solid currentColor;
+    border-radius: 0.25rem;
+  }
+  .book-history button:focus-visible,
+  .book-history select:focus-visible {
+    outline: 3px solid currentColor;
+    outline-offset: 3px;
+  }
+  .book-history p {
+    margin-block: 1rem;
+  }
+  .history-selectors,
+  .history-frames {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1rem;
+    margin-block: 1rem;
+  }
+  .history-selectors label {
+    display: grid;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+  .history-selectors select {
+    padding: 0.5rem;
+    max-width: 100%;
+    color: inherit;
+    background: inherit;
+    border: 1px solid currentColor;
+  }
+  .history-frames section {
+    min-width: 0;
+  }
+  .history-frames h3 {
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+  }
+  iframe {
+    width: 100%;
+    height: min(65vh, 52rem);
+    min-height: 20rem;
+    border: 1px solid currentColor;
+    background: white;
+  }
+  [data-history-list] {
+    margin-block: 1rem;
+    padding-left: 1.5rem;
+    list-style: decimal;
+  }
+  @media (min-width: 1000px) {
+    .history-selectors,
+    .history-frames {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+</style>
+<script>
+  import { mountBookHistory } from '@/lib/book-history-view'
+  const active = new Map<HTMLElement, () => void>()
+  const dispose = () => {
+    for (const stop of active.values()) stop()
+    active.clear()
+  }
+  const start = () => {
+    for (const panel of document.querySelectorAll<HTMLElement>(
+      '[data-book-history]',
+    )) {
+      if (active.has(panel)) continue
+      try {
+        active.set(
+          panel,
+          mountBookHistory(
+            panel,
+            JSON.parse(panel.dataset.historyPage ?? 'null'),
+          ),
+        )
+      } catch {
+        const status = panel.querySelector('[data-history-status]')
+        if (status) status.textContent = 'History unavailable for this page.'
+      }
+    }
+  }
+  document.addEventListener('astro:before-preparation', dispose)
+  document.addEventListener('astro:page-load', start)
+  start()
+</script>

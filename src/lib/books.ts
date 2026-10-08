@@ -22,7 +22,7 @@ import {
   type BookHistoryAsset,
 } from './book-history'
 import { captureGitSelection } from '../../adapters/margin/local-source'
-import { collectRenderedBookHistories } from './book-history-rendered'
+import { collectRenderedBookHistories, trustedBookRendererRoot, trustedBookPythonPath } from './book-history-rendered'
 import { publishRenderedHistory, type RenderedHistoryAsset } from './book-history-publication'
 
 /**
@@ -149,14 +149,20 @@ export function renderBookManifest(
 ): BookManifest {
   const python = process.env.CHALLENGES_PYTHON ?? 'python3'
   const root = repoRoot()
-  const stdout = execFileSync(python, [path.join(root, RENDERER_FROM_ROOT)], {
+  return renderBookManifestAt(root, python, bounds)
+}
+
+/** One canonical manifest bridge; preview selects its fixed isolated transport. */
+function renderBookManifestAt(root: string, python: string, bounds: { timeoutMs?: number; maxBuffer?: number }, isolated = false): BookManifest {
+  const stdout = execFileSync(python, [...(isolated ? ['-I', '-B'] : []), path.join(root, RENDERER_FROM_ROOT)], {
     cwd: root,
     encoding: 'utf8',
     maxBuffer: bounds.maxBuffer ?? 256 * 1024 * 1024,
     ...(bounds.timeoutMs === undefined ? {} : { timeout: bounds.timeoutMs }),
+    ...(isolated ? { killSignal: 'SIGKILL' as const, stdio: ['ignore', 'pipe', 'pipe'] as ['ignore', 'pipe', 'pipe'] } : {}),
     // The book is full of typographic punctuation; never let the build host's
     // locale decide how the renderer hands it over.
-    env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+    env: isolated ? { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8', PYTHONIOENCODING: 'utf-8' } : { ...process.env, PYTHONIOENCODING: 'utf-8' },
   })
   return JSON.parse(stdout) as BookManifest
 }
@@ -213,8 +219,13 @@ function publicationHold(reason: string): never { throw new Error(`history publi
  * covered inputs must equal HEAD before execution and remain stable after it.
  * Trusted locked installation is assumed; captured dependency bytes establish
  * stable identity, not independent registry-tarball authentication. */
-export function withHistoryPublicationWitness<T>(root: string, run: (context: { head: string; fingerprint: string; remaining(): number }) => T): T {
-  const deadline = performance.now() + 120_000
+type SourceWitnessContext = { head: string; fingerprint: string; remaining(): number }
+type PreviewWitnessProfile = { deadline: number; python: string; checkRuntime(): void }
+function withBookSourceWitness<T>(root: string, run: (context: SourceWitnessContext) => T, preview?: PreviewWitnessProfile): T {
+  const started = performance.now()
+  if (preview && (!Number.isFinite(preview.deadline) || preview.deadline <= started)) publicationHold('expired preview deadline')
+  const deadline = Math.min(started + 120_000, preview?.deadline ?? Infinity)
+  const requiredInputs = [...PUBLICATION_INPUTS, ...(preview ? ['adapters/margin/proposal-preview.ts', 'adapters/margin/local-proposal-preview.ts'] : [])]
   const remaining = () => { const ms = Math.floor(deadline - performance.now()); if (ms <= 0) publicationHold('deadline'); return ms }
   const resolved = realpathSync(root)
   if (resolved !== path.resolve(root)) publicationHold('source root alias')
@@ -265,7 +276,7 @@ export function withHistoryPublicationWitness<T>(root: string, run: (context: { 
     snapshots.push({ check }); return bytes
   }
   const safeName = (name: string) => name.length > 0 && !/[\\\x00-\x1f\x7f]/.test(name) && name.split('/').every(part => part && part !== '.' && part !== '..')
-  const covered = (name: string) => [...PUBLICATION_INPUTS, ...OPTIONAL_PUBLICATION_INPUTS].includes(name as never) || /^books\/[^/]+\.toml$|^books\/tools\/[^/]+\.py$|^books\/chapters\/[^/]+\.md$|^books\/challenges\/[^/]+\/challenge\.md$/.test(name)
+  const covered = (name: string) => [...requiredInputs, ...OPTIONAL_PUBLICATION_INPUTS].includes(name as never) || /^books\/[^/]+\.toml$|^books\/tools\/[^/]+\.py$|^books\/chapters\/[^/]+\.md$|^books\/challenges\/[^/]+\/challenge\.md$/.test(name)
   // Include tree rows: an explicit empty tree is occupied, never optional absence.
   const rawTree = git(['ls-tree', '-r', '-t', '-z', '--full-tree', head])
   const decoded = new TextDecoder('utf-8', { fatal: true }).decode(rawTree)
@@ -276,7 +287,7 @@ export function withHistoryPublicationWitness<T>(root: string, run: (context: { 
     if (!match || !safeName(match[4])) publicationHold('tree framing/path')
     if (covered(match[4])) { if (match[2] !== 'blob' || !['100644', '100755'].includes(match[1]) || expected.has(match[4])) publicationHold('covered tree type'); expected.set(match[4], { mode: match[1], oid: match[3] }) }
   }
-  for (const required of PUBLICATION_INPUTS) if (!expected.has(required)) publicationHold('missing covered source')
+  for (const required of requiredInputs) if (!expected.has(required)) publicationHold('missing covered source')
   const directoryNames = (directory: string) => {
     const result: string[] = [], dir = opendirSync(directory)
     try { for (;;) { const entry = dir.readSync(); if (!entry) break; if (result.length >= 10_000) publicationHold('directory membership bound'); result.push(entry.name) } }
@@ -285,7 +296,7 @@ export function withHistoryPublicationWitness<T>(root: string, run: (context: { 
   }
   const present = (name: string) => { try { lstatSync(path.join(resolved, name)); return true } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error } }
   const membership = () => {
-    const names: string[] = [...PUBLICATION_INPUTS]
+    const names: string[] = [...requiredInputs]
     for (const optional of OPTIONAL_PUBLICATION_INPUTS) if (present(optional)) names.push(optional)
     for (const [folder, suffix] of [['books', '.toml'], ['books/tools', '.py'], ['books/chapters', '.md']]) {
       for (const name of directoryNames(path.join(resolved, folder))) if (name.endsWith(suffix)) names.push(`${folder}/${name}`)
@@ -345,7 +356,13 @@ export function withHistoryPublicationWitness<T>(root: string, run: (context: { 
     snapshots.push({ check() { if (resolveEntry() !== entry || realpathSync(entry) !== entry || JSON.stringify(walk()) !== JSON.stringify(files)) publicationHold('dependency resolution/membership drift') } })
     dependencyHashes.push({ name: packageName, version: manifest.version, integrity: locked.integrity, files: hashes })
   }
-  const fingerprint = contentHash(JSON.stringify({ head, sourceHashes, dependencyHashes }))
+  let runtimeHash: string | undefined
+  if (preview) {
+    preview.checkRuntime()
+    runtimeHash = contentHash(pin(preview.python))
+    snapshots.push({ check: preview.checkRuntime })
+  }
+  const fingerprint = contentHash(JSON.stringify({ head, sourceHashes, dependencyHashes, ...(preview ? { mappingRuntime: { path: preview.python, sha256: runtimeHash } } : {}) }))
   remaining(); selection.check()
   for (const snapshot of snapshots) snapshot.check()
   const result = run({ head, fingerprint, remaining })
@@ -354,6 +371,42 @@ export function withHistoryPublicationWitness<T>(root: string, run: (context: { 
   if (git(['rev-parse', '--verify', 'HEAD']).toString().trim() !== head || JSON.stringify(membership()) !== JSON.stringify(names)) publicationHold('HEAD/source membership drift')
   for (const snapshot of snapshots) snapshot.check()
   remaining(); return result
+}
+
+/** Existing publication entry keeps the original fixed profile and default budget. */
+export function withHistoryPublicationWitness<T>(root: string, run: (context: SourceWitnessContext) => T): T {
+  return withBookSourceWitness(root, run)
+}
+
+/** Local trusted-site bridge. No caller root, cached mapping, or private transport. */
+export function withLocalBookPreviewInputs<T>(deadline: number, visit: (context: SourceWitnessContext & {
+  root: string; site: string; loadNodes(): { book: string; node: string; path: string; sourcePath: string }[]
+}) => T): T {
+  const root = trustedBookRendererRoot(), python = trustedBookPythonPath()
+  const checkRuntime = () => { if (trustedBookRendererRoot() !== root || trustedBookPythonPath() !== python) publicationHold('preview runtime selector drift') }
+  return withBookSourceWitness(root, context => {
+    let active = true
+    const check = () => { if (!active) publicationHold('preview mapping scope expired'); context.remaining(); checkRuntime() }
+    const loadNodes = () => {
+      check()
+      const manifest = renderBookManifestAt(root, python, { timeoutMs: Math.min(15_000, context.remaining()), maxBuffer: HISTORY_LIMITS.commandBytes }, true)
+      check()
+      if (!Array.isArray(manifest.books) || manifest.books.length > 10_000) publicationHold('preview mapping shape/count')
+      const nodes: { book: string; node: string; path: string; sourcePath: string }[] = []
+      let bytes = 0
+      for (const book of manifest.books) {
+        if (!Array.isArray(book.nodes)) publicationHold('preview mapping node shape')
+        for (const node of book.nodes) {
+          const row = { book: book.slug, node: node.id, path: node.path, sourcePath: node.sourcePath }
+          bytes += Buffer.byteLength(JSON.stringify(row)); if (nodes.length >= 10_000 || bytes > 2 * 1024 * 1024) publicationHold('preview mapping bound')
+          nodes.push(row)
+        }
+      }
+      check(); return nodes
+    }
+    try { check(); const value = visit({ ...context, root, site: new URL(SITE.SITEURL).origin, loadNodes }); check(); return value }
+    finally { active = false }
+  }, { deadline, python, checkRuntime })
 }
 
 /** No cached manifest or cross-invocation history result is authority. */

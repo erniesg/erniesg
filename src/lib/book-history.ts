@@ -690,17 +690,20 @@ export function withExactBookBaseSnapshot<T>(
   root: string,
   site: string,
   loadNodes: (remainingMs: number) => readonly HistoryNode[],
-  options: { expectedHead: string; baseCommit: string; limits?: Partial<Limits>; gitCalls?: number },
+  options: { expectedHead: string; baseCommit: string; limits?: Partial<Limits>; gitCalls?: number; deadline?: number },
   visitor: (nodes: readonly HistoryNode[], snapshot: ExactBookBaseSnapshot) => T,
 ): T {
   const started = performance.now()
   try {
     if (!options || typeof options !== 'object' || Array.isArray(options)
-        || Object.keys(options).some(key => !['expectedHead', 'baseCommit', 'limits', 'gitCalls'].includes(key))
+        || Object.keys(options).some(key => !['expectedHead', 'baseCommit', 'limits', 'gitCalls', 'deadline'].includes(key))
         || typeof options.expectedHead !== 'string' || !oid(options.expectedHead)
         || typeof options.baseCommit !== 'string' || !oid(options.baseCommit)
         || options.expectedHead.length !== options.baseCommit.length)
       fail('invalid exact-base options or full object IDs')
+    if (options.deadline !== undefined && (!Number.isFinite(options.deadline) || options.deadline <= started))
+      fail('invalid or expired exact-base deadline')
+    const deadline = Math.min(started + (options.limits?.collectionMs ?? HISTORY_LIMITS.collectionMs), options.deadline ?? Infinity)
     const { expectedHead, baseCommit } = options
     const gitCalls = options.gitCalls ?? 4096
     if (!Number.isSafeInteger(gitCalls) || gitCalls < 1 || gitCalls > 4096)
@@ -713,7 +716,7 @@ export function withExactBookBaseSnapshot<T>(
     const selection = captureGitSelection(resolved)
     const reader = new LocalHistory(resolved, options.limits, {
       selection, extraInputs: [], gitCalls, checkInputs: () => {},
-    }, started + (options.limits?.collectionMs ?? HISTORY_LIMITS.collectionMs))
+    }, deadline)
     reader.remaining()
     const head = reader.head()
     if (head !== expectedHead) fail('history HEAD differs from expected HEAD')

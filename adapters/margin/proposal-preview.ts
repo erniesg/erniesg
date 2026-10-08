@@ -1,7 +1,7 @@
 /** Local supplied-data preview only. No approval, authenticated transport or publication authority. */
 import { applyHunks, parseHunks, toUnifiedDiff } from '../../src/annotations/criticmarkup'
 import { safeHistoryHtml, type SafeHistoryBlock } from '../../src/lib/book-history-safe-html'
-import { RENDERED_HISTORY_LIMITS, ReadonlyBookInputError, withReadOnlyBookRenderer, type ReadonlyBookInput } from '../../src/lib/book-history-rendered'
+import { RENDERED_HISTORY_LIMITS, ReadonlyBookInputError, withReadOnlyBookRenderer, type ReadonlyBookInput, type ReadonlyBookRenderer } from '../../src/lib/book-history-rendered'
 import { decodeSource, LIMITS, resolveDocument, sha256, type Failure } from './source-plan'
 
 type Preview = {
@@ -17,7 +17,7 @@ function shape(value: unknown, keys: string[]): value is Record<string, unknown>
 }
 
 /** Size-bounded synchronous computation; the owned Python child has its own hard deadline. */
-export function previewCurrentProposal(raw: unknown): Preview | Failure {
+function computePreview(raw: unknown, withRenderer: (visit: (handle: ReadonlyBookRenderer) => Preview | Failure) => Preview | Failure): Preview | Failure {
   if (!shape(raw, ['expectedHead', 'snapshot', 'mapping', 'tree'])) return refused('invalid-preview-input')
   const context = resolveDocument(raw)
   if ('status' in context) return context
@@ -46,7 +46,7 @@ export function previewCurrentProposal(raw: unknown): Preview | Failure {
     return error instanceof Error && error.message === 'source-limit' ? unavailable('source-limit') : refused('invalid-source-or-proposal')
   }
   try {
-    return withReadOnlyBookRenderer(handle => {
+    return withRenderer(handle => {
       // Validate the original map as well as the derived one without rendering
       // twice: replacement preserves original metadata keys and shared input
       // validation still checks the original hash separately above.
@@ -66,4 +66,16 @@ export function previewCurrentProposal(raw: unknown): Preview | Failure {
   } catch (error) {
     return error instanceof ReadonlyBookInputError ? { status: error.kind, reason: 'readonly-input-' + error.kind } : unavailable('renderer-unavailable')
   }
+}
+
+/** Existing supplied-data API preserves its independent default scope and wire result. */
+export function previewCurrentProposal(raw: unknown): Preview | Failure {
+  return computePreview(raw, visit => withReadOnlyBookRenderer(visit))
+}
+
+/** Caller owns a real scoped handle; neither this handle nor the input grants approval. */
+export function previewCurrentProposalWithRenderer(raw: unknown, handle: ReadonlyBookRenderer): Preview | Failure {
+  void handle.fingerprint
+  try { return computePreview(raw, visit => visit(handle)) }
+  finally { void handle.fingerprint }
 }

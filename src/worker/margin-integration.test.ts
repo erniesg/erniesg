@@ -270,7 +270,7 @@ describe('AuthKit and canonical service composition', () => {
           headers,
         )
       ).status,
-    ).toBe(501)
+    ).toBe(400)
     expect(h.assets).not.toHaveBeenCalled()
   })
 
@@ -513,6 +513,118 @@ describe('privileged saved-review readback Worker composition', () => {
     expect(clears).toContain('__Host-margin-session=')
     expect(clears).toContain('margin-session=')
     expect(clears).toContain('Max-Age=0')
+    expect(h.assets).not.toHaveBeenCalled()
+  })
+})
+
+
+describe('history outer HEAD RED pilot', () => {
+  it('removes the body from missing-storage HEAD while preserving no-store', async () => {
+    const h = await setup()
+    delete h.env.MARGIN_DB
+    const response = await h.request(`/documents/${encodeURIComponent(CHAPTER_ONE)}/history/`, 'HEAD')
+    expect(response.status).toBe(503)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(await response.text()).toBe('')
+  })
+})
+
+describe('public history Worker composition', () => {
+  const document = 'https://ernie.sg/books/example/chapter/'
+  const path = `/documents/${encodeURIComponent(document)}/history`
+  function register(h: Awaited<ReturnType<typeof setup>>) {
+    h.db.execute(`INSERT INTO margin_adapters(site,adapter,enabled,created_at,history_location)
+      VALUES ('https://ernie.sg','site-builder',1,'2026-10-08T00:00:00Z','https://ernie.sg{documentPath}history.json')`)
+  }
+  function publicAsset() {
+    return { schemaVersion: 1, site: 'https://ernie.sg', document, book: 'example', node: 'chapter',
+      buildCommit: 'a'.repeat(40), sourcePath: 'books/example/chapter.md', versions: [] }
+  }
+  it('reads public registered history anonymously, without private proposal access or external fetch', async () => {
+    const h = await setup(); register(h)
+    h.env.MARGIN_HISTORY_SITE = 'https://ernie.sg'
+    h.assets.mockImplementation(async () => new Response(JSON.stringify(publicAsset()) + '\n', { headers: { 'content-type': 'application/json' } }))
+    const external = vi.fn(async () => { throw Error('external network forbidden') })
+    vi.stubGlobal('fetch', external)
+    h.db.executed.length = 0
+    const response = await h.request(path)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ kind: 'asset', document, history: publicAsset() })
+    expect(h.db.reads()).toHaveLength(1)
+    expect(h.db.reads()[0].sql).toMatch(/FROM margin_adapters WHERE site = \?/)
+    expect(external).not.toHaveBeenCalled()
+    expect(h.assets).toHaveBeenCalledOnce()
+  })
+  it('returns a remote locator without sending the second site to co-deployed assets', async () => {
+    const h = await setup()
+    h.env.MARGIN_HISTORY_SITE = 'https://ernie.sg'
+    h.db.execute(`INSERT INTO margin_adapters(site,adapter,enabled,created_at,history_location)
+      VALUES ('https://notes.example','notes-builder',1,'2026-10-08T00:00:00Z','https://notes.example/history{documentPath}index.json')`)
+    const response = await h.request(`/documents/${encodeURIComponent('https://notes.example/start/')}/history`)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ kind: 'locator', historyLocation: 'https://notes.example/history/start/index.json' })
+    expect(h.assets).not.toHaveBeenCalled()
+  })
+  it('keeps adapter credentials outside public and human history authority', async () => {
+    const h = await setup(); register(h)
+    const external = vi.fn(async () => { throw Error('must not enter human authentication') })
+    vi.stubGlobal('fetch', external)
+    for (const spelling of [path, path + '/', path.replace('/documents/', '//%64ocuments//').replace('/history', '//%68istory//')]) {
+      for (const method of ['GET', 'HEAD']) {
+        const response = await h.request(spelling, method, undefined, undefined, { authorization: 'Bearer margin-adapter-v1.invalid' })
+        expect(response.status).toBe(403)
+        if (method === 'HEAD') expect(await response.text()).toBe('')
+        expect(response.headers.get('cache-control')).toBe('no-store')
+      }
+    }
+    expect(external).not.toHaveBeenCalled()
+    expect(h.assets).not.toHaveBeenCalled()
+  })
+  it('finalizes every recognized HEAD spelling for success, missing registration, invalid request and storage failures', async () => {
+    const h = await setup(); register(h)
+    for (const spelling of [path, path + '/', path.replace('/documents/', '//%64ocuments//').replace('/history', '//%68istory//')]) {
+      for (const [candidate, status] of [[spelling, 200], [spelling + '?source=other', 400], [spelling.replace(encodeURIComponent(document), encodeURIComponent('https://notes.example/absent/')), 404]] as const) {
+        const response = await h.request(candidate, 'HEAD', 'margin-session=old-fixture')
+        expect(response.status).toBe(status)
+        expect(await response.text()).toBe('')
+        expect(response.headers.get('cache-control')).toBe('no-store')
+        expect(response.headers.get('set-cookie')).toContain('Max-Age=0')
+      }
+      h.env.MARGIN_DB = undefined
+      const missing = await h.request(spelling, 'HEAD')
+      expect(missing.status).toBe(503); expect(await missing.text()).toBe('')
+      h.env.MARGIN_DB = { prepare() { throw Error('private database details') } }
+      const thrown = await h.request(spelling, 'HEAD')
+      expect(thrown.status).toBe(503); expect(await thrown.text()).toBe('')
+      h.env.MARGIN_DB = h.db
+    }
+  })
+  it('retains renewed and terminal cookies through history HEAD outcomes', async () => {
+    const h = await setup(); register(h)
+    const now = Math.floor(Date.now() / 1000)
+    const fresh = await h.signer.sign({ iss: TEST_ISSUER, sub: writer.subject, client_id: TEST_CLIENT_ID, iat: now, exp: now + 300 })
+    const provider = createFakeProvider({ jwks: h.signer.jwks, authenticate: {
+      access_token: fresh, refresh_token: 'fixture-history-renewal', user: { id: writer.subject },
+    } })
+    vi.stubGlobal('fetch', provider.fetchImpl)
+    const stale = await h.cookie(writer, true)
+    const ok = await h.request(path, 'HEAD', stale)
+    expect(ok.status).toBe(200)
+    h.env.MARGIN_DB = undefined
+    const missing = await h.request(path, 'HEAD', stale)
+    expect(missing.status).toBe(503)
+    for (const response of [ok, missing]) {
+      expect(await response.text()).toBe('')
+      expect(response.headers.get('set-cookie')).toContain('__Host-margin-session=')
+      expect(response.headers.get('set-cookie')).not.toContain('Max-Age=0')
+      expect(response.headers.get('cache-control')).toBe('no-store')
+    }
+    vi.stubGlobal('fetch', createFakeProvider({ jwks: h.signer.jwks, authenticateStatus: 400, authenticate: { error: 'invalid_grant' } }).fetchImpl)
+    const expired = await h.request(path, 'HEAD', stale + '; margin-session=legacy-fixture')
+    expect(await expired.text()).toBe('')
+    expect(expired.headers.get('set-cookie')).toContain('__Host-margin-session=')
+    expect(expired.headers.get('set-cookie')).toContain('margin-session=')
+    expect(expired.headers.get('set-cookie')).toContain('Max-Age=0')
     expect(h.assets).not.toHaveBeenCalled()
   })
 })

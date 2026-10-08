@@ -356,7 +356,7 @@ describe('adapter revocation and credential scope', () => {
         token = await f.token()
       await f.approve()
       await f.token(OTHER, 2)
-      f.h.database.execute('INSERT INTO margin_adapters VALUES(?,?,1,?)', [
+      f.h.database.execute('INSERT INTO margin_adapters(site,adapter,enabled,created_at) VALUES(?,?,1,?)', [
         'https://third.example',
         'other-adapter',
         AT,
@@ -493,7 +493,7 @@ describe('adapter paging and migration', () => {
       ).toThrow()
     expect(() => f.h.database.execute('UPDATE margin_adapters SET enabled=2')).toThrow()
     expect(() =>
-      f.h.database.execute('INSERT INTO margin_adapters VALUES(?,?,1,?)', [
+      f.h.database.execute('INSERT INTO margin_adapters(site,adapter,enabled,created_at) VALUES(?,?,1,?)', [
         SITE,
         'another',
         AT,

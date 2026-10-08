@@ -25,7 +25,7 @@ async function fixture(grant = true) {
   const h = createHarness(),
     selector = event(11),
     hash = 'a'.repeat(64)
-  h.database.execute('INSERT INTO margin_adapters VALUES(?,?,1,?)', [
+  h.database.execute('INSERT INTO margin_adapters(site,adapter,enabled,created_at) VALUES(?,?,1,?)', [
     SITE,
     'fixture-adapter',
     AT,
@@ -231,7 +231,7 @@ describe('current report authority on both write and read', () => {
         'missing-grant': 'DELETE FROM margin_adapter_report_grants',
       }
       if (drift === 'grant-scope')
-        f.h.database.execute('INSERT INTO margin_adapters VALUES(?,?,1,?)', [
+        f.h.database.execute('INSERT INTO margin_adapters(site,adapter,enabled,created_at) VALUES(?,?,1,?)', [
           'https://foreign.example',
           'foreign',
           AT,
@@ -296,7 +296,7 @@ describe('current report authority on both write and read', () => {
     const f = await fixture()
     await f.h.repository.reportProposalExecution(f.credential, f.report(1, 0), AT)
     const other = 'https://foreign.example'
-    f.h.database.execute('INSERT INTO margin_adapters VALUES(?,?,1,?)', [
+    f.h.database.execute('INSERT INTO margin_adapters(site,adapter,enabled,created_at) VALUES(?,?,1,?)', [
       other,
       'foreign',
       AT,
@@ -614,16 +614,19 @@ describe('initialization, immutable approval and private projections', () => {
         'margin_proposal_applications',
         'margin_adapters',
         'margin_adapter_tokens',
-      ])
-        for (const row of f.h.database.query('SELECT * FROM ' + table)) {
+      ]) {
+        // The destination is deliberately historical. Copy its columns rather
+        // than importing fields added by migrations after the one under test.
+        const quote = (name: string) => '"' + name.replaceAll('"', '""') + '"'
+        const columns = db.prepare(`PRAGMA table_info(${quote(table)})`).all()
+          .map(row => String(row.name))
+        const names = columns.map(quote).join(',')
+        for (const row of f.h.database.query(`SELECT ${names} FROM ${quote(table)}`)) {
           db.prepare(
-            `INSERT INTO ${table}(${Object.keys(row).join(',')}) VALUES(${Object.keys(
-              row,
-            )
-              .map(() => '?')
-              .join(',')})`,
-          ).run(...(Object.values(row) as any[]))
+            `INSERT INTO ${quote(table)}(${names}) VALUES(${columns.map(() => '?').join(',')})`,
+          ).run(...(columns.map(column => row[column]) as any[]))
         }
+      }
       db.exec(readFileSync('migrations/0009_margin_adapter_execution.sql', 'utf8'))
       const local = new SqliteD1Database(db),
         repo = new D1MarginRepository(local)

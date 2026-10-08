@@ -1,3 +1,4 @@
+import { readHistory, type HistoryContext } from './history'
 import { z } from 'zod'
 import { isFullCommitId, parseHunks } from '../../annotations/criticmarkup'
 import type { Principal } from '../principal'
@@ -64,7 +65,7 @@ import {
  *   GET/HEAD /proposals/:id/review   admin-only saved-review readback
  *   POST   /proposals/:id/review     save pending admin review
  *   POST   /proposals/:id/apply      snapshot approved revision
- *   GET    /documents/:id/history    501 — issue 059
+ *   GET/HEAD /documents/:id/history  public site-owned history (060)
  *
  * `GET /health` is answered by the Worker entry point instead, so that it
  * still reports a running Worker when the database binding is what is missing.
@@ -109,6 +110,7 @@ export const MARGIN_API_PREFIX = '/api/margin/v1'
 
 export type MarginRouteContext = {
   repository: MarginRepository
+  history?: HistoryContext
   principal: Principal | null
   /** Injected so tests get deterministic timestamps and ids. */
   now: () => string
@@ -1346,17 +1348,7 @@ async function writeProgress(
   return json(progressToWire(scope.book, rows))
 }
 
-function notImplemented(issue: string): Response {
-  return json(
-    {
-      error: {
-        code: 'not_implemented',
-        message: `this route lands in issue ${issue}`,
-      },
-    },
-    501,
-  )
-}
+
 
 /* -------------------------------------------------------------------------- */
 /* Router                                                                     */
@@ -1382,6 +1374,12 @@ function segments(pathname: string): string[] | null {
 }
 
 /** Share the router's exact decoded spellings with outer HEAD finalization. */
+export function isHistoryReadPath(pathname: string): boolean {
+  if (!pathname.startsWith(`${MARGIN_API_PREFIX}/`)) return false
+  const path = segments(pathname)
+  return path !== null && path.length === 3 && path[0] === 'documents' && path[2] === 'history'
+}
+
 export function isReviewReadbackPath(pathname: string): boolean {
   if (!pathname.startsWith(`${MARGIN_API_PREFIX}/`)) return false
   const path = segments(pathname)
@@ -1483,7 +1481,7 @@ export async function handleMarginRequest(
 
   if (path.length === 3 && path[0] === 'documents' && path[2] === 'history') {
     if (method !== 'GET') return methodNotAllowed(['GET', 'HEAD'])
-    return notImplemented('059')
+    return readHistory(path[1], url, context.history)
   }
 
   return problem(404, 'not_found', 'no such margin route')

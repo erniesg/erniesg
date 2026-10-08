@@ -843,3 +843,11 @@ export function adapterWorkQuery(
   }
 }
 
+
+/** Public registration only: no private annotation, credential or application join. */
+export function historyRegistrationQuery(site: string): Query {
+  return {
+    sql: 'SELECT site, adapter, enabled, created_at, history_location FROM margin_adapters WHERE site = ?',
+    params: [site],
+  }
+}

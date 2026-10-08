@@ -492,3 +492,112 @@ describe('bundled trusted renderer location', () => {
     expect(preserved(root)).toEqual(before)
   }, 30_000)
 })
+
+
+describe('shared supplied-data readonly renderer', () => {
+  function supplied() {
+    const sourcePath = 'books/chapters/one.md', content = document('Public **supplied** prose.\n')
+    return { sourcePath, files: [{ path: sourcePath, mode: '100644', sha256: sha(content), content }], occupied: ['books', 'books/chapters', sourcePath] }
+  }
+  it('shares the actual canonical result, expires escaped handles and forbids async visitors', async () => {
+    const { withReadOnlyBookRenderer } = await import('./book-history-rendered')
+    const input = supplied(); let escaped: any
+    const result = withReadOnlyBookRenderer(handle => { escaped = handle; return handle.render(input) })
+    const direct = realSpawn('/usr/bin/python3', ['-I', '-B', path.join(ROOT, 'books/tools/history_render.py')], {
+      input: JSON.stringify({ schemaVersion: 1, sourcePath: input.sourcePath, files: input.files }),
+      cwd: ROOT, env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8' }, timeout: 15_000, maxBuffer: 4 * 1024 * 1024,
+    })
+    expect(direct.status).toBe(0)
+    expect(result).toEqual(JSON.parse(direct.stdout.toString()))
+    expect(() => escaped.render(input)).toThrow(/expired/)
+    expect(() => escaped.fingerprint).toThrow(/expired/)
+    expect(() => withReadOnlyBookRenderer(async () => null)).toThrow(/synchronous/)
+    expect(() => withReadOnlyBookRenderer(handle => { escaped = handle; throw Error('fixture failure') })).toThrow('fixture failure')
+    expect(() => escaped.render(input)).toThrow(/expired/)
+  })
+  it('preflights oversized supplied dependencies before allocating a Buffer copy', async () => {
+    const { withReadOnlyBookRenderer } = await import('./book-history-rendered')
+    const input = supplied(), large = 'z'.repeat(2 * 1024 * 1024 + 1)
+    input.files.push({ path: 'books/challenges/other/data.txt', mode: '100644', sha256: sha(large), content: large })
+    input.occupied.push('books/challenges', 'books/challenges/other', 'books/challenges/other/data.txt')
+    const original = Buffer.from; let copied = false
+    const spy = vi.spyOn(Buffer, 'from').mockImplementation(((...args: any[]) => {
+      if (args[0] === large) copied = true
+      return (original as any)(...args)
+    }) as any)
+    try {
+      expect(() => withReadOnlyBookRenderer(handle => handle.render(input))).toThrow(/not_evaluated/)
+      expect(copied).toBe(false)
+    } finally { spy.mockRestore() }
+  })
+  it('refuses child failures and malformed/extra read metadata without a partial render', async () => {
+    const { withReadOnlyBookRenderer } = await import('./book-history-rendered')
+    const input = supplied()
+    for (const kind of ['exit', 'timeout', 'stderr', 'foreign-read', 'extra-shape']) {
+      vi.mocked(spawnSync).mockImplementation(((...args: Parameters<typeof spawnSync>) => {
+        const actual = realSpawn(...args)
+        if (kind === 'exit') return { ...actual, status: 1 }
+        if (kind === 'timeout') return { ...actual, signal: 'SIGKILL', status: null }
+        if (kind === 'stderr') return { ...actual, stderr: Buffer.from('PRIVATE_FAILURE_MARKER') }
+        const result = JSON.parse(actual.stdout.toString())
+        if (kind === 'foreign-read') result.reads.push({ path: 'books/chapters/foreign.md', mode: '100644', sha256: 'a'.repeat(64) })
+        else result.extra = true
+        return { ...actual, stdout: Buffer.from(JSON.stringify(result) + '\n') }
+      }) as any)
+      expect(() => withReadOnlyBookRenderer(handle => handle.render(input))).toThrow(/renderer|rendering/)
+      vi.mocked(spawnSync).mockImplementation(realSpawn)
+    }
+  })
+})
+
+
+it('keeps supplied-map bounds, legacy rendering and included absence declarations explicit', async () => {
+  const { withReadOnlyBookRenderer, READONLY_BOOK_OCCUPANCY_LIMITS } = await import('./book-history-rendered')
+  for (const prefix of ['books/challenges', 'challenges']) {
+    const sourcePath = `${prefix}/one/challenge.md`, included = `${prefix}/included/challenge.md`
+    const content = document(':::run\n:::\n:::problem{id="included"}\n:::\n', 'challenge')
+    const other = document(':::run\n:::\n', 'challenge', 'included')
+    const input = { sourcePath, files: [
+      { path: sourcePath, mode: '100644', sha256: sha(content), content },
+      { path: included, mode: '100755', sha256: sha(other), content: other },
+    ], occupied: [...new Set([prefix.split('/')[0], prefix, `${prefix}/one`, sourcePath, `${prefix}/included`, included])] }
+    const result = withReadOnlyBookRenderer(handle => handle.render(input))
+    expect(result.optionalAbsences).toEqual([`${prefix}/one/starter.py`])
+    expect(result.reads.map(row => row.path)).toContain(included)
+    // Canonical problem cards read the included node but do not render its
+    // run block. Exercise a claimed included absence inertly, as the existing
+    // historical decoder controls do; do not claim actual include absence.
+    input.occupied.push(`${prefix}/included/starter.py`)
+    vi.mocked(spawnSync).mockImplementation(((...args: Parameters<typeof spawnSync>) => {
+      const child = realSpawn(...args)
+      const raw = child.stdout.toString().replace(
+        `"optionalAbsences": [${JSON.stringify(`${prefix}/one/starter.py`)}]`,
+        `"optionalAbsences": [${JSON.stringify(`${prefix}/included/starter.py`)}, ${JSON.stringify(`${prefix}/one/starter.py`)}]`,
+      )
+      return { ...child, stdout: Buffer.from(raw) }
+    }) as any)
+    expect(() => withReadOnlyBookRenderer(handle => handle.render(input))).toThrow(/absence/)
+    vi.mocked(spawnSync).mockImplementation(realSpawn)
+    input.occupied.pop()
+    for (const limits of [{ mapFiles: 1 }, { mapBytes: 1 }, { inputBytes: 1 }, { outputBytes: 1 }]) {
+      expect(() => withReadOnlyBookRenderer(handle => handle.render(input), { limits })).toThrow()
+    }
+    expect(() => withReadOnlyBookRenderer(handle => handle.render(input), { limits: { commandMs: 15001 } })).toThrow(/limit/)
+    expect(() => withReadOnlyBookRenderer(handle => handle.render({ ...input, occupied: Array(READONLY_BOOK_OCCUPANCY_LIMITS.paths + 1).fill('x') }))).toThrow(/not_evaluated/)
+  }
+})
+
+
+it('refuses an expired scoped deadline before any child launch', async () => {
+  const { withReadOnlyBookRenderer } = await import('./book-history-rendered')
+  const { performance } = await import('node:perf_hooks')
+  const clock = vi.spyOn(performance, 'now').mockReturnValue(0)
+  vi.mocked(spawnSync).mockClear()
+  try {
+    expect(() => withReadOnlyBookRenderer(handle => {
+      clock.mockReturnValue(2)
+      return handle.render({ sourcePath: 'books/chapters/one.md', files: [], occupied: [] })
+    }, { limits: { collectionMs: 1 } })).toThrow(/deadline/)
+    expect(vi.mocked(spawnSync)).not.toHaveBeenCalled()
+  } finally { clock.mockRestore() }
+})

@@ -102,7 +102,7 @@ function pythonJSON(value: unknown): string {
   if (value && typeof value === 'object') return `{${Object.entries(value).map(([k, v]) => `${JSON.stringify(k)}: ${pythonJSON(v)}`).join(', ')}}`
   return JSON.stringify(value)
 }
-function decodeRender(raw: Buffer, source: string, files: Map<string, File>, tree: HistoryTree): Render {
+function decodeRender(raw: Buffer, source: string, files: Map<string, File>, occupied: ReadonlySet<string>): Render {
   let value: unknown
   try { value = JSON.parse(utf8(raw)) } catch { return fail('historical renderer JSON unavailable') }
   if (!shape(value, ['schemaVersion', 'profile', 'sourcePath', 'sourceSha256', 'html', 'blocks', 'reads', 'optionalAbsences']) || value.schemaVersion !== 1 || value.profile !== PROFILE || value.sourcePath !== source || value.sourceSha256 !== files.get(source)?.sha256 || !string(value.html) || !Array.isArray(value.blocks) || !Array.isArray(value.reads) || !Array.isArray(value.optionalAbsences)) fail('historical renderer result shape differs')
@@ -117,7 +117,7 @@ function decodeRender(raw: Buffer, source: string, files: Map<string, File>, tre
   if (!seen.has(source)) fail('historical renderer omitted source read')
   last = ''
   for (const missing of result.optionalAbsences) {
-    if (!string(missing) || !safePath(missing) || missing <= last || !missing.endsWith('/starter.py') || !seen.has(missing.slice(0, -'starter.py'.length) + 'challenge.md') || tree.occupied.has(missing) || seen.has(missing)) fail('historical renderer absence lacks tree proof')
+    if (!string(missing) || !safePath(missing) || missing <= last || !missing.endsWith('/starter.py') || !seen.has(missing.slice(0, -'starter.py'.length) + 'challenge.md') || occupied.has(missing) || seen.has(missing)) fail('historical renderer absence lacks tree proof')
     last = missing
   }
   const matches = [...result.html.matchAll(/<div class="block" data-block-kind="([a-z-]+)" data-block-digest="([0-9a-f]+)" id="([^"]+)">/g)]
@@ -153,6 +153,108 @@ function dataMap(snapshot: HistorySnapshot, commit: string, source: string, limi
   let metadata = [...tree.entries].reduce((sum, [name, item]) => sum + Buffer.byteLength(name) + item.oid.length + item.mode.length + 64, 0)
   for (const name of tree.occupied) metadata += Buffer.byteLength(name) + 64
   return { tree, files, serialized, cost: bytes + encoded + metadata }
+}
+
+/** One child invocation and decoder, shared by witnessed history and local supplied data. */
+function invokeRenderer(
+  python: string, source: string, files: Map<string, File>, serialized: string[], occupied: ReadonlySet<string>,
+  limits: Limits, remaining: () => number, checkInputs: () => void,
+): { render: Render; sha256: string } {
+  const prefix = `{"schemaVersion":1,"sourcePath":${JSON.stringify(source)},"files":[`
+  const inputSize = Buffer.byteLength(prefix) + serialized.reduce((sum, row) => sum + Buffer.byteLength(row), 0) + Math.max(0, serialized.length - 1) + 2
+  if (inputSize > limits.inputBytes) fail('historical renderer input byte bound')
+  const input = Buffer.from(prefix + serialized.join(',') + ']}')
+  checkInputs()
+  const child = spawnSync(python, ['-I', '-B', path.join(TRUSTED_ROOT, 'books/tools/history_render.py')], {
+    cwd: TRUSTED_ROOT, env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' },
+    input, stdio: ['pipe', 'pipe', 'pipe'], timeout: Math.min(limits.commandMs, remaining()),
+    killSignal: 'SIGKILL', maxBuffer: limits.outputBytes,
+  })
+  checkInputs()
+  if (child.error || child.signal || child.status !== 0 || !Buffer.isBuffer(child.stdout) || !Buffer.isBuffer(child.stderr) || child.stdout.length > limits.outputBytes || child.stderr.length) fail('historical rendering unavailable or resource bound exceeded')
+  return { render: decodeRender(child.stdout, source, files, occupied), sha256: sha(child.stdout) }
+}
+
+export type ReadonlyBookInput = {
+  sourcePath: string
+  files: readonly { path: string; mode: string; sha256: string; content: string }[]
+  occupied: readonly string[]
+}
+export const READONLY_BOOK_OCCUPANCY_LIMITS = Object.freeze({ paths: 100_000, bytes: 8 * 1024 * 1024 })
+export class ReadonlyBookInputError extends Error {
+  constructor(readonly kind: 'refused' | 'not_evaluated') { super('readonly supplied data ' + kind) }
+}
+function inputFailure(kind: 'refused' | 'not_evaluated'): never { throw new ReadonlyBookInputError(kind) }
+function boundedString(value: unknown, maximum: number): value is string {
+  return typeof value === 'string' && value.length <= maximum && Buffer.byteLength(value) <= maximum && string(value)
+}
+
+/** Validate supplied declarations, never authenticate them as an actual Git tree. */
+function readonlyData(raw: unknown, limits: Limits) {
+  if (!shape(raw, ['sourcePath', 'files', 'occupied']) || !boundedString(raw.sourcePath, 4096) || !safePath(raw.sourcePath) || !Array.isArray(raw.files) || !Array.isArray(raw.occupied)) inputFailure('refused')
+  if (!raw.files.length || raw.files.length > limits.mapFiles || raw.occupied.length > READONLY_BOOK_OCCUPANCY_LIMITS.paths) inputFailure('not_evaluated')
+  const occupied = new Set<string>(); let occupancyBytes = 0
+  for (const name of raw.occupied) {
+    if (!boundedString(name, 4096) || !safePath(name) || occupied.has(name)) inputFailure('refused')
+    occupancyBytes += Buffer.byteLength(name)
+    if (occupancyBytes > READONLY_BOOK_OCCUPANCY_LIMITS.bytes) inputFailure('not_evaluated')
+    occupied.add(name)
+  }
+  // Require declared ancestors as well as leaves, including explicit empty
+  // trees. Otherwise a child could silently imply occupancy not in this set.
+  for (const name of occupied) {
+    const parent = name.slice(0, name.lastIndexOf('/'))
+    if (name.includes('/') && !occupied.has(parent)) inputFailure('refused')
+  }
+  const files = new Map<string, File>(); let bytes = 0, encoded = 0
+  for (const row of raw.files) {
+    if (!shape(row, ['path', 'mode', 'sha256', 'content']) || !boundedString(row.path, 4096) || !safePath(row.path) || !['100644', '100755'].includes(row.mode as string) || typeof row.content !== 'string' || typeof row.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(row.sha256) || files.has(row.path) || !occupied.has(row.path)) inputFailure('refused')
+    if (row.content.length > HISTORY_LIMITS.blobBytes) inputFailure('not_evaluated')
+    const size = Buffer.byteLength(row.content)
+    bytes += size
+    if (bytes > limits.mapBytes || size > HISTORY_LIMITS.blobBytes) inputFailure('not_evaluated')
+    if (!string(row.content)) inputFailure('refused')
+    if (sha(row.content) !== row.sha256) inputFailure('refused')
+    const file = { path: row.path, mode: row.mode as string, sha256: row.sha256, content: row.content }
+    encoded += Buffer.byteLength(JSON.stringify(file)) + 1
+    if (encoded > limits.inputBytes) inputFailure('not_evaluated')
+    files.set(file.path, file)
+  }
+  for (const name of occupied) {
+    const parent = name.slice(0, name.lastIndexOf('/'))
+    if (name.includes('/') && files.has(parent)) inputFailure('refused')
+  }
+  if (!files.has(raw.sourcePath)) inputFailure('refused')
+  const sorted = new Map([...files].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))
+  return { source: raw.sourcePath, files: sorted, serialized: [...sorted.values()].map(row => JSON.stringify(row)), occupied }
+}
+
+export type ReadonlyBookRenderer = { readonly fingerprint: string; render(input: ReadonlyBookInput): Render }
+/** Local synchronous scope. The handle and its input declarations confer no Git/auth authority. */
+export function withReadOnlyBookRenderer<T>(visit: (handle: ReadonlyBookRenderer) => T, options: { limits?: Partial<Limits> } = {}): T {
+  const limits = boundedOptions(options.limits ?? {}), deadline = performance.now() + limits.collectionMs
+  let active = true
+  const remaining = () => { if (!active) fail('readonly renderer scope expired'); const ms = Math.floor(deadline - performance.now()); if (ms <= 0) fail('readonly renderer deadline exceeded'); return ms }
+  // This caller's code/profile binding is separate from historical collector
+  // fingerprints; the established collector pin set above remains unchanged.
+  const names = [...TRUSTED_SOURCES, 'adapters/margin/proposal-preview.ts', 'src/lib/book-history-safe-html.ts']
+  const pins = names.map(name => pin(path.join(TRUSTED_ROOT, name), HISTORY_LIMITS.blobBytes))
+  const python = pin(pythonPath(), 128 * 1024 * 1024)
+  const check = () => { remaining(); for (const file of [...pins, python]) file.check() }
+  const fingerprint = sha(JSON.stringify({ profile: PROFILE, sources: names.map((name, i) => [name, pins[i].digest]), python: python.digest }))
+  const handle = Object.freeze({
+    get fingerprint() { check(); return fingerprint },
+    render(input: ReadonlyBookInput) {
+      check()
+      const data = readonlyData(input, limits)
+      return invokeRenderer(python.filename, data.source, data.files, data.serialized, data.occupied, limits, remaining, check).render
+    },
+  })
+  try {
+    check(); const result = visit(handle)
+    if (result && typeof (result as { then?: unknown }).then === 'function') fail('synchronous readonly renderer visitor required')
+    check(); return result
+  } finally { active = false }
 }
 
 /** Input-size and checked-deadline bounded; synchronous parsing is not preemptive. */
@@ -202,22 +304,12 @@ export function collectRenderedBookHistories(
           }
           const source = map.files.get(version.path)
           if (!source || version.content === null || source.content !== version.content) fail('historical source differs from raw history')
-          const prefix = `{"schemaVersion":1,"sourcePath":${JSON.stringify(version.path)},"files":[`
-          const inputSize = Buffer.byteLength(prefix) + map.serialized.reduce((sum, row) => sum + Buffer.byteLength(row), 0) + Math.max(0, map.serialized.length - 1) + 2
-          if (inputSize > limits.inputBytes) fail('historical renderer input byte bound')
-          const input = Buffer.from(prefix + map.serialized.join(',') + ']}')
-          checkInputs(); selection.check()
-          const child = spawnSync(python.filename, ['-I', '-B', path.join(TRUSTED_ROOT, 'books/tools/history_render.py')], {
-            cwd: TRUSTED_ROOT, env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' },
-            input, stdio: ['pipe', 'pipe', 'pipe'], timeout: Math.min(limits.commandMs, remaining(), snapshot.remaining()),
-            killSignal: 'SIGKILL', maxBuffer: limits.outputBytes,
-          })
-          checkInputs(); selection.check(); snapshot.remaining()
-          if (child.error || child.signal || child.status !== 0 || !Buffer.isBuffer(child.stdout) || !Buffer.isBuffer(child.stderr) || child.stdout.length > limits.outputBytes || child.stderr.length) fail('historical rendering unavailable or resource bound exceeded')
-          const render = decodeRender(child.stdout, version.path, map.files, map.tree)
+          const { render, sha256: renderSha256 } = invokeRenderer(python.filename, version.path, map.files, map.serialized, map.tree.occupied, limits,
+            () => Math.min(remaining(), snapshot.remaining()),
+            () => { checkInputs(); selection.check(); snapshot.remaining() })
           result = { commit: version.commit, deleted: false, treeOID: map.tree.treeOID, sourcePath: version.path, sourceOID: map.tree.entries.get(version.path)!.oid, sourceSha256: source.sha256,
             dependencies: render.reads.map(row => ({ ...row, oid: map!.tree.entries.get(row.path)!.oid })),
-            optionalAbsences: render.optionalAbsences.map(name => ({ path: name, treeOID: map!.tree.treeOID })), render, renderSha256: sha(child.stdout) }
+            optionalAbsences: render.optionalAbsences.map(name => ({ path: name, treeOID: map!.tree.treeOID })), render, renderSha256 }
         }
         const size = Buffer.byteLength(JSON.stringify(result)) + 1
         nodeBytes += size; total += size

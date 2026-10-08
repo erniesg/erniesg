@@ -1,3 +1,4 @@
+import type { HistoryRegistration, HistoryRegistrationRepository } from './history'
 import {
   adapterSelectorSchema,
   adapterSiteSchema,
@@ -12,6 +13,7 @@ import { principalSchema, type Principal } from '../principal'
 import { PRINCIPAL_IRI_PREFIX, principalKey } from './identity'
 import type { D1Database } from './d1'
 import {
+  historyRegistrationQuery,
   adapterWorkQuery,
   adapterReportSnapshotQuery,
   insertAdapterReportQuery,
@@ -550,12 +552,29 @@ function validateExecutionTarget(target: z.infer<typeof reportTarget>) {
   }
 }
 
-export class D1MarginRepository implements MarginRepository, AdapterFeedRepository, AdapterReportRepository, AdapterWorkRepository {
+export class D1MarginRepository implements HistoryRegistrationRepository, MarginRepository, AdapterFeedRepository, AdapterReportRepository, AdapterWorkRepository {
   constructor(private readonly database: D1Database) {}
 
   private statement({ sql, params }: Query) {
     const prepared = this.database.prepare(sql)
     return params.length > 0 ? prepared.bind(...params) : prepared
+  }
+
+  async historyRegistration(site: string): Promise<HistoryRegistration | null> {
+    adapterSiteSchema.parse(site)
+    const result = await this.statement(historyRegistrationQuery(site)).all()
+    if (!result || result.success !== true || !Array.isArray(result.results) || result.results.length > 1) {
+      throw Error('history registration result unavailable')
+    }
+    if (result.results.length === 0) return null
+    const row = z.object({
+      site: z.literal(site), adapter: adapterIdSchema,
+      enabled: z.union([z.literal(0), z.literal(1)]),
+      created_at: z.string().min(1).max(40),
+      history_location: z.string().max(1024).nullable(),
+    }).strict().parse(result.results[0])
+    return { site: row.site, adapter: row.adapter, enabled: row.enabled,
+      createdAt: row.created_at, historyLocation: row.history_location }
   }
 
   private async reportSnapshot(

@@ -10,7 +10,7 @@ import { legacyCookieClears } from './margin/session'
 import { handleAuthRequest } from './margin/auth-routes'
 import { isD1Database } from './margin/d1'
 import { D1MarginRepository } from './margin/d1-repository'
-import { handleMarginRequest, isReviewReadbackPath } from './margin/routes'
+import { handleMarginRequest, isReviewReadbackPath, isHistoryReadPath } from './margin/routes'
 import {
   json,
   MARGIN_API_PREFIX,
@@ -63,7 +63,7 @@ export default {
     // including missing storage and thrown queries. Cookie headers survive.
     if (
       request.method === 'HEAD' &&
-      (isReviewReadbackPath(pathname) || isAdapterNamespace(pathname) || hasAdapterCredential(request))
+      (isHistoryReadPath(pathname) || isReviewReadbackPath(pathname) || isAdapterNamespace(pathname) || hasAdapterCredential(request))
     ) {
       response = new Response(null, { status: response.status, headers: response.headers })
     }
@@ -112,8 +112,10 @@ async function route(request: Request, env: WorkerEnv): Promise<Response> {
     )
   } else {
     try {
+      const repository = new D1MarginRepository(env.MARGIN_DB)
       response = await handleMarginRequest(forwarded, {
-        repository: new D1MarginRepository(env.MARGIN_DB),
+        repository,
+        history: { repository, site: env.MARGIN_HISTORY_SITE, assets: env.ASSETS },
         principal: await getPrincipal(forwarded, env),
         now: () => new Date().toISOString(),
         newId: () => crypto.randomUUID(),

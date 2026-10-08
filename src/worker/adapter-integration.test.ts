@@ -55,7 +55,7 @@ async function integration() {
     ),
     (x) => x.toString(16).padStart(2, '0'),
   ).join('')
-  h.database.execute('INSERT INTO margin_adapters VALUES(?,?,1,?)', [
+  h.database.execute('INSERT INTO margin_adapters(site,adapter,enabled,created_at) VALUES(?,?,1,?)', [
     'https://ernie.sg',
     'test-adapter',
     '2026-10-08T00:00:00.000Z',

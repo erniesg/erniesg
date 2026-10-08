@@ -24,6 +24,8 @@ export const DEVELOPMENT_ENVIRONMENT = 'development'
 export type WorkerEnv = WorkosEnv & {
   /** Static asset binding. Everything the Worker does not handle goes here. */
   ASSETS: AssetFetcher
+  /** Optional canonical origin whose public history is co-deployed in ASSETS. */
+  MARGIN_HISTORY_SITE?: string
   /** `margin-db` in production, `margin-db-stg` in preview. */
   MARGIN_DB?: D1Database
   /** `development`, `staging` or `production`. Absent means production. */

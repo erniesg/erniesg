@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { DatabaseSync } from 'node:sqlite'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ADA,
   ADA_KEY,
@@ -21,7 +24,7 @@ import {
   MAX_QUOTE_LENGTH,
   STRUCT_SELECTOR_TYPE,
 } from './web-annotation'
-import { MARGIN_API_PREFIX } from './routes'
+import { handleMarginRequest, MARGIN_API_PREFIX, type MarginRouteContext } from './routes'
 import { MAX_PAGE_SIZE } from './repository'
 import { MAX_SOURCE_LENGTH } from './web-annotation'
 
@@ -446,12 +449,10 @@ describe('proposals and the routes 059 and 060 will finish', () => {
     expect((await harness.request('POST', '/proposals/annotation-001/apply')).status).toBe(400)
   })
 
-  it.each([
-    ['GET', '/documents/chapter-1/history', '059'],
-  ])('answers %s %s with 501', async (method, path, issue) => {
-    const response = await harness.request(method, path)
-    expect(response.status).toBe(501)
-    expect((await response.json()).error.message).toContain(issue)
+  it('requires a full document URI on the public history route', async () => {
+    const response = await harness.request('GET', '/documents/chapter-1/history')
+    expect(response.status).toBe(400)
+    expect((await response.json()).error.code).toBe('invalid_history_document')
   })
 })
 
@@ -1693,5 +1694,359 @@ describe('body caps (issue 059)', () => {
     expect(
       (await patch(bareId(note), 'y'.repeat(MAX_BODY_LENGTH + 1))).status,
     ).toBe(413)
+  })
+})
+
+
+// History is a public, site-owned asset; this capability carries no proposal reads.
+const HISTORY_DOCUMENT = 'https://ernie.sg/books/example/chapter/'
+const historyPath = (document = HISTORY_DOCUMENT) => `/documents/${encodeURIComponent(document)}/history`
+const historyRegistration = (site = 'https://ernie.sg') => ({
+  site, adapter: 'site-builder', enabled: 1 as const, createdAt: '2026-10-08T00:00:00Z',
+  historyLocation: `${site}{documentPath}history.json`,
+})
+const historyAsset = () => ({
+  schemaVersion: 1, site: 'https://ernie.sg', document: HISTORY_DOCUMENT,
+  book: 'example', node: 'chapter', buildCommit: 'a'.repeat(40),
+  sourcePath: 'books/example/chapter.md', versions: [{
+    commit: 'b'.repeat(40), author: 'Site Author', date: '2026-10-07T00:00:00+00:00',
+    message: 'Public edit', path: 'books/example/chapter.md', change: 'M',
+    deleted: false, content: '# Public chapter\n',
+  }],
+})
+const historyResponse = (value: unknown = historyAsset()) => new Response(JSON.stringify(value) + '\n', {
+  headers: { 'content-type': 'application/json' },
+})
+async function requestHistory(history?: unknown, path = historyPath(), method = 'GET') {
+  return handleMarginRequest(new Request(`https://ernie.sg${MARGIN_API_PREFIX}${path}`, { method }), {
+    repository: harness.repository, principal: null,
+    now: () => '2026-10-08T00:00:00Z', newId: () => 'unused',
+    ...(history === undefined ? {} : { history }),
+  } as MarginRouteContext)
+}
+
+describe('history service RED pilots', () => {
+  it('distinguishes an unavailable capability from a valid empty history', async () => {
+    expect((await requestHistory()).status).toBe(503)
+  })
+  it('returns a second-site locator without fetching its assets', async () => {
+    const assets = { fetch: vi.fn(async () => historyResponse()) }
+    const response = await requestHistory({
+      repository: { historyRegistration: async () => historyRegistration('https://notes.example') },
+      site: 'https://ernie.sg', assets,
+    }, historyPath('https://notes.example/essays/start/'))
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ kind: 'locator', document: 'https://notes.example/essays/start/', historyLocation: 'https://notes.example/essays/start/history.json' })
+    expect(assets.fetch).not.toHaveBeenCalled()
+  })
+  it('returns the strict co-deployed asset with its full document identity', async () => {
+    const response = await requestHistory({
+      repository: { historyRegistration: async () => historyRegistration() },
+      site: 'https://ernie.sg', assets: { fetch: async () => historyResponse() },
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ kind: 'asset', history: historyAsset() })
+  })
+  it('refuses malformed local asset data instead of returning a locator or empty list', async () => {
+    const response = await requestHistory({
+      repository: { historyRegistration: async () => historyRegistration() },
+      site: 'https://ernie.sg', assets: { fetch: async () => historyResponse({ ...historyAsset(), document: '/books/example/chapter/' }) },
+    })
+    expect(response.status).toBe(503)
+  })
+})
+
+const localHistory = (fetch = async (_request: Request) => historyResponse()) => ({
+  repository: { historyRegistration: async () => historyRegistration() },
+  site: 'https://ernie.sg', assets: { fetch },
+})
+
+describe('public history registration and locator invariants', () => {
+  it('queries one exact site with real SQLite and performs no mutation', async () => {
+    harness.database.execute(`INSERT INTO margin_adapters(site,adapter,enabled,created_at,history_location)
+      VALUES (?, 'site-builder', 1, '2026-10-08T00:00:00Z', ?)`,
+      ['https://notes.example', 'https://notes.example/history{documentPath}index.json'])
+    harness.database.executed.length = 0
+    const response = await requestHistory({ repository: harness.repository }, historyPath('https://notes.example/essays/start/'))
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ schemaVersion: 1, kind: 'locator', site: 'https://notes.example',
+      document: 'https://notes.example/essays/start/', historyLocation: 'https://notes.example/history/essays/start/index.json' })
+    expect(harness.database.executed).toHaveLength(1)
+    expect(harness.database.executed[0].sql).toMatch(/^SELECT /)
+    expect(harness.database.executed[0].sql).not.toMatch(/LIMIT|JOIN|annotations|token/i)
+    expect(harness.database.executed[0].params).toEqual(['https://notes.example'])
+    expect((await requestHistory({ repository: harness.repository })).status).toBe(404)
+  })
+  it.each([0, 1])('preserves unconfigured or disabled existing registrations (%s)', async enabled => {
+    harness.database.execute('INSERT INTO margin_adapters(site,adapter,enabled,created_at) VALUES (?, ?, ?, ?)',
+      ['https://ernie.sg', 'site-builder', enabled, '2026-10-08T00:00:00Z'])
+    const response = await requestHistory({ repository: harness.repository })
+    expect(response.status).toBe(404)
+    expect(await response.json()).toMatchObject({ error: { code: 'history_unavailable' } })
+  })
+  it('keeps missing registry schema visibly unavailable', async () => {
+    harness.database.execute('ALTER TABLE margin_adapters DROP COLUMN history_location')
+    const response = await requestHistory({ repository: harness.repository })
+    expect(response.status).toBe(503)
+    expect(await response.json()).toMatchObject({ error: { code: 'history_registration_unavailable' } })
+  })
+  it.each([
+    null, {}, { success: false, results: [] }, { success: true }, { success: true, results: {} },
+    { success: true, results: [null] }, { success: true, results: [{}, {}] },
+  ])('rejects incomplete or multirow D1 result %j', async result => {
+    vi.spyOn(harness.database, 'prepare').mockReturnValue({ bind() { return this }, all: async () => result } as never)
+    expect((await requestHistory({ repository: harness.repository })).status).toBe(503)
+  })
+  const registrationRow = { site: 'https://ernie.sg', adapter: 'site-builder', enabled: 1,
+    created_at: '2026-10-08T00:00:00Z', history_location: 'https://ernie.sg{documentPath}history.json' }
+  it.each([
+    { site: 'https://notes.example' }, { adapter: '' }, { adapter: '/root' }, { enabled: true },
+    { enabled: 2 }, { created_at: null }, { history_location: 42 }, { unexpected: 'private' },
+  ])('rejects malformed registry field %j', async patch => {
+    vi.spyOn(harness.database, 'prepare').mockReturnValue({ bind() { return this },
+      all: async () => ({ success: true, results: [{ ...registrationRow, ...patch }] }) } as never)
+    expect((await requestHistory({ repository: harness.repository })).status).toBe(503)
+  })
+  it('does not choose either of two otherwise valid returned rows', async () => {
+    vi.spyOn(harness.database, 'prepare').mockReturnValue({ bind() { return this },
+      all: async () => ({ success: true, results: [registrationRow, registrationRow] }) } as never)
+    expect((await requestHistory({ repository: harness.repository })).status).toBe(503)
+  })
+  it.each([
+    'https://elsewhere.example{documentPath}history.json',
+    'https://ernie.sg.evil.example{documentPath}history.json',
+    'https://user@ernie.sg{documentPath}history.json',
+    'https://ernie.sg/path/history.json', 'https://ernie.sg{documentPath}{documentPath}',
+    'https://ernie.sg{documentPath}{other}', 'https://ernie.sg{documentPath}../history.json',
+    'https://ernie.sg{documentPath}history.json?', 'https://ernie.sg{documentPath}history.json#',
+    'https://ernie.sg{documentPath}%2fhistory.json', 'https://ernie.sg{documentPath}%5chistory.json',
+    'https://ernie.sg{documentPath}' + 'x'.repeat(1024),
+  ])('refuses an invalid registered locator %s', async historyLocation => {
+    const fetch = vi.fn(async (_: Request) => historyResponse())
+    const context = localHistory(fetch)
+    context.repository.historyRegistration = async () => ({ ...historyRegistration(), historyLocation })
+    expect((await requestHistory(context)).status).toBe(503)
+    expect(fetch).not.toHaveBeenCalled()
+  })
+  it.each([
+    'id', 'file:///tmp/history', 'https://user@ernie.sg/book/',
+    HISTORY_DOCUMENT + '?', HISTORY_DOCUMENT + '#', HISTORY_DOCUMENT + '?source=other',
+    'https://ernie.sg/%2fbook/', 'https://ernie.sg/%5cbook/', 'https://ernie.sg/%00book/',
+    'https://ernie.sg/%broken/',
+  ])('refuses invalid or ambiguous document %s', async document => {
+    const context = localHistory(vi.fn(async () => historyResponse()))
+    expect((await requestHistory(context, historyPath(document))).status).toBe(400)
+    expect(context.assets.fetch).not.toHaveBeenCalled()
+  })
+  it('rejects request query overrides and preserves the method allowlist', async () => {
+    expect((await requestHistory(localHistory(), historyPath() + '?source=elsewhere')).status).toBe(400)
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      const response = await requestHistory(localHistory(), historyPath(), method)
+      expect(response.status).toBe(405)
+      expect(response.headers.get('allow')).toBe('GET, HEAD')
+    }
+  })
+  it.each(['', 'https://ernie.sg/', 'https://other.example/path', 'not a site'])('refuses invalid deployment site %s', async site => {
+    const context = localHistory(vi.fn(async () => historyResponse()))
+    expect((await requestHistory({ ...context, site })).status).toBe(503)
+    expect(context.assets.fetch).not.toHaveBeenCalled()
+  })
+  it('requires ASSETS only for the explicitly co-deployed matching site', async () => {
+    const repository = { historyRegistration: async () => historyRegistration() }
+    expect((await requestHistory({ repository })).status).toBe(200)
+    expect((await requestHistory({ repository, site: 'https://notes.example' })).status).toBe(200)
+    expect((await requestHistory({ repository, site: 'https://ernie.sg' })).status).toBe(503)
+  })
+})
+
+describe('public history asset invariants', () => {
+  it('preserves Git order with nonmonotonic dates, renames and tombstones', async () => {
+    const asset = historyAsset()
+    asset.versions = [
+      { ...asset.versions[0], date: '2026-10-01T00:00:00+00:00', change: 'R100', path: 'challenges/old-name.md' },
+      { ...asset.versions[0], commit: 'c'.repeat(40), date: '2026-10-06T00:00:00+00:00', change: 'D', deleted: true, content: null as never },
+      { ...asset.versions[0], commit: 'd'.repeat(64), date: '2024-02-29T23:59:59-05:30', change: 'A', content: '' },
+    ]
+    const response = await requestHistory(localHistory(async () => historyResponse(asset)))
+    expect(response.status).toBe(200)
+    expect((await response.json()).history).toEqual(asset)
+  })
+  it('accepts an explicit empty asset without substituting it for an unavailable result', async () => {
+    const asset = { ...historyAsset(), versions: [] }
+    const response = await requestHistory(localHistory(async () => historyResponse(asset)))
+    expect(response.status).toBe(200)
+    expect((await response.json()).history.versions).toEqual([])
+  })
+  it.each([
+    { schemaVersion: 2 }, { site: 'https://other.example' }, { document: '/books/example/chapter/' },
+    { proposalIds: ['private'] }, { sourcePath: '../old.md' }, { sourcePath: '/old.md' },
+    { book: '' }, { node: 'x'.repeat(129) }, { buildCommit: 'abc' }, { versions: {} },
+    { versions: Array(10_001).fill(null) },
+  ])('rejects malformed root case %#', async patch => {
+    expect((await requestHistory(localHistory(async () => historyResponse({ ...historyAsset(), ...patch })))).status).toBe(503)
+  })
+  it.each([
+    { commit: 'short' }, { author: '' }, { author: 'x'.repeat(4097) }, { message: 'x'.repeat(65_537) },
+    { date: '2025-02-29T00:00:00+00:00' }, { date: '2026-04-31T00:00:00+00:00' },
+    { date: '2026-01-01T24:00:00+00:00' }, { date: '2026-01-01T00:00:00+24:00' },
+    { date: 'yesterday' }, { path: 'a/../b' }, { path: 'a//b' }, { path: 'a\\b' },
+    { path: 'a/./b' }, { path: 'a\u0000b' }, { change: 'R101' }, { change: 'C100' },
+    { deleted: true }, { content: null }, { content: 'x'.repeat(2 * 1024 * 1024 + 1) },
+    { content: '\ud800' }, { privateProposalId: 'private' },
+  ])('rejects malformed version case %#', async patch => {
+    const asset = historyAsset()
+    const response = await requestHistory(localHistory(async () => historyResponse({ ...asset, versions: [{ ...asset.versions[0], ...patch }] })))
+    expect(response.status).toBe(503)
+  })
+  it('rejects duplicate commits and deletion/body mismatches', async () => {
+    const asset = historyAsset()
+    for (const versions of [[asset.versions[0], asset.versions[0]], [{ ...asset.versions[0], change: 'D', deleted: true }]]) {
+      expect((await requestHistory(localHistory(async () => historyResponse({ ...asset, versions })))).status).toBe(503)
+    }
+  })
+  it.each(['duplicate', 'escaped duplicate', 'numeric alias', 'overflow', 'BOM', 'trailing', 'nested'])('rejects noncanonical raw JSON: %s', async kind => {
+    let raw = JSON.stringify(historyAsset()) + '\n'
+    if (kind === 'duplicate') raw = raw.replace('"schemaVersion":1', '"schemaVersion":1,"schemaVersion":1')
+    if (kind === 'escaped duplicate') raw = raw.replace('"schemaVersion":1', '"schemaVersion":1,"schema\\u0056ersion":1')
+    if (kind === 'numeric alias') raw = raw.replace('"schemaVersion":1', '"schemaVersion":1.0')
+    if (kind === 'overflow') raw = raw.replace('"schemaVersion":1', '"schemaVersion":1e400')
+    if (kind === 'BOM') raw = '\ufeff' + raw
+    if (kind === 'trailing') raw += ' '
+    if (kind === 'nested') raw = '{"schemaVersion":' + '['.repeat(100) + '1' + ']'.repeat(100) + '}\n'
+    expect((await requestHistory(localHistory(async () => new Response(raw, { headers: { 'content-type': 'application/json' } })))).status).toBe(503)
+  })
+  it('rejects malformed UTF8 rather than replacement decoding', async () => {
+    expect((await requestHistory(localHistory(async () => new Response(new Uint8Array([0xff]), { headers: { 'content-type': 'application/json' } })))).status).toBe(503)
+  })
+  it.each([301, 302, 404, 500])('classifies ASSETS status %s and cancels its body', async status => {
+    const cancelled = vi.fn()
+    const result = new Response(new ReadableStream({ cancel: cancelled }), { status, headers: { 'content-type': 'application/json', location: 'https://other.example/' } })
+    expect((await requestHistory(localHistory(async () => result))).status).toBe(status === 404 ? 404 : 503)
+    expect(cancelled).toHaveBeenCalledTimes(1)
+  })
+  it('does not forward cookies, credentials or upstream headers', async () => {
+    const assets = vi.fn(async (request: Request) => {
+      expect(request.url).toBe(HISTORY_DOCUMENT + 'history.json')
+      expect(request.method).toBe('GET')
+      expect(request.redirect).toBe('manual')
+      expect([...request.headers]).toEqual([['accept', 'application/json']])
+      const result = historyResponse()
+      result.headers.set('set-cookie', 'upstream=not-forwarded')
+      return result
+    })
+    const response = await handleMarginRequest(new Request(`https://ernie.sg${MARGIN_API_PREFIX}${historyPath()}`, {
+      headers: { cookie: 'test=private', 'x-private': 'do-not-forward' },
+    }), { repository: harness.repository, principal: null, now: () => '', newId: () => '', history: localHistory(assets) })
+    expect(response.status).toBe(200)
+    expect(response.headers.get('set-cookie')).toBeNull()
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(assets).toHaveBeenCalledTimes(1)
+  })
+  it('rejects HTML and dishonest content-length without trusting either', async () => {
+    for (const headers of [{ 'content-type': 'text/html' }, { 'content-type': 'application/json', 'content-length': '8388609' },
+      { 'content-type': 'application/json', 'content-length': 'invalid' }] as Record<string, string>[]) {
+      expect((await requestHistory(localHistory(async () => new Response('{}', { headers })))).status).toBe(503)
+    }
+    const cancelled = vi.fn()
+    let count = 0
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) { count += 1; controller.enqueue(new Uint8Array(1024 * 1024)) }, cancel: cancelled,
+    })
+    expect((await requestHistory(localHistory(async () => new Response(body, { headers: { 'content-type': 'application/json', 'content-length': '1' } })))).status).toBe(503)
+    expect(cancelled).toHaveBeenCalledOnce()
+    expect(count).toBeLessThanOrEqual(11)
+  })
+  it('cancels an owned response arriving after the logical fetch deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      let resolve!: (response: Response) => void
+      let signal!: AbortSignal
+      const fetch = vi.fn((request: Request) => { signal = request.signal; return new Promise<Response>(r => { resolve = r }) })
+      const pending = requestHistory(localHistory(fetch))
+      await vi.advanceTimersByTimeAsync(5001)
+      expect((await pending).status).toBe(503)
+      expect(signal.aborted).toBe(true)
+      const cancelled = vi.fn()
+      resolve(new Response(new ReadableStream({ cancel: cancelled }), { headers: { 'content-type': 'application/json' } }))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(cancelled).toHaveBeenCalledOnce()
+      expect(fetch).toHaveBeenCalledOnce()
+    } finally { vi.useRealTimers() }
+  })
+  it('cancels a body stalled after headers under the same deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      const cancelled = vi.fn()
+      const pending = requestHistory(localHistory(async () => new Response(new ReadableStream({ cancel: cancelled }), { headers: { 'content-type': 'application/json' } })))
+      await vi.advanceTimersByTimeAsync(5001)
+      expect((await pending).status).toBe(503)
+      expect(cancelled).toHaveBeenCalledOnce()
+    } finally { vi.useRealTimers() }
+  })
+})
+
+
+describe('history additive migration', () => {
+  it('preserves existing registrations and integer identity bootstrap without seeding history', () => {
+    const db = new DatabaseSync(':memory:')
+    try {
+      const files = readdirSync('migrations').filter(file => file.endsWith('.sql')).sort()
+      for (const file of files.filter(file => file < '0010')) db.exec(readFileSync(join('migrations', file), 'utf8'))
+      db.exec("INSERT INTO margin_adapters(site,adapter,enabled,created_at) VALUES ('https://notes.example','old-builder',1,'2026-10-01T00:00:00Z')")
+      const before = db.prepare('SELECT * FROM margin_adapters').all()
+      const identity = db.prepare('PRAGMA table_info(margin_identity)').all()
+      db.exec(readFileSync('migrations/0010_margin_history_location.sql', 'utf8'))
+      expect(db.prepare('SELECT site,adapter,enabled,created_at FROM margin_adapters').all()).toEqual(before)
+      expect(db.prepare('SELECT history_location FROM margin_adapters').all()).toEqual([{ history_location: null }])
+      expect(db.prepare('PRAGMA table_info(margin_identity)').all()).toEqual(identity)
+      expect(() => db.exec("INSERT INTO margin_adapters(site,adapter,enabled,created_at) VALUES ('https://notes.example','other-builder',1,'now')")).toThrow()
+    } finally { db.close() }
+  })
+})
+
+
+describe('history raw URL delimiter regression', () => {
+  it.each(['https://ernie.sg/bo\\ok/', 'https://ernie.sg/bo\tok/', 'https://ernie.sg/bo\nok/'])('refuses parser-normalized raw delimiters %j', async document => {
+    const fetch = vi.fn(async () => historyResponse())
+    const response = await requestHistory(localHistory(fetch), historyPath(document))
+    expect(response.status).toBe(400)
+    expect(fetch).not.toHaveBeenCalled()
+  })
+})
+
+
+describe('history byte-bound and cancellation edges', () => {
+  it('counts UTF8 bytes and accepts the exact per-version content limit', async () => {
+    const asset = historyAsset()
+    asset.versions[0].content = 'é'.repeat(1024 * 1024)
+    expect((await requestHistory(localHistory(async () => historyResponse(asset)))).status).toBe(200)
+    asset.versions[0].content += 'é'
+    expect((await requestHistory(localHistory(async () => historyResponse(asset)))).status).toBe(503)
+  })
+  it('applies the total byte cap to multiple individually valid versions', async () => {
+    const asset = historyAsset()
+    asset.versions = Array.from({ length: 4 }, (_, i) => ({ ...asset.versions[0], commit: String(i + 1).repeat(40), content: 'x'.repeat(2 * 1024 * 1024) }))
+    expect((await requestHistory(localHistory(async () => historyResponse(asset)))).status).toBe(503)
+  })
+  it('does not wait for a late-response cancellation promise to settle', async () => {
+    vi.useFakeTimers()
+    try {
+      let resolve!: (response: Response) => void
+      const pending = requestHistory(localHistory(() => new Promise<Response>(r => { resolve = r })))
+      await vi.advanceTimersByTimeAsync(5001)
+      expect((await pending).status).toBe(503)
+      const cancel = vi.fn(() => new Promise<void>(() => {}))
+      resolve(new Response(new ReadableStream({ cancel }), { headers: { 'content-type': 'application/json' } }))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(cancel).toHaveBeenCalledOnce()
+    } finally { vi.useRealTimers() }
+  })
+  it('handles a rejected owned fetch without retrying or falling back', async () => {
+    const fetch = vi.fn(async () => { throw Error('private binding details') })
+    const response = await requestHistory(localHistory(fetch))
+    expect(response.status).toBe(503)
+    expect(await response.text()).not.toContain('private binding details')
+    expect(fetch).toHaveBeenCalledOnce()
   })
 })

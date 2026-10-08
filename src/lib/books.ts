@@ -13,6 +13,11 @@ import path from 'node:path'
 
 import { SITE } from '../consts'
 import { resolveStampMode, stampSource, type SourceStamp } from './book-source'
+import {
+  collectBookHistories,
+  HISTORY_LIMITS,
+  type BookHistoryAsset,
+} from './book-history'
 
 /**
  * `digest` verifies the anchor. `id` is positional, so inserting a block
@@ -133,13 +138,16 @@ function repoRoot(): string {
 }
 
 /** Render the whole collection afresh. Callers that just want the build's copy want `bookManifest()`. */
-export function renderBookManifest(): BookManifest {
+export function renderBookManifest(
+  bounds: { timeoutMs?: number; maxBuffer?: number } = {},
+): BookManifest {
   const python = process.env.CHALLENGES_PYTHON ?? 'python3'
   const root = repoRoot()
   const stdout = execFileSync(python, [path.join(root, RENDERER_FROM_ROOT)], {
     cwd: root,
     encoding: 'utf8',
-    maxBuffer: 256 * 1024 * 1024,
+    maxBuffer: bounds.maxBuffer ?? 256 * 1024 * 1024,
+    ...(bounds.timeoutMs === undefined ? {} : { timeout: bounds.timeoutMs }),
     // The book is full of typographic punctuation; never let the build host's
     // locale decide how the renderer hands it over.
     env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
@@ -153,6 +161,32 @@ let cached: BookManifest | null = null
 export function bookManifest(): BookManifest {
   if (!cached) cached = renderBookManifest()
   return cached
+}
+
+/** Complete static history inputs are rendered afresh inside the strict Git
+ * witness. The ordinary page cache may predate it, so it is not evidence here.
+ * This can invoke the same canonical renderer a second time in a build; it
+ * never introduces another renderer or runs historical source code.
+ */
+export function bookHistoryAssets(): BookHistoryAsset[] {
+  return collectBookHistories(
+    repoRoot(),
+    new URL(SITE.SITEURL).origin,
+    (remainingMs) => {
+      const manifest = renderBookManifest({
+        timeoutMs: remainingMs,
+        maxBuffer: HISTORY_LIMITS.commandBytes,
+      })
+      return manifest.books.flatMap((book) =>
+        book.nodes.map((node) => ({
+          book: book.slug,
+          node: node.id,
+          path: node.path,
+          sourcePath: node.sourcePath,
+        })),
+      )
+    },
+  )
 }
 
 export function books(): Book[] {

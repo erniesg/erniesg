@@ -101,7 +101,7 @@ test('marked current changes remain literal and clearly separate from approved c
     },
   }))
   await page.goto(PATH)
-  await page.getByLabel('State', { exact: true }).selectOption('approved')
+  await page.getByRole('combobox', { name: 'State', exact: true }).selectOption('approved')
   await page.getByRole('button', { name: 'Filter proposals' }).click()
   const article = page.locator('[data-review-rows] article')
   await expect(article).toContainText('Current revision 2')
@@ -208,7 +208,7 @@ test('late response from old filters cannot repaint private rows after a new emp
   })
   await page.goto(PATH, { waitUntil: 'domcontentloaded' })
   await expect.poll(() => waiting).toBe(true)
-  await page.getByLabel('State', { exact: true }).selectOption('merged')
+  await page.getByRole('combobox', { name: 'State', exact: true }).selectOption('merged')
   await page.getByRole('button', { name: 'Filter proposals' }).click()
   await expect(page.getByRole('status')).toContainText('No proposals match')
   release()

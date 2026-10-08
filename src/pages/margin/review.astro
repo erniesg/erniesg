@@ -244,7 +244,8 @@ const site = new URL(SITE.SITEURL).origin
   [data-review-save-form] {
     display: grid;
   }
-  [data-review-session-content] :global(pre) {
+  [data-review-session-content] :global(pre),
+  [data-review-draft-diff] :global(pre) {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }

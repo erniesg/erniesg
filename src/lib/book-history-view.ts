@@ -372,7 +372,9 @@ export class HistoryRequests {
       signal.addEventListener('abort', listener, { once: true })
       const owned = async () => {
         const expected = this.origin + pathname
-        const response = await this.fetcher(expected, {
+        // Native Window.fetch must not receive this HistoryRequests instance.
+        const fetcher = this.fetcher
+        const response = await fetcher(expected, {
           method: 'GET',
           credentials: 'omit',
           mode: 'same-origin',

@@ -606,3 +606,49 @@ it('retains panel-wide request occupancy when the same element is disposed and r
   pending.forEach((resolve) => resolve(new Response('late')))
   second()
 })
+
+it.each(['default', 'injected'] as const)(
+  'invokes the %s fetch callable without a HistoryRequests receiver for every asset family',
+  async (mode) => {
+    const { HistoryRequests } = await api()
+    const calls: string[] = []
+    const nativeLike = function (
+      this: unknown,
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ): Promise<Response> {
+      if (this !== undefined)
+        throw new TypeError('Illegal invocation: unexpected fetch receiver')
+      const url = String(input)
+      calls.push(url)
+      expect(init).toMatchObject({
+        method: 'GET',
+        credentials: 'omit',
+        mode: 'same-origin',
+        redirect: 'error',
+        cache: 'no-store',
+      })
+      const response = new Response('{}', {
+        headers: { 'Content-Type': 'application/json' },
+      })
+      Object.defineProperty(response, 'url', { value: url })
+      return Promise.resolve(response)
+    }
+    vi.stubGlobal('fetch', nativeLike)
+    const pool =
+      mode === 'default'
+        ? new HistoryRequests('https://preview.example')
+        : new HistoryRequests('https://preview.example', nativeLike)
+    for (const path of [
+      '/books/book/node/history.json',
+      '/books/book/node/history-rendered/index.json',
+      `/books/book/node/history-rendered/${oid}.json`,
+    ]) {
+      await expect(
+        pool.read(path, 100, new AbortController().signal),
+      ).resolves.toEqual(new TextEncoder().encode('{}'))
+      await vi.waitFor(() => expect(pool.outstanding).toBe(0))
+    }
+    expect(calls).toHaveLength(3)
+  },
+)

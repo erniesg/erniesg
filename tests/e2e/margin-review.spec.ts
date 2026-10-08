@@ -276,7 +276,16 @@ async function savingService(
       url.pathname === '/api/margin/v1/proposals' &&
       request.method() === 'GET'
     ) {
-      await reply({ annotations: [proposal] })
+      const state =
+        (proposal as Record<string, unknown>)['margin:proposalState'] ??
+        'pending'
+      const document = url.searchParams.get('document')
+      const target = new URL(proposal.target.source)
+      const matches =
+        state === url.searchParams.get('state') &&
+        (!document ||
+          document === target.pathname + target.search + target.hash)
+      await reply({ annotations: matches ? [proposal] : [] })
       return
     }
     if (
@@ -386,6 +395,12 @@ test('Save records only decision/comments and displays literal authoritative met
   for (const width of [390, 1280, 2560]) {
     await page.setViewportSize({ width, height: 900 })
     await expect(panel).toBeVisible()
+    await expect(
+      panel.locator('[data-review-draft-diff] pre').first(),
+    ).toHaveCSS('white-space', 'pre-wrap')
+    await expect(
+      panel.locator('[data-review-draft-diff] pre').first(),
+    ).toHaveCSS('overflow-wrap', 'anywhere')
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= innerWidth,
@@ -513,6 +528,12 @@ test('a revised pending proposal saves only its displayed marked draft and keeps
   for (const width of [390, 1280, 2560]) {
     await page.setViewportSize({ width, height: 900 })
     await expect(panel).toBeVisible()
+    await expect(
+      panel.locator('[data-review-draft-diff] pre').first(),
+    ).toHaveCSS('white-space', 'pre-wrap')
+    await expect(
+      panel.locator('[data-review-draft-diff] pre').first(),
+    ).toHaveCSS('overflow-wrap', 'anywhere')
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= innerWidth,
@@ -768,6 +789,15 @@ test('reported conflict and terminal details stay literal and never imply verifi
     'conflict',
   )
   await page.goto(PATH)
+  await expect(page.locator('[data-review-status]')).toContainText(
+    'No proposals match',
+  )
+  await page
+    .getByRole('combobox', { name: 'State', exact: true })
+    .selectOption('conflict')
+  await page
+    .getByRole('button', { name: 'Filter proposals', exact: true })
+    .click()
   await page.getByRole('button', { name: 'Open review', exact: true }).click()
   const progress = page.getByRole('region', {
     name: 'Execution progress',
@@ -823,6 +853,15 @@ test('malformed or denied progress and observed account changes clear the privat
   const s = await savingService(page, baseURL!)
   s.observe(approvedExecution)
   await page.goto(PATH)
+  await expect(page.locator('[data-review-status]')).toContainText(
+    'No proposals match',
+  )
+  await page
+    .getByRole('combobox', { name: 'State', exact: true })
+    .selectOption('approved')
+  await page
+    .getByRole('button', { name: 'Filter proposals', exact: true })
+    .click()
   await page.getByRole('button', { name: 'Open review', exact: true }).click()
   const panel = page.locator('[data-review-session]')
   await expect(
@@ -854,6 +893,15 @@ test('malformed or denied progress and observed account changes clear the privat
   await expect(page.locator('[data-review-rows] article')).toHaveCount(0)
   s.readStatus(200)
   await page.reload()
+  await expect(page.locator('[data-review-status]')).toContainText(
+    'No proposals match',
+  )
+  await page
+    .getByRole('combobox', { name: 'State', exact: true })
+    .selectOption('approved')
+  await page
+    .getByRole('button', { name: 'Filter proposals', exact: true })
+    .click()
   await page.getByRole('button', { name: 'Open review', exact: true }).click()
   await expect(
     panel.getByRole('region', { name: 'Execution progress' }),

@@ -77,12 +77,30 @@ function parse(source: string) {
   return parseFragment(source, { onParseError: error => fail(`parse ${error.code}`) })
 }
 export function safeHistoryHtml(source: string, namespace: string): { html: string; blocks: SafeHistoryBlock[] } {
+  return rewriteHistoryHtml(source, namespace, false)
+}
+
+/** Validate the closed published profile and isolate one readonly view.
+ * Link destinations remain inert data; original fragment IDs are not restored.
+ * Returned block `id` is the incoming published DOM ID, to pair with the
+ * sidecar's `domId`; original source descriptors remain separate caller data.
+ * This establishes profile validity, not source/hash/publication authority. */
+export function readPublishedHistoryHtml(source: string, viewNamespace: string): { html: string; blocks: SafeHistoryBlock[] } {
+  return rewriteHistoryHtml(source, viewNamespace, true)
+}
+
+function rewriteHistoryHtml(source: string, namespace: string, published: boolean): { html: string; blocks: SafeHistoryBlock[] } {
   validText(source, SAFE_HISTORY_LIMITS.htmlBytes)
   if (!/^[a-z][a-z0-9-]{0,100}$/.test(namespace)) fail('namespace')
-  const tree = parse(source), items = inspect(tree, false)
+  const tree = parse(source), items = inspect(tree, published)
+  const publishedIds = new Set<string>()
   const ids = new Map<Tree.ParentNode, Map<string, Tree.Element[]>>()
   for (const { node, scope } of items) {
     const id = attr(node, 'id')
+    if (id && published) {
+      if (publishedIds.has(id.value)) fail('duplicate published ID')
+      publishedIds.add(id.value)
+    }
     if (id) { let names = ids.get(scope); if (!names) ids.set(scope, names = new Map()); let occurrences = names.get(id.value); if (!occurrences) names.set(id.value, occurrences = []); occurrences.push(node) }
   }
   const references: { attribute: Tree.Element['attrs'][number]; target: Tree.Element }[] = []

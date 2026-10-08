@@ -680,3 +680,519 @@ it('refuses excessive cursor and raw query lengths before a page query', async (
     expect(f.h.database.executed).toHaveLength(1)
   }
 })
+
+const REPORTS = '/api/margin/v1/adapter/reports'
+const reportEvent = (n: number) => encodeBase64Url(new Uint8Array(16).fill(n))
+async function reportFixture() {
+  const f = await fixture(),
+    value = await f.token(),
+    proposal = await f.approve()
+  const grant = async () =>
+    f.h.database.execute(
+      'INSERT INTO margin_adapter_report_grants VALUES(?,?,?,?,?,NULL)',
+      [value.split('.')[1], await digest(value), SITE, 'fixture-adapter', AT],
+    )
+  const report = (n = 1) => ({
+    eventId: reportEvent(n),
+    proposalId: proposal.id,
+    approvedRevision: 1,
+    expectedStateVersion: 0,
+    outcome: { state: 'apply_failed', detail: 'offline fixture result' },
+  })
+  const call = (path: string, method: string, body?: unknown, bearer = value) =>
+    worker.fetch(
+      new Request(SITE + path, {
+        method,
+        headers: {
+          authorization: `Bearer ${bearer}`,
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      }),
+      { ASSETS: { fetch: async () => new Response('asset') }, MARGIN_DB: f.h.database },
+    )
+  return { ...f, value, proposal, grant, report, requestReport: call }
+}
+
+describe('report HTTP representative RED pilots', () => {
+  it('requires the exact report grant and returns the same stored acknowledgement on replay', async () => {
+    const f = await reportFixture(),
+      input = f.report()
+    expect((await f.requestReport(REPORTS, 'POST', input)).status).toBe(403)
+    await f.grant()
+    const first = await f.requestReport(REPORTS, 'POST', input)
+    expect(first.status).toBe(200)
+    const stored = await first.json()
+    expect(stored.ack).toMatchObject({
+      eventId: input.eventId,
+      proposalId: f.proposal.id,
+      stateVersion: 1,
+      failedApplyCount: 1,
+    })
+    expect(await (await f.requestReport(REPORTS, 'POST', input)).json()).toEqual(stored)
+    expect((await f.requestReport(REPORTS, 'POST', f.report(2))).status).toBe(409)
+    f.h.database.execute('UPDATE margin_adapter_report_grants SET revoked_at=?', [AT])
+    expect(
+      (await f.requestReport('/api/margin/v1/adapter/receipts/' + input.eventId, 'GET'))
+        .status,
+    ).toBe(403)
+    expect(
+      f.h.database.query('SELECT * FROM margin_adapter_report_receipts'),
+    ).toHaveLength(1)
+  })
+  it('maps uncertain committed writes to503 and reconciles through a read-only receipt', async () => {
+    const f = await reportFixture()
+    await f.grant()
+    const input = f.report(),
+      query = f.h.database.query.bind(f.h.database)
+    const spy = vi.spyOn(f.h.database, 'query').mockImplementation((sql, params) => {
+      const rows = query(sql, params)
+      if (sql.startsWith('INSERT INTO margin_adapter_report_receipts'))
+        throw Error('fixture response lost after commit')
+      return rows
+    })
+    const uncertain = await f.requestReport(REPORTS, 'POST', input)
+    expect(uncertain.status).toBe(503)
+    expect(await uncertain.json()).toEqual({ error: { code: 'storage_unavailable' } })
+    spy.mockRestore()
+    const recovered = await f.requestReport(
+      '/api/margin/v1/adapter/receipts/' + input.eventId,
+      'GET',
+    )
+    expect(recovered.status).toBe(200)
+    expect((await recovered.json()).ack).toMatchObject({
+      stateVersion: 1,
+      failedApplyCount: 1,
+    })
+    expect(
+      f.h.database.query('SELECT * FROM margin_adapter_report_receipts'),
+    ).toHaveLength(1)
+  })
+})
+
+async function rawReport(
+  f: Awaited<ReturnType<typeof reportFixture>>,
+  body: BodyInit | null,
+  extra: Record<string, string> = {},
+  method = 'POST',
+  path = REPORTS,
+) {
+  return worker.fetch(
+    new Request(SITE + path, {
+      method,
+      headers: {
+        authorization: `Bearer ${f.value}`,
+        'content-type': 'application/json',
+        ...extra,
+      },
+      ...(body === null ? {} : { body }),
+      duplex: 'half',
+    } as RequestInit),
+    { ASSETS: { fetch: async () => new Response('asset') }, MARGIN_DB: f.h.database },
+  )
+}
+
+describe('bounded report transport and shared schema', () => {
+  const invalid: Record<
+    string,
+    (r: ReturnType<Awaited<ReturnType<typeof reportFixture>>['report']>) => string
+  > = {
+    'root duplicate': (r) =>
+      JSON.stringify(r).replace('{', '{"eventId":"' + r.eventId + '",'),
+    'escaped duplicate': (r) =>
+      JSON.stringify(r).replace('{', '{"event\\u0049d":"' + r.eventId + '",'),
+    'nested duplicate': (r) =>
+      JSON.stringify(r).replace('"detail":', '"detail":"first","detail":'),
+    'unknown key': (r) => JSON.stringify({ ...r, extra: true }),
+    'unknown outcome key': (r) =>
+      JSON.stringify({ ...r, outcome: { ...r.outcome, extra: true } }),
+    'array root': (r) => JSON.stringify([r]),
+    'null root': () => 'null',
+    'array member': (r) => JSON.stringify({ ...r, outcome: [] }),
+    'excess nesting': (r) =>
+      JSON.stringify({
+        ...r,
+        outcome: { state: 'closed', pr: { head: { nested: 'fixture' } } },
+      }),
+    'member bound': (r) =>
+      JSON.stringify({
+        ...r,
+        ...Object.fromEntries(Array.from({ length: 17 }, (_, i) => ['key' + i, i])),
+      }),
+    'trailing bytes': (r) => JSON.stringify(r) + ' false',
+    'trailing comma': (r) => JSON.stringify(r).replace(/}$/, ',}'),
+    'infinite numeric value': (r) =>
+      JSON.stringify(r).replace(
+        '"expectedStateVersion":0',
+        '"expectedStateVersion":1e999',
+      ),
+    'boolean version': (r) => JSON.stringify({ ...r, expectedStateVersion: true }),
+    'fraction revision': (r) => JSON.stringify({ ...r, approvedRevision: 1.5 }),
+    'unsafe integer': (r) =>
+      JSON.stringify({ ...r, expectedStateVersion: Number.MAX_SAFE_INTEGER + 1 }),
+    'unknown state': (r) =>
+      JSON.stringify({ ...r, outcome: { state: 'pending', detail: 'fixture' } }),
+    'empty detail': (r) =>
+      JSON.stringify({ ...r, outcome: { ...r.outcome, detail: '' } }),
+    BOM: (r) => '\uFEFF' + JSON.stringify(r),
+  }
+  it.each(Object.keys(invalid))('rejects %s before mutation', async (name) => {
+    const f = await reportFixture()
+    await f.grant()
+    const response = await rawReport(f, invalid[name](f.report()))
+    expect(response.status).toBe(400)
+    expect(f.h.database.query('SELECT * FROM margin_adapter_report_receipts')).toEqual(
+      [],
+    )
+  })
+  it('rejects duplicate nested PR fields and permits harmless string braces/escaped quotes', async () => {
+    const f = await reportFixture()
+    await f.grant()
+    const raw = JSON.stringify({
+      ...f.report(),
+      outcome: {
+        state: 'closed',
+        pr: { number: 1, url: 'https://code.example/pr/1', head: 'a'.repeat(40) },
+      },
+    })
+    expect(
+      (await rawReport(f, raw.replace('"number":1', '"number":1,"num\\u0062er":1')))
+        .status,
+    ).toBe(400)
+    const valid = {
+      ...f.report(),
+      outcome: {
+        state: 'conflict',
+        detail: 'literal {braces}, "quote", \\slash and café',
+      },
+    }
+    expect((await rawReport(f, ' \n' + JSON.stringify(valid) + '\r\n')).status).toBe(
+      200,
+    )
+  })
+  it.each([
+    'text/plain',
+    'application/json; charset=latin1',
+    'application/json; extra=one',
+    '',
+  ])('rejects unsupported media %s', async (media) => {
+    const f = await reportFixture()
+    await f.grant()
+    expect(
+      (await rawReport(f, JSON.stringify(f.report()), { 'content-type': media }))
+        .status,
+    ).toBe(415)
+    expect(f.h.database.query('SELECT * FROM margin_adapter_report_receipts')).toEqual(
+      [],
+    )
+  })
+  it('refuses encoded content and malformed UTF8; handles a missing body', async () => {
+    const f = await reportFixture()
+    await f.grant()
+    expect(
+      (await rawReport(f, JSON.stringify(f.report()), { 'content-encoding': 'gzip' }))
+        .status,
+    ).toBe(415)
+    expect(
+      (await rawReport(f, new Uint8Array([123, 34, 255, 34, 58, 49, 125]))).status,
+    ).toBe(400)
+    expect((await rawReport(f, null)).status).toBe(400)
+  })
+  it('accepts exactly64KiB with whitespace, ignoring misleading larger Content-Length', async () => {
+    const f = await reportFixture()
+    await f.grant()
+    const raw = JSON.stringify(f.report())
+    expect(
+      (
+        await rawReport(
+          f,
+          raw + ' '.repeat(65_536 - new TextEncoder().encode(raw).length),
+          { 'content-length': '90000' },
+        )
+      ).status,
+    ).toBe(200)
+  })
+  it('bounds actual multibyte streamed bytes and cancels the unfinished stream', async () => {
+    const f = await reportFixture()
+    await f.grant()
+    const cancel = vi.fn(),
+      bytes = new TextEncoder().encode('é'.repeat(32_769))
+    let n = 0
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(bytes.subarray(n, n + 8192))
+        n += 8192
+      },
+      cancel,
+    })
+    const response = await rawReport(f, stream, { 'content-length': '1' })
+    expect(response.status).toBe(413)
+    expect(cancel).toHaveBeenCalledTimes(1)
+    expect(f.h.database.query('SELECT * FROM margin_adapter_report_receipts')).toEqual(
+      [],
+    )
+  })
+  it('accepts valid JSON split across UTF8/codepoint and token boundaries', async () => {
+    const f = await reportFixture()
+    await f.grant()
+    const bytes = new TextEncoder().encode(
+      JSON.stringify({
+        ...f.report(),
+        outcome: { state: 'conflict', detail: 'café fixture' },
+      }),
+    )
+    let n = 0
+    const stream = new ReadableStream<Uint8Array>({
+      pull(c) {
+        if (n === bytes.length) c.close()
+        else {
+          const byte = bytes.slice(n, n + 1)
+          n++
+          c.enqueue(byte)
+        }
+      },
+    })
+    expect(
+      (
+        await rawReport(f, stream, {
+          'content-type': 'Application/JSON; charset="UTF-8"',
+        })
+      ).status,
+    ).toBe(200)
+  })
+  it('bounds empty chunk churn and cancels without a receipt', async () => {
+    const f = await reportFixture()
+    await f.grant()
+    const cancel = vi.fn(),
+      stream = new ReadableStream<Uint8Array>({
+        pull(c) {
+          c.enqueue(new Uint8Array())
+        },
+        cancel,
+      })
+    expect((await rawReport(f, stream)).status).toBe(400)
+    expect(cancel).toHaveBeenCalledTimes(1)
+  })
+  it.each(['pr_open', 'conflict', 'apply_failed', 'merged', 'closed'])(
+    'uses the shared command schema for %s',
+    async (state) => {
+      const f = await reportFixture()
+      await f.grant()
+      const pr = { number: 1, url: 'https://code.example/pr/1', head: 'a'.repeat(40) }
+      const outcome =
+        state === 'pr_open'
+          ? { state, pr, checks: 'pending', detail: null }
+          : state === 'merged'
+            ? { state, pr, mergeCommit: 'b'.repeat(40) }
+            : state === 'closed'
+              ? { state, pr }
+              : { state, detail: 'offline fixture' }
+      const response = await rawReport(f, JSON.stringify({ ...f.report(), outcome }))
+      expect(response.status).toBe(200)
+      expect((await response.json()).ack.state).toBe(state)
+    },
+  )
+})
+
+describe('report transport authority and result taxonomy', () => {
+  it('rechecks grant authority after bearer verification without leaking targets', async () => {
+    const f = await reportFixture()
+    await f.grant()
+    const query = f.h.database.query.bind(f.h.database)
+    vi.spyOn(f.h.database, 'query').mockImplementation((sql, params) => {
+      const rows = query(sql, params)
+      if (sql.includes('LIMIT 2'))
+        f.h.database.execute('UPDATE margin_adapter_report_grants SET revoked_at=?', [
+          AT,
+        ])
+      return rows
+    })
+    expect((await f.requestReport(REPORTS, 'POST', f.report())).status).toBe(403)
+    expect(f.h.database.query('SELECT * FROM margin_adapter_report_receipts')).toEqual(
+      [],
+    )
+  })
+  it('returns generic forbidden for foreign and missing targets and scoped404 for receipts', async () => {
+    const f = await reportFixture()
+    await f.grant()
+    await f.token(OTHER, 2)
+    const foreign = await f.approve(OTHER + '/books/example/')
+    for (const id of [foreign.id, 'missing']) {
+      const response = await f.requestReport(REPORTS, 'POST', {
+        ...f.report(),
+        proposalId: id,
+      })
+      expect(response.status).toBe(403)
+      expect(await response.json()).toEqual({ error: { code: 'adapter_forbidden' } })
+    }
+    const missing = await f.requestReport(
+      '/api/margin/v1/adapter/receipts/' + reportEvent(12),
+      'GET',
+    )
+    expect(missing.status).toBe(404)
+    expect(await missing.json()).toEqual({ error: { code: 'receipt_not_found' } })
+  })
+  it('returns not-evaluated for a historical missing execution row without defaulting counts', async () => {
+    const f = await reportFixture()
+    await f.grant()
+    f.h.database.execute('DROP TRIGGER margin_execution_initialize')
+    const legacy = await f.approve()
+    const response = await f.requestReport(REPORTS, 'POST', {
+      ...f.report(),
+      proposalId: legacy.id,
+    })
+    expect(response.status).toBe(503)
+    expect(await response.json()).toEqual({
+      error: { code: 'execution_not_evaluated' },
+    })
+    expect(f.h.database.query('SELECT * FROM margin_adapter_report_receipts')).toEqual(
+      [],
+    )
+  })
+  it('classifies a malformed committed RETURNING as storage503, never input400', async () => {
+    const f = await reportFixture()
+    await f.grant()
+    const query = f.h.database.query.bind(f.h.database)
+    const spy = vi.spyOn(f.h.database, 'query').mockImplementation((sql, params) => {
+      const rows = query(sql, params)
+      return sql.startsWith('INSERT INTO margin_adapter_report_receipts')
+        ? [{ ...rows[0], extra: 'private fixture diagnostic' }]
+        : rows
+    })
+    const response = await f.requestReport(REPORTS, 'POST', f.report())
+    expect(response.status).toBe(503)
+    expect(await response.json()).toEqual({ error: { code: 'storage_unavailable' } })
+    spy.mockRestore()
+    expect(
+      (
+        await f.requestReport(
+          '/api/margin/v1/adapter/receipts/' + reportEvent(1),
+          'GET',
+        )
+      ).status,
+    ).toBe(200)
+    expect(
+      f.h.database.query('SELECT * FROM margin_adapter_report_receipts'),
+    ).toHaveLength(1)
+  })
+  it('rejects unknown/duplicate query keys before report or receipt repository work', async () => {
+    const f = await reportFixture()
+    await f.grant()
+    for (const suffix of ['?extra=1', '?eventId=one&eventId=two']) {
+      expect((await f.requestReport(REPORTS + suffix, 'POST', f.report())).status).toBe(
+        400,
+      )
+      expect(
+        (
+          await f.requestReport(
+            '/api/margin/v1/adapter/receipts/' + reportEvent(1) + suffix,
+            'GET',
+          )
+        ).status,
+      ).toBe(400)
+    }
+    expect(f.h.database.query('SELECT * FROM margin_adapter_report_receipts')).toEqual(
+      [],
+    )
+  })
+})
+
+import { D1MarginRepository } from './d1-repository'
+import {
+  adapterExecutionReportSchema,
+  adapterSelectorSchema as sharedSelector,
+  canonicalSegment as sharedSegment,
+} from './repository'
+import {
+  adapterSelectorSchema as transportSelector,
+  canonicalSegment as transportSegment,
+} from './adapter'
+
+describe('transport result and module contracts', () => {
+  it('shares the command and selector implementation without a duplicate decoder', async () => {
+    expect(sharedSelector).toBe(transportSelector)
+    expect(sharedSegment).toBe(transportSegment)
+    const f = await reportFixture()
+    expect(adapterExecutionReportSchema.parse(f.report())).toEqual(f.report())
+    expect(
+      adapterExecutionReportSchema.safeParse({ ...f.report(), site: SITE }).success,
+    ).toBe(false)
+  })
+  it.each(['precommit', 'unexpected', 'malformed-ack', 'unknown-ack-key'])(
+    'returns storage503 for %s without exposing diagnostics',
+    async (kind) => {
+      const f = await reportFixture()
+      await f.grant()
+      const replacement =
+        kind === 'unexpected'
+          ? { status: 'missing' }
+          : kind === 'malformed-ack'
+            ? { status: 'accepted', ack: {} }
+            : {
+                status: 'accepted',
+                ack: {
+                  eventId: reportEvent(1),
+                  proposalId: f.proposal.id,
+                  approvedRevision: 1,
+                  stateVersion: 1,
+                  failedApplyCount: 1,
+                  state: 'apply_failed',
+                  acceptedAt: AT,
+                  extra: 'private fixture diagnostic',
+                },
+              }
+      const spy = vi.spyOn(D1MarginRepository.prototype, 'reportProposalExecution')
+      if (kind === 'precommit')
+        spy.mockRejectedValue(Error('private fixture diagnostic'))
+      else spy.mockResolvedValue(replacement as any)
+      const response = await f.requestReport(REPORTS, 'POST', f.report())
+      expect(response.status).toBe(503)
+      expect(await response.json()).toEqual({ error: { code: 'storage_unavailable' } })
+      expect(
+        f.h.database.query('SELECT * FROM margin_adapter_report_receipts'),
+      ).toEqual([])
+    },
+  )
+  it('does not map unexpected receipt states to report errors', async () => {
+    const f = await reportFixture()
+    await f.grant()
+    vi.spyOn(
+      D1MarginRepository.prototype,
+      'readAdapterReportReceipt',
+    ).mockResolvedValue({ status: 'conflict' })
+    const response = await f.requestReport(
+      '/api/margin/v1/adapter/receipts/' + reportEvent(1),
+      'GET',
+    )
+    expect(response.status).toBe(503)
+    expect(await response.json()).toEqual({ error: { code: 'storage_unavailable' } })
+  })
+})
+
+it.each([
+  { order: ['repository', 'adapter', 'd1', 'worker'] },
+  { order: ['adapter', 'd1', 'repository', 'worker'] },
+  { order: ['d1', 'worker', 'adapter', 'repository'] },
+])('initializes a fresh module graph in entry order $order', async ({ order }) => {
+  vi.resetModules()
+  const loaders = {
+    repository: () => import('./repository'),
+    adapter: () => import('./adapter'),
+    d1: () => import('./d1-repository'),
+    worker: () => import('../index'),
+  }
+  for (const name of order) await loaders[name as keyof typeof loaders]()
+  const shared = await import('./repository'),
+    transport = await import('./adapter')
+  expect(shared.adapterSelectorSchema).toBe(transport.adapterSelectorSchema)
+  expect(
+    shared.adapterExecutionReportSchema.safeParse({
+      eventId: reportEvent(1),
+      proposalId: 'fixture',
+      approvedRevision: 1,
+      expectedStateVersion: 0,
+      outcome: { state: 'conflict', detail: 'fixture' },
+    }).success,
+  ).toBe(true)
+  expect(typeof (await import('./d1-repository')).D1MarginRepository).toBe('function')
+})

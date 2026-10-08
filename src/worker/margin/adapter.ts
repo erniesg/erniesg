@@ -3,10 +3,18 @@ import { decodeBase64Url, encodeBase64Url, timingSafeEqual } from './base64url'
 import type {
   AdapterCredential,
   AdapterFeedRepository,
+  AdapterReportRepository,
+  AdapterReportResult,
   ApprovedFeedCursor,
   ApprovedFeedItem,
 } from './repository'
 import { splitSource } from './web-annotation'
+import {
+  canonicalSegment,
+  adapterSelectorSchema,
+  adapterExecutionReportSchema,
+} from './repository'
+export { canonicalSegment, adapterSelectorSchema } from './repository'
 
 export const ADAPTER_FEED_PATH = '/api/margin/v1/adapter/feed'
 const ADAPTER_NAMESPACE = '/api/margin/v1/adapter'
@@ -27,14 +35,6 @@ export const adapterSiteSchema = z
     return scope?.site === value && scope.document === '/'
   })
 export const adapterIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/)
-export function canonicalSegment(value: string, size: number): boolean {
-  const bytes = decodeBase64Url(value)
-  return bytes?.length === size && encodeBase64Url(bytes) === value
-}
-export const adapterSelectorSchema = z
-  .string()
-  .length(22)
-  .refine((value) => canonicalSegment(value, 16))
 export const approvedFeedOptionsSchema = z
   .object({
     limit: z
@@ -74,6 +74,7 @@ export function isAdapterNamespace(path: string): boolean {
     .split('/')
     .filter(Boolean)
     .join('/')
+    .toLowerCase()
   return (
     normalized === ADAPTER_NAMESPACE.slice(1) ||
     normalized.startsWith(ADAPTER_NAMESPACE.slice(1) + '/')
@@ -145,6 +146,37 @@ function nextCursor(credential: AdapterCredential, item: ApprovedFeedItem): stri
   )
 }
 
+/** Shared bearer verification; repository methods still recheck current scope. */
+async function authenticateAdapter(
+  request: Request,
+  repository: AdapterFeedRepository | null,
+): Promise<{ credential: AdapterCredential } | { denied: Response }> {
+  const supplied = token(request)
+  if (!supplied) return { denied: adapterError(401, 'adapter_unauthorized') }
+  if (!repository) return { denied: adapterError(503, 'storage_unavailable') }
+  try {
+    const credential = await repository.findAdapterCredential(supplied.selector)
+    const digest = Array.from(
+      new Uint8Array(
+        await crypto.subtle.digest('SHA-256', encoder.encode(supplied.value)),
+      ),
+      (x) => x.toString(16).padStart(2, '0'),
+    ).join('')
+    const matches = timingSafeEqual(digest, credential?.tokenSha256 ?? '0'.repeat(64))
+    if (!credential || !matches)
+      return { denied: adapterError(401, 'adapter_unauthorized') }
+    if (
+      !credential.enabled ||
+      credential.revokedAt !== null ||
+      credential.capability !== 'approved_feed'
+    )
+      return { denied: adapterError(403, 'adapter_forbidden') }
+    return { credential }
+  } catch {
+    return { denied: adapterError(503, 'storage_unavailable') }
+  }
+}
+
 /** No cookies, Principal, provider, write, or report capability is consulted here. */
 export async function handleAdapterFeed(
   request: Request,
@@ -157,26 +189,10 @@ export async function handleAdapterFeed(
     denied.headers.set('allow', 'GET')
     return denied
   }
-  const supplied = token(request)
-  if (!supplied) return adapterError(401, 'adapter_unauthorized')
-  if (!repository) return adapterError(503, 'storage_unavailable')
+  const authenticated = await authenticateAdapter(request, repository)
+  if ('denied' in authenticated) return authenticated.denied
+  const credential = authenticated.credential
   try {
-    const credential = await repository.findAdapterCredential(supplied.selector)
-    const digest = Array.from(
-      new Uint8Array(
-        await crypto.subtle.digest('SHA-256', encoder.encode(supplied.value)),
-      ),
-      (x) => x.toString(16).padStart(2, '0'),
-    ).join('')
-    // Both operands have fixed length, even when the selector is unknown.
-    const matches = timingSafeEqual(digest, credential?.tokenSha256 ?? '0'.repeat(64))
-    if (!credential || !matches) return adapterError(401, 'adapter_unauthorized')
-    if (
-      !credential.enabled ||
-      credential.revokedAt !== null ||
-      credential.capability !== 'approved_feed'
-    )
-      return adapterError(403, 'adapter_forbidden')
     let limit = 25,
       after: ApprovedFeedCursor | undefined
     try {
@@ -198,7 +214,7 @@ export async function handleAdapterFeed(
     } catch {
       return adapterError(400, 'invalid_feed_query')
     }
-    const page = await repository.listApprovedFeed(credential, {
+    const page = await repository!.listApprovedFeed(credential, {
       limit: limit + 1,
       ...(after ? { after } : {}),
     })
@@ -229,4 +245,233 @@ export async function handleAdapterFeed(
   } catch {
     return adapterError(503, 'storage_unavailable')
   }
+}
+
+export const ADAPTER_REPORT_PATH = '/api/margin/v1/adapter/reports'
+const RECEIPT_PREFIX = '/api/margin/v1/adapter/receipts/'
+const REPORT_BYTES = 65_536
+class ReportBodyError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+  ) {
+    super(code)
+  }
+}
+
+/** Purpose-built JSON reader for objects/scalars only, at most three object
+ * levels and16 members per object. Decoded member names are checked before
+ * assignment, including differently escaped spellings of the same name. */
+function reportJSON(text: string): unknown {
+  let at = 0
+  const fail = (): never => {
+    throw new ReportBodyError(400, 'invalid_report')
+  }
+  const space = () => {
+    while (/[\x20\t\r\n]/.test(text[at] ?? '') && at < text.length) at++
+  }
+  const string = (): string => {
+    if (text[at] !== '"') return fail()
+    const start = at++
+    while (at < text.length) {
+      const ch = text[at++]
+      if (ch === '\\') {
+        if (at >= text.length) return fail()
+        at++
+        continue
+      }
+      if (ch === '"') {
+        try {
+          return JSON.parse(text.slice(start, at)) as string
+        } catch {
+          return fail()
+        }
+      }
+    }
+    return fail()
+  }
+  const value = (depth: number): unknown => {
+    space()
+    if (text[at] === '{') return object(depth)
+    if (text[at] === '"') return string()
+    const match =
+      /^(?:null|true|false|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)/.exec(
+        text.slice(at),
+      )
+    if (!match) return fail()
+    at += match[0].length
+    const result: unknown = JSON.parse(match[0])
+    if (typeof result === 'number' && !Number.isFinite(result)) return fail()
+    return result
+  }
+  const object = (depth: number): Record<string, unknown> => {
+    if (depth > 3 || text[at++] !== '{') return fail()
+    const result: Record<string, unknown> = Object.create(null),
+      keys = new Set<string>()
+    space()
+    if (text[at] === '}') {
+      at++
+      return result
+    }
+    while (at < text.length) {
+      space()
+      const key = string()
+      if (keys.has(key) || keys.size >= 16) return fail()
+      keys.add(key)
+      space()
+      if (text[at++] !== ':') return fail()
+      result[key] = value(depth + 1)
+      space()
+      const next = text[at++]
+      if (next === '}') return result
+      if (next !== ',') return fail()
+    }
+    return fail()
+  }
+  space()
+  const result = object(1)
+  space()
+  if (at !== text.length) return fail()
+  return result
+}
+
+async function readReportBody(request: Request): Promise<unknown> {
+  const media = request.headers.get('content-type') ?? ''
+  if (
+    !/^application\/json(?:\s*;\s*charset\s*=\s*(?:utf-8|"utf-8"))?\s*$/i.test(media) ||
+    request.headers.has('content-encoding')
+  ) {
+    void request.body?.cancel().catch(() => {})
+    throw new ReportBodyError(415, 'unsupported_report_media')
+  }
+  if (!request.body) throw new ReportBodyError(400, 'invalid_report')
+  const reader = request.body.getReader(),
+    bytes = new Uint8Array(REPORT_BYTES)
+  let length = 0,
+    reads = 0
+  try {
+    for (;;) {
+      const item = await reader.read()
+      if (item.done) break
+      if (!(item.value instanceof Uint8Array) || ++reads > REPORT_BYTES + 1)
+        throw new ReportBodyError(400, 'invalid_report')
+      if (length + item.value.byteLength > REPORT_BYTES)
+        throw new ReportBodyError(413, 'report_too_large')
+      bytes.set(item.value, length)
+      length += item.value.byteLength
+    }
+    // Preserve a BOM so JSON grammar rejects it instead of silently stripping.
+    return reportJSON(
+      new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
+        bytes.subarray(0, length),
+      ),
+    )
+  } catch (error) {
+    void reader.cancel().catch(() => {})
+    if (error instanceof ReportBodyError) throw error
+    throw new ReportBodyError(400, 'invalid_report')
+  } finally {
+    reader.releaseLock()
+  }
+}
+function methodDenied(allow: string): Response {
+  const denied = adapterError(405, 'method_not_allowed')
+  denied.headers.set('allow', allow)
+  return denied
+}
+const reportAckSchema = z
+  .object({
+    eventId: adapterSelectorSchema,
+    proposalId: id,
+    approvedRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    stateVersion: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    failedApplyCount: z.number().int().min(0).max(3),
+    state: z.enum(['pr_open', 'conflict', 'apply_failed', 'merged', 'closed']),
+    acceptedAt: date,
+  })
+  .strict()
+  .refine((ack) => ack.failedApplyCount <= ack.stateVersion)
+function reportResponse(result: AdapterReportResult, receipt: boolean): Response {
+  if (result.status === 'accepted') {
+    const parsed = z
+      .object({ status: z.literal('accepted'), ack: reportAckSchema })
+      .strict()
+      .parse(result)
+    return response({ ack: parsed.ack })
+  }
+  z.object({ status: z.string() }).strict().parse(result)
+  if (result.status === 'forbidden') return adapterError(403, 'adapter_forbidden')
+  if (receipt && result.status === 'missing')
+    return adapterError(404, 'receipt_not_found')
+  if (!receipt && result.status === 'conflict')
+    return adapterError(409, 'report_conflict')
+  if (!receipt && result.status === 'not_evaluated')
+    return adapterError(503, 'execution_not_evaluated')
+  return adapterError(503, 'storage_unavailable')
+}
+async function reportRoute(
+  request: Request,
+  repository: (AdapterFeedRepository & AdapterReportRepository) | null,
+): Promise<Response> {
+  const url = new URL(request.url),
+    isReport = url.pathname === ADAPTER_REPORT_PATH
+  const segment = url.pathname.startsWith(RECEIPT_PREFIX)
+    ? url.pathname.slice(RECEIPT_PREFIX.length)
+    : null
+  const isReceipt = segment !== null && /^[A-Za-z0-9_-]{22}$/.test(segment)
+  if (!isReport && !isReceipt) return adapterError(404, 'not_found')
+  if (isReport ? request.method !== 'POST' : !['GET', 'HEAD'].includes(request.method))
+    return methodDenied(isReport ? 'POST' : 'GET, HEAD')
+  const authenticated = await authenticateAdapter(request, repository)
+  if ('denied' in authenticated) return authenticated.denied
+  if (url.search || url.username || url.password)
+    return adapterError(400, 'invalid_report_query')
+  if (isReceipt) {
+    if (!adapterSelectorSchema.safeParse(segment).success)
+      return adapterError(400, 'invalid_receipt_id')
+    try {
+      return reportResponse(
+        await repository!.readAdapterReportReceipt(authenticated.credential, segment!),
+        true,
+      )
+    } catch {
+      return adapterError(503, 'storage_unavailable')
+    }
+  }
+  let command
+  try {
+    command = adapterExecutionReportSchema.parse(await readReportBody(request))
+  } catch (error) {
+    return error instanceof ReportBodyError
+      ? adapterError(error.status, error.code)
+      : adapterError(400, 'invalid_report')
+  }
+  // This catch is deliberately separate: a post-commit malformed response is
+  // uncertain storage, never client400 and never an automatic mutation retry.
+  try {
+    return reportResponse(
+      await repository!.reportProposalExecution(
+        authenticated.credential,
+        command,
+        new Date().toISOString(),
+      ),
+      false,
+    )
+  } catch {
+    return adapterError(503, 'storage_unavailable')
+  }
+}
+
+/** Exact service dispatcher. Namespace aliases reach refusal here, not AuthKit. */
+export async function handleAdapterRequest(
+  request: Request,
+  repository: (AdapterFeedRepository & AdapterReportRepository) | null,
+): Promise<Response> {
+  const result =
+    new URL(request.url).pathname === ADAPTER_FEED_PATH
+      ? await handleAdapterFeed(request, repository)
+      : await reportRoute(request, repository)
+  return request.method === 'HEAD'
+    ? new Response(null, { status: result.status, headers: result.headers })
+    : result
 }

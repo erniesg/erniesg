@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import worker from './index'
-import { ADA, createHarness } from './margin/fixtures'
+import { ADA, BOB, createHarness, webAnnotation, scopeQuery } from './margin/fixtures'
 
 afterEach(() => vi.unstubAllGlobals())
 it('isolates the adapter route and bearer from human cookies and every normal API capability', async () => {
@@ -234,3 +234,280 @@ it.each(['/api/margin/v1/%61dapter/invalid%ZZ', '/api/margin/v1/%2fadapter/feed'
     }
   },
 )
+
+it('report transport pilot bounds actual body bytes and isolates receipt HEAD and aliases from human auth', async () => {
+  const f = await integration(),
+    selector = f.token.split('.')[1]
+  const row = f.h.database.query(
+    'SELECT token_sha256 FROM margin_adapter_tokens WHERE token_id=?',
+    [selector],
+  )[0]
+  f.h.database.execute(
+    'INSERT INTO margin_adapter_report_grants VALUES(?,?,?,?,?,NULL)',
+    [
+      selector,
+      row.token_sha256,
+      'https://ernie.sg',
+      'test-adapter',
+      '2026-10-08T00:00:00.000Z',
+    ],
+  )
+  const auth = vi.spyOn(authRoutes, 'handleAuthRequest')
+  try {
+    const oversized = await worker.fetch(
+      new Request('https://ernie.sg/api/margin/v1/adapter/reports', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${f.token}`,
+          'content-type': 'application/json',
+          'content-length': '1',
+        },
+        body: ' '.repeat(65_537),
+      }),
+      f.env,
+    )
+    expect(oversized.status).toBe(413)
+    const missing = encodeBase64Url(new Uint8Array(16).fill(18))
+    for (const method of ['HEAD', 'head', 'HeAd']) {
+      const head = await f.call(
+        '/api/margin/v1/adapter/receipts/' + missing,
+        method,
+        `Bearer ${f.token}`,
+        'margin-session=obsolete',
+      )
+      expect(head.status).toBe(404)
+      expect(await head.text()).toBe('')
+      expect(head.headers.get('set-cookie')).toContain('margin-session=;')
+    }
+    expect((await f.call('/api/margin/v1/adapter/reports', 'HEAD')).status).toBe(405)
+    expect((await f.call('/api/margin/v1/adapter/%72eports', 'POST')).status).toBe(404)
+    expect((await f.call('/api/margin/v1/adapter/reports', 'POST', '')).status).toBe(
+      401,
+    )
+    expect(auth).not.toHaveBeenCalled()
+    expect(f.h.database.query('SELECT * FROM margin_adapter_report_receipts')).toEqual(
+      [],
+    )
+  } finally {
+    auth.mockRestore()
+  }
+})
+
+it.each([
+  '/API/MARGIN/V1/ADAPTER/reports',
+  '/api/margin/v1/Adapter/reports',
+  '/api/margin/v1/%41dapter/reports',
+  '/api/margin/v1/adapter/Reports',
+  '/api/margin/v1/adapter/reports/',
+  '/api/margin/v1/adapter/%72eports',
+  '//api//margin//v1//adapter//reports',
+  '/api/margin/v1/adapter%2freports',
+  '/api/margin/v1/ADAPTER/receipts/invalid%ZZ',
+  '/api/margin/v1/adapter/Receipts/AQEBAQEBAQEBAQEBAQEBAQ',
+])(
+  'outer Worker reserves report alias %s before all human session handling',
+  async (path) => {
+    const f = await integration(),
+      auth = vi.spyOn(authRoutes, 'handleAuthRequest'),
+      fetcher = vi.fn().mockRejectedValue(Error('provider forbidden'))
+    vi.stubGlobal('fetch', fetcher)
+    try {
+      for (const method of ['GET', 'POST', 'HEAD']) {
+        const response = await f.call(path, method, '', 'margin-session=obsolete')
+        expect(response.status).toBe(404)
+        expect(response.headers.get('cache-control')).toBe('no-store')
+        expect(response.headers.get('set-cookie')).toContain('margin-session=;')
+        if (method === 'HEAD') expect(await response.text()).toBe('')
+      }
+      expect(auth).not.toHaveBeenCalled()
+      expect(fetcher).not.toHaveBeenCalled()
+      expect(f.assets).not.toHaveBeenCalled()
+    } finally {
+      auth.mockRestore()
+    }
+  },
+)
+
+async function storedReport(f: Awaited<ReturnType<typeof integration>>) {
+  const at = '2026-10-08T00:00:00.000Z'
+  f.h.database.execute(
+    'INSERT INTO margin_identity(provider,issuer,subject,first_seen_at,last_seen_at) VALUES(?,?,?,?,?)',
+    [ADA.provider, ADA.issuer, ADA.subject, at, at],
+  )
+  const identity = f.h.database.query('SELECT id FROM margin_identity')[0].id
+  f.h.database.execute(
+    "INSERT INTO margin_allowlist(identity_id,role,added_at) VALUES(?,'admin',?)",
+    [identity, at],
+  )
+  f.h.database.execute('INSERT INTO margin_site_admins VALUES(?,?)', [
+    'https://ernie.sg',
+    identity,
+  ])
+  const source = 'https://ernie.sg/books/example/'
+  const created = await f.h.request('POST', '/annotations', {
+    as: BOB,
+    body: webAnnotation({ source, motivation: 'editing' }),
+  })
+  expect(created.status).toBe(201)
+  const id = (await created.json()).id.replace('urn:margin:annotation:', '')
+  expect(
+    (
+      await f.h.request('POST', `/proposals/${id}/apply${scopeQuery(source)}`, {
+        body: { revision: 1 },
+      })
+    ).status,
+  ).toBe(202)
+  const credential = (await f.h.repository.findAdapterCredential(
+    f.token.split('.')[1],
+  ))!
+  f.h.database.execute(
+    'INSERT INTO margin_adapter_report_grants VALUES(?,?,?,?,?,NULL)',
+    [
+      credential.tokenId,
+      credential.tokenSha256,
+      credential.site,
+      credential.adapter,
+      at,
+    ],
+  )
+  const eventId = encodeBase64Url(new Uint8Array(16).fill(19))
+  const accepted = await f.h.repository.reportProposalExecution(
+    credential,
+    {
+      eventId,
+      proposalId: id,
+      approvedRevision: 1,
+      expectedStateVersion: 0,
+      outcome: { state: 'conflict', detail: 'private fixture detail' },
+    },
+    at,
+  )
+  expect(accepted.status).toBe('accepted')
+  return { eventId, path: '/api/margin/v1/adapter/receipts/' + eventId }
+}
+
+it.each(['HEAD', 'head', 'HeAd'])(
+  'receipt %s matches GET authority and strips every result/error body',
+  async (method) => {
+    const f = await integration(),
+      stored = await storedReport(f),
+      cookie = 'margin-session=obsolete'
+    for (const [suffix, bearer, status] of [
+      ['', `Bearer ${f.token}`, 200],
+      ['', undefined, 401],
+      ['', 'Bearer margin-adapter-v1.invalid', 401],
+      ['?extra=1', `Bearer ${f.token}`, 400],
+      ['/', '', 404],
+    ] as const) {
+      const response = await f.call(stored.path + suffix, method, bearer ?? '', cookie)
+      expect(response.status).toBe(status)
+      expect(await response.text()).toBe('')
+      expect(response.headers.get('cache-control')).toBe('no-store')
+      expect(response.headers.get('set-cookie')).toContain('margin-session=;')
+      expect(response.headers.has('access-control-allow-origin')).toBe(false)
+    }
+    f.h.database.execute('UPDATE margin_adapter_report_grants SET revoked_at=?', [
+      '2026-10-08T01:00:00.000Z',
+    ])
+    const denied = await f.call(stored.path, method, `Bearer ${f.token}`, cookie)
+    expect(denied.status).toBe(403)
+    expect(await denied.text()).toBe('')
+    const absentDB = await worker.fetch(
+      new Request('https://ernie.sg' + stored.path, {
+        method,
+        headers: { authorization: `Bearer ${f.token}`, cookie },
+      }),
+      { ASSETS: f.env.ASSETS },
+    )
+    expect(absentDB.status).toBe(503)
+    expect(await absentDB.text()).toBe('')
+    expect(absentDB.headers.get('set-cookie')).toContain('margin-session=;')
+    const spy = vi.spyOn(f.h.database, 'query').mockImplementation(() => {
+      throw Error('private storage diagnostic')
+    })
+    try {
+      const malformed = await f.call(stored.path, method, `Bearer ${f.token}`, cookie)
+      expect(malformed.status).toBe(503)
+      expect(await malformed.text()).toBe('')
+      expect(malformed.headers.get('set-cookie')).toContain('margin-session=;')
+    } finally {
+      spy.mockRestore()
+    }
+  },
+)
+
+it.each(['GET', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'])(
+  'report endpoint method %s cannot mutate or renew human authority',
+  async (method) => {
+    const f = await integration(),
+      auth = vi.spyOn(authRoutes, 'handleAuthRequest')
+    try {
+      const response = await f.call(
+        '/api/margin/v1/adapter/reports',
+        method,
+        '',
+        'margin-session=obsolete',
+      )
+      expect(response.status).toBe(405)
+      expect(response.headers.get('allow')).toBe('POST')
+      if (method === 'HEAD') expect(await response.text()).toBe('')
+      expect(response.headers.has('access-control-allow-origin')).toBe(false)
+      expect(auth).not.toHaveBeenCalled()
+      expect(
+        f.h.database.query('SELECT * FROM margin_adapter_report_receipts'),
+      ).toEqual([])
+    } finally {
+      auth.mockRestore()
+    }
+  },
+)
+it.each(['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'])(
+  'receipt method %s is read-only denial',
+  async (method) => {
+    const f = await integration(),
+      path =
+        '/api/margin/v1/adapter/receipts/' +
+        encodeBase64Url(new Uint8Array(16).fill(20))
+    const response = await f.call(path, method)
+    expect(response.status).toBe(405)
+    expect(response.headers.get('allow')).toBe('GET, HEAD')
+    expect(f.h.database.query('SELECT * FROM margin_adapter_report_receipts')).toEqual(
+      [],
+    )
+  },
+)
+it('valid and expired human admin cookies cannot authorize either report or receipt or renew', async () => {
+  const f = await integration(),
+    signer = await testSigner(),
+    now = Math.floor(Date.now() / 1000),
+    fetcher = vi.fn().mockRejectedValue(Error('provider forbidden'))
+  vi.stubGlobal('fetch', fetcher)
+  for (const expiry of [now + 300, now - 60]) {
+    const signed = await signer.sign({
+      iss: TEST_ISSUER,
+      sub: 'offline-admin',
+      client_id: TEST_CLIENT_ID,
+      iat: now - 300,
+      exp: expiry,
+    })
+    const cookie = await sessionCookieHeader(signed, {
+      expiresAt: expiry,
+      ceiling: now + 3600,
+      refreshToken: 'fixture-refresh',
+    })
+    for (const [path, method] of [
+      ['/api/margin/v1/adapter/reports', 'POST'],
+      [
+        '/api/margin/v1/adapter/receipts/' +
+          encodeBase64Url(new Uint8Array(16).fill(21)),
+        'GET',
+      ],
+    ]) {
+      const response = await f.call(path, method, '', cookie)
+      expect(response.status).toBe(401)
+      expect(response.headers.has('set-cookie')).toBe(false)
+    }
+  }
+  expect(fetcher).not.toHaveBeenCalled()
+  expect(f.assets).not.toHaveBeenCalled()
+})

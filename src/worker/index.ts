@@ -1,7 +1,7 @@
 import {
   hasAdapterCredential,
   isAdapterNamespace,
-  handleAdapterFeed,
+  handleAdapterRequest,
   adapterError,
 } from './margin/adapter'
 import type { WorkerEnv } from './env'
@@ -76,7 +76,7 @@ async function route(request: Request, env: WorkerEnv): Promise<Response> {
   // This namespace has only a scoped service credential; never renew a human
   // session or fall through to an ordinary API with that credential.
   if (isAdapterNamespace(pathname)) {
-    return handleAdapterFeed(
+    return handleAdapterRequest(
       request,
       isD1Database(env.MARGIN_DB) ? new D1MarginRepository(env.MARGIN_DB) : null,
     )

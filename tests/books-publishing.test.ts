@@ -30,6 +30,38 @@ import {
   type BookManifest,
 } from '../src/lib/books'
 
+/** Only runtime modules emit book markup; Vitest fixtures may contain examples. */
+function bookRendererOffenders(root: string): string[] {
+  const emittedOnlyByRenderPy = [
+    'problem-summary',
+    'problem-name',
+    'locked-solution',
+    'support-unaided',
+    'walk-controls',
+    'desk-actions',
+    'cell-run',
+    'hint-title',
+    'solution-title',
+    ':::statement',
+    ':::figure',
+  ]
+  const offenders: string[] = []
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir)) {
+      const full = path.join(dir, entry)
+      if (statSync(full).isDirectory()) { walk(full); continue }
+      if (/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(entry)) continue
+      if (!/\.(astro|ts|tsx|js|jsx|mjs|css)$/.test(entry)) continue
+      const text = readFileSync(full, 'utf8')
+      for (const marker of emittedOnlyByRenderPy) {
+        if (text.includes(marker)) offenders.push(`${path.relative(root, full)}: ${marker}`)
+      }
+    }
+  }
+  walk(root)
+  return offenders
+}
+
 const ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..')
 const DIST = path.join(ROOT, 'dist')
 const SLUG = 'build-a-coding-agent'
@@ -262,44 +294,9 @@ describe('one renderer', () => {
     expect(listed).not.toContain('<textarea')
   })
 
-  it('has no second renderer anywhere in src/', () => {
-    // Markup only `render.py` is allowed to emit. `src/publication/` is a
-    // different pipeline over different documents (ADR 010 keeps both); these
-    // are the book's own, and nothing in src/ may produce them.
-    const emittedOnlyByRenderPy = [
-      'problem-summary',
-      'problem-name',
-      'locked-solution',
-      'support-unaided',
-      'walk-controls',
-      'desk-actions',
-      'cell-run',
-      'hint-title',
-      'solution-title',
-      ':::statement',
-      ':::figure',
-    ]
-    const offenders: string[] = []
-
-    const walk = (dir: string) => {
-      for (const entry of readdirSync(dir)) {
-        const full = path.join(dir, entry)
-        if (statSync(full).isDirectory()) {
-          walk(full)
-          continue
-        }
-        if (!/\.(astro|ts|tsx|js|jsx|mjs|css)$/.test(entry)) continue
-        const text = readFileSync(full, 'utf8')
-        for (const marker of emittedOnlyByRenderPy) {
-          if (text.includes(marker)) offenders.push(`${path.relative(ROOT, full)}: ${marker}`)
-        }
-      }
-    }
-    walk(path.join(ROOT, 'src'))
-
-    expect(offenders).toEqual([])
-  })
-})
+  it('has no second renderer in production src/ modules', () => {
+    expect(bookRendererOffenders(path.join(ROOT, 'src'))).toEqual([])
+  })})
 
 describe('nothing an author writes becomes markup by accident', () => {
   // The block id is what an annotation resolves through, so a value that can
@@ -889,5 +886,29 @@ describe('the book stylesheet has one author', () => {
 
   it('refuses to scope a stylesheet it would get wrong', () => {
     expect(() => scopeContentCss('@media (min-width:1px){a{color:red}}', '.x')).toThrow()
+  })
+})
+
+
+describe('renderer guard source scope', () => {
+  const fixture = (files: Record<string, string>, verify: (root: string) => void) => {
+    const root = mkdtempSync(path.join(tmpdir(), 'book-renderer-scope-'))
+    try {
+      for (const [name, content] of Object.entries(files)) writeFileSync(path.join(root, name), content)
+      verify(root)
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  }
+  it('allows directive examples in Vitest test modules', () => {
+    const files = Object.fromEntries(['example.test.ts', 'example.spec.tsx', 'example.test.js', 'example.spec.mjs'].map(name => [name, ':::statement :::figure']))
+    fixture(files, root => expect(bookRendererOffenders(root)).toEqual([]))
+  })
+  it('keeps every production source extension and marker guarded', () => {
+    const markers = ['problem-summary', 'problem-name', 'locked-solution', 'support-unaided', 'walk-controls', 'desk-actions', 'cell-run', 'hint-title', 'solution-title', ':::statement', ':::figure']
+    const files = Object.fromEntries(['astro', 'ts', 'tsx', 'js', 'jsx', 'mjs', 'css'].map(ext => [`renderer.${ext}`, markers.join(' ')]))
+    fixture(files, root => expect(bookRendererOffenders(root).sort()).toEqual(Object.keys(files).flatMap(name => markers.map(marker => `${name}: ${marker}`)).sort()))
+  })
+  it('does not exempt production helpers merely named after tests', () => {
+    const files = { 'test-renderer.ts': ':::figure', 'renderer.test-helper.ts': ':::statement', 'renderer.spec.css': 'problem-name' }
+    fixture(files, root => expect(bookRendererOffenders(root).sort()).toEqual(['test-renderer.ts: :::figure', 'renderer.test-helper.ts: :::statement', 'renderer.spec.css: problem-name'].sort()))
   })
 })

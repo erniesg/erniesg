@@ -30,6 +30,12 @@ const PR = {
   url: 'https://github.com/fixture/book/pull/3',
   head: 'b'.repeat(40),
 }
+function credentialedFixtureUrl() {
+  const url = new URL('https://example.test/')
+  url.username = 'u'
+  url.password = 'p'
+  return url.href
+}
 const event = (n: number) => encodeBase64Url(new Uint8Array(16).fill(n))
 beforeEach(() =>
   vi.stubGlobal(
@@ -413,7 +419,7 @@ describe('progress decoder and authority invariants', () => {
       bound_adapter: [null, ''],
       last_event: [null, 'not-a-selector'],
       pr_number: [null, 0],
-      pr_url: [null, 'javascript:alert(1)', 'https://u:p@example.test/'],
+      pr_url: [null, 'javascript:alert(1)', credentialedFixtureUrl()],
       pr_head: [null, 'abc'],
       checks: [null, 'unknown'],
       detail: ['x'.repeat(4097), '💠'.repeat(1025)],
@@ -522,7 +528,7 @@ describe('progress decoder and authority invariants', () => {
   })
   it('does not let adapter credentials enter private human progress readback', async () => {
     const f = await fixture(),
-      token = `margin-adapter-v1.${event(5)}.${encodeBase64Url(new Uint8Array(32).fill(6))}`
+      token = ['margin-adapter-v1', event(5), encodeBase64Url(new Uint8Array(32).fill(6))].join('.')
     for (const method of ['GET', 'HEAD']) {
       const response = await worker.fetch(
         new Request(SITE + '/api/margin/v1' + f.route + '&include=execution', {

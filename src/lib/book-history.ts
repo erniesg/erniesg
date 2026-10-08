@@ -108,12 +108,22 @@ function fields(bytes: Buffer): string[] {
   return value.slice(0, -1).split('\0')
 }
 
+export type HistorySelection = { gitdir: string; common: string; check(): void }
+type SnapshotHooks = { selection: HistorySelection; extraInputs: readonly string[]; gitCalls: number; checkInputs(): void }
+export type HistoryTree = { treeOID: string; entries: ReadonlyMap<string, { mode: string; oid: string }>; occupied: ReadonlySet<string> }
+export type HistorySnapshot = {
+  readonly head: string
+  remaining(): number
+  tree(commit: string): HistoryTree
+  blobs(oids: readonly string[], byteLimit?: number): Map<string, Buffer>
+}
+
 class LocalHistory {
   readonly limits: Limits
   readonly deadline: number
   readonly root: string
   readonly env: NodeJS.ProcessEnv
-  constructor(root: string, limits: Partial<Limits> = {}) {
+  constructor(root: string, limits: Partial<Limits> = {}, readonly hooks?: SnapshotHooks) {
     this.root = realpathSync(root)
     for (const [key, value] of Object.entries(limits)) {
       if (
@@ -138,6 +148,7 @@ class LocalHistory {
       GIT_OPTIONAL_LOCKS: '0',
     })
   }
+  private calls = 0
   remaining(): number {
     const left = Math.floor(this.deadline - performance.now())
     if (left <= 0) fail('history collection time bound exceeded')
@@ -147,11 +158,16 @@ class LocalHistory {
     args: string[],
     missingConfig = false,
     maxBuffer = this.limits.commandBytes,
+    input?: Buffer,
   ): Buffer {
+    this.hooks?.selection.check()
+    this.hooks?.checkInputs()
+    if (this.hooks && ++this.calls > this.hooks.gitCalls) fail('history Git call bound exceeded')
     try {
-      return execFileSync(
-        'git',
+      const result = execFileSync(
+        this.hooks ? '/usr/bin/git' : 'git',
         [
+          ...(this.hooks ? [`--git-dir=${this.hooks.selection.gitdir}`, `--work-tree=${this.root}`, '-c', 'protocol.allow=never', '-c', 'maintenance.auto=false', '-c', 'gc.auto=0'] : []),
           '--no-replace-objects',
           '--literal-pathspecs',
           '-c',
@@ -165,12 +181,19 @@ class LocalHistory {
         {
           cwd: this.root,
           env: this.env,
-          stdio: ['ignore', 'pipe', 'pipe'],
+          stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+          ...(input === undefined ? {} : { input }),
+          ...(this.hooks ? { killSignal: 'SIGKILL' as const } : {}),
           timeout: Math.min(this.remaining(), this.limits.commandMs),
           maxBuffer,
         },
       )
+      this.hooks?.selection.check()
+      this.hooks?.checkInputs()
+      return result
     } catch (error) {
+      this.hooks?.selection.check()
+      this.hooks?.checkInputs()
       if (missingConfig && (error as { status?: number }).status === 1)
         return Buffer.alloc(0)
       return fail(
@@ -208,6 +231,7 @@ class LocalHistory {
       this.git(['rev-parse', '--path-format=absolute', '--git-common-dir']),
     ).trim()
     if (!path.isAbsolute(common)) fail('Git common directory unavailable')
+    if (this.hooks && common !== this.hooks.selection.common) fail('history Git selection differs')
     const pack = path.join(common, 'objects/pack')
     if (
       existsSync(pack) &&
@@ -220,10 +244,12 @@ class LocalHistory {
   tree(
     commit: string,
     names: string[] = [],
+    includeTrees = false,
   ): Map<string, { mode: string; oid: string }> {
     const raw = this.git([
       'ls-tree',
       '-r',
+      ...(includeTrees ? ['-t'] : []),
       '-z',
       '--full-tree',
       commit,
@@ -237,6 +263,12 @@ class LocalHistory {
       )
       if (!match || !oid(match[3]) || result.has(match[4]))
         fail('malformed Git tree')
+      if (includeTrees && (
+        match[3].length !== commit.length ||
+        !((match[2] === 'tree' && match[1] === '040000') ||
+          (match[2] === 'blob' && ['100644', '100755', '120000'].includes(match[1])) ||
+          (match[2] === 'commit' && match[1] === '160000'))
+      )) fail('malformed historical tree object type')
       result.set(relative(match[4]), { mode: match[1], oid: match[3] })
     }
     return result
@@ -266,7 +298,8 @@ class LocalHistory {
   }
   inputs(head: string): string {
     this.remaining()
-    const names = new Set(FIXED_INPUTS)
+    const selectedInput = (name: string) => inputPath(name) || Boolean(this.hooks?.extraInputs.includes(name))
+    const names = new Set([...FIXED_INPUTS, ...(this.hooks?.extraInputs ?? [])])
     const addFiles = (dir: string, suffix: string) => {
       const location = path.join(this.root, dir)
       if (existsSync(location))
@@ -291,7 +324,7 @@ class LocalHistory {
     if (names.size > HISTORY_LIMITS.versions)
       fail('history input membership bound exceeded')
     const tree = this.tree(head),
-      expected = [...tree.keys()].filter(inputPath).sort()
+      expected = [...tree.keys()].filter(selectedInput).sort()
     if (JSON.stringify([...names].sort()) !== JSON.stringify(expected))
       fail('history input membership differs from HEAD')
     const staged = this.git(['ls-files', '--stage', '-z'])
@@ -299,7 +332,7 @@ class LocalHistory {
     for (const record of fields(staged)) {
       const match = /^(\d{6}) ([0-9a-f]+) ([0-3])\t([\s\S]+)$/.exec(record)
       if (!match) fail('malformed Git index')
-      if (!inputPath(match[4])) continue
+      if (!selectedInput(match[4])) continue
       if (match[3] !== '0' || index.has(match[4]))
         fail('history inputs have an unresolved index')
       index.set(match[4], `${match[1]}:${match[2]}`)
@@ -455,15 +488,17 @@ export function serializeBookHistory(asset: BookHistoryAsset): string {
  * this witness. It receives its remaining time bound; no unkeyed prior cache.
  * A lower resource budget is allowed; callers cannot bypass the fixed ceilings.
  */
-export function collectBookHistories(
+function collectHistorySnapshot<T>(
   root: string,
   site: string,
   loadNodes: (remainingMs: number) => readonly HistoryNode[],
-  options: { expectedHead?: string; limits?: Partial<Limits> } = {},
-): BookHistoryAsset[] {
+  options: { expectedHead?: string; limits?: Partial<Limits> },
+  visitor: (assets: BookHistoryAsset[], snapshot: HistorySnapshot) => T,
+  hooks?: SnapshotHooks,
+): T {
   if (!/^https?:\/\//.test(site) || new URL(site).origin !== site)
     fail('invalid history site origin')
-  const reader = new LocalHistory(root, options.limits),
+  const reader = new LocalHistory(root, options.limits, hooks),
     head = reader.head()
   if (options.expectedHead !== undefined && options.expectedHead !== head)
     fail('history HEAD differs from expected HEAD')
@@ -527,6 +562,79 @@ export function collectBookHistories(
       fail('history serialized asset bytes bound exceeded')
     assets.push(asset)
   }
+  let active = true
+  const allowedCommits = new Set(assets.flatMap(asset => asset.versions.map(version => version.commit)))
+  const allowedOids = new Set<string>()
+  const check = () => { if (!active) fail('expired history snapshot'); reader.remaining() }
+  const snapshot: HistorySnapshot = Object.freeze({
+    get head() { check(); return head },
+    remaining() { check(); return reader.remaining() },
+    tree(commit: string) {
+      check()
+      if (!allowedCommits.has(commit)) fail('history commit is outside selected versions')
+      const treeOID = text(reader.git(['rev-parse', '--verify', `${commit}^{tree}`])).trim()
+      if (!oid(treeOID) || treeOID.length !== head.length) fail('invalid historical tree OID')
+      // Only rendered snapshots need complete occupancy, including empty
+      // trees. Default raw-v1 tree traversal remains leaf-only.
+      const entries = reader.tree(treeOID, [], true)
+      const occupied = new Set(entries.keys())
+      allowedOids.clear()
+      for (const [name, item] of entries) {
+        if (item.mode === '040000') entries.delete(name)
+        else if (['100644', '100755'].includes(item.mode)) allowedOids.add(item.oid)
+      }
+      return { treeOID, entries, occupied }
+    },
+    blobs(requested: readonly string[], byteLimit = 64 * 1024 * 1024) {
+      check()
+      if (!Number.isSafeInteger(byteLimit) || byteLimit < 1 || byteLimit > 64 * 1024 * 1024) fail('invalid historical map byte limit')
+      if (!Array.isArray(requested) || requested.length > 10_000 || requested.some(id => !oid(id) || !allowedOids.has(id))) fail('invalid historical blob selection')
+      const oids = [...new Set(requested)]
+      const result = new Map<string, Buffer>()
+      if (!oids.length) return result
+      const sizes = new Map<string, number>()
+      for (let start = 0; start < oids.length; start += 512) {
+        const group = oids.slice(start, start + 512)
+        const raw = text(reader.git(['cat-file', '--batch-check=%(objectname) %(objecttype) %(objectsize)'], false, 128 * 1024, Buffer.from(group.join('\n') + '\n')))
+        const rows = raw.split('\n')
+        if (rows.pop() !== '' || rows.length !== group.length) fail('incomplete historical size framing')
+        rows.forEach((row, index) => {
+          const match = /^([a-f0-9]+) blob (0|[1-9][0-9]*)$/.exec(row)
+          const size = Number(match?.[2])
+          if (!match || match[1] !== group[index] || !Number.isSafeInteger(size) || size > reader.limits.blobBytes) fail('historical blob size/type bound')
+          sizes.set(group[index], size)
+        })
+      }
+      if (requested.reduce((sum, id) => sum + sizes.get(id)!, 0) > byteLimit) fail('historical batch map bound')
+      let cursor = 0
+      while (cursor < oids.length) {
+        check()
+        const group: string[] = []; let expected = 0
+        while (cursor < oids.length && group.length < 512 && expected + sizes.get(oids[cursor])! + 128 <= 16 * 1024 * 1024) {
+          const id = oids[cursor++]; group.push(id); expected += sizes.get(id)! + 128
+        }
+        if (!group.length) fail('historical blob batch bound')
+        const raw = reader.git(['cat-file', '--batch'], false, 16 * 1024 * 1024, Buffer.from(group.join('\n') + '\n'))
+        let offset = 0
+        for (const id of group) {
+          const newline = raw.indexOf(10, offset), size = sizes.get(id)!
+          if (newline < offset || !raw.subarray(offset, newline).equals(Buffer.from(`${id} blob ${size}`, 'ascii'))) fail('historical batch header differs')
+          offset = newline + 1
+          if (offset + size >= raw.length || raw[offset + size] !== 10) fail('incomplete historical batch body')
+          const bytes = Buffer.from(raw.subarray(offset, offset + size)); offset += size + 1
+          const actual = createHash(head.length === 40 ? 'sha1' : 'sha256').update(`blob ${size}\0`).update(bytes).digest('hex')
+          if (actual !== id) fail('historical blob OID differs')
+          result.set(id, bytes)
+        }
+        if (offset !== raw.length) fail('extra historical batch bytes')
+      }
+      return result
+    },
+  })
+  let value: T
+  try { value = visitor(assets, snapshot) } finally { active = false }
+  // An async visitor could retain work after this witness closes. Refuse it.
+  if (value && typeof (value as { then?: unknown }).then === 'function') fail('history visitor must be synchronous')
   reader.complete()
   if (
     reader.head() !== head ||
@@ -535,5 +643,23 @@ export function collectBookHistories(
   )
     fail('history HEAD or mapping inputs changed')
   reader.remaining()
-  return assets
+  return value
+}
+
+/** Existing raw-v1 API and serialization remain unchanged. */
+export function collectBookHistories(
+  root: string, site: string, loadNodes: (remainingMs: number) => readonly HistoryNode[],
+  options: { expectedHead?: string; limits?: Partial<Limits> } = {},
+): BookHistoryAsset[] {
+  return collectHistorySnapshot(root, site, loadNodes, options, assets => assets)
+}
+
+/** Trusted build-only visitor. Read capability expires before final witness validation. */
+export function withBookHistorySnapshot<T>(
+  root: string, site: string, loadNodes: (remainingMs: number) => readonly HistoryNode[],
+  options: { expectedHead?: string; limits?: Partial<Limits> },
+  hooks: SnapshotHooks,
+  visitor: (assets: BookHistoryAsset[], snapshot: HistorySnapshot) => T,
+): T {
+  return collectHistorySnapshot(root, site, loadNodes, options, visitor, hooks)
 }

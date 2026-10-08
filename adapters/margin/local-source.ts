@@ -105,7 +105,7 @@ function packMembership(path: string): { witness: Identity[]; names: string[] } 
 }
 
 /** Capture every supported Git selector before the first asynchronous Git read. */
-function captureGitSelection(repo: string) {
+export function captureGitSelection(repo: string) {
   const entry = join(repo, '.git'); const entryChain = chain(entry)
   const entryFile = (entryChain[entryChain.length - 1].mode & 0o170000) === 0o100000 ? optionalFile(entry) : undefined
   let gitdir = entry

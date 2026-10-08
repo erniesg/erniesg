@@ -1,3 +1,9 @@
+import {
+  hasAdapterCredential,
+  isAdapterNamespace,
+  handleAdapterFeed,
+  adapterError,
+} from './margin/adapter'
 import type { WorkerEnv } from './env'
 import { getPrincipal } from './principal'
 import { legacyCookieClears } from './margin/session'
@@ -39,7 +45,7 @@ export default {
     const health =
       pathname === MARGIN_HEALTH_PATH || pathname === `${MARGIN_HEALTH_PATH}/`
 
-    if (health) {
+    if (health && !hasAdapterCredential(request)) {
       if (request.method !== 'GET' && request.method !== 'HEAD') {
         return new Response(null, {
           status: 405,
@@ -53,9 +59,12 @@ export default {
     // still sends one gets it cleared, on whichever route it hits first.
     const clears = legacyCookieClears(request)
     let response = await route(request, env)
-    // Finalize every readback HEAD outcome after route/gate/auth composition,
+    // Finalize privileged readback/feed HEAD outcomes after composition,
     // including missing storage and thrown queries. Cookie headers survive.
-    if (request.method === 'HEAD' && isReviewReadbackPath(pathname)) {
+    if (
+      request.method === 'HEAD' &&
+      (isReviewReadbackPath(pathname) || isAdapterNamespace(pathname) || hasAdapterCredential(request))
+    ) {
       response = new Response(null, { status: response.status, headers: response.headers })
     }
     return clears.reduce(withCookie, response)
@@ -64,6 +73,20 @@ export default {
 
 async function route(request: Request, env: WorkerEnv): Promise<Response> {
   const { pathname } = new URL(request.url)
+  // This namespace has only a scoped service credential; never renew a human
+  // session or fall through to an ordinary API with that credential.
+  if (isAdapterNamespace(pathname)) {
+    return handleAdapterFeed(
+      request,
+      isD1Database(env.MARGIN_DB) ? new D1MarginRepository(env.MARGIN_DB) : null,
+    )
+  }
+  if (
+    hasAdapterCredential(request) &&
+    (pathname.startsWith('/api/') || pathname === '/auth' || pathname.startsWith('/auth/'))
+  ) {
+    return adapterError(403, 'adapter_route_forbidden')
+  }
   const auth = await handleAuthRequest(request, env)
   if (auth) return auth
   if (

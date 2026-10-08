@@ -238,3 +238,42 @@ export interface MarginRepository {
 
 /** Applied when a user has never set a preference. */
 export const DEFAULT_VISIBILITY: MarginVisibility = 'private'
+
+/** Separate service capability: never a human Principal or MarginRepository grant. */
+export type AdapterCredential = {
+  tokenId: string
+  site: string
+  adapter: string
+  tokenSha256: string
+  capability: string
+  createdAt: string
+  revokedAt: string | null
+  enabled: boolean
+  registrationCreatedAt: string
+}
+export type ApprovedFeedItem = {
+  proposalId: string
+  site: string
+  document: string
+  source: string
+  approvedRevision: number
+  body: string
+  baseCommit: string
+  sourcePath: string
+  visibility: MarginVisibility
+  approvedAt: string
+}
+export type ApprovedFeedCursor = { approvedAt: string; proposalId: string }
+export type ApprovedFeedOptions = { limit: number; after?: ApprovedFeedCursor }
+export interface AdapterFeedRepository {
+  findAdapterCredential(tokenId: string): Promise<AdapterCredential | null>
+  /** Authority and rows from one snapshot, rechecking the verified credential. */
+  listApprovedFeed(
+    credential: AdapterCredential,
+    options: ApprovedFeedOptions,
+  ): Promise<{
+    authorized: boolean
+    items: ApprovedFeedItem[]
+  }>
+}
+

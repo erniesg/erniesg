@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { formatHunks } from '../annotations/criticmarkup'
-import { ReviewSession } from './margin-review-session'
+import {
+  ReviewSession,
+  parseReviewReadback,
+  parseReviewProgressReadback,
+  reviewRoute,
+  progressReviewRoute,
+} from './margin-review-session'
 
 const SITE = 'https://ernie.sg'
 const target = {
@@ -56,7 +62,8 @@ function fixture(
       )
     expect(url).toBe(
       '/api/margin/v1/proposals/proposal-1/review?' +
-        new URLSearchParams({ source: target.source }),
+        new URLSearchParams({ source: target.source }) +
+        (init?.method === 'POST' ? '' : '&include=execution'),
     )
     if (init?.method === 'POST') {
       const body = JSON.parse(init.body as string)
@@ -65,7 +72,11 @@ function fixture(
     }
     return options.read
       ? options.read()
-      : Response.json({ annotation: wire(), savedReview: metadata })
+      : Response.json({
+          annotation: wire(),
+          execution: null,
+          savedReview: metadata,
+        })
   }
   const privacy = vi.fn(),
     changed = vi.fn()
@@ -143,7 +154,8 @@ describe('Save session RED pilots', () => {
       },
     }
     const f = fixture({
-      read: () => Response.json({ annotation: bad, savedReview: null }),
+      read: () =>
+        Response.json({ annotation: bad, execution: null, savedReview: null }),
     })
     await f.session.open(target)
     expect(f.session.state.status).toBe('malformed')
@@ -158,7 +170,11 @@ describe('Save session invariant sweep', () => {
     const f = fixture({
       read: () =>
         ++reads === 1
-          ? Response.json({ annotation: wire(), savedReview: null })
+          ? Response.json({
+              annotation: wire(),
+              execution: null,
+              savedReview: null,
+            })
           : new Response(null, { status: 503 }),
     })
     await f.session.open(target)
@@ -176,7 +192,11 @@ describe('Save session invariant sweep', () => {
       identity: () => ({ authenticated: true, principal: who }),
       read: () => {
         if (++reads === 1)
-          return Response.json({ annotation: wire(), savedReview: null })
+          return Response.json({
+            annotation: wire(),
+            execution: null,
+            savedReview: null,
+          })
         who = { ...principal, subject: 'other' }
         return new Response(null, { status: 503 })
       },
@@ -223,10 +243,15 @@ describe('Save session invariant sweep', () => {
     let reads = 0
     const f = fixture({
       post: () =>
-        Response.json({ annotation: wire(), savedReview: saved('ours') }),
+        Response.json({
+          annotation: wire(),
+          execution: null,
+          savedReview: saved('ours'),
+        }),
       read: () =>
         Response.json({
           annotation: wire(),
+          execution: null,
           savedReview: ++reads === 1 ? null : saved('another latest review'),
         }),
     })
@@ -256,7 +281,11 @@ describe('Save session invariant sweep', () => {
     await vi.waitFor(() => expect(release).toBeTypeOf('function'))
     f.session.close()
     release(
-      Response.json({ annotation: wire(), savedReview: saved('private') }),
+      Response.json({
+        annotation: wire(),
+        execution: null,
+        savedReview: saved('private'),
+      }),
     )
     await pending
     expect(f.session.state).toEqual({ status: 'idle', outcome: 'none' })
@@ -308,6 +337,7 @@ describe('Save session invariant sweep', () => {
         read: () =>
           Response.json({
             annotation: { ...wire(), ...extra },
+            execution: null,
             savedReview: null,
           }),
       })
@@ -412,7 +442,7 @@ describe('Save session invariant sweep', () => {
       },
     ]
     for (const mutate of mutations) {
-      const value = { annotation: wire(), savedReview: null }
+      const value = { annotation: wire(), execution: null, savedReview: null }
       mutate(value)
       const f = fixture({ read: () => Response.json(value) })
       await f.session.open(target)
@@ -493,7 +523,11 @@ it('does not dispatch after close while pre-Save identity is pending', async () 
         return Response.json({ authenticated: true, principal })
       }
       if (init?.method === 'POST') writes++
-      return Response.json({ annotation: wire(), savedReview: null })
+      return Response.json({
+        annotation: wire(),
+        execution: null,
+        savedReview: null,
+      })
     },
     () => {},
   )
@@ -748,11 +782,16 @@ describe('revised review same-rule controls', () => {
                 }),
         read: () =>
           ++reads === 1
-            ? Response.json({ annotation: wire(), savedReview: null })
+            ? Response.json({
+                annotation: wire(),
+                execution: null,
+                savedReview: null,
+              })
             : mode === 'ack-read-unavailable'
               ? new Response(null, { status: 503 })
               : Response.json({
                   annotation: { ...wire(), 'margin:revision': 3 },
+                  execution: null,
                   savedReview: null,
                 }),
       })
@@ -862,4 +901,679 @@ describe('revised review same-rule controls', () => {
       vi.unstubAllGlobals()
     }
   })
+})
+
+// Private progress pilots exercise the existing read/write session, not a new API.
+function progressFixture() {
+  let execution: any = {
+    approvedRevision: 1,
+    state: 'approved',
+    stateVersion: 0,
+    failedApplyCount: 0,
+    pr: null,
+    checks: null,
+    detail: null,
+    mergeCommit: null,
+    updatedAt: '2026-10-08T00:01:00.000Z',
+  }
+  let annotation: any = {
+    ...wire(),
+    'margin:revision': 2,
+    'margin:proposalState': 'approved',
+    'margin:approvedRevision': 1,
+  }
+  let who = principal,
+    reader: undefined | (() => Promise<Response>),
+    postStatus = 200
+  const calls: { url: string; init?: RequestInit }[] = []
+  const privacy = vi.fn()
+  const session = new ReviewSession(
+    SITE,
+    async (input, init) => {
+      const url = String(input)
+      calls.push({ url, init })
+      if (url === '/auth/me')
+        return Response.json({ authenticated: true, principal: who })
+      if (init?.method === 'POST')
+        return Response.json(annotation, { status: postStatus })
+      return reader
+        ? reader()
+        : Response.json({ annotation, savedReview: null, execution })
+    },
+    () => {},
+    privacy,
+  )
+  return {
+    session,
+    calls,
+    privacy,
+    setExecution: (v: any) => {
+      execution = v
+      if (v) annotation = { ...annotation, 'margin:proposalState': v.state }
+    },
+    pending: () => {
+      annotation = wire()
+      execution = null
+    },
+    reader: (v: typeof reader) => {
+      reader = v
+    },
+    identity: () => {
+      who = { ...principal, subject: 'other' }
+    },
+    post: (v: number) => {
+      postStatus = v
+    },
+  }
+}
+describe('private execution progress RED pilots', () => {
+  it('opts in for one authorized read and binds approval separately from later current content', async () => {
+    const f = progressFixture()
+    await f.session.open(target)
+    expect(f.session.state.status).toBe('ready')
+    expect(f.session.state.observed).toMatchObject({
+      revision: 2,
+      approvedRevision: 1,
+      execution: { state: 'approved', stateVersion: 0, failedApplyCount: 0 },
+    })
+    const reads = f.calls.filter((c) => c.url !== '/auth/me')
+    expect(reads).toHaveLength(1)
+    expect(new URL(reads[0].url, SITE).searchParams.get('include')).toBe(
+      'execution',
+    )
+    expect(new URL(reads[0].url, SITE).searchParams.get('source')).toBe(
+      target.source,
+    )
+    expect(f.session.canSave).toBe(false)
+  })
+  it('distinguishes a legacy unknown record from all six canonical execution states', async () => {
+    const f = progressFixture()
+    f.setExecution(null)
+    await f.session.open(target)
+    expect(f.session.state.status).toBe('ready')
+    expect(f.session.state.observed).toHaveProperty('execution', null)
+    expect(f.session.state.observed?.approvedRevision).toBe(1)
+    const pr = {
+      number: 1,
+      url: 'http://example.test/review/1',
+      head: 'a'.repeat(64),
+    }
+    for (const change of [
+      {
+        state: 'approved',
+        stateVersion: 0,
+        failedApplyCount: 0,
+        pr: null,
+        checks: null,
+        detail: null,
+        mergeCommit: null,
+      },
+      {
+        state: 'pr_open',
+        stateVersion: 1,
+        failedApplyCount: 0,
+        pr,
+        checks: 'pending',
+        detail: null,
+        mergeCommit: null,
+      },
+      {
+        state: 'conflict',
+        stateVersion: 2,
+        failedApplyCount: 0,
+        pr,
+        checks: 'not_evaluated',
+        detail: '冲突 <script>',
+        mergeCommit: null,
+      },
+      {
+        state: 'apply_failed',
+        stateVersion: 3,
+        failedApplyCount: 3,
+        pr: null,
+        checks: null,
+        detail: 'not applied',
+        mergeCommit: null,
+      },
+      {
+        state: 'merged',
+        stateVersion: 4,
+        failedApplyCount: 0,
+        pr,
+        checks: null,
+        detail: null,
+        mergeCommit: 'b'.repeat(40),
+      },
+      {
+        state: 'closed',
+        stateVersion: 5,
+        failedApplyCount: 0,
+        pr,
+        checks: null,
+        detail: null,
+        mergeCommit: null,
+      },
+    ]) {
+      const execution = {
+        approvedRevision: 1,
+        updatedAt: '2026-10-08T00:01:00.000Z',
+        ...change,
+      }
+      f.setExecution(execution)
+      await f.session.open(target)
+      expect(f.session.state.status).toBe('ready')
+      expect(f.session.state.observed).toMatchObject({ execution })
+    }
+  })
+  it('clears observed progress on an identity change and ignores a late closed-generation response', async () => {
+    const f = progressFixture()
+    await f.session.open(target)
+    expect(f.session.state.observed?.state).toBe('approved')
+    let release!: (r: Response) => void
+    f.reader(
+      () =>
+        new Promise((r) => {
+          release = r
+        }),
+    )
+    const pending = f.session.open(target)
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    expect(f.session.state.observed).toBeUndefined()
+    f.session.close()
+    release(
+      Response.json({ annotation: wire(), savedReview: null, execution: null }),
+    )
+    await pending
+    expect(f.session.state.status).toBe('idle')
+    f.reader(undefined)
+    f.identity()
+    await f.session.open(target, JSON.stringify(Object.values(principal)))
+    expect(f.session.state.status).toBe('session-changed')
+    expect(f.session.state.observed).toBeUndefined()
+    expect(f.privacy).toHaveBeenCalled()
+  })
+  it('keeps acknowledged readback failure distinct from uncertain Save without adding or replaying writes', async () => {
+    for (const post of [200, 503]) {
+      const f = progressFixture()
+      f.pending()
+      await f.session.open(target)
+      expect(f.session.canSave).toBe(true)
+      f.post(post)
+      if (post === 200)
+        f.reader(async () => new Response(null, { status: 503 }))
+      await f.session.save('ready', 'literal comment')
+      expect(f.session.state.outcome).toBe(
+        post === 200 ? 'acknowledged' : 'uncertain',
+      )
+      const writes = f.calls.filter((c) => c.init?.method === 'POST')
+      expect(writes).toHaveLength(1)
+      expect(new URL(writes[0].url, SITE).searchParams.has('include')).toBe(
+        false,
+      )
+      expect(JSON.parse(String(writes[0].init?.body))).toEqual({
+        revision: 1,
+        decision: 'ready',
+        comments: 'literal comment',
+      })
+      if (post === 200) expect(f.session.state.observed).toBeUndefined()
+      else expect(f.session.state.observed).toHaveProperty('execution', null)
+    }
+  })
+})
+
+const executionAt = '2026-10-08T00:01:00.000Z'
+const executionPR = {
+  number: 7,
+  url: 'http://example.test/pull/7',
+  head: 'a'.repeat(64),
+}
+const executionRows = [
+  {
+    state: 'approved',
+    stateVersion: 0,
+    failedApplyCount: 0,
+    pr: null,
+    checks: null,
+    detail: null,
+    mergeCommit: null,
+  },
+  {
+    state: 'pr_open',
+    stateVersion: 1,
+    failedApplyCount: 0,
+    pr: executionPR,
+    checks: 'pending',
+    detail: null,
+    mergeCommit: null,
+  },
+  {
+    state: 'conflict',
+    stateVersion: 2,
+    failedApplyCount: 0,
+    pr: null,
+    checks: null,
+    detail: '冲突 <img>\n  literal',
+    mergeCommit: null,
+  },
+  {
+    state: 'conflict',
+    stateVersion: 3,
+    failedApplyCount: 0,
+    pr: executionPR,
+    checks: 'not_evaluated',
+    detail: 'conflict',
+    mergeCommit: null,
+  },
+  {
+    state: 'apply_failed',
+    stateVersion: 3,
+    failedApplyCount: 3,
+    pr: null,
+    checks: null,
+    detail: 'not applied',
+    mergeCommit: null,
+  },
+  {
+    state: 'merged',
+    stateVersion: 4,
+    failedApplyCount: 0,
+    pr: executionPR,
+    checks: null,
+    detail: null,
+    mergeCommit: 'b'.repeat(40),
+  },
+  {
+    state: 'closed',
+    stateVersion: 5,
+    failedApplyCount: 0,
+    pr: executionPR,
+    checks: null,
+    detail: null,
+    mergeCommit: null,
+  },
+].map((r) => ({ approvedRevision: 1, updatedAt: executionAt, ...r }))
+function progressWire(execution: any) {
+  return {
+    annotation: {
+      ...wire(),
+      'margin:revision': 2,
+      'margin:approvedRevision': 1,
+      'margin:proposalState': execution?.state ?? 'approved',
+    },
+    savedReview: null,
+    execution,
+  }
+}
+describe('closed private progress decoder', () => {
+  it('preserves the strict default envelope and exact default/POST route bytes', () => {
+    const raw = { annotation: wire(), savedReview: null }
+    expect(parseReviewReadback(raw, target, SITE)).not.toHaveProperty(
+      'execution',
+    )
+    expect(() =>
+      parseReviewReadback({ ...raw, execution: null }, target, SITE),
+    ).toThrow()
+    expect(() => parseReviewProgressReadback(raw, target, SITE)).toThrow()
+    expect(
+      parseReviewProgressReadback({ ...raw, execution: null }, target, SITE)
+        .execution,
+    ).toBeNull()
+    const route =
+      '/api/margin/v1/proposals/proposal-1/review?' +
+      new URLSearchParams({ source: target.source })
+    expect(reviewRoute(target, SITE)).toBe(route)
+    expect(progressReviewRoute(target, SITE)).toBe(route + '&include=execution')
+  })
+  it.each(executionRows)(
+    'accepts complete canonical $state v$stateVersion without confusing current revision',
+    (e) => {
+      const row = parseReviewProgressReadback(progressWire(e), target, SITE)
+      expect(row).toMatchObject({
+        revision: 2,
+        approvedRevision: 1,
+        execution: e,
+      })
+    },
+  )
+  it('refuses every omitted field and undeclared field at each closed envelope', () => {
+    const valid = progressWire(executionRows[1])
+    for (const keys of [[], ['execution'], ['execution', 'pr']]) {
+      const object: any = keys.reduce((o: any, k) => o[k], valid)
+      for (const key of [...Object.keys(object), 'unknown']) {
+        const bad = structuredClone(valid),
+          holder: any = keys.reduce((o: any, k) => o[k], bad)
+        if (key === 'unknown') holder[key] = true
+        else delete holder[key]
+        expect(
+          () => parseReviewProgressReadback(bad, target, SITE),
+          keys.join('.') + '.' + key,
+        ).toThrow()
+      }
+    }
+  })
+  it('enforces semantic state tuples over the whole six-state family', () => {
+    for (const row of executionRows) {
+      const mutations: any[] = [
+        { approvedRevision: 2 },
+        { stateVersion: 0.5 },
+        { failedApplyCount: 4 },
+        { failedApplyCount: Math.min(row.stateVersion, 3) + 1 },
+        { updatedAt: 'yesterday' },
+        { pr: { ...executionPR, extra: 1 } },
+        { state: 'pending' },
+      ]
+      if (row.state !== 'approved') mutations.push({ stateVersion: 0 })
+      if (row.state === 'approved')
+        mutations.push(
+          { stateVersion: 1 },
+          { pr: executionPR },
+          { checks: 'pending' },
+          { detail: 'x' },
+          { mergeCommit: 'a'.repeat(40) },
+        )
+      if (row.state === 'pr_open')
+        mutations.push(
+          { pr: null },
+          { checks: null },
+          { mergeCommit: 'a'.repeat(40) },
+        )
+      if (row.state === 'conflict')
+        mutations.push(
+          { detail: null },
+          { mergeCommit: 'a'.repeat(40) },
+          { checks: row.pr ? 'passed' : 'not_evaluated' },
+        )
+      if (row.state === 'apply_failed')
+        mutations.push(
+          { failedApplyCount: 0 },
+          { pr: executionPR },
+          { checks: 'failed' },
+          { detail: null },
+          { mergeCommit: 'a'.repeat(40) },
+        )
+      if (row.state === 'merged')
+        mutations.push(
+          { pr: null },
+          { mergeCommit: null },
+          { checks: 'passed' },
+          { detail: 'x' },
+        )
+      if (row.state === 'closed')
+        mutations.push(
+          { pr: null },
+          { mergeCommit: 'a'.repeat(40) },
+          { checks: 'passed' },
+          { detail: 'x' },
+        )
+      for (const change of mutations) {
+        const bad = progressWire({ ...row, ...change })
+        expect(
+          () => parseReviewProgressReadback(bad, target, SITE),
+          row.state + JSON.stringify(change),
+        ).toThrow()
+      }
+    }
+  })
+  it('shares URL/UTF8/full-hash/safe-integer boundaries and rejects mismatched authority data', () => {
+    const base = executionRows[1]
+    const parse = (change: any) =>
+      parseReviewProgressReadback(
+        progressWire({ ...base, ...change }),
+        target,
+        SITE,
+      )
+    expect(
+      parse({ stateVersion: Number.MAX_SAFE_INTEGER, detail: 'é'.repeat(2048) })
+        .execution?.stateVersion,
+    ).toBe(Number.MAX_SAFE_INTEGER)
+    for (const change of [
+      { stateVersion: Number.MAX_SAFE_INTEGER + 1 },
+      { detail: 'é'.repeat(2049) },
+      { detail: '' },
+      { updatedAt: '2026-10-08' },
+      { pr: { ...executionPR, number: 0 } },
+      ...['a'.repeat(39), 'A'.repeat(40), 'a'.repeat(65)].map((head) => ({
+        pr: { ...executionPR, head },
+      })),
+      ...[
+        'javascript:alert(1)',
+        'https://example.test',
+        'https://example.test/%zz\n',
+      ].map((url) => ({ pr: { ...executionPR, url } })),
+    ])
+      expect(() => parse(change)).toThrow()
+    const credentialURL = new URL('https://example.test/')
+    credentialURL.username = 'fixture'
+    expect(() =>
+      parse({ pr: { ...executionPR, url: credentialURL.href } }),
+    ).toThrow()
+    for (const update of [
+      (v: any) => {
+        v.annotation['margin:proposalState'] = 'merged'
+      },
+      (v: any) => {
+        v.annotation['margin:approvedRevision'] = 2
+      },
+      (v: any) => {
+        v.annotation['margin:revision'] = 0
+      },
+      (v: any) => {
+        v.annotation['margin:withdrawnAt'] = executionAt
+      },
+      (v: any) => {
+        v.annotation.target.source = SITE + '/other'
+      },
+      (v: any) => {
+        v.annotation.id = 'urn:margin:annotation:other'
+      },
+      (v: any) => {
+        delete v.annotation['margin:approvedRevision']
+        delete v.annotation['margin:proposalState']
+      },
+      (v: any) => {
+        v.savedReview = saved()
+        v.savedReview.revision = 2
+      },
+    ]) {
+      const raw = progressWire(base)
+      update(raw)
+      expect(() => parseReviewProgressReadback(raw, target, SITE)).toThrow()
+    }
+  })
+  it.each([401, 403, 503, 200])(
+    'clears earlier progress after a failed refresh %s',
+    async (status) => {
+      const f = progressFixture()
+      await f.session.open(target)
+      expect(f.session.state.status).toBe('ready')
+      f.reader(async () => Response.json({}, { status }))
+      await f.session.open(target)
+      expect(f.session.state.observed).toBeUndefined()
+      expect(f.session.state.attempt).toBeUndefined()
+      expect(f.session.state.status).toBe(
+        (
+          {
+            401: 'unauthenticated',
+            403: 'forbidden',
+            503: 'unavailable',
+            200: 'malformed',
+          } as const
+        )[status],
+      )
+      expect(f.session.canSave).toBe(false)
+    },
+  )
+  it('does not retain progress when identity changes during a successful read', async () => {
+    const f = progressFixture()
+    await f.session.open(target)
+    f.reader(async () => {
+      f.identity()
+      return Response.json(progressWire(executionRows[1]))
+    })
+    await f.session.open(target)
+    expect(f.session.state.status).toBe('session-changed')
+    expect(f.session.state.observed).toBeUndefined()
+    expect(f.privacy).toHaveBeenCalled()
+  })
+})
+
+it('decodes real SQLite-backed reports for every canonical state through the unchanged review session', async () => {
+  const { ADA, BOB, createHarness, webAnnotation, proposalBody, scopeQuery } =
+    await import('../worker/margin/fixtures')
+  const { ensureSchema } = await import('../worker/margin/identity')
+  const { annotationIdFromIri } =
+    await import('../worker/margin/web-annotation')
+  const { encodeBase64Url } = await import('../worker/margin/base64url')
+  const external = vi
+    .fn()
+    .mockRejectedValue(new Error('external operation forbidden'))
+  vi.stubGlobal('fetch', external)
+  try {
+    for (const state of [
+      'approved',
+      'pr_open',
+      'conflict',
+      'apply_failed',
+      'merged',
+      'closed',
+    ] as const) {
+      const h = createHarness()
+      await ensureSchema(h.database)
+      h.database.execute(
+        'INSERT INTO margin_identity(provider,issuer,subject,first_seen_at,last_seen_at) VALUES(?,?,?,?,?)',
+        [ADA.provider, ADA.issuer, ADA.subject, executionAt, executionAt],
+      )
+      const identity = h.database.query('SELECT id FROM margin_identity')[0].id
+      h.database.execute(
+        "INSERT INTO margin_allowlist(identity_id,role,added_at) VALUES(?,'admin',?)",
+        [identity, executionAt],
+      )
+      h.database.execute(
+        'INSERT INTO margin_site_admins(site,identity_id) VALUES(?,?)',
+        [SITE, identity],
+      )
+      const created = await h.request('POST', '/annotations', {
+        as: BOB,
+        body: webAnnotation({
+          source: target.source,
+          motivation: 'editing',
+          visibility: 'private',
+        }),
+      })
+      expect(created.status).toBe(201)
+      const annotation = await created.json(),
+        id = annotationIdFromIri(annotation.id)
+      const scope = scopeQuery(target.source)
+      expect(
+        (
+          await h.request('POST', `/proposals/${id}/apply${scope}`, {
+            as: ADA,
+            body: { revision: 1 },
+          })
+        ).status,
+      ).toBe(202)
+      const selector = encodeBase64Url(new Uint8Array(16).fill(11))
+      h.database.execute(
+        'INSERT INTO margin_adapters(site,adapter,enabled,created_at) VALUES(?,?,1,?)',
+        [SITE, 'fixture', executionAt],
+      )
+      h.database.execute(
+        'INSERT INTO margin_adapter_tokens VALUES(?,?,?,?,?,?,NULL)',
+        [
+          selector,
+          SITE,
+          'fixture',
+          'a'.repeat(64),
+          'approved_feed',
+          executionAt,
+        ],
+      )
+      h.database.execute(
+        'INSERT INTO margin_adapter_report_grants(token_id,token_sha256,site,adapter,granted_at,revoked_at) VALUES(?,?,?,?,?,NULL)',
+        [selector, 'a'.repeat(64), SITE, 'fixture', executionAt],
+      )
+      const credential = (await h.repository.findAdapterCredential(selector))!
+      const report = async (outcome: any, version = 0) =>
+        expect(
+          (
+            await h.repository.reportProposalExecution(
+              credential,
+              {
+                eventId: encodeBase64Url(new Uint8Array(16).fill(version + 1)),
+                proposalId: id,
+                approvedRevision: 1,
+                expectedStateVersion: version,
+                outcome,
+              },
+              executionAt,
+            )
+          ).status,
+        ).toBe('accepted')
+      if (state === 'pr_open')
+        await report({
+          state,
+          pr: executionPR,
+          checks: 'pending',
+          detail: null,
+        })
+      if (state === 'conflict' || state === 'apply_failed')
+        await report({ state, detail: 'private literal <img>\n  冲突' })
+      if (state === 'merged' || state === 'closed') {
+        await report({
+          state: 'pr_open',
+          pr: executionPR,
+          checks: 'passed',
+          detail: null,
+        })
+        await report(
+          state === 'merged'
+            ? { state, pr: executionPR, mergeCommit: 'b'.repeat(64) }
+            : { state, pr: executionPR },
+          1,
+        )
+      }
+      expect(
+        (
+          await h.request('PATCH', `/annotations/${id}${scope}`, {
+            as: BOB,
+            body: { body: proposalBody('Later {++current++} text') },
+          })
+        ).status,
+      ).toBe(200)
+      const calls: string[] = []
+      const session = new ReviewSession(
+        SITE,
+        async (url, init) => {
+          if (String(url) === '/auth/me')
+            return Response.json({ authenticated: true, principal: ADA })
+          calls.push(String(url))
+          expect(init?.method).toBe('GET')
+          return h.request('GET', String(url).replace('/api/margin/v1', ''), {
+            as: ADA,
+          })
+        },
+        () => {},
+      )
+      await session.open({ id: annotation.id, source: target.source })
+      expect(session.state.status).toBe('ready')
+      expect(session.state.observed).toMatchObject({
+        revision: 2,
+        approvedRevision: 1,
+        state,
+        execution: {
+          state,
+          approvedRevision: 1,
+          failedApplyCount: state === 'apply_failed' ? 1 : 0,
+        },
+      })
+      expect(session.canSave).toBe(false)
+      expect(calls).toHaveLength(1)
+      expect(new URL(calls[0], SITE).searchParams.get('include')).toBe(
+        'execution',
+      )
+    }
+    expect(external).not.toHaveBeenCalled()
+  } finally {
+    vi.unstubAllGlobals()
+  }
 })

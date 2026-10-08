@@ -7,6 +7,7 @@ import {
   ReviewRequestError,
   readReviewIdentity,
   type ReviewTarget,
+  type ReviewProgressObservation,
   type SessionStatus,
 } from './margin-review-session'
 import {
@@ -18,6 +19,45 @@ import {
   parseCriticMarkup,
   parseHunks,
 } from '../annotations/criticmarkup'
+
+/** Text-only presentation of a private server observation. Reported results
+ * are not a fresh repository-policy check or an immutable body preview.
+ */
+export function executionProgress(
+  row: ReviewProgressObservation,
+  status: SessionStatus = 'ready',
+): { lines: string[]; pr?: { text: string; url: string } } | undefined {
+  if (status !== 'ready') return undefined
+  const e = row.execution
+  if (e === null)
+    return {
+      lines: [
+        row.approvedRevision === undefined
+          ? 'No approved execution record.'
+          : 'Execution details unavailable for this legacy record. Failure count and repository outcome are unknown.',
+      ],
+    }
+  const lines = [
+    e.stateVersion === 0
+      ? 'Approval recorded; no adapter result recorded.'
+      : `Adapter-reported state: ${e.state}.`,
+    `Approved revision ${e.approvedRevision} · Execution state version ${e.stateVersion}`,
+    `Recorded failed Apply count: ${e.failedApplyCount} of 3.`,
+    'Recorded results do not verify current repository policy or exclude unreported attempts.',
+    `Execution record updated ${e.updatedAt}`,
+  ]
+  if (e.pr) lines.push(`Reported PR head: ${e.pr.head}`)
+  if (e.checks !== null) lines.push(`Adapter-reported checks: ${e.checks}`)
+  if (e.detail !== null) lines.push(`Adapter-reported detail: ${e.detail}`)
+  if (e.mergeCommit !== null)
+    lines.push(`Reported merge commit: ${e.mergeCommit}`)
+  return {
+    lines,
+    ...(e.pr
+      ? { pr: { text: `Reported pull request #${e.pr.number}`, url: e.pr.url } }
+      : {}),
+  }
+}
 
 export const REVIEW_STATES = [
   'pending',
@@ -665,6 +705,23 @@ export function mountReviewReader(root: HTMLElement): () => void {
             element('p', `Reviewer: ${row.savedReview.reviewer}`),
           )
         } else content.append(element('p', 'No saved review.'))
+        const progress = executionProgress(row, view.status)
+        if (progress) {
+          const section = doc.createElement('section')
+          section.setAttribute('aria-label', 'Execution progress')
+          section.append(element('h3', 'Execution progress'))
+          for (const line of progress.lines)
+            section.append(element('pre', line))
+          if (progress.pr) {
+            const link = element('a', progress.pr.text) as HTMLAnchorElement
+            link.href = progress.pr.url
+            link.target = '_blank'
+            link.rel = 'noopener noreferrer'
+            link.referrerPolicy = 'no-referrer'
+            section.append(link)
+          }
+          content.append(section)
+        }
       }
       renderDraft()
     },

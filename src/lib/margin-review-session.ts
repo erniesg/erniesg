@@ -3,6 +3,13 @@
  */
 import { z } from 'zod'
 import {
+  reportInteger,
+  reportCommit,
+  reportDetail,
+  reportURL,
+  type ReviewExecution,
+} from '../worker/margin/repository'
+import {
   isFullCommitId,
   parseHunks,
   acceptAll,
@@ -27,6 +34,9 @@ export type ReviewObservation = ReviewTarget & {
   withdrawnAt?: string
   savedReview: SavedReview | null
 }
+export type ReviewProgressObservation = ReviewObservation & {
+  execution: ReviewExecution | null
+}
 export type SaveAttempt = {
   revision: number
   decision: string
@@ -48,7 +58,7 @@ export type SessionStatus =
 export type ReviewSessionState = {
   status: SessionStatus
   outcome: 'none' | 'acknowledged' | 'uncertain' | 'conflict' | 'rejected'
-  observed?: ReviewObservation
+  observed?: ReviewProgressObservation
   attempt?: SaveAttempt
 }
 export class ReviewRequestError extends Error {
@@ -220,6 +230,97 @@ export function parseReviewReadback(
     throw new ReviewRequestError('malformed')
   return { ...current, savedReview: saved }
 }
+/** Opt-in private projection. The default readback decoder remains closed to
+ * this field; a missing execution value is never interpreted as legacy null.
+ * Reuse wire primitives, without importing the server's stored private tuple.
+ */
+const executionSchema = z
+  .object({
+    approvedRevision: reportInteger.positive(),
+    state: z.enum(states),
+    stateVersion: reportInteger,
+    failedApplyCount: reportInteger.max(3),
+    pr: z
+      .object({
+        number: reportInteger.positive(),
+        url: reportURL,
+        head: reportCommit,
+      })
+      .strict()
+      .nullable(),
+    checks: z.enum(['pending', 'passed', 'failed', 'not_evaluated']).nullable(),
+    detail: reportDetail.nullable(),
+    mergeCommit: reportCommit.nullable(),
+    updatedAt: date.max(40),
+  })
+  .strict()
+export function progressReviewRoute(
+  target: ReviewTarget,
+  site: string,
+): string {
+  return reviewRoute(target, site) + '&include=execution'
+}
+export function parseReviewProgressReadback(
+  raw: unknown,
+  target: ReviewTarget,
+  site: string,
+): ReviewProgressObservation {
+  const envelope = z
+    .object({
+      annotation: z.unknown(),
+      savedReview: savedSchema.nullable(),
+      execution: executionSchema.nullable(),
+    })
+    .strict()
+    .parse(raw)
+  const current = parseReviewReadback(
+    { annotation: envelope.annotation, savedReview: envelope.savedReview },
+    target,
+    site,
+  )
+  const e = envelope.execution
+  if (e) {
+    const hasPR = e.pr !== null
+    const valid =
+      e.state === 'approved'
+        ? e.stateVersion === 0 &&
+          !hasPR &&
+          e.checks === null &&
+          e.detail === null &&
+          e.mergeCommit === null
+        : e.state === 'pr_open'
+          ? hasPR && e.checks !== null && e.mergeCommit === null
+          : e.state === 'merged'
+            ? hasPR &&
+              e.mergeCommit !== null &&
+              e.checks === null &&
+              e.detail === null
+            : e.state === 'closed'
+              ? hasPR &&
+                e.mergeCommit === null &&
+                e.checks === null &&
+                e.detail === null
+              : e.state === 'conflict'
+                ? e.detail !== null &&
+                  e.mergeCommit === null &&
+                  (hasPR ? e.checks === 'not_evaluated' : e.checks === null)
+                : !hasPR &&
+                  e.failedApplyCount > 0 &&
+                  e.detail !== null &&
+                  e.checks === null &&
+                  e.mergeCommit === null
+    if (
+      !valid ||
+      e.failedApplyCount > e.stateVersion ||
+      (e.state !== 'approved' && e.stateVersion === 0) ||
+      e.state !== current.state ||
+      e.approvedRevision !== current.approvedRevision
+    )
+      throw new ReviewRequestError('malformed')
+  }
+  return { ...current, execution: e }
+}
+
 function editable(row?: ReviewObservation): boolean {
   return (
     !!row &&
@@ -405,16 +506,16 @@ export class ReviewSession {
     target: ReviewTarget,
     signal: AbortSignal,
     identity: string,
-  ): Promise<ReviewObservation> {
-    let observed: ReviewObservation | undefined, failure: unknown
+  ): Promise<ReviewProgressObservation> {
+    let observed: ReviewProgressObservation | undefined, failure: unknown
     try {
       const reply = await requestJSON(
         this.fetcher,
-        reviewRoute(target, this.site),
+        progressReviewRoute(target, this.site),
         signal,
       )
       if (reply.status !== 200) throw responseError(reply.status)
-      observed = parseReviewReadback(reply.value, target, this.site)
+      observed = parseReviewProgressReadback(reply.value, target, this.site)
     } catch (error) {
       failure = error
     }

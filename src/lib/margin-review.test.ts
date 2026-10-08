@@ -1,3 +1,4 @@
+import * as reviewProgress from './margin-review'
 import { describe, expect, it, vi } from 'vitest'
 import {
   formatHunks,
@@ -619,4 +620,155 @@ describe('pending proposal draft invariants', () => {
       criticMarkupFor(base, proposed),
     )
   })
+})
+
+describe('private execution presentation RED pilot', () => {
+  it('keeps pending and legacy unknown separate from a recorded zero without interpreting text', () => {
+    const base: any = {
+      id: 'urn:margin:annotation:p',
+      source: SITE + '/books/chapter/',
+      body,
+      revision: 2,
+      state: 'pending',
+      savedReview: null,
+      execution: null,
+    }
+    expect(reviewProgress.executionProgress?.(base)).toEqual({
+      lines: ['No approved execution record.'],
+    })
+    expect(
+      reviewProgress.executionProgress?.({
+        ...base,
+        state: 'approved',
+        approvedRevision: 1,
+      }),
+    ).toEqual({
+      lines: [
+        'Execution details unavailable for this legacy record. Failure count and repository outcome are unknown.',
+      ],
+    })
+  })
+})
+
+it('presents five bounded progress pilots as literal reported observations with unknown distinct from zero', () => {
+  const base: any = {
+    id: 'urn:margin:annotation:p',
+    source: SITE + '/books/chapter/',
+    body,
+    revision: 3,
+    state: 'approved',
+    approvedRevision: 1,
+    savedReview: null,
+  }
+  const e = {
+    approvedRevision: 1,
+    state: 'approved',
+    stateVersion: 0,
+    failedApplyCount: 0,
+    pr: null,
+    checks: null,
+    detail: null,
+    mergeCommit: null,
+    updatedAt: '2026-10-08T00:01:00.000Z',
+  }
+  const pr = {
+    number: 7,
+    url: 'http://example.test/pull/7',
+    head: 'a'.repeat(64),
+  }
+  const pilots = [
+    null,
+    e,
+    { ...e, state: 'pr_open', stateVersion: 2, pr, checks: 'passed' },
+    {
+      ...e,
+      state: 'conflict',
+      stateVersion: 3,
+      pr,
+      checks: 'not_evaluated',
+      detail: '<img src=x onerror=alert(1)>\n  冲突 ' + 'é'.repeat(1000),
+    },
+    { ...e, state: 'merged', stateVersion: 4, pr, mergeCommit: 'b'.repeat(64) },
+  ]
+  for (const execution of pilots) {
+    const result = reviewProgress.executionProgress({ ...base, execution })!
+    expect(result.lines.join('\n').length).toBeLessThan(8192)
+    expect(result.lines.join('\n')).not.toMatch(
+      /can merge|eligible to merge|repository policy verified/i,
+    )
+    if (execution === null) {
+      expect(result.lines.join()).toContain('unknown')
+      expect(result.lines.join()).not.toContain('0 of 3')
+    } else {
+      expect(result.lines).toContain(
+        'Recorded results do not verify current repository policy or exclude unreported attempts.',
+      )
+      expect(result.lines).toContain(
+        'Approved revision 1 · Execution state version ' +
+          execution.stateVersion,
+      )
+      if (execution.stateVersion === 0)
+        expect(result.lines[0]).toBe(
+          'Approval recorded; no adapter result recorded.',
+        )
+      else
+        expect(result.lines[0]).toBe(
+          'Adapter-reported state: ' + execution.state + '.',
+        )
+      if (execution.detail)
+        expect(result.lines).toContain(
+          'Adapter-reported detail: ' + execution.detail,
+        )
+      if (execution.pr)
+        expect(result.pr).toEqual({
+          text: 'Reported pull request #7',
+          url: pr.url,
+        })
+      if (execution.mergeCommit)
+        expect(result.lines).toContain(
+          'Reported merge commit: ' + execution.mergeCommit,
+        )
+    }
+  }
+  for (const state of ['closed', 'apply_failed']) {
+    const result = reviewProgress.executionProgress({
+      ...base,
+      execution: {
+        ...e,
+        state,
+        stateVersion: 3,
+        failedApplyCount: 3,
+        detail: state === 'apply_failed' ? 'Retry limit reached' : null,
+        pr: state === 'closed' ? pr : null,
+      },
+    })!
+    expect(result.lines[0]).toBe('Adapter-reported state: ' + state + '.')
+    expect(result.lines).toContain('Recorded failed Apply count: 3 of 3.')
+  }
+})
+
+it('never presents a previous execution observation as current during a busy or failed session', () => {
+  const previous: any = {
+    id: 'urn:margin:annotation:p',
+    source: SITE + '/books/chapter/',
+    body,
+    revision: 2,
+    state: 'approved',
+    approvedRevision: 1,
+    savedReview: null,
+    execution: null,
+  }
+  for (const status of [
+    'idle',
+    'loading',
+    'saving',
+    'reconciling',
+    'unauthenticated',
+    'forbidden',
+    'missing',
+    'unavailable',
+    'malformed',
+    'session-changed',
+  ] as const)
+    expect(reviewProgress.executionProgress(previous, status)).toBeUndefined()
 })

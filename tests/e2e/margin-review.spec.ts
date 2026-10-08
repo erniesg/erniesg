@@ -249,6 +249,8 @@ async function savingService(
   if (initialBody !== undefined)
     proposal = { ...proposal, body: { ...proposal.body, value: initialBody } }
   let savedReview: unknown = null
+  let execution: any = null,
+    readStatus = 200
   const writes: unknown[] = [],
     forbidden: string[] = []
   let readbacks = 0
@@ -282,11 +284,20 @@ async function savingService(
       url.searchParams.get('source') === source
     ) {
       if (request.method() === 'GET') {
+        expect(url.searchParams.get('include')).toBe('execution')
+        expect([...url.searchParams.keys()].sort()).toEqual([
+          'include',
+          'source',
+        ])
         readbacks++
-        await reply({ annotation: proposal, savedReview })
+        await reply(
+          { annotation: proposal, savedReview, execution },
+          readStatus,
+        )
         return
       }
       if (request.method() === 'POST') {
+        expect([...url.searchParams.keys()]).toEqual(['source'])
         const body = request.postDataJSON()
         writes.push(body)
         if (mode !== 'conflict') {
@@ -322,6 +333,18 @@ async function savingService(
     writes,
     forbidden,
     current: () => proposal,
+    observe: (value: any, state = 'approved') => {
+      execution = value
+      proposal = {
+        ...proposal,
+        'margin:revision': 3,
+        'margin:approvedRevision': 1,
+        'margin:proposalState': state,
+      } as typeof proposal
+    },
+    readStatus: (status: number) => {
+      readStatus = status
+    },
     readbacks: () => readbacks,
     switchPrincipal: () => {
       identity = {
@@ -635,5 +658,217 @@ test('edited uncertain writes never replay and account changes clear the revised
     '',
   )
   expect(s.writes).toHaveLength(1)
+  expect(s.forbidden).toEqual([])
+})
+
+const reportedPR = {
+  number: 7,
+  url: 'http://example.test/pull/7',
+  head: 'a'.repeat(64),
+}
+const approvedExecution = {
+  approvedRevision: 1,
+  state: 'approved',
+  stateVersion: 0,
+  failedApplyCount: 0,
+  pr: null,
+  checks: null,
+  detail: null,
+  mergeCommit: null,
+  updatedAt: '2026-10-08T00:01:00.000Z',
+}
+
+test('private progress distinguishes pending, legacy unknown, and reported PR results at three widths', async ({
+  page,
+  baseURL,
+}) => {
+  const s = await savingService(page, baseURL!)
+  await page.goto(PATH)
+  await page.getByRole('button', { name: 'Open review', exact: true }).click()
+  const panel = page.locator('[data-review-session]'),
+    progress = panel.getByRole('region', {
+      name: 'Execution progress',
+      exact: true,
+    })
+  await expect(progress).toContainText('No approved execution record.')
+  s.observe(null)
+  await page
+    .getByRole('button', { name: 'Refresh selected review', exact: true })
+    .click()
+  await expect(progress).toContainText(
+    'Failure count and repository outcome are unknown.',
+  )
+  await expect(progress).not.toContainText('0 of 3')
+  s.observe(approvedExecution)
+  await page
+    .getByRole('button', { name: 'Refresh selected review', exact: true })
+    .click()
+  await expect(progress).toContainText(
+    'Approval recorded; no adapter result recorded.',
+  )
+  s.observe(
+    {
+      ...approvedExecution,
+      state: 'pr_open',
+      stateVersion: 2,
+      pr: reportedPR,
+      checks: 'passed',
+    },
+    'pr_open',
+  )
+  await page
+    .getByRole('button', { name: 'Refresh selected review', exact: true })
+    .click()
+  await expect(progress).toContainText('Adapter-reported state: pr_open.')
+  await expect(progress).toContainText(reportedPR.head)
+  await expect(panel).toContainText('Current revision 3')
+  await expect(panel).toContainText(
+    'Approved revision 1. Showing current content, not the approved snapshot.',
+  )
+  await expect(
+    page.getByRole('button', { name: 'Save review', exact: true }),
+  ).toBeDisabled()
+  const link = progress.getByRole('link', {
+    name: 'Reported pull request #7',
+    exact: true,
+  })
+  await expect(link).toHaveAttribute('href', reportedPR.url)
+  await expect(link).toHaveAttribute('target', '_blank')
+  await expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+  await expect(link).toHaveAttribute('referrerpolicy', 'no-referrer')
+  for (const width of [390, 1280, 2560]) {
+    await page.setViewportSize({ width, height: 900 })
+    await expect(progress).toBeVisible()
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true)
+  }
+  expect(s.writes).toEqual([])
+  expect(s.forbidden).toEqual([])
+  expect(s.readbacks()).toBe(4)
+})
+
+test('reported conflict and terminal details stay literal and never imply verified policy or an Apply action', async ({
+  page,
+  baseURL,
+}) => {
+  const s = await savingService(page, baseURL!)
+  const detail = '<img src=x onerror=alert(1)>\n  冲突 ' + 'é'.repeat(1000)
+  s.observe(
+    {
+      ...approvedExecution,
+      state: 'conflict',
+      stateVersion: 2,
+      pr: reportedPR,
+      checks: 'not_evaluated',
+      detail,
+    },
+    'conflict',
+  )
+  await page.goto(PATH)
+  await page.getByRole('button', { name: 'Open review', exact: true }).click()
+  const progress = page.getByRole('region', {
+    name: 'Execution progress',
+    exact: true,
+  })
+  await expect(progress).toContainText('Adapter-reported state: conflict.')
+  expect(await progress.locator('pre').allTextContents()).toContain(
+    'Adapter-reported detail: ' + detail,
+  )
+  await expect(progress.locator('img,script,iframe,button')).toHaveCount(0)
+  for (const width of [390, 1280, 2560]) {
+    await page.setViewportSize({ width, height: 900 })
+    await expect(progress).toBeVisible()
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true)
+  }
+  for (const [state, change] of [
+    [
+      'apply_failed',
+      { failedApplyCount: 3, detail: 'Three recorded failures', pr: null },
+    ],
+    ['closed', { pr: reportedPR }],
+    ['merged', { pr: reportedPR, mergeCommit: 'b'.repeat(64) }],
+  ] as const) {
+    s.observe(
+      { ...approvedExecution, state, stateVersion: 3, ...change },
+      state,
+    )
+    await page
+      .getByRole('button', { name: 'Refresh selected review', exact: true })
+      .click()
+    await expect(progress).toContainText(
+      'Adapter-reported state: ' + state + '.',
+    )
+    await expect(progress).toContainText(
+      'Recorded results do not verify current repository policy or exclude unreported attempts.',
+    )
+  }
+  await expect(
+    page.getByRole('button', { name: /^(apply|approve|merge)$/i }),
+  ).toHaveCount(0)
+  expect(s.writes).toEqual([])
+  expect(s.forbidden).toEqual([])
+})
+
+test('malformed or denied progress and observed account changes clear the private view without stale fallback', async ({
+  page,
+  baseURL,
+}) => {
+  const s = await savingService(page, baseURL!)
+  s.observe(approvedExecution)
+  await page.goto(PATH)
+  await page.getByRole('button', { name: 'Open review', exact: true }).click()
+  const panel = page.locator('[data-review-session]')
+  await expect(
+    panel.getByRole('region', { name: 'Execution progress' }),
+  ).toBeVisible()
+  s.observe({ ...approvedExecution, extra: 'not allowed' })
+  await page
+    .getByRole('button', { name: 'Refresh selected review', exact: true })
+    .click()
+  await expect(panel).toContainText('could not be read safely')
+  await expect(
+    panel.getByRole('region', { name: 'Execution progress' }),
+  ).toHaveCount(0)
+  s.observe(approvedExecution)
+  await page
+    .getByRole('button', { name: 'Refresh selected review', exact: true })
+    .click()
+  await expect(
+    panel.getByRole('region', { name: 'Execution progress' }),
+  ).toBeVisible()
+  s.readStatus(403)
+  await page
+    .getByRole('button', { name: 'Refresh selected review', exact: true })
+    .click()
+  await expect(panel).toContainText('does not have site-admin review access')
+  await expect(
+    panel.getByRole('region', { name: 'Execution progress' }),
+  ).toHaveCount(0)
+  await expect(page.locator('[data-review-rows] article')).toHaveCount(0)
+  s.readStatus(200)
+  await page.reload()
+  await page.getByRole('button', { name: 'Open review', exact: true }).click()
+  await expect(
+    panel.getByRole('region', { name: 'Execution progress' }),
+  ).toBeVisible()
+  s.switchPrincipal()
+  await page
+    .getByRole('button', { name: 'Refresh selected review', exact: true })
+    .click()
+  await expect(panel).toContainText(
+    'The account changed. Private review data was cleared.',
+  )
+  await expect(
+    panel.getByRole('region', { name: 'Execution progress' }),
+  ).toHaveCount(0)
+  await expect(page.locator('[data-review-rows] article')).toHaveCount(0)
+  expect(s.writes).toEqual([])
   expect(s.forbidden).toEqual([])
 })

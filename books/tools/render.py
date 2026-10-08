@@ -21,6 +21,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from typing import Protocol
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -195,12 +196,27 @@ def block_id(node_id: str, kind: str, ordinal: int) -> str:
 # loading
 # --------------------------------------------------------------------------
 
+class RenderSource(Protocol):
+    """Explicit data-only reads for the historical profile; no filesystem fallback."""
+
+    def load_node(self, node_id: str) -> dict: ...
+    def figure_data(self, figure_id: str) -> dict: ...
+    def starter_text(self, node: dict, attrs: dict) -> str: ...
+
+
+def parse_front_matter(text: str) -> tuple[dict, str]:
+    """Canonical node parser, shared by filesystem and historical data readers."""
+    if not text.startswith("+++"):
+        raise ValueError("node has no +++ front matter")
+    _, raw, body = text.split("+++", 2)
+    return tomllib.loads(raw), re.sub(r"\A\s*#\s+.*\n", "", body)
+
+
 def read_front_matter(path: Path) -> tuple[dict, str]:
     text = path.read_text()
     if not text.startswith("+++"):
         raise ValueError(f"{path} has no +++ front matter")
-    _, raw, body = text.split("+++", 2)
-    return tomllib.loads(raw), re.sub(r"\A\s*#\s+.*\n", "", body)
+    return parse_front_matter(text)
 
 
 def node_path(node_id: str) -> Path:
@@ -339,6 +355,8 @@ def figure(
     target: str = "web",
     number: int | None = None,
     runnable: bool = True,
+    *,
+    source: RenderSource | None = None,
 ) -> str:
     """A figure, numbered so the prose can refer to it by name.
 
@@ -351,10 +369,13 @@ def figure(
     is missing, not JavaScript in general, so only `CONTROLLED_FIGURES` fall
     back — the cost and links charts are static SVG and are fine as they are.
     """
-    path = FIGURES / f"{figure_id}.json"
-    if not path.is_file():
-        return f'<p class="missing">missing figure: {html.escape(figure_id)}</p>'
-    data = json.loads(path.read_text())
+    if source is None:
+        path = FIGURES / f"{figure_id}.json"
+        if not path.is_file():
+            return f'<p class="missing">missing figure: {html.escape(figure_id)}</p>'
+        data = json.loads(path.read_text())
+    else:
+        data = source.figure_data(figure_id)
     kind = data.get("type")
     title = html.escape(data.get("title", ""))
     # the figure's own caption is what explains it; a directive's one-line
@@ -556,6 +577,10 @@ def render_node(
     solved: bool = False,
     runnable: bool = True,
     reveal: str = "grader",
+    *,
+    source: RenderSource | None = None,
+    read_only: bool = False,
+    max_output_bytes: int | None = None,
 ) -> str:
     """One node, one markup, differing only where a target cannot follow.
 
@@ -575,6 +600,17 @@ def render_node(
     keep all three behind a closed disclosure rather than behind a tier check
     that can never pass.
     """
+    if type(read_only) is not bool:
+        raise ValueError("read_only must be a boolean")
+    if source is not None and not read_only:
+        raise ValueError("historical data requires the read-only profile")
+    if max_output_bytes is not None and (
+        type(max_output_bytes) is not int or max_output_bytes < 1 or not read_only
+    ):
+        raise ValueError("output budget requires the read-only profile and a positive integer")
+    if read_only:
+        runnable = False
+        reveal = "reader"
     if reveal not in ("grader", "reader"):
         raise ValueError("reveal must be 'grader' or 'reader'")
     support = node.get("support", "guided")
@@ -582,6 +618,15 @@ def render_node(
     card_parts = {name: inner for name, _, inner in pieces if name in CARD_BLOCKS}
     out: list[str] = []
     seen: dict[str, int] = {}
+    emitted_bytes = 0
+
+    def append(markup: str) -> None:
+        nonlocal emitted_bytes
+        if max_output_bytes is not None:
+            emitted_bytes += len(markup.encode("utf-8"))
+            if emitted_bytes > max_output_bytes:
+                raise ValueError("historical output byte bound")
+        out.append(markup)
 
     def emit(kind: str, markup: str) -> None:
         """Append one addressable block.
@@ -591,7 +636,7 @@ def render_node(
         same markup without the wrapper: a page has nowhere to put the note.
         """
         if target != "web":
-            out.append(markup)
+            append(markup)
             return
         seen[kind] = seen.get(kind, 0) + 1
         # The id is positional, so inserting a block ahead of this one shifts
@@ -606,7 +651,7 @@ def render_node(
         # the attribute an annotation resolves through, and a value that can
         # close the attribute would take every note on the node with it.
         identifier = html.escape(block_id(node["id"], kind, seen[kind]), quote=True)
-        out.append(
+        append(
             f'<div class="block" data-block-kind="{kind}" '
             f'data-block-digest="{digest}" '
             f'id="{identifier}">{markup}</div>'
@@ -680,14 +725,15 @@ def render_node(
             listing = target == "print" or not runnable
             emit("prose", rendered if listing else _runnable(rendered))
         elif name == "problem":
-            referenced = load_node(attrs.get("id", ""))
+            referenced = (source.load_node(attrs.get("id", "")) if source is not None
+                          else load_node(attrs.get("id", "")))
             parts = {n: i for n, _, i in split_blocks(referenced["body"]) if n in CARD_BLOCKS}
             emit("card", problem_card(referenced, parts))
         elif name == "figure":
             figure_number += 1
             emit(
                 "figure",
-                figure(attrs.get("id", ""), inner, target, figure_number, runnable),
+                figure(attrs.get("id", ""), inner, target, figure_number, runnable, source=source),
             )
         elif name == "hint":
             if support == "unaided" and target != "print" and reveal == "grader":
@@ -728,12 +774,12 @@ def render_node(
                     f"{render_markdown(inner)}</details>",
                 )
         elif name == "run":
-            emit("desk", _desk(node, attrs, target, runnable))
+            emit("desk", _desk(node, attrs, target, runnable, source=source))
         elif name == "exercise":
-            emit("exercise", exercise(attrs.get("id", ""), inner, target))
+            emit("exercise", exercise(attrs.get("id", ""), inner, target, read_only=read_only))
     flush_hints()
     body = "".join(out)
-    if node.get("kind") == "challenge" and target == "web":
+    if node.get("kind") == "challenge" and target == "web" and not read_only:
         body = challenge_split(out)
     return body.replace(HINT_BUTTON, "").replace(HINT_PANEL, "")
 
@@ -874,20 +920,23 @@ def same_output(produced: str, expected: str) -> bool:
     return tidy(produced) == tidy(expected)
 
 
-def exercise(exercise_id: str, inner: str, target: str) -> str:
+def exercise(exercise_id: str, inner: str, target: str, *, read_only: bool = False) -> str:
     parts = parse_exercise(inner)
     missing = [name for name in EXERCISE_PARTS if name not in parts]
     if missing:
         return f'<p class="missing">exercise {html.escape(exercise_id)} is missing {", ".join(missing)}</p>'
     prompt = render_markdown(parts["prompt"])
-    if target == "print":
+    if target == "print" or read_only:
+        answer_open = ("<details class='answer'><summary>Show the answer</summary>"
+                       if read_only and target == "web"
+                       else '<div class="solution"><p class="solution-title">Answer</p>')
+        answer_close = "</details>" if read_only and target == "web" else "</div>"
         return (
             f'<section class="exercise" id="ex-{html.escape(exercise_id)}">'
             f'<p class="exercise-title">Try it</p>{prompt}'
             f'<pre><code>{html.escape(parts["starter"])}</code></pre>'
             f'<p class="figure-note">It should print:</p><pre><code>{html.escape(parts["output"])}</code></pre>'
-            '<div class="solution"><p class="solution-title">Answer</p>'
-            f'<pre><code>{html.escape(parts["answer"])}</code></pre></div></section>'
+            f'{answer_open}<pre><code>{html.escape(parts["answer"])}</code></pre>{answer_close}</section>'
         )
     return (
         f'<section class="exercise" id="ex-{html.escape(exercise_id)}" '
@@ -944,9 +993,12 @@ def _runnable(rendered: str) -> str:
     )
 
 
-def _desk(node: dict, attrs: dict, target: str, runnable: bool = True) -> str:
+def _desk(node: dict, attrs: dict, target: str, runnable: bool = True, *,
+          source: RenderSource | None = None) -> str:
     starter = ""
-    if node.get("dir"):
+    if source is not None:
+        starter = source.starter_text(node, attrs)
+    elif node.get("dir"):
         path = node["dir"] / attrs.get("starter", "starter.py")
         if path.is_file():
             starter = path.read_text()

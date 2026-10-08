@@ -6,7 +6,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { performance } from 'node:perf_hooks'
 import { captureGitSelection } from '../../adapters/margin/local-source'
-import { BookHistoryError, HISTORY_LIMITS, serializeBookHistory, withBookHistorySnapshot, type BookHistoryAsset, type HistoryNode, type HistorySnapshot, type HistoryTree } from './book-history'
+import { BookHistoryError, HISTORY_LIMITS, serializeBookHistory, withBookHistorySnapshot, type BookHistoryAsset, type HistoryNode, type HistorySnapshot, type HistoryTree, type ExactBookBaseSnapshot } from './book-history'
 
 export const RENDERED_HISTORY_LIMITS = Object.freeze({
   collectionMs: 120_000, commandMs: 15_000, gitCalls: 4096,
@@ -126,7 +126,7 @@ function decodeRender(raw: Buffer, source: string, files: Map<string, File>, occ
   return result
 }
 type DataMap = { tree: HistoryTree; files: Map<string, File>; serialized: string[]; cost: number }
-function dataMap(snapshot: HistorySnapshot, commit: string, source: string, limits: Limits): DataMap {
+function dataMap(snapshot: Pick<HistorySnapshot, 'tree' | 'blobs' | 'remaining'>, commit: string, source: string, limits: Limits): DataMap {
   const tree = snapshot.tree(commit), legacy = source.startsWith('challenges/')
   if (!/^(?:books\/(?:chapters\/[a-z0-9-]+\.md|challenges\/[a-z0-9-]+\/challenge\.md)|challenges\/(?:[a-z0-9-]+\.md|[a-z0-9-]+\/challenge\.md))$/.test(source)) fail('unsupported historical source layout')
   const prefix = legacy ? 'challenges/' : 'books/challenges/'
@@ -153,6 +153,24 @@ function dataMap(snapshot: HistorySnapshot, commit: string, source: string, limi
   let metadata = [...tree.entries].reduce((sum, [name, item]) => sum + Buffer.byteLength(name) + item.oid.length + item.mode.length + 64, 0)
   for (const name of tree.occupied) metadata += Buffer.byteLength(name) + 64
   return { tree, files, serialized, cost: bytes + encoded + metadata }
+}
+
+/** Fixed current code/runtime selectors, never supplied repository authority. */
+export function trustedBookRendererRoot(): string { return realpathSync(TRUSTED_ROOT) }
+export function trustedBookPythonPath(): string { return pythonPath() }
+
+/** Reuse complete-tree selection and raw blob validation for one scoped exact base. */
+export function captureExactBookInput(snapshot: ExactBookBaseSnapshot, sourcePath: string) {
+  const limits = boundedOptions({})
+  const data = dataMap({ tree: () => snapshot.tree(), blobs: snapshot.blobs, remaining: snapshot.remaining }, snapshot.baseCommit, sourcePath, limits)
+  const source = data.tree.entries.get(sourcePath)
+  if (!source || !data.files.has(sourcePath)) fail('exact-base source missing from data map')
+  if (data.tree.occupied.size > READONLY_BOOK_OCCUPANCY_LIMITS.paths) fail('exact-base occupied path bound')
+  let occupancyBytes = 0
+  for (const name of data.tree.occupied) { occupancyBytes += Buffer.byteLength(name); if (occupancyBytes > READONLY_BOOK_OCCUPANCY_LIMITS.bytes) fail('exact-base occupied byte bound') }
+  snapshot.remaining()
+  return { treeOID: data.tree.treeOID, sourceOID: source.oid, files: [...data.files.values()], occupied: [...data.tree.occupied],
+    objects: [...data.files.values()].map(file => ({ path: file.path, mode: file.mode, oid: data.tree.entries.get(file.path)!.oid, sha256: file.sha256 })) }
 }
 
 /** One child invocation and decoder, shared by witnessed history and local supplied data. */
@@ -231,8 +249,10 @@ function readonlyData(raw: unknown, limits: Limits) {
 
 export type ReadonlyBookRenderer = { readonly fingerprint: string; render(input: ReadonlyBookInput): Render }
 /** Local synchronous scope. The handle and its input declarations confer no Git/auth authority. */
-export function withReadOnlyBookRenderer<T>(visit: (handle: ReadonlyBookRenderer) => T, options: { limits?: Partial<Limits> } = {}): T {
-  const limits = boundedOptions(options.limits ?? {}), deadline = performance.now() + limits.collectionMs
+export function withReadOnlyBookRenderer<T>(visit: (handle: ReadonlyBookRenderer) => T, options: { limits?: Partial<Limits>; deadline?: number } = {}): T {
+  const limits = boundedOptions(options.limits ?? {}), started = performance.now()
+  if (options.deadline !== undefined && (!Number.isFinite(options.deadline) || options.deadline <= started)) fail('invalid or expired readonly renderer deadline')
+  const deadline = Math.min(started + limits.collectionMs, options.deadline ?? Infinity)
   let active = true
   const remaining = () => { if (!active) fail('readonly renderer scope expired'); const ms = Math.floor(deadline - performance.now()); if (ms <= 0) fail('readonly renderer deadline exceeded'); return ms }
   // This caller's code/profile binding is separate from historical collector
@@ -240,7 +260,7 @@ export function withReadOnlyBookRenderer<T>(visit: (handle: ReadonlyBookRenderer
   const names = [...TRUSTED_SOURCES, 'adapters/margin/proposal-preview.ts', 'src/lib/book-history-safe-html.ts']
   const pins = names.map(name => pin(path.join(TRUSTED_ROOT, name), HISTORY_LIMITS.blobBytes))
   const python = pin(pythonPath(), 128 * 1024 * 1024)
-  const check = () => { remaining(); for (const file of [...pins, python]) file.check() }
+  const check = () => { remaining(); for (const file of [...pins, python]) file.check(); if (options.deadline !== undefined && pythonPath() !== python.filename) fail('trusted renderer runtime selector changed') }
   const fingerprint = sha(JSON.stringify({ profile: PROFILE, sources: names.map((name, i) => [name, pins[i].digest]), python: python.digest }))
   const handle = Object.freeze({
     get fingerprint() { check(); return fingerprint },

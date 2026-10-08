@@ -154,6 +154,55 @@ describe('history producer representative RED pilots', () => {
     )
     expect(asset.versions.at(-1)!.path).toBe('books/chapters/old.md')
   })
+  it('preserves full follow order and raw bytes for a genuine edited rename', () => {
+    const root = fixture()
+    const content = Array.from({ length: 100 }, (_, i) => `source line ${i}\n`).join('')
+    write(root, 'books/chapters/old.md', content)
+    commit(root, 'expand original')
+    git(root, 'mv', 'books/chapters/old.md', 'books/chapters/new.md')
+    write(root, 'books/chapters/new.md', content + 'edited after rename\n')
+    commit(root, 'rename and edit')
+    const status = git(root, 'log', '-1', '--follow', '--name-status', '--format=', '--', 'books/chapters/new.md').split('\t')[0]
+    expect(status).toMatch(/^R0[0-9]{2}$/)
+    const [asset] = collect(root, nodes('books/chapters/new.md'))
+    expect(asset.versions[0].change).toBe(status)
+    expect(asset.versions.map(v => v.commit)).toEqual(git(root, 'log', '--follow', '--format=%H', 'HEAD', '--', 'books/chapters/new.md').split('\n'))
+    for (const v of asset.versions) expect(Buffer.from(v.content!)).toEqual(execFileSync('git', ['show', `${v.commit}:${v.path}`], { cwd: root }))
+  })
+  it('accepts every three-digit rename score and rejects malformed score spellings', () => {
+    const root = fixture()
+    git(root, 'mv', 'books/chapters/old.md', 'books/chapters/new.md')
+    commit(root, 'exact rename')
+    const cache = new Map<string, { value?: Buffer; error?: unknown }>()
+    vi.mocked(execFileSync).mockImplementation(((command: any, args: any, options: any) => {
+      try {
+        const value = (realExec as any)(command, args, options)
+        cache.set(JSON.stringify(args), { value })
+        return value
+      } catch (error) {
+        cache.set(JSON.stringify(args), { error })
+        throw error
+      }
+    }) as any)
+    const expected = collect(root, nodes('books/chapters/new.md'))[0]
+    expect(expected.versions[0].change).toBe('R100')
+    let score = 'R100'
+    vi.mocked(execFileSync).mockImplementation(((command: any, args: any) => {
+      expect(command).toBe('git')
+      const cached = cache.get(JSON.stringify(args))
+      expect(cached).toBeDefined()
+      if (cached!.error) throw cached!.error
+      const value = cached!.value!
+      return args.includes('--name-status') ? Buffer.from(value.toString().replace('\nR100\0', `\n${score}\0`)) : value
+    }) as any)
+    for (let n = 0; n <= 100; n++) {
+      score = `R${String(n).padStart(3, '0')}`
+      expect(collect(root, nodes('books/chapters/new.md'))[0], score).toEqual({ ...expected, versions: [{ ...expected.versions[0], change: score }, ...expected.versions.slice(1)] })
+    }
+    for (score of ['R', 'R0', 'R00', 'R99', 'R0000', 'R101', 'R999', 'R-01', 'R1.0', 'R 99', 'R0a1', 'C099']) {
+      expect(() => collect(root, nodes('books/chapters/new.md')), score).toThrow(/unsupported/)
+    }
+  })
   it('refuses dirty, shallow and partial inputs instead of emitting partial assets', () => {
     const root = fixture()
     collect(root)
@@ -358,7 +407,7 @@ describe('strict complete history invariant sweep', () => {
   })
   it('refuses unsupported status or incomplete command output instead of guessing paths', () => {
     const root = fixture()
-    for (const change of ['Q', 'R099']) {
+    for (const change of ['Q', 'R101']) {
       vi.mocked(execFileSync).mockImplementation(((
         command: any,
         args: any,

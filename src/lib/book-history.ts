@@ -406,7 +406,7 @@ class LocalHistory {
         fail('malformed or unsupported Git history record')
       const change = rawChange.slice(1)
       let at: string
-      if (/^R(?:100|[1-9]?\d)$/.test(change)) {
+      if (/^R(?:100|0\d{2})$/.test(change)) {
         const old = relative(parts[cursor++] ?? ''),
           next = relative(parts[cursor++] ?? '')
         if (next !== historical) fail('ambiguous history rename lineage')

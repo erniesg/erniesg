@@ -511,3 +511,75 @@ it('valid and expired human admin cookies cannot authorize either report or rece
   expect(fetcher).not.toHaveBeenCalled()
   expect(f.assets).not.toHaveBeenCalled()
 })
+
+it('reserves work route aliases and keeps GET-only work separate from human sessions', async () => {
+  const f = await integration(),
+    fetcher = vi.fn().mockRejectedValue(new Error('no external calls'))
+  vi.stubGlobal('fetch', fetcher)
+  expect((await f.call('/api/margin/v1/adapter/work', 'GET', '')).status).toBe(401)
+  expect((await f.call('/api/margin/v1/adapter/work')).status).toBe(403)
+  for (const method of ['HEAD', 'POST', 'OPTIONS']) {
+    const r = await f.call('/api/margin/v1/adapter/work', method)
+    expect(r.status).toBe(405)
+    expect(r.headers.get('allow')).toBe('GET')
+    if (method === 'HEAD') expect(await r.text()).toBe('')
+  }
+  for (const path of [
+    '/api/margin/v1/adapter/WORK',
+    '/api/margin/v1/adapter/%77ork',
+    '/api/margin/v1/adapter/work/',
+  ]) {
+    expect((await f.call(path)).status).toBe(404)
+  }
+  expect(fetcher).not.toHaveBeenCalled()
+  expect(f.assets).not.toHaveBeenCalled()
+})
+
+it('work HEAD aliases and missing storage retain bodyless refusal and cookie clearing without AuthKit', async () => {
+  const f = await integration(),
+    auth = vi.spyOn(authRoutes, 'handleAuthRequest')
+  try {
+    for (const method of ['HEAD', 'head', 'HeAd']) {
+      const response = await f.call(
+        '/api/margin/v1/adapter/work',
+        method,
+        `Bearer ${f.token}`,
+        'margin-session=obsolete',
+      )
+      expect(response.status).toBe(405)
+      expect(await response.text()).toBe('')
+      expect(response.headers.get('allow')).toBe('GET')
+      expect(response.headers.get('set-cookie')).toContain('margin-session=;')
+    }
+    for (const path of [
+      '/API/MARGIN/V1/ADAPTER/work',
+      '/api/margin/v1/%61dapter/work',
+      '/api/margin/v1//adapter/work',
+    ]) {
+      const response = await f.call(
+        path,
+        'HEAD',
+        `Bearer ${f.token}`,
+        'margin-session=obsolete',
+      )
+      expect(response.status).toBe(404)
+      expect(await response.text()).toBe('')
+    }
+    const unavailable = await worker.fetch(
+      new Request('https://ernie.sg/api/margin/v1/adapter/work', {
+        headers: {
+          authorization: `Bearer ${f.token}`,
+          cookie: 'margin-session=obsolete',
+        },
+      }),
+      { ASSETS: f.env.ASSETS },
+    )
+    expect(unavailable.status).toBe(503)
+    expect(unavailable.headers.get('cache-control')).toBe('no-store')
+    expect(unavailable.headers.get('set-cookie')).toContain('margin-session=;')
+    expect(auth).not.toHaveBeenCalled()
+    expect(f.assets).not.toHaveBeenCalled()
+  } finally {
+    auth.mockRestore()
+  }
+})

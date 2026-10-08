@@ -4,6 +4,8 @@ import type {
   AdapterCredential,
   AdapterFeedRepository,
   AdapterReportRepository,
+  AdapterWorkRepository,
+  AdapterWorkCandidate,
   AdapterReportResult,
   ApprovedFeedCursor,
   ApprovedFeedItem,
@@ -247,6 +249,130 @@ export async function handleAdapterFeed(
   }
 }
 
+export const ADAPTER_WORK_PATH = '/api/margin/v1/adapter/work'
+const workCursorSchema = cursorSchema
+  .omit({ eligibility: true })
+  .extend({ purpose: z.literal('work') })
+function workCursor(value: string, credential: AdapterCredential): ApprovedFeedCursor {
+  if (value.length > MAX_CURSOR_LENGTH) throw Error('cursor length')
+  const bytes = decodeBase64Url(value)
+  if (!bytes || encodeBase64Url(bytes) !== value) throw Error('cursor encoding')
+  const decoded = workCursorSchema.parse(
+    JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)),
+  )
+  // Construct in the declared wire order, independently of input member order.
+  if (
+    nextWorkCursor(credential, decoded) !== value ||
+    decoded.site !== credential.site ||
+    decoded.adapter !== credential.adapter ||
+    decoded.tokenId !== credential.tokenId
+  )
+    throw Error('cursor scope or canonical form')
+  return { approvedAt: decoded.approvedAt, proposalId: decoded.proposalId }
+}
+function nextWorkCursor(
+  credential: AdapterCredential,
+  item: ApprovedFeedCursor,
+): string {
+  return encodeBase64Url(
+    encoder.encode(
+      JSON.stringify({
+        version: 1,
+        purpose: 'work',
+        site: credential.site,
+        adapter: credential.adapter,
+        tokenId: credential.tokenId,
+        approvedAt: item.approvedAt,
+        proposalId: item.proposalId,
+      }),
+    ),
+  )
+}
+async function handleAdapterWork(
+  request: Request,
+  repository: (AdapterFeedRepository & AdapterWorkRepository) | null,
+): Promise<Response> {
+  if (request.method !== 'GET') return methodDenied('GET')
+  const authenticated = await authenticateAdapter(request, repository)
+  if ('denied' in authenticated) return authenticated.denied
+  const credential = authenticated.credential,
+    url = new URL(request.url)
+  let limit = 25,
+    after: ApprovedFeedCursor | undefined
+  try {
+    if (url.username || url.password || url.search.length > MAX_QUERY_LENGTH)
+      throw Error('query')
+    for (const key of url.searchParams.keys())
+      if (
+        !['limit', 'cursor'].includes(key) ||
+        url.searchParams.getAll(key).length !== 1
+      )
+        throw Error('query')
+    if (url.searchParams.has('limit')) {
+      const value = url.searchParams.get('limit')!
+      if (!/^(?:[1-9]|[1-4][0-9]|50)$/.test(value)) throw Error('limit')
+      limit = Number(value)
+    }
+    if (url.searchParams.has('cursor'))
+      after = workCursor(url.searchParams.get('cursor')!, credential)
+  } catch {
+    return adapterError(400, 'invalid_work_query')
+  }
+  try {
+    const page = await repository!.listAdapterWork(credential, {
+      limit: limit + 1,
+      ...(after ? { after } : {}),
+    })
+    if (!page.authorized) return adapterError(403, 'adapter_forbidden')
+    const scanned = page.candidates.slice(0, limit)
+    const items: (Omit<AdapterWorkCandidate, 'execution'> & {
+      execution: Omit<NonNullable<AdapterWorkCandidate['execution']>, 'boundAdapter'>
+      work: 'apply' | 'refresh_pr' | 'reconcile_only'
+    })[] = []
+    const notEvaluated = { unknownExecution: 0 },
+      excluded = { exhaustedFailures: 0, otherAdapter: 0 }
+    for (const candidate of scanned) {
+      const { execution, ...snapshot } = candidate
+      if (execution === null) {
+        notEvaluated.unknownExecution++
+        continue
+      }
+      const { boundAdapter, ...metadata } = execution
+      if (boundAdapter !== null && boundAdapter !== credential.adapter) {
+        excluded.otherAdapter++
+        continue
+      }
+      if (execution.state === 'apply_failed' && execution.failedApplyCount === 3) {
+        excluded.exhaustedFailures++
+        continue
+      }
+      const work =
+        execution.pr !== null
+          ? 'refresh_pr'
+          : execution.failedApplyCount === 3
+            ? 'reconcile_only'
+            : 'apply'
+      items.push({ ...snapshot, execution: metadata, work })
+    }
+    const body = {
+      eligibility: 'known_execution',
+      items,
+      nextCursor:
+        page.candidates.length > limit
+          ? nextWorkCursor(credential, scanned[scanned.length - 1])
+          : null,
+      scanned: scanned.length,
+      notEvaluated,
+      excluded,
+    }
+    if (encoder.encode(JSON.stringify(body) + '\n').byteLength > ADAPTER_PAGE_BYTES)
+      throw Error('work page byte bound')
+    return response(body)
+  } catch {
+    return adapterError(503, 'storage_unavailable')
+  }
+}
+
 export const ADAPTER_REPORT_PATH = '/api/margin/v1/adapter/reports'
 const RECEIPT_PREFIX = '/api/margin/v1/adapter/receipts/'
 const REPORT_BYTES = 65_536
@@ -465,12 +591,15 @@ async function reportRoute(
 /** Exact service dispatcher. Namespace aliases reach refusal here, not AuthKit. */
 export async function handleAdapterRequest(
   request: Request,
-  repository: (AdapterFeedRepository & AdapterReportRepository) | null,
+  repository:
+    (AdapterFeedRepository & AdapterReportRepository & AdapterWorkRepository) | null,
 ): Promise<Response> {
   const result =
     new URL(request.url).pathname === ADAPTER_FEED_PATH
       ? await handleAdapterFeed(request, repository)
-      : await reportRoute(request, repository)
+      : new URL(request.url).pathname === ADAPTER_WORK_PATH
+        ? await handleAdapterWork(request, repository)
+        : await reportRoute(request, repository)
   return request.method === 'HEAD'
     ? new Response(null, { status: result.status, headers: result.headers })
     : result

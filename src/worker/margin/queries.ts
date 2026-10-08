@@ -803,3 +803,43 @@ export function insertAdapterReportQuery(
   }
 }
 
+
+/** Candidate scan is tenant-scoped, before any execution eligibility filtering. */
+export function adapterWorkQuery(
+  credential: import('./repository').AdapterCredential,
+  options: import('./repository').ApprovedFeedOptions,
+): Query {
+  const columns =
+    'proposal_id, site, document, visibility, body, base_commit, source_path, revision, approved_at, state'
+  const after = options.after
+  return {
+    sql: `WITH authority AS (${reportAuthority}), page AS (
+      SELECT ${columns
+        .split(', ')
+        .map((c) => `p.${c}`)
+        .join(', ')},
+        CASE WHEN e.proposal_id IS NULL THEN NULL ELSE json_object(${executionColumns
+          .split(', ')
+          .map((c) => `'${c}',e.${c}`)
+          .join(',')}) END AS execution
+      FROM margin_proposal_applications p JOIN authority a ON a.site=p.site
+      LEFT JOIN margin_proposal_execution e ON e.proposal_id=p.proposal_id
+      WHERE p.state IN ('approved','pr_open','conflict','apply_failed')
+        ${after ? 'AND (p.approved_at > ? OR (p.approved_at = ? AND p.proposal_id > ?))' : ''}
+      ORDER BY p.approved_at ASC,p.proposal_id ASC LIMIT ?
+    )
+    SELECT 'authority' AS kind, CASE WHEN EXISTS(SELECT 1 FROM authority) THEN 1 ELSE 0 END AS authorized,
+      ${columns
+        .split(', ')
+        .map((c) => `NULL AS ${c}`)
+        .join(', ')}, NULL AS execution
+    UNION ALL SELECT 'item' AS kind,1 AS authorized,${columns},execution FROM page
+    ORDER BY kind ASC,approved_at ASC,proposal_id ASC`,
+    params: [
+      ...reportAuthorityParams(credential),
+      ...(after ? [after.approvedAt, after.approvedAt, after.proposalId] : []),
+      options.limit,
+    ],
+  }
+}
+

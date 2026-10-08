@@ -280,6 +280,33 @@ export interface AdapterFeedRepository {
 }
 
 
+/** Scanned immutable applications; absence is legacy unknown, never zero. */
+export type AdapterWorkExecution = {
+  state: 'approved' | 'pr_open' | 'conflict' | 'apply_failed'
+  stateVersion: number
+  failedApplyCount: number
+  boundAdapter: string | null
+  pr: AdapterReportPR | null
+  checks: 'pending' | 'passed' | 'failed' | 'not_evaluated' | null
+  detail: string | null
+  mergeCommit: string | null
+  lastEvent: string | null
+  updatedAt: string
+}
+export type AdapterWorkCandidate = ApprovedFeedItem & {
+  execution: AdapterWorkExecution | null
+}
+export interface AdapterWorkRepository {
+  /** Current report-grant authority and all candidates from one SQL snapshot. */
+  listAdapterWork(
+    credential: AdapterCredential,
+    options: ApprovedFeedOptions,
+  ): Promise<{
+    authorized: boolean
+    candidates: AdapterWorkCandidate[]
+  }>
+}
+
 /** Private adapter assertions, not proof of provider work or merge authority. */
 export type AdapterReportPR = { number: number; url: string; head: string }
 export type AdapterReportOutcome =

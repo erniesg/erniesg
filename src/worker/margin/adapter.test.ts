@@ -1196,3 +1196,459 @@ it.each([
   ).toBe(true)
   expect(typeof (await import('./d1-repository')).D1MarginRepository).toBe('function')
 })
+
+const WORK = '/api/margin/v1/adapter/work'
+describe('known execution work RED pilots', () => {
+  it('requires current report authority while keeping the immutable feed unchanged', async () => {
+    const f = await reportFixture()
+    expect((await f.call(f.value)).status).toBe(200)
+    expect((await f.requestReport(WORK, 'GET')).status).toBe(403)
+    await f.grant()
+    const response = await f.requestReport(WORK, 'GET')
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      eligibility: 'known_execution',
+      scanned: 1,
+      notEvaluated: { unknownExecution: 0 },
+      excluded: { exhaustedFailures: 0, otherAdapter: 0 },
+      items: [
+        {
+          proposalId: f.proposal.id,
+          work: 'apply',
+          execution: {
+            state: 'approved',
+            stateVersion: 0,
+            failedApplyCount: 0,
+            pr: null,
+            lastEvent: null,
+          },
+        },
+      ],
+      nextCursor: null,
+    })
+    const query = f.h.database.query.bind(f.h.database)
+    vi.spyOn(f.h.database, 'query').mockImplementation((sql, params) => {
+      const rows = query(sql, params)
+      if (sql.includes('LIMIT 2'))
+        f.h.database.execute('UPDATE margin_adapter_report_grants SET revoked_at=?', [
+          AT,
+        ])
+      return rows
+    })
+    expect((await f.requestReport(WORK, 'GET')).status).toBe(403)
+    expect((await f.call(f.value)).status).toBe(200)
+  })
+  it('classifies cumulative failure and known PR states from immutable approval only', async () => {
+    const f = await reportFixture()
+    await f.grant()
+    await f.h.request(
+      'PATCH',
+      `/annotations/${f.proposal.id}${scopeQuery(f.proposal.source)}`,
+      {
+        as: BOB,
+        body: { body: proposalBody('New {++current++}.') },
+      },
+    )
+    const initial = await f.requestReport(WORK, 'GET')
+    expect(initial.status).toBe(200)
+    expect((await initial.json()).items[0]).toMatchObject({
+      body: proposalBody(),
+      approvedRevision: 1,
+      work: 'apply',
+    })
+    let version = 0
+    const send = async (outcome: unknown) => {
+      const r = await f.requestReport(REPORTS, 'POST', {
+        ...f.report(++version),
+        expectedStateVersion: version - 1,
+        outcome,
+      })
+      expect(r.status).toBe(200)
+      const page = await f.requestReport(WORK, 'GET')
+      expect(page.status).toBe(200)
+      return page.json()
+    }
+    for (let n = 1; n <= 3; n++) {
+      const page = await send({ state: 'apply_failed', detail: 'offline failure' })
+      expect(page.excluded.exhaustedFailures).toBe(n === 3 ? 1 : 0)
+      expect(page.items.map((x: any) => x.work)).toEqual(n === 3 ? [] : ['apply'])
+    }
+    expect(
+      (await send({ state: 'conflict', detail: 'offline conflict' })).items[0].work,
+    ).toBe('reconcile_only')
+    const pr = { number: 4, url: 'https://code.example/pr/4', head: 'c'.repeat(40) }
+    expect(
+      (await send({ state: 'pr_open', pr, checks: 'not_evaluated', detail: null }))
+        .items[0],
+    ).toMatchObject({ work: 'refresh_pr', execution: { failedApplyCount: 3, pr } })
+    expect(
+      (await send({ state: 'conflict', detail: 'retain known PR' })).items[0],
+    ).toMatchObject({ work: 'refresh_pr', execution: { failedApplyCount: 3, pr } })
+    expect((await send({ state: 'closed', pr })).items).toEqual([])
+  })
+  it('advances an empty legacy page and rejects feed or another token cursor', async () => {
+    const f = await reportFixture()
+    await f.grant()
+    f.h.database.execute('DROP TRIGGER margin_execution_initialize')
+    await f.approve(
+      SITE + '/legacy/',
+      'private',
+      proposalBody(),
+      '2020-01-01T00:00:00.000Z',
+    )
+    const first = await f.requestReport(WORK + '?limit=1', 'GET')
+    expect(first.status).toBe(200)
+    const page = await first.json()
+    expect(page).toMatchObject({
+      items: [],
+      scanned: 1,
+      notEvaluated: { unknownExecution: 1 },
+    })
+    expect(page.nextCursor).toEqual(expect.any(String))
+    const next = await f.requestReport(
+      WORK + '?limit=1&cursor=' + page.nextCursor,
+      'GET',
+    )
+    expect(next.status).toBe(200)
+    expect((await next.json()).items[0].proposalId).toBe(f.proposal.id)
+    const feed = await (await f.call(f.value, '?limit=1')).json()
+    expect(
+      (await f.requestReport(WORK + '?cursor=' + feed.nextCursor, 'GET')).status,
+    ).toBe(400)
+    const otherToken = await f.token(SITE, 8)
+    expect(
+      (
+        await f.requestReport(
+          WORK + '?cursor=' + page.nextCursor,
+          'GET',
+          undefined,
+          otherToken,
+        )
+      ).status,
+    ).toBe(400)
+  })
+  it('rejects malformed execution in lookahead before classifying any rows', async () => {
+    const f = await reportFixture()
+    await f.grant()
+    await f.approve()
+    const query = f.h.database.query.bind(f.h.database)
+    vi.spyOn(f.h.database, 'query').mockImplementation((sql, params) => {
+      const rows = query(sql, params)
+      if (sql.includes('margin_proposal_execution') && rows.length === 3) {
+        rows[2] = { ...rows[2], execution: JSON.stringify({ malformed: true }) }
+      }
+      return rows
+    })
+    expect((await f.requestReport(WORK + '?limit=1', 'GET')).status).toBe(503)
+  })
+})
+
+function alterWorkRows(
+  f: Awaited<ReturnType<typeof reportFixture>>,
+  alter: (rows: Record<string, any>[]) => Record<string, any>[],
+) {
+  const query = f.h.database.query.bind(f.h.database)
+  return vi.spyOn(f.h.database, 'query').mockImplementation((sql, params) => {
+    const rows = query(sql, params)
+    return sql.includes('page AS') && sql.includes('margin_proposal_execution')
+      ? alter(rows)
+      : rows
+  })
+}
+function workState(
+  row: Record<string, any>,
+  state: string,
+  count: number,
+  hasPR: boolean,
+) {
+  const e = JSON.parse(row.execution)
+  Object.assign(e, {
+    state_version: state === 'approved' ? 0 : Math.max(1, count),
+    failed_apply_count: count,
+    bound_adapter: state === 'approved' ? null : 'fixture-adapter',
+    last_event: state === 'approved' ? null : reportEvent(3),
+    pr_number: hasPR ? 4 : null,
+    pr_url: hasPR ? 'https://code.example/pr/4' : null,
+    pr_head: hasPR ? 'd'.repeat(40) : null,
+    merge_commit: null,
+    checks: state === 'pr_open' ? 'passed' : hasPR ? 'not_evaluated' : null,
+    detail: ['conflict', 'apply_failed'].includes(state) ? 'offline detail' : null,
+  })
+  return { ...row, state, execution: JSON.stringify(e) }
+}
+
+describe('work projection invariant sweep', () => {
+  const states = [
+    { state: 'approved', count: 0, pr: false, work: 'apply' },
+    ...[0, 1, 2, 3].flatMap((count) => [
+      { state: 'pr_open', count, pr: true, work: 'refresh_pr' },
+      { state: 'conflict', count, pr: true, work: 'refresh_pr' },
+      {
+        state: 'conflict',
+        count,
+        pr: false,
+        work: count === 3 ? 'reconcile_only' : 'apply',
+      },
+    ]),
+    ...[1, 2, 3].map((count) => ({
+      state: 'apply_failed',
+      count,
+      pr: false,
+      work: count === 3 ? null : 'apply',
+    })),
+  ]
+  it.each(states)(
+    'classifies $state count$count PR$pr',
+    async ({ state, count, pr, work }) => {
+      const f = await reportFixture()
+      await f.grant()
+      alterWorkRows(f, (rows) => [rows[0], workState(rows[1], state, count, pr)])
+      const response = await f.requestReport(WORK, 'GET')
+      expect(response.status).toBe(200)
+      const page = await response.json()
+      expect(page.items.map((x: any) => x.work)).toEqual(work ? [work] : [])
+      expect(page.excluded.exhaustedFailures).toBe(work ? 0 : 1)
+      if (work) {
+        expect(page.items[0].execution).toMatchObject({
+          state,
+          failedApplyCount: count,
+        })
+        expect(page.items[0].execution).not.toHaveProperty('boundAdapter')
+      }
+    },
+  )
+  const invalid: Record<string, (e: Record<string, any>) => void> = {
+    'unknown column': (e) => {
+      e.extra = true
+    },
+    'foreign site': (e) => {
+      e.site = OTHER
+    },
+    'other proposal': (e) => {
+      e.proposal_id = 'another'
+    },
+    'other revision': (e) => {
+      e.approved_revision = 2
+    },
+    'boolean count': (e) => {
+      e.failed_apply_count = false
+    },
+    'fraction version': (e) => {
+      e.state_version = 0.5
+    },
+    'unsafe version': (e) => {
+      e.state_version = Number.MAX_SAFE_INTEGER + 1
+    },
+    'excess count': (e) => {
+      e.failed_apply_count = 4
+    },
+    'partial PR': (e) => {
+      e.pr_url = 'https://code.example/pr/1'
+    },
+    'empty stamp': (e) => {
+      e.updated_at = ''
+    },
+    'initial timestamp mismatch': (e) => {
+      e.updated_at = AT
+    },
+    'initial bound adapter': (e) => {
+      e.bound_adapter = 'other-adapter'
+    },
+    'initial last event': (e) => {
+      e.last_event = reportEvent(2)
+    },
+    'initial detail': (e) => {
+      e.detail = 'unexpected'
+    },
+    'initial checks': (e) => {
+      e.checks = 'passed'
+    },
+    'initial merge': (e) => {
+      e.merge_commit = 'a'.repeat(40)
+    },
+  }
+  it.each(Object.entries(invalid).map(([name, mutate]) => ({ name, mutate })))(
+    'refuses $name in selected and lookahead before exclusion',
+    async ({ mutate }) => {
+      for (const position of [1, 2]) {
+        const f = await reportFixture()
+        await f.grant()
+        await f.approve()
+        const spy = alterWorkRows(f, (rows) => {
+          const e = JSON.parse(rows[position].execution)
+          mutate(e)
+          return rows.map((row, i) =>
+            i === position ? { ...row, execution: JSON.stringify(e) } : row,
+          )
+        })
+        const response = await f.requestReport(WORK + '?limit=1', 'GET')
+        expect(response.status).toBe(503)
+        expect(await response.json()).toEqual({
+          error: { code: 'storage_unavailable' },
+        })
+        spy.mockRestore()
+      }
+    },
+  )
+  it.each([
+    'scope',
+    'body',
+    'unknown',
+    'terminal',
+    'duplicate',
+    'reverse',
+    'absent-authority',
+    'false-authority-with-data',
+    'extra-authority',
+    'excess-rows',
+    'bad-execution-json',
+  ])('refuses invalid candidate envelope %s', async (kind) => {
+    const f = await reportFixture()
+    await f.grant()
+    await f.approve()
+    alterWorkRows(f, (rows) => {
+      if (kind === 'scope') rows[1].site = OTHER
+      if (kind === 'body') rows[1].body = 'not structured hunks'
+      if (kind === 'unknown') rows[1].extra = true
+      if (kind === 'terminal') rows[1].state = 'merged'
+      if (kind === 'duplicate') rows[2] = { ...rows[1] }
+      if (kind === 'reverse') [rows[1], rows[2]] = [rows[2], rows[1]]
+      if (kind === 'absent-authority') rows.shift()
+      if (kind === 'false-authority-with-data') rows[0].authorized = 0
+      if (kind === 'extra-authority') rows[0].execution = '{}'
+      if (kind === 'excess-rows') return [...rows, rows[1]]
+      if (kind === 'bad-execution-json') rows[2].execution = '{'
+      return rows
+    })
+    expect((await f.requestReport(WORK + '?limit=1', 'GET')).status).toBe(503)
+  })
+  it('excludes a valid other-adapter binding without cross-site rows or counters', async () => {
+    const f = await reportFixture()
+    await f.grant()
+    await f.token(OTHER, 2)
+    await f.approve(OTHER + '/private/')
+    const spy = alterWorkRows(f, (rows) => {
+      const item = workState(rows[1], 'conflict', 3, false),
+        e = JSON.parse(item.execution)
+      e.bound_adapter = 'another-valid-adapter'
+      item.execution = JSON.stringify(e)
+      return [rows[0], item]
+    })
+    const page = await (await f.requestReport(WORK, 'GET')).json()
+    expect(page).toMatchObject({
+      items: [],
+      scanned: 1,
+      excluded: { otherAdapter: 1, exhaustedFailures: 0 },
+      notEvaluated: { unknownExecution: 0 },
+    })
+    spy.mockRestore()
+    f.h.database.executed.length = 0
+    expect((await f.requestReport(WORK, 'GET')).status).toBe(200)
+    expect(f.h.database.executed).toHaveLength(2)
+    expect(f.h.database.executed[1].sql).toContain('a.site=p.site')
+    expect(f.h.database.executed[1].sql).toContain('margin_adapter_report_grants')
+    expect(f.h.database.executed[1].sql).not.toContain('margin_annotations')
+    expect(f.h.database.executed[1].params).toContain(SITE)
+  })
+  it('bounds the entire candidate result and recovers with a smaller limit without truncation', async () => {
+    const f = await reportFixture()
+    await f.grant()
+    const body = proposalBody('{++' + '界'.repeat(60_000) + '++}')
+    for (let n = 0; n < 24; n++) await f.approve(SITE + '/large/' + n, 'private', body)
+    const tooLarge = await f.requestReport(WORK + '?limit=25', 'GET')
+    expect(tooLarge.status).toBe(503)
+    expect(await tooLarge.json()).toEqual({ error: { code: 'storage_unavailable' } })
+    const smaller = await f.requestReport(WORK + '?limit=1', 'GET')
+    expect(smaller.status).toBe(200)
+    const page = await smaller.json()
+    expect(page.scanned).toBe(1)
+    expect(page.nextCursor).toEqual(expect.any(String))
+    const next = await f.requestReport(
+      WORK + '?limit=1&cursor=' + page.nextCursor,
+      'GET',
+    )
+    expect(next.status).toBe(200)
+    expect((await next.json()).items[0].body).toBe(body)
+  })
+  it.each([
+    '?limit=0',
+    '?limit=51',
+    '?limit=01',
+    '?limit=1.0',
+    '?limit=-1',
+    '?cursor=',
+    '?limit=1&limit=1',
+    '?cursor=x&cursor=y',
+    '?site=x',
+    '?cursor=' + 'a'.repeat(32769),
+    '?extra=' + 'a'.repeat(40001),
+  ])('rejects bounded query %s', async (suffix) => {
+    const f = await reportFixture()
+    await f.grant()
+    f.h.database.executed.length = 0
+    expect((await f.requestReport(WORK + suffix, 'GET')).status).toBe(400)
+    expect(f.h.database.executed).toHaveLength(1)
+  })
+  it('validates canonical cursor shape, scope, and UTF8 BINARY ordering', async () => {
+    const f = await reportFixture()
+    await f.grant()
+    await f.approve()
+    const page = await (await f.requestReport(WORK + '?limit=1', 'GET')).json()
+    const decoded = JSON.parse(
+      new TextDecoder().decode(
+        Uint8Array.from(
+          atob(page.nextCursor.replace(/-/g, '+').replace(/_/g, '/')),
+          (c) => c.charCodeAt(0),
+        ),
+      ),
+    )
+    for (const patch of [
+      { version: 2 },
+      { purpose: 'approved' },
+      { site: OTHER },
+      { adapter: 'other' },
+      { tokenId: reportEvent(44) },
+      { extra: true },
+    ]) {
+      const cursor = encodeBase64Url(
+        new TextEncoder().encode(JSON.stringify({ ...decoded, ...patch })),
+      )
+      expect((await f.requestReport(WORK + '?cursor=' + cursor, 'GET')).status).toBe(
+        400,
+      )
+    }
+    for (const raw of [
+      JSON.stringify(decoded).replace('{', '{"version":1,'),
+      JSON.stringify(decoded, null, 2),
+    ]) {
+      expect(
+        (
+          await f.requestReport(
+            WORK + '?cursor=' + encodeBase64Url(new TextEncoder().encode(raw)),
+            'GET',
+          )
+        ).status,
+      ).toBe(400)
+    }
+    const spy = alterWorkRows(f, (rows) =>
+      rows.map((r, i) => {
+        if (!i) return r
+        const e = JSON.parse(r.execution),
+          id = i === 1 ? '\uE000' : '\u{10000}'
+        return {
+          ...r,
+          proposal_id: id,
+          approved_at: AT,
+          execution: JSON.stringify({ ...e, proposal_id: id, updated_at: AT }),
+        }
+      }),
+    )
+    const ordered = await f.requestReport(WORK, 'GET')
+    expect(ordered.status).toBe(200)
+    expect((await ordered.json()).items.map((x: any) => x.proposalId)).toEqual([
+      '\uE000',
+      '\u{10000}',
+    ])
+    spy.mockRestore()
+  })
+})

@@ -243,6 +243,13 @@ export default defineConfig({
     enabled: false,
   },
   vite: {
+    // Prerender chunks are relocated under dist/. The renderer still executes
+    // only this checkout's pinned current code, never the historical input tree.
+    define: {
+      'import.meta.BOOK_RENDERER_SOURCE_ROOT': JSON.stringify(
+        fileURLToPath(new URL('.', import.meta.url)),
+      ),
+    },
     plugins: [
       legacyRedirectsDevPlugin(),
       localOcrBuildAssetsPlugin(),

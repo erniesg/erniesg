@@ -20,7 +20,11 @@ type Render = { schemaVersion: 1; profile: 'node-content-readonly-v1'; sourcePat
 type Live = { commit: string; deleted: false; treeOID: string; sourcePath: string; sourceOID: string; sourceSha256: string; dependencies: (Read & { oid: string })[]; optionalAbsences: { path: string; treeOID: string }[]; render: Render; renderSha256: string }
 type Tombstone = { commit: string; sourcePath: string; deleted: true; render: null }
 export type RenderedBookHistories = { schemaVersion: 1; site: string; buildCommit: string; rendererProfile: string; rendererFingerprint: string; rawAssets: BookHistoryAsset[]; documents: { document: string; rawHistorySha256: string; versions: (Live | Tombstone)[] }[] }
-const TRUSTED_ROOT = fileURLToPath(new URL('../../', import.meta.url))
+// Astro binds this literal from its trusted config before relocating chunks.
+// Unbundled callers keep the module's fixed source root. Neither the caller's
+// historical repository nor its cwd selects executable renderer code.
+const TRUSTED_ROOT = (import.meta as ImportMeta & { BOOK_RENDERER_SOURCE_ROOT?: string }).BOOK_RENDERER_SOURCE_ROOT
+  ?? fileURLToPath(new URL('../../', import.meta.url))
 const TRUSTED_SOURCES = [
   'src/lib/book-history.ts', 'src/lib/book-history-rendered.ts',
   'adapters/margin/local-source.ts', 'adapters/margin/source-plan.ts', 'src/annotations/criticmarkup.ts',

@@ -17,6 +17,7 @@ import {
 } from 'node:fs'
 import path from 'node:path'
 import { performance } from 'node:perf_hooks'
+import { captureGitSelection } from '../../adapters/margin/local-source'
 
 export type HistoryNode = {
   book: string
@@ -123,7 +124,7 @@ class LocalHistory {
   readonly deadline: number
   readonly root: string
   readonly env: NodeJS.ProcessEnv
-  constructor(root: string, limits: Partial<Limits> = {}, readonly hooks?: SnapshotHooks) {
+  constructor(root: string, limits: Partial<Limits> = {}, readonly hooks?: SnapshotHooks, deadline?: number) {
     this.root = realpathSync(root)
     for (const [key, value] of Object.entries(limits)) {
       if (
@@ -135,7 +136,7 @@ class LocalHistory {
         fail('invalid history resource limit')
     }
     this.limits = { ...HISTORY_LIMITS, ...limits }
-    this.deadline = performance.now() + this.limits.collectionMs
+    this.deadline = deadline ?? performance.now() + this.limits.collectionMs
     this.env = Object.fromEntries(
       Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')),
     )
@@ -484,6 +485,80 @@ export function serializeBookHistory(asset: BookHistoryAsset): string {
   return JSON.stringify(asset) + '\n'
 }
 
+/** Shared decoder; each caller supplies its own immutable commit authority. */
+function historySnapshot(
+  reader: LocalHistory, head: string, allowedCommits: ReadonlySet<string>, isActive: () => boolean,
+): HistorySnapshot {
+  const allowedOids = new Set<string>()
+  const check = () => { if (!isActive()) fail('expired history snapshot'); reader.remaining() }
+  const snapshot: HistorySnapshot = Object.freeze({
+    get head() { check(); return head },
+    remaining() { check(); return reader.remaining() },
+    tree(commit: string) {
+      check()
+      if (!allowedCommits.has(commit)) fail('history commit is outside selected versions')
+      const treeOID = text(reader.git(['rev-parse', '--verify', `${commit}^{tree}`])).trim()
+      if (!oid(treeOID) || treeOID.length !== head.length) fail('invalid historical tree OID')
+      // Only rendered snapshots need complete occupancy, including empty
+      // trees. Default raw-v1 tree traversal remains leaf-only.
+      const entries = reader.tree(treeOID, [], true)
+      const occupied = new Set(entries.keys())
+      allowedOids.clear()
+      for (const [name, item] of entries) {
+        if (item.mode === '040000') entries.delete(name)
+        else if (['100644', '100755'].includes(item.mode)) allowedOids.add(item.oid)
+      }
+      return { treeOID, entries, occupied }
+    },
+    blobs(requested: readonly string[], byteLimit = 64 * 1024 * 1024) {
+      check()
+      if (!Number.isSafeInteger(byteLimit) || byteLimit < 1 || byteLimit > 64 * 1024 * 1024) fail('invalid historical map byte limit')
+      if (!Array.isArray(requested) || requested.length > 10_000 || requested.some(id => !oid(id) || !allowedOids.has(id))) fail('invalid historical blob selection')
+      const oids = [...new Set(requested)]
+      const result = new Map<string, Buffer>()
+      if (!oids.length) return result
+      const sizes = new Map<string, number>()
+      for (let start = 0; start < oids.length; start += 512) {
+        const group = oids.slice(start, start + 512)
+        const raw = text(reader.git(['cat-file', '--batch-check=%(objectname) %(objecttype) %(objectsize)'], false, 128 * 1024, Buffer.from(group.join('\n') + '\n')))
+        const rows = raw.split('\n')
+        if (rows.pop() !== '' || rows.length !== group.length) fail('incomplete historical size framing')
+        rows.forEach((row, index) => {
+          const match = /^([a-f0-9]+) blob (0|[1-9][0-9]*)$/.exec(row)
+          const size = Number(match?.[2])
+          if (!match || match[1] !== group[index] || !Number.isSafeInteger(size) || size > reader.limits.blobBytes) fail('historical blob size/type bound')
+          sizes.set(group[index], size)
+        })
+      }
+      if (requested.reduce((sum, id) => sum + sizes.get(id)!, 0) > byteLimit) fail('historical batch map bound')
+      let cursor = 0
+      while (cursor < oids.length) {
+        check()
+        const group: string[] = []; let expected = 0
+        while (cursor < oids.length && group.length < 512 && expected + sizes.get(oids[cursor])! + 128 <= 16 * 1024 * 1024) {
+          const id = oids[cursor++]; group.push(id); expected += sizes.get(id)! + 128
+        }
+        if (!group.length) fail('historical blob batch bound')
+        const raw = reader.git(['cat-file', '--batch'], false, 16 * 1024 * 1024, Buffer.from(group.join('\n') + '\n'))
+        let offset = 0
+        for (const id of group) {
+          const newline = raw.indexOf(10, offset), size = sizes.get(id)!
+          if (newline < offset || !raw.subarray(offset, newline).equals(Buffer.from(`${id} blob ${size}`, 'ascii'))) fail('historical batch header differs')
+          offset = newline + 1
+          if (offset + size >= raw.length || raw[offset + size] !== 10) fail('incomplete historical batch body')
+          const bytes = Buffer.from(raw.subarray(offset, offset + size)); offset += size + 1
+          const actual = createHash(head.length === 40 ? 'sha1' : 'sha256').update(`blob ${size}\0`).update(bytes).digest('hex')
+          if (actual !== id) fail('historical blob OID differs')
+          result.set(id, bytes)
+        }
+        if (offset !== raw.length) fail('extra historical batch bytes')
+      }
+      return result
+    },
+  })
+  return snapshot
+}
+
 /** The callback must freshly use the site's canonical mapping producer inside
  * this witness. It receives its remaining time bound; no unkeyed prior cache.
  * A lower resource budget is allowed; callers cannot bypass the fixed ceilings.
@@ -564,73 +639,7 @@ function collectHistorySnapshot<T>(
   }
   let active = true
   const allowedCommits = new Set(assets.flatMap(asset => asset.versions.map(version => version.commit)))
-  const allowedOids = new Set<string>()
-  const check = () => { if (!active) fail('expired history snapshot'); reader.remaining() }
-  const snapshot: HistorySnapshot = Object.freeze({
-    get head() { check(); return head },
-    remaining() { check(); return reader.remaining() },
-    tree(commit: string) {
-      check()
-      if (!allowedCommits.has(commit)) fail('history commit is outside selected versions')
-      const treeOID = text(reader.git(['rev-parse', '--verify', `${commit}^{tree}`])).trim()
-      if (!oid(treeOID) || treeOID.length !== head.length) fail('invalid historical tree OID')
-      // Only rendered snapshots need complete occupancy, including empty
-      // trees. Default raw-v1 tree traversal remains leaf-only.
-      const entries = reader.tree(treeOID, [], true)
-      const occupied = new Set(entries.keys())
-      allowedOids.clear()
-      for (const [name, item] of entries) {
-        if (item.mode === '040000') entries.delete(name)
-        else if (['100644', '100755'].includes(item.mode)) allowedOids.add(item.oid)
-      }
-      return { treeOID, entries, occupied }
-    },
-    blobs(requested: readonly string[], byteLimit = 64 * 1024 * 1024) {
-      check()
-      if (!Number.isSafeInteger(byteLimit) || byteLimit < 1 || byteLimit > 64 * 1024 * 1024) fail('invalid historical map byte limit')
-      if (!Array.isArray(requested) || requested.length > 10_000 || requested.some(id => !oid(id) || !allowedOids.has(id))) fail('invalid historical blob selection')
-      const oids = [...new Set(requested)]
-      const result = new Map<string, Buffer>()
-      if (!oids.length) return result
-      const sizes = new Map<string, number>()
-      for (let start = 0; start < oids.length; start += 512) {
-        const group = oids.slice(start, start + 512)
-        const raw = text(reader.git(['cat-file', '--batch-check=%(objectname) %(objecttype) %(objectsize)'], false, 128 * 1024, Buffer.from(group.join('\n') + '\n')))
-        const rows = raw.split('\n')
-        if (rows.pop() !== '' || rows.length !== group.length) fail('incomplete historical size framing')
-        rows.forEach((row, index) => {
-          const match = /^([a-f0-9]+) blob (0|[1-9][0-9]*)$/.exec(row)
-          const size = Number(match?.[2])
-          if (!match || match[1] !== group[index] || !Number.isSafeInteger(size) || size > reader.limits.blobBytes) fail('historical blob size/type bound')
-          sizes.set(group[index], size)
-        })
-      }
-      if (requested.reduce((sum, id) => sum + sizes.get(id)!, 0) > byteLimit) fail('historical batch map bound')
-      let cursor = 0
-      while (cursor < oids.length) {
-        check()
-        const group: string[] = []; let expected = 0
-        while (cursor < oids.length && group.length < 512 && expected + sizes.get(oids[cursor])! + 128 <= 16 * 1024 * 1024) {
-          const id = oids[cursor++]; group.push(id); expected += sizes.get(id)! + 128
-        }
-        if (!group.length) fail('historical blob batch bound')
-        const raw = reader.git(['cat-file', '--batch'], false, 16 * 1024 * 1024, Buffer.from(group.join('\n') + '\n'))
-        let offset = 0
-        for (const id of group) {
-          const newline = raw.indexOf(10, offset), size = sizes.get(id)!
-          if (newline < offset || !raw.subarray(offset, newline).equals(Buffer.from(`${id} blob ${size}`, 'ascii'))) fail('historical batch header differs')
-          offset = newline + 1
-          if (offset + size >= raw.length || raw[offset + size] !== 10) fail('incomplete historical batch body')
-          const bytes = Buffer.from(raw.subarray(offset, offset + size)); offset += size + 1
-          const actual = createHash(head.length === 40 ? 'sha1' : 'sha256').update(`blob ${size}\0`).update(bytes).digest('hex')
-          if (actual !== id) fail('historical blob OID differs')
-          result.set(id, bytes)
-        }
-        if (offset !== raw.length) fail('extra historical batch bytes')
-      }
-      return result
-    },
-  })
+  const snapshot = historySnapshot(reader, head, allowedCommits, () => active)
   let value: T
   try { value = visitor(assets, snapshot) } finally { active = false }
   // An async visitor could retain work after this witness closes. Refuse it.
@@ -662,4 +671,102 @@ export function withBookHistorySnapshot<T>(
   visitor: (assets: BookHistoryAsset[], snapshot: HistorySnapshot) => T,
 ): T {
   return collectHistorySnapshot(root, site, loadNodes, options, visitor, hooks)
+}
+
+
+export type ExactBookBaseSnapshot = {
+  readonly head: string
+  readonly baseCommit: string
+  remaining(): number
+  tree(): HistoryTree
+  blobs(oids: readonly string[], byteLimit?: number): Map<string, Buffer>
+}
+
+/** Local Git provenance only. loadNodes is trusted host code, not an authenticated
+ * mapping supplied by a request. Its canonical freshness/provenance is the caller's
+ * responsibility. The complete covered-input witness surrounds that callback and
+ * the visitor; this API never grants proposal, renderer or private-data authority. */
+export function withExactBookBaseSnapshot<T>(
+  root: string,
+  site: string,
+  loadNodes: (remainingMs: number) => readonly HistoryNode[],
+  options: { expectedHead: string; baseCommit: string; limits?: Partial<Limits>; gitCalls?: number },
+  visitor: (nodes: readonly HistoryNode[], snapshot: ExactBookBaseSnapshot) => T,
+): T {
+  const started = performance.now()
+  try {
+    if (!options || typeof options !== 'object' || Array.isArray(options)
+        || Object.keys(options).some(key => !['expectedHead', 'baseCommit', 'limits', 'gitCalls'].includes(key))
+        || typeof options.expectedHead !== 'string' || !oid(options.expectedHead)
+        || typeof options.baseCommit !== 'string' || !oid(options.baseCommit)
+        || options.expectedHead.length !== options.baseCommit.length)
+      fail('invalid exact-base options or full object IDs')
+    const { expectedHead, baseCommit } = options
+    const gitCalls = options.gitCalls ?? 4096
+    if (!Number.isSafeInteger(gitCalls) || gitCalls < 1 || gitCalls > 4096)
+      fail('invalid exact-base Git call bound')
+    if (typeof site !== 'string' || !/^https?:\/\//.test(site) || new URL(site).origin !== site)
+      fail('invalid history site origin')
+    if (typeof loadNodes !== 'function' || typeof visitor !== 'function')
+      fail('exact-base synchronous callbacks required')
+    const resolved = realpathSync(root)
+    const selection = captureGitSelection(resolved)
+    const reader = new LocalHistory(resolved, options.limits, {
+      selection, extraInputs: [], gitCalls, checkInputs: () => {},
+    }, started + (options.limits?.collectionMs ?? HISTORY_LIMITS.collectionMs))
+    reader.remaining()
+    const head = reader.head()
+    if (head !== expectedHead) fail('history HEAD differs from expected HEAD')
+    reader.complete()
+    const base = text(reader.git(['rev-parse', '--verify', `${baseCommit}^{commit}`])).trim()
+    if (base !== baseCommit) fail('exact base is not the selected commit object')
+    reader.git(['merge-base', '--is-ancestor', baseCommit, head])
+    const witness = reader.inputs(head)
+    const supplied = loadNodes(reader.remaining())
+    reader.remaining(); selection.check()
+    if (!Array.isArray(supplied) || !supplied.length || supplied.length > reader.limits.versions)
+      fail('invalid exact-base mapping count or asynchronous mapping')
+    const documents = new Set<string>(), sources = new Set<string>()
+    const mappings: Readonly<HistoryNode>[] = []
+    let mappingBytes = 0
+    for (const node of supplied) {
+      reader.remaining()
+      if (!node || typeof node.book !== 'string' || typeof node.node !== 'string'
+          || typeof node.path !== 'string' || typeof node.sourcePath !== 'string'
+          || [node.book, node.node, node.path, node.sourcePath].some(value => value.length > 4096)
+          || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(node.book)
+          || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(node.node)
+          || node.path !== `/books/${node.book}/${node.node}/` || !sourcePath(node.sourcePath))
+        fail('invalid history mapping/locator')
+      mappingBytes += Buffer.byteLength(JSON.stringify([node.book, node.node, node.path, node.sourcePath]))
+      if (mappingBytes > reader.limits.nodeBytes) fail('exact-base mapping bytes bound exceeded')
+      relative(node.sourcePath)
+      const document = new URL(node.path, site).href
+      if (documents.has(document)) fail('duplicate history locator')
+      documents.add(document)
+      if (!sources.has(node.sourcePath)) { reader.blob(head, node.sourcePath); sources.add(node.sourcePath) }
+      mappings.push(Object.freeze({ book: node.book, node: node.node, path: node.path, sourcePath: node.sourcePath }))
+    }
+    let active = true
+    const capability = historySnapshot(reader, head, new Set([baseCommit]), () => active)
+    const snapshot: ExactBookBaseSnapshot = Object.freeze({
+      get head() { return capability.head },
+      get baseCommit() { capability.remaining(); return baseCommit },
+      remaining: () => capability.remaining(),
+      tree: () => capability.tree(baseCommit),
+      blobs: (oids: readonly string[], byteLimit?: number) => capability.blobs(oids, byteLimit),
+    })
+    let value: T
+    try { value = visitor(Object.freeze(mappings), snapshot) } finally { active = false }
+    if (value && typeof (value as { then?: unknown }).then === 'function')
+      fail('exact-base visitor must be synchronous')
+    reader.complete()
+    if (reader.head() !== head || reader.inputs(head) !== witness || reader.head() !== head)
+      fail('history HEAD or mapping inputs changed')
+    selection.check(); reader.remaining()
+    return value
+  } catch (error) {
+    if (error instanceof BookHistoryError) throw error
+    return fail('exact-base inspection or callback failed')
+  }
 }

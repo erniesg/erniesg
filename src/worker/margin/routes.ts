@@ -510,6 +510,11 @@ async function listReviewProposals(url: URL, context: MarginRouteContext): Promi
 
 async function readReviewProposal(url: URL, context: MarginRouteContext, id: string): Promise<Response> {
   if (!context.principal) return unauthenticated()
+  const includes = url.searchParams.getAll('include')
+  if (includes.length && (includes.length !== 1 || includes[0] !== 'execution')) {
+    return problem(400,'invalid_include','review include must be execution once')
+  }
+  const includeExecution = includes.length === 1
   for (const key of ['source','site','document']) {
     if (url.searchParams.getAll(key).length > 1) return problem(400,'invalid_scope','review scope parameters must be unique')
   }
@@ -518,10 +523,11 @@ async function readReviewProposal(url: URL, context: MarginRouteContext, id: str
   }
   const scope = readScope(url)
   if ('error' in scope) return scope.error
-  const result = await context.repository.readReviewProposal(scope,id,context.principal)
+  const result = await context.repository.readReviewProposal(scope,id,context.principal,includeExecution)
   if (result.status === 'forbidden') return problem(403,'review_forbidden','review requires global admin and an explicit site mapping')
   if (result.status === 'missing') return problem(404,'not_found','no proposal has that id here')
-  return json({ annotation: present(result.record), savedReview: result.savedReview })
+  if (includeExecution && result.execution === undefined) throw new Error('missing execution readback')
+  return json({ annotation: present(result.record), savedReview: result.savedReview, ...(includeExecution ? { execution: result.execution } : {}) })
 }
 
 async function reviewProposal(request: Request, url: URL, context: MarginRouteContext, id: string, apply: boolean): Promise<Response> {

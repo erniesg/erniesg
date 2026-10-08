@@ -108,15 +108,27 @@ it('binds fragment destinations and SVG references without cross-figure ambiguit
     '<p data-history-link-destination="/x">Wrong carrier</p>', '<a data-history-link-destination="/x">Not input</a>',
   ]) expect(() => safeHistoryHtml(html, 'h-reference')).toThrow()
 })
-it('enforces UTF-8, node, depth and CSS ceilings without silently truncating', async () => {
+it('enforces the exact UTF-8 byte ceiling and rejects malformed encoding', async () => {
   const { safeHistoryHtml, validateHistoryCss } = await api()
   expect(safeHistoryHtml('π'.repeat(2 * 1024 * 1024), 'h-exact').html.length).toBe(2 * 1024 * 1024)
   expect(() => safeHistoryHtml('π'.repeat(2 * 1024 * 1024) + 'x', 'h-over')).toThrow()
   expect(() => safeHistoryHtml('\ud800', 'h-encoding')).toThrow()
+})
+it('enforces the depth ceiling without truncating accepted nesting', async () => {
+  const { safeHistoryHtml, validateHistoryCss } = await api()
   expect(safeHistoryHtml('<div>'.repeat(127) + 'x' + '</div>'.repeat(127), 'h-depth').html).toContain('x')
+})
+it('enforces the node ceiling without silently truncating', async () => {
+  const { safeHistoryHtml, validateHistoryCss } = await api()
   expect(() => safeHistoryHtml('<p>x</p>'.repeat(50001), 'h-nodes')).toThrow(/node\/depth/)
+})
+it('enforces the CSS byte ceiling without silently truncating', async () => {
+  const { safeHistoryHtml, validateHistoryCss } = await api()
   expect(validateHistoryCss(' '.repeat(65536))).toHaveLength(65536)
   expect(() => validateHistoryCss(' '.repeat(65537))).toThrow()
+})
+it('enforces the attribute byte ceiling without silently truncating', async () => {
+  const { safeHistoryHtml, validateHistoryCss } = await api()
   expect(safeHistoryHtml('<a href="/' + 'x'.repeat(4095) + '">x</a>', 'h-attr').html).toContain('data-history-link-destination')
   expect(() => safeHistoryHtml('<a href="/' + 'x'.repeat(4096) + '">x</a>', 'h-attr')).toThrow()
 })

@@ -10,6 +10,10 @@ import {
   type SessionStatus,
 } from './margin-review-session'
 import {
+  acceptAll,
+  rejectAll,
+  criticMarkupFor,
+  formatHunks,
   isFullCommitId,
   parseCriticMarkup,
   parseHunks,
@@ -91,6 +95,116 @@ export function markupTokens(body: string): ReviewRow['hunks'] {
           : [segment],
     ),
   }))
+}
+
+/** One selected hunk is edited as text. No source reads or rendering authority. */
+export class ReviewDraft {
+  readonly original: string
+  #body: string
+  #index?: number
+  #text = ''
+  #openedText = ''
+  #error = ''
+  constructor(body: string) {
+    markupTokens(body) // same body/hunk/markup limits as the marked reader
+    this.original = this.#body = body
+  }
+  get body(): string {
+    return this.#body
+  }
+  get changed(): boolean {
+    return this.#body !== this.original
+  }
+  get error(): string {
+    return this.#error
+  }
+  get editor(): { index: number; text: string } | undefined {
+    return this.#index === undefined
+      ? undefined
+      : { index: this.#index, text: this.#text }
+  }
+  get pending(): boolean {
+    return (
+      this.#index !== undefined &&
+      this.#text !== acceptAll(parseHunks(this.#body)[this.#index].criticMarkup)
+    )
+  }
+  open(index: number): void {
+    const hunks = parseHunks(this.#body)
+    if (!Number.isInteger(index) || index < 0 || index >= hunks.length)
+      throw new Error('invalid hunk')
+    // Opening another hunk must not silently discard unmaterialized edits.
+    if (this.pending) throw new Error('update or cancel the current text first')
+    this.#index = index
+    this.#text = this.#openedText = acceptAll(hunks[index].criticMarkup)
+    this.#error = ''
+  }
+  stage(text: string, fromTextarea = false): void {
+    if (this.#index === undefined) return
+    this.#text = text
+    this.#error = ''
+    if (fromTextarea) {
+      // The textarea value API normalizes CRLF and CR. Reconstruct only the
+      // opened hunk's known homogeneous style; never normalize stored text.
+      const normalized = text.replace(/\r\n?/g, '\n')
+      if (normalized === this.#openedText.replace(/\r\n?/g, '\n')) {
+        this.#text = this.#openedText
+        return
+      }
+      const endings = new Set(this.#openedText.match(/\r\n|\r|\n/g) ?? [])
+      if (endings.size > 1) {
+        this.#error =
+          'This hunk has mixed line endings and cannot be edited here. Cancel this edit to preserve its text and save review metadata only.'
+        return
+      }
+      const newline = endings.values().next().value ?? '\n'
+      this.#text = normalized.replace(/\n/g, newline)
+    }
+  }
+  cancel(): void {
+    this.#index = undefined
+    this.#text = ''
+    this.#openedText = ''
+    this.#error = ''
+  }
+  discard(): void {
+    this.#body = this.original
+    this.cancel()
+  }
+  update(): boolean {
+    if (this.#index === undefined || this.#error) return false
+    try {
+      if (
+        this.#text.length > 64_000 ||
+        new TextDecoder('utf-8', { ignoreBOM: true }).decode(
+          new TextEncoder().encode(this.#text),
+        ) !== this.#text
+      )
+        throw new Error('edited text is too large or not well-formed Unicode')
+      const index = this.#index,
+        current = parseHunks(this.#body),
+        original = parseHunks(this.original)[index]
+      const base = rejectAll(original.criticMarkup)
+      // Exactly one bounded converter invocation per deliberate Update action;
+      // unchanged text (including undo) retains the original markup bytes.
+      const markup =
+        this.#text === acceptAll(original.criticMarkup)
+          ? original.criticMarkup
+          : criticMarkupFor(base, this.#text)
+      if (rejectAll(markup) !== base || acceptAll(markup) !== this.#text)
+        throw new Error('ambiguous text')
+      current[index] = { ...original, criticMarkup: markup }
+      const body = formatHunks(current)
+      markupTokens(body) // includes final serialized body size, not just input
+      this.#body = body
+      this.cancel()
+      return true
+    } catch {
+      this.#error =
+        'These edits cannot be represented within the proposal limits. Shorten or change the text, or cancel this edit.'
+      return false
+    }
+  }
 }
 
 export function parseReviewPage(
@@ -362,6 +476,26 @@ export function mountReviewReader(root: HTMLElement): () => void {
     '[data-review-refresh]',
   )!
   const close = root.querySelector<HTMLButtonElement>('[data-review-close]')!
+  const draftPanel = root.querySelector<HTMLElement>('[data-review-draft]')!
+  const draftStatus = root.querySelector<HTMLElement>(
+    '[data-review-draft-status]',
+  )!
+  const draftDiff = root.querySelector<HTMLElement>('[data-review-draft-diff]')!
+  const editor = root.querySelector<HTMLElement>('[data-review-hunk-editor]')!
+  const editorLabel = root.querySelector<HTMLElement>(
+    '[data-review-hunk-label]',
+  )!
+  const proposedText = root.querySelector<HTMLTextAreaElement>(
+    '[data-review-proposed-text]',
+  )!
+  const update = root.querySelector<HTMLButtonElement>('[data-review-update]')!
+  const cancelEdit = root.querySelector<HTMLButtonElement>(
+    '[data-review-cancel-edit]',
+  )!
+  const discard = root.querySelector<HTMLButtonElement>(
+    '[data-review-discard]',
+  )!
+  let draft: ReviewDraft | undefined
   const site = root.dataset.reviewSite!
   const fetcher: typeof fetch = (input, init) => fetch(input, init)
   let epoch = 0,
@@ -373,8 +507,12 @@ export function mountReviewReader(root: HTMLElement): () => void {
     node.textContent = text
     return node
   }
-  const renderHunks = (into: HTMLElement, hunks: ReviewRow['hunks']) => {
-    for (const hunk of hunks) {
+  const renderHunks = (
+    into: HTMLElement,
+    hunks: ReviewRow['hunks'],
+    editable = false,
+  ) => {
+    for (const [index, hunk] of hunks.entries()) {
       into.append(element('h3', `Base lines ${hunk.start}–${hunk.end}`))
       const pre = doc.createElement('pre')
       for (const token of hunk.tokens)
@@ -389,14 +527,54 @@ export function mountReviewReader(root: HTMLElement): () => void {
           ),
         )
       into.append(pre)
+      if (editable) {
+        const edit = element(
+          'button',
+          `Edit proposed text · base lines ${hunk.start}–${hunk.end}`,
+        ) as HTMLButtonElement
+        edit.type = 'button'
+        edit.disabled = !session.canSave || Boolean(draft?.pending)
+        edit.addEventListener('click', () => {
+          if (!session.canSave || !draft || draft.pending) return
+          draft.open(index)
+          renderDraft()
+          proposedText.focus()
+        })
+        into.append(edit)
+      }
     }
   }
   const updateSave = () => {
     saveButton.disabled =
       !session.canSave ||
+      Boolean(draft?.pending || draft?.error) ||
       !decision.value.trim() ||
       decision.value.trim().length > 200 ||
       comments.value.length > 8000
+  }
+  const renderDraft = () => {
+    draftPanel.hidden = !draft
+    draftDiff.replaceChildren()
+    draftStatus.textContent = draft
+      ? draft.error ||
+        (draft.changed
+          ? 'Unsaved proposed changes. Save review to store them; the proposal stays pending.'
+          : 'Stored proposed changes.')
+      : ''
+    discard.disabled =
+      !draft || !session.canSave || (!draft.changed && !draft.editor)
+    if (draft) renderHunks(draftDiff, markupTokens(draft.body), true)
+    const active = draft?.editor
+    editor.hidden = !active
+    proposedText.value = active?.text ?? ''
+    proposedText.disabled = !active || !session.canSave
+    update.disabled =
+      !active || !session.canSave || !draft?.pending || Boolean(draft?.error)
+    if (active) {
+      const hunk = parseHunks(draft!.body)[active.index]
+      editorLabel.textContent = `Proposed text · base lines ${hunk.baseStartLine}–${hunk.baseEndLine}`
+    } else editorLabel.textContent = 'Proposed text'
+    updateSave()
   }
   const session = new ReviewSession(
     site,
@@ -448,6 +626,7 @@ export function mountReviewReader(root: HTMLElement): () => void {
         message = 'Save was refused. Refresh the review before another action.'
       panelStatus.textContent = message
       const row = view.observed
+      draft = row && session.canSave ? new ReviewDraft(row.body) : undefined
       if (row) {
         content.append(
           element(
@@ -470,7 +649,7 @@ export function mountReviewReader(root: HTMLElement): () => void {
             ),
             element('pre', row.body),
           )
-        } else renderHunks(content, markupTokens(row.body))
+        } else if (!draft) renderHunks(content, markupTokens(row.body))
         if (row.withdrawnAt)
           content.append(
             element('p', 'This proposal was withdrawn and is read-only.'),
@@ -487,7 +666,7 @@ export function mountReviewReader(root: HTMLElement): () => void {
           )
         } else content.append(element('p', 'No saved review.'))
       }
-      updateSave()
+      renderDraft()
     },
     () => {
       epoch++
@@ -617,7 +796,12 @@ export function mountReviewReader(root: HTMLElement): () => void {
   }
   const save = (event: Event) => {
     event.preventDefault()
-    void session.save(decision.value, comments.value)
+    if (!session.canSave || draft?.pending || draft?.error) return
+    void session.save(
+      decision.value,
+      comments.value,
+      draft?.changed ? draft.body : undefined,
+    )
   }
   const refreshSelected = () => {
     if (selected) void session.open(selected, principal)
@@ -625,6 +809,39 @@ export function mountReviewReader(root: HTMLElement): () => void {
   const closeSelected = () => {
     selected = undefined
     session.close()
+  }
+  const stageText = () => {
+    if (!session.canSave || !draft) return
+    draft.stage(proposedText.value, true)
+    // No conversion or complete DOM rerender on input.
+    draftStatus.textContent =
+      draft.error ||
+      (draft.pending
+        ? 'Unreviewed text edits. Update marked changes before saving.'
+        : draft.changed
+          ? 'Unsaved proposed changes.'
+          : 'Stored proposed changes.')
+    update.disabled = !draft.pending || Boolean(draft.error)
+    for (const button of draftDiff.querySelectorAll<HTMLButtonElement>(
+      'button',
+    ))
+      button.disabled = draft.pending
+    updateSave()
+  }
+  const updateText = () => {
+    if (!session.canSave || !draft) return
+    draft.update()
+    renderDraft()
+    if (draft.editor) proposedText.focus()
+    else saveButton.focus()
+  }
+  const cancelText = () => {
+    draft?.cancel()
+    renderDraft()
+  }
+  const discardText = () => {
+    draft?.discard()
+    renderDraft()
   }
   const visibility = () => {
     if (doc.visibilityState === 'hidden') clearPrivate()
@@ -639,6 +856,10 @@ export function mountReviewReader(root: HTMLElement): () => void {
   saveForm.addEventListener('submit', save)
   decision.addEventListener('input', updateSave)
   comments.addEventListener('input', updateSave)
+  proposedText.addEventListener('input', stageText)
+  update.addEventListener('click', updateText)
+  cancelEdit.addEventListener('click', cancelText)
+  discard.addEventListener('click', discardText)
   refresh.addEventListener('click', refreshSelected)
   close.addEventListener('click', closeSelected)
   doc.addEventListener('visibilitychange', visibility)
@@ -652,6 +873,10 @@ export function mountReviewReader(root: HTMLElement): () => void {
     saveForm.removeEventListener('submit', save)
     decision.removeEventListener('input', updateSave)
     comments.removeEventListener('input', updateSave)
+    proposedText.removeEventListener('input', stageText)
+    update.removeEventListener('click', updateText)
+    cancelEdit.removeEventListener('click', cancelText)
+    discard.removeEventListener('click', discardText)
     refresh.removeEventListener('click', refreshSelected)
     close.removeEventListener('click', closeSelected)
     doc.removeEventListener('visibilitychange', visibility)

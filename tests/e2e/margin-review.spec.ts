@@ -1,5 +1,10 @@
 import { expect, test, type Page } from '@playwright/test'
-import { formatHunks } from '../../src/annotations/criticmarkup'
+import {
+  formatHunks,
+  parseHunks,
+  acceptAll,
+  rejectAll,
+} from '../../src/annotations/criticmarkup'
 import { installStaticRoutes } from './static-build'
 
 // Synthetic browser contracts only. Root admits execution separately; these
@@ -101,7 +106,9 @@ test('marked current changes remain literal and clearly separate from approved c
     },
   }))
   await page.goto(PATH)
-  await page.getByLabel('State', { exact: true }).selectOption('approved')
+  await page
+    .getByRole('combobox', { name: 'State', exact: true })
+    .selectOption('approved')
   await page.getByRole('button', { name: 'Filter proposals' }).click()
   const article = page.locator('[data-review-rows] article')
   await expect(article).toContainText('Current revision 2')
@@ -208,7 +215,9 @@ test('late response from old filters cannot repaint private rows after a new emp
   })
   await page.goto(PATH, { waitUntil: 'domcontentloaded' })
   await expect.poll(() => waiting).toBe(true)
-  await page.getByLabel('State', { exact: true }).selectOption('merged')
+  await page
+    .getByRole('combobox', { name: 'State', exact: true })
+    .selectOption('merged')
   await page.getByRole('button', { name: 'Filter proposals' }).click()
   await expect(page.getByRole('status')).toContainText('No proposals match')
   release()
@@ -219,6 +228,7 @@ async function savingService(
   page: Page,
   baseURL: string,
   mode: 'success' | 'lost' | 'conflict' = 'success',
+  initialBody?: string,
 ) {
   await installStaticRoutes(page)
   const principal = {
@@ -232,10 +242,12 @@ async function savingService(
     canWrite: false,
     isAdmin: false,
   }
-  const proposal = row('urn:margin:annotation:save-target', {
+  let proposal = row('urn:margin:annotation:save-target', {
     'margin:baseCommit': 'a'.repeat(40),
     'margin:sourcePath': 'books/chapter.md',
   })
+  if (initialBody !== undefined)
+    proposal = { ...proposal, body: { ...proposal.body, value: initialBody } }
   let savedReview: unknown = null
   const writes: unknown[] = [],
     forbidden: string[] = []
@@ -277,12 +289,21 @@ async function savingService(
       if (request.method() === 'POST') {
         const body = request.postDataJSON()
         writes.push(body)
-        if (mode !== 'conflict')
+        if (mode !== 'conflict') {
+          if (body.body !== undefined)
+            proposal = {
+              ...proposal,
+              'margin:revision': proposal['margin:revision'] + 1,
+              body: { ...proposal.body, value: body.body },
+            }
           savedReview = {
-            ...body,
+            revision: proposal['margin:revision'],
+            decision: body.decision,
+            comments: body.comments,
             reviewer: 'urn:margin:principal:fixture:urn%3Atest:admin',
             at: '2026-10-08T00:00:00.000Z',
           }
+        }
         await reply(
           mode === 'success' ? proposal : {},
           mode === 'success' ? 200 : mode === 'lost' ? 503 : 409,
@@ -300,6 +321,7 @@ async function savingService(
   return {
     writes,
     forbidden,
+    current: () => proposal,
     readbacks: () => readbacks,
     switchPrincipal: () => {
       identity = {
@@ -400,5 +422,218 @@ test('observed identity switch before Save clears queue and private draft with z
   )
   expect(await page.locator('[name=comments]').inputValue()).toBe('')
   expect(s.writes).toHaveLength(0)
+  expect(s.forbidden).toEqual([])
+})
+
+test('a revised pending proposal saves only its displayed marked draft and keeps source binding at three widths', async ({
+  page,
+  baseURL,
+}) => {
+  const s = await savingService(page, baseURL!)
+  const original = parseHunks(s.current().body.value)[0]
+  await page.setViewportSize({ width: 390, height: 900 })
+  await page.goto(PATH)
+  await page.getByRole('button', { name: 'Open review', exact: true }).click()
+  await page.getByLabel('Review decision', { exact: true }).fill('revise')
+  await page
+    .getByRole('button', { name: /^Edit proposed text · base lines/ })
+    .click()
+  const input = page.getByRole('textbox', {
+    name: /^Proposed text · base lines/,
+  })
+  const edited = 'Revised <img src=x onerror=alert(1)> text.'
+  await input.fill(edited)
+  const save = page.getByRole('button', { name: 'Save review', exact: true })
+  await expect(save).toBeDisabled()
+  expect(s.writes).toHaveLength(0)
+  await page
+    .getByRole('button', { name: 'Update marked changes', exact: true })
+    .click()
+  const panel = page.locator('[data-review-session]')
+  await expect(panel.locator('[data-review-draft-status]')).toContainText(
+    'Unsaved proposed changes',
+  )
+  await expect(panel.locator('img,script,iframe')).toHaveCount(0)
+  await expect(save).toBeEnabled()
+  await save.click()
+  await expect(panel.locator('[data-review-session-status]')).toContainText(
+    'Save acknowledged',
+  )
+  await expect(panel).toContainText('Current revision 3 · pending')
+  await expect(panel).toContainText('Saved review for revision 3')
+  expect(s.writes).toHaveLength(1)
+  const write = s.writes[0] as {
+    revision: number
+    decision: string
+    comments: string
+    body: string
+  }
+  expect(Object.keys(write).sort()).toEqual([
+    'body',
+    'comments',
+    'decision',
+    'revision',
+  ])
+  expect(write.revision).toBe(2)
+  const stored = parseHunks(write.body)[0]
+  expect(rejectAll(stored.criticMarkup)).toBe(rejectAll(original.criticMarkup))
+  expect(acceptAll(stored.criticMarkup)).toBe(edited)
+  expect(stored.baseStartLine).toBe(original.baseStartLine)
+  expect(stored.baseEndLine).toBe(original.baseEndLine)
+  expect(s.current()).toMatchObject({
+    'margin:baseCommit': 'a'.repeat(40),
+    'margin:sourcePath': 'books/chapter.md',
+  })
+  await expect(
+    page.getByRole('button', { name: /^(apply|approve)$/i }),
+  ).toHaveCount(0)
+  for (const width of [390, 1280, 2560]) {
+    await page.setViewportSize({ width, height: 900 })
+    await expect(panel).toBeVisible()
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true)
+  }
+  expect(s.forbidden).toEqual([])
+})
+
+test('a real textarea character edit preserves CRLF and BOM in the submitted proposal', async ({
+  page,
+  baseURL,
+}) => {
+  const before = '\uFEFFFirst\r\nsecond\r\n'
+  const initial = formatHunks([
+    { baseStartLine: 2, baseEndLine: 3, criticMarkup: before },
+  ])
+  const s = await savingService(page, baseURL!, 'success', initial)
+  await page.goto(PATH)
+  await page.getByRole('button', { name: 'Open review', exact: true }).click()
+  await page.getByLabel('Review decision', { exact: true }).fill('revise')
+  await page
+    .getByRole('button', { name: /^Edit proposed text · base lines/ })
+    .click()
+  const input = page.getByRole('textbox', {
+    name: /^Proposed text · base lines/,
+  })
+  // Assert the actual browser normalization rather than feeding CRLF directly
+  // into ReviewDraft. A keyboard edit must not rewrite untouched line endings.
+  expect(await input.inputValue()).toBe('\uFEFFFirst\nsecond\n')
+  await input.focus()
+  await input.evaluate((node: HTMLTextAreaElement) =>
+    node.setSelectionRange(6, 6),
+  )
+  await page.keyboard.insertText('!')
+  expect(await input.inputValue()).toBe('\uFEFFFirst!\nsecond\n')
+  await page
+    .getByRole('button', { name: 'Update marked changes', exact: true })
+    .click()
+  await page.getByRole('button', { name: 'Save review', exact: true }).click()
+  await expect(page.locator('[data-review-session-status]')).toContainText(
+    'Save acknowledged',
+  )
+  expect(s.writes).toHaveLength(1)
+  const hunk = parseHunks((s.writes[0] as { body: string }).body)[0]
+  expect(acceptAll(hunk.criticMarkup)).toBe('\uFEFFFirst!\r\nsecond\r\n')
+  expect(rejectAll(hunk.criticMarkup)).toBe(before)
+  expect([hunk.baseStartLine, hunk.baseEndLine]).toEqual([2, 3])
+  expect(s.forbidden).toEqual([])
+})
+
+test('cancel and discard keep stored text while invalid unmaterialized input cannot Save', async ({
+  page,
+  baseURL,
+}) => {
+  const s = await savingService(page, baseURL!)
+  const original = s.current().body.value
+  await page.goto(PATH)
+  await page.getByRole('button', { name: 'Open review', exact: true }).click()
+  await page.getByLabel('Review decision', { exact: true }).fill('ready')
+  const open = () =>
+    page
+      .getByRole('button', { name: /^Edit proposed text · base lines/ })
+      .click()
+  const input = page.getByRole('textbox', {
+    name: /^Proposed text · base lines/,
+  })
+  await open()
+  await input.fill('{~~old~>new~~}')
+  await page
+    .getByRole('button', { name: 'Update marked changes', exact: true })
+    .click()
+  await expect(page.locator('[data-review-draft-status]')).toContainText(
+    'cannot be represented',
+  )
+  await expect(
+    page.getByRole('button', { name: 'Save review', exact: true }),
+  ).toBeDisabled()
+  await page
+    .getByRole('button', { name: 'Cancel this edit', exact: true })
+    .click()
+  await open()
+  await input.fill('A saved later draft.')
+  await page
+    .getByRole('button', { name: 'Update marked changes', exact: true })
+    .click()
+  await expect(page.locator('[data-review-draft-status]')).toContainText(
+    'Unsaved',
+  )
+  await page
+    .getByRole('button', { name: 'Discard unsaved changes', exact: true })
+    .click()
+  await expect(page.locator('[data-review-draft-status]')).toHaveText(
+    'Stored proposed changes.',
+  )
+  await page.getByRole('button', { name: 'Save review', exact: true }).click()
+  await expect(page.locator('[data-review-session-status]')).toContainText(
+    'Save acknowledged',
+  )
+  expect(s.writes).toEqual([{ revision: 2, decision: 'ready', comments: '' }])
+  expect(s.current().body.value).toBe(original)
+  expect(s.forbidden).toEqual([])
+})
+
+test('edited uncertain writes never replay and account changes clear the revised body', async ({
+  page,
+  baseURL,
+}) => {
+  const s = await savingService(page, baseURL!, 'lost')
+  await page.goto(PATH)
+  await page.getByRole('button', { name: 'Open review', exact: true }).click()
+  await page.getByLabel('Review decision', { exact: true }).fill('revise')
+  await page
+    .getByRole('button', { name: /^Edit proposed text · base lines/ })
+    .click()
+  await page
+    .getByRole('textbox', { name: /^Proposed text · base lines/ })
+    .fill('Private revised fixture text')
+  await page
+    .getByRole('button', { name: 'Update marked changes', exact: true })
+    .click()
+  await page.getByRole('button', { name: 'Save review', exact: true }).click()
+  await expect(page.locator('[data-review-session-status]')).toContainText(
+    'Save outcome is uncertain',
+  )
+  await expect(
+    page.getByRole('button', { name: 'Save review', exact: true }),
+  ).toBeDisabled()
+  expect(s.writes).toHaveLength(1)
+  await page
+    .getByRole('button', { name: 'Refresh selected review', exact: true })
+    .click()
+  await expect(
+    page.getByRole('button', { name: 'Save review', exact: true }),
+  ).toBeEnabled()
+  s.switchPrincipal()
+  await page.getByRole('button', { name: 'Save review', exact: true }).click()
+  await expect(page.locator('[data-review-rows] article')).toHaveCount(0)
+  await expect(page.locator('[data-review-session]')).not.toContainText(
+    'Private revised fixture text',
+  )
+  expect(await page.locator('[data-review-proposed-text]').inputValue()).toBe(
+    '',
+  )
+  expect(s.writes).toHaveLength(1)
   expect(s.forbidden).toEqual([])
 })

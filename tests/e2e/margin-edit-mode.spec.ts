@@ -13,6 +13,7 @@ import {
 } from '../../src/annotations/criticmarkup'
 import type { Principal } from '../../src/worker/principal'
 import { D1MarginRepository } from '../../src/worker/margin/d1-repository'
+import { ensureSchema } from '../../src/worker/margin/identity'
 import { handleMarginRequest } from '../../src/worker/margin/routes'
 import { SqliteD1Database } from '../../src/worker/margin/sqlite-database'
 import { installStaticRoutes } from './static-build'
@@ -49,6 +50,7 @@ type Service = {
 async function mountService(page: Page, documentUri: string): Promise<Service> {
   await installStaticRoutes(page)
   const database = SqliteD1Database.inMemory()
+  await ensureSchema(database)
   const repository = new D1MarginRepository(database)
   let clock = 0
   let sequence = 0

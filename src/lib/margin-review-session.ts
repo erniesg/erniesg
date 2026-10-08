@@ -2,7 +2,12 @@
  * request. Identity probes isolate observed responses, not cookie transactions.
  */
 import { z } from 'zod'
-import { isFullCommitId, parseHunks } from '../annotations/criticmarkup'
+import {
+  isFullCommitId,
+  parseHunks,
+  acceptAll,
+  rejectAll,
+} from '../annotations/criticmarkup'
 
 export type ReviewTarget = { id: string; source: string }
 export type SavedReview = {
@@ -26,6 +31,7 @@ export type SaveAttempt = {
   revision: number
   decision: string
   comments: string
+  body?: string
 }
 export type SessionStatus =
   | 'idle'
@@ -459,12 +465,42 @@ export class ReviewSession {
       if (generation === this.#generation) this.#failure(error)
     }
   }
-  async save(decision: string, comments: string): Promise<void> {
+  async save(decision: string, comments: string, body?: string): Promise<void> {
     if (!this.canSave || !this.#target || !this.#identity) return
-    const attempt = {
-      revision: this.state.observed!.revision!,
+    const original = this.state.observed!
+    // Editing changes proposed text only. The original hunk ranges/base text,
+    // base commit and source remain the readback's immutable attempt inputs.
+    if (body !== undefined) {
+      try {
+        if (typeof body !== 'string' || body.length > 64_000) return
+        const before = parseHunks(original.body),
+          after = parseHunks(body)
+        if (after.length > 1000 || after.length !== before.length) return
+        let changed = false
+        for (let i = 0; i < before.length; i++) {
+          if (
+            before[i].baseStartLine !== after[i].baseStartLine ||
+            before[i].baseEndLine !== after[i].baseEndLine ||
+            rejectAll(before[i].criticMarkup) !==
+              rejectAll(after[i].criticMarkup)
+          )
+            return
+          changed ||=
+            acceptAll(before[i].criticMarkup) !==
+            acceptAll(after[i].criticMarkup)
+          // Always parse every proposed segment, even after an earlier change.
+          acceptAll(after[i].criticMarkup)
+        }
+        if (!changed) body = undefined
+      } catch {
+        return
+      }
+    }
+    const attempt: SaveAttempt = {
+      revision: original.revision!,
       decision: decision.trim(),
       comments,
+      ...(body === undefined ? {} : { body }),
     }
     if (
       !attempt.decision ||
@@ -500,7 +536,11 @@ export class ReviewSession {
         else if (reply.status === 200) {
           const current = currentAnnotation(reply.value, target, this.site)
           if (
-            current.revision !== attempt.revision ||
+            current.revision !==
+              attempt.revision + Number(attempt.body !== undefined) ||
+            current.body !== (attempt.body ?? original.body) ||
+            current.baseCommit !== original.baseCommit ||
+            current.sourcePath !== original.sourcePath ||
             current.state !== 'pending' ||
             current.withdrawnAt !== undefined
           )

@@ -537,3 +537,329 @@ it.each([
   expect(other).toBe(0)
   expect(privacy).toHaveBeenCalled()
 })
+
+describe('pending revision Save behavioral RED families', () => {
+  const changedBody = formatHunks([
+    { baseStartLine: 1, baseEndLine: 1, criticMarkup: 'A {++better++} line.' },
+  ])
+  it('sends the displayed edited body once and acknowledges the exact next revision', async () => {
+    const f = fixture({
+      post: () =>
+        Response.json({
+          ...wire(),
+          'margin:revision': 2,
+          body: { ...wire().body, value: changedBody },
+        }),
+    })
+    await f.session.open(target)
+    await f.session.save('revise', 'clearer', changedBody)
+    expect(JSON.parse(f.writes()[0].init!.body as string)).toEqual({
+      revision: 1,
+      decision: 'revise',
+      comments: 'clearer',
+      body: changedBody,
+    })
+    expect(f.session.state.outcome).toBe('acknowledged')
+  })
+  it('refuses invalid or altered-base drafts before sending any mutation', async () => {
+    for (const body of [
+      'not hunks',
+      formatHunks([
+        {
+          baseStartLine: 2,
+          baseEndLine: 2,
+          criticMarkup: 'A {++better++} line.',
+        },
+      ]),
+      formatHunks([
+        {
+          baseStartLine: 1,
+          baseEndLine: 1,
+          criticMarkup: 'DIFFERENT {++base++}',
+        },
+      ]),
+    ]) {
+      const f = fixture()
+      await f.session.open(target)
+      await f.session.save('revise', '', body)
+      expect(f.writes()).toHaveLength(0)
+    }
+  })
+  it('does not acknowledge a200 which silently ignored an edited body', async () => {
+    const f = fixture()
+    await f.session.open(target)
+    await f.session.save('revise', '', changedBody)
+    expect(f.session.state.outcome).toBe('uncertain')
+    expect(f.session.canSave).toBe(false)
+  })
+  it('binds metadata-only success to the observed body base and source path', async () => {
+    for (const extra of [
+      { 'margin:baseCommit': 'b'.repeat(40) },
+      { 'margin:sourcePath': 'books/other.md' },
+      { body: { ...wire().body, value: changedBody } },
+    ]) {
+      const f = fixture({ post: () => Response.json({ ...wire(), ...extra }) })
+      await f.session.open(target)
+      await f.session.save('ready', '')
+      expect(f.session.state.outcome).toBe('uncertain')
+    }
+  })
+  it('retains the exact uncertain edited attempt without automatic replay', async () => {
+    const f = fixture({
+      post: () => {
+        throw new Error('lost response')
+      },
+    })
+    await f.session.open(target)
+    await f.session.save('revise', 'draft', changedBody)
+    expect(f.session.state.attempt?.body).toBe(changedBody)
+    expect(f.session.state.outcome).toBe('uncertain')
+    await f.session.save('revise', 'replay', changedBody)
+    expect(f.writes()).toHaveLength(1)
+    f.session.close()
+    expect(f.session.state.attempt).toBeUndefined()
+  })
+})
+
+describe('revised review same-rule controls', () => {
+  const body = formatHunks([
+    { baseStartLine: 1, baseEndLine: 1, criticMarkup: 'A {++better++} line.' },
+  ])
+  it('omits semantic no-op bodies and rejects malformed/count/size variants without writes', async () => {
+    const f = fixture()
+    await f.session.open(target)
+    const equivalent = formatHunks([
+      {
+        baseStartLine: 1,
+        baseEndLine: 1,
+        criticMarkup: '{~~A  line.~>A new line.~~}',
+      },
+    ])
+    await f.session.save('ready', '', equivalent)
+    expect(JSON.parse(f.writes()[0].init!.body as string)).toEqual({
+      revision: 1,
+      decision: 'ready',
+      comments: '',
+    })
+    expect(f.session.state.outcome).toBe('acknowledged')
+    for (const invalid of [
+      body + ' ',
+      formatHunks([
+        { baseStartLine: 1, baseEndLine: 1, criticMarkup: '{++broken' },
+      ]),
+      formatHunks([
+        {
+          baseStartLine: 1,
+          baseEndLine: 2,
+          criticMarkup: 'A {++better++} line.',
+        },
+      ]),
+      formatHunks([
+        {
+          baseStartLine: 1,
+          baseEndLine: 1,
+          criticMarkup: 'A {++better++} line.',
+        },
+        { baseStartLine: 2, baseEndLine: 2, criticMarkup: 'other' },
+      ]),
+      formatHunks([
+        {
+          baseStartLine: 1,
+          baseEndLine: 1,
+          criticMarkup: 'A {++' + 'x'.repeat(64_000) + '++} line.',
+        },
+      ]),
+    ]) {
+      const bad = fixture()
+      await bad.session.open(target)
+      await bad.session.save('ready', '', invalid)
+      expect(bad.writes()).toHaveLength(0)
+    }
+  })
+  it('binds every edited-success field and classifies changed metadata as uncertain', async () => {
+    const expected = {
+      ...wire(),
+      'margin:revision': 2,
+      body: { ...wire().body, value: body },
+    }
+    for (const override of [
+      { 'margin:revision': 1 },
+      { 'margin:revision': 3 },
+      { 'margin:baseCommit': 'b'.repeat(40) },
+      { 'margin:sourcePath': 'books/other.md' },
+      { id: 'urn:margin:annotation:other' },
+      { 'margin:withdrawnAt': '2026-10-08T00:00:00.000Z' },
+      { 'margin:proposalState': 'approved', 'margin:approvedRevision': 2 },
+      { body: wire().body },
+    ]) {
+      const f = fixture({
+        post: () => Response.json({ ...expected, ...override }),
+      })
+      await f.session.open(target)
+      await f.session.save('ready', '', body)
+      expect(f.session.state.outcome).toBe('uncertain')
+      expect(f.writes()).toHaveLength(1)
+    }
+  })
+  it('coalesces body writes and clears the attempted edit after an observed principal switch', async () => {
+    let release!: (r: Response) => void,
+      who = principal
+    const f = fixture({
+      identity: () => ({ authenticated: true, principal: who }),
+      post: () =>
+        new Promise((r) => {
+          release = r
+        }),
+    })
+    await f.session.open(target)
+    const pending = f.session.save('revise', '', body)
+    await f.session.save('again', '', body)
+    await vi.waitFor(() => expect(f.writes()).toHaveLength(1))
+    who = { ...principal, subject: 'other' }
+    release(
+      Response.json({
+        ...wire(),
+        'margin:revision': 2,
+        body: { ...wire().body, value: body },
+      }),
+    )
+    await pending
+    expect(f.session.state.attempt).toBeUndefined()
+    expect(f.session.state.observed).toBeUndefined()
+    expect(f.privacy).toHaveBeenCalled()
+  })
+  it('keeps revision-race409 and acknowledged/readback503 separate from unknown writes', async () => {
+    for (const mode of [
+      'conflict',
+      'ack-read-unavailable',
+      'uncertain-later-body',
+    ] as const) {
+      let reads = 0
+      const f = fixture({
+        post: () =>
+          mode === 'conflict'
+            ? new Response(null, { status: 409 })
+            : mode === 'uncertain-later-body'
+              ? new Response(null, { status: 503 })
+              : Response.json({
+                  ...wire(),
+                  'margin:revision': 2,
+                  body: { ...wire().body, value: body },
+                }),
+        read: () =>
+          ++reads === 1
+            ? Response.json({ annotation: wire(), savedReview: null })
+            : mode === 'ack-read-unavailable'
+              ? new Response(null, { status: 503 })
+              : Response.json({
+                  annotation: { ...wire(), 'margin:revision': 3 },
+                  savedReview: null,
+                }),
+      })
+      await f.session.open(target)
+      await f.session.save('revise', '', body)
+      expect(f.session.state.outcome).toBe(
+        mode === 'conflict'
+          ? 'conflict'
+          : mode === 'ack-read-unavailable'
+            ? 'acknowledged'
+            : 'uncertain',
+      )
+      expect(f.session.state.attempt?.body).toBe(body)
+      expect(f.writes()).toHaveLength(1)
+      if (mode !== 'ack-read-unavailable')
+        expect(f.session.state.observed?.revision).toBe(3)
+      expect(f.session.canSave).toBe(false)
+    }
+  })
+  it('uses the same real SQLite Save path for another creator and the admin without an approval or repository call', async () => {
+    const { ADA, BOB, createHarness, webAnnotation } =
+      await import('../worker/margin/fixtures')
+    const { ensureSchema } = await import('../worker/margin/identity')
+    const external = vi
+      .fn()
+      .mockRejectedValue(new Error('no external operation'))
+    vi.stubGlobal('fetch', external)
+    try {
+      for (const creator of [ADA, BOB]) {
+        const h = createHarness()
+        await ensureSchema(h.database)
+        h.database.execute(
+          'INSERT INTO margin_identity(provider,issuer,subject,first_seen_at,last_seen_at) VALUES(?,?,?,?,?)',
+          [
+            ADA.provider,
+            ADA.issuer,
+            ADA.subject,
+            '2026-10-08T00:00:00.000Z',
+            '2026-10-08T00:00:00.000Z',
+          ],
+        )
+        const identity = h.database.query('SELECT id FROM margin_identity')[0]
+          .id
+        h.database.execute(
+          'INSERT INTO margin_allowlist(identity_id,role,added_at) VALUES(?,?,?)',
+          [identity, 'admin', '2026-10-08T00:00:00.000Z'],
+        )
+        h.database.execute(
+          'INSERT INTO margin_site_admins(site,identity_id) VALUES(?,?)',
+          [SITE, identity],
+        )
+        const create = await h.request('POST', '/annotations', {
+          as: creator,
+          body: webAnnotation({
+            source: target.source,
+            motivation: 'editing',
+            visibility: 'private',
+            body: wire().body.value,
+          }),
+        })
+        expect(create.status).toBe(201)
+        const created = await create.json()
+        const selected = { id: created.id, source: target.source }
+        const writes: unknown[] = []
+        const session = new ReviewSession(
+          SITE,
+          async (url, init) => {
+            if (String(url) === '/auth/me')
+              return Response.json({ authenticated: true, principal: ADA })
+            const data = init?.body ? JSON.parse(String(init.body)) : undefined
+            if (init?.method === 'POST') writes.push(data)
+            return h.request(
+              (init?.method ?? 'GET') as 'GET' | 'POST',
+              String(url).replace('/api/margin/v1', ''),
+              { as: ADA, ...(data ? { body: data } : {}) },
+            )
+          },
+          () => {},
+        )
+        await session.open(selected)
+        expect(session.canSave).toBe(true)
+        await session.save('revise', 'clearer', body)
+        expect(session.state.outcome).toBe('acknowledged')
+        expect(session.state.observed?.revision).toBe(2)
+        expect(session.state.observed?.body).toBe(body)
+        expect(session.state.observed?.state).toBe('pending')
+        expect(session.state.observed?.savedReview).toMatchObject({
+          revision: 2,
+          decision: 'revise',
+          comments: 'clearer',
+        })
+        expect(writes).toEqual([
+          { revision: 1, decision: 'revise', comments: 'clearer', body },
+        ])
+        expect(
+          h.database.query('SELECT * FROM margin_proposal_applications'),
+        ).toEqual([])
+        expect(session.state.observed?.baseCommit).toBe(
+          created['margin:baseCommit'],
+        )
+        expect(session.state.observed?.sourcePath).toBe(
+          created['margin:sourcePath'],
+        )
+      }
+      expect(external).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})

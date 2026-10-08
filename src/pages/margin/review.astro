@@ -32,8 +32,8 @@ const site = new URL(SITE.SITEURL).origin
       <p class="scope-note">
         This reader shows marked current changes. It does not show the immutable
         approved snapshot or a full rendered result. You can save decision and
-        comments for a pending proposal. Applying changes and editing proposal
-        content are not available here yet.
+        comments and revise the proposed text for a pending proposal. Saving
+        leaves it pending. Applying changes is not available here yet.
       </p>
     </header>
     <form aria-label="Review filters">
@@ -77,6 +77,33 @@ const site = new URL(SITE.SITEURL).origin
       <h2 id="selected-review-title">Selected proposal</h2>
       <p data-review-session-status role="status" aria-live="polite"></p>
       <div data-review-session-content></div>
+      <section data-review-draft hidden aria-label="Proposed changes">
+        <p data-review-draft-status role="status" aria-live="polite"></p>
+        <div data-review-draft-diff></div>
+        <button data-review-discard type="button"
+          >Discard unsaved changes</button
+        >
+        <div data-review-hunk-editor hidden>
+          <label for="review-proposed-text" data-review-hunk-label
+            >Proposed text</label
+          >
+          <textarea
+            id="review-proposed-text"
+            data-review-proposed-text
+            maxlength="64000"
+            rows="10"
+            autocomplete="off"
+            spellcheck="false"></textarea>
+          <p>
+            The line range and recorded base stay unchanged. Update the marked
+            changes before saving.
+          </p>
+          <button data-review-update type="button">Update marked changes</button
+          >
+          <button data-review-cancel-edit type="button">Cancel this edit</button
+          >
+        </div>
+      </section>
       <form data-review-save-form aria-label="Save proposal review">
         <label
           >Review decision
@@ -223,5 +250,18 @@ const site = new URL(SITE.SITEURL).origin
   }
   [hidden] {
     display: none !important;
+  }
+</style>
+
+<style>
+  [data-review-hunk-editor] {
+    margin-block: 1rem;
+  }
+  [data-review-proposed-text] {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    margin-block: 0.6rem;
+    font-family: monospace;
   }
 </style>

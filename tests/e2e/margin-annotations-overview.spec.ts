@@ -9,6 +9,7 @@ import { formatHunks, proposeHunks } from '../../src/annotations/criticmarkup'
 import { PROPOSAL_STATE_LABELS, PROPOSAL_STATES } from '../../src/lib/annotations-overview'
 import type { Principal } from '../../src/worker/principal'
 import { D1MarginRepository } from '../../src/worker/margin/d1-repository'
+import { ensureSchema } from '../../src/worker/margin/identity'
 import { handleMarginRequest } from '../../src/worker/margin/routes'
 import { MAX_PAGE_SIZE } from '../../src/worker/margin/repository'
 import { SqliteD1Database } from '../../src/worker/margin/sqlite-database'
@@ -76,6 +77,7 @@ async function mountService(page: Page): Promise<Service> {
   // First, so the routes below are asked before the static files are.
   await installStaticRoutes(page)
   const database = SqliteD1Database.inMemory()
+  await ensureSchema(database)
   const repository = new D1MarginRepository(database)
   let clock = 0
   let sequence = 0

@@ -1,10 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
-import { formatHunks } from '../annotations/criticmarkup'
+import {
+  formatHunks,
+  parseHunks,
+  acceptAll,
+  rejectAll,
+  criticMarkupFor,
+} from '../annotations/criticmarkup'
 import {
   markupTokens,
   parseReviewPage,
   revisionLabel,
   ReviewQueue,
+  ReviewDraft,
 } from './margin-review'
 
 const SITE = 'https://ernie.sg'
@@ -452,4 +459,164 @@ it('accepts the existing full SHA-256 base profile as well as SHA-1', () => {
       'pending',
     ).rows,
   ).toHaveLength(1)
+})
+
+describe('pending proposal draft invariants', () => {
+  const original = formatHunks([
+    {
+      baseStartLine: 2,
+      baseEndLine: 3,
+      criticMarkup: 'First {~~old~>new~~}\r\nsecond\r\n',
+    },
+    { baseStartLine: 8, baseEndLine: 8, criticMarkup: 'Keep {++this++} line.' },
+  ])
+  it('restores homogeneous line endings after textarea normalization without changing BOM or untouched text', () => {
+    for (const newline of ['\r\n', '\r', '\n']) {
+      const text = `\uFEFFFirst${newline}second${newline}`
+      const body = formatHunks([
+        { baseStartLine: 2, baseEndLine: 3, criticMarkup: text },
+      ])
+      for (const edited of [
+        text,
+        text.replace('First', 'First!'),
+        `\uFEFFFirst${newline}inserted${newline}second${newline}`,
+        `\uFEFFFirst${newline}`,
+        '',
+      ]) {
+        const draft = new ReviewDraft(body)
+        draft.open(0)
+        // HTML textarea API values normalize CRLF and CR to LF before input.
+        draft.stage(edited.replace(/\r\n?/g, '\n'), true)
+        expect(draft.pending).toBe(edited !== text)
+        expect(draft.update()).toBe(true)
+        const hunk = parseHunks(draft.body)[0]
+        expect(acceptAll(hunk.criticMarkup)).toBe(edited)
+        expect(rejectAll(hunk.criticMarkup)).toBe(text)
+        expect([hunk.baseStartLine, hunk.baseEndLine]).toEqual([2, 3])
+        if (edited === text) expect(draft.body).toBe(body)
+      }
+    }
+  })
+  it('keeps mixed-newline no-ops exact and refuses ambiguous textarea edits before changing the marked draft', () => {
+    for (const text of [
+      '\uFEFFfirst\r\nsecond\nthird\r',
+      'first\nsecond\r\n',
+    ]) {
+      const body = formatHunks([
+        { baseStartLine: 1, baseEndLine: 3, criticMarkup: text },
+      ])
+      const draft = new ReviewDraft(body)
+      draft.open(0)
+      draft.stage(text.replace(/\r\n?/g, '\n'), true)
+      expect(draft.pending).toBe(false)
+      expect(draft.update()).toBe(true)
+      expect(draft.body).toBe(body)
+      draft.open(0)
+      draft.stage(text.replace(/\r\n?/g, '\n') + 'edit', true)
+      expect(draft.error).toMatch(/mixed line endings/i)
+      expect(draft.pending).toBe(true)
+      expect(draft.update()).toBe(false)
+      expect(draft.body).toBe(body)
+      draft.cancel()
+      expect(draft.error).toBe('')
+      expect(draft.changed).toBe(false)
+      expect(draft.editor).toBeUndefined()
+    }
+  })
+  it('updates only one selected hunk against its original base and preserves marked roundtrips', () => {
+    const d = new ReviewDraft(original),
+      before = parseHunks(original)
+    for (const text of [
+      'Revised\r\nsecond\r\n',
+      '',
+      '<img src=x>\r\n',
+      '\uFEFFLiteral\r\n',
+    ]) {
+      d.open(0)
+      d.stage(text)
+      expect(d.pending).toBe(true)
+      expect(d.body).toBe(original)
+      expect(d.update()).toBe(true)
+      const after = parseHunks(d.body)
+      expect(after[1]).toEqual(before[1])
+      expect(after[0].baseStartLine).toBe(2)
+      expect(after[0].baseEndLine).toBe(3)
+      expect(rejectAll(after[0].criticMarkup)).toBe(
+        rejectAll(before[0].criticMarkup),
+      )
+      expect(acceptAll(after[0].criticMarkup)).toBe(text)
+      expect(
+        markupTokens(d.body)[0]
+          .tokens.filter((t) => t.kind !== 'delete')
+          .map((t) => t.text)
+          .join(''),
+      ).toBe(text)
+      expect(d.editor).toBeUndefined()
+      d.discard()
+    }
+  })
+  it('preserves original body on no-op, undo and discard without silently switching dirty editors', () => {
+    const d = new ReviewDraft(original)
+    d.open(0)
+    expect(d.pending).toBe(false)
+    expect(d.update()).toBe(true)
+    expect(d.body).toBe(original)
+    d.open(0)
+    d.stage('draft')
+    expect(() => d.open(1)).toThrow()
+    expect(d.editor?.text).toBe('draft')
+    d.cancel()
+    expect(d.body).toBe(original)
+    d.open(1)
+    d.stage('changed')
+    expect(d.update()).toBe(true)
+    expect(d.changed).toBe(true)
+    d.open(1)
+    d.stage(acceptAll(parseHunks(original)[1].criticMarkup))
+    expect(d.update()).toBe(true)
+    expect(d.body).toBe(original)
+    expect(d.changed).toBe(false)
+    d.open(0)
+    d.stage('private unsaved')
+    d.discard()
+    expect(d.editor).toBeUndefined()
+    for (const i of [-1, 2, 0.5, NaN]) expect(() => d.open(i)).toThrow()
+  })
+  it('refuses oversized and unrepresentable text without replacing the displayed draft', () => {
+    const d = new ReviewDraft(original)
+    for (const text of ['x'.repeat(64_001), '\ud800', '{~~old~>new~~}']) {
+      d.open(0)
+      d.stage(text)
+      const ok = d.update()
+      expect(ok).toBe(false)
+      expect(d.body).toBe(original)
+      expect(d.error).not.toBe('')
+      expect(d.pending).toBe(true)
+      d.cancel()
+    }
+    // Input fits, but JSON quoting doubles its encoded size beyond64k.
+    d.open(0)
+    d.stage('"'.repeat(40_000))
+    expect(d.update()).toBe(false)
+    expect(d.body).toBe(original)
+  })
+  it('keeps1000hunk/body bounds and delegates the long-change coarse fallback to the original converter', () => {
+    const hunks = Array.from({ length: 1001 }, (_, i) => ({
+      baseStartLine: i + 1,
+      baseEndLine: i + 1,
+      criticMarkup: 'a',
+    }))
+    expect(() => new ReviewDraft(formatHunks(hunks))).toThrow()
+    const base = 'a '.repeat(6000),
+      proposed = 'b '.repeat(6000)
+    const d = new ReviewDraft(
+      formatHunks([{ baseStartLine: 1, baseEndLine: 1, criticMarkup: base }]),
+    )
+    d.open(0)
+    d.stage(proposed)
+    expect(d.update()).toBe(true)
+    expect(parseHunks(d.body)[0].criticMarkup).toBe(
+      criticMarkupFor(base, proposed),
+    )
+  })
 })

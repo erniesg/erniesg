@@ -39,6 +39,8 @@ import {
 } from './queries'
 import type { ProgressItem, ProgressRow, ProgressScope } from './progress'
 import {
+  adapterExecutionReportSchema as reportInput,
+  reportInteger, reportId, reportCommit, reportDetail, reportURL,
   type AdapterReportRepository,
   type AdapterExecutionReport,
   type AdapterReportResult,
@@ -371,55 +373,6 @@ function binaryCompare(a: string, b: string): number {
 }
 
 // Report decoders deliberately do not coalesce legacy/missing metadata to zero.
-const reportInteger = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
-const reportId = z.string().min(1).max(2048)
-const reportCommit = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/)
-const reportDetail = z
-  .string()
-  .min(1)
-  .max(4096)
-  .refine((v) => new TextEncoder().encode(v).length <= 4096)
-const reportURL = z
-  .string()
-  .max(2048)
-  .url()
-  .refine((value) => {
-    const url = new URL(value)
-    return (
-      ['http:', 'https:'].includes(url.protocol) &&
-      !url.username &&
-      !url.password &&
-      url.href === value
-    )
-  })
-const reportPR = z
-  .object({ number: reportInteger.positive(), url: reportURL, head: reportCommit })
-  .strict()
-const reportInput = z
-  .object({
-    eventId: adapterSelectorSchema,
-    proposalId: reportId,
-    approvedRevision: reportInteger.positive(),
-    expectedStateVersion: reportInteger,
-    outcome: z.union([
-      z
-        .object({
-          state: z.literal('pr_open'),
-          pr: reportPR,
-          checks: z.enum(['pending', 'passed', 'failed', 'not_evaluated']),
-          detail: reportDetail.nullable(),
-        })
-        .strict(),
-      z
-        .object({ state: z.enum(['conflict', 'apply_failed']), detail: reportDetail })
-        .strict(),
-      z
-        .object({ state: z.literal('merged'), pr: reportPR, mergeCommit: reportCommit })
-        .strict(),
-      z.object({ state: z.literal('closed'), pr: reportPR }).strict(),
-    ]),
-  })
-  .strict()
 const reportMetadata = {
   state_version: reportInteger,
   failed_apply_count: reportInteger.max(3),

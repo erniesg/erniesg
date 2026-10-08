@@ -424,3 +424,59 @@ export const adapterExecutionReportSchema = z
     ]),
   })
   .strict()
+
+/** Scalar fields are decoded first; this shared rule checks only state consistency. */
+export type ReportExecutionTuple = {
+  state_version: number
+  failed_apply_count: number
+  pr_number: number | null
+  pr_url: string | null
+  pr_head: string | null
+  checks: string | null
+  detail: string | null
+  merge_commit: string | null
+}
+export function validReportTuple(
+  row: ReportExecutionTuple,
+  state: string,
+) {
+  const hasPR = row.pr_number !== null
+  if (
+    hasPR !== (row.pr_url !== null) ||
+    hasPR !== (row.pr_head !== null) ||
+    row.failed_apply_count > row.state_version
+  )
+    throw Error('invalid execution tuple')
+  const valid =
+    state === 'approved'
+      ? row.state_version === 0 &&
+        !hasPR &&
+        row.checks === null &&
+        row.detail === null &&
+        row.merge_commit === null
+      : state === 'pr_open'
+        ? hasPR && row.checks !== null && row.merge_commit === null
+        : state === 'merged'
+          ? hasPR &&
+            row.merge_commit !== null &&
+            row.checks === null &&
+            row.detail === null
+          : state === 'closed'
+            ? hasPR &&
+              row.merge_commit === null &&
+              row.checks === null &&
+              row.detail === null
+            : state === 'conflict'
+              ? row.detail !== null &&
+                row.merge_commit === null &&
+                (hasPR ? row.checks === 'not_evaluated' : row.checks === null)
+              : state === 'apply_failed'
+                ? !hasPR &&
+                  row.failed_apply_count > 0 &&
+                  row.detail !== null &&
+                  row.checks === null &&
+                  row.merge_commit === null
+                : false
+  if (!valid || (state !== 'approved' && row.state_version === 0))
+    throw Error('inconsistent execution state')
+}

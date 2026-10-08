@@ -82,6 +82,9 @@ describe('actual trusted current-renderer small data pilots', () => {
     expect(safe.blocks.map(({ kind, id, digest }: any) => ({ kind, id, digest }))).toEqual(rendered.blocks)
     expect(safe.html).not.toMatch(/<(?:script|input|button|textarea|form)\b|\shref=/)
     expect(safe.html.length).toBeGreaterThan(0)
+    const read = await publishedReader(), view = read(safe.html, 'view-canonical')
+    expect(textNodes(view.html)).toEqual(textNodes(safe.html))
+    expect(view.blocks.map(block => block.id)).toEqual(safe.blocks.map((block: any) => block.domId))
   })
   it('accepts the actual current content stylesheet before and after existing scoping', async () => {
     const { validateHistoryCss } = await api()
@@ -116,4 +119,80 @@ it('enforces UTF-8, node, depth and CSS ceilings without silently truncating', a
   expect(() => validateHistoryCss(' '.repeat(65537))).toThrow()
   expect(safeHistoryHtml('<a href="/' + 'x'.repeat(4095) + '">x</a>', 'h-attr').html).toContain('data-history-link-destination')
   expect(() => safeHistoryHtml('<a href="/' + 'x'.repeat(4096) + '">x</a>', 'h-attr')).toThrow()
+})
+
+async function publishedReader() {
+  const module = await import('./book-history-safe-html')
+  expect((module as any).readPublishedHistoryHtml).toBeTypeOf('function')
+  return (module as any).readPublishedHistoryHtml as (source: string, namespace: string) => { html: string; blocks: { kind: string; id: string; digest: string; domId: string }[] }
+}
+function elementAttributes(html: string, name: string): string[] {
+  const result: string[] = [], stack: any[] = [parseFragment(html)]
+  while (stack.length) {
+    const node = stack.pop()
+    for (const attr of node.attrs ?? []) if (attr.name === name) result.push(attr.value)
+    if (node.childNodes) stack.push(...[...node.childNodes].reverse())
+  }
+  return result
+}
+describe('published output reader prerequisite', () => {
+  it('preserves every inert carrier spelling and never reconstructs navigation', async () => {
+    const { safeHistoryHtml } = await api(), read = await publishedReader()
+    const canonical = '<h2 id="title">Title</h2>' + [
+      '#title', '#%74itle', '/books/example/', 'https://example.invalid/?a=&quot;x&quot;&amp;b=π', 'http://example.invalid/', '//example.invalid/path',
+    ].map(destination => `<a href="${destination}">Label &amp; 🧭</a>`).join('')
+    const published = safeHistoryHtml(canonical, 'h-published')
+    const output = read(published.html, 'view-left')
+    expect(elementAttributes(output.html, 'data-history-link-destination')).toEqual(elementAttributes(published.html, 'data-history-link-destination'))
+    expect(elementAttributes(output.html, 'href')).toEqual([])
+    expect(textNodes(output.html)).toEqual(textNodes(published.html))
+    expect(elementAttributes(output.html, 'id')).toEqual(['view-left-0'])
+  })
+  it('creates disjoint view IDs and keeps both figures marker references local', async () => {
+    const { safeHistoryHtml } = await api(), read = await publishedReader()
+    const published = safeHistoryHtml(svg + svg, 'h-published')
+    const left = read(published.html, 'view-left'), right = read(published.html, 'view-right')
+    const ids = [...elementAttributes(left.html, 'id'), ...elementAttributes(right.html, 'id')]
+    expect(new Set(ids).size).toBe(ids.length)
+    for (const [output, prefix] of [[left, 'view-left-'], [right, 'view-right-']] as const) {
+      const ownIds = elementAttributes(output.html, 'id')
+      expect(ownIds.every(id => id.startsWith(prefix))).toBe(true)
+      expect(elementAttributes(output.html, 'marker-end')).toEqual(ownIds.map(id => `url(#${id})`))
+      expect(textNodes(output.html)).toEqual(textNodes(published.html))
+    }
+  })
+  it('refuses all duplicate published IDs and missing/cross-scope marker references', async () => {
+    const read = await publishedReader()
+    for (const html of [
+      '<p id="same">A</p><p id="same">B</p>',
+      '<svg><marker id="same"></marker></svg><svg><marker id="same"></marker></svg>',
+      '<svg><marker id="m"></marker></svg><svg><line marker-end="url(#m)"></line></svg>',
+      '<svg><line marker-end="url(#absent)"></line></svg>',
+      '<svg><g id="wrong"></g><line marker-end="url(#wrong)"></line></svg>',
+    ]) expect(() => read(html, 'view-refused')).toThrow()
+  })
+  it('shares the closed profile and resource limits without admitting href or capabilities', async () => {
+    const read = await publishedReader()
+    for (const html of [
+      '<a href="/fixture">Navigation</a>', '<a href="/fixture" data-history-link-destination="/fixture">Mixed</a>',
+      '<p data-history-link-destination="/fixture">Wrong tag</p>', '<a data-history-link-destination="relative">Unsupported spelling</a>',
+      '<p data-other="fixture">Unknown</p>', '<img src="/fixture">', '<script>fixture</script>',
+      '<svg><foreignObject><p>Fixture</p></foreignObject></svg>', '<svg><line marker-end="url(/fixture)"></line></svg>',
+      '<svg width="1e309"></svg>', '<p style="color:red">Inline style</p>',
+      '<a data-history-link-destination="/fixture&#10;other">Control</a>',
+      '<div>'.repeat(129) + 'x' + '</div>'.repeat(129), 'x'.repeat(4 * 1024 * 1024 + 1),
+    ]) expect(() => read(html, 'view-refused')).toThrow()
+  })
+  it('binds published block IDs to fresh view IDs while preserving source descriptors separately', async () => {
+    const { safeHistoryHtml } = await api(), read = await publishedReader()
+    const canonical = '<div class="block" data-block-kind="prose" data-block-digest="012345abcdef" id="source-block"><p>Old <strong>text</strong>.</p></div>'
+    const published = safeHistoryHtml(canonical, 'h-published'), sourceDescriptors = JSON.stringify(published.blocks)
+    const first = read(published.html, 'view-left')
+    expect(first.blocks).toEqual([{ kind: 'prose', id: published.blocks[0].domId, digest: '012345abcdef', domId: 'view-left-0' }])
+    expect(read(first.html, 'view-right').blocks).toEqual([{ kind: 'prose', id: 'view-left-0', digest: '012345abcdef', domId: 'view-right-0' }])
+    expect(read(published.html, 'view-left')).toEqual(first)
+    expect(JSON.stringify(published.blocks)).toBe(sourceDescriptors)
+    expect(() => read(published.html, '../invalid')).toThrow()
+    expect(() => safeHistoryHtml(published.html + '<a data-history-link-destination="/x">X</a>', 'h-default')).toThrow()
+  })
 })

@@ -11,6 +11,8 @@ import { principalSchema, type Principal } from '../principal'
 import { PRINCIPAL_IRI_PREFIX, principalKey } from './identity'
 import type { D1Database } from './d1'
 import {
+  adapterReportSnapshotQuery,
+  insertAdapterReportQuery,
   adapterCredentialQuery,
   approvedFeedQuery,
   countRepliesQuery,
@@ -37,6 +39,10 @@ import {
 } from './queries'
 import type { ProgressItem, ProgressRow, ProgressScope } from './progress'
 import {
+  type AdapterReportRepository,
+  type AdapterExecutionReport,
+  type AdapterReportResult,
+  type AdapterReportAck,
   type AdapterFeedRepository,
   type AdapterCredential,
   type ApprovedFeedOptions,
@@ -364,12 +370,395 @@ function binaryCompare(a: string, b: string): number {
   return left.length - right.length
 }
 
-export class D1MarginRepository implements MarginRepository, AdapterFeedRepository {
+// Report decoders deliberately do not coalesce legacy/missing metadata to zero.
+const reportInteger = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
+const reportId = z.string().min(1).max(2048)
+const reportCommit = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/)
+const reportDetail = z
+  .string()
+  .min(1)
+  .max(4096)
+  .refine((v) => new TextEncoder().encode(v).length <= 4096)
+const reportURL = z
+  .string()
+  .max(2048)
+  .url()
+  .refine((value) => {
+    const url = new URL(value)
+    return (
+      ['http:', 'https:'].includes(url.protocol) &&
+      !url.username &&
+      !url.password &&
+      url.href === value
+    )
+  })
+const reportPR = z
+  .object({ number: reportInteger.positive(), url: reportURL, head: reportCommit })
+  .strict()
+const reportInput = z
+  .object({
+    eventId: adapterSelectorSchema,
+    proposalId: reportId,
+    approvedRevision: reportInteger.positive(),
+    expectedStateVersion: reportInteger,
+    outcome: z.union([
+      z
+        .object({
+          state: z.literal('pr_open'),
+          pr: reportPR,
+          checks: z.enum(['pending', 'passed', 'failed', 'not_evaluated']),
+          detail: reportDetail.nullable(),
+        })
+        .strict(),
+      z
+        .object({ state: z.enum(['conflict', 'apply_failed']), detail: reportDetail })
+        .strict(),
+      z
+        .object({ state: z.literal('merged'), pr: reportPR, mergeCommit: reportCommit })
+        .strict(),
+      z.object({ state: z.literal('closed'), pr: reportPR }).strict(),
+    ]),
+  })
+  .strict()
+const reportMetadata = {
+  state_version: reportInteger,
+  failed_apply_count: reportInteger.max(3),
+  pr_number: reportInteger.positive().nullable(),
+  pr_url: reportURL.nullable(),
+  pr_head: reportCommit.nullable(),
+  checks: z.enum(['pending', 'passed', 'failed', 'not_evaluated']).nullable(),
+  detail: reportDetail.nullable(),
+  merge_commit: reportCommit.nullable(),
+}
+const reportExecution = z
+  .object({
+    ...reportMetadata,
+    proposal_id: reportId,
+    site: adapterSiteSchema,
+    approved_revision: reportInteger.positive(),
+    bound_adapter: adapterIdSchema.nullable(),
+    last_event: adapterSelectorSchema.nullable(),
+    updated_at: adapterDate,
+  })
+  .strict()
+const reportTarget = z
+  .object({
+    proposal_id: reportId,
+    site: adapterSiteSchema,
+    revision: reportInteger.positive(),
+    approved_at: adapterDate,
+    state: z.enum([
+      'approved',
+      'pr_open',
+      'conflict',
+      'apply_failed',
+      'merged',
+      'closed',
+    ]),
+    execution: reportExecution.nullable(),
+  })
+  .strict()
+const reportReceipt = z
+  .object({
+    ...reportMetadata,
+    site: adapterSiteSchema,
+    adapter: adapterIdSchema,
+    event_id: adapterSelectorSchema,
+    proposal_id: reportId,
+    approved_revision: reportInteger.positive(),
+    expected_version: reportInteger,
+    fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+    accepted_at: adapterDate,
+    state: z.enum(['pr_open', 'conflict', 'apply_failed', 'merged', 'closed']),
+  })
+  .strict()
+type ReportReceipt = z.infer<typeof reportReceipt>
+function reportRows(result: unknown) {
+  return z
+    .object({
+      success: z.literal(true),
+      results: z.array(z.record(z.unknown())).max(1),
+    })
+    .parse(result).results
+}
+function validReportTuple(
+  row: z.infer<typeof reportExecution> | ReportReceipt,
+  state: string,
+) {
+  const hasPR = row.pr_number !== null
+  if (
+    hasPR !== (row.pr_url !== null) ||
+    hasPR !== (row.pr_head !== null) ||
+    row.failed_apply_count > row.state_version
+  )
+    throw Error('invalid execution tuple')
+  const valid =
+    state === 'approved'
+      ? row.state_version === 0 &&
+        !hasPR &&
+        row.checks === null &&
+        row.detail === null &&
+        row.merge_commit === null
+      : state === 'pr_open'
+        ? hasPR && row.checks !== null && row.merge_commit === null
+        : state === 'merged'
+          ? hasPR &&
+            row.merge_commit !== null &&
+            row.checks === null &&
+            row.detail === null
+          : state === 'closed'
+            ? hasPR &&
+              row.merge_commit === null &&
+              row.checks === null &&
+              row.detail === null
+            : state === 'conflict'
+              ? row.detail !== null &&
+                row.merge_commit === null &&
+                (hasPR ? row.checks === 'not_evaluated' : row.checks === null)
+              : state === 'apply_failed'
+                ? !hasPR &&
+                  row.failed_apply_count > 0 &&
+                  row.detail !== null &&
+                  row.checks === null &&
+                  row.merge_commit === null
+                : false
+  if (!valid || (state !== 'approved' && row.state_version === 0))
+    throw Error('inconsistent execution state')
+}
+function decodeReportReceipt(
+  value: unknown,
+  c: AdapterCredential,
+  eventId: string,
+): ReportReceipt {
+  const row = reportReceipt.parse(value)
+  if (
+    row.site !== c.site ||
+    row.adapter !== c.adapter ||
+    row.event_id !== eventId ||
+    row.state_version !== row.expected_version + 1
+  )
+    throw Error('report receipt binding')
+  validReportTuple(row, row.state)
+  return row
+}
+function reportAck(row: ReportReceipt): AdapterReportAck {
+  return {
+    eventId: row.event_id,
+    proposalId: row.proposal_id,
+    approvedRevision: row.approved_revision,
+    stateVersion: row.state_version,
+    failedApplyCount: row.failed_apply_count,
+    state: row.state,
+    acceptedAt: row.accepted_at,
+  }
+}
+function parseReportJSON(value: string): unknown {
+  if (new TextEncoder().encode(value).length > 65536)
+    throw Error('report snapshot bound')
+  return JSON.parse(value)
+}
+function checkReportCredential(c: AdapterCredential) {
+  credentialRow.parse({
+    token_id: c.tokenId,
+    site: c.site,
+    adapter: c.adapter,
+    token_sha256: c.tokenSha256,
+    capability: c.capability,
+    created_at: c.createdAt,
+    revoked_at: c.revokedAt,
+    enabled: c.enabled ? 1 : 0,
+    registration_created_at: c.registrationCreatedAt,
+  })
+}
+
+export class D1MarginRepository implements MarginRepository, AdapterFeedRepository, AdapterReportRepository {
   constructor(private readonly database: D1Database) {}
 
   private statement({ sql, params }: Query) {
     const prepared = this.database.prepare(sql)
     return params.length > 0 ? prepared.bind(...params) : prepared
+  }
+
+  private async reportSnapshot(
+    c: AdapterCredential,
+    eventId: string,
+    proposalId?: string,
+  ) {
+    checkReportCredential(c)
+    const rows = reportRows(
+      await this.statement(adapterReportSnapshotQuery(c, eventId, proposalId)).all(),
+    )
+    if (rows.length !== 1) throw Error('report snapshot cardinality')
+    const row = z
+      .object({
+        authorized: z.union([z.literal(0), z.literal(1)]),
+        receipt: z.string().nullable(),
+        target: z.string().nullable(),
+      })
+      .strict()
+      .parse(rows[0])
+    if (row.authorized === 0) {
+      if (row.receipt !== null || row.target !== null)
+        throw Error('unauthorized report projection')
+      return {
+        authorized: false as const,
+        receipt: null,
+        target: null,
+        rawTarget: null,
+      }
+    }
+    const receipt =
+      row.receipt === null
+        ? null
+        : decodeReportReceipt(parseReportJSON(row.receipt), c, eventId)
+    const target =
+      row.target === null ? null : reportTarget.parse(parseReportJSON(row.target))
+    if (target) {
+      if (target.site !== c.site || target.proposal_id !== proposalId)
+        throw Error('report target binding')
+      const e = target.execution
+      if (e) {
+        if (
+          e.site !== target.site ||
+          e.proposal_id !== target.proposal_id ||
+          e.approved_revision !== target.revision
+        )
+          throw Error('execution approval binding')
+        validReportTuple(e, target.state)
+        if (
+          e.state_version === 0
+            ? e.failed_apply_count !== 0 ||
+              e.bound_adapter !== null ||
+              e.last_event !== null ||
+              e.updated_at !== target.approved_at
+            : e.bound_adapter === null || e.last_event === null
+        )
+          throw Error('execution stamp binding')
+      }
+    }
+    return { authorized: true as const, receipt, target, rawTarget: row.target }
+  }
+
+  async readAdapterReportReceipt(
+    c: AdapterCredential,
+    eventId: string,
+  ): Promise<AdapterReportResult> {
+    adapterSelectorSchema.parse(eventId)
+    const snapshot = await this.reportSnapshot(c, eventId)
+    if (!snapshot.authorized) return { status: 'forbidden' }
+    return snapshot.receipt
+      ? { status: 'accepted', ack: reportAck(snapshot.receipt) }
+      : { status: 'missing' }
+  }
+
+  async reportProposalExecution(
+    c: AdapterCredential,
+    input: AdapterExecutionReport,
+    at: string,
+  ): Promise<AdapterReportResult> {
+    const report = reportInput.parse(input)
+    adapterDate.parse(at)
+    // Zod projects keys in schema order, including the nested outcome/PR.
+    const bytes = new TextEncoder().encode(JSON.stringify(report))
+    if (bytes.length > 65536) throw Error('report input bound')
+    const fingerprint = Array.from(
+      new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)),
+      (b) => b.toString(16).padStart(2, '0'),
+    ).join('')
+    const classify = (
+      snapshot: Awaited<ReturnType<D1MarginRepository['reportSnapshot']>>,
+    ): AdapterReportResult | null => {
+      if (!snapshot.authorized) return { status: 'forbidden' }
+      if (snapshot.receipt) {
+        const r = snapshot.receipt
+        if (
+          r.fingerprint !== fingerprint ||
+          r.proposal_id !== report.proposalId ||
+          r.approved_revision !== report.approvedRevision ||
+          r.expected_version !== report.expectedStateVersion
+        )
+          return { status: 'conflict' }
+        return { status: 'accepted', ack: reportAck(r) }
+      }
+      const p = snapshot.target,
+        e = p?.execution
+      if (!p) return { status: 'forbidden' }
+      if (!e) return { status: 'not_evaluated' }
+      if (e.bound_adapter !== null && e.bound_adapter !== c.adapter)
+        return { status: 'forbidden' }
+      if (
+        p.revision !== report.approvedRevision ||
+        e.state_version !== report.expectedStateVersion ||
+        e.state_version === Number.MAX_SAFE_INTEGER ||
+        ['merged', 'closed'].includes(p.state)
+      )
+        return { status: 'conflict' }
+      const o = report.outcome
+      if (
+        o.state === 'apply_failed' &&
+        (e.pr_number !== null || e.failed_apply_count >= 3)
+      )
+        return { status: 'conflict' }
+      if (
+        'pr' in o &&
+        e.pr_number !== null &&
+        (e.pr_number !== o.pr.number || e.pr_url !== o.pr.url)
+      )
+        return { status: 'conflict' }
+      return null
+    }
+    const before = await this.reportSnapshot(c, report.eventId, report.proposalId)
+    const result = classify(before)
+    if (result) return result
+    const rows = reportRows(
+      await this.statement(
+        insertAdapterReportQuery(c, report, fingerprint, at, before.rawTarget!),
+      ).all(),
+    )
+    if (rows.length === 1) {
+      const row = decodeReportReceipt(rows[0], c, report.eventId)
+      if (
+        row.fingerprint !== fingerprint ||
+        row.proposal_id !== report.proposalId ||
+        row.approved_revision !== report.approvedRevision ||
+        row.expected_version !== report.expectedStateVersion ||
+        row.accepted_at !== at ||
+        row.state !== report.outcome.state
+      )
+        throw Error('report RETURNING mismatch; reconcile receipt')
+      const e = before.target!.execution!,
+        o = report.outcome,
+        pr = 'pr' in o ? o.pr : null
+      const expected = {
+        state_version: e.state_version + 1,
+        failed_apply_count: e.failed_apply_count + Number(o.state === 'apply_failed'),
+        pr_number: o.state === 'conflict' ? e.pr_number : (pr?.number ?? null),
+        pr_url: o.state === 'conflict' ? e.pr_url : (pr?.url ?? null),
+        pr_head: o.state === 'conflict' ? e.pr_head : (pr?.head ?? null),
+        checks:
+          o.state === 'conflict'
+            ? e.pr_number === null
+              ? null
+              : 'not_evaluated'
+            : o.state === 'pr_open'
+              ? o.checks
+              : null,
+        detail: 'detail' in o ? o.detail : null,
+        merge_commit: o.state === 'merged' ? o.mergeCommit : null,
+      }
+      if (
+        Object.entries(expected).some(
+          ([key, value]) => row[key as keyof ReportReceipt] !== value,
+        )
+      )
+        throw Error('report RETURNING projection mismatch; reconcile receipt')
+      return { status: 'accepted', ack: reportAck(row) }
+    }
+    return (
+      classify(await this.reportSnapshot(c, report.eventId, report.proposalId)) ?? {
+        status: 'conflict',
+      }
+    )
   }
 
   async findAdapterCredential(tokenId: string): Promise<AdapterCredential | null> {

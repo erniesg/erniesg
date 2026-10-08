@@ -707,3 +707,99 @@ export function approvedFeedQuery(
   }
 }
 
+
+// Report capability is explicit and current-token-specific. This predicate is
+// shared by mutation, no-row classification and response-loss receipt recovery.
+const reportAuthority = `SELECT t.site,t.adapter FROM margin_adapter_tokens t
+  JOIN margin_adapters a ON a.site=t.site AND a.adapter=t.adapter
+  JOIN margin_adapter_report_grants g ON g.token_id=t.token_id
+    AND g.token_sha256=t.token_sha256 AND g.site=t.site AND g.adapter=t.adapter
+  WHERE t.token_id=? AND t.token_sha256=? AND t.site=? AND t.adapter=?
+    AND t.capability='approved_feed' AND t.revoked_at IS NULL AND a.enabled=1 AND g.revoked_at IS NULL`
+function reportAuthorityParams(c: import('./repository').AdapterCredential) {
+  return [c.tokenId, c.tokenSha256, c.site, c.adapter]
+}
+export const REPORT_RECEIPT_COLUMNS =
+  'site, adapter, event_id, proposal_id, approved_revision, expected_version, fingerprint, accepted_at, state_version, failed_apply_count, state, pr_number, pr_url, pr_head, checks, detail, merge_commit'
+const executionColumns =
+  'proposal_id, site, approved_revision, state_version, failed_apply_count, bound_adapter, pr_number, pr_url, pr_head, checks, detail, merge_commit, last_event, updated_at'
+const reportTargetJson = `json_object('proposal_id',p.proposal_id,'site',p.site,'revision',p.revision,'approved_at',p.approved_at,'state',p.state,
+  'execution',CASE WHEN e.proposal_id IS NULL THEN NULL ELSE json_object(${executionColumns
+    .split(', ')
+    .map((c) => `'${c}',e.${c}`)
+    .join(',')}) END)`
+
+/** One scoped snapshot. A NULL target never distinguishes foreign from absent. */
+export function adapterReportSnapshotQuery(
+  c: import('./repository').AdapterCredential,
+  eventId: string,
+  proposalId?: string,
+): Query {
+  return {
+    sql: `WITH authority AS (${reportAuthority})
+    SELECT CASE WHEN EXISTS(SELECT 1 FROM authority) THEN 1 ELSE 0 END AS authorized,
+      (SELECT json_object(${REPORT_RECEIPT_COLUMNS.split(', ')
+        .map((c) => `'${c}',r.${c}`)
+        .join(',')})
+       FROM margin_adapter_report_receipts r JOIN authority a ON a.site=r.site AND a.adapter=r.adapter WHERE r.event_id=?) AS receipt,
+      (SELECT ${reportTargetJson} FROM margin_proposal_applications p
+       JOIN authority a ON a.site=p.site LEFT JOIN margin_proposal_execution e ON e.proposal_id=p.proposal_id
+       WHERE p.proposal_id=?) AS target`,
+    params: [...reportAuthorityParams(c), eventId, proposalId ?? null],
+  }
+}
+
+export function insertAdapterReportQuery(
+  c: import('./repository').AdapterCredential,
+  report: import('./repository').AdapterExecutionReport,
+  fingerprint: string,
+  at: string,
+  exactTarget: string,
+): Query {
+  const o = report.outcome,
+    pr = 'pr' in o ? o.pr : null
+  const retained = o.state === 'conflict'
+  const projection = [pr?.number ?? null, pr?.url ?? null, pr?.head ?? null]
+  return {
+    // The complete decoded snapshot is compared inside the write as well as CAS.
+    // No metadata repair, authority fallback or stale pre-read can authorize it.
+    sql: `INSERT INTO margin_adapter_report_receipts(${REPORT_RECEIPT_COLUMNS})
+      WITH authority AS (${reportAuthority})
+      SELECT p.site,a.adapter,?,p.proposal_id,p.revision,e.state_version,?,?,
+        e.state_version+1,e.failed_apply_count+CASE WHEN ?='apply_failed' THEN 1 ELSE 0 END,?,
+        ${retained ? 'e.pr_number,e.pr_url,e.pr_head' : '?,?,?'},
+        ${retained ? "CASE WHEN e.pr_number IS NULL THEN NULL ELSE 'not_evaluated' END" : '?'},?,?
+      FROM margin_proposal_applications p JOIN authority a ON a.site=p.site
+      JOIN margin_proposal_execution e ON e.proposal_id=p.proposal_id AND e.site=p.site AND e.approved_revision=p.revision
+      WHERE p.proposal_id=? AND p.revision=? AND e.state_version=? AND e.state_version<9007199254740991
+        AND (e.bound_adapter IS NULL OR e.bound_adapter=a.adapter)
+        AND p.state IN ('approved','pr_open','conflict','apply_failed')
+        AND (?!='apply_failed' OR (e.pr_number IS NULL AND e.failed_apply_count<3))
+        AND (e.pr_number IS NULL OR ? IS NULL OR (e.pr_number=? AND e.pr_url=?))
+        AND ${reportTargetJson}=?
+        AND NOT EXISTS(SELECT 1 FROM margin_adapter_report_receipts r WHERE r.site=p.site AND r.adapter=a.adapter AND r.event_id=?)
+      RETURNING ${REPORT_RECEIPT_COLUMNS}`,
+    params: [
+      ...reportAuthorityParams(c),
+      report.eventId,
+      fingerprint,
+      at,
+      o.state,
+      o.state,
+      ...(retained ? [] : projection),
+      ...(retained ? [] : [o.state === 'pr_open' ? o.checks : null]),
+      'detail' in o ? o.detail : null,
+      o.state === 'merged' ? o.mergeCommit : null,
+      report.proposalId,
+      report.approvedRevision,
+      report.expectedStateVersion,
+      o.state,
+      pr?.number ?? null,
+      pr?.number ?? null,
+      pr?.url ?? null,
+      exactTarget,
+      report.eventId,
+    ],
+  }
+}
+

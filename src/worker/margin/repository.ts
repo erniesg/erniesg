@@ -277,3 +277,49 @@ export interface AdapterFeedRepository {
   }>
 }
 
+
+/** Private adapter assertions, not proof of provider work or merge authority. */
+export type AdapterReportPR = { number: number; url: string; head: string }
+export type AdapterReportOutcome =
+  | {
+      state: 'pr_open'
+      pr: AdapterReportPR
+      checks: 'pending' | 'passed' | 'failed' | 'not_evaluated'
+      detail: string | null
+    }
+  | { state: 'conflict' | 'apply_failed'; detail: string }
+  | { state: 'merged'; pr: AdapterReportPR; mergeCommit: string }
+  | { state: 'closed'; pr: AdapterReportPR }
+export type AdapterExecutionReport = {
+  eventId: string
+  proposalId: string
+  approvedRevision: number
+  expectedStateVersion: number
+  outcome: AdapterReportOutcome
+}
+export type AdapterReportAck = {
+  eventId: string
+  proposalId: string
+  approvedRevision: number
+  stateVersion: number
+  failedApplyCount: number
+  state: AdapterReportOutcome['state']
+  acceptedAt: string
+}
+export type AdapterReportResult =
+  | { status: 'accepted'; ack: AdapterReportAck }
+  | { status: 'forbidden' | 'conflict' | 'not_evaluated' | 'missing' }
+export interface AdapterReportRepository {
+  /** Caller authenticates; SQL rechecks current token-specific report authority.
+   * A thrown/uncertain result requires receipt reconciliation, never blind retry. */
+  reportProposalExecution(
+    credential: AdapterCredential,
+    report: AdapterExecutionReport,
+    at: string,
+  ): Promise<AdapterReportResult>
+  readAdapterReportReceipt(
+    credential: AdapterCredential,
+    eventId: string,
+  ): Promise<AdapterReportResult>
+}
+

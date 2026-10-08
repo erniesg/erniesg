@@ -1,3 +1,9 @@
+import {
+  adapterSelectorSchema,
+  adapterSiteSchema,
+  adapterIdSchema,
+  approvedFeedOptionsSchema,
+} from './adapter'
 import { textAnnotationSchema } from '../../annotations/annotations'
 import { z } from 'zod'
 import { isFullCommitId, parseHunks } from '../../annotations/criticmarkup'
@@ -5,6 +11,8 @@ import { principalSchema, type Principal } from '../principal'
 import { PRINCIPAL_IRI_PREFIX, principalKey } from './identity'
 import type { D1Database } from './d1'
 import {
+  adapterCredentialQuery,
+  approvedFeedQuery,
   countRepliesQuery,
   reviewMutationQuery,
   reviewTargetQuery,
@@ -29,6 +37,9 @@ import {
 } from './queries'
 import type { ProgressItem, ProgressRow, ProgressScope } from './progress'
 import {
+  type AdapterFeedRepository,
+  type AdapterCredential,
+  type ApprovedFeedOptions,
   DEFAULT_VISIBILITY,
   PROPOSAL_STATES,
   type ProposalReview,
@@ -54,6 +65,7 @@ import {
   TOMBSTONE_BODY,
   isRepoRelativePath,
   splitSource,
+  joinSource,
   maxBodyLength,
   MAX_QUOTE_LENGTH,
   MAX_CONTEXT_LENGTH,
@@ -298,12 +310,154 @@ function projectedRows(result: unknown, limit?: number): MarginAnnotationRecord[
   })
 }
 
-export class D1MarginRepository implements MarginRepository {
+const adapterDate = z.string().datetime({ offset: true }).max(40)
+const credentialRow = z
+  .object({
+    token_id: adapterSelectorSchema,
+    site: adapterSiteSchema,
+    adapter: adapterIdSchema,
+    token_sha256: z.string().regex(/^[0-9a-f]{64}$/),
+    capability: z.string().min(1).max(64),
+    created_at: adapterDate,
+    revoked_at: adapterDate.nullable(),
+    enabled: z.union([z.literal(0), z.literal(1)]),
+    registration_created_at: adapterDate,
+  })
+  .strict()
+const feedColumns = {
+  proposal_id: z.string().min(1).max(2048),
+  site: adapterSiteSchema,
+  document: z.string().min(1).max(2048),
+  visibility: z.enum(['public', 'private']),
+  body: z.string().min(1).max(maxBodyLength('editing')),
+  base_commit: z.string().refine(isFullCommitId),
+  source_path: z.string().min(1).max(512).refine(isRepoRelativePath),
+  revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  approved_at: adapterDate,
+  state: z.literal('approved'),
+}
+const feedRow = z
+  .object({ kind: z.literal('item'), authorized: z.literal(1), ...feedColumns })
+  .strict()
+const feedAuthority = z
+  .object({
+    kind: z.literal('authority'),
+    authorized: z.union([z.literal(0), z.literal(1)]),
+    ...Object.fromEntries(Object.keys(feedColumns).map((key) => [key, z.null()])),
+  })
+  .strict()
+function adapterRows(result: unknown): Record<string, unknown>[] {
+  return z
+    .object({
+      success: z.literal(true),
+      results: z.array(z.record(z.unknown())).max(52),
+    })
+    .parse(result).results
+}
+/** SQLite BINARY orders valid UTF-8 bytes, including non-ASCII stored IDs. */
+function binaryCompare(a: string, b: string): number {
+  const encoder = new TextEncoder(),
+    left = encoder.encode(a),
+    right = encoder.encode(b)
+  for (let i = 0; i < Math.min(left.length, right.length); i++)
+    if (left[i] !== right[i]) return left[i] - right[i]
+  return left.length - right.length
+}
+
+export class D1MarginRepository implements MarginRepository, AdapterFeedRepository {
   constructor(private readonly database: D1Database) {}
 
   private statement({ sql, params }: Query) {
     const prepared = this.database.prepare(sql)
     return params.length > 0 ? prepared.bind(...params) : prepared
+  }
+
+  async findAdapterCredential(tokenId: string): Promise<AdapterCredential | null> {
+    adapterSelectorSchema.parse(tokenId)
+    const rows = adapterRows(
+      await this.statement(adapterCredentialQuery(tokenId)).all(),
+    )
+    if (rows.length > 1) throw new Error('adapter credential cardinality')
+    if (!rows.length) return null
+    const row = credentialRow.parse(rows[0])
+    if (row.token_id !== tokenId) throw new Error('adapter credential selector')
+    return {
+      tokenId: row.token_id,
+      site: row.site,
+      adapter: row.adapter,
+      tokenSha256: row.token_sha256,
+      capability: row.capability,
+      createdAt: row.created_at,
+      revokedAt: row.revoked_at,
+      enabled: row.enabled === 1,
+      registrationCreatedAt: row.registration_created_at,
+    }
+  }
+
+  async listApprovedFeed(credential: AdapterCredential, options: ApprovedFeedOptions) {
+    credentialRow.parse({
+      token_id: credential.tokenId,
+      site: credential.site,
+      adapter: credential.adapter,
+      token_sha256: credential.tokenSha256,
+      capability: credential.capability,
+      created_at: credential.createdAt,
+      revoked_at: credential.revokedAt,
+      enabled:
+        credential.enabled === true ? 1 : credential.enabled === false ? 0 : null,
+      registration_created_at: credential.registrationCreatedAt,
+    })
+    approvedFeedOptionsSchema.parse(options)
+    if (
+      !credential.enabled ||
+      credential.revokedAt !== null ||
+      credential.capability !== 'approved_feed'
+    )
+      throw new Error('adapter not authorized')
+    const rows = adapterRows(
+      await this.statement(approvedFeedQuery(credential, options)).all(),
+    )
+    if (rows.length < 1 || rows.length > options.limit + 1)
+      throw new Error('adapter feed cardinality')
+    const authority = feedAuthority.parse(rows[0])
+    if (authority.authorized === 0) {
+      if (rows.length !== 1) throw new Error('unauthorized adapter rows')
+      return { authorized: false, items: [] }
+    }
+    let previous = options.after
+    const items = rows.slice(1).map((raw) => {
+      const row = feedRow.parse(raw),
+        source = joinSource(row.site, row.document),
+        scope = splitSource(source)
+      if (
+        row.site !== credential.site ||
+        scope?.site !== row.site ||
+        scope.document !== row.document
+      )
+        throw new Error('adapter snapshot scope')
+      parseHunks(row.body)
+      if (
+        previous &&
+        (binaryCompare(row.approved_at, previous.approvedAt) < 0 ||
+          (row.approved_at === previous.approvedAt &&
+            binaryCompare(row.proposal_id, previous.proposalId) <= 0))
+      )
+        throw new Error('adapter feed order')
+      previous = { approvedAt: row.approved_at, proposalId: row.proposal_id }
+      return {
+        proposalId: row.proposal_id,
+        site: row.site,
+        document: row.document,
+        source,
+        approvedRevision: row.revision,
+        body: row.body,
+        baseCommit: row.base_commit,
+        sourcePath: row.source_path,
+        visibility: row.visibility,
+        approvedAt: row.approved_at,
+      }
+    })
+    return { authorized: true, items }
   }
 
   async readReviewProposal(scope: TenantScope, id: string, principal: Principal): Promise<ReviewReadResult> {

@@ -655,3 +655,55 @@ export function reviewReadbackQuery(scope: TenantScope, id: string, principal: P
       scope.site,scope.document,id,principal.provider,principal.issuer,principal.subject],
   }
 }
+
+/** Selector is public lookup material, not authentication by itself. */
+export function adapterCredentialQuery(tokenId: string): Query {
+  return {
+    sql: `SELECT t.token_id, t.site, t.adapter, t.token_sha256, t.capability,
+      t.created_at, t.revoked_at, a.enabled, a.created_at AS registration_created_at
+      FROM margin_adapter_tokens t JOIN margin_adapters a ON a.site=t.site AND a.adapter=t.adapter
+      WHERE t.token_id=? LIMIT 2`,
+    params: [tokenId],
+  }
+}
+
+export function approvedFeedQuery(
+  credential: import('./repository').AdapterCredential,
+  options: import('./repository').ApprovedFeedOptions,
+): Query {
+  const after = options.after
+  const columns =
+    'proposal_id, site, document, visibility, body, base_commit, source_path, revision, approved_at, state'
+  return {
+    sql: `WITH authority AS (
+      SELECT t.site FROM margin_adapter_tokens t
+      JOIN margin_adapters a ON a.site=t.site AND a.adapter=t.adapter
+      WHERE t.token_id=? AND t.token_sha256=? AND t.site=? AND t.adapter=?
+        AND t.capability='approved_feed' AND t.revoked_at IS NULL AND a.enabled=1
+    ), page AS (
+      SELECT ${columns
+        .split(', ')
+        .map((x) => `p.${x}`)
+        .join(', ')}
+      FROM margin_proposal_applications p JOIN authority ON authority.site=p.site
+      WHERE p.state='approved'${after ? ' AND (p.approved_at > ? OR (p.approved_at = ? AND p.proposal_id > ?))' : ''}
+      ORDER BY p.approved_at ASC, p.proposal_id ASC LIMIT ?
+    )
+    SELECT 'authority' AS kind, CASE WHEN EXISTS(SELECT 1 FROM authority) THEN 1 ELSE 0 END AS authorized,
+      ${columns
+        .split(', ')
+        .map((x) => `NULL AS ${x}`)
+        .join(', ')}
+    UNION ALL SELECT 'item' AS kind, 1 AS authorized, ${columns} FROM page
+    ORDER BY kind ASC, approved_at ASC, proposal_id ASC`,
+    params: [
+      credential.tokenId,
+      credential.tokenSha256,
+      credential.site,
+      credential.adapter,
+      ...(after ? [after.approvedAt, after.approvedAt, after.proposalId] : []),
+      options.limit,
+    ],
+  }
+}
+

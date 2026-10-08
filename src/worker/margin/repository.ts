@@ -92,6 +92,13 @@ export type ReviewMutationResult =
   | { status: 'missing' }
   | { status: 'conflict' }
 
+/** Privileged saved-review metadata, never an ordinary annotation field. */
+export type SavedProposalReview = { decision: string; comments: string; revision: number; reviewer: string; at: string }
+export type ReviewReadResult =
+  | { status: 'found'; record: MarginAnnotationRecord; savedReview: SavedProposalReview | null }
+  | { status: 'forbidden' }
+  | { status: 'missing' }
+
 export type ReviewListOptions = ReviewFilters & { limit: number; after?: ListCursor }
 export type ReviewListResult = { authorized: boolean; records: MarginAnnotationRecord[] }
 
@@ -102,6 +109,9 @@ export const MAX_PAGE_SIZE = 200
 export const DEFAULT_PAGE_SIZE = 100
 
 export interface MarginRepository {
+  /** One snapshot binds current admin authority, current proposal and saved review. */
+  readReviewProposal(scope: TenantScope, id: string, principal: Principal): Promise<ReviewReadResult>
+
   reviewProposal(scope: TenantScope, id: string, principal: Principal, input: ProposalReview | { revision: number }, at: string, apply: boolean): Promise<ReviewMutationResult>
 
   /**

@@ -8,6 +8,7 @@ import {
   countRepliesQuery,
   reviewMutationQuery,
   reviewTargetQuery,
+  reviewReadbackQuery,
   deleteAnnotationQuery,
   findAnnotationQuery,
   findIdempotencyReceiptQuery,
@@ -32,6 +33,8 @@ import {
   PROPOSAL_STATES,
   type ProposalReview,
   type ReviewMutationResult,
+  type ReviewReadResult,
+  type SavedProposalReview,
   MAX_PAGE_SIZE,
   type AnnotationPatch,
   type IdempotencyReceipt,
@@ -184,6 +187,17 @@ const reviewAnnotation = proposalColumns.extend({
 }).strict().refine(validProposalColumns).refine(row =>
   (row.proposal_state === null) === (row.approved_revision === null))
 
+// Separate from Save RETURNING and ordinary/read-list projections. Every key
+// is mandatory even when null; no read-time normalization or inferred review.
+const storedReviewMetadata = z.object({
+  review_decision: z.string().min(1).max(200).refine(value => value === value.trim()).nullable(),
+  review_comments: z.string().max(8000).nullable(),
+  reviewed_revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullable(),
+  reviewed_by: z.string().refine(isStoredPrincipalKey).nullable(),
+  reviewed_at: reviewKey.shape.created.nullable(),
+}).strict()
+const reviewReadback = z.object({ annotation: reviewAnnotation, saved_review: storedReviewMetadata }).strict()
+
 export function rowToRecord(row: AnnotationRow): MarginAnnotationRecord {
   const kind = kindForMotivation(row.motivation as Motivation)
   const annotation = textAnnotationSchema.parse({
@@ -290,6 +304,46 @@ export class D1MarginRepository implements MarginRepository {
   private statement({ sql, params }: Query) {
     const prepared = this.database.prepare(sql)
     return params.length > 0 ? prepared.bind(...params) : prepared
+  }
+
+  async readReviewProposal(scope: TenantScope, id: string, principal: Principal): Promise<ReviewReadResult> {
+    principalSchema.parse(principal)
+    reviewSite.parse(scope.site)
+    const canonical = splitSource(scope.site + scope.document)
+    if (canonical?.site !== scope.site || canonical.document !== scope.document) throw new Error('invalid review document')
+    reviewKey.shape.id.parse(id)
+    const result = await this.statement(reviewReadbackQuery(scope,id,principal)).all()
+    const rows = z.object({ success: z.literal(true), results: z.array(z.object({
+      authorized: z.union([z.literal(0),z.literal(1)]), review: z.string().max(1_048_576).nullable(),
+    }).strict()).length(1) }).parse(result).results
+    const row = rows[0]
+    if (!row.authorized) {
+      if (row.review !== null) throw new Error('unauthorized review readback')
+      return { status: 'forbidden' }
+    }
+    if (row.review === null) return { status: 'missing' }
+    const { annotation, saved_review: saved } = reviewReadback.parse(JSON.parse(row.review))
+    if (annotation.site !== scope.site || annotation.document !== scope.document || annotation.id !== id
+        || (annotation.approved_revision !== null && (annotation.revision === null
+          || annotation.approved_revision > annotation.revision || annotation.withdrawn_at !== null))) {
+      throw new Error('invalid review readback binding')
+    }
+    // Migration0003 keeps historical unstamped free-text proposals readable.
+    // Fully stamped current proposals must still carry canonical hunks; legacy
+    // other checks forbid saved reviews or application projections on legacy rows.
+    if (annotation.revision !== null) parseHunks(annotation.body)
+    let savedReview: SavedProposalReview | null = null
+    if (!Object.values(saved).every(value => value === null)) {
+      if (saved.review_decision === null || saved.review_comments === null || saved.reviewed_revision === null
+          || saved.reviewed_by === null || saved.reviewed_at === null || annotation.revision === null
+          || saved.reviewed_revision > annotation.revision
+          || (annotation.approved_revision !== null && saved.reviewed_revision > annotation.approved_revision)) {
+        throw new Error('incomplete or inconsistent stored review')
+      }
+      savedReview = { decision: saved.review_decision, comments: saved.review_comments, revision: saved.reviewed_revision,
+        reviewer: saved.reviewed_by, at: saved.reviewed_at }
+    }
+    return { status: 'found', record: rowToRecord(annotation), savedReview }
   }
 
   async reviewProposal(scope: TenantScope, id: string, principal: Principal,

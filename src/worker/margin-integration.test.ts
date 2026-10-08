@@ -468,3 +468,51 @@ describe('AuthKit and canonical service composition', () => {
     ).toMatchObject({ annotations: [] })
   })
 })
+
+describe('privileged saved-review readback Worker composition', () => {
+  it('uses verified identity and retains renewed cookies and no-store on every HEAD outcome', async () => {
+    const h=await setup()
+    h.db.execute("UPDATE margin_allowlist SET role='admin' WHERE identity_id=(SELECT id FROM margin_identity WHERE subject=?)",[writer.subject])
+    h.db.execute('INSERT INTO margin_site_admins(site,identity_id) SELECT ?,id FROM margin_identity WHERE subject=?',['https://ernie.sg',writer.subject])
+    const created=await h.request('/annotations','POST',await h.cookie(other),webAnnotation({source:CHAPTER_ONE,motivation:'editing',visibility:'private'}))
+    expect(created.status).toBe(201)
+    const annotation=await created.json()
+    const path=`//%70roposals//${encodeURIComponent(annotation.id)}//%72eview//${scope}`
+    const now=Math.floor(Date.now()/1000)
+    const fresh=await h.signer.sign({iss:TEST_ISSUER,sub:writer.subject,client_id:TEST_CLIENT_ID,iat:now,exp:now+300})
+    const provider=createFakeProvider({jwks:h.signer.jwks,authenticate:{access_token:fresh,refresh_token:'fixture-rotated-readback',user:{id:writer.subject}}})
+    vi.stubGlobal('fetch',provider.fetchImpl)
+    const stale=await h.cookie(writer,true)
+    const responses:Response[]=[]
+    const success=await h.request(path,'HEAD',stale);expect(success.status).toBe(200);responses.push(success)
+    const get=await h.request(path,'GET',await h.cookie());expect(get.status).toBe(200);expect((await get.json()).savedReview).toBeNull()
+    h.db.execute('DELETE FROM margin_site_admins')
+    const denied=await h.request(path,'HEAD',stale);expect(denied.status).toBe(403);responses.push(denied)
+    h.env.MARGIN_DB=undefined
+    const missing=await h.request(path,'HEAD',stale);expect(missing.status).toBe(503);responses.push(missing)
+    h.env.MARGIN_DB={prepare(){throw new Error('private fixture database details')}}
+    const failed=await h.request(path,'HEAD',stale);expect(failed.status).toBe(503);responses.push(failed)
+    for(const response of responses) {
+      expect(await response.text()).toBe('')
+      expect(response.headers.get('cache-control')).toBe('no-store')
+      expect(response.headers.get('content-type')).toContain('application/json')
+      expect(response.headers.get('set-cookie')).toContain('__Host-margin-session=')
+      expect(response.headers.get('set-cookie')).not.toContain('Max-Age=0')
+    }
+    expect(h.assets).not.toHaveBeenCalled()
+  })
+  it('retains terminal and legacy cookie clearing with bodyless unauthorized readback', async () => {
+    const h=await setup()
+    const provider=createFakeProvider({jwks:h.signer.jwks,authenticateStatus:400,authenticate:{error:'invalid_grant'}})
+    vi.stubGlobal('fetch',provider.fetchImpl)
+    const cookie=(await h.cookie(writer,true))+'; margin-session=legacy-fixture'
+    const response=await h.request(`/proposals/missing/review${scope}`,'HEAD',cookie)
+    expect(response.status).toBe(401);expect(await response.text()).toBe('')
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    const clears=response.headers.get('set-cookie')!
+    expect(clears).toContain('__Host-margin-session=')
+    expect(clears).toContain('margin-session=')
+    expect(clears).toContain('Max-Age=0')
+    expect(h.assets).not.toHaveBeenCalled()
+  })
+})

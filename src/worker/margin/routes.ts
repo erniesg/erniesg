@@ -61,6 +61,7 @@ import {
  *   GET    /proposals                list, restricted to `editing`
  *   GET    /proposals?scope=review   pending proposals on explicitly mapped admin sites
  *   POST   /proposals/:id/withdraw   owner-scoped; keeps the row (059)
+ *   GET/HEAD /proposals/:id/review   admin-only saved-review readback
  *   POST   /proposals/:id/review     save pending admin review
  *   POST   /proposals/:id/apply      snapshot approved revision
  *   GET    /documents/:id/history    501 — issue 059
@@ -503,6 +504,22 @@ async function listReviewProposals(url: URL, context: MarginRouteContext): Promi
     annotations: rows.map(present),
     ...(result.records.length > page.limit && last ? { nextCursor: encodeReviewCursor(filters, last) } : {}),
   })
+}
+
+async function readReviewProposal(url: URL, context: MarginRouteContext, id: string): Promise<Response> {
+  if (!context.principal) return unauthenticated()
+  for (const key of ['source','site','document']) {
+    if (url.searchParams.getAll(key).length > 1) return problem(400,'invalid_scope','review scope parameters must be unique')
+  }
+  if (url.searchParams.has('source') && (url.searchParams.has('site') || url.searchParams.has('document'))) {
+    return problem(400,'invalid_scope','supply only one review scope representation')
+  }
+  const scope = readScope(url)
+  if ('error' in scope) return scope.error
+  const result = await context.repository.readReviewProposal(scope,id,context.principal)
+  if (result.status === 'forbidden') return problem(403,'review_forbidden','review requires global admin and an explicit site mapping')
+  if (result.status === 'missing') return problem(404,'not_found','no proposal has that id here')
+  return json({ annotation: present(result.record), savedReview: result.savedReview })
 }
 
 async function reviewProposal(request: Request, url: URL, context: MarginRouteContext, id: string, apply: boolean): Promise<Response> {
@@ -1364,6 +1381,13 @@ function segments(pathname: string): string[] | null {
   }
 }
 
+/** Share the router's exact decoded spellings with outer HEAD finalization. */
+export function isReviewReadbackPath(pathname: string): boolean {
+  if (!pathname.startsWith(`${MARGIN_API_PREFIX}/`)) return false
+  const path = segments(pathname)
+  return path !== null && path.length === 3 && path[0] === 'proposals' && path[2] === 'review'
+}
+
 function unauthenticated(): Response {
   return problem(401, 'unauthenticated', 'this route needs a signed-in caller')
 }
@@ -1449,7 +1473,11 @@ export async function handleMarginRequest(
   }
 
   if (path.length === 3 && path[0] === 'proposals' && ['review', 'apply'].includes(path[2])) {
-    if (method !== 'POST') return methodNotAllowed(['POST'])
+    if (path[2] === 'review' && method === 'GET') {
+      const response = await readReviewProposal(url,context,annotationIdFromIri(path[1]))
+      return request.method === 'HEAD' ? new Response(null,{status:response.status,headers:response.headers}) : response
+    }
+    if (method !== 'POST') return methodNotAllowed(path[2] === 'review' ? ['GET','HEAD','POST'] : ['POST'])
     return reviewProposal(request, url, context, annotationIdFromIri(path[1]), path[2] === 'apply')
   }
 

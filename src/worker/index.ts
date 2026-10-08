@@ -4,7 +4,7 @@ import { legacyCookieClears } from './margin/session'
 import { handleAuthRequest } from './margin/auth-routes'
 import { isD1Database } from './margin/d1'
 import { D1MarginRepository } from './margin/d1-repository'
-import { handleMarginRequest } from './margin/routes'
+import { handleMarginRequest, isReviewReadbackPath } from './margin/routes'
 import {
   json,
   MARGIN_API_PREFIX,
@@ -52,7 +52,12 @@ export default {
     // The pre-release unprefixed cookie names are never read. A browser that
     // still sends one gets it cleared, on whichever route it hits first.
     const clears = legacyCookieClears(request)
-    const response = await route(request, env)
+    let response = await route(request, env)
+    // Finalize every readback HEAD outcome after route/gate/auth composition,
+    // including missing storage and thrown queries. Cookie headers survive.
+    if (request.method === 'HEAD' && isReviewReadbackPath(pathname)) {
+      response = new Response(null, { status: response.status, headers: response.headers })
+    }
     return clears.reduce(withCookie, response)
   },
 }

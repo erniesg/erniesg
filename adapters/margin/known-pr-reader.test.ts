@@ -1462,3 +1462,13 @@ describe('IC-OUTCOME-1 success-only execution witness', () => {
     })
   })
 })
+
+describe('cross-method source observation occupancy', () => {
+  it.each([undefined, 'configured'] as const)('keeps source observation busy during a PR operation %s', async checks => {
+    const d = deferred<Response>(), reader = createKnownPRReader({ token }, () => d.promise)
+    const pending = reader.readPR({ number: 42, ...(checks ? { checks } : {}) })
+    expect(await reader.readPublicSource({ branch: `coordinator/margin-proposal-${'1'.repeat(64)}`, sourcePath: 'books/chapters/intro.md' })).toEqual({ status: 'not_evaluated', reason: 'busy' })
+    reader.dispose(); expect(await pending).toMatchObject({ reason: 'aborted' })
+    d.resolve(response()); await tick()
+  })
+})

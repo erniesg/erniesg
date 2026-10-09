@@ -5,6 +5,8 @@ import {
   ADAPTER_REPORT_PATH,
   ADAPTER_PAGE_BYTES,
   ADAPTER_PAGE_SIZE,
+  CORRELATION_PAGE_SIZE,
+  publicCorrelationSchema,
   adapterSiteSchema,
 } from '../../src/worker/margin/adapter'
 import {
@@ -39,8 +41,15 @@ const optionsSchema = z
   .object({
     limit: z.number().int().min(1).max(ADAPTER_PAGE_SIZE).optional(),
     cursor: cursor.nullable().optional(),
+    include: z.literal('publicCorrelation').optional(),
   })
   .strict()
+  .refine(
+    (value) =>
+      value.include === undefined ||
+      value.limit === undefined ||
+      value.limit <= CORRELATION_PAGE_SIZE,
+  )
 const configSchema = z
   .object({
     origin: z
@@ -122,9 +131,23 @@ const pageSchema = z
       .strict(),
   })
   .strict()
+const correlatedPageSchema = pageSchema
+  .extend({
+    publicCorrelation: z.literal('v1'),
+    items: z
+      .array(
+        itemSchema
+          .extend({ publicCorrelation: publicCorrelationSchema })
+          .strict(),
+      )
+      .max(CORRELATION_PAGE_SIZE),
+    scanned: count.max(CORRELATION_PAGE_SIZE),
+  })
+  .strict()
 export type ApprovedWorkPage = z.infer<typeof pageSchema>
+export type CorrelatedApprovedWorkPage = z.infer<typeof correlatedPageSchema>
 export type WorkReadResult =
-  | { status: 'ready'; page: ApprovedWorkPage }
+  | { status: 'ready'; page: ApprovedWorkPage | CorrelatedApprovedWorkPage }
   | {
       status: 'refused' | 'not_evaluated'
       reason:
@@ -249,7 +272,8 @@ function decodePage(
   bytes: Uint8Array,
   limit: number,
   check: () => void,
-): ApprovedWorkPage {
+  include = false,
+): ApprovedWorkPage | CorrelatedApprovedWorkPage {
   check()
   // ignoreBOM=true retains U+FEFF, so canonical equality rejects it.
   const text = new TextDecoder('utf-8', {
@@ -260,7 +284,7 @@ function decodePage(
   const raw: unknown = JSON.parse(text)
   if (JSON.stringify(raw) + '\n' !== text) throw Error('canonical JSON')
   check()
-  const page = pageSchema.parse(raw)
+  const page = include ? correlatedPageSchema.parse(raw) : pageSchema.parse(raw)
   if (
     page.scanned > limit ||
     page.items.length +
@@ -516,7 +540,11 @@ export function createApprovedWorkClient(
   }
   return {
     readPage(
-      options: { limit?: number; cursor?: string | null } = {},
+      options: {
+        limit?: number
+        cursor?: string | null
+        include?: 'publicCorrelation'
+      } = {},
     ): Promise<WorkReadResult> {
       if (disposed)
         return Promise.resolve({ status: 'refused', reason: 'closed' })
@@ -527,9 +555,11 @@ export function createApprovedWorkClient(
         return Promise.resolve({ status: 'refused', reason: 'options' })
       if (active)
         return Promise.resolve({ status: 'not_evaluated', reason: 'busy' })
-      const limit = query.data.limit ?? 25,
+      const include = query.data.include === 'publicCorrelation',
+        limit = query.data.limit ?? (include ? CORRELATION_PAGE_SIZE : 25),
         url = new URL(parsed.data.origin + ADAPTER_WORK_PATH)
       url.searchParams.set('limit', String(limit))
+      if (include) url.searchParams.set('include', 'publicCorrelation')
       if (query.data.cursor != null)
         url.searchParams.set('cursor', query.data.cursor)
       const deadline = performance.now() + DEADLINE_MS
@@ -540,7 +570,7 @@ export function createApprovedWorkClient(
         deadline,
         (bytes, _status, check) => ({
           status: 'ready',
-          page: decodePage(bytes, limit, check),
+          page: decodePage(bytes, limit, check, include),
         }),
         (status, reason) => ({ status, reason }),
         (status) =>

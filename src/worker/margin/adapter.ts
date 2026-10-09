@@ -9,6 +9,8 @@ import type {
   AdapterReportResult,
   ApprovedFeedCursor,
   ApprovedFeedItem,
+  PublicCorrelationRepository,
+  PublicCorrelationKey,
 } from './repository'
 import { splitSource } from './web-annotation'
 import {
@@ -22,6 +24,51 @@ export const ADAPTER_FEED_PATH = '/api/margin/v1/adapter/feed'
 const ADAPTER_NAMESPACE = '/api/margin/v1/adapter'
 export const ADAPTER_PAGE_BYTES = 4 * 1024 * 1024
 export const ADAPTER_PAGE_SIZE = 50
+export const CORRELATION_PAGE_SIZE = 10
+export const publicCorrelationSchema = z
+  .object({
+    version: z.literal(1),
+    value: z.string().regex(/^[0-9a-f]{64}$/),
+  })
+  .strict()
+export type AdapterDeliveryOptions = {
+  publicCorrelationKey?: unknown
+  publicCorrelationKeyId?: unknown
+}
+class CorrelationPageDeadline extends Error {}
+function boundedWorkJSON(value: unknown): string {
+  const text = JSON.stringify(value)
+  if (encoder.encode(text).byteLength > ADAPTER_PAGE_BYTES)
+    throw Error('work projection bound')
+  return text
+}
+async function importCorrelationKey(
+  options: AdapterDeliveryOptions,
+): Promise<PublicCorrelationKey | null> {
+  const value = options.publicCorrelationKey,
+    keyId = options.publicCorrelationKeyId
+  if (
+    typeof value !== 'string' ||
+    value.length !== 43 ||
+    !canonicalSegment(value, 32) ||
+    typeof keyId !== 'string' ||
+    !/^[A-Za-z0-9_-]{1,32}$/.test(keyId)
+  )
+    return null
+  try {
+    const key = await crypto.subtle.importKey(
+      'raw',
+      new Uint8Array(decodeBase64Url(value)!),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign'],
+    )
+    return { key, keyId }
+  } catch {
+    return null
+  }
+}
+
 // Accommodate the JSON/base64 expansion of every accepted 2048-unit ID.
 const MAX_CURSOR_LENGTH = 32_768
 const MAX_QUERY_LENGTH = 40_000
@@ -152,18 +199,22 @@ function nextCursor(credential: AdapterCredential, item: ApprovedFeedItem): stri
 async function authenticateAdapter(
   request: Request,
   repository: AdapterFeedRepository | null,
+  check?: () => void,
 ): Promise<{ credential: AdapterCredential } | { denied: Response }> {
   const supplied = token(request)
   if (!supplied) return { denied: adapterError(401, 'adapter_unauthorized') }
   if (!repository) return { denied: adapterError(503, 'storage_unavailable') }
   try {
+    check?.()
     const credential = await repository.findAdapterCredential(supplied.selector)
+    check?.()
     const digest = Array.from(
       new Uint8Array(
         await crypto.subtle.digest('SHA-256', encoder.encode(supplied.value)),
       ),
       (x) => x.toString(16).padStart(2, '0'),
     ).join('')
+    check?.()
     const matches = timingSafeEqual(digest, credential?.tokenSha256 ?? '0'.repeat(64))
     if (!credential || !matches)
       return { denied: adapterError(401, 'adapter_unauthorized') }
@@ -290,43 +341,66 @@ function nextWorkCursor(
 }
 async function handleAdapterWork(
   request: Request,
-  repository: (AdapterFeedRepository & AdapterWorkRepository) | null,
+  repository:
+    | (AdapterFeedRepository &
+        AdapterWorkRepository &
+        Partial<PublicCorrelationRepository>)
+    | null,
+  options: AdapterDeliveryOptions = {},
 ): Promise<Response> {
   if (request.method !== 'GET') return methodDenied('GET')
-  const authenticated = await authenticateAdapter(request, repository)
+  const url = new URL(request.url),
+    include = url.searchParams.get('include') === 'publicCorrelation'
+  const deadline = include ? performance.now() + 10000 : Infinity
+  const material = include
+    ? {
+        publicCorrelationKey: options.publicCorrelationKey,
+        publicCorrelationKeyId: options.publicCorrelationKeyId,
+      }
+    : {}
+  const check = () => {
+    if (include && performance.now() >= deadline)
+      throw new CorrelationPageDeadline()
+  }
+  const authenticated = await authenticateAdapter(
+    request,
+    repository,
+    include ? check : undefined,
+  )
+  if (include && performance.now() >= deadline)
+    return adapterError(503, 'public_correlation_deadline')
   if ('denied' in authenticated) return authenticated.denied
-  const credential = authenticated.credential,
-    url = new URL(request.url)
-  let limit = 25,
+  const credential = authenticated.credential
+  let limit = include ? CORRELATION_PAGE_SIZE : 25,
     after: ApprovedFeedCursor | undefined
   try {
     if (url.username || url.password || url.search.length > MAX_QUERY_LENGTH)
       throw Error('query')
     for (const key of url.searchParams.keys())
       if (
-        !['limit', 'cursor'].includes(key) ||
+        !['limit', 'cursor', 'include'].includes(key) ||
         url.searchParams.getAll(key).length !== 1
       )
         throw Error('query')
+    if (url.searchParams.has('include') && !include) throw Error('include')
     if (url.searchParams.has('limit')) {
       const value = url.searchParams.get('limit')!
       if (!/^(?:[1-9]|[1-4][0-9]|50)$/.test(value)) throw Error('limit')
       limit = Number(value)
+      if (include && limit > CORRELATION_PAGE_SIZE) throw Error('limit')
     }
     if (url.searchParams.has('cursor'))
       after = workCursor(url.searchParams.get('cursor')!, credential)
   } catch {
     return adapterError(400, 'invalid_work_query')
   }
-  try {
-    const page = await repository!.listAdapterWork(credential, {
-      limit: limit + 1,
-      ...(after ? { after } : {}),
-    })
-    if (!page.authorized) return adapterError(403, 'adapter_forbidden')
-    const scanned = page.candidates.slice(0, limit)
+  const project = (candidates: AdapterWorkCandidate[]) => {
+    const scanned = candidates.slice(0, limit)
     const items: (Omit<AdapterWorkCandidate, 'execution'> & {
-      execution: Omit<NonNullable<AdapterWorkCandidate['execution']>, 'boundAdapter'>
+      execution: Omit<
+        NonNullable<AdapterWorkCandidate['execution']>,
+        'boundAdapter'
+      >
       work: 'apply' | 'refresh_pr' | 'reconcile_only'
     })[] = []
     const notEvaluated = { unknownExecution: 0 },
@@ -342,7 +416,10 @@ async function handleAdapterWork(
         excluded.otherAdapter++
         continue
       }
-      if (execution.state === 'apply_failed' && execution.failedApplyCount === 3) {
+      if (
+        execution.state === 'apply_failed' &&
+        execution.failedApplyCount === 3
+      ) {
         excluded.exhaustedFailures++
         continue
       }
@@ -358,18 +435,110 @@ async function handleAdapterWork(
       eligibility: 'known_execution',
       items,
       nextCursor:
-        page.candidates.length > limit
+        candidates.length > limit
           ? nextWorkCursor(credential, scanned[scanned.length - 1])
           : null,
       scanned: scanned.length,
       notEvaluated,
       excluded,
     }
-    if (encoder.encode(JSON.stringify(body) + '\n').byteLength > ADAPTER_PAGE_BYTES)
+    return body
+  }
+  try {
+    check()
+    const query = { limit: limit + 1, ...(after ? { after } : {}) }
+    const page = await repository!.listAdapterWork(credential, query)
+    check()
+    if (!page.authorized) return adapterError(403, 'adapter_forbidden')
+    const body = project(page.candidates)
+    if (include) {
+      if (typeof repository!.getOrIssuePublicCorrelation !== 'function')
+        return adapterError(503, 'public_correlation_unavailable')
+      const initial = boundedWorkJSON(page.candidates),
+        initialBody = boundedWorkJSON(body)
+      check()
+      const key = body.items.length
+        ? await importCorrelationKey(material)
+        : null
+      check()
+      const correlations: z.infer<typeof publicCorrelationSchema>[] = []
+      for (const item of body.items) {
+        check()
+        const result = await repository!.getOrIssuePublicCorrelation!(
+          credential,
+          {
+            proposalId: item.proposalId,
+            approvedRevision: item.approvedRevision,
+          },
+          key,
+          deadline,
+        )
+        check()
+        if (result.status === 'forbidden')
+          return adapterError(403, 'adapter_forbidden')
+        if (result.status === 'not_evaluated')
+          return adapterError(
+            503,
+            result.reason === 'deadline'
+              ? 'public_correlation_deadline'
+              : result.reason === 'legacy_reconciliation_required'
+                ? 'public_correlation_legacy_unavailable'
+                : 'public_correlation_unavailable',
+          )
+        if (
+          result.status !== 'ready' ||
+          result.site !== item.site ||
+          result.proposalId !== item.proposalId ||
+          result.approvedRevision !== item.approvedRevision
+        )
+          return adapterError(503, 'public_correlation_page_changed')
+        correlations.push(
+          publicCorrelationSchema.parse(result.publicCorrelation),
+        )
+      }
+      check()
+      const final = await repository!.listAdapterWork(credential, query)
+      check()
+      if (!final.authorized) return adapterError(403, 'adapter_forbidden')
+      if (
+        boundedWorkJSON(final.candidates) !== initial ||
+        boundedWorkJSON(project(final.candidates)) !== initialBody
+      )
+        return adapterError(503, 'public_correlation_page_changed')
+      const enriched = {
+        ...body,
+        publicCorrelation: 'v1',
+        items: body.items.map((item, index) => ({
+          ...item,
+          publicCorrelation: correlations[index],
+        })),
+      }
+      if (
+        encoder.encode(JSON.stringify(enriched) + '\n').byteLength >
+        ADAPTER_PAGE_BYTES
+      )
+        throw Error('work page byte bound')
+      check()
+      const result = response(enriched)
+      check()
+      return result
+    }
+    if (
+      encoder.encode(JSON.stringify(body) + '\n').byteLength >
+      ADAPTER_PAGE_BYTES
+    )
       throw Error('work page byte bound')
     return response(body)
-  } catch {
-    return adapterError(503, 'storage_unavailable')
+  } catch (error) {
+    return adapterError(
+      503,
+      error instanceof CorrelationPageDeadline ||
+        (include && performance.now() >= deadline)
+        ? 'public_correlation_deadline'
+        : include
+          ? 'public_correlation_unavailable'
+          : 'storage_unavailable',
+    )
   }
 }
 
@@ -592,13 +761,18 @@ async function reportRoute(
 export async function handleAdapterRequest(
   request: Request,
   repository:
-    (AdapterFeedRepository & AdapterReportRepository & AdapterWorkRepository) | null,
+    | (AdapterFeedRepository &
+        AdapterReportRepository &
+        AdapterWorkRepository &
+        Partial<PublicCorrelationRepository>)
+    | null,
+  options: AdapterDeliveryOptions = {},
 ): Promise<Response> {
   const result =
     new URL(request.url).pathname === ADAPTER_FEED_PATH
       ? await handleAdapterFeed(request, repository)
       : new URL(request.url).pathname === ADAPTER_WORK_PATH
-        ? await handleAdapterWork(request, repository)
+        ? await handleAdapterWork(request, repository, options)
         : await reportRoute(request, repository)
   return request.method === 'HEAD'
     ? new Response(null, { status: result.status, headers: result.headers })

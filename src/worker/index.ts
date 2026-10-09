@@ -79,6 +79,10 @@ async function route(request: Request, env: WorkerEnv): Promise<Response> {
     return handleAdapterRequest(
       request,
       isD1Database(env.MARGIN_DB) ? new D1MarginRepository(env.MARGIN_DB) : null,
+      {
+        publicCorrelationKey: env.MARGIN_PUBLIC_CORRELATION_KEY,
+        publicCorrelationKeyId: env.MARGIN_PUBLIC_CORRELATION_KEY_ID,
+      },
     )
   }
   if (

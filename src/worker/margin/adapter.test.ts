@@ -1652,3 +1652,683 @@ describe('work projection invariant sweep', () => {
     spy.mockRestore()
   })
 })
+
+import { createApprovedWorkClient } from '../../../adapters/margin/service-client'
+const CORRELATION_WORK = '/api/margin/v1/adapter/work'
+const correlationBindings = {
+  MARGIN_PUBLIC_CORRELATION_KEY: encodeBase64Url(new Uint8Array(32).fill(23)),
+  MARGIN_PUBLIC_CORRELATION_KEY_ID: 'delivery-fixture',
+}
+async function correlationFixture() {
+  const f = await fixture(),
+    token = await f.token()
+  f.h.database.execute(
+    'INSERT INTO margin_adapter_report_grants(token_id,token_sha256,site,adapter,granted_at,revoked_at) SELECT token_id,token_sha256,site,adapter,created_at,NULL FROM margin_adapter_tokens',
+  )
+  const credential = (await f.h.repository.findAdapterCredential(
+    token.split('.')[1],
+  ))!
+  const call = (
+    suffix = '?include=publicCorrelation',
+    bindings: Record<string, unknown> = correlationBindings,
+  ) =>
+    worker.fetch(
+      new Request(SITE + CORRELATION_WORK + suffix, {
+        headers: { authorization: 'Bearer ' + token },
+      }),
+      {
+        ASSETS: { fetch: async () => new Response('asset') },
+        MARGIN_DB: f.h.database,
+        ...bindings,
+      },
+    )
+  const client = (bindings: Record<string, unknown> = correlationBindings) =>
+    createApprovedWorkClient({ origin: SITE, token }, async (input, init) =>
+      worker.fetch(new Request(input, init), {
+        ASSETS: { fetch: async () => new Response('asset') },
+        MARGIN_DB: f.h.database,
+        ...bindings,
+      }),
+    )
+  return { ...f, token, credential, call, client }
+}
+describe('explicit correlation delivery initial behavioral RED families', () => {
+  it('round-trips actual Worker/SQLite/client while default wire and keyless recovery stay unchanged', async () => {
+    const f = await correlationFixture()
+    await f.approve()
+    const before = await (await f.call('', {})).text()
+    const client = f.client()
+    const enriched = await client.readPage({
+      include: 'publicCorrelation',
+    } as any)
+    expect(enriched.status).toBe('ready')
+    expect((enriched as any).page.publicCorrelation).toBe('v1')
+    expect((enriched as any).page.items[0].publicCorrelation).toEqual({
+      version: 1,
+      value: expect.stringMatching(/^[0-9a-f]{64}$/),
+    })
+    expect(await (await f.call('', {})).text()).toBe(before)
+    const retired = f.client({})
+    expect(
+      await retired.readPage({ include: 'publicCorrelation' } as any),
+    ).toEqual(enriched)
+    client.dispose()
+    retired.dispose()
+  })
+  it('bounds opt-in to ten with real lookahead and 33 SQL/10 HMAC while ordinary50 still works', async () => {
+    const f = await correlationFixture()
+    for (let i = 0; i < 11; i++) await f.approve()
+    const sign = vi.spyOn(crypto.subtle, 'sign')
+    f.h.database.executed.length = 0
+    const r = await f.call()
+    expect(r.status).toBe(200)
+    const page = await r.json()
+    expect(page.items).toHaveLength(10)
+    expect(page.scanned).toBe(10)
+    expect(page.nextCursor).not.toBeNull()
+    expect(f.h.database.executed).toHaveLength(33)
+    expect(sign).toHaveBeenCalledTimes(10)
+    expect((await f.call('?include=publicCorrelation&limit=11')).status).toBe(
+      400,
+    )
+    expect((await f.call('?limit=50', {})).status).toBe(200)
+  })
+  it('returns no partial page when a later eligible item cannot issue without a key', async () => {
+    const f = await correlationFixture(),
+      a = await f.approve()
+    await f.approve()
+    const key = await crypto.subtle.importKey(
+      'raw',
+      new Uint8Array(32).fill(23),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign'],
+    )
+    expect(
+      (
+        await f.h.repository.getOrIssuePublicCorrelation(
+          f.credential,
+          { proposalId: a.id, approvedRevision: 1 },
+          { keyId: 'delivery-fixture', key },
+        )
+      ).status,
+    ).toBe('ready')
+    const r = await f.call('?include=publicCorrelation', {})
+    expect(r.status).toBe(503)
+    expect(await r.json()).toEqual({
+      error: { code: 'public_correlation_unavailable' },
+    })
+    expect(
+      f.h.database.query('SELECT * FROM margin_public_correlations'),
+    ).toHaveLength(1)
+  })
+  it('rechecks complete real execution projection after signing before returning a page', async () => {
+    const f = await correlationFixture(),
+      a = await f.approve(),
+      b = await f.approve()
+    const original = crypto.subtle.sign.bind(crypto.subtle)
+    let n = 0
+    vi.spyOn(crypto.subtle, 'sign').mockImplementation(async (...args) => {
+      const value = await original(...args)
+      if (++n === 2)
+        expect(
+          (
+            await f.h.repository.reportProposalExecution(
+              f.credential,
+              {
+                eventId: encodeBase64Url(new Uint8Array(16).fill(91)),
+                proposalId: a.id,
+                approvedRevision: 1,
+                expectedStateVersion: 0,
+                outcome: {
+                  state: 'apply_failed',
+                  detail: 'synthetic changed projection',
+                },
+              },
+              AT,
+            )
+          ).status,
+        ).toBe('accepted')
+      return value
+    })
+    const r = await f.call()
+    expect(r.status).toBe(503)
+    expect(await r.json()).toEqual({
+      error: { code: 'public_correlation_page_changed' },
+    })
+    expect(b.id).not.toBe(a.id)
+  })
+  it('honors one page deadline and rejects late signing with no partial response', async () => {
+    const f = await correlationFixture()
+    await f.approve()
+    let now = 0
+    vi.spyOn(performance, 'now').mockImplementation(() => now)
+    const original = crypto.subtle.sign.bind(crypto.subtle)
+    vi.spyOn(crypto.subtle, 'sign').mockImplementation(async (...args) => {
+      const value = await original(...args)
+      now = 10000
+      return value
+    })
+    const r = await f.call()
+    expect(r.status).toBe(503)
+    expect(await r.json()).toEqual({
+      error: { code: 'public_correlation_deadline' },
+    })
+    expect(
+      f.h.database.query('SELECT * FROM margin_public_correlations'),
+    ).toHaveLength(0)
+  })
+})
+
+function observeWorkFinal(
+  transform: (
+    page: Awaited<ReturnType<D1MarginRepository['listAdapterWork']>>,
+  ) => void,
+) {
+  const original = D1MarginRepository.prototype.listAdapterWork
+  let calls = 0
+  return vi
+    .spyOn(D1MarginRepository.prototype, 'listAdapterWork')
+    .mockImplementation(async function (this: D1MarginRepository, c, o) {
+      const page = await original.call(this, c, o)
+      if (++calls === 2) transform(page)
+      return page
+    })
+}
+describe('explicit correlation delivery boundary sweep', () => {
+  it('returns an explicitly marked empty page with three SQL and no key import/signing', async () => {
+    const f = await correlationFixture(),
+      imported = vi.spyOn(crypto.subtle, 'importKey'),
+      sign = vi.spyOn(crypto.subtle, 'sign')
+    f.h.database.executed.length = 0
+    const r = await f.call()
+    expect(r.status).toBe(200)
+    expect(await r.json()).toEqual({
+      eligibility: 'known_execution',
+      items: [],
+      nextCursor: null,
+      scanned: 0,
+      notEvaluated: { unknownExecution: 0 },
+      excluded: { exhaustedFailures: 0, otherAdapter: 0 },
+      publicCorrelation: 'v1',
+    })
+    expect(f.h.database.executed).toHaveLength(3)
+    expect(imported).not.toHaveBeenCalled()
+    expect(sign).not.toHaveBeenCalled()
+    expect(r.headers.get('cache-control')).toBe('no-store')
+  })
+  for (const suffix of [
+    '?include=wrong',
+    '?include=',
+    '?include=publicCorrelation&include=publicCorrelation',
+    '?include=publicCorrelation&limit=11',
+    '?include=publicCorrelation&limit=50',
+    '?include=publicCorrelation&limit=01',
+    '?include=publicCorrelation&limit=1.0',
+    '?include=publicCorrelation&limit=0',
+    '?include=publicCorrelation&limit=1&limit=1',
+    '?include=publicCorrelation&other=yes',
+  ])
+    it(
+      'refuses malformed opt-in query before page SQL/crypto ' + suffix,
+      async () => {
+        const f = await correlationFixture(),
+          list = vi.spyOn(D1MarginRepository.prototype, 'listAdapterWork'),
+          imported = vi.spyOn(crypto.subtle, 'importKey')
+        const r = await f.call(suffix)
+        expect(r.status).toBe(400)
+        expect(await r.json()).toEqual({
+          error: { code: 'invalid_work_query' },
+        })
+        expect(list).not.toHaveBeenCalled()
+        expect(imported).not.toHaveBeenCalled()
+      },
+    )
+  for (const bindings of [
+    {},
+    {
+      MARGIN_PUBLIC_CORRELATION_KEY: 'bad',
+      MARGIN_PUBLIC_CORRELATION_KEY_ID: 'valid',
+    },
+    {
+      ...correlationBindings,
+      MARGIN_PUBLIC_CORRELATION_KEY:
+        correlationBindings.MARGIN_PUBLIC_CORRELATION_KEY + '=',
+    },
+    { ...correlationBindings, MARGIN_PUBLIC_CORRELATION_KEY_ID: 1 },
+    { ...correlationBindings, MARGIN_PUBLIC_CORRELATION_KEY_ID: 'bad space' },
+  ])
+    it(
+      'missing or malformed service binding keeps ordinary bytes and existing correlation usable ' +
+        JSON.stringify(Object.keys(bindings)),
+      async () => {
+        const f = await correlationFixture()
+        await f.approve()
+        const before = await (await f.call('', {})).text()
+        expect(
+          (await f.call('?include=publicCorrelation', bindings)).status,
+        ).toBe(503)
+        expect(await (await f.call('', bindings)).text()).toBe(before)
+        const ready = await (await f.call()).text()
+        expect(
+          await (await f.call('?include=publicCorrelation', bindings)).text(),
+        ).toBe(ready)
+      },
+    )
+  it('imports one nonextractable sign-only key, retains first value across configured rotation', async () => {
+    const f = await correlationFixture()
+    await f.approve()
+    await f.approve()
+    const imported = vi.spyOn(crypto.subtle, 'importKey'),
+      sign = vi.spyOn(crypto.subtle, 'sign')
+    const first = await (await f.call()).text()
+    expect(imported).toHaveBeenCalledTimes(1)
+    expect(imported.mock.calls[0].slice(2)).toEqual([
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign'],
+    ])
+    expect(sign).toHaveBeenCalledTimes(2)
+    expect(
+      await (
+        await f.call('?include=publicCorrelation', {
+          MARGIN_PUBLIC_CORRELATION_KEY: encodeBase64Url(
+            new Uint8Array(32).fill(24),
+          ),
+          MARGIN_PUBLIC_CORRELATION_KEY_ID: 'rotated',
+        })
+      ).text(),
+    ).toBe(first)
+    expect(sign).toHaveBeenCalledTimes(2)
+  })
+  it('does not accept key material from the request or echo a failed key import', async () => {
+    const f = await correlationFixture()
+    await f.approve()
+    vi.spyOn(crypto.subtle, 'importKey').mockRejectedValue(
+      Error('private fixture key detail'),
+    )
+    const r = await f.call()
+    expect(r.status).toBe(503)
+    expect(await r.text()).toBe(
+      '{"error":{"code":"public_correlation_unavailable"}}\n',
+    )
+    expect(
+      (await f.call('?include=publicCorrelation&key=untrusted')).status,
+    ).toBe(400)
+  })
+  it('retains count/cursor semantics across unknown rows and reuses default cursors without a new mode', async () => {
+    const f = await correlationFixture()
+    const initializer = f.h.database.query(
+      "SELECT sql FROM sqlite_master WHERE name='margin_execution_initialize'",
+    )[0].sql as string
+    f.h.database.execute('DROP TRIGGER margin_execution_initialize')
+    await f.approve()
+    f.h.database.execute(initializer)
+    await f.approve()
+    await f.approve()
+    const ordinary = await (await f.call('?limit=2', {})).json(),
+      enriched = await (
+        await f.call('?include=publicCorrelation&limit=2')
+      ).json()
+    expect(enriched.scanned).toBe(2)
+    expect(enriched.notEvaluated).toEqual({ unknownExecution: 1 })
+    expect(enriched.items).toHaveLength(1)
+    expect(enriched.nextCursor).toBe(ordinary.nextCursor)
+    expect(
+      (
+        await f.call(
+          '?include=publicCorrelation&limit=2&cursor=' + ordinary.nextCursor,
+        )
+      ).status,
+    ).toBe(200)
+    expect(
+      (await f.call('?limit=2&cursor=' + enriched.nextCursor, {})).status,
+    ).toBe(200)
+  })
+  it('does not backfill already-active legacy execution or expose an earlier item/cursor', async () => {
+    const f = await correlationFixture()
+    await f.approve()
+    const b = await f.approve()
+    expect(
+      (
+        await f.h.repository.reportProposalExecution(
+          f.credential,
+          {
+            eventId: encodeBase64Url(new Uint8Array(16).fill(87)),
+            proposalId: b.id,
+            approvedRevision: 1,
+            expectedStateVersion: 0,
+            outcome: { state: 'apply_failed', detail: 'existing activity' },
+          },
+          AT,
+        )
+      ).status,
+    ).toBe('accepted')
+    const r = await f.call()
+    expect(r.status).toBe(503)
+    expect(await r.json()).toEqual({
+      error: { code: 'public_correlation_legacy_unavailable' },
+    })
+    expect(
+      f.h.database.query('SELECT * FROM margin_public_correlations'),
+    ).toHaveLength(1)
+    expect((await f.call('', {})).status).toBe(200)
+  })
+  for (const revoke of [
+    'DELETE FROM margin_adapter_report_grants',
+    'UPDATE margin_adapters SET enabled=0',
+    'UPDATE margin_adapter_tokens SET revoked_at=created_at',
+  ])
+    it(
+      'requires fresh final authority even for an already-issued item: ' +
+        revoke,
+      async () => {
+        const f = await correlationFixture()
+        await f.approve()
+        expect((await f.call()).status).toBe(200)
+        const original = D1MarginRepository.prototype.listAdapterWork
+        let n = 0
+        vi.spyOn(
+          D1MarginRepository.prototype,
+          'listAdapterWork',
+        ).mockImplementation(async function (this: D1MarginRepository, c, o) {
+          if (++n === 2) f.h.database.execute(revoke)
+          return original.call(this, c, o)
+        })
+        const r = await f.call()
+        expect(r.status).toBe(403)
+        expect(await r.json()).toEqual({ error: { code: 'adapter_forbidden' } })
+      },
+    )
+  const changes: Record<string, (p: any) => void> = {
+    proposalId: (p) => (p.candidates[0].proposalId += 'changed'),
+    site: (p) => (p.candidates[0].site = OTHER),
+    document: (p) => (p.candidates[0].document += '#new'),
+    source: (p) => (p.candidates[0].source += '#new'),
+    approvedRevision: (p) => p.candidates[0].approvedRevision++,
+    body: (p) => (p.candidates[0].body += ' '),
+    baseCommit: (p) => (p.candidates[0].baseCommit = 'f'.repeat(40)),
+    sourcePath: (p) => (p.candidates[0].sourcePath = 'different.md'),
+    visibility: (p) => (p.candidates[0].visibility = 'public'),
+    approvedAt: (p) => (p.candidates[0].approvedAt = AT),
+    'execution-state': (p) => (p.candidates[0].execution.state = 'conflict'),
+    'execution-version': (p) => p.candidates[0].execution.stateVersion++,
+    'execution-count': (p) => p.candidates[0].execution.failedApplyCount++,
+    'execution-bound': (p) =>
+      (p.candidates[0].execution.boundAdapter = 'changed'),
+    'execution-pr': (p) =>
+      (p.candidates[0].execution.pr = {
+        number: 1,
+        url: 'https://example.org/pr/1',
+        head: 'a'.repeat(40),
+      }),
+    'execution-checks': (p) => (p.candidates[0].execution.checks = 'passed'),
+    'execution-detail': (p) => (p.candidates[0].execution.detail = 'changed'),
+    'execution-merge': (p) =>
+      (p.candidates[0].execution.mergeCommit = 'a'.repeat(40)),
+    'execution-event': (p) => (p.candidates[0].execution.lastEvent = 'changed'),
+    'execution-time': (p) => (p.candidates[0].execution.updatedAt = AT),
+    'execution-null': (p) => (p.candidates[0].execution = null),
+    'lookahead-body': (p) => (p.candidates[1].body += ' '),
+    'lookahead-removed': (p) => p.candidates.pop(),
+    order: (p) => p.candidates.reverse(),
+  }
+  for (const [name, change] of Object.entries(changes))
+    it('compares complete final projection including ' + name, async () => {
+      const f = await correlationFixture()
+      await f.approve()
+      await f.approve()
+      observeWorkFinal(change)
+      const r = await f.call('?include=publicCorrelation&limit=1')
+      expect(r.status).toBe(503)
+      expect(await r.json()).toEqual({
+        error: { code: 'public_correlation_page_changed' },
+      })
+    })
+  for (const field of [
+    'site',
+    'proposalId',
+    'approvedRevision',
+    'version',
+    'value',
+  ])
+    it('binds issuer ready result ' + field, async () => {
+      const f = await correlationFixture()
+      await f.approve()
+      const original = D1MarginRepository.prototype.getOrIssuePublicCorrelation
+      vi.spyOn(
+        D1MarginRepository.prototype,
+        'getOrIssuePublicCorrelation',
+      ).mockImplementation(async function (this: D1MarginRepository, ...args) {
+        const result = await original.apply(this, args)
+        if (result.status === 'ready') {
+          if (field === 'version') result.publicCorrelation.version = 2 as any
+          else if (field === 'value') result.publicCorrelation.value = 'bad'
+          else (result as any)[field] = 'changed'
+        }
+        return result
+      })
+      const r = await f.call()
+      expect(r.status).toBe(503)
+      expect(await r.text()).not.toContain('items')
+    })
+  for (const stage of [
+    'auth',
+    'import',
+    'initial-page',
+    'final-page',
+    'final-serialize',
+  ])
+    it('checks shared deadline after ' + stage, async () => {
+      const f = await correlationFixture()
+      await f.approve()
+      let now = 0
+      vi.spyOn(performance, 'now').mockImplementation(() => now)
+      if (stage === 'auth') {
+        const old = crypto.subtle.digest.bind(crypto.subtle)
+        vi.spyOn(crypto.subtle, 'digest').mockImplementation(async (...a) => {
+          const r = await old(...a)
+          now = 10000
+          return r
+        })
+      }
+      if (stage === 'import') {
+        const old = crypto.subtle.importKey.bind(crypto.subtle)
+        vi.spyOn(crypto.subtle, 'importKey').mockImplementation(
+          async (...a: any[]) => {
+            const r = await (old as any)(...a)
+            now = 10000
+            return r
+          },
+        )
+      }
+      if (stage === 'initial-page' || stage === 'final-page') {
+        const old = D1MarginRepository.prototype.listAdapterWork
+        let n = 0
+        vi.spyOn(
+          D1MarginRepository.prototype,
+          'listAdapterWork',
+        ).mockImplementation(async function (this: D1MarginRepository, ...a) {
+          const r = await old.apply(this, a)
+          if (++n === (stage === 'initial-page' ? 1 : 2)) now = 10000
+          return r
+        })
+      }
+      if (stage === 'final-serialize') {
+        const old = JSON.stringify
+        vi.spyOn(JSON, 'stringify').mockImplementation(((...a: any[]) => {
+          const text = (old as any)(...a)
+          if (a[0]?.publicCorrelation === 'v1') now = 10000
+          return text
+        }) as any)
+      }
+      const r = await f.call()
+      expect(r.status).toBe(503)
+      expect(await r.json()).toEqual({
+        error: { code: 'public_correlation_deadline' },
+      })
+    })
+  it('passes exactly the same absolute deadline to every issuer and recovers a late committed row', async () => {
+    const f = await correlationFixture()
+    await f.approve()
+    await f.approve()
+    let now = 400
+    vi.spyOn(performance, 'now').mockImplementation(() => now)
+    const old = D1MarginRepository.prototype.getOrIssuePublicCorrelation,
+      seen: number[] = []
+    vi.spyOn(
+      D1MarginRepository.prototype,
+      'getOrIssuePublicCorrelation',
+    ).mockImplementation(async function (this: D1MarginRepository, ...args) {
+      seen.push(args[3]!)
+      const result = await old.apply(this, args)
+      now += 100
+      return result
+    })
+    expect((await f.call()).status).toBe(200)
+    expect(seen).toEqual([10400, 10400])
+    vi.restoreAllMocks()
+    const g = await correlationFixture()
+    await g.approve()
+    now = 0
+    vi.spyOn(performance, 'now').mockImplementation(() => now)
+    const query = g.h.database.query.bind(g.h.database)
+    const watcher = vi
+      .spyOn(g.h.database, 'query')
+      .mockImplementation((sql, params) => {
+        const r = query(sql, params)
+        if (sql.startsWith('INSERT INTO margin_public_correlations'))
+          now = 10000
+        return r
+      })
+    expect((await g.call()).status).toBe(503)
+    watcher.mockRestore()
+    expect(
+      g.h.database.query('SELECT * FROM margin_public_correlations'),
+    ).toHaveLength(1)
+    expect((await g.call('?include=publicCorrelation', {})).status).toBe(200)
+  })
+  it('captures runtime bindings before authentication awaits', async () => {
+    const f = await correlationFixture()
+    await f.approve()
+    const bindings = { ...correlationBindings },
+      old = crypto.subtle.digest.bind(crypto.subtle)
+    vi.spyOn(crypto.subtle, 'digest').mockImplementation(async (...a) => {
+      bindings.MARGIN_PUBLIC_CORRELATION_KEY = 'invalid'
+      return old(...a)
+    })
+    expect((await f.call('?include=publicCorrelation', bindings)).status).toBe(
+      200,
+    )
+  })
+  it('ordinary work is unaffected by malformed optional key bindings and HEAD stays bodyless', async () => {
+    const f = await correlationFixture()
+    await f.approve()
+    const before = await (await f.call('', {})).text(),
+      imported = vi.spyOn(crypto.subtle, 'importKey')
+    expect(
+      await (await f.call('', { MARGIN_PUBLIC_CORRELATION_KEY: 'bad' })).text(),
+    ).toBe(before)
+    const r = await worker.fetch(
+      new Request(SITE + CORRELATION_WORK + '?include=publicCorrelation', {
+        method: 'HEAD',
+        headers: { authorization: 'Bearer ' + f.token },
+      }),
+      {
+        ASSETS: { fetch: async () => new Response('asset') },
+        MARGIN_DB: f.h.database,
+        ...correlationBindings,
+      },
+    )
+    expect(r.status).toBe(405)
+    expect(await r.text()).toBe('')
+    expect(imported).not.toHaveBeenCalled()
+  })
+})
+
+it('does not start authentication digest after the opt-in deadline expires during credential SQL', async () => {
+  const f = await correlationFixture()
+  let now = 0
+  vi.spyOn(performance, 'now').mockImplementation(() => now)
+  const old = D1MarginRepository.prototype.findAdapterCredential
+  vi.spyOn(
+    D1MarginRepository.prototype,
+    'findAdapterCredential',
+  ).mockImplementation(async function (this: D1MarginRepository, ...a) {
+    const r = await old.apply(this, a)
+    now = 10000
+    return r
+  })
+  const digest = vi.spyOn(crypto.subtle, 'digest')
+  const r = await f.call()
+  expect(r.status).toBe(503)
+  expect(await r.json()).toEqual({
+    error: { code: 'public_correlation_deadline' },
+  })
+  expect(digest).not.toHaveBeenCalled()
+})
+
+it('bounds malformed runtime key length before base64 decoding', async () => {
+  const f = await correlationFixture()
+  await f.approve()
+  const decode = vi.spyOn(globalThis, 'atob')
+  expect(
+    (
+      await f.call('?include=publicCorrelation', {
+        ...correlationBindings,
+        MARGIN_PUBLIC_CORRELATION_KEY: 'x'.repeat(10000),
+      })
+    ).status,
+  ).toBe(503)
+  expect(decode.mock.calls.every(([value]) => value.length < 100)).toBe(true)
+})
+for (const [name, ending] of [
+  ['LF', '\n'],
+  ['CR', '\r'],
+  ['CRLF', '\r\n'],
+  ['LS', '\u2028'],
+  ['PS', '\u2029'],
+])
+  it('refuses ready correlation terminal line terminator ' + name, async () => {
+    const f = await correlationFixture()
+    await f.approve()
+    const old = D1MarginRepository.prototype.getOrIssuePublicCorrelation
+    vi.spyOn(
+      D1MarginRepository.prototype,
+      'getOrIssuePublicCorrelation',
+    ).mockImplementation(async function (this: D1MarginRepository, ...a) {
+      const r = await old.apply(this, a)
+      if (r.status === 'ready') r.publicCorrelation.value += ending
+      return r
+    })
+    expect((await f.call()).status).toBe(503)
+  })
+
+for (const stage of [1, 2])
+  it(
+    'classifies a rejected page SQL promise at the shared deadline, stage ' +
+      stage,
+    async () => {
+      const f = await correlationFixture()
+      await f.approve()
+      let now = 0,
+        calls = 0
+      vi.spyOn(performance, 'now').mockImplementation(() => now)
+      const original = D1MarginRepository.prototype.listAdapterWork
+      vi.spyOn(
+        D1MarginRepository.prototype,
+        'listAdapterWork',
+      ).mockImplementation(async function (this: D1MarginRepository, ...args) {
+        if (++calls === stage) {
+          now = 10000
+          throw Error('private delayed SQL failure')
+        }
+        return original.apply(this, args)
+      })
+      const r = await f.call()
+      expect(r.status).toBe(503)
+      expect(await r.json()).toEqual({
+        error: { code: 'public_correlation_deadline' },
+      })
+    },
+  )

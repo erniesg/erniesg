@@ -1,5 +1,6 @@
 import type { HistoryRegistration, HistoryRegistrationRepository } from './history'
 import {
+  derivePublicCorrelation,
   adapterSelectorSchema,
   adapterSiteSchema,
   adapterIdSchema,
@@ -13,6 +14,8 @@ import { principalSchema, type Principal } from '../principal'
 import { PRINCIPAL_IRI_PREFIX, principalKey } from './identity'
 import type { D1Database } from './d1'
 import {
+  publicCorrelationSnapshotQuery,
+  insertPublicCorrelationQuery,
   historyRegistrationQuery,
   adapterWorkQuery,
   adapterReportSnapshotQuery,
@@ -45,6 +48,10 @@ import type { ProgressItem, ProgressRow, ProgressScope } from './progress'
 import {
   adapterExecutionReportSchema as reportInput,
   reportInteger, reportId, reportCommit, reportDetail, reportURL, validReportTuple,
+  type PublicCorrelationRepository,
+  type PublicCorrelationKey,
+  type PublicCorrelationTarget,
+  type PublicCorrelationResult,
   type AdapterReportRepository,
   type AdapterExecutionReport,
   type AdapterReportResult,
@@ -512,12 +519,105 @@ function validateExecutionTarget(target: z.infer<typeof reportTarget>) {
   }
 }
 
-export class D1MarginRepository implements HistoryRegistrationRepository, MarginRepository, AdapterFeedRepository, AdapterReportRepository, AdapterWorkRepository {
+const publicCorrelationRow = z.object({
+  proposal_id: reportId, site: adapterSiteSchema,
+  approved_revision: reportInteger.positive(),
+  public_id: z.string().regex(/^[0-9a-f]{64}$/),
+  key_id: z.string().regex(/^[A-Za-z0-9_-]{1,32}$/),
+  scheme_version: z.literal(1), issued_at: adapterDate,
+}).strict()
+class PublicCorrelationDeadline extends Error {}
+
+export class D1MarginRepository implements PublicCorrelationRepository, HistoryRegistrationRepository, MarginRepository, AdapterFeedRepository, AdapterReportRepository, AdapterWorkRepository {
   constructor(private readonly database: D1Database) {}
 
   private statement({ sql, params }: Query) {
     const prepared = this.database.prepare(sql)
     return params.length > 0 ? prepared.bind(...params) : prepared
+  }
+
+  async getOrIssuePublicCorrelation(
+    credential: AdapterCredential, input: PublicCorrelationTarget, material: PublicCorrelationKey | null,
+    inheritedDeadline?: number,
+  ): Promise<PublicCorrelationResult> {
+    if (inheritedDeadline !== undefined && (typeof inheritedDeadline !== 'number' ||
+        !Number.isFinite(inheritedDeadline) || inheritedDeadline < 0))
+      throw new TypeError('invalid correlation deadline')
+    // Capture caller-owned inputs before the first await. No raw ID reaches a public field.
+    const c = { ...credential }, target = z.object({
+      proposalId: reportId, approvedRevision: reportInteger.positive(),
+    }).strict().parse(input)
+    checkReportCredential(c)
+    if (c.enabled !== true || c.revokedAt !== null || c.capability !== 'approved_feed')
+      return { status: 'forbidden' }
+    const key = material == null ? null : { keyId: material.keyId, key: material.key }
+    const ownDeadline = performance.now() + 5000
+    const deadline = inheritedDeadline === undefined ? ownDeadline : Math.min(ownDeadline, inheritedDeadline)
+    const check = () => { if (performance.now() >= deadline) throw new PublicCorrelationDeadline() }
+    const snapshot = async () => {
+      check()
+      const rows = reportRows(await this.statement(publicCorrelationSnapshotQuery(c, target.proposalId)).all())
+      check()
+      if (rows.length !== 1) throw Error('correlation snapshot cardinality')
+      const row = z.object({ authorized: z.union([z.literal(0), z.literal(1)]),
+        target: z.string().nullable(), correlation: z.string().nullable(),
+      }).strict().parse(rows[0])
+      if (!row.authorized && (row.target !== null || row.correlation !== null))
+        throw Error('unauthorized correlation projection')
+      const application = row.target === null ? null : reportTarget.parse(parseReportJSON(row.target))
+      const correlation = row.correlation === null ? null : publicCorrelationRow.parse(parseReportJSON(row.correlation))
+      if (application) {
+        if (application.site !== c.site || application.proposal_id !== target.proposalId)
+          throw Error('correlation target binding')
+        validateExecutionTarget(application)
+      }
+      if (correlation && (!application || correlation.site !== c.site ||
+          correlation.proposal_id !== target.proposalId || correlation.approved_revision !== application.revision))
+        throw Error('stored correlation binding')
+      return { authorized: row.authorized === 1, application, correlation, rawTarget: row.target }
+    }
+    type Snapshot = Awaited<ReturnType<typeof snapshot>>
+    const classify = (s: Snapshot): PublicCorrelationResult | null => {
+      if (!s.authorized) return { status: 'forbidden' }
+      const p = s.application, e = p?.execution
+      if (!p) return { status: 'not_found' }
+      if (p.revision !== target.approvedRevision) return { status: 'conflict' }
+      if (!e) return { status: 'not_evaluated', reason: 'legacy_reconciliation_required' }
+      if (e.bound_adapter !== null && e.bound_adapter !== c.adapter) return { status: 'forbidden' }
+      if (['merged', 'closed'].includes(p.state) || (p.state === 'apply_failed' && e.failed_apply_count === 3))
+        return { status: 'conflict' }
+      if (s.correlation) return { status: 'ready', proposalId: p.proposal_id, site: p.site,
+        approvedRevision: p.revision, publicCorrelation: { version: 1, value: s.correlation.public_id } }
+      if (p.state !== 'approved' || e.state_version !== 0 || e.failed_apply_count !== 0 ||
+          e.pr_number !== null || e.bound_adapter !== null || e.last_event !== null)
+        return { status: 'not_evaluated', reason: 'legacy_reconciliation_required' }
+      return null
+    }
+    try {
+      const before = await snapshot(), result = classify(before)
+      if (result) return result
+      if (!key) return { status: 'not_evaluated', reason: 'key_unavailable' }
+      let value: string
+      try { value = await derivePublicCorrelation(key, c.site, target.proposalId) }
+      catch { check(); return { status: 'not_evaluated', reason: 'key_unavailable' } }
+      check()
+      // An exception may follow a committed insert. Never return an unpersisted digest;
+      // a later explicit call recovers the first row, without repeating an external effect.
+      const rows = reportRows(await this.statement(insertPublicCorrelationQuery(
+        c, target, value, key.keyId, new Date().toISOString(), before.rawTarget!,
+      )).all())
+      check()
+      if (rows.length > 1) throw Error('correlation insert cardinality')
+      if (rows.length) {
+        const row = publicCorrelationRow.parse(rows[0])
+        if (row.proposal_id !== target.proposalId || row.site !== c.site ||
+            row.approved_revision !== target.approvedRevision || row.public_id !== value || row.key_id !== key.keyId)
+          throw Error('correlation insert projection')
+      }
+      return classify(await snapshot()) ?? { status: 'conflict' }
+    } catch (error) {
+      return { status: 'not_evaluated', reason: error instanceof PublicCorrelationDeadline ? 'deadline' : 'storage_unavailable' }
+    }
   }
 
   async historyRegistration(site: string): Promise<HistoryRegistration | null> {

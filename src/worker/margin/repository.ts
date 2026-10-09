@@ -480,3 +480,21 @@ export function validReportTuple(
   if (!valid || (state !== 'approved' && row.state_version === 0))
     throw Error('inconsistent execution state')
 }
+
+/** Dedicated service-held material, never part of a feed/report or browser wire. */
+export type PublicCorrelationKey = { keyId: string; key: CryptoKey }
+export type PublicCorrelationTarget = { proposalId: string; approvedRevision: number }
+export type PublicCorrelationResult =
+  | { status: 'ready'; proposalId: string; site: string; approvedRevision: number;
+      publicCorrelation: { version: 1; value: string } }
+  | { status: 'forbidden' | 'not_found' | 'conflict' }
+  | { status: 'not_evaluated'; reason: 'key_unavailable' | 'legacy_reconciliation_required' | 'storage_unavailable' | 'deadline' }
+export interface PublicCorrelationRepository {
+  /** Current scoped authority is checked again in the insert and final read. */
+  getOrIssuePublicCorrelation(
+    credential: AdapterCredential, target: PublicCorrelationTarget,
+    key: PublicCorrelationKey | null,
+    /** Absolute performance.now() deadline in this same service clock domain. */
+    inheritedDeadline?: number,
+  ): Promise<PublicCorrelationResult>
+}

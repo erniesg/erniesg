@@ -30,6 +30,7 @@ const configSchema = z
       .strict(),
     provider: z
       .object({
+        checks: z.literal('configured').optional(),
         token: z
           .string()
           .min(1)
@@ -105,7 +106,10 @@ export function createKnownPRRefreshOperation(
       typeof providerTransport === 'function'
     ) {
       client = createApprovedWorkClient(parsed.service, serviceTransport)
-      reader = createKnownPRReader(parsed.provider, providerTransport)
+      reader = createKnownPRReader(
+        { token: parsed.provider.token },
+        providerTransport,
+      )
       host = parsed
     }
   } catch {
@@ -177,7 +181,10 @@ export function createKnownPRRefreshOperation(
             status: 'not_evaluated',
             reason: 'version_exhausted',
           }
-        const observed = await reader.readPR({ number: pr.number })
+        const observed = await reader.readPR({
+          number: pr.number,
+          ...(host.provider.checks ? { checks: host.provider.checks } : {}),
+        })
         if (observed.status !== 'ready')
           return { phase: 'provider', result: observed }
         if (disposed) return failure('closed')

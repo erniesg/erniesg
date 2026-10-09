@@ -1,5 +1,6 @@
 /** Supplied-data conversion only. A draft confers no approval or provider freshness. */
 import { z } from 'zod'
+import { configuredChecksSchema } from './known-pr-reader'
 import { adapterSiteSchema } from '../../src/worker/margin/adapter'
 import {
   adapterExecutionReportSchema,
@@ -49,6 +50,7 @@ const inputSchema = z
           state: z.enum(['open', 'closed']),
           merged: z.boolean(),
           mergeCommit: reportCommit.nullable(),
+          checks: configuredChecksSchema.optional(),
         })
         .strict(),
     ]),
@@ -129,10 +131,19 @@ export function planKnownPRRefresh(
         : o.merged !== (o.mergeCommit !== null)
     )
       return { status: 'refused', reason: 'inconsistent_observation' }
+    if (o.checks && (o.state !== 'open' || o.checks.head !== o.head))
+      return { status: 'refused', reason: 'binding_mismatch' }
     const pr = { number: b.pr.number, url: b.pr.url, head: o.head }
     const outcome: RefreshOutcome =
       o.state === 'open'
-        ? { state: 'pr_open', pr, checks: 'not_evaluated', detail: null }
+        ? {
+            state: 'pr_open',
+            pr,
+            checks: o.checks?.state ?? 'not_evaluated',
+            detail: o.checks
+              ? `Configured head-job profile ${o.checks.profile}: ${o.checks.reason}; reported snapshot, not merge eligibility.`
+              : null,
+          }
         : o.merged && o.mergeCommit !== null
           ? { state: 'merged', pr, mergeCommit: o.mergeCommit }
           : { state: 'closed', pr }

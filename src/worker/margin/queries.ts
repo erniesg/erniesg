@@ -854,3 +854,37 @@ export function historyRegistrationQuery(site: string): Query {
     params: [site],
   }
 }
+
+const publicCorrelationColumns = 'proposal_id,site,approved_revision,public_id,key_id,scheme_version,issued_at'
+/** Private read; no credential or target fact is supplied by an unscoped query. */
+export function publicCorrelationSnapshotQuery(c: import('./repository').AdapterCredential, proposalId: string): Query {
+  return {
+    sql: `WITH authority AS (${reportAuthority})
+      SELECT CASE WHEN EXISTS(SELECT 1 FROM authority) THEN 1 ELSE 0 END AS authorized,
+      (SELECT ${reportTargetJson} FROM margin_proposal_applications p JOIN authority a ON a.site=p.site
+        LEFT JOIN margin_proposal_execution e ON e.proposal_id=p.proposal_id WHERE p.proposal_id=?) AS target,
+      (SELECT json_object(${publicCorrelationColumns.split(',').map(n => `'${n}',r.${n}`).join(',')})
+        FROM margin_public_correlations r JOIN authority a ON a.site=r.site WHERE r.proposal_id=?) AS correlation`,
+    params: [...reportAuthorityParams(c), proposalId, proposalId],
+  }
+}
+export function insertPublicCorrelationQuery(
+  c: import('./repository').AdapterCredential, target: import('./repository').PublicCorrelationTarget,
+  publicId: string, keyId: string, at: string, exactTarget: string,
+): Query {
+  return {
+    sql: `INSERT INTO margin_public_correlations(${publicCorrelationColumns})
+      WITH authority AS (${reportAuthority})
+      SELECT p.proposal_id,p.site,p.revision,?,?,1,?
+      FROM margin_proposal_applications p JOIN authority a ON a.site=p.site
+      JOIN margin_proposal_execution e ON e.proposal_id=p.proposal_id AND e.site=p.site AND e.approved_revision=p.revision
+      WHERE p.proposal_id=? AND p.revision=? AND p.state='approved'
+        AND e.state_version=0 AND e.failed_apply_count=0 AND e.bound_adapter IS NULL AND e.last_event IS NULL
+        AND e.pr_number IS NULL AND e.pr_url IS NULL AND e.pr_head IS NULL
+        AND e.checks IS NULL AND e.detail IS NULL AND e.merge_commit IS NULL AND e.updated_at=p.approved_at
+        AND ${reportTargetJson}=?
+        AND NOT EXISTS(SELECT 1 FROM margin_public_correlations r WHERE r.proposal_id=p.proposal_id)
+      RETURNING ${publicCorrelationColumns}`,
+    params: [...reportAuthorityParams(c), publicId, keyId, at, target.proposalId, target.approvedRevision, exactTarget],
+  }
+}

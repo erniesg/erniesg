@@ -604,3 +604,28 @@ export async function handleAdapterRequest(
     ? new Response(null, { status: result.status, headers: result.headers })
     : result
 }
+
+/** Service-only primitive. The result must be durably associated before disclosure. */
+export async function derivePublicCorrelation(
+  material: import('./repository').PublicCorrelationKey,
+  site: string,
+  proposalId: string,
+): Promise<string> {
+  adapterSiteSchema.parse(site)
+  id.parse(proposalId)
+  const roundtrip = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
+  if (roundtrip.decode(encoder.encode(proposalId)) !== proposalId)
+    throw Error('invalid correlation input')
+  if (!material || typeof material.keyId !== 'string' || !/^[A-Za-z0-9_-]{1,32}$/.test(material.keyId))
+    throw Error('invalid correlation key')
+  const key = material.key, algorithm = key?.algorithm as HmacKeyAlgorithm | undefined
+  if (!key || key.type !== 'secret' || key.extractable !== false ||
+      key.usages.length !== 1 || key.usages[0] !== 'sign' ||
+      algorithm?.name !== 'HMAC' || algorithm.hash.name !== 'SHA-256' || algorithm.length !== 256)
+    throw Error('invalid correlation key')
+  const message = encoder.encode(JSON.stringify(['margin-public-correlation', 1, site, proposalId]))
+  if (message.byteLength > 32768) throw Error('correlation input bound')
+  const signature = new Uint8Array(await crypto.subtle.sign('HMAC', key, message))
+  if (signature.byteLength !== 32) throw Error('invalid correlation output')
+  return Array.from(signature, byte => byte.toString(16).padStart(2, '0')).join('')
+}

@@ -1929,3 +1929,238 @@ describe('report validation preserves operation ownership', () => {
     expect(transport).toHaveBeenCalledTimes(1)
   })
 })
+
+function correlatedService(items = [candidate('correlation-item')]) {
+  const f = service(items)
+  ;(f.repo as any).getOrIssuePublicCorrelation = vi.fn(
+    async (c: any, target: any) => ({
+      status: 'ready',
+      site: c.site,
+      proposalId: target.proposalId,
+      approvedRevision: target.approvedRevision,
+      publicCorrelation: { version: 1, value: 'c'.repeat(64) },
+    }),
+  )
+  return f
+}
+async function correlationWire() {
+  const f = correlatedService(),
+    r = await f.transport(
+      new Request(ORIGIN + ADAPTER_WORK_PATH + '?include=publicCorrelation', {
+        headers: { authorization: 'Bearer ' + token },
+      }),
+    )
+  expect(r.status).toBe(200)
+  return r.json()
+}
+describe('opt-in public correlation client rules', () => {
+  it('uses one explicit request and default10 while ordinary default25 and max50 remain exact', async () => {
+    const f = correlatedService(),
+      create = await api(),
+      client = create({ origin: ORIGIN, token }, f.transport)
+    expect(
+      (await client.readPage({ include: 'publicCorrelation' })).page
+        .publicCorrelation,
+    ).toBe('v1')
+    expect(new URL(String(f.transport.mock.calls[0][0])).search).toBe(
+      '?limit=10&include=publicCorrelation',
+    )
+    expect(f.repo.listAdapterWork).toHaveBeenCalledTimes(2)
+    expect((f.repo as any).getOrIssuePublicCorrelation).toHaveBeenCalledTimes(1)
+    expect((await client.readPage()).status).toBe('ready')
+    expect(new URL(String(f.transport.mock.calls[1][0])).search).toBe(
+      '?limit=25',
+    )
+    expect((await client.readPage({ limit: 50 })).status).toBe('ready')
+    client.dispose()
+  })
+  for (const options of [
+    { include: 'publicCorrelation', limit: 11 },
+    { include: 'publicCorrelation', limit: 50 },
+    { include: 'publicCorrelation', limit: 0 },
+    { include: 'publicCorrelation', limit: 1.5 },
+    { include: 'other' },
+    { include: null },
+    { include: 'publicCorrelation', extra: true },
+  ])
+    it(
+      'rejects option without transport ' + JSON.stringify(options),
+      async () => {
+        const create = await api(),
+          transport = vi.fn(),
+          client = create({ origin: ORIGIN, token }, transport)
+        expect(await client.readPage(options)).toEqual({
+          status: 'refused',
+          reason: 'options',
+        })
+        expect(transport).not.toHaveBeenCalled()
+        client.dispose()
+      },
+    )
+  const malformed: Record<string, (p: any) => void> = {
+    'missing marker': (p) => delete p.publicCorrelation,
+    'wrong marker': (p) => (p.publicCorrelation = 'v2'),
+    'missing item correlation': (p) => delete p.items[0].publicCorrelation,
+    'null item correlation': (p) => (p.items[0].publicCorrelation = null),
+    'wrong version': (p) => (p.items[0].publicCorrelation.version = 2),
+    'short digest': (p) =>
+      (p.items[0].publicCorrelation.value = 'c'.repeat(63)),
+    'uppercase digest': (p) =>
+      (p.items[0].publicCorrelation.value = 'A'.repeat(64)),
+    'extra private key field': (p) =>
+      (p.items[0].publicCorrelation.keyId = 'not-deliverable'),
+    'extra page field': (p) => (p.extra = true),
+    'tuple mismatch': (p) => (p.items[0].execution.checks = 'passed'),
+    'stamp mismatch': (p) => (p.items[0].execution.lastEvent = segment(16)),
+    'counter mismatch': (p) => (p.scanned = 0),
+    'eleven scan': (p) => {
+      p.scanned = 11
+      p.notEvaluated.unknownExecution = 10
+    },
+  }
+  for (const [name, mutate] of Object.entries(malformed))
+    it('refuses closed correlated wire ' + name, async () => {
+      const page = await correlationWire()
+      mutate(page)
+      const create = await api(),
+        client = create({ origin: ORIGIN, token }, async () =>
+          jsonResponse(page),
+        )
+      expect(
+        (await client.readPage({ include: 'publicCorrelation' })).status,
+      ).toBe('not_evaluated')
+      client.dispose()
+    })
+  it('requires mode-specific schemas even for empty pages and checks raw canonical JSON first', async () => {
+    const create = await api(),
+      page = await correlationWire(),
+      texts = [
+        JSON.stringify(page),
+        JSON.stringify(page).replace('"version":1', '"version":1,"version":1') +
+          '\n',
+        '\ufeff' + JSON.stringify(page) + '\n',
+      ]
+    for (const text of texts) {
+      const client = create(
+        { origin: ORIGIN, token },
+        async () =>
+          new Response(text, {
+            headers: { 'content-type': 'application/json' },
+          }),
+      )
+      expect(
+        (await client.readPage({ include: 'publicCorrelation' })).status,
+      ).toBe('not_evaluated')
+      client.dispose()
+    }
+    const old = create({ origin: ORIGIN, token }, async () =>
+      jsonResponse(page),
+    )
+    expect((await old.readPage()).status).toBe('not_evaluated')
+    old.dispose()
+    const empty = emptyPage(),
+      next = create({ origin: ORIGIN, token }, async () => jsonResponse(empty))
+    expect((await next.readPage({ include: 'publicCorrelation' })).status).toBe(
+      'not_evaluated',
+    )
+    next.dispose()
+    const valid = create({ origin: ORIGIN, token }, async () =>
+      jsonResponse({ ...empty, publicCorrelation: 'v1' }),
+    )
+    expect(
+      (await valid.readPage({ include: 'publicCorrelation' })).status,
+    ).toBe('ready')
+    valid.dispose()
+  })
+  for (const mode of ['timeout', 'non-200', 'invalid-header'] as const)
+    it(
+      'keeps shared occupancy through ' +
+        mode +
+        ' and late cancellation acknowledgment',
+      async () => {
+        vi.useFakeTimers()
+        const create = await api()
+        let settle!: (r: Response) => void, acknowledge!: () => void
+        const cancel = vi.fn(() => new Promise<void>((r) => (acknowledge = r))),
+          transport = vi.fn(() => new Promise<Response>((r) => (settle = r))),
+          client = create({ origin: ORIGIN, token }, transport)
+        const first = client.readPage({ include: 'publicCorrelation' })
+        if (mode === 'timeout') {
+          await vi.advanceTimersByTimeAsync(10001)
+          expect((await first).reason).toBe('timeout')
+        }
+        settle(
+          new Response(new ReadableStream({ cancel }), {
+            status: mode === 'non-200' ? 503 : 200,
+            headers: {
+              'content-type':
+                mode === 'invalid-header' ? 'text/plain' : 'application/json',
+            },
+          }),
+        )
+        await vi.advanceTimersByTimeAsync(0)
+        expect((await first).status).toBe('not_evaluated')
+        expect(cancel).toHaveBeenCalledTimes(1)
+        expect(
+          (await client.readPage({ include: 'publicCorrelation' })).reason,
+        ).toBe('busy')
+        expect((await client.readReportReceipt(segment(16))).reason).toBe(
+          'busy',
+        )
+        expect(transport).toHaveBeenCalledTimes(1)
+        acknowledge()
+        await vi.advanceTimersByTimeAsync(0)
+        transport.mockImplementation(async () =>
+          jsonResponse({ ...emptyPage(), publicCorrelation: 'v1' }),
+        )
+        expect(
+          (await client.readPage({ include: 'publicCorrelation' })).status,
+        ).toBe('ready')
+        client.dispose()
+      },
+    )
+  it('does not free a slot on rejected cancellation or dispatch after disposal', async () => {
+    const create = await api(),
+      transport = vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream({
+              cancel: async () => {
+                throw Error('private fixture error')
+              },
+            }),
+            { status: 403 },
+          ),
+      ),
+      client = create({ origin: ORIGIN, token }, transport)
+    expect(
+      (await client.readPage({ include: 'publicCorrelation' })).status,
+    ).toBe('refused')
+    await new Promise((r) => setTimeout(r, 0))
+    expect(
+      (await client.readPage({ include: 'publicCorrelation' })).reason,
+    ).toBe('busy')
+    expect(transport).toHaveBeenCalledTimes(1)
+    client.dispose()
+    expect(
+      (await client.readPage({ include: 'publicCorrelation' })).reason,
+    ).toBe('closed')
+  })
+})
+for (const [name, ending] of [
+  ['LF', '\n'],
+  ['CR', '\r'],
+  ['CRLF', '\r\n'],
+  ['LS', '\u2028'],
+  ['PS', '\u2029'],
+])
+  it('refuses wire correlation terminal line terminator ' + name, async () => {
+    const page = await correlationWire()
+    page.items[0].publicCorrelation.value += ending
+    const create = await api(),
+      client = create({ origin: ORIGIN, token }, async () => jsonResponse(page))
+    expect(
+      (await client.readPage({ include: 'publicCorrelation' })).status,
+    ).toBe('not_evaluated')
+    client.dispose()
+  })

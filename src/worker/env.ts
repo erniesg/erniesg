@@ -26,6 +26,9 @@ export type WorkerEnv = WorkosEnv & {
   ASSETS: AssetFetcher
   /** Optional canonical origin whose public history is co-deployed in ASSETS. */
   MARGIN_HISTORY_SITE?: string
+  /** Dedicated service-only HMAC material; opt-in adapter work delivery only. */
+  MARGIN_PUBLIC_CORRELATION_KEY?: string
+  MARGIN_PUBLIC_CORRELATION_KEY_ID?: string
   /** `margin-db` in production, `margin-db-stg` in preview. */
   MARGIN_DB?: D1Database
   /** `development`, `staging` or `production`. Absent means production. */

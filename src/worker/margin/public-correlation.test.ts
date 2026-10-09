@@ -624,7 +624,7 @@ describe('public correlation boundary controls', () => {
 })
 
 describe('public correlation preservation and malformed boundaries', () => {
-  it('preserves actual default work/feed bytes and keeps correlation HTTP opt-in unimplemented', async () => {
+  it('preserves actual default work/feed bytes and delivers the persisted identity without key configuration', async () => {
     const f = await fixture(),
       token = [
         'margin-adapter-v1',
@@ -655,7 +655,15 @@ describe('public correlation preservation and malformed boundaries', () => {
       expect(r.headers.get('cache-control')).toBe('no-store')
       expect(await r.text()).toBe(before[n])
     }
-    expect((await read('work?include=publicCorrelation')).status).toBe(400)
+    const delivered = await read('work?include=publicCorrelation')
+    expect(delivered.status).toBe(200)
+    const page = await delivered.json()
+    expect(page.publicCorrelation).toBe('v1')
+    expect(page.items).toHaveLength(1)
+    expect(page.items[0].publicCorrelation).toEqual({
+      version: 1,
+      value: f.h.database.query('SELECT public_id FROM margin_public_correlations')[0].public_id,
+    })
   })
   it('does not hide report grant absence or registry disablement behind an existing association', async () => {
     for (const revoke of [

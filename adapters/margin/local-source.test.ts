@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, readdirSyn
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { formatHunks } from '../../src/annotations/criticmarkup'
+import { createHash } from 'node:crypto'
 
 vi.mock('node:child_process', async importOriginal => { const actual = await importOriginal<typeof import('node:child_process')>(); return { ...actual, spawn: vi.fn(actual.spawn) } })
 const roots: string[] = []
@@ -321,5 +322,170 @@ describe('selection-closure shape sweep', () => {
     if (kind === 'symlink-selector') symlinkSync(join(f.root, 'unavailable'), join(f.repo, '.git/commondir'))
     if (kind === 'malformed-selector') writeFileSync(join(f.repo, '.git/commondir'), Buffer.from([0xff]))
     const r = await planLocalApprovedSource(f.data); expect(r.status).toBe('not_evaluated'); expect(r).not.toHaveProperty('proposedBytes')
+  })
+})
+
+const publicContext = () => ({ version: 1 as const, publicCorrelation: { version: 1 as const, value: '1'.repeat(64) } })
+const blobOID = (bytes: Uint8Array) => createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex')
+
+describe('public source identity initial behavior', () => {
+  it('attaches opaque metadata to the exact actual post-merge source plan', async () => {
+    const { planLocalApprovedSource } = await import('./local-source')
+    const f = fixture(); const r = await planLocalApprovedSource({ ...f.data, publicContext: publicContext() } as Parameters<typeof planLocalApprovedSource>[0])
+    expect(r.status).toBe('planned')
+    if (r.status !== 'planned') throw Error('source unavailable')
+    const value = (r as typeof r & { publicSource?: unknown }).publicSource
+    expect(value).toMatchObject({ version: 1, intent: 'source-change', repository: 'erniesg/erniesg', node: 'intro',
+      branch: `coordinator/margin-proposal-${'1'.repeat(64)}`, title: 'Margin proposal for intro',
+      content: { parent: f.data.expectedHead, mode: '100644', path: f.sourcePath, currentBlob: r.currentBlob,
+        proposedBlob: blobOID(r.proposedBytes), proposedSha256: r.proposedSha256, proposedBytes: r.proposedBytes.length } })
+    expect(Buffer.from(r.proposedBytes).toString()).toBe('new\nkeep\nchanged\n')
+  })
+  it('refuses explicit null before any child command', async () => {
+    const { planLocalApprovedSource } = await import('./local-source')
+    const f = fixture(); vi.mocked(spawn).mockClear()
+    expect(await planLocalApprovedSource({ ...f.data, publicContext: null } as unknown as Parameters<typeof planLocalApprovedSource>[0])).toEqual({ status: 'refused', reason: 'invalid-public-context' })
+    expect(spawn).not.toHaveBeenCalled()
+  })
+  it('refuses a noncanonical correlation before any child command', async () => {
+    const { planLocalApprovedSource } = await import('./local-source')
+    const f = fixture(); vi.mocked(spawn).mockClear()
+    expect(await planLocalApprovedSource({ ...f.data, publicContext: { version: 1, publicCorrelation: { version: 1, value: 'A'.repeat(64) } } } as Parameters<typeof planLocalApprovedSource>[0])).toEqual({ status: 'refused', reason: 'invalid-public-context' })
+    expect(spawn).not.toHaveBeenCalled()
+  })
+  it('refuses another site for public metadata without restricting the default source planner', async () => {
+    const { planLocalApprovedSource } = await import('./local-source')
+    const f = fixture(); f.data.snapshot.site = f.data.mapping.site = 'https://elsewhere.invalid'
+    f.data.snapshot.document = f.data.mapping.documents[0].document = 'https://elsewhere.invalid/books/test/intro/'
+    expect((await planLocalApprovedSource(f.data)).status).toBe('planned')
+    expect(await planLocalApprovedSource({ ...f.data, publicContext: publicContext() } as Parameters<typeof planLocalApprovedSource>[0])).toEqual({ status: 'refused', reason: 'unsupported-public-target' })
+  })
+  it('captures option and context before returning the first pending promise', async () => {
+    const { planLocalApprovedSource } = await import('./local-source')
+    const f = fixture(); const option = publicContext()
+    const pending = planLocalApprovedSource({ ...f.data, publicContext: option } as Parameters<typeof planLocalApprovedSource>[0])
+    option.publicCorrelation.value = '2'.repeat(64)
+    f.data.snapshot.document = f.data.mapping.documents[0].document = 'https://ernie.sg/books/changed/other/'
+    f.data.snapshot.body = 'changed after dispatch'
+    const r = await pending
+    expect(r.status).toBe('planned')
+    expect(r).toMatchObject({ publicSource: { document: 'https://ernie.sg/books/test/intro/', node: 'intro', branch: `coordinator/margin-proposal-${'1'.repeat(64)}` } })
+  })
+})
+
+describe('public metadata lifetime and default parity', () => {
+  it.each([
+    ['array', []], ['extra', { ...publicContext(), observed: {} }], ['version', { ...publicContext(), version: 2 }],
+    ['nested-extra', { version: 1, publicCorrelation: { ...publicContext().publicCorrelation, privateId: 'private' } }],
+    ['boxed', { version: 1, publicCorrelation: { version: 1, value: new String('1'.repeat(64)) } }],
+    ['oversized', { version: 1, publicCorrelation: { version: 1, value: '1'.repeat(100_000) } }],
+    ['symbol-key', { ...publicContext(), [Symbol('extra')]: 1 }], ['inherited', Object.create(publicContext())],
+  ])('refuses %s before commands', async (_name, value) => {
+    const { planLocalApprovedSource } = await import('./local-source'); const f = fixture(); vi.mocked(spawn).mockClear()
+    expect(await planLocalApprovedSource({ ...f.data, publicContext: value } as unknown as Parameters<typeof planLocalApprovedSource>[0])).toEqual({ status: 'refused', reason: 'invalid-public-context' })
+    expect(spawn).not.toHaveBeenCalled()
+  })
+  it('never invokes option getters, serializers or a late read of the original', async () => {
+    const { planLocalApprovedSource } = await import('./local-source'); const f = fixture()
+    const getter = vi.fn(() => '1'.repeat(64)), bad = { version: 1, publicCorrelation: { version: 1 } }
+    Object.defineProperty(bad.publicCorrelation, 'value', { enumerable: true, get: getter })
+    expect(await planLocalApprovedSource({ ...f.data, publicContext: bad } as unknown as Parameters<typeof planLocalApprovedSource>[0])).toEqual({ status: 'refused', reason: 'invalid-public-context' }); expect(getter).not.toHaveBeenCalled()
+    const option = publicContext(); const pending = planLocalApprovedSource({ ...f.data, publicContext: option })
+    Object.defineProperty(option.publicCorrelation, 'value', { get() { throw Error('late original read') } })
+    expect(await pending).toMatchObject({ status: 'planned', publicSource: { branch: `coordinator/margin-proposal-${'1'.repeat(64)}` } })
+  })
+  it('omitted and undefined opt-in never load the new helper', async () => {
+    vi.resetModules(); vi.doMock('./public-source-identity', () => { throw Error('default must not import public helper') })
+    try {
+      const { planLocalApprovedSource } = await import('./local-source'); const f = fixture()
+      const first = await planLocalApprovedSource(f.data); expect(first.status).toBe('planned')
+      expect(await planLocalApprovedSource({ ...f.data, publicContext: undefined })).toEqual(first)
+    } finally { vi.doUnmock('./public-source-identity'); vi.resetModules() }
+  })
+  it('preserves original result and exact child calls under explicit opt-in', async () => {
+    const { planLocalApprovedSource } = await import('./local-source'); const f = fixture()
+    const trace = () => vi.mocked(spawn).mock.calls.map(([file, args, options]) => ({ file,
+      args: (args as string[]).map(arg => arg.replace(/margin-source-[^/]+/g, 'margin-source-OWNED')),
+      cwd: String(options?.cwd).replace(/margin-source-[^/]+/g, 'margin-source-OWNED'),
+      env: Object.fromEntries(Object.entries(options?.env ?? {}).map(([key, value]) => [key, value?.replace(/margin-source-[^/]+/g, 'margin-source-OWNED')])) }))
+    vi.mocked(spawn).mockClear(); const original = await planLocalApprovedSource(f.data), originalTrace = trace()
+    vi.mocked(spawn).mockClear(); const optin = await planLocalApprovedSource({ ...f.data, publicContext: publicContext() })
+    expect(optin.status).toBe('planned'); if (optin.status !== 'planned') throw Error('source unavailable')
+    const { publicSource, ...same } = optin
+    expect(publicSource).toBeDefined(); expect(same).toEqual(original); expect(trace()).toEqual(originalTrace)
+    expect(readdirSync(f.scratch)).toEqual([])
+  })
+  it('attaches no-op after the actual merge and preserves source/index/refs', async () => {
+    const { planLocalApprovedSource } = await import('./local-source'); const f = fixture()
+    f.data.snapshot.body = formatHunks([{ baseStartLine: 1, baseEndLine: 1, criticMarkup: 'old\n' }])
+    const before = [readFileSync(join(f.repo, f.sourcePath)), readFileSync(join(f.repo, '.git/index')), f.git('show-ref')]
+    const r = await planLocalApprovedSource({ ...f.data, publicContext: publicContext() })
+    expect(r).toMatchObject({ status: 'planned', changed: false, publicSource: { intent: 'no-op' } })
+    if (r.status !== 'planned') throw Error('source unavailable')
+    expect(r.publicSource?.content.proposedBlob).toBe(r.currentBlob)
+    expect([readFileSync(join(f.repo, f.sourcePath)), readFileSync(join(f.repo, '.git/index')), f.git('show-ref')]).toEqual(before)
+  })
+  it('does not attach metadata to an actual merge conflict', async () => {
+    const { planLocalApprovedSource } = await import('./local-source'); const f = fixture('other\nkeep\nlast\n')
+    const r = await planLocalApprovedSource({ ...f.data, publicContext: publicContext() })
+    expect(r.status).toBe('conflict'); expect(r).not.toHaveProperty('publicSource')
+  })
+  it.each(['100644', '100755'])('binds actual regular mode %s', async mode => {
+    const { planLocalApprovedSource } = await import('./local-source'); const f = fixture()
+    chmodSync(join(f.repo, f.sourcePath), mode === '100755' ? 0o755 : 0o644)
+    f.git('add', f.sourcePath); f.git('commit', '--allow-empty', '-qm', 'fixture mode')
+    f.data.expectedHead = f.data.mapping.head = f.git('rev-parse', 'HEAD')
+    expect(await planLocalApprovedSource({ ...f.data, publicContext: publicContext() })).toMatchObject({ status: 'planned', publicSource: { content: { mode } } })
+  })
+  it.each([
+    ['BOM/CRLF', '\ufeffold\r\nlast', '\ufeff{~~old~>new~~}\r\n', '\ufeffnew\r\nlast'],
+    ['no final newline', 'old', '{~~old~>new~~}', 'new'],
+    ['Unicode', 'old\n', '{~~old~>新しい~~}\n', '新しい\n'],
+  ])('binds actual %s Git bytes without normalization', async (_label, base, markup, expected) => {
+    const { planLocalApprovedSource } = await import('./local-source'); const f = fixture()
+    writeFileSync(join(f.repo, f.sourcePath), base); f.git('add', f.sourcePath); f.git('commit', '-qm', 'fixture bytes')
+    f.data.expectedHead = f.data.mapping.head = f.data.snapshot.baseCommit = f.git('rev-parse', 'HEAD')
+    f.data.snapshot.body = formatHunks([{ baseStartLine: 1, baseEndLine: 1, criticMarkup: markup }])
+    const r = await planLocalApprovedSource({ ...f.data, publicContext: publicContext() })
+    expect(r).toMatchObject({ status: 'planned', publicSource: { content: { proposedBlob: blobOID(Buffer.from(expected)), proposedBytes: Buffer.byteLength(expected) } } })
+    if (r.status !== 'planned') throw Error('source unavailable')
+    expect(Buffer.from(r.proposedBytes)).toEqual(Buffer.from(expected))
+  })
+  it.each(['head', 'source', 'index', 'cleanup'] as const)('retains final %s refusal after metadata derivation', async kind => {
+    const actual = await vi.importActual<typeof import('./public-source-identity')>('./public-source-identity'); const f = fixture()
+    vi.resetModules(); vi.doMock('./public-source-identity', () => ({ ...actual, bindPublicSource: (...args: Parameters<typeof actual.bindPublicSource>) => {
+      const value = actual.bindPublicSource(...args)
+      if (kind === 'head') f.git('update-ref', 'HEAD', f.data.snapshot.baseCommit)
+      if (kind === 'source') writeFileSync(join(f.repo, f.sourcePath), 'concurrent edit\n')
+      if (kind === 'index') { writeFileSync(join(f.repo, f.sourcePath), 'concurrent staged edit\n'); f.git('add', f.sourcePath) }
+      if (kind === 'cleanup') writeFileSync(join(f.scratch, readdirSync(f.scratch)[0], 'unexpected'), 'preserve')
+      return value
+    } }))
+    try {
+      const { planLocalApprovedSource } = await import('./local-source')
+      const r = await planLocalApprovedSource({ ...f.data, publicContext: publicContext() })
+      expect(r.status).toBe('not_evaluated'); expect(r).not.toHaveProperty('publicSource')
+      if (kind === 'cleanup') expect(r).toMatchObject({ reason: 'temp-cleanup-failed' })
+    } finally { vi.doUnmock('./public-source-identity'); vi.resetModules() }
+  })
+  it('counts dynamic import and final binding inside the same absolute deadline', async () => {
+    const { performance } = await import('node:perf_hooks')
+    const actual = await vi.importActual<typeof import('./public-source-identity')>('./public-source-identity')
+    for (const phase of ['import', 'binding'] as const) {
+      const f = fixture(), start = performance.now(); vi.resetModules(); vi.mocked(spawn).mockClear()
+      vi.doMock('./public-source-identity', () => {
+        if (phase === 'import') vi.spyOn(performance, 'now').mockReturnValue(start + 30_000)
+        return { ...actual, bindPublicSource: (...args: Parameters<typeof actual.bindPublicSource>) => {
+          const value = actual.bindPublicSource(...args)
+          if (phase === 'binding') vi.spyOn(performance, 'now').mockReturnValue(start + 30_000)
+          return value
+        } }
+      })
+      try {
+        const { planLocalApprovedSource } = await import('./local-source')
+        expect(await planLocalApprovedSource({ ...f.data, publicContext: publicContext() })).toEqual({ status: 'not_evaluated', reason: 'deadline' })
+        if (phase === 'import') expect(spawn).not.toHaveBeenCalled()
+      } finally { vi.restoreAllMocks(); vi.doUnmock('./public-source-identity'); vi.resetModules() }
+    }
   })
 })

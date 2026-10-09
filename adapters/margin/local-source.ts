@@ -7,10 +7,26 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { performance } from 'node:perf_hooks'
 import { LIMITS, decodeSource, resolveDocument, sha256, type ContextData, type Failure, type Prepared } from './source-plan'
+import type { PublicContext, PublicIdentity, PublicSource } from './public-source-identity'
 
-export type LocalInput = ContextData & { repoRoot: string; scratchRoot: string }
-export type LocalPlan = Failure | ({ status: 'conflict'; reason: 'merge-conflict'; detail: string }) | (Omit<Prepared, 'status'> & { status: 'planned'; baseBlob: string; currentBlob: string; mode: string })
+export type LocalInput = ContextData & { repoRoot: string; scratchRoot: string; publicContext?: PublicContext }
+export type LocalPlan = Failure | ({ status: 'conflict'; reason: 'merge-conflict'; detail: string }) | (Omit<Prepared, 'status'> & { status: 'planned'; baseBlob: string; currentBlob: string; mode: string; publicSource?: PublicSource })
 class Hold extends Error { constructor(readonly reason: string, readonly status: Failure['status'] = 'not_evaluated') { super(reason) } }
+// Capture only data properties before a dynamic import can yield. Opaque format
+// validation is deferred to the shared schema, operating on this new scalar copy.
+function capturePublicContext(raw: unknown): PublicContext {
+  const fields = (value: unknown, keys: string[]): Record<string, unknown> => {
+    if (!value || typeof value !== 'object' || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) throw new Hold('invalid-public-context', 'refused')
+    const names = Reflect.ownKeys(value)
+    if (names.length !== keys.length || !keys.every(key => names.includes(key))) throw new Hold('invalid-public-context', 'refused')
+    const copy: Record<string, unknown> = {}
+    for (const key of keys) { const descriptor = Object.getOwnPropertyDescriptor(value, key); if (!descriptor || !('value' in descriptor)) throw new Hold('invalid-public-context', 'refused'); copy[key] = descriptor.value }
+    return copy
+  }
+  const outer = fields(raw, ['version', 'publicCorrelation']), inner = fields(outer.publicCorrelation, ['version', 'value'])
+  if (outer.version !== 1 || inner.version !== 1 || typeof inner.value !== 'string' || inner.value.length > 64) throw new Hold('invalid-public-context', 'refused')
+  return { version: 1, publicCorrelation: { version: 1, value: inner.value } }
+}
 const env = (cwd: string): NodeJS.ProcessEnv => ({ GIT_CEILING_DIRECTORIES: cwd, PATH: '/usr/bin:/bin', LANG: 'C', LC_ALL: 'C', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_SYSTEM: '/dev/null', GIT_CONFIG_GLOBAL: '/dev/null', GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1', GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_ATTR_NOSYSTEM: '1', TSX_DISABLE_CACHE: '1' })
 const gitFlags = ['--no-replace-objects', '--literal-pathspecs', '-c', 'protocol.allow=never', '-c', 'core.fsmonitor=false', '-c', 'gc.auto=0', '-c', 'maintenance.auto=false', '-c', 'credential.helper=', '-c', 'diff.external=']
 type Identity = { path: string; dev: number; ino: number; mode: number; size: number; mtimeMs: number; ctimeMs: number }
@@ -195,6 +211,15 @@ export async function planLocalApprovedSource(input: LocalInput): Promise<LocalP
     if (typeof input.repoRoot !== 'string' || typeof input.scratchRoot !== 'string') throw new Hold('invalid-local-context', 'refused')
     const repo = resolve(input.repoRoot); const scratch = resolve(input.scratchRoot)
     if (repo !== input.repoRoot || scratch !== input.scratchRoot || realpathSync(repo) !== repo || realpathSync(scratch) !== scratch) throw new Hold('unsafe-path')
+    let publicModule: typeof import('./public-source-identity') | undefined; let publicIdentity: PublicIdentity | undefined
+    const option = input.publicContext
+    if (option !== undefined) {
+      const captured = capturePublicContext(option)
+      publicModule = await import('./public-source-identity')
+      const prepared = publicModule.preparePublicIdentity(context, captured)
+      if ('status' in prepared) return prepared
+      publicIdentity = prepared
+    }
     const repoChain = chain(repo); const scratchChain = chain(scratch); const scratchStat = lstatSync(scratch)
     if (!scratchStat.isDirectory() || scratchStat.uid !== process.getuid?.() || (scratchStat.mode & 0o777) !== 0o700 || !relative(repo, scratch).startsWith(`..${sep}`) && relative(repo, scratch) !== '..') throw new Hold('unsafe-scratch')
     const git = pinned('/usr/bin/git'); const node = pinned(process.execPath)
@@ -276,6 +301,11 @@ export async function planLocalApprovedSource(input: LocalInput): Promise<LocalP
           result = { ...prepared, status: 'planned', baseBlob: base.oid, currentBlob: current.oid, mode: current.mode }
         }
       } else result = { ...prepared, status: 'planned', baseBlob: base.oid, currentBlob: current.oid, mode: current.mode }
+    }
+    if (publicIdentity && publicModule && result.status === 'planned') {
+      const publicSource = publicModule.bindPublicSource(publicIdentity, result)
+      if ('status' in publicSource) result = publicSource
+      else result = { ...result, publicSource }
     }
     await head(); await staged()
     assertChain(repoChain); assertChain(scratchChain); assertChain(selected.witness); assertChain(tempChain)

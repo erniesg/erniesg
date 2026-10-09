@@ -10,6 +10,11 @@ import {
   type PublicSourceReadResult,
 } from './public-source-reader'
 
+import {
+  ArtifactDiscoveryError, capturePublicArtifactInput, observePublicArtifacts,
+  type PublicArtifactInput, type PublicArtifactReadResult,
+} from './public-artifact-discovery'
+
 const MAX_BYTES = 1024 * 1024
 const DEADLINE_MS = 10_000
 const repository = 'erniesg/erniesg' as const
@@ -401,8 +406,14 @@ export function createKnownPRReader(config: unknown, transport: WorkTransport) {
   }
   let disposed = false,
     active: Operation | undefined
-  type Result = KnownPRReadResult | PublicSourceReadResult
-  function readOperation(input: unknown, sourceMode = false): Promise<Result> {
+  type Result =
+    KnownPRReadResult | PublicSourceReadResult | PublicArtifactReadResult
+  function readOperation(
+    input: unknown,
+    mode: 'pr' | 'source' | 'artifacts' = 'pr',
+  ): Promise<Result> {
+    const sourceMode = mode === 'source',
+      artifactMode = mode === 'artifacts'
     const deadline = performance.now() + DEADLINE_MS
     if (disposed) return Promise.resolve(fail('closed', 'refused'))
     if (!token || typeof transport !== 'function')
@@ -410,8 +421,10 @@ export function createKnownPRReader(config: unknown, transport: WorkTransport) {
     if (active) return Promise.resolve(fail('busy'))
     let selected: z.infer<typeof inputSchema> | undefined
     let sourceInput: PublicSourceInput | undefined
+    let artifactInput: PublicArtifactInput | undefined
     try {
-      if (sourceMode) sourceInput = capturePublicSourceInput(input)
+      if (artifactMode) artifactInput = capturePublicArtifactInput(input)
+      else if (sourceMode) sourceInput = capturePublicSourceInput(input)
       else selected = inputSchema.parse(input)
     } catch {
       return Promise.resolve(
@@ -440,8 +453,8 @@ export function createKnownPRReader(config: unknown, transport: WorkTransport) {
     let observed: KnownPRObservation | undefined
     let requests = 0,
       totalBytes = 0
-    const responseLimit = sourceMode ? 4 * MAX_BYTES : MAX_BYTES
-    const totalLimit = (sourceMode ? 16 : 6) * MAX_BYTES
+    const responseLimit = sourceMode || artifactMode ? 4 * MAX_BYTES : MAX_BYTES
+    const totalLimit = (sourceMode || artifactMode ? 16 : 6) * MAX_BYTES
     const controller = new AbortController()
     const cancel = (): Promise<boolean> => {
       if (cancellation) return cancellation
@@ -511,13 +524,17 @@ export function createKnownPRReader(config: unknown, transport: WorkTransport) {
     }
     // One transport lifetime for the entire observation. A new request starts only
     // after the preceding response ended or cancellation was acknowledged.
-    const get = async <T>(
+    const get = async <T,>(
       url: string,
       decodeBody: (bytes: Uint8Array) => T,
       terminal = false,
+      listLink?: (value: string | null) => void,
     ): Promise<T> => {
       check()
-      if (++requests > (sourceMode ? 7 : configured ? 6 : 1)) throw new ReadError('bounds')
+      if (
+        ++requests > (artifactMode ? 21 : sourceMode ? 7 : configured ? 6 : 1)
+      )
+        throw new ReadError('bounds')
       response = undefined
       reader = undefined
       cancellation = undefined
@@ -575,6 +592,15 @@ export function createKnownPRReader(config: unknown, transport: WorkTransport) {
           )
         )
           throw new ReadError('incomplete')
+        if (listLink) {
+          const link = response.headers.get('link')
+          if (
+            link !== null &&
+            (link.length > 8192 || Buffer.byteLength(link, 'utf8') > 8192)
+          )
+            throw new ArtifactDiscoveryError('bounds')
+          listLink(link)
+        }
         phase = 'body'
         reader = response.body.getReader()
         const bytes = new Uint8Array(responseLimit)
@@ -593,19 +619,22 @@ export function createKnownPRReader(config: unknown, transport: WorkTransport) {
             ended = true
             break
           }
-          if (sourceMode && chunk.value instanceof Uint8Array)
+          if ((sourceMode || artifactMode) && chunk.value instanceof Uint8Array)
             totalBytes += chunk.value.byteLength
           if (
             !(chunk.value instanceof Uint8Array) ||
             chunk.value.byteLength > responseLimit - size ||
-            (sourceMode
+            (sourceMode || artifactMode
               ? totalBytes > totalLimit
               : chunk.value.byteLength > totalLimit - totalBytes)
-          )
+          ) {
+            if (artifactMode && chunk.value instanceof Uint8Array)
+              throw new ArtifactDiscoveryError('bounds')
             throw Error('bytes')
+          }
           bytes.set(chunk.value, size)
           size += chunk.value.byteLength
-          if (!sourceMode) totalBytes += chunk.value.byteLength
+          if (!sourceMode && !artifactMode) totalBytes += chunk.value.byteLength
         }
         phase = 'response'
         const value = decodeBody(bytes.subarray(0, size))
@@ -617,7 +646,8 @@ export function createKnownPRReader(config: unknown, transport: WorkTransport) {
       } catch (error) {
         const failure =
           error instanceof ReadError ||
-          (sourceMode && error instanceof SourceReadError)
+          (sourceMode && error instanceof SourceReadError) ||
+          (artifactMode && error instanceof ArtifactDiscoveryError)
             ? error
             : new ReadError(phase)
         if (terminal && !retired && !disposed)
@@ -642,11 +672,22 @@ export function createKnownPRReader(config: unknown, transport: WorkTransport) {
       get(api, (bytes) => decode(bytes, number, api, check), !configured)
     void (async () => {
       try {
+        if (artifactMode) {
+          const observation = await observePublicArtifacts(
+            artifactInput!,
+            (url, decode, link) => get(url, decode, false, link),
+            (bytes) => jsonBody(bytes, check),
+            check,
+          )
+          check()
+          finish(observation)
+          return
+        }
         if (sourceMode) {
           const observation = await observePublicSource(
             sourceInput!,
             get,
-            bytes => jsonBody(bytes, check),
+            (bytes) => jsonBody(bytes, check),
             check,
           )
           check()
@@ -702,8 +743,7 @@ export function createKnownPRReader(config: unknown, transport: WorkTransport) {
             finish(final)
             return
           }
-          if (final.observation.head !== observed.head)
-            reason = 'head_changed'
+          if (final.observation.head !== observed.head) reason = 'head_changed'
           observed = final.observation
         } catch {
           check()
@@ -713,17 +753,19 @@ export function createKnownPRReader(config: unknown, transport: WorkTransport) {
       } catch (error) {
         if (!retired && !disposed)
           finish(
-            sourceMode && error instanceof SourceReadError
+            artifactMode && error instanceof ArtifactDiscoveryError
               ? { status: 'not_evaluated', reason: error.reason }
-              : observed
-              ? partial(
-                  error instanceof ReadError ? error.reason : 'response',
-                )
-              : defaultFailure(
-                  error instanceof ReadError
-                    ? error
-                    : new ReadError('transport'),
-                ),
+              : sourceMode && error instanceof SourceReadError
+                ? { status: 'not_evaluated', reason: error.reason }
+                : observed
+                  ? partial(
+                      error instanceof ReadError ? error.reason : 'response',
+                    )
+                  : defaultFailure(
+                      error instanceof ReadError
+                        ? error
+                        : new ReadError('transport'),
+                    ),
           )
       } finally {
         if (cleanupSafe && active === op) active = undefined
@@ -736,7 +778,13 @@ export function createKnownPRReader(config: unknown, transport: WorkTransport) {
       return readOperation(input) as Promise<KnownPRReadResult>
     },
     readPublicSource(input: unknown): Promise<PublicSourceReadResult> {
-      return readOperation(input, true) as Promise<PublicSourceReadResult>
+      return readOperation(input, 'source') as Promise<PublicSourceReadResult>
+    },
+    discoverPublicArtifacts(input: unknown): Promise<PublicArtifactReadResult> {
+      return readOperation(
+        input,
+        'artifacts',
+      ) as Promise<PublicArtifactReadResult>
     },
     dispose() {
       disposed = true

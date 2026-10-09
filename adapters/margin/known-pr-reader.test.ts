@@ -1472,3 +1472,239 @@ describe('cross-method source observation occupancy', () => {
     d.resolve(response()); await tick()
   })
 })
+
+describe('artifact discovery shares the existing occupied lifetime', () => {
+  const base = 'https://api.github.com/repos/erniesg/erniesg'
+  const correlation = {
+    publicCorrelation: { version: 1, value: '1'.repeat(64) },
+  }
+  const branch = 'coordinator/margin-proposal-' + '1'.repeat(64)
+  const meta = {
+    id: 123,
+    full_name: 'erniesg/erniesg',
+    url: base,
+    html_url: 'https://github.com/erniesg/erniesg',
+  }
+  const json = (v: unknown) =>
+    new Response(JSON.stringify(v), {
+      headers: { 'content-type': 'application/json' },
+    })
+  it.each(['pr', 'source'] as const)(
+    'refuses discovery while %s owns an unresolved transport',
+    async (mode) => {
+      let resolve!: (r: Response) => void
+      const reader = createKnownPRReader(
+        { token },
+        () => new Promise<Response>((r) => (resolve = r)),
+      )
+      const pending =
+        mode === 'pr'
+          ? reader.readPR({ number: 42 })
+          : reader.readPublicSource({
+              branch,
+              sourcePath: 'books/chapters/intro.md',
+            })
+      expect(await reader.discoverPublicArtifacts(correlation)).toMatchObject({
+        reason: 'busy',
+      })
+      reader.dispose()
+      expect(await pending).toMatchObject({ reason: 'aborted' })
+      resolve(response())
+      await tick()
+    },
+  )
+  for (const stage of [1, 2, 3])
+    for (const refusal of ['status', 'media', 'link'] as const) {
+      if (stage === 1 && refusal === 'link') continue
+      it(`retains ${stage}/${refusal} cleanup occupancy until cancellation acknowledgment`, async () => {
+        vi.useFakeTimers()
+        let ack!: () => void,
+          cancels = 0,
+          calls = 0
+        const cancellation = new Promise<void>((r) => (ack = r))
+        const reader = createKnownPRReader({ token }, async () => {
+          calls++
+          if (calls < stage) return json(calls === 1 ? meta : [])
+          if (calls > stage) return response()
+          return new Response(
+            new ReadableStream({
+              cancel() {
+                cancels++
+                return cancellation
+              },
+            }),
+            {
+              status: refusal === 'status' ? 403 : 200,
+              headers: {
+                'content-type':
+                  refusal === 'media' ? 'text/html' : 'application/json',
+                ...(refusal === 'link' ? { link: 'malformed' } : {}),
+              },
+            },
+          )
+        })
+        const pending = reader.discoverPublicArtifacts(correlation)
+        await tick()
+        expect(cancels).toBe(1)
+        expect(await reader.readPR({ number: 42 })).toMatchObject({
+          reason: 'busy',
+        })
+        expect(
+          await reader.readPublicSource({
+            branch,
+            sourcePath: 'books/chapters/intro.md',
+          }),
+        ).toMatchObject({ reason: 'busy' })
+        expect(await reader.discoverPublicArtifacts(correlation)).toMatchObject(
+          { reason: 'busy' },
+        )
+        await vi.advanceTimersByTimeAsync(10001)
+        expect(await pending).toMatchObject({ reason: 'timeout' })
+        expect(await reader.discoverPublicArtifacts(correlation)).toMatchObject(
+          { reason: 'busy' },
+        )
+        expect(calls).toBe(stage)
+        expect(cancels).toBe(1)
+        ack()
+        await tick()
+        expect(await reader.readPR({ number: 42 })).toMatchObject({
+          status: 'ready',
+        })
+        reader.dispose()
+      })
+    }
+  it.each([1, 2, 3])(
+    'retains unresolved body-read ownership on dispose at discovery phase%s',
+    async (stage) => {
+      let calls = 0,
+        ack!: () => void,
+        cancelled = 0
+      const cancellation = new Promise<void>((r) => (ack = r))
+      const reader = createKnownPRReader({ token }, async () => {
+        calls++
+        if (calls < stage) return json(calls === 1 ? meta : [])
+        return new Response(
+          new ReadableStream({
+            pull() {
+              return new Promise(() => {})
+            },
+            cancel() {
+              cancelled++
+              return cancellation
+            },
+          }),
+          { headers: { 'content-type': 'application/json' } },
+        )
+      })
+      const pending = reader.discoverPublicArtifacts(correlation)
+      await tick()
+      reader.dispose()
+      expect(await pending).toMatchObject({ reason: 'aborted' })
+      await tick()
+      expect(cancelled).toBe(1)
+      expect(await reader.readPR({ number: 42 })).toMatchObject({
+        reason: 'closed',
+      })
+      expect(
+        await reader.readPublicSource({
+          branch,
+          sourcePath: 'books/chapters/intro.md',
+        }),
+      ).toMatchObject({ reason: 'closed' })
+      expect(await reader.discoverPublicArtifacts(correlation)).toMatchObject({
+        reason: 'closed',
+      })
+      ack()
+      await tick()
+      expect(calls).toBe(stage)
+    },
+  )
+  it('never frees a discovery slot when body cancellation rejects', async () => {
+    let calls = 0
+    const reader = createKnownPRReader({ token }, async () => {
+      calls++
+      return new Response(
+        new ReadableStream({
+          cancel() {
+            throw Error('synthetic refusal')
+          },
+        }),
+        { status: 403 },
+      )
+    })
+    expect(await reader.discoverPublicArtifacts(correlation)).toMatchObject({
+      reason: 'body',
+    })
+    expect(await reader.readPR({ number: 42 })).toMatchObject({
+      reason: 'busy',
+    })
+    expect(await reader.discoverPublicArtifacts(correlation)).toMatchObject({
+      reason: 'busy',
+    })
+    expect(calls).toBe(1)
+    reader.dispose()
+  })
+})
+
+describe('artifact discovery late list transport ownership', () => {
+  it.each([2, 3])(
+    'keeps phase%s occupied after ignored abort until late body cancel completes',
+    async (phase) => {
+      vi.useFakeTimers()
+      let calls = 0,
+        resolve!: (r: Response) => void,
+        ack!: () => void,
+        cancelled = 0
+      const late = new Promise<Response>((r) => (resolve = r)),
+        cancellation = new Promise<void>((r) => (ack = r))
+      const base = 'https://api.github.com/repos/erniesg/erniesg'
+      const reader = createKnownPRReader({ token }, async () => {
+        calls++
+        if (calls === phase) return late
+        return new Response(
+          JSON.stringify(
+            calls === 1
+              ? {
+                  id: 123,
+                  full_name: 'erniesg/erniesg',
+                  url: base,
+                  html_url: 'https://github.com/erniesg/erniesg',
+                }
+              : [],
+          ),
+          { headers: { 'content-type': 'application/json' } },
+        )
+      })
+      const request = {
+        publicCorrelation: { version: 1, value: '1'.repeat(64) },
+      }
+      const pending = reader.discoverPublicArtifacts(request)
+      await tick()
+      expect(calls).toBe(phase)
+      await vi.advanceTimersByTimeAsync(10001)
+      expect(await pending).toMatchObject({ reason: 'timeout' })
+      expect(await reader.discoverPublicArtifacts(request)).toMatchObject({
+        reason: 'busy',
+      })
+      resolve(
+        new Response(
+          new ReadableStream({
+            cancel() {
+              cancelled++
+              return cancellation
+            },
+          }),
+        ),
+      )
+      await tick()
+      expect(cancelled).toBe(1)
+      expect(await reader.readPR({ number: 42 })).toMatchObject({
+        reason: 'busy',
+      })
+      ack()
+      await tick()
+      reader.dispose()
+      expect(calls).toBe(phase)
+    },
+  )
+})

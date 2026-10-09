@@ -459,3 +459,57 @@ describe('known PR refresh boundary controls', () => {
     ).toEqual({ status: 'refused', reason: 'invalid_input' })
   })
 })
+
+describe('configured check observation projection', () => {
+  const profile =
+    'a18da97e6446100605fc3b3accb53ffed12f1597d5a5433577aead8086a01859'
+  it('projects only a bound closed profile and preserves caller CAS and unverified provenance', () => {
+    for (const [state, reason] of [
+      ['passed', 'complete'],
+      ['failed', 'failed'],
+      ['pending', 'pending'],
+      ['not_evaluated', 'provider_refused'],
+    ] as const) {
+      const v = input()
+      const observation = {
+        ...v.observation,
+        checks: { profile, head: v.observation.head, state, reason },
+      }
+      const r = planKnownPRRefresh(config, { ...v, observation })
+      expect(r.status).toBe('planned')
+      if (r.status !== 'planned') throw Error('planned')
+      expect(r.provenance).toBe('supplied-unverified')
+      expect(r.command.expectedStateVersion).toBe(7)
+      expect(r.command.outcome).toMatchObject({
+        checks: state,
+        pr: { head: v.observation.head },
+      })
+      if (r.command.outcome.state !== 'pr_open') throw Error('open')
+      expect(r.command.outcome.detail).toContain('not merge eligibility')
+      expect(r.command.outcome.detail).toContain(reason)
+    }
+  })
+  it('rejects profile/head/reason forgery and extra fields across the entire optional projection', () => {
+    const v = input()
+    const checks = {
+      profile,
+      head: v.observation.head,
+      state: 'passed',
+      reason: 'complete',
+    }
+    for (const delta of [
+      { profile: 'wrong' },
+      { head: 'c'.repeat(40) },
+      { reason: 'timeout' },
+      { state: 'failed' },
+      { complete: true },
+    ]) {
+      expect(
+        planKnownPRRefresh(config, {
+          ...v,
+          observation: { ...v.observation, checks: { ...checks, ...delta } },
+        }).status,
+      ).toBe('refused')
+    }
+  })
+})

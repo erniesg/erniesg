@@ -651,3 +651,167 @@ describe('composition lifetime', () => {
     expect(f.calls).toHaveLength(6)
   })
 })
+
+describe('explicit configured checks operation option', () => {
+  it('wires through the real reader/planner and reports unknown permission with the exact observed head', async () => {
+    const f = fixture()
+    f.operation.dispose()
+    let calls = 0
+    const op = createKnownPRRefreshOperation(
+      { ...config(), provider: { ...config().provider, checks: 'configured' } },
+      {
+        serviceTransport: f.serviceTransport,
+        providerTransport: async () =>
+          ++calls === 2
+            ? new Response(null, { status: 403 })
+            : response(wire()),
+      },
+    )
+    try {
+      const r = await op.refresh(selector())
+      expect(r.phase).toBe('report')
+      if (r.phase !== 'report') throw Error('report')
+      expect(r.command.outcome).toMatchObject({
+        state: 'pr_open',
+        pr: { head: 'b'.repeat(40) },
+        checks: 'not_evaluated',
+      })
+      expect(r.command.outcome).toHaveProperty(
+        'detail',
+        expect.stringContaining('provider_refused'),
+      )
+      expect(calls).toBe(3)
+      expect(f.calls.filter((c) => c.init.method === 'POST')).toHaveLength(1)
+      expect(r.command.eventId).toBe(eventId)
+      expect(r.command.expectedStateVersion).toBe(7)
+    } finally {
+      op.dispose()
+    }
+  })
+})
+
+function configuredProviderValue(url: string) {
+  if (url === api) return wire()
+  const base = 'https://api.github.com/repos/erniesg/erniesg/actions/runs'
+  if (
+    url ===
+    base + '?head_sha=' + 'b'.repeat(40) + '&event=pull_request&per_page=100'
+  )
+    return {
+      total_count: 2,
+      workflow_runs: ['ci.yml', 'agent-evidence.yml'].map((file, i) => ({
+        id: 501 + i,
+        run_number: 10,
+        run_attempt: 2,
+        path: '.github/workflows/' + file,
+        event: 'pull_request',
+        repository: { full_name: 'erniesg/erniesg' },
+        head_sha: 'b'.repeat(40),
+        html_url: `https://github.com/erniesg/erniesg/actions/runs/${501 + i}`,
+        status: 'completed',
+        conclusion: 'success',
+      })),
+    }
+  const i =
+    url === base + '/501/attempts/2/jobs?per_page=100'
+      ? 0
+      : url === base + '/502/attempts/2/jobs?per_page=100'
+        ? 1
+        : -1
+  if (i < 0) throw Error('unexpected provider route')
+  const names = i === 0 ? ['checks', 'secret-scan'] : ['evidence']
+  return {
+    total_count: names.length,
+    jobs: names.map((name, j) => ({
+      id: 700 + i * 10 + j,
+      run_id: 501 + i,
+      head_sha: 'b'.repeat(40),
+      name,
+      html_url: `https://github.com/erniesg/erniesg/actions/runs/${501 + i}/job/${700 + i * 10 + j}`,
+      status: 'completed',
+      conclusion: 'success',
+      runner_id: 91,
+      steps: [
+        {
+          number: 1,
+          name: 'fixture',
+          status: 'completed',
+          conclusion: 'success',
+        },
+      ],
+    })),
+  }
+}
+describe('configured checks full existing-component composition', () => {
+  it('performs six bounded GETs then submits one unchanged event/CAS informational success', async () => {
+    const f = fixture()
+    f.operation.dispose()
+    const urls: string[] = []
+    const op = createKnownPRRefreshOperation(
+      { ...config(), provider: { ...config().provider, checks: 'configured' } },
+      {
+        serviceTransport: f.serviceTransport,
+        providerTransport: async (u, init) => {
+          expect(init).toMatchObject({
+            method: 'GET',
+            credentials: 'omit',
+            redirect: 'error',
+            cache: 'no-store',
+          })
+          urls.push(String(u))
+          return response(configuredProviderValue(String(u)))
+        },
+      },
+    )
+    try {
+      const r = await op.refresh(selector())
+      expect(r.phase).toBe('report')
+      if (r.phase !== 'report') throw Error('report')
+      expect(r.result.status).toBe('accepted')
+      expect(r.command).toMatchObject({
+        eventId,
+        proposalId,
+        approvedRevision: 3,
+        expectedStateVersion: 7,
+        outcome: {
+          state: 'pr_open',
+          checks: 'passed',
+          pr: { head: 'b'.repeat(40) },
+          detail: expect.stringContaining('not merge eligibility'),
+        },
+      })
+      expect(urls).toHaveLength(6)
+      expect(f.calls.map((c) => c.init.method)).toEqual(['GET', 'POST'])
+      expect(JSON.parse(String(f.calls[1].init.body))).toEqual(r.command)
+    } finally {
+      op.dispose()
+    }
+  })
+  for (const stage of [2, 3, 4, 5, 6])
+    it(`disposal during check/final witness GET ${stage} prevents the report`, async () => {
+      const f = fixture()
+      f.operation.dispose()
+      let calls = 0
+      const op = createKnownPRRefreshOperation(
+        {
+          ...config(),
+          provider: { ...config().provider, checks: 'configured' },
+        },
+        {
+          serviceTransport: f.serviceTransport,
+          providerTransport: async (u) => {
+            if (++calls === stage) op.dispose()
+            return response(configuredProviderValue(String(u)))
+          },
+        },
+      )
+      try {
+        const r = await op.refresh(selector())
+        expect(r.phase).not.toBe('report')
+        expect(f.calls.map((c) => c.init.method)).toEqual(['GET'])
+        expect(calls).toBe(stage)
+      } finally {
+        op.dispose()
+      }
+    })
+})

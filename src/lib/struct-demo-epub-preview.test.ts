@@ -113,6 +113,96 @@ const centralEntry = (archive: Uint8Array, name: string) => {
   throw new Error(`missing central entry: ${name}`)
 }
 
+const withDataDescriptor = (
+  original: Uint8Array,
+  name: string,
+  signature: boolean,
+) => {
+  const eocd = (() => {
+    for (let offset = original.length - 22; offset >= 0; offset -= 1) {
+      if (
+        original[offset] === 0x50 &&
+        original[offset + 1] === 0x4b &&
+        original[offset + 2] === 0x05 &&
+        original[offset + 3] === 0x06
+      )
+        return offset
+    }
+    throw new Error('missing EOCD')
+  })()
+  const originalView = new DataView(
+    original.buffer,
+    original.byteOffset,
+    original.byteLength,
+  )
+  const centralOffset = originalView.getUint32(eocd + 16, true)
+  const entry = centralEntry(original, name)
+  const localOffset = entry.view.getUint32(entry.offset + 42, true)
+  const dataOffset =
+    localOffset +
+    30 +
+    originalView.getUint16(localOffset + 26, true) +
+    originalView.getUint16(localOffset + 28, true)
+  const descriptor = new Uint8Array(signature ? 16 : 12)
+  const descriptorView = new DataView(descriptor.buffer)
+  const fieldOffset = signature ? 4 : 0
+  if (signature) descriptorView.setUint32(0, 0x08074b50, true)
+  descriptorView.setUint32(
+    fieldOffset,
+    entry.view.getUint32(entry.offset + 16, true),
+    true,
+  )
+  descriptorView.setUint32(
+    fieldOffset + 4,
+    entry.view.getUint32(entry.offset + 20, true),
+    true,
+  )
+  descriptorView.setUint32(
+    fieldOffset + 8,
+    entry.view.getUint32(entry.offset + 24, true),
+    true,
+  )
+  const patched = new Uint8Array(original.byteLength + descriptor.byteLength)
+  const descriptorOffset =
+    dataOffset + entry.view.getUint32(entry.offset + 20, true)
+  patched.set(original.subarray(0, descriptorOffset))
+  patched.set(descriptor, descriptorOffset)
+  patched.set(
+    original.subarray(descriptorOffset),
+    descriptorOffset + descriptor.byteLength,
+  )
+  const view = new DataView(patched.buffer)
+  view.setUint16(
+    localOffset + 6,
+    view.getUint16(localOffset + 6, true) | 8,
+    true,
+  )
+  view.setUint32(localOffset + 14, 0, true)
+  view.setUint32(localOffset + 18, 0, true)
+  view.setUint32(localOffset + 22, 0, true)
+  const shiftedCentral = centralOffset + descriptor.byteLength
+  const shiftedEocd = eocd + descriptor.byteLength
+  for (let offset = shiftedCentral; offset < shiftedEocd;) {
+    const nameLength = view.getUint16(offset + 28, true)
+    const extraLength = view.getUint16(offset + 30, true)
+    const commentLength = view.getUint16(offset + 32, true)
+    const candidate = new TextDecoder().decode(
+      patched.slice(offset + 46, offset + 46 + nameLength),
+    )
+    if (candidate === name)
+      view.setUint16(offset + 8, view.getUint16(offset + 8, true) | 8, true)
+    if (view.getUint32(offset + 42, true) > localOffset)
+      view.setUint32(
+        offset + 42,
+        view.getUint32(offset + 42, true) + descriptor.byteLength,
+        true,
+      )
+    offset += 46 + nameLength + extraLength + commentLength
+  }
+  view.setUint32(shiftedEocd + 16, shiftedCentral, true)
+  return patched
+}
+
 const container = `<?xml version="1.0"?><container><rootfiles><rootfile full-path="OPS/book.opf"/></rootfiles></container>`
 const opf = `<?xml version="1.0"?><package xmlns:dc="http://purl.org/dc/elements/1.1/"><metadata><dc:title>Converted paper</dc:title></metadata><manifest>
   <item id="one" href="one.xhtml" media-type="application/xhtml+xml"/>
@@ -271,5 +361,36 @@ describe('struct demo EPUB preview compiler', () => {
         compileStructDemoEpubPreview(candidate, 'invalid-directory.epub'),
       ).toThrow('EPUB preview is unavailable.')
     }
+  })
+
+  it('accepts an unsigned descriptor whose CRC equals the signature and rejects nonzero local descriptor fields', () => {
+    const magicCrcBody = new Uint8Array([
+      ...strToU8('<html><body>descriptor</body></html>'),
+      0x1f,
+      0x32,
+      0xde,
+      0x6c,
+    ])
+    const valid = archive({
+      'META-INF/container.xml': container,
+      'OPS/book.opf': opf,
+      'OPS/one.xhtml': magicCrcBody,
+      'OPS/two.xhtml': '<html><body>two</body></html>',
+    })
+    const unsigned = withDataDescriptor(valid, 'OPS/one.xhtml', false)
+    expect(
+      compileStructDemoEpubPreview(unsigned, 'descriptor.epub').html,
+    ).toContain('descriptor')
+    const nonzeroLocalFields = unsigned.slice()
+    const entry = centralEntry(nonzeroLocalFields, 'OPS/one.xhtml')
+    const localOffset = entry.view.getUint32(entry.offset + 42, true)
+    new DataView(
+      nonzeroLocalFields.buffer,
+      nonzeroLocalFields.byteOffset,
+      nonzeroLocalFields.byteLength,
+    ).setUint32(localOffset + 14, 1, true)
+    expect(() =>
+      compileStructDemoEpubPreview(nonzeroLocalFields, 'descriptor.epub'),
+    ).toThrow('EPUB preview is unavailable.')
   })
 })

@@ -408,16 +408,25 @@ function inspectArchive(archive: Uint8Array, limits: typeof DEFAULT_LIMITS) {
       unavailable()
     let end = dataEnd
     if (flags & 8) {
-      const descriptorOffset =
-        view.getUint32(end, true) === 0x08074b50 ? end + 4 : end
       if (
-        descriptorOffset + 12 > centralOffset ||
+        view.getUint32(entry.localOffset + 14, true) !== 0 ||
+        view.getUint32(entry.localOffset + 18, true) !== 0 ||
+        view.getUint32(entry.localOffset + 22, true) !== 0
+      )
+        unavailable()
+      const nextOffset = ordered[index + 1]?.localOffset ?? centralOffset
+      const descriptorSize = nextOffset - dataEnd
+      if (descriptorSize !== 12 && descriptorSize !== 16) unavailable()
+      if (descriptorSize === 16 && view.getUint32(dataEnd, true) !== 0x08074b50)
+        unavailable()
+      const descriptorOffset = dataEnd + (descriptorSize === 16 ? 4 : 0)
+      if (
         view.getUint32(descriptorOffset, true) !== entry.crc ||
         view.getUint32(descriptorOffset + 4, true) !== entry.compressedSize ||
         view.getUint32(descriptorOffset + 8, true) !== entry.uncompressedSize
       )
         unavailable()
-      end = descriptorOffset + 12
+      end = nextOffset
     } else if (
       view.getUint32(entry.localOffset + 14, true) !== entry.crc ||
       view.getUint32(entry.localOffset + 18, true) !== entry.compressedSize ||

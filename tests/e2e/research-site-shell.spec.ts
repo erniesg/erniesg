@@ -42,7 +42,9 @@ for (const locale of ['', 'zh/', 'ja/', 'ko/']) {
           ),
       ).toEqual(referenceLinks)
       expect(await page.locator('footer').innerText()).toBe(referenceFooter)
-      const breadcrumbs = page.locator('main nav[aria-label="breadcrumb"]')
+      const breadcrumbs = page
+        .locator('main nav')
+        .filter({ has: page.locator('[aria-current="page"]') })
       await expect(breadcrumbs).toBeVisible()
       await expect(breadcrumbs.locator('[aria-current="page"]')).toHaveCount(1)
       if (route !== '/research/') {

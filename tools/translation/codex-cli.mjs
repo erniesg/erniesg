@@ -4,6 +4,44 @@ import os from 'node:os'
 import path from 'node:path'
 
 const DEFAULT_REASONING_EFFORT = 'high'
+const TRUSTED_VM_MARKER = '/etc/erniesg-translation-publisher.json'
+const TRUSTED_RUNNER_ROOT = '/opt/erniesg-translation-publisher'
+
+// This assertion is provisioned by the VM administrator, outside repository
+// control. Environment variables and checkout files cannot authorize a host.
+export async function verifyCodexTrustedVm({
+  platform = os.platform(),
+  filesystem = fs,
+} = {}) {
+  const deny = (reason) => {
+    throw new Error(
+      `Codex translation requires the trusted VM (${reason}). Run npm run content:publish to use the trusted publisher.`,
+    )
+  }
+  if (platform !== 'linux') deny('unsupported host')
+  let marker
+  let machineId
+  try {
+    const stat = await filesystem.lstat(TRUSTED_VM_MARKER)
+    if (!stat.isFile() || stat.uid !== 0 || (stat.mode & 0o022) !== 0) {
+      deny('unsafe publisher assertion')
+    }
+    if ((await filesystem.realpath(TRUSTED_VM_MARKER)) !== TRUSTED_VM_MARKER) {
+      deny('redirected publisher assertion')
+    }
+    marker = JSON.parse(await filesystem.readFile(TRUSTED_VM_MARKER, 'utf8'))
+    machineId = (await filesystem.readFile('/etc/machine-id', 'utf8')).trim()
+  } catch {
+    deny('missing or invalid publisher assertion')
+  }
+  if (
+    !/^[a-f0-9]{32}$/.test(machineId) ||
+    marker?.machineId !== machineId ||
+    marker?.trustedRunnerRoot !== TRUSTED_RUNNER_ROOT
+  ) {
+    deny('publisher assertion does not match this VM')
+  }
+}
 
 export function isCodexUsageLimitError(error) {
   return /hit your usage limit/i.test(String(error?.message ?? error ?? ''))
@@ -156,6 +194,7 @@ export async function runCodexStructuredJson({
   schema,
   providerConfig = {},
 }) {
+  await verifyCodexTrustedVm()
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-translate-'))
   const schemaPath = path.join(tempDir, 'schema.json')
   const outputPath = path.join(tempDir, 'output.json')

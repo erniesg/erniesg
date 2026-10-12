@@ -7,9 +7,12 @@ CREATE TABLE struct_demo_jobs (
   quota_day TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,
+  lease_expires_at INTEGER NOT NULL DEFAULT 0,
   backend_id TEXT,
   deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1))
 );
 CREATE INDEX struct_demo_quota_day ON struct_demo_jobs(quota_day);
 CREATE INDEX struct_demo_network_day ON struct_demo_jobs(network_hash, quota_day);
 CREATE INDEX struct_demo_expiry ON struct_demo_jobs(expires_at);
+CREATE INDEX struct_demo_leases ON struct_demo_jobs(lease_expires_at);
+CREATE UNIQUE INDEX struct_demo_backend_identity ON struct_demo_jobs(backend_id) WHERE backend_id IS NOT NULL;

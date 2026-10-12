@@ -48,9 +48,18 @@ beforeEach(() => {
     STRUCT_DEMO_TOKEN: 'private-secret',
   }
   now = new Date('2026-10-12T23:59:00Z')
+  let sequence = 0
   backend = vi.fn(async (_url: string, init?: RequestInit) => {
     if (init?.method === 'POST')
-      return Response.json({ id: PRIVATE_ID }, { status: 202 })
+      return Response.json(
+        {
+          id:
+            sequence++ === 0
+              ? PRIVATE_ID
+              : sequence.toString(16).padStart(32, '0'),
+        },
+        { status: 202 },
+      )
     if (init?.method === 'DELETE') return Response.json({ deleted: PRIVATE_ID })
     if (_url.endsWith('.epub'))
       return new Response('epub bytes', {
@@ -97,11 +106,12 @@ describe('public Struct gateway', () => {
     expect((form.get('file') as File).name).toBe('private-document.pdf')
   })
   it('enforces per-network quota atomically during concurrent submissions', async () => {
+    await submit()
     const results = await Promise.all(
       Array.from({ length: 12 }, () => submit()),
     )
-    expect(results.filter((r) => r.response.status === 202)).toHaveLength(3)
-    expect(results.filter((r) => r.response.status === 429)).toHaveLength(9)
+    expect(results.filter((r) => r.response.status === 202)).toHaveLength(2)
+    expect(results.filter((r) => r.response.status === 429)).toHaveLength(10)
     expect(backend).toHaveBeenCalledTimes(3)
     expect(db.query('SELECT * FROM struct_demo_jobs')).toHaveLength(3)
   })
@@ -130,10 +140,12 @@ describe('public Struct gateway', () => {
     ).toBe('document.pdf')
   })
   it('enforces the global quota across networks concurrently', async () => {
+    for (let i = 0; i < 18; i++)
+      expect((await submit(`198.51.100.${i + 1}`)).response.status).toBe(202)
     const results = await Promise.all(
       Array.from({ length: 30 }, (_, i) => submit(`192.0.2.${i + 1}`)),
     )
-    expect(results.filter((r) => r.response.status === 202)).toHaveLength(20)
+    expect(results.filter((r) => r.response.status === 202)).toHaveLength(2)
     expect(backend).toHaveBeenCalledTimes(20)
   })
   it('resets at UTC midnight while retaining stable download ownership', async () => {
@@ -500,7 +512,8 @@ describe('public Struct gateway', () => {
       '2001:db8:abcd:12::3',
       '2001:db8:abcd:12::4',
     ]
-    const results = await Promise.all(addresses.map((ip) => submit(ip)))
+    const results = []
+    for (const ip of addresses) results.push(await submit(ip))
     expect(results.filter((r) => r.response.status === 202)).toHaveLength(3)
     expect(results.filter((r) => r.response.status === 429)).toHaveLength(1)
     expect(
@@ -743,14 +756,14 @@ describe('public Struct gateway', () => {
       vi.useRealTimers()
     }
   })
-  it('concurrently reserves only three stalled uploads before readers start', async () => {
+  it('concurrently leases only two stalled uploads across twenty networks before readers start', async () => {
     vi.useFakeTimers()
     try {
       const pulls = vi.fn()
       const cancels = vi.fn()
       const requests = Array.from(
-        { length: 8 },
-        () =>
+        { length: 20 },
+        (_, i) =>
           new Request(SITE + '/api/struct-demo/jobs', {
             method: 'POST',
             duplex: 'half',
@@ -760,23 +773,111 @@ describe('public Struct gateway', () => {
             ),
             headers: {
               Origin: SITE,
-              'CF-Connecting-IP': '2001:db8:1:2::3',
+              'CF-Connecting-IP': `192.0.2.${i + 1}`,
               'Content-Type': 'application/pdf',
             },
           } as RequestInit),
       )
       const pending = requests.map(run)
-      await vi.waitFor(() => expect(cancels).toHaveBeenCalledTimes(5))
-      expect(pulls).toHaveBeenCalledTimes(3)
-      expect(db.query('SELECT * FROM struct_demo_jobs')).toHaveLength(3)
+      await vi.waitFor(() => expect(cancels).toHaveBeenCalledTimes(18))
+      expect(pulls).toHaveBeenCalledTimes(2)
+      expect(db.query('SELECT * FROM struct_demo_jobs')).toHaveLength(2)
       await vi.advanceTimersByTimeAsync(30_000)
       const results = await Promise.all(pending)
-      expect(results.filter((r) => r.status === 408)).toHaveLength(3)
-      expect(results.filter((r) => r.status === 429)).toHaveLength(5)
-      expect(cancels).toHaveBeenCalledTimes(8)
+      expect(results.filter((r) => r.status === 408)).toHaveLength(2)
+      expect(results.filter((r) => r.status === 429)).toHaveLength(18)
+      for (const response of results.filter((r) => r.status === 429))
+        expect(((await response.json()) as any).error.code).toBe('busy')
+      expect(cancels).toHaveBeenCalledTimes(20)
       expect(backend).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }
+  })
+  it('rejects duplicate converter IDs without granting the second client access', async () => {
+    const normal = backend.getMockImplementation()!
+    backend.mockImplementation(async () =>
+      Response.json({ id: PRIVATE_ID }, { status: 202 }),
+    )
+    const results = await Promise.all([
+      submit('192.0.2.1'),
+      submit('192.0.2.2'),
+    ])
+    expect(results.map((r) => r.response.status).sort()).toEqual([202, 503])
+    const winner = results.find((r) => r.response.status === 202)!
+    const loserIndex = results.findIndex((r) => r.response.status === 503)
+    const loserIp = `192.0.2.${loserIndex + 1}`
+    expect(JSON.stringify(results)).not.toContain(PRIVATE_ID)
+    const losingRows = db.query(
+      'SELECT public_id FROM struct_demo_jobs WHERE backend_id IS NULL',
+    )
+    backend.mockClear()
+    for (const id of [winner.data.id, losingRows[0].public_id]) {
+      for (const [suffix, method] of [
+        ['', 'GET'],
+        ['/files/document-paperpro.epub', 'GET'],
+        ['', 'DELETE'],
+      ])
+        expect(
+          (await run(req(`jobs/${id}${suffix}`, method, loserIp))).status,
+        ).toBe(404)
+    }
+    expect(backend).not.toHaveBeenCalled()
+    expect(
+      db.query('SELECT * FROM struct_demo_jobs WHERE backend_id IS NOT NULL'),
+    ).toHaveLength(1)
+    backend.mockImplementation(normal)
+    const winnerIp = `192.0.2.${results.findIndex((r) => r.response.status === 202) + 1}`
+    const state = await run(req(`jobs/${winner.data.id}`, 'GET', winnerIp))
+    expect(state.status).toBe(200)
+    expect(await state.text()).not.toContain(PRIVATE_ID)
+    const download = await run(
+      req(
+        `jobs/${winner.data.id}/files/document-paperpro.epub`,
+        'GET',
+        winnerIp,
+      ),
+    )
+    expect(download.status).toBe(200)
+    expect(await download.text()).toBe('epub bytes')
+    expect(
+      (await run(req(`jobs/${winner.data.id}`, 'DELETE', winnerIp))).status,
+    ).toBe(200)
+  })
+  it('recovers expired crash leases and releases leases after success and source failure', async () => {
+    for (let i = 0; i < 2; i++)
+      db.execute(
+        'INSERT INTO struct_demo_jobs(public_id,owner_hash,network_hash,quota_day,created_at,expires_at,lease_expires_at) VALUES(?,?,?,?,?,?,?)',
+        [
+          crypto.randomUUID(),
+          'other',
+          'other',
+          '2026-10-12',
+          now.getTime(),
+          now.getTime() + 86400000,
+          now.getTime() + 120000,
+        ],
+      )
+    expect((await submit()).data.error.code).toBe('busy')
+    expect(db.query('SELECT * FROM struct_demo_jobs')).toHaveLength(2)
+    now = new Date(now.getTime() + 120001)
+    expect((await submit()).response.status).toBe(202)
+    expect(
+      db.query('SELECT * FROM struct_demo_jobs WHERE lease_expires_at > ?', [
+        now.getTime(),
+      ]),
+    ).toHaveLength(0)
+    backend.mockImplementationOnce(async () => {
+      throw new Error('private-secret')
+    })
+    expect(
+      (await run(req('samples/attention-is-all-you-need', 'POST'))).status,
+    ).toBe(503)
+    expect(
+      db.query('SELECT * FROM struct_demo_jobs WHERE lease_expires_at > ?', [
+        now.getTime(),
+      ]),
+    ).toHaveLength(0)
+    expect((await submit()).response.status).toBe(202)
   })
 })

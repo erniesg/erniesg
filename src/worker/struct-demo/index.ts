@@ -1,4 +1,5 @@
 import { isD1Database, type D1Database } from '../margin/d1'
+import { timeoutSignal } from '../margin/deadline'
 
 export const MAX_BYTES = 10 * 1024 * 1024
 export const MAX_EPUB_BYTES = 32 * 1024 * 1024
@@ -7,6 +8,8 @@ const SAMPLE_URL = 'https://arxiv.org/pdf/1706.03762v7'
 export const DAILY_LIMIT = 3
 export const GLOBAL_DAILY_LIMIT = 20
 const RETENTION_MS = 72 * 60 * 60 * 1000
+const LEASE_MS = 120_000
+const MAX_INFLIGHT = 2
 const PREFIX = '/api/struct-demo'
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const PRIVATE_ID = /^[0-9a-f]{32}$/
@@ -423,7 +426,7 @@ export async function handleStructDemoRequest(
         ...init,
         headers: { Authorization: `Bearer ${cfg.token}` },
         redirect: 'error',
-        signal: AbortSignal.timeout(30_000),
+        signal: timeoutSignal(30_000),
       })
     if (path === '/limits') {
       const counts = await cfg.db
@@ -465,14 +468,15 @@ export async function handleStructDemoRequest(
         }
       }
       const publicId = crypto.randomUUID()
-      // One SQLite statement makes checking both quotas and reserving an attempt atomic.
+      // One statement atomically checks both quotas and the shared Worker memory budget.
       // Never decrement on provider errors or deletion: these are attempt limits.
       const reserved = await cfg.db
         .prepare(
-          `INSERT INTO struct_demo_jobs (public_id, owner_hash, network_hash, quota_day, created_at, expires_at)
-        SELECT ?, ?, ?, ?, ?, ?
+          `INSERT INTO struct_demo_jobs (public_id, owner_hash, network_hash, quota_day, created_at, expires_at, lease_expires_at)
+        SELECT ?, ?, ?, ?, ?, ?, ?
         WHERE (SELECT COUNT(*) FROM struct_demo_jobs WHERE network_hash = ? AND quota_day = ?) < ?
-          AND (SELECT COUNT(*) FROM struct_demo_jobs WHERE quota_day = ?) < ?`,
+          AND (SELECT COUNT(*) FROM struct_demo_jobs WHERE quota_day = ?) < ?
+          AND (SELECT COUNT(*) FROM struct_demo_jobs WHERE lease_expires_at > ?) < ?`,
         )
         .bind(
           publicId,
@@ -481,77 +485,116 @@ export async function handleStructDemoRequest(
           day,
           now,
           now + RETENTION_MS,
+          now + LEASE_MS,
           networkHash,
           day,
           DAILY_LIMIT,
           day,
           GLOBAL_DAILY_LIMIT,
+          now,
+          MAX_INFLIGHT,
         )
         .run()
       if (!reserved.success || reserved.meta?.changes === undefined)
         return unavailable()
       if (reserved.meta.changes !== 1) {
         cancelBody(request)
+        const counts = await cfg.db
+          .prepare(
+            'SELECT COUNT(*) AS global_count, COALESCE(SUM(CASE WHEN network_hash = ? THEN 1 ELSE 0 END), 0) AS owner_count FROM struct_demo_jobs WHERE quota_day = ?',
+          )
+          .bind(networkHash, day)
+          .first<{ global_count: number; owner_count: number }>()
+        if (!counts) return unavailable()
+        if (
+          counts.owner_count < DAILY_LIMIT &&
+          counts.global_count < GLOBAL_DAILY_LIMIT
+        )
+          return error(
+            'busy',
+            'The demo is busy. Please try again shortly.',
+            429,
+          )
         return error(
           'daily_limit',
           'The daily demo limit has been reached. Try again after the next UTC reset.',
           429,
         )
       }
-      let bytes: Uint8Array
-      if (isSample) {
-        cancelBody(request)
-        const source = await (deps.fetch ?? fetch)(SAMPLE_URL, {
-          credentials: 'omit',
-          redirect: 'error',
-          signal: AbortSignal.timeout(30_000),
-        })
-        if (source.status !== 200 || !validLength(source, MAX_BYTES)) {
-          cancelBody(source)
-          return unavailable()
-        }
-        try {
-          bytes = await readBounded(source, MAX_BYTES, true)
-        } catch {
-          return unavailable()
-        }
-      } else {
-        try {
-          bytes = await readBounded(request, MAX_BYTES, true)
-        } catch (cause) {
-          if (cause instanceof BodyError)
+      try {
+        let bytes: Uint8Array
+        if (isSample) {
+          cancelBody(request)
+          const source = await (deps.fetch ?? fetch)(SAMPLE_URL, {
+            credentials: 'omit',
+            redirect: 'error',
+            signal: timeoutSignal(30_000),
+          })
+          if (source.status !== 200 || !validLength(source, MAX_BYTES)) {
+            cancelBody(source)
+            return unavailable()
+          }
+          try {
+            bytes = await readBounded(source, MAX_BYTES, true)
+          } catch {
+            return unavailable()
+          }
+        } else {
+          try {
+            bytes = await readBounded(request, MAX_BYTES, true)
+          } catch (cause) {
+            if (cause instanceof BodyError)
+              return error(
+                cause.status === 413 ? 'too_large' : 'invalid_pdf',
+                cause.status === 413
+                  ? 'Choose a PDF no larger than 10 MiB.'
+                  : 'The PDF upload could not be read.',
+                cause.status,
+              )
             return error(
-              cause.status === 413 ? 'too_large' : 'invalid_pdf',
-              cause.status === 413
-                ? 'Choose a PDF no larger than 10 MiB.'
-                : 'The PDF upload could not be read.',
-              cause.status,
+              'invalid_pdf',
+              'The PDF upload could not be read.',
+              400,
             )
-          return error('invalid_pdf', 'The PDF upload could not be read.', 400)
+          }
+        }
+        const form = new FormData()
+        form.set(
+          'file',
+          new Blob([bytes as Uint8Array<ArrayBuffer>], {
+            type: 'application/pdf',
+          }),
+          isSample ? 'attention-is-all-you-need.pdf' : filename(request),
+        )
+        form.set('profiles', 'paperPro,paperProMove')
+        const upstream = await call('/api/jobs', { method: 'POST', body: form })
+        if (upstream.status !== 202)
+          return providerFailure(upstream.status, true)
+        const submitted = await upstreamJson(upstream)
+        if (typeof submitted.id !== 'string' || !PRIVATE_ID.test(submitted.id))
+          return unavailable()
+        const mapped = await cfg.db
+          .prepare(
+            'UPDATE struct_demo_jobs SET backend_id = ? WHERE public_id = ? AND owner_hash = ?',
+          )
+          .bind(submitted.id, publicId, ownerHash)
+          .run()
+        if (!mapped.success || mapped.meta?.changes !== 1) return unavailable()
+        return json({ id: publicId, status: 'queued' }, 202)
+      } finally {
+        // A crashed invocation recovers by expiry. Release failures retain the lease
+        // conservatively rather than widening concurrency or refunding an attempt.
+        try {
+          await cfg.db
+            .prepare(
+              'UPDATE struct_demo_jobs SET lease_expires_at = 0 WHERE public_id = ? AND owner_hash = ?',
+            )
+            .bind(publicId, ownerHash)
+            .run()
+        } catch {
+          /* Expiry is the fallback. */
         }
       }
-      const form = new FormData()
-      form.set(
-        'file',
-        new Blob([bytes as Uint8Array<ArrayBuffer>], {
-          type: 'application/pdf',
-        }),
-        isSample ? 'attention-is-all-you-need.pdf' : filename(request),
-      )
-      form.set('profiles', 'paperPro,paperProMove')
-      const upstream = await call('/api/jobs', { method: 'POST', body: form })
-      if (upstream.status !== 202) return providerFailure(upstream.status, true)
-      const submitted = await upstreamJson(upstream)
-      if (typeof submitted.id !== 'string' || !PRIVATE_ID.test(submitted.id))
-        return unavailable()
-      const mapped = await cfg.db
-        .prepare(
-          'UPDATE struct_demo_jobs SET backend_id = ? WHERE public_id = ? AND owner_hash = ?',
-        )
-        .bind(submitted.id, publicId, ownerHash)
-        .run()
-      if (!mapped.success || mapped.meta?.changes !== 1) return unavailable()
-      return json({ id: publicId, status: 'queued' }, 202)
     }
     if (!jobMatch || !UUID.test(jobMatch[1])) return missing()
     const publicId = jobMatch[1]

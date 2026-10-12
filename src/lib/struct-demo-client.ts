@@ -178,7 +178,11 @@ export function initializeStructDemos() {
             const data = await response.json().catch(() => ({}))
             allowed = false
             say(
-              `The daily limit has been reached.${resetLabel(data.resetsAt)} Preconverted samples still work.`,
+              data.error?.code === 'daily_limit'
+                ? `The daily limit has been reached.${resetLabel(data.resetsAt)} Preconverted samples still work.`
+                : data.error?.code === 'busy'
+                  ? 'The converter is busy. Try again shortly. Preconverted samples still work.'
+                  : 'Conversion is temporarily unavailable. Try again shortly. Preconverted samples still work.',
             )
             refresh.hidden = false
             busy = false

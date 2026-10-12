@@ -133,7 +133,14 @@ describe('the production release gate', () => {
   /** A built site shaped like `astro build` output, from the real manifest. */
   async function builtSite() {
     const dir = await mkdtemp(path.join(tmpdir(), 'ia-redirects-'))
-    for (const url of [...manifest, '/books/', '/books/example/', '/projects/', '/projects/experiments/']) {
+    for (const url of [
+      '/blog/',
+      ...manifest,
+      '/books/',
+      '/books/example/',
+      '/projects/',
+      '/projects/experiments/',
+    ]) {
       const file = url.endsWith('/')
         ? path.join(dir, ...url.split('/').filter(Boolean), 'index.html')
         : path.join(dir, ...url.split('/').filter(Boolean))
@@ -193,6 +200,48 @@ describe('the production release gate', () => {
     expect(entries.some(({ from }) => from === '/study')).toBe(false)
   })
 
+  it('marks only the production artifact with its published sections', async () => {
+    outDir = await builtSite()
+    expect(existsSync(path.join(outDir, '_site-sections.json'))).toBe(false)
+    expect(await applyReleaseGate(outDir)).toEqual([])
+    expect(
+      JSON.parse(
+        await readFile(path.join(outDir, '_site-sections.json'), 'utf8'),
+      ),
+    ).toEqual({ environment: 'production', sections: ['blog', 'research'] })
+  })
+
+  it.each(['blog', 'research'])(
+    'refuses production without its %s index',
+    async (section) => {
+      outDir = await builtSite()
+      await rm(path.join(outDir, section, 'index.html'))
+      expect(await applyReleaseGate(outDir)).toContain(
+        `${section}/index.html is missing from the production artifact`,
+      )
+    },
+  )
+
+  it.each([
+    { environment: 'staging', sections: ['blog', 'research'] },
+    { environment: 'production', sections: ['blog'] },
+    {
+      environment: 'production',
+      sections: ['blog', 'research'],
+      private: 'books',
+    },
+  ])('refuses a forged section marker %j', async (marker) => {
+    outDir = await builtSite()
+    await applyReleaseGate(outDir)
+    await writeFile(
+      path.join(outDir, '_site-sections.json'),
+      JSON.stringify(marker),
+    )
+    expect(await verifyPostGate(outDir)).toContain(
+      '_site-sections.json does not declare exactly the production Blog and Research sections',
+    )
+  })
+
   it('refuses an artifact that redirects to a page it does not serve', async () => {
     outDir = await builtSite()
     await rm(path.join(outDir, 'library'), { recursive: true, force: true })
@@ -215,6 +264,7 @@ describe('the production release gate', () => {
 
   it('refuses an artifact with no redirect table', async () => {
     outDir = await builtSite()
+    await applyReleaseGate(outDir)
     await rm(path.join(outDir, '_redirects'))
 
     expect(await verifyPostGate(outDir)).toEqual([

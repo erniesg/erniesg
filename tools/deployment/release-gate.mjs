@@ -17,12 +17,19 @@ export const WITHHELD_IN_PRODUCTION = Object.freeze([
   'projects',
 ])
 
+export const SITE_SECTIONS_FILE = '_site-sections.json'
+const PRODUCTION_SECTIONS = Object.freeze(['blog', 'research'])
+
 /** Remove preview-only trees and redirects into them before validating the artifact. */
 export async function applyReleaseGate(outDir) {
   for (const withheld of WITHHELD_IN_PRODUCTION) {
     await rm(path.join(outDir, withheld), { recursive: true, force: true })
   }
   await dropRedirectsIntoWithheld(outDir)
+  await writeFile(
+    path.join(outDir, SITE_SECTIONS_FILE),
+    `${JSON.stringify({ environment: 'production', sections: PRODUCTION_SECTIONS })}\n`,
+  )
   return verifyPostGate(outDir)
 }
 
@@ -87,16 +94,62 @@ function serves(outDir, to) {
     : existsSync(path.join(outDir, ...segments, 'index.html'))
 }
 
+/** Validate both the section declaration and the actual production artifact. */
+export async function verifyProductionSections(outDir) {
+  const problems = []
+  let marker
+  try {
+    marker = JSON.parse(
+      await readFile(path.join(outDir, SITE_SECTIONS_FILE), 'utf8'),
+    )
+  } catch {
+    problems.push(`${SITE_SECTIONS_FILE} is missing or invalid`)
+  }
+  if (
+    marker &&
+    (Object.keys(marker).sort().join(',') !== 'environment,sections' ||
+      marker.environment !== 'production' ||
+      !Array.isArray(marker.sections) ||
+      marker.sections.length !== PRODUCTION_SECTIONS.length ||
+      marker.sections.some(
+        (section, index) => section !== PRODUCTION_SECTIONS[index],
+      ))
+  ) {
+    problems.push(
+      `${SITE_SECTIONS_FILE} does not declare exactly the production Blog and Research sections`,
+    )
+  } else if (
+    marker === null ||
+    (marker !== undefined && typeof marker !== 'object')
+  ) {
+    problems.push(
+      `${SITE_SECTIONS_FILE} does not declare exactly the production Blog and Research sections`,
+    )
+  }
+  for (const section of PRODUCTION_SECTIONS) {
+    if (!existsSync(path.join(outDir, section, 'index.html'))) {
+      problems.push(
+        `${section}/index.html is missing from the production artifact`,
+      )
+    }
+  }
+  for (const withheld of WITHHELD_IN_PRODUCTION) {
+    if (existsSync(path.join(outDir, withheld)))
+      problems.push(`${withheld} was not withheld`)
+  }
+  return problems
+}
+
 /**
  * Checks the artifact that actually deploys, after the gate ran: every
  * redirect is still there, every legacy page still has its stub, no legacy
  * tree carries content, and nothing withheld survived.
  */
 export async function verifyPostGate(outDir) {
-  const problems = []
+  const problems = await verifyProductionSections(outDir)
   const redirectsPath = path.join(outDir, REDIRECTS_FILE)
   if (!existsSync(redirectsPath)) {
-    return [`${REDIRECTS_FILE} is missing from the built output`]
+    return [...problems, `${REDIRECTS_FILE} is missing from the built output`]
   }
   const entries = parseRedirectsFile(await readFile(redirectsPath, 'utf8'))
   for (const { from, to, status } of entries) {
@@ -118,11 +171,6 @@ export async function verifyPostGate(outDir) {
     }
     if (!isFilePath(from) && !existsSync(stubPath(outDir, from))) {
       problems.push(`${from} lost its redirect stub`)
-    }
-  }
-  for (const withheld of WITHHELD_IN_PRODUCTION) {
-    if (existsSync(path.join(outDir, withheld))) {
-      problems.push(`${withheld} was not withheld`)
     }
   }
   return problems

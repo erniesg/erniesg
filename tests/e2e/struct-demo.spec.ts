@@ -31,11 +31,9 @@ test('unavailable uploads preserve sample browsing and sandbox reflow', async ({
     page.getByRole('button', { name: 'Convert this paper' }),
   ).toBeDisabled()
   await expect(page.getByText(/Uploads are unavailable/)).toBeVisible()
-  const sample = page
-    .locator('[data-struct-sample]')
-    .filter({
-      has: page.getByRole('heading', { name: 'AI Must Die', exact: true }),
-    })
+  const sample = page.locator('[data-struct-sample]').filter({
+    has: page.getByRole('heading', { name: 'AI Must Die', exact: true }),
+  })
   await expect(sample).toBeVisible()
   await expect(
     sample.getByRole('link', { name: 'Source PDF' }),
@@ -94,6 +92,7 @@ test('quota rejection disables upload and shows reset without raw server error',
       status: 429,
       json: {
         resetsAt: limits.resetsAt,
+        error: { code: 'daily_limit' },
         message: 'SECRET internal backend trace',
       },
     }),
@@ -284,7 +283,10 @@ test('paper conversion obeys quota while cached samples remain free', async ({
   await page.route(
     '**/api/struct-demo/samples/attention-is-all-you-need',
     (route) =>
-      route.fulfill({ status: 429, json: { resetsAt: limits.resetsAt } }),
+      route.fulfill({
+        status: 429,
+        json: { resetsAt: limits.resetsAt, error: { code: 'daily_limit' } },
+      }),
   )
   await page.goto('/research/struct/demo/')
   await page.getByRole('button', { name: 'Convert this paper' }).click()
@@ -302,3 +304,48 @@ test('paper conversion obeys quota while cached samples remain free', async ({
     cached.getByRole('link', { name: 'Paper Pro EPUB', exact: true }),
   ).toHaveAttribute('download', '')
 })
+
+for (const mode of ['upload', 'paper'] as const) {
+  test(`${mode} capacity rejection offers retry without claiming the daily allowance is exhausted`, async ({
+    page,
+  }) => {
+    await setup(page)
+    const endpoint =
+      mode === 'upload'
+        ? '**/api/struct-demo/jobs'
+        : '**/api/struct-demo/samples/attention-is-all-you-need'
+    await page.route(endpoint, (route) =>
+      route.fulfill({
+        status: 429,
+        json: { error: { code: 'busy', message: 'PRIVATE provider trace' } },
+      }),
+    )
+    await page.goto('/research/struct/demo/')
+    if (mode === 'upload') {
+      await page.getByLabel('Choose a PDF').setInputFiles(pdf)
+      await page.getByRole('button', { name: 'Convert PDF' }).click()
+    } else {
+      await page.getByRole('button', { name: 'Convert this paper' }).click()
+    }
+    await expect(page.getByRole('status')).toContainText(/converter is busy/i)
+    await expect(page.getByRole('status')).not.toContainText(/daily limit|UTC/i)
+    await expect(page.getByRole('status')).not.toContainText(
+      'PRIVATE provider trace',
+    )
+    await expect(
+      page.getByRole('button', { name: 'Convert PDF' }),
+    ).toBeDisabled()
+    await expect(
+      page.getByRole('button', { name: 'Convert this paper' }),
+    ).toBeDisabled()
+    await page
+      .getByRole('button', { name: 'Check upload availability' })
+      .click()
+    await expect(
+      page.getByRole('button', { name: 'Convert PDF' }),
+    ).toBeEnabled()
+    await expect(
+      page.getByRole('button', { name: 'Convert this paper' }),
+    ).toBeEnabled()
+  })
+}

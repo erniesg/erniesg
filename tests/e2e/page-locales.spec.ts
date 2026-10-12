@@ -84,6 +84,38 @@ test.describe('completed localized artifact', () => {
     )
   })
 
+  test('native Chinese post remains stable when the host canonicalizes slashless locale links', async ({
+    page,
+  }) => {
+    await installStaticRoutes(page)
+    await page.route(
+      /\/blog\/loss-price-love(?:\/(?:zh|ja|ko))?(?:[?#].*)?$/,
+      async (route) => {
+        const target = new URL(route.request().url())
+        target.pathname += '/'
+        await route.fulfill({
+          status: 302,
+          headers: { location: target.toString() },
+        })
+      },
+    )
+    const navigations: string[] = []
+    page.on('framenavigated', (frame) => {
+      if (frame === page.mainFrame()) navigations.push(frame.url())
+    })
+    await page.goto('/blog/loss-price-love/zh/?view=reading#notes')
+    await expect(
+      page.getByRole('heading', { name: '失去是挚爱付出的代价', exact: true }),
+    ).toBeVisible()
+    await page.waitForTimeout(750)
+    expect(navigations).toEqual([
+      'https://srt-evaluation.test/blog/loss-price-love/zh/?view=reading#notes',
+    ])
+    await expect(page).toHaveURL(
+      'https://srt-evaluation.test/blog/loss-price-love/zh/?view=reading#notes',
+    )
+  })
+
   for (const locale of Object.keys(LOCALE_EXPECTATIONS) as Array<
     keyof typeof LOCALE_EXPECTATIONS
   >) {

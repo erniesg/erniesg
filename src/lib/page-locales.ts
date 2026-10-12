@@ -1,8 +1,4 @@
-import {
-  DEFAULT_LOCALE,
-  SUPPORTED_LOCALES,
-  type SupportedLocale,
-} from './i18n'
+import { DEFAULT_LOCALE, SUPPORTED_LOCALES, type SupportedLocale } from './i18n'
 
 /** Make a locale route a full-document navigation while retaining reader state in the URL. */
 export function localizedNavigationUrl(
@@ -11,6 +7,10 @@ export function localizedNavigationUrl(
 ): string {
   const current = new URL(currentUrl)
   const target = new URL(localizedPath, current.origin)
+  // Production serves page routes with a trailing slash. Comparing a
+  // slashless locale map entry with that canonical URL otherwise reloads
+  // forever after the host redirects back to the current document.
+  if (!target.pathname.endsWith('/')) target.pathname += '/'
   target.search = current.search
   target.hash = current.hash
   return target.toString()
@@ -30,7 +30,5 @@ export function resolveDocumentLocale(
   }
   if (storedLocale) return normalize(storedLocale)
   const declared = normalize(documentLang)
-  return declared !== DEFAULT_LOCALE
-    ? declared
-    : normalize(browserLocale)
+  return declared !== DEFAULT_LOCALE ? declared : normalize(browserLocale)
 }

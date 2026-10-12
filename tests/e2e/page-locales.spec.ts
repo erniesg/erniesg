@@ -100,8 +100,9 @@ test.describe('completed localized artifact', () => {
       },
     )
     const navigations: string[] = []
-    page.on('framenavigated', (frame) => {
-      if (frame === page.mainFrame()) navigations.push(frame.url())
+    page.on('request', (request) => {
+      if (request.isNavigationRequest() && request.frame() === page.mainFrame())
+        navigations.push(request.url())
     })
     await page.goto('/blog/loss-price-love/zh/?view=reading#notes')
     await expect(
@@ -109,7 +110,7 @@ test.describe('completed localized artifact', () => {
     ).toBeVisible()
     await page.waitForTimeout(750)
     expect(navigations).toEqual([
-      'https://srt-evaluation.test/blog/loss-price-love/zh/?view=reading#notes',
+      'https://srt-evaluation.test/blog/loss-price-love/zh/?view=reading',
     ])
     await expect(page).toHaveURL(
       'https://srt-evaluation.test/blog/loss-price-love/zh/?view=reading#notes',

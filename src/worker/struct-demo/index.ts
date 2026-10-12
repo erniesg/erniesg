@@ -425,7 +425,8 @@ export async function handleStructDemoRequest(
       (deps.fetch ?? fetch)(cfg.origin + endpoint, {
         ...init,
         headers: { Authorization: `Bearer ${cfg.token}` },
-        redirect: 'error',
+        // Workers support manual/follow only. Status checks below refuse redirects.
+        redirect: 'manual',
         signal: timeoutSignal(30_000),
       })
     if (path === '/limits') {
@@ -527,7 +528,7 @@ export async function handleStructDemoRequest(
           cancelBody(request)
           const source = await (deps.fetch ?? fetch)(SAMPLE_URL, {
             credentials: 'omit',
-            redirect: 'error',
+            redirect: 'manual',
             signal: timeoutSignal(30_000),
           })
           if (source.status !== 200 || !validLength(source, MAX_BYTES)) {

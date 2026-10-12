@@ -97,7 +97,7 @@ describe('public Struct gateway', () => {
     expect(JSON.stringify(data)).not.toContain(PRIVATE_ID)
     const [url, init] = backend.mock.calls[0]
     expect(url).toBe('https://converter.example/api/jobs')
-    expect(init?.redirect).toBe('error')
+    expect(init?.redirect).toBe('manual')
     expect(new Headers(init?.headers).get('Authorization')).toBe(
       'Bearer private-secret',
     )
@@ -491,7 +491,7 @@ describe('public Struct gateway', () => {
     expect(
       backend.mock.calls.every(
         ([, init]) =>
-          init?.redirect === 'error' && init.signal instanceof AbortSignal,
+          init?.redirect === 'manual' && init.signal instanceof AbortSignal,
       ),
     ).toBe(true)
   })
@@ -588,7 +588,7 @@ describe('public Struct gateway', () => {
     expect(url).toBe('https://arxiv.org/pdf/1706.03762v7')
     expect(new Headers(init?.headers).get('Authorization')).toBeNull()
     expect(init?.credentials).toBe('omit')
-    expect(init?.redirect).toBe('error')
+    expect(init?.redirect).toBe('manual')
     await submit()
     await submit()
     expect(

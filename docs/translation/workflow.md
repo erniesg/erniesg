@@ -14,14 +14,14 @@ It creates a temporary `generated/tmp/erniesg-localization-<id>` input bundle,
 then sends that bundle to the existing `erniesg-ai-vm` SSH alias. The runner
 rejects any other host. The bundle contains only translation inputs:
 
-- `package.json`, `tools/translation/`, `.translation/`, and
-  `docs/translation/`;
-- `src/content/blog/` and optional `public/data/` source copy; and
+- translation JSON/reports, translation documentation, blog MDX, and public
+  image assets; and
 - HTML files from the already gated `dist/` build.
 
-It never stages `.env`, `.git`, `node_modules`, Cloudflare configuration, or
-publisher credentials. The VM uses its existing Codex login and its existing
-`node_modules`; the bridge does not create, copy, or print credentials.
+It never stages executable project code, `.env`, `.git`, `node_modules`,
+Cloudflare configuration, or publisher credentials. The VM runs the reviewed,
+pinned publisher runtime installed under `/opt/erniesg-translation-publisher/`;
+the bridge does not create, copy, or print credentials.
 
 On the trusted VM, the runner sets `TRANSLATION_PROVIDER=codex-cli` without
 forcing a model, then runs the blog sequence:
@@ -38,13 +38,20 @@ and `ko` in three independent locale catalogs. Each locale generator persists
 after each page, and the runner merges only that locale's result into the base
 catalog serially before validating the catalog against the staged HTML.
 
-The bridge returns only `.translation` metadata/reports and localized blog
-sidecars. Before the command applies any returned file locally, it rejects an
-unexpected artifact, any modified protected input, an unsafe existing sidecar
-overwrite, or a changed native page-catalog locale. It repeats the existing
-machine-provenance and hash check against the caller's current checkout and
-preserves source originals and human-owned targets. New sidecars must identify
-themselves as machine translations. The bridge never deploys or publishes;
+Before that work starts, the pinned VM helper snapshots every source and
+human-owned translation. At export it rejects any changed source, human-owned
+target, or unexpected result, and returns only changed or new machine sidecars
+plus the manifest, page catalog, and review reports. Project code is never
+uploaded or executed on the VM.
+
+Before applying a returned archive locally, the bridge validates every archive
+entry's path and type, rejects links and special files, checks all returned
+machine provenance and hashes, and preserves every non-machine manifest, page,
+and translation-memory record. It snapshots the output bytes once, checks the
+entire staged checkout state (including paths that must still be absent), then
+prepares every replacement before the first atomic rename. A local exclusive
+lock prevents two publishers from racing. If a rename fails, only files that
+were already committed are restored. The bridge never deploys or publishes;
 the caller performs the gated build and deployment after the local result is
 applied.
 

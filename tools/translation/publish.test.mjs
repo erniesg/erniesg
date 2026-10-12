@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import * as fs from 'node:fs/promises'
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { execFile as execFileCallback } from 'node:child_process'
 import { promisify } from 'node:util'
 import os from 'node:os'
@@ -8,10 +16,12 @@ import {
   applyValidatedPublishArtifacts,
   createPublishStage,
   createTrustedVmPublishScript,
+  runTrustedVmPublish,
   trustedVmSshInvocation,
   validateReturnedPublishArtifacts,
 } from './publish.mjs'
 import { parsePublishArgs } from './run-publish.mjs'
+import { sha256 } from './content.mjs'
 
 const execFile = promisify(execFileCallback)
 
@@ -58,6 +68,64 @@ async function fixture() {
     ),
   ])
   return root
+}
+
+async function validMachineOutput(
+  root,
+  { body = '译文', pages = { pages: {} } } = {},
+) {
+  const output = await mkdtemp(
+    path.join(os.tmpdir(), 'translation-publish-output-'),
+  )
+  const source = await readFile(
+    path.join(root, 'src', 'content', 'blog', 'post', 'index.mdx'),
+    'utf8',
+  )
+  const translation = `---\nlang: zh\ntranslationStatus: machine\ntranslationSource: codex\n---\n${body}\n`
+  await mkdir(path.join(output, 'src', 'content', 'blog', 'post'), {
+    recursive: true,
+  })
+  await mkdir(path.join(output, '.translation'), { recursive: true })
+  await writeFile(
+    path.join(output, 'src', 'content', 'blog', 'post', 'zh.mdx'),
+    translation,
+  )
+  await writeFile(
+    path.join(output, '.translation', 'manifest.json'),
+    JSON.stringify({
+      families: {
+        post: {
+          targets: {
+            zh: {
+              path: 'src/content/blog/post/zh.mdx',
+              status: 'machine',
+              sourcePath: 'src/content/blog/post/index.mdx',
+              sourceSha256: sha256(source),
+              targetSha256: sha256(translation),
+            },
+          },
+        },
+      },
+    }),
+  )
+  await writeFile(
+    path.join(output, '.translation', 'pages.json'),
+    JSON.stringify(pages),
+  )
+  return { output, translation }
+}
+
+async function bytes(root, files) {
+  return Object.fromEntries(
+    await Promise.all(
+      files.map(async (file) => [
+        file,
+        await readFile(path.join(root, file), 'utf8').catch((error) =>
+          error.code === 'ENOENT' ? null : Promise.reject(error),
+        ),
+      ]),
+    ),
+  )
 }
 
 describe('translation publish bridge', () => {
@@ -119,6 +187,69 @@ describe('translation publish bridge', () => {
           'src/content/blog/post/index.mdx',
         ]),
       )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('never stages checkout-supplied translation code, even when it is malicious', async () => {
+    const root = await fixture()
+    try {
+      await writeFile(
+        path.join(root, 'tools', 'translation', 'sync.mjs'),
+        'throw new Error("would read VM credentials")\n',
+      )
+      const stage = await createPublishStage({
+        repoRoot: root,
+        runId: 'data-only',
+      })
+      expect(stage.files).not.toContain('tools/translation/sync.mjs')
+      await expect(
+        readFile(
+          path.join(stage.path, 'tools', 'translation', 'sync.mjs'),
+          'utf8',
+        ),
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(createTrustedVmPublishScript()).toContain(
+        '/opt/erniesg-translation-publisher/',
+      )
+      expect(createTrustedVmPublishScript()).not.toContain(
+        'node tools/translation/sync.mjs',
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a symlink among staged inputs before copying any archive data', async () => {
+    const root = await fixture()
+    try {
+      const source = path.join(root, 'docs', 'translation', 'zh.md')
+      const linked = path.join(root, 'docs', 'translation', 'ja.md')
+      await symlink(source, linked)
+      await expect(
+        createPublishStage({ repoRoot: root, runId: 'symlink' }),
+      ).rejects.toThrow(/Symbolic links are not allowed/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('aborts before any archive or SSH process when the stage inventory changes', async () => {
+    const root = await fixture()
+    try {
+      const stage = await createPublishStage({
+        repoRoot: root,
+        runId: 'changed-stage',
+      })
+      await writeFile(path.join(stage.path, 'unexpected.txt'), 'injected')
+      const archivePath = path.join(root, 'returned.tar.gz')
+      await expect(runTrustedVmPublish({ stage, archivePath })).rejects.toThrow(
+        /Publish stage inventory changed/,
+      )
+      await expect(readFile(archivePath)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -199,7 +330,113 @@ describe('translation publish bridge', () => {
         )
         await expect(
           validateReturnedPublishArtifacts({ stage, outputRoot: output }),
-        ).rejects.toThrow(/native page locale changed: \/about\/ zh/)
+        ).rejects.toThrow(
+          /protected translation entry changed: pages\.\/about\//,
+        )
+      } finally {
+        await rm(output, { recursive: true, force: true })
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects removal of an unknown catalog record, including dotted translation keys', async () => {
+    const root = await fixture()
+    try {
+      await writeFile(
+        path.join(root, '.translation', 'pages.json'),
+        JSON.stringify({
+          pages: {},
+          translations: {
+            zh: {
+              'heading.with.dots': {
+                status: 'unknown',
+                sourceHash: 'source',
+                text: '保留',
+              },
+            },
+          },
+        }),
+      )
+      const stage = await createPublishStage({
+        repoRoot: root,
+        runId: 'unknown-record',
+      })
+      const { output } = await validMachineOutput(root, {
+        pages: { pages: {}, translations: { zh: {} } },
+      })
+      try {
+        await expect(
+          validateReturnedPublishArtifacts({ stage, outputRoot: output }),
+        ).rejects.toThrow(
+          /protected translation entry changed: translations\.zh\.heading\.with\.dots/,
+        )
+      } finally {
+        await rm(output, { recursive: true, force: true })
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a returned final manifest record relabelled as machine', async () => {
+    const root = await fixture()
+    try {
+      await writeFile(
+        path.join(root, '.translation', 'manifest.json'),
+        JSON.stringify({
+          families: {
+            post: {
+              targets: {
+                zh: {
+                  path: 'src/content/blog/post/zh.mdx',
+                  status: 'final',
+                  note: 'author',
+                },
+              },
+            },
+          },
+        }),
+      )
+      const stage = await createPublishStage({
+        repoRoot: root,
+        runId: 'final-record',
+      })
+      const { output } = await validMachineOutput(root)
+      try {
+        await expect(
+          validateReturnedPublishArtifacts({ stage, outputRoot: output }),
+        ).rejects.toThrow(
+          /protected translation entry changed: families\.post\.targets\.zh/,
+        )
+      } finally {
+        await rm(output, { recursive: true, force: true })
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a sidecar whose returned provenance or source and target hashes are malformed', async () => {
+    const root = await fixture()
+    try {
+      const stage = await createPublishStage({
+        repoRoot: root,
+        runId: 'bad-provenance',
+      })
+      const { output } = await validMachineOutput(root)
+      try {
+        const manifestPath = path.join(output, '.translation', 'manifest.json')
+        const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+        manifest.families.post.targets.zh.sourcePath =
+          'src/content/blog/other/index.mdx'
+        manifest.families.post.targets.zh.targetSha256 =
+          'not-a-real-target-hash'
+        await writeFile(manifestPath, JSON.stringify(manifest))
+        await expect(
+          validateReturnedPublishArtifacts({ stage, outputRoot: output }),
+        ).rejects.toThrow(/Invalid returned machine sidecar/)
       } finally {
         await rm(output, { recursive: true, force: true })
       }
@@ -222,9 +459,38 @@ describe('translation publish bridge', () => {
         await mkdir(path.join(output, 'src', 'content', 'blog', 'post'), {
           recursive: true,
         })
+        const translation =
+          '---\nlang: zh\ntranslationStatus: machine\ntranslationSource: codex\n---\n译文\n'
         await writeFile(
           path.join(output, 'src', 'content', 'blog', 'post', 'zh.mdx'),
-          '---\nlang: zh\ntranslationStatus: machine\ntranslationSource: codex\n---\n译文\n',
+          translation,
+        )
+        await mkdir(path.join(output, '.translation'), { recursive: true })
+        const source = await readFile(
+          path.join(root, 'src', 'content', 'blog', 'post', 'index.mdx'),
+          'utf8',
+        )
+        await writeFile(
+          path.join(output, '.translation', 'manifest.json'),
+          JSON.stringify({
+            families: {
+              post: {
+                targets: {
+                  zh: {
+                    path: 'src/content/blog/post/zh.mdx',
+                    status: 'machine',
+                    sourcePath: 'src/content/blog/post/index.mdx',
+                    sourceSha256: sha256(source),
+                    targetSha256: sha256(translation),
+                  },
+                },
+              },
+            },
+          }),
+        )
+        await writeFile(
+          path.join(output, '.translation', 'pages.json'),
+          JSON.stringify({ pages: {} }),
         )
         await applyValidatedPublishArtifacts({
           stage,
@@ -243,6 +509,187 @@ describe('translation publish bridge', () => {
             'utf8',
           ),
         ).toContain('译文')
+      } finally {
+        await rm(output, { recursive: true, force: true })
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    ['manifest', '.translation/manifest.json'],
+    ['catalog', '.translation/pages.json'],
+    ['machine sidecar', 'src/content/blog/post/zh.mdx'],
+  ])(
+    'refuses application when the current %s changes after staging',
+    async (_label, changed) => {
+      const root = await fixture()
+      try {
+        const stage = await createPublishStage({
+          repoRoot: root,
+          runId: `stale-${changed.replaceAll(/[^a-zA-Z0-9-]/gu, '-')}`,
+        })
+        const { output } = await validMachineOutput(root)
+        try {
+          if (changed.endsWith('zh.mdx')) {
+            await writeFile(
+              path.join(root, changed),
+              '---\ntranslationStatus: machine\n---\nlocal edit\n',
+            )
+          } else {
+            await writeFile(path.join(root, changed), '{"local":"edit"}\n')
+          }
+          const before = await bytes(root, [
+            '.translation/manifest.json',
+            '.translation/pages.json',
+            'src/content/blog/post/zh.mdx',
+          ])
+          await expect(
+            applyValidatedPublishArtifacts({
+              stage,
+              outputRoot: output,
+              repoRoot: root,
+            }),
+          ).rejects.toThrow(/Checkout inputs changed/)
+          expect(await bytes(root, Object.keys(before))).toEqual(before)
+        } finally {
+          await rm(output, { recursive: true, force: true })
+        }
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    },
+  )
+
+  it.each([2, 3])(
+    'rolls every target back when atomic application rename %i fails',
+    async (failureAt) => {
+      const root = await fixture()
+      try {
+        await writeFile(
+          path.join(root, '.translation', 'pages.json'),
+          '{"pages":{}}\n',
+        )
+        const stage = await createPublishStage({
+          repoRoot: root,
+          runId: `rollback-${failureAt}`,
+        })
+        const { output } = await validMachineOutput(root, {
+          pages: { pages: {}, translations: {} },
+        })
+        try {
+          const tracked = [
+            '.translation/manifest.json',
+            '.translation/pages.json',
+            'src/content/blog/post/zh.mdx',
+          ]
+          const before = await bytes(root, tracked)
+          const originalRename = fs.rename
+          let calls = 0
+          const operations = {
+            ...fs,
+            rename: async (...args) => {
+              calls += 1
+              if (calls === failureAt) {
+                const error = new Error('simulated rename failure')
+                error.code = 'EIO'
+                throw error
+              }
+              return originalRename(...args)
+            },
+          }
+          try {
+            await expect(
+              applyValidatedPublishArtifacts({
+                stage,
+                outputRoot: output,
+                repoRoot: root,
+                fileOps: operations,
+              }),
+            ).rejects.toThrow(/simulated rename failure/)
+          } finally {
+            // `operations` is test-local; no global filesystem patch is needed.
+          }
+          expect(await bytes(root, tracked)).toEqual(before)
+        } finally {
+          await rm(output, { recursive: true, force: true })
+        }
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    },
+  )
+
+  it('preflights an existing non-file target before changing any other artifact', async () => {
+    const root = await fixture()
+    try {
+      await writeFile(
+        path.join(root, '.translation', 'pages.json'),
+        '{"pages":{}}\n',
+      )
+      const stage = await createPublishStage({
+        repoRoot: root,
+        runId: 'nonfile-target',
+      })
+      const { output } = await validMachineOutput(root, {
+        pages: { pages: {}, translations: {} },
+      })
+      try {
+        const before = await bytes(root, [
+          '.translation/manifest.json',
+          'src/content/blog/post/zh.mdx',
+        ])
+        await rm(path.join(root, '.translation', 'pages.json'))
+        await mkdir(path.join(root, '.translation', 'pages.json'))
+        await expect(
+          applyValidatedPublishArtifacts({
+            stage,
+            outputRoot: output,
+            repoRoot: root,
+          }),
+        ).rejects.toThrow(
+          /Checkout inputs changed|Target must be a regular file|Regular files only/,
+        )
+        expect(await bytes(root, Object.keys(before))).toEqual(before)
+      } finally {
+        await rm(output, { recursive: true, force: true })
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('binds application to the exact bytes that were validated', async () => {
+    const root = await fixture()
+    try {
+      const stage = await createPublishStage({
+        repoRoot: root,
+        runId: 'output-race',
+      })
+      const { output } = await validMachineOutput(root)
+      try {
+        const validatedResult = await validateReturnedPublishArtifacts({
+          stage,
+          outputRoot: output,
+        })
+        await writeFile(
+          path.join(output, 'src', 'content', 'blog', 'post', 'zh.mdx'),
+          '---\nlang: zh\ntranslationStatus: machine\ntranslationSource: codex\n---\ntampered\n',
+        )
+        const before = await bytes(root, [
+          '.translation/manifest.json',
+          'src/content/blog/post/zh.mdx',
+        ])
+        await expect(
+          applyValidatedPublishArtifacts({
+            stage,
+            outputRoot: output,
+            repoRoot: root,
+            validatedResult,
+          }),
+        ).rejects.toThrow(/Returned artifact changed while preparing/)
+        expect(await bytes(root, Object.keys(before))).toEqual(before)
       } finally {
         await rm(output, { recursive: true, force: true })
       }

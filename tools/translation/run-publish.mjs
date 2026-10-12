@@ -25,10 +25,14 @@ export function parsePublishArgs(argv = process.argv.slice(2)) {
 async function main() {
   const { runId, vmAlias } = parsePublishArgs()
   const result = await runPublish({ runId, vmAlias })
-  const artifacts = await applyValidatedPublishArtifacts(result)
-  console.log(
-    `Applied ${artifacts.length} validated translation artifacts from ${result.outputRoot}`,
-  )
+  try {
+    const artifacts = await applyValidatedPublishArtifacts(result)
+    console.log(
+      `Applied ${artifacts.length} validated translation artifacts from ${result.outputRoot}`,
+    )
+  } finally {
+    await result.release()
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

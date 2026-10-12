@@ -349,3 +349,100 @@ for (const mode of ['upload', 'paper'] as const) {
     ).toBeEnabled()
   })
 }
+
+for (const [locale, ready, download, quotaText, invalid] of [
+  [
+    'zh',
+    '转换完成',
+    '下载 paper.epub',
+    '此网络今天还可转换 3 次',
+    '请选择有效的 PDF 文件',
+  ],
+  [
+    'ja',
+    '変換が完了しました',
+    'paper.epub をダウンロード',
+    'このネットワークでは本日あと 3 回',
+    '有効な PDF ファイルを選択してください',
+  ],
+  [
+    'ko',
+    '변환이 완료되었습니다',
+    'paper.epub 다운로드',
+    '이 네트워크에서 오늘 3회',
+    '유효한 PDF 파일을 선택해 주세요',
+  ],
+] as const) {
+  test(`${locale} conversion messages and download labels preserve source filenames`, async ({
+    page,
+  }) => {
+    await setup(page)
+    await page.addInitScript(
+      (language) => localStorage.setItem('siteLang', language),
+      locale,
+    )
+    await page.route('**/api/struct-demo/jobs', (route) =>
+      route.fulfill({
+        status: 202,
+        json: { id: 'localized-job', status: 'queued' },
+      }),
+    )
+    await page.route('**/api/struct-demo/jobs/localized-job', (route) =>
+      route.fulfill({
+        json: {
+          id: 'localized-job',
+          status: 'done',
+          files: [{ name: 'paper.epub' }],
+        },
+      }),
+    )
+    await page.goto('/research/struct/demo/')
+    await expect(page.locator('[data-struct-quota]')).toContainText(quotaText)
+    await page
+      .locator('[data-struct-form] input')
+      .setInputFiles({
+        name: 'fake.pdf',
+        mimeType: 'application/pdf',
+        buffer: Buffer.from('not pdf'),
+      })
+    await page.locator('[data-struct-form] button').click()
+    await expect(page.getByRole('status')).toContainText(invalid)
+    await page.locator('[data-struct-form] input').setInputFiles(pdf)
+    await page.locator('[data-struct-form] button').click()
+    await expect(page.getByRole('status')).toContainText(ready)
+    await expect(page.locator('[data-struct-downloads] a')).toHaveText(download)
+    await expect(page.locator('[data-struct-downloads] a')).toHaveAttribute(
+      'download',
+      'paper.epub',
+    )
+  })
+}
+
+test('Chinese daily limit and busy messages retain distinct retry semantics', async ({
+  page,
+}) => {
+  await setup(page)
+  await page.addInitScript(() => localStorage.setItem('siteLang', 'zh'))
+  let attempt = 0
+  await page.route(
+    '**/api/struct-demo/samples/attention-is-all-you-need',
+    (route) =>
+      route.fulfill({
+        status: 429,
+        json:
+          attempt++ === 0
+            ? { error: { code: 'busy' } }
+            : { error: { code: 'daily_limit' }, resetsAt: limits.resetsAt },
+      }),
+  )
+  await page.goto('/research/struct/demo/')
+  await page.locator('[data-struct-convert-sample]').click()
+  await expect(page.getByRole('status')).toContainText('转换服务正忙')
+  await expect(page.getByRole('status')).not.toContainText(/UTC|每日限额/)
+  await page.locator('[data-struct-refresh]').click()
+  await page.locator('[data-struct-convert-sample]').click()
+  await expect(page.getByRole('status')).toContainText('已达到每日限额')
+  await expect(page.getByRole('status')).toContainText(
+    '2026-10-13 00:00:00 UTC',
+  )
+})

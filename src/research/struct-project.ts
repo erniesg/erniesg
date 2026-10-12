@@ -1,10 +1,10 @@
 /** Public research framing; results refer to the named evidence, not a release claim. */
 export const structProject = {
-  title: 'Struct: Document Reconstruction and Responsive Typesetting',
+  title: 'Struct: Portable Document Semantics and PDF Import',
   path: '/research/struct/',
-  status: 'Research in progress',
+  status: 'Supporting component',
   summary:
-    'Investigating faithful reconstruction of scholarly documents and reproducible evaluation of their semantic, reflowable reading renditions.',
+    'A supporting component for portable document semantics, rendering, and an experimental PDF-to-EPUB import demonstration.',
   question:
     'How can we reconstruct scholarly documents for different reading surfaces and verify what survives, what changes, and what still needs correction?',
   repository: 'https://github.com/erniesg/struct',

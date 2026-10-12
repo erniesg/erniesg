@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 import {
   canWriteExistingTarget,
   getManifestTarget,
+  isProtectedPath,
   listTargetSidecars,
   loadConfig,
   loadManifest,
@@ -15,11 +16,15 @@ import { generateTranslation } from './generate.mjs'
 import { isCodexUsageLimitError } from './codex-cli.mjs'
 
 export function revisionCandidateIssue({ config, file, target, report }) {
+  if (isProtectedPath(target?.path ?? report?.targetPath ?? '', config))
+    return 'protected'
   if (file.frontmatter.translationStatus !== 'machine') return 'human-owned'
   if (!target) return 'missing-manifest-target'
   if (target.qualityStatus !== 'review-failed') return 'review-not-failed'
   if (
     !canWriteExistingTarget({
+      filePath: target.path,
+      config,
       frontmatter: file.frontmatter,
       manifestTarget: target,
       currentText: file.raw,
@@ -69,6 +74,10 @@ export async function reviseFailedTranslations({
   const results = []
 
   for (const filePath of paths) {
+    if (isProtectedPath(filePath, config)) {
+      results.push({ filePath, action: 'skipped', reason: 'protected' })
+      continue
+    }
     const file = await readMdxFile(filePath)
     const target = getManifestTarget(manifest, filePath)
     let report = null

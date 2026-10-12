@@ -1,4 +1,5 @@
 ---
+import { representingTasteProject } from '@/research/representing-taste'
 import { structProject } from '@/research/struct-project'
 ---
 
@@ -8,18 +9,27 @@ import { structProject } from '@/research/struct-project'
   </h2>
   <ul class="border-t">
     <li class="border-b py-6">
-      <a class="group flex flex-col gap-y-2" href={structProject.path}>
+      <a
+        class="group flex flex-col gap-y-2"
+        href={representingTasteProject.path}
+      >
         <small class="text-xs text-muted-foreground"
-          >{structProject.status}</small
+          >{representingTasteProject.status}</small
         >
         <h3
           class="text-xl font-semibold group-hover:underline group-hover:underline-offset-4"
         >
-          {structProject.title}
+          {representingTasteProject.title}
         </h3>
         <p class="text-sm leading-relaxed text-muted-foreground">
-          {structProject.summary}
+          {representingTasteProject.summary}
         </p>
+        <span class="text-sm text-muted-foreground">
+          First supporting milestone: <a
+            class="underline underline-offset-4"
+            href={structProject.demoPath}>Struct’s live PDF-import demo</a
+          >
+        </span>
       </a>
     </li>
   </ul>

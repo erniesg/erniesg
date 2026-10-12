@@ -110,12 +110,15 @@ describe('publish scripts', () => {
     expect(pkg.scripts['translate:codex-revise']).toContain(
       'CODEX_TRANSLATION_MODEL=gpt-5.5',
     )
-    expect(pkg.scripts['content:publish']).toContain('translate:codex-sync')
-    expect(pkg.scripts['content:publish']).toContain('translate:codex-review')
-    expect(pkg.scripts['content:publish']).toContain('translate:codex-revise')
-    expect(
-      pkg.scripts['content:publish'].match(/translate:codex-revise/g),
-    ).toHaveLength(2)
+    expect(pkg.scripts['content:publish']).toContain('build:source-production')
+    expect(pkg.scripts['content:publish']).toContain(
+      'tools/translation/run-publish.mjs',
+    )
+    expect(pkg.scripts['content:publish']).toContain('build:production')
+    expect(pkg.scripts['worker:deploy:production']).toContain('content:publish')
+    expect(pkg.scripts['build:production']).toContain(
+      'tools/translation/pages.mjs apply',
+    )
     expect(pkg.scripts['content:check']).not.toContain('translate:codex-sync')
     expect(pkg.scripts['content:check']).not.toContain(
       'translate:sync -- --write',

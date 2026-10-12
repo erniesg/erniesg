@@ -1,6 +1,7 @@
 ---
 import Container from '@/components/Container.astro'
 import Layout from '@/layouts/Layout.astro'
+import { representingTasteProject } from '@/research/representing-taste'
 import { structProject } from '@/research/struct-project'
 ---
 
@@ -22,6 +23,10 @@ import { structProject } from '@/research/struct-project'
           class="font-semibold underline underline-offset-4"
           href={structProject.demoPath}>Try the demo →</a
         >
+        <a
+          class="underline underline-offset-4"
+          href={representingTasteProject.path}>REPResenting Taste</a
+        >
         <a class="underline underline-offset-4" href={structProject.repository}
           >Source code</a
         >
@@ -34,7 +39,23 @@ import { structProject } from '@/research/struct-project'
     </header>
 
     <div class="prose max-w-[70ch] dark:prose-invert">
-      <h2>Research question</h2>
+      <h2>Role in REPResenting Taste</h2>
+      <p>
+        Struct is a supporting component of <a
+          href={representingTasteProject.path}>REPResenting Taste</a
+        >. It supplies portable document semantics and rendering capabilities
+        within its existing ownership boundary; it does not supply a claim that
+        the programme’s proposed decision representation is novel or effective.
+      </p>
+      <p>
+        Its existing PDF-import and responsive-reading demo is the programme’s
+        first milestone and remains available at <a
+          href={structProject.demoPath}>the live Struct demo</a
+        >. The demo is an experimental import path for review, not a result of
+        the planned composition-and-revision study.
+      </p>
+
+      <h2>Struct research question</h2>
       <p>{structProject.question}</p>
       <p>
         The proposition is that the document remains a semantic graph. Pages,

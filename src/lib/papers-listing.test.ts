@@ -16,13 +16,15 @@ describe('published research and site sections', () => {
       }),
     ).toBe('listed')
   })
-  it('limits production navigation to Blog and Research', () => {
+  it('keeps About and Tags alongside published production sections', () => {
     expect(navLinks({ PUBLIC_RESEARCH_RELEASE: 'production' })).toEqual([
       { href: '/blog', label: 'blog' },
       { href: '/research', label: 'research' },
+      { href: '/about', label: 'about' },
+      { href: '/tags', label: 'tags' },
     ])
   })
-  it('shows the five sections on development and preview', () => {
+  it('shows five sections plus About and Tags on development and preview', () => {
     for (const env of [{ DEV: true }, { PUBLIC_RESEARCH_RELEASE: 'staging' }]) {
       expect(navLinks(env).map(({ href }) => href)).toEqual([
         '/blog',
@@ -30,6 +32,8 @@ describe('published research and site sections', () => {
         '/research',
         '/library',
         '/projects',
+        '/about',
+        '/tags',
       ])
     }
   })

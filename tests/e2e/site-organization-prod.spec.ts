@@ -6,7 +6,7 @@ test.skip(
   'Checks the gated production artifact',
 )
 
-test('production has Blog and Research navigation and preserves the live author article', async ({
+test('production has Blog, Research, About, and Tags navigation and preserves the live author article', async ({
   page,
 }) => {
   await installStaticRoutes(page)
@@ -15,9 +15,12 @@ test('production has Blog and Research navigation and preserves the live author 
     page.getByRole('heading', { name: 'Research', exact: true }),
   ).toBeVisible()
   const links = page.locator('header nav:visible a')
-  await expect(links).toHaveCount(2)
+  await expect(links).toHaveCount(4)
   await expect(links.nth(0)).toHaveAttribute('href', '/blog')
   await expect(links.nth(1)).toHaveAttribute('href', '/research')
+  await expect(links.nth(2)).toHaveAttribute('href', '/about')
+  await expect(links.nth(3)).toHaveAttribute('href', '/tags')
+  await expect(links).toHaveText(['Blog', 'Research', 'About', 'Tags'])
   await expect(
     page.getByRole('link', {
       name: 'Struct: Document Reconstruction and Responsive Typesetting',

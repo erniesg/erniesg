@@ -1,3 +1,5 @@
+import { currentStructDemoCopy } from '@/research/struct-demo-copy'
+
 const API = '/api/struct-demo'
 const MAX_BYTES = 10 * 1024 * 1024
 const SESSION_KEY = 'struct-demo-job'
@@ -33,6 +35,9 @@ export function initializeStructDemos() {
       const sampleButtons = root.querySelectorAll<HTMLButtonElement>(
         '[data-struct-convert-sample]',
       )
+      const copy = currentStructDemoCopy
+      retry.textContent = copy().retry
+      refresh.textContent = copy().refresh
       const abort = new AbortController()
       let timer: ReturnType<typeof setTimeout> | undefined
       let active = true
@@ -68,8 +73,10 @@ export function initializeStructDemos() {
       const resetLabel = (value: unknown) => {
         const date = typeof value === 'string' ? new Date(value) : null
         return date && Number.isFinite(date.getTime())
-          ? ` Resets at ${date.toISOString().replace('T', ' ').replace('.000Z', ' UTC')}.`
-          : ' Resets at the next UTC day.'
+          ? copy().reset(
+              date.toISOString().replace('T', ' ').replace('.000Z', ' UTC'),
+            )
+          : copy().nextReset
       }
       async function checkLimits() {
         refresh.hidden = true
@@ -95,13 +102,12 @@ export function initializeStructDemos() {
           maxBytes = Math.min(MAX_BYTES, data.maxBytes)
           allowed = data.remaining > 0 && data.globalRemaining > 0
           quota.textContent = allowed
-            ? `${data.remaining} of ${data.dailyLimit} conversions remaining for this network today.`
-            : `The daily limit has been reached.${resetLabel(data.resetsAt)} Preconverted samples still work.`
+            ? copy().remaining(data.remaining, data.dailyLimit)
+            : `${copy().limit}${resetLabel(data.resetsAt)}${copy().samples}`
           refresh.hidden = allowed
         } catch {
           if (!active) return
-          quota.textContent =
-            'Uploads are unavailable. Paper conversion is unavailable too. Preconverted samples still work; try checking availability again later.'
+          quota.textContent = copy().unavailable
           refresh.hidden = false
         }
         controls()
@@ -128,42 +134,32 @@ export function initializeStructDemos() {
               if (!validEpub(file?.name)) continue
               const item = document.createElement('li')
               const link = document.createElement('a')
-              link.textContent = `Download ${file.name}`
+              link.textContent = copy().download(file.name)
               link.href = `${API}/jobs/${encodeURIComponent(jobId)}/files/${encodeURIComponent(file.name)}`
               link.download = file.name
               link.className = 'underline underline-offset-4'
               item.append(link)
               downloads.append(item)
             }
-            say(
-              downloads.childElementCount
-                ? 'Conversion complete. Your EPUB is ready.'
-                : 'Conversion finished, but no EPUB is available. Please try another PDF.',
-            )
+            say(downloads.childElementCount ? copy().complete : copy().noEpub)
             busy = false
             store()
             controls()
             return
           }
           if (data.status === 'failed') {
-            say('Conversion failed. Please try another PDF.')
+            say(copy().failed)
             busy = false
             store()
             controls()
             return
           }
-          say(
-            data.status === 'queued'
-              ? 'Your PDF is queued for conversion.'
-              : 'Converting your PDF…',
-          )
+          say(data.status === 'queued' ? copy().queued : copy().running)
           if (Date.now() >= pollUntil) throw new Error('Timeout')
           timer = setTimeout(poll, POLL_INTERVAL)
         } catch {
           if (!active) return
-          say(
-            'Status checking paused. Your upload may still be converting. Retry to check its progress; do not upload it again.',
-          )
+          say(copy().paused)
           retry.hidden = false
         }
       }
@@ -179,10 +175,10 @@ export function initializeStructDemos() {
             allowed = false
             say(
               data.error?.code === 'daily_limit'
-                ? `The daily limit has been reached.${resetLabel(data.resetsAt)} Preconverted samples still work.`
+                ? `${copy().limit}${resetLabel(data.resetsAt)}${copy().samples}`
                 : data.error?.code === 'busy'
-                  ? 'The converter is busy. Try again shortly. Preconverted samples still work.'
-                  : 'Conversion is temporarily unavailable. Try again shortly. Preconverted samples still work.',
+                  ? copy().busy
+                  : copy().temporary,
             )
             refresh.hidden = false
             busy = false
@@ -201,9 +197,7 @@ export function initializeStructDemos() {
           await poll()
         } catch {
           if (!active) return
-          say(
-            'The conversion request could not be confirmed. Check availability before trying again.',
-          )
+          say(copy().requestFailed)
           busy = false
           allowed = false
           refresh.hidden = false
@@ -215,7 +209,7 @@ export function initializeStructDemos() {
         if (busy || !allowed) return
         const file = input.files?.[0]
         if (!file) {
-          say('Choose a PDF first.')
+          say(copy().choose)
           return
         }
         busy = true
@@ -223,9 +217,7 @@ export function initializeStructDemos() {
         downloads.replaceChildren()
         try {
           if (file.size > maxBytes) {
-            say(
-              `Choose a PDF no larger than ${Math.floor(maxBytes / 1024 / 1024)} MiB.`,
-            )
+            say(copy().oversize(Math.floor(maxBytes / 1024 / 1024)))
             busy = false
             controls()
             return
@@ -236,15 +228,13 @@ export function initializeStructDemos() {
             new TextDecoder().decode(await file.slice(0, 5).arrayBuffer()) !==
               '%PDF-'
           ) {
-            say(
-              'Choose a valid PDF file. Renaming another file to .pdf will not work.',
-            )
+            say(copy().invalid)
             busy = false
             controls()
             return
           }
           if (!active) return
-          say('Uploading your PDF…')
+          say(copy().uploading)
           await submitJob(`${API}/jobs`, {
             method: 'POST',
             body: file,
@@ -255,9 +245,7 @@ export function initializeStructDemos() {
           })
         } catch {
           if (!active) return
-          say(
-            'The upload could not be confirmed. Check availability before trying again.',
-          )
+          say(copy().uploadFailed)
           busy = false
           allowed = false
           refresh.hidden = false
@@ -272,7 +260,7 @@ export function initializeStructDemos() {
           busy = true
           controls()
           downloads.replaceChildren()
-          say('Requesting this paper from arXiv for conversion…')
+          say(copy().requestPaper)
           status.scrollIntoView({ block: 'center', behavior: 'auto' })
           void submitJob(`${API}/samples/${sampleId}`, { method: 'POST' })
         })

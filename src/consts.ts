@@ -40,7 +40,7 @@ export const SITE: Site = {
   SITEURL: 'https://ernie.sg',
 }
 
-/** The five sections are visible in preview; production publishes Blog and Research. */
+/** Preview shows all five sections; About and Tags remain in every header. */
 export function navLinks(env: PapersListingEnv): Link[] {
   const links = [
     { href: '/blog', label: 'blog' },
@@ -48,9 +48,11 @@ export function navLinks(env: PapersListingEnv): Link[] {
     { href: '/research', label: 'research' },
     { href: '/library', label: 'library' },
     { href: '/projects', label: 'projects' },
+    { href: '/about', label: 'about' },
+    { href: '/tags', label: 'tags' },
   ]
   return env.PUBLIC_RESEARCH_RELEASE === 'production'
-    ? links.filter(({ href }) => href === '/blog' || href === '/research')
+    ? links.filter(({ href }) => ['/blog', '/research', '/about', '/tags'].includes(href))
     : links
 }
 

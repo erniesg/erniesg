@@ -124,7 +124,10 @@ const structuredData = {
 <meta property="og:locale" content={ogLocales[lang]} />
 {
   Object.entries(ogLocales)
-    .filter(([locale]) => locale !== lang)
+    .filter(
+      ([locale]) =>
+        locale !== lang && alternates?.[locale as SupportedLocale],
+    )
     .map(([, ogLocale]) => (
       <meta property="og:locale:alternate" content={ogLocale} />
     ))

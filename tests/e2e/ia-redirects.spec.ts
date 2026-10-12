@@ -17,9 +17,7 @@ import { installStaticRoutes } from './static-build'
  * Every URL ADR 010 moved still answers, with a permanent redirect.
  *
  * The legacy URLs are not listed here. They are enumerated from the route
- * files under `src/pages/papers` and `src/pages/library` — the old research
- * routes now live there — and from every asset under `public/papers`, which
- * used to be `public/research`. A page or an asset added to either tree is in
+ * files under `src/pages/research` and `src/pages/library` and from every asset under `public/research`. A page or an asset added to either tree is in
  * this test the moment it exists.
  *
  * On the dev server this checks the 301s themselves. Pointed at a build with
@@ -48,18 +46,18 @@ test('enumerates the legacy routes and the legacy assets', () => {
 
   expect(froms).toEqual(
     expect.arrayContaining([
-      '/research',
+      '/papers',
       '/research/studio',
       '/research/pdf-review',
       '/study/experiments/pdf-to-epub',
-      '/research/if-letters-home-could-sing/if-letters-home-could-sing.pdf',
-      '/research/if-letters-home-could-sing/if-letters-home-could-sing.epub',
-      '/research/if-letters-home-could-sing/media/image1.png',
+      '/papers/if-letters-home-could-sing/if-letters-home-could-sing.pdf',
+      '/papers/if-letters-home-could-sing/if-letters-home-could-sing.epub',
+      '/papers/if-letters-home-could-sing/media/image1.png',
     ]),
   )
   for (const id of paperIdsOnDisk(ROOT)) {
-    expect(froms).toContain(`/research/${id}`)
-    expect(froms).toContain(`/research/${id}/manifest.json`)
+    expect(froms).toContain(`/papers/${id}`)
+    expect(froms).toContain(`/papers/${id}/manifest.json`)
   }
 })
 
@@ -159,7 +157,7 @@ test.describe('in the built site, after the release gate', () => {
   })
 
   test('sends a browser on from a legacy stub', async ({ page }) => {
-    await page.goto('/research/studio/')
-    await expect(page).toHaveURL(/\/library\/$/u)
+    await page.goto('/papers/')
+    await expect(page).toHaveURL(/\/research\/$/u)
   })
 })

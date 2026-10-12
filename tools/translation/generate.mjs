@@ -6,6 +6,7 @@ import {
   ensureFamily,
   familyKeyFromPath,
   getManifestTarget,
+  isProtectedPath,
   loadConfig,
   loadManifest,
   localeFromPath,
@@ -66,6 +67,29 @@ export async function generateTranslation({
   const sourceLocale =
     source.frontmatter.lang ?? localeFromPath(normalizedSourcePath)
   const targetPath = targetPathForLocale(normalizedSourcePath, targetLocale)
+  if (isProtectedPath(targetPath, config)) {
+    throw new Error(`Refusing to generate protected translation: ${targetPath}`)
+  }
+  const assertExistingWritable = async (currentConfig) => {
+    if (isProtectedPath(targetPath, currentConfig)) {
+      throw new Error(
+        `Refusing to overwrite protected translation: ${targetPath}`,
+      )
+    }
+    try {
+      const existing = await readMdxFile(targetPath)
+      assertCanWriteExistingTarget({
+        filePath: targetPath,
+        config: currentConfig,
+        frontmatter: existing.frontmatter,
+        manifestTarget: getManifestTarget(manifest, targetPath),
+        currentText: existing.raw,
+      })
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error
+    }
+  }
+  await assertExistingWritable(config)
   const familyKey = familyKeyFromPath(normalizedSourcePath)
   const segments = extractSegments(source.raw)
   const styleContext = await loadStyleContext(targetLocale)
@@ -115,17 +139,7 @@ export async function generateTranslation({
     )
   }
 
-  try {
-    const existing = await readMdxFile(targetPath)
-    assertCanWriteExistingTarget({
-      filePath: targetPath,
-      frontmatter: existing.frontmatter,
-      manifestTarget: getManifestTarget(manifest, targetPath),
-      currentText: existing.raw,
-    })
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error
-  }
+  await assertExistingWritable(await loadConfig())
 
   const family = ensureFamily(manifest, familyKey)
   family.sourcePath = normalizedSourcePath

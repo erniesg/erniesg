@@ -151,7 +151,8 @@ export const STATIC_TRANSLATIONS: Record<
   en: {
     'nav.blog': 'Blog',
     'nav.books': 'Books',
-    'nav.papers': 'Papers',
+    'nav.research': 'Research',
+    'nav.projects': 'Projects',
     'nav.library': 'Library',
     'nav.about': 'About',
     'nav.tags': 'Tags',
@@ -212,7 +213,8 @@ export const STATIC_TRANSLATIONS: Record<
   zh: {
     'nav.blog': '博客',
     'nav.books': '书',
-    'nav.papers': '论文',
+    'nav.research': '研究',
+    'nav.projects': '项目',
     'nav.library': '书房',
     'nav.about': '关于',
     'nav.tags': '标签',
@@ -273,7 +275,8 @@ export const STATIC_TRANSLATIONS: Record<
   ko: {
     'nav.blog': '블로그',
     'nav.books': '책',
-    'nav.papers': '논문',
+    'nav.research': '연구',
+    'nav.projects': '프로젝트',
     'nav.library': '서재',
     'nav.about': '소개',
     'nav.tags': '태그',
@@ -334,7 +337,8 @@ export const STATIC_TRANSLATIONS: Record<
   ja: {
     'nav.blog': 'ブログ',
     'nav.books': '本',
-    'nav.papers': '論文',
+    'nav.research': '研究',
+    'nav.projects': 'プロジェクト',
     'nav.library': '書斎',
     'nav.about': '紹介',
     'nav.tags': 'タグ',

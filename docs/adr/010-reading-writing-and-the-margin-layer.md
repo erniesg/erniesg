@@ -130,3 +130,32 @@ and the sitemap point at `/papers` (by default, listed in dev and on staging
 only). `tools/deployment/release-gate.mjs` still withholds `/papers` from the
 production artifact, while keeping the `/research` redirect stubs and
 `_redirects`. Publishing means changing that gate.
+
+
+## Addendum — 2026-10-12: Research and staged sections
+
+The owner selected five sections: Blog (`/blog`), Books (`/books`), Research
+(`/research`), Library (`/library`), and Projects (`/projects`). Experiments
+belong under `/projects/experiments`. This supersedes the earlier Papers naming
+and publication switches above: existing research is published in production.
+Research includes papers in progress as well as finished work, and its index
+and paper pages are indexable.
+
+Production navigation contains exactly Blog and Research. About and Tags stay
+accessible through the footer. Development and preview navigation shows all
+five sections; production withholds the entire Books, Library, and Projects
+trees until they are populated. Placeholder indexes describe their current
+empty state without implying completed work.
+
+Existing `/research` paper and asset URLs keep their original home. URLs
+introduced under `/papers` permanently redirect to matching `/research` pages
+and files, with no reverse prefix redirect. Historical importer URLs
+(`/research/studio`, `/research/pdf-review`, and `/study`) retain redirects into
+Library when their targets exist. The production release gate removes both
+those redirects and their static stubs while Library is withheld, and validates
+every retained redirect against the deployed artifact without requiring a
+redirect under a removed legacy prefix.
+
+Paper annotation tenancy keeps its existing `/papers/<id>/` document URI;
+canonical links and reader navigation use `/research/<id>/`. This preserves
+existing annotation rows while moving their public routes.

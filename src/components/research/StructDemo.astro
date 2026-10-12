@@ -1,0 +1,290 @@
+---
+export interface StructDemoSample {
+  id: string
+  title: string
+  description: string
+  pdfUrl: string
+  htmlUrl?: string
+  convertSampleId?: string
+  epubUrls: { label: string; url: string }[]
+  attribution?: {
+    authors: string
+    sourceUrl: string
+    license: string
+    licenseUrl: string
+    changes: string
+  }
+  verdict?: string
+}
+interface Props {
+  samples?: StructDemoSample[]
+}
+const { samples = [] } = Astro.props
+const initialSample =
+  samples.find(
+    (sample) => sample.id === 'docling-technical-report' && sample.htmlUrl,
+  ) ??
+  samples.find((sample) => sample.htmlUrl) ??
+  samples[0]
+---
+
+<section data-struct-demo class="space-y-6">
+  <section class="space-y-2" aria-labelledby="struct-upload-title">
+    <h2 id="struct-upload-title" class="sr-only">Upload a PDF</h2>
+    <form data-struct-form class="flex flex-wrap items-end gap-3">
+      <div class="min-w-0 flex-1 space-y-2">
+        <label class="block text-sm font-medium" for="struct-pdf"
+          >Choose a PDF</label
+        >
+        <input
+          id="struct-pdf"
+          name="pdf"
+          type="file"
+          accept="application/pdf,.pdf"
+          disabled
+          class="block w-full min-w-0 text-sm"
+        />
+      </div>
+      <button
+        type="submit"
+        disabled
+        class="rounded-md border px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+        >Convert PDF</button
+      >
+    </form>
+    <p data-struct-quota class="text-sm text-muted-foreground">
+      Checking upload availability…
+    </p>
+    <p
+      id="struct-conversion-status"
+      data-struct-status
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      class="text-sm"
+    >
+    </p>
+    <ul data-struct-downloads class="space-y-1 text-sm"></ul>
+    <div class="flex flex-wrap gap-3">
+      <button
+        data-struct-retry
+        type="button"
+        hidden
+        class="text-sm underline underline-offset-4">Retry status check</button
+      >
+      <button
+        data-struct-refresh
+        type="button"
+        hidden
+        class="text-sm underline underline-offset-4"
+        >Check upload availability</button
+      >
+    </div>
+  </section>
+
+  <section class="space-y-3" aria-labelledby="struct-preview-label">
+    <div class="flex flex-wrap items-end justify-between gap-3">
+      <div class="w-full min-w-0 space-y-2 sm:w-auto sm:flex-1">
+        <label for="struct-sample" class="block text-sm font-medium"
+          >Existing paper</label
+        >
+        <select
+          id="struct-sample"
+          data-struct-sample-select
+          class="w-full rounded-md border bg-background px-3 py-2 text-sm"
+        >
+          {
+            samples.map((sample) => (
+              <option
+                value={sample.id}
+                selected={sample.id === initialSample?.id}
+              >
+                {sample.title}
+              </option>
+            ))
+          }
+          <option data-struct-upload-option value="__upload__" hidden disabled
+            >Your converted PDF</option
+          >
+        </select>
+      </div>
+      <div
+        role="group"
+        aria-label="Reading surface"
+        class="flex flex-wrap gap-1"
+        data-struct-preview-controls
+      >
+        <button type="button" data-struct-device="phone" aria-pressed="true"
+          >Phone</button
+        >
+        <button type="button" data-struct-device="tablet" aria-pressed="false"
+          >Tablet</button
+        >
+        <button type="button" data-struct-device="desktop" aria-pressed="false"
+          >Desktop</button
+        >
+        <button type="button" data-struct-device="eink" aria-pressed="false"
+          >E-ink</button
+        >
+      </div>
+    </div>
+    <h2 id="struct-preview-label" data-struct-preview-title class="sr-only">
+      {initialSample?.title ?? 'Reading preview'}
+    </h2>
+    <p data-struct-preview-error hidden role="status" class="text-sm">
+      Preview unavailable. Download the EPUB to read it.
+    </p>
+    <p
+      data-struct-preview-empty
+      hidden={!initialSample || !!initialSample.htmlUrl}
+      class="text-sm text-muted-foreground"
+    >
+      Convert this paper to preview it.
+    </p>
+    <div
+      data-struct-preview-viewport
+      hidden={!initialSample?.htmlUrl}
+      class="w-full overflow-hidden"
+    >
+      <div
+        data-struct-preview-stage
+        class="mx-auto overflow-hidden border bg-white"
+      >
+        <iframe
+          data-struct-preview-frame
+          title="Reading preview"
+          src={initialSample?.htmlUrl}
+          sandbox=""
+          class="block border-0 bg-white"></iframe>
+      </div>
+    </div>
+    {
+      samples.length === 0 && (
+        <p class="text-sm text-muted-foreground">
+          Samples are being prepared. Please check back soon.
+        </p>
+      )
+    }
+    {
+      samples.map((sample) => (
+        <article
+          data-struct-sample
+          data-sample-id={sample.id}
+          data-sample-title={sample.title}
+          data-sample-html={sample.htmlUrl ?? ''}
+          hidden={sample.id !== initialSample?.id}
+          class="space-y-2 text-sm"
+        >
+          <h3 class="sr-only">{sample.title}</h3>
+          <div class="flex flex-wrap gap-x-4 gap-y-2">
+            <a
+              class="underline underline-offset-4"
+              href={sample.pdfUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Source PDF
+            </a>
+            {sample.epubUrls.map((epub) => (
+              <a class="underline underline-offset-4" href={epub.url} download>
+                {epub.label}
+              </a>
+            ))}
+            <small class="text-muted-foreground">
+              {sample.htmlUrl ? 'Free sample' : 'Uses your daily allowance'}
+            </small>
+          </div>
+          {sample.convertSampleId && (
+            <button
+              type="button"
+              data-struct-convert-sample={sample.convertSampleId}
+              aria-describedby="struct-conversion-status"
+              disabled
+              class="rounded-md border px-4 py-2 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Convert this paper
+            </button>
+          )}
+          <details>
+            <summary class="cursor-pointer text-muted-foreground">
+              Source, credits and review notes
+            </summary>
+            <div class="space-y-2 py-3">
+              <p>{sample.description}</p>
+              {sample.convertSampleId && (
+                <p>
+                  The server downloads this source from arXiv for your
+                  conversion. This uses one conversion from your daily
+                  allowance; your private EPUB will appear above.
+                </p>
+              )}
+              {sample.attribution && (
+                <>
+                  <p>
+                    By {sample.attribution.authors}.{' '}
+                    <a
+                      class="underline underline-offset-4"
+                      href={sample.attribution.sourceUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Original publication
+                    </a>
+                    {' · '}
+                    <a
+                      class="underline underline-offset-4"
+                      href={sample.attribution.licenseUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {sample.attribution.license}
+                    </a>
+                  </p>
+                  <p data-struct-changes>{sample.attribution.changes}</p>
+                </>
+              )}
+              {sample.verdict && <p data-struct-verdict>{sample.verdict}</p>}
+            </div>
+          </details>
+        </article>
+      ))
+    }
+  </section>
+  <details class="text-sm text-muted-foreground">
+    <summary class="cursor-pointer">Limits and privacy</summary>
+    <p class="py-3">
+      Your PDF is sent to the server for conversion. Completed files are removed
+      after about 72 hours; queued or running jobs remain until they finish.
+      Download links expire 72 hours after submission. The demo allows 3
+      conversion attempts per network per UTC day, shared by people on that
+      network, with a global limit of 20 attempts per day. Failed submissions
+      also use the allowance. PDFs must be 10 MiB or smaller. Preconverted
+      samples are free and do not use your daily allowance.
+    </p>
+  </details>
+</section>
+<style>
+  [data-struct-device] {
+    padding: 0.5rem 0.625rem;
+    border-bottom: 2px solid transparent;
+    font-size: 0.875rem;
+  }
+  [data-struct-device][aria-pressed='true'] {
+    border-color: currentColor;
+    font-weight: 600;
+  }
+  [data-struct-device]:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+  }
+</style>
+<script>
+  import { initializeStructDemos } from '@/lib/struct-demo-client'
+  import { initializeStructPreviews } from '@/lib/struct-demo-preview'
+  initializeStructPreviews()
+  initializeStructDemos()
+  document.addEventListener('astro:page-load', () => {
+    initializeStructPreviews()
+    initializeStructDemos()
+  })
+</script>

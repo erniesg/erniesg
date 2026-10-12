@@ -44,7 +44,7 @@ const productionRelease = listingEnv.PUBLIC_RESEARCH_RELEASE === 'production'
 
 /**
  * The dev server's half of the ADR 010 redirects: a real 301 for every legacy
- * `/research` and `/study` URL, pages and files alike, from the same rules the
+ * `/papers` and `/study` URL, pages and files alike, from the same rules the
  * build turns into `_redirects` and static stubs.
  */
 function legacyRedirectsDevPlugin(): Plugin {
@@ -65,7 +65,7 @@ function legacyRedirectsDevPlugin(): Plugin {
 }
 
 /**
- * The build's half: once Astro has emitted `/papers` and `/library`, write a
+ * The build's half: once Astro has emitted `/research` and `/library`, write a
  * redirect for every legacy URL that now lives there. Derived from the output,
  * so a new page or asset cannot ship without its redirect.
  */

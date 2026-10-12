@@ -22,7 +22,7 @@
     "margin:build": "tsc -p packages/margin/tsconfig.build.json",
     "build": "npm run build:production",
     "build:astro": "astro check && astro build",
-    "build:production": "PUBLIC_RESEARCH_RELEASE=production npm run build:astro && PUBLIC_RESEARCH_RELEASE=production node tools/deployment/apply-release-gate.mjs && npm run publication:build -- --adapter astro --entry moving-to-cloudflare-with-astro --output .agent/evidence/publication && npm run publication:check -- --input .agent/evidence/publication --matrix phone-webpub,eink-epub,a5-pdf,a4-pdf",
+    "build:production": "PUBLIC_RESEARCH_RELEASE=production npm run build:astro && PUBLIC_RESEARCH_RELEASE=production node tools/deployment/apply-release-gate.mjs && node tools/translation/pages.mjs apply --dist dist --catalog .translation/pages.json && node tools/translation/pages-sitemap.mjs --dist dist --catalog .translation/pages.json && npm run publication:build -- --adapter astro --entry moving-to-cloudflare-with-astro --output .agent/evidence/publication && npm run publication:check -- --input .agent/evidence/publication --matrix phone-webpub,eink-epub,a5-pdf,a4-pdf",
     "build:staging": "PUBLIC_RESEARCH_RELEASE=staging npm run build:astro",
     "srt:export": "PUBLIC_RESEARCH_RELEASE=staging astro check && PUBLIC_RESEARCH_RELEASE=staging astro build --outDir .agent/evidence/srt-export",
     "srt:checkpoint-evidence": "playwright install chromium && node tools/srt-source-output-evidence.mjs",
@@ -55,7 +55,7 @@
     "srt:overlay-evidence": "node tools/pdf-diagnostic-evidence.mjs",
     "worker:build": "npm run build:production",
     "worker:deploy:preview": "npm run build:staging && wrangler deploy --config wrangler.jsonc --message \"Deploy ernie.sg Workers preview\"",
-    "worker:deploy:production": "npm run build:production && wrangler deploy --config wrangler.production.jsonc --message \"Deploy ernie.sg Workers production\"",
+    "worker:deploy:production": "npm run content:publish && wrangler deploy --config wrangler.production.jsonc --message \"Deploy ernie.sg Workers production\"",
     "worker:rollback:dry-run": "wrangler delete erniesg-workers --config wrangler.production.jsonc --dry-run",
     "worker:rollback": "wrangler delete erniesg-workers --config wrangler.production.jsonc --force",
     "worker:verify": "node tools/deployment/verify-cloudflare.mjs",
@@ -78,7 +78,8 @@
     "translate:test": "vitest run tools/translation/*.test.mjs",
     "i18n:check": "vitest run src/lib/i18n.test.ts",
     "content:check": "npm run translate:audit && npm run translate:check && npm run i18n:check && npm run build",
-    "content:publish": "npm run translate:codex-sync -- --write && npm run translate:codex-review && npm run translate:codex-revise -- --write && npm run translate:codex-review && npm run translate:codex-revise -- --write && npm run translate:codex-review -- --strict-publish && npm run i18n:check && npm run build"
+    "content:publish": "npm run build:source-production && node tools/translation/run-publish.mjs && npm run translate:audit && npm run translate:check -- --strict-publish && npm run i18n:check && npm run build:production",
+    "build:source-production": "PUBLIC_RESEARCH_RELEASE=production npm run build:astro && PUBLIC_RESEARCH_RELEASE=production node tools/deployment/apply-release-gate.mjs"
   },
   "dependencies": {
     "@astrojs/react": "^6.0.1",

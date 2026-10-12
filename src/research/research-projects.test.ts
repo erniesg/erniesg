@@ -38,9 +38,11 @@ describe('research programme framing', () => {
     expect(projects).toContain('structProject')
     expect(projects).toContain('First supporting milestone')
     expect(projects).toContain('href={structProject.demoPath}')
+    expect(projects).toContain('rounded-xl border p-4')
+    expect(projects).toContain('hover:bg-secondary/50')
   })
 
-  it('uses one landing heading and whitespace without repeated research labels or decorative rules', async () => {
+  it('uses one landing heading and a project card without repeated research labels or decorative rules', async () => {
     const landing = await parse(source('src/pages/research/index.astro'))
     const projects = await parse(
       source('src/components/research/ResearchProjects.astro'),
@@ -53,7 +55,7 @@ describe('research programme framing', () => {
         expect(node.name).not.toBe('hr')
         const classes =
           node.attributes.find(({ name }) => name === 'class')?.value ?? ''
-        expect(classes).not.toMatch(/(?:^|\s)border(?:-[^\s]+)?(?:\s|$)/u)
+        expect(classes).not.toMatch(/(?:^|\s)border-b(?:\s|$)/u)
       }
       if (node.type === 'expression')
         expressions.push(
@@ -99,6 +101,38 @@ describe('research programme framing', () => {
       'representingTasteProject.path',
       'structProject.demoPath',
     ])
+  })
+
+  it('uses shared breadcrumbs for the research hierarchy', () => {
+    const landing = source('src/pages/research/index.astro')
+    const programme = source(
+      'src/pages/research/representing-taste/index.astro',
+    )
+    const struct = source('src/pages/research/struct/index.astro')
+    const demo = source('src/pages/research/struct/demo/index.astro')
+
+    for (const page of [landing, programme, struct, demo]) {
+      expect(page).toContain(
+        "import Breadcrumbs from '@/components/Breadcrumbs.astro'",
+      )
+      expect(page).toContain('<Breadcrumbs')
+      expect(page).not.toMatch(/← (?:Research|Struct research)/u)
+    }
+
+    expect(landing).toContain("i18nKey: 'nav.research'")
+    expect(programme).toContain(
+      "{ label: 'Research', href: '/research/', i18nKey: 'nav.research' }",
+    )
+    expect(programme).toContain("{ label: 'REPResenting Taste' }")
+    expect(struct).toContain(
+      "{ label: 'Research', href: '/research/', i18nKey: 'nav.research' }",
+    )
+    expect(struct).toContain("{ label: 'Struct' }")
+    expect(demo).toContain(
+      "{ label: 'Research', href: '/research/', i18nKey: 'nav.research' }",
+    )
+    expect(demo).toContain("{ label: 'Struct', href: '/research/struct/' }")
+    expect(demo).toContain("{ label: 'Struct demo' }")
   })
 
   it('uses the concise REPR programme framing and planned outcome', () => {

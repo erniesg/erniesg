@@ -13,6 +13,28 @@ export function previewScale(
   return availableWidth > 0 ? Math.min(1, availableWidth / logicalWidth) : 1
 }
 
+export function createPreviewRequestGuard() {
+  let requestId: string | undefined
+  let selectionRevision = 0
+  let startedRevision = 0
+  const accepts = (candidate: unknown) =>
+    requestId !== undefined && candidate === requestId
+  return {
+    start(candidate: string) {
+      if (candidate === requestId) return
+      requestId = candidate
+      startedRevision = selectionRevision
+    },
+    selectionChanged() {
+      selectionRevision += 1
+    },
+    accepts,
+    shouldActivate(candidate: unknown) {
+      return accepts(candidate) && startedRevision === selectionRevision
+    },
+  }
+}
+
 export function initializeStructPreviews() {
   document
     .querySelectorAll<HTMLElement>('[data-struct-demo]')
@@ -53,6 +75,7 @@ export function initializeStructPreviews() {
       )
       let device: StructPreviewDevice = 'phone'
       let uploaded: { html: string; title: string } | undefined
+      const requests = createPreviewRequestGuard()
       function resize() {
         const size = STRUCT_PREVIEW_SIZES[device]
         const scale = previewScale(viewport.clientWidth, size.width)
@@ -92,7 +115,10 @@ export function initializeStructPreviews() {
         frame.title = `${title.textContent} · ${frameLabel}`
         resize()
       }
-      select.addEventListener('change', chooseSample)
+      select.addEventListener('change', () => {
+        requests.selectionChanged()
+        chooseSample()
+      })
       buttons.forEach((button) =>
         button.addEventListener('click', () => {
           const value = button.dataset.structDevice
@@ -107,15 +133,24 @@ export function initializeStructPreviews() {
           resize()
         }),
       )
+      const start = (event: Event) => {
+        if (!(event instanceof CustomEvent)) return
+        const requestId = event.detail?.requestId
+        if (typeof requestId === 'string' && requestId.length > 0)
+          requests.start(requestId)
+      }
       const ready = (event: Event) => {
         if (!(event instanceof CustomEvent)) return
         const detail = event.detail
+        if (!requests.accepts(detail?.requestId)) return
         if (detail?.error === 'preview-unavailable') {
           uploaded = undefined
           uploadedOption.textContent = uploadLabel
           uploadedOption.disabled = uploadedOption.hidden = false
-          select.value = '__upload__'
-          chooseSample()
+          if (requests.shouldActivate(detail.requestId)) {
+            select.value = '__upload__'
+            chooseSample()
+          }
           return
         }
         if (
@@ -126,9 +161,12 @@ export function initializeStructPreviews() {
         uploaded = { html: detail.html, title: detail.title }
         uploadedOption.textContent = detail.title
         uploadedOption.disabled = uploadedOption.hidden = false
-        select.value = '__upload__'
-        chooseSample()
+        if (requests.shouldActivate(detail.requestId)) {
+          select.value = '__upload__'
+          chooseSample()
+        }
       }
+      root.addEventListener('struct:preview-start', start)
       root.addEventListener('struct:preview-ready', ready)
       let animationFrame: number | undefined
       let observedWidth = viewport.clientWidth
@@ -145,6 +183,7 @@ export function initializeStructPreviews() {
         observer.disconnect()
         if (animationFrame !== undefined) cancelAnimationFrame(animationFrame)
         root.removeEventListener('struct:preview-ready', ready)
+        root.removeEventListener('struct:preview-start', start)
       }
       document.addEventListener('astro:before-swap', cleanup, { once: true })
       window.addEventListener('pagehide', cleanup, { once: true })

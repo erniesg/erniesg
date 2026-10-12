@@ -7,6 +7,8 @@ const DEFAULT_LIMITS = {
   entries: 512,
   inflatedBytes: 64 * 1024 * 1024,
   entryBytes: 8 * 1024 * 1024,
+  embeddedBytes: 16 * 1024 * 1024,
+  outputBytes: 8 * 1024 * 1024,
 }
 
 export const STRUCT_DEMO_PREVIEW_CSP =
@@ -96,10 +98,36 @@ function resolvePath(base: string, href: string) {
   return safePath(`${base.slice(0, base.lastIndexOf('/') + 1)}${path}`)
 }
 
-function dataUrl(bytes: Uint8Array, mediaType: string) {
-  let binary = ''
-  for (const byte of bytes) binary += String.fromCharCode(byte)
-  return `data:${mediaType};base64,${btoa(binary)}`
+type OutputBudget = {
+  embedded: number
+  limits: typeof DEFAULT_LIMITS
+  cache: Map<Uint8Array, string>
+}
+
+function outputBytes(value: string) {
+  return new TextEncoder().encode(value).byteLength
+}
+
+function assertOutput(value: string, maximum: number) {
+  if (outputBytes(value) > maximum) unavailable()
+}
+
+function safeStyleText(value: string) {
+  return value.replace(/</g, '\\3C ')
+}
+
+function dataUrl(bytes: Uint8Array, mediaType: string, budget: OutputBudget) {
+  let encoded = budget.cache.get(bytes)
+  if (!encoded) {
+    let binary = ''
+    for (const byte of bytes) binary += String.fromCharCode(byte)
+    encoded = btoa(binary)
+    budget.cache.set(bytes, encoded)
+  }
+  const value = `data:${mediaType};base64,${encoded}`
+  budget.embedded += outputBytes(value)
+  if (budget.embedded > budget.limits.embeddedBytes) unavailable()
+  return value
 }
 
 function safeImageBytes(bytes: Uint8Array, mediaType: string) {
@@ -153,6 +181,7 @@ function sanitizeDocument(
   source: string,
   documentPath: string,
   files: Record<string, Uint8Array>,
+  budget: OutputBudget,
 ) {
   const document = parse(source) as unknown as Node
   const visit = (node: Node) => {
@@ -189,7 +218,7 @@ function sanitizeDocument(
         const type = path ? imageMediaTypes[extension(path)] : undefined
         const bytes = path ? files[path] : undefined
         if (!type || !bytes) set('src')
-        else set('src', dataUrl(safeImageBytes(bytes, type), type))
+        else set('src', dataUrl(safeImageBytes(bytes, type), type, budget))
       }
       if (tag === 'a' || tag === 'area') {
         const href = get('href')
@@ -207,13 +236,16 @@ function sanitizeDocument(
     }
   }
   visit(document)
-  return serialize(find(document, 'body') as never)
+  const body = serialize(find(document, 'body') as never)
+  assertOutput(body, budget.limits.outputBytes)
+  return body
 }
 
 function sanitizeCss(
   source: string,
   stylesheetPath: string,
   files: Record<string, Uint8Array>,
+  budget: OutputBudget,
 ) {
   return source
     .replace(/@import[\s\S]*?(?:;|$)/gi, '')
@@ -221,7 +253,7 @@ function sanitizeCss(
       const path = resolvePath(stylesheetPath, value.trim())
       const type = path ? fontMediaTypes[extension(path)] : undefined
       const bytes = path ? files[path] : undefined
-      return type && bytes ? `url("${dataUrl(bytes, type)}")` : 'none'
+      return type && bytes ? `url("${dataUrl(bytes, type, budget)}")` : 'none'
     })
 }
 
@@ -250,6 +282,12 @@ export function compileStructDemoEpubPreview(
         )
       },
     })
+    let actualInflated = 0
+    for (const bytes of Object.values(files)) {
+      if (bytes.byteLength > limits.entryBytes) unavailable()
+      actualInflated += bytes.byteLength
+      if (actualInflated > limits.inflatedBytes) unavailable()
+    }
     const container = files['META-INF/container.xml']
     if (!container) unavailable()
     const rootPath = attr(strFromU8(container), 'full-path')
@@ -277,16 +315,38 @@ export function compileStructDemoEpubPreview(
       .flatMap((id) => (id ? [manifest.get(id)] : []))
       .filter((path): path is string => Boolean(path && files[path]))
     if (!spine.length) unavailable()
-    const css = [...manifest.values()]
-      .filter((path) => extension(path) === 'css' && files[path])
-      .map((path) => sanitizeCss(strFromU8(files[path]!), path, files))
-      .join('\n')
-    const body = spine
-      .map((path) => sanitizeDocument(strFromU8(files[path]!), path, files))
-      .join('\n')
+    const budget: OutputBudget = {
+      embedded: 0,
+      limits,
+      cache: new Map(),
+    }
+    let css = ''
+    for (const path of [...manifest.values()].filter(
+      (candidate) => extension(candidate) === 'css' && files[candidate],
+    )) {
+      css += `${css ? '\n' : ''}${sanitizeCss(
+        strFromU8(files[path]!),
+        path,
+        files,
+        budget,
+      )}`
+      assertOutput(css, limits.outputBytes)
+    }
+    let body = ''
+    for (const path of spine) {
+      body += `${body ? '\n' : ''}${sanitizeDocument(
+        strFromU8(files[path]!),
+        path,
+        files,
+        budget,
+      )}`
+      assertOutput(body, limits.outputBytes)
+    }
+    const html = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${STRUCT_DEMO_PREVIEW_CSP}"><style>${safeStyleText(css)}</style></head><body>${body}</body></html>`
+    assertOutput(html, limits.outputBytes)
     return {
       title: title.replace(/<[^>]+>/g, '').trim() || textTitle(sourceFilename),
-      html: `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${STRUCT_DEMO_PREVIEW_CSP}"><style>${css}</style></head><body>${body}</body></html>`,
+      html,
     }
   } catch {
     unavailable()

@@ -66,15 +66,20 @@ describe('completed demo EPUB preview', () => {
       'paper.epub',
       undefined,
       fetcher,
+      'preview-1',
     )
 
     expect(fetcher).toHaveBeenCalledWith(
       '/api/struct-demo/jobs/job-1/files/paper.epub',
-      expect.objectContaining({ credentials: 'same-origin' }),
+      expect.objectContaining({
+        credentials: 'same-origin',
+        redirect: 'error',
+      }),
     )
     expect(events).toHaveLength(1)
     expect(events[0]!.detail).toMatchObject({
       title: 'Ready preview',
+      requestId: 'preview-1',
       html: expect.stringContaining('<h1>Read me</h1>'),
     })
   })
@@ -93,14 +98,54 @@ describe('completed demo EPUB preview', () => {
 
     await loadStructDemoEpubPreview(
       root,
-      '/private.epub',
+      '/api/struct-demo/jobs/job-1/files/paper.epub',
       'paper.epub',
       undefined,
       fetcher,
+      'preview-2',
     )
 
     expect(events.map((event) => event.detail)).toEqual([
-      { error: 'preview-unavailable' },
+      { error: 'preview-unavailable', requestId: 'preview-2' },
     ])
+  })
+
+  it('rejects off-contract and redirected download responses before parsing', async () => {
+    const root = new EventTarget()
+    const events: CustomEvent[] = []
+    root.addEventListener('struct:preview-ready', (event) =>
+      events.push(event as CustomEvent),
+    )
+    const fetcher = vi.fn()
+
+    await loadStructDemoEpubPreview(
+      root,
+      'https://example.test/book.epub',
+      'paper.epub',
+      undefined,
+      fetcher,
+      'preview-3',
+    )
+
+    expect(fetcher).not.toHaveBeenCalled()
+    expect(events.map((event) => event.detail)).toEqual([
+      { error: 'preview-unavailable', requestId: 'preview-3' },
+    ])
+
+    const redirected = new Response(new Uint8Array([80, 75]))
+    Object.defineProperty(redirected, 'redirected', { value: true })
+    fetcher.mockResolvedValueOnce(redirected)
+    await loadStructDemoEpubPreview(
+      root,
+      '/api/struct-demo/jobs/job-1/files/paper.epub',
+      'paper.epub',
+      undefined,
+      fetcher,
+      'preview-4',
+    )
+    expect(events.at(-1)?.detail).toEqual({
+      error: 'preview-unavailable',
+      requestId: 'preview-4',
+    })
   })
 })

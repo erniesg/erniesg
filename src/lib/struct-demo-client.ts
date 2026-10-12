@@ -48,12 +48,24 @@ async function readBoundedEpub(response: Response, signal?: AbortSignal) {
   return bytes
 }
 
-function previewUnavailable(root: EventTarget) {
+function previewUnavailable(root: EventTarget, requestId: string) {
   root.dispatchEvent(
     new CustomEvent('struct:preview-ready', {
-      detail: { error: 'preview-unavailable' },
+      detail: { error: 'preview-unavailable', requestId },
     }),
   )
+}
+
+function validPreviewRoute(href: string, filename: string) {
+  const match = href.match(
+    /^\/api\/struct-demo\/jobs\/([A-Za-z0-9_-]{1,128})\/files\/([^/?#]+)$/,
+  )
+  if (!match || !validJob(match[1])) return false
+  try {
+    return decodeURIComponent(match[2]!) === filename && validEpub(filename)
+  } catch {
+    return false
+  }
 }
 
 export async function loadStructDemoEpubPreview(
@@ -62,20 +74,26 @@ export async function loadStructDemoEpubPreview(
   filename: string,
   signal?: AbortSignal,
   fetcher: typeof fetch = fetch,
+  requestId = 'struct-preview-direct',
 ) {
   try {
+    if (!validPreviewRoute(href, filename)) throw new Error('Invalid preview')
     const response = await fetcher(href, {
       credentials: 'same-origin',
       signal,
+      redirect: 'error',
     })
-    if (!response.ok) throw new Error('EPUB is unavailable')
+    if (!response.ok || response.redirected)
+      throw new Error('EPUB is unavailable')
     const preview = compileStructDemoEpubPreview(
       await readBoundedEpub(response, signal),
       filename,
     )
     if (signal?.aborted) return
     root.dispatchEvent(
-      new CustomEvent('struct:preview-ready', { detail: preview }),
+      new CustomEvent('struct:preview-ready', {
+        detail: { ...preview, requestId },
+      }),
     )
   } catch (error) {
     if (
@@ -83,7 +101,7 @@ export async function loadStructDemoEpubPreview(
       (error instanceof DOMException && error.name === 'AbortError')
     )
       return
-    previewUnavailable(root)
+    previewUnavailable(root, requestId)
   }
 }
 
@@ -114,6 +132,7 @@ export function initializeStructDemos() {
       retry.textContent = copy().retry
       refresh.textContent = copy().refresh
       const abort = new AbortController()
+      let previewAbort = new AbortController()
       let timer: ReturnType<typeof setTimeout> | undefined
       let active = true
       let busy = false
@@ -121,6 +140,22 @@ export function initializeStructDemos() {
       let maxBytes = MAX_BYTES
       let jobId: string | undefined
       let pollUntil = 0
+      let previewSequence = 0
+      let previewRequestId: string | undefined
+      const startPreview = (previewJobId?: string) => {
+        previewAbort.abort()
+        previewAbort = new AbortController()
+        previewRequestId = `struct-preview-${Date.now().toString(36)}-${++previewSequence}`
+        root.dispatchEvent(
+          new CustomEvent('struct:preview-start', {
+            detail: {
+              requestId: previewRequestId,
+              ...(previewJobId ? { jobId: previewJobId } : {}),
+            },
+          }),
+        )
+        return previewRequestId
+      }
       const say = (message: string) => {
         if (active) status.textContent = message
       }
@@ -238,10 +273,12 @@ export function initializeStructDemos() {
                 root,
                 previewHref,
                 previewName,
-                abort.signal,
+                previewAbort.signal,
+                fetch,
+                previewRequestId,
               )
             } else {
-              previewUnavailable(root)
+              previewUnavailable(root, previewRequestId ?? startPreview(jobId))
             }
             return
           }
@@ -333,6 +370,7 @@ export function initializeStructDemos() {
           }
           if (!active) return
           say(copy().uploading)
+          startPreview()
           await submitJob(`${API}/jobs`, {
             method: 'POST',
             body: file,
@@ -358,6 +396,7 @@ export function initializeStructDemos() {
           busy = true
           controls()
           downloads.replaceChildren()
+          startPreview()
           say(copy().requestPaper)
           status.scrollIntoView({ block: 'center', behavior: 'auto' })
           void submitJob(`${API}/samples/${sampleId}`, { method: 'POST' })
@@ -374,6 +413,7 @@ export function initializeStructDemos() {
       if (validJob(saved)) {
         jobId = saved
         busy = true
+        startPreview(jobId)
         pollUntil = Date.now() + POLL_DURATION
         void poll()
       }
@@ -382,6 +422,7 @@ export function initializeStructDemos() {
         active = false
         clearTimeout(timer)
         abort.abort()
+        previewAbort.abort()
       }
       document.addEventListener('astro:before-swap', cleanup, { once: true })
       window.addEventListener('pagehide', cleanup, { once: true })

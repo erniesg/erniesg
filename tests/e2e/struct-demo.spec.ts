@@ -603,9 +603,19 @@ test('uploaded documents use the same sandboxed preview and show a localized fal
   await setup(page)
   await page.goto('/research/struct/demo/')
   await page.evaluate(() =>
+    document
+      .querySelector('[data-struct-demo]')!
+      .dispatchEvent(
+        new CustomEvent('struct:preview-start', {
+          detail: { requestId: 'upload-test' },
+        }),
+      ),
+  )
+  await page.evaluate(() =>
     document.querySelector('[data-struct-demo]')!.dispatchEvent(
       new CustomEvent('struct:preview-ready', {
         detail: {
+          requestId: 'upload-test',
           html: '<!doctype html><html><body><h1>Uploaded document</h1><script>parent.document.body.dataset.unsafe="yes"</script></body></html>',
           title: 'original.pdf',
         },
@@ -628,10 +638,99 @@ test('uploaded documents use the same sandboxed preview and show a localized fal
   await page.evaluate(() =>
     document.querySelector('[data-struct-demo]')!.dispatchEvent(
       new CustomEvent('struct:preview-ready', {
-        detail: { error: 'preview-unavailable' },
+        detail: { requestId: 'upload-test', error: 'preview-unavailable' },
       }),
     ),
   )
   await expect(page.locator('[data-struct-preview-error]')).toBeVisible()
   await expect(page.locator('[data-struct-preview-frame]')).toBeHidden()
 })
+
+for (const outcome of ['success', 'failure'] as const) {
+  test(`late ${outcome} preserves the reader's newer sample and ignores older request tokens`, async ({
+    page,
+  }) => {
+    await setup(page)
+    await page.goto('/research/struct/demo/')
+    await page.evaluate(() =>
+      document
+        .querySelector('[data-struct-demo]')!
+        .dispatchEvent(
+          new CustomEvent('struct:preview-start', {
+            detail: { requestId: 'A' },
+          }),
+        ),
+    )
+    await page.getByLabel('Existing paper').selectOption('ai-must-die')
+    const detail =
+      outcome === 'success'
+        ? { requestId: 'A', html: '<h1>A result</h1>', title: 'A.pdf' }
+        : { requestId: 'A', error: 'preview-unavailable' }
+    await page.evaluate(
+      (value) =>
+        document
+          .querySelector('[data-struct-demo]')!
+          .dispatchEvent(
+            new CustomEvent('struct:preview-ready', { detail: value }),
+          ),
+      detail,
+    )
+    await expect(page.getByLabel('Existing paper')).toHaveValue('ai-must-die')
+    await expect(page.locator('[data-struct-preview-frame]')).toHaveAttribute(
+      'src',
+      '/research/struct/samples/ai-must-die/content.html',
+    )
+    await expect(page.locator('[data-struct-preview-error]')).toBeHidden()
+    if (outcome === 'success') {
+      await page.getByLabel('Existing paper').selectOption('__upload__')
+      await expect(
+        page
+          .frameLocator('[data-struct-preview-frame]')
+          .getByRole('heading', { name: 'A result' }),
+      ).toBeVisible()
+      await page.getByLabel('Existing paper').selectOption('ai-must-die')
+    }
+    await page.evaluate(() =>
+      document
+        .querySelector('[data-struct-demo]')!
+        .dispatchEvent(
+          new CustomEvent('struct:preview-start', {
+            detail: { requestId: 'B' },
+          }),
+        ),
+    )
+    await page.evaluate(
+      (value) =>
+        document
+          .querySelector('[data-struct-demo]')!
+          .dispatchEvent(
+            new CustomEvent('struct:preview-ready', { detail: value }),
+          ),
+      detail,
+    )
+    await expect(page.getByLabel('Existing paper')).toHaveValue('ai-must-die')
+    await expect(page.locator('[data-struct-preview-error]')).toBeHidden()
+    await page.evaluate(() =>
+      document
+        .querySelector('[data-struct-demo]')!
+        .dispatchEvent(
+          new CustomEvent('struct:preview-ready', {
+            detail: {
+              requestId: 'B',
+              html: '<h1>B result</h1>',
+              title: 'B.pdf',
+            },
+          }),
+        ),
+    )
+    await expect(page.getByLabel('Existing paper')).toHaveValue('__upload__')
+    await expect(page.locator('[data-struct-upload-option]')).toHaveText(
+      'B.pdf',
+    )
+    await expect(
+      page
+        .frameLocator('[data-struct-preview-frame]')
+        .getByRole('heading', { name: 'B result' }),
+    ).toBeVisible()
+  })
+}

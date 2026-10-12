@@ -377,6 +377,10 @@ describe('struct demo EPUB preview compiler', () => {
       'OPS/one.xhtml': magicCrcBody,
       'OPS/two.xhtml': '<html><body>two</body></html>',
     })
+    const signed = withDataDescriptor(valid, 'OPS/one.xhtml', true)
+    expect(
+      compileStructDemoEpubPreview(signed, 'descriptor.epub').html,
+    ).toContain('descriptor')
     const unsigned = withDataDescriptor(valid, 'OPS/one.xhtml', false)
     expect(
       compileStructDemoEpubPreview(unsigned, 'descriptor.epub').html,

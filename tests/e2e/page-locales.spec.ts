@@ -124,13 +124,22 @@ test.describe('completed localized artifact', () => {
 async function directLocaleRoutes(page: Page) {
   await installStaticRoutes(page)
   if (process.env.SRT_STATIC_BUILD_DIR) return
-  await page.route('**/research/{zh,ja,ko}/', async (route) => {
+  await page.route('**/{research,about}/{zh,ja,ko}/', async (route) => {
     const locale = new URL(route.request().url()).pathname
       .split('/')
       .filter(Boolean)
       .at(-1) as keyof typeof LOCALE_EXPECTATIONS
+    const section = new URL(route.request().url()).pathname
+      .split('/')
+      .filter(Boolean)[0]
+    const paths = {
+      en: `/${section}/`,
+      zh: `/${section}/zh/`,
+      ja: `/${section}/ja/`,
+      ko: `/${section}/ko/`,
+    }
     const response = await route.fetch({
-      url: new URL('/research/', route.request().url()).href,
+      url: new URL(`/${section}/`, route.request().url()).href,
     })
     const html = (await response.text())
       .replace(
@@ -143,7 +152,13 @@ async function directLocaleRoutes(page: Page) {
       )
       .replace(
         '</head>',
-        '<script id="site-locale-paths" type="application/json">{"en":"/research/","zh":"/research/zh/","ja":"/research/ja/","ko":"/research/ko/"}</script></head>',
+        `<script id="site-locale-paths" type="application/json">${JSON.stringify(paths)}</script></head>`,
+      )
+      .replace(/<a\b[^>]*data-i18n-key="nav\.[^"]*"[^>]*>/g, (tag) =>
+        tag.replace(
+          /href="\/(blog|research|about|tags)\/?"/,
+          (_, section) => `href="/${section}/${locale}/"`,
+        ),
       )
     await route.fulfill({ response, body: html })
   })
@@ -226,7 +241,25 @@ test('updates the persisted header to an incoming native document without creati
   )
   await expect(page.locator('html')).toHaveAttribute('lang', 'zh-Hans')
   await expect(page.locator('[data-language-trigger]')).toContainText('中')
-  if (process.env.SRT_STATIC_BUILD_DIR)
-    await expect(page.locator('header nav a[href="/about/zh/"]')).toBeVisible()
+  await expect(page.locator('header nav a[href="/about/zh/"]')).toBeVisible()
+  expect(await page.evaluate(() => localStorage.getItem('siteLang'))).toBeNull()
+})
+
+test('mobile navigation keeps a native Chinese reader on localized About without a saved preference', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await directLocaleRoutes(page)
+  await page.goto('/research/zh/')
+  await page.locator('header button.md\\:hidden').click()
+  const about = page.getByRole('menuitem', { name: '关于', exact: true })
+  await expect(about).toHaveAttribute('href', '/about/zh/')
+  await about.click()
+  await expect(page).toHaveURL(/\/about\/zh\/$/)
+  await expect(page.locator('html')).toHaveAttribute('lang', 'zh-Hans')
+  await page.locator('header button.md\\:hidden').click()
+  await expect(
+    page.getByRole('menuitem', { name: '研究', exact: true }),
+  ).toHaveAttribute('href', '/research/zh/')
   expect(await page.evaluate(() => localStorage.getItem('siteLang'))).toBeNull()
 })

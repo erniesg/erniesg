@@ -36,6 +36,7 @@ const siteLocaleChangeEvent = SITE_LOCALE_CHANGE_EVENT
     <div class="flex flex-wrap items-center justify-between gap-4 py-4">
       <Link
         href="/"
+        data-header-link="/"
         class="flex flex-shrink-0 items-center gap-2 text-xl font-semibold transition-colors duration-300 hover:text-primary"
       >
         <Image src={logo} alt="Logo" class="size-8" />
@@ -47,6 +48,7 @@ const siteLocaleChangeEvent = SITE_LOCALE_CHANGE_EVENT
             NAV_LINKS.map((item) => (
               <Link
                 href={item.href}
+                data-header-link={item.href}
                 class="capitalize text-foreground/60 transition-colors hover:text-foreground/80"
                 data-i18n-key={`nav.${item.label}`}
               >
@@ -205,6 +207,23 @@ const siteLocaleChangeEvent = SITE_LOCALE_CHANGE_EVENT
       }
     })
   }
+
+  document.addEventListener('astro:before-swap', (event) => {
+    // The incoming Header contains links already checked and localized by the
+    // build. Copy those hrefs before Astro discards it in favor of this one.
+    const incomingLinks = new Map(
+      Array.from(
+        event.newDocument.querySelectorAll('header [data-header-link]'),
+      ).map((link) => [
+        link.getAttribute('data-header-link'),
+        link.getAttribute('href'),
+      ]),
+    )
+    document.querySelectorAll('header [data-header-link]').forEach((link) => {
+      const href = incomingLinks.get(link.getAttribute('data-header-link'))
+      if (href) link.setAttribute('href', href)
+    })
+  })
 
   document.addEventListener('astro:page-load', () => {
     const preferredLocale = getPreferredLocale()

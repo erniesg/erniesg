@@ -19,7 +19,7 @@ test.describe('completed localized artifact', () => {
   ) {
     const expected = LOCALE_EXPECTATIONS[locale]
     await expect(page.locator('html')).toHaveAttribute('lang', expected.html)
-    await expect(page.locator('main h1').first()).toHaveText(
+    await expect(page.locator('main').getByRole('heading').first()).toHaveText(
       expected.characters,
     )
     await expect(page.locator('main')).toContainText(expected.characters)
@@ -33,7 +33,10 @@ test.describe('completed localized artifact', () => {
     page,
   }) => {
     await installStaticRoutes(page)
-    await page.addInitScript(() => localStorage.setItem('siteLang', 'zh'))
+    await page.addInitScript(() => {
+      if (!localStorage.getItem('siteLang'))
+        localStorage.setItem('siteLang', 'zh')
+    })
 
     await page.goto('/research/zh/')
     await expectLocalizedProse(page, 'zh')
@@ -192,7 +195,7 @@ test('honors an explicit saved English choice over a linked Chinese document', a
   page,
 }) => {
   await directLocaleRoutes(page)
-  await page.evaluate(() => localStorage.setItem('siteLang', 'en'))
+  await page.addInitScript(() => localStorage.setItem('siteLang', 'en'))
   await page.goto('/research/zh/')
   await expect(page).toHaveURL(/\/research\/$/)
   await expect(page.locator('html')).toHaveAttribute('lang', 'en')

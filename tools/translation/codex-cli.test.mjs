@@ -8,24 +8,70 @@ import {
 import { translationSourceForProvider } from './providers.mjs'
 
 describe('local Codex translation provider', () => {
-  it('builds high-effort read-only codex exec args for structured JSON', () => {
+  it('builds high-effort tool-free Codex args with a fixed permission profile', () => {
     const args = buildCodexExecArgs({
       cwd: '/repo',
       schemaPath: '/tmp/schema.json',
       outputPath: '/tmp/output.json',
       reasoningEffort: 'high',
-      sandbox: 'read-only',
+      sandbox: 'danger-full-access',
       search: true,
       model: 'gpt-5.5',
     })
 
-    expect(args).toContain('--search')
+    expect(args).not.toContain('--search')
     expect(args).toContain('exec')
     expect(args).toContain('--skip-git-repo-check')
     expect(args).toContain('--cd')
     expect(args).toContain('/repo')
-    expect(args).toContain('--sandbox')
-    expect(args).toContain('read-only')
+    expect(args).not.toContain('--sandbox')
+    expect(args).not.toContain('danger-full-access')
+    expect(args).toContain('default_permissions="erniesg-translation"')
+    expect(args).toContain(
+      'permissions.erniesg-translation.network.enabled=false',
+    )
+    expect(args).toContain('web_search="disabled"')
+    expect(args).toContain('approval_policy="never"')
+    expect(args).toContain('mcp_servers.openaiDeveloperDocs.enabled=false')
+    for (const feature of [
+      'shell_tool',
+      'unified_exec',
+      'apps',
+      'plugins',
+      'code_mode_host',
+      'browser_use',
+      'computer_use',
+      'multi_agent',
+      'hooks',
+      'skill_search',
+      'view_image',
+      'image_generation',
+      'workspace_dependencies',
+      'memories',
+      'multi_agent_v2',
+      'browser_use_external',
+      'in_app_browser',
+    ]) {
+      const index = args.indexOf(feature)
+      expect(index).toBeGreaterThan(0)
+      expect(args[index - 1]).toBe('--disable')
+    }
+    const policy = args.find((arg) =>
+      arg.startsWith('permissions.erniesg-translation.filesystem='),
+    )
+    for (const denied of [
+      ':workspace_roots',
+      '/home/ubuntu',
+      '/root',
+      '/tmp',
+      '/opt',
+      '/var',
+      '/proc',
+      '/etc/pdf2epub',
+    ]) {
+      expect(policy).toContain(`"${denied}" = "deny"`)
+    }
+    expect(policy).toContain('":minimal" = "read"')
     expect(args).toContain('--output-schema')
     expect(args).toContain('/tmp/schema.json')
     expect(args).toContain('--output-last-message')

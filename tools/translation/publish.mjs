@@ -6,7 +6,17 @@ import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import fg from 'fast-glob'
 import matter from 'gray-matter'
-import { getManifestTarget, isProtectedPath, sha256 } from './content.mjs'
+import {
+  canWriteExistingTarget,
+  getManifestTarget,
+  isProtectedPath,
+  sha256,
+} from './content.mjs'
+import {
+  acquirePublisherLease,
+  commitPublisherTransaction,
+  recoverPublisherTransaction,
+} from './publisher-transaction.mjs'
 
 export const TRUSTED_VM_ALIAS = 'erniesg-ai-vm'
 export const VM_RUNNER_VERSION = 'v1'
@@ -27,6 +37,14 @@ const MACHINE = new Set([
   'google',
   'gemini',
 ])
+const PROVIDER_SOURCE = {
+  codex: 'codex',
+  'codex-cli': 'codex',
+  openai: 'openai',
+  anthropic: 'anthropic',
+  google: 'google',
+  gemini: 'gemini',
+}
 const hash = (value) => crypto.createHash('sha256').update(value).digest('hex')
 const sidecar = (file) =>
   /^src\/content\/blog\/.+\/(?:zh|ja|ko)\.mdx$/u.test(file)
@@ -112,11 +130,20 @@ async function assertTree(root, expected, label) {
     if (hash(await regularFile(root, file)) !== expected[file])
       throw new Error(`${label} changed: ${file}`)
 }
-async function assertKnown(root, expected, label) {
+async function assertKnown(root, expected, label, expectedFiles) {
+  const actualFiles = await files(root, INPUT_PATTERNS)
+  if (
+    actualFiles.length !== expectedFiles.length ||
+    actualFiles.some((file, index) => file !== expectedFiles[index])
+  )
+    throw new Error(`${label} changed: inventory`)
   for (const [file, expectedHash] of Object.entries(expected)) {
     const actual = await regularFile(root, file)
       .then(hash)
-      .catch((error) => (error.code === 'ENOENT' ? null : null))
+      .catch((error) => {
+        if (error.code === 'ENOENT') return null
+        throw error
+      })
     if (actual !== expectedHash) throw new Error(label + ' changed: ' + file)
   }
 }
@@ -190,6 +217,7 @@ async function checkSidecar(
   const sourceRaw = await fs
     .readFile(path.join(stage.path, source), 'utf8')
     .catch(() => null)
+  const sourceLocale = sourceRaw ? (matter(sourceRaw).data?.lang ?? 'en') : null
   if (
     data.lang !== path.basename(file, '.mdx') ||
     data.translationStatus !== 'machine' ||
@@ -199,7 +227,11 @@ async function checkSidecar(
     target.targetSha256 !== sha256(raw) ||
     target.sourcePath !== source ||
     !sourceRaw ||
-    target.sourceSha256 !== sha256(sourceRaw)
+    target.sourceSha256 !== sha256(sourceRaw) ||
+    !Object.hasOwn(PROVIDER_SOURCE, target.provider) ||
+    PROVIDER_SOURCE[target.provider] !== data.translationSource ||
+    target.targetLocale !== path.basename(file, '.mdx') ||
+    target.sourceLocale !== sourceLocale
   )
     throw new Error(`Invalid returned machine sidecar: ${file}`)
   const old = await fs
@@ -212,14 +244,15 @@ async function checkSidecar(
   }
   if (sha256(old) === sha256(raw))
     throw new Error(`Returned sidecar is unchanged: ${file}`)
-  const oldData = matter(old).data ?? {}
   const oldTarget = getManifestTarget(inputManifest, file)
   if (
-    isProtectedPath(file, config) ||
-    oldData.translationStatus !== 'machine' ||
-    !MACHINE.has(oldData.translationSource) ||
-    oldTarget?.status !== 'machine' ||
-    oldTarget.targetSha256 !== sha256(old)
+    !canWriteExistingTarget({
+      filePath: file,
+      config,
+      frontmatter: matter(old).data ?? {},
+      manifestTarget: oldTarget,
+      currentText: old,
+    })
   )
     throw new Error(`Refusing unsafe existing target: ${file}`)
 }
@@ -262,10 +295,17 @@ export function createTrustedVmPublishScript() {
   const runner = VM_RUNNER_ROOT
   return `set -euo pipefail
 runner="${runner}"
+for component in "$runner" "$runner/trusted-runner.py" "$runner/publish-output.mjs" "$runner/sync.mjs" "$runner/check-quality.mjs" "$runner/revise.mjs" "$runner/pages.mjs" "$runner/publish-merge-pages.mjs"; do
+  [ ! -L "$component" ] || { echo "Untrusted runner link: $component" >&2; exit 1; }
+  [ "$(/usr/bin/stat -c '%U' "$component")" = root ] || { echo "Untrusted runner owner: $component" >&2; exit 1; }
+  mode="$(/usr/bin/stat -c '%a' "$component")"; (( (8#$mode & 18) == 0 )) || { echo "Writable runner component: $component" >&2; exit 1; }
+  kind="$(/usr/bin/stat -c '%F' "$component")"; if [ "$component" = "$runner" ]; then [ "$kind" = directory ] || exit 1; else [ "$kind" = 'regular file' ] || exit 1; fi
+done
+/usr/bin/python3 "$runner/trusted-runner.py" verify >&2
 workdir="$(mktemp -d /tmp/erniesg-localization-XXXXXX)"; trap 'rm -rf "$workdir"' EXIT
 mkdir -p "$workdir/input" "$workdir/output"; tar -xzf - -C "$workdir/input"; cd "$workdir/input"
 node "$runner/publish-output.mjs" snapshot --root "$workdir/input" --snapshot "$workdir/snapshot.json" >&2
-export TRANSLATION_PROVIDER=codex-cli CODEX_TRANSLATION_SEARCH=0 CODEX_TRANSLATION_REVIEW_CONCURRENCY=1 CODEX_TRANSLATION_REVISION_CONCURRENCY=1
+export TRANSLATION_PROVIDER=codex-cli TRANSLATION_TRANSLATE_PROVIDER=codex-cli TRANSLATION_REVIEW_PROVIDER=codex-cli CODEX_TRANSLATION_SEARCH=0 CODEX_TRANSLATION_REVIEW_CONCURRENCY=1 CODEX_TRANSLATION_REVISION_CONCURRENCY=1
 node "$runner/sync.mjs" --write >&2
 node "$runner/check-quality.mjs" --refresh-review >&2
 node "$runner/revise.mjs" --write >&2
@@ -331,39 +371,11 @@ export async function runTrustedVmPublish({
     await fs.rm(list, { force: true })
   }
 }
-async function preflightTargets(repoRoot, paths, fileOps = fs) {
-  for (const file of paths) {
-    if (!safe(file)) throw new Error(`Unsafe target path: ${file}`)
-    const target = path.join(repoRoot, file)
-    const stat = await fileOps
-      .lstat(target)
-      .catch((error) =>
-        error.code === 'ENOENT' ? null : Promise.reject(error),
-      )
-    if (stat && (!stat.isFile() || stat.isSymbolicLink()))
-      throw new Error(`Target must be a regular file: ${file}`)
-    for (
-      let parent = path.dirname(target);
-      parent.startsWith(repoRoot);
-      parent = path.dirname(parent)
-    ) {
-      const parentStat = await fileOps
-        .lstat(parent)
-        .catch((error) =>
-          error.code === 'ENOENT' ? null : Promise.reject(error),
-        )
-      if (parentStat?.isSymbolicLink())
-        throw new Error(`Target parent must not be a symbolic link: ${file}`)
-      if (parent === repoRoot) break
-    }
-  }
-}
 export async function applyValidatedPublishArtifacts({
   stage,
   outputRoot,
   repoRoot = process.cwd(),
   validatedResult,
-  fileOps = fs,
 } = {}) {
   const result =
     validatedResult ??
@@ -378,63 +390,28 @@ export async function applyValidatedPublishArtifacts({
       throw new Error(`Returned artifact changed while preparing: ${file}`)
     output.set(file, bytes)
   }
-  await assertKnown(repoRoot, expected, 'Checkout inputs')
-  await preflightTargets(repoRoot, [...output.keys()], fileOps)
-  const prepared = []
-  const committed = []
-  try {
-    for (const [file, bytes] of output) {
-      const target = path.join(repoRoot, file)
-      const before = await fileOps
-        .readFile(target)
-        .catch((error) =>
-          error.code === 'ENOENT' ? null : Promise.reject(error),
-        )
-      if (before && hash(before) === hash(bytes)) continue
-      await fileOps.mkdir(path.dirname(target), { recursive: true })
-      const temp = `${target}.translation-publish-${crypto.randomUUID()}`
-      await fileOps.writeFile(temp, bytes, { flag: 'wx', mode: 0o600 })
-      prepared.push({ temp, target, before })
-    }
-    await assertKnown(repoRoot, expected, 'Checkout inputs')
-    for (const entry of prepared) {
-      await fileOps.rename(entry.temp, entry.target)
-      committed.push(entry)
-    }
-  } catch (error) {
-    for (const entry of committed.reverse())
-      entry.before === null
-        ? await fileOps.rm(entry.target, { force: true })
-        : await fileOps.writeFile(entry.target, entry.before)
-    await Promise.all(
-      prepared.map(({ temp }) => fileOps.rm(temp, { force: true })),
-    )
-    throw error
+  await assertKnown(repoRoot, expected, 'Checkout inputs', stage.files)
+  const entries = []
+  for (const [relative, bytes] of output) {
+    const beforeBytes = await fs
+      .readFile(path.join(repoRoot, relative))
+      .catch((error) => {
+        if (error.code === 'ENOENT') return null
+        throw error
+      })
+    if (beforeBytes && hash(beforeBytes) === hash(bytes)) continue
+    entries.push({ relative, bytes, beforeBytes })
   }
-  return result.files
-}
-export async function acquirePublishLock({
-  repoRoot = process.cwd(),
-  lockPath = path.join(
+  if (!entries.length) return []
+  return commitPublisherTransaction({
     repoRoot,
-    'generated',
-    'tmp',
-    '.translation-publisher.lock',
-  ),
-} = {}) {
-  await fs.mkdir(path.dirname(lockPath), { recursive: true })
-  await fs.mkdir(lockPath).catch((error) => {
-    if (error.code === 'EEXIST')
-      throw new Error('Translation publish already running locally.')
-    throw error
+    entries,
+    beforeCommit: () =>
+      assertKnown(repoRoot, expected, 'Checkout inputs', stage.files),
   })
-  let released = false
-  return async () => {
-    if (!released) {
-      released = true
-      await fs.rm(lockPath, { recursive: true, force: true })
-    }
-  }
+}
+export async function acquirePublishLock({ repoRoot = process.cwd() } = {}) {
+  return acquirePublisherLease({ repoRoot })
 }
 async function archiveNames(archivePath, verbose = false) {
   return new Promise((resolve, reject) => {
@@ -459,6 +436,7 @@ export async function runPublish({
 } = {}) {
   const release = await acquirePublishLock({ repoRoot })
   try {
+    await recoverPublisherTransaction({ repoRoot })
     const stage = await createPublishStage({ repoRoot, runId })
     const archivePath = `${stage.path}.returned.tar.gz`
     await runTrustedVmPublish({ stage, vmAlias, archivePath })

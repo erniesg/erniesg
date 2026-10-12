@@ -12,6 +12,30 @@ const digest = (bytes) =>
 const sidecar = (file) =>
   /^src\/content\/blog\/.+\/(?:zh|ja|ko)\.mdx$/u.test(file)
 
+export function validatePublishInputMetadata(config, manifest) {
+  const locales = new Set(['en', 'zh', 'ja', 'ko'])
+  for (const list of [config.supportedLocales, config.requiredPublishLocales]) {
+    if (list && (!Array.isArray(list) || list.some(locale => !locales.has(locale))))
+      throw new Error('Unsupported publication locale configuration')
+  }
+  if (config.defaultLocale && !locales.has(config.defaultLocale))
+    throw new Error('Unsupported publication source locale')
+  const safePath = value => typeof value === 'string' && !/[\x00-\x1f\\]/u.test(value) && !value.split('/').some(part => part === '.' || part === '..')
+  const sourcePath = value => safePath(value) && /^src\/content\/blog\/[^/]+\/index\.mdx$/u.test(value)
+  for (const family of Object.values(manifest.families ?? {})) {
+    if (!sourcePath(family.sourcePath) || (family.sourceLocale && !locales.has(family.sourceLocale)))
+      throw new Error('Publication manifest contains an unsafe source reference')
+    for (const [locale, target] of Object.entries(family.targets ?? {})) {
+      if (!locales.has(locale) || !safePath(target.path) || !sidecar(target.path) || path.dirname(target.path) !== path.dirname(family.sourcePath) ||
+          (target.sourcePath && !sourcePath(target.sourcePath) && !sidecar(target.sourcePath)) ||
+          (target.status === 'machine' && target.sourcePath !== family.sourcePath))
+        throw new Error('Publication manifest contains an unsafe target reference')
+      if (target.qualityReportPath && (!safePath(target.qualityReportPath) || !/^\.translation\/reports\/[^/]+\.json$/u.test(target.qualityReportPath)))
+        throw new Error('Publication manifest contains an unsafe review reference')
+    }
+  }
+}
+
 export async function snapshotPublishInputs(root) {
   const config = JSON.parse(
     await fs.readFile(path.join(root, '.translation/config.json'), 'utf8'),
@@ -19,6 +43,7 @@ export async function snapshotPublishInputs(root) {
   const manifest = JSON.parse(
     await fs.readFile(path.join(root, '.translation/manifest.json'), 'utf8'),
   )
+  validatePublishInputMetadata(config, manifest)
   const entries = {}
   for (const file of await fg('src/content/blog/**/*', {
     cwd: root,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import * as fs from 'node:fs/promises'
 import {
+  access,
   mkdtemp,
   mkdir,
   readFile,
@@ -72,7 +72,7 @@ async function fixture() {
 
 async function validMachineOutput(
   root,
-  { body = '译文', pages = { pages: {} } } = {},
+  { body = '译文', pages = { pages: {} }, target = {} } = {},
 ) {
   const output = await mkdtemp(
     path.join(os.tmpdir(), 'translation-publish-output-'),
@@ -99,9 +99,13 @@ async function validMachineOutput(
             zh: {
               path: 'src/content/blog/post/zh.mdx',
               status: 'machine',
+              provider: 'codex-cli',
+              targetLocale: 'zh',
+              sourceLocale: 'en',
               sourcePath: 'src/content/blog/post/index.mdx',
               sourceSha256: sha256(source),
               targetSha256: sha256(translation),
+              ...target,
             },
           },
         },
@@ -254,6 +258,54 @@ describe('translation publish bridge', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  it.each([
+    [
+      'a new English source post',
+      'src/content/blog/new-post/index.mdx',
+      '---\nlang: en\n---\nNew source\n',
+    ],
+    [
+      'a new rendered HTML page',
+      'dist/new-page/index.html',
+      '<p>New rendered page</p>\n',
+    ],
+  ])(
+    'refuses application if %s appears after staging',
+    async (_label, newFile, text) => {
+      const root = await fixture()
+      try {
+        const stage = await createPublishStage({
+          repoRoot: root,
+          runId: `new-input-${newFile.includes('dist') ? 'html' : 'post'}`,
+        })
+        const { output } = await validMachineOutput(root)
+        try {
+          await mkdir(path.dirname(path.join(root, newFile)), {
+            recursive: true,
+          })
+          await writeFile(path.join(root, newFile), text)
+          const before = await bytes(root, [
+            '.translation/manifest.json',
+            '.translation/pages.json',
+            'src/content/blog/post/zh.mdx',
+          ])
+          await expect(
+            applyValidatedPublishArtifacts({
+              stage,
+              outputRoot: output,
+              repoRoot: root,
+            }),
+          ).rejects.toThrow(/Checkout inputs changed/)
+          expect(await bytes(root, Object.keys(before))).toEqual(before)
+        } finally {
+          await rm(output, { recursive: true, force: true })
+        }
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    },
+  )
 
   it('rejects a returned artifact that changes protected input bytes', async () => {
     const root = await fixture()
@@ -418,6 +470,44 @@ describe('translation publish bridge', () => {
     }
   })
 
+  it('rejects a returned manifest that omits a human-owned sidecar record', async () => {
+    const root = await fixture()
+    try {
+      await writeFile(
+        path.join(root, '.translation', 'manifest.json'),
+        JSON.stringify({
+          families: {
+            post: {
+              targets: {
+                zh: {
+                  path: 'src/content/blog/post/zh.mdx',
+                  status: 'human',
+                  note: 'do not replace',
+                },
+              },
+            },
+          },
+        }),
+      )
+      const stage = await createPublishStage({
+        repoRoot: root,
+        runId: 'human-record',
+      })
+      const { output } = await validMachineOutput(root)
+      try {
+        await expect(
+          validateReturnedPublishArtifacts({ stage, outputRoot: output }),
+        ).rejects.toThrow(
+          /protected translation entry changed: families\.post\.targets\.zh/,
+        )
+      } finally {
+        await rm(output, { recursive: true, force: true })
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('rejects a sidecar whose returned provenance or source and target hashes are malformed', async () => {
     const root = await fixture()
     try {
@@ -437,6 +527,63 @@ describe('translation publish bridge', () => {
         await expect(
           validateReturnedPublishArtifacts({ stage, outputRoot: output }),
         ).rejects.toThrow(/Invalid returned machine sidecar/)
+      } finally {
+        await rm(output, { recursive: true, force: true })
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    ['missing provider', {}],
+    ['mismatched provider', { provider: 'openai' }],
+    ['mismatched target locale', { targetLocale: 'ja' }],
+    ['mismatched source locale', { sourceLocale: 'zh' }],
+  ])('rejects a returned machine sidecar with %s', async (_label, target) => {
+    const root = await fixture()
+    try {
+      const stage = await createPublishStage({
+        repoRoot: root,
+        runId: `machine-${_label.replaceAll(' ', '-')}`,
+      })
+      const { output } = await validMachineOutput(root, { target })
+      try {
+        if (_label === 'missing provider') {
+          const manifestPath = path.join(
+            output,
+            '.translation',
+            'manifest.json',
+          )
+          const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+          delete manifest.families.post.targets.zh.provider
+          await writeFile(manifestPath, JSON.stringify(manifest))
+        }
+        await expect(
+          validateReturnedPublishArtifacts({ stage, outputRoot: output }),
+        ).rejects.toThrow(/Invalid returned machine sidecar/)
+      } finally {
+        await rm(output, { recursive: true, force: true })
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('accepts canonical codex-cli provenance paired with codex frontmatter', async () => {
+    const root = await fixture()
+    try {
+      const stage = await createPublishStage({
+        repoRoot: root,
+        runId: 'canonical-codex',
+      })
+      const { output } = await validMachineOutput(root)
+      try {
+        await expect(
+          validateReturnedPublishArtifacts({ stage, outputRoot: output }),
+        ).resolves.toMatchObject({
+          files: expect.arrayContaining(['src/content/blog/post/zh.mdx']),
+        })
       } finally {
         await rm(output, { recursive: true, force: true })
       }
@@ -479,6 +626,9 @@ describe('translation publish bridge', () => {
                   zh: {
                     path: 'src/content/blog/post/zh.mdx',
                     status: 'machine',
+                    provider: 'codex-cli',
+                    targetLocale: 'zh',
+                    sourceLocale: 'en',
                     sourcePath: 'src/content/blog/post/index.mdx',
                     sourceSha256: sha256(source),
                     targetSha256: sha256(translation),
@@ -509,6 +659,17 @@ describe('translation publish bridge', () => {
             'utf8',
           ),
         ).toContain('译文')
+        await expect(
+          access(
+            path.join(
+              root,
+              'generated',
+              'tmp',
+              '.translation-transaction',
+              'journal.json',
+            ),
+          ),
+        ).rejects.toMatchObject({ code: 'ENOENT' })
       } finally {
         await rm(output, { recursive: true, force: true })
       }
@@ -562,65 +723,6 @@ describe('translation publish bridge', () => {
     },
   )
 
-  it.each([2, 3])(
-    'rolls every target back when atomic application rename %i fails',
-    async (failureAt) => {
-      const root = await fixture()
-      try {
-        await writeFile(
-          path.join(root, '.translation', 'pages.json'),
-          '{"pages":{}}\n',
-        )
-        const stage = await createPublishStage({
-          repoRoot: root,
-          runId: `rollback-${failureAt}`,
-        })
-        const { output } = await validMachineOutput(root, {
-          pages: { pages: {}, translations: {} },
-        })
-        try {
-          const tracked = [
-            '.translation/manifest.json',
-            '.translation/pages.json',
-            'src/content/blog/post/zh.mdx',
-          ]
-          const before = await bytes(root, tracked)
-          const originalRename = fs.rename
-          let calls = 0
-          const operations = {
-            ...fs,
-            rename: async (...args) => {
-              calls += 1
-              if (calls === failureAt) {
-                const error = new Error('simulated rename failure')
-                error.code = 'EIO'
-                throw error
-              }
-              return originalRename(...args)
-            },
-          }
-          try {
-            await expect(
-              applyValidatedPublishArtifacts({
-                stage,
-                outputRoot: output,
-                repoRoot: root,
-                fileOps: operations,
-              }),
-            ).rejects.toThrow(/simulated rename failure/)
-          } finally {
-            // `operations` is test-local; no global filesystem patch is needed.
-          }
-          expect(await bytes(root, tracked)).toEqual(before)
-        } finally {
-          await rm(output, { recursive: true, force: true })
-        }
-      } finally {
-        await rm(root, { recursive: true, force: true })
-      }
-    },
-  )
-
   it('preflights an existing non-file target before changing any other artifact', async () => {
     const root = await fixture()
     try {
@@ -650,6 +752,49 @@ describe('translation publish bridge', () => {
           }),
         ).rejects.toThrow(
           /Checkout inputs changed|Target must be a regular file|Regular files only/,
+        )
+        expect(await bytes(root, Object.keys(before))).toEqual(before)
+      } finally {
+        await rm(output, { recursive: true, force: true })
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('does not treat an unexpected symlink at a new translation target as absent', async () => {
+    const root = await fixture()
+    try {
+      const stage = await createPublishStage({
+        repoRoot: root,
+        runId: 'new-target-symlink',
+      })
+      const { output } = await validMachineOutput(root)
+      try {
+        const target = path.join(
+          root,
+          'src',
+          'content',
+          'blog',
+          'post',
+          'zh.mdx',
+        )
+        await symlink(
+          path.join(root, 'src', 'content', 'blog', 'post', 'index.mdx'),
+          target,
+        )
+        const before = await bytes(root, [
+          '.translation/manifest.json',
+          '.translation/pages.json',
+        ])
+        await expect(
+          applyValidatedPublishArtifacts({
+            stage,
+            outputRoot: output,
+            repoRoot: root,
+          }),
+        ).rejects.toThrow(
+          /Symbolic links are not allowed|Target must be a regular file/,
         )
         expect(await bytes(root, Object.keys(before))).toEqual(before)
       } finally {

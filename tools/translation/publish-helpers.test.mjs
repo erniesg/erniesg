@@ -6,6 +6,7 @@ import { mergePageLocaleCatalogs } from './publish-merge-pages.mjs'
 import {
   exportPublishOutputs,
   snapshotPublishInputs,
+  validatePublishInputMetadata,
 } from './publish-output.mjs'
 import { sha256 } from './content.mjs'
 
@@ -79,12 +80,23 @@ async function outputFixture() {
   const manifest = {
     families: {
       post: {
+        sourcePath: 'src/content/blog/post/index.mdx',
+        sourceLocale: 'en',
         targets: {
           ja: {
             path: 'src/content/blog/post/ja.mdx',
+            sourcePath: 'src/content/blog/post/index.mdx',
             status: 'machine',
             provider: 'codex-cli',
             targetSha256: sha256(machine),
+          },
+          zh: {
+            path: 'src/content/blog/post/zh.mdx',
+            // A native inherited translation can legitimately identify itself
+            // as its source, rather than pretending to be derived from English.
+            sourcePath: 'src/content/blog/post/zh.mdx',
+            status: 'final',
+            provider: 'human',
           },
         },
       },
@@ -184,6 +196,73 @@ describe('publish page catalog merge', () => {
 })
 
 describe('trusted publish output boundary', () => {
+  it('accepts canonical family metadata and native self-sourced sidecars', () => {
+    const manifest = {
+      families: {
+        post: {
+          sourcePath: 'src/content/blog/post/index.mdx',
+          sourceLocale: 'en',
+          targets: {
+            zh: {
+              path: 'src/content/blog/post/zh.mdx',
+              sourcePath: 'src/content/blog/post/zh.mdx',
+              status: 'final',
+              provider: 'human',
+            },
+          },
+        },
+      },
+    }
+    expect(() =>
+      validatePublishInputMetadata(
+        { supportedLocales: ['en', 'zh', 'ja', 'ko'], defaultLocale: 'en' },
+        manifest,
+      ),
+    ).not.toThrow()
+  })
+
+  it('rejects unsafe manifest paths and unsupported requested locales before reading inputs', () => {
+    const valid = {
+      families: {
+        post: {
+          sourcePath: 'src/content/blog/post/index.mdx',
+          sourceLocale: 'en',
+          targets: {
+            ja: {
+              path: 'src/content/blog/post/ja.mdx',
+              sourcePath: 'src/content/blog/post/index.mdx',
+              status: 'machine',
+              provider: 'codex-cli',
+            },
+          },
+        },
+      },
+    }
+    expect(() =>
+      validatePublishInputMetadata(
+        { requiredPublishLocales: ['../../private'] },
+        valid,
+      ),
+    ).toThrow(/Unsupported publication locale configuration/)
+    for (const mutate of [
+      manifest => {
+        manifest.families.post.sourcePath = '/private/source.mdx'
+      },
+      manifest => {
+        manifest.families.post.targets.ja.qualityReportPath = '../private.json'
+      },
+      manifest => {
+        manifest.families.post.targets.ja.sourcePath = '../../private/index.mdx'
+      },
+    ]) {
+      const manifest = clone(valid)
+      mutate(manifest)
+      expect(() => validatePublishInputMetadata({}, manifest)).toThrow(
+        /unsafe (source|target|review) reference/,
+      )
+    }
+  })
+
   it('exports metadata plus only changed or new verified machine sidecars', async () => {
     const fixture = await outputFixture()
     const output = await mkdtemp(

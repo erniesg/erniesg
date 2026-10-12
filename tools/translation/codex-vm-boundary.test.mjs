@@ -1,7 +1,12 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { runCodexStructuredJson, verifyCodexTrustedVm } from './codex-cli.mjs'
+import {
+  codexChildEnvironment,
+  inspectCodexHostConfig,
+  runCodexStructuredJson,
+  verifyCodexTrustedVm,
+} from './codex-cli.mjs'
 
 const machineId = '0123456789abcdef0123456789abcdef'
 const markerPath = '/etc/erniesg-translation-publisher.json'
@@ -29,6 +34,62 @@ function fixture({
 afterEach(() => vi.restoreAllMocks())
 
 describe('Codex provider trusted VM boundary', () => {
+  it('removes credentials, publisher controls and capability overrides from child environment', () => {
+    expect(
+      codexChildEnvironment({
+        PATH: '/usr/bin',
+        HOME: '/home/ubuntu',
+        LANG: 'en_US.UTF-8',
+        LC_ALL: 'C',
+        TMPDIR: '/tmp',
+        CODEX_HOME: '/home/ubuntu/.codex',
+        OPENAI_API_KEY: 'test',
+        SSH_AUTH_SOCK: '/tmp/socket',
+        PUBLISHER_SECRET: 'test',
+        CODEX_TRANSLATION_MODEL: 'override',
+        CODEX_TRANSLATION_SEARCH: '1',
+      }),
+    ).toEqual({
+      PATH: '/usr/bin',
+      HOME: '/home/ubuntu',
+      LANG: 'en_US.UTF-8',
+      LC_ALL: 'C',
+      TMPDIR: '/tmp',
+      CODEX_HOME: '/home/ubuntu/.codex',
+    })
+  })
+
+  it('accepts the known host MCP server, which is disabled in fixed command arguments', () => {
+    expect(() =>
+      inspectCodexHostConfig(
+        'model = "configured-model"\n[mcp_servers.openaiDeveloperDocs]\nurl = "https://developers.openai.com/mcp"\n',
+      ),
+    ).not.toThrow()
+  })
+
+  it('accepts quoted project, plugin and agent metadata namespaces', () => {
+    expect(() =>
+      inspectCodexHostConfig(
+        '[projects."/home/ubuntu/code/site"]\ntrust_level = "trusted"\n[plugins."name@marketplace"]\nenabled = true\n[agents."editor.worker"]\nconfig_file = "/home/ubuntu/agent.toml"\n',
+      ),
+    ).not.toThrow()
+  })
+
+  it.each([
+    'sandbox_mode = "danger-full-access"',
+    '[profiles.publisher]\nsandbox_mode = "workspace-write"',
+    '[mcp_servers.other]\ncommand = "provider"',
+    'mcp_servers = { other = { command = "provider" } }',
+    '["mcp_servers".other]\ncommand = "provider"',
+    '"mcp_servers" = {}',
+    '["\\u006dcp_servers".other]\ncommand = "provider"',
+    '"\\u0073andbox_mode" = "danger-full-access"',
+    'description = """multiline"""',
+  ])('rejects legacy or unsupported host configuration: %s', (config) => {
+    expect(() => inspectCodexHostConfig(config)).toThrow(
+      'Codex host configuration',
+    )
+  })
   it('accepts only a root-owned assertion matching the actual Linux machine', async () => {
     await expect(
       verifyCodexTrustedVm({ platform: 'linux', filesystem: fixture() }),

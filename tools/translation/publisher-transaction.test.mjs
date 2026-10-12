@@ -506,3 +506,256 @@ describe('publisher transaction', () => {
     }
   })
 })
+
+describe('descriptor-pinned conditional publication', () => {
+  const entries = [
+    {
+      relative: '.translation/pages.json',
+      beforeBytes: Buffer.from('{"before":true}\n'),
+      bytes: Buffer.from('{"after":true}\n'),
+    },
+    {
+      relative: 'src/content/blog/post/zh.mdx',
+      beforeBytes: Buffer.from('before\n'),
+      bytes: Buffer.from('after\n'),
+    },
+  ]
+  const transactionDir = (root) =>
+    path.join(root, 'generated/tmp/.translation-transaction')
+
+  it('pins the actual target directory when its pathname becomes an outside symlink', async () => {
+    const root = await fixture()
+    const outside = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'publisher-pin-outside-'),
+    )
+    try {
+      await fs.writeFile(path.join(outside, 'pages.json'), 'outside edit\n')
+      await expect(
+        commitPublisherTransaction({
+          repoRoot: root,
+          entries,
+          onTransactionStep: async ({ boundary, relative }) => {
+            if (boundary !== 'prepared' || relative !== entries[0].relative)
+              return
+            await fs.rename(
+              path.join(root, '.translation'),
+              path.join(root, '.translation-original'),
+            )
+            await fs.symlink(outside, path.join(root, '.translation'))
+          },
+        }),
+      ).rejects.toThrow(/symbolic-link|unsafe/)
+      expect(await fs.readFile(path.join(outside, 'pages.json'), 'utf8')).toBe(
+        'outside edit\n',
+      )
+      expect(await fs.readdir(outside)).toEqual(['pages.json'])
+      expect(await fs.readdir(transactionDir(root))).toContain('active')
+    } finally {
+      await fs.rm(root, { recursive: true, force: true })
+      await fs.rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  for (const boundary of ['prepared', 'quarantined']) {
+    it(`preserves an external install edit made at ${boundary}`, async () => {
+      const root = await fixture()
+      try {
+        await expect(
+          commitPublisherTransaction({
+            repoRoot: root,
+            entries,
+            onTransactionStep: async (step) => {
+              if (
+                step.boundary === boundary &&
+                step.relative === entries[0].relative
+              )
+                await fs.writeFile(
+                  path.join(root, step.relative),
+                  'external edit\n',
+                )
+            },
+          }),
+        ).rejects.toThrow(/changed|exists/)
+        expect(await body(root, entries[0].relative)).toBe('external edit\n')
+        expect(await fs.readdir(transactionDir(root))).toContain('active')
+        await expect(
+          recoverPublisherTransaction({ repoRoot: root }),
+        ).rejects.toThrow(/changed/)
+        expect(await body(root, entries[0].relative)).toBe('external edit\n')
+      } finally {
+        await fs.rm(root, { recursive: true, force: true })
+      }
+    })
+  }
+
+  for (const boundary of ['prepared', 'quarantined', 'installed']) {
+    it(`recovers SIGKILL at the ${boundary} replacement boundary`, async () => {
+      const root = await fixture()
+      try {
+        const script = `
+          import { commitPublisherTransaction } from ${JSON.stringify(moduleUrl)};
+          await commitPublisherTransaction({ repoRoot: ${JSON.stringify(root)},
+            entries: ${JSON.stringify(entries.map(({ relative, beforeBytes, bytes }) => ({ relative, before: beforeBytes.toString(), after: bytes.toString() })))}.map(e => ({relative:e.relative,beforeBytes:Buffer.from(e.before),bytes:Buffer.from(e.after)})),
+            onTransactionStep: async ({boundary}) => { if(boundary === ${JSON.stringify(boundary)}) process.kill(process.pid, 'SIGKILL') }
+          });
+        `
+        await expect(
+          execFile(process.execPath, ['--input-type=module', '-e', script]),
+        ).rejects.toMatchObject({ signal: 'SIGKILL' })
+        await recoverPublisherTransaction({ repoRoot: root })
+        expect(await body(root, entries[0].relative)).toBe(
+          entries[0].beforeBytes.toString(),
+        )
+        expect(await body(root, entries[1].relative)).toBe(
+          entries[1].beforeBytes.toString(),
+        )
+        expect(await fs.readdir(transactionDir(root))).toEqual([])
+      } finally {
+        await fs.rm(root, { recursive: true, force: true })
+      }
+    })
+  }
+
+  for (const boundary of ['prepared', 'quarantined']) {
+    it(`preserves an external restore edit made at ${boundary}`, async () => {
+      const root = await fixture()
+      try {
+        const script = `
+          import { commitPublisherTransaction } from ${JSON.stringify(moduleUrl)};
+          await commitPublisherTransaction({ repoRoot: ${JSON.stringify(root)},
+            entries: ${JSON.stringify(entries.map(({ relative, beforeBytes, bytes }) => ({ relative, before: beforeBytes.toString(), after: bytes.toString() })))}.map(e => ({relative:e.relative,beforeBytes:Buffer.from(e.before),bytes:Buffer.from(e.after)})),
+            onCommitStep: async () => process.kill(process.pid, 'SIGKILL')
+          });
+        `
+        await expect(
+          execFile(process.execPath, ['--input-type=module', '-e', script]),
+        ).rejects.toMatchObject({ signal: 'SIGKILL' })
+        await expect(
+          recoverPublisherTransaction({
+            repoRoot: root,
+            onTransactionStep: async (step) => {
+              if (step.phase === 'restore' && step.boundary === boundary)
+                await fs.writeFile(
+                  path.join(root, step.relative),
+                  'external restore edit\n',
+                )
+            },
+          }),
+        ).rejects.toThrow(/changed|exists/)
+        expect(await body(root, entries[0].relative)).toBe(
+          'external restore edit\n',
+        )
+        expect(await fs.readdir(transactionDir(root))).toContain('active')
+      } finally {
+        await fs.rm(root, { recursive: true, force: true })
+      }
+    })
+  }
+
+  it('serializes two stale-lease contenders and preserves the winning live lease', async () => {
+    const root = await fixture()
+    let release
+    try {
+      const lock = path.join(root, 'generated/tmp/.translation-publisher.lock')
+      await fs.mkdir(path.dirname(lock), { recursive: true })
+      await fs.writeFile(
+        lock,
+        JSON.stringify({ pid: 999999, hostname: os.hostname() }),
+      )
+      const results = await Promise.allSettled([
+        acquirePublisherLease({ repoRoot: root }),
+        acquirePublisherLease({ repoRoot: root }),
+      ])
+      expect(
+        results.filter((result) => result.status === 'fulfilled'),
+      ).toHaveLength(1)
+      expect(
+        results.filter((result) => result.status === 'rejected'),
+      ).toHaveLength(1)
+      release = results.find((result) => result.status === 'fulfilled').value
+      const winner = await fs.readFile(lock, 'utf8')
+      await expect(acquirePublisherLease({ repoRoot: root })).rejects.toThrow(
+        /already running/,
+      )
+      expect(await fs.readFile(lock, 'utf8')).toBe(winner)
+      expect(JSON.parse(winner).pid).toBe(process.pid)
+    } finally {
+      if (release) await release()
+      await fs.rm(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('rollback interruption protocol', () => {
+  for (const boundary of ['prepared', 'quarantined', 'installed']) {
+    it(`recovers SIGKILL during rollback at ${boundary}`, async () => {
+      const root = await fixture()
+      try {
+        const script = `
+          import { commitPublisherTransaction } from ${JSON.stringify(moduleUrl)};
+          await commitPublisherTransaction({ repoRoot: ${JSON.stringify(root)}, entries: [
+            {relative: '.translation/pages.json', beforeBytes: Buffer.from('{"before":true}\\n'), bytes: Buffer.from('{"after":true}\\n')},
+            {relative: 'src/content/blog/post/zh.mdx', beforeBytes: Buffer.from('before\\n'), bytes: Buffer.from('after\\n')}
+          ], onCommitStep: async () => process.kill(process.pid, 'SIGKILL') });
+        `
+        await expect(
+          execFile(process.execPath, ['--input-type=module', '-e', script]),
+        ).rejects.toMatchObject({ signal: 'SIGKILL' })
+        const recovery = `
+          import { recoverPublisherTransaction } from ${JSON.stringify(moduleUrl)};
+          await recoverPublisherTransaction({repoRoot: ${JSON.stringify(root)},
+            onTransactionStep: async ({boundary}) => { if(boundary === ${JSON.stringify(boundary)}) process.kill(process.pid, 'SIGKILL') }
+          });
+        `
+        await expect(
+          execFile(process.execPath, ['--input-type=module', '-e', recovery]),
+        ).rejects.toMatchObject({ signal: 'SIGKILL' })
+        await recoverPublisherTransaction({ repoRoot: root })
+        expect(await body(root, '.translation/pages.json')).toBe(
+          '{"before":true}\n',
+        )
+        expect(await body(root, 'src/content/blog/post/zh.mdx')).toBe(
+          'before\n',
+        )
+        expect(
+          await fs.readdir(
+            path.join(root, 'generated/tmp/.translation-transaction'),
+          ),
+        ).toEqual([])
+      } finally {
+        await fs.rm(root, { recursive: true, force: true })
+      }
+    })
+  }
+
+  it('uses no-replace for newly created artifacts', async () => {
+    const root = await fixture()
+    try {
+      await fs.unlink(path.join(root, '.translation/pages.json'))
+      await expect(
+        commitPublisherTransaction({
+          repoRoot: root,
+          entries: [
+            {
+              relative: '.translation/pages.json',
+              beforeBytes: null,
+              bytes: Buffer.from('published\n'),
+            },
+          ],
+          onTransactionStep: async ({ boundary }) => {
+            if (boundary === 'quarantined')
+              await fs.writeFile(
+                path.join(root, '.translation/pages.json'),
+                'external new file\n',
+              )
+          },
+        }),
+      ).rejects.toThrow(/exists/)
+      expect(await body(root, '.translation/pages.json')).toBe(
+        'external new file\n',
+      )
+    } finally {
+      await fs.rm(root, { recursive: true, force: true })
+    }
+  })
+})

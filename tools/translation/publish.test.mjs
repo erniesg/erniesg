@@ -176,8 +176,9 @@ describe('translation publish bridge', () => {
     const hashes = trustedRunnerExpectedHashes()
     expect(hashes['package.json']).toMatch(/^[0-9a-f]{64}$/)
     expect(hashes['package-lock.json']).toMatch(/^[0-9a-f]{64}$/)
-    expect(hashes['trusted-runner.py']).toMatch(/^[0-9a-f]{64}$/)
-    expect(hashes['sync.mjs']).toMatch(/^[0-9a-f]{64}$/)
+    expect(hashes['tools/translation/trusted-runner.py']).toMatch(/^[0-9a-f]{64}$/)
+    expect(hashes['tools/translation/publisher-posix.py']).toMatch(/^[0-9a-f]{64}$/)
+    expect(hashes['tools/translation/sync.mjs']).toMatch(/^[0-9a-f]{64}$/)
     expect(createTrustedVmPublishScript()).toContain(
       'verify --expected-hashes "$expected_hashes"',
     )

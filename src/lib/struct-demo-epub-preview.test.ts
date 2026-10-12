@@ -52,6 +52,42 @@ const forgedStoredMetadata = () => {
   throw new Error('fixture did not contain a central directory entry')
 }
 
+const forgedDeflatedMetadata = () => {
+  const archive = zipSync({
+    'META-INF/container.xml': strToU8(container),
+    'OPS/book.opf': strToU8(opf),
+    'OPS/one.xhtml': strToU8(
+      `<html><body>${'x'.repeat(1_048_576)}</body></html>`,
+    ),
+    'OPS/two.xhtml': strToU8('<html><body>two</body></html>'),
+  })
+  const forged = archive.slice()
+  for (let offset = 0; offset < forged.length - 3; offset += 1) {
+    if (
+      forged[offset] === 0x50 &&
+      forged[offset + 1] === 0x4b &&
+      forged[offset + 2] === 0x01 &&
+      forged[offset + 3] === 0x02
+    ) {
+      const view = new DataView(
+        forged.buffer,
+        forged.byteOffset,
+        forged.byteLength,
+      )
+      const nameLength = view.getUint16(offset + 28, true)
+      const name = new TextDecoder().decode(
+        forged.slice(offset + 46, offset + 46 + nameLength),
+      )
+      if (name === 'OPS/one.xhtml') {
+        view.setUint32(offset + 24, 128, true)
+        view.setUint32(view.getUint32(offset + 42, true) + 22, 128, true)
+        return forged
+      }
+    }
+  }
+  throw new Error('fixture did not contain a central directory entry')
+}
+
 const container = `<?xml version="1.0"?><container><rootfiles><rootfile full-path="OPS/book.opf"/></rootfiles></container>`
 const opf = `<?xml version="1.0"?><package xmlns:dc="http://purl.org/dc/elements/1.1/"><metadata><dc:title>Converted paper</dc:title></metadata><manifest>
   <item id="one" href="one.xhtml" media-type="application/xhtml+xml"/>
@@ -120,6 +156,12 @@ describe('struct demo EPUB preview compiler', () => {
     expect(() =>
       compileStructDemoEpubPreview(forgedStoredMetadata(), 'forged.epub', {
         entryBytes: 512,
+      }),
+    ).toThrow('EPUB preview is unavailable.')
+    expect(() =>
+      compileStructDemoEpubPreview(forgedDeflatedMetadata(), 'forged.epub', {
+        entryBytes: 512,
+        inflatedBytes: 8 * 1024,
       }),
     ).toThrow('EPUB preview is unavailable.')
   })

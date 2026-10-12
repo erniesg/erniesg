@@ -58,9 +58,12 @@ export function trustedRunnerExpectedHashes(runnerDir = LOCAL_RUNNER_DIR) {
     .sort()
   const expected = {}
   for (const file of sourceFiles)
-    expected[file] = hash(fsSync.readFileSync(path.join(runnerDir, file)))
+    expected[`tools/translation/${file}`] = hash(
+      fsSync.readFileSync(path.join(runnerDir, file)),
+    )
   for (const [installed, local] of [
-    ['trusted-runner.py', 'trusted-runner.py'],
+    ['tools/translation/trusted-runner.py', 'trusted-runner.py'],
+    ['tools/translation/publisher-posix.py', 'publisher-posix.py'],
     ['package.json', 'runner-package.json'],
     ['package-lock.json', 'runner-package-lock.json'],
   ]) {

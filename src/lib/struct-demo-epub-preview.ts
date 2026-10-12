@@ -1,4 +1,4 @@
-import { strFromU8, unzipSync } from 'fflate'
+import { strFromU8, Unzip, UnzipInflate } from 'fflate'
 import { parse, serialize } from 'parse5'
 
 const MAX_ARCHIVE_BYTES = 32 * 1024 * 1024
@@ -257,6 +257,60 @@ function sanitizeCss(
     })
 }
 
+function archiveFilePath(name: string) {
+  return /(?:\.xml|\.opf|\.xhtml|\.html|\.css|\.(?:png|jpe?g|gif|webp|svg|woff2?|ttf|otf))$/i.test(
+    name,
+  )
+}
+
+function extractBoundedArchive(
+  archive: Uint8Array,
+  limits: typeof DEFAULT_LIMITS,
+) {
+  const files: Record<string, Uint8Array> = {}
+  let entries = 0
+  let inflated = 0
+  const unzip = new Unzip((file) => {
+    entries += 1
+    if (entries > limits.entries) unavailable()
+    const selected = archiveFilePath(file.name)
+    const chunks: Uint8Array[] = []
+    let entryBytes = 0
+    file.ondata = (error, chunk, final) => {
+      if (error) unavailable()
+      entryBytes += chunk.byteLength
+      inflated += chunk.byteLength
+      if (entryBytes > limits.entryBytes || inflated > limits.inflatedBytes) {
+        file.terminate()
+        unavailable()
+      }
+      if (selected) chunks.push(chunk)
+      if (!final || !selected) return
+      const bytes = new Uint8Array(entryBytes)
+      let offset = 0
+      for (const part of chunks) {
+        bytes.set(part, offset)
+        offset += part.byteLength
+      }
+      files[file.name] = bytes
+    }
+    file.start()
+  })
+  unzip.register(UnzipInflate)
+  const chunkSize = 256
+  for (let offset = 0; offset < archive.byteLength; offset += chunkSize) {
+    unzip.push(
+      archive.subarray(
+        offset,
+        Math.min(offset + chunkSize, archive.byteLength),
+      ),
+      offset + chunkSize >= archive.byteLength,
+    )
+  }
+  if (archive.byteLength === 0) unzip.push(archive, true)
+  return files
+}
+
 export function compileStructDemoEpubPreview(
   archive: Uint8Array,
   sourceFilename: string,
@@ -265,29 +319,7 @@ export function compileStructDemoEpubPreview(
   try {
     const limits = { ...DEFAULT_LIMITS, ...overrides }
     if (archive.byteLength > limits.archiveBytes) unavailable()
-    let entries = 0
-    let inflated = 0
-    const files = unzipSync(archive, {
-      filter(file) {
-        entries += 1
-        inflated += file.originalSize
-        if (
-          entries > limits.entries ||
-          inflated > limits.inflatedBytes ||
-          file.originalSize > limits.entryBytes
-        )
-          unavailable()
-        return /(?:\.xml|\.opf|\.xhtml|\.html|\.css|\.(?:png|jpe?g|gif|webp|svg|woff2?|ttf|otf))$/i.test(
-          file.name,
-        )
-      },
-    })
-    let actualInflated = 0
-    for (const bytes of Object.values(files)) {
-      if (bytes.byteLength > limits.entryBytes) unavailable()
-      actualInflated += bytes.byteLength
-      if (actualInflated > limits.inflatedBytes) unavailable()
-    }
+    const files = extractBoundedArchive(archive, limits)
     const container = files['META-INF/container.xml']
     if (!container) unavailable()
     const rootPath = attr(strFromU8(container), 'full-path')

@@ -1,9 +1,166 @@
 import crypto from 'node:crypto'
-import { execFile as execFileCallback } from 'node:child_process'
-import * as fs from 'node:fs/promises'
+import { execFile as execFileCallback, spawn } from 'node:child_process'
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { createInterface } from 'node:readline'
+import { fileURLToPath } from 'node:url'
+import * as nativeFs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
+
+// All repository I/O is descriptor-relative in the POSIX helper. The context
+// spans nested recovery calls and user test hooks without global fs mutation.
+const sessions = new AsyncLocalStorage()
+const leases = new Map()
+const fs = new Proxy(
+  {},
+  {
+    get:
+      (_, name) =>
+      (...args) => {
+        const session = sessions.getStore()
+        return session ? session.fs[name](...args) : nativeFs[name](...args)
+      },
+  },
+)
+
+function createSession(root) {
+  const child = spawn(
+    'python3',
+    [
+      '-u',
+      fileURLToPath(new URL('./publisher-posix.py', import.meta.url)),
+      root,
+    ],
+    {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    },
+  )
+  let sequence = 0
+  const pending = new Map()
+  let diagnostics = ''
+  child.stderr.on('data', (chunk) => {
+    diagnostics += chunk.toString()
+  })
+  child.stdin.on('error', (error) => {
+    for (const waiter of pending.values()) waiter.reject(error)
+    pending.clear()
+  })
+  const lines = createInterface({ input: child.stdout })
+  lines.on('line', (line) => {
+    const result = JSON.parse(line)
+    const waiter = pending.get(result.id)
+    if (!waiter) return
+    pending.delete(result.id)
+    if (result.error)
+      waiter.reject(
+        Object.assign(new Error(result.error), { code: result.code }),
+      )
+    else waiter.resolve(result.result)
+  })
+  const exited = new Promise((resolve) => {
+    child.on('error', (error) => {
+      for (const waiter of pending.values()) waiter.reject(error)
+      pending.clear()
+    })
+    child.on('close', (code) => {
+      for (const waiter of pending.values())
+        waiter.reject(
+          new Error(`Publisher POSIX helper exited (${code}): ${diagnostics}`),
+        )
+      pending.clear()
+      resolve()
+    })
+  })
+  const rpc = (op, values = {}) =>
+    new Promise((resolve, reject) => {
+      const id = ++sequence
+      pending.set(id, { resolve, reject })
+      child.stdin.write(
+        `${JSON.stringify({ id, op, ...values })}\n`,
+        (error) => {
+          if (error) {
+            pending.delete(id)
+            reject(error)
+          }
+        },
+      )
+    })
+  const api = {
+    realpath: nativeFs.realpath,
+    async lstat(file) {
+      const state = await rpc('stat', { path: file })
+      return {
+        ...state,
+        isDirectory: () => (state.mode & 0o170000) === 0o040000,
+        isFile: () => (state.mode & 0o170000) === 0o100000,
+        isSymbolicLink: () => (state.mode & 0o170000) === 0o120000,
+      }
+    },
+    async readFile(file, encoding) {
+      const bytes = Buffer.from(await rpc('read', { path: file }), 'base64')
+      return encoding ? bytes.toString(encoding) : bytes
+    },
+    mkdir: (file, options) => rpc('mkdir', { path: file, mode: options?.mode }),
+    readdir: (file) => rpc('list', { path: file }),
+    unlink: (file) => rpc('unlink', { path: file }),
+    rmdir: (file) => rpc('rmdir', { path: file }),
+    rename: (file, to) => rpc('rename', { path: file, to }),
+    async open(file, flags, mode) {
+      const handle = await rpc('open', { path: file, flags, mode })
+      return {
+        writeFile: (bytes) =>
+          rpc('writeHandle', {
+            handle,
+            data: Buffer.from(bytes).toString('base64'),
+          }),
+        sync: () => rpc('syncHandle', { handle }),
+        close: () => rpc('closeHandle', { handle }),
+      }
+    },
+  }
+  return {
+    root,
+    rpc,
+    fs: api,
+    close: async () => {
+      child.stdin.end()
+      await exited
+    },
+  }
+}
+
+async function inSession(options, action) {
+  if (sessions.getStore()) return action()
+  const root = await rootPath(options?.repoRoot ?? process.cwd())
+  const lease = leases.get(root)
+  if (lease) {
+    if (lease.busy)
+      throw new Error('Translation publish already running locally.')
+    lease.busy = true
+    try {
+      return await sessions.run(lease, action)
+    } finally {
+      lease.busy = false
+    }
+  }
+  const session = createSession(root)
+  try {
+    return await sessions.run(session, async () => {
+      await ensureParents(root, LOCK_RELATIVE)
+      try {
+        await session.rpc('guard')
+      } catch (error) {
+        if (error.code === 'EAGAIN' || error.code === 'EWOULDBLOCK')
+          throw new Error('Translation publish already running locally.')
+        throw error
+      }
+      return action()
+    })
+  } finally {
+    await session.close()
+  }
+}
 
 const TRANSACTION_RELATIVE = 'generated/tmp/.translation-transaction'
 const LOCK_RELATIVE = 'generated/tmp/.translation-publisher.lock'
@@ -11,7 +168,8 @@ const ACTIVE = 'active'
 const JOURNAL = 'journal.json'
 const PREPARATION = /^prepare-[0-9a-f-]+$/
 const CLEANUP = /^cleanup-[0-9a-f-]+$/
-const PRIVATE_FILE = /^(?:before|after)-[0-9]+\.bin$/
+const PRIVATE_FILE =
+  /^(?:(?:before|after)-[0-9]+\.bin|(?:displaced|replacement)-[0-9a-f]+\.bin|operation-[0-9a-f]+\.json(?:\.next)?)$/
 const execFile = promisify(execFileCallback)
 const digest = (value) =>
   crypto.createHash('sha256').update(value).digest('hex')
@@ -55,7 +213,12 @@ async function ensureParents(root, relative) {
       throw new Error(`Refusing symbolic-link publication path: ${relative}`)
     if (state && !state.isDirectory())
       throw new Error(`Publication parent is not a directory: ${relative}`)
-    if (!state) await fs.mkdir(current)
+    if (!state) {
+      await fs.mkdir(current).catch((error) => {
+        if (error.code !== 'EEXIST') throw error
+      })
+      await syncDirectory(path.dirname(current))
+    }
   }
 }
 
@@ -83,6 +246,8 @@ async function durableWrite(file, bytes, exclusive = false) {
 }
 
 async function syncDirectory(directory) {
+  const session = sessions.getStore()
+  if (session) return session.rpc('sync', { path: directory })
   const handle = await fs.open(directory, 'r')
   try {
     await handle.sync()
@@ -213,65 +378,83 @@ async function readJournal(active, root) {
   return journal
 }
 
-async function restore(root, active, entry) {
+async function conditionalReplace(
+  root,
+  active,
+  entry,
+  expected,
+  replacement,
+  source,
+  onTransactionStep,
+  phase,
+) {
+  const session = sessions.getStore()
+  const token = await session.rpc('replaceStart', {
+    target: path.join(root, entry.relative),
+    active,
+    expected,
+    replacement,
+    source,
+  })
+  if (onTransactionStep)
+    await onTransactionStep({
+      phase,
+      boundary: 'prepared',
+      relative: entry.relative,
+    })
+  await session.rpc('replaceQuarantine', { token })
+  if (onTransactionStep)
+    await onTransactionStep({
+      phase,
+      boundary: 'quarantined',
+      relative: entry.relative,
+    })
+  await session.rpc('replaceInstall', { token })
+  if (onTransactionStep)
+    await onTransactionStep({
+      phase,
+      boundary: 'installed',
+      relative: entry.relative,
+    })
+}
+
+async function restore(root, active, entry, onTransactionStep) {
   const current = await publicationTarget(root, entry.relative)
-  if (entry.beforeHash === null) {
-    if (current.bytes === null) return
-    if (digest(current.bytes) !== entry.afterHash)
-      throw new Error(
-        `Publisher recovery found changed target: ${entry.relative}`,
-      )
-    await fs.unlink(current.target)
-    await syncDirectory(path.dirname(current.target))
-    return
-  }
-  if (current.bytes !== null && digest(current.bytes) === entry.beforeHash)
-    return
-  if (current.bytes === null || digest(current.bytes) !== entry.afterHash)
+  const currentHash = current.bytes === null ? null : digest(current.bytes)
+  if (currentHash === entry.beforeHash) return
+  if (currentHash !== entry.afterHash)
     throw new Error(
       `Publisher recovery found changed target: ${entry.relative}`,
     )
-  const backup = path.join(active, entry.beforeFile)
-  const state = await lstatOrNull(backup)
-  if (!state?.isFile() || state.isSymbolicLink())
-    throw new Error('Publisher recovery backup is invalid')
-  const bytes = await fs.readFile(backup)
-  if (digest(bytes) !== entry.beforeHash)
-    throw new Error('Publisher recovery backup digest does not match')
-  const temporary = `${current.target}.translation-restore-${crypto.randomUUID()}`
-  await durableWrite(temporary, bytes, true)
-  await fs.rename(temporary, current.target)
-  await syncDirectory(path.dirname(current.target))
+  await conditionalReplace(
+    root,
+    active,
+    entry,
+    entry.afterHash,
+    entry.beforeHash,
+    entry.beforeFile,
+    onTransactionStep,
+    'restore',
+  )
 }
 
-async function verifiedAfterBytes(active, entry) {
-  const prepared = path.join(active, entry.afterFile)
-  const state = await lstatOrNull(prepared)
-  if (!state?.isFile() || state.isSymbolicLink())
-    throw new Error('Publisher prepared artifact is unsafe')
-  const bytes = await fs.readFile(prepared)
-  if (digest(bytes) !== entry.afterHash)
-    throw new Error('Publisher prepared artifact digest does not match')
-  return bytes
-}
-
-async function installVerifiedAfter(root, active, entry) {
+async function installVerifiedAfter(root, active, entry, onTransactionStep) {
   const current = await publicationTarget(root, entry.relative)
   const currentHash = current.bytes === null ? null : digest(current.bytes)
   if (currentHash !== entry.beforeHash)
     throw new Error(
       `Publisher target changed immediately before publish: ${entry.relative}`,
     )
-  const bytes = await verifiedAfterBytes(active, entry)
-  const temporary = `${current.target}.translation-publish-${crypto.randomUUID()}`
-  await durableWrite(temporary, bytes, true)
-  await fs.rename(temporary, current.target)
-  await syncDirectory(path.dirname(current.target))
-  const published = await publicationTarget(root, entry.relative)
-  if (published.bytes === null || digest(published.bytes) !== entry.afterHash)
-    throw new Error(
-      `Publisher target changed during publish: ${entry.relative}`,
-    )
+  await conditionalReplace(
+    root,
+    active,
+    entry,
+    entry.beforeHash,
+    entry.afterHash,
+    entry.afterFile,
+    onTransactionStep,
+    'install',
+  )
 }
 
 async function assertUniformState(root, journal, field) {
@@ -296,18 +479,19 @@ async function moveToCleanup(active) {
 }
 
 async function cleanupUniform(cleanup, journal, onCleanupStep) {
-  for (const entry of journal.entries)
-    for (const name of [entry.beforeFile, entry.afterFile].filter(Boolean)) {
-      const file = path.join(cleanup, name)
-      const state = await lstatOrNull(file)
-      if (state) {
-        if (!state.isFile() || state.isSymbolicLink())
-          throw new Error('Publisher private transaction artifact is unsafe')
-        await fs.unlink(file)
-        if (onCleanupStep)
-          await onCleanupStep({ phase: 'artifact', file: name })
-      }
-    }
+  for (const name of await fs.readdir(cleanup)) {
+    if (name === JOURNAL) continue
+    if (!PRIVATE_FILE.test(name))
+      throw new Error(
+        'Publisher private transaction directory contains unknown files',
+      )
+    const file = path.join(cleanup, name)
+    const state = await fs.lstat(file)
+    if (!state.isFile() || state.isSymbolicLink())
+      throw new Error('Publisher private transaction artifact is unsafe')
+    await fs.unlink(file)
+    if (onCleanupStep) await onCleanupStep({ phase: 'artifact', file: name })
+  }
   await syncDirectory(cleanup)
   const journalPath = path.join(cleanup, JOURNAL)
   const journalState = await lstatOrNull(journalPath)
@@ -341,9 +525,10 @@ async function recoverInactive(root) {
   return directory
 }
 
-export async function recoverPublisherTransaction({
+async function recoverTransaction({
   repoRoot = process.cwd(),
   onCleanupStep,
+  onTransactionStep,
 } = {}) {
   const root = await rootPath(repoRoot)
   const directory = await recoverInactive(root)
@@ -354,6 +539,9 @@ export async function recoverPublisherTransaction({
   const journal = await readJournal(active, root)
   if (!journal)
     throw new Error('Publisher active transaction is missing its journal')
+  await sessions
+    .getStore()
+    .rpc('recoverOperations', { path: active, entries: journal.entries })
   const states = []
   for (const entry of journal.entries) {
     const current = await publicationTarget(root, entry.relative)
@@ -368,14 +556,17 @@ export async function recoverPublisherTransaction({
   if (!allAfter)
     for (let index = 0; index < journal.entries.length; index += 1)
       if (states[index].after)
-        await restore(root, active, journal.entries[index])
+        await restore(root, active, journal.entries[index], onTransactionStep)
+  await sessions
+    .getStore()
+    .rpc('recoverOperations', { path: active, entries: journal.entries })
   await assertUniformState(root, journal, allAfter ? 'afterHash' : 'beforeHash')
   const cleanup = await moveToCleanup(active)
   await cleanupUniform(cleanup, journal, onCleanupStep)
   return allAfter ? 'finalized' : 'rolled-back'
 }
 
-export async function commitPublisherTransaction({
+async function commitTransaction({
   repoRoot = process.cwd(),
   entries,
   beforeCommit,
@@ -383,6 +574,7 @@ export async function commitPublisherTransaction({
   onPrepareStep,
   onJournalDurable,
   onCleanupStep,
+  onTransactionStep,
 } = {}) {
   const root = await rootPath(repoRoot)
   if (!Array.isArray(entries) || !entries.length)
@@ -463,7 +655,7 @@ export async function commitPublisherTransaction({
     }
     for (let index = 0; index < journal.entries.length; index += 1) {
       const entry = journal.entries[index]
-      await installVerifiedAfter(root, active, entry)
+      await installVerifiedAfter(root, active, entry, onTransactionStep)
       if (onCommitStep)
         await onCommitStep({
           index: index + 1,
@@ -471,6 +663,9 @@ export async function commitPublisherTransaction({
           relative: entry.relative,
         })
     }
+    await sessions
+      .getStore()
+      .rpc('recoverOperations', { path: active, entries: journal.entries })
     await assertUniformState(root, journal, 'afterHash')
     const cleanup = await moveToCleanup(active)
     await cleanupUniform(cleanup, journal, onCleanupStep)
@@ -494,8 +689,8 @@ async function processIdentity(pid) {
   if (process.platform === 'linux') {
     try {
       const [bootId, stat] = await Promise.all([
-        fs.readFile('/proc/sys/kernel/random/boot_id', 'utf8'),
-        fs.readFile(`/proc/${pid}/stat`, 'utf8'),
+        nativeFs.readFile('/proc/sys/kernel/random/boot_id', 'utf8'),
+        nativeFs.readFile(`/proc/${pid}/stat`, 'utf8'),
       ])
       const fields = stat
         .slice(stat.lastIndexOf(')') + 2)
@@ -560,7 +755,7 @@ async function ownerIsLive(owner, identityProvider) {
   )
 }
 
-export async function acquirePublisherLease({
+async function acquireLease({
   repoRoot = process.cwd(),
   identityProvider = processIdentity,
 } = {}) {
@@ -617,5 +812,46 @@ export async function acquirePublisherLease({
       await fs.unlink(lock)
       await syncDirectory(path.dirname(lock))
     }
+  }
+}
+
+export function commitPublisherTransaction(options = {}) {
+  return inSession(options, () => commitTransaction(options))
+}
+
+export function recoverPublisherTransaction(options = {}) {
+  return inSession(options, () => recoverTransaction(options))
+}
+
+export async function acquirePublisherLease(options = {}) {
+  const root = await rootPath(options.repoRoot ?? process.cwd())
+  const session = createSession(root)
+  try {
+    const release = await sessions.run(session, async () => {
+      await ensureParents(root, LOCK_RELATIVE)
+      try {
+        await session.rpc('guard')
+      } catch (error) {
+        if (error.code === 'EAGAIN' || error.code === 'EWOULDBLOCK')
+          throw new Error('Translation publish already running locally.')
+        throw error
+      }
+      return acquireLease(options)
+    })
+    leases.set(root, session)
+    let released = false
+    return async () => {
+      if (released) return
+      released = true
+      try {
+        await sessions.run(session, release)
+      } finally {
+        if (leases.get(root) === session) leases.delete(root)
+        await session.close()
+      }
+    }
+  } catch (error) {
+    await session.close()
+    throw error
   }
 }

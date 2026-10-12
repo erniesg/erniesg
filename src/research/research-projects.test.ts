@@ -1,3 +1,5 @@
+import { parse } from '@astrojs/compiler'
+import type { Node } from '@astrojs/compiler/types'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -36,6 +38,29 @@ describe('research programme framing', () => {
     expect(projects).toContain('structProject')
     expect(projects).toContain('First supporting milestone')
     expect(projects).toContain('href={structProject.demoPath}')
+  })
+
+  it('keeps programme and supporting demo links independent without nested anchors', async () => {
+    const { ast } = await parse(
+      source('src/components/research/ResearchProjects.astro'),
+    )
+    const hrefs: string[] = []
+    function visit(node: Node, insideAnchor = false) {
+      const anchor = node.type === 'element' && node.name === 'a'
+      if (anchor) {
+        expect(insideAnchor, 'a link must not contain another link').toBe(false)
+        hrefs.push(
+          node.attributes.find(({ name }) => name === 'href')?.value ?? '',
+        )
+      }
+      if ('children' in node)
+        for (const child of node.children) visit(child, insideAnchor || anchor)
+    }
+    visit(ast)
+    expect(hrefs).toEqual([
+      'representingTasteProject.path',
+      'structProject.demoPath',
+    ])
   })
 
   it('uses the concise REPR programme framing and planned outcome', () => {

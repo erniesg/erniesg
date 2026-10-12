@@ -41,6 +41,7 @@ function pageSourceHash(segments) {
         segment.kind,
         segment.attribute ?? null,
         segment.sourceText,
+        Boolean(segment.preserveOriginal),
       ]),
     ),
   )
@@ -158,6 +159,17 @@ function hasProtectedAncestor(ancestors) {
   )
 }
 
+function isPreservedReferenceText(ancestors) {
+  return (
+    ancestors.some(
+      (node) =>
+        node.tagName === 'section' &&
+        getAttr(node, 'aria-labelledby') === 'references',
+    ) &&
+    ancestors.some((node) => node.tagName === 'p' || node.tagName === 'cite')
+  )
+}
+
 export function extractPageSegments(html) {
   const document = parse(html)
   const segments = {}
@@ -170,6 +182,9 @@ export function extractPageSegments(html) {
         kind: 'text',
         sourceText: node.value,
         context: elementPath(ancestors, node.parentNode),
+        ...(isPreservedReferenceText(ancestors)
+          ? { preserveOriginal: true }
+          : {}),
       }
       return
     }
@@ -230,11 +245,12 @@ export async function extractPageCatalog({
       sourcePath: relative.split(path.sep).join('/'),
       sourceHash: pageSourceHash(segments),
       segments,
-      // Preserve human/native work for explicit reconciliation if source prose
-      // changes. Machine entries can be regenerated from the new hash.
+      // Preserve every non-machine state verbatim. Unknown states deliberately
+      // remain blocking: dropping them would let a future generator overwrite
+      // content whose ownership this tool does not understand.
       locales: Object.fromEntries(
-        Object.entries(priorLocales).filter(([, entry]) =>
-          ['native', 'edited', 'final'].includes(entry.status),
+        Object.entries(priorLocales).filter(
+          ([, entry]) => entry?.status !== 'machine',
         ),
       ),
     }
@@ -256,6 +272,7 @@ export async function extractPageCatalog({
 }
 
 function translationFor(catalog, page, entry, locale, id) {
+  if (page.segments[id].preserveOriginal) return page.segments[id].sourceText
   return (
     entry.translations?.[id] ??
     catalog.translations?.[locale]?.[page.segments[id].translationKey]?.text
@@ -404,6 +421,13 @@ function replaceHeadMetadata(document, { locale, localizedPath, alternates }) {
         { en: 'en_US', zh: 'zh_CN', ja: 'ja_JP', ko: 'ko_KR' }[locale],
       )
     }
+    if (node.tagName === 'meta' && getAttr(node, 'property') === 'og:url')
+      setAttr(node, 'content', toAbsoluteHref(localizedPath))
+    if (
+      node.tagName === 'meta' &&
+      getAttr(node, 'name') === 'site-document-locale'
+    )
+      setAttr(node, 'content', locale)
   }
   const nodes = [
     {
@@ -538,6 +562,7 @@ function applyNativeBlogCards(document, locale) {
     try {
       const content = JSON.parse(getAttr(card, 'data-localizations'))?.[locale]
       if (!content) return
+      let tagIndex = 0
       walk(card, (node) => {
         if (getAttr(node, 'data-i18n-card-link') !== undefined)
           setAttr(node, 'href', content.url)
@@ -554,6 +579,11 @@ function applyNativeBlogCards(document, locale) {
           replaceElementText(node, content.date)
         if (getAttr(node, 'data-i18n-card-read-time') !== undefined)
           replaceElementText(node, content.readTime)
+        if (getAttr(node, 'data-i18n-card-tag-label') !== undefined) {
+          const tag = content.tags?.[tagIndex]
+          tagIndex += 1
+          if (tag) replaceElementText(node, tag)
+        }
       })
     } catch {
       // A malformed card remains source HTML; it is not a translation target.
@@ -641,7 +671,9 @@ const LOCALE_SCRIPT = {
 }
 
 export function assertPageTranslations({ segments, translations, locale }) {
-  const ids = Object.keys(segments)
+  const ids = Object.keys(segments).filter(
+    (id) => !segments[id].preserveOriginal,
+  )
   const missing = ids.filter(
     (id) => typeof translations?.[id] !== 'string' || !translations[id].trim(),
   )
@@ -651,6 +683,9 @@ export function assertPageTranslations({ segments, translations, locale }) {
   // remain English. Echo detection is meaningful only for sentence-like prose.
   const prose = ids.filter((id) => {
     const source = segments[id].sourceText.trim()
+    if (/^https?:\/\/\S+$/u.test(source)) return false
+    const alphabeticWords = source.match(/\p{L}{3,}/gu) ?? []
+    if (alphabeticWords.length < 2) return false
     const words = source.match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) ?? []
     return (
       words.length >= 6 ||
@@ -701,6 +736,8 @@ export async function generatePageTranslations({
   batchLimit = 5,
   write = false,
   onPage,
+  onPartial,
+  runStructuredJson = runCodexStructuredJson,
 } = {}) {
   if (!PAGE_LOCALES.includes(locale))
     throw new Error(`Unsupported page locale: ${locale}`)
@@ -720,44 +757,74 @@ export async function generatePageTranslations({
   for (const [route, page] of candidates) {
     const ids = Object.keys(page.segments)
     const missingIds = ids.filter(
-      (id) => !result.translations[locale][page.segments[id].translationKey],
+      (id) =>
+        !page.segments[id].preserveOriginal &&
+        !result.translations[locale][page.segments[id].translationKey],
     )
     if (missingIds.length) {
-      const response = await runCodexStructuredJson({
-        systemPrompt: `Translate reader-facing website copy from English to ${locale}. Write idiomatic native web prose, not sentence-fragment literal translation; retain proper nouns, code, URLs, IDs, and claimed results exactly. For research and scientific statements, preserve uncertainty and do not invent findings, evidence, or outcomes. Return each requested id exactly once.`,
-        userPayload: {
-          route,
-          locale,
-          pagePlainText: ids
-            .map((id) => page.segments[id].sourceText)
-            .join('\n'),
-          houseStyle: styleContext,
-          segments: missingIds.map((id) => ({ id, ...page.segments[id] })),
-        },
-        schema: translationSchema(missingIds),
-      })
+      const translations = {}
+      let outstanding = missingIds
+      for (let attempt = 0; attempt < 2 && outstanding.length; attempt += 1) {
+        const response = await runStructuredJson({
+          systemPrompt: `Translate reader-facing website copy from English to ${locale}. Write idiomatic native web prose, not sentence-fragment literal translation; retain proper nouns, code, URLs, IDs, and claimed results exactly. For research and scientific statements, preserve uncertainty and do not invent findings, evidence, or outcomes. Return each requested id exactly once. Standalone fragments are required output: never drop, merge, or omit them.`,
+          userPayload: {
+            route,
+            locale,
+            pagePlainText: ids.map((id) => page.segments[id].sourceText).join('\n'),
+            houseStyle: styleContext,
+            segments: outstanding.map((id) => ({ id, ...page.segments[id] })),
+          },
+          schema: translationSchema(outstanding),
+        })
+        for (const id of outstanding) {
+          const value = response.translations?.[id]
+          if (typeof value !== 'string' || !value.trim()) continue
+          try {
+            assertPageTranslations({
+              segments: { [id]: page.segments[id] },
+              translations: { [id]: value },
+              locale,
+            })
+          } catch {
+            // Do not cache malformed, echoed, or wrong-script fragments.
+            continue
+          }
+          translations[id] = value
+          const key = page.segments[id].translationKey
+          result.translations[locale][key] = {
+            text: value,
+            status: 'machine',
+            sourceHash: result.strings?.[key]?.sourceHash ?? sha256(page.segments[id].sourceText),
+            provenance: { provider: 'codex-cli', generatedAt: new Date().toISOString() },
+          }
+        }
+        outstanding = outstanding.filter((id) => !translations[id])
+        if (Object.keys(translations).length) await onPartial?.(result, route)
+      }
+      if (outstanding.length)
+        throw new Error(`${route}: provider omitted required segments after retry: ${outstanding.join(', ')}`)
       assertPageTranslations({
         segments: Object.fromEntries(
           missingIds.map((id) => [id, page.segments[id]]),
         ),
-        translations: response.translations,
+        translations,
         locale,
       })
-      for (const id of missingIds) {
-        const key = page.segments[id].translationKey
-        result.translations[locale][key] = {
-          text: response.translations[id],
-          status: 'machine',
-          sourceHash:
-            result.strings?.[key]?.sourceHash ??
-            sha256(page.segments[id].sourceText),
-          provenance: {
-            provider: 'codex-cli',
-            generatedAt: new Date().toISOString(),
-          },
-        }
-      }
     }
+    const effectiveTranslations = Object.fromEntries(
+      ids.map((id) => [
+        id,
+        page.segments[id].preserveOriginal
+          ? page.segments[id].sourceText
+          : result.translations[locale][page.segments[id].translationKey]
+              ?.text,
+      ]),
+    )
+    assertPageTranslations({
+      segments: page.segments,
+      translations: effectiveTranslations,
+      locale,
+    })
     page.locales ??= {}
     page.locales[locale] = {
       status: 'machine',
@@ -813,6 +880,7 @@ async function main() {
       batchLimit: Number(args['batch-limit'] ?? 5),
       write: true,
       onPage: save,
+      onPartial: save,
     })
     await save(generated)
   } else

@@ -9,14 +9,16 @@ import {
   assertPageTranslations,
   checkPageCatalog,
   extractPageCatalog,
+  extractPageSegments,
+  generatePageTranslations,
   localizedInternalHref,
   localizedSitemapPaths,
   pagePathForLocale,
 } from './pages.mjs'
 
 const sourceHtml = `<!doctype html>
-<html lang="en"><head><title>Research | Ernie</title><link rel="canonical" href="https://ernie.sg/research/"></head>
-<body><main><h1 id="research">Research</h1><p>Read <a href="/research/struct/">the Struct project</a>.</p><img src="/static/research.png" alt="Research diagram"><article data-i18n-card data-localizations='{"zh":{"url":"/blog/native/zh/","title":"母语标题","description":"母语摘要","date":"今天","readTime":"3 分钟","imageAlt":"母语图片"}}'><a data-i18n-card-link href="/blog/native/"><span data-i18n-card-title>English title</span></a><p data-i18n-card-description>English description</p><span data-i18n-card-date>Today</span><span data-i18n-card-read-time>3 min</span><img data-i18n-card-image alt="English image"></article><pre><code>const untouched = true</code></pre><iframe src="https://demo.example/"></iframe></main></body></html>`
+<html lang="en"><head><title>Research | Ernie</title><link rel="canonical" href="https://ernie.sg/research/"><meta property="og:url" content="https://ernie.sg/research/"></head>
+<body><main><h1 id="research">Research</h1><p>Read <a href="/research/struct/">the Struct project</a>.</p><img src="/static/research.png" alt="Research diagram"><article data-i18n-card data-localizations='{"zh":{"url":"/blog/native/zh/","title":"母语标题","description":"母语摘要","date":"今天","readTime":"3 分钟","imageAlt":"母语图片","tags":["人工智能"]}}'><a data-i18n-card-link href="/blog/native/"><span data-i18n-card-title>English title</span></a><p data-i18n-card-description>English description</p><span data-i18n-card-date>Today</span><span data-i18n-card-read-time>3 min</span><img data-i18n-card-image alt="English image"><div data-i18n-card-tags><a href="/tags/ai/"><span data-i18n-card-tag-label>AI</span></a></div></article><pre><code>const untouched = true</code></pre><iframe src="https://demo.example/"></iframe></main></body></html>`
 const execFile = promisify(execFileCallback)
 const pagesCli = path.resolve('tools/translation/pages.mjs')
 
@@ -97,6 +99,7 @@ describe('owned page localization catalog', () => {
       expect(english).toContain('id="site-locale-paths"')
       expect(localized).toContain('<html lang="zh-Hans">')
       expect(localized).toContain('https://ernie.sg/research/zh/')
+      expect(localized).toContain('property="og:url" content="https://ernie.sg/research/zh/"')
       expect(localized).toContain('研究')
       expect(localized).toContain('href="/research/struct/"')
       expect(localized).toContain('id="research"')
@@ -104,6 +107,8 @@ describe('owned page localization catalog', () => {
       expect(localized).toContain('src="https://demo.example/"')
       expect(localized).toContain('母语标题')
       expect(localized).toContain('href="/blog/native/zh/"')
+      expect(localized).toContain('人工智能')
+      expect(localized).toContain('href="/tags/ai/"')
       expect(localized).toContain('id="site-locale-paths"')
       expect(localized).toContain('hreflang="zh"')
     } finally {
@@ -163,6 +168,34 @@ describe('owned page localization catalog', () => {
       )
       const problems = await checkPageCatalog({ distDir, catalog, locales: [] })
       expect(problems).toEqual([])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves unknown locale ownership and refuses to generate over it', async () => {
+    const { root, distDir } = await fixture()
+    const catalogPath = path.join(root, 'pages.json')
+    try {
+      const catalog = await extractPageCatalog({ distDir })
+      const page = catalog.pages['/research/']
+      page.locales.zh = {
+        status: 'external-owner',
+        sourceHash: 'old-source-hash',
+        translations: {},
+      }
+      await writeFile(catalogPath, JSON.stringify(catalog))
+      const extracted = await extractPageCatalog({ distDir, outputPath: catalogPath })
+      expect(extracted.pages['/research/'].locales.zh).toEqual(page.locales.zh)
+      const generated = await generatePageTranslations({
+        catalog: extracted,
+        locale: 'zh',
+        batchLimit: 1,
+      })
+      expect(generated.generatedRoutes).toEqual([])
+      expect(
+        await checkPageCatalog({ distDir, catalog: extracted, locales: ['zh'] }),
+      ).toContain('/research/: zh has invalid status')
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -234,6 +267,95 @@ describe('owned page localization catalog', () => {
         },
       }),
     ).toThrow(/echo English/)
+    expect(() =>
+      assertPageTranslations({
+        locale: 'ko',
+        segments: {
+          s0001: { sourceText: '11.8″ · 1620 × 2160 · 229 PPI' },
+          s0002: { sourceText: 'https://doi.org/10.1000/example' },
+        },
+        translations: {
+          s0001: '11.8″ · 1620 × 2160 · 229 PPI',
+          s0002: 'https://doi.org/10.1000/example',
+        },
+      }),
+    ).not.toThrow()
+  })
+
+  it('preserves bibliography entries while retaining a translatable references heading', () => {
+    const segments = extractPageSegments(`<!doctype html><section aria-labelledby="references"><h2 id="references">References</h2><p>Benton, G., &amp; Liu, H. (2018). <a href="https://doi.org/10.1/example">https://doi.org/10.1/example</a>. University of California Press.</p></section>`)
+    const values = Object.values(segments)
+    expect(values.find((segment) => segment.sourceText === 'References')?.preserveOriginal).toBeUndefined()
+    expect(values.find((segment) => segment.sourceText.includes('Benton'))?.preserveOriginal).toBe(true)
+    expect(values.find((segment) => segment.sourceText.includes('doi.org'))?.preserveOriginal).toBe(true)
+  })
+
+  it('retries only omitted provider fragments and retains valid partial memory', async () => {
+    const catalog = {
+      strings: {}, translations: {}, pages: {
+        '/research/': {
+          sourceHash: 'source', locales: {}, segments: {
+            s0001: { sourceText: 'Read this research report before making any conclusions.', translationKey: 'one' },
+            s0002: { sourceText: ' in Guangdong ', translationKey: 'two' },
+          },
+        },
+      },
+    }
+    const calls = []
+    const partials = []
+    const generated = await generatePageTranslations({
+      catalog, locale: 'ko', batchLimit: 1,
+      runStructuredJson: async ({ userPayload }) => {
+        calls.push(userPayload.segments.map((segment) => segment.id))
+        return calls.length === 1
+          ? { translations: { s0001: '결론을 내리기 전에 이 연구 보고서를 읽으세요.' } }
+          : { translations: { s0002: ' 광둥에서 ' } }
+      },
+      onPartial: async (next) => partials.push(next.translations.ko.one?.text),
+    })
+    expect(calls).toEqual([['s0001', 's0002'], ['s0002']])
+    expect(partials).toContain('결론을 내리기 전에 이 연구 보고서를 읽으세요.')
+    expect(generated.catalog.pages['/research/'].locales.ko.translationKeys).toEqual({ s0001: 'one', s0002: 'two' })
+  })
+
+  it('stops after the bounded fragment retry when a provider keeps omitting output', async () => {
+    const catalog = {
+      strings: {}, translations: {}, pages: {
+        '/': { sourceHash: 'source', locales: {}, segments: {
+          s0001: { sourceText: 'A substantive sentence that needs a translation now.', translationKey: 'one' },
+        } },
+      },
+    }
+    let calls = 0
+    await expect(generatePageTranslations({
+      catalog, locale: 'zh', batchLimit: 1,
+      runStructuredJson: async () => { calls += 1; return { translations: {} } },
+    })).rejects.toThrow(/omitted required segments after retry/)
+    expect(calls).toBe(2)
+  })
+
+  it('does not persist an echoed prose fragment before its targeted repair succeeds', async () => {
+    const sourceText = 'This substantive paragraph needs a natural localized translation.'
+    const catalog = {
+      strings: {}, translations: {}, pages: {
+        '/': { sourceHash: 'source', locales: {}, segments: {
+          s0001: { sourceText, translationKey: 'one' },
+        } },
+      },
+    }
+    const calls = []
+    const partials = []
+    const generated = await generatePageTranslations({
+      catalog, locale: 'zh', batchLimit: 1,
+      runStructuredJson: async ({ userPayload }) => {
+        calls.push(userPayload.segments.map((segment) => segment.id))
+        return { translations: { s0001: calls.length === 1 ? sourceText : '这段内容需要自然的本地化翻译。' } }
+      },
+      onPartial: async (next) => partials.push(next.translations.zh.one?.text),
+    })
+    expect(calls).toEqual([['s0001'], ['s0001']])
+    expect(partials).not.toContain(sourceText)
+    expect(generated.catalog.translations.zh.one.text).toBe('这段内容需要自然的本地化翻译。')
   })
 
   it('rewrites only known owned or native locale links and keeps query and fragment state', () => {

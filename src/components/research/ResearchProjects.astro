@@ -9,17 +9,17 @@ import { structProject } from '@/research/struct-project'
   </h2>
   <ul class="border-t">
     <li class="border-b py-6">
-      <a
-        class="group flex flex-col gap-y-2"
-        href={representingTasteProject.path}
-      >
+      <div class="flex flex-col gap-y-2">
         <small class="text-xs text-muted-foreground"
           >{representingTasteProject.status}</small
         >
-        <h3
-          class="text-xl font-semibold group-hover:underline group-hover:underline-offset-4"
-        >
-          {representingTasteProject.title}
+        <h3 class="text-xl font-semibold">
+          <a
+            class="hover:underline hover:underline-offset-4"
+            href={representingTasteProject.path}
+          >
+            {representingTasteProject.title}
+          </a>
         </h3>
         <p class="text-sm leading-relaxed text-muted-foreground">
           {representingTasteProject.summary}
@@ -30,7 +30,7 @@ import { structProject } from '@/research/struct-project'
             href={structProject.demoPath}>Struct’s live PDF-import demo</a
           >
         </span>
-      </a>
+      </div>
     </li>
   </ul>
 </section>

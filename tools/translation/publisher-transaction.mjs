@@ -169,7 +169,7 @@ const JOURNAL = 'journal.json'
 const PREPARATION = /^prepare-[0-9a-f-]+$/
 const CLEANUP = /^cleanup-[0-9a-f-]+$/
 const PRIVATE_FILE =
-  /^(?:(?:before|after)-[0-9]+\.bin|(?:displaced|replacement)-[0-9a-f]+\.bin|operation-[0-9a-f]+\.json(?:\.next)?)$/
+  /^(?:(?:before|after)-[0-9]+\.bin|(?:displaced|replacement|conflict)-[0-9a-f]+\.bin|operation-[0-9a-f]+\.json(?:\.next)?)$/
 const execFile = promisify(execFileCallback)
 const digest = (value) =>
   crypto.createHash('sha256').update(value).digest('hex')
@@ -416,6 +416,7 @@ async function conditionalReplace(
       boundary: 'installed',
       relative: entry.relative,
     })
+  await session.rpc('replaceFinish', { token })
 }
 
 async function restore(root, active, entry, onTransactionStep) {

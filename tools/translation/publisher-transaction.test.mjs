@@ -759,3 +759,103 @@ describe('rollback interruption protocol', () => {
     }
   })
 })
+
+describe('parent relocation conflict evidence', () => {
+  for (const boundary of ['prepared', 'quarantined', 'installed']) {
+    for (const killed of [false, true]) {
+      it(`preserves a moved parent at ${boundary}${killed ? ' after SIGKILL' : ''}`, async () => {
+        const root = await fixture()
+        const outside = await fs.mkdtemp(
+          path.join(os.tmpdir(), 'publisher-relocated-'),
+        )
+        const moved = path.join(outside, 'moved')
+        const relocate = async () => {
+          await fs.rename(path.join(root, '.translation'), moved)
+          await fs.mkdir(path.join(root, '.translation'))
+          await fs.writeFile(
+            path.join(root, '.translation/pages.json'),
+            '{"before":true}\n',
+          )
+        }
+        try {
+          if (killed) {
+            const script = `
+              import * as fs from 'node:fs/promises';
+              import { commitPublisherTransaction } from ${JSON.stringify(moduleUrl)};
+              await commitPublisherTransaction({ repoRoot: ${JSON.stringify(root)}, entries: [
+                {relative: '.translation/pages.json', beforeBytes: Buffer.from('{"before":true}\\n'), bytes: Buffer.from('{"after":true}\\n')}
+              ], onTransactionStep: async ({boundary}) => {
+                if(boundary !== ${JSON.stringify(boundary)}) return;
+                await fs.rename(${JSON.stringify(path.join(root, '.translation'))}, ${JSON.stringify(moved)});
+                await fs.mkdir(${JSON.stringify(path.join(root, '.translation'))});
+                await fs.writeFile(${JSON.stringify(path.join(root, '.translation/pages.json'))}, '{"before":true}\\n');
+                process.kill(process.pid, 'SIGKILL');
+              }});
+            `
+            await expect(
+              execFile(process.execPath, ['--input-type=module', '-e', script]),
+            ).rejects.toMatchObject({ signal: 'SIGKILL' })
+          } else {
+            await expect(
+              commitPublisherTransaction({
+                repoRoot: root,
+                entries: [
+                  {
+                    relative: '.translation/pages.json',
+                    beforeBytes: Buffer.from('{"before":true}\n'),
+                    bytes: Buffer.from('{"after":true}\n'),
+                  },
+                ],
+                onTransactionStep: async (step) => {
+                  if (step.boundary === boundary) await relocate()
+                },
+              }),
+            ).rejects.toThrow(/parent changed/)
+          }
+          if (killed) {
+            // The helper keeps its flock until EOF conflict restitution is
+            // durable; a new process may initially observe the held guard.
+            await expect
+              .poll(async () => {
+                try {
+                  await recoverPublisherTransaction({ repoRoot: root })
+                  return 'unexpected success'
+                } catch (error) {
+                  return error.message
+                }
+              })
+              .toMatch(/parent changed/)
+          }
+          expect(
+            await fs.readFile(path.join(moved, 'pages.json'), 'utf8'),
+          ).toBe('{"before":true}\n')
+          expect(await body(root, '.translation/pages.json')).toBe(
+            '{"before":true}\n',
+          )
+          const active = path.join(
+            root,
+            'generated/tmp/.translation-transaction/active',
+          )
+          await expect(
+            fs.access(path.join(active, 'journal.json')),
+          ).resolves.toBeUndefined()
+          await expect(
+            recoverPublisherTransaction({ repoRoot: root }),
+          ).rejects.toThrow(/parent changed/)
+          // Even returning the original parent cannot erase a recorded conflict.
+          await fs.rm(path.join(root, '.translation'), { recursive: true })
+          await fs.rename(moved, path.join(root, '.translation'))
+          await expect(
+            recoverPublisherTransaction({ repoRoot: root }),
+          ).rejects.toThrow(/parent changed/)
+          await expect(
+            fs.access(path.join(active, 'journal.json')),
+          ).resolves.toBeUndefined()
+        } finally {
+          await fs.rm(root, { recursive: true, force: true })
+          await fs.rm(outside, { recursive: true, force: true })
+        }
+      })
+    }
+  }
+})

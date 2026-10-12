@@ -62,7 +62,7 @@ test.describe('completed localized artifact', () => {
     await expect(page.locator('html')).toHaveAttribute('lang', 'en')
     await expect(page.locator('main h1')).toHaveText('Research')
     await expect(page.locator('main')).toContainText(
-      'Research papers and work in progress.',
+      'Investigating representations of creative decisions',
     )
     await expect
       .poll(() => page.evaluate(() => localStorage.getItem('siteLang')))

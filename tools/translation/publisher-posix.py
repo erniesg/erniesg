@@ -101,6 +101,60 @@ def restore_quarantine(active, target, basename, intent):
     os.fsync(target)
 
 
+def parent_identity(fd):
+    state = os.fstat(fd)
+    return dict(dev=state.st_dev, ino=state.st_ino)
+
+
+def parent_matches(intent):
+    try:
+        current, _ = parent(intent['relative'])
+        try:
+            return parent_identity(current) == intent['parentIdentity']
+        finally:
+            os.close(current)
+    except (OSError, ValueError):
+        return False
+
+
+def preserve_parent_conflict(target, basename, active, name, intent):
+    # Record the conflict before attempting restitution. Recovery must never
+    # infer success from a new directory that happens to contain the old bytes.
+    intent['phase'] = 'conflict'
+    save_intent(active, name, intent)
+    current = digest_at(target, basename)
+    if current is not None and intent['replacement'] is not None:
+        candidate = os.stat(basename, dir_fd=target, follow_symlinks=False)
+        replacement = os.stat(intent['temporary'], dir_fd=active, follow_symlinks=False)
+        if (candidate.st_dev, candidate.st_ino) == (replacement.st_dev, replacement.st_ino):
+            # Quarantine then verify the exact entry; the preliminary inode
+            # check alone does not justify deleting or overwriting a pathname.
+            os.rename(basename, intent['conflictFile'], src_dir_fd=target, dst_dir_fd=active)
+            os.fsync(target)
+            os.fsync(active)
+            displaced = os.stat(intent['conflictFile'], dir_fd=active, follow_symlinks=False)
+            if ((displaced.st_dev, displaced.st_ino) != (replacement.st_dev, replacement.st_ino) or
+                    digest_at(active, intent['conflictFile']) != intent['replacement']):
+                try:
+                    os.link(intent['conflictFile'], basename, src_dir_fd=active,
+                            dst_dir_fd=target, follow_symlinks=False)
+                    os.fsync(target)
+                except FileExistsError:
+                    pass
+                return
+    if intent['expected'] is not None and digest_at(active, intent['quarantine']) == intent['expected']:
+        try:
+            restore_quarantine(active, target, basename, intent)
+        except FileExistsError:
+            pass
+
+
+def check_parent(target, basename, active, name, intent):
+    if parent_identity(target) != intent['parentIdentity'] or not parent_matches(intent):
+        preserve_parent_conflict(target, basename, active, name, intent)
+        raise ValueError('Publisher unsafe parent changed; conflict evidence preserved')
+
+
 def validate_target(relative):
     if not (relative in ('.translation/manifest.json', '.translation/pages.json') or
             re.fullmatch(r'\.translation/reports/[A-Za-z0-9._-]+\.json', relative) or
@@ -117,7 +171,11 @@ def validate_intent(name, intent):
     validate_target(intent['relative'])
     if (intent['quarantine'] != 'displaced-' + token + '.bin' or
             intent['temporary'] != 'replacement-' + token + '.bin' or
-            intent['phase'] not in ('prepared', 'quarantined', 'installed') or
+            intent['conflictFile'] != 'conflict-' + token + '.bin' or
+            not isinstance(intent.get('parentIdentity'), dict) or
+            set(intent['parentIdentity']) != {'dev', 'ino'} or
+            any(type(value) is not int for value in intent['parentIdentity'].values()) or
+            intent['phase'] not in ('prepared', 'quarantined', 'installed', 'conflict') or
             any(value is not None and not re.fullmatch(r'[0-9a-f]{64}', value)
                 for value in (intent['expected'], intent['replacement']))):
         raise ValueError('Invalid publisher operation journal')
@@ -132,7 +190,9 @@ def operation_start(request):
     intent = dict(relative='/'.join(parts(request['target'])),
                   expected=request['expected'], replacement=request['replacement'],
                   quarantine='displaced-' + token + '.bin',
-                  temporary='replacement-' + token + '.bin', phase='prepared')
+                  temporary='replacement-' + token + '.bin',
+                  conflictFile='conflict-' + token + '.bin',
+                  parentIdentity=parent_identity(target), phase='prepared')
     try:
         if os.fstat(target).st_dev != os.fstat(active).st_dev:
             raise ValueError('Publisher target and transaction must share a filesystem')
@@ -158,10 +218,12 @@ def operation_start(request):
 
 def operation_quarantine(token):
     target, basename, active, name, intent = PENDING[token]
+    check_parent(target, basename, active, name, intent)
     if intent['expected'] is not None:
         os.rename(basename, intent['quarantine'], src_dir_fd=target, dst_dir_fd=active)
         os.fsync(target)
         os.fsync(active)
+    check_parent(target, basename, active, name, intent)
     intent['phase'] = 'quarantined'
     save_intent(active, name, intent)
     return None
@@ -170,6 +232,7 @@ def operation_quarantine(token):
 def operation_install(token):
     target, basename, active, name, intent = PENDING[token]
     try:
+        check_parent(target, basename, active, name, intent)
         if intent['expected'] is not None:
             try:
                 displaced_hash = digest_at(active, intent['quarantine'])
@@ -199,8 +262,19 @@ def operation_install(token):
             os.fsync(target)
         elif digest_at(target, basename) is not None:
             raise ValueError('Publisher target changed during removal; evidence preserved')
+        check_parent(target, basename, active, name, intent)
         intent['phase'] = 'installed'
         save_intent(active, name, intent)
+    except BaseException:
+        # Keep descriptors until recovery or EOF can preserve a relocation
+        # conflict without looking up a different directory by pathname.
+        raise
+
+
+def operation_finish(token):
+    target, basename, active, name, intent = PENDING[token]
+    try:
+        check_parent(target, basename, active, name, intent)
     finally:
         os.close(target)
         os.close(active)
@@ -221,10 +295,20 @@ def operation_recover(active_path, entries):
                     (entry['beforeHash'], entry['afterHash']),
                     (entry['afterHash'], entry['beforeHash'])):
                 raise ValueError('Publisher operation does not match transaction journal')
-            operations.append(intent)
+            # Validate all parent identities before any recovery mutation.
+            if intent['phase'] == 'conflict' or not parent_matches(intent):
+                pending = next((record for record in PENDING.values() if record[3] == name), None)
+                if intent['phase'] != 'conflict':
+                    if pending is not None:
+                        preserve_parent_conflict(*pending)
+                    else:
+                        intent['phase'] = 'conflict'
+                        save_intent(active, name, intent)
+                raise ValueError('Publisher unsafe parent changed; conflict evidence preserved')
+            operations.append((name, intent))
         # Resolve unfinished quarantines first: an earlier completed install
         # may legitimately have a missing path while its rollback is pending.
-        for intent in sorted(operations, key=lambda item: item['phase'] == 'installed'):
+        for name, intent in sorted(operations, key=lambda item: item[1]['phase'] == 'installed'):
             target, basename = parent(intent['relative'])
             try:
                 displaced = digest_at(active, intent['quarantine'])
@@ -232,12 +316,16 @@ def operation_recover(active_path, entries):
                 # A writer changed the displaced object: keep all evidence.
                 if displaced is not None and displaced != intent['expected']:
                     if current is None:
+                        check_parent(target, basename, active, name, intent)
                         restore_quarantine(active, target, basename, intent)
+                        check_parent(target, basename, active, name, intent)
                     raise ValueError('Publisher recovery found changed target in quarantine')
                 # An interrupted quarantine is restored before ordinary journal
                 # recovery decides between the complete before/after generation.
                 if current is None and displaced is not None and intent['phase'] != 'installed':
+                    check_parent(target, basename, active, name, intent)
                     restore_quarantine(active, target, basename, intent)
+                    check_parent(target, basename, active, name, intent)
                 elif current not in (intent['expected'], intent['replacement']):
                     raise ValueError('Publisher recovery found changed target; evidence preserved')
             finally:
@@ -265,6 +353,8 @@ def dispatch(r):
         return operation_quarantine(r['token'])
     if op == 'replaceInstall':
         return operation_install(r['token'])
+    if op == 'replaceFinish':
+        return operation_finish(r['token'])
     if op == 'recoverOperations':
         return operation_recover(r['path'], r['entries'])
     if op == 'closeHandle':
@@ -328,3 +418,11 @@ for line in sys.stdin:
             message = 'Refusing symbolic-link or unsafe publisher path: ' + message
         response = dict(id=request.get('id'), error=message, code=code)
     print(json.dumps(response, separators=(',', ':')), flush=True)
+
+# Parent termination closes stdin. Pending directory descriptors still let us
+# restore an observed relocation without following the replacement pathname.
+for record in list(PENDING.values()):
+    try:
+        check_parent(*record)
+    except Exception:
+        pass

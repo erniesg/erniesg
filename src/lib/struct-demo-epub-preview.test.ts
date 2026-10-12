@@ -88,6 +88,31 @@ const forgedDeflatedMetadata = () => {
   throw new Error('fixture did not contain a central directory entry')
 }
 
+const centralEntry = (archive: Uint8Array, name: string) => {
+  for (let offset = 0; offset < archive.length - 46; offset += 1) {
+    if (
+      archive[offset] === 0x50 &&
+      archive[offset + 1] === 0x4b &&
+      archive[offset + 2] === 0x01 &&
+      archive[offset + 3] === 0x02
+    ) {
+      const view = new DataView(
+        archive.buffer,
+        archive.byteOffset,
+        archive.byteLength,
+      )
+      const nameLength = view.getUint16(offset + 28, true)
+      if (
+        new TextDecoder().decode(
+          archive.slice(offset + 46, offset + 46 + nameLength),
+        ) === name
+      )
+        return { offset, view }
+    }
+  }
+  throw new Error(`missing central entry: ${name}`)
+}
+
 const container = `<?xml version="1.0"?><container><rootfiles><rootfile full-path="OPS/book.opf"/></rootfiles></container>`
 const opf = `<?xml version="1.0"?><package xmlns:dc="http://purl.org/dc/elements/1.1/"><metadata><dc:title>Converted paper</dc:title></metadata><manifest>
   <item id="one" href="one.xhtml" media-type="application/xhtml+xml"/>
@@ -208,5 +233,43 @@ describe('struct demo EPUB preview compiler', () => {
       'style',
     ])
     expect(result.html).not.toContain('<script')
+  })
+
+  it('requires a complete central directory matching every streamed local entry', () => {
+    const valid = archive({
+      'META-INF/container.xml': container,
+      'OPS/book.opf': opf,
+      'OPS/one.xhtml': '<html><body>one</body></html>',
+      'OPS/two.xhtml': '<html><body>two</body></html>',
+    })
+    const truncated = valid.slice(0, valid.length - 22)
+    const renamed = valid.slice()
+    const renamedEntry = centralEntry(renamed, 'OPS/one.xhtml')
+    renamed[renamedEntry.offset + 46] = 'X'.charCodeAt(0)
+    const badOffset = valid.slice()
+    const offsetEntry = centralEntry(badOffset, 'OPS/one.xhtml')
+    offsetEntry.view.setUint32(offsetEntry.offset + 42, 1, true)
+    const badCrc = valid.slice()
+    const crcEntry = centralEntry(badCrc, 'OPS/one.xhtml')
+    crcEntry.view.setUint32(crcEntry.offset + 16, 1, true)
+    const badCompressedSize = valid.slice()
+    const sizeEntry = centralEntry(badCompressedSize, 'OPS/one.xhtml')
+    sizeEntry.view.setUint32(
+      sizeEntry.offset + 20,
+      sizeEntry.view.getUint32(sizeEntry.offset + 20, true) + 1,
+      true,
+    )
+
+    for (const candidate of [
+      truncated,
+      renamed,
+      badOffset,
+      badCrc,
+      badCompressedSize,
+    ]) {
+      expect(() =>
+        compileStructDemoEpubPreview(candidate, 'invalid-directory.epub'),
+      ).toThrow('EPUB preview is unavailable.')
+    }
   })
 })

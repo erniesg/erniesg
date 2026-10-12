@@ -263,29 +263,212 @@ function archiveFilePath(name: string) {
   )
 }
 
+type ArchiveEntry = {
+  name: string
+  flags: number
+  compression: number
+  crc: number
+  compressedSize: number
+  uncompressedSize: number
+  localOffset: number
+}
+
+const crcTable = (() => {
+  const table = new Uint32Array(256)
+  for (let index = 0; index < table.length; index += 1) {
+    let value = index
+    for (let bit = 0; bit < 8; bit += 1) {
+      value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1
+    }
+    table[index] = value >>> 0
+  }
+  return table
+})()
+
+function crc32(crc: number, bytes: Uint8Array) {
+  let next = crc
+  for (const byte of bytes)
+    next = crcTable[(next ^ byte) & 0xff]! ^ (next >>> 8)
+  return next >>> 0
+}
+
+function equalBytes(left: Uint8Array, right: Uint8Array) {
+  return (
+    left.byteLength === right.byteLength &&
+    left.every((byte, index) => byte === right[index])
+  )
+}
+
+function findEocd(view: DataView, length: number) {
+  for (
+    let offset = length - 22;
+    offset >= Math.max(0, length - 65_557);
+    offset -= 1
+  ) {
+    if (view.getUint32(offset, true) !== 0x06054b50) continue
+    if (offset + 22 + view.getUint16(offset + 20, true) === length)
+      return offset
+  }
+  unavailable()
+}
+
+function inspectArchive(archive: Uint8Array, limits: typeof DEFAULT_LIMITS) {
+  const view = new DataView(
+    archive.buffer,
+    archive.byteOffset,
+    archive.byteLength,
+  )
+  const eocd = findEocd(view, archive.byteLength)
+  const disk = view.getUint16(eocd + 4, true)
+  const centralDisk = view.getUint16(eocd + 6, true)
+  const diskEntries = view.getUint16(eocd + 8, true)
+  const entries = view.getUint16(eocd + 10, true)
+  const centralSize = view.getUint32(eocd + 12, true)
+  const centralOffset = view.getUint32(eocd + 16, true)
+  if (
+    disk !== 0 ||
+    centralDisk !== 0 ||
+    diskEntries !== entries ||
+    entries > limits.entries ||
+    entries === 0 ||
+    diskEntries === 0xffff ||
+    entries === 0xffff ||
+    centralSize === 0xffffffff ||
+    centralOffset === 0xffffffff ||
+    centralOffset + centralSize !== eocd
+  )
+    unavailable()
+  const records = new Map<string, ArchiveEntry>()
+  let cursor = centralOffset
+  for (let index = 0; index < entries; index += 1) {
+    if (cursor + 46 > eocd || view.getUint32(cursor, true) !== 0x02014b50)
+      unavailable()
+    const flags = view.getUint16(cursor + 8, true)
+    const compression = view.getUint16(cursor + 10, true)
+    const crc = view.getUint32(cursor + 16, true)
+    const compressedSize = view.getUint32(cursor + 20, true)
+    const uncompressedSize = view.getUint32(cursor + 24, true)
+    const nameLength = view.getUint16(cursor + 28, true)
+    const extraLength = view.getUint16(cursor + 30, true)
+    const commentLength = view.getUint16(cursor + 32, true)
+    const recordEnd = cursor + 46 + nameLength + extraLength + commentLength
+    if (
+      recordEnd > eocd ||
+      view.getUint16(cursor + 34, true) !== 0 ||
+      (compression !== 0 && compression !== 8)
+    )
+      unavailable()
+    const nameBytes = archive.slice(cursor + 46, cursor + 46 + nameLength)
+    const name = new TextDecoder().decode(nameBytes)
+    const localOffset = view.getUint32(cursor + 42, true)
+    if (!name || records.has(name) || localOffset >= centralOffset)
+      unavailable()
+    records.set(name, {
+      name,
+      flags,
+      compression,
+      crc,
+      compressedSize,
+      uncompressedSize,
+      localOffset,
+    })
+    cursor = recordEnd
+  }
+  if (cursor !== eocd || records.size !== entries) unavailable()
+  const ordered = [...records.values()].sort(
+    (left, right) => left.localOffset - right.localOffset,
+  )
+  let expectedOffset = 0
+  for (let index = 0; index < ordered.length; index += 1) {
+    const entry = ordered[index]!
+    if (
+      entry.localOffset !== expectedOffset ||
+      entry.localOffset + 30 > centralOffset
+    )
+      unavailable()
+    if (view.getUint32(entry.localOffset, true) !== 0x04034b50) unavailable()
+    const flags = view.getUint16(entry.localOffset + 6, true)
+    const compression = view.getUint16(entry.localOffset + 8, true)
+    const nameLength = view.getUint16(entry.localOffset + 26, true)
+    const extraLength = view.getUint16(entry.localOffset + 28, true)
+    const dataOffset = entry.localOffset + 30 + nameLength + extraLength
+    const dataEnd = dataOffset + entry.compressedSize
+    if (
+      flags !== entry.flags ||
+      compression !== entry.compression ||
+      dataEnd > centralOffset ||
+      !equalBytes(
+        archive.slice(
+          entry.localOffset + 30,
+          entry.localOffset + 30 + nameLength,
+        ),
+        new TextEncoder().encode(entry.name),
+      )
+    )
+      unavailable()
+    let end = dataEnd
+    if (flags & 8) {
+      const descriptorOffset =
+        view.getUint32(end, true) === 0x08074b50 ? end + 4 : end
+      if (
+        descriptorOffset + 12 > centralOffset ||
+        view.getUint32(descriptorOffset, true) !== entry.crc ||
+        view.getUint32(descriptorOffset + 4, true) !== entry.compressedSize ||
+        view.getUint32(descriptorOffset + 8, true) !== entry.uncompressedSize
+      )
+        unavailable()
+      end = descriptorOffset + 12
+    } else if (
+      view.getUint32(entry.localOffset + 14, true) !== entry.crc ||
+      view.getUint32(entry.localOffset + 18, true) !== entry.compressedSize ||
+      view.getUint32(entry.localOffset + 22, true) !== entry.uncompressedSize
+    )
+      unavailable()
+    expectedOffset = end
+    if (expectedOffset !== (ordered[index + 1]?.localOffset ?? centralOffset))
+      unavailable()
+  }
+  return records
+}
+
 function extractBoundedArchive(
   archive: Uint8Array,
   limits: typeof DEFAULT_LIMITS,
+  records: ReadonlyMap<string, ArchiveEntry>,
 ) {
   const files: Record<string, Uint8Array> = {}
-  let entries = 0
   let inflated = 0
+  const observed = new Set<string>()
   const unzip = new Unzip((file) => {
-    entries += 1
-    if (entries > limits.entries) unavailable()
+    const entry = records.get(file.name)
+    if (
+      !entry ||
+      observed.has(file.name) ||
+      file.compression !== entry.compression
+    )
+      unavailable()
+    observed.add(file.name)
     const selected = archiveFilePath(file.name)
     const chunks: Uint8Array[] = []
     let entryBytes = 0
+    let crc = 0xffffffff
     file.ondata = (error, chunk, final) => {
       if (error) unavailable()
       entryBytes += chunk.byteLength
       inflated += chunk.byteLength
+      crc = crc32(crc, chunk)
       if (entryBytes > limits.entryBytes || inflated > limits.inflatedBytes) {
         file.terminate()
         unavailable()
       }
       if (selected) chunks.push(chunk)
-      if (!final || !selected) return
+      if (!final) return
+      if (
+        entryBytes !== entry.uncompressedSize ||
+        (crc ^ 0xffffffff) >>> 0 !== entry.crc
+      )
+        unavailable()
+      if (!selected) return
       const bytes = new Uint8Array(entryBytes)
       let offset = 0
       for (const part of chunks) {
@@ -308,6 +491,7 @@ function extractBoundedArchive(
     )
   }
   if (archive.byteLength === 0) unzip.push(archive, true)
+  if (observed.size !== records.size) unavailable()
   return files
 }
 
@@ -319,7 +503,8 @@ export function compileStructDemoEpubPreview(
   try {
     const limits = { ...DEFAULT_LIMITS, ...overrides }
     if (archive.byteLength > limits.archiveBytes) unavailable()
-    const files = extractBoundedArchive(archive, limits)
+    const records = inspectArchive(archive, limits)
+    const files = extractBoundedArchive(archive, limits, records)
     const container = files['META-INF/container.xml']
     if (!container) unavailable()
     const rootPath = attr(strFromU8(container), 'full-path')

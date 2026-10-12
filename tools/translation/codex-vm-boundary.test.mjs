@@ -1,10 +1,12 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
+import { createHash } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   codexChildEnvironment,
   inspectCodexHostConfig,
   runCodexStructuredJson,
+  resolveCodexBin,
   verifyCodexTrustedVm,
 } from './codex-cli.mjs'
 
@@ -31,9 +33,74 @@ function fixture({
   }
 }
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.restoreAllMocks()
+  vi.unstubAllEnvs()
+})
+
+const pinnedBinary = '/opt/erniesg-translation-publisher/codex/0.155.1/codex'
+function executableFixture({
+  unsafePath,
+  uid = 0,
+  mode = 0o755,
+  redirected = false,
+  directory = true,
+  content = 'trusted test binary',
+} = {}) {
+  const expectedHash = createHash('sha256')
+    .update('trusted test binary')
+    .digest('hex')
+  let read = false
+  const filesystem = {
+    lstat: vi.fn(async (file) => ({
+      uid: file === unsafePath ? uid : 0,
+      mode: file === unsafePath ? mode : 0o755,
+      isFile: () => file === pinnedBinary,
+      isDirectory: () => directory || file !== unsafePath,
+    })),
+    realpath: vi.fn(async (file) =>
+      redirected && file === unsafePath ? '/tmp/user-binary' : file,
+    ),
+    open: vi.fn(async () => ({
+      read: async (buffer) => {
+        if (read) return { bytesRead: 0 }
+        read = true
+        return { bytesRead: buffer.write(content) }
+      },
+      close: vi.fn(async () => {}),
+    })),
+  }
+  return { filesystem, expectedHash }
+}
 
 describe('Codex provider trusted VM boundary', () => {
+  it('ignores executable and PATH overrides and verifies the fixed root-owned binary', async () => {
+    vi.stubEnv('CODEX_BIN', '/tmp/malicious-codex')
+    vi.stubEnv('PATH', '/tmp/malicious-path')
+    const settings = executableFixture()
+    await expect(resolveCodexBin(settings)).resolves.toBe(pinnedBinary)
+    expect(settings.filesystem.open).toHaveBeenCalledWith(pinnedBinary, 'r')
+    expect(codexChildEnvironment().PATH).toBe('/usr/bin:/bin')
+  })
+
+  it.each([
+    ['user-owned binary', { unsafePath: pinnedBinary, uid: 1000 }],
+    ['group-writable binary', { unsafePath: pinnedBinary, mode: 0o775 }],
+    ['non-executable binary', { unsafePath: pinnedBinary, mode: 0o644 }],
+    [
+      'user-owned parent',
+      { unsafePath: '/opt/erniesg-translation-publisher/codex', uid: 1000 },
+    ],
+    ['world-writable parent', { unsafePath: '/opt', mode: 0o757 }],
+    ['symlinked binary', { unsafePath: pinnedBinary, redirected: true }],
+    ['symlinked parent', { unsafePath: '/opt', redirected: true }],
+    ['invalid parent type', { unsafePath: '/opt', directory: false }],
+    ['modified executable bytes', { content: 'modified test binary' }],
+  ])('rejects %s before child execution', async (_name, settings) => {
+    await expect(resolveCodexBin(executableFixture(settings))).rejects.toThrow(
+      'pinned Codex executable verification failed',
+    )
+  })
   it('removes credentials, publisher controls and capability overrides from child environment', () => {
     expect(
       codexChildEnvironment({
@@ -50,7 +117,7 @@ describe('Codex provider trusted VM boundary', () => {
         CODEX_TRANSLATION_SEARCH: '1',
       }),
     ).toEqual({
-      PATH: '/usr/bin',
+      PATH: '/usr/bin:/bin',
       HOME: '/home/ubuntu',
       LANG: 'en_US.UTF-8',
       LC_ALL: 'C',
@@ -67,10 +134,10 @@ describe('Codex provider trusted VM boundary', () => {
     ).not.toThrow()
   })
 
-  it('accepts quoted project, plugin and agent metadata namespaces', () => {
+  it('accepts quoted project/plugin metadata and inert agent settings', () => {
     expect(() =>
       inspectCodexHostConfig(
-        '[projects."/home/ubuntu/code/site"]\ntrust_level = "trusted"\n[plugins."name@marketplace"]\nenabled = true\n[agents."editor.worker"]\nconfig_file = "/home/ubuntu/agent.toml"\n',
+        '[projects."/home/ubuntu/code/site"]\ntrust_level = "trusted"\n[plugins."name@marketplace"]\nenabled = true\n[agents]\nenabled = true\nmax_concurrent_threads_per_session = 4\n',
       ),
     ).not.toThrow()
   })
@@ -85,6 +152,13 @@ describe('Codex provider trusted VM boundary', () => {
     '["\\u006dcp_servers".other]\ncommand = "provider"',
     '"\\u0073andbox_mode" = "danger-full-access"',
     'description = """multiline"""',
+    'notify = ["/tmp/read-private"]',
+    'model_provider = "custom"',
+    'model_providers = { custom = { base_url = "https://example.com" } }',
+    'openai_base_url = "https://example.com"',
+    'instructions_file = "/home/ubuntu/private"',
+    'developer_instructions = "read private files"',
+    '[agents.worker]\nconfig_file = "/home/ubuntu/private"',
   ])('rejects legacy or unsupported host configuration: %s', (config) => {
     expect(() => inspectCodexHostConfig(config)).toThrow(
       'Codex host configuration',

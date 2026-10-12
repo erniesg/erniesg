@@ -2,10 +2,15 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 
 const DEFAULT_REASONING_EFFORT = 'high'
 const TRUSTED_VM_MARKER = '/etc/erniesg-translation-publisher.json'
 const TRUSTED_RUNNER_ROOT = '/opt/erniesg-translation-publisher'
+const CODEX_EXECUTABLE =
+  '/opt/erniesg-translation-publisher/codex/0.155.1/codex'
+const CODEX_EXECUTABLE_SHA256 =
+  '298d3d73d0bbc1367e58a370df5b6216fe30ce0a92e8b6b0afb0377a958dc335'
 const DISABLED_TRANSLATION_FEATURES = [
   'shell_tool',
   'unified_exec',
@@ -54,14 +59,27 @@ export function inspectCodexHostConfig(text) {
     }
     return keys
   }
-  const metadataNamespaces = new Set([
-    'agents',
-    'projects',
-    'tui',
-    'features',
-    'plugins',
-    'profiles',
+  const rootKeys = new Set([
+    'approvals_reviewer',
+    'model',
+    'model_reasoning_effort',
   ])
+  const allowedMetadata = {
+    agents: new Set([
+      'enabled',
+      'interrupt_message',
+      'max_concurrent_threads_per_session',
+    ]),
+    projects: new Set(['trust_level']),
+    plugins: new Set(['enabled']),
+    mcp_servers: new Set(['url', 'enabled']),
+    features: new Set([
+      ...DISABLED_TRANSLATION_FEATURES,
+      'network_proxy',
+      'prevent_idle_sleep',
+    ]),
+  }
+  let section = []
   for (const line of String(text).split(/\r?\n/)) {
     const trimmed = line.trim()
     if (!trimmed || trimmed.startsWith('#')) continue
@@ -83,9 +101,17 @@ export function inspectCodexHostConfig(text) {
       ) {
         throw new Error('Unsupported MCP server in Codex host configuration.')
       }
-      if (keys[0] !== 'mcp_servers' && !metadataNamespaces.has(keys[0])) {
+      if (
+        !(keys[0] in allowedMetadata || keys[0] === 'tui') ||
+        (['projects', 'plugins', 'mcp_servers'].includes(keys[0])
+          ? keys.length !== 2
+          : keys[0] === 'tui'
+            ? keys.length !== 2 || keys[1] !== 'model_availability_nux'
+            : keys.length !== 1)
+      ) {
         throw new Error('Unsupported Codex host configuration table.')
       }
+      section = keys
     } else {
       const assignment = trimmed.match(
         /^((?:[^="']|"(?:[^"\\]|\\.)*"|'[^']*')+)=/,
@@ -94,25 +120,38 @@ export function inspectCodexHostConfig(text) {
         throw new Error('Unsupported Codex host configuration key.')
       }
       const keys = parseKey(assignment[1])
-      if (keys.includes('mcp_servers') || keys.includes('sandbox_mode')) {
-        throw new Error(
-          'Unsupported legacy or MCP Codex host configuration key.',
+      if (
+        keys.length !== 1 ||
+        (section.length === 0
+          ? !rootKeys.has(keys[0])
+          : section[0] !== 'tui' &&
+            !allowedMetadata[section[0]]?.has(keys[0])) ||
+        [
+          'notify',
+          'hooks',
+          'model_provider',
+          'model_providers',
+          'openai_base_url',
+          'config_file',
+          'sandbox_mode',
+          'instructions',
+          'developer_instructions',
+          'instructions_file',
+          'model_instructions_file',
+        ].includes(keys[0]) ||
+        !/^\s*(?:"(?:[^"\\]|\\.)*"|'[^']*'|true|false|[+-]?\d+(?:\.\d+)?)\s*(?:#.*)?$/.test(
+          trimmed.slice(assignment[0].length),
         )
+      ) {
+        throw new Error('Unsupported Codex host configuration key or value.')
       }
     }
   }
 }
 
 export function codexChildEnvironment(environment = process.env) {
-  const result = {}
-  for (const key of [
-    'PATH',
-    'HOME',
-    'LANG',
-    'LC_ALL',
-    'TMPDIR',
-    'CODEX_HOME',
-  ]) {
+  const result = { PATH: '/usr/bin:/bin' }
+  for (const key of ['HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'CODEX_HOME']) {
     if (typeof environment[key] === 'string') result[key] = environment[key]
   }
   return result
@@ -169,20 +208,46 @@ export function isCodexUsageLimitError(error) {
   return /hit your usage limit/i.test(String(error?.message ?? error ?? ''))
 }
 
-async function pathExists(filePath) {
-  try {
-    await fs.access(filePath)
-    return true
-  } catch {
-    return false
+export async function resolveCodexBin({
+  filesystem = fs,
+  expectedHash = CODEX_EXECUTABLE_SHA256,
+} = {}) {
+  const reject = () => {
+    throw new Error('Trusted pinned Codex executable verification failed.')
   }
-}
-
-export async function resolveCodexBin() {
-  if (process.env.CODEX_BIN) return process.env.CODEX_BIN
-  const bundled = '/Users/erniesg/.codex/bin/codex'
-  if (await pathExists(bundled)) return bundled
-  return 'codex'
+  try {
+    let currentPath = CODEX_EXECUTABLE
+    while (true) {
+      const stat = await filesystem.lstat(currentPath)
+      if (
+        stat.uid !== 0 ||
+        (stat.mode & 0o022) !== 0 ||
+        (currentPath === CODEX_EXECUTABLE
+          ? !stat.isFile() || (stat.mode & 0o100) === 0
+          : !stat.isDirectory()) ||
+        (await filesystem.realpath(currentPath)) !== currentPath
+      )
+        reject()
+      if (currentPath === '/') break
+      currentPath = path.dirname(currentPath)
+    }
+    const handle = await filesystem.open(CODEX_EXECUTABLE, 'r')
+    const hash = createHash('sha256')
+    try {
+      const buffer = Buffer.alloc(1024 * 1024)
+      while (true) {
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, null)
+        if (bytesRead === 0) break
+        hash.update(buffer.subarray(0, bytesRead))
+      }
+    } finally {
+      await handle.close()
+    }
+    if (hash.digest('hex') !== expectedHash) reject()
+    return CODEX_EXECUTABLE
+  } catch {
+    reject()
+  }
 }
 
 function tomlString(value) {
@@ -343,6 +408,7 @@ export async function runCodexStructuredJson({
 }) {
   await verifyCodexTrustedVm()
   await verifyCodexHostConfig()
+  const codexBin = await resolveCodexBin()
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-translate-'))
   const schemaPath = path.join(tempDir, 'schema.json')
   const outputPath = path.join(tempDir, 'output.json')
@@ -363,7 +429,7 @@ export async function runCodexStructuredJson({
         providerConfig.serviceTier,
     })
     await runProcess({
-      bin: await resolveCodexBin(),
+      bin: codexBin,
       args,
       stdin: composePrompt({ systemPrompt, userPayload }),
       cwd: workerCwd,

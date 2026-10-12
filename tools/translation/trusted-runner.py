@@ -4,6 +4,7 @@
 Installation is separate from content publishing. Publishing calls only verify.
 """
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -34,7 +35,7 @@ def inventory(root):
             for path in sorted(root.rglob('*')) if path.is_file()}
 
 
-def verify(root=ROOT):
+def verify(root=ROOT, expected_hashes=None):
     for component in reversed([root, *root.parents]):
         secure(component, directory=True)
     secure(root / 'manifest.json')
@@ -48,6 +49,14 @@ def verify(root=ROOT):
     actual.pop('manifest.json', None)
     if actual != expected:
         raise ValueError('Pinned runner content does not match its immutable manifest')
+    source_manifest = json.loads((root / 'source-manifest.json').read_text())
+    if source_manifest.get('reviewedCommit') != manifest['reviewedCommit']:
+        raise ValueError('Runner source and installed release identities differ')
+    source_files = source_manifest['files']
+    if expected_hashes is not None and source_files != expected_hashes:
+        raise ValueError('Installed runner differs from the reviewed publisher code')
+    if any(actual.get(name) != value for name, value in source_files.items()):
+        raise ValueError('Installed source files differ from their reviewed hashes')
     return manifest['reviewedCommit']
 
 
@@ -74,8 +83,14 @@ def install(source, commit):
             target = staging / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source / relative, target)
+        shutil.copyfile(source / 'source-manifest.json', staging / 'source-manifest.json')
         # Public, version-pinned dependencies. No package lifecycle code runs.
-        subprocess.run(['npm', 'install', '--ignore-scripts', '--no-audit', '--no-fund', '--omit=dev'], cwd=staging, check=True)
+        subprocess.run([
+            '/usr/bin/node', '/usr/lib/node_modules/npm/bin/npm-cli.js', 'ci',
+            '--ignore-scripts', '--no-audit', '--no-fund', '--omit=dev',
+        ], cwd=staging, check=True, env={
+            'PATH': '/usr/bin:/bin', 'HOME': '/root', 'LANG': 'C.UTF-8',
+        })
         # npm creates bin links; these tools are not used by this runtime.
         for entry in staging.rglob('*'):
             if entry.is_symlink():
@@ -98,12 +113,24 @@ def main():
     parser.add_argument('command', choices=['verify', 'install'])
     parser.add_argument('--source', type=pathlib.Path)
     parser.add_argument('--commit')
+    parser.add_argument('--expected-hashes')
     args = parser.parse_args()
     if args.command == 'install':
         if not args.source or not args.commit:
             raise ValueError('Install requires an approved source bundle and commit')
         install(args.source.resolve(), args.commit)
-    print('Verified pinned translation runner:', verify())
+    expected_hashes = None
+    if args.expected_hashes:
+        expected_hashes = json.loads(base64.b64decode(args.expected_hashes, validate=True))
+        if not isinstance(expected_hashes, dict) or not expected_hashes or any(
+            not isinstance(name, str) or not isinstance(value, str)
+            or not re.fullmatch(r'[0-9a-f]{64}', value)
+            or pathlib.PurePosixPath(name).is_absolute()
+            or '..' in pathlib.PurePosixPath(name).parts
+            for name, value in expected_hashes.items()
+        ):
+            raise ValueError('Invalid reviewed runner source hashes')
+    print('Verified pinned translation runner:', verify(expected_hashes=expected_hashes))
 
 
 if __name__ == '__main__':

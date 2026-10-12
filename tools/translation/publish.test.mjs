@@ -17,6 +17,7 @@ import {
   createPublishStage,
   createTrustedVmPublishScript,
   runTrustedVmPublish,
+  trustedRunnerExpectedHashes,
   trustedVmSshInvocation,
   validateReturnedPublishArtifacts,
 } from './publish.mjs'
@@ -156,9 +157,27 @@ describe('translation publish bridge', () => {
       expect(invocation[0]).toBe('erniesg-ai-vm')
       expect(invocation).toHaveLength(2)
       expect(invocation[1]).toMatch(/^bash -c /)
+      expect(script).toContain('PATH=/usr/bin:/bin')
+      expect(script).toContain(
+        'unset NODE_OPTIONS NODE_PATH PYTHONPATH PYTHONHOME BASH_ENV ENV',
+      )
+      expect(script).toContain(
+        '/usr/bin/python3 -I "$runner/trusted-runner.py"',
+      )
     } finally {
       await rm(root, { recursive: true, force: true })
     }
+  })
+
+  it('binds the VM verifier to the local reviewed runner code and dependency lock', () => {
+    const hashes = trustedRunnerExpectedHashes()
+    expect(hashes['package.json']).toMatch(/^[0-9a-f]{64}$/)
+    expect(hashes['package-lock.json']).toMatch(/^[0-9a-f]{64}$/)
+    expect(hashes['trusted-runner.py']).toMatch(/^[0-9a-f]{64}$/)
+    expect(hashes['sync.mjs']).toMatch(/^[0-9a-f]{64}$/)
+    expect(createTrustedVmPublishScript()).toContain(
+      'verify --expected-hashes "$expected_hashes"',
+    )
   })
 
   it('stages only the bounded translation inputs and HTML build output', async () => {

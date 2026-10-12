@@ -1,8 +1,10 @@
 import crypto from 'node:crypto'
 import { spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
+import fsSync from 'node:fs'
 import { createWriteStream } from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { pipeline } from 'node:stream/promises'
 import fg from 'fast-glob'
 import matter from 'gray-matter'
@@ -29,22 +31,7 @@ const INPUT_PATTERNS = [
   'public/**/*.{avif,gif,jpeg,jpg,png,svg,webp}',
   'dist/**/*.html',
 ]
-const MACHINE = new Set([
-  'codex',
-  'codex-cli',
-  'openai',
-  'anthropic',
-  'google',
-  'gemini',
-])
-const PROVIDER_SOURCE = {
-  codex: 'codex',
-  'codex-cli': 'codex',
-  openai: 'openai',
-  anthropic: 'anthropic',
-  google: 'google',
-  gemini: 'gemini',
-}
+const LOCAL_RUNNER_DIR = path.dirname(fileURLToPath(import.meta.url))
 const hash = (value) => crypto.createHash('sha256').update(value).digest('hex')
 const sidecar = (file) =>
   /^src\/content\/blog\/.+\/(?:zh|ja|ko)\.mdx$/u.test(file)
@@ -57,8 +44,39 @@ const safe = (file) =>
   Boolean(file) &&
   !file.startsWith('/') &&
   !file.includes('\\') &&
+  !/[\u0000-\u001f\u007f]/u.test(file) &&
   file.split('/').every((part) => part && part !== '.' && part !== '..')
 const relative = (file) => file.replace(/^\.\//u, '')
+
+export function trustedRunnerExpectedHashes(runnerDir = LOCAL_RUNNER_DIR) {
+  const sourceFiles = fsSync
+    .readdirSync(runnerDir, { withFileTypes: true })
+    .filter(
+      (entry) =>
+        entry.isFile() &&
+        entry.name.endsWith('.mjs') &&
+        !entry.name.endsWith('.test.mjs') &&
+        !entry.name.endsWith('.node-test.mjs'),
+    )
+    .map((entry) => entry.name)
+    .sort()
+  const expected = {}
+  for (const file of sourceFiles)
+    expected[file] = hash(fsSync.readFileSync(path.join(runnerDir, file)))
+  for (const [installed, local] of [
+    ['trusted-runner.py', 'trusted-runner.py'],
+    ['package.json', 'runner-package.json'],
+    ['package-lock.json', 'runner-package-lock.json'],
+  ]) {
+    const stat = fsSync.lstatSync(path.join(runnerDir, local))
+    if (!stat.isFile() || stat.isSymbolicLink())
+      throw new Error(`Trusted runner source is unsafe: ${local}`)
+    expected[installed] = hash(fsSync.readFileSync(path.join(runnerDir, local)))
+  }
+  return Object.fromEntries(
+    Object.entries(expected).sort(([a], [b]) => a.localeCompare(b)),
+  )
+}
 
 async function files(root, patterns = ['**/*']) {
   const candidates = await fg(patterns, {
@@ -72,6 +90,7 @@ async function files(root, patterns = ['**/*']) {
   const result = []
   for (const candidate of candidates) {
     const file = candidate.split(path.sep).join('/')
+    if (!safe(file)) throw new Error(`Unsafe path: ${file}`)
     const stat = await fs.lstat(path.join(root, file))
     if (stat.isSymbolicLink())
       throw new Error(`Symbolic links are not allowed: ${file}`)
@@ -221,15 +240,14 @@ async function checkSidecar(
   if (
     data.lang !== path.basename(file, '.mdx') ||
     data.translationStatus !== 'machine' ||
-    !MACHINE.has(data.translationSource) ||
+    data.translationSource !== 'codex' ||
     target?.status !== 'machine' ||
     target.path !== file ||
     target.targetSha256 !== sha256(raw) ||
     target.sourcePath !== source ||
     !sourceRaw ||
     target.sourceSha256 !== sha256(sourceRaw) ||
-    !Object.hasOwn(PROVIDER_SOURCE, target.provider) ||
-    PROVIDER_SOURCE[target.provider] !== data.translationSource ||
+    target.provider !== 'codex-cli' ||
     target.targetLocale !== path.basename(file, '.mdx') ||
     target.sourceLocale !== sourceLocale
   )
@@ -293,15 +311,22 @@ export async function validateReturnedPublishArtifacts({ stage, outputRoot }) {
 }
 export function createTrustedVmPublishScript() {
   const runner = VM_RUNNER_ROOT
+  const expectedHashes = Buffer.from(
+    JSON.stringify(trustedRunnerExpectedHashes()),
+  ).toString('base64')
   return `set -euo pipefail
+PATH=/usr/bin:/bin
+export PATH
+unset NODE_OPTIONS NODE_PATH PYTHONPATH PYTHONHOME BASH_ENV ENV
 runner="${runner}"
+expected_hashes="${expectedHashes}"
 for component in "$runner" "$runner/trusted-runner.py" "$runner/publish-output.mjs" "$runner/sync.mjs" "$runner/check-quality.mjs" "$runner/revise.mjs" "$runner/pages.mjs" "$runner/publish-merge-pages.mjs"; do
   [ ! -L "$component" ] || { echo "Untrusted runner link: $component" >&2; exit 1; }
   [ "$(/usr/bin/stat -c '%U' "$component")" = root ] || { echo "Untrusted runner owner: $component" >&2; exit 1; }
   mode="$(/usr/bin/stat -c '%a' "$component")"; (( (8#$mode & 18) == 0 )) || { echo "Writable runner component: $component" >&2; exit 1; }
   kind="$(/usr/bin/stat -c '%F' "$component")"; if [ "$component" = "$runner" ]; then [ "$kind" = directory ] || exit 1; else [ "$kind" = 'regular file' ] || exit 1; fi
 done
-/usr/bin/python3 "$runner/trusted-runner.py" verify >&2
+/usr/bin/python3 -I "$runner/trusted-runner.py" verify --expected-hashes "$expected_hashes" >&2
 workdir="$(mktemp -d /tmp/erniesg-localization-XXXXXX)"; trap 'rm -rf "$workdir"' EXIT
 mkdir -p "$workdir/input" "$workdir/output"; tar -xzf - -C "$workdir/input"; cd "$workdir/input"
 node "$runner/publish-output.mjs" snapshot --root "$workdir/input" --snapshot "$workdir/snapshot.json" >&2
@@ -347,13 +372,13 @@ export async function runTrustedVmPublish({
     )
   await assertTree(stage.path, stage.hashes, 'Publish stage')
   const list = `${archivePath}.files`
-  await fs.writeFile(list, `${stage.files.join('\n')}\n`, {
+  await fs.writeFile(list, `${stage.files.join('\0')}\0`, {
     flag: 'wx',
     mode: 0o600,
   })
   const tar = run(
     'tar',
-    ['-czf', '-', '-C', stage.path, '--files-from', list],
+    ['-czf', '-', '-C', stage.path, '--null', '--files-from', list],
     { stdio: ['ignore', 'pipe', 'inherit'] },
   )
   const ssh = run('ssh', trustedVmSshInvocation(), {

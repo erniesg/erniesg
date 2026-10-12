@@ -21,6 +21,8 @@ ROOT_FD = os.open(ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
 GUARD = None
 HANDLES = {}
 PENDING = {}
+CLEANUPS = {}
+CLEANUP_STATE = "cleanup-state.json"
 
 
 def parts(value):
@@ -89,7 +91,7 @@ def write_at(fd, name, data, exclusive=True):
 
 def save_intent(fd, name, intent):
     temporary = name + '.next'
-    write_at(fd, temporary, json.dumps(intent, separators=(',', ':')).encode())
+    write_at(fd, temporary, json.dumps(intent, separators=(',', ':'), ensure_ascii=False).encode(), exclusive=False)
     os.rename(temporary, name, src_dir_fd=fd, dst_dir_fd=fd)
     os.fsync(fd)
 
@@ -106,7 +108,20 @@ def parent_identity(fd):
     return dict(dev=state.st_dev, ino=state.st_ino)
 
 
+def root_matches(identity=None):
+    try:
+        current = os.open(ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            return parent_identity(current) == (identity or parent_identity(ROOT_FD))
+        finally:
+            os.close(current)
+    except OSError:
+        return False
+
+
 def parent_matches(intent):
+    if not root_matches(intent['rootIdentity']):
+        return False
     try:
         current, _ = parent(intent['relative'])
         try:
@@ -172,6 +187,9 @@ def validate_intent(name, intent):
     if (intent['quarantine'] != 'displaced-' + token + '.bin' or
             intent['temporary'] != 'replacement-' + token + '.bin' or
             intent['conflictFile'] != 'conflict-' + token + '.bin' or
+            not isinstance(intent.get('rootIdentity'), dict) or
+            set(intent['rootIdentity']) != {'dev', 'ino'} or
+            any(type(value) is not int for value in intent['rootIdentity'].values()) or
             not isinstance(intent.get('parentIdentity'), dict) or
             set(intent['parentIdentity']) != {'dev', 'ino'} or
             any(type(value) is not int for value in intent['parentIdentity'].values()) or
@@ -192,7 +210,8 @@ def operation_start(request):
                   quarantine='displaced-' + token + '.bin',
                   temporary='replacement-' + token + '.bin',
                   conflictFile='conflict-' + token + '.bin',
-                  parentIdentity=parent_identity(target), phase='prepared')
+                  parentIdentity=parent_identity(target),
+                  rootIdentity=parent_identity(ROOT_FD), phase='prepared')
     try:
         if os.fstat(target).st_dev != os.fstat(active).st_dev:
             raise ValueError('Publisher target and transaction must share a filesystem')
@@ -272,13 +291,9 @@ def operation_install(token):
 
 
 def operation_finish(token):
-    target, basename, active, name, intent = PENDING[token]
-    try:
-        check_parent(target, basename, active, name, intent)
-    finally:
-        os.close(target)
-        os.close(active)
-        del PENDING[token]
+    # Retain completed handles until cleanup commits the uniform generation.
+    # A root move after this acknowledgement still needs pinned restitution.
+    check_parent(*PENDING[token])
 
 
 def operation_recover(active_path, entries):
@@ -334,9 +349,174 @@ def operation_recover(active_path, entries):
         os.close(active)
 
 
+# Cleanup retains a self-contained identity/journal sentinel through every
+# caller hook. A deleted journal is recoverable from that durable sentinel.
+def validate_cleanup(state):
+    journal = state['journal']
+    payload = {key: value for key, value in journal.items() if key != 'journalHash'}
+    encoded = json.dumps(payload, separators=(',', ':'), ensure_ascii=False).encode()
+    if (state['version'] != 1 or state['rootPath'] != ROOT or
+            journal['repoRoot'] != ROOT or journal['version'] != 2 or
+            hashlib.sha256(encoded).hexdigest() != journal['journalHash'] or
+            state['field'] not in ('beforeHash', 'afterHash') or
+            state['phase'] not in ('cleaning', 'conflict') or
+            len(state['targets']) != len(journal['entries'])):
+        raise ValueError('Publisher cleanup sentinel is invalid')
+    for target, entry in zip(state['targets'], journal['entries']):
+        validate_target(target['relative'])
+        if (target['relative'] != entry['relative'] or
+                target['expectedHash'] != entry[state['field']] or
+                target['rootIdentity'] != state['rootIdentity']):
+            raise ValueError('Publisher cleanup target is invalid')
+    for identity in [state['rootIdentity'], state['directoryIdentity']] + [t['parentIdentity'] for t in state['targets']]:
+        if (not isinstance(identity, dict) or set(identity) != {'dev', 'ino'} or
+                any(type(value) is not int for value in identity.values())):
+            raise ValueError('Publisher cleanup identity is invalid')
+
+
+def cleanup_conflict(record):
+    fd, _, _, state = record
+    state['phase'] = 'conflict'
+    save_intent(fd, CLEANUP_STATE, state)
+    # A hook after journal deletion must still leave a readable journal.
+    try:
+        write_at(fd, 'journal.json', json.dumps(state['journal'], separators=(',', ':'), ensure_ascii=False).encode())
+    except FileExistsError:
+        pass
+    os.fsync(fd)
+    raise ValueError('Publisher cleanup identity changed; conflict evidence preserved')
+
+
+def cleanup_check(record):
+    fd, parent_fd, basename, state = record
+    if (state['phase'] == 'conflict' or not root_matches(state['rootIdentity']) or
+            parent_identity(fd) != state['directoryIdentity']):
+        cleanup_conflict(record)
+    try:
+        linked = os.stat(basename, dir_fd=parent_fd, follow_symlinks=False)
+        if (linked.st_dev, linked.st_ino) != (state['directoryIdentity']['dev'], state['directoryIdentity']['ino']):
+            cleanup_conflict(record)
+        for target in state['targets']:
+            if not parent_matches(target):
+                cleanup_conflict(record)
+            target_fd, name = parent(target['relative'])
+            try:
+                if (parent_identity(target_fd) != target['parentIdentity'] or
+                        digest_at(target_fd, name) != target['expectedHash']):
+                    cleanup_conflict(record)
+            finally:
+                os.close(target_fd)
+    except (FileNotFoundError, NotADirectoryError):
+        cleanup_conflict(record)
+
+
+def cleanup_begin(request):
+    fd = directory(request['path'])
+    parent_fd, basename = parent(request['path'])
+    try:
+        try:
+            state = json.loads(read_at(fd, CLEANUP_STATE))
+        except FileNotFoundError:
+            if request.get('resume'):
+                raise ValueError('Publisher cleanup is missing its identity sentinel')
+            targets = []
+            for entry in request['journal']['entries']:
+                target_fd, _ = parent(entry['relative'])
+                try:
+                    targets.append(dict(relative=entry['relative'], parentIdentity=parent_identity(target_fd),
+                                        rootIdentity=parent_identity(ROOT_FD), expectedHash=entry[request['field']]))
+                finally:
+                    os.close(target_fd)
+            state = dict(version=1, rootPath=ROOT, rootIdentity=parent_identity(ROOT_FD),
+                         directoryIdentity=parent_identity(fd), journal=request['journal'],
+                         field=request['field'], targets=targets, phase='cleaning')
+            save_intent(fd, CLEANUP_STATE, state)
+        validate_cleanup(state)
+        record = (fd, parent_fd, basename, state)
+        cleanup_check(record)
+        if not request.get('resume'):
+            # Parent/root identity may have changed since the caller's uniform
+            # check. Original operation identities remain authoritative.
+            operation_recover(request['path'], state['journal']['entries'])
+            cleanup_check(record)
+            destination = request['destination']
+            if not re.fullmatch(r'cleanup-[0-9a-f-]+', destination):
+                raise ValueError('Invalid publisher cleanup destination')
+            os.rename(basename, destination, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            os.fsync(parent_fd)
+            record = (fd, parent_fd, destination, state)
+            cleanup_check(record)
+        # No rollback after entering cleanup: retain the verified generation
+        # and its sentinel instead of using operation files being discarded.
+        for token, pending in list(PENDING.items()):
+            os.close(pending[0])
+            os.close(pending[2])
+            del PENDING[token]
+        token = uuid.uuid4().hex
+        CLEANUPS[token] = record
+        return dict(token=token, names=os.listdir(fd))
+    except BaseException:
+        os.close(fd)
+        os.close(parent_fd)
+        raise
+
+
+def cleanup_remove(token, name):
+    record = CLEANUPS[token]
+    cleanup_check(record)
+    fd = record[0]
+    if name == CLEANUP_STATE or not (name == 'journal.json' or
+            re.fullmatch(r'(?:(?:before|after)-[0-9]+\.bin|(?:displaced|replacement|conflict)-[0-9a-f]+\.bin|operation-[0-9a-f]+\.json(?:\.next)?|cleanup-state\.json\.next)', name)):
+        raise ValueError('Publisher private transaction directory contains unknown files')
+    state = os.stat(name, dir_fd=fd, follow_symlinks=False)
+    if not stat.S_ISREG(state.st_mode):
+        raise ValueError('Publisher private transaction artifact is unsafe')
+    os.unlink(name, dir_fd=fd)
+    os.fsync(fd)
+    cleanup_check(record)
+
+
+def cleanup_finish(token):
+    record = CLEANUPS[token]
+    cleanup_check(record)
+    fd, parent_fd, basename, state = record
+    if os.listdir(fd) != [CLEANUP_STATE]:
+        raise ValueError('Publisher cleanup contains unexpected artifacts')
+    # There are no user callbacks between the final identity check and these
+    # final removals. Recheck after removing the sentinel before removing its
+    # directory, while evidence can still be restored through the retained fd.
+    os.unlink(CLEANUP_STATE, dir_fd=fd)
+    os.fsync(fd)
+    cleanup_check(record)
+    os.rmdir(basename, dir_fd=parent_fd)
+    os.fsync(parent_fd)
+    if not root_matches(state['rootIdentity']) or any(not parent_matches(t) for t in state['targets']):
+        # The final directory removal raced relocation. Recreate only a fresh
+        # evidence directory, never overwrite a concurrent directory entry.
+        name = 'cleanup-' + str(uuid.uuid4())
+        os.mkdir(name, 0o700, dir_fd=parent_fd)
+        evidence = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
+        try:
+            cleanup_conflict((evidence, parent_fd, name, state))
+        finally:
+            os.close(evidence)
+            os.fsync(parent_fd)
+    os.close(fd)
+    os.close(parent_fd)
+    del CLEANUPS[token]
+
+
 def dispatch(r):
     global GUARD
     op = r['op']
+    if op == 'cleanupBegin':
+        return cleanup_begin(r)
+    if op == 'cleanupCheck':
+        return cleanup_check(CLEANUPS[r['token']])
+    if op == 'cleanupRemove':
+        return cleanup_remove(r['token'], r['name'])
+    if op == 'cleanupFinish':
+        return cleanup_finish(r['token'])
     if op == 'guard':
         fd, name = parent('generated/tmp/.translation-publisher.guard')
         try:
@@ -424,5 +604,11 @@ for line in sys.stdin:
 for record in list(PENDING.values()):
     try:
         check_parent(*record)
+    except Exception:
+        pass
+
+for record in list(CLEANUPS.values()):
+    try:
+        cleanup_check(record)
     except Exception:
         pass

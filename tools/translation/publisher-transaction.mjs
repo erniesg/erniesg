@@ -169,7 +169,7 @@ const JOURNAL = 'journal.json'
 const PREPARATION = /^prepare-[0-9a-f-]+$/
 const CLEANUP = /^cleanup-[0-9a-f-]+$/
 const PRIVATE_FILE =
-  /^(?:(?:before|after)-[0-9]+\.bin|(?:displaced|replacement|conflict)-[0-9a-f]+\.bin|operation-[0-9a-f]+\.json(?:\.next)?)$/
+  /^(?:(?:before|after)-[0-9]+\.bin|(?:displaced|replacement|conflict)-[0-9a-f]+\.bin|operation-[0-9a-f]+\.json(?:\.next)?|cleanup-state\.json(?:\.next)?)$/
 const execFile = promisify(execFileCallback)
 const digest = (value) =>
   crypto.createHash('sha256').update(value).digest('hex')
@@ -469,45 +469,32 @@ async function assertUniformState(root, journal, field) {
   }
 }
 
-async function moveToCleanup(active) {
-  const cleanup = path.join(
-    path.dirname(active),
-    `cleanup-${crypto.randomUUID()}`,
-  )
-  await fs.rename(active, cleanup)
-  await syncDirectory(path.dirname(active))
-  return cleanup
+async function moveToCleanup(active, journal, field) {
+  return sessions.getStore().rpc('cleanupBegin', {
+    path: active,
+    journal,
+    field,
+    destination: `cleanup-${crypto.randomUUID()}`,
+  })
 }
 
-async function cleanupUniform(cleanup, journal, onCleanupStep) {
-  for (const name of await fs.readdir(cleanup)) {
-    if (name === JOURNAL) continue
-    if (!PRIVATE_FILE.test(name))
-      throw new Error(
-        'Publisher private transaction directory contains unknown files',
-      )
-    const file = path.join(cleanup, name)
-    const state = await fs.lstat(file)
-    if (!state.isFile() || state.isSymbolicLink())
-      throw new Error('Publisher private transaction artifact is unsafe')
-    await fs.unlink(file)
+async function cleanupUniform(cleanup, onCleanupStep) {
+  const rpc = sessions.getStore().rpc
+  for (const name of cleanup.names) {
+    if (name === JOURNAL || name === 'cleanup-state.json') continue
+    await rpc('cleanupRemove', { token: cleanup.token, name })
     if (onCleanupStep) await onCleanupStep({ phase: 'artifact', file: name })
+    await rpc('cleanupCheck', { token: cleanup.token })
   }
-  await syncDirectory(cleanup)
-  const journalPath = path.join(cleanup, JOURNAL)
-  const journalState = await lstatOrNull(journalPath)
-  if (journalState) {
-    if (!journalState.isFile() || journalState.isSymbolicLink())
-      throw new Error('Publisher transaction journal is unsafe')
-    await fs.unlink(journalPath)
-    await syncDirectory(cleanup)
+  if (cleanup.names.includes(JOURNAL)) {
+    await rpc('cleanupRemove', { token: cleanup.token, name: JOURNAL })
     if (onCleanupStep) await onCleanupStep({ phase: 'journal' })
+    await rpc('cleanupCheck', { token: cleanup.token })
   }
-  await fs.rmdir(cleanup).catch((error) => {
-    if (error.code !== 'ENOENT') throw error
-  })
-  await syncDirectory(path.dirname(cleanup))
+  // Keep the identity sentinel until after the final caller boundary.
   if (onCleanupStep) await onCleanupStep({ phase: 'directory' })
+  await rpc('cleanupCheck', { token: cleanup.token })
+  await rpc('cleanupFinish', { token: cleanup.token })
 }
 
 async function recoverInactive(root) {
@@ -516,7 +503,13 @@ async function recoverInactive(root) {
     if (!PREPARATION.test(name) && !CLEANUP.test(name)) continue
     const privateDirectory = path.join(directory, name)
     await safePrivateDirectory(privateDirectory, name)
-    await removePrivateDirectory(privateDirectory, { allowJournal: true })
+    if (CLEANUP.test(name)) {
+      const cleanup = await sessions
+        .getStore()
+        .rpc('cleanupBegin', { path: privateDirectory, resume: true })
+      await cleanupUniform(cleanup)
+    } else
+      await removePrivateDirectory(privateDirectory, { allowJournal: true })
   }
   const unexpected = (await fs.readdir(directory)).filter(
     (name) => name !== ACTIVE,
@@ -562,8 +555,12 @@ async function recoverTransaction({
     .getStore()
     .rpc('recoverOperations', { path: active, entries: journal.entries })
   await assertUniformState(root, journal, allAfter ? 'afterHash' : 'beforeHash')
-  const cleanup = await moveToCleanup(active)
-  await cleanupUniform(cleanup, journal, onCleanupStep)
+  const cleanup = await moveToCleanup(
+    active,
+    journal,
+    allAfter ? 'afterHash' : 'beforeHash',
+  )
+  await cleanupUniform(cleanup, onCleanupStep)
   return allAfter ? 'finalized' : 'rolled-back'
 }
 
@@ -668,8 +665,8 @@ async function commitTransaction({
       .getStore()
       .rpc('recoverOperations', { path: active, entries: journal.entries })
     await assertUniformState(root, journal, 'afterHash')
-    const cleanup = await moveToCleanup(active)
-    await cleanupUniform(cleanup, journal, onCleanupStep)
+    const cleanup = await moveToCleanup(active, journal, 'afterHash')
+    await cleanupUniform(cleanup, onCleanupStep)
     return entries.map(({ relative }) => relative)
   } catch (error) {
     if (!promoted)

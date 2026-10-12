@@ -859,3 +859,300 @@ describe('parent relocation conflict evidence', () => {
     }
   }
 })
+
+describe('repository-root relocation', () => {
+  for (const boundary of ['prepared', 'quarantined', 'installed', 'finish']) {
+    for (const killed of [false, true]) {
+      it(`retains root conflict at ${boundary}${killed ? ' after SIGKILL' : ''}`, async () => {
+        const root = await fixture()
+        const outside = await fs.mkdtemp(
+          path.join(os.tmpdir(), 'publisher-root-move-'),
+        )
+        const moved = path.join(outside, 'moved')
+        const relocate = async () => {
+          await fs.rename(root, moved)
+          await fs.mkdir(path.join(root, '.translation'), { recursive: true })
+          await fs.writeFile(
+            path.join(root, '.translation/pages.json'),
+            '{"before":true}\n',
+          )
+        }
+        try {
+          if (killed) {
+            const callback =
+              boundary === 'finish' ? 'onCommitStep' : 'onTransactionStep'
+            const script = `
+              import * as fs from 'node:fs/promises';
+              import { commitPublisherTransaction } from ${JSON.stringify(moduleUrl)};
+              await commitPublisherTransaction({repoRoot:${JSON.stringify(root)},entries:[
+                {relative:'.translation/pages.json',beforeBytes:Buffer.from('{"before":true}\\n'),bytes:Buffer.from('{"after":true}\\n')}
+              ], ${callback}:async(step)=>{
+                if(${JSON.stringify(boundary)} !== 'finish' && step.boundary !== ${JSON.stringify(boundary)}) return;
+                await fs.rename(${JSON.stringify(root)},${JSON.stringify(moved)});
+                await fs.mkdir(${JSON.stringify(path.join(root, '.translation'))},{recursive:true});
+                await fs.writeFile(${JSON.stringify(path.join(root, '.translation/pages.json'))},'{"before":true}\\n');
+                process.kill(process.pid,'SIGKILL');
+              }});
+            `
+            await expect(
+              execFile(process.execPath, ['--input-type=module', '-e', script]),
+            ).rejects.toMatchObject({ signal: 'SIGKILL' })
+          } else {
+            await expect(
+              commitPublisherTransaction({
+                repoRoot: root,
+                entries: [
+                  {
+                    relative: '.translation/pages.json',
+                    beforeBytes: Buffer.from('{"before":true}\n'),
+                    bytes: Buffer.from('{"after":true}\n'),
+                  },
+                ],
+                onTransactionStep: async (step) => {
+                  if (step.boundary === boundary) await relocate()
+                },
+                onCommitStep: async () => {
+                  if (boundary === 'finish') await relocate()
+                },
+              }),
+            ).rejects.toThrow(/parent changed/)
+          }
+          const active = path.join(
+            moved,
+            'generated/tmp/.translation-transaction/active',
+          )
+          await expect
+            .poll(async () => {
+              try {
+                const names = await fs.readdir(active)
+                const operation = names.find((name) =>
+                  /^operation-.*\.json$/.test(name),
+                )
+                const intent = JSON.parse(
+                  await fs.readFile(path.join(active, operation), 'utf8'),
+                )
+                const bytes = await fs.readFile(
+                  path.join(moved, '.translation/pages.json'),
+                  'utf8',
+                )
+                return (
+                  intent.phase === 'conflict' && bytes === '{"before":true}\n'
+                )
+              } catch {
+                return false
+              }
+            })
+            .toBe(true)
+          expect(await body(root, '.translation/pages.json')).toBe(
+            '{"before":true}\n',
+          )
+          await expect(
+            fs.access(path.join(active, 'journal.json')),
+          ).resolves.toBeUndefined()
+          await fs.rm(root, { recursive: true })
+          await fs.rename(moved, root)
+          await expect(
+            recoverPublisherTransaction({ repoRoot: root }),
+          ).rejects.toThrow(/parent changed/)
+        } finally {
+          await fs.rm(root, { recursive: true, force: true })
+          await fs.rm(outside, { recursive: true, force: true })
+        }
+      })
+    }
+  }
+})
+
+describe('cleanup identity sentinel', () => {
+  for (const phase of ['artifact', 'journal', 'directory']) {
+    for (const moveRoot of [false, true]) {
+      for (const killed of [false, true]) {
+        it(`retains ${moveRoot ? 'root' : 'parent'} relocation evidence at cleanup ${phase}${killed ? ' after SIGKILL' : ''}`, async () => {
+          const root = await fixture()
+          const outside = await fs.mkdtemp(
+            path.join(os.tmpdir(), 'publisher-cleanup-move-'),
+          )
+          const moved = path.join(outside, 'moved')
+          const source = moveRoot ? root : path.join(root, '.translation')
+          const recreate = moveRoot ? path.join(root, '.translation') : source
+          const relocate = async () => {
+            await fs.rename(source, moved)
+            await fs.mkdir(recreate, { recursive: true })
+            await fs.writeFile(
+              path.join(recreate, 'pages.json'),
+              '{"after":true}\n',
+            )
+          }
+          try {
+            if (killed) {
+              const script = `
+                import * as fs from 'node:fs/promises';
+                import { commitPublisherTransaction } from ${JSON.stringify(moduleUrl)};
+                await commitPublisherTransaction({repoRoot:${JSON.stringify(root)},entries:[
+                  {relative:'.translation/pages.json',beforeBytes:Buffer.from('{"before":true}\\n'),bytes:Buffer.from('{"after":true}\\n')}
+                ],onCleanupStep:async(step)=>{
+                  if(step.phase!==${JSON.stringify(phase)}) return;
+                  await fs.rename(${JSON.stringify(source)},${JSON.stringify(moved)});
+                  await fs.mkdir(${JSON.stringify(recreate)},{recursive:true});
+                  await fs.writeFile(${JSON.stringify(path.join(recreate, 'pages.json'))},'{"after":true}\\n');
+                  process.kill(process.pid,'SIGKILL');
+                }});
+              `
+              await expect(
+                execFile(process.execPath, [
+                  '--input-type=module',
+                  '-e',
+                  script,
+                ]),
+              ).rejects.toMatchObject({ signal: 'SIGKILL' })
+            } else {
+              await expect(
+                commitPublisherTransaction({
+                  repoRoot: root,
+                  entries: [
+                    {
+                      relative: '.translation/pages.json',
+                      beforeBytes: Buffer.from('{"before":true}\n'),
+                      bytes: Buffer.from('{"after":true}\n'),
+                    },
+                  ],
+                  onCleanupStep: async (step) => {
+                    if (step.phase === phase) await relocate()
+                  },
+                }),
+              ).rejects.toThrow(/cleanup identity changed/)
+            }
+            const transaction = path.join(
+              moveRoot ? moved : root,
+              'generated/tmp/.translation-transaction',
+            )
+            let evidence
+            await expect
+              .poll(async () => {
+                try {
+                  const name = (await fs.readdir(transaction)).find((name) =>
+                    name.startsWith('cleanup-'),
+                  )
+                  evidence = path.join(transaction, name)
+                  const sentinel = JSON.parse(
+                    await fs.readFile(
+                      path.join(evidence, 'cleanup-state.json'),
+                      'utf8',
+                    ),
+                  )
+                  const journal = JSON.parse(
+                    await fs.readFile(
+                      path.join(evidence, 'journal.json'),
+                      'utf8',
+                    ),
+                  )
+                  return (
+                    sentinel.phase === 'conflict' &&
+                    journal.journalHash === sentinel.journal.journalHash
+                  )
+                } catch {
+                  return false
+                }
+              })
+              .toBe(true)
+            expect(
+              await fs.readFile(
+                path.join(
+                  moveRoot ? path.join(moved, '.translation') : moved,
+                  'pages.json',
+                ),
+                'utf8',
+              ),
+            ).toBe('{"after":true}\n')
+            // Resume at the original pathname; identical published bytes must
+            // not erase a conflict persisted during interrupted cleanup.
+            await fs.rm(source, { recursive: true })
+            await fs.rename(moved, source)
+            await expect(
+              recoverPublisherTransaction({ repoRoot: root }),
+            ).rejects.toThrow(/cleanup identity changed/)
+            const retained = path.join(
+              root,
+              'generated/tmp/.translation-transaction',
+              path.basename(evidence),
+            )
+            await expect(
+              fs.access(path.join(retained, 'journal.json')),
+            ).resolves.toBeUndefined()
+            await expect(
+              fs.access(path.join(retained, 'cleanup-state.json')),
+            ).resolves.toBeUndefined()
+          } finally {
+            await fs.rm(root, { recursive: true, force: true })
+            await fs.rm(outside, { recursive: true, force: true })
+          }
+        })
+      }
+    }
+  }
+})
+
+describe('interrupted cleanup identity validation', () => {
+  for (const phase of ['artifact', 'journal', 'directory']) {
+    it(`rejects relocation after the old helper exited at ${phase}`, async () => {
+      const root = await fixture()
+      const outside = await fs.mkdtemp(
+        path.join(os.tmpdir(), 'publisher-resume-cleanup-'),
+      )
+      const moved = path.join(outside, 'moved')
+      try {
+        const script = `
+          import { commitPublisherTransaction } from ${JSON.stringify(moduleUrl)};
+          await commitPublisherTransaction({repoRoot:${JSON.stringify(root)},entries:[
+            {relative:'.translation/pages.json',beforeBytes:Buffer.from('{"before":true}\\n'),bytes:Buffer.from('{"after":true}\\n')}
+          ],onCleanupStep:async(step)=>{if(step.phase===${JSON.stringify(phase)}) process.kill(process.pid,'SIGKILL')}});
+        `
+        await expect(
+          execFile(process.execPath, ['--input-type=module', '-e', script]),
+        ).rejects.toMatchObject({ signal: 'SIGKILL' })
+        // A fresh lease proves the former helper released its flock. Creating
+        // this new lease does not recover the pending cleanup automatically.
+        await expect
+          .poll(async () => {
+            try {
+              const release = await acquirePublisherLease({ repoRoot: root })
+              await release()
+              return true
+            } catch {
+              return false
+            }
+          })
+          .toBe(true)
+        await fs.rename(path.join(root, '.translation'), moved)
+        await fs.mkdir(path.join(root, '.translation'))
+        await fs.writeFile(
+          path.join(root, '.translation/pages.json'),
+          '{"after":true}\n',
+        )
+        await expect(
+          recoverPublisherTransaction({ repoRoot: root }),
+        ).rejects.toThrow(/cleanup identity changed/)
+        const directory = path.join(
+          root,
+          'generated/tmp/.translation-transaction',
+        )
+        const cleanup = (await fs.readdir(directory)).find((name) =>
+          name.startsWith('cleanup-'),
+        )
+        const state = JSON.parse(
+          await fs.readFile(
+            path.join(directory, cleanup, 'cleanup-state.json'),
+            'utf8',
+          ),
+        )
+        expect(state.phase).toBe('conflict')
+        await expect(
+          fs.access(path.join(directory, cleanup, 'journal.json')),
+        ).resolves.toBeUndefined()
+      } finally {
+        await fs.rm(root, { recursive: true, force: true })
+        await fs.rm(outside, { recursive: true, force: true })
+      }
+    })
+  }
+})

@@ -729,6 +729,33 @@ async function pageStyleContext(locale) {
     .join('\n\n')
 }
 
+function usableCachedTranslation(catalog, locale, key) {
+  const entry = catalog.translations?.[locale]?.[key]
+  if (!entry || typeof entry.text !== 'string' || !entry.text.trim()) return false
+  // Native and author-owned wording is deliberately retained. Machine output
+  // must carry the same provider provenance that the publish bridge accepts.
+  if (entry.status !== 'machine') return true
+  const source = catalog.strings?.[key]
+  return Boolean(
+    entry.provenance?.provider === 'codex-cli' &&
+      source?.sourceHash === entry.sourceHash &&
+      typeof source.sourceText === 'string' &&
+      sha256(source.sourceText) === entry.sourceHash,
+  )
+}
+
+function needsPageGeneration(catalog, locale, page) {
+  const entry = page.locales?.[locale]
+  if (!entry) return true
+  if (entry.status !== 'machine') return false
+  if (entry.sourceHash !== page.sourceHash) return true
+  return Object.values(page.segments).some(
+    (segment) =>
+      !segment.preserveOriginal &&
+      !usableCachedTranslation(catalog, locale, segment.translationKey),
+  )
+}
+
 /** Generate only missing or stale machine entries; final/native/edited entries are never rewritten. */
 export async function generatePageTranslations({
   catalog,
@@ -746,20 +773,18 @@ export async function generatePageTranslations({
   result.translations[locale] ??= {}
   const styleContext = await pageStyleContext(locale)
   const candidates = Object.entries(result.pages)
-    .filter(([, page]) => {
-      const entry = page.locales?.[locale]
-      return (
-        !entry ||
-        (entry.status === 'machine' && entry.sourceHash !== page.sourceHash)
-      )
-    })
+    .filter(([, page]) => needsPageGeneration(result, locale, page))
     .slice(0, batchLimit)
   for (const [route, page] of candidates) {
     const ids = Object.keys(page.segments)
     const missingIds = ids.filter(
       (id) =>
         !page.segments[id].preserveOriginal &&
-        !result.translations[locale][page.segments[id].translationKey],
+        !usableCachedTranslation(
+          result,
+          locale,
+          page.segments[id].translationKey,
+        ),
     )
     if (missingIds.length) {
       const translations = {}

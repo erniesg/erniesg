@@ -152,6 +152,123 @@ describe('publisher transaction', () => {
     }
   })
 
+  it('fails closed when an active transaction loses its journal mid-publish', async () => {
+    const root = await fixture()
+    try {
+      await expect(
+        commitPublisherTransaction({
+          repoRoot: root,
+          entries: [
+            {
+              relative: '.translation/pages.json',
+              beforeBytes: Buffer.from('{"before":true}\n'),
+              bytes: Buffer.from('{"after":true}\n'),
+            },
+            {
+              relative: 'src/content/blog/post/zh.mdx',
+              beforeBytes: Buffer.from('before\n'),
+              bytes: Buffer.from('after\n'),
+            },
+          ],
+          onCommitStep: async ({ index }) => {
+            if (index !== 1) return
+            await fs.unlink(
+              path.join(
+                root,
+                'generated/tmp/.translation-transaction/active/journal.json',
+              ),
+            )
+            throw new Error('stop after journal loss')
+          },
+        }),
+      ).rejects.toThrow('stop after journal loss')
+      expect(await body(root, 'src/content/blog/post/zh.mdx')).toBe('before\n')
+      await expect(
+        recoverPublisherTransaction({ repoRoot: root }),
+      ).rejects.toThrow(/missing its journal/)
+    } finally {
+      await fs.rm(root, { recursive: true, force: true })
+    }
+  })
+
+  for (const mutation of ['bytes', 'symlink']) {
+    it(`rejects a ${mutation} replacement of a prepared artifact`, async () => {
+      const root = await fixture()
+      const outside = await fs.mkdtemp(
+        path.join(os.tmpdir(), 'publisher-after-'),
+      )
+      try {
+        await expect(
+          commitPublisherTransaction({
+            repoRoot: root,
+            entries: [
+              {
+                relative: '.translation/pages.json',
+                beforeBytes: Buffer.from('{"before":true}\n'),
+                bytes: Buffer.from('{"after":true}\n'),
+              },
+            ],
+            beforeCommit: async () => {
+              const prepared = path.join(
+                root,
+                'generated/tmp/.translation-transaction/active/after-0.bin',
+              )
+              if (mutation === 'bytes')
+                await fs.writeFile(prepared, 'tampered\n')
+              else {
+                const outsideFile = path.join(outside, 'prepared.bin')
+                await fs.writeFile(outsideFile, '{"after":true}\n')
+                await fs.unlink(prepared)
+                await fs.symlink(outsideFile, prepared)
+              }
+            },
+          }),
+        ).rejects.toThrow(/prepared artifact/)
+        expect(await body(root, '.translation/pages.json')).toBe(
+          '{"before":true}\n',
+        )
+      } finally {
+        await fs.rm(root, { recursive: true, force: true })
+        await fs.rm(outside, { recursive: true, force: true })
+      }
+    })
+  }
+
+  it('does not overwrite a later target edited after an earlier install', async () => {
+    const root = await fixture()
+    try {
+      await expect(
+        commitPublisherTransaction({
+          repoRoot: root,
+          entries: [
+            {
+              relative: '.translation/pages.json',
+              beforeBytes: Buffer.from('{"before":true}\n'),
+              bytes: Buffer.from('{"after":true}\n'),
+            },
+            {
+              relative: 'src/content/blog/post/zh.mdx',
+              beforeBytes: Buffer.from('before\n'),
+              bytes: Buffer.from('after\n'),
+            },
+          ],
+          onCommitStep: async ({ index }) => {
+            if (index === 1)
+              await fs.writeFile(
+                path.join(root, 'src/content/blog/post/zh.mdx'),
+                'external edit\n',
+              )
+          },
+        }),
+      ).rejects.toThrow(/changed immediately before publish/)
+      expect(await body(root, 'src/content/blog/post/zh.mdx')).toBe(
+        'external edit\n',
+      )
+    } finally {
+      await fs.rm(root, { recursive: true, force: true })
+    }
+  })
+
   for (const step of [1, 2, 3]) {
     it(`recovers to a single prior state after a process dies following rename ${step}`, async () => {
       const root = await fixture()

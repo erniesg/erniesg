@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import crypto from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { execFile as execFileCallback } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -356,6 +357,82 @@ describe('owned page localization catalog', () => {
     expect(calls).toEqual([['s0001'], ['s0001']])
     expect(partials).not.toContain(sourceText)
     expect(generated.catalog.translations.zh.one.text).toBe('这段内容需要自然的本地化翻译。')
+  })
+
+  it('replaces cached machine output unless it has canonical Codex provenance', async () => {
+    const sourceText = 'This substantive paragraph needs a natural localized translation.'
+    const key = 'memory-key'
+    const sourceHash = crypto.createHash('sha256').update(sourceText).digest('hex')
+    const catalog = {
+      strings: { [key]: { sourceText, sourceHash } },
+      translations: {
+        zh: {
+          [key]: {
+            text: '伪造的缓存译文。',
+            status: 'machine',
+            sourceHash,
+            provenance: { provider: 'openai' },
+          },
+        },
+      },
+      pages: {
+        '/': {
+          sourceHash: 'page-hash',
+          locales: {
+            zh: {
+              status: 'machine',
+              sourceHash: 'page-hash',
+              translationKeys: { s0001: key },
+            },
+          },
+          segments: { s0001: { sourceText, translationKey: key } },
+        },
+      },
+    }
+    let calls = 0
+    const generated = await generatePageTranslations({
+      catalog,
+      locale: 'zh',
+      batchLimit: 1,
+      runStructuredJson: async () => {
+        calls += 1
+        return { translations: { s0001: '这段内容需要自然的本地化翻译。' } }
+      },
+    })
+    expect(calls).toBe(1)
+    expect(generated.catalog.translations.zh[key].provenance.provider).toBe(
+      'codex-cli',
+    )
+  })
+
+  it('reuses canonical Codex and native page translation memory', async () => {
+    const sourceText = 'This substantive paragraph needs a natural localized translation.'
+    const sourceHash = crypto.createHash('sha256').update(sourceText).digest('hex')
+    const catalog = {
+      strings: { codex: { sourceText, sourceHash }, native: { sourceText, sourceHash } },
+      translations: {
+        zh: {
+          codex: { text: '这段内容需要自然的本地化翻译。', status: 'machine', sourceHash, provenance: { provider: 'codex-cli' } },
+          native: { text: '这段内容需要自然的本地化翻译。', status: 'native', sourceHash },
+        },
+      },
+      pages: {
+        '/codex/': { sourceHash: 'codex-page', locales: { zh: { status: 'machine', sourceHash: 'codex-page', translationKeys: { s0001: 'codex' } } }, segments: { s0001: { sourceText, translationKey: 'codex' } } },
+        '/native/': { sourceHash: 'native-page', locales: { zh: { status: 'machine', sourceHash: 'native-page', translationKeys: { s0001: 'native' } } }, segments: { s0001: { sourceText, translationKey: 'native' } } },
+      },
+    }
+    let calls = 0
+    const generated = await generatePageTranslations({
+      catalog,
+      locale: 'zh',
+      batchLimit: 2,
+      runStructuredJson: async () => {
+        calls += 1
+        return { translations: {} }
+      },
+    })
+    expect(calls).toBe(0)
+    expect(generated.generatedRoutes).toEqual([])
   })
 
   it('rewrites only known owned or native locale links and keeps query and fragment state', () => {

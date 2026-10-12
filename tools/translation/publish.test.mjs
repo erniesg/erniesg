@@ -611,6 +611,156 @@ describe('translation publish bridge', () => {
     }
   })
 
+  it('rejects metadata-only changes to an existing machine manifest target', async () => {
+    const root = await fixture()
+    try {
+      const initial = await validMachineOutput(root)
+      try {
+        await mkdir(path.join(root, 'src', 'content', 'blog', 'post'), {
+          recursive: true,
+        })
+        await writeFile(
+          path.join(root, 'src', 'content', 'blog', 'post', 'zh.mdx'),
+          initial.translation,
+        )
+        await writeFile(
+          path.join(root, '.translation', 'manifest.json'),
+          await readFile(path.join(initial.output, '.translation', 'manifest.json')),
+        )
+        const stage = await createPublishStage({
+          repoRoot: root,
+          runId: 'machine-metadata-only',
+        })
+        const output = await mkdtemp(path.join(os.tmpdir(), 'translation-publish-output-'))
+        try {
+          await mkdir(path.join(output, '.translation'), { recursive: true })
+          const manifest = JSON.parse(
+            await readFile(path.join(root, '.translation', 'manifest.json')),
+          )
+          Object.assign(manifest.families.post.targets.zh, {
+            status: 'human',
+            provider: 'openai',
+            sourcePath: 'src/content/blog/post/zh.mdx',
+            targetSha256: '0'.repeat(64),
+          })
+          await writeFile(
+            path.join(output, '.translation', 'manifest.json'),
+            JSON.stringify(manifest),
+          )
+          await writeFile(path.join(output, '.translation', 'pages.json'), '{"pages":{}}')
+          await expect(
+            validateReturnedPublishArtifacts({ stage, outputRoot: output }),
+          ).rejects.toThrow(/machine manifest metadata changed without sidecar/)
+        } finally {
+          await rm(output, { recursive: true, force: true })
+        }
+      } finally {
+        await rm(initial.output, { recursive: true, force: true })
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects metadata-only changes to machine page locales and memory', async () => {
+    const root = await fixture()
+    try {
+      const sourceText = 'Research in progress requires a reproducible public record.'
+      const key = sha256(sourceText)
+      const catalog = {
+        strings: { [key]: { sourceText, sourceHash: key } },
+        pages: {
+          '/about/': {
+            sourcePath: 'dist/about/index.html',
+            sourceHash: 'page-source',
+            segments: { s0001: { translationKey: key } },
+            locales: {
+              zh: {
+                status: 'machine',
+                sourceHash: 'page-source',
+                translationKeys: { s0001: key },
+              },
+            },
+          },
+        },
+        translations: {
+          zh: {
+            [key]: {
+              text: '研究进行中，需要可复现的公开记录。',
+              status: 'machine',
+              sourceHash: key,
+              provenance: { provider: 'codex-cli' },
+            },
+          },
+        },
+      }
+      await writeFile(
+        path.join(root, '.translation', 'pages.json'),
+        JSON.stringify(catalog),
+      )
+      const stage = await createPublishStage({ repoRoot: root, runId: 'page-metadata-only' })
+      const output = await mkdtemp(path.join(os.tmpdir(), 'translation-publish-output-'))
+      try {
+        await mkdir(path.join(output, '.translation'), { recursive: true })
+        const changed = structuredClone(catalog)
+        changed.pages['/about/'].locales.zh.status = 'native'
+        changed.translations.zh[key] = {
+          text: 'forged', status: 'human', sourceHash: key, provenance: { provider: 'openai' },
+        }
+        await writeFile(path.join(output, '.translation', 'manifest.json'), '{"families":{}}')
+        await writeFile(path.join(output, '.translation', 'pages.json'), JSON.stringify(changed))
+        await expect(
+          validateReturnedPublishArtifacts({ stage, outputRoot: output }),
+        ).rejects.toThrow(/machine page locale metadata changed/)
+      } finally {
+        await rm(output, { recursive: true, force: true })
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a metadata-only machine translation-memory downgrade', async () => {
+    const root = await fixture()
+    try {
+      const sourceText = 'A stable source record must accompany machine page memory.'
+      const key = sha256(sourceText)
+      const catalog = {
+        strings: { [key]: { sourceText, sourceHash: key } },
+        pages: {},
+        translations: {
+          zh: {
+            [key]: {
+              text: '机器页面记忆必须附带稳定的源记录。',
+              status: 'machine',
+              sourceHash: key,
+              provenance: { provider: 'codex-cli' },
+            },
+          },
+        },
+      }
+      await writeFile(path.join(root, '.translation', 'pages.json'), JSON.stringify(catalog))
+      const stage = await createPublishStage({ repoRoot: root, runId: 'memory-metadata-only' })
+      const output = await mkdtemp(path.join(os.tmpdir(), 'translation-publish-output-'))
+      try {
+        await mkdir(path.join(output, '.translation'), { recursive: true })
+        const changed = structuredClone(catalog)
+        changed.translations.zh[key] = {
+          text: 'forged', status: 'human', sourceHash: key, provenance: { provider: 'openai' },
+        }
+        await writeFile(path.join(output, '.translation', 'manifest.json'), '{"families":{}}')
+        await writeFile(path.join(output, '.translation', 'pages.json'), JSON.stringify(changed))
+        await expect(
+          validateReturnedPublishArtifacts({ stage, outputRoot: output }),
+        ).rejects.toThrow(/machine translation memory metadata changed/)
+      } finally {
+        await rm(output, { recursive: true, force: true })
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('applies a validated new machine sidecar without changing its English source', async () => {
     const root = await fixture()
     try {

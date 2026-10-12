@@ -10,6 +10,7 @@ const LOCK_RELATIVE = 'generated/tmp/.translation-publisher.lock'
 const ACTIVE = 'active'
 const JOURNAL = 'journal.json'
 const PREPARATION = /^prepare-[0-9a-f-]+$/
+const CLEANUP = /^cleanup-[0-9a-f-]+$/
 const PRIVATE_FILE = /^(?:before|after)-[0-9]+\.bin$/
 const execFile = promisify(execFileCallback)
 const digest = (value) =>
@@ -106,6 +107,8 @@ async function safePrivateDirectory(directory, expectedName) {
   const state = await lstatOrNull(directory)
   if (!state?.isDirectory() || state.isSymbolicLink())
     throw new Error('Publisher private transaction directory is unsafe')
+  if (state.mode & 0o077)
+    throw new Error('Publisher private transaction directory is not private')
   if (path.basename(directory) !== expectedName)
     throw new Error('Publisher private transaction directory is invalid')
 }
@@ -241,10 +244,61 @@ async function restore(root, active, entry) {
   await syncDirectory(path.dirname(current.target))
 }
 
-async function cleanupActive(active, journal, onCleanupStep) {
+async function verifiedAfterBytes(active, entry) {
+  const prepared = path.join(active, entry.afterFile)
+  const state = await lstatOrNull(prepared)
+  if (!state?.isFile() || state.isSymbolicLink())
+    throw new Error('Publisher prepared artifact is unsafe')
+  const bytes = await fs.readFile(prepared)
+  if (digest(bytes) !== entry.afterHash)
+    throw new Error('Publisher prepared artifact digest does not match')
+  return bytes
+}
+
+async function installVerifiedAfter(root, active, entry) {
+  const current = await publicationTarget(root, entry.relative)
+  const currentHash = current.bytes === null ? null : digest(current.bytes)
+  if (currentHash !== entry.beforeHash)
+    throw new Error(
+      `Publisher target changed immediately before publish: ${entry.relative}`,
+    )
+  const bytes = await verifiedAfterBytes(active, entry)
+  const temporary = `${current.target}.translation-publish-${crypto.randomUUID()}`
+  await durableWrite(temporary, bytes, true)
+  await fs.rename(temporary, current.target)
+  await syncDirectory(path.dirname(current.target))
+  const published = await publicationTarget(root, entry.relative)
+  if (published.bytes === null || digest(published.bytes) !== entry.afterHash)
+    throw new Error(
+      `Publisher target changed during publish: ${entry.relative}`,
+    )
+}
+
+async function assertUniformState(root, journal, field) {
+  for (const entry of journal.entries) {
+    const current = await publicationTarget(root, entry.relative)
+    const hash = current.bytes === null ? null : digest(current.bytes)
+    if (hash !== entry[field])
+      throw new Error(
+        `Publisher target changed before cleanup: ${entry.relative}`,
+      )
+  }
+}
+
+async function moveToCleanup(active) {
+  const cleanup = path.join(
+    path.dirname(active),
+    `cleanup-${crypto.randomUUID()}`,
+  )
+  await fs.rename(active, cleanup)
+  await syncDirectory(path.dirname(active))
+  return cleanup
+}
+
+async function cleanupUniform(cleanup, journal, onCleanupStep) {
   for (const entry of journal.entries)
     for (const name of [entry.beforeFile, entry.afterFile].filter(Boolean)) {
-      const file = path.join(active, name)
+      const file = path.join(cleanup, name)
       const state = await lstatOrNull(file)
       if (state) {
         if (!state.isFile() || state.isSymbolicLink())
@@ -254,30 +308,30 @@ async function cleanupActive(active, journal, onCleanupStep) {
           await onCleanupStep({ phase: 'artifact', file: name })
       }
     }
-  await syncDirectory(active)
-  const journalPath = path.join(active, JOURNAL)
+  await syncDirectory(cleanup)
+  const journalPath = path.join(cleanup, JOURNAL)
   const journalState = await lstatOrNull(journalPath)
   if (journalState) {
     if (!journalState.isFile() || journalState.isSymbolicLink())
       throw new Error('Publisher transaction journal is unsafe')
     await fs.unlink(journalPath)
-    await syncDirectory(active)
+    await syncDirectory(cleanup)
     if (onCleanupStep) await onCleanupStep({ phase: 'journal' })
   }
-  await fs.rmdir(active).catch((error) => {
+  await fs.rmdir(cleanup).catch((error) => {
     if (error.code !== 'ENOENT') throw error
   })
-  await syncDirectory(path.dirname(active))
+  await syncDirectory(path.dirname(cleanup))
   if (onCleanupStep) await onCleanupStep({ phase: 'directory' })
 }
 
 async function recoverInactive(root) {
   const directory = await transactionRoot(root)
   for (const name of await fs.readdir(directory)) {
-    if (!PREPARATION.test(name)) continue
-    const preparation = path.join(directory, name)
-    await safePrivateDirectory(preparation, name)
-    await removePrivateDirectory(preparation, { allowJournal: true })
+    if (!PREPARATION.test(name) && !CLEANUP.test(name)) continue
+    const privateDirectory = path.join(directory, name)
+    await safePrivateDirectory(privateDirectory, name)
+    await removePrivateDirectory(privateDirectory, { allowJournal: true })
   }
   const unexpected = (await fs.readdir(directory)).filter(
     (name) => name !== ACTIVE,
@@ -298,10 +352,8 @@ export async function recoverPublisherTransaction({
   if (!state) return false
   await safePrivateDirectory(active, ACTIVE)
   const journal = await readJournal(active, root)
-  if (!journal) {
-    await removePrivateDirectory(active)
-    return 'cleaned'
-  }
+  if (!journal)
+    throw new Error('Publisher active transaction is missing its journal')
   const states = []
   for (const entry of journal.entries) {
     const current = await publicationTarget(root, entry.relative)
@@ -317,7 +369,9 @@ export async function recoverPublisherTransaction({
     for (let index = 0; index < journal.entries.length; index += 1)
       if (states[index].after)
         await restore(root, active, journal.entries[index])
-  await cleanupActive(active, journal, onCleanupStep)
+  await assertUniformState(root, journal, allAfter ? 'afterHash' : 'beforeHash')
+  const cleanup = await moveToCleanup(active)
+  await cleanupUniform(cleanup, journal, onCleanupStep)
   return allAfter ? 'finalized' : 'rolled-back'
 }
 
@@ -352,7 +406,7 @@ export async function commitPublisherTransaction({
   await recoverPublisherTransaction({ repoRoot: root })
   const directory = await recoverInactive(root)
   const preparation = path.join(directory, `prepare-${crypto.randomUUID()}`)
-  await fs.mkdir(preparation)
+  await fs.mkdir(preparation, { mode: 0o700 })
   await syncDirectory(directory)
   let promoted = false
   try {
@@ -409,9 +463,7 @@ export async function commitPublisherTransaction({
     }
     for (let index = 0; index < journal.entries.length; index += 1) {
       const entry = journal.entries[index]
-      const current = await publicationTarget(root, entry.relative)
-      await fs.rename(path.join(active, entry.afterFile), current.target)
-      await syncDirectory(path.dirname(current.target))
+      await installVerifiedAfter(root, active, entry)
       if (onCommitStep)
         await onCommitStep({
           index: index + 1,
@@ -419,7 +471,9 @@ export async function commitPublisherTransaction({
           relative: entry.relative,
         })
     }
-    await cleanupActive(active, journal, onCleanupStep)
+    await assertUniformState(root, journal, 'afterHash')
+    const cleanup = await moveToCleanup(active)
+    await cleanupUniform(cleanup, journal, onCleanupStep)
     return entries.map(({ relative }) => relative)
   } catch (error) {
     if (!promoted)

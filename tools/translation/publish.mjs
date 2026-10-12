@@ -185,6 +185,134 @@ function assertProtected(input, output) {
         `protected translation entry changed: ${parts.join('.') || '<root>'}`,
       )
 }
+const same = (left, right) => JSON.stringify(left) === JSON.stringify(right)
+const manifestIdentity = (target) =>
+  target &&
+  Object.fromEntries(
+    [
+      'status',
+      'provider',
+      'path',
+      'sourcePath',
+      'sourceLocale',
+      'targetLocale',
+      'sourceSha256',
+      'targetSha256',
+    ].map((key) => [key, target[key]]),
+  )
+const pageLocaleIdentity = (entry) =>
+  entry &&
+  Object.fromEntries(
+    ['status', 'sourceHash', 'translationKeys'].map((key) => [key, entry[key]]),
+  )
+const memoryIdentity = (entry) =>
+  entry &&
+  {
+    status: entry.status,
+    text: entry.text,
+    sourceHash: entry.sourceHash,
+    provider: entry.provenance?.provider,
+  }
+
+function assertManifestMachineMetadata(input, output, validatedSidecars) {
+  for (const [family, inputFamily] of Object.entries(input.families ?? {})) {
+    for (const [locale, inputTarget] of Object.entries(inputFamily.targets ?? {})) {
+      if (inputTarget?.status !== 'machine') continue
+      const outputTarget = output.families?.[family]?.targets?.[locale]
+      if (same(manifestIdentity(inputTarget), manifestIdentity(outputTarget)))
+        continue
+      if (!validatedSidecars.has(inputTarget.path))
+        throw new Error(`machine manifest metadata changed without sidecar: ${family}/${locale}`)
+    }
+  }
+  for (const [family, outputFamily] of Object.entries(output.families ?? {})) {
+    for (const [locale, outputTarget] of Object.entries(outputFamily.targets ?? {})) {
+      if (input.families?.[family]?.targets?.[locale]) continue
+      if (!validatedSidecars.has(outputTarget?.path))
+        throw new Error(`new manifest target has no validated sidecar: ${family}/${locale}`)
+    }
+  }
+}
+
+function validMachineMemory(key, entry, strings) {
+  return Boolean(
+    entry &&
+      entry.status === 'machine' &&
+      entry.provenance?.provider === 'codex-cli' &&
+      entry.sourceHash === key &&
+      strings?.[key]?.sourceHash === key &&
+      typeof strings[key]?.sourceText === 'string' &&
+      sha256(strings[key].sourceText) === key &&
+      typeof entry.text === 'string',
+  )
+}
+
+function assertPageCatalogMachineMetadata(input, output) {
+  for (const [route, inputPage] of Object.entries(input.pages ?? {})) {
+    const outputPage = output.pages?.[route]
+    if (!outputPage || inputPage.sourcePath !== outputPage.sourcePath || inputPage.sourceHash !== outputPage.sourceHash || !same(inputPage.segments, outputPage.segments))
+      throw new Error(`page catalog source changed: ${route}`)
+    for (const [locale, inputLocale] of Object.entries(inputPage.locales ?? {})) {
+      if (
+        inputLocale?.status !== 'machine' ||
+        same(
+          pageLocaleIdentity(inputLocale),
+          pageLocaleIdentity(outputPage.locales?.[locale]),
+        )
+      )
+        continue
+      const outputLocale = outputPage.locales?.[locale]
+      if (
+        outputLocale?.status !== 'machine' ||
+        outputLocale.sourceHash !== outputPage.sourceHash ||
+        !same(outputLocale.translationKeys, inputLocale.translationKeys)
+      )
+        throw new Error(`machine page locale metadata changed: ${route}/${locale}`)
+    }
+    for (const [locale, outputLocale] of Object.entries(outputPage.locales ?? {})) {
+      if (inputPage.locales?.[locale]) continue
+      if (
+        outputLocale?.status !== 'machine' ||
+        outputLocale.sourceHash !== outputPage.sourceHash ||
+        !same(
+          outputLocale.translationKeys,
+          Object.fromEntries(
+            Object.entries(outputPage.segments ?? {}).map(([id, segment]) => [
+              id,
+              segment.translationKey,
+            ]),
+          ),
+        )
+      )
+        throw new Error(`new page locale is not canonical machine output: ${route}/${locale}`)
+    }
+  }
+  for (const route of Object.keys(output.pages ?? {})) if (!input.pages?.[route]) throw new Error(`new page catalog source is not staged: ${route}`)
+  for (const key of Object.keys(output.strings ?? {}))
+    if (!input.strings?.[key])
+      throw new Error(`new page catalog string is not staged: ${key}`)
+  for (const [locale, inputMemory] of Object.entries(input.translations ?? {})) {
+    const outputMemory = output.translations?.[locale] ?? {}
+    for (const [key, inputEntry] of Object.entries(inputMemory)) {
+      const outputEntry = outputMemory[key]
+      if (
+        inputEntry?.status !== 'machine' ||
+        same(memoryIdentity(inputEntry), memoryIdentity(outputEntry))
+      )
+        continue
+      if (!validMachineMemory(key, outputEntry, output.strings))
+        throw new Error(`machine translation memory metadata changed: ${locale}/${key}`)
+    }
+  }
+  for (const [locale, outputMemory] of Object.entries(output.translations ?? {})) {
+    const inputMemory = input.translations?.[locale] ?? {}
+    for (const [key, outputEntry] of Object.entries(outputMemory)) {
+      if (inputMemory[key]) continue
+      if (!validMachineMemory(key, outputEntry, output.strings))
+        throw new Error(`new translation memory is not canonical machine output: ${locale}/${key}`)
+    }
+  }
+}
 
 export async function createPublishStage({
   repoRoot = process.cwd(),
@@ -305,8 +433,13 @@ export async function validateReturnedPublishArtifacts({ stage, outputRoot }) {
   assertProtected(inputPages, pages ?? {})
   if (!manifest || !pages)
     throw new Error('Returned translation metadata is incomplete')
-  for (const file of list.filter(sidecar))
+  const validatedSidecars = new Set()
+  for (const file of list.filter(sidecar)) {
     await checkSidecar(stage, outputRoot, file, config, inputManifest, manifest)
+    validatedSidecars.add(file)
+  }
+  assertManifestMachineMetadata(inputManifest, manifest, validatedSidecars)
+  assertPageCatalogMachineMetadata(inputPages, pages)
   return { files: list, hashes: await hashes(outputRoot, list) }
 }
 export function createTrustedVmPublishScript() {

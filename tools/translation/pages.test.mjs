@@ -405,20 +405,41 @@ describe('owned page localization catalog', () => {
     )
   })
 
+  it('does not reuse a self-consistent Codex cache entry under a stale segment key', async () => {
+    const sourceText = 'This substantive paragraph needs a natural localized translation.'
+    const staleText = 'A different prior paragraph had a cached translation.'
+    const staleKey = crypto.createHash('sha256').update(staleText).digest('hex')
+    const catalog = {
+      strings: { [staleKey]: { sourceText: staleText, sourceHash: staleKey } },
+      translations: { zh: { [staleKey]: { text: '另一段旧文本。', status: 'machine', sourceHash: staleKey, provenance: { provider: 'codex-cli' } } } },
+      pages: { '/': { sourceHash: 'page', locales: { zh: { status: 'machine', sourceHash: 'page', translationKeys: { s0001: staleKey } } }, segments: { s0001: { sourceText, translationKey: staleKey } } } },
+    }
+    let calls = 0
+    await generatePageTranslations({
+      catalog,
+      locale: 'zh',
+      runStructuredJson: async () => {
+        calls += 1
+        return { translations: { s0001: '这段内容需要自然的本地化翻译。' } }
+      },
+    })
+    expect(calls).toBe(1)
+  })
+
   it('reuses canonical Codex and native page translation memory', async () => {
     const sourceText = 'This substantive paragraph needs a natural localized translation.'
     const sourceHash = crypto.createHash('sha256').update(sourceText).digest('hex')
+    const codexKey = sourceHash
+    const nativeKey = sourceHash
     const catalog = {
-      strings: { codex: { sourceText, sourceHash }, native: { sourceText, sourceHash } },
+      strings: { [codexKey]: { sourceText, sourceHash } },
       translations: {
         zh: {
-          codex: { text: '这段内容需要自然的本地化翻译。', status: 'machine', sourceHash, provenance: { provider: 'codex-cli' } },
-          native: { text: '这段内容需要自然的本地化翻译。', status: 'native', sourceHash },
+          [codexKey]: { text: '这段内容需要自然的本地化翻译。', status: 'machine', sourceHash, provenance: { provider: 'codex-cli' } },
         },
       },
       pages: {
-        '/codex/': { sourceHash: 'codex-page', locales: { zh: { status: 'machine', sourceHash: 'codex-page', translationKeys: { s0001: 'codex' } } }, segments: { s0001: { sourceText, translationKey: 'codex' } } },
-        '/native/': { sourceHash: 'native-page', locales: { zh: { status: 'machine', sourceHash: 'native-page', translationKeys: { s0001: 'native' } } }, segments: { s0001: { sourceText, translationKey: 'native' } } },
+        '/codex/': { sourceHash: 'codex-page', locales: { zh: { status: 'machine', sourceHash: 'codex-page', translationKeys: { s0001: codexKey } } }, segments: { s0001: { sourceText, translationKey: codexKey } } },
       },
     }
     let calls = 0

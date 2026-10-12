@@ -49,12 +49,12 @@
     "equationCount": 0,
     "internalLinkAnnotations": 25
   },
-  "adaptationNotice": "Attribution and reconstruction notice added to HTML and EPUB; no source prose deliberately edited.",
+  "adaptationNotice": "Attribution and reconstruction notice retained at the end of HTML and in EPUB; no source prose deliberately edited.",
   "artifacts": {
     "styles.css": "8106cbe6cb6d14ab8d8392d7f99aa5c3f7b4f9f30cebe87ea46c4e7e36b2f83d",
     "paperpro.epub": "3817ff0e8a900bd56f5b3796a74315ea5fb8c9cea1d9fd976fd61e4f604138ce",
     "source.pdf": "82dd470712ce8389f19f20eb9330475e2166a281f8c7990a9f1d0763d73b4d22",
     "papermove.epub": "cebc3d9e0c929f02ba27a1a4b0e7a71745321d0d5451ecc996541812044253ae",
-    "content.html": "ad091ae4b0fd2802554f6195cbf21af701fc6b4d66cfb40d9eecd95247b89907"
+    "content.html": "f751a822a60f9a0291f38eb00fd34ac5e9fedb93f76b4cb014e334cee6c74ef9"
   }
 }

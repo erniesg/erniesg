@@ -23,6 +23,7 @@ import {
 } from './publish.mjs'
 import { parsePublishArgs } from './run-publish.mjs'
 import { sha256 } from './content.mjs'
+import { extractPageCatalog } from './pages.mjs'
 
 const execFile = promisify(execFileCallback)
 
@@ -73,7 +74,7 @@ async function fixture() {
 
 async function validMachineOutput(
   root,
-  { body = '译文', pages = { pages: {} }, target = {} } = {},
+  { body = '译文', pages, target = {} } = {},
 ) {
   const output = await mkdtemp(
     path.join(os.tmpdir(), 'translation-publish-output-'),
@@ -115,7 +116,9 @@ async function validMachineOutput(
   )
   await writeFile(
     path.join(output, '.translation', 'pages.json'),
-    JSON.stringify(pages),
+    JSON.stringify(
+      pages ?? (await extractPageCatalog({ distDir: path.join(root, 'dist') })),
+    ),
   )
   return { output, translation }
 }
@@ -402,7 +405,7 @@ describe('translation publish bridge', () => {
         await expect(
           validateReturnedPublishArtifacts({ stage, outputRoot: output }),
         ).rejects.toThrow(
-          /protected translation entry changed: pages\.\/about\//,
+          /protected page locale changed: \/about\/\/zh/,
         )
       } finally {
         await rm(output, { recursive: true, force: true })
@@ -611,6 +614,65 @@ describe('translation publish bridge', () => {
     }
   })
 
+  it('rejects duplicate manifest target paths before a sidecar can validate a shadow record', async () => {
+    const root = await fixture()
+    try {
+      const stage = await createPublishStage({ repoRoot: root, runId: 'duplicate-target' })
+      const { output } = await validMachineOutput(root)
+      try {
+        const manifestPath = path.join(output, '.translation', 'manifest.json')
+        const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+        manifest.families.shadow = {
+          targets: { zh: structuredClone(manifest.families.post.targets.zh) },
+        }
+        await writeFile(manifestPath, JSON.stringify(manifest))
+        await expect(
+          validateReturnedPublishArtifacts({ stage, outputRoot: output }),
+        ).rejects.toThrow(/duplicate manifest target path/)
+      } finally {
+        await rm(output, { recursive: true, force: true })
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('accepts a catalog freshly extracted from changed staged HTML, including a new owned route', async () => {
+    const root = await fixture()
+    try {
+      await writeFile(
+        path.join(root, '.translation', 'pages.json'),
+        JSON.stringify(await extractPageCatalog({ distDir: path.join(root, 'dist') })),
+      )
+      await writeFile(
+        path.join(root, 'dist', 'about', 'index.html'),
+        '<main><h1>Changed research page</h1><p>New public copy.</p></main>',
+      )
+      await mkdir(path.join(root, 'dist', 'new'), { recursive: true })
+      await writeFile(
+        path.join(root, 'dist', 'new', 'index.html'),
+        '<main><h1>New owned page</h1><p>It needs translation.</p></main>',
+      )
+      const stage = await createPublishStage({ repoRoot: root, runId: 'fresh-dist-catalog' })
+      const output = await mkdtemp(path.join(os.tmpdir(), 'translation-publish-output-'))
+      try {
+        await mkdir(path.join(output, '.translation'), { recursive: true })
+        const catalog = await extractPageCatalog({
+          distDir: path.join(stage.path, 'dist'),
+        })
+        await writeFile(path.join(output, '.translation', 'manifest.json'), '{"families":{}}')
+        await writeFile(path.join(output, '.translation', 'pages.json'), JSON.stringify(catalog))
+        await expect(
+          validateReturnedPublishArtifacts({ stage, outputRoot: output }),
+        ).resolves.toMatchObject({ files: expect.arrayContaining(['.translation/pages.json']) })
+      } finally {
+        await rm(output, { recursive: true, force: true })
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('rejects metadata-only changes to an existing machine manifest target', async () => {
     const root = await fixture()
     try {
@@ -665,32 +727,24 @@ describe('translation publish bridge', () => {
   it('rejects metadata-only changes to machine page locales and memory', async () => {
     const root = await fixture()
     try {
-      const sourceText = 'Research in progress requires a reproducible public record.'
-      const key = sha256(sourceText)
-      const catalog = {
-        strings: { [key]: { sourceText, sourceHash: key } },
-        pages: {
-          '/about/': {
-            sourcePath: 'dist/about/index.html',
-            sourceHash: 'page-source',
-            segments: { s0001: { translationKey: key } },
-            locales: {
-              zh: {
-                status: 'machine',
-                sourceHash: 'page-source',
-                translationKeys: { s0001: key },
-              },
-            },
-          },
-        },
-        translations: {
-          zh: {
-            [key]: {
-              text: '研究进行中，需要可复现的公开记录。',
-              status: 'machine',
-              sourceHash: key,
-              provenance: { provider: 'codex-cli' },
-            },
+      const catalog = await extractPageCatalog({
+        distDir: path.join(root, 'dist'),
+      })
+      const page = catalog.pages['/about/']
+      const [id, segment] = Object.entries(page.segments)[0]
+      const key = segment.translationKey
+      page.locales.zh = {
+        status: 'machine',
+        sourceHash: page.sourceHash,
+        translationKeys: { [id]: key },
+      }
+      catalog.translations = {
+        zh: {
+          [key]: {
+            text: '关于',
+            status: 'machine',
+            sourceHash: key,
+            provenance: { provider: 'codex-cli' },
           },
         },
       }
@@ -708,7 +762,12 @@ describe('translation publish bridge', () => {
           text: 'forged', status: 'human', sourceHash: key, provenance: { provider: 'openai' },
         }
         await writeFile(path.join(output, '.translation', 'manifest.json'), '{"families":{}}')
-        await writeFile(path.join(output, '.translation', 'pages.json'), JSON.stringify(changed))
+        const current = await extractPageCatalog({
+          distDir: path.join(stage.path, 'dist'),
+        })
+        current.translations = changed.translations
+        current.strings = changed.strings
+        await writeFile(path.join(output, '.translation', 'pages.json'), JSON.stringify(current))
         await expect(
           validateReturnedPublishArtifacts({ stage, outputRoot: output }),
         ).rejects.toThrow(/machine page locale metadata changed/)
@@ -749,7 +808,12 @@ describe('translation publish bridge', () => {
           text: 'forged', status: 'human', sourceHash: key, provenance: { provider: 'openai' },
         }
         await writeFile(path.join(output, '.translation', 'manifest.json'), '{"families":{}}')
-        await writeFile(path.join(output, '.translation', 'pages.json'), JSON.stringify(changed))
+        const current = await extractPageCatalog({
+          distDir: path.join(stage.path, 'dist'),
+        })
+        current.strings = changed.strings
+        current.translations = changed.translations
+        await writeFile(path.join(output, '.translation', 'pages.json'), JSON.stringify(current))
         await expect(
           validateReturnedPublishArtifacts({ stage, outputRoot: output }),
         ).rejects.toThrow(/machine translation memory metadata changed/)
@@ -809,7 +873,9 @@ describe('translation publish bridge', () => {
         )
         await writeFile(
           path.join(output, '.translation', 'pages.json'),
-          JSON.stringify({ pages: {} }),
+          JSON.stringify(
+            await extractPageCatalog({ distDir: path.join(root, 'dist') }),
+          ),
         )
         await applyValidatedPublishArtifacts({
           stage,
@@ -904,7 +970,7 @@ describe('translation publish bridge', () => {
         runId: 'nonfile-target',
       })
       const { output } = await validMachineOutput(root, {
-        pages: { pages: {}, translations: {} },
+        pages: await extractPageCatalog({ distDir: path.join(root, 'dist') }),
       })
       try {
         const before = await bytes(root, [

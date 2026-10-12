@@ -729,7 +729,8 @@ async function pageStyleContext(locale) {
     .join('\n\n')
 }
 
-function usableCachedTranslation(catalog, locale, key) {
+function usableCachedTranslation(catalog, locale, segment) {
+  const key = segment.translationKey
   const entry = catalog.translations?.[locale]?.[key]
   if (!entry || typeof entry.text !== 'string' || !entry.text.trim()) return false
   // Native and author-owned wording is deliberately retained. Machine output
@@ -740,7 +741,8 @@ function usableCachedTranslation(catalog, locale, key) {
     entry.provenance?.provider === 'codex-cli' &&
       source?.sourceHash === entry.sourceHash &&
       typeof source.sourceText === 'string' &&
-      sha256(source.sourceText) === entry.sourceHash,
+      sha256(source.sourceText) === entry.sourceHash &&
+      sha256(segment.sourceText) === key,
   )
 }
 
@@ -752,7 +754,7 @@ function needsPageGeneration(catalog, locale, page) {
   return Object.values(page.segments).some(
     (segment) =>
       !segment.preserveOriginal &&
-      !usableCachedTranslation(catalog, locale, segment.translationKey),
+      !usableCachedTranslation(catalog, locale, segment),
   )
 }
 
@@ -783,7 +785,7 @@ export async function generatePageTranslations({
         !usableCachedTranslation(
           result,
           locale,
-          page.segments[id].translationKey,
+          page.segments[id],
         ),
     )
     if (missingIds.length) {

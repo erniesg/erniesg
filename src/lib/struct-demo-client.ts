@@ -1,7 +1,9 @@
-import { currentStructDemoCopy } from '@/research/struct-demo-copy'
+import { currentStructDemoCopy } from '../research/struct-demo-copy'
+import { compileStructDemoEpubPreview } from './struct-demo-epub-preview'
 
 const API = '/api/struct-demo'
 const MAX_BYTES = 10 * 1024 * 1024
+const MAX_EPUB_BYTES = 32 * 1024 * 1024
 const SESSION_KEY = 'struct-demo-job'
 const POLL_INTERVAL = 5_000
 const POLL_DURATION = 65 * 60_000
@@ -11,6 +13,79 @@ const validEpub = (value: unknown): value is string =>
   typeof value === 'string' &&
   /^[a-zA-Z0-9][a-zA-Z0-9 _().-]{0,199}\.epub$/i.test(value) &&
   !value.includes('..')
+
+async function readBoundedEpub(response: Response, signal?: AbortSignal) {
+  const advertised = Number(response.headers.get('content-length'))
+  if (Number.isFinite(advertised) && advertised > MAX_EPUB_BYTES) {
+    throw new Error('EPUB is too large')
+  }
+  if (!response.body) {
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    if (bytes.byteLength > MAX_EPUB_BYTES) throw new Error('EPUB is too large')
+    return bytes
+  }
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let length = 0
+  try {
+    while (true) {
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+      const next = await reader.read()
+      if (next.done) break
+      length += next.value.byteLength
+      if (length > MAX_EPUB_BYTES) throw new Error('EPUB is too large')
+      chunks.push(next.value)
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined)
+  }
+  const bytes = new Uint8Array(length)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return bytes
+}
+
+function previewUnavailable(root: EventTarget) {
+  root.dispatchEvent(
+    new CustomEvent('struct:preview-ready', {
+      detail: { error: 'preview-unavailable' },
+    }),
+  )
+}
+
+export async function loadStructDemoEpubPreview(
+  root: EventTarget,
+  href: string,
+  filename: string,
+  signal?: AbortSignal,
+  fetcher: typeof fetch = fetch,
+) {
+  try {
+    const response = await fetcher(href, {
+      credentials: 'same-origin',
+      signal,
+    })
+    if (!response.ok) throw new Error('EPUB is unavailable')
+    const preview = compileStructDemoEpubPreview(
+      await readBoundedEpub(response, signal),
+      filename,
+    )
+    if (signal?.aborted) return
+    root.dispatchEvent(
+      new CustomEvent('struct:preview-ready', { detail: preview }),
+    )
+  } catch (error) {
+    if (
+      signal?.aborted ||
+      (error instanceof DOMException && error.name === 'AbortError')
+    )
+      return
+    previewUnavailable(root)
+  }
+}
 
 export function initializeStructDemos() {
   document
@@ -130,13 +205,21 @@ export function initializeStructDemos() {
             throw new Error('Unavailable')
           if (data.status === 'done') {
             downloads.replaceChildren()
-            for (const file of Array.isArray(data.files) ? data.files : []) {
-              if (!validEpub(file?.name)) continue
+            const epubFiles: string[] = (
+              Array.isArray(data.files) ? data.files : []
+            )
+              .map((file: unknown) =>
+                typeof file === 'object' && file !== null
+                  ? (file as { name?: unknown }).name
+                  : undefined,
+              )
+              .filter((name: unknown): name is string => validEpub(name))
+            for (const name of epubFiles) {
               const item = document.createElement('li')
               const link = document.createElement('a')
-              link.textContent = copy().download(file.name)
-              link.href = `${API}/jobs/${encodeURIComponent(jobId)}/files/${encodeURIComponent(file.name)}`
-              link.download = file.name
+              link.textContent = copy().download(name)
+              link.href = `${API}/jobs/${encodeURIComponent(jobId)}/files/${encodeURIComponent(name)}`
+              link.download = name
               link.className = 'underline underline-offset-4'
               item.append(link)
               downloads.append(item)
@@ -145,6 +228,21 @@ export function initializeStructDemos() {
             busy = false
             store()
             controls()
+            const previewName =
+              epubFiles.find((name) =>
+                /(?:^|[-_.])mobile(?:[-_.]|$)/i.test(name),
+              ) ?? epubFiles[0]
+            if (previewName) {
+              const previewHref = `${API}/jobs/${encodeURIComponent(jobId)}/files/${encodeURIComponent(previewName)}`
+              void loadStructDemoEpubPreview(
+                root,
+                previewHref,
+                previewName,
+                abort.signal,
+              )
+            } else {
+              previewUnavailable(root)
+            }
             return
           }
           if (data.status === 'failed') {

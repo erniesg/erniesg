@@ -8,12 +8,8 @@ import { fileURLToPath } from 'node:url'
 import { pipeline } from 'node:stream/promises'
 import fg from 'fast-glob'
 import matter from 'gray-matter'
-import {
-  canWriteExistingTarget,
-  getManifestTarget,
-  isProtectedPath,
-  sha256,
-} from './content.mjs'
+import { canWriteExistingTarget, getManifestTarget, isProtectedPath, sha256 } from './content.mjs'
+import { extractPageCatalog } from './pages.mjs'
 import {
   acquirePublisherLease,
   commitPublisherTransaction,
@@ -221,17 +217,28 @@ function assertManifestMachineMetadata(input, output, validatedSidecars) {
       const outputTarget = output.families?.[family]?.targets?.[locale]
       if (same(manifestIdentity(inputTarget), manifestIdentity(outputTarget)))
         continue
-      if (!validatedSidecars.has(inputTarget.path))
+      if (!validatedSidecars.has(`${family}\u0000${locale}`))
         throw new Error(`machine manifest metadata changed without sidecar: ${family}/${locale}`)
     }
   }
   for (const [family, outputFamily] of Object.entries(output.families ?? {})) {
     for (const [locale, outputTarget] of Object.entries(outputFamily.targets ?? {})) {
       if (input.families?.[family]?.targets?.[locale]) continue
-      if (!validatedSidecars.has(outputTarget?.path))
+      if (!validatedSidecars.has(`${family}\u0000${locale}`))
         throw new Error(`new manifest target has no validated sidecar: ${family}/${locale}`)
     }
   }
+}
+
+function assertUniqueManifestTargets(manifest) {
+  const paths = new Set()
+  for (const family of Object.values(manifest.families ?? {}))
+    for (const target of Object.values(family?.targets ?? {})) {
+      if (!target?.path) continue
+      if (paths.has(target.path))
+        throw new Error(`duplicate manifest target path: ${target.path}`)
+      paths.add(target.path)
+    }
 }
 
 function validMachineMemory(key, entry, strings) {
@@ -247,12 +254,61 @@ function validMachineMemory(key, entry, strings) {
   )
 }
 
-function assertPageCatalogMachineMetadata(input, output) {
+function assertPageCatalogProtected(input, output) {
+  const metadata = (catalog) => {
+    const { pages, strings, translations, ...rest } = catalog
+    return rest
+  }
+  for (const [key, value] of Object.entries(metadata(input)))
+    if (!same(value, metadata(output)[key]))
+      throw new Error('protected page catalog metadata changed')
   for (const [route, inputPage] of Object.entries(input.pages ?? {})) {
     const outputPage = output.pages?.[route]
-    if (!outputPage || inputPage.sourcePath !== outputPage.sourcePath || inputPage.sourceHash !== outputPage.sourceHash || !same(inputPage.segments, outputPage.segments))
+    if (!outputPage) {
+      if (
+        Object.values(inputPage.locales ?? {}).some(
+          (entry) => entry?.status !== 'machine',
+        )
+      )
+        throw new Error(`protected page catalog route removed: ${route}`)
+      continue
+    }
+    const { sourcePath, sourceHash, segments, locales, ...inputOpaque } = inputPage
+    const {
+      sourcePath: outputPath,
+      sourceHash: outputHash,
+      segments: outputSegments,
+      locales: outputLocales,
+      ...outputOpaque
+    } = outputPage
+    if (!same(inputOpaque, outputOpaque))
+      throw new Error(`protected page catalog record changed: ${route}`)
+    for (const [locale, entry] of Object.entries(locales ?? {}))
+      if (entry?.status !== 'machine' && !same(entry, outputLocales?.[locale]))
+        throw new Error(`protected page locale changed: ${route}/${locale}`)
+  }
+  for (const [locale, entries] of Object.entries(input.translations ?? {}))
+    for (const [key, entry] of Object.entries(entries))
+      if (
+        entry?.status !== 'machine' &&
+        !same(entry, output.translations?.[locale]?.[key])
+      )
+        throw new Error(`protected translation entry changed: translations.${locale}.${key}`)
+}
+
+function assertPageCatalogMachineMetadata(input, output, current) {
+  assertPageCatalogProtected(input, output)
+  for (const [route, currentPage] of Object.entries(current.pages ?? {})) {
+    const outputPage = output.pages?.[route]
+    if (
+      !outputPage ||
+      outputPage.sourcePath !== currentPage.sourcePath ||
+      outputPage.sourceHash !== currentPage.sourceHash ||
+      !same(outputPage.segments, currentPage.segments)
+    )
       throw new Error(`page catalog source changed: ${route}`)
-    for (const [locale, inputLocale] of Object.entries(inputPage.locales ?? {})) {
+    const inputPage = input.pages?.[route]
+    for (const [locale, inputLocale] of Object.entries(inputPage?.locales ?? {})) {
       if (
         inputLocale?.status !== 'machine' ||
         same(
@@ -270,7 +326,7 @@ function assertPageCatalogMachineMetadata(input, output) {
         throw new Error(`machine page locale metadata changed: ${route}/${locale}`)
     }
     for (const [locale, outputLocale] of Object.entries(outputPage.locales ?? {})) {
-      if (inputPage.locales?.[locale]) continue
+      if (inputPage?.locales?.[locale]) continue
       if (
         outputLocale?.status !== 'machine' ||
         outputLocale.sourceHash !== outputPage.sourceHash ||
@@ -287,9 +343,11 @@ function assertPageCatalogMachineMetadata(input, output) {
         throw new Error(`new page locale is not canonical machine output: ${route}/${locale}`)
     }
   }
-  for (const route of Object.keys(output.pages ?? {})) if (!input.pages?.[route]) throw new Error(`new page catalog source is not staged: ${route}`)
-  for (const key of Object.keys(output.strings ?? {}))
-    if (!input.strings?.[key])
+  for (const route of Object.keys(output.pages ?? {}))
+    if (!current.pages?.[route])
+      throw new Error(`new page catalog source is not staged: ${route}`)
+  for (const [key, entry] of Object.entries(output.strings ?? {}))
+    if (!same(entry, input.strings?.[key] ?? current.strings?.[key]))
       throw new Error(`new page catalog string is not staged: ${key}`)
   for (const [locale, inputMemory] of Object.entries(input.translations ?? {})) {
     const outputMemory = output.translations?.[locale] ?? {}
@@ -359,14 +417,16 @@ async function checkSidecar(
 ) {
   const raw = (await regularFile(outputRoot, file)).toString('utf8')
   const data = matter(raw).data ?? {}
-  const target = getManifestTarget(outputManifest, file)
+  const family = path.relative('src/content/blog', path.dirname(file)).split(path.sep).join('/')
+  const locale = path.basename(file, '.mdx')
+  const target = outputManifest.families?.[family]?.targets?.[locale]
   const source = `${path.dirname(file)}/index.mdx`
   const sourceRaw = await fs
     .readFile(path.join(stage.path, source), 'utf8')
     .catch(() => null)
   const sourceLocale = sourceRaw ? (matter(sourceRaw).data?.lang ?? 'en') : null
   if (
-    data.lang !== path.basename(file, '.mdx') ||
+    data.lang !== locale ||
     data.translationStatus !== 'machine' ||
     data.translationSource !== 'codex' ||
     target?.status !== 'machine' ||
@@ -376,7 +436,7 @@ async function checkSidecar(
     !sourceRaw ||
     target.sourceSha256 !== sha256(sourceRaw) ||
     target.provider !== 'codex-cli' ||
-    target.targetLocale !== path.basename(file, '.mdx') ||
+    target.targetLocale !== locale ||
     target.sourceLocale !== sourceLocale
   )
     throw new Error(`Invalid returned machine sidecar: ${file}`)
@@ -386,7 +446,7 @@ async function checkSidecar(
   if (old === null) {
     if (isProtectedPath(file, config))
       throw new Error(`Refusing protected new target: ${file}`)
-    return
+    return { family, locale }
   }
   if (sha256(old) === sha256(raw))
     throw new Error(`Returned sidecar is unchanged: ${file}`)
@@ -401,6 +461,7 @@ async function checkSidecar(
     })
   )
     throw new Error(`Refusing unsafe existing target: ${file}`)
+  return { family, locale }
 }
 export async function validateReturnedPublishArtifacts({ stage, outputRoot }) {
   await noLinks(outputRoot)
@@ -430,16 +491,27 @@ export async function validateReturnedPublishArtifacts({ stage, outputRoot }) {
   )
   const pages = await json(path.join(outputRoot, '.translation/pages.json'))
   assertProtected(inputManifest, manifest ?? {})
-  assertProtected(inputPages, pages ?? {})
+  assertPageCatalogProtected(inputPages, pages ?? {})
   if (!manifest || !pages)
     throw new Error('Returned translation metadata is incomplete')
+  assertUniqueManifestTargets(manifest)
+  const currentPages = await extractPageCatalog({
+    distDir: path.join(stage.path, 'dist'),
+  })
   const validatedSidecars = new Set()
   for (const file of list.filter(sidecar)) {
-    await checkSidecar(stage, outputRoot, file, config, inputManifest, manifest)
-    validatedSidecars.add(file)
+    const record = await checkSidecar(
+      stage,
+      outputRoot,
+      file,
+      config,
+      inputManifest,
+      manifest,
+    )
+    validatedSidecars.add(`${record.family}\u0000${record.locale}`)
   }
   assertManifestMachineMetadata(inputManifest, manifest, validatedSidecars)
-  assertPageCatalogMachineMetadata(inputPages, pages)
+  assertPageCatalogMachineMetadata(inputPages, pages, currentPages)
   return { files: list, hashes: await hashes(outputRoot, list) }
 }
 export function createTrustedVmPublishScript() {

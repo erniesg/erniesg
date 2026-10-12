@@ -3,34 +3,25 @@ import { representingTasteProject } from '@/research/representing-taste'
 import { structProject } from '@/research/struct-project'
 ---
 
-<section class="flex flex-col gap-y-4" aria-labelledby="research-projects">
-  <h2 id="research-projects" class="text-2xl font-semibold">
-    Research projects
+<section
+  class="flex max-w-2xl flex-col gap-y-4"
+  aria-labelledby="representing-taste"
+>
+  <h2 id="representing-taste" class="text-2xl font-semibold">
+    <a
+      class="hover:underline hover:underline-offset-4"
+      href={representingTasteProject.path}
+    >
+      {representingTasteProject.title}
+    </a>
   </h2>
-  <ul class="border-t">
-    <li class="border-b py-6">
-      <div class="flex flex-col gap-y-2">
-        <small class="text-xs text-muted-foreground"
-          >{representingTasteProject.status}</small
-        >
-        <h3 class="text-xl font-semibold">
-          <a
-            class="hover:underline hover:underline-offset-4"
-            href={representingTasteProject.path}
-          >
-            {representingTasteProject.title}
-          </a>
-        </h3>
-        <p class="text-sm leading-relaxed text-muted-foreground">
-          {representingTasteProject.summary}
-        </p>
-        <span class="text-sm text-muted-foreground">
-          First supporting milestone: <a
-            class="underline underline-offset-4"
-            href={structProject.demoPath}>Struct’s live PDF-import demo</a
-          >
-        </span>
-      </div>
-    </li>
-  </ul>
+  <p class="text-sm leading-relaxed text-muted-foreground">
+    {representingTasteProject.summary}
+  </p>
+  <p class="text-sm text-muted-foreground">
+    First supporting milestone: <a
+      class="underline underline-offset-4"
+      href={structProject.demoPath}>Struct’s live PDF-import demo</a
+    >
+  </p>
 </section>

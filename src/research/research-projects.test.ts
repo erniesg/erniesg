@@ -40,6 +40,44 @@ describe('research programme framing', () => {
     expect(projects).toContain('href={structProject.demoPath}')
   })
 
+  it('uses one landing heading and whitespace without repeated research labels or decorative rules', async () => {
+    const landing = await parse(source('src/pages/research/index.astro'))
+    const projects = await parse(
+      source('src/components/research/ResearchProjects.astro'),
+    )
+    const headings: string[] = []
+    const expressions: string[] = []
+    function visit(node: Node) {
+      if (node.type === 'element') {
+        if (/^h[1-6]$/u.test(node.name)) headings.push(node.name)
+        expect(node.name).not.toBe('hr')
+        const classes =
+          node.attributes.find(({ name }) => name === 'class')?.value ?? ''
+        expect(classes).not.toMatch(/(?:^|\s)border(?:-[^\s]+)?(?:\s|$)/u)
+      }
+      if (node.type === 'expression')
+        expressions.push(
+          node.children
+            .map((child) => (child.type === 'text' ? child.value : ''))
+            .join(''),
+        )
+      if ('children' in node) for (const child of node.children) visit(child)
+    }
+    visit(landing.ast)
+    visit(projects.ast)
+    expect(headings).toEqual(['h1', 'h2'])
+    expect(
+      expressions.filter((text) => text === 'representingTasteProject.summary'),
+    ).toHaveLength(1)
+    expect(expressions).not.toContain('representingTasteProject.status')
+    expect(
+      source('src/components/research/ResearchProjects.astro'),
+    ).not.toContain('Research projects')
+    expect(source('src/pages/research/index.astro')).not.toMatch(
+      /<p[^>]*>\s*Research papers and work in progress\./u,
+    )
+  })
+
   it('keeps programme and supporting demo links independent without nested anchors', async () => {
     const { ast } = await parse(
       source('src/components/research/ResearchProjects.astro'),

@@ -1,5 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import { installStaticRoutes } from './static-build'
+import { readFile } from 'node:fs/promises'
+import { extname, resolve, sep } from 'node:path'
 
 const limits = {
   available: true,
@@ -16,6 +18,41 @@ const pdf = {
 }
 async function setup(page: Page, available = true) {
   await installStaticRoutes(page)
+  // Match the static host's sample assets. Astro dev rejects their opaque
+  // sandbox origin, while published CSS/images are ordinary public files.
+  if (!process.env.SRT_STATIC_BUILD_DIR) {
+    const publicRoot = resolve('public')
+    await page.route('**/research/struct/samples/**', async (route) => {
+      const file = resolve(
+        publicRoot,
+        decodeURIComponent(new URL(route.request().url()).pathname).replace(
+          /^\/+/,
+          '',
+        ),
+      )
+      if (!file.startsWith(`${publicRoot}${sep}`)) {
+        await route.abort()
+        return
+      }
+      try {
+        const body = await readFile(file)
+        const contentType =
+          (
+            {
+              '.html': 'text/html',
+              '.css': 'text/css',
+              '.png': 'image/png',
+              '.jpg': 'image/jpeg',
+              '.svg': 'image/svg+xml',
+              '.epub': 'application/epub+zip',
+            } as Record<string, string>
+          )[extname(file)] ?? 'application/octet-stream'
+        await route.fulfill({ body, contentType })
+      } catch {
+        await route.fulfill({ status: 404 })
+      }
+    })
+  }
   await page.route('**/api/struct-demo/limits', (route) =>
     route.fulfill({ json: { ...limits, available } }),
   )
@@ -27,10 +64,8 @@ test('unavailable uploads preserve sample browsing and sandbox reflow', async ({
   await setup(page, false)
   await page.goto('/research/struct/demo/')
   await expect(page.getByRole('button', { name: 'Convert PDF' })).toBeDisabled()
-  await expect(
-    page.getByRole('button', { name: 'Convert this paper' }),
-  ).toBeDisabled()
   await expect(page.getByText(/Uploads are unavailable/)).toBeVisible()
+  await page.getByLabel('Existing paper').selectOption('ai-must-die')
   const sample = page.locator('[data-struct-sample]').filter({
     has: page.getByRole('heading', { name: 'AI Must Die', exact: true }),
   })
@@ -38,10 +73,19 @@ test('unavailable uploads preserve sample browsing and sandbox reflow', async ({
   await expect(
     sample.getByRole('link', { name: 'Source PDF' }),
   ).toHaveAttribute('href', /\.pdf$/)
-  await expect(sample.locator('iframe')).toHaveAttribute('sandbox', '')
+  await expect(page.locator('[data-struct-preview-frame]')).toHaveAttribute(
+    'sandbox',
+    '',
+  )
   await expect(
     sample.getByRole('link', { name: /EPUB/ }).first(),
   ).toHaveAttribute('download', '')
+  await page
+    .getByLabel('Existing paper')
+    .selectOption('attention-is-all-you-need')
+  await expect(
+    page.getByRole('button', { name: 'Convert this paper' }),
+  ).toBeDisabled()
 })
 
 test('uploads raw PDF once and presents private EPUB download when done', async ({
@@ -100,8 +144,10 @@ test('quota rejection disables upload and shows reset without raw server error',
   await page.goto('/research/struct/demo/')
   await page.getByLabel('Choose a PDF').setInputFiles(pdf)
   await page.getByRole('button', { name: 'Convert PDF' }).click()
-  await expect(page.getByRole('status')).toContainText(/daily limit/i)
-  await expect(page.getByRole('status')).toContainText(/UTC/)
+  await expect(page.locator('[data-struct-status]')).toContainText(
+    /daily limit/i,
+  )
+  await expect(page.locator('[data-struct-status]')).toContainText(/UTC/)
   await expect(page.getByRole('button', { name: 'Convert PDF' })).toBeDisabled()
   await expect(page.getByText('SECRET internal backend trace')).toHaveCount(0)
 })
@@ -120,7 +166,7 @@ test('rejects a disguised PDF before uploading', async ({ page }) => {
     buffer: Buffer.from('not a pdf'),
   })
   await page.getByRole('button', { name: 'Convert PDF' }).click()
-  await expect(page.getByRole('status')).toContainText(/valid PDF/i)
+  await expect(page.locator('[data-struct-status]')).toContainText(/valid PDF/i)
   expect(submissions).toBe(0)
 })
 
@@ -145,7 +191,9 @@ test('resumes a saved job and recovers polling without another upload', async ({
       })
   })
   await page.goto('/research/struct/demo/')
-  await expect(page.getByRole('status')).toContainText(/checking paused/i)
+  await expect(page.locator('[data-struct-status]')).toContainText(
+    /checking paused/i,
+  )
   await expect(page.getByRole('button', { name: 'Convert PDF' })).toBeDisabled()
   await page.getByRole('button', { name: 'Retry status check' }).click()
   await expect(
@@ -167,7 +215,9 @@ test('oversize PDFs stay on the client', async ({ page }) => {
     buffer: Buffer.alloc(10 * 1024 * 1024 + 1),
   })
   await page.getByRole('button', { name: 'Convert PDF' }).click()
-  await expect(page.getByRole('status')).toContainText(/no larger than 10 MiB/i)
+  await expect(page.locator('[data-struct-status]')).toContainText(
+    /no larger than 10 MiB/i,
+  )
   expect(submissions).toBe(0)
 })
 
@@ -177,9 +227,13 @@ test('real paper sample credits its authors, source, license, and reconstruction
   await setup(page, false)
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/research/struct/demo/')
+  await page.getByLabel('Existing paper').selectOption('ai-must-die')
   const sample = page
     .locator('[data-struct-sample]')
     .filter({ has: page.getByRole('heading', { name: /AI Must Die/i }) })
+  await sample
+    .getByText('Source, credits and review notes', { exact: true })
+    .click()
   await expect(sample).toContainText('Myke Walton')
   await expect(sample).toContainText('Cam Smith')
   await expect(
@@ -192,15 +246,14 @@ test('real paper sample credits its authors, source, license, and reconstruction
     /reflow|reconstruct/i,
   )
   await expect(sample.locator('[data-struct-verdict]')).toContainText(/review/i)
-  await sample.getByText('Read reflowed HTML', { exact: true }).click()
-  await expect(sample.locator('iframe')).toBeVisible()
+  await expect(page.locator('[data-struct-preview-frame]')).toBeVisible()
   await expect(
-    sample
-      .frameLocator('iframe')
+    page
+      .frameLocator('[data-struct-preview-frame]')
       .getByRole('heading', { name: 'AI MUST DIE', exact: true }),
   ).toBeVisible()
-  await sample
-    .locator('iframe')
+  await page
+    .locator('[data-struct-preview-frame]')
     .screenshot({ path: '.agent/evidence/struct-demo-mobile-reflow.png' })
   expect(
     await page.evaluate(
@@ -259,6 +312,9 @@ test('converts the pinned paper without a client URL and prevents competing uplo
   )
   await page.goto('/research/struct/demo/')
   await page.getByLabel('Choose a PDF').setInputFiles(pdf)
+  await page
+    .getByLabel('Existing paper')
+    .selectOption('attention-is-all-you-need')
   const convert = page.getByRole('button', { name: 'Convert this paper' })
   await convert.click()
   await expect(convert).toBeDisabled()
@@ -289,8 +345,13 @@ test('paper conversion obeys quota while cached samples remain free', async ({
       }),
   )
   await page.goto('/research/struct/demo/')
+  await page
+    .getByLabel('Existing paper')
+    .selectOption('attention-is-all-you-need')
   await page.getByRole('button', { name: 'Convert this paper' }).click()
-  await expect(page.getByRole('status')).toContainText(/daily limit/i)
+  await expect(page.locator('[data-struct-status]')).toContainText(
+    /daily limit/i,
+  )
   await expect(
     page.getByRole('button', { name: 'Convert this paper' }),
   ).toBeDisabled()
@@ -298,8 +359,8 @@ test('paper conversion obeys quota while cached samples remain free', async ({
   const cached = page.locator('[data-struct-sample]').filter({
     has: page.getByRole('heading', { name: 'AI Must Die', exact: true }),
   })
-  await cached.getByText('Read reflowed HTML', { exact: true }).click()
-  await expect(cached.locator('iframe')).toBeVisible()
+  await page.getByLabel('Existing paper').selectOption('ai-must-die')
+  await expect(page.locator('[data-struct-preview-frame]')).toBeVisible()
   await expect(
     cached.getByRole('link', { name: 'Paper Pro EPUB', exact: true }),
   ).toHaveAttribute('download', '')
@@ -321,15 +382,25 @@ for (const mode of ['upload', 'paper'] as const) {
       }),
     )
     await page.goto('/research/struct/demo/')
+    await page
+      .getByLabel('Existing paper')
+      .selectOption('attention-is-all-you-need')
     if (mode === 'upload') {
       await page.getByLabel('Choose a PDF').setInputFiles(pdf)
       await page.getByRole('button', { name: 'Convert PDF' }).click()
     } else {
+      await page
+        .getByLabel('Existing paper')
+        .selectOption('attention-is-all-you-need')
       await page.getByRole('button', { name: 'Convert this paper' }).click()
     }
-    await expect(page.getByRole('status')).toContainText(/converter is busy/i)
-    await expect(page.getByRole('status')).not.toContainText(/daily limit|UTC/i)
-    await expect(page.getByRole('status')).not.toContainText(
+    await expect(page.locator('[data-struct-status]')).toContainText(
+      /converter is busy/i,
+    )
+    await expect(page.locator('[data-struct-status]')).not.toContainText(
+      /daily limit|UTC/i,
+    )
+    await expect(page.locator('[data-struct-status]')).not.toContainText(
       'PRIVATE provider trace',
     )
     await expect(
@@ -398,18 +469,16 @@ for (const [locale, ready, download, quotaText, invalid] of [
     )
     await page.goto('/research/struct/demo/')
     await expect(page.locator('[data-struct-quota]')).toContainText(quotaText)
-    await page
-      .locator('[data-struct-form] input')
-      .setInputFiles({
-        name: 'fake.pdf',
-        mimeType: 'application/pdf',
-        buffer: Buffer.from('not pdf'),
-      })
+    await page.locator('[data-struct-form] input').setInputFiles({
+      name: 'fake.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('not pdf'),
+    })
     await page.locator('[data-struct-form] button').click()
-    await expect(page.getByRole('status')).toContainText(invalid)
+    await expect(page.locator('[data-struct-status]')).toContainText(invalid)
     await page.locator('[data-struct-form] input').setInputFiles(pdf)
     await page.locator('[data-struct-form] button').click()
-    await expect(page.getByRole('status')).toContainText(ready)
+    await expect(page.locator('[data-struct-status]')).toContainText(ready)
     await expect(page.locator('[data-struct-downloads] a')).toHaveText(download)
     await expect(page.locator('[data-struct-downloads] a')).toHaveAttribute(
       'download',
@@ -436,13 +505,133 @@ test('Chinese daily limit and busy messages retain distinct retry semantics', as
       }),
   )
   await page.goto('/research/struct/demo/')
+  await page
+    .locator('[data-struct-sample-select]')
+    .selectOption('attention-is-all-you-need')
   await page.locator('[data-struct-convert-sample]').click()
-  await expect(page.getByRole('status')).toContainText('转换服务正忙')
-  await expect(page.getByRole('status')).not.toContainText(/UTC|每日限额/)
+  await expect(page.locator('[data-struct-status]')).toContainText(
+    '转换服务正忙',
+  )
+  await expect(page.locator('[data-struct-status]')).not.toContainText(
+    /UTC|每日限额/,
+  )
   await page.locator('[data-struct-refresh]').click()
+  await page
+    .locator('[data-struct-sample-select]')
+    .selectOption('attention-is-all-you-need')
   await page.locator('[data-struct-convert-sample]').click()
-  await expect(page.getByRole('status')).toContainText('已达到每日限额')
-  await expect(page.getByRole('status')).toContainText(
+  await expect(page.locator('[data-struct-status]')).toContainText(
+    '已达到每日限额',
+  )
+  await expect(page.locator('[data-struct-status]')).toContainText(
     '2026-10-13 00:00:00 UTC',
   )
+})
+
+test('preview opens Docling immediately and preserves actual device viewport widths on mobile', async ({
+  page,
+}) => {
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  await setup(page, false)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/research/struct/demo/')
+  await expect(page.getByLabel('Existing paper')).toHaveValue(
+    'docling-technical-report',
+  )
+  const frame = page.locator('[data-struct-preview-frame]')
+  await expect(frame).toBeVisible()
+  await expect(frame).toHaveAttribute(
+    'src',
+    '/research/struct/samples/docling-technical-report/content.html',
+  )
+  await expect(frame).toHaveAttribute('sandbox', '')
+  await page.getByRole('button', { name: 'Desktop', exact: true }).click()
+  await expect
+    .poll(() => frame.evaluate((el: HTMLIFrameElement) => el.offsetWidth))
+    .toBe(1280)
+  await expect
+    .poll(() =>
+      page
+        .frameLocator('[data-struct-preview-frame]')
+        .locator('body')
+        .evaluate(() => innerWidth),
+    )
+    .toBe(1280)
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true)
+  await page.getByRole('button', { name: 'E-ink', exact: true }).click()
+  await expect
+    .poll(() => frame.evaluate((el: HTMLIFrameElement) => el.offsetWidth))
+    .toBe(600)
+  await page.getByRole('button', { name: 'Phone', exact: true }).click()
+  await expect(
+    page.frameLocator('[data-struct-preview-frame]').locator('img').first(),
+  ).toBeVisible()
+  await expect
+    .poll(() =>
+      page
+        .frameLocator('[data-struct-preview-frame]')
+        .locator('img')
+        .first()
+        .evaluate((img: HTMLImageElement) => img.naturalWidth),
+    )
+    .toBeGreaterThan(0)
+  await page.evaluate(() => scrollTo(0, 0))
+  await page.screenshot({
+    path: '.agent/evidence/struct-demo-concise-mobile.png',
+    fullPage: true,
+  })
+  await frame.screenshot({
+    path: '.agent/evidence/struct-demo-concise-mobile-frame.png',
+  })
+  await page.setViewportSize({ width: 1440, height: 1200 })
+  await page.evaluate(() => scrollTo(0, 0))
+  await page.screenshot({
+    path: '.agent/evidence/struct-demo-concise-desktop.png',
+    fullPage: true,
+  })
+  expect(errors).toEqual([])
+})
+
+test('uploaded documents use the same sandboxed preview and show a localized fallback on failure', async ({
+  page,
+}) => {
+  await setup(page)
+  await page.goto('/research/struct/demo/')
+  await page.evaluate(() =>
+    document.querySelector('[data-struct-demo]')!.dispatchEvent(
+      new CustomEvent('struct:preview-ready', {
+        detail: {
+          html: '<!doctype html><html><body><h1>Uploaded document</h1><script>parent.document.body.dataset.unsafe="yes"</script></body></html>',
+          title: 'original.pdf',
+        },
+      }),
+    ),
+  )
+  await expect(page.locator('[data-struct-preview-title]')).toHaveText(
+    'original.pdf',
+  )
+  await expect(
+    page
+      .frameLocator('[data-struct-preview-frame]')
+      .getByRole('heading', { name: 'Uploaded document' }),
+  ).toBeVisible()
+  await expect(page.locator('body')).not.toHaveAttribute('data-unsafe', 'yes')
+  await expect(page.locator('[data-struct-preview-frame]')).toHaveAttribute(
+    'sandbox',
+    '',
+  )
+  await page.evaluate(() =>
+    document.querySelector('[data-struct-demo]')!.dispatchEvent(
+      new CustomEvent('struct:preview-ready', {
+        detail: { error: 'preview-unavailable' },
+      }),
+    ),
+  )
+  await expect(page.locator('[data-struct-preview-error]')).toBeVisible()
+  await expect(page.locator('[data-struct-preview-frame]')).toBeHidden()
 })

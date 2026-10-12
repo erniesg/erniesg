@@ -1,4 +1,4 @@
-import { papersListing, type PapersListing } from './lib/papers-listing'
+import type { PapersListingEnv } from './lib/papers-listing'
 
 export type Site = {
   TITLE: string
@@ -40,22 +40,26 @@ export const SITE: Site = {
   SITEURL: 'https://ernie.sg',
 }
 
-/**
- * The four reading surfaces of ADR 010, then the rest. `/papers` always
- * exists; `listing` decides only whether the nav points at it.
- */
-export function navLinks(listing: PapersListing): Link[] {
-  return [
+/** The five sections are visible in preview; production publishes Blog and Research. */
+export function navLinks(env: PapersListingEnv): Link[] {
+  const links = [
     { href: '/blog', label: 'blog' },
     { href: '/books', label: 'books' },
-    ...(listing === 'listed' ? [{ href: '/papers', label: 'papers' }] : []),
+    { href: '/research', label: 'research' },
     { href: '/library', label: 'library' },
-    { href: '/about', label: 'about' },
-    { href: '/tags', label: 'tags' },
+    { href: '/projects', label: 'projects' },
   ]
+  return env.PUBLIC_RESEARCH_RELEASE === 'production'
+    ? links.filter(({ href }) => href === '/blog' || href === '/research')
+    : links
 }
 
-export const NAV_LINKS: Link[] = navLinks(papersListing(import.meta.env))
+export const NAV_LINKS: Link[] = navLinks(import.meta.env)
+
+/** Annotation tenancy is stable even when the public canonical paper route moves. */
+export function researchDocumentUri(paperId: string): string {
+  return new URL(`/papers/${paperId}/`, SITE.SITEURL).toString()
+}
 
 export const SOCIAL_LINKS: Link[] = [
   { href: 'https://github.com/erniesg', label: 'GitHub' },

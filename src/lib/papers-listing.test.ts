@@ -1,82 +1,83 @@
 import { describe, expect, it } from 'vitest'
-
-import { navLinks } from '../consts'
+import { navLinks, researchDocumentUri } from '../consts'
 import { includeInSitemap, papersListing } from './papers-listing'
+import { getStaticTranslation, SUPPORTED_LOCALES } from './i18n'
 
-describe('the /papers listing flag', () => {
-  it('defaults to what /research did: listed in dev and staging only', () => {
-    expect(papersListing({ DEV: true })).toBe('listed')
-    expect(papersListing({ PUBLIC_RESEARCH_RELEASE: 'staging' })).toBe('listed')
-    expect(papersListing({ PUBLIC_RESEARCH_RELEASE: 'production' })).toBe(
-      'unlisted',
-    )
-    expect(papersListing({})).toBe('unlisted')
+describe('published research and site sections', () => {
+  it('preserves the annotation tenancy URI when paper routes move', () => {
+    expect(researchDocumentUri('if-letters-home-could-sing')).toBe('https://ernie.sg/papers/if-letters-home-could-sing/')
+    expect(researchDocumentUri('semantic-responsive-typesetting')).toBe('https://ernie.sg/papers/semantic-responsive-typesetting/')
   })
-
-  it('is one switch that overrides the default either way', () => {
+  it('publishes research even with a legacy unlisted override', () => {
     expect(
       papersListing({
-        PUBLIC_PAPERS_LISTING: 'listed',
-        PUBLIC_RESEARCH_RELEASE: 'staging',
+        PUBLIC_RESEARCH_RELEASE: 'production',
+        PUBLIC_PAPERS_LISTING: 'unlisted',
       }),
     ).toBe('listed')
-    expect(
-      papersListing({ PUBLIC_PAPERS_LISTING: 'unlisted', DEV: true }),
-    ).toBe('unlisted')
-    expect(papersListing({ PUBLIC_PAPERS_LISTING: 'yes', DEV: true })).toBe(
-      'listed',
-    )
   })
-
-  it('never lists /papers in a production build, which withholds it', () => {
-    // The release gate deletes dist/papers, so a listed nav link would be a 404.
-    expect(
-      papersListing({
-        PUBLIC_PAPERS_LISTING: 'listed',
-        PUBLIC_RESEARCH_RELEASE: 'production',
-      }),
-    ).toBe('unlisted')
+  it('limits production navigation to Blog and Research', () => {
+    expect(navLinks({ PUBLIC_RESEARCH_RELEASE: 'production' })).toEqual([
+      { href: '/blog', label: 'blog' },
+      { href: '/research', label: 'research' },
+    ])
   })
-
-  it('keeps /papers out of the nav and the sitemap when off', () => {
-    const hrefs = navLinks('unlisted').map((link) => link.href)
-
-    expect(hrefs).not.toContain('/papers')
-    expect(hrefs).toEqual(expect.arrayContaining(['/blog', '/books', '/library']))
-    for (const pathname of ['/papers', '/papers/semantic-responsive-typesetting']) {
-      expect(
-        includeInSitemap(pathname, { listing: 'unlisted', production: false }),
-      ).toBe(false)
+  it('shows the five sections on development and preview', () => {
+    for (const env of [{ DEV: true }, { PUBLIC_RESEARCH_RELEASE: 'staging' }]) {
+      expect(navLinks(env).map(({ href }) => href)).toEqual([
+        '/blog',
+        '/books',
+        '/research',
+        '/library',
+        '/projects',
+      ])
     }
   })
-
-  it('puts /papers in the nav and the sitemap when on', () => {
-    expect(navLinks('listed').map((link) => link.href)).toContain('/papers')
+  it('localizes all five section labels', () => {
+    for (const locale of SUPPORTED_LOCALES) {
+      for (const section of [
+        'blog',
+        'books',
+        'research',
+        'library',
+        'projects',
+      ]) {
+        const key = `nav.${section}`
+        expect(getStaticTranslation(key, locale)).not.toBe(key)
+      }
+    }
+  })
+  it('excludes retired URLs and all withheld production trees from the sitemap', () => {
+    const options = { listing: 'listed' as const, production: true }
+    for (const route of [
+      '/papers',
+      '/papers/example',
+      '/study',
+      '/research/studio',
+      '/research/pdf-review',
+      '/books',
+      '/books/example',
+      '/library',
+      '/library/pdf-review',
+      '/projects',
+      '/projects/experiments',
+    ]) {
+      expect(includeInSitemap(route, options), route).toBe(false)
+    }
+    for (const route of [
+      '/research',
+      '/research/example',
+      '/research/struct',
+      '/blog',
+      '/bookshelf',
+    ]) {
+      expect(includeInSitemap(route, options), route).toBe(true)
+    }
     expect(
-      includeInSitemap('/papers/semantic-responsive-typesetting', {
-        listing: 'listed',
+      includeInSitemap('/projects/experiments', {
+        ...options,
         production: false,
       }),
-    ).toBe(true)
-  })
-
-  it('never lists a legacy redirect or a withheld production tree', () => {
-    for (const pathname of ['/research', '/research/studio', '/study']) {
-      expect(
-        includeInSitemap(pathname, { listing: 'listed', production: false }),
-      ).toBe(false)
-    }
-    expect(
-      includeInSitemap('/library/pdf-review', {
-        listing: 'listed',
-        production: true,
-      }),
-    ).toBe(false)
-    expect(
-      includeInSitemap('/library', { listing: 'unlisted', production: true }),
-    ).toBe(true)
-    expect(
-      includeInSitemap('/papersmith', { listing: 'unlisted', production: true }),
     ).toBe(true)
   })
 })

@@ -2,7 +2,7 @@
 import IfLettersPublication from '@/components/research/IfLettersPublication.astro'
 import ResearchPaperActions from '@/components/research/ResearchPaperActions'
 import ResearchStudio from '@/components/research/ResearchStudio'
-import { SITE } from '@/consts'
+import { researchDocumentUri } from '@/consts'
 import ReadingLayout from '@/layouts/ReadingLayout.astro'
 import { papers } from '@/research/papers'
 import { IF_LETTERS_SECTIONS } from '@/research/publications/if-letters-sections'
@@ -13,7 +13,7 @@ export function getStaticPaths() {
 
 const { paper } = Astro.props
 const isFellowshipPaper = paper.id === 'if-letters-home-could-sing'
-const path = `/papers/${paper.id}/`
+const path = `/research/${paper.id}/`
 const contents = isFellowshipPaper
   ? IF_LETTERS_SECTIONS.map(([number, title, anchor]) => ({
       href: `#${anchor}`,
@@ -29,17 +29,16 @@ const contents = isFellowshipPaper
 <ReadingLayout
   title={paper.title}
   description={paper.abstract}
-  documentUri={new URL(path, SITE.SITEURL).toString()}
+  documentUri={researchDocumentUri(paper.id)}
   canonicalPath={path}
-  noindex
   image={isFellowshipPaper
-    ? '/papers/if-letters-home-could-sing/media/image3.jpg'
+    ? '/research/if-letters-home-could-sing/media/image3.jpg'
     : undefined}
 >
   <Fragment slot="navigation">
     <div class="flex flex-col gap-y-3 text-sm">
-      <a class="text-muted-foreground hover:text-foreground" href="/papers/">
-        ← Papers
+      <a class="text-muted-foreground hover:text-foreground" href="/research/">
+        ← Research
       </a>
       <ol class="flex flex-col gap-y-2">
         {

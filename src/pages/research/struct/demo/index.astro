@@ -1,0 +1,28 @@
+---
+import Container from '@/components/Container.astro'
+import StructDemo from '@/components/research/StructDemo.astro'
+import Layout from '@/layouts/Layout.astro'
+import { structSamples } from '@/research/struct-project'
+---
+
+<Layout
+  title="Struct demo"
+  description="Compare source PDFs with Struct reading renditions, or convert your own PDF with a daily allowance."
+  canonicalPath="/research/struct/demo/"
+>
+  <Container class="flex flex-col gap-y-8 pb-24">
+    <header class="flex flex-col gap-y-3 border-b pb-6">
+      <a
+        class="text-sm text-muted-foreground hover:underline"
+        href="/research/struct/">← Struct research</a
+      >
+      <h1 class="text-3xl font-bold">Struct demo</h1>
+      <p class="max-w-2xl leading-relaxed text-muted-foreground">
+        Compare a source PDF with its reconstructed reading view and EPUBs.
+        Explore the samples, or upload your own PDF. Check the result against
+        its source before relying on it.
+      </p>
+    </header>
+    <StructDemo samples={structSamples} />
+  </Container>
+</Layout>

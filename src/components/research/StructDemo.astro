@@ -1,0 +1,183 @@
+---
+export interface StructDemoSample {
+  id: string
+  title: string
+  description: string
+  pdfUrl: string
+  htmlUrl?: string
+  convertSampleId?: string
+  epubUrls: { label: string; url: string }[]
+  attribution?: {
+    authors: string
+    sourceUrl: string
+    license: string
+    licenseUrl: string
+    changes: string
+  }
+  verdict?: string
+}
+interface Props {
+  samples?: StructDemoSample[]
+}
+const { samples = [] } = Astro.props
+---
+
+<section data-struct-demo class="space-y-10">
+  <section aria-labelledby="struct-samples-title" class="space-y-6">
+    <h2 id="struct-samples-title" class="text-2xl font-semibold">
+      Explore converted samples
+    </h2>
+    <p class="text-muted-foreground">
+      Compare the source PDF with Struct’s reflowed HTML and download an EPUB.
+      Preconverted samples are free and do not use your daily allowance.
+    </p>
+    {
+      samples.length === 0 && (
+        <p>Samples are being prepared. Please check back soon.</p>
+      )
+    }
+    {
+      samples.map((sample) => (
+        <article data-struct-sample class="space-y-3 border-t pt-6">
+          <h3 class="text-xl font-semibold">{sample.title}</h3>
+          <p class="text-muted-foreground">{sample.description}</p>
+          {sample.attribution && (
+            <div class="space-y-2 text-sm text-muted-foreground">
+              <p>
+                By {sample.attribution.authors}.{' '}
+                <a
+                  class="underline underline-offset-4"
+                  href={sample.attribution.sourceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Original publication
+                </a>
+                {' · '}
+                <a
+                  class="underline underline-offset-4"
+                  href={sample.attribution.licenseUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {sample.attribution.license}
+                </a>
+              </p>
+              <p data-struct-changes>{sample.attribution.changes}</p>
+            </div>
+          )}
+          {sample.verdict && (
+            <p data-struct-verdict class="text-sm font-medium">
+              {sample.verdict}
+            </p>
+          )}
+          <div class="flex flex-wrap gap-4">
+            <a
+              class="underline underline-offset-4"
+              href={sample.pdfUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Source PDF
+            </a>
+            {sample.epubUrls.map((epub) => (
+              <a class="underline underline-offset-4" href={epub.url} download>
+                {epub.label}
+              </a>
+            ))}
+          </div>
+          {sample.convertSampleId && (
+            <div class="space-y-2">
+              <p class="text-sm text-muted-foreground">
+                The server downloads this source from arXiv for your conversion.
+                This uses one conversion from your daily allowance; your private
+                EPUB will appear below.
+              </p>
+              <button
+                type="button"
+                data-struct-convert-sample={sample.convertSampleId}
+                aria-describedby="struct-conversion-status"
+                disabled
+                class="rounded-md border px-4 py-2 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Convert this paper
+              </button>
+            </div>
+          )}
+          {sample.htmlUrl && (
+            <details>
+              <summary class="cursor-pointer py-2">Read reflowed HTML</summary>
+              <iframe
+                title={`${sample.title} — reflowed HTML`}
+                src={sample.htmlUrl}
+                sandbox=""
+                loading="lazy"
+                class="h-[32rem] w-full rounded border bg-white"
+              />
+            </details>
+          )}
+        </article>
+      ))
+    }
+  </section>
+  <section
+    aria-labelledby="struct-upload-title"
+    class="space-y-4 border-t pt-6"
+  >
+    <h2 id="struct-upload-title" class="text-2xl font-semibold">
+      Convert your PDF
+    </h2>
+    <p class="text-muted-foreground">
+      Your PDF is sent to the server for conversion. Completed files are removed
+      after about 72 hours; queued or running jobs remain until they finish.
+      Download links expire 72 hours after submission. The demo allows 3
+      conversion attempts per network per UTC day, shared by people on that
+      network, with a global limit of 20 attempts per day. Failed submissions
+      also use the allowance. PDFs must be 10 MiB or smaller.
+    </p>
+    <p data-struct-quota>Checking upload availability…</p>
+    <form data-struct-form class="space-y-3">
+      <label class="block font-medium" for="struct-pdf">Choose a PDF</label>
+      <input
+        id="struct-pdf"
+        name="pdf"
+        type="file"
+        accept="application/pdf,.pdf"
+        disabled
+        class="block w-full text-sm"
+      />
+      <button
+        type="submit"
+        disabled
+        class="rounded-md border px-4 py-2 disabled:cursor-not-allowed disabled:opacity-50"
+        >Convert PDF</button
+      >
+    </form>
+    <p
+      id="struct-conversion-status"
+      data-struct-status
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    >
+    </p>
+    <ul data-struct-downloads class="space-y-2"></ul>
+    <button
+      data-struct-retry
+      type="button"
+      hidden
+      class="rounded-md border px-4 py-2">Retry status check</button
+    >
+    <button
+      data-struct-refresh
+      type="button"
+      hidden
+      class="rounded-md border px-4 py-2">Check upload availability</button
+    >
+  </section>
+</section>
+<script>
+  import { initializeStructDemos } from '@/lib/struct-demo-client'
+  initializeStructDemos()
+  document.addEventListener('astro:page-load', initializeStructDemos)
+</script>

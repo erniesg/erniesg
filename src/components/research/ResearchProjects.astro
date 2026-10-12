@@ -1,0 +1,26 @@
+---
+import { structProject } from '@/research/struct-project'
+---
+
+<section class="flex flex-col gap-y-4" aria-labelledby="research-projects">
+  <h2 id="research-projects" class="text-2xl font-semibold">
+    Research projects
+  </h2>
+  <ul class="border-t">
+    <li class="border-b py-6">
+      <a class="group flex flex-col gap-y-2" href={structProject.path}>
+        <small class="text-xs text-muted-foreground"
+          >{structProject.status}</small
+        >
+        <h3
+          class="text-xl font-semibold group-hover:underline group-hover:underline-offset-4"
+        >
+          {structProject.title}
+        </h3>
+        <p class="text-sm leading-relaxed text-muted-foreground">
+          {structProject.summary}
+        </p>
+      </a>
+    </li>
+  </ul>
+</section>

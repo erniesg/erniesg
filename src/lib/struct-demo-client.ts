@@ -5,6 +5,7 @@ const API = '/api/struct-demo'
 const MAX_BYTES = 10 * 1024 * 1024
 const MAX_EPUB_BYTES = 32 * 1024 * 1024
 const SESSION_KEY = 'struct-demo-job'
+const SESSION_SOURCE_KEY = 'struct-demo-source-sample'
 const POLL_INTERVAL = 5_000
 const POLL_DURATION = 65 * 60_000
 const validJob = (value: unknown): value is string =>
@@ -142,7 +143,13 @@ export function initializeStructDemos() {
       let pollUntil = 0
       let previewSequence = 0
       let previewRequestId: string | undefined
-      const startPreview = (previewJobId?: string) => {
+      let pendingSourceSample: string | undefined
+      const startPreview = (
+        previewJobId?: string,
+        sourceFile?: File,
+        sourceSampleId?: string,
+      ) => {
+        pendingSourceSample = sourceSampleId
         previewAbort.abort()
         previewAbort = new AbortController()
         previewRequestId = `struct-preview-${Date.now().toString(36)}-${++previewSequence}`
@@ -150,6 +157,8 @@ export function initializeStructDemos() {
           new CustomEvent('struct:preview-start', {
             detail: {
               requestId: previewRequestId,
+              sourceFile,
+              sourceSampleId,
               ...(previewJobId ? { jobId: previewJobId } : {}),
             },
           }),
@@ -176,6 +185,12 @@ export function initializeStructDemos() {
         try {
           if (id) sessionStorage.setItem(SESSION_KEY, id)
           else sessionStorage.removeItem(SESSION_KEY)
+          if (id && pendingSourceSample === 'attention-is-all-you-need')
+            sessionStorage.setItem(
+              SESSION_SOURCE_KEY,
+              JSON.stringify({ jobId: id, sampleId: pendingSourceSample }),
+            )
+          else sessionStorage.removeItem(SESSION_SOURCE_KEY)
         } catch {
           /* Storage is optional. */
         }
@@ -370,7 +385,7 @@ export function initializeStructDemos() {
           }
           if (!active) return
           say(copy().uploading)
-          startPreview()
+          startPreview(undefined, file)
           await submitJob(`${API}/jobs`, {
             method: 'POST',
             body: file,
@@ -396,7 +411,7 @@ export function initializeStructDemos() {
           busy = true
           controls()
           downloads.replaceChildren()
-          startPreview()
+          startPreview(undefined, undefined, sampleId)
           say(copy().requestPaper)
           status.scrollIntoView({ block: 'center', behavior: 'auto' })
           void submitJob(`${API}/samples/${sampleId}`, { method: 'POST' })
@@ -413,7 +428,20 @@ export function initializeStructDemos() {
       if (validJob(saved)) {
         jobId = saved
         busy = true
-        startPreview(jobId)
+        let sourceSampleId: string | undefined
+        try {
+          const source = JSON.parse(
+            sessionStorage.getItem(SESSION_SOURCE_KEY) ?? 'null',
+          )
+          if (
+            source?.jobId === jobId &&
+            source?.sampleId === 'attention-is-all-you-need'
+          )
+            sourceSampleId = source.sampleId
+        } catch {
+          /* Storage is optional. */
+        }
+        startPreview(jobId, undefined, sourceSampleId)
         pollUntil = Date.now() + POLL_DURATION
         void poll()
       }

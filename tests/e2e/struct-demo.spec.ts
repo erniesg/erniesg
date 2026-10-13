@@ -278,6 +278,254 @@ test('real paper sample credits its authors, source, license, and reconstruction
   })
 })
 
+test('compares each sample original beside its reconstruction on desktop and stacks on mobile', async ({
+  page,
+}) => {
+  await setup(page, false)
+  await page.setViewportSize({ width: 1440, height: 1200 })
+  await page.goto('/research/struct/demo/')
+
+  const comparison = page.locator('[data-struct-comparison]')
+  const original = comparison.getByRole('heading', {
+    name: 'Original',
+    exact: true,
+  })
+  const reconstruction = comparison.getByRole('heading', {
+    name: 'Reconstruction',
+    exact: true,
+  })
+  await expect(original).toBeVisible()
+  await expect(reconstruction).toBeVisible()
+  await expect(page.locator('[data-struct-original-frame]')).toHaveAttribute(
+    'src',
+    '/research/struct/samples/docling-technical-report/source.pdf',
+  )
+  const originalCanvas = page.locator('[data-struct-original-frame] canvas')
+  await expect(originalCanvas).toBeVisible()
+  await expect
+    .poll(() =>
+      originalCanvas.evaluate((canvas) => (canvas as HTMLCanvasElement).width),
+    )
+    .toBeGreaterThan(0)
+  await expect(page.getByLabel(/^Original PDF page 1 of/)).toBeVisible()
+
+  const desktopPanels = await comparison
+    .locator(':scope > section')
+    .evaluateAll((panels) =>
+      panels.map((panel) => {
+        const { left, top } = panel.getBoundingClientRect()
+        return { left, top }
+      }),
+    )
+  expect(desktopPanels).toHaveLength(2)
+  expect(desktopPanels[0].left).toBeLessThan(desktopPanels[1].left)
+  expect(desktopPanels[0].top).toBe(desktopPanels[1].top)
+
+  await page.getByLabel('Existing paper').selectOption('ai-must-die')
+  const selectedSample = page.locator('[data-struct-sample]').filter({
+    has: page.getByRole('heading', { name: 'AI Must Die', exact: true }),
+  })
+  const selectedPdf = await selectedSample.getAttribute('data-sample-pdf')
+  expect(selectedPdf).toBeTruthy()
+  await expect(page.locator('[data-struct-original-frame]')).toHaveAttribute(
+    'src',
+    new RegExp(`${selectedPdf}$`),
+  )
+  await expect(page.locator('[data-struct-original-link]')).toHaveAttribute(
+    'href',
+    new RegExp(`${selectedPdf}$`),
+  )
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  const mobilePanels = await comparison
+    .locator(':scope > section')
+    .evaluateAll((panels) =>
+      panels.map((panel) => {
+        const { left, top } = panel.getBoundingClientRect()
+        return { left, top }
+      }),
+    )
+  expect(mobilePanels[0].left).toBe(mobilePanels[1].left)
+  expect(mobilePanels[0].top).toBeLessThan(mobilePanels[1].top)
+})
+
+test('clears the original PDF when an upload preview has no source file', async ({
+  page,
+}) => {
+  await setup(page)
+  await page.goto('/research/struct/demo/')
+  await expect(page.locator('[data-struct-original-frame]')).toHaveAttribute(
+    'src',
+    /source\.pdf$/,
+  )
+
+  await page.evaluate(() =>
+    document.querySelector('[data-struct-demo]')!.dispatchEvent(
+      new CustomEvent('struct:preview-start', {
+        detail: { requestId: 'upload-without-source' },
+      }),
+    ),
+  )
+  await page.evaluate(() =>
+    document.querySelector('[data-struct-demo]')!.dispatchEvent(
+      new CustomEvent('struct:preview-ready', {
+        detail: {
+          requestId: 'upload-without-source',
+          html: '<h1>Uploaded reconstruction</h1>',
+          title: 'upload.pdf',
+        },
+      }),
+    ),
+  )
+
+  await expect(page.getByLabel('Existing paper')).toHaveValue('__upload__')
+  await expect(page.locator('[data-struct-original-frame]')).toBeHidden()
+  await expect(
+    page.locator('[data-struct-original-frame]'),
+  ).not.toHaveAttribute('src')
+  await expect(page.locator('[data-struct-original-link]')).toBeHidden()
+  await expect(page.locator('[data-struct-original-link]')).not.toHaveAttribute(
+    'href',
+  )
+  await expect(page.locator('[data-struct-original-empty]')).toBeVisible()
+  await expect(
+    page
+      .frameLocator('[data-struct-preview-frame]')
+      .getByRole('heading', { name: 'Uploaded reconstruction' }),
+  ).toBeVisible()
+})
+
+test('resumed paper conversion restores its original sample PDF', async ({
+  page,
+}) => {
+  await setup(page)
+  await page.addInitScript(() => {
+    sessionStorage.setItem('struct-demo-job', 'saved-job')
+    sessionStorage.setItem(
+      'struct-demo-source-sample',
+      JSON.stringify({
+        jobId: 'saved-job',
+        sampleId: 'attention-is-all-you-need',
+      }),
+    )
+  })
+  await page.route('**/api/struct-demo/jobs/saved-job', (route) =>
+    route.fulfill({
+      json: {
+        id: 'saved-job',
+        status: 'done',
+        files: [{ name: 'attention.epub' }],
+      },
+    }),
+  )
+  await page.route(
+    '**/api/struct-demo/jobs/saved-job/files/attention.epub',
+    (route) => route.fulfill({ status: 404 }),
+  )
+  await page.goto('/research/struct/demo/')
+
+  await expect(page.locator('[data-struct-original-frame]')).toHaveAttribute(
+    'src',
+    'https://arxiv.org/pdf/1706.03762v7',
+  )
+  await expect(page.locator('[data-struct-original-link]')).toHaveAttribute(
+    'href',
+    'https://arxiv.org/pdf/1706.03762v7',
+  )
+  await expect(
+    page.getByRole('link', { name: 'Download attention.epub' }),
+  ).toBeVisible()
+})
+
+test('keeps an upload source PDF through duplicate starts and replaces it with the selected sample source', async ({
+  page,
+}) => {
+  const sourcePdf = (
+    await readFile('tests/fixtures/pdf/born-digital.pdf')
+  ).toString('base64')
+  await setup(page)
+  await page.goto('/research/struct/demo/')
+
+  await page.evaluate((bytes) => {
+    const binary = atob(bytes)
+    const sourceFile = new File(
+      [Uint8Array.from(binary, (character) => character.charCodeAt(0))],
+      'source.pdf',
+      { type: 'application/pdf' },
+    )
+    document.querySelector('[data-struct-demo]')!.dispatchEvent(
+      new CustomEvent('struct:preview-start', {
+        detail: { requestId: 'upload-with-source', sourceFile },
+      }),
+    )
+  }, sourcePdf)
+  await page.evaluate(() =>
+    document.querySelector('[data-struct-demo]')!.dispatchEvent(
+      new CustomEvent('struct:preview-ready', {
+        detail: {
+          requestId: 'upload-with-source',
+          html: '<h1>Upload reconstruction</h1>',
+          title: 'source.pdf',
+        },
+      }),
+    ),
+  )
+
+  const original = page.locator('[data-struct-original-frame]')
+  await expect(original).toHaveAttribute('src', /^blob:/)
+  const blobSource = await original.getAttribute('src')
+  await expect(
+    page
+      .frameLocator('[data-struct-preview-frame]')
+      .getByRole('heading', { name: 'Upload reconstruction' }),
+  ).toBeVisible()
+
+  await page.evaluate((bytes) => {
+    const binary = atob(bytes)
+    const sourceFile = new File(
+      [Uint8Array.from(binary, (character) => character.charCodeAt(0))],
+      'source.pdf',
+      { type: 'application/pdf' },
+    )
+    document.querySelector('[data-struct-demo]')!.dispatchEvent(
+      new CustomEvent('struct:preview-start', {
+        detail: { requestId: 'upload-with-source', sourceFile },
+      }),
+    )
+  }, sourcePdf)
+  await expect(original).toHaveAttribute('src', blobSource!)
+
+  await page.evaluate(() =>
+    document.querySelector('[data-struct-demo]')!.dispatchEvent(
+      new CustomEvent('struct:preview-start', {
+        detail: {
+          requestId: 'sample-source',
+          sourceSampleId: 'ai-must-die',
+        },
+      }),
+    ),
+  )
+  await page.evaluate(() =>
+    document.querySelector('[data-struct-demo]')!.dispatchEvent(
+      new CustomEvent('struct:preview-ready', {
+        detail: {
+          requestId: 'sample-source',
+          html: '<h1>Sample reconstruction</h1>',
+          title: 'AI Must Die.pdf',
+        },
+      }),
+    ),
+  )
+  await expect(original).toHaveAttribute(
+    'src',
+    /\/research\/struct\/samples\/ai-must-die\/source\.pdf$/,
+  )
+  await expect(page.locator('[data-struct-original-link]')).toHaveAttribute(
+    'href',
+    /\/research\/struct\/samples\/ai-must-die\/source\.pdf$/,
+  )
+})
+
 test('converts the pinned paper without a client URL and prevents competing uploads', async ({
   page,
 }) => {
@@ -603,13 +851,11 @@ test('uploaded documents use the same sandboxed preview and show a localized fal
   await setup(page)
   await page.goto('/research/struct/demo/')
   await page.evaluate(() =>
-    document
-      .querySelector('[data-struct-demo]')!
-      .dispatchEvent(
-        new CustomEvent('struct:preview-start', {
-          detail: { requestId: 'upload-test' },
-        }),
-      ),
+    document.querySelector('[data-struct-demo]')!.dispatchEvent(
+      new CustomEvent('struct:preview-start', {
+        detail: { requestId: 'upload-test' },
+      }),
+    ),
   )
   await page.evaluate(() =>
     document.querySelector('[data-struct-demo]')!.dispatchEvent(
@@ -653,13 +899,11 @@ for (const outcome of ['success', 'failure'] as const) {
     await setup(page)
     await page.goto('/research/struct/demo/')
     await page.evaluate(() =>
-      document
-        .querySelector('[data-struct-demo]')!
-        .dispatchEvent(
-          new CustomEvent('struct:preview-start', {
-            detail: { requestId: 'A' },
-          }),
-        ),
+      document.querySelector('[data-struct-demo]')!.dispatchEvent(
+        new CustomEvent('struct:preview-start', {
+          detail: { requestId: 'A' },
+        }),
+      ),
     )
     await page.getByLabel('Existing paper').selectOption('ai-must-die')
     const detail =
@@ -691,13 +935,11 @@ for (const outcome of ['success', 'failure'] as const) {
       await page.getByLabel('Existing paper').selectOption('ai-must-die')
     }
     await page.evaluate(() =>
-      document
-        .querySelector('[data-struct-demo]')!
-        .dispatchEvent(
-          new CustomEvent('struct:preview-start', {
-            detail: { requestId: 'B' },
-          }),
-        ),
+      document.querySelector('[data-struct-demo]')!.dispatchEvent(
+        new CustomEvent('struct:preview-start', {
+          detail: { requestId: 'B' },
+        }),
+      ),
     )
     await page.evaluate(
       (value) =>
@@ -711,17 +953,15 @@ for (const outcome of ['success', 'failure'] as const) {
     await expect(page.getByLabel('Existing paper')).toHaveValue('ai-must-die')
     await expect(page.locator('[data-struct-preview-error]')).toBeHidden()
     await page.evaluate(() =>
-      document
-        .querySelector('[data-struct-demo]')!
-        .dispatchEvent(
-          new CustomEvent('struct:preview-ready', {
-            detail: {
-              requestId: 'B',
-              html: '<h1>B result</h1>',
-              title: 'B.pdf',
-            },
-          }),
-        ),
+      document.querySelector('[data-struct-demo]')!.dispatchEvent(
+        new CustomEvent('struct:preview-ready', {
+          detail: {
+            requestId: 'B',
+            html: '<h1>B result</h1>',
+            title: 'B.pdf',
+          },
+        }),
+      ),
     )
     await expect(page.getByLabel('Existing paper')).toHaveValue('__upload__')
     await expect(page.locator('[data-struct-upload-option]')).toHaveText(

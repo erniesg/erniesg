@@ -131,32 +131,76 @@ const initialSample =
     <h2 id="struct-preview-label" data-struct-preview-title class="sr-only">
       {initialSample?.title ?? 'Reading preview'}
     </h2>
-    <p data-struct-preview-error hidden role="status" class="text-sm">
-      Preview unavailable. Download the EPUB to read it.
-    </p>
-    <p
-      data-struct-preview-empty
-      hidden={!initialSample || !!initialSample.htmlUrl}
-      class="text-sm text-muted-foreground"
-    >
-      Convert this paper to preview it.
-    </p>
-    <div
-      data-struct-preview-viewport
-      hidden={!initialSample?.htmlUrl}
-      class="w-full overflow-hidden"
-    >
-      <div
-        data-struct-preview-stage
-        class="mx-auto overflow-hidden border bg-white"
+    <div data-struct-comparison class="grid min-w-0 gap-6 md:grid-cols-2">
+      <section
+        class="min-w-0 space-y-3"
+        aria-labelledby="struct-original-label"
       >
-        <iframe
-          data-struct-preview-frame
-          title="Reading preview"
-          src={initialSample?.htmlUrl}
-          sandbox=""
-          class="block border-0 bg-white"></iframe>
-      </div>
+        <div class="flex items-center justify-between gap-3">
+          <h3 id="struct-original-label" class="text-sm font-medium">
+            Original
+          </h3>
+          <a
+            data-struct-original-link
+            href={initialSample?.pdfUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="text-sm underline underline-offset-4">Open PDF ↗</a
+          >
+        </div>
+        <div
+          data-struct-original-frame
+          title={`${initialSample?.title ?? 'Source'} · Original PDF`}
+          data-source={initialSample?.pdfUrl}
+          class="struct-original-frame block w-full overflow-auto border bg-white"
+        >
+        </div>
+        <p
+          data-struct-original-empty
+          hidden
+          class="text-sm text-muted-foreground"
+        >
+          The original PDF is not available in this session.
+        </p>
+        <p class="text-sm text-muted-foreground">
+          If the preview is unavailable, use Open PDF.
+        </p>
+      </section>
+      <section
+        class="min-w-0 space-y-3"
+        aria-labelledby="struct-reconstruction-label"
+      >
+        <h3 id="struct-reconstruction-label" class="text-sm font-medium">
+          Reconstruction
+        </h3>
+        <p data-struct-preview-error hidden role="status" class="text-sm">
+          Preview unavailable. Download the EPUB to read it.
+        </p>
+        <p
+          data-struct-preview-empty
+          hidden={!initialSample || !!initialSample.htmlUrl}
+          class="text-sm text-muted-foreground"
+        >
+          Convert this paper to preview it.
+        </p>
+        <div
+          data-struct-preview-viewport
+          hidden={!initialSample?.htmlUrl}
+          class="w-full overflow-hidden"
+        >
+          <div
+            data-struct-preview-stage
+            class="mx-auto overflow-hidden border bg-white"
+          >
+            <iframe
+              data-struct-preview-frame
+              title="Reading preview"
+              src={initialSample?.htmlUrl}
+              sandbox=""
+              class="block border-0 bg-white"></iframe>
+          </div>
+        </div>
+      </section>
     </div>
     {
       samples.length === 0 && (
@@ -171,6 +215,7 @@ const initialSample =
           data-struct-sample
           data-sample-id={sample.id}
           data-sample-title={sample.title}
+          data-sample-pdf={sample.pdfUrl}
           data-sample-html={sample.htmlUrl ?? ''}
           hidden={sample.id !== initialSample?.id}
           class="space-y-2 text-sm"
@@ -264,6 +309,14 @@ const initialSample =
   </details>
 </section>
 <style>
+  .struct-original-frame[hidden] {
+    display: none;
+  }
+  .struct-original-frame {
+    height: 844px;
+    max-height: 80vh;
+    min-height: 400px;
+  }
   [data-struct-device] {
     padding: 0.5rem 0.625rem;
     border-bottom: 2px solid transparent;

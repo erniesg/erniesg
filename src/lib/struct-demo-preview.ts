@@ -1,3 +1,5 @@
+import { createStructOriginalViewer } from './struct-demo-original'
+
 export const STRUCT_PREVIEW_SIZES = {
   phone: { width: 390, height: 844 },
   tablet: { width: 768, height: 1024 },
@@ -50,6 +52,16 @@ export function initializeStructPreviews() {
       const frame = root.querySelector<HTMLIFrameElement>(
         '[data-struct-preview-frame]',
       )!
+      const originalFrame = root.querySelector<HTMLElement>(
+        '[data-struct-original-frame]',
+      )!
+      const originalViewer = createStructOriginalViewer(originalFrame)
+      const originalLink = root.querySelector<HTMLAnchorElement>(
+        '[data-struct-original-link]',
+      )!
+      const originalEmpty = root.querySelector<HTMLElement>(
+        '[data-struct-original-empty]',
+      )!
       const viewport = root.querySelector<HTMLElement>(
         '[data-struct-preview-viewport]',
       )!
@@ -76,6 +88,9 @@ export function initializeStructPreviews() {
       let device: StructPreviewDevice = 'phone'
       let uploaded: { html: string; title: string } | undefined
       const requests = createPreviewRequestGuard()
+      let uploadedPdf: string | undefined
+      let ownedPdf: string | undefined
+      let sourceRequestId: string | undefined
       function resize() {
         const size = STRUCT_PREVIEW_SIZES[device]
         const scale = previewScale(viewport.clientWidth, size.width)
@@ -88,6 +103,24 @@ export function initializeStructPreviews() {
       }
       function chooseSample() {
         error.hidden = true
+        const selectedArticle = articles.find(
+          (article) => article.dataset.sampleId === select.value,
+        )
+        const pdf =
+          select.value === '__upload__'
+            ? uploadedPdf
+            : selectedArticle?.dataset.samplePdf
+        originalFrame.hidden = originalLink.hidden = !pdf
+        originalEmpty.hidden = !!pdf
+        if (pdf) {
+          originalFrame.setAttribute('src', pdf)
+          originalLink.href = pdf
+          originalFrame.title = `${selectedArticle?.dataset.sampleTitle ?? uploaded?.title ?? 'Source'} · Original PDF`
+        } else {
+          originalFrame.removeAttribute('src')
+          originalLink.removeAttribute('href')
+        }
+        originalViewer.setSource(pdf, originalFrame.title)
         articles.forEach((article) => {
           article.hidden = article.dataset.sampleId !== select.value
         })
@@ -136,8 +169,28 @@ export function initializeStructPreviews() {
       const start = (event: Event) => {
         if (!(event instanceof CustomEvent)) return
         const requestId = event.detail?.requestId
-        if (typeof requestId === 'string' && requestId.length > 0)
-          requests.start(requestId)
+        if (typeof requestId !== 'string' || requestId.length === 0) return
+        if (requestId === sourceRequestId) return
+        sourceRequestId = requestId
+        requests.start(requestId)
+        if (ownedPdf) URL.revokeObjectURL(ownedPdf)
+        ownedPdf = undefined
+        uploadedPdf = undefined
+        if (event.detail.sourceFile instanceof File) {
+          ownedPdf = URL.createObjectURL(
+            new Blob([event.detail.sourceFile], { type: 'application/pdf' }),
+          )
+          uploadedPdf = ownedPdf
+        } else if (typeof event.detail.sourceSampleId === 'string') {
+          uploadedPdf = articles.find(
+            (article) =>
+              article.dataset.sampleId === event.detail.sourceSampleId,
+          )?.dataset.samplePdf
+        }
+        if (select.value === '__upload__') {
+          uploaded = undefined
+          chooseSample()
+        }
       }
       const ready = (event: Event) => {
         if (!(event instanceof CustomEvent)) return
@@ -178,9 +231,11 @@ export function initializeStructPreviews() {
         animationFrame = requestAnimationFrame(resize)
       })
       observer.observe(viewport)
-      resize()
+      chooseSample()
       const cleanup = () => {
         observer.disconnect()
+        originalViewer.destroy()
+        if (ownedPdf) URL.revokeObjectURL(ownedPdf)
         if (animationFrame !== undefined) cancelAnimationFrame(animationFrame)
         root.removeEventListener('struct:preview-ready', ready)
         root.removeEventListener('struct:preview-start', start)

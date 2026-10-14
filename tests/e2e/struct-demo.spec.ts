@@ -231,9 +231,7 @@ test('real paper sample credits its authors, source, license, and reconstruction
   const sample = page
     .locator('[data-struct-sample]')
     .filter({ has: page.getByRole('heading', { name: /AI Must Die/i }) })
-  await sample
-    .getByText('Source, credits and review notes', { exact: true })
-    .click()
+  await sample.getByText('Details', { exact: true }).click()
   await expect(sample).toContainText('Myke Walton')
   await expect(sample).toContainText('Cam Smith')
   await expect(
@@ -285,7 +283,10 @@ test('compares each sample original beside its reconstruction on desktop and sta
   await page.setViewportSize({ width: 1440, height: 1200 })
   await page.goto('/research/struct/demo/')
 
+  const standardContent = page.locator('[data-struct-standard-content]')
   const comparison = page.locator('[data-struct-comparison]')
+  const sampleSelect = page.getByLabel('Existing paper')
+  const controls = page.locator('[data-struct-preview-controls]')
   const original = comparison.getByRole('heading', {
     name: 'Original',
     exact: true,
@@ -296,6 +297,31 @@ test('compares each sample original beside its reconstruction on desktop and sta
   })
   await expect(original).toBeVisible()
   await expect(reconstruction).toBeVisible()
+  await expect(standardContent).toBeVisible()
+  await expect(sampleSelect).toBeVisible()
+  await expect(controls).toBeVisible()
+  const uploadDetails = page.locator('details').filter({
+    has: page.getByText('Upload details', { exact: true }),
+  })
+  await expect(uploadDetails).not.toHaveAttribute('open', '')
+  await uploadDetails.getByText('Upload details', { exact: true }).click()
+  await expect(uploadDetails).toHaveAttribute('open', '')
+  await expect(uploadDetails).toContainText(
+    'PDFs are sent to the server for conversion.',
+  )
+  await expect(uploadDetails).toContainText('10 MiB max.')
+  await expect(uploadDetails).toContainText(
+    '3 attempts per network per UTC day',
+  )
+  await expect(uploadDetails).toContainText('20 globally per UTC day')
+  await expect(uploadDetails).toContainText('expire 72 hours after submission.')
+  await expect(uploadDetails).toContainText(
+    'Completed files are deleted after about 72 hours',
+  )
+  await expect(uploadDetails).toContainText('pending jobs stay until finished')
+  await expect(uploadDetails).toContainText('Samples use no allowance.')
+  await uploadDetails.getByText('Upload details', { exact: true }).click()
+  await expect(uploadDetails).not.toHaveAttribute('open', '')
   await expect(page.locator('[data-struct-original-frame]')).toHaveAttribute(
     'src',
     '/research/struct/samples/docling-technical-report/source.pdf',
@@ -308,6 +334,54 @@ test('compares each sample original beside its reconstruction on desktop and sta
     )
     .toBeGreaterThan(0)
   await expect(page.getByLabel(/^Original PDF page 1 of/)).toBeVisible()
+
+  const desktopLayout = await page.evaluate(() => {
+    const standard = document.querySelector<HTMLElement>(
+      '[data-struct-standard-content]',
+    )!
+    const comparison = document.querySelector<HTMLElement>(
+      '[data-struct-comparison]',
+    )!
+    const sample = document.querySelector<HTMLElement>(
+      '[data-struct-sample-select]',
+    )!
+    const controls = document.querySelector<HTMLElement>(
+      '[data-struct-preview-controls]',
+    )!
+    const title = document.querySelector('h1')!
+    const upload = document.querySelector<HTMLElement>('[data-struct-form]')!
+    const breadcrumb = document.querySelector('nav')!
+    const bounds = (element: Element) => {
+      const { left, right, width } = element.getBoundingClientRect()
+      return { left, right, width }
+    }
+    return {
+      standard: bounds(standard),
+      comparison: bounds(comparison),
+      sample: bounds(sample),
+      controls: bounds(controls),
+      title: bounds(title),
+      upload: bounds(upload),
+      breadcrumb: bounds(breadcrumb),
+      controlsWrap: getComputedStyle(controls).flexWrap,
+    }
+  })
+  expect(desktopLayout.standard.width).toBeLessThanOrEqual(768)
+  expect(desktopLayout.comparison.width).toBeGreaterThan(
+    desktopLayout.standard.width,
+  )
+  expect(desktopLayout.sample.width).toBeLessThanOrEqual(320)
+  expect(desktopLayout.controlsWrap).toBe('wrap')
+  for (const content of [
+    desktopLayout.breadcrumb,
+    desktopLayout.title,
+    desktopLayout.upload,
+    desktopLayout.sample,
+    desktopLayout.controls,
+  ]) {
+    expect(content.left).toBeGreaterThanOrEqual(desktopLayout.standard.left)
+    expect(content.right).toBeLessThanOrEqual(desktopLayout.standard.right)
+  }
 
   const desktopPanels = await comparison
     .locator(':scope > section')
@@ -347,6 +421,31 @@ test('compares each sample original beside its reconstruction on desktop and sta
     )
   expect(mobilePanels[0].left).toBe(mobilePanels[1].left)
   expect(mobilePanels[0].top).toBeLessThan(mobilePanels[1].top)
+  const mobileLayout = await page.evaluate(() => {
+    const standard = document.querySelector<HTMLElement>(
+      '[data-struct-standard-content]',
+    )!
+    const comparison = document.querySelector<HTMLElement>(
+      '[data-struct-comparison]',
+    )!
+    const sample = document.querySelector<HTMLElement>(
+      '[data-struct-sample-select]',
+    )!
+    const bounds = (element: Element) => {
+      const { left, right, width } = element.getBoundingClientRect()
+      return { left, right, width }
+    }
+    return {
+      standard: bounds(standard),
+      comparison: bounds(comparison),
+      sample: bounds(sample),
+      scrolls: document.documentElement.scrollWidth <= innerWidth,
+    }
+  })
+  expect(mobileLayout.scrolls).toBe(true)
+  expect(mobileLayout.comparison.left).toBe(mobileLayout.standard.left)
+  expect(mobileLayout.comparison.right).toBe(mobileLayout.standard.right)
+  expect(mobileLayout.sample.width).toBe(mobileLayout.standard.width)
 })
 
 test('clears the original PDF when an upload preview has no source file', async ({
@@ -670,25 +769,19 @@ for (const mode of ['upload', 'paper'] as const) {
 }
 
 for (const [locale, ready, download, quotaText, invalid] of [
-  [
-    'zh',
-    '转换完成',
-    '下载 paper.epub',
-    '此网络今天还可转换 3 次',
-    '请选择有效的 PDF 文件',
-  ],
+  ['zh', '转换完成', '下载 paper.epub', '3/3（今日）', '请选择有效的 PDF 文件'],
   [
     'ja',
     '変換が完了しました',
     'paper.epub をダウンロード',
-    'このネットワークでは本日あと 3 回',
+    '3/3（今日）',
     '有効な PDF ファイルを選択してください',
   ],
   [
     'ko',
     '변환이 완료되었습니다',
     'paper.epub 다운로드',
-    '이 네트워크에서 오늘 3회',
+    '3/3 (오늘)',
     '유효한 PDF 파일을 선택해 주세요',
   ],
 ] as const) {

@@ -6,6 +6,20 @@ import { strToU8, zipSync } from 'fflate'
 afterEach(() => vi.unstubAllGlobals())
 
 describe('demo message locale', () => {
+  it('uses compact daily quota labels in every supported locale', () => {
+    const cases = [
+      ['en', '3/3 today'],
+      ['zh-Hans', '3/3（今日）'],
+      ['ja-JP', '3/3（今日）'],
+      ['ko-KR', '3/3 (오늘)'],
+    ] as const
+
+    for (const [locale, expected] of cases) {
+      vi.stubGlobal('document', { documentElement: { lang: locale } })
+      expect(currentStructDemoCopy().remaining(3, 3)).toBe(expected)
+    }
+  })
+
   it('uses the rendered Japanese document ahead of a stale Chinese preference', () => {
     vi.stubGlobal('document', { documentElement: { lang: 'ja-JP' } })
     vi.stubGlobal('localStorage', { getItem: () => 'zh' })

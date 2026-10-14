@@ -28,7 +28,7 @@ const initialSample =
   samples[0]
 ---
 
-<section data-struct-demo class="space-y-6">
+<section data-struct-demo data-struct-standard-content class="space-y-6">
   <section class="space-y-2" aria-labelledby="struct-upload-title">
     <h2 id="struct-upload-title" class="sr-only">Upload a PDF</h2>
     <form data-struct-form class="flex flex-wrap items-end gap-3">
@@ -84,7 +84,7 @@ const initialSample =
 
   <section class="space-y-3" aria-labelledby="struct-preview-label">
     <div class="flex flex-wrap items-end justify-between gap-3">
-      <div class="w-full min-w-0 space-y-2 sm:w-auto sm:flex-1">
+      <div class="w-full min-w-0 space-y-2 sm:w-80 sm:flex-none">
         <label for="struct-sample" class="block text-sm font-medium"
           >Existing paper</label
         >
@@ -131,7 +131,10 @@ const initialSample =
     <h2 id="struct-preview-label" data-struct-preview-title class="sr-only">
       {initialSample?.title ?? 'Reading preview'}
     </h2>
-    <div data-struct-comparison class="grid min-w-0 gap-6 md:grid-cols-2">
+    <div
+      data-struct-comparison
+      class="struct-comparison grid min-w-0 gap-6 md:grid-cols-2"
+    >
       <section
         class="min-w-0 space-y-3"
         aria-labelledby="struct-original-label"
@@ -161,9 +164,6 @@ const initialSample =
           class="text-sm text-muted-foreground"
         >
           The original PDF is not available in this session.
-        </p>
-        <p class="text-sm text-muted-foreground">
-          If the preview is unavailable, use Open PDF.
         </p>
       </section>
       <section
@@ -252,10 +252,9 @@ const initialSample =
           )}
           <details>
             <summary class="cursor-pointer text-muted-foreground">
-              Source, credits and review notes
+              Details
             </summary>
             <div class="space-y-2 py-3">
-              <p>{sample.description}</p>
               {sample.convertSampleId && (
                 <p>
                   The server downloads this source from arXiv for your
@@ -296,19 +295,21 @@ const initialSample =
     }
   </section>
   <details class="text-sm text-muted-foreground">
-    <summary class="cursor-pointer">Limits and privacy</summary>
+    <summary class="cursor-pointer">Upload details</summary>
     <p class="py-3">
-      Your PDF is sent to the server for conversion. Completed files are removed
-      after about 72 hours; queued or running jobs remain until they finish.
-      Download links expire 72 hours after submission. The demo allows 3
-      conversion attempts per network per UTC day, shared by people on that
-      network, with a global limit of 20 attempts per day. Failed submissions
-      also use the allowance. PDFs must be 10 MiB or smaller. Preconverted
-      samples are free and do not use your daily allowance.
+      PDFs are sent to the server for conversion. 10 MiB max. 3 attempts per
+      network per UTC day, 20 globally per UTC day; failed attempts count. Links
+      expire 72 hours after submission. Completed files are deleted after about
+      72 hours; pending jobs stay until finished. Samples use no allowance.
     </p>
   </details>
 </section>
 <style>
+  .struct-comparison {
+    width: min(calc(100vw - 2rem), 80rem);
+    margin-left: 50%;
+    transform: translateX(-50%);
+  }
   .struct-original-frame[hidden] {
     display: none;
   }

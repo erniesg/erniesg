@@ -11,18 +11,12 @@ import {
   SUPPORTED_LOCALES,
   type SupportedLocale,
 } from '@/lib/i18n'
+import { getStaticText, useSiteLocale } from '@/lib/use-site-locale'
 import {
-  detectPreferredLocale,
-  getStaticText,
-  normalizeLocalePreference,
-} from '@/lib/use-site-locale'
-import {
-  LEGACY_BLOG_LOCALE_STORAGE_KEY,
   SITE_LOCALE_CHANGE_EVENT,
   SITE_LOCALE_STORAGE_KEY,
 } from '@/lib/site-preferences'
 import { Check, Languages } from 'lucide-react'
-import * as React from 'react'
 
 function getLocalizedPagePath(locale: SupportedLocale) {
   const mapElement = document.getElementById('site-locale-paths')
@@ -47,25 +41,11 @@ function dispatchLocaleChange(locale: SupportedLocale) {
 }
 
 export function LanguageToggle() {
-  const [locale, setLocale] = React.useState<SupportedLocale>('en')
+  const locale = useSiteLocale()
   const t = (key: string) => getStaticText(locale, key)
-
-  React.useEffect(() => {
-    const storedLocale =
-      localStorage.getItem(SITE_LOCALE_STORAGE_KEY) ??
-      localStorage.getItem(LEGACY_BLOG_LOCALE_STORAGE_KEY)
-    const nextLocale = storedLocale
-      ? normalizeLocalePreference(storedLocale)
-      : detectPreferredLocale()
-
-    localStorage.setItem(SITE_LOCALE_STORAGE_KEY, nextLocale)
-    setLocale(nextLocale)
-    dispatchLocaleChange(nextLocale)
-  }, [])
 
   function chooseLocale(nextLocale: SupportedLocale) {
     localStorage.setItem(SITE_LOCALE_STORAGE_KEY, nextLocale)
-    setLocale(nextLocale)
     dispatchLocaleChange(nextLocale)
 
     const nextPath = getLocalizedPagePath(nextLocale)

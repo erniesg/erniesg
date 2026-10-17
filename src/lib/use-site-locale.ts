@@ -4,13 +4,13 @@ import {
   STATIC_TRANSLATIONS,
   SUPPORTED_LOCALES,
   type SupportedLocale,
-} from '@/lib/i18n'
+} from './i18n'
 import {
   LEGACY_BLOG_LOCALE_CHANGE_EVENT,
   LEGACY_BLOG_LOCALE_STORAGE_KEY,
   SITE_LOCALE_CHANGE_EVENT,
   SITE_LOCALE_STORAGE_KEY,
-} from '@/lib/site-preferences'
+} from './site-preferences'
 
 const supportedLocaleSet = new Set<string>(SUPPORTED_LOCALES)
 
@@ -39,6 +39,19 @@ export function detectPreferredLocale(): SupportedLocale {
 }
 
 export function getCurrentLocalePreference(): SupportedLocale {
+  if (typeof window !== 'undefined') {
+    const parts = window.location.pathname.split('/').filter(Boolean)
+    const routeLocale = parts.at(-1)
+    if (
+      parts[0] === 'blog' &&
+      parts.length >= 2 &&
+      routeLocale &&
+      supportedLocaleSet.has(routeLocale)
+    ) {
+      return routeLocale as SupportedLocale
+    }
+  }
+
   if (typeof localStorage === 'undefined') return DEFAULT_LOCALE
 
   const savedLocale =
@@ -61,7 +74,18 @@ export function useSiteLocale(): SupportedLocale {
   const [locale, setLocale] = React.useState<SupportedLocale>(DEFAULT_LOCALE)
 
   React.useEffect(() => {
-    setLocale(getCurrentLocalePreference())
+    const syncLocale = () => {
+      const nextLocale = getCurrentLocalePreference()
+      localStorage.setItem(SITE_LOCALE_STORAGE_KEY, nextLocale)
+      setLocale(nextLocale)
+      window.dispatchEvent(
+        new CustomEvent(SITE_LOCALE_CHANGE_EVENT, {
+          detail: { locale: nextLocale },
+        }),
+      )
+    }
+    syncLocale()
+    document.addEventListener('astro:page-load', syncLocale)
 
     const handleLanguageChange = (event: Event) => {
       if (!(event instanceof CustomEvent)) return
@@ -75,6 +99,7 @@ export function useSiteLocale(): SupportedLocale {
     )
 
     return () => {
+      document.removeEventListener('astro:page-load', syncLocale)
       window.removeEventListener(SITE_LOCALE_CHANGE_EVENT, handleLanguageChange)
       window.removeEventListener(
         LEGACY_BLOG_LOCALE_CHANGE_EVENT,

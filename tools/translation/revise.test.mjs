@@ -27,6 +27,8 @@ function candidate(overrides = {}) {
       },
     },
     target: {
+      path: 'src/content/blog/x/ja.mdx',
+      provider: 'codex-cli',
       status: 'machine',
       targetSha256: sha256(raw),
       qualityStatus: 'review-failed',
@@ -54,5 +56,10 @@ describe('review-driven machine translation revision', () => {
     const value = candidate()
     value.report.targetSha256 = 'old-hash'
     expect(revisionCandidateIssue(value)).toBe('stale-quality-report')
+  })
+  it('excludes protected paths despite machine labels', () => {
+    const value = candidate()
+    value.config.protectedHumanTranslations = [value.target.path]
+    expect(revisionCandidateIssue(value)).toBe('protected')
   })
 })

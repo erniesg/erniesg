@@ -29,3 +29,9 @@ Agent operating contract for `erniesg`.
 - Use `.agent/pr-policy.yaml` for review stewardship and `.agent/merge-policy.yaml` for guarded merge decisions; merge is disabled unless the repo opts in.
 - Use `.agent/deploy.yaml` as the deploy contract; do not run deploy, rollback, DNS, IAM, or infrastructure apply commands without explicit human approval.
 - Treat `infra/vm` as reusable recipes. Do not paste SSH keys, Tailscale auth keys, cloud credentials, or app secrets into those files or their logs.
+
+## Preview Deployment Ownership
+
+- `erniesg-workers-preview` hosts the active book and annotation/auth preview. Preserve its book assets, Worker entry point, staging database, and existing `WORKOS_*` bindings.
+- Do not use this Worker to validate a production-release or assets-only build. Use an already-authorized separate target; creating a new target still follows the deployment approval contract.
+- Preview deploys must require the existing auth secret names and preserve bindings. Check the book, `/auth/me`, and annotation API after deployment; a missing auth configuration is a failed deployment.

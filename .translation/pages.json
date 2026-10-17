@@ -5452,6 +5452,134 @@
     "a82a880efebe3c6f3bf200d5734cd01216c7363e0d56377f8a428bcd441dd431": {
       "sourceText": "\nPDFs are sent to the server for conversion. 10 MiB max. 3 attempts per\n      network per UTC day, 20 globally per UTC day; failed attempts count. Links\n      expire 72 hours after submission. Completed files are deleted after about\n      72 hours; pending jobs stay until finished. Samples use no allowance.\n",
       "sourceHash": "a82a880efebe3c6f3bf200d5734cd01216c7363e0d56377f8a428bcd441dd431"
+    },
+    "b079c84f2b8bd0779057e9e5f3e5696df6884479b603eba67732ed6d2d8be137": {
+      "sourceText": "Reader settings",
+      "sourceHash": "b079c84f2b8bd0779057e9e5f3e5696df6884479b603eba67732ed6d2d8be137"
+    },
+    "23acc3e789224a7d176d21728255ba5896b8b7d18c30361c0ec403dbf8399d97": {
+      "sourceText": "Device model\n",
+      "sourceHash": "23acc3e789224a7d176d21728255ba5896b8b7d18c30361c0ec403dbf8399d97"
+    },
+    "46aa94dfbe14fc0049765a913bbcc0f408db084014e43f7824b1067fcc7f570f": {
+      "sourceText": "Device model",
+      "sourceHash": "46aa94dfbe14fc0049765a913bbcc0f408db084014e43f7824b1067fcc7f570f"
+    },
+    "6c95bad7abf7ab5b8a4f8f67820f436567f71ac93f373c3233f549a76f0cc225": {
+      "sourceText": " Phone · 390 × 844 ",
+      "sourceHash": "6c95bad7abf7ab5b8a4f8f67820f436567f71ac93f373c3233f549a76f0cc225"
+    },
+    "1835337481f66c31066e145b600283133bce994ca5468dfc709a88f2ed04e5ad": {
+      "sourceText": " iPhone SE · 375 × 667 ",
+      "sourceHash": "1835337481f66c31066e145b600283133bce994ca5468dfc709a88f2ed04e5ad"
+    },
+    "31401a22ae4b2cee7974033460c4bb66a821fac74d7f26f449648dbf50fb942b": {
+      "sourceText": " iPhone 14 Pro Max · 430 × 932 ",
+      "sourceHash": "31401a22ae4b2cee7974033460c4bb66a821fac74d7f26f449648dbf50fb942b"
+    },
+    "bb6143728c892b0e692d7e516d302e6788e7ab687283dd33067516c4dba01038": {
+      "sourceText": " Tablet · 768 × 1024 ",
+      "sourceHash": "bb6143728c892b0e692d7e516d302e6788e7ab687283dd33067516c4dba01038"
+    },
+    "1cfb4c7e191691005355f760425cb588a4def5a185295bdd24bc8a23cab8c496": {
+      "sourceText": " iPad Air 11″ · 820 × 1180 ",
+      "sourceHash": "1cfb4c7e191691005355f760425cb588a4def5a185295bdd24bc8a23cab8c496"
+    },
+    "101596f218056dec7a821463d7431251f2310be0bc82cbe78f744e3e063a1367": {
+      "sourceText": " iPad Pro 12.9″ · 1024 × 1366 ",
+      "sourceHash": "101596f218056dec7a821463d7431251f2310be0bc82cbe78f744e3e063a1367"
+    },
+    "aef0f299027c34a2656e1a502a22cc6a4b558c7240aba9b689419f388487061f": {
+      "sourceText": " Desktop · 1280 × 800 ",
+      "sourceHash": "aef0f299027c34a2656e1a502a22cc6a4b558c7240aba9b689419f388487061f"
+    },
+    "2547fc9409fdc8d00afa194f974db6f7af3cf83429e34d5f86c3c610d0145e38": {
+      "sourceText": " Laptop · 1440 × 900 ",
+      "sourceHash": "2547fc9409fdc8d00afa194f974db6f7af3cf83429e34d5f86c3c610d0145e38"
+    },
+    "251ad94ceda09cbba1c6cb3a10539f83564b8b5a6da5025c209b3fa420a5b11d": {
+      "sourceText": " Full HD · 1920 × 1080 ",
+      "sourceHash": "251ad94ceda09cbba1c6cb3a10539f83564b8b5a6da5025c209b3fa420a5b11d"
+    },
+    "b4ed15e12120ab933755584140f9fbc2e226f7ec8df65b7ed381eb41e70b734e": {
+      "sourceText": " E-ink · 600 × 800 ",
+      "sourceHash": "b4ed15e12120ab933755584140f9fbc2e226f7ec8df65b7ed381eb41e70b734e"
+    },
+    "48f9e6803d774e4cc53fb50437dd7037deb1e6556f5e718cde7b4ebf0e8f32f4": {
+      "sourceText": " reMarkable Paper Pro · 810 × 1080 ",
+      "sourceHash": "48f9e6803d774e4cc53fb50437dd7037deb1e6556f5e718cde7b4ebf0e8f32f4"
+    },
+    "55f81652a02cfd4b069956f29509b8248ea50f56c2e6043a26bd683bab6994db": {
+      "sourceText": " reMarkable Paper Pro Move · 477 × 848 ",
+      "sourceHash": "55f81652a02cfd4b069956f29509b8248ea50f56c2e6043a26bd683bab6994db"
+    },
+    "d432bb2b8200bb3a214a507a782f9bfd64fcf4eddfec99d3abe67ae6e035e8e0": {
+      "sourceText": "Custom size",
+      "sourceHash": "d432bb2b8200bb3a214a507a782f9bfd64fcf4eddfec99d3abe67ae6e035e8e0"
+    },
+    "20b50f28f43bfbcc5dc99b832e002bad34fc61eeb9c58db0df1780cd2c545079": {
+      "sourceText": "Width (px)\n",
+      "sourceHash": "20b50f28f43bfbcc5dc99b832e002bad34fc61eeb9c58db0df1780cd2c545079"
+    },
+    "bad5f0ee7ade0c1083e06201917929ad892d241cb6ba185065b981bad80d1b00": {
+      "sourceText": "Width (px)",
+      "sourceHash": "bad5f0ee7ade0c1083e06201917929ad892d241cb6ba185065b981bad80d1b00"
+    },
+    "43af6054e859798cdc8644d6886ed9f89c35d08e76e581ae544277f95f87b720": {
+      "sourceText": "Height (px)\n",
+      "sourceHash": "43af6054e859798cdc8644d6886ed9f89c35d08e76e581ae544277f95f87b720"
+    },
+    "a8af39afa89df04666546ca7054d55a2563897e6f45b944005281d5188c5d9a6": {
+      "sourceText": "Height (px)",
+      "sourceHash": "a8af39afa89df04666546ca7054d55a2563897e6f45b944005281d5188c5d9a6"
+    },
+    "c98d38f59789c7609fd742b07e35a6c41b81072f2f7096a600b1d99a3def3b87": {
+      "sourceText": "Font family\n",
+      "sourceHash": "c98d38f59789c7609fd742b07e35a6c41b81072f2f7096a600b1d99a3def3b87"
+    },
+    "119ef3fa607e7c05ce8d693b7aeb64ce7ca4d18a655046c2d0f6a93d62c164f6": {
+      "sourceText": "Font family",
+      "sourceHash": "119ef3fa607e7c05ce8d693b7aeb64ce7ca4d18a655046c2d0f6a93d62c164f6"
+    },
+    "4691492179d2208993976d27d343bd02964068569f241d6061116d7df6d4099a": {
+      "sourceText": "Georgia",
+      "sourceHash": "4691492179d2208993976d27d343bd02964068569f241d6061116d7df6d4099a"
+    },
+    "aac910161f16402c8108e8df6d7dc5941b65103b4deec7830cb141e563c68ee7": {
+      "sourceText": "Arial",
+      "sourceHash": "aac910161f16402c8108e8df6d7dc5941b65103b4deec7830cb141e563c68ee7"
+    },
+    "6725e7bbcd28f3a8a586fa34bf191fd72dde8b61756932cd3237c17a6f196f1a": {
+      "sourceText": "System",
+      "sourceHash": "6725e7bbcd28f3a8a586fa34bf191fd72dde8b61756932cd3237c17a6f196f1a"
+    },
+    "09d22d5c2f3f83d711c2fb7442b5f44491d315b664e7f11e090823b0f0e3e6f3": {
+      "sourceText": "Times New Roman",
+      "sourceHash": "09d22d5c2f3f83d711c2fb7442b5f44491d315b664e7f11e090823b0f0e3e6f3"
+    },
+    "c35ac1f135179da798b42517370eac231587f07116c229fec5f316f9790c7bc0": {
+      "sourceText": "Font size (px)\n",
+      "sourceHash": "c35ac1f135179da798b42517370eac231587f07116c229fec5f316f9790c7bc0"
+    },
+    "f5c080f4fa8315c66f0a34932e55d811ac8adbf17f38b81a3ae87d7815bdcbf6": {
+      "sourceText": "Font size (px)",
+      "sourceHash": "f5c080f4fa8315c66f0a34932e55d811ac8adbf17f38b81a3ae87d7815bdcbf6"
+    },
+    "e8c08d43278d1113b8b7ccd8a04e2247bbb602712e31ad2903f23b225aba9944": {
+      "sourceText": "Margins (px)\n",
+      "sourceHash": "e8c08d43278d1113b8b7ccd8a04e2247bbb602712e31ad2903f23b225aba9944"
+    },
+    "ec9cdb765856a2f652869eaa423ca51220fa54bb41867cd14b8a805f33c75f5b": {
+      "sourceText": "Margins (px)",
+      "sourceHash": "ec9cdb765856a2f652869eaa423ca51220fa54bb41867cd14b8a805f33c75f5b"
+    },
+    "9577697aa96f7cc05446d8166adb42733e71b466c7fe28d84befe889db51f0d0": {
+      "sourceText": "Reset reader",
+      "sourceHash": "9577697aa96f7cc05446d8166adb42733e71b466c7fe28d84befe889db51f0d0"
+    },
+    "ba381173ed86a4b50dd68a05df5f63b2790bc1e6325a1ad57af795ce1a143282": {
+      "sourceText": "\nApproximate reading viewports in logical pixels. Changes affect this\n      preview; downloaded EPUBs keep their device profiles.\n",
+      "sourceHash": "ba381173ed86a4b50dd68a05df5f63b2790bc1e6325a1ad57af795ce1a143282"
     }
   },
   "translations": {
@@ -15282,6 +15410,262 @@
         "provenance": {
           "provider": "manual"
         }
+      },
+      "b079c84f2b8bd0779057e9e5f3e5696df6884479b603eba67732ed6d2d8be137": {
+        "text": "阅读设置",
+        "status": "edited",
+        "sourceHash": "b079c84f2b8bd0779057e9e5f3e5696df6884479b603eba67732ed6d2d8be137",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "23acc3e789224a7d176d21728255ba5896b8b7d18c30361c0ec403dbf8399d97": {
+        "text": "设备型号",
+        "status": "edited",
+        "sourceHash": "23acc3e789224a7d176d21728255ba5896b8b7d18c30361c0ec403dbf8399d97",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "46aa94dfbe14fc0049765a913bbcc0f408db084014e43f7824b1067fcc7f570f": {
+        "text": "设备型号",
+        "status": "edited",
+        "sourceHash": "46aa94dfbe14fc0049765a913bbcc0f408db084014e43f7824b1067fcc7f570f",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "6c95bad7abf7ab5b8a4f8f67820f436567f71ac93f373c3233f549a76f0cc225": {
+        "text": "手机 · 390 × 844",
+        "status": "edited",
+        "sourceHash": "6c95bad7abf7ab5b8a4f8f67820f436567f71ac93f373c3233f549a76f0cc225",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "1835337481f66c31066e145b600283133bce994ca5468dfc709a88f2ed04e5ad": {
+        "text": "iPhone SE · 375 × 667",
+        "status": "edited",
+        "sourceHash": "1835337481f66c31066e145b600283133bce994ca5468dfc709a88f2ed04e5ad",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "31401a22ae4b2cee7974033460c4bb66a821fac74d7f26f449648dbf50fb942b": {
+        "text": "iPhone 14 Pro Max · 430 × 932",
+        "status": "edited",
+        "sourceHash": "31401a22ae4b2cee7974033460c4bb66a821fac74d7f26f449648dbf50fb942b",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "bb6143728c892b0e692d7e516d302e6788e7ab687283dd33067516c4dba01038": {
+        "text": "平板电脑 · 768 × 1024",
+        "status": "edited",
+        "sourceHash": "bb6143728c892b0e692d7e516d302e6788e7ab687283dd33067516c4dba01038",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "1cfb4c7e191691005355f760425cb588a4def5a185295bdd24bc8a23cab8c496": {
+        "text": "iPad Air 11″ · 820 × 1180",
+        "status": "edited",
+        "sourceHash": "1cfb4c7e191691005355f760425cb588a4def5a185295bdd24bc8a23cab8c496",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "101596f218056dec7a821463d7431251f2310be0bc82cbe78f744e3e063a1367": {
+        "text": "iPad Pro 12.9″ · 1024 × 1366",
+        "status": "edited",
+        "sourceHash": "101596f218056dec7a821463d7431251f2310be0bc82cbe78f744e3e063a1367",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "aef0f299027c34a2656e1a502a22cc6a4b558c7240aba9b689419f388487061f": {
+        "text": "桌面显示器 · 1280 × 800",
+        "status": "edited",
+        "sourceHash": "aef0f299027c34a2656e1a502a22cc6a4b558c7240aba9b689419f388487061f",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "2547fc9409fdc8d00afa194f974db6f7af3cf83429e34d5f86c3c610d0145e38": {
+        "text": "笔记本电脑 · 1440 × 900",
+        "status": "edited",
+        "sourceHash": "2547fc9409fdc8d00afa194f974db6f7af3cf83429e34d5f86c3c610d0145e38",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "251ad94ceda09cbba1c6cb3a10539f83564b8b5a6da5025c209b3fa420a5b11d": {
+        "text": "全高清 · 1920 × 1080",
+        "status": "edited",
+        "sourceHash": "251ad94ceda09cbba1c6cb3a10539f83564b8b5a6da5025c209b3fa420a5b11d",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "b4ed15e12120ab933755584140f9fbc2e226f7ec8df65b7ed381eb41e70b734e": {
+        "text": "电子墨水屏 · 600 × 800",
+        "status": "edited",
+        "sourceHash": "b4ed15e12120ab933755584140f9fbc2e226f7ec8df65b7ed381eb41e70b734e",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "48f9e6803d774e4cc53fb50437dd7037deb1e6556f5e718cde7b4ebf0e8f32f4": {
+        "text": "reMarkable Paper Pro · 810 × 1080",
+        "status": "edited",
+        "sourceHash": "48f9e6803d774e4cc53fb50437dd7037deb1e6556f5e718cde7b4ebf0e8f32f4",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "55f81652a02cfd4b069956f29509b8248ea50f56c2e6043a26bd683bab6994db": {
+        "text": "reMarkable Paper Pro Move · 477 × 848",
+        "status": "edited",
+        "sourceHash": "55f81652a02cfd4b069956f29509b8248ea50f56c2e6043a26bd683bab6994db",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "d432bb2b8200bb3a214a507a782f9bfd64fcf4eddfec99d3abe67ae6e035e8e0": {
+        "text": "自定义尺寸",
+        "status": "edited",
+        "sourceHash": "d432bb2b8200bb3a214a507a782f9bfd64fcf4eddfec99d3abe67ae6e035e8e0",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "20b50f28f43bfbcc5dc99b832e002bad34fc61eeb9c58db0df1780cd2c545079": {
+        "text": "宽度（像素）",
+        "status": "edited",
+        "sourceHash": "20b50f28f43bfbcc5dc99b832e002bad34fc61eeb9c58db0df1780cd2c545079",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "bad5f0ee7ade0c1083e06201917929ad892d241cb6ba185065b981bad80d1b00": {
+        "text": "宽度（像素）",
+        "status": "edited",
+        "sourceHash": "bad5f0ee7ade0c1083e06201917929ad892d241cb6ba185065b981bad80d1b00",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "43af6054e859798cdc8644d6886ed9f89c35d08e76e581ae544277f95f87b720": {
+        "text": "高度（像素）",
+        "status": "edited",
+        "sourceHash": "43af6054e859798cdc8644d6886ed9f89c35d08e76e581ae544277f95f87b720",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "a8af39afa89df04666546ca7054d55a2563897e6f45b944005281d5188c5d9a6": {
+        "text": "高度（像素）",
+        "status": "edited",
+        "sourceHash": "a8af39afa89df04666546ca7054d55a2563897e6f45b944005281d5188c5d9a6",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "c98d38f59789c7609fd742b07e35a6c41b81072f2f7096a600b1d99a3def3b87": {
+        "text": "字体",
+        "status": "edited",
+        "sourceHash": "c98d38f59789c7609fd742b07e35a6c41b81072f2f7096a600b1d99a3def3b87",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "119ef3fa607e7c05ce8d693b7aeb64ce7ca4d18a655046c2d0f6a93d62c164f6": {
+        "text": "字体",
+        "status": "edited",
+        "sourceHash": "119ef3fa607e7c05ce8d693b7aeb64ce7ca4d18a655046c2d0f6a93d62c164f6",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "4691492179d2208993976d27d343bd02964068569f241d6061116d7df6d4099a": {
+        "text": "Georgia",
+        "status": "edited",
+        "sourceHash": "4691492179d2208993976d27d343bd02964068569f241d6061116d7df6d4099a",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "aac910161f16402c8108e8df6d7dc5941b65103b4deec7830cb141e563c68ee7": {
+        "text": "Arial",
+        "status": "edited",
+        "sourceHash": "aac910161f16402c8108e8df6d7dc5941b65103b4deec7830cb141e563c68ee7",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "6725e7bbcd28f3a8a586fa34bf191fd72dde8b61756932cd3237c17a6f196f1a": {
+        "text": "系统字体",
+        "status": "edited",
+        "sourceHash": "6725e7bbcd28f3a8a586fa34bf191fd72dde8b61756932cd3237c17a6f196f1a",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "09d22d5c2f3f83d711c2fb7442b5f44491d315b664e7f11e090823b0f0e3e6f3": {
+        "text": "Times New Roman",
+        "status": "edited",
+        "sourceHash": "09d22d5c2f3f83d711c2fb7442b5f44491d315b664e7f11e090823b0f0e3e6f3",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "c35ac1f135179da798b42517370eac231587f07116c229fec5f316f9790c7bc0": {
+        "text": "字号（像素）",
+        "status": "edited",
+        "sourceHash": "c35ac1f135179da798b42517370eac231587f07116c229fec5f316f9790c7bc0",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "f5c080f4fa8315c66f0a34932e55d811ac8adbf17f38b81a3ae87d7815bdcbf6": {
+        "text": "字号（像素）",
+        "status": "edited",
+        "sourceHash": "f5c080f4fa8315c66f0a34932e55d811ac8adbf17f38b81a3ae87d7815bdcbf6",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "e8c08d43278d1113b8b7ccd8a04e2247bbb602712e31ad2903f23b225aba9944": {
+        "text": "页边距（像素）",
+        "status": "edited",
+        "sourceHash": "e8c08d43278d1113b8b7ccd8a04e2247bbb602712e31ad2903f23b225aba9944",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "ec9cdb765856a2f652869eaa423ca51220fa54bb41867cd14b8a805f33c75f5b": {
+        "text": "页边距（像素）",
+        "status": "edited",
+        "sourceHash": "ec9cdb765856a2f652869eaa423ca51220fa54bb41867cd14b8a805f33c75f5b",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "9577697aa96f7cc05446d8166adb42733e71b466c7fe28d84befe889db51f0d0": {
+        "text": "重置阅读设置",
+        "status": "edited",
+        "sourceHash": "9577697aa96f7cc05446d8166adb42733e71b466c7fe28d84befe889db51f0d0",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "ba381173ed86a4b50dd68a05df5f63b2790bc1e6325a1ad57af795ce1a143282": {
+        "text": "以逻辑像素近似模拟阅读视口。设置仅影响此预览；下载的 EPUB 保留原有设备配置。",
+        "status": "edited",
+        "sourceHash": "ba381173ed86a4b50dd68a05df5f63b2790bc1e6325a1ad57af795ce1a143282",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
       }
     },
     "ja": {
@@ -22720,6 +23104,262 @@
         "provenance": {
           "provider": "manual"
         }
+      },
+      "b079c84f2b8bd0779057e9e5f3e5696df6884479b603eba67732ed6d2d8be137": {
+        "text": "閲覧設定",
+        "status": "edited",
+        "sourceHash": "b079c84f2b8bd0779057e9e5f3e5696df6884479b603eba67732ed6d2d8be137",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "23acc3e789224a7d176d21728255ba5896b8b7d18c30361c0ec403dbf8399d97": {
+        "text": "デバイスモデル",
+        "status": "edited",
+        "sourceHash": "23acc3e789224a7d176d21728255ba5896b8b7d18c30361c0ec403dbf8399d97",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "46aa94dfbe14fc0049765a913bbcc0f408db084014e43f7824b1067fcc7f570f": {
+        "text": "デバイスモデル",
+        "status": "edited",
+        "sourceHash": "46aa94dfbe14fc0049765a913bbcc0f408db084014e43f7824b1067fcc7f570f",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "6c95bad7abf7ab5b8a4f8f67820f436567f71ac93f373c3233f549a76f0cc225": {
+        "text": "スマートフォン · 390 × 844",
+        "status": "edited",
+        "sourceHash": "6c95bad7abf7ab5b8a4f8f67820f436567f71ac93f373c3233f549a76f0cc225",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "1835337481f66c31066e145b600283133bce994ca5468dfc709a88f2ed04e5ad": {
+        "text": "iPhone SE · 375 × 667",
+        "status": "edited",
+        "sourceHash": "1835337481f66c31066e145b600283133bce994ca5468dfc709a88f2ed04e5ad",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "31401a22ae4b2cee7974033460c4bb66a821fac74d7f26f449648dbf50fb942b": {
+        "text": "iPhone 14 Pro Max · 430 × 932",
+        "status": "edited",
+        "sourceHash": "31401a22ae4b2cee7974033460c4bb66a821fac74d7f26f449648dbf50fb942b",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "bb6143728c892b0e692d7e516d302e6788e7ab687283dd33067516c4dba01038": {
+        "text": "タブレット · 768 × 1024",
+        "status": "edited",
+        "sourceHash": "bb6143728c892b0e692d7e516d302e6788e7ab687283dd33067516c4dba01038",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "1cfb4c7e191691005355f760425cb588a4def5a185295bdd24bc8a23cab8c496": {
+        "text": "iPad Air 11″ · 820 × 1180",
+        "status": "edited",
+        "sourceHash": "1cfb4c7e191691005355f760425cb588a4def5a185295bdd24bc8a23cab8c496",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "101596f218056dec7a821463d7431251f2310be0bc82cbe78f744e3e063a1367": {
+        "text": "iPad Pro 12.9″ · 1024 × 1366",
+        "status": "edited",
+        "sourceHash": "101596f218056dec7a821463d7431251f2310be0bc82cbe78f744e3e063a1367",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "aef0f299027c34a2656e1a502a22cc6a4b558c7240aba9b689419f388487061f": {
+        "text": "デスクトップ · 1280 × 800",
+        "status": "edited",
+        "sourceHash": "aef0f299027c34a2656e1a502a22cc6a4b558c7240aba9b689419f388487061f",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "2547fc9409fdc8d00afa194f974db6f7af3cf83429e34d5f86c3c610d0145e38": {
+        "text": "ノートパソコン · 1440 × 900",
+        "status": "edited",
+        "sourceHash": "2547fc9409fdc8d00afa194f974db6f7af3cf83429e34d5f86c3c610d0145e38",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "251ad94ceda09cbba1c6cb3a10539f83564b8b5a6da5025c209b3fa420a5b11d": {
+        "text": "フルHD · 1920 × 1080",
+        "status": "edited",
+        "sourceHash": "251ad94ceda09cbba1c6cb3a10539f83564b8b5a6da5025c209b3fa420a5b11d",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "b4ed15e12120ab933755584140f9fbc2e226f7ec8df65b7ed381eb41e70b734e": {
+        "text": "電子ペーパー · 600 × 800",
+        "status": "edited",
+        "sourceHash": "b4ed15e12120ab933755584140f9fbc2e226f7ec8df65b7ed381eb41e70b734e",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "48f9e6803d774e4cc53fb50437dd7037deb1e6556f5e718cde7b4ebf0e8f32f4": {
+        "text": "reMarkable Paper Pro · 810 × 1080",
+        "status": "edited",
+        "sourceHash": "48f9e6803d774e4cc53fb50437dd7037deb1e6556f5e718cde7b4ebf0e8f32f4",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "55f81652a02cfd4b069956f29509b8248ea50f56c2e6043a26bd683bab6994db": {
+        "text": "reMarkable Paper Pro Move · 477 × 848",
+        "status": "edited",
+        "sourceHash": "55f81652a02cfd4b069956f29509b8248ea50f56c2e6043a26bd683bab6994db",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "d432bb2b8200bb3a214a507a782f9bfd64fcf4eddfec99d3abe67ae6e035e8e0": {
+        "text": "カスタムサイズ",
+        "status": "edited",
+        "sourceHash": "d432bb2b8200bb3a214a507a782f9bfd64fcf4eddfec99d3abe67ae6e035e8e0",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "20b50f28f43bfbcc5dc99b832e002bad34fc61eeb9c58db0df1780cd2c545079": {
+        "text": "幅（px）",
+        "status": "edited",
+        "sourceHash": "20b50f28f43bfbcc5dc99b832e002bad34fc61eeb9c58db0df1780cd2c545079",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "bad5f0ee7ade0c1083e06201917929ad892d241cb6ba185065b981bad80d1b00": {
+        "text": "幅（px）",
+        "status": "edited",
+        "sourceHash": "bad5f0ee7ade0c1083e06201917929ad892d241cb6ba185065b981bad80d1b00",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "43af6054e859798cdc8644d6886ed9f89c35d08e76e581ae544277f95f87b720": {
+        "text": "高さ（px）",
+        "status": "edited",
+        "sourceHash": "43af6054e859798cdc8644d6886ed9f89c35d08e76e581ae544277f95f87b720",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "a8af39afa89df04666546ca7054d55a2563897e6f45b944005281d5188c5d9a6": {
+        "text": "高さ（px）",
+        "status": "edited",
+        "sourceHash": "a8af39afa89df04666546ca7054d55a2563897e6f45b944005281d5188c5d9a6",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "c98d38f59789c7609fd742b07e35a6c41b81072f2f7096a600b1d99a3def3b87": {
+        "text": "フォント",
+        "status": "edited",
+        "sourceHash": "c98d38f59789c7609fd742b07e35a6c41b81072f2f7096a600b1d99a3def3b87",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "119ef3fa607e7c05ce8d693b7aeb64ce7ca4d18a655046c2d0f6a93d62c164f6": {
+        "text": "フォント",
+        "status": "edited",
+        "sourceHash": "119ef3fa607e7c05ce8d693b7aeb64ce7ca4d18a655046c2d0f6a93d62c164f6",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "4691492179d2208993976d27d343bd02964068569f241d6061116d7df6d4099a": {
+        "text": "Georgia",
+        "status": "edited",
+        "sourceHash": "4691492179d2208993976d27d343bd02964068569f241d6061116d7df6d4099a",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "aac910161f16402c8108e8df6d7dc5941b65103b4deec7830cb141e563c68ee7": {
+        "text": "Arial",
+        "status": "edited",
+        "sourceHash": "aac910161f16402c8108e8df6d7dc5941b65103b4deec7830cb141e563c68ee7",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "6725e7bbcd28f3a8a586fa34bf191fd72dde8b61756932cd3237c17a6f196f1a": {
+        "text": "システム",
+        "status": "edited",
+        "sourceHash": "6725e7bbcd28f3a8a586fa34bf191fd72dde8b61756932cd3237c17a6f196f1a",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "09d22d5c2f3f83d711c2fb7442b5f44491d315b664e7f11e090823b0f0e3e6f3": {
+        "text": "Times New Roman",
+        "status": "edited",
+        "sourceHash": "09d22d5c2f3f83d711c2fb7442b5f44491d315b664e7f11e090823b0f0e3e6f3",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "c35ac1f135179da798b42517370eac231587f07116c229fec5f316f9790c7bc0": {
+        "text": "文字サイズ（px）",
+        "status": "edited",
+        "sourceHash": "c35ac1f135179da798b42517370eac231587f07116c229fec5f316f9790c7bc0",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "f5c080f4fa8315c66f0a34932e55d811ac8adbf17f38b81a3ae87d7815bdcbf6": {
+        "text": "文字サイズ（px）",
+        "status": "edited",
+        "sourceHash": "f5c080f4fa8315c66f0a34932e55d811ac8adbf17f38b81a3ae87d7815bdcbf6",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "e8c08d43278d1113b8b7ccd8a04e2247bbb602712e31ad2903f23b225aba9944": {
+        "text": "余白（px）",
+        "status": "edited",
+        "sourceHash": "e8c08d43278d1113b8b7ccd8a04e2247bbb602712e31ad2903f23b225aba9944",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "ec9cdb765856a2f652869eaa423ca51220fa54bb41867cd14b8a805f33c75f5b": {
+        "text": "余白（px）",
+        "status": "edited",
+        "sourceHash": "ec9cdb765856a2f652869eaa423ca51220fa54bb41867cd14b8a805f33c75f5b",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "9577697aa96f7cc05446d8166adb42733e71b466c7fe28d84befe889db51f0d0": {
+        "text": "閲覧設定をリセット",
+        "status": "edited",
+        "sourceHash": "9577697aa96f7cc05446d8166adb42733e71b466c7fe28d84befe889db51f0d0",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "ba381173ed86a4b50dd68a05df5f63b2790bc1e6325a1ad57af795ce1a143282": {
+        "text": "論理ピクセルによる閲覧領域の近似表示です。変更はこのプレビューにのみ適用され、ダウンロードした EPUB のデバイス設定は維持されます。",
+        "status": "edited",
+        "sourceHash": "ba381173ed86a4b50dd68a05df5f63b2790bc1e6325a1ad57af795ce1a143282",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
       }
     },
     "ko": {
@@ -30021,6 +30661,262 @@
         "sourceHash": "a82a880efebe3c6f3bf200d5734cd01216c7363e0d56377f8a428bcd441dd431",
         "provenance": {
           "provider": "manual"
+        }
+      },
+      "b079c84f2b8bd0779057e9e5f3e5696df6884479b603eba67732ed6d2d8be137": {
+        "text": "읽기 설정",
+        "status": "edited",
+        "sourceHash": "b079c84f2b8bd0779057e9e5f3e5696df6884479b603eba67732ed6d2d8be137",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "23acc3e789224a7d176d21728255ba5896b8b7d18c30361c0ec403dbf8399d97": {
+        "text": "기기 모델",
+        "status": "edited",
+        "sourceHash": "23acc3e789224a7d176d21728255ba5896b8b7d18c30361c0ec403dbf8399d97",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "46aa94dfbe14fc0049765a913bbcc0f408db084014e43f7824b1067fcc7f570f": {
+        "text": "기기 모델",
+        "status": "edited",
+        "sourceHash": "46aa94dfbe14fc0049765a913bbcc0f408db084014e43f7824b1067fcc7f570f",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "6c95bad7abf7ab5b8a4f8f67820f436567f71ac93f373c3233f549a76f0cc225": {
+        "text": "휴대폰 · 390 × 844",
+        "status": "edited",
+        "sourceHash": "6c95bad7abf7ab5b8a4f8f67820f436567f71ac93f373c3233f549a76f0cc225",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "1835337481f66c31066e145b600283133bce994ca5468dfc709a88f2ed04e5ad": {
+        "text": "iPhone SE · 375 × 667",
+        "status": "edited",
+        "sourceHash": "1835337481f66c31066e145b600283133bce994ca5468dfc709a88f2ed04e5ad",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "31401a22ae4b2cee7974033460c4bb66a821fac74d7f26f449648dbf50fb942b": {
+        "text": "iPhone 14 Pro Max · 430 × 932",
+        "status": "edited",
+        "sourceHash": "31401a22ae4b2cee7974033460c4bb66a821fac74d7f26f449648dbf50fb942b",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "bb6143728c892b0e692d7e516d302e6788e7ab687283dd33067516c4dba01038": {
+        "text": "태블릿 · 768 × 1024",
+        "status": "edited",
+        "sourceHash": "bb6143728c892b0e692d7e516d302e6788e7ab687283dd33067516c4dba01038",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "1cfb4c7e191691005355f760425cb588a4def5a185295bdd24bc8a23cab8c496": {
+        "text": "iPad Air 11″ · 820 × 1180",
+        "status": "edited",
+        "sourceHash": "1cfb4c7e191691005355f760425cb588a4def5a185295bdd24bc8a23cab8c496",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "101596f218056dec7a821463d7431251f2310be0bc82cbe78f744e3e063a1367": {
+        "text": "iPad Pro 12.9″ · 1024 × 1366",
+        "status": "edited",
+        "sourceHash": "101596f218056dec7a821463d7431251f2310be0bc82cbe78f744e3e063a1367",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "aef0f299027c34a2656e1a502a22cc6a4b558c7240aba9b689419f388487061f": {
+        "text": "데스크톱 · 1280 × 800",
+        "status": "edited",
+        "sourceHash": "aef0f299027c34a2656e1a502a22cc6a4b558c7240aba9b689419f388487061f",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "2547fc9409fdc8d00afa194f974db6f7af3cf83429e34d5f86c3c610d0145e38": {
+        "text": "노트북 · 1440 × 900",
+        "status": "edited",
+        "sourceHash": "2547fc9409fdc8d00afa194f974db6f7af3cf83429e34d5f86c3c610d0145e38",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "251ad94ceda09cbba1c6cb3a10539f83564b8b5a6da5025c209b3fa420a5b11d": {
+        "text": "풀 HD · 1920 × 1080",
+        "status": "edited",
+        "sourceHash": "251ad94ceda09cbba1c6cb3a10539f83564b8b5a6da5025c209b3fa420a5b11d",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "b4ed15e12120ab933755584140f9fbc2e226f7ec8df65b7ed381eb41e70b734e": {
+        "text": "전자잉크 · 600 × 800",
+        "status": "edited",
+        "sourceHash": "b4ed15e12120ab933755584140f9fbc2e226f7ec8df65b7ed381eb41e70b734e",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "48f9e6803d774e4cc53fb50437dd7037deb1e6556f5e718cde7b4ebf0e8f32f4": {
+        "text": "reMarkable Paper Pro · 810 × 1080",
+        "status": "edited",
+        "sourceHash": "48f9e6803d774e4cc53fb50437dd7037deb1e6556f5e718cde7b4ebf0e8f32f4",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "55f81652a02cfd4b069956f29509b8248ea50f56c2e6043a26bd683bab6994db": {
+        "text": "reMarkable Paper Pro Move · 477 × 848",
+        "status": "edited",
+        "sourceHash": "55f81652a02cfd4b069956f29509b8248ea50f56c2e6043a26bd683bab6994db",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "d432bb2b8200bb3a214a507a782f9bfd64fcf4eddfec99d3abe67ae6e035e8e0": {
+        "text": "사용자 지정 크기",
+        "status": "edited",
+        "sourceHash": "d432bb2b8200bb3a214a507a782f9bfd64fcf4eddfec99d3abe67ae6e035e8e0",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "20b50f28f43bfbcc5dc99b832e002bad34fc61eeb9c58db0df1780cd2c545079": {
+        "text": "너비(px)",
+        "status": "edited",
+        "sourceHash": "20b50f28f43bfbcc5dc99b832e002bad34fc61eeb9c58db0df1780cd2c545079",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "bad5f0ee7ade0c1083e06201917929ad892d241cb6ba185065b981bad80d1b00": {
+        "text": "너비(px)",
+        "status": "edited",
+        "sourceHash": "bad5f0ee7ade0c1083e06201917929ad892d241cb6ba185065b981bad80d1b00",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "43af6054e859798cdc8644d6886ed9f89c35d08e76e581ae544277f95f87b720": {
+        "text": "높이(px)",
+        "status": "edited",
+        "sourceHash": "43af6054e859798cdc8644d6886ed9f89c35d08e76e581ae544277f95f87b720",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "a8af39afa89df04666546ca7054d55a2563897e6f45b944005281d5188c5d9a6": {
+        "text": "높이(px)",
+        "status": "edited",
+        "sourceHash": "a8af39afa89df04666546ca7054d55a2563897e6f45b944005281d5188c5d9a6",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "c98d38f59789c7609fd742b07e35a6c41b81072f2f7096a600b1d99a3def3b87": {
+        "text": "글꼴",
+        "status": "edited",
+        "sourceHash": "c98d38f59789c7609fd742b07e35a6c41b81072f2f7096a600b1d99a3def3b87",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "119ef3fa607e7c05ce8d693b7aeb64ce7ca4d18a655046c2d0f6a93d62c164f6": {
+        "text": "글꼴",
+        "status": "edited",
+        "sourceHash": "119ef3fa607e7c05ce8d693b7aeb64ce7ca4d18a655046c2d0f6a93d62c164f6",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "4691492179d2208993976d27d343bd02964068569f241d6061116d7df6d4099a": {
+        "text": "Georgia",
+        "status": "edited",
+        "sourceHash": "4691492179d2208993976d27d343bd02964068569f241d6061116d7df6d4099a",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "aac910161f16402c8108e8df6d7dc5941b65103b4deec7830cb141e563c68ee7": {
+        "text": "Arial",
+        "status": "edited",
+        "sourceHash": "aac910161f16402c8108e8df6d7dc5941b65103b4deec7830cb141e563c68ee7",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "6725e7bbcd28f3a8a586fa34bf191fd72dde8b61756932cd3237c17a6f196f1a": {
+        "text": "시스템 글꼴",
+        "status": "edited",
+        "sourceHash": "6725e7bbcd28f3a8a586fa34bf191fd72dde8b61756932cd3237c17a6f196f1a",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "09d22d5c2f3f83d711c2fb7442b5f44491d315b664e7f11e090823b0f0e3e6f3": {
+        "text": "Times New Roman",
+        "status": "edited",
+        "sourceHash": "09d22d5c2f3f83d711c2fb7442b5f44491d315b664e7f11e090823b0f0e3e6f3",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "c35ac1f135179da798b42517370eac231587f07116c229fec5f316f9790c7bc0": {
+        "text": "글자 크기(px)",
+        "status": "edited",
+        "sourceHash": "c35ac1f135179da798b42517370eac231587f07116c229fec5f316f9790c7bc0",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "f5c080f4fa8315c66f0a34932e55d811ac8adbf17f38b81a3ae87d7815bdcbf6": {
+        "text": "글자 크기(px)",
+        "status": "edited",
+        "sourceHash": "f5c080f4fa8315c66f0a34932e55d811ac8adbf17f38b81a3ae87d7815bdcbf6",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "e8c08d43278d1113b8b7ccd8a04e2247bbb602712e31ad2903f23b225aba9944": {
+        "text": "여백(px)",
+        "status": "edited",
+        "sourceHash": "e8c08d43278d1113b8b7ccd8a04e2247bbb602712e31ad2903f23b225aba9944",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "ec9cdb765856a2f652869eaa423ca51220fa54bb41867cd14b8a805f33c75f5b": {
+        "text": "여백(px)",
+        "status": "edited",
+        "sourceHash": "ec9cdb765856a2f652869eaa423ca51220fa54bb41867cd14b8a805f33c75f5b",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "9577697aa96f7cc05446d8166adb42733e71b466c7fe28d84befe889db51f0d0": {
+        "text": "읽기 설정 초기화",
+        "status": "edited",
+        "sourceHash": "9577697aa96f7cc05446d8166adb42733e71b466c7fe28d84befe889db51f0d0",
+        "provenance": {
+          "provider": "manual-reader-controls"
+        }
+      },
+      "ba381173ed86a4b50dd68a05df5f63b2790bc1e6325a1ad57af795ce1a143282": {
+        "text": "논리 픽셀로 읽기 화면을 근사하여 표시합니다. 변경 사항은 이 미리보기에만 적용되며 다운로드한 EPUB은 기존 기기 설정을 유지합니다.",
+        "status": "edited",
+        "sourceHash": "ba381173ed86a4b50dd68a05df5f63b2790bc1e6325a1ad57af795ce1a143282",
+        "provenance": {
+          "provider": "manual-reader-controls"
         }
       }
     }
@@ -41853,7 +42749,7 @@
     },
     "/research/struct/demo/": {
       "sourcePath": "research/struct/demo/index.html",
-      "sourceHash": "6c8b390d0bf9e9869cc521eaf7de9b13c7d858c1e933f8ce5c580fa0cd7a9b26",
+      "sourceHash": "cabcbbac39e0f556d9768b3068c7b1cff28da18799fc8c9d317232cc105540d4",
       "segments": {
         "s0001": {
           "kind": "text",
@@ -42101,406 +42997,604 @@
         },
         "s0040": {
           "kind": "text",
+          "sourceText": "Reader settings",
+          "context": "html > body > div > main > div > section > section > fieldset > legend > legend",
+          "translationKey": "b079c84f2b8bd0779057e9e5f3e5696df6884479b603eba67732ed6d2d8be137"
+        },
+        "s0041": {
+          "kind": "text",
+          "sourceText": "Device model\n",
+          "context": "html > body > div > main > div > section > section > fieldset > label > label",
+          "translationKey": "23acc3e789224a7d176d21728255ba5896b8b7d18c30361c0ec403dbf8399d97"
+        },
+        "s0042": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "Device model",
+          "context": "html > body > div > main > div > section > section > fieldset > label > select",
+          "translationKey": "46aa94dfbe14fc0049765a913bbcc0f408db084014e43f7824b1067fcc7f570f"
+        },
+        "s0043": {
+          "kind": "text",
+          "sourceText": " Phone · 390 × 844 ",
+          "context": "html > body > div > main > div > section > section > fieldset > label > select > option > option",
+          "translationKey": "6c95bad7abf7ab5b8a4f8f67820f436567f71ac93f373c3233f549a76f0cc225"
+        },
+        "s0044": {
+          "kind": "text",
+          "sourceText": " iPhone SE · 375 × 667 ",
+          "context": "html > body > div > main > div > section > section > fieldset > label > select > option > option",
+          "translationKey": "1835337481f66c31066e145b600283133bce994ca5468dfc709a88f2ed04e5ad"
+        },
+        "s0045": {
+          "kind": "text",
+          "sourceText": " iPhone 14 Pro Max · 430 × 932 ",
+          "context": "html > body > div > main > div > section > section > fieldset > label > select > option > option",
+          "translationKey": "31401a22ae4b2cee7974033460c4bb66a821fac74d7f26f449648dbf50fb942b"
+        },
+        "s0046": {
+          "kind": "text",
+          "sourceText": " Tablet · 768 × 1024 ",
+          "context": "html > body > div > main > div > section > section > fieldset > label > select > option > option",
+          "translationKey": "bb6143728c892b0e692d7e516d302e6788e7ab687283dd33067516c4dba01038"
+        },
+        "s0047": {
+          "kind": "text",
+          "sourceText": " iPad Air 11″ · 820 × 1180 ",
+          "context": "html > body > div > main > div > section > section > fieldset > label > select > option > option",
+          "translationKey": "1cfb4c7e191691005355f760425cb588a4def5a185295bdd24bc8a23cab8c496"
+        },
+        "s0048": {
+          "kind": "text",
+          "sourceText": " iPad Pro 12.9″ · 1024 × 1366 ",
+          "context": "html > body > div > main > div > section > section > fieldset > label > select > option > option",
+          "translationKey": "101596f218056dec7a821463d7431251f2310be0bc82cbe78f744e3e063a1367"
+        },
+        "s0049": {
+          "kind": "text",
+          "sourceText": " Desktop · 1280 × 800 ",
+          "context": "html > body > div > main > div > section > section > fieldset > label > select > option > option",
+          "translationKey": "aef0f299027c34a2656e1a502a22cc6a4b558c7240aba9b689419f388487061f"
+        },
+        "s0050": {
+          "kind": "text",
+          "sourceText": " Laptop · 1440 × 900 ",
+          "context": "html > body > div > main > div > section > section > fieldset > label > select > option > option",
+          "translationKey": "2547fc9409fdc8d00afa194f974db6f7af3cf83429e34d5f86c3c610d0145e38"
+        },
+        "s0051": {
+          "kind": "text",
+          "sourceText": " Full HD · 1920 × 1080 ",
+          "context": "html > body > div > main > div > section > section > fieldset > label > select > option > option",
+          "translationKey": "251ad94ceda09cbba1c6cb3a10539f83564b8b5a6da5025c209b3fa420a5b11d"
+        },
+        "s0052": {
+          "kind": "text",
+          "sourceText": " E-ink · 600 × 800 ",
+          "context": "html > body > div > main > div > section > section > fieldset > label > select > option > option",
+          "translationKey": "b4ed15e12120ab933755584140f9fbc2e226f7ec8df65b7ed381eb41e70b734e"
+        },
+        "s0053": {
+          "kind": "text",
+          "sourceText": " reMarkable Paper Pro · 810 × 1080 ",
+          "context": "html > body > div > main > div > section > section > fieldset > label > select > option > option",
+          "translationKey": "48f9e6803d774e4cc53fb50437dd7037deb1e6556f5e718cde7b4ebf0e8f32f4"
+        },
+        "s0054": {
+          "kind": "text",
+          "sourceText": " reMarkable Paper Pro Move · 477 × 848 ",
+          "context": "html > body > div > main > div > section > section > fieldset > label > select > option > option",
+          "translationKey": "55f81652a02cfd4b069956f29509b8248ea50f56c2e6043a26bd683bab6994db"
+        },
+        "s0055": {
+          "kind": "text",
+          "sourceText": "Custom size",
+          "context": "html > body > div > main > div > section > section > fieldset > label > select > option > option",
+          "translationKey": "d432bb2b8200bb3a214a507a782f9bfd64fcf4eddfec99d3abe67ae6e035e8e0"
+        },
+        "s0056": {
+          "kind": "text",
+          "sourceText": "Width (px)\n",
+          "context": "html > body > div > main > div > section > section > fieldset > label > label",
+          "translationKey": "20b50f28f43bfbcc5dc99b832e002bad34fc61eeb9c58db0df1780cd2c545079"
+        },
+        "s0057": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "Width (px)",
+          "context": "html > body > div > main > div > section > section > fieldset > label > input",
+          "translationKey": "bad5f0ee7ade0c1083e06201917929ad892d241cb6ba185065b981bad80d1b00"
+        },
+        "s0058": {
+          "kind": "text",
+          "sourceText": "Height (px)\n",
+          "context": "html > body > div > main > div > section > section > fieldset > label > label",
+          "translationKey": "43af6054e859798cdc8644d6886ed9f89c35d08e76e581ae544277f95f87b720"
+        },
+        "s0059": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "Height (px)",
+          "context": "html > body > div > main > div > section > section > fieldset > label > input",
+          "translationKey": "a8af39afa89df04666546ca7054d55a2563897e6f45b944005281d5188c5d9a6"
+        },
+        "s0060": {
+          "kind": "text",
+          "sourceText": "Font family\n",
+          "context": "html > body > div > main > div > section > section > fieldset > label > label",
+          "translationKey": "c98d38f59789c7609fd742b07e35a6c41b81072f2f7096a600b1d99a3def3b87"
+        },
+        "s0061": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "Font family",
+          "context": "html > body > div > main > div > section > section > fieldset > label > select",
+          "translationKey": "119ef3fa607e7c05ce8d693b7aeb64ce7ca4d18a655046c2d0f6a93d62c164f6"
+        },
+        "s0062": {
+          "kind": "text",
+          "sourceText": "Georgia",
+          "context": "html > body > div > main > div > section > section > fieldset > label > select > option > option",
+          "translationKey": "4691492179d2208993976d27d343bd02964068569f241d6061116d7df6d4099a"
+        },
+        "s0063": {
+          "kind": "text",
+          "sourceText": "Arial",
+          "context": "html > body > div > main > div > section > section > fieldset > label > select > option > option",
+          "translationKey": "aac910161f16402c8108e8df6d7dc5941b65103b4deec7830cb141e563c68ee7"
+        },
+        "s0064": {
+          "kind": "text",
+          "sourceText": "System",
+          "context": "html > body > div > main > div > section > section > fieldset > label > select > option > option",
+          "translationKey": "6725e7bbcd28f3a8a586fa34bf191fd72dde8b61756932cd3237c17a6f196f1a"
+        },
+        "s0065": {
+          "kind": "text",
+          "sourceText": "Times New Roman",
+          "context": "html > body > div > main > div > section > section > fieldset > label > select > option > option",
+          "translationKey": "09d22d5c2f3f83d711c2fb7442b5f44491d315b664e7f11e090823b0f0e3e6f3"
+        },
+        "s0066": {
+          "kind": "text",
+          "sourceText": "Font size (px)\n",
+          "context": "html > body > div > main > div > section > section > fieldset > label > label",
+          "translationKey": "c35ac1f135179da798b42517370eac231587f07116c229fec5f316f9790c7bc0"
+        },
+        "s0067": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "Font size (px)",
+          "context": "html > body > div > main > div > section > section > fieldset > label > input",
+          "translationKey": "f5c080f4fa8315c66f0a34932e55d811ac8adbf17f38b81a3ae87d7815bdcbf6"
+        },
+        "s0068": {
+          "kind": "text",
+          "sourceText": "Margins (px)\n",
+          "context": "html > body > div > main > div > section > section > fieldset > label > label",
+          "translationKey": "e8c08d43278d1113b8b7ccd8a04e2247bbb602712e31ad2903f23b225aba9944"
+        },
+        "s0069": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "Margins (px)",
+          "context": "html > body > div > main > div > section > section > fieldset > label > input",
+          "translationKey": "ec9cdb765856a2f652869eaa423ca51220fa54bb41867cd14b8a805f33c75f5b"
+        },
+        "s0070": {
+          "kind": "text",
+          "sourceText": "Reset reader",
+          "context": "html > body > div > main > div > section > section > fieldset > button > button",
+          "translationKey": "9577697aa96f7cc05446d8166adb42733e71b466c7fe28d84befe889db51f0d0"
+        },
+        "s0071": {
+          "kind": "text",
+          "sourceText": "\nApproximate reading viewports in logical pixels. Changes affect this\n      preview; downloaded EPUBs keep their device profiles.\n",
+          "context": "html > body > div > main > div > section > section > p > p",
+          "translationKey": "ba381173ed86a4b50dd68a05df5f63b2790bc1e6325a1ad57af795ce1a143282"
+        },
+        "s0072": {
+          "kind": "text",
           "sourceText": " Docling Technical Report ",
           "context": "html > body > div > main > div > section > section > h2 > h2",
           "translationKey": "73d7cdf5997ff35275052b0f9b7e9b52409777be54b12ada592ae8b1dcd7fc4a"
         },
-        "s0041": {
+        "s0073": {
           "kind": "text",
           "sourceText": "\nOriginal\n",
           "context": "html > body > div > main > div > section > section > div > section > div > h3 > h3",
           "translationKey": "e22e0ad8ad64b587793a3b86a28377665184eaab838965d9e56204576cfd82c7"
         },
-        "s0042": {
+        "s0074": {
           "kind": "text",
           "sourceText": "Open PDF ↗",
           "context": "html > body > div > main > div > section > section > div > section > div > a > a",
           "translationKey": "b866658b8db81295d9e1981581542acca54c1dee3f8c5c62640ad1f8bd2f8a0e"
         },
-        "s0043": {
+        "s0075": {
           "kind": "attribute",
           "attribute": "title",
           "sourceText": "Docling Technical Report · Original PDF",
           "context": "html > body > div > main > div > section > section > div > section > div",
           "translationKey": "0a0d545b233eab15ef894c2a02bd74c028c6ebf12c950e9517c6d1452717b20f"
         },
-        "s0044": {
+        "s0076": {
           "kind": "text",
           "sourceText": "\nThe original PDF is not available in this session.\n",
           "context": "html > body > div > main > div > section > section > div > section > p > p",
           "translationKey": "ef5932e1ee76fe050c4484b67efe45dc4489357e462cd38aa485ba2fe4b49516"
         },
-        "s0045": {
+        "s0077": {
           "kind": "text",
           "sourceText": "\nReconstruction\n",
           "context": "html > body > div > main > div > section > section > div > section > h3 > h3",
           "translationKey": "7f50745746305e37c24f96e9e65fbce961363b5699e4554bdf08282a7e13e938"
         },
-        "s0046": {
+        "s0078": {
           "kind": "text",
           "sourceText": "\nPreview unavailable. Download the EPUB to read it.\n",
           "context": "html > body > div > main > div > section > section > div > section > p > p",
           "translationKey": "2bb4db50afd17131427bdb127085bf19954e6a75c0780a3ed20870b3728f9613"
         },
-        "s0047": {
+        "s0079": {
           "kind": "text",
           "sourceText": "\nConvert this paper to preview it.\n",
           "context": "html > body > div > main > div > section > section > div > section > p > p",
           "translationKey": "8d77a1434e66a7474ac025c07254314db68cd342ed02719c4a7fdba1075f5ced"
         },
-        "s0048": {
+        "s0080": {
           "kind": "text",
           "sourceText": "Attention Is All You Need",
           "context": "html > body > div > main > div > section > section > article > h3 > h3",
           "translationKey": "ab8508f26511d617d8cd58cf7d21103895b9180b46b48d8822d4f0a560d3e2e0"
         },
-        "s0049": {
+        "s0081": {
           "kind": "text",
           "sourceText": "\nSource PDF\n",
           "context": "html > body > div > main > div > section > section > article > div > a > a",
           "translationKey": "82e219941d5d90698ffbe6cb2a7453e9e16651dd6763eebd48f5e594fb07487a"
         },
-        "s0050": {
+        "s0082": {
           "kind": "text",
           "sourceText": " Uses your daily allowance ",
           "context": "html > body > div > main > div > section > section > article > div > small > small",
           "translationKey": "30166b1818f13e64be70f9143f578f8fe2e4cee5ebcef2941033ea87ae60556c"
         },
-        "s0051": {
+        "s0083": {
           "kind": "text",
           "sourceText": "\nConvert this paper\n",
           "context": "html > body > div > main > div > section > section > article > button > button",
           "translationKey": "1defc442ee9a219d24b40612d61006c444f438a1b6b064eeb549d2ac622114e7"
         },
-        "s0052": {
+        "s0084": {
           "kind": "text",
           "sourceText": "\nDetails\n",
           "context": "html > body > div > main > div > section > section > article > details > summary > summary",
           "translationKey": "c83c1a7c47b3a804686b490c6944a02d96f890b9207c06850e4b559ff333bcb7"
         },
-        "s0053": {
+        "s0085": {
           "kind": "text",
           "sourceText": "\nThe server downloads this source from arXiv for your\n                  conversion. This uses one conversion from your daily\n                  allowance; your private EPUB will appear above.\n",
           "context": "html > body > div > main > div > section > section > article > details > div > p > p",
           "translationKey": "2a154d0f27fb7f968f7d16f1772dcd42252d95e56ea3e35f69d9d3ee7537527e"
         },
-        "s0054": {
+        "s0086": {
           "kind": "text",
           "sourceText": "\nBy Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Łukasz Kaiser, and Illia Polosukhin.  ",
           "context": "html > body > div > main > div > section > section > article > details > div > p > p",
           "translationKey": "be191c6c8cbc7821a7016c155ded96b55dcda987f807cfb0b8907980882181c7"
         },
-        "s0055": {
+        "s0087": {
           "kind": "text",
           "sourceText": "\nOriginal publication\n",
           "context": "html > body > div > main > div > section > section > article > details > div > p > a > a",
           "translationKey": "4fa1c42b52953d2c1fcd3249e2fa082960d7306a1a14fa8eb6fb77994e4c5fed"
         },
-        "s0056": {
+        "s0088": {
           "kind": "text",
           "sourceText": " arXiv distribution terms ",
           "context": "html > body > div > main > div > section > section > article > details > div > p > a > a",
           "translationKey": "cfee62d5259b8270ea87b1e77ea678cc6c93f233ab5b51730ad8b38b4cbb37f5"
         },
-        "s0057": {
+        "s0089": {
           "kind": "text",
           "sourceText": "The original stays on arXiv. Conversion creates a private result for your network; no full copy or adaptation of this paper is mirrored in the public samples.",
           "context": "html > body > div > main > div > section > section > article > details > div > p > p",
           "translationKey": "dbd0d08c60497de33b4fd348e25231a0a89a81219593f15e33df7f98eb80ccf1"
         },
-        "s0058": {
+        "s0090": {
           "kind": "text",
           "sourceText": "Docling Technical Report",
           "context": "html > body > div > main > div > section > section > article > h3 > h3",
           "translationKey": "828b0044bb75cc242e54b1576af980a3f76352d1a1c8f6885c55b046f0672264"
         },
-        "s0059": {
+        "s0091": {
           "kind": "text",
           "sourceText": "\nSource PDF\n",
           "context": "html > body > div > main > div > section > section > article > div > a > a",
           "translationKey": "82e219941d5d90698ffbe6cb2a7453e9e16651dd6763eebd48f5e594fb07487a"
         },
-        "s0060": {
+        "s0092": {
           "kind": "text",
           "sourceText": " Paper Pro EPUB ",
           "context": "html > body > div > main > div > section > section > article > div > a > a",
           "translationKey": "29b434aff02b5afc50e3b91e980b66fb0d49859bc2fcbb89b59dddbf3e4b6a84"
         },
-        "s0061": {
+        "s0093": {
           "kind": "text",
           "sourceText": " Paper Pro Move EPUB ",
           "context": "html > body > div > main > div > section > section > article > div > a > a",
           "translationKey": "42d9643002ded1a6b920aace143fc5c176357a094c1eed0ad8499ca53f9b17f2"
         },
-        "s0062": {
+        "s0094": {
           "kind": "text",
           "sourceText": " Free sample ",
           "context": "html > body > div > main > div > section > section > article > div > small > small",
           "translationKey": "08d2e9a880aee6ed786716e9cf2ffb00d0629c75ed49caf6c4236b4751f18b75"
         },
-        "s0063": {
+        "s0095": {
           "kind": "text",
           "sourceText": "\nDetails\n",
           "context": "html > body > div > main > div > section > section > article > details > summary > summary",
           "translationKey": "c83c1a7c47b3a804686b490c6944a02d96f890b9207c06850e4b559ff333bcb7"
         },
-        "s0064": {
+        "s0096": {
           "kind": "text",
           "sourceText": "\nBy Christoph Auer and coauthors.  ",
           "context": "html > body > div > main > div > section > section > article > details > div > p > p",
           "translationKey": "2da3a357d5f06029313e42ad65c63e5973639a30fb33769437951a227a6961fb"
         },
-        "s0065": {
+        "s0097": {
           "kind": "text",
           "sourceText": "\nOriginal publication\n",
           "context": "html > body > div > main > div > section > section > article > details > div > p > a > a",
           "translationKey": "4fa1c42b52953d2c1fcd3249e2fa082960d7306a1a14fa8eb6fb77994e4c5fed"
         },
-        "s0066": {
+        "s0098": {
           "kind": "text",
           "sourceText": " CC BY 4.0 ",
           "context": "html > body > div > main > div > section > section > article > details > div > p > a > a",
           "translationKey": "388815e473b4d852276f49c7db08bb668d4211d8df777d27c238030d5418087e"
         },
-        "s0067": {
+        "s0099": {
           "kind": "text",
           "sourceText": "Reconstructed and reflowed automatically with the Struct reference adapter. The authors do not endorse this demonstration.",
           "context": "html > body > div > main > div > section > section > article > details > div > p > p",
           "translationKey": "ebe58af658b74ae2fdc066844d3caef90d4f728d4f906cac5cdd15f0e1871090"
         },
-        "s0068": {
+        "s0100": {
           "kind": "text",
           "sourceText": "Review required: the local check recorded 97.5% text coverage and four of five captioned figures. Tables and code still need comparison with the source.",
           "context": "html > body > div > main > div > section > section > article > details > div > p > p",
           "translationKey": "aca0538a9242d04b37ef669e7456450b322d055632a5a6ca3d3e946280056b2c"
         },
-        "s0069": {
+        "s0101": {
           "kind": "text",
           "sourceText": "AI Must Die",
           "context": "html > body > div > main > div > section > section > article > h3 > h3",
           "translationKey": "d050a14eb81cd1b1b8d11b609fc53c82d5abc265259f6a62eae7c169fd06c943"
         },
-        "s0070": {
+        "s0102": {
           "kind": "text",
           "sourceText": "\nSource PDF\n",
           "context": "html > body > div > main > div > section > section > article > div > a > a",
           "translationKey": "82e219941d5d90698ffbe6cb2a7453e9e16651dd6763eebd48f5e594fb07487a"
         },
-        "s0071": {
+        "s0103": {
           "kind": "text",
           "sourceText": " Paper Pro EPUB ",
           "context": "html > body > div > main > div > section > section > article > div > a > a",
           "translationKey": "29b434aff02b5afc50e3b91e980b66fb0d49859bc2fcbb89b59dddbf3e4b6a84"
         },
-        "s0072": {
+        "s0104": {
           "kind": "text",
           "sourceText": " Paper Pro Move EPUB ",
           "context": "html > body > div > main > div > section > section > article > div > a > a",
           "translationKey": "42d9643002ded1a6b920aace143fc5c176357a094c1eed0ad8499ca53f9b17f2"
         },
-        "s0073": {
+        "s0105": {
           "kind": "text",
           "sourceText": " Free sample ",
           "context": "html > body > div > main > div > section > section > article > div > small > small",
           "translationKey": "08d2e9a880aee6ed786716e9cf2ffb00d0629c75ed49caf6c4236b4751f18b75"
         },
-        "s0074": {
+        "s0106": {
           "kind": "text",
           "sourceText": "\nDetails\n",
           "context": "html > body > div > main > div > section > section > article > details > summary > summary",
           "translationKey": "c83c1a7c47b3a804686b490c6944a02d96f890b9207c06850e4b559ff333bcb7"
         },
-        "s0075": {
+        "s0107": {
           "kind": "text",
           "sourceText": "\nBy Myke Walton and Cam Smith.  ",
           "context": "html > body > div > main > div > section > section > article > details > div > p > p",
           "translationKey": "e4fca390e5197c2c41d2fec8cf2854a6a2b5b5c3961c5e8f2656626f52c4d756"
         },
-        "s0076": {
+        "s0108": {
           "kind": "text",
           "sourceText": "\nOriginal publication\n",
           "context": "html > body > div > main > div > section > section > article > details > div > p > a > a",
           "translationKey": "4fa1c42b52953d2c1fcd3249e2fa082960d7306a1a14fa8eb6fb77994e4c5fed"
         },
-        "s0077": {
+        "s0109": {
           "kind": "text",
           "sourceText": " CC BY-NC-SA 4.0 ",
           "context": "html > body > div > main > div > section > section > article > details > div > p > a > a",
           "translationKey": "ad92417bdb74a53e907da2497d0f75bcdca6f21c721a348ba8fd021788f2a24e"
         },
-        "s0078": {
+        "s0110": {
           "kind": "text",
           "sourceText": "Reconstructed and reflowed automatically with the Struct reference adapter; the reading view and EPUBs are adaptations under the same license. Compare them with the original.",
           "context": "html > body > div > main > div > section > section > article > details > div > p > p",
           "translationKey": "a940f565b36ad0aa76c64885ecaae4b982b8d04ddc3df315648b79e037b86d76"
         },
-        "s0079": {
+        "s0111": {
           "kind": "text",
           "sourceText": "Review required: the automatic check found an unresolved source link. This sample is a demonstration, not a corpus benchmark.",
           "context": "html > body > div > main > div > section > section > article > details > div > p > p",
           "translationKey": "147cbfb4f1fcb989e70f97100f9cec6782025a765ae30db8c1067d4209c519a2"
         },
-        "s0080": {
+        "s0112": {
           "kind": "text",
           "sourceText": "Upload details",
           "context": "html > body > div > main > div > section > details > summary > summary",
           "translationKey": "9330865be27e45b859af48ca586fb2df19553109b9b05b3ddc955c13e4a49c5a"
         },
-        "s0081": {
+        "s0113": {
           "kind": "text",
           "sourceText": "\nPDFs are sent to the server for conversion. 10 MiB max. 3 attempts per\n      network per UTC day, 20 globally per UTC day; failed attempts count. Links\n      expire 72 hours after submission. Completed files are deleted after about\n      72 hours; pending jobs stay until finished. Samples use no allowance.\n",
           "context": "html > body > div > main > div > section > details > p > p",
           "translationKey": "a82a880efebe3c6f3bf200d5734cd01216c7363e0d56377f8a428bcd441dd431"
         },
-        "s0082": {
+        "s0114": {
           "kind": "text",
           "sourceText": "\n© 2026 ",
           "context": "html > body > div > footer > div > div > div > span > span",
           "translationKey": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014"
         },
-        "s0083": {
+        "s0115": {
           "kind": "text",
           "sourceText": "All rights reserved.",
           "context": "html > body > div > footer > div > div > div > span > span > span",
           "translationKey": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5"
         },
-        "s0084": {
+        "s0116": {
           "kind": "text",
           "sourceText": "Made with care by",
           "context": "html > body > div > footer > div > div > div > p > span > span",
           "translationKey": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa"
         },
-        "s0085": {
+        "s0117": {
           "kind": "text",
           "sourceText": " enscribe ",
           "context": "html > body > div > footer > div > div > div > p > a > a",
           "translationKey": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d"
         },
-        "s0086": {
+        "s0118": {
           "kind": "attribute",
           "attribute": "aria-label",
           "sourceText": "More",
           "context": "html > body > div > footer > div > div > nav",
           "translationKey": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996"
         },
-        "s0087": {
+        "s0119": {
           "kind": "text",
           "sourceText": "About",
           "context": "html > body > div > footer > div > div > nav > a > a",
           "translationKey": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1"
         },
-        "s0088": {
+        "s0120": {
           "kind": "text",
           "sourceText": "Tags",
           "context": "html > body > div > footer > div > div > nav > a > a",
           "translationKey": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8"
         },
-        "s0089": {
+        "s0121": {
           "kind": "attribute",
           "attribute": "aria-label",
           "sourceText": "GitHub",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb"
         },
-        "s0090": {
+        "s0122": {
           "kind": "attribute",
           "attribute": "title",
           "sourceText": "GitHub",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb"
         },
-        "s0091": {
+        "s0123": {
           "kind": "attribute",
           "attribute": "aria-label",
           "sourceText": "Twitter",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc"
         },
-        "s0092": {
+        "s0124": {
           "kind": "attribute",
           "attribute": "title",
           "sourceText": "Twitter",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc"
         },
-        "s0093": {
+        "s0125": {
           "kind": "attribute",
           "attribute": "aria-label",
           "sourceText": "LinkedIn",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b"
         },
-        "s0094": {
+        "s0126": {
           "kind": "attribute",
           "attribute": "title",
           "sourceText": "LinkedIn",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b"
         },
-        "s0095": {
+        "s0127": {
           "kind": "attribute",
           "attribute": "aria-label",
           "sourceText": "YouTube",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c"
         },
-        "s0096": {
+        "s0128": {
           "kind": "attribute",
           "attribute": "title",
           "sourceText": "YouTube",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c"
         },
-        "s0097": {
+        "s0129": {
           "kind": "attribute",
           "attribute": "aria-label",
           "sourceText": "Facebook",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85"
         },
-        "s0098": {
+        "s0130": {
           "kind": "attribute",
           "attribute": "title",
           "sourceText": "Facebook",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85"
         },
-        "s0099": {
+        "s0131": {
           "kind": "attribute",
           "attribute": "aria-label",
           "sourceText": "Instagram",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6"
         },
-        "s0100": {
+        "s0132": {
           "kind": "attribute",
           "attribute": "title",
           "sourceText": "Instagram",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6"
         },
-        "s0101": {
+        "s0133": {
           "kind": "attribute",
           "attribute": "aria-label",
           "sourceText": "Email",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621"
         },
-        "s0102": {
+        "s0134": {
           "kind": "attribute",
           "attribute": "title",
           "sourceText": "Email",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621"
         },
-        "s0103": {
+        "s0135": {
           "kind": "attribute",
           "attribute": "aria-label",
           "sourceText": "RSS",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
         },
-        "s0104": {
+        "s0136": {
           "kind": "attribute",
           "attribute": "title",
           "sourceText": "RSS",
@@ -42511,7 +43605,7 @@
       "locales": {
         "zh": {
           "status": "machine",
-          "sourceHash": "6c8b390d0bf9e9869cc521eaf7de9b13c7d858c1e933f8ce5c580fa0cd7a9b26",
+          "sourceHash": "cabcbbac39e0f556d9768b3068c7b1cff28da18799fc8c9d317232cc105540d4",
           "translationKeys": {
             "s0001": "860387e389584112ea6c27e3846296e439db36be58e4f2d431e09f187718f435",
             "s0002": "860387e389584112ea6c27e3846296e439db36be58e4f2d431e09f187718f435",
@@ -42552,76 +43646,108 @@
             "s0037": "e34a879c8b8b67effd9e14878e1443829419cf2aba09a03252d2a4f137e49941",
             "s0038": "9bd88f2485acbb9426ad3dd9e06842ede8c7516d0ba8559298675f09419681fa",
             "s0039": "ec5b6e5d48d51c0783ad3453ac830c9fed2200ec83c4d4d78087e5dbaa53adcc",
-            "s0040": "73d7cdf5997ff35275052b0f9b7e9b52409777be54b12ada592ae8b1dcd7fc4a",
-            "s0041": "e22e0ad8ad64b587793a3b86a28377665184eaab838965d9e56204576cfd82c7",
-            "s0042": "b866658b8db81295d9e1981581542acca54c1dee3f8c5c62640ad1f8bd2f8a0e",
-            "s0043": "0a0d545b233eab15ef894c2a02bd74c028c6ebf12c950e9517c6d1452717b20f",
-            "s0044": "ef5932e1ee76fe050c4484b67efe45dc4489357e462cd38aa485ba2fe4b49516",
-            "s0045": "7f50745746305e37c24f96e9e65fbce961363b5699e4554bdf08282a7e13e938",
-            "s0046": "2bb4db50afd17131427bdb127085bf19954e6a75c0780a3ed20870b3728f9613",
-            "s0047": "8d77a1434e66a7474ac025c07254314db68cd342ed02719c4a7fdba1075f5ced",
-            "s0048": "ab8508f26511d617d8cd58cf7d21103895b9180b46b48d8822d4f0a560d3e2e0",
-            "s0049": "82e219941d5d90698ffbe6cb2a7453e9e16651dd6763eebd48f5e594fb07487a",
-            "s0050": "30166b1818f13e64be70f9143f578f8fe2e4cee5ebcef2941033ea87ae60556c",
-            "s0051": "1defc442ee9a219d24b40612d61006c444f438a1b6b064eeb549d2ac622114e7",
-            "s0052": "c83c1a7c47b3a804686b490c6944a02d96f890b9207c06850e4b559ff333bcb7",
-            "s0053": "2a154d0f27fb7f968f7d16f1772dcd42252d95e56ea3e35f69d9d3ee7537527e",
-            "s0054": "be191c6c8cbc7821a7016c155ded96b55dcda987f807cfb0b8907980882181c7",
-            "s0055": "4fa1c42b52953d2c1fcd3249e2fa082960d7306a1a14fa8eb6fb77994e4c5fed",
-            "s0056": "cfee62d5259b8270ea87b1e77ea678cc6c93f233ab5b51730ad8b38b4cbb37f5",
-            "s0057": "dbd0d08c60497de33b4fd348e25231a0a89a81219593f15e33df7f98eb80ccf1",
-            "s0058": "828b0044bb75cc242e54b1576af980a3f76352d1a1c8f6885c55b046f0672264",
-            "s0059": "82e219941d5d90698ffbe6cb2a7453e9e16651dd6763eebd48f5e594fb07487a",
-            "s0060": "29b434aff02b5afc50e3b91e980b66fb0d49859bc2fcbb89b59dddbf3e4b6a84",
-            "s0061": "42d9643002ded1a6b920aace143fc5c176357a094c1eed0ad8499ca53f9b17f2",
-            "s0062": "08d2e9a880aee6ed786716e9cf2ffb00d0629c75ed49caf6c4236b4751f18b75",
-            "s0063": "c83c1a7c47b3a804686b490c6944a02d96f890b9207c06850e4b559ff333bcb7",
-            "s0064": "2da3a357d5f06029313e42ad65c63e5973639a30fb33769437951a227a6961fb",
-            "s0065": "4fa1c42b52953d2c1fcd3249e2fa082960d7306a1a14fa8eb6fb77994e4c5fed",
-            "s0066": "388815e473b4d852276f49c7db08bb668d4211d8df777d27c238030d5418087e",
-            "s0067": "ebe58af658b74ae2fdc066844d3caef90d4f728d4f906cac5cdd15f0e1871090",
-            "s0068": "aca0538a9242d04b37ef669e7456450b322d055632a5a6ca3d3e946280056b2c",
-            "s0069": "d050a14eb81cd1b1b8d11b609fc53c82d5abc265259f6a62eae7c169fd06c943",
-            "s0070": "82e219941d5d90698ffbe6cb2a7453e9e16651dd6763eebd48f5e594fb07487a",
-            "s0071": "29b434aff02b5afc50e3b91e980b66fb0d49859bc2fcbb89b59dddbf3e4b6a84",
-            "s0072": "42d9643002ded1a6b920aace143fc5c176357a094c1eed0ad8499ca53f9b17f2",
-            "s0073": "08d2e9a880aee6ed786716e9cf2ffb00d0629c75ed49caf6c4236b4751f18b75",
-            "s0074": "c83c1a7c47b3a804686b490c6944a02d96f890b9207c06850e4b559ff333bcb7",
-            "s0075": "e4fca390e5197c2c41d2fec8cf2854a6a2b5b5c3961c5e8f2656626f52c4d756",
-            "s0076": "4fa1c42b52953d2c1fcd3249e2fa082960d7306a1a14fa8eb6fb77994e4c5fed",
-            "s0077": "ad92417bdb74a53e907da2497d0f75bcdca6f21c721a348ba8fd021788f2a24e",
-            "s0078": "a940f565b36ad0aa76c64885ecaae4b982b8d04ddc3df315648b79e037b86d76",
-            "s0079": "147cbfb4f1fcb989e70f97100f9cec6782025a765ae30db8c1067d4209c519a2",
-            "s0080": "9330865be27e45b859af48ca586fb2df19553109b9b05b3ddc955c13e4a49c5a",
-            "s0081": "a82a880efebe3c6f3bf200d5734cd01216c7363e0d56377f8a428bcd441dd431",
-            "s0082": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
-            "s0083": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
-            "s0084": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
-            "s0085": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
-            "s0086": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
-            "s0087": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
-            "s0088": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
-            "s0089": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
-            "s0090": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
-            "s0091": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
-            "s0092": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
-            "s0093": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
-            "s0094": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
-            "s0095": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
-            "s0096": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
-            "s0097": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
-            "s0098": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
-            "s0099": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
-            "s0100": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
-            "s0101": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
-            "s0102": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
-            "s0103": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
-            "s0104": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+            "s0040": "b079c84f2b8bd0779057e9e5f3e5696df6884479b603eba67732ed6d2d8be137",
+            "s0041": "23acc3e789224a7d176d21728255ba5896b8b7d18c30361c0ec403dbf8399d97",
+            "s0042": "46aa94dfbe14fc0049765a913bbcc0f408db084014e43f7824b1067fcc7f570f",
+            "s0043": "6c95bad7abf7ab5b8a4f8f67820f436567f71ac93f373c3233f549a76f0cc225",
+            "s0044": "1835337481f66c31066e145b600283133bce994ca5468dfc709a88f2ed04e5ad",
+            "s0045": "31401a22ae4b2cee7974033460c4bb66a821fac74d7f26f449648dbf50fb942b",
+            "s0046": "bb6143728c892b0e692d7e516d302e6788e7ab687283dd33067516c4dba01038",
+            "s0047": "1cfb4c7e191691005355f760425cb588a4def5a185295bdd24bc8a23cab8c496",
+            "s0048": "101596f218056dec7a821463d7431251f2310be0bc82cbe78f744e3e063a1367",
+            "s0049": "aef0f299027c34a2656e1a502a22cc6a4b558c7240aba9b689419f388487061f",
+            "s0050": "2547fc9409fdc8d00afa194f974db6f7af3cf83429e34d5f86c3c610d0145e38",
+            "s0051": "251ad94ceda09cbba1c6cb3a10539f83564b8b5a6da5025c209b3fa420a5b11d",
+            "s0052": "b4ed15e12120ab933755584140f9fbc2e226f7ec8df65b7ed381eb41e70b734e",
+            "s0053": "48f9e6803d774e4cc53fb50437dd7037deb1e6556f5e718cde7b4ebf0e8f32f4",
+            "s0054": "55f81652a02cfd4b069956f29509b8248ea50f56c2e6043a26bd683bab6994db",
+            "s0055": "d432bb2b8200bb3a214a507a782f9bfd64fcf4eddfec99d3abe67ae6e035e8e0",
+            "s0056": "20b50f28f43bfbcc5dc99b832e002bad34fc61eeb9c58db0df1780cd2c545079",
+            "s0057": "bad5f0ee7ade0c1083e06201917929ad892d241cb6ba185065b981bad80d1b00",
+            "s0058": "43af6054e859798cdc8644d6886ed9f89c35d08e76e581ae544277f95f87b720",
+            "s0059": "a8af39afa89df04666546ca7054d55a2563897e6f45b944005281d5188c5d9a6",
+            "s0060": "c98d38f59789c7609fd742b07e35a6c41b81072f2f7096a600b1d99a3def3b87",
+            "s0061": "119ef3fa607e7c05ce8d693b7aeb64ce7ca4d18a655046c2d0f6a93d62c164f6",
+            "s0062": "4691492179d2208993976d27d343bd02964068569f241d6061116d7df6d4099a",
+            "s0063": "aac910161f16402c8108e8df6d7dc5941b65103b4deec7830cb141e563c68ee7",
+            "s0064": "6725e7bbcd28f3a8a586fa34bf191fd72dde8b61756932cd3237c17a6f196f1a",
+            "s0065": "09d22d5c2f3f83d711c2fb7442b5f44491d315b664e7f11e090823b0f0e3e6f3",
+            "s0066": "c35ac1f135179da798b42517370eac231587f07116c229fec5f316f9790c7bc0",
+            "s0067": "f5c080f4fa8315c66f0a34932e55d811ac8adbf17f38b81a3ae87d7815bdcbf6",
+            "s0068": "e8c08d43278d1113b8b7ccd8a04e2247bbb602712e31ad2903f23b225aba9944",
+            "s0069": "ec9cdb765856a2f652869eaa423ca51220fa54bb41867cd14b8a805f33c75f5b",
+            "s0070": "9577697aa96f7cc05446d8166adb42733e71b466c7fe28d84befe889db51f0d0",
+            "s0071": "ba381173ed86a4b50dd68a05df5f63b2790bc1e6325a1ad57af795ce1a143282",
+            "s0072": "73d7cdf5997ff35275052b0f9b7e9b52409777be54b12ada592ae8b1dcd7fc4a",
+            "s0073": "e22e0ad8ad64b587793a3b86a28377665184eaab838965d9e56204576cfd82c7",
+            "s0074": "b866658b8db81295d9e1981581542acca54c1dee3f8c5c62640ad1f8bd2f8a0e",
+            "s0075": "0a0d545b233eab15ef894c2a02bd74c028c6ebf12c950e9517c6d1452717b20f",
+            "s0076": "ef5932e1ee76fe050c4484b67efe45dc4489357e462cd38aa485ba2fe4b49516",
+            "s0077": "7f50745746305e37c24f96e9e65fbce961363b5699e4554bdf08282a7e13e938",
+            "s0078": "2bb4db50afd17131427bdb127085bf19954e6a75c0780a3ed20870b3728f9613",
+            "s0079": "8d77a1434e66a7474ac025c07254314db68cd342ed02719c4a7fdba1075f5ced",
+            "s0080": "ab8508f26511d617d8cd58cf7d21103895b9180b46b48d8822d4f0a560d3e2e0",
+            "s0081": "82e219941d5d90698ffbe6cb2a7453e9e16651dd6763eebd48f5e594fb07487a",
+            "s0082": "30166b1818f13e64be70f9143f578f8fe2e4cee5ebcef2941033ea87ae60556c",
+            "s0083": "1defc442ee9a219d24b40612d61006c444f438a1b6b064eeb549d2ac622114e7",
+            "s0084": "c83c1a7c47b3a804686b490c6944a02d96f890b9207c06850e4b559ff333bcb7",
+            "s0085": "2a154d0f27fb7f968f7d16f1772dcd42252d95e56ea3e35f69d9d3ee7537527e",
+            "s0086": "be191c6c8cbc7821a7016c155ded96b55dcda987f807cfb0b8907980882181c7",
+            "s0087": "4fa1c42b52953d2c1fcd3249e2fa082960d7306a1a14fa8eb6fb77994e4c5fed",
+            "s0088": "cfee62d5259b8270ea87b1e77ea678cc6c93f233ab5b51730ad8b38b4cbb37f5",
+            "s0089": "dbd0d08c60497de33b4fd348e25231a0a89a81219593f15e33df7f98eb80ccf1",
+            "s0090": "828b0044bb75cc242e54b1576af980a3f76352d1a1c8f6885c55b046f0672264",
+            "s0091": "82e219941d5d90698ffbe6cb2a7453e9e16651dd6763eebd48f5e594fb07487a",
+            "s0092": "29b434aff02b5afc50e3b91e980b66fb0d49859bc2fcbb89b59dddbf3e4b6a84",
+            "s0093": "42d9643002ded1a6b920aace143fc5c176357a094c1eed0ad8499ca53f9b17f2",
+            "s0094": "08d2e9a880aee6ed786716e9cf2ffb00d0629c75ed49caf6c4236b4751f18b75",
+            "s0095": "c83c1a7c47b3a804686b490c6944a02d96f890b9207c06850e4b559ff333bcb7",
+            "s0096": "2da3a357d5f06029313e42ad65c63e5973639a30fb33769437951a227a6961fb",
+            "s0097": "4fa1c42b52953d2c1fcd3249e2fa082960d7306a1a14fa8eb6fb77994e4c5fed",
+            "s0098": "388815e473b4d852276f49c7db08bb668d4211d8df777d27c238030d5418087e",
+            "s0099": "ebe58af658b74ae2fdc066844d3caef90d4f728d4f906cac5cdd15f0e1871090",
+            "s0100": "aca0538a9242d04b37ef669e7456450b322d055632a5a6ca3d3e946280056b2c",
+            "s0101": "d050a14eb81cd1b1b8d11b609fc53c82d5abc265259f6a62eae7c169fd06c943",
+            "s0102": "82e219941d5d90698ffbe6cb2a7453e9e16651dd6763eebd48f5e594fb07487a",
+            "s0103": "29b434aff02b5afc50e3b91e980b66fb0d49859bc2fcbb89b59dddbf3e4b6a84",
+            "s0104": "42d9643002ded1a6b920aace143fc5c176357a094c1eed0ad8499ca53f9b17f2",
+            "s0105": "08d2e9a880aee6ed786716e9cf2ffb00d0629c75ed49caf6c4236b4751f18b75",
+            "s0106": "c83c1a7c47b3a804686b490c6944a02d96f890b9207c06850e4b559ff333bcb7",
+            "s0107": "e4fca390e5197c2c41d2fec8cf2854a6a2b5b5c3961c5e8f2656626f52c4d756",
+            "s0108": "4fa1c42b52953d2c1fcd3249e2fa082960d7306a1a14fa8eb6fb77994e4c5fed",
+            "s0109": "ad92417bdb74a53e907da2497d0f75bcdca6f21c721a348ba8fd021788f2a24e",
+            "s0110": "a940f565b36ad0aa76c64885ecaae4b982b8d04ddc3df315648b79e037b86d76",
+            "s0111": "147cbfb4f1fcb989e70f97100f9cec6782025a765ae30db8c1067d4209c519a2",
+            "s0112": "9330865be27e45b859af48ca586fb2df19553109b9b05b3ddc955c13e4a49c5a",
+            "s0113": "a82a880efebe3c6f3bf200d5734cd01216c7363e0d56377f8a428bcd441dd431",
+            "s0114": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
+            "s0115": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
+            "s0116": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
+            "s0117": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
+            "s0118": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
+            "s0119": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
+            "s0120": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
+            "s0121": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0122": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0123": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0124": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0125": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0126": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0127": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0128": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0129": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0130": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0131": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0132": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0133": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0134": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0135": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
+            "s0136": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
           }
         },
         "ja": {
           "status": "machine",
-          "sourceHash": "6c8b390d0bf9e9869cc521eaf7de9b13c7d858c1e933f8ce5c580fa0cd7a9b26",
+          "sourceHash": "cabcbbac39e0f556d9768b3068c7b1cff28da18799fc8c9d317232cc105540d4",
           "translationKeys": {
             "s0001": "860387e389584112ea6c27e3846296e439db36be58e4f2d431e09f187718f435",
             "s0002": "860387e389584112ea6c27e3846296e439db36be58e4f2d431e09f187718f435",
@@ -42662,76 +43788,108 @@
             "s0037": "e34a879c8b8b67effd9e14878e1443829419cf2aba09a03252d2a4f137e49941",
             "s0038": "9bd88f2485acbb9426ad3dd9e06842ede8c7516d0ba8559298675f09419681fa",
             "s0039": "ec5b6e5d48d51c0783ad3453ac830c9fed2200ec83c4d4d78087e5dbaa53adcc",
-            "s0040": "73d7cdf5997ff35275052b0f9b7e9b52409777be54b12ada592ae8b1dcd7fc4a",
-            "s0041": "e22e0ad8ad64b587793a3b86a28377665184eaab838965d9e56204576cfd82c7",
-            "s0042": "b866658b8db81295d9e1981581542acca54c1dee3f8c5c62640ad1f8bd2f8a0e",
-            "s0043": "0a0d545b233eab15ef894c2a02bd74c028c6ebf12c950e9517c6d1452717b20f",
-            "s0044": "ef5932e1ee76fe050c4484b67efe45dc4489357e462cd38aa485ba2fe4b49516",
-            "s0045": "7f50745746305e37c24f96e9e65fbce961363b5699e4554bdf08282a7e13e938",
-            "s0046": "2bb4db50afd17131427bdb127085bf19954e6a75c0780a3ed20870b3728f9613",
-            "s0047": "8d77a1434e66a7474ac025c07254314db68cd342ed02719c4a7fdba1075f5ced",
-            "s0048": "ab8508f26511d617d8cd58cf7d21103895b9180b46b48d8822d4f0a560d3e2e0",
-            "s0049": "82e219941d5d90698ffbe6cb2a7453e9e16651dd6763eebd48f5e594fb07487a",
-            "s0050": "30166b1818f13e64be70f9143f578f8fe2e4cee5ebcef2941033ea87ae60556c",
-            "s0051": "1defc442ee9a219d24b40612d61006c444f438a1b6b064eeb549d2ac622114e7",
-            "s0052": "c83c1a7c47b3a804686b490c6944a02d96f890b9207c06850e4b559ff333bcb7",
-            "s0053": "2a154d0f27fb7f968f7d16f1772dcd42252d95e56ea3e35f69d9d3ee7537527e",
-            "s0054": "be191c6c8cbc7821a7016c155ded96b55dcda987f807cfb0b8907980882181c7",
-            "s0055": "4fa1c42b52953d2c1fcd3249e2fa082960d7306a1a14fa8eb6fb77994e4c5fed",
-            "s0056": "cfee62d5259b8270ea87b1e77ea678cc6c93f233ab5b51730ad8b38b4cbb37f5",
-            "s0057": "dbd0d08c60497de33b4fd348e25231a0a89a81219593f15e33df7f98eb80ccf1",
-            "s0058": "828b0044bb75cc242e54b1576af980a3f76352d1a1c8f6885c55b046f0672264",
-            "s0059": "82e219941d5d90698ffbe6cb2a7453e9e16651dd6763eebd48f5e594fb07487a",
-            "s0060": "29b434aff02b5afc50e3b91e980b66fb0d49859bc2fcbb89b59dddbf3e4b6a84",
-            "s0061": "42d9643002ded1a6b920aace143fc5c176357a094c1eed0ad8499ca53f9b17f2",
-            "s0062": "08d2e9a880aee6ed786716e9cf2ffb00d0629c75ed49caf6c4236b4751f18b75",
-            "s0063": "c83c1a7c47b3a804686b490c6944a02d96f890b9207c06850e4b559ff333bcb7",
-            "s0064": "2da3a357d5f06029313e42ad65c63e5973639a30fb33769437951a227a6961fb",
-            "s0065": "4fa1c42b52953d2c1fcd3249e2fa082960d7306a1a14fa8eb6fb77994e4c5fed",
-            "s0066": "388815e473b4d852276f49c7db08bb668d4211d8df777d27c238030d5418087e",
-            "s0067": "ebe58af658b74ae2fdc066844d3caef90d4f728d4f906cac5cdd15f0e1871090",
-            "s0068": "aca0538a9242d04b37ef669e7456450b322d055632a5a6ca3d3e946280056b2c",
-            "s0069": "d050a14eb81cd1b1b8d11b609fc53c82d5abc265259f6a62eae7c169fd06c943",
-            "s0070": "82e219941d5d90698ffbe6cb2a7453e9e16651dd6763eebd48f5e594fb07487a",
-            "s0071": "29b434aff02b5afc50e3b91e980b66fb0d49859bc2fcbb89b59dddbf3e4b6a84",
-            "s0072": "42d9643002ded1a6b920aace143fc5c176357a094c1eed0ad8499ca53f9b17f2",
-            "s0073": "08d2e9a880aee6ed786716e9cf2ffb00d0629c75ed49caf6c4236b4751f18b75",
-            "s0074": "c83c1a7c47b3a804686b490c6944a02d96f890b9207c06850e4b559ff333bcb7",
-            "s0075": "e4fca390e5197c2c41d2fec8cf2854a6a2b5b5c3961c5e8f2656626f52c4d756",
-            "s0076": "4fa1c42b52953d2c1fcd3249e2fa082960d7306a1a14fa8eb6fb77994e4c5fed",
-            "s0077": "ad92417bdb74a53e907da2497d0f75bcdca6f21c721a348ba8fd021788f2a24e",
-            "s0078": "a940f565b36ad0aa76c64885ecaae4b982b8d04ddc3df315648b79e037b86d76",
-            "s0079": "147cbfb4f1fcb989e70f97100f9cec6782025a765ae30db8c1067d4209c519a2",
-            "s0080": "9330865be27e45b859af48ca586fb2df19553109b9b05b3ddc955c13e4a49c5a",
-            "s0081": "a82a880efebe3c6f3bf200d5734cd01216c7363e0d56377f8a428bcd441dd431",
-            "s0082": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
-            "s0083": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
-            "s0084": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
-            "s0085": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
-            "s0086": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
-            "s0087": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
-            "s0088": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
-            "s0089": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
-            "s0090": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
-            "s0091": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
-            "s0092": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
-            "s0093": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
-            "s0094": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
-            "s0095": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
-            "s0096": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
-            "s0097": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
-            "s0098": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
-            "s0099": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
-            "s0100": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
-            "s0101": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
-            "s0102": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
-            "s0103": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
-            "s0104": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+            "s0040": "b079c84f2b8bd0779057e9e5f3e5696df6884479b603eba67732ed6d2d8be137",
+            "s0041": "23acc3e789224a7d176d21728255ba5896b8b7d18c30361c0ec403dbf8399d97",
+            "s0042": "46aa94dfbe14fc0049765a913bbcc0f408db084014e43f7824b1067fcc7f570f",
+            "s0043": "6c95bad7abf7ab5b8a4f8f67820f436567f71ac93f373c3233f549a76f0cc225",
+            "s0044": "1835337481f66c31066e145b600283133bce994ca5468dfc709a88f2ed04e5ad",
+            "s0045": "31401a22ae4b2cee7974033460c4bb66a821fac74d7f26f449648dbf50fb942b",
+            "s0046": "bb6143728c892b0e692d7e516d302e6788e7ab687283dd33067516c4dba01038",
+            "s0047": "1cfb4c7e191691005355f760425cb588a4def5a185295bdd24bc8a23cab8c496",
+            "s0048": "101596f218056dec7a821463d7431251f2310be0bc82cbe78f744e3e063a1367",
+            "s0049": "aef0f299027c34a2656e1a502a22cc6a4b558c7240aba9b689419f388487061f",
+            "s0050": "2547fc9409fdc8d00afa194f974db6f7af3cf83429e34d5f86c3c610d0145e38",
+            "s0051": "251ad94ceda09cbba1c6cb3a10539f83564b8b5a6da5025c209b3fa420a5b11d",
+            "s0052": "b4ed15e12120ab933755584140f9fbc2e226f7ec8df65b7ed381eb41e70b734e",
+            "s0053": "48f9e6803d774e4cc53fb50437dd7037deb1e6556f5e718cde7b4ebf0e8f32f4",
+            "s0054": "55f81652a02cfd4b069956f29509b8248ea50f56c2e6043a26bd683bab6994db",
+            "s0055": "d432bb2b8200bb3a214a507a782f9bfd64fcf4eddfec99d3abe67ae6e035e8e0",
+            "s0056": "20b50f28f43bfbcc5dc99b832e002bad34fc61eeb9c58db0df1780cd2c545079",
+            "s0057": "bad5f0ee7ade0c1083e06201917929ad892d241cb6ba185065b981bad80d1b00",
+            "s0058": "43af6054e859798cdc8644d6886ed9f89c35d08e76e581ae544277f95f87b720",
+            "s0059": "a8af39afa89df04666546ca7054d55a2563897e6f45b944005281d5188c5d9a6",
+            "s0060": "c98d38f59789c7609fd742b07e35a6c41b81072f2f7096a600b1d99a3def3b87",
+            "s0061": "119ef3fa607e7c05ce8d693b7aeb64ce7ca4d18a655046c2d0f6a93d62c164f6",
+            "s0062": "4691492179d2208993976d27d343bd02964068569f241d6061116d7df6d4099a",
+            "s0063": "aac910161f16402c8108e8df6d7dc5941b65103b4deec7830cb141e563c68ee7",
+            "s0064": "6725e7bbcd28f3a8a586fa34bf191fd72dde8b61756932cd3237c17a6f196f1a",
+            "s0065": "09d22d5c2f3f83d711c2fb7442b5f44491d315b664e7f11e090823b0f0e3e6f3",
+            "s0066": "c35ac1f135179da798b42517370eac231587f07116c229fec5f316f9790c7bc0",
+            "s0067": "f5c080f4fa8315c66f0a34932e55d811ac8adbf17f38b81a3ae87d7815bdcbf6",
+            "s0068": "e8c08d43278d1113b8b7ccd8a04e2247bbb602712e31ad2903f23b225aba9944",
+            "s0069": "ec9cdb765856a2f652869eaa423ca51220fa54bb41867cd14b8a805f33c75f5b",
+            "s0070": "9577697aa96f7cc05446d8166adb42733e71b466c7fe28d84befe889db51f0d0",
+            "s0071": "ba381173ed86a4b50dd68a05df5f63b2790bc1e6325a1ad57af795ce1a143282",
+            "s0072": "73d7cdf5997ff35275052b0f9b7e9b52409777be54b12ada592ae8b1dcd7fc4a",
+            "s0073": "e22e0ad8ad64b587793a3b86a28377665184eaab838965d9e56204576cfd82c7",
+            "s0074": "b866658b8db81295d9e1981581542acca54c1dee3f8c5c62640ad1f8bd2f8a0e",
+            "s0075": "0a0d545b233eab15ef894c2a02bd74c028c6ebf12c950e9517c6d1452717b20f",
+            "s0076": "ef5932e1ee76fe050c4484b67efe45dc4489357e462cd38aa485ba2fe4b49516",
+            "s0077": "7f50745746305e37c24f96e9e65fbce961363b5699e4554bdf08282a7e13e938",
+            "s0078": "2bb4db50afd17131427bdb127085bf19954e6a75c0780a3ed20870b3728f9613",
+            "s0079": "8d77a1434e66a7474ac025c07254314db68cd342ed02719c4a7fdba1075f5ced",
+            "s0080": "ab8508f26511d617d8cd58cf7d21103895b9180b46b48d8822d4f0a560d3e2e0",
+            "s0081": "82e219941d5d90698ffbe6cb2a7453e9e16651dd6763eebd48f5e594fb07487a",
+            "s0082": "30166b1818f13e64be70f9143f578f8fe2e4cee5ebcef2941033ea87ae60556c",
+            "s0083": "1defc442ee9a219d24b40612d61006c444f438a1b6b064eeb549d2ac622114e7",
+            "s0084": "c83c1a7c47b3a804686b490c6944a02d96f890b9207c06850e4b559ff333bcb7",
+            "s0085": "2a154d0f27fb7f968f7d16f1772dcd42252d95e56ea3e35f69d9d3ee7537527e",
+            "s0086": "be191c6c8cbc7821a7016c155ded96b55dcda987f807cfb0b8907980882181c7",
+            "s0087": "4fa1c42b52953d2c1fcd3249e2fa082960d7306a1a14fa8eb6fb77994e4c5fed",
+            "s0088": "cfee62d5259b8270ea87b1e77ea678cc6c93f233ab5b51730ad8b38b4cbb37f5",
+            "s0089": "dbd0d08c60497de33b4fd348e25231a0a89a81219593f15e33df7f98eb80ccf1",
+            "s0090": "828b0044bb75cc242e54b1576af980a3f76352d1a1c8f6885c55b046f0672264",
+            "s0091": "82e219941d5d90698ffbe6cb2a7453e9e16651dd6763eebd48f5e594fb07487a",
+            "s0092": "29b434aff02b5afc50e3b91e980b66fb0d49859bc2fcbb89b59dddbf3e4b6a84",
+            "s0093": "42d9643002ded1a6b920aace143fc5c176357a094c1eed0ad8499ca53f9b17f2",
+            "s0094": "08d2e9a880aee6ed786716e9cf2ffb00d0629c75ed49caf6c4236b4751f18b75",
+            "s0095": "c83c1a7c47b3a804686b490c6944a02d96f890b9207c06850e4b559ff333bcb7",
+            "s0096": "2da3a357d5f06029313e42ad65c63e5973639a30fb33769437951a227a6961fb",
+            "s0097": "4fa1c42b52953d2c1fcd3249e2fa082960d7306a1a14fa8eb6fb77994e4c5fed",
+            "s0098": "388815e473b4d852276f49c7db08bb668d4211d8df777d27c238030d5418087e",
+            "s0099": "ebe58af658b74ae2fdc066844d3caef90d4f728d4f906cac5cdd15f0e1871090",
+            "s0100": "aca0538a9242d04b37ef669e7456450b322d055632a5a6ca3d3e946280056b2c",
+            "s0101": "d050a14eb81cd1b1b8d11b609fc53c82d5abc265259f6a62eae7c169fd06c943",
+            "s0102": "82e219941d5d90698ffbe6cb2a7453e9e16651dd6763eebd48f5e594fb07487a",
+            "s0103": "29b434aff02b5afc50e3b91e980b66fb0d49859bc2fcbb89b59dddbf3e4b6a84",
+            "s0104": "42d9643002ded1a6b920aace143fc5c176357a094c1eed0ad8499ca53f9b17f2",
+            "s0105": "08d2e9a880aee6ed786716e9cf2ffb00d0629c75ed49caf6c4236b4751f18b75",
+            "s0106": "c83c1a7c47b3a804686b490c6944a02d96f890b9207c06850e4b559ff333bcb7",
+            "s0107": "e4fca390e5197c2c41d2fec8cf2854a6a2b5b5c3961c5e8f2656626f52c4d756",
+            "s0108": "4fa1c42b52953d2c1fcd3249e2fa082960d7306a1a14fa8eb6fb77994e4c5fed",
+            "s0109": "ad92417bdb74a53e907da2497d0f75bcdca6f21c721a348ba8fd021788f2a24e",
+            "s0110": "a940f565b36ad0aa76c64885ecaae4b982b8d04ddc3df315648b79e037b86d76",
+            "s0111": "147cbfb4f1fcb989e70f97100f9cec6782025a765ae30db8c1067d4209c519a2",
+            "s0112": "9330865be27e45b859af48ca586fb2df19553109b9b05b3ddc955c13e4a49c5a",
+            "s0113": "a82a880efebe3c6f3bf200d5734cd01216c7363e0d56377f8a428bcd441dd431",
+            "s0114": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
+            "s0115": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
+            "s0116": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
+            "s0117": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
+            "s0118": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
+            "s0119": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
+            "s0120": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
+            "s0121": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0122": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0123": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0124": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0125": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0126": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0127": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0128": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0129": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0130": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0131": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0132": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0133": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0134": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0135": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
+            "s0136": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
           }
         },
         "ko": {
           "status": "machine",
-          "sourceHash": "6c8b390d0bf9e9869cc521eaf7de9b13c7d858c1e933f8ce5c580fa0cd7a9b26",
+          "sourceHash": "cabcbbac39e0f556d9768b3068c7b1cff28da18799fc8c9d317232cc105540d4",
           "translationKeys": {
             "s0001": "860387e389584112ea6c27e3846296e439db36be58e4f2d431e09f187718f435",
             "s0002": "860387e389584112ea6c27e3846296e439db36be58e4f2d431e09f187718f435",
@@ -42772,71 +43930,103 @@
             "s0037": "e34a879c8b8b67effd9e14878e1443829419cf2aba09a03252d2a4f137e49941",
             "s0038": "9bd88f2485acbb9426ad3dd9e06842ede8c7516d0ba8559298675f09419681fa",
             "s0039": "ec5b6e5d48d51c0783ad3453ac830c9fed2200ec83c4d4d78087e5dbaa53adcc",
-            "s0040": "73d7cdf5997ff35275052b0f9b7e9b52409777be54b12ada592ae8b1dcd7fc4a",
-            "s0041": "e22e0ad8ad64b587793a3b86a28377665184eaab838965d9e56204576cfd82c7",
-            "s0042": "b866658b8db81295d9e1981581542acca54c1dee3f8c5c62640ad1f8bd2f8a0e",
-            "s0043": "0a0d545b233eab15ef894c2a02bd74c028c6ebf12c950e9517c6d1452717b20f",
-            "s0044": "ef5932e1ee76fe050c4484b67efe45dc4489357e462cd38aa485ba2fe4b49516",
-            "s0045": "7f50745746305e37c24f96e9e65fbce961363b5699e4554bdf08282a7e13e938",
-            "s0046": "2bb4db50afd17131427bdb127085bf19954e6a75c0780a3ed20870b3728f9613",
-            "s0047": "8d77a1434e66a7474ac025c07254314db68cd342ed02719c4a7fdba1075f5ced",
-            "s0048": "ab8508f26511d617d8cd58cf7d21103895b9180b46b48d8822d4f0a560d3e2e0",
-            "s0049": "82e219941d5d90698ffbe6cb2a7453e9e16651dd6763eebd48f5e594fb07487a",
-            "s0050": "30166b1818f13e64be70f9143f578f8fe2e4cee5ebcef2941033ea87ae60556c",
-            "s0051": "1defc442ee9a219d24b40612d61006c444f438a1b6b064eeb549d2ac622114e7",
-            "s0052": "c83c1a7c47b3a804686b490c6944a02d96f890b9207c06850e4b559ff333bcb7",
-            "s0053": "2a154d0f27fb7f968f7d16f1772dcd42252d95e56ea3e35f69d9d3ee7537527e",
-            "s0054": "be191c6c8cbc7821a7016c155ded96b55dcda987f807cfb0b8907980882181c7",
-            "s0055": "4fa1c42b52953d2c1fcd3249e2fa082960d7306a1a14fa8eb6fb77994e4c5fed",
-            "s0056": "cfee62d5259b8270ea87b1e77ea678cc6c93f233ab5b51730ad8b38b4cbb37f5",
-            "s0057": "dbd0d08c60497de33b4fd348e25231a0a89a81219593f15e33df7f98eb80ccf1",
-            "s0058": "828b0044bb75cc242e54b1576af980a3f76352d1a1c8f6885c55b046f0672264",
-            "s0059": "82e219941d5d90698ffbe6cb2a7453e9e16651dd6763eebd48f5e594fb07487a",
-            "s0060": "29b434aff02b5afc50e3b91e980b66fb0d49859bc2fcbb89b59dddbf3e4b6a84",
-            "s0061": "42d9643002ded1a6b920aace143fc5c176357a094c1eed0ad8499ca53f9b17f2",
-            "s0062": "08d2e9a880aee6ed786716e9cf2ffb00d0629c75ed49caf6c4236b4751f18b75",
-            "s0063": "c83c1a7c47b3a804686b490c6944a02d96f890b9207c06850e4b559ff333bcb7",
-            "s0064": "2da3a357d5f06029313e42ad65c63e5973639a30fb33769437951a227a6961fb",
-            "s0065": "4fa1c42b52953d2c1fcd3249e2fa082960d7306a1a14fa8eb6fb77994e4c5fed",
-            "s0066": "388815e473b4d852276f49c7db08bb668d4211d8df777d27c238030d5418087e",
-            "s0067": "ebe58af658b74ae2fdc066844d3caef90d4f728d4f906cac5cdd15f0e1871090",
-            "s0068": "aca0538a9242d04b37ef669e7456450b322d055632a5a6ca3d3e946280056b2c",
-            "s0069": "d050a14eb81cd1b1b8d11b609fc53c82d5abc265259f6a62eae7c169fd06c943",
-            "s0070": "82e219941d5d90698ffbe6cb2a7453e9e16651dd6763eebd48f5e594fb07487a",
-            "s0071": "29b434aff02b5afc50e3b91e980b66fb0d49859bc2fcbb89b59dddbf3e4b6a84",
-            "s0072": "42d9643002ded1a6b920aace143fc5c176357a094c1eed0ad8499ca53f9b17f2",
-            "s0073": "08d2e9a880aee6ed786716e9cf2ffb00d0629c75ed49caf6c4236b4751f18b75",
-            "s0074": "c83c1a7c47b3a804686b490c6944a02d96f890b9207c06850e4b559ff333bcb7",
-            "s0075": "e4fca390e5197c2c41d2fec8cf2854a6a2b5b5c3961c5e8f2656626f52c4d756",
-            "s0076": "4fa1c42b52953d2c1fcd3249e2fa082960d7306a1a14fa8eb6fb77994e4c5fed",
-            "s0077": "ad92417bdb74a53e907da2497d0f75bcdca6f21c721a348ba8fd021788f2a24e",
-            "s0078": "a940f565b36ad0aa76c64885ecaae4b982b8d04ddc3df315648b79e037b86d76",
-            "s0079": "147cbfb4f1fcb989e70f97100f9cec6782025a765ae30db8c1067d4209c519a2",
-            "s0080": "9330865be27e45b859af48ca586fb2df19553109b9b05b3ddc955c13e4a49c5a",
-            "s0081": "a82a880efebe3c6f3bf200d5734cd01216c7363e0d56377f8a428bcd441dd431",
-            "s0082": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
-            "s0083": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
-            "s0084": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
-            "s0085": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
-            "s0086": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
-            "s0087": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
-            "s0088": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
-            "s0089": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
-            "s0090": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
-            "s0091": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
-            "s0092": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
-            "s0093": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
-            "s0094": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
-            "s0095": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
-            "s0096": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
-            "s0097": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
-            "s0098": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
-            "s0099": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
-            "s0100": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
-            "s0101": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
-            "s0102": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
-            "s0103": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
-            "s0104": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+            "s0040": "b079c84f2b8bd0779057e9e5f3e5696df6884479b603eba67732ed6d2d8be137",
+            "s0041": "23acc3e789224a7d176d21728255ba5896b8b7d18c30361c0ec403dbf8399d97",
+            "s0042": "46aa94dfbe14fc0049765a913bbcc0f408db084014e43f7824b1067fcc7f570f",
+            "s0043": "6c95bad7abf7ab5b8a4f8f67820f436567f71ac93f373c3233f549a76f0cc225",
+            "s0044": "1835337481f66c31066e145b600283133bce994ca5468dfc709a88f2ed04e5ad",
+            "s0045": "31401a22ae4b2cee7974033460c4bb66a821fac74d7f26f449648dbf50fb942b",
+            "s0046": "bb6143728c892b0e692d7e516d302e6788e7ab687283dd33067516c4dba01038",
+            "s0047": "1cfb4c7e191691005355f760425cb588a4def5a185295bdd24bc8a23cab8c496",
+            "s0048": "101596f218056dec7a821463d7431251f2310be0bc82cbe78f744e3e063a1367",
+            "s0049": "aef0f299027c34a2656e1a502a22cc6a4b558c7240aba9b689419f388487061f",
+            "s0050": "2547fc9409fdc8d00afa194f974db6f7af3cf83429e34d5f86c3c610d0145e38",
+            "s0051": "251ad94ceda09cbba1c6cb3a10539f83564b8b5a6da5025c209b3fa420a5b11d",
+            "s0052": "b4ed15e12120ab933755584140f9fbc2e226f7ec8df65b7ed381eb41e70b734e",
+            "s0053": "48f9e6803d774e4cc53fb50437dd7037deb1e6556f5e718cde7b4ebf0e8f32f4",
+            "s0054": "55f81652a02cfd4b069956f29509b8248ea50f56c2e6043a26bd683bab6994db",
+            "s0055": "d432bb2b8200bb3a214a507a782f9bfd64fcf4eddfec99d3abe67ae6e035e8e0",
+            "s0056": "20b50f28f43bfbcc5dc99b832e002bad34fc61eeb9c58db0df1780cd2c545079",
+            "s0057": "bad5f0ee7ade0c1083e06201917929ad892d241cb6ba185065b981bad80d1b00",
+            "s0058": "43af6054e859798cdc8644d6886ed9f89c35d08e76e581ae544277f95f87b720",
+            "s0059": "a8af39afa89df04666546ca7054d55a2563897e6f45b944005281d5188c5d9a6",
+            "s0060": "c98d38f59789c7609fd742b07e35a6c41b81072f2f7096a600b1d99a3def3b87",
+            "s0061": "119ef3fa607e7c05ce8d693b7aeb64ce7ca4d18a655046c2d0f6a93d62c164f6",
+            "s0062": "4691492179d2208993976d27d343bd02964068569f241d6061116d7df6d4099a",
+            "s0063": "aac910161f16402c8108e8df6d7dc5941b65103b4deec7830cb141e563c68ee7",
+            "s0064": "6725e7bbcd28f3a8a586fa34bf191fd72dde8b61756932cd3237c17a6f196f1a",
+            "s0065": "09d22d5c2f3f83d711c2fb7442b5f44491d315b664e7f11e090823b0f0e3e6f3",
+            "s0066": "c35ac1f135179da798b42517370eac231587f07116c229fec5f316f9790c7bc0",
+            "s0067": "f5c080f4fa8315c66f0a34932e55d811ac8adbf17f38b81a3ae87d7815bdcbf6",
+            "s0068": "e8c08d43278d1113b8b7ccd8a04e2247bbb602712e31ad2903f23b225aba9944",
+            "s0069": "ec9cdb765856a2f652869eaa423ca51220fa54bb41867cd14b8a805f33c75f5b",
+            "s0070": "9577697aa96f7cc05446d8166adb42733e71b466c7fe28d84befe889db51f0d0",
+            "s0071": "ba381173ed86a4b50dd68a05df5f63b2790bc1e6325a1ad57af795ce1a143282",
+            "s0072": "73d7cdf5997ff35275052b0f9b7e9b52409777be54b12ada592ae8b1dcd7fc4a",
+            "s0073": "e22e0ad8ad64b587793a3b86a28377665184eaab838965d9e56204576cfd82c7",
+            "s0074": "b866658b8db81295d9e1981581542acca54c1dee3f8c5c62640ad1f8bd2f8a0e",
+            "s0075": "0a0d545b233eab15ef894c2a02bd74c028c6ebf12c950e9517c6d1452717b20f",
+            "s0076": "ef5932e1ee76fe050c4484b67efe45dc4489357e462cd38aa485ba2fe4b49516",
+            "s0077": "7f50745746305e37c24f96e9e65fbce961363b5699e4554bdf08282a7e13e938",
+            "s0078": "2bb4db50afd17131427bdb127085bf19954e6a75c0780a3ed20870b3728f9613",
+            "s0079": "8d77a1434e66a7474ac025c07254314db68cd342ed02719c4a7fdba1075f5ced",
+            "s0080": "ab8508f26511d617d8cd58cf7d21103895b9180b46b48d8822d4f0a560d3e2e0",
+            "s0081": "82e219941d5d90698ffbe6cb2a7453e9e16651dd6763eebd48f5e594fb07487a",
+            "s0082": "30166b1818f13e64be70f9143f578f8fe2e4cee5ebcef2941033ea87ae60556c",
+            "s0083": "1defc442ee9a219d24b40612d61006c444f438a1b6b064eeb549d2ac622114e7",
+            "s0084": "c83c1a7c47b3a804686b490c6944a02d96f890b9207c06850e4b559ff333bcb7",
+            "s0085": "2a154d0f27fb7f968f7d16f1772dcd42252d95e56ea3e35f69d9d3ee7537527e",
+            "s0086": "be191c6c8cbc7821a7016c155ded96b55dcda987f807cfb0b8907980882181c7",
+            "s0087": "4fa1c42b52953d2c1fcd3249e2fa082960d7306a1a14fa8eb6fb77994e4c5fed",
+            "s0088": "cfee62d5259b8270ea87b1e77ea678cc6c93f233ab5b51730ad8b38b4cbb37f5",
+            "s0089": "dbd0d08c60497de33b4fd348e25231a0a89a81219593f15e33df7f98eb80ccf1",
+            "s0090": "828b0044bb75cc242e54b1576af980a3f76352d1a1c8f6885c55b046f0672264",
+            "s0091": "82e219941d5d90698ffbe6cb2a7453e9e16651dd6763eebd48f5e594fb07487a",
+            "s0092": "29b434aff02b5afc50e3b91e980b66fb0d49859bc2fcbb89b59dddbf3e4b6a84",
+            "s0093": "42d9643002ded1a6b920aace143fc5c176357a094c1eed0ad8499ca53f9b17f2",
+            "s0094": "08d2e9a880aee6ed786716e9cf2ffb00d0629c75ed49caf6c4236b4751f18b75",
+            "s0095": "c83c1a7c47b3a804686b490c6944a02d96f890b9207c06850e4b559ff333bcb7",
+            "s0096": "2da3a357d5f06029313e42ad65c63e5973639a30fb33769437951a227a6961fb",
+            "s0097": "4fa1c42b52953d2c1fcd3249e2fa082960d7306a1a14fa8eb6fb77994e4c5fed",
+            "s0098": "388815e473b4d852276f49c7db08bb668d4211d8df777d27c238030d5418087e",
+            "s0099": "ebe58af658b74ae2fdc066844d3caef90d4f728d4f906cac5cdd15f0e1871090",
+            "s0100": "aca0538a9242d04b37ef669e7456450b322d055632a5a6ca3d3e946280056b2c",
+            "s0101": "d050a14eb81cd1b1b8d11b609fc53c82d5abc265259f6a62eae7c169fd06c943",
+            "s0102": "82e219941d5d90698ffbe6cb2a7453e9e16651dd6763eebd48f5e594fb07487a",
+            "s0103": "29b434aff02b5afc50e3b91e980b66fb0d49859bc2fcbb89b59dddbf3e4b6a84",
+            "s0104": "42d9643002ded1a6b920aace143fc5c176357a094c1eed0ad8499ca53f9b17f2",
+            "s0105": "08d2e9a880aee6ed786716e9cf2ffb00d0629c75ed49caf6c4236b4751f18b75",
+            "s0106": "c83c1a7c47b3a804686b490c6944a02d96f890b9207c06850e4b559ff333bcb7",
+            "s0107": "e4fca390e5197c2c41d2fec8cf2854a6a2b5b5c3961c5e8f2656626f52c4d756",
+            "s0108": "4fa1c42b52953d2c1fcd3249e2fa082960d7306a1a14fa8eb6fb77994e4c5fed",
+            "s0109": "ad92417bdb74a53e907da2497d0f75bcdca6f21c721a348ba8fd021788f2a24e",
+            "s0110": "a940f565b36ad0aa76c64885ecaae4b982b8d04ddc3df315648b79e037b86d76",
+            "s0111": "147cbfb4f1fcb989e70f97100f9cec6782025a765ae30db8c1067d4209c519a2",
+            "s0112": "9330865be27e45b859af48ca586fb2df19553109b9b05b3ddc955c13e4a49c5a",
+            "s0113": "a82a880efebe3c6f3bf200d5734cd01216c7363e0d56377f8a428bcd441dd431",
+            "s0114": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
+            "s0115": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
+            "s0116": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
+            "s0117": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
+            "s0118": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
+            "s0119": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
+            "s0120": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
+            "s0121": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0122": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0123": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0124": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0125": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0126": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0127": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0128": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0129": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0130": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0131": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0132": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0133": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0134": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0135": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
+            "s0136": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
           }
         }
       }

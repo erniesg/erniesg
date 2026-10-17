@@ -1,0 +1,361 @@
+{
+  "structured-docx": {
+    "sourceSha256": "69d840e5f9cbbf91471d76e3afc92ddb61a4a360244bfbde100ea1ccb2b16bc4",
+    "sourceNodeCount": 12,
+    "sourceAssetCount": 2,
+    "documentJsonSha256": "3636211997327d1755a60bfcd77797d65a7af87bebf8b0ca9db06f3e0f04c947",
+    "localEncode": "STRUCT_CODEC_CONSERVATION at $.receipt.conservation.accountedSourceRelationshipCount: accountedSourceRelationshipCount must match accounted output",
+    "receiptSha256": "fdefd031eb619b48c92f71d6470b96ce91369f8ea41a62e88156fa234e07015f",
+    "conservation": {
+      "sourceNodeCount": 12,
+      "accountedSourceNodeCount": 12,
+      "sourceRegionCount": 0,
+      "accountedSourceRegionCount": 0,
+      "sourceAnnotationCount": 0,
+      "accountedSourceAnnotationCount": 0,
+      "sourceAssetCount": 2,
+      "accountedSourceAssetCount": 2,
+      "sourceRelationshipCount": 4,
+      "accountedSourceRelationshipCount": 4,
+      "sourceDiagnosticCount": 0,
+      "accountedSourceDiagnosticCount": 0,
+      "sourceTextCharacterCount": 492,
+      "structBlockCount": 12,
+      "structAssetCount": 2,
+      "structRelationshipCount": 5,
+      "structDiagnosticCount": 0,
+      "structTextCharacterCount": 492
+    },
+    "blockIdsInOrder": [
+      "struct-block-62c52718d4ab91f1214c89a0",
+      "struct-block-c37b6929bbd9fc8cbcf4267b",
+      "struct-block-c674d61374b7b4b6de4a35db",
+      "struct-block-b1fe2ac5b8bc44dcd3152593",
+      "struct-block-d594f834a24be295c09a8b7f",
+      "struct-block-3994ae358137604a1b9c8820",
+      "struct-block-f31da5afacbbf5e60d9b2a08",
+      "struct-block-e213d0ed98ad637bba9f2b28",
+      "struct-block-c31da067a297485f0a52c6a8",
+      "struct-block-d92e9239ac89d05c560ddf3d",
+      "struct-block-b8ca2d4fe8d3b6fc70c20a40",
+      "struct-block-5978368d01a38907267b64c5"
+    ],
+    "assetIdsInOrder": [
+      "struct-asset-2bdb35bf7481e3b2fb6363d4",
+      "struct-asset-b0412fd7e5e0a8b6964ba576"
+    ],
+    "assets": [
+      {
+        "id": "struct-asset-2bdb35bf7481e3b2fb6363d4",
+        "sha256": "7ef3a6fac31111282ef8f975c7f5078c3a6d0b0536263282c3fc626ea8178f36",
+        "byteLength": 451,
+        "href": "assets/asset-table-docx-0010-7ef3a6fac311.xhtml"
+      },
+      {
+        "id": "struct-asset-b0412fd7e5e0a8b6964ba576",
+        "sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+        "byteLength": 68,
+        "href": "assets/asset-img-b0007-rId4-431ced6916a2.png"
+      }
+    ],
+    "relationshipIdsInOrder": [
+      "struct-relationship-381584fa125b11e7f8f8da40",
+      "struct-relationship-9155fa59d238a557e82b1ba4",
+      "struct-relationship-96c8433c436594d468c40107",
+      "struct-relationship-e77ed279d83da752286ca289",
+      "struct-relationship-eb3cf2d64f940ae9b35cbcb5"
+    ],
+    "diagnostics": [],
+    "recovery": {
+      "status": "ready",
+      "title": "Your EPUB is ready to read.",
+      "summary": "Text, links, notes, and source visuals passed the reconstruction checks. The file stays on this device.",
+      "issues": []
+    },
+    "xhtmlSha256": "cf4eef0eb1edbddca464b1bcd7d1daac59a1b0715cc8e69c64c9a20270f2cd95",
+    "epubSha256": "373650c1d5d37585c5655ce636a2700b2713a8e7619313d479d8bec9773f9de1",
+    "epubEntries": {
+      "EPUB/assets/asset-img-b0007-rId4-431ced6916a2.png": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+      "EPUB/assets/asset-table-docx-0010-7ef3a6fac311.xhtml": "7ef3a6fac31111282ef8f975c7f5078c3a6d0b0536263282c3fc626ea8178f36",
+      "EPUB/content.xhtml": "cf4eef0eb1edbddca464b1bcd7d1daac59a1b0715cc8e69c64c9a20270f2cd95",
+      "EPUB/nav.xhtml": "244deaedfdc4f3a7bd923f6b9c5efd798ae07f0954899b6ae54de00801184f25",
+      "EPUB/package.opf": "024eba50163093f2bd1ae229bdd44e88724ab6912e5e8fc9f1911d5bbe3ef218",
+      "EPUB/struct.json": "15522fc3dd42a6e95228bfe4731aad859001715144ab1c1696147c7ae92ba2ad",
+      "EPUB/styles.css": "2f60286229245b6a287b77049c12a83b0f56340b495420f666ad5f52beadd627",
+      "META-INF/container.xml": "eb284afd303d7b3de499746d27b3c04e6c8b8c5a4fd788bdb240b985cf38e031",
+      "mimetype": "e468e350d1143eb648f60c7b0bd6031101ec0544a361ca74ecef256ac901f48b"
+    },
+    "packageDecode": "STRUCT_CODEC_CONSERVATION at $.receipt.conservation.accountedSourceRelationshipCount: accountedSourceRelationshipCount must match accounted output",
+    "packageInvalidVersion": "STRUCT_CODEC_SCHEMA_VERSION at $.schemaVersion: unsupported schema version \"9.9.9\"",
+    "packageInvalidReceipt": "STRUCT_CODEC_CONSERVATION at $.receipt.conservation.accountedSourceRelationshipCount: accountedSourceRelationshipCount must match accounted output"
+  },
+  "ordinary-pdf": {
+    "sourceSha256": "50874645b2cec033726018c86974241db2048ac46291e02fcb25d3cb7fbaa907",
+    "sourceNodeCount": 3,
+    "sourceAssetCount": 0,
+    "documentJsonSha256": "4f2445a4599a39d2f5fe16e3a33c5086462e1243952396503bdfc1818e2c8a64",
+    "localEncode": "accepted",
+    "receiptSha256": "e2604ca65b5b122f025212ade8eef9563be2fbd6d18d556abdc89793741a1dcc",
+    "conservation": {
+      "sourceNodeCount": 3,
+      "accountedSourceNodeCount": 3,
+      "sourceRegionCount": 3,
+      "accountedSourceRegionCount": 3,
+      "sourceAnnotationCount": 0,
+      "accountedSourceAnnotationCount": 0,
+      "sourceAssetCount": 0,
+      "accountedSourceAssetCount": 0,
+      "sourceRelationshipCount": 2,
+      "accountedSourceRelationshipCount": 2,
+      "sourceDiagnosticCount": 0,
+      "accountedSourceDiagnosticCount": 0,
+      "sourceTextCharacterCount": 199,
+      "structBlockCount": 3,
+      "structAssetCount": 0,
+      "structRelationshipCount": 2,
+      "structDiagnosticCount": 0,
+      "structTextCharacterCount": 199
+    },
+    "blockIdsInOrder": [
+      "struct-block-d60fa907a1b45397bb3d7e17",
+      "struct-block-1f52ea65e9f802a91f83ffdd",
+      "struct-block-3c98ec514e092733d5ee79a7"
+    ],
+    "assetIdsInOrder": [],
+    "assets": [],
+    "relationshipIdsInOrder": [
+      "struct-relationship-8aed59617ead7e9e1886d977",
+      "struct-relationship-bb9bc5bf71500cd382aaf3d1"
+    ],
+    "diagnostics": [],
+    "recovery": {
+      "status": "ready",
+      "title": "Your EPUB is ready to read.",
+      "summary": "Text, links, notes, and source visuals passed the reconstruction checks. The file stays on this device.",
+      "issues": []
+    },
+    "xhtmlSha256": "4d9bc0a62fb7d4ce8aefbd1811ab5ea7246f33f64cd8721582ab93e1532f14f2",
+    "epubSha256": "1d3c048035a2228a552e9d45d3258c3e75b3dccbe8d141e7b3e0b0e85c26a335",
+    "epubEntries": {
+      "EPUB/content.xhtml": "4d9bc0a62fb7d4ce8aefbd1811ab5ea7246f33f64cd8721582ab93e1532f14f2",
+      "EPUB/nav.xhtml": "93d5fb63b89a352d1ed7324b0d303af9467be96c479f0a04359d957c3049a480",
+      "EPUB/package.opf": "6a53abd7d68c0df334cbbd66b1a3b869112c7cf525ffb28fcc0cbb1020c2f373",
+      "EPUB/struct.json": "896aa9004608fab60d34932d519e32ef09c09a835d8305622dd3912778d7ed75",
+      "EPUB/styles.css": "2f60286229245b6a287b77049c12a83b0f56340b495420f666ad5f52beadd627",
+      "META-INF/container.xml": "eb284afd303d7b3de499746d27b3c04e6c8b8c5a4fd788bdb240b985cf38e031",
+      "mimetype": "e468e350d1143eb648f60c7b0bd6031101ec0544a361ca74ecef256ac901f48b"
+    },
+    "packageDecode": "accepted",
+    "packageInvalidVersion": "STRUCT_CODEC_SCHEMA_VERSION at $.schemaVersion: unsupported schema version \"9.9.9\"",
+    "packageInvalidReceipt": "STRUCT_CODEC_DIGEST at $.receipt.generatedSha256: generatedSha256 does not match the canonical 0.2.0 digest"
+  },
+  "source-preserved-pdf": {
+    "sourceSha256": "f31fdc50a8216f80599644b51ff619a778d8e97268edadd457c3f556d1df03e9",
+    "sourceNodeCount": 22,
+    "sourceAssetCount": 3,
+    "documentJsonSha256": "f8e88784c3d705a2a379deb069fb71ef087d10c99510d2341ad7b344cedde7b5",
+    "localEncode": "accepted",
+    "receiptSha256": "c3cead89160aa3bc93fd17ddf0026b0c8dbea96780d926097da7f180a88636d2",
+    "conservation": {
+      "sourceNodeCount": 22,
+      "accountedSourceNodeCount": 22,
+      "sourceRegionCount": 27,
+      "accountedSourceRegionCount": 27,
+      "sourceAnnotationCount": 0,
+      "accountedSourceAnnotationCount": 0,
+      "sourceAssetCount": 3,
+      "accountedSourceAssetCount": 3,
+      "sourceRelationshipCount": 26,
+      "accountedSourceRelationshipCount": 26,
+      "sourceDiagnosticCount": 19,
+      "accountedSourceDiagnosticCount": 19,
+      "sourceTextCharacterCount": 1276,
+      "structBlockCount": 26,
+      "structAssetCount": 3,
+      "structRelationshipCount": 26,
+      "structDiagnosticCount": 19,
+      "structTextCharacterCount": 1276,
+      "sourceFurnitureBlockCount": 3,
+      "accountedFurnitureBlockCount": 3,
+      "sourceFurnitureTextCharacterCount": 96,
+      "structFurnitureBlockCount": 3,
+      "structFurnitureTextCharacterCount": 96,
+      "furnitureContaminationCount": 0
+    },
+    "blockIdsInOrder": [
+      "struct-block-a5cac19c21e9f971a3c03367",
+      "struct-block-aa703ba65008e87bf97731f8",
+      "struct-block-9b5381aa7e0a37f2283ccc6a",
+      "struct-block-fe1e8863454d4c308194ff45",
+      "struct-block-a1f74e9597ee6dab1c432d49",
+      "struct-block-dd1e8039709014461c7c6950",
+      "struct-block-e21b13482b503dbd867cfc61",
+      "struct-block-77e2fa3cf6aed36783a0821d",
+      "struct-block-a7bba8a0dbd88a5f6269e33d",
+      "struct-block-a0b998c85c7244095624589f",
+      "struct-block-c8ebe3f60053c2a6b5d89dbd",
+      "struct-block-22823d27255533ab7df19fe9",
+      "struct-block-c23d60ab03cc0f4949e113b9",
+      "struct-block-a8e2c9ce04b0a32644b1adb6",
+      "struct-block-5fcbadae6ce92c6466e0f4f6",
+      "struct-block-6ba2f59d08281a7c95627c64",
+      "struct-block-c36d002204fcb69c12949d0b",
+      "struct-block-58893c104a3c5d32ea04ede6",
+      "struct-block-adec34df9d5b21830e98083f",
+      "struct-block-dcb5763a966248e944a965b6",
+      "struct-block-b64e19e24ead3b2bc273c617",
+      "struct-block-072f5c3d7fc3fea126f016c8",
+      "struct-block-283fbc6bb3f1b8f9ac59e12d",
+      "struct-block-39407d804df2dea6877db880",
+      "struct-block-3ecea4dc731dfaf44fbbe7f5",
+      "struct-block-ae7a87ec3be80721092b635f"
+    ],
+    "assetIdsInOrder": [
+      "struct-asset-313eb9ae2d0ccb445c6461fe",
+      "struct-asset-322747c8e09f06ffae50de20",
+      "struct-asset-698fd467980e846735844cad"
+    ],
+    "assets": [
+      {
+        "id": "struct-asset-313eb9ae2d0ccb445c6461fe",
+        "sha256": "5875db2909d104fc40e5c260810a8b66caac61b6d9c152116b9b13c8d1a9d89e",
+        "byteLength": 2624,
+        "href": "assets/asset-9aa442d6c29d9a89f17fda1c.png"
+      },
+      {
+        "id": "struct-asset-322747c8e09f06ffae50de20",
+        "sha256": "3defe0fb0bd6192447ccfdb156df72c8fa3184cf9862735177c852ceaf545097",
+        "byteLength": 82,
+        "href": "assets/asset-3defe0fb0bd6192447ccfdb1.png"
+      },
+      {
+        "id": "struct-asset-698fd467980e846735844cad",
+        "sha256": "67748bc6a990b49995852d8cc8311fcb2d33428eb8e7e0e20b8e1eb7c1469929",
+        "byteLength": 179,
+        "href": "assets/asset-67748bc6a990b49995852d8c.svg"
+      }
+    ],
+    "relationshipIdsInOrder": [
+      "struct-relationship-070d6f35392f992143e7b2d1",
+      "struct-relationship-0a016d093c24c043820e75ca",
+      "struct-relationship-1ab0d0ac5a1cc2706e3ac51e",
+      "struct-relationship-2038b9d11a68db265dc8e61c",
+      "struct-relationship-23faa26bdbefcc6ed92359d1",
+      "struct-relationship-2d75fe5bba85525c179a0d2d",
+      "struct-relationship-3b7667217a62988a96a29d8f",
+      "struct-relationship-421eee3850cb2eea798cae8e",
+      "struct-relationship-43256b947b5cbd3418d96d9e",
+      "struct-relationship-4986240bc374ce57849fe0ef",
+      "struct-relationship-51720130290cec23ca53ace2",
+      "struct-relationship-527c099a54213fb022de1beb",
+      "struct-relationship-62bfb998059983e2c8eefa77",
+      "struct-relationship-646a08fad9981d2f0788c0bd",
+      "struct-relationship-7fb247d960154dca64d0cd5c",
+      "struct-relationship-887831ab859f90aea92308bc",
+      "struct-relationship-917c6dd0fff65f6f0ac82297",
+      "struct-relationship-9336ba9781247e82f9488b54",
+      "struct-relationship-9577a944e64f09f822c3f2fc",
+      "struct-relationship-aafdad6e8dc17306134d13e7",
+      "struct-relationship-b638bf0ac6b2cc4b09b9e5bd",
+      "struct-relationship-ce0381f641777a98af3f0048",
+      "struct-relationship-dd589af29c26889f9c23c601",
+      "struct-relationship-df544592265b49c545cffc83",
+      "struct-relationship-f44db0f6918bc07088f6e843",
+      "struct-relationship-f65d9077e6ae15ba65ab26fc"
+    ],
+    "diagnostics": [
+      {
+        "severity": "info"
+      },
+      {
+        "severity": "info"
+      },
+      {
+        "severity": "error"
+      },
+      {
+        "severity": "info"
+      },
+      {
+        "severity": "info"
+      },
+      {
+        "severity": "error"
+      },
+      {
+        "severity": "info"
+      },
+      {
+        "severity": "info"
+      },
+      {
+        "severity": "info"
+      },
+      {
+        "severity": "error"
+      },
+      {
+        "severity": "info"
+      },
+      {
+        "severity": "error"
+      },
+      {
+        "severity": "info"
+      },
+      {
+        "severity": "error"
+      },
+      {
+        "severity": "error"
+      },
+      {
+        "severity": "error"
+      },
+      {
+        "severity": "info"
+      },
+      {
+        "severity": "info"
+      },
+      {
+        "severity": "info"
+      }
+    ],
+    "recovery": {
+      "status": "review-required",
+      "title": "Your EPUB is readable, but not publication-ready yet.",
+      "summary": "You can read the local fallback now. Recoverable text, captions, links, and source-preserved visuals were kept wherever a safe semantic reconstruction was not possible. Nothing was uploaded.",
+      "issues": [
+        {
+          "category": "visuals",
+          "title": "A figure or diagram is missing from the readable export",
+          "count": 1,
+          "pages": [1],
+          "action": "Open the marked page and confirm the figure is visible. If it is absent, keep the source PDF instead of publishing this EPUB."
+        },
+        {
+          "category": "visuals",
+          "title": "Some source artwork could not be packaged",
+          "count": 1,
+          "pages": [],
+          "action": "If the preview still shows a blank region, keep the original PDF alongside the EPUB."
+        },
+        {
+          "category": "source",
+          "title": "Some structure remains source-preserved",
+          "count": 1,
+          "pages": [],
+          "action": "Try again with a clearer original file. If it still fails, keep the source file instead of publishing this EPUB."
+        }
+      ],
+      "userAction": "Open the preview and check page 1, and any unnumbered item."
+    },
+    "xhtmlSha256": "eba808794a97517df241e6dff1d289bd19c2584a84b5dabcf58b61896f87c444",
+    "epubError": "STRUCT_EPUB_RECOVERY_REVIEW_REQUIRED",
+    "epubEntries": {},
+    "packageDecode": "accepted",
+    "packageInvalidVersion": "STRUCT_CODEC_SCHEMA_VERSION at $.schemaVersion: unsupported schema version \"9.9.9\"",
+    "packageInvalidReceipt": "STRUCT_CODEC_DIGEST at $.receipt.generatedSha256: generatedSha256 does not match the canonical 0.2.0 digest"
+  }
+}

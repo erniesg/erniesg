@@ -24,6 +24,12 @@ The structured DOCX output has assets and relationships and produces a determini
 - [ ] Later E-03/E-04 migrations may replace temporary local `src/struct` ID, ordering, receipt, recovery presentation, and renderer dependencies. The adapter uses public package document types now, while those runtime imports remain on local production implementations to avoid a premature cutover. Existing local recovery copy remains the presentation owner pending a separately scoped move.
 - [ ] Coordinator runs `scripts/agent-evidence` and integrated exact-head review on a clean integrated head; this isolated stage does not claim those gates.
 
+## Independent review finding repair
+
+The review of `133b739556a23915e83886424d2fc870dde4f36e` found that the boundary test missed direct app research imports and unexported package paths. The test now scans imports and re-exports with the TypeScript AST in every non-test `.ts` file under `src/struct` and `src/struct-adapters`. It checks type imports, dynamic imports, and import types, resolves portable relative paths within `src/struct`, and allows only the legacy reconstruction re-export and the root index compatibility path. Package imports must appear in the pinned package's `exports` map.
+
+The old guard missed all three representative forbidden imports in a baseline reproduction (red). The new boundary suite passes its synthetic negative cases and live source scan (green). The package artifact suite also passes. Adapter parity and package parity are pending coordinator repair of the installed dependency tree: both fail to load because `fast-xml-parser` cannot resolve `@nodable/entities`. This repair has not received fresh integrated-head evidence or independent review.
+
 ## Rollback
 
 Revert this preparation commit to restore the base adapter location and remove the frozen source pilot. No durable writer or public route changes are involved. Preserve dirty canonical/recovery worktrees and the verified offload archive.

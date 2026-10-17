@@ -1,4 +1,12 @@
 import { createStructOriginalViewer } from './struct-demo-original'
+import {
+  DEFAULT_READER_SETTINGS,
+  STRUCT_DEVICE_MODELS,
+  STRUCT_READER_FONTS,
+  previewDimension,
+  readerDocument,
+  type ReaderSettings,
+} from './struct-reader-settings'
 
 export const STRUCT_PREVIEW_SIZES = {
   phone: { width: 390, height: 844 },
@@ -86,13 +94,84 @@ export function initializeStructPreviews() {
         '[data-struct-device]',
       )
       let device: StructPreviewDevice = 'phone'
+      const model = root.querySelector<HTMLSelectElement>(
+        '[data-struct-model]',
+      )!
+      const widthInput = root.querySelector<HTMLInputElement>(
+        '[data-struct-width]',
+      )!
+      const heightInput = root.querySelector<HTMLInputElement>(
+        '[data-struct-height]',
+      )!
+      const fontInput = root.querySelector<HTMLSelectElement>(
+        '[data-struct-font-family]',
+      )!
+      const fontSizeInput = root.querySelector<HTMLInputElement>(
+        '[data-struct-font-size]',
+      )!
+      const marginInput = root.querySelector<HTMLInputElement>(
+        '[data-struct-margin]',
+      )!
+      let size = { ...STRUCT_PREVIEW_SIZES.phone } as {
+        width: number
+        height: number
+      }
+      let settings = { ...DEFAULT_READER_SETTINGS }
+      let active = true
+      let documentRevision = 0
+      const sampleDocuments = new Map<string, string>()
+      const sampleAbort = new AbortController()
+      function syncModels() {
+        Array.from(model.options).forEach((option) => {
+          option.hidden =
+            !!option.dataset.device && option.dataset.device !== device
+        })
+        buttons.forEach((button) =>
+          button.setAttribute(
+            'aria-pressed',
+            String(button.dataset.structDevice === device),
+          ),
+        )
+        widthInput.value = String(size.width)
+        heightInput.value = String(size.height)
+      }
+      async function renderReadingDocument() {
+        const revision = ++documentRevision
+        if (select.value === '__upload__') {
+          if (uploaded) frame.srcdoc = readerDocument(uploaded.html, settings)
+          return
+        }
+        const source = articles.find(
+          (article) => article.dataset.sampleId === select.value,
+        )?.dataset.sampleHtml
+        if (!source) return
+        try {
+          const url = new URL(source, location.href)
+          if (
+            url.origin !== location.origin ||
+            !url.pathname.startsWith('/research/struct/samples/')
+          )
+            return
+          let html = sampleDocuments.get(source)
+          if (html === undefined) {
+            const response = await fetch(url, { signal: sampleAbort.signal })
+            if (!response.ok) throw new Error('Sample unavailable')
+            html = await response.text()
+            sampleDocuments.set(source, html)
+          }
+          if (!active || revision !== documentRevision) return
+          frame.srcdoc = readerDocument(html, settings, url.href)
+        } catch {
+          // Keep the direct sample URL usable if the settings copy cannot load.
+          if (active && revision === documentRevision) error.hidden = false
+        }
+      }
       let uploaded: { html: string; title: string } | undefined
       const requests = createPreviewRequestGuard()
       let uploadedPdf: string | undefined
       let ownedPdf: string | undefined
       let sourceRequestId: string | undefined
       function resize() {
-        const size = STRUCT_PREVIEW_SIZES[device]
         const scale = previewScale(viewport.clientWidth, size.width)
         frame.style.width = `${size.width}px`
         frame.style.height = `${size.height}px`
@@ -127,7 +206,7 @@ export function initializeStructPreviews() {
         if (select.value === '__upload__') {
           title.textContent = uploaded?.title ?? uploadedOption.textContent
           frame.removeAttribute('src')
-          if (uploaded) frame.srcdoc = uploaded.html
+          if (uploaded) frame.srcdoc = readerDocument(uploaded.html, settings)
           else frame.removeAttribute('srcdoc')
           viewport.hidden = !uploaded
           error.hidden = !!uploaded
@@ -147,6 +226,7 @@ export function initializeStructPreviews() {
         }
         frame.title = `${title.textContent} · ${frameLabel}`
         resize()
+        void renderReadingDocument()
       }
       select.addEventListener('change', () => {
         requests.selectionChanged()
@@ -157,15 +237,60 @@ export function initializeStructPreviews() {
           const value = button.dataset.structDevice
           if (!value || !Object.hasOwn(STRUCT_PREVIEW_SIZES, value)) return
           device = value as StructPreviewDevice
-          buttons.forEach((candidate) =>
-            candidate.setAttribute(
-              'aria-pressed',
-              String(candidate === button),
-            ),
-          )
+          model.value = device
+          size = { ...STRUCT_PREVIEW_SIZES[device] }
+          syncModels()
           resize()
         }),
       )
+      model.addEventListener('change', () => {
+        const selected = STRUCT_DEVICE_MODELS.find(
+          (item) => item.id === model.value && item.device === device,
+        )
+        if (selected) size = { width: selected.width, height: selected.height }
+        syncModels()
+        resize()
+      })
+      for (const input of [widthInput, heightInput])
+        input.addEventListener('change', () => {
+          size = {
+            width: previewDimension(widthInput.value, size.width),
+            height: previewDimension(heightInput.value, size.height),
+          }
+          model.value = 'custom'
+          syncModels()
+          resize()
+        })
+      function updateTypography() {
+        const family = fontInput.value
+        if (Object.hasOwn(STRUCT_READER_FONTS, family))
+          settings.fontFamily = family as ReaderSettings['fontFamily']
+        const fontSize = fontSizeInput.valueAsNumber
+        const margin = marginInput.valueAsNumber
+        if (Number.isFinite(fontSize))
+          settings.fontSize = Math.min(32, Math.max(12, Math.round(fontSize)))
+        if (Number.isFinite(margin))
+          settings.margin = Math.min(80, Math.max(0, Math.round(margin)))
+        fontSizeInput.value = String(settings.fontSize)
+        marginInput.value = String(settings.margin)
+        void renderReadingDocument()
+      }
+      for (const input of [fontInput, fontSizeInput, marginInput])
+        input.addEventListener('change', updateTypography)
+      root
+        .querySelector('[data-struct-reader-reset]')!
+        .addEventListener('click', () => {
+          settings = { ...DEFAULT_READER_SETTINGS }
+          device = 'phone'
+          size = { ...STRUCT_PREVIEW_SIZES.phone }
+          model.value = 'phone'
+          fontInput.value = settings.fontFamily
+          fontSizeInput.value = String(settings.fontSize)
+          marginInput.value = String(settings.margin)
+          syncModels()
+          resize()
+          void renderReadingDocument()
+        })
       const start = (event: Event) => {
         if (!(event instanceof CustomEvent)) return
         const requestId = event.detail?.requestId
@@ -233,6 +358,9 @@ export function initializeStructPreviews() {
       observer.observe(viewport)
       chooseSample()
       const cleanup = () => {
+        active = false
+        documentRevision += 1
+        sampleAbort.abort()
         observer.disconnect()
         originalViewer.destroy()
         if (ownedPdf) URL.revokeObjectURL(ownedPdf)

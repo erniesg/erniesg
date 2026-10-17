@@ -1,4 +1,8 @@
 ---
+import {
+  STRUCT_DEVICE_MODELS,
+  STRUCT_READER_FONTS,
+} from '../../lib/struct-reader-settings'
 export interface StructDemoSample {
   id: string
   title: string
@@ -128,6 +132,108 @@ const initialSample =
         >
       </div>
     </div>
+    <fieldset
+      class="struct-reader-settings grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-4"
+    >
+      <legend class="sr-only">Reader settings</legend>
+      <label class="col-span-2 text-sm"
+        >Device model
+        <select
+          data-struct-model
+          aria-label="Device model"
+          class="mt-1 block w-full rounded-md border bg-background px-3 py-2"
+        >
+          {
+            STRUCT_DEVICE_MODELS.map((model) => (
+              <option
+                value={model.id}
+                data-device={model.device}
+                hidden={model.device !== 'phone'}
+              >
+                {model.label}
+              </option>
+            ))
+          }
+          <option value="custom">Custom size</option>
+        </select>
+      </label>
+      <label class="text-sm"
+        >Width (px)
+        <input
+          data-struct-width
+          aria-label="Width (px)"
+          type="number"
+          min="240"
+          max="2560"
+          step="1"
+          value="390"
+          class="mt-1 block w-full rounded-md border bg-background px-3 py-2"
+        />
+      </label>
+      <label class="text-sm"
+        >Height (px)
+        <input
+          data-struct-height
+          aria-label="Height (px)"
+          type="number"
+          min="240"
+          max="2560"
+          step="1"
+          value="844"
+          class="mt-1 block w-full rounded-md border bg-background px-3 py-2"
+        />
+      </label>
+      <label class="text-sm"
+        >Font family
+        <select
+          data-struct-font-family
+          aria-label="Font family"
+          class="mt-1 block w-full rounded-md border bg-background px-3 py-2"
+        >
+          {
+            Object.entries(STRUCT_READER_FONTS).map(([value, font]) => (
+              <option value={value}>{font.label}</option>
+            ))
+          }
+        </select>
+      </label>
+      <label class="text-sm"
+        >Font size (px)
+        <input
+          data-struct-font-size
+          aria-label="Font size (px)"
+          type="number"
+          min="12"
+          max="32"
+          step="1"
+          value="16"
+          class="mt-1 block w-full rounded-md border bg-background px-3 py-2"
+        />
+      </label>
+      <label class="text-sm"
+        >Margins (px)
+        <input
+          data-struct-margin
+          aria-label="Margins (px)"
+          type="number"
+          min="0"
+          max="80"
+          step="1"
+          value="16"
+          class="mt-1 block w-full rounded-md border bg-background px-3 py-2"
+        />
+      </label>
+      <button
+        data-struct-reader-reset
+        type="button"
+        class="self-end rounded-md border px-3 py-2 text-sm"
+        >Reset reader</button
+      >
+    </fieldset>
+    <p class="text-xs text-muted-foreground">
+      Approximate reading viewports in logical pixels. Changes affect this
+      preview; downloaded EPUBs keep their device profiles.
+    </p>
     <h2 id="struct-preview-label" data-struct-preview-title class="sr-only">
       {initialSample?.title ?? 'Reading preview'}
     </h2>

@@ -1067,3 +1067,99 @@ for (const outcome of ['success', 'failure'] as const) {
     ).toBeVisible()
   })
 }
+
+test('reader controls reflow samples and uploads at model and custom sizes', async ({
+  page,
+}) => {
+  await setup(page, false)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/research/struct/demo/')
+  const frame = page.locator('[data-struct-preview-frame]')
+  const body = page.frameLocator('[data-struct-preview-frame]').locator('body')
+  await expect
+    .poll(() => body.evaluate((el) => getComputedStyle(el).fontSize))
+    .toBe('16px')
+  await page.getByRole('button', { name: 'E-ink', exact: true }).click()
+  await page
+    .getByLabel('Device model', { exact: true })
+    .selectOption('remarkable-move')
+  await expect
+    .poll(() => frame.evaluate((el) => (el as HTMLIFrameElement).offsetWidth))
+    .toBe(477)
+  await page.getByLabel('Width (px)', { exact: true }).fill('720')
+  await page.getByLabel('Width (px)', { exact: true }).press('Tab')
+  await expect(page.getByLabel('Device model', { exact: true })).toHaveValue(
+    'custom',
+  )
+  await expect
+    .poll(() => frame.evaluate((el) => (el as HTMLIFrameElement).offsetWidth))
+    .toBe(720)
+  await page.getByLabel('Font size (px)', { exact: true }).fill('24')
+  await page.getByLabel('Font size (px)', { exact: true }).press('Tab')
+  await page.getByLabel('Font family', { exact: true }).selectOption('sans')
+  await page.getByLabel('Margins (px)', { exact: true }).fill('32')
+  await page.getByLabel('Margins (px)', { exact: true }).press('Tab')
+  await expect
+    .poll(() => body.evaluate((el) => getComputedStyle(el).fontSize))
+    .toBe('24px')
+  await expect
+    .poll(() => body.evaluate((el) => getComputedStyle(el).fontFamily))
+    .toContain('Arial')
+  await expect
+    .poll(() => body.evaluate((el) => getComputedStyle(el).paddingLeft))
+    .toBe('32px')
+  await expect
+    .poll(() =>
+      page
+        .frameLocator('[data-struct-preview-frame]')
+        .locator('img')
+        .first()
+        .evaluate((el) => (el as HTMLImageElement).naturalWidth),
+    )
+    .toBeGreaterThan(0)
+  await page.evaluate(() => {
+    const root = document.querySelector('[data-struct-demo]')!
+    root.dispatchEvent(
+      new CustomEvent('struct:preview-start', {
+        detail: { requestId: 'reader-settings' },
+      }),
+    )
+    root.dispatchEvent(
+      new CustomEvent('struct:preview-ready', {
+        detail: {
+          requestId: 'reader-settings',
+          title: 'Settings test',
+          html: "<!doctype html><html><head><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; script-src 'none'\"></head><body><p>Uploaded reader text</p></body></html>",
+        },
+      }),
+    )
+  })
+  await expect(body).toContainText('Uploaded reader text')
+  await expect
+    .poll(() => body.evaluate((el) => getComputedStyle(el).fontSize))
+    .toBe('24px')
+  await expect(frame).toHaveAttribute('sandbox', '')
+  await expect(
+    page
+      .frameLocator('[data-struct-preview-frame]')
+      .locator('meta[http-equiv="Content-Security-Policy"]'),
+  ).toHaveAttribute('content', /script-src 'none'/)
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true)
+  await page.getByRole('button', { name: 'Reset reader', exact: true }).click()
+  await expect(page.getByLabel('Device model', { exact: true })).toHaveValue(
+    'phone',
+  )
+  await expect
+    .poll(() => body.evaluate((el) => getComputedStyle(el).fontSize))
+    .toBe('16px')
+  await expect(body).toContainText('Uploaded reader text')
+  await expect(frame).toHaveAttribute('srcdoc', /Uploaded reader text/)
+  await page.screenshot({
+    path: '.agent/evidence/struct-reader-controls-mobile.png',
+    fullPage: true,
+  })
+})

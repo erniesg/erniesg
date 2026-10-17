@@ -87,11 +87,13 @@ function boundaryViolations(
         return false
       if (
         target === new URL('struct/from-reconstruction', root).pathname ||
-        target === new URL('struct/from-reconstruction.ts', root).pathname
+        target === new URL('struct/from-reconstruction.ts', root).pathname ||
+        target === new URL('struct/from-reconstruction.js', root).pathname
       ) {
         return (
           file.pathname !== new URL('struct/index.ts', root).pathname ||
-          specifier !== './from-reconstruction'
+          (specifier !== './from-reconstruction' &&
+            specifier !== './from-reconstruction.js')
         )
       }
       return !target.startsWith(portableRoot.pathname)
@@ -210,6 +212,11 @@ describe('app-owned Struct adapter boundary', () => {
         portable,
         "import { build } from '../from-reconstruction'",
         '../from-reconstruction',
+      ],
+      [
+        portable,
+        "import { build } from '../from-reconstruction.js'",
+        '../from-reconstruction.js',
       ],
       [
         portable,

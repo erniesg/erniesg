@@ -1,0 +1,622 @@
+{
+  "source": {
+    "fileName": "structured-manuscript.docx",
+    "byteLength": 4101,
+    "sha256": "69d840e5f9cbbf91471d76e3afc92ddb61a4a360244bfbde100ea1ccb2b16bc4",
+    "pageCount": 0,
+    "localOnly": true,
+    "format": "docx",
+    "packageParts": [
+      "[Content_Types].xml",
+      "_rels/.rels",
+      "docProps/core.xml",
+      "word/_rels/document.xml.rels",
+      "word/document.xml",
+      "word/endnotes.xml",
+      "word/footnotes.xml",
+      "word/media/figure.png",
+      "word/numbering.xml",
+      "word/styles.xml"
+    ],
+    "importerVersion": "1.0.0"
+  },
+  "paper": {
+    "id": "docx-69d840e5f9cbbf91",
+    "version": "1.0.0-import",
+    "status": "working",
+    "title": "Explicit Structures Across Languages",
+    "subtitle": "A deterministic synthetic manuscript",
+    "authors": ["Ada Example", "李明"],
+    "updated": "2026-07-18",
+    "abstract": "This local fixture preserves multilingual text: café, العربية, 日本語.",
+    "nodes": [
+      {
+        "id": "sec-docx-0001",
+        "source": "docx:69d840e5f9cbbf91#word/document.xml@block=1",
+        "type": "heading",
+        "level": 1,
+        "text": "Explicit Structures Across Languages",
+        "inlineRuns": [
+          {
+            "start": 0,
+            "end": 36
+          }
+        ]
+      },
+      {
+        "id": "p-docx-0002",
+        "source": "docx:69d840e5f9cbbf91#word/document.xml@block=2",
+        "type": "paragraph",
+        "text": "This local fixture preserves multilingual text: café, العربية, 日本語.",
+        "inlineRuns": [
+          {
+            "start": 0,
+            "end": 67
+          }
+        ]
+      },
+      {
+        "id": "sec-docx-0003",
+        "source": "docx:69d840e5f9cbbf91#word/document.xml@block=3",
+        "type": "heading",
+        "level": 2,
+        "text": "Deterministic relationships",
+        "inlineRuns": [
+          {
+            "start": 0,
+            "end": 27
+          }
+        ]
+      },
+      {
+        "id": "p-docx-0004",
+        "source": "docx:69d840e5f9cbbf91#word/document.xml@block=4",
+        "type": "paragraph",
+        "text": "Plain, bold, italic, and linked text carry a footnote1 and endnote2.",
+        "noteReferences": [
+          {
+            "id": "noteref-footnote-1-b0004-1",
+            "label": "1",
+            "target": "fn-docx-1",
+            "start": 53,
+            "end": 54,
+            "confidence": 1
+          },
+          {
+            "id": "noteref-endnote-2-b0004-2",
+            "label": "2",
+            "target": "en-docx-2",
+            "start": 66,
+            "end": 67,
+            "confidence": 1
+          }
+        ],
+        "inlineRuns": [
+          {
+            "start": 0,
+            "end": 7
+          },
+          {
+            "start": 7,
+            "end": 11,
+            "bold": true
+          },
+          {
+            "start": 11,
+            "end": 13
+          },
+          {
+            "start": 13,
+            "end": 19,
+            "italic": true
+          },
+          {
+            "start": 19,
+            "end": 25
+          },
+          {
+            "start": 25,
+            "end": 36,
+            "href": "https://example.com/source",
+            "relationshipId": "rId5"
+          },
+          {
+            "start": 36,
+            "end": 53
+          },
+          {
+            "start": 54,
+            "end": 66
+          },
+          {
+            "start": 67,
+            "end": 68
+          }
+        ]
+      },
+      {
+        "id": "p-docx-0005",
+        "source": "docx:69d840e5f9cbbf91#word/document.xml@block=5",
+        "type": "paragraph",
+        "text": "Ordered parent item",
+        "inlineRuns": [
+          {
+            "start": 0,
+            "end": 19
+          }
+        ],
+        "list": {
+          "level": 1,
+          "ordered": true,
+          "numberingId": "7"
+        }
+      },
+      {
+        "id": "p-docx-0006",
+        "source": "docx:69d840e5f9cbbf91#word/document.xml@block=6",
+        "type": "paragraph",
+        "text": "Nested bullet item",
+        "inlineRuns": [
+          {
+            "start": 0,
+            "end": 18
+          }
+        ],
+        "list": {
+          "level": 2,
+          "ordered": false,
+          "numberingId": "7"
+        }
+      },
+      {
+        "id": "fig-docx-0007",
+        "source": "docx:69d840e5f9cbbf91#word/document.xml@block=7",
+        "type": "figure",
+        "title": "Figure 1. A source-preserved synthetic image.",
+        "objectType": "figure",
+        "relationships": {
+          "caption": "cap-docx-0007",
+          "assets": ["asset-img-b0007-rId4-431ced6916a2"]
+        }
+      },
+      {
+        "id": "cap-docx-0007",
+        "source": "docx:69d840e5f9cbbf91#word/document.xml@block=8",
+        "type": "caption",
+        "text": "Figure 1. A source-preserved synthetic image."
+      },
+      {
+        "id": "table-docx-0010",
+        "source": "docx:69d840e5f9cbbf91#word/document.xml@block=10",
+        "type": "figure",
+        "title": "Table 1. A semantic comparison.",
+        "objectType": "table",
+        "table": {
+          "rows": [
+            {
+              "cells": [
+                {
+                  "text": "Language",
+                  "headerScope": "column",
+                  "columnSpan": 1,
+                  "rowSpan": 1
+                },
+                {
+                  "text": "Greeting",
+                  "headerScope": "column",
+                  "columnSpan": 1,
+                  "rowSpan": 1
+                }
+              ]
+            },
+            {
+              "cells": [
+                {
+                  "text": "English",
+                  "headerScope": null,
+                  "columnSpan": 1,
+                  "rowSpan": 1
+                },
+                {
+                  "text": "Hello",
+                  "headerScope": null,
+                  "columnSpan": 1,
+                  "rowSpan": 1
+                }
+              ]
+            },
+            {
+              "cells": [
+                {
+                  "text": "中文",
+                  "headerScope": null,
+                  "columnSpan": 1,
+                  "rowSpan": 1
+                },
+                {
+                  "text": "你好",
+                  "headerScope": null,
+                  "columnSpan": 1,
+                  "rowSpan": 1
+                }
+              ]
+            }
+          ]
+        },
+        "relationships": {
+          "caption": "cap-table-docx-0010",
+          "assets": ["asset-table-docx-0010-7ef3a6fac311"]
+        }
+      },
+      {
+        "id": "cap-table-docx-0010",
+        "source": "docx:69d840e5f9cbbf91#word/document.xml@block=9",
+        "type": "caption",
+        "text": "Table 1. A semantic comparison."
+      },
+      {
+        "id": "fn-docx-1",
+        "source": "docx:69d840e5f9cbbf91#word/footnotes.xml@id=1",
+        "type": "footnote",
+        "kind": "footnote",
+        "label": "1",
+        "text": "Footnote text resolved from its explicit OOXML id.",
+        "relationships": {
+          "backlinks": ["noteref-footnote-1-b0004-1"]
+        }
+      },
+      {
+        "id": "en-docx-2",
+        "source": "docx:69d840e5f9cbbf91#word/endnotes.xml@id=2",
+        "type": "footnote",
+        "kind": "endnote",
+        "label": "2",
+        "text": "Endnote text remains linked without geometric matching.",
+        "relationships": {
+          "backlinks": ["noteref-endnote-2-b0004-2"]
+        }
+      }
+    ]
+  },
+  "pages": [],
+  "regions": [],
+  "readingOrder": {
+    "schemaVersion": "1.0.0",
+    "regionIds": [
+      "sec-docx-0001",
+      "p-docx-0002",
+      "sec-docx-0003",
+      "p-docx-0004",
+      "p-docx-0005",
+      "p-docx-0006",
+      "fig-docx-0007",
+      "cap-docx-0007",
+      "table-docx-0010",
+      "cap-table-docx-0010",
+      "fn-docx-1",
+      "en-docx-2"
+    ],
+    "order": [
+      "sec-docx-0001",
+      "p-docx-0002",
+      "sec-docx-0003",
+      "p-docx-0004",
+      "p-docx-0005",
+      "p-docx-0006",
+      "fig-docx-0007",
+      "cap-docx-0007",
+      "table-docx-0010",
+      "cap-table-docx-0010",
+      "fn-docx-1",
+      "en-docx-2"
+    ],
+    "edges": [],
+    "resolutions": [],
+    "acyclic": true,
+    "evaluation": {
+      "schemaVersion": "1.0.0",
+      "algorithm": "explicit-ooxml-v1",
+      "mode": "explicit-structure",
+      "regionCount": 12,
+      "acceptedEdgeCount": 11,
+      "unresolvedEdgeCount": 0,
+      "cycleRate": 0,
+      "orderAccuracy": 1,
+      "provider": null,
+      "modelVersion": null,
+      "latencyMs": 0,
+      "costUsd": 0,
+      "reviewRequired": false
+    }
+  },
+  "noteRelationships": [
+    {
+      "id": "noteref-footnote-1-b0004-1",
+      "label": "1",
+      "referenceRegionId": "p-docx-0004",
+      "referenceStart": 53,
+      "referenceEnd": 54,
+      "targetNoteId": "fn-docx-1",
+      "status": "matched",
+      "canonicalAnchor": {
+        "kind": "node",
+        "nodeId": "p-docx-0004",
+        "start": 53,
+        "end": 54
+      },
+      "confidence": 1,
+      "threshold": 1,
+      "evidence": ["ooxml-explicit-footnote-id"],
+      "candidates": [],
+      "sourceBoxes": []
+    },
+    {
+      "id": "noteref-endnote-2-b0004-2",
+      "label": "2",
+      "referenceRegionId": "p-docx-0004",
+      "referenceStart": 66,
+      "referenceEnd": 67,
+      "targetNoteId": "en-docx-2",
+      "status": "matched",
+      "canonicalAnchor": {
+        "kind": "node",
+        "nodeId": "p-docx-0004",
+        "start": 66,
+        "end": 67
+      },
+      "confidence": 1,
+      "threshold": 1,
+      "evidence": ["ooxml-explicit-endnote-id"],
+      "candidates": [],
+      "sourceBoxes": []
+    }
+  ],
+  "visualRelationships": [
+    {
+      "id": "visual-docx-0007",
+      "kind": "figure",
+      "label": "Figure 1. A source-preserved synthetic image.",
+      "captionRegionId": "cap-docx-0007",
+      "sourceRegionIds": ["block-7"],
+      "sourceObjectIds": ["rId4"],
+      "assetIds": ["asset-img-b0007-rId4-431ced6916a2"],
+      "status": "matched",
+      "confidence": 1,
+      "evidence": ["ooxml-image-relationship", "adjacent-caption-paragraph"],
+      "candidates": [],
+      "sourceBoxes": [],
+      "sourceText": "Figure 1. A source-preserved synthetic image.",
+      "altText": "Figure 1. A source-preserved synthetic image.",
+      "altTextSource": "caption",
+      "canonicalNodeId": "fig-docx-0007",
+      "captionNodeId": "cap-docx-0007"
+    },
+    {
+      "id": "visual-table-docx-0010",
+      "kind": "table",
+      "label": "Table 1. A semantic comparison.",
+      "captionRegionId": "cap-table-docx-0010",
+      "sourceRegionIds": ["block-10"],
+      "sourceObjectIds": ["table-block-10"],
+      "assetIds": ["asset-table-docx-0010-7ef3a6fac311"],
+      "status": "matched",
+      "confidence": 1,
+      "evidence": ["ooxml-table-grid", "adjacent-caption-paragraph"],
+      "candidates": [],
+      "sourceBoxes": [],
+      "sourceText": "Table 1. A semantic comparison.",
+      "altText": "Table 1. A semantic comparison.",
+      "altTextSource": "caption",
+      "canonicalNodeId": "table-docx-0010",
+      "captionNodeId": "cap-table-docx-0010"
+    }
+  ],
+  "assets": [
+    {
+      "id": "asset-img-b0007-rId4-431ced6916a2",
+      "href": "assets/asset-img-b0007-rId4-431ced6916a2.png",
+      "mediaType": "image/png",
+      "kind": "raster",
+      "rendition": "source-preserved",
+      "sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+      "bytes": {
+        "$bytes": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+      },
+      "width": 96,
+      "height": 48,
+      "resolutionDpi": null,
+      "sourceObjectIds": ["rId4"],
+      "sourceBoxes": []
+    },
+    {
+      "id": "asset-table-docx-0010-7ef3a6fac311",
+      "href": "assets/asset-table-docx-0010-7ef3a6fac311.xhtml",
+      "mediaType": "application/xhtml+xml",
+      "kind": "table",
+      "rendition": "semantic-table",
+      "sha256": "7ef3a6fac31111282ef8f975c7f5078c3a6d0b0536263282c3fc626ea8178f36",
+      "bytes": {
+        "$bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPGh0bWwgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkveGh0bWwiPjxoZWFkPjx0aXRsZT5TdHJ1Y3R1cmVkIHRhYmxlPC90aXRsZT48L2hlYWQ+PGJvZHk+PHRhYmxlPjx0cj48dGggc2NvcGU9ImNvbCIgY29sc3Bhbj0iMSIgcm93c3Bhbj0iMSI+TGFuZ3VhZ2U8L3RoPjx0aCBzY29wZT0iY29sIiBjb2xzcGFuPSIxIiByb3dzcGFuPSIxIj5HcmVldGluZzwvdGg+PC90cj48dHI+PHRkIGNvbHNwYW49IjEiIHJvd3NwYW49IjEiPkVuZ2xpc2g8L3RkPjx0ZCBjb2xzcGFuPSIxIiByb3dzcGFuPSIxIj5IZWxsbzwvdGQ+PC90cj48dHI+PHRkIGNvbHNwYW49IjEiIHJvd3NwYW49IjEiPuS4reaWhzwvdGQ+PHRkIGNvbHNwYW49IjEiIHJvd3NwYW49IjEiPuS9oOWlvTwvdGQ+PC90cj48L3RhYmxlPjwvYm9keT48L2h0bWw+Cg=="
+      },
+      "width": 2,
+      "height": 3,
+      "resolutionDpi": null,
+      "sourceObjectIds": ["table-block-10"],
+      "sourceBoxes": []
+    }
+  ],
+  "provenance": {
+    "sec-docx-0001": {
+      "confidence": 1,
+      "pages": [],
+      "regionIds": [],
+      "boxes": [],
+      "links": [],
+      "part": "word/document.xml"
+    },
+    "p-docx-0002": {
+      "confidence": 1,
+      "pages": [],
+      "regionIds": [],
+      "boxes": [],
+      "links": [],
+      "part": "word/document.xml"
+    },
+    "sec-docx-0003": {
+      "confidence": 1,
+      "pages": [],
+      "regionIds": [],
+      "boxes": [],
+      "links": [],
+      "part": "word/document.xml"
+    },
+    "p-docx-0004": {
+      "confidence": 1,
+      "pages": [],
+      "regionIds": [],
+      "boxes": [],
+      "links": [],
+      "part": "word/document.xml",
+      "relationshipIds": ["rId5"]
+    },
+    "p-docx-0005": {
+      "confidence": 1,
+      "pages": [],
+      "regionIds": [],
+      "boxes": [],
+      "links": [],
+      "part": "word/document.xml"
+    },
+    "p-docx-0006": {
+      "confidence": 1,
+      "pages": [],
+      "regionIds": [],
+      "boxes": [],
+      "links": [],
+      "part": "word/document.xml"
+    },
+    "fig-docx-0007": {
+      "confidence": 1,
+      "pages": [],
+      "regionIds": [],
+      "boxes": [],
+      "links": [],
+      "part": "word/document.xml",
+      "relationshipIds": ["rId4"]
+    },
+    "cap-docx-0007": {
+      "confidence": 1,
+      "pages": [],
+      "regionIds": [],
+      "boxes": [],
+      "links": [],
+      "part": "word/document.xml"
+    },
+    "table-docx-0010": {
+      "confidence": 1,
+      "pages": [],
+      "regionIds": [],
+      "boxes": [],
+      "links": [],
+      "part": "word/document.xml"
+    },
+    "cap-table-docx-0010": {
+      "confidence": 1,
+      "pages": [],
+      "regionIds": [],
+      "boxes": [],
+      "links": [],
+      "part": "word/document.xml"
+    },
+    "fn-docx-1": {
+      "confidence": 1,
+      "pages": [],
+      "regionIds": [],
+      "boxes": [],
+      "links": [],
+      "part": "word/footnotes.xml"
+    },
+    "en-docx-2": {
+      "confidence": 1,
+      "pages": [],
+      "regionIds": [],
+      "boxes": [],
+      "links": [],
+      "part": "word/endnotes.xml"
+    }
+  },
+  "diagnostics": [],
+  "semanticSignals": {
+    "captions": 2,
+    "tables": 1,
+    "equations": 0,
+    "citations": 0,
+    "footnoteReferences": 2,
+    "footnotes": 2
+  },
+  "completeness": {
+    "sourceTextCharacters": 448,
+    "outputTextCharacters": 448,
+    "matchedTextCharacters": 448,
+    "textCoverage": 1,
+    "duplicateCanonicalSpanCount": 0,
+    "missingSourceRegionCount": 0,
+    "unprovenancedRenderedUnitCount": 0,
+    "expectedInlineSpanCount": 0,
+    "mappedInlineSpanCount": 0,
+    "inlineSpanCoverage": 1,
+    "expectedHyperlinkCount": 0,
+    "mappedHyperlinkCount": 0,
+    "hyperlinkCoverage": 1,
+    "lineBoundaryCount": 0,
+    "decidedLineBoundaryCount": 0,
+    "unresolvedCorruptingJoinCount": 0,
+    "structurallyConsumedLineBoundaryCount": 0,
+    "sourceAssetCount": 2,
+    "exportedAssetCount": 2,
+    "assetCoverage": 1,
+    "expectedRelationshipCount": 4,
+    "resolvedRelationshipCount": 4,
+    "relationshipCoverage": 1,
+    "unresolvedObjectCount": 0,
+    "unresolvedObjects": {
+      "assets": 0,
+      "captions": 0,
+      "tables": 0,
+      "equations": 0,
+      "citations": 0,
+      "footnoteReferences": 0,
+      "footnotes": 0
+    },
+    "ocrRequiredPages": [],
+    "readingOrderDiagnostics": 0,
+    "readingOrderEvaluation": {
+      "schemaVersion": "1.0.0",
+      "algorithm": "explicit-ooxml-v1",
+      "mode": "explicit-structure",
+      "regionCount": 12,
+      "acceptedEdgeCount": 11,
+      "unresolvedEdgeCount": 0,
+      "cycleRate": 0,
+      "orderAccuracy": 1,
+      "provider": null,
+      "modelVersion": null,
+      "latencyMs": 0,
+      "costUsd": 0,
+      "reviewRequired": false
+    }
+  },
+  "readiness": {
+    "status": "ready",
+    "ready": true,
+    "policy": {
+      "minimumTextCoverage": 1,
+      "minimumAssetCoverage": 1,
+      "minimumRelationshipCoverage": 1,
+      "maximumUnresolvedObjects": 0,
+      "maximumOcrRequiredPages": 0,
+      "maximumReadingOrderDiagnostics": 0
+    },
+    "blockingDiagnosticCodes": []
+  }
+}

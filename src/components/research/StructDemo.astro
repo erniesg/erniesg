@@ -132,108 +132,111 @@ const initialSample =
         >
       </div>
     </div>
-    <fieldset
-      class="struct-reader-settings grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-4"
-    >
-      <legend class="sr-only">Reader settings</legend>
-      <label class="col-span-2 text-sm"
-        >Device model
-        <select
-          data-struct-model
-          aria-label="Device model"
-          class="mt-1 block w-full rounded-md border bg-background px-3 py-2"
-        >
-          {
-            STRUCT_DEVICE_MODELS.map((model) => (
-              <option
-                value={model.id}
-                data-device={model.device}
-                hidden={model.device !== 'phone'}
-              >
-                {model.label}
-              </option>
-            ))
-          }
-          <option value="custom">Custom size</option>
-        </select>
-      </label>
-      <label class="text-sm"
-        >Width (px)
-        <input
-          data-struct-width
-          aria-label="Width (px)"
-          type="number"
-          min="240"
-          max="2560"
-          step="1"
-          value="390"
-          class="mt-1 block w-full rounded-md border bg-background px-3 py-2"
-        />
-      </label>
-      <label class="text-sm"
-        >Height (px)
-        <input
-          data-struct-height
-          aria-label="Height (px)"
-          type="number"
-          min="240"
-          max="2560"
-          step="1"
-          value="844"
-          class="mt-1 block w-full rounded-md border bg-background px-3 py-2"
-        />
-      </label>
-      <label class="text-sm"
-        >Font family
-        <select
-          data-struct-font-family
-          aria-label="Font family"
-          class="mt-1 block w-full rounded-md border bg-background px-3 py-2"
-        >
-          {
-            Object.entries(STRUCT_READER_FONTS).map(([value, font]) => (
-              <option value={value}>{font.label}</option>
-            ))
-          }
-        </select>
-      </label>
-      <label class="text-sm"
-        >Font size (px)
-        <input
-          data-struct-font-size
-          aria-label="Font size (px)"
-          type="number"
-          min="12"
-          max="32"
-          step="1"
-          value="16"
-          class="mt-1 block w-full rounded-md border bg-background px-3 py-2"
-        />
-      </label>
-      <label class="text-sm"
-        >Margins (px)
-        <input
-          data-struct-margin
-          aria-label="Margins (px)"
-          type="number"
-          min="0"
-          max="80"
-          step="1"
-          value="16"
-          class="mt-1 block w-full rounded-md border bg-background px-3 py-2"
-        />
-      </label>
-      <button
-        data-struct-reader-reset
-        type="button"
-        class="self-end rounded-md border px-3 py-2 text-sm"
-        >Reset reader</button
+    <details data-struct-reader-settings>
+      <summary
+        class="ml-auto w-fit cursor-pointer text-sm text-muted-foreground"
+        >Reading settings</summary
       >
-    </fieldset>
-    <p class="text-xs text-muted-foreground">
-      Approximate reading viewports in logical pixels. Changes affect this
-      preview; downloaded EPUBs keep their device profiles.
-    </p>
+      <fieldset
+        class="struct-reader-settings mt-3 grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-4"
+      >
+        <legend class="sr-only">Reader settings</legend>
+        <label class="col-span-2 text-sm"
+          >Device model
+          <select
+            data-struct-model
+            aria-label="Device model"
+            class="mt-1 block w-full rounded-md border bg-background px-3 py-2"
+          >
+            {
+              STRUCT_DEVICE_MODELS.map((model) => (
+                <option
+                  value={model.id}
+                  data-device={model.device}
+                  hidden={model.device !== 'phone'}
+                >
+                  {model.label}
+                </option>
+              ))
+            }
+            <option value="custom">Custom size</option>
+          </select>
+        </label>
+        <label class="text-sm"
+          >Width (px)
+          <input
+            data-struct-width
+            aria-label="Width (px)"
+            type="number"
+            min="240"
+            max="2560"
+            step="1"
+            value="390"
+            class="mt-1 block w-full rounded-md border bg-background px-3 py-2"
+          />
+        </label>
+        <label class="text-sm"
+          >Height (px)
+          <input
+            data-struct-height
+            aria-label="Height (px)"
+            type="number"
+            min="240"
+            max="2560"
+            step="1"
+            value="844"
+            class="mt-1 block w-full rounded-md border bg-background px-3 py-2"
+          />
+        </label>
+        <label class="text-sm"
+          >Font family
+          <select
+            data-struct-font-family
+            aria-label="Font family"
+            class="mt-1 block w-full rounded-md border bg-background px-3 py-2"
+          >
+            {
+              Object.entries(STRUCT_READER_FONTS).map(([value, font]) => (
+                <option value={value}>{font.label}</option>
+              ))
+            }
+          </select>
+        </label>
+        <label class="text-sm"
+          >Font size (px)
+          <input
+            data-struct-font-size
+            aria-label="Font size (px)"
+            type="number"
+            min="12"
+            max="32"
+            step="1"
+            value="16"
+            class="mt-1 block w-full rounded-md border bg-background px-3 py-2"
+          />
+        </label>
+        <label class="text-sm"
+          >Margins (px)
+          <input
+            data-struct-margin
+            aria-label="Margins (px)"
+            type="number"
+            min="0"
+            max="80"
+            step="1"
+            value="16"
+            class="mt-1 block w-full rounded-md border bg-background px-3 py-2"
+          />
+        </label>
+        <button
+          data-struct-reader-reset
+          type="button"
+          class="self-end rounded-md border px-3 py-2 text-sm"
+          >Reset reader</button
+        >
+      </fieldset>
+      <p class="mt-2 text-xs text-muted-foreground">Preview settings only.</p>
+    </details>
     <h2 id="struct-preview-label" data-struct-preview-title class="sr-only">
       {initialSample?.title ?? 'Reading preview'}
     </h2>
@@ -328,22 +331,15 @@ const initialSample =
         >
           <h3 class="sr-only">{sample.title}</h3>
           <div class="flex flex-wrap gap-x-4 gap-y-2">
-            <a
-              class="underline underline-offset-4"
-              href={sample.pdfUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Source PDF
-            </a>
-            {sample.epubUrls.map((epub) => (
-              <a class="underline underline-offset-4" href={epub.url} download>
-                {epub.label}
+            {sample.epubUrls[0] && (
+              <a
+                class="underline underline-offset-4"
+                href={sample.epubUrls[0].url}
+                download={`${sample.id}.epub`}
+              >
+                Download EPUB
               </a>
-            ))}
-            <small class="text-muted-foreground">
-              {sample.htmlUrl ? 'Free sample' : 'Uses your daily allowance'}
-            </small>
+            )}
           </div>
           {sample.convertSampleId && (
             <button
@@ -358,7 +354,7 @@ const initialSample =
           )}
           <details>
             <summary class="cursor-pointer text-muted-foreground">
-              Details
+              Credits
             </summary>
             <div class="space-y-2 py-3">
               {sample.convertSampleId && (
@@ -403,10 +399,9 @@ const initialSample =
   <details class="text-sm text-muted-foreground">
     <summary class="cursor-pointer">Upload details</summary>
     <p class="py-3">
-      PDFs are sent to the server for conversion. 10 MiB max. 3 attempts per
-      network per UTC day, 20 globally per UTC day; failed attempts count. Links
-      expire 72 hours after submission. Completed files are deleted after about
-      72 hours; pending jobs stay until finished. Samples use no allowance.
+      Server conversion: 10 MiB; 3 attempts/network/day, 20 total/day (UTC),
+      including failures. Links and completed files expire after 72h; pending
+      jobs remain until complete.
     </p>
   </details>
 </section>

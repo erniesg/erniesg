@@ -70,16 +70,16 @@ test('unavailable uploads preserve sample browsing and sandbox reflow', async ({
     has: page.getByRole('heading', { name: 'AI Must Die', exact: true }),
   })
   await expect(sample).toBeVisible()
-  await expect(
-    sample.getByRole('link', { name: 'Source PDF' }),
-  ).toHaveAttribute('href', /\.pdf$/)
+  await expect(sample.getByRole('link', { name: 'Source PDF' })).toHaveCount(0)
   await expect(page.locator('[data-struct-preview-frame]')).toHaveAttribute(
     'sandbox',
     '',
   )
   await expect(
-    sample.getByRole('link', { name: /EPUB/ }).first(),
-  ).toHaveAttribute('download', '')
+    sample.getByRole('link', { name: 'Download EPUB', exact: true }),
+  ).toHaveAttribute('download', 'ai-must-die.epub')
+  await expect(sample.getByRole('link', { name: /EPUB/ })).toHaveCount(1)
+  await expect(sample).not.toContainText('Free sample')
   await page
     .getByLabel('Existing paper')
     .selectOption('attention-is-all-you-need')
@@ -231,7 +231,7 @@ test('real paper sample credits its authors, source, license, and reconstruction
   const sample = page
     .locator('[data-struct-sample]')
     .filter({ has: page.getByRole('heading', { name: /AI Must Die/i }) })
-  await sample.getByText('Details', { exact: true }).click()
+  await sample.getByText('Credits', { exact: true }).click()
   await expect(sample).toContainText('Myke Walton')
   await expect(sample).toContainText('Cam Smith')
   await expect(
@@ -306,20 +306,15 @@ test('compares each sample original beside its reconstruction on desktop and sta
   await expect(uploadDetails).not.toHaveAttribute('open', '')
   await uploadDetails.getByText('Upload details', { exact: true }).click()
   await expect(uploadDetails).toHaveAttribute('open', '')
+  await expect(uploadDetails).toContainText('Server conversion: 10 MiB')
+  await expect(uploadDetails).toContainText('3 attempts/network/day')
   await expect(uploadDetails).toContainText(
-    'PDFs are sent to the server for conversion.',
+    '20 total/day (UTC), including failures',
   )
-  await expect(uploadDetails).toContainText('10 MiB max.')
+  await expect(uploadDetails).toContainText('completed files expire after 72h')
   await expect(uploadDetails).toContainText(
-    '3 attempts per network per UTC day',
+    'pending jobs remain until complete',
   )
-  await expect(uploadDetails).toContainText('20 globally per UTC day')
-  await expect(uploadDetails).toContainText('expire 72 hours after submission.')
-  await expect(uploadDetails).toContainText(
-    'Completed files are deleted after about 72 hours',
-  )
-  await expect(uploadDetails).toContainText('pending jobs stay until finished')
-  await expect(uploadDetails).toContainText('Samples use no allowance.')
   await uploadDetails.getByText('Upload details', { exact: true }).click()
   await expect(uploadDetails).not.toHaveAttribute('open', '')
   await expect(page.locator('[data-struct-original-frame]')).toHaveAttribute(
@@ -709,8 +704,8 @@ test('paper conversion obeys quota while cached samples remain free', async ({
   await page.getByLabel('Existing paper').selectOption('ai-must-die')
   await expect(page.locator('[data-struct-preview-frame]')).toBeVisible()
   await expect(
-    cached.getByRole('link', { name: 'Paper Pro EPUB', exact: true }),
-  ).toHaveAttribute('download', '')
+    cached.getByRole('link', { name: 'Download EPUB', exact: true }),
+  ).toHaveAttribute('download', 'ai-must-die.epub')
 })
 
 for (const mode of ['upload', 'paper'] as const) {
@@ -1074,6 +1069,11 @@ test('reader controls reflow samples and uploads at model and custom sizes', asy
   await setup(page, false)
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/research/struct/demo/')
+  const settings = page.locator('[data-struct-reader-settings]')
+  await expect(settings).not.toHaveAttribute('open', '')
+  await expect(page.getByLabel('Device model', { exact: true })).toBeHidden()
+  await settings.locator('summary').click()
+  await expect(page.getByLabel('Device model', { exact: true })).toBeVisible()
   const frame = page.locator('[data-struct-preview-frame]')
   const body = page.frameLocator('[data-struct-preview-frame]').locator('body')
   await expect
@@ -1117,6 +1117,13 @@ test('reader controls reflow samples and uploads at model and custom sizes', asy
         .evaluate((el) => (el as HTMLImageElement).naturalWidth),
     )
     .toBeGreaterThan(0)
+  await settings.locator('summary').click()
+  await expect(page.getByLabel('Font family', { exact: true })).toBeHidden()
+  await settings.locator('summary').focus()
+  await page.keyboard.press('Enter')
+  await expect(page.getByLabel('Font family', { exact: true })).toHaveValue(
+    'sans',
+  )
   await page.evaluate(() => {
     const root = document.querySelector('[data-struct-demo]')!
     root.dispatchEvent(

@@ -10,6 +10,13 @@ const portableRoot = new URL('struct/', root)
 const adapterRoot = new URL('struct-adapters/', root)
 
 function importedPaths(source: string, file: URL): string[] {
+  if (file.pathname.endsWith('.astro')) {
+    const frontmatter = source.match(/^---\s*\n([\s\S]*?)\n---/)?.[1] ?? ''
+    const scripts = [
+      ...source.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g),
+    ].map((match) => match[1])
+    source = [frontmatter, ...scripts].join('\n')
+  }
   const ast = ts.createSourceFile(
     file.pathname,
     source,
@@ -54,7 +61,8 @@ function boundaryViolations(
 ): string[] {
   const portable = file.pathname.startsWith(portableRoot.pathname)
   return importedPaths(source, file).filter((specifier) => {
-    if (specifier === '<nonliteral dynamic import>') return true
+    if (specifier === '<nonliteral dynamic import>')
+      return portable || file.pathname.startsWith(adapterRoot.pathname)
     if (
       specifier === '@erniesg/struct' ||
       specifier.startsWith('@erniesg/struct/')
@@ -65,6 +73,12 @@ function boundaryViolations(
       const target = new URL(specifier, file).pathname
       if (target.includes('/node_modules/')) return true
       if (!portable) return false
+      // The legacy root barrel reaches the app adapter and is not a portable API.
+      if (
+        target.replace(/\/(?:index(?:\.(?:ts|js))?)?\/?$/, '/') ===
+        portableRoot.pathname
+      )
+        return true
       if (
         file.pathname ===
           new URL('struct/from-reconstruction.ts', root).pathname &&
@@ -115,8 +129,8 @@ async function portableFiles(directory: URL): Promise<URL[]> {
       .filter(
         (entry) =>
           entry.isFile() &&
-          entry.name.endsWith('.ts') &&
-          !entry.name.endsWith('.test.ts'),
+          /\.(?:[cm]?[jt]sx?|astro)$/.test(entry.name) &&
+          !/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(entry.name),
       )
       .map((entry) => new URL(entry.name, directory)),
   ]
@@ -142,14 +156,16 @@ describe('app-owned Struct adapter boundary', () => {
 
   it('keeps all implementation modules within their allowed import boundaries', async () => {
     const publicPaths = await publicPackagePaths()
-    for (const directory of [portableRoot, adapterRoot]) {
-      for (const file of await portableFiles(directory)) {
-        const source = await readFile(file, 'utf8')
-        expect(
-          boundaryViolations(source, file, publicPaths),
-          file.pathname,
-        ).toEqual([])
-      }
+    const files = await portableFiles(root)
+    expect(files.map((file) => file.pathname)).toContain(
+      new URL('research/import-types.ts', root).pathname,
+    )
+    for (const file of files) {
+      const source = await readFile(file, 'utf8')
+      expect(
+        boundaryViolations(source, file, publicPaths),
+        file.pathname,
+      ).toEqual([])
     }
   })
 
@@ -159,12 +175,21 @@ describe('app-owned Struct adapter boundary', () => {
     const adapter = new URL('struct-adapters/nested/probe.ts', root)
     const legacy = new URL('struct/from-reconstruction.ts', root)
     const index = new URL('struct/index.ts', root)
+    const research = new URL('research/probe.ts', root)
     for (const [file, source, rejected] of [
+      [
+        research,
+        "import { decode } from '@erniesg/struct/src/document'",
+        '@erniesg/struct/src/document',
+      ],
+      [portable, "import { build } from '..'", '..'],
       [
         portable,
         "import type { Source } from '../../research/import-types'",
         '../../research/import-types',
       ],
+      [portable, "import { build } from '../index'", '../index'],
+      [portable, "import { build } from '../index.ts'", '../index.ts'],
       [portable, "export * from '../../research/pdf'", '../../research/pdf'],
       [
         portable,

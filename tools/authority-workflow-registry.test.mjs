@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rename, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -315,6 +315,34 @@ describe('authority workflow registry', () => {
     expect(codes(result.findings)).not.toContain('workflow-lines-drift')
     expect(result.ok).toBe(false)
     expect(codes(result.findings)).toContain('missing-size-exception')
+  })
+
+  it('rejects a symlinked registry before parsing', async () => {
+    const content = `${GENERATED_HEADER}name: ok\n`
+    const root = await makeRepo({
+      workflows: { 'ok.yml': content },
+      registry: registryWith([entryFor('.github/workflows/ok.yml', content)]),
+    })
+    const registryPath = join(root, '.agent/authority-workflows.json')
+    const moved = join(root, '.agent/real-registry.json')
+    await rename(registryPath, moved)
+    await symlink(moved, registryPath)
+    const result = await auditAuthorityWorkflows({ repoRoot: root })
+    expect(result.ok).toBe(false)
+    expect(codes(result.findings)).toContain('registry-not-regular-file')
+  })
+
+  it('requires reproducibility evidence for authority-bearing workflows', () => {
+    const content = `${GENERATED_HEADER}name: auth\n`
+    const findings = validateAuthorityWorkflowRegistry(
+      registryWith([
+        entryFor('.github/workflows/auth.yml', content, {
+          authority_bearing: true,
+          owner: 'erniesg/erniesg',
+        }),
+      ]),
+    )
+    expect(codes(findings)).toContain('registry-reproducibility')
   })
 
   it('fails closed when an oversized workflow has no size exception', async () => {

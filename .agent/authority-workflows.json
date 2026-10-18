@@ -147,7 +147,16 @@
           }
         }
       },
-      "secrets_referenced": []
+      "secrets_referenced": [],
+      "reproducibility": {
+        "method": "regenerate from the pinned generator and compare bytes",
+        "regenerated_generator": "rucksack-ai-escarp 0.1.7 render_autopilot_workflow(provider=vm-codex, max_dispatches=2, human_ping=\"\")",
+        "regenerated_sha256": "e491ab3013863c9c5a9e291d0a09c19a37de01aa60918699c900004a6e30195c",
+        "regenerated_lines": 2072,
+        "matches_checked_in": false,
+        "recorded_on": "2026-10-18",
+        "note": "The checked-in workflow carries repository-local runner and evidence customizations, so the pinned 0.1.7 generator does not reproduce it byte-for-byte. The mismatch is recorded as drift evidence; migrating to the pinned reviewed generator is a separately reviewed change."
+      }
     },
     {
       "path": ".github/workflows/rucksack-build.yml",

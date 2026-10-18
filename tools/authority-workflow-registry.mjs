@@ -281,6 +281,25 @@ export function validateAuthorityWorkflowRegistry(registry) {
         ),
       )
     }
+    if (entry.authority_bearing === true) {
+      const reproducibility = entry.reproducibility
+      if (
+        !isRecord(reproducibility) ||
+        typeof reproducibility.matches_checked_in !== 'boolean' ||
+        !isNonEmptyString(reproducibility.regenerated_generator) ||
+        typeof reproducibility.regenerated_sha256 !== 'string' ||
+        !/^[0-9a-f]{64}$/.test(reproducibility.regenerated_sha256) ||
+        !isPositiveInteger(reproducibility.regenerated_lines)
+      ) {
+        findings.push(
+          finding(
+            'registry-reproducibility',
+            path,
+            'authority-bearing workflows must record reproducibility evidence: matches_checked_in boolean, regenerated_generator, 64-hex regenerated_sha256, and regenerated_lines',
+          ),
+        )
+      }
+    }
     if (entry.size_exception !== undefined) {
       const exception = entry.size_exception
       if (
@@ -335,12 +354,31 @@ async function workflowFileNames(workflowDirectory) {
 export async function auditAuthorityWorkflows({ repoRoot, registryPath } = {}) {
   const root = repoRoot ?? process.cwd()
   const resolvedRegistryPath = registryPath ?? join(root, DEFAULT_REGISTRY_PATH)
+  const findings = []
+  let registryStats
+  try {
+    registryStats = await lstat(resolvedRegistryPath)
+  } catch (error) {
+    findings.push(
+      finding('registry-missing', DEFAULT_REGISTRY_PATH, String(error.message)),
+    )
+    return { ok: false, findings }
+  }
+  if (!registryStats.isFile()) {
+    findings.push(
+      finding(
+        'registry-not-regular-file',
+        DEFAULT_REGISTRY_PATH,
+        'the authority registry must be a regular file, not a symlink or directory',
+      ),
+    )
+    return { ok: false, findings }
+  }
   const registry = await loadAuthorityWorkflowRegistry(resolvedRegistryPath)
   const validationFindings = validateAuthorityWorkflowRegistry(registry)
   if (validationFindings.length > 0) {
     return { ok: false, findings: validationFindings }
   }
-  const findings = []
   const threshold = registry.entry_gate.loc_threshold
   const workflowDirectory = join(root, WORKFLOW_DIRECTORY)
   let directoryStats

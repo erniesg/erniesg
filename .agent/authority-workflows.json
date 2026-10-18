@@ -9,7 +9,7 @@
   },
   "entry_gate": {
     "loc_threshold": 3000,
-    "scope": "Generated workflows under .github/workflows/** are authority-bearing artifacts and are registered centrally; any generated workflow absent from this registry fails the drift gate."
+    "scope": "Every workflow under .github/workflows/** is classified and registered centrally; any workflow absent from this registry, generated or handwritten, fails the drift gate."
   },
   "review_class_defaults": {
     "generated": "generated-workflow",

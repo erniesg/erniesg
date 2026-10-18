@@ -240,6 +240,67 @@ describe('authority workflow registry', () => {
     expect(codes(findings)).toContain('registry-generator-identity-mismatch')
   })
 
+  it('fails closed on an unregistered handwritten workflow', async () => {
+    const handwritten = `${HANDWRITTEN_HEADER}name: hand\n`
+    const registered = `${GENERATED_HEADER}name: ok\n`
+    const root = await makeRepo({
+      workflows: { 'ok.yml': registered, 'hand.yml': handwritten },
+      registry: registryWith([
+        entryFor('.github/workflows/ok.yml', registered),
+      ]),
+    })
+    const result = await auditAuthorityWorkflows({ repoRoot: root })
+    expect(result.ok).toBe(false)
+    expect(codes(result.findings)).toContain('unregistered-workflow')
+  })
+
+  it('rejects a symlinked workflow directory ancestor', async () => {
+    const content = `${GENERATED_HEADER}name: linked\n`
+    const root = await mkdtemp(join(tmpdir(), 'authority-workflow-'))
+    await mkdir(join(root, '.agent'), { recursive: true })
+    await mkdir(join(root, 'elsewhere/workflows'), { recursive: true })
+    await writeFile(join(root, 'elsewhere/workflows/linked.yml'), content)
+    await symlink(join(root, 'elsewhere'), join(root, '.github'))
+    await writeFile(
+      join(root, '.agent/authority-workflows.json'),
+      JSON.stringify(
+        registryWith([entryFor('.github/workflows/linked.yml', content)]),
+        null,
+        2,
+      ),
+    )
+    const result = await auditAuthorityWorkflows({ repoRoot: root })
+    expect(result.ok).toBe(false)
+    expect(codes(result.findings)).toContain('workflow-directory-not-canonical')
+  })
+
+  it('hashes raw bytes before UTF-8 decoding', async () => {
+    const original = Buffer.from(`${GENERATED_HEADER}name: \uFFFD\n`, 'utf8')
+    const replacement = Buffer.from('\uFFFD', 'utf8')
+    const at = original.indexOf(replacement)
+    const mutated = Buffer.concat([
+      original.subarray(0, at),
+      Buffer.from([0x80]),
+      original.subarray(at + replacement.length),
+    ])
+    const root = await mkdtemp(join(tmpdir(), 'authority-workflow-'))
+    await mkdir(join(root, '.github/workflows'), { recursive: true })
+    await mkdir(join(root, '.agent'), { recursive: true })
+    await writeFile(join(root, '.github/workflows/raw.yml'), mutated)
+    await writeFile(
+      join(root, '.agent/authority-workflows.json'),
+      JSON.stringify(
+        registryWith([
+          entryFor('.github/workflows/raw.yml', original.toString('utf8')),
+        ]),
+        null,
+        2,
+      ),
+    )
+    const result = await auditAuthorityWorkflows({ repoRoot: root })
+    expect(codes(result.findings)).toContain('workflow-digest-drift')
+  })
+
   it('fails closed when an oversized workflow has no size exception', async () => {
     const content = `${GENERATED_HEADER}name: big\na: 1\nb: 2\n`
     const root = await makeRepo({

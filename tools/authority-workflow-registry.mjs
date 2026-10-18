@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { lstat, readFile, readdir } from 'node:fs/promises'
+import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -359,6 +359,18 @@ export async function auditAuthorityWorkflows({ repoRoot, registryPath } = {}) {
     )
     return { ok: false, findings }
   }
+  const repositoryRootReal = await realpath(root)
+  const workflowDirectoryReal = await realpath(workflowDirectory)
+  if (workflowDirectoryReal !== join(repositoryRootReal, WORKFLOW_DIRECTORY)) {
+    findings.push(
+      finding(
+        'workflow-directory-not-canonical',
+        WORKFLOW_DIRECTORY,
+        `the workflow directory resolves outside the canonical repository tree (${workflowDirectoryReal}); symlinked ancestors are not accepted`,
+      ),
+    )
+    return { ok: false, findings }
+  }
   const names = await workflowFileNames(workflowDirectory)
   const registered = new Map(
     registry.workflows.map((entry) => [entry.path, entry]),
@@ -387,22 +399,26 @@ export async function auditAuthorityWorkflows({ repoRoot, registryPath } = {}) {
       )
       continue
     }
-    const content = await readFile(absolute, 'utf8')
+    const buffer = await readFile(absolute)
+    const content = buffer.toString('utf8')
     const isGenerated = declaresGeneratorMarker(content)
     const entry = registered.get(relativePath)
-    if (isGenerated && entry === undefined) {
+    if (entry === undefined) {
       findings.push(
         finding(
-          'unregistered-generated-workflow',
+          isGenerated
+            ? 'unregistered-generated-workflow'
+            : 'unregistered-workflow',
           relativePath,
-          'rucksack-generated workflow is absent from the authority registry and must be registered after review',
+          isGenerated
+            ? 'rucksack-generated workflow is absent from the authority registry and must be registered after review'
+            : 'workflow is absent from the authority registry; every workflow must be classified and registered centrally',
         ),
       )
       continue
     }
-    if (entry === undefined) continue
-    const digest = sha256(content)
-    const bytes = Buffer.byteLength(content)
+    const digest = sha256(buffer)
+    const bytes = buffer.byteLength
     const lines = countLines(content)
     if (entry.sha256 !== digest) {
       findings.push(

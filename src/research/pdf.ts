@@ -59,6 +59,7 @@ export { extractPdfLinkAnnotations } from './pdf-links'
 type PdfImportOptions = {
   signal?: AbortSignal
   standardFontDataUrl?: string
+  canvasFactory?: PdfCanvasFactory
   ocr?: PdfOcrOptions
   decisionFile?: HumanDecisionFile
   language?: string
@@ -1683,7 +1684,8 @@ export async function reconstructPdf(
           const raster = await renderPdfPageCrop({
             page: page as unknown as PdfPageCropSource,
             canvasFactory:
-              document.canvasFactory as unknown as PdfCanvasFactory,
+              options.canvasFactory ??
+              (document.canvasFactory as unknown as PdfCanvasFactory),
             sourceBox: input.sourceBox,
             ownedSourceBoxes: input.ownedSourceBoxes,
             excludedSourceBoxes: input.excludedSourceBoxes,

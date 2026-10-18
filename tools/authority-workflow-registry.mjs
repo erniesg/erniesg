@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { realpathSync } from 'node:fs'
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -298,6 +299,17 @@ export function validateAuthorityWorkflowRegistry(registry) {
             'authority-bearing workflows must record reproducibility evidence: matches_checked_in boolean, regenerated_generator, 64-hex regenerated_sha256, and regenerated_lines',
           ),
         )
+      } else if (
+        reproducibility.matches_checked_in !==
+        (entry.sha256 === reproducibility.regenerated_sha256)
+      ) {
+        findings.push(
+          finding(
+            'registry-reproducibility-mismatch',
+            path,
+            `matches_checked_in ${reproducibility.matches_checked_in} disagrees with the digest comparison (registered ${entry.sha256} vs regenerated ${reproducibility.regenerated_sha256})`,
+          ),
+        )
       }
     }
     if (entry.size_exception !== undefined) {
@@ -373,6 +385,19 @@ export async function auditAuthorityWorkflows({ repoRoot, registryPath } = {}) {
       ),
     )
     return { ok: false, findings }
+  }
+  if (registryPath === undefined) {
+    const registryReal = await realpath(resolvedRegistryPath)
+    if (registryReal !== join(await realpath(root), DEFAULT_REGISTRY_PATH)) {
+      findings.push(
+        finding(
+          'registry-not-canonical',
+          DEFAULT_REGISTRY_PATH,
+          `the registry resolves outside the canonical repository tree (${registryReal}); symlinked ancestors are not accepted`,
+        ),
+      )
+      return { ok: false, findings }
+    }
   }
   const registry = await loadAuthorityWorkflowRegistry(resolvedRegistryPath)
   const validationFindings = validateAuthorityWorkflowRegistry(registry)
@@ -543,10 +568,19 @@ export async function runAuthorityWorkflowRegistryCli(
   return 1
 }
 
-if (
-  process.argv[1] !== undefined &&
-  fileURLToPath(import.meta.url) === process.argv[1]
-) {
+function invokedAsCli() {
+  const invokedPath = process.argv[1]
+  if (invokedPath === undefined) return false
+  const modulePath = fileURLToPath(import.meta.url)
+  if (modulePath === invokedPath) return true
+  try {
+    return realpathSync(modulePath) === realpathSync(invokedPath)
+  } catch {
+    return false
+  }
+}
+
+if (invokedAsCli()) {
   runAuthorityWorkflowRegistryCli()
     .then((code) => {
       process.exitCode = code

@@ -1,8 +1,14 @@
+import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, rename, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+
+const TOOL_PATH = fileURLToPath(
+  new URL('./authority-workflow-registry.mjs', import.meta.url),
+)
 
 import {
   auditAuthorityWorkflows,
@@ -343,6 +349,60 @@ describe('authority workflow registry', () => {
       ]),
     )
     expect(codes(findings)).toContain('registry-reproducibility')
+  })
+
+  it('rejects a symlinked registry ancestor', async () => {
+    const content = `${GENERATED_HEADER}name: ok\n`
+    const root = await mkdtemp(join(tmpdir(), 'authority-workflow-'))
+    await mkdir(join(root, '.github/workflows'), { recursive: true })
+    await mkdir(join(root, 'realagent'), { recursive: true })
+    await writeFile(join(root, '.github/workflows/ok.yml'), content)
+    await writeFile(
+      join(root, 'realagent/authority-workflows.json'),
+      JSON.stringify(
+        registryWith([entryFor('.github/workflows/ok.yml', content)]),
+        null,
+        2,
+      ),
+    )
+    await symlink(join(root, 'realagent'), join(root, '.agent'))
+    const result = await auditAuthorityWorkflows({ repoRoot: root })
+    expect(result.ok).toBe(false)
+    expect(codes(result.findings)).toContain('registry-not-canonical')
+  })
+
+  it('rejects a reproducibility status that contradicts the digests', () => {
+    const content = `${GENERATED_HEADER}name: auth\n`
+    const findings = validateAuthorityWorkflowRegistry(
+      registryWith([
+        entryFor('.github/workflows/auth.yml', content, {
+          authority_bearing: true,
+          owner: 'erniesg/erniesg',
+          reproducibility: {
+            matches_checked_in: true,
+            regenerated_generator: 'rucksack scaffold()',
+            regenerated_sha256: '0'.repeat(64),
+            regenerated_lines: 1,
+          },
+        }),
+      ]),
+    )
+    expect(codes(findings)).toContain('registry-reproducibility-mismatch')
+  })
+
+  it('runs the CLI when invoked through a symlink', async () => {
+    const content = `${GENERATED_HEADER}name: ok\n`
+    const root = await makeRepo({
+      workflows: { 'ok.yml': content },
+      registry: registryWith([entryFor('.github/workflows/ok.yml', content)]),
+    })
+    const link = join(root, 'registry-link.mjs')
+    await symlink(TOOL_PATH, link)
+    const result = spawnSync(process.execPath, [link, '--repo-root', root], {
+      encoding: 'utf8',
+    })
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('audit passed')
   })
 
   it('fails closed when an oversized workflow has no size exception', async () => {

@@ -65,6 +65,7 @@
     {
       "path": ".github/workflows/agent-evidence.yml",
       "generated_by": "rucksack",
+      "generator_identity": "rucksack-ai-escarp 0.1.7 workflow generator",
       "owner": "erniesg/erniesg",
       "authority_bearing": false,
       "review_class": "generated-workflow",
@@ -81,6 +82,7 @@
     {
       "path": ".github/workflows/ci.yml",
       "generated_by": "rucksack",
+      "generator_identity": "rucksack-ai-escarp 0.1.7 workflow generator",
       "owner": "erniesg/erniesg",
       "authority_bearing": false,
       "review_class": "generated-workflow",
@@ -97,6 +99,7 @@
     {
       "path": ".github/workflows/deploy.yml",
       "generated_by": "rucksack",
+      "generator_identity": "rucksack-ai-escarp 0.1.7 workflow generator",
       "owner": "erniesg/erniesg",
       "authority_bearing": false,
       "review_class": "generated-workflow",
@@ -113,6 +116,7 @@
     {
       "path": ".github/workflows/rucksack-autopilot.yml",
       "generated_by": "rucksack",
+      "generator_identity": "rucksack-ai-escarp 0.1.7 workflow generator",
       "owner": "erniesg/erniesg",
       "authority_bearing": true,
       "review_class": "generated-authority-workflow-security",
@@ -139,6 +143,7 @@
     {
       "path": ".github/workflows/rucksack-build.yml",
       "generated_by": "rucksack",
+      "generator_identity": "rucksack-ai-escarp 0.1.7 workflow generator",
       "owner": "erniesg/erniesg",
       "authority_bearing": false,
       "review_class": "generated-workflow",
@@ -155,6 +160,7 @@
     {
       "path": ".github/workflows/rucksack-ledger.yml",
       "generated_by": "rucksack",
+      "generator_identity": "rucksack-ai-escarp 0.1.7 workflow generator",
       "owner": "erniesg/erniesg",
       "authority_bearing": false,
       "review_class": "generated-workflow",

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { readFile, readdir } from 'node:fs/promises'
+import { lstat, readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -16,11 +16,12 @@ function sha256(value) {
 }
 
 function countLines(text) {
-  let lines = 0
+  if (text === '') return 0
+  let newlines = 0
   for (const character of text) {
-    if (character === '\n') lines += 1
+    if (character === '\n') newlines += 1
   }
-  return lines
+  return text.endsWith('\n') ? newlines : newlines + 1
 }
 
 function finding(code, path, message, severity = 'error') {
@@ -29,6 +30,42 @@ function finding(code, path, message, severity = 'error') {
 
 function isPositiveInteger(value) {
   return Number.isInteger(value) && value > 0
+}
+
+function isNonEmptyString(value) {
+  return typeof value === 'string' && value.length > 0
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isStringArray(value) {
+  return (
+    Array.isArray(value) &&
+    value.every((item) => typeof item === 'string' && item.length > 0)
+  )
+}
+
+function hasPermissionShape(value) {
+  return isRecord(value) && isRecord(value.top_level) && isRecord(value.jobs)
+}
+
+/**
+ * The generator marker must be recognized inside the leading YAML preamble
+ * (blank lines, `---` document markers, and comments), so formatting a
+ * generated workflow cannot disguise it as handwritten.
+ */
+export function declaresGeneratorMarker(content) {
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed === '' || trimmed === '---' || trimmed.startsWith('#')) {
+      if (line.includes(GENERATED_WORKFLOW_MARKER)) return true
+      continue
+    }
+    break
+  }
+  return false
 }
 
 export async function loadAuthorityWorkflowRegistry(registryPath) {
@@ -44,11 +81,7 @@ export async function loadAuthorityWorkflowRegistry(registryPath) {
 
 export function validateAuthorityWorkflowRegistry(registry) {
   const findings = []
-  if (
-    registry === null ||
-    typeof registry !== 'object' ||
-    Array.isArray(registry)
-  ) {
+  if (!isRecord(registry)) {
     return [
       finding(
         'registry-malformed',
@@ -63,6 +96,31 @@ export function validateAuthorityWorkflowRegistry(registry) {
         'registry-schema-version',
         DEFAULT_REGISTRY_PATH,
         `expected schema_version ${AUTHORITY_WORKFLOW_REGISTRY_SCHEMA_VERSION}`,
+      ),
+    )
+  }
+  if (!isNonEmptyString(registry.owner)) {
+    findings.push(
+      finding(
+        'registry-owner',
+        DEFAULT_REGISTRY_PATH,
+        'registry must declare a non-empty owner',
+      ),
+    )
+  }
+  const generator = registry.generator
+  if (
+    !isRecord(generator) ||
+    !isNonEmptyString(generator.tool) ||
+    !isNonEmptyString(generator.package) ||
+    !isNonEmptyString(generator.version) ||
+    generator.marker !== GENERATED_WORKFLOW_MARKER
+  ) {
+    findings.push(
+      finding(
+        'registry-generator',
+        DEFAULT_REGISTRY_PATH,
+        `registry generator must carry non-empty tool, package, and version plus marker ${GENERATED_WORKFLOW_MARKER}`,
       ),
     )
   }
@@ -139,10 +197,7 @@ export function validateAuthorityWorkflowRegistry(registry) {
         ),
       )
     }
-    if (
-      typeof entry.generated_by !== 'string' ||
-      entry.generated_by.length === 0
-    ) {
+    if (!isNonEmptyString(entry.generated_by)) {
       findings.push(
         finding(
           'registry-generated-by',
@@ -151,10 +206,16 @@ export function validateAuthorityWorkflowRegistry(registry) {
         ),
       )
     }
-    if (
-      typeof entry.review_class !== 'string' ||
-      entry.review_class.length === 0
-    ) {
+    if (!isNonEmptyString(entry.generator_identity)) {
+      findings.push(
+        finding(
+          'registry-generator-identity',
+          path,
+          'generator_identity must be a non-empty string',
+        ),
+      )
+    }
+    if (!isNonEmptyString(entry.review_class)) {
       findings.push(
         finding(
           'registry-review-class',
@@ -163,13 +224,37 @@ export function validateAuthorityWorkflowRegistry(registry) {
         ),
       )
     }
-    if (
-      entry.authority_bearing === true &&
-      (typeof entry.owner !== 'string' || entry.owner.length === 0)
-    ) {
+    if (!isStringArray(entry.triggers) || entry.triggers.length === 0) {
       findings.push(
         finding(
-          'registry-owner',
+          'registry-triggers',
+          path,
+          'triggers must be a non-empty array of non-empty strings',
+        ),
+      )
+    }
+    if (!hasPermissionShape(entry.permissions)) {
+      findings.push(
+        finding(
+          'registry-permissions',
+          path,
+          'permissions must carry object top_level and jobs maps',
+        ),
+      )
+    }
+    if (!isStringArray(entry.secrets_referenced)) {
+      findings.push(
+        finding(
+          'registry-secrets',
+          path,
+          'secrets_referenced must be an array of non-empty strings',
+        ),
+      )
+    }
+    if (entry.authority_bearing === true && !isNonEmptyString(entry.owner)) {
+      findings.push(
+        finding(
+          'registry-entry-owner',
           path,
           'authority-bearing workflow must declare an owner',
         ),
@@ -178,14 +263,11 @@ export function validateAuthorityWorkflowRegistry(registry) {
     if (entry.size_exception !== undefined) {
       const exception = entry.size_exception
       if (
-        exception === null ||
-        typeof exception !== 'object' ||
+        !isRecord(exception) ||
         !isPositiveInteger(exception.loc_threshold) ||
         !isPositiveInteger(exception.lines) ||
-        typeof exception.authorized_by !== 'string' ||
-        exception.authorized_by.length === 0 ||
-        typeof exception.reason !== 'string' ||
-        exception.reason.length === 0
+        !isNonEmptyString(exception.authorized_by) ||
+        !isNonEmptyString(exception.reason)
       ) {
         findings.push(
           finding(
@@ -194,6 +276,28 @@ export function validateAuthorityWorkflowRegistry(registry) {
             'size_exception must carry integer loc_threshold and lines plus non-empty authorized_by and reason',
           ),
         )
+      } else {
+        if (
+          isPositiveInteger(threshold) &&
+          exception.loc_threshold !== threshold
+        ) {
+          findings.push(
+            finding(
+              'registry-size-exception-threshold',
+              path,
+              `size_exception.loc_threshold ${exception.loc_threshold} must equal the registered entry_gate.loc_threshold ${threshold}`,
+            ),
+          )
+        }
+        if (isPositiveInteger(entry.lines) && exception.lines !== entry.lines) {
+          findings.push(
+            finding(
+              'registry-size-exception-lines',
+              path,
+              `size_exception.lines ${exception.lines} must equal the registered line count ${entry.lines}`,
+            ),
+          )
+        }
       }
     }
   }
@@ -234,11 +338,32 @@ export async function auditAuthorityWorkflows({ repoRoot, registryPath } = {}) {
   const registered = new Map(
     registry.workflows.map((entry) => [entry.path, entry]),
   )
+  const encountered = new Set()
   for (const name of names) {
     const relativePath = `${WORKFLOW_DIRECTORY}/${name}`
-    const content = await readFile(join(workflowDirectory, name), 'utf8')
-    const firstLine = content.split('\n', 1)[0] ?? ''
-    const isGenerated = firstLine.includes(GENERATED_WORKFLOW_MARKER)
+    encountered.add(relativePath)
+    const absolute = join(workflowDirectory, name)
+    let stats
+    try {
+      stats = await lstat(absolute)
+    } catch (error) {
+      findings.push(
+        finding('workflow-unreadable', relativePath, String(error.message)),
+      )
+      continue
+    }
+    if (!stats.isFile()) {
+      findings.push(
+        finding(
+          'workflow-not-regular-file',
+          relativePath,
+          'registered or generated workflows must be regular files, not symlinks or directories',
+        ),
+      )
+      continue
+    }
+    const content = await readFile(absolute, 'utf8')
+    const isGenerated = declaresGeneratorMarker(content)
     const entry = registered.get(relativePath)
     if (isGenerated && entry === undefined) {
       findings.push(
@@ -287,6 +412,17 @@ export async function auditAuthorityWorkflows({ repoRoot, registryPath } = {}) {
           'missing-size-exception',
           relativePath,
           `${lines} lines exceeds the ${threshold}-line entry-gate threshold without a registered size exception`,
+        ),
+      )
+    }
+  }
+  for (const entry of registry.workflows) {
+    if (!encountered.has(entry.path)) {
+      findings.push(
+        finding(
+          'registered-workflow-missing',
+          entry.path,
+          'registry entry has no workflow file under the workflow directory',
         ),
       )
     }

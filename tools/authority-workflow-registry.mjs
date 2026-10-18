@@ -17,11 +17,18 @@ function sha256(value) {
 
 function countLines(text) {
   if (text === '') return 0
-  let newlines = 0
-  for (const character of text) {
-    if (character === '\n') newlines += 1
+  let lineBreaks = 0
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index]
+    if (character === '\r') {
+      if (text[index + 1] === '\n') index += 1
+      lineBreaks += 1
+    } else if (character === '\n') {
+      lineBreaks += 1
+    }
   }
-  return text.endsWith('\n') ? newlines : newlines + 1
+  const terminated = text.endsWith('\n') || text.endsWith('\r')
+  return terminated ? lineBreaks : lineBreaks + 1
 }
 
 function finding(code, path, message, severity = 'error') {

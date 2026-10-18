@@ -139,7 +139,13 @@
           "issues": "write",
           "pull-requests": "read"
         },
-        "jobs": { "orchestrate": {} }
+        "jobs": {
+          "orchestrate": {
+            "contents": "read",
+            "issues": "write",
+            "pull-requests": "read"
+          }
+        }
       },
       "secrets_referenced": []
     },

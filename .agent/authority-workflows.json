@@ -119,7 +119,7 @@
     {
       "path": ".github/workflows/rucksack-autopilot.yml",
       "generated_by": "rucksack",
-      "generator_identity": "rucksack-ai-escarp 0.1.7 workflow generator",
+      "generator_identity": "unknown historical generator with repository-local customizations (checked-in bytes do not match rucksack-ai-escarp 0.1.7; see reproducibility.regenerated_generator)",
       "owner": "erniesg/erniesg",
       "authority_bearing": true,
       "review_class": "generated-authority-workflow-security",

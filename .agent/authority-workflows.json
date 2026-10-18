@@ -19,7 +19,7 @@
     {
       "path": ".github/workflows/agent-evidence-publisher.yml",
       "generated_by": "rucksack",
-      "generator_identity": "rucksack-ai-escarp 0.1.7 scaffold_evidence_publisher_workflow.evidence_publisher_workflow_yml()",
+      "generator_identity": "unknown historical generator (checked-in bytes do not match rucksack-ai-escarp 0.1.7; see reproducibility.regenerated_generator)",
       "owner": "erniesg/erniesg",
       "authority_bearing": true,
       "review_class": "generated-authority-workflow-security",
@@ -92,7 +92,10 @@
       "triggers": ["pull_request", "push:staging,main", "workflow_dispatch"],
       "permissions": {
         "top_level": { "contents": "read" },
-        "jobs": { "secret-scan": { "contents": "read" } }
+        "jobs": {
+          "secret-scan": { "contents": "read" },
+          "checks": { "contents": "read" }
+        }
       },
       "secrets_referenced": []
     },

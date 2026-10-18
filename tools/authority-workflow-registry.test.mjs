@@ -203,6 +203,43 @@ describe('authority workflow registry', () => {
     expect(codes(result.findings)).toContain('workflow-not-regular-file')
   })
 
+  it('rejects a symlinked workflow directory', async () => {
+    const content = `${GENERATED_HEADER}name: linked\n`
+    const root = await mkdtemp(join(tmpdir(), 'authority-workflow-'))
+    await mkdir(join(root, '.agent'), { recursive: true })
+    await mkdir(join(root, '.github'), { recursive: true })
+    await mkdir(join(root, 'elsewhere'), { recursive: true })
+    await writeFile(join(root, 'elsewhere/linked.yml'), content)
+    await symlink(join(root, 'elsewhere'), join(root, '.github/workflows'))
+    await writeFile(
+      join(root, '.agent/authority-workflows.json'),
+      JSON.stringify(
+        registryWith([entryFor('.github/workflows/linked.yml', content)]),
+        null,
+        2,
+      ),
+    )
+    const result = await auditAuthorityWorkflows({ repoRoot: root })
+    expect(result.ok).toBe(false)
+    expect(codes(result.findings)).toContain('workflow-directory-not-regular')
+  })
+
+  it('rejects attributing frozen bytes to the mismatching generator', () => {
+    const content = `${GENERATED_HEADER}name: frozen\n`
+    const findings = validateAuthorityWorkflowRegistry(
+      registryWith([
+        entryFor('.github/workflows/frozen.yml', content, {
+          generator_identity: 'rucksack scaffold()',
+          reproducibility: {
+            matches_checked_in: false,
+            regenerated_generator: 'rucksack scaffold()',
+          },
+        }),
+      ]),
+    )
+    expect(codes(findings)).toContain('registry-generator-identity-mismatch')
+  })
+
   it('fails closed when an oversized workflow has no size exception', async () => {
     const content = `${GENERATED_HEADER}name: big\na: 1\nb: 2\n`
     const root = await makeRepo({

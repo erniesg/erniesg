@@ -215,6 +215,20 @@ export function validateAuthorityWorkflowRegistry(registry) {
         ),
       )
     }
+    if (
+      isRecord(entry.reproducibility) &&
+      entry.reproducibility.matches_checked_in === false &&
+      isNonEmptyString(entry.reproducibility.regenerated_generator) &&
+      entry.reproducibility.regenerated_generator === entry.generator_identity
+    ) {
+      findings.push(
+        finding(
+          'registry-generator-identity-mismatch',
+          path,
+          'generator_identity must not name the regenerated_generator when the checked-in bytes fail reproduction; record the historical generator identity or mark it unknown',
+        ),
+      )
+    }
     if (!isNonEmptyString(entry.review_class)) {
       findings.push(
         finding(
@@ -322,9 +336,9 @@ export async function auditAuthorityWorkflows({ repoRoot, registryPath } = {}) {
   const findings = []
   const threshold = registry.entry_gate.loc_threshold
   const workflowDirectory = join(root, WORKFLOW_DIRECTORY)
-  let names
+  let directoryStats
   try {
-    names = await workflowFileNames(workflowDirectory)
+    directoryStats = await lstat(workflowDirectory)
   } catch (error) {
     findings.push(
       finding(
@@ -335,6 +349,17 @@ export async function auditAuthorityWorkflows({ repoRoot, registryPath } = {}) {
     )
     return { ok: false, findings }
   }
+  if (!directoryStats.isDirectory()) {
+    findings.push(
+      finding(
+        'workflow-directory-not-regular',
+        WORKFLOW_DIRECTORY,
+        'the workflow directory must be a real directory, not a symlink',
+      ),
+    )
+    return { ok: false, findings }
+  }
+  const names = await workflowFileNames(workflowDirectory)
   const registered = new Map(
     registry.workflows.map((entry) => [entry.path, entry]),
   )

@@ -57,7 +57,7 @@ with a default recommendation and an admission gate.
 
 | Gate | Evidence required | Blocks | Status |
 | --- | --- | --- | --- |
-| G-S04 | Exact integrated Struct head, release decision packet, tarball digest, export/API manifest including a complete `./bundle`, clean-consumer install, full bundle negative matrix, three-run XHTML/EPUB goldens | E-02 bundle + E-02 pin bump | OPEN |
+| G-S04 | Exact integrated Struct head, release decision packet, tarball digest, export/API manifest including a complete `./bundle` whose installed runtime + declaration exports and `API_MANIFEST.json` `runtimeExports` agree and directly export `createStructBundle` (handle creation from a document plus supplied asset bytes), `verifyStructBundle`, `decodeStructBundle`, and `encodeStructBundle`; clean-consumer install; full bundle negative matrix; three-run XHTML/EPUB goldens. No app-side bundle pin exists today. | E-02 bundle + E-02 pin bump | OPEN |
 | G-PR450 | Inline-hyperlink accounting landed with its own reviewed golden | E-02 structured-DOCX conservation parity | OPEN |
 | G-E-WF | Generated publisher workflow registered with drift gate (#281) | E-02 and publication-state work | CLOSED |
 | G-EACT | Immutable, authenticated, target-specific explicit-user authorization bound to writer/public-route activation | E-06 only | NOT ELIGIBLE YET |
@@ -69,8 +69,8 @@ tree.
 
 ## Artifact pin / lock / vendor / provenance atomicity
 
-Any E-02/E-03/E-04 pin bump is a single atomic reviewed change over exactly
-these files:
+Any E-02/E-03/E-04 pin bump is a single atomic reviewed change over these four
+files:
 
 - `vendor/struct/<artifact>.tgz` (new bytes)
 - `vendor/struct/provenance.json` (`sourceCommit`, `artifact`, `sha256`,
@@ -78,22 +78,38 @@ these files:
 - `package.json` `dependencies["@erniesg/struct"]`
 - `package-lock.json` `packages[""]` and `packages["node_modules/@erniesg/struct"]`
 
+plus, when the export map changes, the two named test files
+`tests/struct-package-artifact.test.ts` and
+`tests/struct-package-parity.test.ts` in the same commit. "Exactly these files"
+never excludes those reviewed test updates; no other files are part of the pin
+bump.
+
 Rules:
 
 1. Verify tarball SHA-256 and integrity before writing provenance.
-2. Update all four together; never leave a partially bumped pin. If any of
-   `tests/struct-package-artifact.test.ts`, `tests/struct-package-parity.test.ts`,
-   or `tests/struct-adapter-boundary.test.ts` fails, revert the whole commit.
+2. Update all four together (plus the two named tests when applicable); never
+   leave a partially bumped pin. Revert the whole commit on unexpected failures
+   in `tests/struct-package-artifact.test.ts`,
+   `tests/struct-package-parity.test.ts`, or
+   `tests/struct-adapter-boundary.test.ts`, except the reviewed expected
+   closure-list change for `./bundle` described in rule 4, which must not
+   trigger a revert by construction.
 3. Use the shared pnpm store. Do not commit generated `pnpm-lock.yaml`
-   (see `docs/struct-migration-status.md`). For an Ernie.SG VM worktree use the
-   documented physical-directory setup:
+   (see `docs/struct-migration-status.md`). After any bump that changes
+   `package.json`/`package-lock.json`, re-run `pnpm import` from the updated
+   `package-lock.json` to regenerate `pnpm-lock.yaml` before the frozen install.
+   For an Ernie.SG VM worktree use the documented physical-directory setup:
    `pnpm import` then
    `CI=true pnpm install --node-linker=hoisted --frozen-lockfile --ignore-scripts`,
    then `node tools/publication-install-browser.mjs`.
-4. If the S-04 export map adds `./bundle`, update the exact expected export list
-   in `tests/struct-package-artifact.test.ts` deliberately in the same reviewed
-   commit. Do not silently widen the public surface for any other path, and do
-   not add raw `sha256` helpers to the package API.
+4. If the S-04 export map adds `./bundle`, in the same reviewed commit (a)
+   update the exact expected export list in
+   `tests/struct-package-artifact.test.ts`, and (b) remove `'bundle'` from the
+   `it.each(['core', 'schema', 'ids', 'bundle'])` closed-path list in
+   `tests/struct-package-parity.test.ts` and add a positive `./bundle`
+   availability assertion there, while `'core'`/`'schema'`/`'ids'` stay closed.
+   Do not silently widen the public surface for any other path, and do not add
+   raw `sha256` helpers to the package API.
 5. Consume the S-04 artifact through the reproducible local artifact mechanism
    (`file:vendor/...`) when no registry publication is authorized.
 
@@ -119,13 +135,21 @@ Owner: `erniesg/erniesg`. Preconditions: G-S04 and G-PR450.
 
 1. Bump the artifact atomically (see atomicity rules) to the S-04 head.
 2. Extend `tests/fixtures/struct-adapter-parity/observe.ts` to also:
-   - build a bundle from the verified runtime document plus its supplied asset
-     bytes (`createStructBundle`),
-   - encode it (`encodeStructBundle`),
+   - create a handle with the public handle-creating entry point required by
+     G-S04, `createStructBundle(document, suppliedAssetBytes)` (document plus
+     supplied asset bytes; E-02 is not started until this symbol exists in the
+     installed runtime, its `.d.ts`, and `API_MANIFEST.json` `runtimeExports`),
+   - encode it (`encodeStructBundle(handle)`),
    - decode it through the bytes-only API (`decodeStructBundle(rawBytes,
      { expectedBundleSha256 })`),
    - record the verified `documentSha256` / `bundleSha256` and asset digest
      conservation.
+   If, contrary to G-S04, no public handle-creating symbol is present in the
+   installed artifact, do not construct a handle in the app and do not substitute
+   a fixture-only path to evade create acceptance; stop and resolve the upstream
+   bundle surface with Struct first. A package-produced handle/fixture may be
+   used only for read-only decode/encode parity, never as E-02 acceptance
+   evidence. There is no app-side bundle pin today.
    Add a new `tests/struct-adapter-bundle-parity.test.ts`. Do not regenerate the
    existing `expected.json` values; add a new reviewed `bundle` block only.
 3. Add a bytes-only ingress helper surface for Ernie.SG wire data. At the
@@ -152,7 +176,8 @@ Owner: `erniesg/erniesg`. Preconditions: G-S04 and G-PR450.
 
 ### E-02 remaining gaps
 
-- No package `./bundle` at the current pin.
+- No package `./bundle` at the current pin, and no app-side bundle pin exists;
+  bundle acceptance is gated by G-S04 only.
 - S-04 full negative matrix and three-run goldens not yet at a final integrated
   head.
 - PR #450 not landed; the base structured-DOCX `localEncode` is a known
@@ -198,16 +223,35 @@ Not migrated (stay app-owned; do not widen the package API for them):
 
 ### Recovery copy ownership decision
 
-- Package `@erniesg/struct/recovery` owns source-neutral facts:
-  `diagnosticCategory`, `recoveryFact`, the `StructRecovery`/`StructDiagnostic`
-  shapes.
+- Package `@erniesg/struct/document` owns the `StructRecovery`,
+  `StructDiagnostic`, and `StructDiagnosticSeverity` shapes. Package
+  `@erniesg/struct/recovery` owns source-neutral facts:
+  `diagnosticCategory`, `recoveryFact`, `recoverySummary`,
+  `toStructDiagnostic`, `hasActionableRecovery`, and
+  `RecoveryDiagnosticInput` (per the pinned `API_MANIFEST.json`
+  `./recovery` runtimeExports). (F9)
 - App `src/struct-adapters/recovery.ts` owns presentation: `diagnosticCopy`
   titles/messages/actions, the enriched `recoverySummary` titles/summaries, and
-  `userAction`.
-- Do NOT replace the app copy with the package `recoveryFact` title derivation
-  (`titleFromCode` produces different strings) or with the package default
-  summary strings. That would change explanatory wording, serialized document
-  bytes, and receipt hashes.
+  `userAction`. It is an app-owned presentation adapter, not a migrated family
+  and not a portable duplicate.
+- App-owned `src/struct-adapters/recovery` permitted importers (presentation or
+  type-only; update this list deliberately if a new consumer is added):
+  - `src/struct/recovery.ts` (compatibility forwarder) re-exports the app
+    presentation symbols;
+  - `src/struct/index.ts` via `./recovery` (barrel re-export);
+  - `src/research/recovery-projection.ts` (type-only
+    `RecoveryDiagnosticInput`);
+  - `src/components/research/PublicationImporter.tsx`
+    (`diagnosticCopy`, `hasActionableRecovery`, `recoverySummary`).
+  `hasActionableRecovery` is the package fact re-exported through the app
+  adapter; consuming it via the app adapter is allowed because the app adapter
+  wraps package authority in app-owned presentation. (F7)
+- Do NOT replace the app copy with the package `recoveryFact` title derivation.
+  Upstream derives titles internally via `titleFromCode`, which is not a public
+  export and must not be imported (package-private path); cite only the
+  observable difference of the public `recoveryFact` result. Do not replace
+  with the package default summary strings. That would change explanatory
+  wording, serialized document bytes, and receipt hashes. (F9)
 - E-03 work: have the app adapter derive/verify each code's category from the
   package fact source, and add a parity test asserting that every app
   `DIAGNOSTIC_COPY` category equals `diagnosticCategory(code)`. Keep app
@@ -238,21 +282,42 @@ renderer owns renderer constraints).
 
 Add to `tests/struct-adapter-boundary.test.ts` (red first):
 
-- Resolve imports semantically, not by raw specifier text. Production files
-  outside `src/struct/` must not resolve to `src/struct` or its migrated-family
-  re-exports (`types`, `ids`, `reading-order`), including barrel/index forms
-  (`src/struct/index`, `src/struct/index.ts`), configured aliases
-  (`@/struct`, `~/struct`, `#struct`, or equivalent), and the package barrel
-  (`@erniesg/struct`). This also closes transitive re-exports from
-  `src/struct-adapters/*` and `src/struct/from-reconstruction.ts` for those
-  migrated families.
-- The only explicit recovery allowlist is
-  `src/struct/recovery.ts` importing `../struct-adapters/recovery` (plus its
-  barrel/index/alias spellings) for recovery presentation only; every other
-  production import resolving to a migrated family is rejected.
+- Scope: every non-test module under `src/` (the guard's existing walk;
+  `*.test.*`/`*.spec.*` excluded). Intra-`src/struct/` compatibility imports
+  are permitted only where explicitly listed below; `src/struct/index.ts`
+  re-exports are not a hidden intra-core path.
+- Resolve imports semantically, not by raw specifier text. Production modules
+  under `src/` must not resolve to local `src/struct` migrated-family
+  definitions or their re-exports for families `types`, `ids`, `reading-order`,
+  and `codec` in E-03 (and `xhtml`, `epub`, `emitted-ids` in E-04), including
+  barrel/index forms (`src/struct/index`, `src/struct/index.ts`,
+  `src/struct/codec/index.ts`), configured aliases (`@/struct`, `~/struct`,
+  `#struct`, or equivalent), and transitive re-exports from
+  `src/struct-adapters/*` and `src/struct/from-reconstruction.ts`. Public
+  package specifiers `@erniesg/struct` and `@erniesg/struct/<subpath>` are
+  allowed only when the subpath is in the installed export map: the public root
+  and public subpaths are valid; local barrels are closed.
+- Migrated-family set by step:
+  - E-03: `types`, `ids`, `reading-order`, `codec`.
+  - E-04: `xhtml`, `epub`, `emitted-ids`.
+  A family is not considered migrated unless its prohibition is in the guard;
+  no family may migrate without a corresponding guard entry. (F6)
+- E-04 adds a separate guard entry in the same test file for
+  `src/struct/xhtml`, `src/struct/epub`, and `src/struct/emitted-ids`,
+  covering local barrels/index/aliases/re-exports and transitive re-exports,
+  with the same scope and semantic resolution. (F6)
+- Recovery allowlist: `src/struct-adapters/recovery` is app-owned presentation,
+  not a migrated family, so it is not prohibited as a family; its permitted
+  importers are enumerated in the recovery ownership decision. The only
+  `src/struct/*` compatibility forwarder allowlist remains
+  `src/struct/recovery.ts` importing `../struct-adapters/recovery` (plus
+  barrel/index/alias spellings) for recovery presentation only. (F6/F7)
 - Every `@erniesg/struct/...` specifier must be in the installed package export
   map (already enforced).
 - No import of package-private paths.
+- Retained local implementations are compatibility copies, not new authority;
+  E-07 deletes them after parity. No new production semantics may be added to
+  them. (F6)
 
 High-fan-in consumers to enumerate and test: the table above plus the evidence
 tools that load source modules directly —
@@ -298,28 +363,115 @@ narrowed to an ephemeral, mechanically derived renderer plan from one pinned
 approved Struct revision, owning no independent text, semantic IDs,
 persistence, receipt, writer, or release path.
 
-Default recommendation: **narrow**, with a proof obligation.
+Default recommendation: **narrow**, with a proof obligation. Narrowing is valid
+only if the graph is a one-way Struct-derived renderer plan with no
+annotation, persistence, or canonical authority; otherwise retire the
+competing graph. (F4)
 
 - Keep `src/publication/struct-adapter.ts` as a deterministic
   `StructDocument -> PublicationGraph` projection used only for print/Vivliostyle
   rendering (`src/publication/renderers/vivliostyle.ts`).
 - Add a conformance test that adapting one pinned StructDocument twice yields a
   byte-identical graph and that the graph is never persisted or treated as
-  canonical text authority.
+  canonical text authority. The conformance test must also cover the reverse
+  direction: `publicationGraphToResearchPaper` must not introduce or alter
+  `ResearchPaper` text or semantic ids (or must be removed). (F4)
+- Permitted `PublicationGraph` importers (explicit; all others, especially
+  storage/API/route/writer/release modules, are prohibited): (F3)
+  - definition module: `src/publication/schema.ts` (defines `PublicationGraph`,
+    `publicationGraphSchema`, `serializePublicationGraph`,
+    `PUBLICATION_GRAPH_VERSION`, `PublicationNode`, etc.);
+  - projection modules: `src/publication/struct-adapter.ts`,
+    `src/publication/source-adapter.ts`;
+  - renderer: `src/publication/renderers/vivliostyle.ts`;
+  - conformance helper: `src/publication/adapter-conformance.ts`;
+  - bridge: `src/publication/research-paper-adapter.ts` (subject to the
+    reverse-direction decision below);
+  - read-only annotation consumer: `src/annotations/annotation-bundle.ts`
+    (uses graph node ids/text for anchor resolution and emits `graphId`).
+  Storage/API/route/writer/release modules import none today (verified:
+  `src/worker/margin/queries.ts` and route/API modules do not import graph
+  symbols). Any new importer requires an explicit plan update. (F3)
+- Red/green baseline: the red-first assertion must fail before migration on any
+  importer outside the permitted set, and pass after the migration/removal; name
+  the concrete modules constituting storage/API/route/writer/release classes so
+  the rule is mechanical. (F3)
+- `src/publication/research-paper-adapter.ts` is bidirectional:
+  `researchPaperToPublicationGraph` and `publicationGraphToResearchPaper` (the
+  latter synthesises a `ResearchPaper` — nodes, text, ids — from the graph).
+  Narrowing is invalid if the reverse direction remains, because the graph then
+  authors `ResearchPaper` text and semantic ids. E-04 must either retire the
+  reverse direction (or make it strictly one-way with proof that the graph
+  cannot author text/ids) or, if reverse synthesis proves load-bearing, retire
+  the competing graph instead of renaming or hiding it in an allowlist. No
+  allowlist exception may author semantic text or ids. (F4)
+- `src/annotations/annotation-bundle.ts` anchor resolution depends on graph
+  node ids/text and persists `graphId`. If that dependency remains, the graph
+  is canonical authority for annotations and the narrow option is invalid;
+  either migrate annotation anchor authority to Struct document nodes (retiring
+  graph authority) or retire the competing graph. Do not add the annotation
+  module to an allowlist to evade this. (F4)
 - Add a red-first static assertion/test that `PublicationGraph`,
   `publicationGraphSchema`, `serializePublicationGraph`, and any graph
   persistence/import/export helper are absent from storage, API, route, writer,
-  and release modules; only renderer/projection modules may import them.
-- Bind any publication receipt to the Struct `document`/`receipt` digests and
-  the exact package pin; do not treat an independent graph digest as the
-  semantic authority. Receipts must include the canonical Struct digests and
-  exact package pin/version; graph-only digests are diagnostic only.
+  and release modules; only the permitted importer set above may import them.
+  (F3)
+- Bind publication receipts to the Struct `document`/`receipt` digests and the
+  exact package pin; do not treat an independent graph digest as the semantic
+  authority. Receipts must include the canonical Struct digests and exact
+  package pin/version; graph-only digests are diagnostic only. (F8)
+  Receipts and source binding: (F8)
+  - Types/modules: `PublicationReceipt` in
+    `src/publication/renderers/vivliostyle.ts` (built ~1189-1201, persisted to
+    `publication-receipt.json`) and `PublicationContractReceipt` in
+    `src/publication/source-adapter.ts` (`publicationContractReceiptSchema`
+    ~25, `createPublicationContractReceipt` ~148), plus their builders/schemas.
+  - Keep `graphSha256`/`assetBundleSha256` as diagnostic back-compat fields;
+    do not remove them.
+  - Add a discriminated `sourceBinding` (or equivalently minimal field) to both
+    receipts:
+    - legacy variant `{ kind: 'legacy-research-paper' }` with no Struct
+      binding, so legacy read-only render still works and no Struct binding is
+      fabricated for `ResearchPaper` diagnostics;
+    - struct variant `{ kind: 'struct-cutover', documentSha256,
+      bundleSha256? (when wire bytes are available), semanticReceiptSha256?
+      (canonical Struct receipt digest), packageSourceCommit, packageArtifact,
+      packageArtifactSha256, packageIntegrity, packageVersion }`.
+  - Struct cutover/release admission requires the struct variant; the legacy
+    variant is render-only and is not admission evidence.
+  - Canonical pin metadata authority is `vendor/struct/provenance.json`
+    (`sourceCommit`, `artifact`, `sha256`, `integrity`, `packageVersion`),
+    cross-checked against `package.json`, `package-lock.json`, and the tarball
+    by `tests/struct-package-artifact.test.ts`. Do not create a second
+    hand-maintained Struct pin in `src/publication/toolchain-manifest.json`;
+    if a manifest entry is added later it must be generated/validated from
+    provenance by the same test, not a second authority. (F8)
+  - Exact package identity fields map to provenance: `sourceCommit` ->
+    `sourceCommit`, artifact -> `artifact`, artifact sha256 -> `sha256`,
+    integrity -> `integrity`, version -> `packageVersion`. (F8)
 - If any of text, semantic IDs, persistence, receipt, writer, or release path
   proves load-bearing, retire the competing graph instead of renaming it.
-- `ResearchPaper` stays a read-only compatibility model behind the existing
-  facade `src/publication/research-paper-adapter.ts`; it is not removed in
-  E-04. E-04 exit evidence must include a checked-in caller/test inventory for
-  that facade (all callers and tests of `ResearchPaper` and adapter exports).
+- `ResearchPaper` is defined in `src/research/schema.ts` and is directly
+  imported by many production modules; it is not behind any facade.
+  `src/publication/research-paper-adapter.ts` is a bidirectional
+  `ResearchPaper ⇄ PublicationGraph` adapter, not a read-only compatibility
+  facade. The actual read-only renderer compatibility entry is
+  `src/research/epub.ts`: its `renderPublicationXhtml(ResearchPaper, ...)`
+  overloads and `buildEpub(ResearchPaper, ...)` overloads (plus export
+  profiles and readable fallback) remain the legacy ResearchPaper renderer
+  compatibility surface. Preserve those legacy callers separately; do not invent
+  a nonexistent facade. (F5)
+- E-04 exit evidence must include two checked-in inventories (created by
+  separate inventory lanes; this plan requires their existence and scope, not
+  their generation here): (F5)
+  - `docs/struct-research-paper-caller-inventory.md`: (a) direct
+    `ResearchPaper` type/value importers, (b) direct legacy renderer callers of
+    the `renderPublicationXhtml`/`buildEpub` `ResearchPaper` overloads, (c)
+    graph bridge callers of `research-paper-adapter.ts` exports, (d) tests.
+  - `docs/struct-publication-graph-authority-inventory.md`: the PublicationGraph
+    importer inventory (definition, projection, renderer, conformance, bridge,
+    annotation consumer) and the storage/API/route/writer/release absence
+    proof. (F3/F4)
 
 EPUBCheck, Ace, and human accessibility approval remain app-owned release
 evidence, not package unit tests.
@@ -367,7 +519,7 @@ Every stage is red-first and independently revertible:
 | --- | --- |
 | E-02 | Atomic pin; adapter -> package decode -> bundle verify conservation on PDF/DOCX fixtures; bytes-only ingress; frozen parity unchanged except reviewed additions; no writer change |
 | E-03 | Static import guard red-then-green; package/local dual-read equality; accepted/rejected matrix; recovery copy parity; high-fan-in consumers enumerated and tested |
-| E-04 | Dual-render output/failure parity; PublicationGraph ownership proof or retirement (including static absence from storage/API/route modules and receipts bound to Struct digests/package pin); EPUBCheck/Ace/human accessibility still app-owned; ResearchPaper facade `src/publication/research-paper-adapter.ts` inventoried with checked-in caller/test inventory |
+| E-04 | Dual-render output/failure parity; PublicationGraph ownership proof or retirement (enumerated importer set, reverse-direction proof, annotation authority decision; static absence from storage/API/route/writer/release modules; receipts bound to Struct digests/package pin via `vendor/struct/provenance.json`); E-04 static import guard red-then-green for `xhtml`/`epub`/`emitted-ids`; EPUBCheck/Ace/human accessibility still app-owned; ResearchPaper inventories at `docs/struct-research-paper-caller-inventory.md` and `docs/struct-publication-graph-authority-inventory.md` |
 | E-05 | Design record; authenticated state machine; inactive route cannot expose unapproved/superseded artifact; concurrency + rollback/forward recovery rehearsal; writer still inactive |
 | E-06 | Accepted E-ACT receipt matching exact head/pins/targets; single writer; post-activation health/observation/read-after-write |
 | E-07 | Extraction-point hashes; package-test mapping; zero production imports to removed modules; package-only app tests; retained-compatibility register |
@@ -382,6 +534,12 @@ Every stage is red-first and independently revertible:
    pin.
 3. PublicationGraph narrow-vs-retire outcome, after the ownership proof runs.
 4. E-ACT authorizing inputs (separate, immutable authorization) before E-06.
+5. Bundle handle-creation surface: G-S04 must provide `createStructBundle` (and
+   `verifyStructBundle`) in the installed runtime + declarations +
+   `API_MANIFEST.json`, alongside `decodeStructBundle`/`encodeStructBundle`; the
+   upstream manifest/module-surface discrepancy on current branches is a
+   prerequisite the coordinator resolves with Struct before E-02. There is no
+   app-side bundle pin today. (F1)
 
 ## Plan validation
 

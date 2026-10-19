@@ -859,11 +859,13 @@ export function buildStructDocument(
       if (!inline.href && !inline.targetIds?.length) continue
       const href = inline.href
       const targets = inline.targetIds ?? (href ? [href] : [])
+      const relationshipId = structId(
+        'relationship',
+        `hyperlink:${block.id}:${index}:${href ?? targets.join(',')}`,
+      )
+      if (inline.relationshipId) inline.relationshipId = relationshipId
       relationships.push({
-        id: structId(
-          'relationship',
-          `hyperlink:${block.id}:${index}:${href ?? targets.join(',')}`,
-        ),
+        id: relationshipId,
         kind: 'hyperlink',
         from: block.id,
         to: targets,
@@ -1209,10 +1211,23 @@ export function buildStructDocument(
     (count, node) => count + (provenance[node.id]?.links.length ?? 0),
     0,
   )
+  const sourceInlineRelationshipCount = reconstruction.paper.nodes.reduce(
+    (count, node) =>
+      count +
+      (node.inlineRuns ?? []).filter(
+        (run) =>
+          run.semanticRole !== 'citation' &&
+          run.semanticRole !== 'cross-reference' &&
+          run.semanticRole !== 'note-reference' &&
+          (Boolean(run.href) || (run.targetIds?.length ?? 0) > 0),
+      ).length,
+    0,
+  )
   const sourceRelationshipCount =
     reconstruction.visualRelationships.length +
     reconstruction.noteRelationships.length +
     sourceAnnotationCount +
+    sourceInlineRelationshipCount +
     (pdf
       ? reconstruction.citationRelationships.length +
         reconstruction.crossReferenceRelationships.length +

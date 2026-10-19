@@ -3,9 +3,9 @@
     "sourceSha256": "69d840e5f9cbbf91471d76e3afc92ddb61a4a360244bfbde100ea1ccb2b16bc4",
     "sourceNodeCount": 12,
     "sourceAssetCount": 2,
-    "documentJsonSha256": "3636211997327d1755a60bfcd77797d65a7af87bebf8b0ca9db06f3e0f04c947",
-    "localEncode": "STRUCT_CODEC_CONSERVATION at $.receipt.conservation.accountedSourceRelationshipCount: accountedSourceRelationshipCount must match accounted output",
-    "receiptSha256": "fdefd031eb619b48c92f71d6470b96ce91369f8ea41a62e88156fa234e07015f",
+    "documentJsonSha256": "48b93360122110f941252ea04543e5b6641ddf1a34123950f90a3771a9a73b2f",
+    "localEncode": "accepted",
+    "receiptSha256": "14b29b37de08f79306ebe414abec33a78f0ea5f374f2f603816b7124c9df4c27",
     "conservation": {
       "sourceNodeCount": 12,
       "accountedSourceNodeCount": 12,
@@ -15,8 +15,8 @@
       "accountedSourceAnnotationCount": 0,
       "sourceAssetCount": 2,
       "accountedSourceAssetCount": 2,
-      "sourceRelationshipCount": 4,
-      "accountedSourceRelationshipCount": 4,
+      "sourceRelationshipCount": 5,
+      "accountedSourceRelationshipCount": 5,
       "sourceDiagnosticCount": 0,
       "accountedSourceDiagnosticCount": 0,
       "sourceTextCharacterCount": 492,
@@ -73,21 +73,21 @@
       "issues": []
     },
     "xhtmlSha256": "cf4eef0eb1edbddca464b1bcd7d1daac59a1b0715cc8e69c64c9a20270f2cd95",
-    "epubSha256": "373650c1d5d37585c5655ce636a2700b2713a8e7619313d479d8bec9773f9de1",
+    "epubSha256": "f859d1ad1fadc8c897cc3a294a09845fdae5d5360fede37d2a40c16a81386c72",
     "epubEntries": {
       "EPUB/assets/asset-img-b0007-rId4-431ced6916a2.png": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
       "EPUB/assets/asset-table-docx-0010-7ef3a6fac311.xhtml": "7ef3a6fac31111282ef8f975c7f5078c3a6d0b0536263282c3fc626ea8178f36",
       "EPUB/content.xhtml": "cf4eef0eb1edbddca464b1bcd7d1daac59a1b0715cc8e69c64c9a20270f2cd95",
       "EPUB/nav.xhtml": "244deaedfdc4f3a7bd923f6b9c5efd798ae07f0954899b6ae54de00801184f25",
-      "EPUB/package.opf": "024eba50163093f2bd1ae229bdd44e88724ab6912e5e8fc9f1911d5bbe3ef218",
-      "EPUB/struct.json": "15522fc3dd42a6e95228bfe4731aad859001715144ab1c1696147c7ae92ba2ad",
+      "EPUB/package.opf": "b11b2cf7396835cea5c348163b645cedba6ad9843a7148e719be8ccca4026bc4",
+      "EPUB/struct.json": "99f89a78440c5d096695b14d77fb9cffd3177c29753f8b61321f72cecf199f43",
       "EPUB/styles.css": "2f60286229245b6a287b77049c12a83b0f56340b495420f666ad5f52beadd627",
       "META-INF/container.xml": "eb284afd303d7b3de499746d27b3c04e6c8b8c5a4fd788bdb240b985cf38e031",
       "mimetype": "e468e350d1143eb648f60c7b0bd6031101ec0544a361ca74ecef256ac901f48b"
     },
-    "packageDecode": "STRUCT_CODEC_CONSERVATION at $.receipt.conservation.accountedSourceRelationshipCount: accountedSourceRelationshipCount must match accounted output",
+    "packageDecode": "accepted",
     "packageInvalidVersion": "STRUCT_CODEC_SCHEMA_VERSION at $.schemaVersion: unsupported schema version \"9.9.9\"",
-    "packageInvalidReceipt": "STRUCT_CODEC_CONSERVATION at $.receipt.conservation.accountedSourceRelationshipCount: accountedSourceRelationshipCount must match accounted output"
+    "packageInvalidReceipt": "STRUCT_CODEC_DIGEST at $.receipt.generatedSha256: generatedSha256 does not match the canonical 0.2.0 digest"
   },
   "ordinary-pdf": {
     "sourceSha256": "50874645b2cec033726018c86974241db2048ac46291e02fcb25d3cb7fbaa907",
@@ -331,7 +331,9 @@
           "category": "visuals",
           "title": "A figure or diagram is missing from the readable export",
           "count": 1,
-          "pages": [1],
+          "pages": [
+            1
+          ],
           "action": "Open the marked page and confirm the figure is visible. If it is absent, keep the source PDF instead of publishing this EPUB."
         },
         {

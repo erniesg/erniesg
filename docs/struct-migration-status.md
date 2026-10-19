@@ -71,10 +71,26 @@ creates PRs and updates issues. Fresh sessions review immutable committed heads
 and cannot initiate nested review. Raw model transcripts remain VM-local:
 `/home/ubuntu/.local/state/struct-migration/20261020/`.
 
-Use `pnpm import && pnpm install --frozen-lockfile --ignore-scripts` for a new
-VM worktree, with the shared store. Do not commit generated pnpm lockfiles as
-part of this migration preparation. Do not invoke a global formatter or change
-the package artifact while refactoring an application import seam.
+For an Ernie.SG VM worktree, keep the shared pnpm store while using physical
+package directories required by PDF provenance:
+
+```sh
+pnpm import
+CI=true pnpm install --node-linker=hoisted --frozen-lockfile --ignore-scripts
+node tools/publication-install-browser.mjs
+```
+
+The isolated linker (including `--shamefully-hoist`) leaves a symlink at
+`node_modules/pdfjs-dist`; `packageContentsIdentity` deliberately rejects that
+root. The hoisted linker uses real package directories without weakening the
+provenance guard. Use `npm run` or direct `node_modules/.bin` commands after
+setup: pnpm's automatic dependency verification can reset an explicitly chosen
+layout when invoked without matching configuration. The browser setup restores
+the repository's pinned publication cache after the script-free install.
+
+Do not commit generated pnpm lockfiles as part of this preparation. Do not
+invoke a global formatter or change the package artifact while refactoring an
+application import seam.
 
 ## Validation and rollback
 

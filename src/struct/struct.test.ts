@@ -93,10 +93,23 @@ describe('STRUCT canonical document graph', () => {
         count + (reconstruction.provenance?.[node.id]?.links.length ?? 0),
       0,
     )
+    const sourceInlineRelationshipCount = reconstruction.paper.nodes.reduce(
+      (count, node) =>
+        count +
+        (node.inlineRuns ?? []).filter(
+          (run) =>
+            run.semanticRole !== 'citation' &&
+            run.semanticRole !== 'cross-reference' &&
+            run.semanticRole !== 'note-reference' &&
+            (Boolean(run.href) || (run.targetIds?.length ?? 0) > 0),
+        ).length,
+      0,
+    )
     const sourceRelationshipCount =
       reconstruction.visualRelationships.length +
       reconstruction.noteRelationships.length +
-      sourceAnnotationCount
+      sourceAnnotationCount +
+      sourceInlineRelationshipCount
 
     expect(graph.schemaVersion).toBe('0.2.0')
     expect(graph.source.format).toBe('docx')
@@ -189,7 +202,7 @@ describe('STRUCT canonical document graph', () => {
   it('pins the structured DOCX receipt', async () => {
     const graph = buildStructDocument(await structuredDocx())
     expect(graph.receipt.generatedSha256).toBe(
-      'fdefd031eb619b48c92f71d6470b96ce91369f8ea41a62e88156fa234e07015f',
+      '14b29b37de08f79306ebe414abec33a78f0ea5f374f2f603816b7124c9df4c27',
     )
   })
 

@@ -25,12 +25,15 @@ Struct contract settles.
   (`vendor/struct/provenance.json`). Public export map at that pin:
   `.`, `./document`, `./identity`, `./ordering`, `./receipt`, `./recovery`,
   `./renderers/xhtml`, `./renderers/epub`. There is no `./bundle` yet
-  (`API_MANIFEST.json` lists it under `unavailablePaths`).
+  (`vendor/struct/erniesg-struct-0.0.0-10116f4726da89ebabc823cb25706f2de5386f40.tgz::package/API_MANIFEST.json`
+  lists `./bundle` under `unavailablePaths`).
 - Struct upstream status at planning time: S-03 (#6) and S-04 (#7) remain open.
   Embedded-only public bundle surface is Struct PR #33; it explicitly excludes
   the external executor, value verifier, and the full resolver conformance
   harness. Default packed-consumer proof establishes existing document subpaths,
-  not complete bundle acceptance.
+  not complete bundle acceptance. Embedded-only is the consumer/MVP scope
+  default only; it does not waive the upstream S-03/S-04 full resolver,
+  value-verifier, or conformance-harness contract, which remains authoritative.
 
 This plan assumes the ADR and issue plan acceptance criteria are not weakened.
 Anything not inferable from the current contract is left as an explicit decision
@@ -141,6 +144,8 @@ Owner: `erniesg/erniesg`. Preconditions: G-S04 and G-PR450.
 - Ingress is bytes-only; the value verifier is forbidden for wire data.
 - Embedded asset payloads are acceptable for the first MVP; external resolver
   execution is deferred and out of scope until a future consumer needs it.
+  This embedded-only default is consumer/MVP scope only and does not waive
+  upstream S-03/S-04 resolver, value-verifier, or conformance acceptance.
 - No writer or route changes occur in E-02.
 - Structured-DOCX conservation depends on PR #450's landed golden; E-02 rebases
   onto it rather than re-freezing its expected file.
@@ -233,9 +238,18 @@ renderer owns renderer constraints).
 
 Add to `tests/struct-adapter-boundary.test.ts` (red first):
 
-- Production files outside `src/struct/` must not import
-  `../struct/types`, `../struct/ids`, `../struct/reading-order`, except the
-  existing `src/struct/recovery.ts` -> `../struct-adapters/recovery` seam.
+- Resolve imports semantically, not by raw specifier text. Production files
+  outside `src/struct/` must not resolve to `src/struct` or its migrated-family
+  re-exports (`types`, `ids`, `reading-order`), including barrel/index forms
+  (`src/struct/index`, `src/struct/index.ts`), configured aliases
+  (`@/struct`, `~/struct`, `#struct`, or equivalent), and the package barrel
+  (`@erniesg/struct`). This also closes transitive re-exports from
+  `src/struct-adapters/*` and `src/struct/from-reconstruction.ts` for those
+  migrated families.
+- The only explicit recovery allowlist is
+  `src/struct/recovery.ts` importing `../struct-adapters/recovery` (plus its
+  barrel/index/alias spellings) for recovery presentation only; every other
+  production import resolving to a migrated family is rejected.
 - Every `@erniesg/struct/...` specifier must be in the installed package export
   map (already enforced).
 - No import of package-private paths.
@@ -292,13 +306,20 @@ Default recommendation: **narrow**, with a proof obligation.
 - Add a conformance test that adapting one pinned StructDocument twice yields a
   byte-identical graph and that the graph is never persisted or treated as
   canonical text authority.
+- Add a red-first static assertion/test that `PublicationGraph`,
+  `publicationGraphSchema`, `serializePublicationGraph`, and any graph
+  persistence/import/export helper are absent from storage, API, route, writer,
+  and release modules; only renderer/projection modules may import them.
 - Bind any publication receipt to the Struct `document`/`receipt` digests and
   the exact package pin; do not treat an independent graph digest as the
-  semantic authority.
+  semantic authority. Receipts must include the canonical Struct digests and
+  exact package pin/version; graph-only digests are diagnostic only.
 - If any of text, semantic IDs, persistence, receipt, writer, or release path
   proves load-bearing, retire the competing graph instead of renaming it.
-- `ResearchPaper` stays a read-only compatibility model with inventoried
-  callers and tests behind the existing facade; it is not removed in E-04.
+- `ResearchPaper` stays a read-only compatibility model behind the existing
+  facade `src/publication/research-paper-adapter.ts`; it is not removed in
+  E-04. E-04 exit evidence must include a checked-in caller/test inventory for
+  that facade (all callers and tests of `ResearchPaper` and adapter exports).
 
 EPUBCheck, Ace, and human accessibility approval remain app-owned release
 evidence, not package unit tests.
@@ -346,7 +367,7 @@ Every stage is red-first and independently revertible:
 | --- | --- |
 | E-02 | Atomic pin; adapter -> package decode -> bundle verify conservation on PDF/DOCX fixtures; bytes-only ingress; frozen parity unchanged except reviewed additions; no writer change |
 | E-03 | Static import guard red-then-green; package/local dual-read equality; accepted/rejected matrix; recovery copy parity; high-fan-in consumers enumerated and tested |
-| E-04 | Dual-render output/failure parity; PublicationGraph ownership proof or retirement; EPUBCheck/Ace/human accessibility still app-owned; ResearchPaper facade inventoried |
+| E-04 | Dual-render output/failure parity; PublicationGraph ownership proof or retirement (including static absence from storage/API/route modules and receipts bound to Struct digests/package pin); EPUBCheck/Ace/human accessibility still app-owned; ResearchPaper facade `src/publication/research-paper-adapter.ts` inventoried with checked-in caller/test inventory |
 | E-05 | Design record; authenticated state machine; inactive route cannot expose unapproved/superseded artifact; concurrency + rollback/forward recovery rehearsal; writer still inactive |
 | E-06 | Accepted E-ACT receipt matching exact head/pins/targets; single writer; post-activation health/observation/read-after-write |
 | E-07 | Extraction-point hashes; package-test mapping; zero production imports to removed modules; package-only app tests; retained-compatibility register |
@@ -354,7 +375,9 @@ Every stage is red-first and independently revertible:
 ## Open decisions requiring human/coordinator input when reached
 
 1. S-04 bundle shape the app will consume (embedded-only vs external resolver).
-   Default: embedded-only; no resolver implementation.
+   Default: embedded-only for consumer/MVP scope only; this default does not
+   waive the upstream S-03/S-04 resolver, value-verifier, or conformance
+   harness, which remains authoritative.
 2. Whether `./bundle` ships in the same S-04 artifact as the eventual consumer
    pin.
 3. PublicationGraph narrow-vs-retire outcome, after the ownership proof runs.

@@ -86,6 +86,11 @@ function boundaryViolations(
       )
         return false
       if (
+        file.pathname === new URL('struct/recovery.ts', root).pathname &&
+        specifier === '../struct-adapters/recovery'
+      )
+        return false
+      if (
         target === new URL('struct/from-reconstruction', root).pathname ||
         target === new URL('struct/from-reconstruction.ts', root).pathname ||
         target === new URL('struct/from-reconstruction.js', root).pathname
@@ -156,6 +161,73 @@ describe('app-owned Struct adapter boundary', () => {
     expect(rootBuild).toBe(facadeBuild)
   })
 
+  it('keeps one app-owned recovery implementation and legacy forwarding', async () => {
+    const implementation = await readFile(
+      new URL('struct-adapters/recovery.ts', root),
+      'utf8',
+    )
+    const legacy = await readFile(
+      new URL('struct/recovery.ts', root),
+      'utf8',
+    )
+    expect(implementation).toContain('export function recoverySummary(')
+    expect(implementation).toContain(
+      "} from '@erniesg/struct/document'",
+    )
+    expect(implementation).not.toContain("} from './types'")
+    expect(legacy.trim()).toBe(
+      `export {
+  diagnosticCategory,
+  diagnosticCopy,
+  hasActionableRecovery,
+  recoverySummary,
+  toStructDiagnostic,
+  type RecoveryDiagnosticInput,
+} from '../struct-adapters/recovery'`,
+    )
+    const [adapterRecovery, legacyRecovery, rootRecovery] = await Promise.all([
+      import('../src/struct-adapters/recovery'),
+      import('../src/struct/recovery'),
+      import('../src/struct'),
+    ])
+    for (const name of [
+      'diagnosticCategory',
+      'diagnosticCopy',
+      'hasActionableRecovery',
+      'recoverySummary',
+      'toStructDiagnostic',
+    ] as const) {
+      expect(adapterRecovery[name]).toBe(legacyRecovery[name])
+      expect(adapterRecovery[name]).toBe(rootRecovery[name])
+    }
+  })
+
+  it('keeps app recovery consumers on the app-owned path', async () => {
+    const legacyRecovery = new URL('struct/recovery', root).pathname
+    const violations: string[] = []
+    for (const file of await portableFiles(root)) {
+      if (file.pathname.startsWith(portableRoot.pathname)) continue
+      const source = await readFile(file, 'utf8')
+      for (const specifier of importedPaths(source, file)) {
+        if (!specifier.startsWith('.')) {
+          if (
+            specifier === '@/struct/recovery' ||
+            specifier === '@/struct/recovery.ts'
+          )
+            violations.push(`${file.pathname}: ${specifier}`)
+          continue
+        }
+        const target = new URL(specifier, file).pathname.replace(
+          /\.(?:[cm]?[jt]s|astro)$/u,
+          '',
+        )
+        if (target === legacyRecovery)
+          violations.push(`${file.pathname}: ${specifier}`)
+      }
+    }
+    expect(violations).toEqual([])
+  })
+
   it('keeps all implementation modules within their allowed import boundaries', async () => {
     const publicPaths = await publicPackagePaths()
     const files = await portableFiles(root)
@@ -176,6 +248,7 @@ describe('app-owned Struct adapter boundary', () => {
     const portable = new URL('struct/codec/probe.ts', root)
     const adapter = new URL('struct-adapters/nested/probe.ts', root)
     const legacy = new URL('struct/from-reconstruction.ts', root)
+    const legacyRecovery = new URL('struct/recovery.ts', root)
     const index = new URL('struct/index.ts', root)
     const research = new URL('research/probe.ts', root)
     for (const [file, source, rejected] of [
@@ -210,6 +283,11 @@ describe('app-owned Struct adapter boundary', () => {
       ],
       [
         portable,
+        "import { diagnosticCopy } from '../../struct-adapters/recovery'",
+        '../../struct-adapters/recovery',
+      ],
+      [
+        portable,
         "import { build } from '../from-reconstruction'",
         '../from-reconstruction',
       ],
@@ -239,6 +317,16 @@ describe('app-owned Struct adapter boundary', () => {
         '../../node_modules/@erniesg/struct/dist/index',
       ],
       [legacy, "export * from '../research/pdf'", '../research/pdf'],
+      [
+        legacyRecovery,
+        "export * from '../struct-adapters/from-reconstruction'",
+        '../struct-adapters/from-reconstruction',
+      ],
+      [
+        legacyRecovery,
+        "export * from '../struct-adapters/recovery.js'",
+        '../struct-adapters/recovery.js',
+      ],
       [index, "export * from '../research/pdf'", '../research/pdf'],
     ] as const) {
       expect(boundaryViolations(source, file, publicPaths), source).toContain(
@@ -268,7 +356,28 @@ describe('app-owned Struct adapter boundary', () => {
     ).toEqual([])
     expect(
       boundaryViolations(
+        `export {
+  diagnosticCategory,
+  diagnosticCopy,
+  hasActionableRecovery,
+  recoverySummary,
+  toStructDiagnostic,
+  type RecoveryDiagnosticInput,
+} from '../struct-adapters/recovery'`,
+        legacyRecovery,
+        publicPaths,
+      ),
+    ).toEqual([])
+    expect(
+      boundaryViolations(
         "export * from './from-reconstruction'",
+        index,
+        publicPaths,
+      ),
+    ).toEqual([])
+    expect(
+      boundaryViolations(
+        "export * from './recovery'",
         index,
         publicPaths,
       ),

@@ -241,7 +241,13 @@ a follow-up candidate, not a permanent statement.
   the cut and GREEN after: in a scratch copy with the renderer import switch reverted, the
   new entry reports the three reverted imports; on the candidate head the guard file passes
   8/8 (the 6 pre-existing assertions plus the 2 new E-04 blocks).
-- **`npx astro check`**: 0 errors.
+- **`npx astro check`**: 0 errors, 0 warnings (286 hints, the repository's own pre-existing
+  hints).
+- **The repository's own app suite** on the committed head
+  `npx vitest run --exclude 'tests/e2e/**' --exclude 'tools/agent-evidence-budget.test.mjs' --maxWorkers=1`:
+  **331 files (329 passed, 2 skipped); 5067 tests (5059 passed, 8 skipped); exit 0 - no
+  failures.** The suite was run on a committed, clean worktree and the tree was not edited
+  while it ran.
 
 ---
 

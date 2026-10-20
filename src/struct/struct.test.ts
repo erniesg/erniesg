@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises'
 import { strFromU8, unzipSync } from 'fflate'
 import { describe, expect, it, vi } from 'vitest'
+import { buildStructEpub as packageBuildStructEpub } from '@erniesg/struct/renderers/epub'
+import { renderPublicationXhtml as packageRenderPublicationXhtml } from '@erniesg/struct/renderers/xhtml'
 import { fixtureFile } from '../../tests/fixtures/pdf-fixtures'
 import { buildStructDocument } from './from-reconstruction'
 import { buildStructEpub } from './epub'
@@ -1238,9 +1240,15 @@ describe('STRUCT canonical document graph', () => {
 
   it('exposes STRUCT at the existing renderer and EPUB entry points', async () => {
     const graph = buildStructDocument(await structuredDocx())
-    expect(renderPublicXhtml(graph)).toBe(renderPublicationXhtml(graph))
+    // The app's renderer and EPUB entry points are the pinned package
+    // renderers since the E-04 import cut. The local copies under
+    // `src/struct/` are stale compatibility copies that E-07 deletes, so they
+    // are no longer the reference for this assertion.
+    expect(renderPublicXhtml(graph)).toBe(
+      packageRenderPublicationXhtml(graph),
+    )
     expect((await buildPublicEpub(graph)).sha256).toBe(
-      (await buildStructEpub(graph)).sha256,
+      (await packageBuildStructEpub(graph)).sha256,
     )
   })
 

@@ -1,5 +1,5 @@
 import { strFromU8, unzipSync } from 'fflate'
-import { buildStructEpub } from '../struct/epub'
+import { buildStructEpub } from '@erniesg/struct/renderers/epub'
 import type { StructDocument } from '@erniesg/struct/document'
 import type { GroundedStructMaterializationReceipt } from './grounded-struct-materializer'
 import {

@@ -1,3 +1,13 @@
+/**
+ * The ResearchPaper bridge is one-way: a `ResearchPaper` is projected onto a
+ * `PublicationGraph`, and the graph never authors `ResearchPaper` text or
+ * semantic ids. The reverse writer is retired, so no export of this module
+ * converts a graph back into a paper.
+ *
+ * The projection is a read-only compatibility surface. The adapter stays
+ * unregistered in `createDefaultPublicationAdapterRegistry()`, so the graph it
+ * produces never enters the release path.
+ */
 import {
   researchPaperSchema,
   type ResearchNode,
@@ -17,6 +27,7 @@ import {
   type PublicationSourceAdapter,
   type PublicationSourceResult,
 } from './source-adapter'
+import { legacyResearchPaperSourceBinding } from './source-binding'
 
 export const RESEARCH_PAPER_ADAPTER_ID = 'research-paper' as const
 
@@ -195,106 +206,6 @@ export function researchPaperToPublicationGraph(
   })
 }
 
-export function publicationGraphToResearchPaper(
-  input: PublicationGraph,
-): ResearchPaper {
-  const graph = publicationGraphSchema.parse(input)
-  const nodes = graph.nodes.map((node): ResearchNode => {
-    const source = node.provenance.sourceId
-    switch (node.type) {
-      case 'heading':
-        return {
-          id: node.id,
-          type: 'heading',
-          level: node.level as 1 | 2 | 3,
-          text: node.text,
-          inlineRuns: node.inlineRuns,
-          source,
-        }
-      case 'paragraph':
-        return {
-          id: node.id,
-          type: 'paragraph',
-          text: node.text,
-          inlineRuns: node.inlineRuns,
-          source,
-        }
-      case 'quote':
-        return {
-          id: node.id,
-          type: 'quote',
-          text: node.text,
-          inlineRuns: node.inlineRuns,
-          source,
-        }
-      case 'caption':
-        return {
-          id: node.id,
-          type: 'caption',
-          text: node.text,
-          inlineRuns: node.inlineRuns,
-          source,
-        }
-      case 'note':
-        if (node.noteKind === 'author-note')
-          throw new Error('ResearchPaper does not support author-note nodes')
-        return {
-          id: node.id,
-          type: 'footnote',
-          kind: node.noteKind,
-          label: node.label,
-          text: node.text,
-          inlineRuns: node.inlineRuns,
-          relationships: { backlinks: node.backlinkIds },
-          source,
-        }
-      case 'figure':
-        return {
-          id: node.id,
-          type: 'figure',
-          title: node.title,
-          sourceText: node.sourceText,
-          inlineRuns: node.inlineRuns,
-          relationships: {
-            caption:
-              node.captionId ??
-              (() => {
-                throw new Error(`Figure ${node.id} lacks a caption`)
-              })(),
-            ...(node.assetIds.length ? { assets: node.assetIds } : {}),
-          },
-          source,
-        }
-      default:
-        throw new Error(
-          `Publication node ${node.id} (${node.type}) is outside the ResearchPaper subset`,
-        )
-    }
-  })
-
-  return researchPaperSchema.parse({
-    id: graph.id,
-    version: graph.metadata.sourceDocumentVersion,
-    status: graph.metadata.status,
-    title: graph.metadata.title,
-    subtitle: graph.metadata.subtitle,
-    authors: graph.metadata.contributors,
-    language:
-      graph.metadata.defaultLocale === 'und'
-        ? undefined
-        : graph.metadata.defaultLocale,
-    baseDirection:
-      graph.metadata.defaultDirection === 'auto'
-        ? 'unknown'
-        : graph.metadata.defaultDirection,
-    publicationDate: graph.metadata.created,
-    artifactModifiedAt: graph.metadata.artifactModifiedAt,
-    updated: graph.metadata.modified,
-    abstract: graph.metadata.abstract,
-    nodes,
-  })
-}
-
 export function adaptResearchPaper(
   input: ResearchPaper,
   assetBundle: AssetBundle = emptyAssetBundle(),
@@ -311,6 +222,10 @@ export function adaptResearchPaper(
       sourceId: paper.id,
       sourceRevision: paper.version,
     },
+    // This is the only source in the app that has no Struct document, so it
+    // carries the legacy binding. The variant has no Struct field at all: no
+    // placeholder digest and no fabricated package pin.
+    sourceBinding: legacyResearchPaperSourceBinding(),
   })
 }
 

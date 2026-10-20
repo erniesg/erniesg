@@ -263,9 +263,10 @@ Not migrated (stay app-owned; do not widen the package API for them):
   `StructDiagnostic`, and `StructDiagnosticSeverity` shapes. Package
   `@erniesg/struct/recovery` owns source-neutral facts:
   `diagnosticCategory`, `recoveryFact`, `toStructDiagnostic`, and its **own
-  generic `recoverySummary`**, plus `hasActionableRecovery` and the
-  `RecoveryDiagnosticInput` type (per the pinned `API_MANIFEST.json`
-  `./recovery` runtimeExports). (F9)
+  generic `recoverySummary`**, plus `hasActionableRecovery` — those five are
+  the runtime values pinned in `API_MANIFEST.json` under the `./recovery`
+  runtimeExports. The `RecoveryDiagnosticInput` type is a **type export** of
+  `@erniesg/struct/recovery`, not a runtime export. (F9)
 - App `src/struct-adapters/recovery.ts` owns presentation: `diagnosticCopy`
   titles/messages/actions, the **enriched** `recoverySummary` titles/summaries,
   and `userAction`. It is an app-owned presentation adapter, not a migrated family

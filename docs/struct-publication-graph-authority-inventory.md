@@ -201,7 +201,7 @@ type** — it imports `PUBLICATION_GRAPH_VERSION`, `publicationGraphSchema`,
 | S4 | `src/publication/adapter-conformance.ts` | 2 | conformance |
 | S5 | `src/publication/adapters/astro.ts` | 14, 567 | source adapter |
 | S6 | `src/publication/adapters/payload-lexical.ts` | 3, 1646, 1726 | source adapter |
-| S7 | `src/publication/struct-adapter.ts` | 7, 1254 | projection |
+| S7 | `src/publication/struct-adapter.ts` | 4, 105 | projection |
 | S8 | `tools/publication-check.mjs` | 22, 1144 | CLI checker |
 | S9 | `src/publication/schema.test.ts` | 2 | test |
 | S10 | `src/publication/struct-adapter.test.ts` | 5 | test |
@@ -319,7 +319,7 @@ into ResearchPaper nodes and rebuilds the paper envelope:
 | Graph input | Reverse output | Line |
 |---|---|---|
 | `node.id` | `node.id` (semantic id minted from the graph) | `:207`, `:216`, `:224`, `:232`, `:242`, `:253` |
-| `node.text` / `node.sourceText` | `node.text` / `node.sourceText` (canonical text minted from the graph) | `:210`, `:219`, `:228`, `:237`, `:246`, `:255` |
+| `node.text` / `node.sourceText` | `node.text` / `node.sourceText` (canonical text minted from the graph) | `:210`, `:218`, `:226`, `:234`, `:246`, `:256` |
 | `node.provenance.sourceId` | `node.source` | `:203` and each case |
 | `graph.id` | `paper.id` | `:276` |
 | `graph.metadata.sourceDocumentVersion` | `paper.version` | `:277` |

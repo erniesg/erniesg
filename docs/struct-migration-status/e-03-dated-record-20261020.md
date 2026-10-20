@@ -16,7 +16,10 @@ Precondition: E-02 passed (`feat/struct-e03-core-codecs-ids-order-20261020` exis
   `src/research/epub.ts`, `src/research/reconstruction-materialization.ts`,
   `src/research/reconstruction-attempt-trace.ts`, `src/research/grounded-epub-comparison.ts`,
   `src/research/grounded-struct-materializer.ts`, `src/research/grounded-struct-repair-applicator.ts`.
-- Local portable modules (`src/struct/*`, `src/struct-adapters/*`) kept physically unchanged; their tests remain green.
+- The local portable MODULE implementations (`src/struct/types.ts`, `src/struct/ids.ts`, `src/struct/codec*`,
+  `src/struct/reading-order.ts`, `src/struct-adapters/recovery.ts`) are kept physically unchanged; their tests remain green.
+  `src/struct-adapters/from-reconstruction.ts` is a CONSUMER of those families, not one of them: its imports were
+  re-pointed at the package subpaths in this step, and its module body is otherwise unchanged.
 - `src/research/epub.ts` `import type { StructDocument }` switched in E-03; renderer-branch switch (`../struct/xhtml` / `../struct/epub` → package renderers) stays in E-04 and was NOT done.
 - `src/struct/recovery.ts` stays a compatibility forwarder to `src/struct-adapters/recovery.ts`; the app's enriched `recoverySummary` was NOT replaced by the package generic copy.
 - `src/struct/codec*` local modules kept; no new production semantics added to retained copies.
@@ -37,6 +40,18 @@ Precondition: E-02 passed (`feat/struct-e03-core-codecs-ids-order-20261020` exis
 - No golden regenerated; no artifact repinned.
 - No `npm publish`, no deploy, no writer/route change, no PR created, no push, no merge.
 - `astro check` passes (0 errors, 279 hints pre-existing).
-- The repository's own app suite (`npx vitest run --exclude 'tests/e2e/**' --exclude 'tools/agent-evidence-budget.test.mjs' --maxWorkers=1`): 318 files (316 passed, 2 skipped), 4986 tests (4969 passed, 17 skipped), exit 0 - no failures.
+- The repository's own app suite (`npx vitest run --exclude 'tests/e2e/**' --exclude 'tools/agent-evidence-budget.test.mjs' --maxWorkers=1`):
+  318 files (316 passed, 2 skipped), 4986 tests (4969 passed, 17 skipped), exit 0 - no failures. The independent
+  review of this candidate measured the same numbers at the same commit.
+- **Known load sensitivity, stated plainly:** a SECOND recorded run of that identical command at this candidate
+  reported one failing FILE - `src/research/grounded-struct-materializer.test.ts` - with
+  `Error: Test timed out in 300000ms` on its `continues one #199 task through a rejected sibling to terminal
+  promotion` case. That is a per-test timeout, not an assertion failure: the case exercises the materializer of
+  `src/research/grounded-struct-materializer.ts`, one of the eight files re-pointed at the package subpaths in this
+  step, and it runs close to vitest's 300 s per-test limit. The same file passes at the E-02 parent head and in the
+  independent review's run, and the implementation of `structId`/`structDigest` in the package
+  (`@erniesg/struct/identity`) is the same algorithm as the app's local `src/struct/ids.ts`, so the switch adds no
+  new work per identifier. The failure was observed while several suites ran concurrently on one machine; it is
+  recorded here rather than hidden, and no assertion was weakened to hide it.
 - A bare `npx vitest run --maxWorkers=1` (which also collects the Playwright e2e specs, which the repository's script excludes) reports the e2e spec files as collection failures plus the `publication:build` symlink case, whose own setup fails when the gitignored `.agent/evidence/` directory does not exist yet in a fresh worktree. That invocation is not the repository's suite command and is recorded here only so the difference is not mistaken for a regression.
 - `git status --porcelain` clean (only 10 changed files: 8 production import switches + 1 guard extension + 1 dated record; 0 vendor / golden / expected / lockfile changes).

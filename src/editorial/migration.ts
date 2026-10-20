@@ -295,7 +295,7 @@ export async function runEditorialBackfill(
   const records = orderedBackfillRecords(await options.source.listRecords())
   const states = backfillInitialStates(records)
   const cursor = await options.repository.readBackfillProgress(options.name)
-  const start = 0
+  const start = cursor === null ? 0 : indexAfterCursor(records, cursor)
 
   let migrated = 0
   let position = start

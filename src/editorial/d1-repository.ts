@@ -558,7 +558,22 @@ export class D1EditorialRepository implements EditorialRepository {
     const transition: EditorialAggregateTransition | undefined = input.transition
 
     const statements: D1PreparedStatement[] = [
-      this.statement(insertRecordQuery({ table, columns, values })),
+      this.statement(
+        insertRecordQuery({
+          table,
+          columns,
+          values,
+          ...(transition
+            ? {
+                guard: {
+                  kind: transition.kind,
+                  id: transition.id,
+                  expected: transition.expected,
+                },
+              }
+            : {}),
+        }),
+      ),
     ]
     if (transition) {
       statements.push(this.statement(updateAggregateStateQuery(transition)))
@@ -588,6 +603,24 @@ export class D1EditorialRepository implements EditorialRepository {
       // state = 'release-released'` is the storage-level "one current
       // release per target" rule. It fires when two writers both believed
       // they were first.
+      if (message.includes('editorial_releases.target_id')) {
+        return {
+          ok: false,
+          refusal: {
+            code: 'target_already_released',
+            message: `the store refused the write: ${message}`,
+          },
+        }
+      }
+      if (/UNIQUE constraint failed/i.test(message)) {
+        return {
+          ok: false,
+          refusal: {
+            code: 'record_already_exists',
+            message: `the store refused the write: ${message}`,
+          },
+        }
+      }
       return {
         ok: false,
         refusal: {
@@ -597,6 +630,17 @@ export class D1EditorialRepository implements EditorialRepository {
       }
     }
 
+    const written = (results[0]?.meta?.changes ?? 0) > 0
+    if (!written) {
+      return {
+        ok: false,
+        refusal: {
+          code: 'cas_conflict',
+          message:
+            'the aggregate moved between the read and the write: nothing was written',
+        },
+      }
+    }
     return { ok: true, written: true }
   }
 

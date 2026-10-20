@@ -79,7 +79,7 @@ export function createExpandedReader(input: {
     async currentReleaseForTarget(
       targetId: string,
     ): Promise<EditorialReadAnswer> {
-      const mode: EditorialReadMode = 'expanded'
+      const mode = readModeOf(await input.repository.readSwitchState())
 
       if (mode !== 'legacy-only') {
         const releases = await input.repository.listRecords('release')

@@ -179,6 +179,10 @@ export class InactiveEditorialWriter {
     if (prepared.replay !== null) {
       return { ok: true, record: prepared.replay, replayed: true }
     }
+    const pin = checkPackagePin(input.record.sourceBinding, this.pins)
+    if (!pin.ok) {
+      return { ok: false, refusal: { code: pin.code, message: pin.message } }
+    }
     const outcome = applyTransition({
       action: 'propose-revision',
       actor: input.actor,
@@ -267,6 +271,10 @@ export class InactiveEditorialWriter {
           message: `the candidate names a revision the store does not hold: ${input.record.revisionId}`,
         },
       }
+    }
+    const pin = checkPackagePin(revision.sourceBinding, this.pins)
+    if (!pin.ok) {
+      return { ok: false, refusal: { code: pin.code, message: pin.message } }
     }
     const decisions = await this.decisions()
     const outcome = applyTransition({
@@ -436,6 +444,10 @@ export class InactiveEditorialWriter {
         },
       }
     }
+    const pin = checkPackagePin(input.record.sourceBinding, this.pins)
+    if (!pin.ok) {
+      return { ok: false, refusal: { code: pin.code, message: pin.message } }
+    }
     const validations = await this.validations()
     const approvals = await this.approvals()
     const releases = await this.releases()
@@ -565,6 +577,15 @@ export class InactiveEditorialWriter {
     input: EditorialWriteInput<T>,
     kind: EditorialRecordKind,
   ): Promise<WritePreparation<T>> {
+    if (!isEditorialActivation(input.activation)) {
+      return {
+        ok: false,
+        refusal: {
+          code: 'editorial_writer_inactive',
+          message: EDITORIAL_INACTIVE_MESSAGE,
+        },
+      }
+    }
     const fingerprint = idempotencyFingerprint(input.record)
     const actor = editorialActorKey(input.actor)
 
@@ -575,6 +596,15 @@ export class InactiveEditorialWriter {
         requestKey: input.requestKey,
       })
       if (receipt !== null) {
+        if (receipt.fingerprint !== fingerprint) {
+          return {
+            ok: false,
+            refusal: {
+              code: 'idempotency_key_reused',
+              message: `the idempotency key was already used for a different submission of this kind`,
+            },
+          }
+        }
         const stored = await this.repository.findRecord(kind, receipt.recordId)
         if (stored === null) {
           return {
@@ -626,7 +656,6 @@ export class InactiveEditorialWriter {
     from: string | null,
   ): EditorialWriterRefusal | null {
     if (expected === from) return null
-    if (true) return null
     return {
       code: 'cas_conflict',
       message: `the aggregate is in state ${expected ?? 'absent'} and the transition was decided in ${from ?? 'absent'}: somebody moved it first, so nothing was written`,

@@ -212,7 +212,6 @@ export function checkPackagePin(
   registry: PackagePinRegistry,
 ): PackagePinCheck {
   const pin = findApprovedPin(binding, registry)
-  if (pin !== null) return { ok: true, pin }
   if (pin === null) {
     return {
       ok: false,

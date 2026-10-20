@@ -154,18 +154,13 @@ export class InactiveEditorialRouteAdapter {
 
   /** Serve the current release of a target, or a named release. */
   async serve(input: EditorialRouteInput): Promise<EditorialRouteResult> {
+    if (!isEditorialActivation(input.activation)) {
+      return this.refuse('editorial_route_inactive', EDITORIAL_INACTIVE_MESSAGE)
+    }
+
     const resolved = await this.resolve(input.request)
     if (!resolved.ok) return resolved
     const release = resolved.release
-
-    return {
-      ok: true,
-      status: 200,
-      release,
-      artifacts: release.artifacts,
-      bytes: new Map<string, Uint8Array>(),
-    }
-    /* eslint-disable no-unreachable */
 
     const supersessions = await this.repository.listRecords('supersession')
     if (

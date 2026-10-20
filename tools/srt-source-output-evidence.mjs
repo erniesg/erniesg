@@ -20,6 +20,8 @@ import {
   resolve,
 } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { STRUCT_SCHEMA_VERSION } from '@erniesg/struct/document'
+import { structDigest as packageStructDigest } from '@erniesg/struct/identity'
 import { createServer } from 'vite'
 import { chromium } from '@playwright/test'
 import { strFromU8, unzipSync } from 'fflate'
@@ -341,14 +343,14 @@ async function cropFixtureFigure(asset) {
   }
 }
 
-async function createFixtureStructDocument({
+export async function createFixtureStructDocument({
   sourceHash,
   byteLength,
   pageCount,
   fileName,
   page,
   asset,
-  structDigest,
+  structDigest = packageStructDigest,
 }) {
   const figureAsset = await cropFixtureFigure(asset)
   const sourceEvidence = evidence(
@@ -417,17 +419,6 @@ async function createFixtureStructDocument({
     'The high-resolution photograph is attested elsewhere as photograph.'
   const literalMarkupProse =
     '## Not a heading and **not bold** and {placeholder} stay literal.'
-  const textCharacterCount = [
-    'Checkpoint paper',
-    'The result sentence continues across a column break.',
-    'Figure 1. Source flowchart',
-    'Table 1. Validated checkpoint values remain structured.',
-    'for each source line:\n  compare source and rendition\n  keep the named property visible',
-    pageJoinProse,
-    hyphenResolutionProse,
-    literalMarkupProse,
-    ...cells.map(({ text }) => text),
-  ].reduce((total, value) => total + value.length, 0)
   const figureEvidence = {
     ...sourceEvidence,
     boxes: [
@@ -443,8 +434,103 @@ async function createFixtureStructDocument({
     sourceIds: [`source-figure-${page}`],
   }
   const documentId = `srt-checkpoint-${sourceHash.slice(0, 24)}`
+  const blocks = [
+    {
+      id: 'checkpoint-heading',
+      kind: 'heading',
+      text: 'Checkpoint paper',
+      page,
+      order: 0,
+      column: 'single',
+      inline: [],
+      attributes: { level: 1 },
+      evidence: blockEvidence,
+    },
+    {
+      id: 'checkpoint-prose',
+      kind: 'paragraph',
+      text: 'The result sentence continues across a column break.',
+      page,
+      order: 1,
+      column: 'single',
+      inline: [],
+      evidence: blockEvidence,
+    },
+    {
+      id: 'checkpoint-figure',
+      kind: 'figure',
+      label: 'Figure 1',
+      text: 'Figure 1. Source flowchart',
+      page,
+      order: 2,
+      column: 'single',
+      inline: [],
+      fallbackAssetIds: ['checkpoint-source-flowchart'],
+      evidence: blockEvidence,
+    },
+    {
+      id: 'checkpoint-table',
+      kind: 'table',
+      text: 'Table 1. Validated checkpoint values remain structured.',
+      page,
+      order: 3,
+      column: 'single',
+      inline: [],
+      table: { rows: 2, columns: 2, cells, semantic: 'verified' },
+      evidence: blockEvidence,
+    },
+    {
+      id: 'checkpoint-code',
+      kind: 'code',
+      text: 'for each source line:\n  compare source and rendition\n  keep the named property visible',
+      page,
+      order: 4,
+      column: 'single',
+      inline: [],
+      evidence: blockEvidence,
+    },
+    {
+      id: 'checkpoint-page-join-prose',
+      kind: 'paragraph',
+      text: pageJoinProse,
+      page,
+      order: 5,
+      column: 'single',
+      inline: [],
+      evidence: blockEvidence,
+    },
+    {
+      id: 'checkpoint-hyphen-prose',
+      kind: 'paragraph',
+      text: hyphenResolutionProse,
+      page,
+      order: 6,
+      column: 'single',
+      inline: [],
+      evidence: blockEvidence,
+    },
+    {
+      id: 'checkpoint-markup-prose',
+      kind: 'paragraph',
+      text: literalMarkupProse,
+      page,
+      order: 7,
+      column: 'single',
+      inline: [],
+      evidence: blockEvidence,
+    },
+  ]
+  // The package's canonical receipt counts block text only: table cell text is
+  // structure carried by the table block, not block text. Deriving the count
+  // from the blocks keeps the receipt from drifting away from them, and
+  // matches the app's own receipt construction in
+  // `src/struct-adapters/from-reconstruction.ts`.
+  const textCharacterCount = blocks.reduce(
+    (total, block) => total + block.text.length,
+    0,
+  )
   const document = {
-    schemaVersion: '0.1.0',
+    schemaVersion: STRUCT_SCHEMA_VERSION,
     documentId,
     source: {
       format: 'pdf',
@@ -464,92 +550,7 @@ async function createFixtureStructDocument({
       updated: '2026-01-01',
       artifactModifiedAt: '2026-01-01T00:00:00Z',
     },
-    blocks: [
-      {
-        id: 'checkpoint-heading',
-        kind: 'heading',
-        text: 'Checkpoint paper',
-        page,
-        order: 0,
-        column: 'single',
-        inline: [],
-        attributes: { level: 1 },
-        evidence: blockEvidence,
-      },
-      {
-        id: 'checkpoint-prose',
-        kind: 'paragraph',
-        text: 'The result sentence continues across a column break.',
-        page,
-        order: 1,
-        column: 'single',
-        inline: [],
-        evidence: blockEvidence,
-      },
-      {
-        id: 'checkpoint-figure',
-        kind: 'figure',
-        label: 'Figure 1',
-        text: 'Figure 1. Source flowchart',
-        page,
-        order: 2,
-        column: 'single',
-        inline: [],
-        fallbackAssetIds: ['checkpoint-source-flowchart'],
-        evidence: blockEvidence,
-      },
-      {
-        id: 'checkpoint-table',
-        kind: 'table',
-        text: 'Table 1. Validated checkpoint values remain structured.',
-        page,
-        order: 3,
-        column: 'single',
-        inline: [],
-        table: { rows: 2, columns: 2, cells, semantic: 'verified' },
-        evidence: blockEvidence,
-      },
-      {
-        id: 'checkpoint-code',
-        kind: 'code',
-        text: 'for each source line:\n  compare source and rendition\n  keep the named property visible',
-        page,
-        order: 4,
-        column: 'single',
-        inline: [],
-        evidence: blockEvidence,
-      },
-      {
-        id: 'checkpoint-page-join-prose',
-        kind: 'paragraph',
-        text: pageJoinProse,
-        page,
-        order: 5,
-        column: 'single',
-        inline: [],
-        evidence: blockEvidence,
-      },
-      {
-        id: 'checkpoint-hyphen-prose',
-        kind: 'paragraph',
-        text: hyphenResolutionProse,
-        page,
-        order: 6,
-        column: 'single',
-        inline: [],
-        evidence: blockEvidence,
-      },
-      {
-        id: 'checkpoint-markup-prose',
-        kind: 'paragraph',
-        text: literalMarkupProse,
-        page,
-        order: 7,
-        column: 'single',
-        inline: [],
-        evidence: blockEvidence,
-      },
-    ],
+    blocks,
     assets: [
       {
         id: 'checkpoint-source-flowchart',
@@ -608,7 +609,7 @@ async function createFixtureStructDocument({
       issues: [],
     },
     receipt: {
-      schemaVersion: '0.1.0',
+      schemaVersion: STRUCT_SCHEMA_VERSION,
       documentId,
       sourceSha256: sourceHash,
       blockCount: 8,
@@ -641,6 +642,10 @@ async function createFixtureStructDocument({
     },
   }
   const { receipt, ...withoutReceipt } = document
+  // The canonical receipt digest: the document without its receipt, with the
+  // conservation accounting and the byte-free assets in place of the raw
+  // arrays. This is the same shape the app builds in
+  // `src/struct-adapters/from-reconstruction.ts`.
   receipt.generatedSha256 = structDigest({
     ...withoutReceipt,
     conservation: receipt.conservation,
@@ -769,14 +774,13 @@ async function createViteModules() {
     server: { middlewareMode: true, watch: null },
   })
   try {
-    const [checkpoints, pdf, struct, targets, structIds] = await Promise.all([
+    const [checkpoints, pdf, struct, targets] = await Promise.all([
       vite.ssrLoadModule('/src/research/source-output-checkpoints.ts'),
       vite.ssrLoadModule('/src/research/pdf.ts'),
       vite.ssrLoadModule('/src/research/epub.ts'),
       vite.ssrLoadModule('/src/research/targets.ts'),
-      vite.ssrLoadModule('/src/struct/ids.ts'),
     ])
-    return { vite, checkpoints, pdf, struct, targets, structIds }
+    return { vite, checkpoints, pdf, struct, targets }
   } catch (error) {
     await vite.close()
     throw error
@@ -872,7 +876,6 @@ async function run(options) {
           fileName: basename(options.document),
           page: checkpoints[0].page,
           asset: sourceAsset,
-          structDigest: modules.structIds.structDigest,
         })
       : null
     const document = await loadStructDocument(options.struct, fallback)

@@ -1510,6 +1510,27 @@ describe('candidate-grounded STRUCT materialization', () => {
     expect(() =>
       verifyGroundedCoreMaterializationBinding(result.materialization),
     ).not.toThrow()
+    // The repair path rematerializes through the same grounded materializer,
+    // so the repaired document must satisfy the same STRUCT receipt
+    // invariant: its text count describes the blocks it publishes.
+    const repairedBlockTextSum = result.materialization.document.blocks.reduce(
+      (total, block) => total + block.text.length,
+      0,
+    )
+    expect(repairedBlockTextSum).toBe(29)
+    expect(result.materialization.document.receipt.textCharacterCount).toBe(
+      repairedBlockTextSum,
+    )
+    expect(
+      result.materialization.document.receipt.conservation
+        .sourceTextCharacterCount,
+    ).toBe(repairedBlockTextSum)
+    expect(() =>
+      packageDecodeStructDocument(result.materialization.document),
+    ).not.toThrow()
+    expect(() =>
+      localDecodeStructDocument(result.materialization.document),
+    ).not.toThrow()
 
     const forgedVerifier = {
       ...groundedVerifier,

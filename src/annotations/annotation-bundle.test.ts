@@ -9,6 +9,7 @@ import type { DocumentReconstruction } from '../research/import-types'
 import {
   annotationBundleSchema,
   createAnnotationBundle,
+  createLegacyAnnotationAnchorMap,
   serializeAnnotationBundle,
   type AnnotationAnchorSource,
 } from './annotation-bundle'
@@ -246,6 +247,68 @@ describe('AnnotationBundle', () => {
     expect(
       withSourceId.error?.issues.map((issue) => issue.message).join(' '),
     ).toMatch(/sourceId/)
+  })
+
+  it('still parses a legacy 1.1.0 bundle and resolves its graph anchors', () => {
+    const legacyAnchor = {
+      nodeId: 'paragraph-1',
+      position: { start: 4, end: 10 },
+      quote: { exact: 'legacy', prefix: 'the ', suffix: ' paragraph text' },
+    }
+    const legacy = annotationBundleSchema.parse({
+      version: '1.1.0',
+      graphId: 'legacy-graph',
+      anchors: [{ id: 'note:target', anchor: legacyAnchor }],
+      annotations: [
+        {
+          id: 'note',
+          kind: 'note',
+          target: legacyAnchor,
+          body: 'saved body',
+          geometryCache: [],
+        },
+      ],
+    })
+
+    expect(legacy.version).toBe('1.1.0')
+    expect(legacy.graphId).toBe('legacy-graph')
+    expect(legacy.sourceId).toBeUndefined()
+
+    const legacyMap = createLegacyAnnotationAnchorMap({
+      id: 'legacy-graph',
+      nodes: [
+        {
+          id: 'paragraph-1',
+          type: 'paragraph',
+          text: 'the legacy paragraph text',
+        },
+        { id: 'code-1', type: 'code', code: 'const legacy = true' },
+      ],
+    })
+
+    expect(legacyMap.id).toBe('legacy-graph')
+    expect(legacyMap.nodes).toEqual([
+      {
+        id: 'paragraph-1',
+        type: 'paragraph',
+        text: 'the legacy paragraph text',
+      },
+      { id: 'code-1', type: 'code', text: 'const legacy = true' },
+    ])
+
+    expect(
+      resolveTextAnchor(legacy.anchors[0].anchor, legacyMap.nodes),
+    ).toEqual({
+      status: 'resolved',
+      nodeId: 'paragraph-1',
+      start: 4,
+      end: 10,
+      matchedBy: 'position-and-context',
+    })
+
+    expect(() =>
+      createAnnotationBundle(legacyMap, legacy.annotations),
+    ).toThrow(/read-only/)
   })
 
   it('round-trips typed annotations and semantic anchors beside the Struct source', () => {

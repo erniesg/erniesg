@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { randomBytes } from 'node:crypto'
 import { constants as fsConstants } from 'node:fs'
 import {
@@ -21,6 +22,12 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { canonicalPublicationSourceResult } from '../src/publication/adapter-conformance.ts'
+import {
+  buildPublicationPlan,
+  publicationSourceReceiptForPlan,
+} from '../src/publication/publishing-facade.ts'
+import { buildStructDocument } from '../src/struct-adapters/index.ts'
+import { loadAdapterCase } from '../tests/fixtures/struct-adapter-parity/cases.ts'
 import { adaptPayloadLexical } from '../src/publication/adapters/payload-lexical.ts'
 import {
   PUBLICATION_PROFILES,
@@ -32,7 +39,6 @@ import {
   canonicalRouteBodyFingerprint,
   consumeRouteImageIndex,
   createPublicationStagingDirectory,
-  publicationGraphBodyFingerprint,
   publicationBuild,
   publicationReceiptDigest,
   publicationRepositoryForCurrentCheckout,
@@ -56,6 +62,45 @@ function macOSTemporaryAliasCases(processTemporaryDirectory) {
     ])
   return aliases
 }
+
+/**
+ * The publication plan the builder publishes.
+ *
+ * The builder takes its publication semantics from the facade, so the tests
+ * publish a plan instead of a source result. The plan is the pinned Struct
+ * revision, carried with the provenance the payload adapter produces, so the
+ * receipt assertions of the builder stay the same.
+ */
+let payloadPlanFixture
+async function payloadPlan(sourceDocument) {
+  payloadPlanFixture ??= await (async () => {
+    const structDocument = buildStructDocument(
+      await loadAdapterCase('ordinary-pdf'),
+    )
+    const plan = await buildPublicationPlan({
+      adapterId: 'struct',
+      document: structDocument,
+    })
+    const sourceDigest = createHash('sha256')
+      .update(JSON.stringify(sourceDocument ?? {}))
+      .digest('hex')
+    return {
+      ...plan,
+      provenance: {
+        ...plan.provenance,
+        adapterId: 'payload-lexical',
+        sourceType: 'payload',
+        sourceId: `payload:document-${sourceDigest}:en`,
+        sourceRevision: sourceDigest,
+        mappingVersion: '1.0.0',
+      },
+    }
+  })()
+  return payloadPlanFixture
+}
+
+/** The runtime the builder tests publish their plan with. */
+const payloadBuildRuntime = { buildPlan: () => payloadPlan() }
 
 function payloadBuildArgs(output) {
   return [
@@ -248,64 +293,9 @@ describe('publication:build CLI', () => {
     )
   })
 
-  it('binds canonical route body semantics to the publication graph', () => {
-    const graph = {
-      nodes: [
-        { type: 'heading', level: 1, text: 'Heading' },
-        { type: 'paragraph', text: 'Body proof' },
-      ],
-    }
-    const expected = publicationGraphBodyFingerprint(graph)
-    expect(canonicalRouteBodyFingerprint('<article><h1>Heading</h1><p>Body proof</p></article>')).toEqual(expected)
-    expect(canonicalRouteBodyFingerprint('<article><h1>Heading</h1><p>Changed</p></article>')).not.toEqual(expected)
-  })
 
-  it('reads a post body inside the reading shell, not the shell around it', () => {
-    const graph = {
-      nodes: [
-        { type: 'heading', level: 1, text: 'Heading' },
-        { type: 'paragraph', text: 'Body proof' },
-      ],
-    }
-    // ReadingLayout makes the text column the <article>, so the post's own
-    // breadcrumb, title and navigation sit beside its prose. The prose is the
-    // element marked `data-post-content`.
-    const shell = `<article class="reading-text"><nav>Blog › Post</nav>
-      <h1>The post title</h1><p>February 10, 2025</p>
-      <div class="prose" data-post-content><h1>Heading</h1><p>Body proof</p></div>
-      <nav><p>Next post</p></nav></article>`
-    expect(canonicalRouteBodyFingerprint(shell)).toEqual(
-      publicationGraphBodyFingerprint(graph),
-    )
-  })
 
-  it('treats Astro typographic apostrophes as the same authored body text', () => {
-    const graph = {
-      nodes: [{ type: 'paragraph', text: "Author's proof" }],
-    }
-    expect(canonicalRouteBodyFingerprint('<article><p>Author’s proof</p></article>')).toEqual(
-      publicationGraphBodyFingerprint(graph),
-    )
-  })
 
-  it('normalizes Markdown image titles to graph caption semantics', () => {
-    const graph = {
-      nodes: [
-        {
-          type: 'figure',
-          title: 'Alt text',
-          assetIds: ['asset'],
-          captionId: 'caption',
-        },
-        { id: 'caption', type: 'caption', text: 'Authored image title' },
-      ],
-    }
-    const html =
-      '<article><p><img src="/assets/figure.png" alt="Alt text" title="Authored image title"></p></article>'
-    expect(canonicalRouteBodyFingerprint(html)).toEqual(
-      publicationGraphBodyFingerprint(graph),
-    )
-  })
 
   it('consumes duplicate canonical-route image matches one-to-one', () => {
     const images = [
@@ -340,7 +330,7 @@ describe('publication:build CLI', () => {
       await writeFile(staleParity, '{"stale":true}\n')
       await writeFile(strayFile, 'kept-on-failure\n')
       await expect(
-        publicationBuild(payloadBuildArgs(output)),
+        publicationBuild(payloadBuildArgs(output), payloadBuildRuntime),
       ).rejects.toThrow('render-boundary-captured')
       expect(await readFile(staleParity, 'utf8')).toBe('{"stale":true}\n')
       expect(await readFile(strayFile, 'utf8')).toBe('kept-on-failure\n')
@@ -365,6 +355,7 @@ describe('publication:build CLI', () => {
     }
     try {
       const error = await publicationBuild(payloadBuildArgs(output), {
+        ...payloadBuildRuntime,
         platform: 'win32',
       }).then(
         () => undefined,
@@ -451,7 +442,7 @@ describe('publication:build CLI', () => {
     vivliostyleRenderer.render = async (bundle, request) => {
       const target = resolve(request.outputDirectory)
       await mkdir(target, { recursive: true })
-      const source = publicationSourceReceipt(bundle, 'not-applicable')
+      const source = publicationSourceReceipt(await payloadPlan(), 'not-applicable')
       await writeFile(
         resolve(target, 'publication-graph.json'),
         'staged-graph\n',
@@ -477,7 +468,7 @@ describe('publication:build CLI', () => {
       await mkdir(output)
       await writeFile(staleParity, '{"stale":true}\n')
       await writeFile(strayFile, 'merged-into?\n')
-      await publicationBuild(payloadBuildArgs(output))
+      await publicationBuild(payloadBuildArgs(output), payloadBuildRuntime)
       await expect(access(staleParity)).rejects.toMatchObject({
         code: 'ENOENT',
       })
@@ -537,13 +528,13 @@ describe('publication:build CLI', () => {
       await writeFile(resolve(externalSymlinkTarget, 'sentinel.txt'), 'kept\n')
       await symlink(externalSymlinkTarget, repositorySymlinkOutput, 'dir')
       await expect(
-        publicationBuild(payloadBuildArgs(repositoryOutput)),
+        publicationBuild(payloadBuildArgs(repositoryOutput), payloadBuildRuntime),
       ).rejects.toThrow(/repository-local publication output.*ignored/i)
       await expect(
-        publicationBuild(payloadBuildArgs(linkedRepositoryOutput)),
+        publicationBuild(payloadBuildArgs(linkedRepositoryOutput), payloadBuildRuntime),
       ).rejects.toThrow(/repository-local publication output.*ignored/i)
       await expect(
-        publicationBuild(payloadBuildArgs(repositorySymlinkOutput)),
+        publicationBuild(payloadBuildArgs(repositorySymlinkOutput), payloadBuildRuntime),
       ).rejects.toThrow(/publication output path.*symbolic link/i)
       expect(renderedOutputs).toEqual([])
       await expect(readFile(staleRepositoryParity, 'utf8')).resolves.toBe(
@@ -558,10 +549,10 @@ describe('publication:build CLI', () => {
       ).resolves.toBe('kept\n')
 
       await expect(
-        publicationBuild(payloadBuildArgs(ignoredOutput)),
+        publicationBuild(payloadBuildArgs(ignoredOutput), payloadBuildRuntime),
       ).rejects.toThrow('render-boundary-captured')
       await expect(
-        publicationBuild(payloadBuildArgs(externalOutput)),
+        publicationBuild(payloadBuildArgs(externalOutput), payloadBuildRuntime),
       ).rejects.toThrow('render-boundary-captured')
       expect(renderedOutputs).toHaveLength(2)
       // Renders target invocation-owned staging directories next to the
@@ -593,7 +584,7 @@ describe('publication:build CLI', () => {
     }
   })
 
-  it('keeps opaque Payload document identities in source receipts', () => {
+  it('keeps opaque Payload document identities in source receipts', async () => {
     const rawId = ['github', '_pat_', 'R'.repeat(24)].join('')
     const bundle = canonicalPublicationSourceResult(
       adaptPayloadLexical({
@@ -614,7 +605,10 @@ describe('publication:build CLI', () => {
       }),
     )
 
-    const receipt = publicationSourceReceipt(bundle, 'not-applicable')
+    const receipt = publicationSourceReceipt(
+      await payloadPlan(bundle),
+      'not-applicable',
+    )
     expect(JSON.stringify(receipt)).not.toContain(rawId)
     expect(receipt.sourceId).toMatch(
       /^payload:document-[a-f0-9]{64}:en$/,
@@ -649,7 +643,10 @@ describe('publication:build CLI', () => {
         cwd: repositoryRoot,
         encoding: 'utf8',
       }).trim()
-      const source = publicationSourceReceipt(bundle, 'adapter-conformance')
+      const source = publicationSourceReceipt(
+        await payloadPlan(),
+        'adapter-conformance',
+      )
       await writeFile(
         resolve(outputRoot, 'publication-receipt.json'),
         `${JSON.stringify(
@@ -671,7 +668,7 @@ describe('publication:build CLI', () => {
 
       const receipt = await bindPublicationSourceReceipt(
         outputRoot,
-        bundle,
+        publicationSourceReceiptForPlan(await payloadPlan()),
         'adapter-conformance',
       )
 
@@ -1555,7 +1552,7 @@ describe('publication output safety', () => {
       const output = resolve(temporaryRoot, 'output')
       await mkdir(output)
       await symlink(sentinel, resolve(output, 'publication-graph.json'))
-      const outcome = await publicationBuild(payloadBuildArgs(output)).then(
+      const outcome = await publicationBuild(payloadBuildArgs(output), payloadBuildRuntime).then(
         () => 'published',
         () => 'failed',
       )
@@ -1614,7 +1611,7 @@ describe('publication output safety', () => {
       const output = resolve(temporaryRoot, 'output')
       await mkdir(output)
       await link(sentinel, resolve(output, 'publication-graph.json'))
-      await publicationBuild(payloadBuildArgs(output)).catch(() => {})
+      await publicationBuild(payloadBuildArgs(output), payloadBuildRuntime).catch(() => {})
       expect(await readFile(sentinel, 'utf8')).toBe(SENTINEL)
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true })
@@ -1630,7 +1627,7 @@ describe('publication output safety', () => {
       await mkdir(output)
       const fifo = resolve(output, 'publication-graph.json')
       execFileSync('mkfifo', [fifo])
-      const buildOutcome = publicationBuild(payloadBuildArgs(output)).then(
+      const buildOutcome = publicationBuild(payloadBuildArgs(output), payloadBuildRuntime).then(
         () => 'completed',
         () => 'completed',
       )

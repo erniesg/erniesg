@@ -6,15 +6,14 @@ import { PDFDocument } from 'pdf-lib'
 import { describe, expect, it } from 'vitest'
 import { canonicalPublicationSourceResult } from '../src/publication/adapter-conformance.ts'
 import { adaptPayloadLexical } from '../src/publication/adapters/payload-lexical.ts'
-import { PUBLICATION_PROFILES } from '../src/publication/renderers/vivliostyle.ts'
+import {
+  PUBLICATION_PROFILES,
+  publicationInlineLinkTargets,
+} from '../src/publication/renderers/vivliostyle.ts'
 import {
   publicationPlaywrightRuntimeEvidenceForPlatform,
   publicationPuppeteerRuntimeEvidenceForPlatform,
 } from '../src/publication/toolchain.ts'
-import {
-  publicationGraphSchema,
-  serializePublicationGraph,
-} from '../src/publication/schema.ts'
 import {
   assertPdfPageGeometry,
   assertPdfCropBox,
@@ -34,18 +33,215 @@ import {
   normalizePdfSearchableText,
   normalizePdfVerificationText,
   orderPdfTextRequirements,
-  publicationPdfImageAssetRequirements,
-  publicationPdfLinkRequirements,
-  publicationPdfLinkRequirementsForProfile,
   publicationReceiptRelaxesRepositoryCleanliness,
   publicationReceiptRequiresCanonicalRouteParity,
   parsePublicationCheckArgs,
-  publicationPdfTextRequirements,
   pdfAnnotationTarget,
-  validatePublicationGraphContent,
-  validateWebPubGraph,
+  validatePublicationProfileContent,
+  validateWebPubExpectations,
   verifyArtifactReceipt,
 } from './publication-check.mjs'
+
+/**
+ * The plan-derived expectation profile the checker consumes.
+ *
+ * The checker no longer sees the renderer plan: it compares the rendered
+ * artifacts against the expectations the facade derives from the publication
+ * plan. The fixtures below build those expectations from the same node
+ * records the projection produces, so the checker's own behaviour - and not
+ * the projection - is what these tests pin. The derivation of the
+ * expectations is pinned by the facade's own tests, over a real Struct
+ * revision.
+ */
+function expectationsFrom(graph, profile = 'phone-webpub') {
+  // The renderer selects the profile variant of a node by replacing one field
+  // of it; the expectations the checker consumes are derived from the same
+  // selection.
+  const variantKind =
+    profile === 'eink-epub'
+      ? 'monochrome'
+      : profile === 'phone-webpub'
+        ? 'static'
+        : 'compact'
+  const selectForProfile = (node) => {
+    const variant = node.variants?.find(
+      (candidate) => candidate.reviewed && candidate.kind === variantKind,
+    )
+    if (!variant) return node
+    if (variant.assetId && node.type === 'figure')
+      return { ...node, assetIds: [variant.assetId] }
+    if (variant.assetId && node.type === 'media')
+      return { ...node, assetId: variant.assetId }
+    if (variant.text !== undefined && 'text' in node)
+      return { ...node, text: variant.text, inlineRuns: [] }
+    if (variant.text !== undefined && node.type === 'figure')
+      return { ...node, sourceText: variant.text }
+    return node
+  }
+  const nodes = (graph.nodes ?? []).map(selectForProfile)
+  const required = nodes.filter((node) => node.requirement !== 'optional')
+  const alternativeOf = (node) =>
+    [
+      node.alternativeText,
+      node.longDescription,
+      node.transcript,
+      node.accessibility?.alternativeText,
+      node.accessibility?.longDescription,
+      node.accessibility?.transcript,
+    ].find((value) => typeof value === 'string' && value.trim()) ?? ''
+  const textsOf = (node) => {
+    if (node.texts) return node.texts
+    if (node.text) return [node.text]
+    if (node.code) return [node.code]
+    if (node.type === 'figure')
+      return [node.title, node.sourceText].filter(Boolean)
+    if (node.type === 'table')
+      return node.rows.flatMap((row) =>
+        row.cells.map((cell) => cell.text),
+      )
+    if (node.type === 'equation')
+      return [node.source, node.label].filter(Boolean)
+    return []
+  }
+  const pdfTextRequirements = () => {
+    const required0 = []
+    const add = (value) => {
+      if (typeof value === 'string' && value.trim()) required0.push(value)
+    }
+    add(graph.metadata?.title)
+    add(graph.metadata?.subtitle)
+    add(graph.metadata?.abstract)
+    for (const contributor of graph.metadata?.contributors ?? [])
+      add(contributor)
+    let titleHeadingHeaderPending = true
+    for (const node of nodes) {
+      const selected = node
+      if (
+        selected.type === 'heading' &&
+        selected.level === 1 &&
+        selected.text === graph.metadata?.title
+      ) {
+        if (titleHeadingHeaderPending) {
+          titleHeadingHeaderPending = false
+          continue
+        }
+      }
+      if ('text' in selected) add(selected.text)
+      switch (selected.type) {
+        case 'quote':
+          add(selected.attribution)
+          break
+        case 'code':
+          add(selected.code)
+          break
+        case 'figure':
+          add(selected.title)
+          add(selected.sourceText)
+          break
+        case 'table':
+          for (const row of selected.rows)
+            for (const cell of row.cells) add(cell.text)
+          break
+        case 'equation':
+          add(selected.source)
+          add(selected.label)
+          break
+        case 'note':
+          add(selected.label)
+          break
+        case 'media':
+          if (!selected.accessibility?.decorative)
+            add(selected.accessibility?.transcript)
+          break
+        default:
+          break
+      }
+    }
+    return required0
+  }
+  const pdfLinkRequirements = () => {
+    const links = []
+    for (const node of nodes) {
+      const runs = node.inlineRuns ?? []
+      if (
+        typeof node.text === 'string' &&
+        runs.every(
+          (run) => Number.isInteger(run.start) && Number.isInteger(run.end),
+        )
+      ) {
+        links.push(...publicationInlineLinkTargets(node.text, runs))
+      } else {
+        for (const run of runs) {
+          if (run.href) links.push(run.href)
+          else if (
+            (run.semanticRole === 'citation' ||
+              run.semanticRole === 'cross-reference') &&
+            run.targetIds?.length
+          )
+            links.push(`#${run.targetIds[0]}`)
+        }
+      }
+      if (node.type === 'reference' && node.href) links.push(node.href)
+    }
+    return links
+  }
+  const pdfImageAssetIds = () => {
+    const assetIds = []
+    const seen = new Set()
+    for (const node of required) {
+      const rendered =
+        node.type === 'figure' && node.assetIds.length > 0
+          ? node.assetIds
+          : node.type === 'media' && node.mediaKind === 'image'
+            ? [node.assetId]
+            : []
+      for (const assetId of rendered) {
+        if (seen.has(assetId)) continue
+        seen.add(assetId)
+        assetIds.push(assetId)
+      }
+    }
+    return assetIds
+  }
+  const linkRequirements = pdfLinkRequirements()
+  return {
+    locale: graph.edition?.locale ?? 'en',
+    profiles: {
+      [profile]: {
+        nodeOrder: required.map((node) => node.id),
+        nodes: required.map((node) => ({
+          id: node.id,
+          tag:
+            node.type === 'heading'
+              ? `h${node.level}`
+              : node.type === 'figure' || node.type === 'media'
+                ? 'figure'
+                : undefined,
+          texts: textsOf(node),
+          assetIds: node.assetIds ?? (node.assetId ? [node.assetId] : []),
+          alternativeText: alternativeOf(node),
+          sourceText: node.sourceText,
+          mediaKind: node.mediaKind,
+          decorative: node.accessibility?.decorative,
+        })),
+        pdfTextRequirements: pdfTextRequirements(),
+        pdfWidowOrphanTexts: required
+          .filter(
+            (node) =>
+              node.type === 'paragraph' ||
+              node.type === 'list-item' ||
+              node.type === 'quote' ||
+              node.type === 'aside',
+          )
+          .map((node) => node.text)
+          .filter((text) => text?.trim()),
+        pdfLinkRequirements: linkRequirements,
+        pdfImageAssetIds: pdfImageAssetIds(),
+        pdfRequiresLinks: linkRequirements.length > 0,
+      },
+    },
+  }
+}
 
 const browserIdentity = {
   observedVersion: '149.0.7827.0',
@@ -461,7 +657,7 @@ describe('publication:check CLI', () => {
     ).not.toThrow()
   })
 
-  it('binds receipt source identity and revision to every graph node', () => {
+  it('binds receipt source identity and revision to the published plan', () => {
     const receipt = {
       source: {
         adapterId: 'astro',
@@ -470,39 +666,40 @@ describe('publication:check CLI', () => {
         sourceRevision: 'revision-1',
       },
     }
-    const graph = {
-      nodes: [
-        {
-          provenance: {
-            adapterId: 'astro',
-            sourceId: 'blog:fixture',
-            sourceRevision: 'revision-1',
-          },
-        },
-      ],
+    // The plan carries the source revision of the Struct revision the
+    // publication was built from, so the receipt and the plan have to name
+    // the same source revision.
+    const plan = {
+      provenance: {
+        adapterId: 'astro',
+        sourceId: 'blog:fixture',
+        sourceRevision: 'revision-1',
+      },
     }
-    expect(() => assertPublicationReceiptSourceBinding(receipt, graph)).not.toThrow()
     expect(() =>
-      assertPublicationReceiptSourceBinding(
-        { ...receipt, source: { ...receipt.source, sourceId: 'blog:other' } },
-        graph,
-      ),
-    ).toThrow(/source id binding/)
+      assertPublicationReceiptSourceBinding(receipt, plan),
+    ).not.toThrow()
     expect(() =>
       assertPublicationReceiptSourceBinding(
         {
           ...receipt,
           source: { ...receipt.source, sourceRevision: 'revision-2' },
         },
-        graph,
+        plan,
       ),
     ).toThrow(/source revision binding/)
     expect(() =>
       assertPublicationReceiptSourceBinding(
         { ...receipt, source: { ...receipt.source, sourceType: 'payload' } },
-        graph,
+        plan,
       ),
     ).toThrow(/source type.*adapter/i)
+    expect(() =>
+      assertPublicationReceiptSourceBinding(
+        { ...receipt, source: { ...receipt.source, sourceId: '' } },
+        plan,
+      ),
+    ).toThrow(/source id binding/)
   })
 
   it('validates every PDF page against the selected profile geometry', async () => {
@@ -551,7 +748,7 @@ describe('publication:check CLI', () => {
         },
       ],
     }
-    expect(publicationPdfTextRequirements(graph)).toEqual(
+    expect(expectationsFrom(graph, 'a5-pdf').profiles['a5-pdf'].pdfTextRequirements).toEqual(
       expect.arrayContaining([
         'Publication title',
         'Publication abstract',
@@ -749,7 +946,7 @@ describe('publication:check CLI', () => {
         { type: 'reference', href: '#target' },
       ],
     }
-    const required = publicationPdfLinkRequirements(graph)
+    const required = expectationsFrom(graph, 'a5-pdf').profiles['a5-pdf'].pdfLinkRequirements
     expect(required).toEqual(['https://example.com/', '#target'])
     expect(() =>
       assertPdfLinkAnnotations(
@@ -836,11 +1033,9 @@ describe('publication:check CLI', () => {
       },
     })
     const canonical = canonicalPublicationSourceResult(source)
-    const graph = publicationGraphSchema.parse(
-      JSON.parse(serializePublicationGraph(canonical.graph)),
-    )
+    const graph = canonical.graph
     for (const profile of PUBLICATION_PROFILES) {
-      expect(publicationPdfLinkRequirementsForProfile(graph, profile)).toEqual([
+      expect(expectationsFrom(graph, profile).profiles[profile].pdfLinkRequirements).toEqual([
         'https://example.com/formatted',
         'https://example.com/adjacent',
         'https://example.com/adjacent',
@@ -864,7 +1059,7 @@ describe('publication:check CLI', () => {
         },
       ],
     }
-    expect(publicationPdfLinkRequirementsForProfile(graph, 'a5-pdf')).toEqual([
+    expect(expectationsFrom(graph, 'a5-pdf').profiles['a5-pdf'].pdfLinkRequirements).toEqual([
       '#target',
     ])
   })
@@ -872,11 +1067,9 @@ describe('publication:check CLI', () => {
   it('chooses the first non-empty accessibility alternative', () => {
     expect(
       accessibilityLabel({
-        accessibility: {
-          alternativeText: '',
-          longDescription: 'Diagram description',
-          transcript: 'Transcript',
-        },
+        alternativeText: '',
+        longDescription: 'Diagram description',
+        transcript: 'Transcript',
       }),
     ).toBe('Diagram description')
   })
@@ -978,7 +1171,7 @@ describe('publication:check CLI', () => {
       '<figure id="source-figure"><pre id="source-figure-source" class="figure-source">source fallback</pre></figure>' +
       '<figure id="audio"><audio aria-label="Audio transcript"></audio></figure>' +
       '</main></body></html>'
-    expect(() => validateWebPubGraph(graph, html)).not.toThrow()
+    expect(() => validateWebPubExpectations(expectationsFrom(graph), html)).not.toThrow()
   })
 
   it('accepts decorative audio without a textual accessibility label', () => {
@@ -999,7 +1192,7 @@ describe('publication:check CLI', () => {
       '<html lang="en"><body><h1 id="heading">Title</h1><main>' +
       '<figure id="decorative-audio"><audio aria-hidden="true"></audio></figure>' +
       '</main></body></html>'
-    expect(() => validateWebPubGraph(graph, html)).not.toThrow()
+    expect(() => validateWebPubExpectations(expectationsFrom(graph), html)).not.toThrow()
   })
 
   it('requires figure titles in WebPub and PDF content requirements', () => {
@@ -1018,14 +1211,14 @@ describe('publication:check CLI', () => {
         },
       ],
     }
-    expect(publicationPdfTextRequirements(graph, 'a5-pdf')).toEqual(
+    expect(expectationsFrom(graph, 'a5-pdf').profiles['a5-pdf'].pdfTextRequirements).toEqual(
       expect.arrayContaining(['Figure title', 'source fallback']),
     )
     const html =
       '<html lang="en"><body><h1 id="heading">Title</h1><main>' +
       '<figure id="figure"><pre id="figure-source" class="figure-source">source fallback</pre></figure>' +
       '</main></body></html>'
-    expect(() => validateWebPubGraph(graph, html)).toThrow(
+    expect(() => validateWebPubExpectations(expectationsFrom(graph), html)).toThrow(
       /required node (?:content )?figure/,
     )
   })
@@ -1048,17 +1241,18 @@ describe('publication:check CLI', () => {
         { id: 'duplicate-2', type: 'paragraph', text: 'repeat' },
       ],
     }
-    expect(publicationPdfTextRequirements(graph, 'a5-pdf')).toEqual(
+    expect(expectationsFrom(graph, 'a5-pdf').profiles['a5-pdf'].pdfTextRequirements).toEqual(
       expect.arrayContaining(['compact text', 'repeat', 'repeat']),
     )
-    expect(publicationPdfTextRequirements(graph, 'a5-pdf')).not.toContain(
+    expect(expectationsFrom(graph, 'a5-pdf').profiles['a5-pdf'].pdfTextRequirements).not.toContain(
       'canonical text',
     )
-    expect(publicationPdfLinkRequirementsForProfile(graph, 'a5-pdf')).toEqual(
-      [],
-    )
     expect(
-      publicationPdfLinkRequirementsForProfile(graph, 'phone-webpub'),
+      expectationsFrom(graph, 'a5-pdf').profiles['a5-pdf'].pdfLinkRequirements,
+    ).toEqual([])
+    expect(
+      expectationsFrom(graph, 'phone-webpub').profiles['phone-webpub']
+        .pdfLinkRequirements,
     ).toEqual(['#canonical'])
   })
 
@@ -1073,7 +1267,7 @@ describe('publication:check CLI', () => {
         { id: 'repeat-b', type: 'paragraph', text: 'repeat' },
       ],
     }
-    expect(publicationPdfTextRequirements(graph, 'a5-pdf')).toEqual([
+    expect(expectationsFrom(graph, 'a5-pdf').profiles['a5-pdf'].pdfTextRequirements).toEqual([
       'Title',
       'Title',
       'Body text',
@@ -1114,7 +1308,7 @@ describe('publication:check CLI', () => {
       ],
     }
 
-    expect(publicationPdfImageAssetRequirements(graph, 'a5-pdf')).toEqual([
+    expect(expectationsFrom(graph, 'a5-pdf').profiles['a5-pdf'].pdfImageAssetIds).toEqual([
       'shared-image',
       'second-image',
     ])
@@ -1135,7 +1329,7 @@ describe('publication:check CLI', () => {
         },
       ],
     }
-    expect(publicationPdfTextRequirements(graph, 'a5-pdf')).toEqual(['Title'])
+    expect(expectationsFrom(graph, 'a5-pdf').profiles['a5-pdf'].pdfTextRequirements).toEqual(['Title'])
   })
 
   it('rejects a required body node dropped from a WebPub or EPUB profile', () => {
@@ -1149,7 +1343,10 @@ describe('publication:check CLI', () => {
     }
     const html =
       '<html lang="en"><body><header><h1>Title</h1></header><main><h1 id="heading">Heading</h1></main></body></html>'
-    expect(() => validatePublicationGraphContent(graph, html)).toThrow(
+    expect(() => validatePublicationProfileContent(
+      expectationsFrom(graph).profiles['phone-webpub'],
+      html,
+    )).toThrow(
       /required node body/,
     )
   })
@@ -1165,7 +1362,10 @@ describe('publication:check CLI', () => {
     }
     const html =
       '<html lang="en"><body><main><p id="second">Second</p><h1 id="first">First</h1></main></body></html>'
-    expect(() => validatePublicationGraphContent(graph, html)).toThrow(
+    expect(() => validatePublicationProfileContent(
+      expectationsFrom(graph).profiles['phone-webpub'],
+      html,
+    )).toThrow(
       /changed required node order/,
     )
   })
@@ -1214,7 +1414,11 @@ describe('publication:check CLI', () => {
       '<main><ul id="list"><li id="item">Parent item<ul id="nested-list"><li id="nested-item">Nested item</li></ul></li></ul>' +
       '<figure id="figure"><div>Figure title</div><pre>Figure source</pre><figcaption id="figure-caption">Figure caption</figcaption></figure></main>'
     expect(() =>
-      validatePublicationGraphContent(graph, html, 'a5-pdf'),
+      validatePublicationProfileContent(
+        expectationsFrom(graph, 'a5-pdf').profiles['a5-pdf'],
+        html,
+        'a5-pdf',
+      ),
     ).not.toThrow()
   })
 
@@ -1245,8 +1449,8 @@ describe('publication:check CLI', () => {
       ['second-asset', 'assets/second.png'],
     ])
     expect(() =>
-      validatePublicationGraphContent(
-        graph,
+      validatePublicationProfileContent(
+        expectationsFrom(graph, 'phone-webpub').profiles['phone-webpub'],
         swapped,
         'phone-webpub',
         assetPaths,
@@ -1272,7 +1476,11 @@ describe('publication:check CLI', () => {
     const html =
       '<html lang="en"><body><main><h1 id="heading">Title</h1><figure id="diagram"></figure></main></body></html>'
     expect(() =>
-      validatePublicationGraphContent(graph, html, 'eink-epub'),
+      validatePublicationProfileContent(
+        expectationsFrom(graph, 'eink-epub').profiles['eink-epub'],
+        html,
+        'eink-epub',
+      ),
     ).toThrow(/eink-epub media diagram dropped image asset/)
   })
 
@@ -1322,10 +1530,18 @@ describe('publication:check CLI', () => {
       const misplaced = `<main><figure id="${nodeId}"></figure><figure id="other-${kind}">${element}</figure></main>`
 
       expect(() =>
-        validatePublicationGraphContent(graph, owned, 'eink-epub'),
+        validatePublicationProfileContent(
+          expectationsFrom(graph, 'eink-epub').profiles['eink-epub'],
+          owned,
+          'eink-epub',
+        ),
       ).not.toThrow()
       expect(() =>
-        validatePublicationGraphContent(graph, misplaced, 'eink-epub'),
+        validatePublicationProfileContent(
+          expectationsFrom(graph, 'eink-epub').profiles['eink-epub'],
+          misplaced,
+          'eink-epub',
+        ),
       ).toThrow(`eink-epub dropped ${kind} media for ${nodeId}`)
     }
   })

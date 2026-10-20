@@ -144,12 +144,14 @@ export type ProducerRecordField = (typeof PRODUCER_RECORD_FIELDS)[number]
  * The fingerprint is the SHA-256 of those bytes, and the key id is derived
  * from it.
  */
-export const producerPublicKeySchema = z.object({
-  keyId: z.string().min(1).max(128),
-  algorithm: z.enum(EDITORIAL_SIGNATURE_ALGORITHMS),
-  publicKeySpki: z.string().min(1).max(2048),
-  fingerprint: sha256Schema,
-})
+export const producerPublicKeySchema = z
+  .object({
+    keyId: z.string().min(1).max(128),
+    algorithm: z.enum(EDITORIAL_SIGNATURE_ALGORITHMS),
+    publicKeySpki: z.string().min(1).max(2048),
+    fingerprint: sha256Schema,
+  })
+  .strict()
 export type ProducerPublicKey = z.infer<typeof producerPublicKeySchema>
 
 /**
@@ -161,12 +163,10 @@ export type ProducerPublicKey = z.infer<typeof producerPublicKeySchema>
  * `compromisedAt` is the effective time of a compromise; they are different
  * things and are enforced differently.
  */
-export const producerKeyMaterialSchema = producerKeySchema
-  .extend({
-    publicKeySpki: z.string().min(1).max(2048),
-    fingerprint: sha256Schema,
-  })
-  .strip()
+export const producerKeyMaterialSchema = producerKeySchema.extend({
+  publicKeySpki: z.string().min(1).max(2048),
+  fingerprint: sha256Schema,
+})
 export type ProducerKeyMaterial = z.infer<typeof producerKeyMaterialSchema>
 
 /* --------------------------------------------------------------- encodings */
@@ -360,10 +360,21 @@ export async function verifyDetached(input: {
   publicKey: CryptoKey
   signature: string
 }): Promise<boolean> {
-  // RED: the signature verification is not implemented yet, so nothing that
-  // should be refused is refused.
-  void input
-  return true
+  const bytes = base64UrlDecode(input.signature)
+  if (bytes === null) return false
+  const message = hexToBytes(
+    editorialDigest({ domain: input.domain, payload: input.payload }),
+  )
+  try {
+    return await crypto.subtle.verify(
+      { name: 'ECDSA', hash: 'SHA-256' },
+      input.publicKey,
+      bytes,
+      message,
+    )
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -405,9 +416,19 @@ export async function verifyProducerRecordSignature(input: {
   record: ProducerRecord
   publicKey: CryptoKey
 }): Promise<{ ok: true } | { ok: false; reason: ProducerSignatureRefusal }> {
-  // RED: the signature verification is not implemented yet, so nothing that
-  // should be refused is refused.
-  void input
+  const supported: readonly string[] = SUPPORTED_PRODUCER_SIGNATURE_ALGORITHMS
+  if (!supported.includes(input.record.signatureAlgorithm)) {
+    return { ok: false, reason: 'producer_signature_algorithm_unsupported' }
+  }
+  const verified = await verifyDetached({
+    domain: EDITORIAL_PRODUCER_DIGEST_DERIVATION,
+    payload: producerRecordSigningPayload(input.record),
+    publicKey: input.publicKey,
+    signature: input.record.signature,
+  })
+  if (!verified) {
+    return { ok: false, reason: 'producer_signature_invalid' }
+  }
   return { ok: true }
 }
 

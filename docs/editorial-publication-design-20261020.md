@@ -17,6 +17,13 @@ concurrency proofs, the rollback rehearsal and the forged-record negative
 matrix — belongs to E05b and E05c and is stated here only as a contract, not
 as a claim.
 
+**§9.5, §9.6 and §9.7 are E05b's addition** (phase E-05b, 2026-10-20):
+they state what E05b settled and implemented against §9.3 and §9.4 — the
+primitive, the epoch rule, the replay ledger, the rotation, the revocation
+and compromise rules, the refusal reasons, the authenticated policy epoch
+document, and the negative matrix with the reason each case returns. Every
+other section is E-05a's and is unchanged.
+
 ---
 
 ## 0. The problem, in one paragraph
@@ -1228,6 +1235,228 @@ digest-mismatched, policy-rollback, expired-policy, unavailable-beyond-
 freshness and improperly backdated-after-compromise records must all fail
 closed.
 
+### 9.5 What E05b settled and implemented
+
+E05b implements §9.4. This subsection states what it settled, because two
+of the questions §9.3 left open had more than one consistent answer, and
+the settlement is part of the contract.
+
+**The primitive: ECDSA over NIST P-256 with SHA-256, detached, through
+WebCrypto** (`globalThis.crypto.subtle`). No dependency is added; the app
+already uses `crypto.subtle.digest` in `src/research/epub.ts`,
+`src/research/docx-import.ts` and `src/research/overrides.ts`, and the
+primitive runs unchanged in Node, in the Worker and in a browser, so a
+producer in Node and a consumer in the Worker verify with the same code. It
+is asymmetric, so the consumer holds the *public* key and the key registry
+is publishable. P-256 is the one asymmetric algorithm every WebCrypto
+implementation is required to have. `EDITORIAL_SIGNATURE_ALGORITHMS` names
+three algorithms; **this implementation supports exactly one and refuses the
+other two** with `producer_signature_algorithm_unsupported`, because a
+verifier that guesses is a verifier that can be fooled.
+
+**What is signed.** The signed message is the **canonical digest** of the
+record's signing payload — every field except `signature` — under the
+domain tag `erniesg.editorial.producer-export.v1`:
+
+```
+signing payload = every field of the record except `signature`
+digest          = structDigest({ domain, payload })   // the pinned Struct digest
+signed message  = the 32 raw bytes of that digest
+signature       = ECDSA-P256-SHA256(message, privateKey), base64url, detached
+```
+
+The digest is the pinned Struct package's `structDigest` (`ids.ts`), so the
+bytes that are signed are the bytes the app's one canonical serializer
+produces. Every field is covered, `issuedAt` and `expiresAt` included: a
+field that is not in the payload is a field an attacker may change. The
+record's own id is derived from the same canonical form
+(`erniesg.editorial.producer-id.v1`), so the id is a function of the signed
+content and cannot be swapped.
+
+**The key identity is the public key fingerprint.** The key id is
+`<algorithm>:<fingerprint>`, where the fingerprint is the SHA-256 of the
+key's SPKI bytes. A record that names a key id can therefore only be
+verified against the key whose fingerprint that id names, and a registry
+entry whose key id is not its own fingerprint is refused
+(`producer_key_identity_mismatch`). The material the consumer needs to
+verify is in the **policy epoch document** (§9.6), which is itself signed
+by the trust root; the producer record carries the identity, not the key.
+
+**The epoch rule, settled.** The **policy epoch** is the monotonic unit: it
+is the epoch of the *authority* (the key set), not a counter of the
+records.
+
+- A policy at a **lower** epoch than the one the consumer has accepted is a
+  **rollback** and is refused (`trust_policy_rollback`). This is the
+  anti-rollback property: an attacker cannot serve an old policy, with an
+  old key set, to resurrect a key that has since been revoked.
+- A policy at the **same** epoch is the same policy. It neither advances
+  the state nor is a refusal.
+- A policy at a **higher** epoch advances the state, and the advance is a
+  **compare-and-advance**: it happens only if the state has not moved since
+  it was read. Two consumers that race lose one of the two advances, and
+  the loser refuses (`trust_state_concurrent_modification`).
+
+The **record's** `policyEpoch` is the epoch of the key that signed it: it
+must equal that key's epoch and must not exceed the policy's epoch. It is
+*not* compared with the accepted epoch, because §9.3's rule 3 requires that
+a superseded key stays usable for the records it issued before its
+`notAfter` — and those records carry the old epoch. Whether an old key may
+still validate a record is decided by the **current** policy's registry
+entry (its validity window, its revocation, its compromise), not by an
+epoch counter.
+
+**§9.3's open question, settled: the replay ledger.** The ledger holds the
+pair (`eventId`, the record's own digest) of every record the consumer has
+accepted. A pair that is already in the ledger is a replay
+(`producer_record_replayed`); an `eventId` that is already in the ledger
+with a *different* digest is an event id presented twice with different
+content (`producer_event_id_reused`). Both are refusals. So the epoch's
+role is reduced to rollback detection of the authority, and the ledger —
+not the epoch — is what tells a superseding record from a replayed one.
+The ledger only has to hold the pairs inside the freshness window, because
+a record older than the freshness bound is refused before the ledger is
+consulted.
+
+This is the one place where E05b's rule is *wider* than §9.3's strict
+"refuses anything at or below it". It has to be: under the strict rule
+every record after the first would need a new epoch, which makes §9.3's
+rotation overlap (§9.3 rule 3) and every supersession unreachable. The
+strict helper `trustEpochIsAcceptable` in `trust.ts` is left as E-05a
+wrote it and remains the rule for a consumer that keeps no ledger; E05b's
+verifier is the ledger-bearing variant, and it refuses a *lower* epoch
+exactly as the strict rule does.
+
+**Rotation.** A new key is introduced under a new epoch. The old key stays
+usable only until its `notAfter`, and only for the records it issued
+before then. A policy whose successor key takes over more than
+`maxRotationOverlapSeconds` after its predecessor stopped is a migration,
+not a rotation, and is refused
+(`trust_policy_rotation_overlap_exceeded`).
+
+**Revocation and compromise.** A revoked key is refused **from the
+revocation's effective time onwards** (`producer_key_revoked`): what it
+signed before the revocation is still good. A **compromised** key is
+refused for its **entire lifetime** (`producer_key_compromised`): the
+records it signed before the compromise are exactly the records an attacker
+could have made. The one exception is evidence — a **pre-compromise
+inclusion proof**, a trusted timestamp or a transparency-log inclusion,
+signed by a registered timestamp authority, naming the record's digest and
+placing its issue time *before* the compromise. Without such a proof, or
+with a proof the authority did not make before the compromise, the key is
+treated as revoked for its whole life.
+
+**Freshness.** The bounds are the **policy's own** (inside the policy's
+signature, so they cannot be widened by an attacker): the freshness bound
+on a record's age, the longest validity window a record may claim, the
+future skew, and the rotation overlap. A record outside its window, issued
+too far in the future, claiming too long a window, or older than the
+freshness bound is refused (`producer_record_not_fresh`). A policy past its
+expiry is refused (`trust_policy_expired`); a policy that is not yet valid
+is refused (`trust_policy_not_yet_valid`).
+
+**Failing closed.** Every failure is a refusal with a specific reason, and
+there is no "assume valid" path: no policy (`trust_policy_unavailable`), a
+malformed policy (`trust_policy_malformed`), an unauthenticated policy
+(`trust_policy_unauthenticated`), a trust state that cannot be read
+(`trust_authority_unavailable`), a compare-and-advance that lost the race
+(`trust_state_concurrent_modification`). A refusal writes nothing: the
+trust state is advanced only when the whole chain has been verified. The
+signature refusal is deliberately **non-leaking**: a bad signature, a
+truncated signature, a signature over different bytes and a signature by a
+different key are all `producer_signature_invalid`.
+
+**The refusal reasons**, in `PRODUCER_REFUSAL_REASONS`
+(`src/editorial/trust-policy.ts`):
+
+| Reason | Meaning |
+| --- | --- |
+| `producer_record_malformed` | the record does not satisfy its own schema |
+| `producer_record_id_mismatch` | the record's id is not derived from its content |
+| `producer_signature_algorithm_unsupported` | the algorithm is not one this verifier implements |
+| `producer_signature_invalid` | the signature does not verify (non-leaking) |
+| `producer_key_unknown` | the policy does not carry the key the record names |
+| `producer_key_identity_mismatch` | the registry entry's key id is not its fingerprint |
+| `producer_key_material_invalid` | the registry entry's fingerprint is not its public key |
+| `producer_epoch_mismatch` | the record's epoch is not its key's epoch, or exceeds the policy's |
+| `producer_record_not_fresh` | the record is expired, too old, or from too far in the future |
+| `producer_record_superseded` | the record's own status says it is superseded |
+| `producer_record_revoked` | the record's own status says it is revoked |
+| `producer_record_replayed` | the (event id, digest) pair was already accepted |
+| `producer_event_id_reused` | the event id was already accepted with other content |
+| `producer_key_not_usable` | the record was issued outside the key's validity window |
+| `producer_key_revoked` | the key was revoked at or before the record's issue time |
+| `producer_key_compromised` | the key was compromised and there is no pre-compromise proof |
+| `producer_artifact_set_mismatch` | the record's artifact set digest is not its artifacts' digest |
+| `producer_digest_mismatch` | a bound digest is not the digest it must equal |
+| `producer_target_mismatch` | the record is not for the target being resolved |
+| `producer_audience_mismatch` | the record is not for the audience being resolved |
+| `producer_release_mismatch` | the record does not name the release being resolved |
+| `producer_revision_stale` | the record was issued against a superseded revision |
+| `trust_root_malformed` | the trust root does not satisfy its schema |
+| `trust_policy_malformed` | the policy does not satisfy its schema |
+| `trust_policy_unavailable` | there is no policy, so there is no authority |
+| `trust_policy_unauthenticated` | the policy's signature does not verify against the root |
+| `trust_policy_expired` | the policy is past its expiry |
+| `trust_policy_not_yet_valid` | the policy claims to be from the future |
+| `trust_policy_rollback` | the policy's epoch is older than the accepted epoch |
+| `trust_policy_rotation_overlap_exceeded` | the policy's key rotation overlaps too long |
+| `trust_authority_unavailable` | the trust state could not be read |
+| `trust_state_concurrent_modification` | the compare-and-advance lost the race |
+
+### 9.6 The authenticated policy epoch document
+
+The consumer needs an authority before it resolves anything: a **policy
+epoch document**, signed by the **trust root**, carrying the epoch, the
+bounds and the key registry.
+
+```
+recordType: 'erniesg.editorial.trust-policy.v1', version: '1.0.0'
+policyEpoch, issuedAt, expiresAt
+bounds: { maxRecordAgeSeconds, maxValiditySeconds,
+           maxFutureSkewSeconds, maxRotationOverlapSeconds }
+keys: [ { keyId, policyEpoch, algorithm, notBefore, notAfter,
+          revokedAt?, compromisedAt?, publicKeySpki, fingerprint } ]
+signatureAlgorithm, signature
+```
+
+The **trust root** is app-owned configuration, configured out of band, the
+same way the margin service's allowlist and the target registry are: it is
+the only thing a consumer trusts a priori. It carries the root's public key
+and the **timestamp authorities** — the keys that may vouch for a record's
+inclusion.
+
+The verification order is the order a reader cares about: **who is the
+authority** (the root, the policy, its epoch, its freshness, its rotation),
+then **what is the record** (its schema, its id, its key, its epoch), then
+**is it authentic** (its signature), then **may it be used** (its status,
+its freshness, its key's usability, the replay ledger), and finally **does
+it bind what the consumer is resolving** (the target, the digests, the
+release and the revision).
+
+### 9.7 The negative matrix
+
+Every one of these fails closed, with the reason the code returns. The
+tests are in `src/editorial/trust-policy.test.ts` and
+`src/editorial/producer-record.test.ts`.
+
+| Case | What it is | Refusal |
+| --- | --- | --- |
+| forged bundle | fully rehashed and self-consistent under the Struct digest; Struct integrity passes | `producer_signature_invalid` |
+| swapped | the record's digests are not the bundle's digests | `producer_digest_mismatch` |
+| stale | the record was issued against a superseded revision | `producer_revision_stale` |
+| superseded | the release the record names is no longer current | `producer_record_superseded` |
+| replayed | the same event id presented twice | `producer_record_replayed` |
+| wrong audience | the record is for another audience | `producer_audience_mismatch` |
+| wrong target | the record is for another target | `producer_target_mismatch` |
+| revoked key | the key was revoked at or before the issue time | `producer_key_revoked` |
+| digest mismatch | the record's artifact set digest is not its artifacts' digest | `producer_artifact_set_mismatch` |
+| policy rollback | an older policy epoch after a newer one was accepted | `trust_policy_rollback` |
+| expired policy | the policy is past its expiry | `trust_policy_expired` |
+| unavailable beyond freshness | the trust state cannot be read | `trust_authority_unavailable` |
+| past the freshness bound | the record is older than the policy's bound | `producer_record_not_fresh` |
+| backdated after compromise | a compromised key's record, with no pre-compromise proof | `producer_key_compromised` |
+
 ---
 
 ## 10. The inactive writer and route
@@ -1338,6 +1567,9 @@ report.
 | `src/editorial/validation.ts` | the cross-record rules and the state projections |
 | `src/editorial/state-machine.ts` | the transition table, the actor authorisation, the pure transition function, the refusal codes |
 | `src/editorial/trust.ts` | the producer record shape and the trust bounds (no cryptography) |
+| `src/editorial/producer-record.ts` | the producer record's field list, its canonical payloads, its id and digest derivations, the key material and its fingerprint, the detached signature and its verification |
+| `src/editorial/trust-policy.ts` | the authenticated policy epoch document, the trust root, the key registry, the inclusion proof, the monotonic trust state and its replay ledger, the compare-and-advance store, and the verification |
+| `src/editorial/producer-fixtures.ts` | the shared producer and trust fixtures (test-only) |
 | `src/editorial/schema.sql` | the DDL of record (not applied) |
 | `src/editorial/fixtures.ts` | the shared test fixtures |
 | `src/editorial/index.ts` | the public surface |
@@ -1347,3 +1579,10 @@ The dependency direction is one way: `records.ts` → `ids.ts` (runtime),
 `ids.ts` → `records.ts` (types only), `state-machine.ts` → `records.ts`,
 `ids.ts`, `validation.ts`, `validation.ts` → `records.ts` (types only). There
 is no cycle.
+
+E05b's two modules continue that direction:
+`producer-record.ts` → `ids.ts`, `records.ts`, `trust.ts`;
+`trust-policy.ts` → `ids.ts`, `records.ts`, `trust.ts`, `producer-record.ts`.
+`src/editorial/index.ts` is E-05a's file and is **not** extended here: the
+E05b modules are imported by path, and whoever owns the public surface
+(`index.ts`) may re-export them.

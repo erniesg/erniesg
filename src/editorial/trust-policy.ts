@@ -153,6 +153,7 @@ export const producerTrustBoundsSchema = z
     /** The longest overlap a key rotation may have. */
     maxRotationOverlapSeconds: z.number().int().nonnegative().max(604_800),
   })
+  .strict()
 export type ProducerTrustBounds = z.infer<typeof producerTrustBoundsSchema>
 
 /**
@@ -176,6 +177,7 @@ export const producerTrustPolicySchema = z
     /** The trust root's detached signature, base64url. */
     signature: z.string().min(1).max(2048),
   })
+  .strict()
 export type ProducerTrustPolicy = z.infer<typeof producerTrustPolicySchema>
 
 /**
@@ -192,6 +194,7 @@ export const producerTrustRootSchema = z
     key: producerPublicKeySchema,
     timestampAuthorities: z.array(producerPublicKeySchema).max(16),
   })
+  .strict()
 export type ProducerTrustRoot = z.infer<typeof producerTrustRootSchema>
 
 /* --------------------------------------------------------- inclusion proof */
@@ -217,6 +220,7 @@ export const producerInclusionProofSchema = z
     /** The authority's detached signature, base64url. */
     signature: z.string().min(1).max(2048),
   })
+  .strict()
 export type ProducerInclusionProof = z.infer<typeof producerInclusionProofSchema>
 
 /* ------------------------------------------------------------------- state */
@@ -319,10 +323,7 @@ export function producerPolicyEpochIsAcceptable(
   policyEpoch: number,
   state: ProducerTrustState,
 ): boolean {
-  // RED: the epoch rule is not implemented yet, so a rollback is not refused.
-  void policyEpoch
-  void state
-  return true
+  return policyEpoch >= state.highestAcceptedEpoch
 }
 
 /**
@@ -337,10 +338,11 @@ export function producerReplayStatus(
   record: ProducerRecord,
   state: ProducerTrustState,
 ): 'replayed' | 'reused' | null {
-  // RED: the replay ledger is not implemented yet, so a replay is not
-  // refused.
-  void record
-  void state
+  const digest = producerRecordDigest(record)
+  for (const accepted of state.acceptedEvents) {
+    if (accepted.eventId !== record.eventId) continue
+    return accepted.digest === digest ? 'replayed' : 'reused'
+  }
   return null
 }
 
@@ -436,9 +438,22 @@ export async function verifyProducerTrustPolicySignature(input: {
   policy: ProducerTrustPolicy
   root: ProducerTrustRoot
 }): Promise<{ ok: true } | { ok: false; reason: 'trust_policy_unauthenticated' }> {
-  // RED: the policy signature is not verified yet, so an unauthenticated
-  // policy is not refused.
-  void input
+  if (input.policy.signatureAlgorithm !== input.root.key.algorithm) {
+    return { ok: false, reason: 'trust_policy_unauthenticated' }
+  }
+  const publicKey = await importProducerPublicKey(input.root.key)
+  if (publicKey === null) {
+    return { ok: false, reason: 'trust_policy_unauthenticated' }
+  }
+  const verified = await verifyDetached({
+    domain: EDITORIAL_TRUST_POLICY_SIGNATURE_DERIVATION,
+    payload: producerTrustPolicyPayload(input.policy),
+    publicKey,
+    signature: input.policy.signature,
+  })
+  if (!verified) {
+    return { ok: false, reason: 'trust_policy_unauthenticated' }
+  }
   return { ok: true }
 }
 
@@ -478,10 +493,27 @@ export async function verifyProducerInclusionProof(input: {
   root: ProducerTrustRoot
   compromisedAt: string
 }): Promise<boolean> {
-  // RED: the inclusion proof is not verified yet, so a compromised key is
-  // not refused.
-  void input
-  return true
+  const proof = producerInclusionProofSchema.safeParse(input.proof)
+  if (!proof.success) return false
+  const authority = input.root.timestampAuthorities.find(
+    (entry) => entry.keyId === proof.data.authorityKeyId,
+  )
+  if (authority === undefined) return false
+  const observed = Date.parse(proof.data.observedAt)
+  const compromised = Date.parse(input.compromisedAt)
+  if (Number.isNaN(observed) || Number.isNaN(compromised)) return false
+  if (observed >= compromised) return false
+  if (proof.data.recordDigest !== producerRecordDigest(input.record)) {
+    return false
+  }
+  const publicKey = await importProducerPublicKey(authority)
+  if (publicKey === null) return false
+  return verifyDetached({
+    domain: EDITORIAL_INCLUSION_PROOF_DERIVATION,
+    payload: producerInclusionProofPayload(proof.data),
+    publicKey,
+    signature: proof.data.signature,
+  })
 }
 
 /* ------------------------------------------------------------ verification */
@@ -607,22 +639,199 @@ function recordIsFresh(
  * chain has been verified.
  */
 export async function verifyProducerRecord(input: {
+  /** The producer record, as it arrived. */
   record: unknown
+  /** The policy epoch document, as it arrived. */
   policy?: unknown
+  /** The app-owned trust root. */
   root: unknown
+  /** The durable trust state. */
   store: ProducerTrustStore
+  /** The consumer's clock. */
   now: Date
+  /** What the consumer expects the record to bind. */
   expectation?: ProducerExpectation
+  /** The pre-compromise inclusion proof, when there is one. */
   inclusionProof?: unknown
 }): Promise<ProducerVerification> {
-  // RED: the verification is not implemented yet, so nothing that should be
-  // refused is refused.
-  const record = producerRecordSchema.safeParse(input.record)
+  const root = producerTrustRootSchema.safeParse(input.root)
+  if (!root.success) return refuse('trust_root_malformed')
+
+  if (input.policy === undefined || input.policy === null) {
+    return refuse('trust_policy_unavailable')
+  }
   const policy = producerTrustPolicySchema.safeParse(input.policy)
+  if (!policy.success) return refuse('trust_policy_malformed')
+
+  let state: ProducerTrustState
+  try {
+    state = await input.store.read()
+  } catch {
+    return refuse('trust_authority_unavailable')
+  }
+
+  const policySignature = await verifyProducerTrustPolicySignature({
+    policy: policy.data,
+    root: root.data,
+  })
+  if (!policySignature.ok) return refuse(policySignature.reason)
+
+  if (!producerPolicyEpochIsAcceptable(policy.data.policyEpoch, state)) {
+    return refuse('trust_policy_rollback')
+  }
+
+  const current = policyIsCurrent(policy.data, input.now)
+  if (!current.ok) return refuse(current.reason)
+
+  if (!rotationOverlapsWithin(policy.data)) {
+    return refuse('trust_policy_rotation_overlap_exceeded')
+  }
+
+  const record = producerRecordSchema.safeParse(input.record)
+  if (!record.success) return refuse('producer_record_malformed')
+
+  if (record.data.producerRecordId !== deriveProducerRecordId(record.data)) {
+    return refuse('producer_record_id_mismatch')
+  }
+
+  const key = policy.data.keys.find(
+    (entry) => entry.keyId === record.data.keyId,
+  )
+  if (key === undefined) return refuse('producer_key_unknown')
+
+  const fingerprint = await producerKeyFingerprint(key.publicKeySpki)
+  if (fingerprint === null || fingerprint !== key.fingerprint) {
+    return refuse('producer_key_material_invalid')
+  }
+  if (key.keyId !== producerKeyId(key.algorithm, key.fingerprint)) {
+    return refuse('producer_key_identity_mismatch')
+  }
+
+  if (record.data.policyEpoch !== key.policyEpoch) {
+    return refuse('producer_epoch_mismatch')
+  }
+  if (record.data.policyEpoch > policy.data.policyEpoch) {
+    return refuse('producer_epoch_mismatch')
+  }
+
+  if (key.algorithm !== record.data.signatureAlgorithm) {
+    return refuse('producer_signature_algorithm_unsupported')
+  }
+
+  const publicKey = await importProducerPublicKey(key)
+  if (publicKey === null) return refuse('producer_key_material_invalid')
+
+  const signature = await verifyProducerRecordSignature({
+    record: record.data,
+    publicKey,
+  })
+  if (!signature.ok) return refuse(signature.reason)
+
+  if (record.data.status === 'superseded') {
+    return refuse('producer_record_superseded')
+  }
+  if (record.data.status === 'revoked') {
+    return refuse('producer_record_revoked')
+  }
+
+  if (!recordIsFresh(record.data, policy.data.bounds, input.now)) {
+    return refuse('producer_record_not_fresh')
+  }
+
+  const issued = Date.parse(record.data.issuedAt)
+  if (
+    issued < Date.parse(key.notBefore) ||
+    issued > Date.parse(key.notAfter)
+  ) {
+    return refuse('producer_key_not_usable')
+  }
+  if (
+    key.revokedAt !== undefined &&
+    issued >= Date.parse(key.revokedAt)
+  ) {
+    return refuse('producer_key_revoked')
+  }
+  if (key.compromisedAt !== undefined) {
+    const proof = await verifyProducerInclusionProof({
+      proof: input.inclusionProof,
+      record: record.data,
+      root: root.data,
+      compromisedAt: key.compromisedAt,
+    })
+    if (!proof) return refuse('producer_key_compromised')
+  }
+
+  const replay = producerReplayStatus(record.data, state)
+  if (replay === 'replayed') return refuse('producer_record_replayed')
+  if (replay === 'reused') return refuse('producer_event_id_reused')
+
+  if (
+    editorialArtifactSetDigest(record.data.artifacts) !==
+    record.data.artifactSetSha256
+  ) {
+    return refuse('producer_artifact_set_mismatch')
+  }
+
+  const expectation = input.expectation
+  if (expectation !== undefined) {
+    if (
+      expectation.targetId !== undefined &&
+      record.data.target.id !== expectation.targetId
+    ) {
+      return refuse('producer_target_mismatch')
+    }
+    if (
+      expectation.audience !== undefined &&
+      record.data.target.audience !== expectation.audience
+    ) {
+      return refuse('producer_audience_mismatch')
+    }
+    if (
+      expectation.documentSha256 !== undefined &&
+      record.data.documentSha256 !== expectation.documentSha256
+    ) {
+      return refuse('producer_digest_mismatch')
+    }
+    if (
+      expectation.bundleSha256 !== undefined &&
+      record.data.bundleSha256 !== expectation.bundleSha256
+    ) {
+      return refuse('producer_digest_mismatch')
+    }
+    if (
+      expectation.artifactSetSha256 !== undefined &&
+      record.data.artifactSetSha256 !== expectation.artifactSetSha256
+    ) {
+      return refuse('producer_digest_mismatch')
+    }
+    if (
+      expectation.releaseId !== undefined &&
+      record.data.releaseId !== expectation.releaseId
+    ) {
+      return refuse('producer_release_mismatch')
+    }
+    if (
+      expectation.releaseSha256 !== undefined &&
+      record.data.releaseSha256 !== expectation.releaseSha256
+    ) {
+      return refuse('producer_digest_mismatch')
+    }
+    if (
+      expectation.approvedRevisionId !== undefined &&
+      record.data.approvedRevisionId !== expectation.approvedRevisionId
+    ) {
+      return refuse('producer_revision_stale')
+    }
+  }
+
+  const next = producerNextState(state, policy.data.policyEpoch, record.data)
+  const advanced = await input.store.compareAndAdvance(state, next)
+  if (!advanced) return refuse('trust_state_concurrent_modification')
+
   return {
     ok: true,
-    record: (record.success ? record.data : input.record) as ProducerRecord,
-    policy: (policy.success ? policy.data : {}) as ProducerTrustPolicy,
-    state: EMPTY_PRODUCER_TRUST_STATE,
+    record: record.data,
+    policy: policy.data,
+    state: next,
   }
 }

@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   EDITORIAL_RECORD_KINDS,
+  EDITORIAL_SOURCE_BINDING_FIELDS,
   editorialApprovalSchema,
   editorialCandidateSchema,
   editorialDecisionSchema,
@@ -106,8 +107,14 @@ describe('editorial record schemas', () => {
     ).toBe(false)
   })
 
-  it('binds the source binding in the exact E-04 struct shape', () => {
+  it('pins the source binding field list in one shared constant', () => {
     expect(Object.keys(editorialSourceBindingSchema.shape)).toEqual([
+      ...EDITORIAL_SOURCE_BINDING_FIELDS,
+    ])
+  })
+
+  it('pins the shared source binding field list itself', () => {
+    expect([...EDITORIAL_SOURCE_BINDING_FIELDS]).toEqual([
       'kind',
       'documentSha256',
       'bundleSha256',

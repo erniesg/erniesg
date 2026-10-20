@@ -139,23 +139,44 @@ export const editorialActorSchema = z.discriminatedUnion('kind', [
 ])
 export type EditorialActor = z.infer<typeof editorialActorSchema>
 
-/* ------------------------------------------------- the E-04 source binding */
+/* ------------------------------------------------- the app-owned source binding */
 
 /**
- * The Struct-cutover source binding, in the exact shape the E-04 contract
- * freezes for `sourceBinding`:
+ * The field list of the source binding.
+ *
+ * It is a shared constant so that the shape is stated once. When the E-04
+ * module lands, its module must compare its own field list against this
+ * one; until then, this constant is the app's own statement and nothing
+ * else.
+ */
+export const EDITORIAL_SOURCE_BINDING_FIELDS = [
+  'kind',
+  'documentSha256',
+  'bundleSha256',
+  'semanticReceiptSha256',
+  'packageSourceCommit',
+  'packageArtifact',
+  'packageArtifactSha256',
+  'packageIntegrity',
+  'packageVersion',
+] as const
+
+/**
+ * The Struct-cutover source binding: the provenance a release must bind.
+ *
+ * **The shape is app-owned and provisional.** It is the app's own
+ * restatement of the fields a Struct-cutover source carries —
  * `documentSha256`, `bundleSha256?`, `semanticReceiptSha256?`,
  * `packageSourceCommit`, `packageArtifact`, `packageArtifactSha256`,
- * `packageIntegrity`, `packageVersion`.
+ * `packageIntegrity`, `packageVersion` — and it is *not* yet checked
+ * against an E-04 module, because E-04 has not landed on this branch and no
+ * module in `src/**` defines a `sourceBinding` to check it against. The
+ * field list is pinned in `EDITORIAL_SOURCE_BINDING_FIELDS` above, which
+ * the E-04 module must compare against when it lands.
  *
  * The legacy `ResearchPaper` variant of the E-04 union is deliberately not
  * admitted here: a release in this contract must bind a Struct-cutover
  * source, so the shape is pinned rather than inherited.
- *
- * E-05 does not import `src/publication/**` (the E-04 module does not exist
- * on this base and E-05 must not touch that tree), so the shape is restated
- * here. `records.test.ts` pins the exact field set so a drift against the
- * E-04 module is visible rather than silent.
  */
 export const editorialSourceBindingSchema = z
   .object({

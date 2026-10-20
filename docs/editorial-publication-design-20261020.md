@@ -535,8 +535,8 @@ produce the release candidate", enforced in one place.**
   2. the release's `sourceBinding` equals the revision's, byte for byte
      under the canonical form, and names the revision's `documentSha256`
      and `bundleSha256` — otherwise `digest_mismatch`. **This is where the
-     E-04 Struct cutover binding is carried:** the same `sourceBinding`
-     shape, over the same one provenance source,
+     Struct-cutover provenance is carried:** the app-owned `sourceBinding`
+     shape (§7.1), over the same one provenance source,
      `vendor/struct/provenance.json`;
   3. the release's `schemaVersions` and `rendering` equal the revision's —
      otherwise `digest_mismatch`;
@@ -738,13 +738,13 @@ The immutable content revision.
 | `documentSha256` | 64 hex | yes | the Struct document digest |
 | `bundleSha256` | 64 hex | no | the Struct bundle digest |
 | `semanticReceiptSha256` | 64 hex | no | the Struct semantic receipt digest |
-| `sourceBinding` | see below | yes | the E-04 Struct cutover binding |
+| `sourceBinding` | see below | yes | the app-owned source binding |
 | `schemaVersions` | see below | yes | the artifact schema versions |
 | `rendering` | see below | yes | the rendering intent |
 | `author` | actor | yes | must be `kind: 'editor'` |
 | `created` | timestamp | yes | excluded from the id |
 
-`sourceBinding` (the E-04 `struct-cutover` variant, exactly):
+`sourceBinding` (the app-owned `struct-cutover` binding):
 
 ```ts
 {
@@ -766,10 +766,15 @@ The package fields are the fields of the **one** provenance source,
 E-04 union is deliberately **not** admitted: a release in this contract must
 bind a Struct-cutover source.
 
-E-05 does not import `src/publication/**` — the E-04 module does not exist
-on this base and E-05 must not touch that tree — so the shape is restated
-here, and `records.test.ts` pins the exact field list so a drift against the
-E-04 module is visible rather than silent.
+**This shape is app-owned and provisional.** It is *not* a verified copy of
+another contract's shape: E-04 has not landed on this branch, and no module
+in `src/**` defines a `sourceBinding` to check it against (measured — the
+E-04 worktree `app-e04-receipt@b4521168` has no such module either). The
+field list is pinned in the shared constant `EDITORIAL_SOURCE_BINDING_FIELDS`
+(`src/editorial/records.ts`), which `records.test.ts` checks against the
+schema's own field list, and **the E-04 module must compare its shape
+against that constant when it lands**. Until then a drift between the two
+shapes would not be visible, and this document does not claim that it is.
 
 `schemaVersions`:
 
@@ -913,7 +918,7 @@ fresh at the moment of release.
 | `candidateId` | candidate id | yes | |
 | `revisionId` | revision id | yes | |
 | `contentHash` | 64 hex | yes | |
-| `sourceBinding` | the E-04 binding | yes | the package pin and the document, bundle and receipt digests |
+| `sourceBinding` | the app-owned binding (§7.1) | yes | the package pin and the document, bundle and receipt digests |
 | `schemaVersions` | as §7.1 | yes | |
 | `rendering` | as §7.1 | yes | the renderer and the profiles |
 | `validations` | `{ id, sha256 }`[1..16] | yes | unique, ordered by id |
@@ -1230,7 +1235,7 @@ report.
 
 | Module | Owns |
 | --- | --- |
-| `src/editorial/records.ts` | the seven record schemas, the target, the actors, the E-04 source binding, the cross-field rules |
+| `src/editorial/records.ts` | the seven record schemas, the target, the actors, the app-owned source binding, the cross-field rules |
 | `src/editorial/ids.ts` | the immutable id derivation, the content and artifact-set digests, the idempotency fingerprint |
 | `src/editorial/validation.ts` | the cross-record rules and the state projections |
 | `src/editorial/state-machine.ts` | the transition table, the actor authorisation, the pure transition function, the refusal codes |

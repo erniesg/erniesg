@@ -1,3 +1,6 @@
+import { readFileSync, readdirSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -291,5 +294,25 @@ describe('editorial record schemas', () => {
         subjectReleaseId: 'urn:editorial:release:not-a-digest',
       }).success,
     ).toBe(false)
+  })
+
+  /**
+   * The sources of the contract stay text.
+   *
+   * A raw NUL byte in a source file makes the file register as binary data,
+   * and a recursive grep over the tree then skips it silently: the file that
+   * defines the whole record contract would be the one file a reader could
+   * not find. The separators are therefore written as escapes.
+   */
+  it('keeps every editorial source free of raw NUL bytes', () => {
+    const directory = fileURLToPath(new URL('.', import.meta.url))
+
+    for (const name of readdirSync(directory).sort()) {
+      const source = readFileSync(`${directory}/${name}`, 'utf8')
+      expect(
+        source.includes('\u0000'),
+        `${name} carries a raw NUL byte`,
+      ).toBe(false)
+    }
   })
 })

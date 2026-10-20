@@ -41,6 +41,16 @@ export const EDITORIAL_RELEASE_VERSION = '1.0.0' as const
 export const EDITORIAL_SUPERSESSION_VERSION = '1.0.0' as const
 export const EDITORIAL_TARGET_VERSION = '1.0.0' as const
 
+/**
+ * The separator the ordering checks join with.
+ *
+ * It is the NUL character, written as an escape. A raw NUL byte in a source
+ * file makes the file register as binary data, and every recursive grep over
+ * the tree then skips it silently — so the file that defines the whole
+ * record contract would be the one file a reader could not find.
+ */
+export const EDITORIAL_JOIN_SEPARATOR = '\u0000'
+
 /** The record kinds the durable editorial store holds. */
 export const EDITORIAL_RECORD_KINDS = [
   'revision',
@@ -538,7 +548,10 @@ export const editorialCandidateSchema = z
       })
     }
     const sorted = [...paths].sort()
-    if (paths.join(' ') !== sorted.join(' ')) {
+    if (
+      paths.join(EDITORIAL_JOIN_SEPARATOR) !==
+      sorted.join(EDITORIAL_JOIN_SEPARATOR)
+    ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['artifacts'],
@@ -648,7 +661,10 @@ export const editorialReleaseSchema = z
       })
     }
     const sorted = [...ids].sort()
-    if (ids.join(' ') !== sorted.join(' ')) {
+    if (
+      ids.join(EDITORIAL_JOIN_SEPARATOR) !==
+      sorted.join(EDITORIAL_JOIN_SEPARATOR)
+    ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['validations'],
@@ -664,7 +680,10 @@ export const editorialReleaseSchema = z
       })
     }
     const sortedPaths = [...paths].sort()
-    if (paths.join(' ') !== sortedPaths.join(' ')) {
+    if (
+      paths.join(EDITORIAL_JOIN_SEPARATOR) !==
+      sortedPaths.join(EDITORIAL_JOIN_SEPARATOR)
+    ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['artifacts'],

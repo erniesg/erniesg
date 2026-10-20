@@ -4,7 +4,7 @@ import {
   renderPublicationXhtml as renderStructPublicationXhtml,
   type StructXhtmlOptions,
 } from '../struct/xhtml'
-import type { StructDocument } from '../struct/types'
+import type { StructDocument } from '@erniesg/struct/document'
 import {
   DocxImportError,
   PdfImportError,

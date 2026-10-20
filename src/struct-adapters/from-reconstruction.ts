@@ -10,7 +10,7 @@ import {
   modelConsultationReceiptMatchesPdfReconstruction,
   pdfModelDerivedDecisionKeys,
 } from '../research/model-fallback-pipeline'
-import { structDigest, structId } from '../struct/ids'
+import { structDigest, structId } from '@erniesg/struct/identity'
 import {
   validateModelConsultationReceipt,
   type ModelFallbackReceipt,
@@ -19,7 +19,7 @@ import { recoverySummary, toStructDiagnostic } from './recovery'
 import {
   orderBlocksByLayout,
   pageLayoutsFromBlocks,
-} from '../struct/reading-order'
+} from '@erniesg/struct/ordering'
 import type {
   StructAsset,
   StructBlock,
@@ -34,7 +34,7 @@ import type {
   StructTable,
   StructTableCell,
 } from '@erniesg/struct/document'
-import { STRUCT_SCHEMA_VERSION } from '../struct/types'
+import { STRUCT_SCHEMA_VERSION } from '@erniesg/struct/document'
 
 function isPdf(
   reconstruction: DocumentReconstruction,

@@ -19,7 +19,7 @@ import type {
   StructInline,
   StructRelationship,
   StructTableCell,
-} from '../struct/types'
+} from '@erniesg/struct/document'
 
 export const STRUCT_PUBLICATION_ADAPTER_ID = 'struct-document' as const
 export const STRUCT_PUBLICATION_MAPPING_VERSION = '1.0.0' as const

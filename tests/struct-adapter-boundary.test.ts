@@ -383,4 +383,48 @@ describe('app-owned Struct adapter boundary', () => {
       ),
     ).toEqual([])
   })
+
+  it('E-03: prohibits migrated-family imports (types/ids/reading-order/codec) and validates package paths', async () => {
+    const publicPaths = await publicPackagePaths()
+    const migratedFamilies = new Set([
+      'types', 'ids', 'reading-order', 'codec',
+    ])
+    const permittedRecoveryImporter = new URL('struct/recovery.ts', root).pathname
+    const permittedAdapterRecoveryImporter = new URL('struct-adapters/recovery.ts', root).pathname
+    const permittedRecoverySpecifiers = [
+      '../struct-adapters/recovery', '../struct-adapters/recovery.ts',
+    ]
+    const violations: string[] = []
+    for (const file of await portableFiles(root)) {
+      if (file.pathname.startsWith(portableRoot.pathname)) continue
+      const source = await readFile(file, 'utf8')
+      for (const specifier of importedPaths(source, file)) {
+        // Check package-private imports
+        if (specifier === '@erniesg/struct' || specifier.startsWith('@erniesg/struct/')) {
+          if (!publicPaths.has(specifier)) {
+            violations.push(`${file.pathname}: private package import ${specifier}`)
+          }
+          continue
+        }
+        if (!specifier.startsWith('.')) continue
+        const target = new URL(specifier, file).pathname.replace(
+          /\.(?:[cm]?[jt]s|astro)$/u,
+          '',
+        )
+        // Skip permitted recovery paths
+        if (file.pathname === permittedRecoveryImporter && permittedRecoverySpecifiers.some(s => {
+          const t = new URL(s, file).pathname.replace(/\.(?:[cm]?[jt]s|astro)$/u, '')
+          return target === t || target === new URL('struct-adapters/recovery', root).pathname || target === new URL('struct-adapters/recovery.ts', root).pathname
+        })) continue
+        // Check migrated family prohibition for non-test production modules
+        const familyMatch = target.match(/struct\/(types|ids|reading-order|codec)(?:\/(?:index)?)?$/)
+        if (familyMatch && migratedFamilies.has(familyMatch[1]!)) {
+          // Only allowed if it is the adapter recovery permitted path (not a migrated family violation)
+          // The family list excludes recovery; recovery is handled separately.
+          violations.push(`${file.pathname}: migrated family import ${specifier} -> ${target}`)
+        }
+      }
+    }
+    expect(violations).toEqual([])
+  })
 })

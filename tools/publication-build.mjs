@@ -28,19 +28,37 @@ import {
 } from '../src/publication/renderers/vivliostyle.ts'
 import { serializePublicationGraph } from '../src/publication/schema.ts'
 
+/**
+ * Adapter ids that named the retired Payload-Lexical publication path. The
+ * path itself is gone; the ids are still recognised so that an operator who
+ * still uses them gets the retirement reason instead of a generic
+ * "unsupported adapter" message that would hide it.
+ */
+const RETIRED_PAYLOAD_ADAPTER_IDS = new Set(['payload', 'payload-lexical'])
+
+const PAYLOAD_RETIREMENT_MESSAGE =
+  'The Payload publication adapter was retired: `--adapter payload` is no longer available. Re-adding a Payload publication path requires a Struct-semantics conversion first.'
+
 export function parsePublicationBuildArgs(argv) {
   const options = {}
   for (let index = 0; index < argv.length; index += 1) {
     const option = argv[index]
-    if (
-      ![
-        '--adapter',
-        '--entry',
-        '--input',
-        '--mapping',
-        '--output',
-      ].includes(option)
-    )
+    if (option === '--adapter') {
+      const value = argv[++index]
+      if (!value || value.startsWith('--'))
+        throw new Error(`Missing value for ${option}`)
+      // The refusal is checked before anything else so that every spelling of
+      // the retired adapter reports the same documented retirement reason.
+      if (RETIRED_PAYLOAD_ADAPTER_IDS.has(value))
+        throw new Error(PAYLOAD_RETIREMENT_MESSAGE)
+      options.adapter = value
+      continue
+    }
+    if (option === '--input' || option === '--mapping')
+      throw new Error(
+        `Publication:build option ${option} was removed with the retired Payload publication path: ${PAYLOAD_RETIREMENT_MESSAGE}`,
+      )
+    if (!['--entry', '--output'].includes(option))
       throw new Error(`Unknown publication:build option: ${option}`)
     const value = argv[++index]
     if (!value || value.startsWith('--'))
@@ -49,22 +67,12 @@ export function parsePublicationBuildArgs(argv) {
   }
   if (!options.adapter || !options.output)
     throw new Error(
-      'Usage: publication:build --adapter astro --entry <blog-id> --output <directory> | --adapter payload --input <json> [--mapping <json>] --output <directory>',
+      'Usage: publication:build --adapter astro --entry <blog-id> --output <directory>',
     )
-  if (options.adapter === 'payload') options.adapter = 'payload-lexical'
-  if (options.adapter === 'astro') {
-    if (!options.entry)
-      throw new Error('Astro publication builds require --entry <blog-id>')
-    if (options.input || options.mapping)
-      throw new Error('Astro publication builds do not accept Payload input or mapping files')
-  } else if (options.adapter === 'payload-lexical') {
-    if (!options.input)
-      throw new Error('Payload publication builds require --input <json>')
-    if (options.entry)
-      throw new Error('Payload publication builds do not accept an Astro --entry')
-  } else {
+  if (options.adapter !== 'astro')
     throw new Error(`Unsupported publication source adapter: ${options.adapter}`)
-  }
+  if (!options.entry)
+    throw new Error('Astro publication builds require --entry <blog-id>')
   return options
 }
 
@@ -1051,19 +1059,7 @@ export async function publicationBuild(argv = process.argv.slice(2), runtime = {
   // staging is excluded explicitly from the clean-source receipt evidence.
   const finalOutput = assertPublicationOutputDirectory(options.output)
   const registry = createDefaultPublicationAdapterRegistry()
-  const locator =
-    options.adapter === 'astro'
-      ? { entryId: options.entry }
-      : {
-          document: JSON.parse(await readFile(resolve(options.input), 'utf8')),
-          ...(options.mapping
-            ? {
-                mapping: JSON.parse(
-                  await readFile(resolve(options.mapping), 'utf8'),
-                ),
-              }
-            : {}),
-        }
+  const locator = { entryId: options.entry }
   const bundle = await registry.resolve(options.adapter, locator)
   // The whole build writes into a private invocation-owned staging directory
   // and only ever touches the caller-supplied output path through one final

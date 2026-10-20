@@ -76,7 +76,7 @@ describe('publication adapter output conformance CLI', () => {
     }
   })
 
-  it('passes canonical graphs to the renderer after semantic comparison', async () => {
+  it('passes the canonical graph to the renderer', async () => {
     const temporaryRoot = await mkdtemp(
       resolve(tmpdir(), 'publication-adapter-conformance-boundary-'),
     )
@@ -85,16 +85,16 @@ describe('publication adapter output conformance CLI', () => {
     const originalRender = vivliostyleRenderer.render
     vivliostyleRenderer.render = async (bundle) => {
       renderedNodeIds.push(bundle.graph.nodes.map((node) => node.id))
-      if (renderedNodeIds.length === 2) throw new Error('render-boundary-captured')
-      return undefined
+      throw new Error('render-boundary-captured')
     }
     try {
       await expect(
         publicationAdapterConformance(['--output', output]),
       ).rejects.toThrow('render-boundary-captured')
-      expect(renderedNodeIds).toHaveLength(2)
+      // The retired Payload adapter was the only second adapter, so exactly one
+      // canonical graph is rendered now.
+      expect(renderedNodeIds).toHaveLength(1)
       expect(renderedNodeIds[0][0]).toBe('node-1')
-      expect(renderedNodeIds[1][0]).toBe('node-1')
     } finally {
       vivliostyleRenderer.render = originalRender
       await rm(temporaryRoot, { recursive: true, force: true })
@@ -182,7 +182,11 @@ describe('publication adapter output conformance CLI', () => {
       )
       expect(result.status, result.stderr).toBe(0)
       expect(result.stdout).toContain(
-        `Astro/Payload publication output receipts conform at ${output} (4 artifacts each)`,
+        `Astro publication output receipt conforms at ${output} (4 artifacts)`,
+      )
+      // The coverage loss is stated by the tool itself, not hidden by it.
+      expect(result.stdout).toContain(
+        'Coverage loss: the cross-adapter equivalence proof no longer has a second adapter',
       )
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true })

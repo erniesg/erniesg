@@ -9,7 +9,6 @@ import { parse } from 'parse5'
 import { PDFDocument } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { canonicalPublicationSubsetSha256 } from '../src/publication/adapter-conformance.ts'
-import { PAYLOAD_MAPPING_POLICY_VERSION } from '../src/publication/adapters/payload-lexical.ts'
 import {
   PUBLICATION_PROFILES,
   publicationAssetFileExtension,
@@ -248,18 +247,25 @@ export function assertPublicationReceiptPolicyVersions(receipt) {
   )
 }
 
-export function assertPublicationReceiptMappingVersion(receipt) {
-  if (receipt?.source?.sourceType !== 'payload') return
+/**
+ * The Payload publication path is retired (E-04 P-2): the adapter that
+ * produced Payload-sourced receipts no longer exists, and the Payload mapping
+ * policy version went with it. A receipt that still claims a Payload source is
+ * therefore refused instead of version-checked, so a stale Payload receipt can
+ * never pass the check as if it were current.
+ */
+export function assertPublicationReceiptRetiredPayloadSource(receipt) {
+  const source = receipt?.source
+  if (source?.sourceType !== 'payload' && source?.adapterId !== 'payload-lexical')
+    return
   assert(
-    receipt.source?.adapterId === 'payload-lexical' &&
-      receipt.source?.mappingVersion === PAYLOAD_MAPPING_POLICY_VERSION,
-    'Payload mapping version is missing or stale in its receipt',
+    false,
+    'Publication receipt claims the retired Payload publication source',
   )
 }
 
 const PUBLICATION_SOURCE_TYPE_BY_ADAPTER = Object.freeze({
   astro: 'astro',
-  'payload-lexical': 'payload',
 })
 
 export function assertPublicationReceiptSourceBinding(receipt, graph) {
@@ -1181,7 +1187,7 @@ export async function publicationCheck(
       typeof receipt.source?.sourceId === 'string',
     'Publication source provenance is missing from its receipt',
   )
-  assertPublicationReceiptMappingVersion(receipt)
+  assertPublicationReceiptRetiredPayloadSource(receipt)
   const currentRepository = publicationRepositoryForCurrentCheckout(
     execution.cleanlinessExclusions,
   )

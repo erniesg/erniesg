@@ -4,8 +4,6 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { PDFDocument } from 'pdf-lib'
 import { describe, expect, it } from 'vitest'
-import { canonicalPublicationSourceResult } from '../src/publication/adapter-conformance.ts'
-import { adaptPayloadLexical } from '../src/publication/adapters/payload-lexical.ts'
 import { PUBLICATION_PROFILES } from '../src/publication/renderers/vivliostyle.ts'
 import {
   publicationPlaywrightRuntimeEvidenceForPlatform,
@@ -13,7 +11,6 @@ import {
 } from '../src/publication/toolchain.ts'
 import {
   publicationGraphSchema,
-  serializePublicationGraph,
 } from '../src/publication/schema.ts'
 import {
   assertPdfPageGeometry,
@@ -26,7 +23,7 @@ import {
   accessibilityLabel,
   assertPublicationPdfPageCountPolicy,
   assertPublicationReceiptSourceBinding,
-  assertPublicationReceiptMappingVersion,
+  assertPublicationReceiptRetiredPayloadSource,
   assertPublicationReceiptPolicyVersions,
   assertPublicationReceiptRepositoryBinding,
   assertPublicationReceiptRuntime,
@@ -261,8 +258,8 @@ describe('publication:check CLI', () => {
     expect(
       publicationReceiptRequiresCanonicalRouteParity({
         source: {
-          adapterId: 'payload-lexical',
-          sourceType: 'payload',
+          adapterId: 'struct-document',
+          sourceType: 'research-paper',
           routeParity: 'not-applicable',
         },
       }),
@@ -439,23 +436,24 @@ describe('publication:check CLI', () => {
     ).toThrow(/policy versions/)
   })
 
-  it('pins Payload mapping receipts to the canonical accepted policy version', () => {
-    const receipt = {
+  it('refuses receipts that claim the retired Payload publication source', () => {
+    const payloadReceipt = {
       source: {
         adapterId: 'payload-lexical',
         sourceType: 'payload',
         mappingVersion: '1.0.0',
       },
     }
-    expect(() => assertPublicationReceiptMappingVersion(receipt)).not.toThrow()
     expect(() =>
-      assertPublicationReceiptMappingVersion({
-        ...receipt,
-        source: { ...receipt.source, mappingVersion: '99.0.0' },
+      assertPublicationReceiptRetiredPayloadSource(payloadReceipt),
+    ).toThrow(/retired Payload publication source/)
+    expect(() =>
+      assertPublicationReceiptRetiredPayloadSource({
+        source: { adapterId: 'payload-lexical', sourceType: 'astro' },
       }),
-    ).toThrow(/Payload mapping version is missing or stale/)
+    ).toThrow(/retired Payload publication source/)
     expect(() =>
-      assertPublicationReceiptMappingVersion({
+      assertPublicationReceiptRetiredPayloadSource({
         source: { adapterId: 'astro', sourceType: 'astro' },
       }),
     ).not.toThrow()
@@ -781,64 +779,74 @@ describe('publication:check CLI', () => {
   })
 
   it('matches PDF requirements to rendered link ranges without crossing breaks or blocks', () => {
-    const source = adaptPayloadLexical({
-      id: 'link-boundaries',
-      title: 'Link boundaries',
-      locale: 'en',
-      content: {
-        root: {
-          type: 'root',
-          children: [
-            {
-              type: 'paragraph',
-              children: [
-                {
-                  type: 'link',
-                  url: 'https://example.com/formatted',
-                  children: [
-                    { type: 'text', text: 'Read ' },
-                    { type: 'text', text: 'more', format: 'bold' },
-                  ],
-                },
-                {
-                  type: 'link',
-                  url: 'https://example.com/adjacent',
-                  children: [{ type: 'text', text: 'one' }],
-                },
-                {
-                  type: 'link',
-                  url: 'https://example.com/adjacent',
-                  children: [{ type: 'text', text: 'two' }],
-                },
-                {
-                  type: 'link',
-                  url: 'https://example.com/break',
-                  children: [
-                    { type: 'text', text: 'up' },
-                    { type: 'linebreak' },
-                    { type: 'text', text: 'down' },
-                  ],
-                },
-              ],
-            },
-            {
-              type: 'paragraph',
-              children: [
-                {
-                  type: 'link',
-                  url: 'https://example.com/adjacent',
-                  children: [{ type: 'text', text: 'block' }],
-                },
-              ],
-            },
+    // The retired Payload adapter used to produce this graph. The check itself
+    // is about the canonical inline-run shape, so the fixture is stated
+    // directly as the canonical graph.
+    const graph = publicationGraphSchema.parse({
+      version: '1.0.0',
+      id: 'pdf-link-boundaries',
+      metadata: {
+        title: 'Link boundaries',
+        contributors: [],
+        defaultLocale: 'en',
+        defaultDirection: 'auto',
+        keywords: [],
+      },
+      edition: { id: 'edition', locale: 'en', direction: 'auto' },
+      nodes: [
+        {
+          id: 'node-1',
+          locale: 'en',
+          direction: 'auto',
+          requirement: 'required',
+          importance: 'essential',
+          provenance: {
+            adapterId: 'conformance-fixture',
+            sourceId: 'conformance:fixture',
+            sourceRevision: '1',
+            evidence: ['conformance:fixture'],
+            idOrigin: 'source',
+          },
+          accessibility: { decorative: false },
+          variants: [],
+          permittedTransformationIds: [],
+          edition: { editionId: 'edition' },
+          type: 'paragraph',
+          text: 'Read moreonetwoup\ndown',
+          inlineRuns: [
+            { start: 0, end: 9, href: 'https://example.com/formatted' },
+            { start: 5, end: 9, bold: true },
+            { start: 9, end: 12, href: 'https://example.com/adjacent' },
+            { start: 12, end: 15, href: 'https://example.com/adjacent' },
+            { start: 15, end: 22, href: 'https://example.com/break' },
+            { start: 17, end: 18, hardBreak: true },
           ],
         },
-      },
+        {
+          id: 'node-2',
+          locale: 'en',
+          direction: 'auto',
+          requirement: 'required',
+          importance: 'essential',
+          provenance: {
+            adapterId: 'conformance-fixture',
+            sourceId: 'conformance:fixture',
+            sourceRevision: '1',
+            evidence: ['conformance:fixture'],
+            idOrigin: 'source',
+          },
+          accessibility: { decorative: false },
+          variants: [],
+          permittedTransformationIds: [],
+          edition: { editionId: 'edition' },
+          type: 'paragraph',
+          text: 'block',
+          inlineRuns: [
+            { start: 0, end: 5, href: 'https://example.com/adjacent' },
+          ],
+        },
+      ],
     })
-    const canonical = canonicalPublicationSourceResult(source)
-    const graph = publicationGraphSchema.parse(
-      JSON.parse(serializePublicationGraph(canonical.graph)),
-    )
     for (const profile of PUBLICATION_PROFILES) {
       expect(publicationPdfLinkRequirementsForProfile(graph, profile)).toEqual([
         'https://example.com/formatted',

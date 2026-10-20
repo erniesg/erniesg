@@ -9,13 +9,8 @@ import {
 } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import {
-  canonicalPublicationSourceResult,
-  comparePublicationOutputReceipts,
-  comparePublicationSemanticSubset,
-} from '../src/publication/adapter-conformance.ts'
+import { canonicalPublicationSourceResult } from '../src/publication/adapter-conformance.ts'
 import { adaptAstroBlogEntry } from '../src/publication/adapters/astro.ts'
-import { adaptPayloadLexical } from '../src/publication/adapters/payload-lexical.ts'
 import {
   PUBLICATION_PROFILES,
   vivliostyleRenderer,
@@ -51,7 +46,6 @@ export async function publicationAdapterConformance(
   await mkdir(root)
   let staging
   let astroReceipt
-  let payloadReceipt
   try {
     staging = await (
       execution.createStagingDirectory ?? createPublicationStagingDirectory
@@ -77,41 +71,16 @@ export async function publicationAdapterConformance(
       entryId: 'payload-equivalent',
       contentRoot,
     })
-    const payload = adaptPayloadLexical(
-      JSON.parse(
-        await readFile(
-          resolve('tests/fixtures/payload/equivalent-publication.json'),
-          'utf8',
-        ),
-      ),
-      JSON.parse(
-        await readFile(resolve('tests/fixtures/payload/mapping.json'), 'utf8'),
-      ),
-    )
-    if (!comparePublicationSemanticSubset(astro, payload))
-      throw new Error('Equivalent Astro and Payload fixtures have different canonical semantics')
     const canonicalAstro = canonicalPublicationSourceResult(astro)
-    const canonicalPayload = canonicalPublicationSourceResult(payload)
 
     const astroOutput = resolve(staging, 'astro-output')
-    const payloadOutput = resolve(staging, 'payload-output')
     await vivliostyleRenderer.render(canonicalAstro, {
       outputDirectory: astroOutput,
-      profiles: PUBLICATION_PROFILES,
-    })
-    await vivliostyleRenderer.render(canonicalPayload, {
-      outputDirectory: payloadOutput,
       profiles: PUBLICATION_PROFILES,
     })
     astroReceipt = await bindPublicationSourceReceipt(
       astroOutput,
       canonicalAstro,
-      'adapter-conformance',
-      [staging],
-    )
-    payloadReceipt = await bindPublicationSourceReceipt(
-      payloadOutput,
-      canonicalPayload,
       'adapter-conformance',
       [staging],
     )
@@ -124,14 +93,6 @@ export async function publicationAdapterConformance(
       ['--input', astroOutput, '--matrix', matrix],
       checkerContext,
     )
-    await publicationCheck(
-      ['--input', payloadOutput, '--matrix', matrix],
-      checkerContext,
-    )
-    if (!comparePublicationOutputReceipts(astroReceipt, payloadReceipt))
-      throw new Error(
-        'Equivalent Astro and Payload output receipts differ outside the source allowlist',
-      )
     await publishPublicationOutput(staging, root)
   } catch (error) {
     // All-or-nothing: only the reservation this invocation created (and only
@@ -142,9 +103,12 @@ export async function publicationAdapterConformance(
     if (staging) await rm(staging, { recursive: true, force: true })
   }
   process.stdout.write(
-    `Astro/Payload publication output receipts conform at ${root} (${PUBLICATION_PROFILES.length} artifacts each)\n`,
+    `Astro publication output receipt conforms at ${root} (${PUBLICATION_PROFILES.length} artifacts)\n` +
+      'Coverage loss: the cross-adapter equivalence proof no longer has a second adapter. ' +
+      'The Payload-Lexical publication path was retired, so this tool can no longer compare ' +
+      'an Astro receipt against an equivalent Payload receipt.\n',
   )
-  return { astroReceipt, payloadReceipt }
+  return { astroReceipt }
 }
 
 if (

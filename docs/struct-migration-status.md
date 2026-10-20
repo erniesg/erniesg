@@ -10,9 +10,11 @@ remain authoritative.
 - Ernie.SG default: `453fb256` (PR #447, app-owned reconstruction adapter and frozen parity).
 - Struct default: `fae461e9` (MathML validation); its canonical checkout has unrelated
   PDF-service work and must not be reset to this default.
-- App artifact: source `10116f4726da89ebabc823cb25706f2de5386f40`,
-  SHA-256 `e18d743de5e2c8431b64a830974bd1180299f21cc8ab8cf70a9b184c36ab1374`.
-  The exact pin in `vendor/struct/provenance.json` remains unchanged.
+- App artifact: source `90f76f1f80b037cc065169d07b13779c03420026`,
+  SHA-256 `42fee58e9b1e1888c53e929ad6367a2c128d1607140225387836ee5da53df8f1`
+  (33 packed files, 346,288 uncompressed bytes). The exact pin in
+  `vendor/struct/provenance.json` was updated to it by the atomic repin
+  commit (9b7d21fc).
 - Execution host: `erniesg-ai-vm`; laptop is a control interface. October 17
   preservation was verified by
   `/home/ubuntu/.local/state/erniesg-offload/20261017/SYNC-VERIFIED.json`.
@@ -29,7 +31,7 @@ remain authoritative.
 | E-01 #280, E-WF #281 | Closed; architecture and generated-workflow groundwork landed. |
 | S-03 Struct #6 | Open. Private bundle/resolver work is in PRs #23/#24; public embedded-only surface is PR #33. PR #33 explicitly excludes the external executor, value verifier and full conformance harness. |
 | S-04 Struct #7 | Open. Default packed-consumer proof establishes existing document subpaths, not complete Bundle acceptance. Re-run the full public negative matrix and deterministic goldens at the final integrated package head. |
-| E-02 #282 | PR #447 landed adapter relocation and frozen source parity. PR #450 separately owns inline-hyperlink conservation. Bundle-through-adapter verification and complete S-04 proof remain open. |
+| E-02 #282 | PR #447 landed adapter relocation and frozen source parity. PR #450 separately owns inline-hyperlink conservation. The app is pinned to the reviewed S-04 artifact and the app-side bundle parity (create -> encode -> bytes-only decode with the asset digests conserved) is in place; the upstream S-04 release packet is measured at one immutable head. This is a candidate, not a landed cutover: no merge, no publication, no deploy and no route or writer activation has happened, and E-03/E-04/E-05/E-06/E-07 remain separate steps. |
 | E-03 #283 | Not cut over. Recovery ownership preparation is behavior-preserving; it does not satisfy this issue. Switch types/codecs/identity/ordering/recovery facts only after E-02 passes. |
 | E-04 #284 | Depends on E-03. Preserve ResearchPaper compatibility; converge PublicationGraph semantics deliberately. |
 | E-05/#285, E-06/#286 | Durable publication design/activation remain separate; this work activates no writer or route. |

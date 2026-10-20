@@ -15,6 +15,7 @@ import {
 import {
   decodeReconstruction,
   observeAdapterBundle,
+  sha256,
 } from './fixtures/struct-adapter-parity/observe'
 
 const frozen = JSON.parse(
@@ -119,6 +120,75 @@ describe('app-owned Struct bundle parity at the S-04 pin', () => {
       name: 'StructBundleError',
       stage: 'digest',
       code: 'MISMATCH',
+    })
+  })
+
+  it('refuses a bundle body with one flipped byte instead of decoding it', async () => {
+    const document = await loadDocument('structured-docx')
+    const handle = createStructBundle({
+      document: packageEncodeDocument(document),
+    })
+    const raw = encodeStructBundle(handle)
+    // Baseline: the untampered body is accepted, so the rejection below is
+    // caused by the flipped byte alone and not by a broken fixture.
+    const accepted = await decodeStructBundle(raw)
+    expect(accepted.bundleSha256).toBe(handle.bundleSha256)
+
+    // Exactly one byte of the encoded body is flipped: the last one.
+    const tampered = new Uint8Array(raw)
+    tampered[tampered.length - 1] ^= 0xff
+    let differing = 0
+    for (let index = 0; index < raw.length; index += 1) {
+      if (tampered[index] !== raw[index]) differing += 1
+    }
+    expect(differing).toBe(1)
+
+    // The bytes-only ingress must refuse the tampered body. Measured at this
+    // pin: stage `canonical`, code `SYNTAX`, because the flipped byte breaks
+    // the canonical JSON envelope before any asset is inspected.
+    await expect(decodeStructBundle(tampered)).rejects.toBeInstanceOf(
+      StructBundleError,
+    )
+    await expect(decodeStructBundle(tampered)).rejects.toMatchObject({
+      name: 'StructBundleError',
+      stage: 'canonical',
+      code: 'SYNTAX',
+    })
+  })
+
+  it('refuses asset bytes whose digest does not match the declared digest', async () => {
+    const document = await loadDocument('structured-docx')
+    const json = packageEncodeDocument(document)
+    const tamperedAssets = json.assets.map((asset, index) => {
+      if (index !== 0) return asset
+      const bytes = new Uint8Array(Buffer.from(asset.bytes ?? '', 'base64'))
+      expect(bytes.byteLength).toBeGreaterThan(0)
+      bytes[0] ^= 0xff
+      // The declared digest and the supplied bytes must genuinely disagree.
+      // Both sides are computed here, so no frozen fixture value is asserted.
+      expect(sha256(bytes)).not.toBe(asset.sha256)
+      return { ...asset, bytes: Buffer.from(bytes).toString('base64') }
+    })
+    const tampered = { ...json, assets: tamperedAssets }
+
+    // The creator throws synchronously; it never returns a handle for the
+    // mismatch and never returns a rejected promise.
+    expect(() => createStructBundle({ document: tampered })).toThrow(
+      StructBundleError,
+    )
+    let thrown: unknown
+    try {
+      createStructBundle({ document: tampered })
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(StructBundleError)
+    // Measured at this pin: the document codec refuses the mismatched bytes
+    // first, so the bundle facade surfaces the refusal at stage `input`.
+    expect(thrown).toMatchObject({
+      name: 'StructBundleError',
+      stage: 'input',
+      code: 'TYPE',
     })
   })
 

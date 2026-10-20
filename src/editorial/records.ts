@@ -22,7 +22,8 @@
  *
  * The schemas are strict: an unknown field is a refusal, not a shrug, so a
  * record written by a newer writer cannot be half-understood by an older
- * reader.
+ * reader. The cross-field rules live in `superRefine`, so a record that
+ * contradicts itself does not parse.
  */
 import { z } from 'zod'
 
@@ -143,8 +144,8 @@ export type EditorialActor = z.infer<typeof editorialActorSchema>
  *
  * E-05 does not import `src/publication/**` (the E-04 module does not exist
  * on this base and E-05 must not touch that tree), so the shape is restated
- * here. `editorialSourceBindingSchema.test.ts` pins the exact field set so a
- * drift against the E-04 module is visible rather than silent.
+ * here. `records.test.ts` pins the exact field set so a drift against the
+ * E-04 module is visible rather than silent.
  */
 export const editorialSourceBindingSchema = z
   .object({
@@ -224,21 +225,30 @@ export type EditorialArtifact = z.infer<typeof editorialArtifactSchema>
 /* ------------------------------------------------------------------ targets */
 
 /**
- * The mandatory checks. Every release needs all four; a target policy may
- * add more but may never drop one.
+ * The checks a validation can record.
+ *
+ * The first four are mandatory for every release. A target may require more
+ * of the optional ones — a print target may require a preflight check — but
+ * no target may drop one of the mandatory four.
  */
 export const EDITORIAL_VALIDATION_CHECKS = [
   'bundle-verification',
   'epubcheck',
   'ace',
   'human-review',
+  'preflight',
+  'link-integrity',
 ] as const
 export type EditorialValidationCheck =
   (typeof EDITORIAL_VALIDATION_CHECKS)[number]
 
 /** The checks no release may be published without. */
-export const MANDATORY_VALIDATION_CHECKS: readonly EditorialValidationCheck[] =
-  EDITORIAL_VALIDATION_CHECKS
+export const MANDATORY_VALIDATION_CHECKS: readonly EditorialValidationCheck[] = [
+  'bundle-verification',
+  'epubcheck',
+  'ace',
+  'human-review',
+]
 
 /**
  * A target: the audience, channel and environment a release is published to.
@@ -268,6 +278,25 @@ export const editorialTargetSchema = z
       .strict(),
   })
   .strict()
+  .superRefine((target, context) => {
+    const required = target.policy.requiredValidationChecks
+    if (new Set(required).size !== required.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['policy', 'requiredValidationChecks'],
+        message: 'a target may not require the same check twice',
+      })
+    }
+    for (const check of MANDATORY_VALIDATION_CHECKS) {
+      if (!required.includes(check)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['policy', 'requiredValidationChecks'],
+          message: `a target may not drop the mandatory ${check} check`,
+        })
+      }
+    }
+  })
 export type EditorialTarget = z.infer<typeof editorialTargetSchema>
 
 /* ------------------------------------------------------------- record ids */
@@ -380,6 +409,40 @@ export const editorialRevisionSchema = z
     created: timestampSchema,
   })
   .strict()
+  .superRefine((revision, context) => {
+    if (revision.author.kind !== 'editor') {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['author', 'kind'],
+        message: 'a revision is cut by an editor',
+      })
+    }
+    const binding = revision.sourceBinding
+    const disagrees =
+      binding.documentSha256 !== revision.documentSha256 ||
+      (binding.bundleSha256 ?? null) !== (revision.bundleSha256 ?? null) ||
+      (binding.semanticReceiptSha256 ?? null) !==
+        (revision.semanticReceiptSha256 ?? null)
+    if (disagrees) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['sourceBinding'],
+        message: 'the source binding must name the digests the revision carries',
+      })
+    }
+    const contentHash = editorialContentDigest({
+      documentSha256: revision.documentSha256,
+      bundleSha256: revision.bundleSha256,
+      semanticReceiptSha256: revision.semanticReceiptSha256,
+    })
+    if (contentHash !== revision.contentHash) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['contentHash'],
+        message: 'the content hash must be the hash of the content digests',
+      })
+    }
+  })
 export type EditorialRevision = z.infer<typeof editorialRevisionSchema>
 
 /** The outcomes a review decision can have. */
@@ -429,11 +492,70 @@ export const editorialCandidateSchema = z
     target: editorialTargetSchema,
     artifacts: z.array(editorialArtifactSchema).min(1).max(64),
     artifactSetSha256: sha256Schema,
-    requiredValidationChecks: z.array(z.enum(EDITORIAL_VALIDATION_CHECKS)).min(1).max(16),
+    requiredValidationChecks: z
+      .array(z.enum(EDITORIAL_VALIDATION_CHECKS))
+      .min(1)
+      .max(16),
     author: editorialActorSchema,
     created: timestampSchema,
   })
   .strict()
+  .superRefine((candidate, context) => {
+    if (
+      new Set(candidate.requiredValidationChecks).size !==
+      candidate.requiredValidationChecks.length
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['requiredValidationChecks'],
+        message: 'a candidate may not require the same check twice',
+      })
+    }
+    for (const check of MANDATORY_VALIDATION_CHECKS) {
+      if (!candidate.requiredValidationChecks.includes(check)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['requiredValidationChecks'],
+          message: `a candidate may not drop the mandatory ${check} check`,
+        })
+      }
+    }
+    for (const check of candidate.target.policy.requiredValidationChecks) {
+      if (!candidate.requiredValidationChecks.includes(check)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['requiredValidationChecks'],
+          message: `the candidate must require the ${check} check its target requires`,
+        })
+      }
+    }
+    const paths = candidate.artifacts.map((artifact) => artifact.path)
+    if (new Set(paths).size !== paths.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['artifacts'],
+        message: 'an artifact may not appear twice',
+      })
+    }
+    const sorted = [...paths].sort()
+    if (paths.join(' ') !== sorted.join(' ')) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['artifacts'],
+        message: 'the artifacts must be ordered by path',
+      })
+    }
+    if (
+      editorialArtifactSetDigest(candidate.artifacts) !==
+      candidate.artifactSetSha256
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['artifactSetSha256'],
+        message: 'the artifact set digest must be the digest of the artifacts',
+      })
+    }
+  })
 export type EditorialCandidate = z.infer<typeof editorialCandidateSchema>
 
 /** The outcomes a validation can have. */
@@ -516,6 +638,50 @@ export const editorialReleaseSchema = z
     releasedAt: timestampSchema,
   })
   .strict()
+  .superRefine((release, context) => {
+    const ids = release.validations.map((reference) => reference.id)
+    if (new Set(ids).size !== ids.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['validations'],
+        message: 'a validation may not be bound twice',
+      })
+    }
+    const sorted = [...ids].sort()
+    if (ids.join(' ') !== sorted.join(' ')) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['validations'],
+        message: 'the bound validations must be ordered by id',
+      })
+    }
+    const paths = release.artifacts.map((artifact) => artifact.path)
+    if (new Set(paths).size !== paths.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['artifacts'],
+        message: 'an artifact may not appear twice',
+      })
+    }
+    const sortedPaths = [...paths].sort()
+    if (paths.join(' ') !== sortedPaths.join(' ')) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['artifacts'],
+        message: 'the artifacts must be ordered by path',
+      })
+    }
+    if (
+      editorialArtifactSetDigest(release.artifacts) !==
+      release.artifactSetSha256
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['artifactSetSha256'],
+        message: 'the artifact set digest must be the digest of the artifacts',
+      })
+    }
+  })
 export type EditorialRelease = z.infer<typeof editorialReleaseSchema>
 
 /** The reasons a release can be retired. */
@@ -547,12 +713,37 @@ export const editorialSupersessionSchema = z
     at: timestampSchema,
   })
   .strict()
+  .superRefine((supersession, context) => {
+    const replaces =
+      supersession.reason === 'replacement' || supersession.reason === 'correction'
+    if (replaces && supersession.supersedingReleaseId === null) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['supersedingReleaseId'],
+        message: 'a replaced release must name the release that replaces it',
+      })
+    }
+    if (!replaces && supersession.supersedingReleaseId !== null) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['supersedingReleaseId'],
+        message: 'a withdrawn release names no replacement',
+      })
+    }
+  })
 export type EditorialSupersession = z.infer<typeof editorialSupersessionSchema>
 
 /* ------------------------------------------------------------------ unions */
 
-/** Any editorial record. */
-export const editorialRecordSchema = z.discriminatedUnion('kind', [
+/**
+ * Any editorial record.
+ *
+ * A plain union, not a discriminated one: the record schemas carry
+ * `superRefine`, and zod's discriminated union cannot take a refined object.
+ * The `kind` field still selects the variant, and every variant pins its
+ * `kind` to a literal, so the union is unambiguous.
+ */
+export const editorialRecordSchema = z.union([
   editorialRevisionSchema,
   editorialDecisionSchema,
   editorialCandidateSchema,

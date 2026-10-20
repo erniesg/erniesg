@@ -35,6 +35,7 @@ import {
   type EditorialProducerActor,
   type EditorialRelease,
   type EditorialRevision,
+  type EditorialSourceBinding,
   type EditorialSupersession,
   type EditorialTarget,
   type EditorialToolActor,
@@ -377,6 +378,10 @@ export function releaseFixture(
     releasedAt?: string
     target?: EditorialTarget
     artifacts?: readonly EditorialArtifact[]
+    sourceBinding?: EditorialSourceBinding
+    revisionId?: string
+    artifactSetSha256?: string
+    approvalRef?: { id: string; sha256: string }
   } = {},
 ): EditorialRelease {
   const artifacts = [...(overrides.artifacts ?? candidate.artifacts)]
@@ -384,22 +389,30 @@ export function releaseFixture(
     kind: 'release' as const,
     version: EDITORIAL_RELEASE_VERSION,
     candidateId: candidate.id,
-    revisionId: revision.id,
+    revisionId: overrides.revisionId ?? revision.id,
     contentHash: candidate.contentHash,
-    sourceBinding: revision.sourceBinding,
+    sourceBinding: overrides.sourceBinding ?? revision.sourceBinding,
     schemaVersions: revision.schemaVersions,
     rendering: revision.rendering,
-    validations: validations.map((validation) => ({
-      id: validation.id,
-      sha256: editorialRecordDigest(validation),
-    })),
-    approval: {
-      id: approval.id,
-      sha256: editorialRecordDigest(approval),
-    },
+    validations: validations
+      .map((validation) => ({
+        id: validation.id,
+        sha256: editorialRecordDigest(validation),
+      }))
+      .sort((left, right) => (left.id < right.id ? -1 : 1)),
+    approval:
+      overrides.approvalRef ?? {
+        id: approval.id,
+        sha256: editorialRecordDigest(approval),
+      },
     target: overrides.target ?? candidate.target,
     artifacts,
-    artifactSetSha256: editorialArtifactSetDigest(artifacts),
+    // A release publishes the candidate's artifacts, so the digest it claims
+    // is the candidate's. A test that swaps the bytes must say what digest
+    // it is claiming.
+    artifactSetSha256:
+      overrides.artifactSetSha256 ??
+      editorialArtifactSetDigest(candidate.artifacts),
     producer: overrides.producer ?? PRODUCER,
     releasedAt: overrides.releasedAt ?? LATER,
   }
@@ -415,15 +428,20 @@ export function supersessionFixture(
     at?: string
   } = {},
 ): EditorialSupersession {
+  const reason = overrides.reason ?? ('replacement' as const)
+  const replaces = reason === 'replacement' || reason === 'correction'
+  const supersedingReleaseId =
+    overrides.supersedingReleaseId === undefined
+      ? replaces
+        ? `urn:editorial:release:${digestOf('editorial-fixture/replacement')}`
+        : null
+      : overrides.supersedingReleaseId
   const withoutId = {
     kind: 'supersession' as const,
     version: EDITORIAL_SUPERSESSION_VERSION,
     subjectReleaseId: release.id,
-    supersedingReleaseId:
-      overrides.supersedingReleaseId === undefined
-        ? null
-        : overrides.supersedingReleaseId,
-    reason: overrides.reason ?? ('replacement' as const),
+    supersedingReleaseId,
+    reason,
     actor: overrides.actor ?? PRODUCER,
     at: overrides.at ?? LATER,
   }

@@ -249,7 +249,7 @@ describe('editorial cross-record rules', () => {
               ...target.policy,
               requiredValidationChecks: [
                 ...target.policy.requiredValidationChecks,
-                'ace',
+                'preflight',
               ],
             },
           },

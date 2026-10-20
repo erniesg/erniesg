@@ -20,10 +20,10 @@ import {
   supersessionFixture,
   validationFixture,
 } from './fixtures'
+import { editorialArtifactSetDigest } from './ids'
 import type {
   EditorialCandidate,
   EditorialDecision,
-  EditorialRelease,
   EditorialRevision,
   EditorialValidation,
 } from './records'
@@ -97,6 +97,8 @@ describe('the editorial state machine', () => {
         candidate,
         validation,
         validations: validations.filter((other) => other.id !== validation.id),
+        approvals: [],
+        releases: [],
       })
       expect(outcome.ok).toBe(true)
       if (outcome.ok) validationsState = outcome.to
@@ -209,6 +211,8 @@ describe('the editorial state machine', () => {
       candidate,
       validation,
       validations: [],
+      approvals: [],
+      releases: [],
     })
 
     expectRefusal(outcome, 'actor_not_permitted')
@@ -298,6 +302,8 @@ describe('the editorial state machine', () => {
       candidate,
       validation,
       validations: [],
+      approvals: [],
+      releases: [],
     })
 
     expectRefusal(outcome, 'digest_mismatch')
@@ -416,7 +422,12 @@ describe('the editorial state machine', () => {
     const candidate = candidateFixture(revision)
     const validations = validationSet(candidate)
     const approval = approvalFixture(candidate)
-    const release = releaseFixture(revision, candidate, validations, approval)
+    const release = releaseFixture(revision, candidate, validations, approval, {
+      approvalRef: {
+        id: `urn:editorial:approval:${'a'.repeat(64)}`,
+        sha256: 'b'.repeat(64),
+      },
+    })
 
     const outcome = applyTransition({
       action: 'record-release',
@@ -426,7 +437,7 @@ describe('the editorial state machine', () => {
       candidate,
       release,
       validations,
-      approvals: [],
+      approvals: [approval],
       releases: [],
       supersessions: [],
     })
@@ -439,11 +450,13 @@ describe('the editorial state machine', () => {
     const candidate = candidateFixture(revision)
     const validations = validationSet(candidate)
     const approval = approvalFixture(candidate)
+    const swapped = [
+      { ...candidate.artifacts[0], sha256: 'e'.repeat(64) },
+      candidate.artifacts[1],
+    ]
     const release = releaseFixture(revision, candidate, validations, approval, {
-      artifacts: [
-        { ...candidate.artifacts[0], sha256: 'e'.repeat(64) },
-        candidate.artifacts[1],
-      ],
+      artifacts: swapped,
+      artifactSetSha256: editorialArtifactSetDigest(swapped),
     })
 
     const outcome = applyTransition({
@@ -467,14 +480,12 @@ describe('the editorial state machine', () => {
     const candidate = candidateFixture(revision)
     const validations = validationSet(candidate)
     const approval = approvalFixture(candidate)
-    const release = releaseFixture(revision, candidate, validations, approval)
-    const forged = {
-      ...release,
+    const release = releaseFixture(revision, candidate, validations, approval, {
       sourceBinding: {
-        ...release.sourceBinding,
+        ...revision.sourceBinding,
         packageArtifactSha256: 'f'.repeat(64),
       },
-    }
+    })
 
     const outcome = applyTransition({
       action: 'record-release',
@@ -482,7 +493,7 @@ describe('the editorial state machine', () => {
       now: NOW,
       revision,
       candidate,
-      release: forged,
+      release,
       validations,
       approvals: [approval],
       releases: [],
@@ -641,18 +652,17 @@ describe('the editorial state machine', () => {
     const validations = validationSet(candidate)
     const approval = approvalFixture(candidate)
     const release = releaseFixture(revision, candidate, validations, approval)
-    const late = validationFixture(candidate, {
-      check: 'epubcheck',
-      validatedAt: MUCH_LATER,
-    })
+    const late = validationFixture(candidate, { check: 'epubcheck' })
 
     const outcome = applyTransition({
       action: 'record-validation',
       actor: late.actor,
-      now: NOW,
+      now: MUCH_LATER,
       candidate,
       validation: late,
       validations: [...validations, late],
+      approvals: [approval],
+      releases: [release],
     })
 
     expectRefusal(outcome, 'wrong_state')
@@ -691,7 +701,13 @@ describe('the editorial state machine', () => {
     const validations = validationSet(candidate)
     const approval = approvalFixture(candidate)
     const release = releaseFixture(revision, candidate, validations, approval)
-    const mismatched: EditorialRelease = { ...release, revisionId: otherRevision.id }
+    const mismatched = releaseFixture(
+      revision,
+      candidate,
+      validations,
+      approval,
+      { revisionId: otherRevision.id },
+    )
 
     const outcome = applyTransition({
       action: 'record-release',

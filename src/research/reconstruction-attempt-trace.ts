@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { StructBox } from '../struct/types'
+import type { StructBox } from '@erniesg/struct/document'
 import { sha256HexSync } from '../struct/sha256'
 
 /**

@@ -15,10 +15,12 @@
 --
 -- Design notes that the DDL has to carry:
 --
---  - Every row is immutable. There is no `updated_at`, and the only write
---    path is an INSERT. A record that has to change is replaced by a new
---    record, which is why the state columns below are the only mutable
---    thing in the store.
+--  - Every row is immutable. There is no `updated_at`, and a *record row*
+--    is only ever written by an INSERT. A record that has to change is
+--    replaced by a new record, which is why the state columns below are the
+--    only mutable thing in the store: the materialised `state` column is
+--    updated by the conditional UPDATE of the compare-and-swap, in the same
+--    transaction as the append it belongs to.
 --  - `state` on a revision, a candidate and a release is the *materialised*
 --    projection of the append-only record set. It exists so a write can be
 --    a compare-and-swap: `UPDATE ... SET state = ? WHERE id = ? AND state
@@ -174,6 +176,17 @@ CREATE INDEX IF NOT EXISTS editorial_releases_target
   ON editorial_releases (target_id, state);
 CREATE INDEX IF NOT EXISTS editorial_releases_candidate
   ON editorial_releases (candidate_id);
+
+-- At most one release per target may be current at a time.
+--
+-- The state machine refuses a second current release for a target
+-- (`target_already_released`), and this index makes the same rule hold at
+-- the storage level: two writers that both believed they were first cannot
+-- both commit. A compare-and-swap cannot enforce it, because there is no
+-- per-target row to compare and swap -- the CAS guards one row's state, and
+-- a release row's state says whether *that* release is current.
+CREATE UNIQUE INDEX IF NOT EXISTS editorial_releases_one_current
+  ON editorial_releases (target_id) WHERE state = 'release-released';
 
 CREATE TABLE IF NOT EXISTS editorial_supersessions (
   id                   TEXT PRIMARY KEY,

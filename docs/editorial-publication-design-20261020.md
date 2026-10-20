@@ -41,12 +41,15 @@ do not change.
 **Cloudflare D1 (SQLite), in its own database, reached only by the Worker.**
 
 The app already has one durable store and one durable-store pattern:
-`src/worker/margin/d1-repository.ts` (the only file in `src/worker/` that
-touches a database), `src/worker/margin/queries.ts` (every SQL statement, as
-pure `(sql, params)` values), `src/worker/margin/repository.ts` (the storage
+`src/worker/margin/d1-repository.ts` (the repository that runs the
+statements), `src/worker/margin/d1.ts` (the D1 client interface and its
+type guard), `src/worker/margin/queries.ts` (every SQL statement, as pure
+`(sql, params)` values), `src/worker/margin/repository.ts` (the storage
 seam the handlers depend on), `src/worker/margin/schema.sql` (the bootstrap
-DDL) and `migrations/0001..0004` (the numbered, forward-only migrations).
-E-05 follows that pattern exactly, in a **separate `EDITORIAL_DB` binding**.
+DDL), `src/worker/margin/sqlite-database.ts` (the local SQLite stand-in
+for D1, used by the tests) and `migrations/0001..0004` (the numbered,
+forward-only migrations). E-05 follows that pattern exactly, in a
+**separate `EDITORIAL_DB` binding**.
 
 Why a separate database rather than more tables in the margin one:
 
@@ -72,12 +75,20 @@ What D1 guarantees, and what it does not:
 
 The application-level guarantees E-05 adds on top:
 
-- **Records are immutable.** The only write path is an `INSERT`. There is no
-  `updated_at` column anywhere in `src/editorial/schema.sql`.
+- **Records are immutable.** Every *record row* is written once and only
+  ever inserted; there is no `updated_at` column anywhere in
+  `src/editorial/schema.sql`. The only `UPDATE` the store ever runs is on
+  the materialised `state` column, in the same transaction as the append it
+  belongs to (§1.3, §6.2).
 - **A record's id is its content's digest.** A row cannot be updated to
   point at different bytes without changing its primary key.
 - **One current release per target.** Enforced by the state machine
-  (§5.5) and by the CAS on `editorial_releases.state`.
+  (`guardRecordRelease`, §5.7) and by the storage: the partial unique
+  index `editorial_releases_one_current` on
+  `editorial_releases (target_id) WHERE state = 'release-released'`. The
+  CAS on `editorial_releases.state` cannot enforce it — there is no
+  per-target row to compare and swap — so the index is what makes it
+  storage-enforced as well as application-enforced.
 
 ### 1.2 The tables
 
@@ -121,7 +132,7 @@ visibility is a committed D1 transaction.
 - **Across records, the boundary is the record, not the pipeline.** A
   revision, a decision, a candidate, a validation, an approval and a release
   are six transactions. A reader that wants to know "is there a current
-  release for this target?" expands the supersessions (§5.6) and sees a
+  release for this target?" expands the supersessions (§4.4, §5.8) and sees a
   consistent set of committed rows.
 
 The one thing that is *not* atomic is the pair "write the artifacts, then
@@ -367,6 +378,13 @@ for a target that still has a current one is refused
 depends on, and it is what makes "the current artifact for this target" a
 well-defined question.
 
+The rule is enforced twice: by the state machine (§5.7) and by the storage —
+the partial unique index `editorial_releases_one_current` on
+`editorial_releases (target_id) WHERE state = 'release-released'`
+(`src/editorial/schema.sql`). A compare-and-swap cannot enforce it: the CAS
+guards the state of one release row, and there is no per-target row to
+compare and swap.
+
 The order of a replacement is: **supersede, then release**. The old release
 is retired first; there is then no current release for the target, and the
 new one may be published. The alternative — publishing the new one first —
@@ -407,7 +425,7 @@ asserts the table contains every outcome `applyTransition` can return.
               ▼                 ▼                 ▼
    ┌──────────────────┐ ┌──────────────┐ ┌───────────────────────┐
    │ revision-approved│ │revision-    │ │ revision-changes-     │
-   │   (terminal)     │ │rejected      │ │ requested (terminal)  │
+   │ (one decision)   │ │rejected      │ │ requested (terminal)  │
    └────────┬─────────┘ │(terminal)    │ └───────────────────────┘
             │           └──────────────┘
             │ assemble-candidate (editor)
@@ -440,6 +458,14 @@ asserts the table contains every outcome `applyTransition` can return.
                                               └────────────────────────┘
 ```
 
+**What "terminal" means here.** A terminal state is one the *record* does
+not leave: no further transition of its own kind may be recorded on it. A
+revision takes exactly one decision, so `revision-rejected` and
+`revision-changes-requested` are terminal, and `revision-approved` is
+terminal *as a revision state* — no second decision may be recorded on that
+revision — while the pipeline continues from it into `assemble-candidate`.
+A terminal release is one the pipeline never leaves.
+
 ### 5.2 `propose-revision`
 
 - **From:** the revision does not exist yet. **To:** `revision-proposed`.
@@ -458,12 +484,15 @@ asserts the table contains every outcome `applyTransition` can return.
 - **Requires:** the decision's `subject` matches the revision **exactly** —
   the same `revisionId`, the same `contentHash`, the same `documentSha256`
   and the same `bundleSha256` — otherwise `stale_decision`.
-- **Terminal:** all three outcomes are terminal. **A revision takes exactly
-  one decision.** A changed mind produces a new revision, because a revision
-  is immutable and a decision is about one cut of the content. This is what
-  makes "a stale decision cannot authorize a changed candidate" structural
-  rather than a check: there is no second decision to confuse the first
-  with.
+- **Terminal:** all three outcomes end the revision's decision — a revision
+  takes exactly one decision, and none of the three leaves a revision state
+  that takes another. **A revision takes exactly one decision.** A changed
+  mind produces a new revision, because a revision is immutable and a
+  decision is about one cut of the content. This is what makes "a stale
+  decision cannot authorize a changed candidate" structural rather than a
+  check: there is no second decision to confuse the first with. (The
+  pipeline still continues from `revision-approved` into
+  `assemble-candidate`; see §5.1.)
 - **Refusals:** `actor_not_permitted`, `wrong_state`, `stale_decision`.
 
 ### 5.4 `assemble-candidate`
@@ -607,6 +636,11 @@ tool recorded does not satisfy a release.
 
 The projections are `projectRevisionState`, `projectCandidateState` and
 `projectReleaseState` in `src/editorial/validation.ts`.
+
+"Terminal" in the third column means *the record takes no further transition
+of its own kind* — see §5.1. `revision-approved` is terminal as a revision
+state (no second decision), and the pipeline continues from it into
+`assemble-candidate`.
 
 ### 5.10 The refusal codes
 

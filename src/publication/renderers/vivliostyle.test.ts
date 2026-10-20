@@ -170,7 +170,7 @@ describe('Vivliostyle publication renderer boundary', () => {
     // for it. Since E-04 the ids are Struct-derived, so the assertion follows
     // the graph instead of a hard-coded legacy id.
     const noteref = graph.nodes
-      .flatMap((node) => node.inlineRuns ?? [])
+      .flatMap((node) => ('inlineRuns' in node ? node.inlineRuns ?? [] : []))
       .find(
         (run) =>
           run.semanticRole === 'cross-reference' && Boolean(run.relationshipId),

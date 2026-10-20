@@ -537,14 +537,17 @@ produce the release candidate", enforced in one place.**
   4. the release's `target` equals the candidate's, and its `artifacts` and
      `artifactSetSha256` equal the candidate's — otherwise
      `digest_mismatch`;
-  5. every validation the release binds exists, passed, and matches the
-     candidate's digests — `mandatory_validation_missing`,
-     `validation_not_passed` or `digest_mismatch`;
+  5. every validation the release binds exists, is content addressed, is
+     bound by its own digest, was recorded by the actor kind its check
+     requires, passed, and matches the candidate's digests —
+     `mandatory_validation_missing`, `digest_mismatch`,
+     `actor_not_permitted` or `validation_not_passed`;
   6. the bound validations cover the candidate's whole required set —
      otherwise `mandatory_validation_missing`;
-  7. the approval the release binds exists, matches the candidate, and is
+  7. the approval the release binds exists, is content addressed, is bound by
+     its own digest, was given by an approver, matches the candidate, and is
      still fresh under the target's `maxApprovalAgeSeconds` —
-     `approval_missing`, `digest_mismatch` or
+     `approval_missing`, `digest_mismatch`, `actor_not_permitted` or
      `target_policy_not_satisfied`;
   8. the target has no current release — otherwise
      `target_already_released`.
@@ -558,6 +561,17 @@ package, schema, bundle, document, renderer/profile, validation, approval,
 target and artifact digests".** Every one of those bindings is checked
 against the record it must equal, and a mismatch is a refusal, not a
 warning.
+
+**The release's own `{ id, sha256 }` references are bindings too.** A
+reference is not a claim the reader takes on trust: the referenced record
+must be in the reader's set, its id must be the id its own content derives,
+and the `sha256` the release carries must be that record's digest. A
+release that binds a validation or an approval whose digest it does not
+carry, or whose id was minted by something other than its content, is
+refused with `digest_mismatch`. The approval must also be an approval —
+`actor.kind === 'approver'` — and every bound validation must have been
+recorded by the actor kind its check requires, so a `human-review` that a
+tool recorded does not satisfy a release.
 
 ### 5.8 `supersede-release`
 
@@ -937,7 +951,10 @@ submission, retained after the record it describes is gone.
 the digest behind it. Because every record is content addressed, the `id`
 *is* the digest; the `sha256` is spelled out so a reader can compare
 digests without parsing URNs. A release's `validations` array and its
-`approval` field are references of this kind.
+`approval` field are references of this kind. **A reference is verified
+against the record it names at the transition** (§5.7): the record must be
+in the reader's set, its id must be the id its own content derives, and the
+`sha256` must be that record's digest.
 
 **The producer record** is a receipt of a different kind — the authenticated
 export — and is specified in §9.

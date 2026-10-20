@@ -382,6 +382,7 @@ export function releaseFixture(
     revisionId?: string
     artifactSetSha256?: string
     approvalRef?: { id: string; sha256: string }
+    validationRefs?: readonly { id: string; sha256: string }[]
   } = {},
 ): EditorialRelease {
   const artifacts = [...(overrides.artifacts ?? candidate.artifacts)]
@@ -394,12 +395,13 @@ export function releaseFixture(
     sourceBinding: overrides.sourceBinding ?? revision.sourceBinding,
     schemaVersions: revision.schemaVersions,
     rendering: revision.rendering,
-    validations: validations
-      .map((validation) => ({
+    validations: (
+      overrides.validationRefs ??
+      validations.map((validation) => ({
         id: validation.id,
         sha256: editorialRecordDigest(validation),
       }))
-      .sort((left, right) => (left.id < right.id ? -1 : 1)),
+    ).sort((left, right) => (left.id < right.id ? -1 : 1)),
     approval:
       overrides.approvalRef ?? {
         id: approval.id,

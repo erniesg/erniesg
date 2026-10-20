@@ -55,10 +55,12 @@ import {
   type EditorialRevision,
   type EditorialSupersession,
   type EditorialValidation,
+  type EditorialValidationCheck,
 } from './records'
 import {
   EDITORIAL_TIMESTAMP_FIELD_BY_KIND,
   editorialDigest,
+  editorialRecordDigest,
   editorialRecordIdMatches,
 } from './ids'
 import {
@@ -319,6 +321,19 @@ function sameValue(left: unknown, right: unknown): boolean {
   return editorialDigest(left) === editorialDigest(right)
 }
 
+/**
+ * The actor kind that may record a check.
+ *
+ * A human review is a person's judgement; every other check is a
+ * deterministic program. The rule is the same wherever a validation is
+ * bound, so it is written once.
+ */
+function validationActorKind(
+  check: EditorialValidationCheck,
+): 'tool' | 'reviewer' {
+  return check === 'human-review' ? 'reviewer' : 'tool'
+}
+
 type Guard = { ok: true; from: EditorialState | null; to: EditorialState }
 type GuardRefusal = { ok: false; code: EditorialRefusalCode; message: string }
 
@@ -562,7 +577,7 @@ function guardRecordValidation(
   input: Extract<TransitionInput, { action: 'record-validation' }>,
 ): Guard | GuardRefusal {
   const check = input.validation.check
-  const required = check === 'human-review' ? 'reviewer' : 'tool'
+  const required = validationActorKind(check)
   if (input.validation.actor.kind !== required) {
     return refuse(
       'actor_not_permitted',
@@ -749,6 +764,24 @@ function guardRecordRelease(
         `the release binds a validation that does not exist: ${reference.id}`,
       )
     }
+    if (!editorialRecordIdMatches(validation)) {
+      return refuse(
+        'digest_mismatch',
+        `the release binds a validation whose id is not its content: ${reference.id}`,
+      )
+    }
+    if (reference.sha256 !== editorialRecordDigest(validation)) {
+      return refuse(
+        'digest_mismatch',
+        `the release binds a validation digest that is not the validation's: ${reference.id}`,
+      )
+    }
+    if (validation.actor.kind !== validationActorKind(validation.check)) {
+      return refuse(
+        'actor_not_permitted',
+        `the release binds a ${validation.check} validation recorded by a ${validation.actor.kind}`,
+      )
+    }
     if (validation.outcome !== 'passed') {
       return refuse(
         'validation_not_passed',
@@ -783,6 +816,24 @@ function guardRecordRelease(
     return refuse(
       'approval_missing',
       `the release binds an approval that does not exist: ${input.release.approval.id}`,
+    )
+  }
+  if (!editorialRecordIdMatches(approval)) {
+    return refuse(
+      'digest_mismatch',
+      `the release binds an approval whose id is not its content: ${approval.id}`,
+    )
+  }
+  if (input.release.approval.sha256 !== editorialRecordDigest(approval)) {
+    return refuse(
+      'digest_mismatch',
+      'the release binds an approval digest that is not the approval digest',
+    )
+  }
+  if (approval.actor.kind !== 'approver') {
+    return refuse(
+      'actor_not_permitted',
+      'the release binds a record that is not an approval',
     )
   }
   if (!approvalSatisfiesCandidate(approval, input.candidate)) {

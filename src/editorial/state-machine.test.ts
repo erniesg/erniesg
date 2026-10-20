@@ -11,6 +11,7 @@ import {
   MUCH_LATER,
   OTHER_DOCUMENT_SHA256,
   REVIEWER,
+  TOOL,
   approvalFixture,
   candidateFixture,
   candidateSubjectOf,
@@ -723,5 +724,208 @@ describe('the editorial state machine', () => {
     })
 
     expectRefusal(outcome, 'digest_mismatch')
+  })
+})
+
+/**
+ * The release's own references.
+ *
+ * A release binds the validations and the approval it publishes. Those
+ * bindings are `{ id, sha256 }` pairs, and a pair that names a record the
+ * release did not actually read is a lie: the reader of the release cannot
+ * tell it from a pair that names the record it binds.
+ */
+describe('the release binds the records it names', () => {
+  it('refuses a release that binds a validation digest that is not its own', () => {
+    const revision = revisionFixture()
+    const candidate = candidateFixture(revision)
+    const validations = validationSet(candidate)
+    const approval = approvalFixture(candidate)
+    const release = releaseFixture(revision, candidate, validations, approval, {
+      validationRefs: validations.map((validation) => ({
+        id: validation.id,
+        sha256: 'a'.repeat(64),
+      })),
+    })
+
+    const outcome = applyTransition({
+      action: 'record-release',
+      actor: release.producer,
+      now: NOW,
+      revision,
+      candidate,
+      release,
+      validations,
+      approvals: [approval],
+      releases: [],
+      supersessions: [],
+    })
+
+    expectRefusal(outcome, 'digest_mismatch')
+  })
+
+  it('refuses a release that binds a validation whose id is not its content', () => {
+    const revision = revisionFixture()
+    const candidate = candidateFixture(revision)
+    const validations = validationSet(candidate).map((validation) =>
+      validation.check === 'ace'
+        ? {
+            ...validation,
+            id: `urn:editorial:validation:${'0'.repeat(64)}`,
+          }
+        : validation,
+    )
+    const approval = approvalFixture(candidate)
+    const release = releaseFixture(revision, candidate, validations, approval)
+
+    const outcome = applyTransition({
+      action: 'record-release',
+      actor: release.producer,
+      now: NOW,
+      revision,
+      candidate,
+      release,
+      validations,
+      approvals: [approval],
+      releases: [],
+      supersessions: [],
+    })
+
+    expectRefusal(outcome, 'digest_mismatch')
+  })
+
+  it('refuses a release that binds a human review recorded by a tool', () => {
+    const revision = revisionFixture()
+    const candidate = candidateFixture(revision)
+    const validations = validationSet(candidate).map((validation) =>
+      validation.check === 'human-review'
+        ? validationFixture(candidate, { check: 'human-review', actor: TOOL })
+        : validation,
+    )
+    const approval = approvalFixture(candidate)
+    const release = releaseFixture(revision, candidate, validations, approval)
+
+    const outcome = applyTransition({
+      action: 'record-release',
+      actor: release.producer,
+      now: NOW,
+      revision,
+      candidate,
+      release,
+      validations,
+      approvals: [approval],
+      releases: [],
+      supersessions: [],
+    })
+
+    expectRefusal(outcome, 'actor_not_permitted')
+  })
+
+  it('refuses a release that binds a validation of another target', () => {
+    const revision = revisionFixture()
+    const candidate = candidateFixture(revision)
+    const validations = validationSet(candidate).map((validation) =>
+      validation.check === 'ace'
+        ? validationFixture(candidate, {
+            check: 'ace',
+            subject: {
+              ...candidateSubjectOf(candidate),
+              targetId: 'another-target',
+            },
+          })
+        : validation,
+    )
+    const approval = approvalFixture(candidate)
+    const release = releaseFixture(revision, candidate, validations, approval)
+
+    const outcome = applyTransition({
+      action: 'record-release',
+      actor: release.producer,
+      now: NOW,
+      revision,
+      candidate,
+      release,
+      validations,
+      approvals: [approval],
+      releases: [],
+      supersessions: [],
+    })
+
+    expectRefusal(outcome, 'digest_mismatch')
+  })
+
+  it('refuses a release that binds an approval digest that is not its own', () => {
+    const revision = revisionFixture()
+    const candidate = candidateFixture(revision)
+    const validations = validationSet(candidate)
+    const approval = approvalFixture(candidate)
+    const release = releaseFixture(revision, candidate, validations, approval, {
+      approvalRef: { id: approval.id, sha256: 'b'.repeat(64) },
+    })
+
+    const outcome = applyTransition({
+      action: 'record-release',
+      actor: release.producer,
+      now: NOW,
+      revision,
+      candidate,
+      release,
+      validations,
+      approvals: [approval],
+      releases: [],
+      supersessions: [],
+    })
+
+    expectRefusal(outcome, 'digest_mismatch')
+  })
+
+  it('refuses a release that binds an approval whose id is not its content', () => {
+    const revision = revisionFixture()
+    const candidate = candidateFixture(revision)
+    const validations = validationSet(candidate)
+    const approval = approvalFixture(candidate)
+    const forged = {
+      ...approval,
+      id: `urn:editorial:approval:${'0'.repeat(64)}`,
+    }
+    const release = releaseFixture(revision, candidate, validations, forged)
+
+    const outcome = applyTransition({
+      action: 'record-release',
+      actor: release.producer,
+      now: NOW,
+      revision,
+      candidate,
+      release,
+      validations,
+      approvals: [forged],
+      releases: [],
+      supersessions: [],
+    })
+
+    expectRefusal(outcome, 'digest_mismatch')
+  })
+
+  it('refuses a release that binds an approval that is not an approval', () => {
+    const revision = revisionFixture()
+    const candidate = candidateFixture(revision)
+    const validations = validationSet(candidate)
+    const approval = approvalFixture(candidate, { actor: TOOL })
+    const release = releaseFixture(revision, candidate, validations, approval)
+
+    const outcome = applyTransition({
+      action: 'record-release',
+      actor: release.producer,
+      now: NOW,
+      revision,
+      candidate,
+      release,
+      validations,
+      approvals: [approval],
+      releases: [],
+      supersessions: [],
+    })
+
+    expectRefusal(outcome, 'actor_not_permitted')
   })
 })

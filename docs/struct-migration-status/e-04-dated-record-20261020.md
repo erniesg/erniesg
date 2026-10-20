@@ -33,9 +33,12 @@ worker/export facade and the public API surface are byte-for-byte unchanged. No 
 semantics were reimplemented in the app, no public API was widened, and no package-private
 path is imported.
 
-The local compatibility copies `src/struct/{xhtml,epub,emitted-ids}.ts` and the rest of
-`src/struct/**` are **physically unchanged**; `git diff --stat` shows no change under
-`src/struct/`. They are stale compatibility copies that E-07 deletes.
+The local compatibility copies `src/struct/{xhtml,epub,emitted-ids}.ts` are **physically
+unchanged** (`git diff --stat` shows no change to them). The only file under `src/struct/`
+that changes is `src/struct/struct.test.ts`, and it changes only its stale reference
+assertion, which now compares the app's renderer entry points with the pinned package
+renderers instead of the local copies. The copies themselves are stale compatibility
+copies that E-07 deletes.
 
 ### 1.2 The PublicationGraph authority convergence
 
@@ -77,11 +80,11 @@ Measured on the repository's own fixtures, loaded with the repository's own
 
 | fixture | local copy | pinned package | equal |
 | --- | --- | --- | --- |
-| `structured-manuscript-docx` XHTML | `cf4eef0eb1edbddca464b1bcd7d1daac59a1b0715cc8e69c64c9a20270f2cd95` (4147 bytes) | `a74427183599f3dc213465c5adac4451994603dbe4057962aefc5b2f0c198b28` (4166 bytes) | **no** |
+| `structured-manuscript-docx` XHTML | `cf4eef0eb1edbddca464b1bcd7d1daac59a1b0715cc8e69c64c9a20270f2cd95` (4147 characters = 4177 UTF-8 bytes) | `a74427183599f3dc213465c5adac4451994603dbe4057962aefc5b2f0c198b28` (4166 characters = 4196 UTF-8 bytes) | **no** |
 | `structured-manuscript-docx` EPUB | `f859d1ad1fadc8c897cc3a294a09845fdae5d5360fede37d2a40c16a81386c72` | `ee11cb70bf0300a69f1ec4621c8d6d53cfc4f18dc9791a504f08f24b9afcf3c9` | **no** |
 | `adapter-parity/ordinary-pdf` XHTML | `4d9bc0a62fb7d4ce8aefbd1811ab5ea7246f33f64cd8721582ab93e1532f14f2` | `4d9bc0a62fb7d4ce8aefbd1811ab5ea7246f33f64cd8721582ab93e1532f14f2` | yes |
 | `adapter-parity/ordinary-pdf` EPUB | `1d3c048035a2228a552e9d45d3258c3e75b3dccbe8d141e7b3e0b0e85c26a335` | `1d3c048035a2228a552e9d45d3258c3e75b3dccbe8d141e7b3e0b0e85c26a335` | yes |
-| `adapter-parity/source-preserved-pdf` XHTML | `eba808794a97517df241e6dff1d289bd19c2584a84b5dabcf58b61896f87c444` (4529) | `0106902dab681da128171ab2937f4ac9a6bfbd8c2418e135a0de25b6c48411be` (4520) | **no** |
+| `adapter-parity/source-preserved-pdf` XHTML | `eba808794a97517df241e6dff1d289bd19c2584a84b5dabcf58b61896f87c444` (4529 characters = 4529 UTF-8 bytes) | `0106902dab681da128171ab2937f4ac9a6bfbd8c2418e135a0de25b6c48411be` (4520 characters = 4520 UTF-8 bytes) | **no** |
 | `adapter-parity/source-preserved-pdf` EPUB | `STRUCT_EPUB_RECOVERY_REVIEW_REQUIRED` | `STRUCT_EPUB_RECOVERY_REVIEW_REQUIRED` | identical refusal |
 
 The divergence classes, all measured:
@@ -122,9 +125,16 @@ lane against the base commit's output:
   already rendered only bold/italic/superscript/subscript, so the narrowing converges the
   publication pipeline onto the app's existing Struct publication semantics. The loss is
   **not silent**: the conversion emits a `lossy-inline-style` warning diagnostic naming
-  the block that lost the style, and a test asserts that diagnostic. The corpus scan
-  measured 0 strikethrough spans, 5 hard breaks (0 in the pinned entry) and exactly one
-  inline-code span.
+  the block that lost the style, and a test asserts that diagnostic.
+
+  The corpus statistic, measured with the repository's own remark pipeline
+  (`remark-parse` + `remark-mdx` + `remark-gfm` + `remark-math`) over the 112 MDX files in
+  `src/content/blog/**`: **0 strikethrough spans, 0 hard breaks and 373 inline-code
+  spans** in the corpus, of which **exactly 1 is in the pinned production entry** - the
+  one that is published. (A narrower scan run during the E-04 proof reported 57 inline
+  code spans and 5 hard breaks; the discrepancy is in the counting scope, and only the
+  pinned-entry number is load-bearing for the E-04 outcome. The corpus-wide numbers here
+  are the ones the independent final review measured.)
 
 ### 2.2 The frozen golden was NOT regenerated
 
@@ -271,7 +281,25 @@ a follow-up candidate, not a permanent statement.
 - E-05 (durable editorial publication behind an inactive gate), E-06 (activation) and
   E-07 (deletion) are separate steps and are not part of this record.
 
-## 8. The known environment sensitivities (stated plainly)
+## 8. The independent review of this candidate, and the disposition of its findings
+
+An independent review of the integrated candidate (a fresh context, read-only, no
+implementer's conclusions) returned FINDINGS. The disposition, recorded here so the
+acceptance names what was fixed and what was deliberately kept:
+
+| Finding | Severity | Disposition |
+| --- | --- | --- |
+| the candidate head did not typecheck: the renderer's test read `inlineRuns` off the `PublicationNode` union without narrowing, so `astro check` reported one error and `npm run build:astro` (which is `astro check && astro build`) could not complete | HIGH | **FIXED**: the union is narrowed before the optional property is read, exactly as the rest of the codebase does. `astro check` reports 0 errors again and the production build completes. |
+| the record's build evidence was stale because the typecheck failed at the head it described | MEDIUM | **FIXED**: the build, the check and the typecheck were re-run on the corrected head and the numbers in §5 are that run. |
+| the contract receipt schema and the renderer receipt type keep `sourceBinding` optional | LOW | **RECORDED DEVIATION, deliberate**: the source result's binding is optional because the facade owns the package pin and computes the binding for the published path (the `struct` adapter legitimately produces a result without one). The published receipt is nevertheless enforced at runtime: `tools/publication-check.mjs` calls `assertPublicationPlanSourceBinding`, which refuses a receipt with no binding, a binding that is not the `struct-cutover` variant, and a binding whose `documentSha256` is not the checked plan's document digest. The closed receipt contract also refuses a receipt without a binding (the N8 negative acceptance). Making the TYPE required would have forced the source adapter to own the pin, which the contract assigns to the facade. |
+| the corpus statistic mixed scopes | LOW | **CORRECTED** in §2.1: the corpus-wide numbers are the ones the review measured, and the pinned-entry number (1) is stated separately. |
+| "git diff --stat shows no change under `src/struct/`" | NOTE | **CORRECTED** in §1.1: the compatibility copies are unchanged; `src/struct/struct.test.ts` changes only its stale reference assertion. |
+| the inventory did not yet carry the compiler-proven importer set at the reviewed head | NOTE | **FIXED** in a later commit (`af71a30f`): the inventory now carries the measured post-E-04 importer set, and the acceptance names the head that carries it. |
+| the branch tip moved during the review | NOTE | **ACCEPTED**: the acceptance names the exact head SHA. |
+| the bundle parity rule now excludes test files from the production scan | NOTE | **ACCEPTED as a deliberate reading**: the rule is about PRODUCTION readers. The scan still asserts that no production module reads bundle wire bytes and that no production module uses the value verifier, and it names the single permitted production importer. |
+| the byte counts in the divergence table are character lengths | NOTE | **CORRECTED** in §2: the counts are labelled as characters, with the UTF-8 byte counts. |
+
+## 9. The known environment sensitivities (stated plainly)
 
 The app suite on this VM has pre-existing, load-sensitive failures that are not E-04
 regressions: the PDF corpus-audit and the ICU locale-enumeration cases time out at their

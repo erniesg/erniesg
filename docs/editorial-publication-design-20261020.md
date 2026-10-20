@@ -670,6 +670,11 @@ The order of the checks is the order of the refusals a reader cares about:
 timestamp), then **the aggregate's state**, then **the rule specific to the
 action**.
 
+Every code in the table has a test. `action_not_permitted` is the only one
+a typed caller cannot reach — `TransitionInput['action']` is the closed
+union of the seven actions in the table — so the branch is the guard against
+an action that is not in the table at all.
+
 ### 5.11 What a reader sees
 
 - `currentReleaseForTarget(releases, supersessions, targetId)` returns the

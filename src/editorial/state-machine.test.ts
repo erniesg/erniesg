@@ -5,9 +5,11 @@ import {
   EDITORIAL_TRANSITIONS,
   type EditorialAction,
   type EditorialRefusalCode,
+  type TransitionInput,
   type TransitionOutcome,
 } from './state-machine'
 import {
+  EDITOR,
   LATER,
   MUCH_LATER,
   OTHER_DOCUMENT_SHA256,
@@ -616,6 +618,16 @@ describe('the editorial state machine', () => {
     })
 
     expectRefusal(outcome, 'record_id_mismatch')
+  })
+
+  it('refuses an action that has no transition', () => {
+    const outcome = applyTransition({
+      action: 'retire-everything',
+      actor: EDITOR,
+      now: NOW,
+    } as unknown as TransitionInput)
+
+    expectRefusal(outcome, 'action_not_permitted')
   })
 
   it('refuses a record that is not of the kind the action appends', () => {

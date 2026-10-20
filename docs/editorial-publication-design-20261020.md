@@ -338,6 +338,30 @@ are different concerns in different modules, and E-05 does not touch
 `src/research/**`. The rendering intent of a revision is its `rendering`
 field (§7.1); the destination is its `target`.
 
+**Who owns the target definitions.** The four mandatory checks are a hard
+floor, enforced by the schema and by the state machine, but the rest of the
+policy is a *choice*: `maxApprovalAgeSeconds` may be as high as the
+schema's ceiling of 31 536 000 (one year) against the 86 400 (24 hours)
+this document uses as its example, and `audience`, `environment`, `route`
+and `id` are free strings with nothing behind them.
+
+**The registry is E05c's and E06's.** The set of legal targets belongs in a
+**server-side registry** — the app's own configuration, not anything a
+caller supplies — and **the target embedded in a candidate and in a release
+must match a registered target exactly**, the whole object under the
+canonical form. A writer that cannot find its target in the registry must
+refuse the write rather than write the target it was handed.
+
+**E-05a implements none of that, and does not claim it.** The target is
+app-owned and embedded verbatim (§4.2); the writer that assembles a
+candidate is the app's own writer (E05c), not a client; and the only bound
+on `maxApprovalAgeSeconds` is the schema's ceiling. Until the registry
+exists, the target policy is only as trustworthy as the code that
+assembles the candidate, and the registry is what makes it reviewable in
+one place instead of spread across that code. The ceiling is a bound on the
+*shape*, not a recommended policy: the targets in this document bound the
+approval age at 86 400 seconds (24 hours).
+
 ### 4.2 How a release binds to exactly one target
 
 The target is a **single embedded object**, not an id and not a list, in
@@ -364,7 +388,9 @@ the candidate and in the release. Three consequences:
 - **`maxApprovalAgeSeconds`** bounds how old an approval may be when the
   release is written. The bound is **exclusive**: an approval that has
   *reached* the maximum age is already too old, and an approval stamped in
-  the future is never fresh.
+  the future is never fresh. The schema's ceiling is 31 536 000 (one year):
+  a bound on the shape, not a policy. Who owns the value is §4.1's
+  question.
 - The candidate must cover the target's policy: the candidate's
   `requiredValidationChecks` must contain every check the target requires
   (`targetPolicyIsSatisfied`). A candidate may require more than the target

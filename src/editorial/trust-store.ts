@@ -16,7 +16,25 @@
  *
  * The guard covers the epoch **and** the number of accepted events, so a
  * change that does not move the epoch — a second event at the same epoch —
- * is still detected. The epoch alone would not be enough.
+ * is still detected. The epoch alone would not be enough. The count is the
+ * number of events the consumer has accepted **ever**, not the number of
+ * rows the ledger currently holds: the ledger is pruned to the freshness
+ * window (§ the retention below), so the two drift apart on purpose, and
+ * the count is what says "the state moved".
+ *
+ * ## The retention of the ledger
+ *
+ * The replay ledger is **pruned** to the freshness window, and the read of
+ * it is **bounded** by the same window. A ledger that is never pruned grows
+ * for the life of the store, and a read that is not bounded reads every pair
+ * the store has ever accepted, on the hot path of every verification.
+ *
+ * The window is the freshness bound plus the future skew, and it is
+ * computed on the **consumer's** clock: the ledger's `accepted_at` column
+ * holds the consumer's acceptance time, so the two are the same clock. A
+ * pair older than the window belongs to a record that can no longer be
+ * fresh, and a record that is not fresh is refused before the ledger is
+ * consulted — so pruning it cannot weaken a refusal.
  *
  * ## The order inside the batch
  *
@@ -28,7 +46,9 @@
  */
 import type { D1Database, D1PreparedStatement } from './d1'
 import {
+  deleteTrustEventsQuery,
   insertTrustEventQuery,
+  selectTrustEventsQuery,
   selectTrustStateQuery,
   updateTrustStateQuery,
   type Query,
@@ -36,6 +56,7 @@ import {
 import {
   EMPTY_PRODUCER_TRUST_STATE,
   type AcceptedProducerEvent,
+  type ProducerTrustLedgerWindow,
   type ProducerTrustState,
   type ProducerTrustStore,
 } from './trust-policy'
@@ -54,27 +75,51 @@ export class D1ProducerTrustStore implements ProducerTrustStore {
    *
    * It throws when the state cannot be established, because the consumer
    * that cannot read its trust state must refuse rather than assume.
+   *
+   * The ledger is read **inside the window**: the pairs older than it
+   * belong to records that can no longer be fresh, so the read does not
+   * fetch them and the read does not grow with the life of the store.
    */
-  async read(): Promise<ProducerTrustState> {
+  async read(window: ProducerTrustLedgerWindow): Promise<ProducerTrustState> {
     const row = await this.statement(selectTrustStateQuery()).first<{
       highest_accepted_epoch?: number
       event_count?: number
     }>()
     if (!row) return EMPTY_PRODUCER_TRUST_STATE
-    const events = await this.statement({
-      sql: 'SELECT event_id, digest FROM editorial_trust_events ORDER BY rowid ASC',
-      params: [],
-    }).all<{ event_id?: string; digest?: string }>()
+    const events = await this.statement(
+      selectTrustEventsQuery({ since: window.since }),
+    ).all<{ event_id?: string; digest?: string; accepted_at?: string }>()
     const acceptedEvents: AcceptedProducerEvent[] = (events.results ?? []).map(
       (event) => ({
         eventId: String(event.event_id),
         digest: String(event.digest),
+        acceptedAt: String(event.accepted_at),
       }),
     )
     return {
       highestAcceptedEpoch: Number(row.highest_accepted_epoch ?? -1),
+      acceptedEventCount: Number(row.event_count ?? 0),
       acceptedEvents,
     }
+  }
+
+  /**
+   * Prune the ledger to the window.
+   *
+   * It removes the pairs the window has made irrelevant, and nothing else:
+   * a pair whose record is still fresh is inside the window, because the
+   * window is the freshness bound plus the future skew, and a record may
+   * have been issued up to the skew in the future of the consumer's clock
+   * when it was accepted.
+   *
+   * The prune does not touch the trust state: the state says how many
+   * events the consumer has accepted, and that number does not change when
+   * the ledger is trimmed.
+   */
+  async prune(window: ProducerTrustLedgerWindow): Promise<void> {
+    await this.statement(
+      deleteTrustEventsQuery({ before: window.since }),
+    ).run()
   }
 
   /**
@@ -89,9 +134,9 @@ export class D1ProducerTrustStore implements ProducerTrustStore {
     const batch = this.database.batch
     if (!batch) return false
 
-    const expectedCount = expected.acceptedEvents.length
-    const nextCount = next.acceptedEvents.length
-    const added = next.acceptedEvents[nextCount - 1]
+    const expectedCount = expected.acceptedEventCount
+    const nextCount = next.acceptedEventCount
+    const added = next.acceptedEvents[next.acceptedEvents.length - 1]
     if (added === undefined) return false
 
     const statements: D1PreparedStatement[] = [
@@ -99,7 +144,7 @@ export class D1ProducerTrustStore implements ProducerTrustStore {
         insertTrustEventQuery({
           eventId: added.eventId,
           digest: added.digest,
-          acceptedAt: new Date().toISOString(),
+          acceptedAt: added.acceptedAt,
           expectedEpoch: expected.highestAcceptedEpoch,
           expectedCount,
         }),
@@ -110,7 +155,7 @@ export class D1ProducerTrustStore implements ProducerTrustStore {
           expectedCount,
           nextEpoch: next.highestAcceptedEpoch,
           nextCount,
-          updatedAt: new Date().toISOString(),
+          updatedAt: added.acceptedAt,
         }),
       ),
     ]

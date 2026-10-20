@@ -11,6 +11,19 @@
 --    of that state is the store's second compare-and-swap, and it guards the
 --    epoch **and** the event count, so a change that does not move the epoch
 --    is still detected.
+--
+--    The two are not the same number on purpose. `event_count` is the
+--    number of events the consumer has accepted **ever**, and it is what
+--    says "the state moved"; the ledger is **pruned** to the policy's
+--    freshness window, so the ledger and the count drift apart, and the
+--    count is what detects the change.
+--
+--    `accepted_at` is the **consumer's** acceptance time, on the same clock
+--    the freshness bound is measured on, because the ledger's retention is
+--    measured against it. The read of the ledger is bounded by that column
+--    (`accepted_at >= ?`) and the prune deletes by it (`accepted_at < ?`),
+--    so the index below is what makes the bounded read a range scan rather
+--    than a scan of the whole ledger.
 --  - `editorial_switch_state` is the durable state of the cutover switch:
 --    when the cutover happened, and when it was undone. A rollback wins over
 --    a switch, whatever the timestamps say.
@@ -42,6 +55,12 @@ CREATE TABLE IF NOT EXISTS editorial_trust_events (
   accepted_at TEXT NOT NULL,
   PRIMARY KEY (event_id, digest)
 );
+
+-- The ledger is read inside the freshness window and pruned to it, so the
+-- read is a range scan over the acceptance times rather than a scan of
+-- every pair the store has ever accepted.
+CREATE INDEX IF NOT EXISTS editorial_trust_events_accepted_at
+  ON editorial_trust_events (accepted_at);
 
 CREATE TABLE IF NOT EXISTS editorial_switch_state (
   id            INTEGER PRIMARY KEY CHECK (id = 1),

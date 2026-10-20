@@ -283,6 +283,36 @@ export function selectTrustStateQuery(): Query {
 }
 
 /**
+ * The replay ledger, **bounded** to the freshness window.
+ *
+ * The filter is in SQL, not in the caller: a read that fetched every pair
+ * the store has ever accepted would grow with the life of the store, and
+ * it would do it on the hot path of every verification. A pair older than
+ * the window belongs to a record that can no longer be fresh, and a record
+ * that is not fresh is refused before the ledger is consulted.
+ */
+export function selectTrustEventsQuery(input: { since: string }): Query {
+  return {
+    sql: `SELECT event_id, digest, accepted_at FROM editorial_trust_events WHERE accepted_at >= ? ORDER BY rowid ASC`,
+    params: [input.since],
+  }
+}
+
+/**
+ * The prune of the replay ledger to the freshness window.
+ *
+ * It removes the pairs the window has made irrelevant and nothing else: a
+ * pair whose record is still fresh is inside the window, because the
+ * window is the freshness bound plus the future skew.
+ */
+export function deleteTrustEventsQuery(input: { before: string }): Query {
+  return {
+    sql: `DELETE FROM editorial_trust_events WHERE accepted_at < ?`,
+    params: [input.before],
+  }
+}
+
+/**
  * The insert of an accepted producer event, guarded by the trust state's
  * *old* values.
  *

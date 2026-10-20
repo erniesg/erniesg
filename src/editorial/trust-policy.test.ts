@@ -28,11 +28,20 @@ import {
   verifyProducerRecord,
   type ProducerExpectation,
   type ProducerRefusalReason,
+  type ProducerTrustLedgerWindow,
   type ProducerTrustStore,
   type ProducerVerification,
 } from './trust-policy'
 
 const OTHER_REVISION_ID = `urn:editorial:revision:${'c'.repeat(64)}`
+
+/**
+ * The window the ledger is read inside.
+ *
+ * The in-memory store keeps every pair, so the window does not change what
+ * it returns; the durable store bounds its read by it.
+ */
+const LEDGER_WINDOW = { since: '1970-01-01T00:00:00.000Z' }
 
 /** A store whose state cannot be read: the consumer is offline. */
 function unavailableStore(): ProducerTrustStore {
@@ -49,8 +58,8 @@ function unavailableStore(): ProducerTrustStore {
 /** A store whose compare-and-advance always loses the race. */
 function racingStore(state: ProducerTrustStore): ProducerTrustStore {
   return {
-    async read() {
-      return state.read()
+    async read(window: ProducerTrustLedgerWindow) {
+      return state.read(window)
     },
     async compareAndAdvance() {
       return false
@@ -123,7 +132,7 @@ describe('the producer trust contract', () => {
       const outcome = await verify({ keys, record, store })
 
       expect(outcome.ok).toBe(true)
-      const state = await store.read()
+      const state = await store.read(LEDGER_WINDOW)
       expect(state.highestAcceptedEpoch).toBe(9)
       expect(state.acceptedEvents).toHaveLength(1)
       expect(state.acceptedEvents[0]?.eventId).toBe('event-1')
@@ -135,6 +144,7 @@ describe('the producer trust contract', () => {
       const record = await producerRecordFixture({ keys })
       const store = createInMemoryProducerTrustStore({
         highestAcceptedEpoch: 12,
+        acceptedEventCount: 0,
         acceptedEvents: [],
       })
 
@@ -219,6 +229,7 @@ describe('the producer trust contract', () => {
     it('treats an epoch at or below the accepted one as a rollback', () => {
       const at = (epoch: number) => ({
         highestAcceptedEpoch: epoch,
+        acceptedEventCount: 0,
         acceptedEvents: [],
       })
       expect(producerPolicyEpochIsAcceptable(8, at(9))).toBe(false)
@@ -763,7 +774,7 @@ describe('the producer trust contract', () => {
       })
 
       expect(refusalOf(outcome)).toBe('producer_target_mismatch')
-      const state = await store.read()
+      const state = await store.read(LEDGER_WINDOW)
       expect(state.highestAcceptedEpoch).toBe(-1)
       expect(state.acceptedEvents).toHaveLength(0)
     })
@@ -773,8 +784,13 @@ describe('the producer trust contract', () => {
       const record = await producerRecordFixture({ keys })
       const state = {
         highestAcceptedEpoch: 9,
+        acceptedEventCount: 1,
         acceptedEvents: [
-          { eventId: record.eventId, digest: producerRecordDigest(record) },
+          {
+            eventId: record.eventId,
+            digest: producerRecordDigest(record),
+            acceptedAt: '2026-10-20T11:00:00.000Z',
+          },
         ],
       }
 

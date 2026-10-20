@@ -1115,6 +1115,7 @@ validation record, and no release without its validations.
 | `editorial_revisions`, `editorial_decisions`, `editorial_validations`, `editorial_approvals` | while referenced by a release; otherwise 180 days | pruned only when no release references the record and the record is not in a non-terminal state |
 | `editorial_candidates` | while referenced by a release; otherwise 180 days | as above |
 | `editorial_idempotency_receipts` | while the record they describe exists, plus 30 days | then, and only then — a key is never silently reused |
+| the consumer's **replay ledger** (`editorial_trust_events`) | the policy's freshness window **plus the future skew** | then. A pair older than that belongs to a record that can no longer be fresh, and a record that is not fresh is refused before the ledger is consulted. The read of the ledger is bounded by the same window. |
 | the artifact **bytes** of a superseded release | 30 days | then. The *record* of them stays forever; only the bytes go. |
 | the artifact bytes of a current release | while the release is current | when the release is superseded and the grace period ends |
 
@@ -1442,9 +1443,32 @@ with a *different* digest is an event id presented twice with different
 content (`producer_event_id_reused`). Both are refusals. So the epoch's
 role is reduced to rollback detection of the authority, and the ledger —
 not the epoch — is what tells a superseding record from a replayed one.
-The ledger only has to hold the pairs inside the freshness window, because
-a record older than the freshness bound is refused before the ledger is
-consulted.
+
+**The ledger's retention, settled.** The ledger only has to hold the pairs
+inside the freshness window, because a record older than the freshness bound
+is refused before the ledger is consulted. The ledger is therefore
+**pruned** to that window and the read of it is **bounded** by it: a ledger
+that is never pruned grows for the life of the store, and a read that is
+not bounded reads every pair the store has ever accepted, on the hot path of
+every verification.
+
+- The window is the freshness bound **plus the future skew**. A record may
+  have been issued up to `maxFutureSkewSeconds` in the future of the
+  consumer's clock when it was accepted, so it stays fresh for that much
+  longer than the freshness bound alone says. A ledger pruned at exactly
+  the freshness bound would drop a pair whose record is still fresh, and
+  that record could then be replayed. The window is the safe side of that.
+- The prune is driven by the **authenticated** policy's bounds, so an
+  unauthenticated policy cannot prune the ledger. It happens after the
+  policy's signature has been verified.
+- The ledger's `accepted_at` is the **consumer's** acceptance time, on the
+  same clock the freshness bound is measured on. The retention is measured
+  against the clock the record's freshness is judged by, so it must be that
+  clock and not the store's own.
+- The trust state's **count** is the number of events the consumer has
+  accepted *ever*, not the number of rows the ledger holds. The count is
+  the change detector of the compare-and-advance, so it must not move when
+  the ledger is trimmed; the ledger and the count drift apart on purpose.
 
 This is the one place where E05b's rule is *wider* than §9.3's strict
 "refuses anything at or below it". It has to be: under the strict rule

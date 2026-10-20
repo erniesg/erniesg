@@ -80,7 +80,18 @@
  *
  * The ledger only has to hold the pairs inside the freshness window: a
  * record older than the freshness bound is refused before the ledger is
- * consulted, so it can never be replayed whatever the ledger says.
+ * consulted, so it can never be replayed whatever the ledger says. The
+ * ledger is therefore **pruned** to that window, and the read of it is
+ * **bounded** by it: a durable ledger that is never pruned grows for the
+ * life of the store, and a read that is not bounded is a read of every pair
+ * the store has ever accepted, on the hot path of every verification.
+ *
+ * The window is the freshness bound **plus the future skew** (§
+ * `producerLedgerWindow`): a record may have been issued up to the skew in
+ * the future of the consumer's clock when it was accepted, so it stays
+ * fresh for that much longer than the freshness bound alone says. A ledger
+ * pruned at exactly the freshness bound would drop a pair whose record is
+ * still fresh, and that record could then be replayed.
  *
  * ## The compromised key
  *
@@ -268,6 +279,15 @@ export type ProducerInclusionProof = z.infer<typeof producerInclusionProofSchema
 export type AcceptedProducerEvent = {
   eventId: string
   digest: string
+  /**
+   * When the consumer accepted it, on the **consumer's own clock**.
+   *
+   * It is the same clock the freshness bound is measured on, so the ledger's
+   * retention is measured on it too. A store that stamped the ledger with
+   * its own wall clock would prune against a different clock than the one
+   * the record's freshness is judged by.
+   */
+  acceptedAt: string
 }
 
 /**
@@ -275,17 +295,59 @@ export type AcceptedProducerEvent = {
  *
  * `highestAcceptedEpoch` is the highest **policy** epoch the consumer has
  * accepted; `-1` means it has accepted none. It never goes down.
+ *
+ * `acceptedEventCount` is the number of events the consumer has accepted,
+ * ever. It is the **change detector** of the compare-and-advance: it moves
+ * on every acceptance, so an acceptance that does not move the epoch is
+ * still detected. It is not the size of the ledger: the ledger is pruned to
+ * the freshness window, so the ledger and the count drift apart on purpose.
  */
 export type ProducerTrustState = {
   highestAcceptedEpoch: number
-  /** The (event id, digest) pairs the consumer has accepted. */
+  /** The number of events the consumer has accepted, ever. */
+  acceptedEventCount: number
+  /** The (event id, digest) pairs inside the read window. */
   acceptedEvents: readonly AcceptedProducerEvent[]
 }
 
 /** The state of a consumer that has accepted nothing yet. */
 export const EMPTY_PRODUCER_TRUST_STATE: ProducerTrustState = {
   highestAcceptedEpoch: -1,
+  acceptedEventCount: 0,
   acceptedEvents: [],
+}
+
+/**
+ * The window the replay ledger is read and pruned to.
+ *
+ * `since` is the oldest ledger entry that can still matter. A pair older
+ * than that belongs to a record that can no longer be fresh, and a record
+ * that is not fresh is refused before the ledger is consulted.
+ */
+export type ProducerTrustLedgerWindow = {
+  /** The oldest ledger entry that can still matter, as an ISO timestamp. */
+  since: string
+}
+
+/**
+ * The window the ledger is read and pruned to, from the policy's own bounds.
+ *
+ * It is the freshness bound **plus the future skew**. A record may have
+ * been issued up to `maxFutureSkewSeconds` in the future of the consumer's
+ * clock when it was accepted, and it stays fresh until that much later than
+ * the freshness bound alone says — so a ledger pruned at exactly the
+ * freshness bound would drop a pair whose record is still fresh, and that
+ * record could then be replayed. The window is the safe side of that.
+ */
+export function producerLedgerWindow(
+  bounds: ProducerTrustBounds,
+  now: Date,
+): ProducerTrustLedgerWindow {
+  const retentionSeconds =
+    bounds.maxRecordAgeSeconds + bounds.maxFutureSkewSeconds
+  return {
+    since: new Date(now.getTime() - retentionSeconds * 1000).toISOString(),
+  }
 }
 
 /**
@@ -297,8 +359,14 @@ export const EMPTY_PRODUCER_TRUST_STATE: ProducerTrustState = {
  * rollback that is not detected.
  */
 export interface ProducerTrustStore {
-  /** The current state. It throws when the state cannot be established. */
-  read(): Promise<ProducerTrustState>
+  /**
+   * The current state. It throws when the state cannot be established.
+   *
+   * The ledger is read **inside the window**: a pair older than the window
+   * belongs to a record that can no longer be fresh, so the read does not
+   * fetch it and the read does not grow with the life of the store.
+   */
+  read(window: ProducerTrustLedgerWindow): Promise<ProducerTrustState>
   /**
    * Advance the state from `expected` to `next`, or refuse.
    *
@@ -309,6 +377,15 @@ export interface ProducerTrustStore {
     expected: ProducerTrustState,
     next: ProducerTrustState,
   ): Promise<boolean>
+  /**
+   * Prune the ledger to the window.
+   *
+   * It is **optional**: a store that keeps every pair may omit it, and a
+   * superset of the window never weakens a refusal. A store that prunes
+   * must never remove a pair whose record is still inside the freshness
+   * window, because that pair is what refuses the replay.
+   */
+  prune?(window: ProducerTrustLedgerWindow): Promise<void>
 }
 
 function sameTrustState(
@@ -316,6 +393,7 @@ function sameTrustState(
   right: ProducerTrustState,
 ): boolean {
   if (left.highestAcceptedEpoch !== right.highestAcceptedEpoch) return false
+  if (left.acceptedEventCount !== right.acceptedEventCount) return false
   if (left.acceptedEvents.length !== right.acceptedEvents.length) return false
   return left.acceptedEvents.every((event, index) => {
     const other = right.acceptedEvents[index]
@@ -330,6 +408,10 @@ function sameTrustState(
  * It is the reference implementation of the store's contract, and the tests
  * use it. The durable store (E05c) must implement the same contract with a
  * conditional update, the way the margin service's CAS does.
+ *
+ * It keeps **every** pair: the ledger of a reference store is not pruned,
+ * and a ledger that holds a superset of the window refuses more replays,
+ * never fewer.
  */
 export function createInMemoryProducerTrustStore(
   initial: ProducerTrustState = EMPTY_PRODUCER_TRUST_STATE,
@@ -406,12 +488,18 @@ export function producerNextState(
   state: ProducerTrustState,
   policyEpoch: number,
   record: ProducerRecord,
+  acceptedAt: string,
 ): ProducerTrustState {
   return {
     highestAcceptedEpoch: Math.max(state.highestAcceptedEpoch, policyEpoch),
+    acceptedEventCount: state.acceptedEventCount + 1,
     acceptedEvents: [
       ...state.acceptedEvents,
-      { eventId: record.eventId, digest: producerRecordDigest(record) },
+      {
+        eventId: record.eventId,
+        digest: producerRecordDigest(record),
+        acceptedAt,
+      },
     ],
   }
 }
@@ -770,7 +858,9 @@ export async function verifyProducerRecord(input: {
   const root = producerTrustRootSchema.safeParse(input.root)
   if (!root.success) return refuse('trust_root_malformed')
 
-  const rootSignature = await verifyProducerTrustRootSignature({ root: root.data })
+  const rootSignature = await verifyProducerTrustRootSignature({
+    root: root.data,
+  })
   if (!rootSignature.ok) return refuse(rootSignature.reason)
 
   if (input.policy === undefined || input.policy === null) {
@@ -779,9 +869,15 @@ export async function verifyProducerRecord(input: {
   const policy = producerTrustPolicySchema.safeParse(input.policy)
   if (!policy.success) return refuse('trust_policy_malformed')
 
+  // The window the ledger is read and pruned to. It is the policy's own
+  // bound, so it is the **authenticated** bound whenever the verification
+  // gets past the policy's signature check — and the prune happens after
+  // that check, so an unauthenticated policy can never prune the ledger.
+  const window = producerLedgerWindow(policy.data.bounds, input.now)
+
   let state: ProducerTrustState
   try {
-    state = await input.store.read()
+    state = await input.store.read(window)
   } catch {
     return refuse('trust_authority_unavailable')
   }
@@ -810,6 +906,19 @@ export async function verifyProducerRecord(input: {
 
   if (!rotationOverlapsWithin(policy.data)) {
     return refuse('trust_policy_rotation_overlap_exceeded')
+  }
+
+  // The ledger is pruned to the window of the **authenticated** policy. It
+  // is a maintenance step, not a state advance: it removes the pairs whose
+  // records can no longer be fresh, and it never removes a pair whose
+  // record is still fresh. It happens after the policy's signature has
+  // been verified, because the window is the policy's own bound and an
+  // unauthenticated policy must not be able to prune the ledger.
+  try {
+    await input.store.prune?.(window)
+  } catch {
+    // A ledger that cannot be pruned is a ledger that grows; it is not a
+    // reason to refuse a record that is otherwise sound.
   }
 
   const record = producerRecordSchema.safeParse(input.record)
@@ -949,7 +1058,15 @@ export async function verifyProducerRecord(input: {
     }
   }
 
-  const next = producerNextState(state, policy.data.policyEpoch, record.data)
+  // The acceptance time is the **consumer's** clock, the same clock the
+  // freshness bound is measured on: the ledger's retention is measured
+  // against it, so it must not be a different clock.
+  const next = producerNextState(
+    state,
+    policy.data.policyEpoch,
+    record.data,
+    input.now.toISOString(),
+  )
   const advanced = await input.store.compareAndAdvance(state, next)
   if (!advanced) return refuse('trust_state_concurrent_modification')
 

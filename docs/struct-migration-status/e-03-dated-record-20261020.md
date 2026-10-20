@@ -37,5 +37,6 @@ Precondition: E-02 passed (`feat/struct-e03-core-codecs-ids-order-20261020` exis
 - No golden regenerated; no artifact repinned.
 - No `npm publish`, no deploy, no writer/route change, no PR created, no push, no merge.
 - `astro check` passes (0 errors, 279 hints pre-existing).
-- Full app suite (`npx vitest run --maxWorkers=1`) completed: 4973 passed, 17 skipped, 1 failed (pre-existing `publication:build` symlink test and `tests/e2e/srt-visual.spec.ts` playwright conflict — unrelated to E-03).
-- `git status --porcelain` clean (only 9 changed files: 7 production import switches + 1 guard extension + 0 vendor/golden/expected changes).
+- The repository's own app suite (`npx vitest run --exclude 'tests/e2e/**' --exclude 'tools/agent-evidence-budget.test.mjs' --maxWorkers=1`): 318 files (316 passed, 2 skipped), 4986 tests (4969 passed, 17 skipped), exit 0 - no failures.
+- A bare `npx vitest run --maxWorkers=1` (which also collects the Playwright e2e specs, which the repository's script excludes) reports the e2e spec files as collection failures plus the `publication:build` symlink case, whose own setup fails when the gitignored `.agent/evidence/` directory does not exist yet in a fresh worktree. That invocation is not the repository's suite command and is recorded here only so the difference is not mistaken for a regression.
+- `git status --porcelain` clean (only 10 changed files: 8 production import switches + 1 guard extension + 1 dated record; 0 vendor / golden / expected / lockfile changes).

@@ -1118,6 +1118,96 @@ validation record, and no release without its validations.
 | the artifact **bytes** of a superseded release | 30 days | then. The *record* of them stays forever; only the bytes go. |
 | the artifact bytes of a current release | while the release is current | when the release is superseded and the grace period ends |
 
+### 8.5 The migration and the backfill E05c added
+
+E05c adds the numbered migrations and the backfill §8.1 and §8.2
+describe. It applies nothing, and it creates no database.
+
+**The files.** `migrations/editorial/0001_editorial_store.sql` and
+`migrations/editorial/0002_editorial_control.sql`, in the scheme of §8.1.
+They are in their own directory because the editorial store is a separate
+database with a separate `migrations_dir`, and the directory is what keeps
+them out of the margin runner: the Wrangler runner for `MARGIN_DB` reads
+`migrations/*.sql` and the margin test harness applies every
+`migrations/*.sql` in filename order, and a *directory* is neither. The
+`EDITORIAL_DB` binding and its `migrations_dir` are added when the cutover
+is authorised, not before.
+
+**0001** is the DDL of record, `src/editorial/schema.sql`, unchanged.
+**0002** is the control the store needs beside the records: the durable
+trust state (`editorial_trust_state`, `editorial_trust_events`), the
+cutover switch (`editorial_switch_state`) and the backfill's cursor
+(`editorial_backfill_progress`).
+
+**The ledger.** `editorial_schema_migrations` records which numbered files
+have been applied. The runner creates it itself, because it has to know
+what is applied before it can decide what to apply.
+
+**The backfill** copies the legacy source's records into the store, in
+**dependency order** — a revision before the decision about it, a decision
+before the candidate it authorises, a candidate before the validations and
+the approval about it, a release last — in bounded batches, and records its
+cursor after every batch. It is therefore interruptible (a run that stops
+leaves a cursor) and resumable (the next run continues from the cursor). A
+reader that finds a release in the store finds its whole chain beside it,
+and never a release whose approval has not arrived yet.
+
+**The materialised state of a restored row** is the *projected* state of
+the whole legacy record set, not the state a new record starts in. A
+revision that was approved before the cutover is restored as
+`revision-approved`; a release that was superseded before the cutover is
+restored as `release-superseded`, so the store's partial unique index —
+one current release per target — holds over the restored set exactly as it
+holds over a live one. The projection is §5's own (`validation.ts`), so the
+restored column and the restored projection cannot disagree about what the
+history says.
+
+**The expanded reader** is `src/editorial/expanded-reader.ts`. It reads the
+store first and the legacy source second, and it is correct throughout the
+backfill: the copy is verbatim and the id is the content's digest, so the
+record a reader observes for a target is the *same* record before and after
+that target's row is migrated. The reader is observationally transparent.
+
+**The cutover switch** is the durable state of the read mode, and it has
+three states:
+
+| Mode | What the reader does |
+| --- | --- |
+| `expanded` | the store first, the legacy source second. This is the reader of the day the store exists, so the fallback is always there and always correct. |
+| `store-only` | the narrowed reader. Narrowing is the act of activation, and it is a separate, explicitly authorised one. |
+| `legacy-only` | the rolled-back reader. The cutover was undone, so the store is not consulted at all. |
+
+A rollback wins over a switch: a switch that was undone is not in force,
+whatever its timestamps say. E05c narrows nothing.
+
+### 8.6 The rollback and forward-recovery rehearsal
+
+E05c rehearses both directions of the cutover on representative pre-switch
+and post-switch records, in `src/editorial/recovery.ts`.
+
+**The rollback.** The cutover is undone: the switch moves to `legacy-only`
+and the reader serves the legacy source again. The post-switch records are
+not served — they exist only in the store — and **nothing is deleted**. The
+rehearsal asserts that the store holds the same number of records before
+and after the rollback, so the rollback is recoverable rather than
+destructive.
+
+**The forward recovery.** The cutover is re-made: the switch moves back to
+`store-only` and the reader serves the store again. The records the
+backfill has not copied yet are still served from the legacy source,
+because the reader is expanded.
+
+**The unsafe package downgrade.** The rehearsal also re-pins the app — the
+approved pin registry gains a newer pin, so every pin before it is older —
+and then offers a candidate cut under a pin that was current before the
+re-pin. The writer refuses it with `package_pin_downgrade`, and the refusal
+writes nothing.
+
+A downgrade is not a forged pin; it is a **stale** one. That is why the
+approved pins are an *ordered* registry rather than a set, and why the
+refusal is a refusal of the pipeline moving backwards rather than of a
+digest that does not match.
+
 ---
 
 ## 9. The trust model (the contract E05b implements)
@@ -1530,6 +1620,107 @@ The proof is the diff: E-05a's two commits touch `docs/` (one new file) and
 `src/editorial/**` (new files) and nothing else. The command is in the
 report.
 
+### 10.3 The storage adapter, the writer and the route adapter E05c built
+
+E05c builds the three modules §10.1 describes, and wires none of them.
+
+| Module | What it is |
+| --- | --- |
+| `src/editorial/d1.ts` | the slice of the D1 client the store uses, typed structurally |
+| `src/editorial/queries.ts` | every statement the store runs, as pure `(sql, params)` values |
+| `src/editorial/repository.ts` | the storage seam: `EditorialRepository` |
+| `src/editorial/d1-repository.ts` | the D1 implementation of the seam |
+| `src/editorial/sqlite-fixture.ts` | the durable SQLite fixture the store is exercised against |
+| `src/editorial/migration.ts` | the migration scheme, the runner and the backfill |
+| `src/editorial/expanded-reader.ts` | the expanded reader of §8.2 |
+| `src/editorial/legacy-source.ts` | the legacy publication source, and the static one the tests use |
+| `src/editorial/activation.ts` | the activation value the inactive modules refuse without |
+| `src/editorial/package-pin.ts` | the approved package pins and the downgrade refusal |
+| `src/editorial/writer.ts` | the inactive writer |
+| `src/editorial/route-adapter.ts` | the inactive public-route adapter |
+| `src/editorial/trust-store.ts` | the durable trust state E05b's contract asks for |
+| `src/editorial/recovery.ts` | the rollback and forward-recovery rehearsal |
+
+**The store.** Three rules, and they are the store's job rather than the
+caller's:
+
+1. **A write is one transaction.** The record, the aggregate's state change
+   and the idempotency receipt are one `batch()`. A reader never sees a
+   record without its receipt, or a receipt without its record.
+2. **A refused write writes nothing.** The compare-and-swap guard lives in
+   the insert statement itself — `INSERT ... SELECT ... WHERE EXISTS
+   (SELECT 1 FROM <aggregate> WHERE id = ? AND state = ?)` — so a lost race
+   inserts nothing, updates nothing and receipts nothing. It is the app's
+   existing idiom: the margin service puts the same guard in the same
+   statement as the write.
+3. **A row is read back through its own schema.** Every read parses the
+   row with the zod schema of its kind, so a row that does not satisfy the
+   record contract is a hard failure rather than a shrug.
+
+**The durable fixture** is a *file*, not `:memory:`. An in-memory database
+proves nothing about durability: a reader that opens a second connection
+sees nothing. The fixture is a file in a temporary directory the fixture
+owns, so a second connection sees the committed rows, the file survives the
+close of the first connection, and an interrupted run leaves a real file
+behind.
+
+**The activation value.** The writer and the route adapter refuse to act
+unless the caller hands them an activation. It is a **phrase**, not a
+configuration file, an environment variable or a binding: every one of
+those is a thing a later commit could add without anybody thinking about
+it, while a phrase has to be *carried*, per call, by the caller. The
+phrase is exported, so it is not a secret — it is a **claim of authority**:
+the caller has read this record and has decided the cutover may happen. The
+only place in this repository that supplies one is the editorial module's
+own test.
+
+**The writer.** One method per transition, plus the reads. Each method
+refuses without an activation, answers a replay, decides with
+`applyTransition`, checks the expected version against the transition's
+`from`, and writes once. The package pin check is a *precondition* of the
+writer rather than a rule of the state machine: the pins are app-owned
+configuration, and a configuration is not part of a pure function over
+records.
+
+**The route adapter.** It refuses rather than falls back. The four
+refusals that matter are:
+
+| Refusal | Status | What it means |
+| --- | --- | --- |
+| `editorial_artifact_unapproved` | 503 | the release binds no approval, or the approval does not authorise the candidate |
+| `editorial_release_superseded` | 410 | the release is retired and is not current |
+| `editorial_approval_digest_mismatch` | 503 | the approval is about different digests |
+| `editorial_producer_record_revoked` / `editorial_producer_record_expired` | 503 | the producer record is revoked, or outside its validity window |
+
+The 503s are one answer: the adapter cannot establish that the artifact is
+current and approved, and a reader that cannot establish that gets an
+error, not a stale artifact.
+
+### 10.4 The inactivity evidence
+
+Two independent claims, and neither of them is "the code looks inactive".
+
+1. **The import graph.** Nothing the Worker serves and nothing the site
+   serves reaches `src/editorial/**`. It is computed with the TypeScript
+   compiler's own resolver over the project's real `paths` mapping, from
+   the Worker entry and from every route, following the transitive closure
+   — so an alias, a re-export and a dynamic import are all followed. The
+   assertion is on the *graph*, not on a grep of the tree.
+2. **The bytes.** The production writer (`tools/publication-build.mjs` and
+   `src/publication/renderers/vivliostyle.ts`) and every route under
+   `src/pages/**` are byte-identical to the commit E-05 started from
+   (`9003ea76`), and the only files E-05 changed are the editorial
+   modules, the editorial migrations and this design record.
+
+E05c's commits extend that diff: the editorial modules, the editorial
+migrations, and this record. Nothing else.
+
+There is a third, weaker claim, and it is worth stating because it is the
+one that survives a careless future commit: the activation phrase appears
+in no module outside `src/editorial/`, so a module that wanted to activate
+the writer would have to add the phrase itself — which is a change anybody
+can see in the diff.
+
 ---
 
 ## 11. What E-05 explicitly does NOT do
@@ -1586,3 +1777,31 @@ E05b's two modules continue that direction:
 `src/editorial/index.ts` is E-05a's file and is **not** extended here: the
 E05b modules are imported by path, and whoever owns the public surface
 (`index.ts`) may re-export them.
+
+E05c's modules continue that direction too, and they add one new rule:
+**a module under `src/editorial/` is imported by nothing outside
+`src/editorial/`**. The dependency arrows are:
+
+`d1-repository.ts` → `d1.ts`, `queries.ts`, `records.ts`, `ids.ts`,
+`repository.ts`;
+`repository.ts` → `queries.ts` (types only);
+`writer.ts` → `activation.ts`, `ids.ts`, `package-pin.ts`,
+`state-machine.ts`, `records.ts`, `repository.ts`, `validation.ts`;
+`route-adapter.ts` → `activation.ts`, `ids.ts`, `package-pin.ts`,
+`records.ts`, `repository.ts`, `trust-policy.ts`, `validation.ts`;
+`expanded-reader.ts` → `migration.ts`, `records.ts`, `repository.ts`,
+`validation.ts`;
+`legacy-source.ts` → `migration.ts`, `records.ts`, `validation.ts`;
+`migration.ts` → `records.ts`, `repository.ts`, `validation.ts`;
+`recovery.ts` → `activation.ts`, `expanded-reader.ts`, `migration.ts`,
+`package-pin.ts`, `records.ts`, `repository.ts`, `writer.ts`;
+`trust-store.ts` → `d1.ts`, `queries.ts`, `trust-policy.ts`.
+
+There is no cycle among them, and none of them is imported by the Worker,
+by a route or by the production writer.
+
+E05c's modules are listed with what they own in §10.3; the tests are
+`src/editorial/storage.test.ts`, `src/editorial/writer.test.ts`,
+`src/editorial/route-adapter.test.ts`, `src/editorial/concurrency.test.ts`,
+`src/editorial/migration.test.ts`, `src/editorial/recovery.test.ts` and
+`src/editorial/inactivity.test.ts`.

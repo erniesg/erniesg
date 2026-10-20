@@ -89,6 +89,7 @@ describe('exact standalone Struct artifact', () => {
       './recovery',
       './renderers/xhtml',
       './renderers/epub',
+      './bundle',
     ])
     const installedManifest = readJson(
       'node_modules/@erniesg/struct/package.json',

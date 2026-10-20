@@ -359,5 +359,89 @@
     "packageDecode": "accepted",
     "packageInvalidVersion": "STRUCT_CODEC_SCHEMA_VERSION at $.schemaVersion: unsupported schema version \"9.9.9\"",
     "packageInvalidReceipt": "STRUCT_CODEC_DIGEST at $.receipt.generatedSha256: generatedSha256 does not match the canonical 0.2.0 digest"
+  },
+  "bundle": {
+    "structured-docx": {
+      "documentSha256": "bdfa62d0c805a6d61a60a4d442fd3b3ff0d6c166a2bc3d8e6097a148cb6d7620",
+      "bundleSha256": "6617fcc5d0ffa90574da88d9cee57aaa7e60461084c51e7b021ce3d496aa1767",
+      "encodedBundleSha256": "6617fcc5d0ffa90574da88d9cee57aaa7e60461084c51e7b021ce3d496aa1767",
+      "encodedBundleByteLength": 12019,
+      "decodedDocumentSha256": "bdfa62d0c805a6d61a60a4d442fd3b3ff0d6c166a2bc3d8e6097a148cb6d7620",
+      "decodedBundleSha256": "6617fcc5d0ffa90574da88d9cee57aaa7e60461084c51e7b021ce3d496aa1767",
+      "assetIds": [
+        "struct-asset-2bdb35bf7481e3b2fb6363d4",
+        "struct-asset-b0412fd7e5e0a8b6964ba576"
+      ],
+      "assetDigestConservation": [
+        {
+          "id": "struct-asset-2bdb35bf7481e3b2fb6363d4",
+          "suppliedSha256": "7ef3a6fac31111282ef8f975c7f5078c3a6d0b0536263282c3fc626ea8178f36",
+          "suppliedByteLength": 451,
+          "verifiedSha256": "7ef3a6fac31111282ef8f975c7f5078c3a6d0b0536263282c3fc626ea8178f36",
+          "verifiedByteLength": 451,
+          "conserved": true
+        },
+        {
+          "id": "struct-asset-b0412fd7e5e0a8b6964ba576",
+          "suppliedSha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+          "suppliedByteLength": 68,
+          "verifiedSha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+          "verifiedByteLength": 68,
+          "conserved": true
+        }
+      ],
+      "assetDigestConservationOk": true
+    },
+    "ordinary-pdf": {
+      "documentSha256": "4f2445a4599a39d2f5fe16e3a33c5086462e1243952396503bdfc1818e2c8a64",
+      "bundleSha256": "a0c27bf748812d37b6045073aa44e3cc445d6959bc07594cb6da68df824ae90b",
+      "encodedBundleSha256": "a0c27bf748812d37b6045073aa44e3cc445d6959bc07594cb6da68df824ae90b",
+      "encodedBundleByteLength": 5334,
+      "decodedDocumentSha256": "4f2445a4599a39d2f5fe16e3a33c5086462e1243952396503bdfc1818e2c8a64",
+      "decodedBundleSha256": "a0c27bf748812d37b6045073aa44e3cc445d6959bc07594cb6da68df824ae90b",
+      "assetIds": [],
+      "assetDigestConservation": [],
+      "assetDigestConservationOk": true
+    },
+    "source-preserved-pdf": {
+      "documentSha256": "c0bd802395f2b4396cb8c71c8a6acf058ce3a7ee2cb80bfe7311f790871c0635",
+      "bundleSha256": "a72b11d1357efacb28f062b97fdc90e9d8963af63138710ed10cacd2302f3b8e",
+      "encodedBundleSha256": "a72b11d1357efacb28f062b97fdc90e9d8963af63138710ed10cacd2302f3b8e",
+      "encodedBundleByteLength": 46409,
+      "decodedDocumentSha256": "c0bd802395f2b4396cb8c71c8a6acf058ce3a7ee2cb80bfe7311f790871c0635",
+      "decodedBundleSha256": "a72b11d1357efacb28f062b97fdc90e9d8963af63138710ed10cacd2302f3b8e",
+      "assetIds": [
+        "struct-asset-313eb9ae2d0ccb445c6461fe",
+        "struct-asset-322747c8e09f06ffae50de20",
+        "struct-asset-698fd467980e846735844cad"
+      ],
+      "assetDigestConservation": [
+        {
+          "id": "struct-asset-313eb9ae2d0ccb445c6461fe",
+          "suppliedSha256": "5875db2909d104fc40e5c260810a8b66caac61b6d9c152116b9b13c8d1a9d89e",
+          "suppliedByteLength": 2624,
+          "verifiedSha256": "5875db2909d104fc40e5c260810a8b66caac61b6d9c152116b9b13c8d1a9d89e",
+          "verifiedByteLength": 2624,
+          "conserved": true
+        },
+        {
+          "id": "struct-asset-322747c8e09f06ffae50de20",
+          "suppliedSha256": "3defe0fb0bd6192447ccfdb156df72c8fa3184cf9862735177c852ceaf545097",
+          "suppliedByteLength": 82,
+          "verifiedSha256": "3defe0fb0bd6192447ccfdb156df72c8fa3184cf9862735177c852ceaf545097",
+          "verifiedByteLength": 82,
+          "conserved": true
+        },
+        {
+          "id": "struct-asset-698fd467980e846735844cad",
+          "suppliedSha256": "67748bc6a990b49995852d8cc8311fcb2d33428eb8e7e0e20b8e1eb7c1469929",
+          "suppliedByteLength": 179,
+          "verifiedSha256": "67748bc6a990b49995852d8cc8311fcb2d33428eb8e7e0e20b8e1eb7c1469929",
+          "verifiedByteLength": 179,
+          "conserved": true
+        }
+      ],
+      "assetDigestConservationOk": true
+    }
   }
 }

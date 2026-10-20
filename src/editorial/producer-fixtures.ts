@@ -36,8 +36,10 @@ import {
   EDITORIAL_TRUST_POLICY_RECORD_TYPE,
   signProducerInclusionProof,
   signProducerTrustPolicy,
+  signProducerTrustRoot,
   type ProducerInclusionProof,
   type ProducerTrustPolicy,
+  type ProducerTrustRoot,
 } from './trust-policy'
 import { EDITORIAL_PRODUCER_RECORD_TYPE, type ProducerRecord } from './trust'
 
@@ -142,13 +144,31 @@ export function producerKeyMaterial(
   }
 }
 
-/** The trust root the consumer is configured with. */
-export function trustRootFixture(keys: ProducerTestKeys) {
-  return {
-    version: '1.0.0' as const,
+/**
+ * The trust root the consumer is configured with.
+ *
+ * The root is a **signed document about itself**: it carries the epoch floor
+ * the app has provisioned and the root's own signature over it. The default
+ * floor is `0` — no floor beyond the epoch rule — and a deployment that has
+ * provisioned the authority raises it, because the floor is what stops a
+ * consumer that has accepted nothing yet from taking a stale policy.
+ */
+export async function trustRootFixture(
+  keys: ProducerTestKeys,
+  overrides: { minPolicyEpoch?: number } = {},
+) {
+  const root: ProducerTrustRoot = {
+    version: '1.0.0',
+    minPolicyEpoch: overrides.minPolicyEpoch ?? 0,
     key: keys.root.publicKey,
     timestampAuthorities: [keys.timestamp.publicKey],
+    signatureAlgorithm: 'ecdsa-p256-sha256',
+    signature: '',
   }
+  return signProducerTrustRoot({
+    root,
+    privateKey: keys.root.keyPair.privateKey,
+  })
 }
 
 /** A signed policy epoch document. */

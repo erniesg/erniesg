@@ -14,13 +14,14 @@
  *
  * ```
  * trust root (app-owned, configured out of band)
- *   └── signs the policy epoch document
- *         └── carries the key registry: the producer keys, their epochs,
- *             their validity windows, their revocations and compromises
- *               └── one of those keys signs the producer record
- *                     └── the record binds the revision, the digests, the
- *                         package, the schema versions, the artifacts, the
- *                         target, the event, the issue time and the status
+ *   └── signs itself: the epoch floor it carries is in that signature
+ *         └── signs the policy epoch document
+ *               └── carries the key registry: the producer keys, their epochs,
+ *                   their validity windows, their revocations and compromises
+ *                 └── one of those keys signs the producer record
+ *                       └── the record binds the revision, the digests, the
+ *                           package, the schema versions, the artifacts, the
+ *                           target, the event, the issue time and the status
  * ```
  *
  * Every link is verified before the next one is used. A consumer that cannot
@@ -33,15 +34,27 @@
  * *authority* (the key set), not a counter of the records.
  *
  * - A policy at a **lower** epoch than the one the consumer has accepted is a
- *   **rollback** and is refused (`trust_policy_rollback`). This is the
- *   anti-rollback property: an attacker cannot serve an old policy, with an
- *   old key set, to resurrect a key that has since been revoked.
+ *   **rollback** and is refused (`trust_policy_rollback`).
  * - A policy at the **same** epoch is the same policy. It neither advances
  *   the state nor is a refusal.
  * - A policy at a **higher** epoch advances the state, and the advance is a
  *   **compare-and-advance**: it happens only if the state has not moved since
  *   it was read. Two consumers that race lose one of the two advances, and
  *   the loser refuses rather than merges.
+ *
+ * The rollback rule is **relative to what the consumer has accepted**, so on
+ * its own it is not an anti-rollback property for a consumer that has
+ * accepted nothing yet: such a consumer cannot tell a stale policy from the
+ * current one, and an attacker can serve an old, genuinely root-signed
+ * policy whose key set carries a key the current policy has revoked.
+ *
+ * The **epoch floor** closes that hole. The trust root carries the epoch the
+ * app has provisioned (`minPolicyEpoch`), a policy below it is refused
+ * (`trust_policy_epoch_below_floor`) **before the key lookup**, so a stale
+ * policy's key set is never consulted at all. The floor is covered by the
+ * trust root's own signature, so it cannot be lowered by editing the
+ * configuration: lowering it takes the root's private key, and a root whose
+ * own signature does not verify is refused (`trust_root_unauthenticated`).
  *
  * The **record's** `policyEpoch` is the epoch of the key that signed it. It
  * must equal that key's epoch and must not exceed the policy's epoch. It is
@@ -133,6 +146,10 @@ export const EDITORIAL_TRUST_POLICY_SIGNATURE_DERIVATION =
 export const EDITORIAL_INCLUSION_PROOF_DERIVATION =
   'erniesg.editorial.inclusion-proof.v1' as const
 
+/** The domain tag the trust root's own signature is computed under. */
+export const EDITORIAL_TRUST_ROOT_SIGNATURE_DERIVATION =
+  'erniesg.editorial.trust-root.v1' as const
+
 /* ------------------------------------------------------------------ policy */
 
 /**
@@ -187,12 +204,34 @@ export type ProducerTrustPolicy = z.infer<typeof producerTrustPolicySchema>
  * allowlist and the target registry are app-owned configuration), and it is
  * the only thing a consumer trusts a priori. The timestamp authorities are
  * the keys that may vouch for a record's inclusion.
+ *
+ * The root is a **signed document about itself**. It carries the epoch floor
+ * the app has provisioned (`minPolicyEpoch`) and the trust root's own
+ * signature over every field except the signature itself. The signature is
+ * what makes the floor an *authenticated* floor rather than a configuration
+ * value anybody may edit: a root whose floor was changed without the root's
+ * private key does not verify, and the consumer refuses it
+ * (`trust_root_unauthenticated`) rather than accept a lower floor.
+ *
+ * The anchor is still the root's **public key**, pinned out of band. The
+ * self-signature is the root's integrity check on its own contents; the
+ * pinned key is what says whose contents they are.
  */
 export const producerTrustRootSchema = z
   .object({
     version: z.literal('1.0.0'),
+    /**
+     * The lowest policy epoch this root accepts.
+     *
+     * It is the epoch the app has provisioned. A policy below it is refused
+     * before its key set is consulted.
+     */
+    minPolicyEpoch: z.number().int().nonnegative(),
     key: producerPublicKeySchema,
     timestampAuthorities: z.array(producerPublicKeySchema).max(16),
+    signatureAlgorithm: z.enum(EDITORIAL_SIGNATURE_ALGORITHMS),
+    /** The trust root's own detached signature, base64url. */
+    signature: z.string().min(1).max(2048),
   })
   .strict()
 export type ProducerTrustRoot = z.infer<typeof producerTrustRootSchema>
@@ -327,6 +366,22 @@ export function producerPolicyEpochIsAcceptable(
 }
 
 /**
+ * Whether a policy epoch is at or above the trust root's **epoch floor**.
+ *
+ * The floor is the epoch the app has provisioned, and it is the floor that
+ * makes the anti-rollback property hold for a consumer that has accepted
+ * nothing yet: the rollback rule above is relative to the accepted epoch, so
+ * it cannot tell a stale policy from the current one until the consumer has
+ * accepted the current epoch under it.
+ */
+export function producerPolicyEpochIsAboveFloor(
+  policyEpoch: number,
+  root: Pick<ProducerTrustRoot, 'minPolicyEpoch'>,
+): boolean {
+  return policyEpoch >= root.minPolicyEpoch
+}
+
+/**
  * Whether a record's event has been accepted before.
  *
  * `'replayed'` is the same event id with the same digest — the same record,
@@ -394,17 +449,75 @@ export const PRODUCER_REFUSAL_REASONS = [
   'producer_release_mismatch',
   'producer_revision_stale',
   'trust_root_malformed',
+  'trust_root_unauthenticated',
   'trust_policy_malformed',
   'trust_policy_unavailable',
   'trust_policy_unauthenticated',
   'trust_policy_expired',
   'trust_policy_not_yet_valid',
   'trust_policy_rollback',
+  'trust_policy_epoch_below_floor',
   'trust_policy_rotation_overlap_exceeded',
   'trust_authority_unavailable',
   'trust_state_concurrent_modification',
 ] as const
 export type ProducerRefusalReason = (typeof PRODUCER_REFUSAL_REASONS)[number]
+
+/* --------------------------------------------------------------- trust root */
+
+/** The payload the trust root's own signature covers. */
+export function producerTrustRootPayload(
+  root: object,
+): Record<string, unknown> {
+  return producerCanonicalPayload(root, ['signature'])
+}
+
+/**
+ * Sign a trust root with its own key.
+ *
+ * The root signs itself so that its **epoch floor** is authenticated: a root
+ * whose floor was lowered without the root's private key does not verify,
+ * and the consumer refuses it rather than accept the lower floor.
+ */
+export async function signProducerTrustRoot(input: {
+  root: ProducerTrustRoot
+  privateKey: CryptoKey
+}): Promise<ProducerTrustRoot> {
+  const signature = await signDetached({
+    domain: EDITORIAL_TRUST_ROOT_SIGNATURE_DERIVATION,
+    payload: producerTrustRootPayload(input.root),
+    privateKey: input.privateKey,
+  })
+  return { ...input.root, signature }
+}
+
+/**
+ * Verify the trust root's own signature.
+ *
+ * A root that does not verify is not a trust anchor: the refusal is
+ * `trust_root_unauthenticated`, whatever the cause.
+ */
+export async function verifyProducerTrustRootSignature(input: {
+  root: ProducerTrustRoot
+}): Promise<{ ok: true } | { ok: false; reason: 'trust_root_unauthenticated' }> {
+  if (input.root.signatureAlgorithm !== input.root.key.algorithm) {
+    return { ok: false, reason: 'trust_root_unauthenticated' }
+  }
+  const publicKey = await importProducerPublicKey(input.root.key)
+  if (publicKey === null) {
+    return { ok: false, reason: 'trust_root_unauthenticated' }
+  }
+  const verified = await verifyDetached({
+    domain: EDITORIAL_TRUST_ROOT_SIGNATURE_DERIVATION,
+    payload: producerTrustRootPayload(input.root),
+    publicKey,
+    signature: input.root.signature,
+  })
+  if (!verified) {
+    return { ok: false, reason: 'trust_root_unauthenticated' }
+  }
+  return { ok: true }
+}
 
 /* ----------------------------------------------------------------- policy */
 
@@ -657,6 +770,9 @@ export async function verifyProducerRecord(input: {
   const root = producerTrustRootSchema.safeParse(input.root)
   if (!root.success) return refuse('trust_root_malformed')
 
+  const rootSignature = await verifyProducerTrustRootSignature({ root: root.data })
+  if (!rootSignature.ok) return refuse(rootSignature.reason)
+
   if (input.policy === undefined || input.policy === null) {
     return refuse('trust_policy_unavailable')
   }
@@ -675,6 +791,15 @@ export async function verifyProducerRecord(input: {
     root: root.data,
   })
   if (!policySignature.ok) return refuse(policySignature.reason)
+
+  // The epoch floor, before the key lookup: a policy below the floor is
+  // refused with its own reason, and its key set is never consulted at all.
+  // Without this check a consumer that has accepted nothing yet cannot tell
+  // a stale policy from the current one, and an old key set could resurrect
+  // a key the current policy has revoked.
+  if (!producerPolicyEpochIsAboveFloor(policy.data.policyEpoch, root.data)) {
+    return refuse('trust_policy_epoch_below_floor')
+  }
 
   if (!producerPolicyEpochIsAcceptable(policy.data.policyEpoch, state)) {
     return refuse('trust_policy_rollback')

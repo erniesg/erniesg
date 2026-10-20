@@ -80,7 +80,7 @@ async function verify(input: {
   return verifyProducerRecord({
     record: input.record,
     policy,
-    root: input.root ?? trustRootFixture(input.keys),
+    root: input.root ?? (await trustRootFixture(input.keys)),
     store: input.store ?? createInMemoryProducerTrustStore(),
     now: input.now ?? NOW,
     ...(input.expectation === undefined
@@ -495,25 +495,129 @@ describe('the producer trust contract', () => {
     })
   })
 
+  describe('the epoch floor', () => {
+    it('refuses a policy below the epoch floor the trust root carries', async () => {
+      const keys = await makeProducerTestKeys()
+      // The record the attacker wants accepted: it is signed with the
+      // producer key, and it carries the old epoch the key was issued under.
+      const record = await producerRecordFixture({
+        keys,
+        overrides: { policyEpoch: 4 },
+      })
+      // The authority's current policy: epoch 9, with the producer key
+      // revoked from 10:30.
+      await trustPolicyFixture({
+        keys,
+        keyOverrides: { revokedAt: '2026-10-20T10:30:00.000Z' },
+      })
+      // The attacker's policy: signed by the same genuine trust root, the
+      // same producer key, the revocation not yet in force, at the old epoch.
+      const stale = await trustPolicyFixture({
+        keys,
+        overrides: { policyEpoch: 4 },
+        keyOverrides: { policyEpoch: 4 },
+      })
+      // The app has provisioned epoch 9, so the root carries that floor.
+      const root = await trustRootFixture(keys, { minPolicyEpoch: 9 })
+
+      // The consumer has accepted nothing yet, so the epoch rule on its own
+      // cannot tell the stale policy from the current one.
+      const outcome = await verifyProducerRecord({
+        record,
+        policy: stale,
+        root,
+        store: createInMemoryProducerTrustStore(),
+        now: NOW,
+      })
+
+      expect(outcome.ok).toBe(false)
+      if (!outcome.ok) {
+        expect(outcome.reason).toBe('trust_policy_epoch_below_floor')
+      }
+    })
+
+    it('refuses a stale policy before its key set is consulted', async () => {
+      const keys = await makeProducerTestKeys()
+      const other = await makeProducerTestKeys()
+      const record = await producerRecordFixture({ keys })
+      // A stale policy whose key set does not carry the record's key at all.
+      // The floor is checked before the key lookup, so the reason is the
+      // floor and not "the key is unknown".
+      const stale = await trustPolicyFixture({
+        keys,
+        overrides: {
+          policyEpoch: 4,
+          keys: [producerKeyMaterial(other)],
+        },
+      })
+      const root = await trustRootFixture(keys, { minPolicyEpoch: 9 })
+
+      const outcome = await verifyProducerRecord({
+        record,
+        policy: stale,
+        root,
+        store: createInMemoryProducerTrustStore(),
+        now: NOW,
+      })
+
+      expect(outcome.ok).toBe(false)
+      if (!outcome.ok) {
+        expect(outcome.reason).toBe('trust_policy_epoch_below_floor')
+      }
+    })
+
+    it('accepts a policy at the epoch floor', async () => {
+      const keys = await makeProducerTestKeys()
+      const record = await producerRecordFixture({ keys })
+      const root = await trustRootFixture(keys, { minPolicyEpoch: 9 })
+
+      const outcome = await verify({ keys, record, root })
+
+      expect(outcome.ok).toBe(true)
+    })
+
+    it('refuses a trust root whose floor was lowered without re-signing it', async () => {
+      const keys = await makeProducerTestKeys()
+      const record = await producerRecordFixture({ keys })
+      const policy = await trustPolicyFixture({ keys })
+      const root = await trustRootFixture(keys, { minPolicyEpoch: 9 })
+      // The floor is lowered, and the root is not re-signed.
+      const lowered = { ...root, minPolicyEpoch: 0 }
+
+      const outcome = await verify({ keys, record, policy, root: lowered })
+
+      expect(refusalOf(outcome)).toBe('trust_root_unauthenticated')
+    })
+
+    it('refuses a trust root whose own signature does not verify', async () => {
+      const keys = await makeProducerTestKeys()
+      const record = await producerRecordFixture({ keys })
+      const policy = await trustPolicyFixture({ keys })
+      const root = await trustRootFixture(keys, { minPolicyEpoch: 9 })
+
+      const outcome = await verify({
+        keys,
+        record,
+        policy,
+        root: { ...root, signature: 'not-a-signature' },
+      })
+
+      expect(refusalOf(outcome)).toBe('trust_root_unauthenticated')
+    })
+  })
+
   describe('the rest of the refusals', () => {
     it('refuses a policy that no authority signed', async () => {
       const keys = await makeProducerTestKeys()
       const record = await producerRecordFixture({ keys })
       const policy = await trustPolicyFixture({ keys })
 
+      // The root is the genuine, signed one; the policy's own signature is
+      // not the root's.
       const outcome = await verify({
         keys,
         record,
-        root: {
-          version: '1.0.0',
-          key: {
-            keyId: 'root-2',
-            algorithm: 'ecdsa-p256-sha256',
-            publicKeySpki: 'AAAA',
-            fingerprint: 'a'.repeat(64),
-          },
-          timestampAuthorities: [],
-        },
+        root: await trustRootFixture(keys),
         policy: { ...policy, signature: 'not-a-signature' },
       })
 
@@ -527,7 +631,7 @@ describe('the producer trust contract', () => {
       const outcome = await verifyProducerRecord({
         record,
         policy: undefined,
-        root: trustRootFixture(keys),
+        root: await trustRootFixture(keys),
         store: createInMemoryProducerTrustStore(),
         now: NOW,
       })

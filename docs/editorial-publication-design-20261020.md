@@ -1311,7 +1311,11 @@ they are written against exactly these names.
    authority, before it resolves anything. If it has neither, it fails
    closed. A consumer that cannot verify the signature must not treat
    `trustPreconditionsHold`'s answer as an authorisation: that function
-   answers only the questions that do not need the signature.
+   answers only the questions that do not need the signature. The consumer
+   must also hold the **epoch floor** the app has provisioned (§9.5): the
+   local epoch state is *relative* — it says what this consumer has
+   accepted — so on its own it cannot tell a stale policy from the current
+   one until the consumer has accepted the current epoch under it.
 
 ### 9.4 What E05b must add
 
@@ -1377,15 +1381,49 @@ is the epoch of the *authority* (the key set), not a counter of the
 records.
 
 - A policy at a **lower** epoch than the one the consumer has accepted is a
-  **rollback** and is refused (`trust_policy_rollback`). This is the
-  anti-rollback property: an attacker cannot serve an old policy, with an
-  old key set, to resurrect a key that has since been revoked.
+  **rollback** and is refused (`trust_policy_rollback`).
 - A policy at the **same** epoch is the same policy. It neither advances
   the state nor is a refusal.
 - A policy at a **higher** epoch advances the state, and the advance is a
   **compare-and-advance**: it happens only if the state has not moved since
   it was read. Two consumers that race lose one of the two advances, and
   the loser refuses (`trust_state_concurrent_modification`).
+
+**The epoch floor, settled.** The rollback rule above is **relative**: it
+compares the policy with the epoch *this consumer* has accepted, and the
+accepted epoch only advances when a producer record is accepted under a
+policy. So the rollback rule on its own is **not** the anti-rollback
+property, and the design record does not claim it is. A consumer that has
+accepted nothing yet (its accepted epoch is `-1`) cannot tell a stale
+policy from the current one, and an attacker who holds an old, genuinely
+root-signed policy can serve it with an old key set that carries a key the
+current policy has revoked.
+
+The **epoch floor** closes that hole, and it is the app's own configuration:
+the trust root carries `minPolicyEpoch`, the epoch the app has provisioned.
+
+- A policy at an epoch **below the floor** is refused
+  (`trust_policy_epoch_below_floor`), and it is refused **before the key
+  lookup**: the stale policy's key set is never consulted at all, so it
+  cannot resurrect a revoked key.
+- The floor is covered by the **trust root's own signature**. The root is a
+  signed document about itself, so lowering the floor takes the root's
+  private key: a root whose floor was edited without re-signing it does not
+  verify, and the consumer refuses it (`trust_root_unauthenticated`) rather
+  than accept the lower floor. The root's **public key** is the anchor and
+  is pinned out of band; the self-signature is the root's integrity check
+  on its own contents.
+- The floor and the rollback rule are both epoch refusals, and the floor is
+  checked first: it is the absolute statement ("this policy is older than
+  the app's authority"), while the rollback rule is the relative one.
+
+Together the two give the property the earlier draft of this record
+claimed for the rollback rule alone: an attacker cannot serve an old
+policy, with an old key set, to resurrect a key that has since been
+revoked. The residual exposure of a consumer that is provisioned with **no**
+floor (a floor of `0`) is exactly the exposure the rollback rule leaves: a
+consumer below the authority's current epoch cannot detect the rollback on
+its own.
 
 The **record's** `policyEpoch` is the epoch of the key that signed it: it
 must equal that key's epoch and must not exceed the policy's epoch. It is
@@ -1448,7 +1486,10 @@ is refused (`trust_policy_not_yet_valid`).
 **Failing closed.** Every failure is a refusal with a specific reason, and
 there is no "assume valid" path: no policy (`trust_policy_unavailable`), a
 malformed policy (`trust_policy_malformed`), an unauthenticated policy
-(`trust_policy_unauthenticated`), a trust state that cannot be read
+(`trust_policy_unauthenticated`), a trust root that does not satisfy its
+schema (`trust_root_malformed`) or whose own signature does not verify
+(`trust_root_unauthenticated`), a policy below the app's epoch floor
+(`trust_policy_epoch_below_floor`), a trust state that cannot be read
 (`trust_authority_unavailable`), a compare-and-advance that lost the race
 (`trust_state_concurrent_modification`). A refusal writes nothing: the
 trust state is advanced only when the whole chain has been verified. The
@@ -1484,12 +1525,14 @@ different key are all `producer_signature_invalid`.
 | `producer_release_mismatch` | the record does not name the release being resolved |
 | `producer_revision_stale` | the record was issued against a superseded revision |
 | `trust_root_malformed` | the trust root does not satisfy its schema |
+| `trust_root_unauthenticated` | the trust root's own signature does not verify, so its epoch floor is not trusted |
 | `trust_policy_malformed` | the policy does not satisfy its schema |
 | `trust_policy_unavailable` | there is no policy, so there is no authority |
 | `trust_policy_unauthenticated` | the policy's signature does not verify against the root |
 | `trust_policy_expired` | the policy is past its expiry |
 | `trust_policy_not_yet_valid` | the policy claims to be from the future |
 | `trust_policy_rollback` | the policy's epoch is older than the accepted epoch |
+| `trust_policy_epoch_below_floor` | the policy's epoch is below the trust root's epoch floor |
 | `trust_policy_rotation_overlap_exceeded` | the policy's key rotation overlaps too long |
 | `trust_authority_unavailable` | the trust state could not be read |
 | `trust_state_concurrent_modification` | the compare-and-advance lost the race |
@@ -1514,15 +1557,32 @@ The **trust root** is app-owned configuration, configured out of band, the
 same way the margin service's allowlist and the target registry are: it is
 the only thing a consumer trusts a priori. It carries the root's public key
 and the **timestamp authorities** — the keys that may vouch for a record's
-inclusion.
+inclusion — and the **epoch floor** `minPolicyEpoch` the app has
+provisioned, which the root's own signature covers:
+
+```
+version: '1.0.0'
+minPolicyEpoch                      # the epoch floor, in the root's signature
+key: { keyId, algorithm, publicKeySpki, fingerprint }
+timestampAuthorities: [ { keyId, algorithm, publicKeySpki, fingerprint } ]
+signatureAlgorithm, signature       # the root's own signature over the above
+```
+
+The root is a **signed document about itself**: the signature covers every
+field except the signature itself, under the domain tag
+`erniesg.editorial.trust-root.v1`. A root whose floor was lowered without
+the root's private key does not verify, and the consumer refuses it
+(`trust_root_unauthenticated`). The anchor is still the root's **public
+key**, pinned out of band.
 
 The verification order is the order a reader cares about: **who is the
-authority** (the root, the policy, its epoch, its freshness, its rotation),
-then **what is the record** (its schema, its id, its key, its epoch), then
-**is it authentic** (its signature), then **may it be used** (its status,
-its freshness, its key's usability, the replay ledger), and finally **does
-it bind what the consumer is resolving** (the target, the digests, the
-release and the revision).
+authority** (the root, its own signature, the policy, its signature, its
+epoch against the floor and against the accepted epoch, its freshness, its
+rotation), then **what is the record** (its schema, its id, its key, its
+epoch), then **is it authentic** (its signature), then **may it be used**
+(its status, its freshness, its key's usability, the replay ledger), and
+finally **does it bind what the consumer is resolving** (the target, the
+digests, the release and the revision).
 
 ### 9.7 The negative matrix
 
@@ -1542,6 +1602,8 @@ tests are in `src/editorial/trust-policy.test.ts` and
 | revoked key | the key was revoked at or before the issue time | `producer_key_revoked` |
 | digest mismatch | the record's artifact set digest is not its artifacts' digest | `producer_artifact_set_mismatch` |
 | policy rollback | an older policy epoch after a newer one was accepted | `trust_policy_rollback` |
+| policy below the epoch floor | a stale policy, genuinely signed by the trust root, whose epoch is below the app's provisioned floor | `trust_policy_epoch_below_floor` |
+| tampered trust root | the root's floor was lowered, or its own signature does not verify | `trust_root_unauthenticated` |
 | expired policy | the policy is past its expiry | `trust_policy_expired` |
 | unavailable beyond freshness | the trust state cannot be read | `trust_authority_unavailable` |
 | past the freshness bound | the record is older than the policy's bound | `producer_record_not_fresh` |

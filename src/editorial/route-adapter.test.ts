@@ -144,7 +144,7 @@ describe('the inactive public-route adapter', () => {
         now: NOW,
         producerRecord,
         policy,
-        root: trustRootFixture(keys),
+        root: await trustRootFixture(keys),
         trustStore: new D1ProducerTrustStore(fixture.database),
       })
       expect(result.ok).toBe(true)
@@ -173,7 +173,7 @@ describe('the inactive public-route adapter', () => {
         now: NOW,
         producerRecord: {},
         policy,
-        root: trustRootFixture(keys),
+        root: await trustRootFixture(keys),
         trustStore: new D1ProducerTrustStore(fixture.database),
       })
       expect(result.ok).toBe(false)
@@ -209,7 +209,7 @@ describe('the inactive public-route adapter', () => {
         now: NOW,
         producerRecord: {},
         policy,
-        root: trustRootFixture(keys),
+        root: await trustRootFixture(keys),
         trustStore: new D1ProducerTrustStore(fixture.database),
       })
       expect(result.ok).toBe(false)
@@ -250,7 +250,7 @@ describe('the inactive public-route adapter', () => {
         now: NOW,
         producerRecord: {},
         policy,
-        root: trustRootFixture(keys),
+        root: await trustRootFixture(keys),
         trustStore: new D1ProducerTrustStore(fixture.database),
       })
       expect(result.ok).toBe(false)
@@ -317,7 +317,7 @@ describe('the inactive public-route adapter', () => {
         now: NOW,
         producerRecord: {},
         policy,
-        root: trustRootFixture(keys),
+        root: await trustRootFixture(keys),
         trustStore: new D1ProducerTrustStore(fixture.database),
       })
       expect(result.ok).toBe(false)
@@ -355,7 +355,7 @@ describe('the inactive public-route adapter', () => {
         now: NOW,
         producerRecord,
         policy,
-        root: trustRootFixture(keys),
+        root: await trustRootFixture(keys),
         trustStore: new D1ProducerTrustStore(fixture.database),
       })
       expect(result.ok).toBe(false)
@@ -394,7 +394,7 @@ describe('the inactive public-route adapter', () => {
         now: NOW,
         producerRecord,
         policy,
-        root: trustRootFixture(keys),
+        root: await trustRootFixture(keys),
         trustStore: new D1ProducerTrustStore(fixture.database),
       })
       expect(result.ok).toBe(false)
@@ -432,7 +432,7 @@ describe('the inactive public-route adapter', () => {
         now: NOW,
         producerRecord: {},
         policy,
-        root: trustRootFixture(keys),
+        root: await trustRootFixture(keys),
         trustStore: new D1ProducerTrustStore(fixture.database),
       })
       expect(result.ok).toBe(false)

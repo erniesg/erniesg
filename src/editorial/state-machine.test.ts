@@ -701,7 +701,6 @@ describe('the editorial state machine', () => {
 
   it('refuses a release of a candidate that was never approved', () => {
     const revision = revisionFixture()
-    const decision = decisionFixture(revision)
     const candidate = candidateFixture(revision)
     const validations = validationSet(candidate)
     const approval = approvalFixture(candidate)

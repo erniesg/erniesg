@@ -39,7 +39,6 @@ import {
   editorialApprovalSchema,
   editorialCandidateSchema,
   editorialDecisionSchema,
-  editorialRecordSchema,
   editorialReleaseSchema,
   editorialRevisionSchema,
   editorialSupersessionSchema,

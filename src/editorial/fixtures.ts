@@ -395,13 +395,13 @@ export function releaseFixture(
     sourceBinding: overrides.sourceBinding ?? revision.sourceBinding,
     schemaVersions: revision.schemaVersions,
     rendering: revision.rendering,
-    validations: (
-      overrides.validationRefs ??
-      validations.map((validation) => ({
-        id: validation.id,
-        sha256: editorialRecordDigest(validation),
-      }))
-    ).sort((left, right) => (left.id < right.id ? -1 : 1)),
+    validations: [
+      ...(overrides.validationRefs ??
+        validations.map((validation) => ({
+          id: validation.id,
+          sha256: editorialRecordDigest(validation),
+        }))),
+    ].sort((left, right) => (left.id < right.id ? -1 : 1)),
     approval:
       overrides.approvalRef ?? {
         id: approval.id,

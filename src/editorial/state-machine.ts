@@ -127,8 +127,17 @@ export type EditorialTransitionRule = {
   actor: readonly EditorialActorKind[]
   /** The record kind the action appends. */
   appends: EditorialRecordKind
-  /** The state the aggregate holds after the action. */
-  to: EditorialState
+  /**
+   * The states the aggregate may hold after the action.
+   *
+   * An action may have more than one outcome: a decision may approve,
+   * reject or ask for changes, a validation may or may not complete the
+   * mandatory set, and a supersession may replace a release or withdraw
+   * it. The table lists all of them, because the table is the map a reader
+   * consults and a table that names one outcome where there are several is
+   * a lie about the contract.
+   */
+  to: readonly EditorialState[]
 }
 
 export const EDITORIAL_TRANSITIONS: readonly EditorialTransitionRule[] = [
@@ -137,49 +146,53 @@ export const EDITORIAL_TRANSITIONS: readonly EditorialTransitionRule[] = [
     from: null,
     actor: ['editor'],
     appends: 'revision',
-    to: 'revision-proposed',
+    to: ['revision-proposed'],
   },
   {
     action: 'record-decision',
     from: ['revision-proposed'],
     actor: ['reviewer'],
     appends: 'decision',
-    to: 'revision-approved',
+    to: [
+      'revision-approved',
+      'revision-rejected',
+      'revision-changes-requested',
+    ],
   },
   {
     action: 'assemble-candidate',
     from: null,
     actor: ['editor'],
     appends: 'candidate',
-    to: 'candidate-assembled',
+    to: ['candidate-assembled'],
   },
   {
     action: 'record-validation',
     from: ['candidate-assembled', 'candidate-validated'],
     actor: ['tool', 'reviewer'],
     appends: 'validation',
-    to: 'candidate-validated',
+    to: ['candidate-assembled', 'candidate-validated'],
   },
   {
     action: 'record-approval',
     from: ['candidate-validated'],
     actor: ['approver'],
     appends: 'approval',
-    to: 'candidate-approved-for-release',
+    to: ['candidate-approved-for-release'],
   },
   {
     action: 'record-release',
     from: ['candidate-approved-for-release'],
     actor: ['producer'],
     appends: 'release',
-    to: 'release-released',
+    to: ['release-released'],
   },
   {
     action: 'supersede-release',
     from: ['release-released'],
     actor: ['producer', 'approver'],
     appends: 'supersession',
-    to: 'release-superseded',
+    to: ['release-superseded', 'release-withdrawn'],
   },
 ]
 

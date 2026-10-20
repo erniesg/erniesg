@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   applyTransition,
   EDITORIAL_TRANSITIONS,
+  type EditorialAction,
   type EditorialRefusalCode,
   type TransitionOutcome,
 } from './state-machine'
@@ -50,6 +51,23 @@ function validationSet(candidate: EditorialCandidate): EditorialValidation[] {
     validationFixture(candidate, { check: 'ace' }),
     validationFixture(candidate, { check: 'human-review', actor: REVIEWER }),
   ]
+}
+
+/**
+ * The outcomes the transition table says an action can produce.
+ *
+ * The table is descriptive: `applyTransition` reads only its `actor` and
+ * `appends`. It is still the map a reader consults, so it has to be right:
+ * a table that names one outcome where the transition has several is a lie
+ * about the contract.
+ */
+function transitionOutcomes(action: EditorialAction): readonly string[] {
+  const rule = EDITORIAL_TRANSITIONS.find(
+    (candidate) => candidate.action === action,
+  )
+  if (!rule) throw new Error(`the table has no rule for ${action}`)
+  const to: unknown = rule.to
+  return Array.isArray(to) ? (to as readonly string[]) : [to as string]
 }
 
 describe('the editorial state machine', () => {
@@ -927,5 +945,117 @@ describe('the release binds the records it names', () => {
     })
 
     expectRefusal(outcome, 'actor_not_permitted')
+  })
+})
+
+/**
+ * The transition table is the map of the contract.
+ *
+ * It is descriptive — the guards decide, the table describes — but a reader
+ * consults it, so every outcome a transition can produce has to be in it.
+ */
+describe('the transition table names every outcome', () => {
+  it('names every outcome a decision can have', () => {
+    const revision = revisionFixture()
+
+    for (const outcome of ['approved', 'rejected', 'changes-requested'] as const) {
+      const decision = decisionFixture(revision, { outcome })
+      const applied = applyTransition({
+        action: 'record-decision',
+        actor: decision.actor,
+        now: NOW,
+        revision,
+        decision,
+        decisions: [],
+      })
+
+      expect(applied.ok).toBe(true)
+      if (!applied.ok) continue
+      expect(transitionOutcomes('record-decision')).toContain(applied.to)
+    }
+  })
+
+  it('names every outcome a validation can have', () => {
+    const revision = revisionFixture()
+    const candidate = candidateFixture(revision)
+    const others = validationSet(candidate).filter(
+      (validation) => validation.check !== 'human-review',
+    )
+
+    const incomplete = validationFixture(candidate, {
+      check: 'human-review',
+      actor: REVIEWER,
+    })
+    const stillAssembled = applyTransition({
+      action: 'record-validation',
+      actor: incomplete.actor,
+      now: NOW,
+      candidate,
+      validation: incomplete,
+      validations: [],
+      approvals: [],
+      releases: [],
+    })
+
+    expect(stillAssembled.ok).toBe(true)
+    if (stillAssembled.ok) {
+      expect(stillAssembled.to).toBe('candidate-assembled')
+      expect(transitionOutcomes('record-validation')).toContain(
+        stillAssembled.to,
+      )
+    }
+
+    const complete = validationFixture(candidate, {
+      check: 'human-review',
+      actor: REVIEWER,
+    })
+    const validated = applyTransition({
+      action: 'record-validation',
+      actor: complete.actor,
+      now: NOW,
+      candidate,
+      validation: complete,
+      validations: [...others, complete],
+      approvals: [],
+      releases: [],
+    })
+
+    expect(validated.ok).toBe(true)
+    if (validated.ok) {
+      expect(validated.to).toBe('candidate-validated')
+      expect(transitionOutcomes('record-validation')).toContain(validated.to)
+    }
+  })
+
+  it('names every outcome a supersession can have', () => {
+    const revision = revisionFixture()
+    const candidate = candidateFixture(revision)
+    const validations = validationSet(candidate)
+    const approval = approvalFixture(candidate)
+    const release = releaseFixture(revision, candidate, validations, approval)
+
+    for (const reason of ['replacement', 'withdrawn'] as const) {
+      const supersession = supersessionFixture(release, { reason })
+      const applied = applyTransition({
+        action: 'supersede-release',
+        actor: supersession.actor,
+        now: NOW,
+        release,
+        supersession,
+        releases: [release],
+        supersessions: [],
+      })
+
+      expect(applied.ok).toBe(true)
+      if (!applied.ok) continue
+      expect(transitionOutcomes('supersede-release')).toContain(applied.to)
+    }
+  })
+
+  it('lists the outcomes of every action as a set of states', () => {
+    for (const rule of EDITORIAL_TRANSITIONS) {
+      expect(Array.isArray(rule.to)).toBe(true)
+      expect(rule.to.length).toBeGreaterThan(0)
+    }
   })
 })

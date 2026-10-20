@@ -387,6 +387,12 @@ contract is exercisable in isolation — which is what
 The rules themselves live in `src/editorial/validation.ts` as pure
 predicates; the state machine composes them into transitions.
 
+The exported table `EDITORIAL_TRANSITIONS` lists, for each action, the
+states the aggregate may hold **after** it — every outcome, not only the
+common one. It is descriptive: the guards decide, the table describes. But
+it is the map a reader consults, so it is kept honest by a test that
+asserts the table contains every outcome `applyTransition` can return.
+
 ### 5.1 The diagram
 
 ```

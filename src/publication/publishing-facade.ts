@@ -46,8 +46,7 @@ import { publicationSourceBindingSchema } from './source-binding'
 
 /** The source locator of a publication plan. */
 export type PublicationPlanSource =
-  | { adapterId: 'astro'; entryId: string }
-  | { adapterId: 'payload-lexical'; document: unknown; mapping?: unknown }
+  | { adapterId: 'astro'; entryId: string; contentRoot?: string }
   | { adapterId: 'struct'; document: StructDocument }
 
 /** The publication plan: the pinned approved Struct revision and its facts. */
@@ -201,13 +200,14 @@ async function resolvePublicationSource(source: PublicationPlanSource): Promise<
       structDocument: source.document,
     }
   const registry = createDefaultPublicationAdapterRegistry()
-  const result =
-    source.adapterId === 'astro'
-      ? await registry.resolve('astro', { entryId: source.entryId })
-      : await registry.resolve('payload-lexical', {
-          document: source.document,
-          ...(source.mapping === undefined ? {} : { mapping: source.mapping }),
-        })
+  // The Astro locator may name the content root the entry is read from; the
+  // adapter's own locator type owns it.
+  const result = await registry.resolve('astro', {
+    entryId: source.entryId,
+    ...(source.contentRoot === undefined
+      ? {}
+      : { contentRoot: source.contentRoot }),
+  })
   return { result, structDocument: result.structDocument }
 }
 

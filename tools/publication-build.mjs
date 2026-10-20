@@ -36,19 +36,37 @@ export {
   consumeRouteImageIndex,
 } from '../src/publication/publishing-facade.ts'
 
+/**
+ * Adapter ids that named the retired Payload-Lexical publication path. The
+ * path itself is gone; the ids are still recognised so that an operator who
+ * still uses them gets the retirement reason instead of a generic
+ * "unsupported adapter" message that would hide it.
+ */
+const RETIRED_PAYLOAD_ADAPTER_IDS = new Set(['payload', 'payload-lexical'])
+
+const PAYLOAD_RETIREMENT_MESSAGE =
+  'The Payload publication adapter was retired: `--adapter payload` is no longer available. Re-adding a Payload publication path requires a Struct-semantics conversion first.'
+
 export function parsePublicationBuildArgs(argv) {
   const options = {}
   for (let index = 0; index < argv.length; index += 1) {
     const option = argv[index]
-    if (
-      ![
-        '--adapter',
-        '--entry',
-        '--input',
-        '--mapping',
-        '--output',
-      ].includes(option)
-    )
+    if (option === '--adapter') {
+      const value = argv[++index]
+      if (!value || value.startsWith('--'))
+        throw new Error(`Missing value for ${option}`)
+      // The refusal is checked before anything else so that every spelling of
+      // the retired adapter reports the same documented retirement reason.
+      if (RETIRED_PAYLOAD_ADAPTER_IDS.has(value))
+        throw new Error(PAYLOAD_RETIREMENT_MESSAGE)
+      options.adapter = value
+      continue
+    }
+    if (option === '--input' || option === '--mapping')
+      throw new Error(
+        `Publication:build option ${option} was removed with the retired Payload publication path: ${PAYLOAD_RETIREMENT_MESSAGE}`,
+      )
+    if (!['--entry', '--output'].includes(option))
       throw new Error(`Unknown publication:build option: ${option}`)
     const value = argv[++index]
     if (!value || value.startsWith('--'))
@@ -57,22 +75,12 @@ export function parsePublicationBuildArgs(argv) {
   }
   if (!options.adapter || !options.output)
     throw new Error(
-      'Usage: publication:build --adapter astro --entry <blog-id> --output <directory> | --adapter payload --input <json> [--mapping <json>] --output <directory>',
+      'Usage: publication:build --adapter astro --entry <blog-id> --output <directory>',
     )
-  if (options.adapter === 'payload') options.adapter = 'payload-lexical'
-  if (options.adapter === 'astro') {
-    if (!options.entry)
-      throw new Error('Astro publication builds require --entry <blog-id>')
-    if (options.input || options.mapping)
-      throw new Error('Astro publication builds do not accept Payload input or mapping files')
-  } else if (options.adapter === 'payload-lexical') {
-    if (!options.input)
-      throw new Error('Payload publication builds require --input <json>')
-    if (options.entry)
-      throw new Error('Payload publication builds do not accept an Astro --entry')
-  } else {
+  if (options.adapter !== 'astro')
     throw new Error(`Unsupported publication source adapter: ${options.adapter}`)
-  }
+  if (!options.entry)
+    throw new Error('Astro publication builds require --entry <blog-id>')
   return options
 }
 
@@ -639,26 +647,13 @@ export async function publicationBuild(argv = process.argv.slice(2), runtime = {
   // Repository-local final outputs must already be git-ignored. Invocation-owned
   // staging is excluded explicitly from the clean-source receipt evidence.
   const finalOutput = assertPublicationOutputDirectory(options.output)
-  const source =
-    options.adapter === 'astro'
-      ? { adapterId: 'astro', entryId: options.entry }
-      : {
-          adapterId: 'payload-lexical',
-          document: JSON.parse(await readFile(resolve(options.input), 'utf8')),
-          ...(options.mapping
-            ? {
-                mapping: JSON.parse(
-                  await readFile(resolve(options.mapping), 'utf8'),
-                ),
-              }
-            : {}),
-        }
   // The facade owns the source-to-plan conversion. The plan is the only
   // publication semantics the builder sees; it never sees the renderer plan.
+  // The only source the CLI can select is the Astro source: the Payload
+  // publication path was retired with the graph convergence.
   const buildPlan = runtime.buildPlan ?? buildPublicationPlan
-  const plan = await buildPlan(source)
-  const routeParity =
-    options.adapter === 'astro' ? 'astro-canonical-route' : 'not-applicable'
+  const plan = await buildPlan({ adapterId: 'astro', entryId: options.entry })
+  const routeParity = 'astro-canonical-route'
   // The whole build writes into a private invocation-owned staging directory
   // and only ever touches the caller-supplied output path through one final
   // atomic swap, so a reused (possibly attacker-seeded) output directory is

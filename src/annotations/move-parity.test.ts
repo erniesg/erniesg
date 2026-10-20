@@ -79,10 +79,7 @@ function structAddressedDemoAnnotations() {
 
 /** The bundle those annotations produce against the Struct source. */
 function structAnchoredBundle() {
-  return createAnnotationBundle(
-    structSource,
-    structAddressedDemoAnnotations(),
-  )
+  return createAnnotationBundle(structSource, structAddressedDemoAnnotations())
 }
 
 describe('annotations module relocation', () => {
@@ -143,7 +140,10 @@ describe('annotations module relocation', () => {
     expect(ANNOTATION_BUNDLE_VERSION).toBe('1.2.0')
     expect(bundle.version).toBe('1.2.0')
     expect(bundle.anchors).toEqual([
-      { id: 'highlight-reading-position:target', anchor: STRUCT_FIXTURE_ANCHOR },
+      {
+        id: 'highlight-reading-position:target',
+        anchor: STRUCT_FIXTURE_ANCHOR,
+      },
       { id: 'note-reading-position:target', anchor: STRUCT_FIXTURE_ANCHOR },
     ])
     expect(

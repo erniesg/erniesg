@@ -64,8 +64,13 @@ const reconstruction = JSON.parse(
  */
 const structDocument = buildStructDocument(reconstruction)
 
+const structDocumentId = structDocument.documentId
+if (!structDocumentId) {
+  throw new Error('The Struct fixture lost its document id')
+}
+
 const structSource: AnnotationAnchorSource = {
-  id: structDocument.documentId,
+  id: structDocumentId,
   nodes: structDocument.blocks.map((block) => ({
     id: block.id,
     type: block.kind,
@@ -97,7 +102,10 @@ function structBundleFixture() {
     ),
     geometryCache: [],
   }
-  return { paragraph, bundle: createAnnotationBundle(structSource, [annotation]) }
+  return {
+    paragraph,
+    bundle: createAnnotationBundle(structSource, [annotation]),
+  }
 }
 
 it('accepts codepoint and document-scoped anchors against ordered text', () => {
@@ -174,7 +182,7 @@ describe('AnnotationBundle', () => {
       },
     ])
     expect(written.version).toBe('1.2.0')
-    expect(written.sourceId).toBe(structDocument.documentId)
+    expect(written.sourceId).toBe(structDocumentId)
     expect(written.graphId).toBeUndefined()
   })
 
@@ -189,7 +197,7 @@ describe('AnnotationBundle', () => {
   it('binds the bundle to the Struct source id', () => {
     const { bundle } = structBundleFixture()
 
-    expect(bundle.sourceId).toBe(structDocument.documentId)
+    expect(bundle.sourceId).toBe(structDocumentId)
     expect(bundle.sourceId).toBe('pdf-50874645b2cec033')
   })
 
@@ -204,7 +212,7 @@ describe('AnnotationBundle', () => {
   it('refuses a 1.2.0 bundle that still carries a graph id', () => {
     const result = annotationBundleSchema.safeParse({
       version: '1.2.0',
-      sourceId: structDocument.documentId,
+      sourceId: structDocumentId,
       graphId: 'legacy-graph',
       anchors: [],
       annotations: [],
@@ -218,7 +226,7 @@ describe('AnnotationBundle', () => {
     expect(
       annotationBundleSchema.safeParse({
         version: '1.2.0',
-        sourceId: structDocument.documentId,
+        sourceId: structDocumentId,
         anchors: [],
         annotations: [],
       }).success,
@@ -239,7 +247,7 @@ describe('AnnotationBundle', () => {
     const withSourceId = annotationBundleSchema.safeParse({
       version: '1.1.0',
       graphId: 'legacy-graph',
-      sourceId: structDocument.documentId,
+      sourceId: structDocumentId,
       anchors: [],
       annotations: [],
     })
@@ -306,9 +314,9 @@ describe('AnnotationBundle', () => {
       matchedBy: 'position-and-context',
     })
 
-    expect(() =>
-      createAnnotationBundle(legacyMap, legacy.annotations),
-    ).toThrow(/read-only/)
+    expect(() => createAnnotationBundle(legacyMap, legacy.annotations)).toThrow(
+      /read-only/,
+    )
   })
 
   it('round-trips typed annotations and semantic anchors beside the Struct source', () => {

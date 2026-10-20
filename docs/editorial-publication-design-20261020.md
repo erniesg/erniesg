@@ -200,11 +200,27 @@ under Lithuanian, and a collation-dependent id is not a portable id.
 
 ### 2.5 The derivation is frozen
 
-The derivation is pinned by a literal-digest test
-(`src/editorial/ids.test.ts`). A change to the canonical serializer that
-moved an id would fail that test loudly, and the fix is a new derivation tag
-(`erniesg.editorial.id.v2`) and a new record version — never a silent change
-to a tag that already names records in the store.
+The derivation is pinned by **literal digests** in
+`src/editorial/ids.test.ts` (`describe('the pinned derivation')`). Every other
+assertion in the editorial suite is *relative* — it says the id is the id the
+record derives, which stays true whatever the derivation does — so these are
+the only assertions that notice a change to it. The pins are:
+
+| Pinned | Value |
+| --- | --- |
+| `EDITORIAL_ID_DERIVATION` | `erniesg.editorial.id.v1` |
+| `EDITORIAL_CONTENT_DERIVATION` | `erniesg.editorial.content.v1` |
+| `EDITORIAL_ARTIFACT_SET_DERIVATION` | `erniesg.editorial.artifact-set.v1` |
+| the id of the fixture revision | `urn:editorial:revision:d1667d54…` |
+| the id of the fixture candidate | `urn:editorial:candidate:42140c6c…` |
+| the content digest of the fixture revision | `f1ad8012fd31f38b…` |
+| the artifact-set digest of the fixture artifacts | `b8dbcdce122567d3…` |
+| the id of a record whose absent optional field is an explicit `undefined`, at the top level and nested | `urn:editorial:revision:fcf9121e…`, `urn:editorial:revision:7a15e9dd…` |
+
+A change to a derivation tag, to the identity payload, or to the canonical
+serializer that moved any of those digests fails those tests loudly. The fix
+is a new derivation tag (`erniesg.editorial.id.v2`) and a new record version —
+never a silent change to a tag that already names records in the store.
 
 ---
 

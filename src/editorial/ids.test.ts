@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  EDITORIAL_ARTIFACT_SET_DERIVATION,
+  EDITORIAL_CONTENT_DERIVATION,
+  EDITORIAL_ID_DERIVATION,
   canonicalRecordValue,
   deriveEditorialId,
   editorialArtifactSetDigest,
@@ -17,6 +20,7 @@ import {
   DOCUMENT_SHA256,
   OTHER_DOCUMENT_SHA256,
   OTHER_EDITOR,
+  SEMANTIC_RECEIPT_SHA256,
   approvalFixture,
   candidateFixture,
   decisionFixture,
@@ -161,5 +165,84 @@ describe('editorial ids', () => {
 
     expect(approval.id).toMatch(/^urn:editorial:approval:[a-f0-9]{64}$/)
     expect(approval.id).not.toBe(candidate.id)
+  })
+})
+
+/**
+ * The derivation is frozen.
+ *
+ * Every assertion above is *relative*: it says the id is the id the record
+ * derives, which stays true whatever the derivation does. These assertions
+ * are the absolute ones: they spell out the digest the derivation produces
+ * today, so a change to a derivation tag, to the identity payload or to the
+ * canonical serializer fails here instead of quietly minting a second set of
+ * ids for records that are already in the store.
+ *
+ * The fix for a failing pin is a new derivation tag
+ * (`erniesg.editorial.id.v2`) and a new record version — never a silent
+ * change to a tag that already names records.
+ */
+describe('the pinned derivation', () => {
+  it('pins the domain tag of every derivation', () => {
+    expect(EDITORIAL_ID_DERIVATION).toBe('erniesg.editorial.id.v1')
+    expect(EDITORIAL_CONTENT_DERIVATION).toBe('erniesg.editorial.content.v1')
+    expect(EDITORIAL_ARTIFACT_SET_DERIVATION).toBe(
+      'erniesg.editorial.artifact-set.v1',
+    )
+  })
+
+  it('pins the id a revision derives', () => {
+    expect(deriveEditorialId(revisionFixture())).toBe(
+      'urn:editorial:revision:d1667d540a7031dfe50b9fad2c6587f11250a578c9def4bc8e05ea6a8ce7b46a',
+    )
+  })
+
+  it('pins the id a candidate derives', () => {
+    const revision = revisionFixture()
+
+    expect(deriveEditorialId(candidateFixture(revision))).toBe(
+      'urn:editorial:candidate:42140c6c3a0514e86f4b79c3ecddb8e12d578d907ac1730981c1753fc593a082',
+    )
+  })
+
+  it('pins the content digest', () => {
+    expect(
+      editorialContentDigest({
+        documentSha256: DOCUMENT_SHA256,
+        bundleSha256: BUNDLE_SHA256,
+        semanticReceiptSha256: SEMANTIC_RECEIPT_SHA256,
+      }),
+    ).toBe(
+      'f1ad8012fd31f38bdc3fae467726e6adfd5c3fc6669c6c0aaeb94ffd0af9db55',
+    )
+  })
+
+  it('pins the artifact set digest', () => {
+    expect(editorialArtifactSetDigest(ARTIFACTS)).toBe(
+      'b8dbcdce122567d3df91b89128f83563a553ba24288391520947547f9c4474ef',
+    )
+  })
+
+  it('pins the canonical form of an absent optional field', () => {
+    const revision = revisionFixture()
+
+    // An absent optional field and an explicit `undefined` are the same
+    // value, at the top level of the record and inside a nested object. The
+    // two pins below are what make a change to the canonical serializer
+    // fail: the first is the identity payload's own rule, the second is the
+    // recursive one in `canonicalRecordValue`.
+    expect(
+      deriveEditorialId({ ...revision, bundleSha256: undefined }),
+    ).toBe(
+      'urn:editorial:revision:fcf9121e0878ad061b94bbec332e42b0e28ea5b2b031c3eeeaf93dbf4de7c2f8',
+    )
+    expect(
+      deriveEditorialId({
+        ...revision,
+        sourceBinding: { ...revision.sourceBinding, bundleSha256: undefined },
+      }),
+    ).toBe(
+      'urn:editorial:revision:7a15e9dd597b0edbf3a52dbaef2bfe3459b5670e16969f2680de38e3c1855328',
+    )
   })
 })

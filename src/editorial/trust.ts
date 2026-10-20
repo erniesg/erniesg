@@ -20,7 +20,12 @@
  *  - **Monotonic epochs.** `policyEpoch` is a non-negative integer that
  *    only ever increases. A consumer keeps the highest epoch it has accepted
  *    and refuses anything at or below it. A record that replays an old epoch
- *    is a rollback and is refused, not merged.
+ *    is a rollback and is refused, not merged. The epoch is the epoch of the
+ *    *key's authority*, so the rule admits exactly one producer record per
+ *    epoch; §9.3 of the design record settles what a distinct record at an
+ *    already-accepted epoch would need (a per-record replay ledger keyed by
+ *    `eventId` and the record digest) and what a `supersedes` record does
+ *    to the epoch (it inherits the epoch of the record it replaces).
  *  - **Freshness.** A record outside its validity window, or issued too long
  *    ago, is refused. Stale or offline status is a refusal, never a
  *    fallback to the last known good record.
@@ -171,6 +176,12 @@ export type TrustState = {
  * Strictly greater than the highest accepted epoch. An equal epoch is a
  * replay of an epoch already in force and is refused; a lower epoch is a
  * rollback and is refused.
+ *
+ * The rule admits exactly one producer record per epoch, because the epoch
+ * is the epoch of the key's authority and not a counter of the records.
+ * §9.3 of the design record says what a distinct record at an
+ * already-accepted epoch would need, and what a `supersedes` record does to
+ * the epoch.
  */
 export function trustEpochIsAcceptable(
   policyEpoch: number,

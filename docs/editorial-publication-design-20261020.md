@@ -1125,11 +1125,42 @@ they are written against exactly these names.
 
 ### 9.3 The rules, all fail-closed
 
-1. **Monotonic epochs.** `policyEpoch` is a non-negative integer that only
-   increases. A consumer keeps the highest epoch it has accepted and refuses
-   anything at or below it (`trustEpochIsAcceptable`). An equal epoch is a
-   replay of an epoch already in force; a lower epoch is a rollback. Both
-   are refused, not merged.
+1. **Monotonic epochs; one producer record per epoch.** `policyEpoch` is a
+   non-negative integer that only ever increases, and it is the epoch of the
+   **key's authority**, not a counter of the records. A consumer keeps the
+   highest epoch it has accepted and refuses anything at or below it
+   (`trustEpochIsAcceptable`; refusal reason `producer_epoch_not_advanced`).
+   An equal epoch is refused because the contract admits **exactly one
+   producer record per epoch**: a record at an already-accepted epoch is
+   treated as a replay, since the epoch alone cannot tell a distinct record
+   from a replayed one. A lower epoch is a rollback and is refused, not
+   merged.
+
+   - **A distinct record at the already-accepted epoch.** The contract does
+     not admit one today, and it does not pretend to. Admitting it needs a
+     **per-record replay ledger**: the pair (`eventId`, the record's own
+     digest) of every record the consumer has accepted. A record whose pair
+     is already in the ledger is a replay; a record whose pair is not is a
+     distinct record. That ledger is E05b's, and with it the epoch is used
+     *only* for rollback detection. Until the ledger exists, the epoch rule
+     stands on its own and refuses the second record.
+   - **What a `supersedes` record does to the epoch.** Nothing by itself: a
+     producer record that supersedes another **inherits the epoch of the
+     record it replaces**, because supersession is the same authority saying
+     something new about the same release, and only a rotation advances the
+     epoch (rule 3). Under the rule as implemented, a superseding record is
+     therefore refused as `producer_epoch_not_advanced` unless the producer's
+     key is issued under a fresh epoch — so **E05b owns the answer**: it
+     either issues a fresh epoch for a supersession, or it adds the
+     per-record replay ledger above and tells the superseding record apart
+     by its (`eventId`, digest) pair. What E05b may not do is accept a
+     second record at an epoch on the strength of the epoch alone.
+   - **`status` is not the epoch.** `status` (`active`, `superseded`,
+     `revoked`) is the record's own claim about the export it carries, it
+     is inside the signed payload, and it never lowers the epoch: a consumer
+     refuses a record whose `status` is not `active` when it resolves the
+     current release, and it takes the epoch only from the epoch rule and
+     the key registry.
 2. **Freshness.** A record outside its validity window, issued too far in
    the future, claiming a validity window longer than
    `TRUST_MAX_VALIDITY_SECONDS` (7 days), or older than
@@ -1158,7 +1189,9 @@ they are written against exactly these names.
 
 The signature verification, the key registry (with rotation and revocation
 effective times), the transparency-log or trusted-timestamp path for a
-compromised key, the linearizable epoch state, and the negative matrix:
+compromised key, the linearizable epoch state, **the per-record replay
+ledger — or a fresh epoch per superseding record — that settles §9.3's
+open question**, and the negative matrix:
 swapped, stale, superseded, replayed, wrong-audience, revoked-key,
 digest-mismatched, policy-rollback, expired-policy, unavailable-beyond-
 freshness and improperly backdated-after-compromise records must all fail

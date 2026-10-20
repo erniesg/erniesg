@@ -166,7 +166,18 @@ describe('Vivliostyle publication renderer boundary', () => {
     )
     const html = publicationGraphToHtml(graph, paths, 'phone-webpub')
     expect(html).toContain('<code>main</code>')
-    expect(html).toContain('id="ref-proof"')
+    // The footnote reference carries the relationship id the projection minted
+    // for it. Since E-04 the ids are Struct-derived, so the assertion follows
+    // the graph instead of a hard-coded legacy id.
+    const noteref = graph.nodes
+      .flatMap((node) => node.inlineRuns ?? [])
+      .find(
+        (run) =>
+          run.semanticRole === 'cross-reference' && Boolean(run.relationshipId),
+      )
+    if (!noteref?.relationshipId)
+      throw new Error('missing footnote reference relationship')
+    expect(html).toContain(`id="${noteref.relationshipId}"`)
     expect(html).toContain('role="doc-noteref"')
     expect(html).toContain('<sup>[proof]</sup>')
     expect(html.match(/id="nested-list"/g)).toHaveLength(1)

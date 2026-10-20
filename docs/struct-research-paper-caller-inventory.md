@@ -183,7 +183,7 @@ header/body row-group boundary.
 
 ### Who owns `ResearchPaper` data today
 
-- `src/research/papers.ts:1-13` is the **only** runtime loader of paper data:
+- `src/research/papers.ts:1-12` is the **only** runtime loader of paper data:
   it imports `src/research/papers/if-letters-home-could-sing.json` and
   `src/research/papers/semantic-responsive-typesetting.json`, parses both with
   `researchPaperSchema`, and exports the `papers` array plus `getPaper(id)`.
@@ -383,12 +383,15 @@ branch at runtime.
 ## 4. The graph bridge — `src/publication/research-paper-adapter.ts`
 
 **This module is a bidirectional bridge, not a facade that gates all
-imports.** It is imported by exactly **two** files, both of them tests:
+imports.** It is imported by **four** files, all of them tests, and by no
+production module:
 
 | # | Importer | Line | Kind | Symbols |
 |---|---|---|---|---|
 | B1 | `src/annotations/move-parity.test.ts` | 2 | runtime value import | `researchPaperToPublicationGraph` |
 | B2 | `src/annotations/annotation-bundle.test.ts` | 11 | runtime value import | `researchPaperToPublicationGraph` |
+| B3 | `src/publication/research-paper-adapter.test.ts` | 5-8 | runtime value import | `publicationGraphToResearchPaper`, `researchPaperToPublicationGraph` |
+| B4 | `src/publication/source-adapter.test.ts` | 5-8 | runtime value import | `researchPaperToPublicationGraph` |
 
 Module exports and their actual callers:
 

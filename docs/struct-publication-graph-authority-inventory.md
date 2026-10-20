@@ -121,6 +121,14 @@ The two models also use **different id grammars**:
 So graph ids cannot be assumed to be derived from a Struct/ResearchPaper id
 without an explicit mapping, and vice versa.
 
+The two id namespaces are **distinct and stricter**, not **disjoint**: the
+ResearchPaper→graph bridge copies `node.id` verbatim in every node case
+(`src/publication/research-paper-adapter.ts:207`, `:216`, `:224`, `:232`,
+`:242`, `:253`), and the round-trip test asserts that graph ids equal the
+source paper ids (`src/publication/research-paper-adapter.test.ts:18-20`). The
+graph's stricter grammar therefore constrains which id strings the graph
+*accepts*; it does not by itself separate the two id namespaces.
+
 ### 1b. Graph-level integrity rules (`.superRefine`, `:427-886`)
 
 Unique node ids; unique *rendered DOM* ids (node id, `<id>-source` for
@@ -251,7 +259,7 @@ The exported parser is currently dead surface.
 | `publication-graph.json` | `src/publication/renderers/vivliostyle.ts:1107-1111` | `vivliostyleRenderer.render` (`:1081`), `writeFile(..., EXCLUSIVE_WRITE)` | `JSON.stringify(bundle.graph, null, 2)` |
 | `asset-bundle.json` | `src/publication/renderers/vivliostyle.ts:1112-1116` | same | asset descriptor |
 | `publication-receipt.json` | `src/publication/renderers/vivliostyle.ts:1201-1205` | same | `PublicationReceipt` (see §6) |
-| `astro-route-parity.json` | `tools/publication-build.mjs:990-996` | CLI | route parity + `graphSha256` |
+| `astro-route-parity.json` | `tools/publication-build.mjs:990-1019` | CLI | route parity + `graphSha256` |
 | `publication-graph.json` (read back) | `tools/publication-check.mjs:1145` | CLI reader | parsed with `publicationGraphSchema` and re-hashed at `:1162` |
 
 The renderer writes into a **fresh, invocation-owned output directory**
@@ -283,8 +291,10 @@ ResearchPaper-side (§6 of the companion inventory):
 
 `src/publication/research-paper-adapter.ts` is **not** a facade that gates
 all `ResearchPaper` imports — it is a **bidirectional** converter with
-exactly two importers, both tests
-(`src/annotations/move-parity.test.ts:2`,
+**four test importers and no production importer**
+(`src/publication/research-paper-adapter.test.ts:8`,
+`src/publication/source-adapter.test.ts:8`,
+`src/annotations/move-parity.test.ts:2`,
 `src/annotations/annotation-bundle.test.ts:11`).
 
 ### 5a. Forward — `researchPaperToPublicationGraph` (`:81-196`)
@@ -556,10 +566,10 @@ as an implementation claim):
 | # | Red condition (ADR-0001 wording) | Observed today | Evidence |
 |---|---|---|---|
 | R1 | "owns no independent **text**" | the graph has its own `text`/`sourceText`/`code`/`source` fields, its own `metadata` envelope, and its own 14-kind node taxonomy | `src/publication/schema.ts:172-315`, `:372-387` |
-| R2 | "owns no independent **semantic IDs**" | the graph has its own id grammar and its own id namespace, disjoint from ResearchPaper's | `src/publication/schema.ts:7-11` vs `src/research/schema.ts:3` |
+| R2 | "owns no independent **semantic IDs**" | the graph has its own id grammar — **distinct and stricter** than ResearchPaper's — but the two namespaces are **not disjoint**: the bridge copies `node.id` verbatim in every node case (`src/publication/research-paper-adapter.ts:207`, `:216`, `:224`, `:232`, `:242`, `:253`), and the round-trip test asserts that graph ids equal the source paper ids (`src/publication/research-paper-adapter.test.ts:18-20`) | `src/publication/schema.ts:7-11` vs `src/research/schema.ts:3` |
 | R3 | "owns no **persistence**" | `publication-graph.json` is written to the render output directory on every render | `src/publication/renderers/vivliostyle.ts:1107-1111`; read back at `tools/publication-check.mjs:1145` |
 | R4 | "owns no **receipt**" | both receipt shapes bind the **graph digest as the source identity** | `src/publication/renderers/vivliostyle.ts:111`, `:1192`; `src/publication/source-adapter.ts:28`, `:155` |
-| R5 | "owns no **writer**" | `tools/publication-build.mjs` writes a graph-derived bundle, graph file and receipt; `vivliostyleRenderer` writes the graph | `tools/publication-build.mjs:463`, `:990-996`, `:1023-1043`; `src/publication/renderers/vivliostyle.ts:1107-1205` |
+| R5 | "owns no **writer**" | `vivliostyleRenderer.render` writes the graph file, the asset bundle, the artifacts, and the receipt; `tools/publication-build.mjs` orchestrates the renderer, directly writes only `astro-route-parity.json`, and re-stamps the renderer-produced receipt | `src/publication/renderers/vivliostyle.ts:1107-1116`, `:1201-1205`; `tools/publication-build.mjs:463`, `:990-1019`, `:1022-1043`, `:1077-1080` |
 | R6 | "owns no **release path**" | `npm run build:production` runs `publication:build` + `publication:check` on the graph pipeline | `package.json` `build:production` |
 | R7 | "mechanically derived from one pinned approved Struct revision" | the graph is produced by **three** independent adapters (astro, payload-lexical, struct) with no shared pinned Struct revision; the canonical-subset mechanism (`:364-399`) exists to make *two different adapters* comparable — the opposite of one pinned source | `src/publication/adapter-registry.ts:55-60`; `src/publication/adapter-conformance.ts:364-399` |
 | R8 | "narrow … to an ephemeral renderer plan" | the graph has a **public schema module** with its own version constant, exported parser/serializer, a 10,000-node cap and a 1,000,000-char text cap | `src/publication/schema.ts:3-5`, `:412`, `:891-897` |

@@ -226,10 +226,21 @@ facts).
 
 | Local family | Public package path | Production consumers to switch |
 | --- | --- | --- |
-| `src/struct/types.ts` | `@erniesg/struct/document` | `src/struct-adapters/from-reconstruction.ts`, `src/publication/struct-adapter.ts`, `src/research/reconstruction-materialization.ts`, `src/research/grounded-struct-materializer.ts`, `src/research/grounded-epub-comparison.ts`, `src/research/reconstruction-attempt-trace.ts` |
+| `src/struct/types.ts` | `@erniesg/struct/document` | `src/struct-adapters/from-reconstruction.ts`, `src/publication/struct-adapter.ts`, `src/research/reconstruction-materialization.ts`, `src/research/grounded-struct-materializer.ts`, `src/research/grounded-epub-comparison.ts`, `src/research/reconstruction-attempt-trace.ts`, `src/research/epub.ts` |
 | `src/struct/codec*` / `src/struct/codec.ts` | `@erniesg/struct/document` (`decodeStructDocument`, `encodeStructDocument`, `decodeCompatibleStructDocument`, `StructCodecError`) | no current production caller outside `src/struct`; adopt the package decoder at any new production decode boundary |
 | `src/struct/ids.ts` | `@erniesg/struct/identity` (`structDigest`, `structId`) | `src/struct-adapters/from-reconstruction.ts`, `src/research/grounded-struct-materializer.ts`, `src/research/grounded-struct-repair-applicator.ts` |
 | `src/struct/reading-order.ts` | `@erniesg/struct/ordering` | `src/struct-adapters/from-reconstruction.ts` |
+
+`src/research/epub.ts:7` (`import type { StructDocument } from
+'../struct/types'`) is a **production** consumer of the `types` family, so it
+is listed in the `types` row above. Its `StructDocument` type import switches
+to `@erniesg/struct/document` in **E-03**, and the E-03 static guard covers
+it like every other non-test `src/` module. That switch is **separate from**
+the E-04 renderer-branch switch in the same file (`src/struct/xhtml` ->
+`@erniesg/struct/renderers/xhtml`, `src/struct/epub` ->
+`@erniesg/struct/renderers/epub`), which stays in E-04. There is **no**
+deferred or named exception for this file in the E-03 guard: the E-03 guard
+cannot go green while this importer is omitted.
 
 Not migrated (stay app-owned; do not widen the package API for them):
 
@@ -251,14 +262,26 @@ Not migrated (stay app-owned; do not widen the package API for them):
 - Package `@erniesg/struct/document` owns the `StructRecovery`,
   `StructDiagnostic`, and `StructDiagnosticSeverity` shapes. Package
   `@erniesg/struct/recovery` owns source-neutral facts:
-  `diagnosticCategory`, `recoveryFact`, `recoverySummary`,
-  `toStructDiagnostic`, `hasActionableRecovery`, and
-  `RecoveryDiagnosticInput` (per the pinned `API_MANIFEST.json`
+  `diagnosticCategory`, `recoveryFact`, `toStructDiagnostic`, and its **own
+  generic `recoverySummary`**, plus `hasActionableRecovery` and the
+  `RecoveryDiagnosticInput` type (per the pinned `API_MANIFEST.json`
   `./recovery` runtimeExports). (F9)
 - App `src/struct-adapters/recovery.ts` owns presentation: `diagnosticCopy`
-  titles/messages/actions, the enriched `recoverySummary` titles/summaries, and
-  `userAction`. It is an app-owned presentation adapter, not a migrated family
+  titles/messages/actions, the **enriched** `recoverySummary` titles/summaries,
+  and `userAction`. It is an app-owned presentation adapter, not a migrated family
   and not a portable duplicate.
+- **The two same-named `recoverySummary` functions are different functions, and
+  so are the two `hasActionableRecovery` functions.** At this head
+  `src/struct-adapters/recovery.ts` imports **types only** from
+  `@erniesg/struct/document` (`:1-5`); it imports no `./recovery` runtime
+  function from the package. The app implements `diagnosticCategory` (`:285`),
+  `toStructDiagnostic` (`:289`), `recoverySummary` (`:320`), and
+  `hasActionableRecovery` (`:424`) **locally**. The app `recoverySummary`
+  emits enriched titles/summaries, a per-issue `action`, and `userAction`; the
+  package `recoverySummary` emits generic titles/summaries and no
+  `userAction`. The app `hasActionableRecovery` is a **local
+  compatibility/presentation implementation, not a re-export** of the package
+  fact of the same name.
 - App-owned `src/struct-adapters/recovery` permitted importers (presentation or
   type-only; update this list deliberately if a new consumer is added):
   - `src/struct/recovery.ts` (compatibility forwarder) re-exports the app
@@ -268,9 +291,11 @@ Not migrated (stay app-owned; do not widen the package API for them):
     `RecoveryDiagnosticInput`);
   - `src/components/research/PublicationImporter.tsx`
     (`diagnosticCopy`, `hasActionableRecovery`, `recoverySummary`).
-  `hasActionableRecovery` is the package fact re-exported through the app
-  adapter; consuming it via the app adapter is allowed because the app adapter
-  wraps package authority in app-owned presentation. (F7)
+  The app `hasActionableRecovery` is **locally implemented**, not re-exported
+  from the package; it is currently behaviorally aligned with the package fact
+  of the same name (both test whether `userAction` is present), and consuming
+  it via the app adapter is allowed because the app adapter is app-owned
+  presentation. (F7)
 - Do NOT replace the app copy with the package `recoveryFact` title derivation.
   Upstream derives titles internally via `titleFromCode`, which is not a public
   export and must not be imported (package-private path); cite only the
@@ -281,6 +306,16 @@ Not migrated (stay app-owned; do not widen the package API for them):
   package fact source, and add a parity test asserting that every app
   `DIAGNOSTIC_COPY` category equals `diagnosticCategory(code)`. Keep app
   titles/messages/actions as the only rendered copy.
+- E-03 work (package fact source): import `diagnosticCategory` from
+  `@erniesg/struct/recovery` in a test (or otherwise parity-test against the
+  package fact source) and assert that every app `DIAGNOSTIC_COPY` entry's
+  category equals the package `diagnosticCategory(code)`, and that the app
+  fallback category matches the package default category. This step imports
+  and parity-tests the package **fact source** only. It does **not** replace
+  the app `recoverySummary` output, the app `diagnosticCopy`
+  titles/messages/actions, or the app `userAction` string with the package's
+  generic equivalents: doing so would change rendered copy and serialized
+  document/receipt bytes, which the rules above forbid.
 
 ### Semantic-vs-renderer validation mismatch decision
 
@@ -408,14 +443,16 @@ absence** (`ripgrep` only; `node_modules/` absent; the repository AST harness
 - **The graph build is production-alive.** `npm run build:production` runs
   `publication:build --adapter astro --entry moving-to-cloudflare-with-astro`
   and then `publication:check` on the graph pipeline.
-  `tools/publication-build.mjs` imports `serializePublicationGraph` (`:29`) and
-  writes `publication-graph.json`, `asset-bundle.json`,
-  `publication-receipt.json`, and `astro-route-parity.json` (`:990-996`); the
-  Vivliostyle renderer also persists the graph into the render output directory
-  (`src/publication/renderers/vivliostyle.ts:1107-1111`), and
-  `tools/publication-check.mjs` re-parses and re-hashes it (`:1144`, `:1162`).
-  The graph is therefore live, wired production code, and "owns no
-  persistence" is **not** the current state.
+  `tools/publication-build.mjs` imports `serializePublicationGraph` (`:29`),
+  orchestrates the renderer (`vivliostyleRenderer.render` at `:1077-1080`),
+  **directly writes only `astro-route-parity.json`** (`:990-1019`), and
+  re-stamps the renderer-produced receipt in place (`:1022-1043`). The
+  `publication-graph.json`, `asset-bundle.json`, and `publication-receipt.json`
+  files are written by the Vivliostyle renderer itself
+  (`src/publication/renderers/vivliostyle.ts:1107-1116`, `:1201-1205`), and
+  `tools/publication-check.mjs` re-parses and re-hashes the graph
+  (`:1144`, `:1162`). The graph is therefore live, wired production code, and
+  "owns no persistence" is **not** the current state.
 - **Writer/release modules import graph symbols today.** The claim "storage /
   API / route / writer / release modules import none today" is **not correct
   as written** (see the importer list below). The two CLI writer/release tools
@@ -435,8 +472,12 @@ absence** (`ripgrep` only; `node_modules/` absent; the repository AST harness
   (`src/publication/research-paper-adapter.ts:198-296`) has exactly one
   caller, the round-trip assertion at
   `src/publication/research-paper-adapter.test.ts:17`; the bridge module
-  `src/publication/research-paper-adapter.ts` has exactly two importers, both
-  tests; and `createAnnotationBundle` (`src/annotations/annotation-bundle.ts:65`)
+  `src/publication/research-paper-adapter.ts` has **four test importers and no
+  production importer** (`src/publication/research-paper-adapter.test.ts:8`,
+  `src/publication/source-adapter.test.ts:8`,
+  `src/annotations/move-parity.test.ts:2`,
+  `src/annotations/annotation-bundle.test.ts:11`); and `createAnnotationBundle`
+  (`src/annotations/annotation-bundle.ts:65`)
   has only test callers (`src/annotations/annotation-bundle.test.ts`,
   `src/annotations/move-parity.test.ts`). That lowers the migration cost of the
   narrow decision; it does not make the reverse writer conformant while it
@@ -619,7 +660,7 @@ runtime, golden, or activation evidence.
 | --- | --- | --- | --- | --- |
 | EG-01 | Graph narrowed to an ephemeral renderer plan from one pinned approved Struct revision | `src/publication/adapter-registry.ts:55-60`, `tools/publication-build.mjs:54-67`, `src/publication/adapters/astro.ts`, `src/publication/adapters/payload-lexical.ts` | three adapters produce graphs; the CLI can select only `astro` / `payload-lexical` | PENDING |
 | EG-02 | Graph owns no independent text | `src/publication/schema.ts:172-315`, `src/publication/research-paper-adapter.ts:198-296` | the graph has its own text fields and metadata envelope | PENDING |
-| EG-03 | Graph owns no independent semantic IDs | `src/publication/schema.ts:7-11` | the graph has its own id grammar, disjoint from `src/research/schema.ts:3` | PENDING |
+| EG-03 | Graph owns no independent semantic IDs | `src/publication/schema.ts:7-11` | the graph has its own id grammar, **distinct and stricter** than `src/research/schema.ts:3`; the namespaces are **not** disjoint, because the bridge may copy the same id string verbatim (`src/publication/research-paper-adapter.ts:207`, `:216`, `:224`, `:232`, `:242`, `:253`) and the round-trip test asserts graph ids equal the source paper ids (`src/publication/research-paper-adapter.test.ts:18-20`) | PENDING |
 | EG-04 | Graph owns no persistence | `src/publication/renderers/vivliostyle.ts:1107-1111`; reader at `tools/publication-check.mjs:1145` | the graph is written to the render output directory | PENDING |
 | EG-05 | Graph owns no receipt | `src/publication/renderers/vivliostyle.ts:109-117`; `src/publication/source-adapter.ts:25-65`; allowlist at `src/publication/adapter-conformance.ts:447-494` | both receipts bind the graph digest as the source identity | PENDING |
 | EG-06 | Graph owns no writer and no release path | `tools/publication-build.mjs`; `package.json` `build:production` | the release build runs the graph pipeline | PENDING |

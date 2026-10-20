@@ -16,6 +16,18 @@ repository, it says so explicitly.
 No source file was modified while producing it. No build, test, renderer,
 golden, or receipt run was executed.
 
+This document is **evidence input for the cutover plan, not a decision**. It
+is linked reciprocally with
+[`docs/superpowers/plans/2026-10-20-struct-full-cutover-sequence.md`](superpowers/plans/2026-10-20-struct-full-cutover-sequence.md)
+(§"E-04 — Cut XHTML/EPUB and converge publication semantics", §"E-04 exit
+evidence must include two checked-in inventories", and the E-04 future-gate
+table) and with its companion
+[`docs/struct-research-paper-caller-inventory.md`](struct-research-paper-caller-inventory.md).
+The plan requires the *existence and scope* of this document; it does not treat
+this document as gate satisfaction, and it records the same grep-bounded
+limitation described below. The gate table in §9 below is the source of the
+plan's pending-gate list; every row of it is still **PENDING**.
+
 ## Authority and baseline
 
 | Item | Value |
@@ -24,10 +36,12 @@ golden, or receipt run was executed.
 | Worktree | `/home/ubuntu/.local/state/struct-migration/20261020-continuation/worktrees/app-inventory` |
 | Source baseline (immutable) | `84747cb49a36fea0eb4db0322dbd092430daf754` |
 | HEAD observed while inventorying | `b65c75b0` (docs-only descendant of the baseline) |
+| Inventory commit (immutable) | `58c9097c7191c182416ee8329fee518b0355a791` |
+| Merged into | `docs/struct-cutover-integrated-plan-20261020` (the cutover plan branch; the plan now links to this document) |
 | Governing ADR | `docs/superpowers/specs/2026-08-27-cross-repository-domain-ownership-and-package-boundaries.md` (ADR-0001) |
 | Governing issue plan | `docs/superpowers/plans/2026-08-27-cross-repository-architecture-issue-plan.md` — E-04 (#284), E-07 (#287) |
-| App cutover plan (read only, not edited here) | `docs/superpowers/plans/2026-10-20-struct-full-cutover-sequence.md`, §"E-04 — Cut XHTML/EPUB and converge publication semantics" |
-| Companion inventory | `docs/struct-research-paper-caller-inventory.md` (same worktree, same scan) |
+| App cutover plan (read only when inventoried; linked reciprocally) | [`docs/superpowers/plans/2026-10-20-struct-full-cutover-sequence.md`](superpowers/plans/2026-10-20-struct-full-cutover-sequence.md), §"E-04 — Cut XHTML/EPUB and converge publication semantics" |
+| Companion inventory (same worktree, same scan; linked reciprocally) | [`docs/struct-research-paper-caller-inventory.md`](struct-research-paper-caller-inventory.md) |
 
 ### Scan scope and limitations (shared with the companion inventory)
 
@@ -50,6 +64,14 @@ home for the E-04 static assertion — but it currently covers only
 > `src/research/` or `src/publication/`, so no barrel re-export path is live.
 > Full scan detail and limitations: companion inventory §"Method, scanned
 > roots, globs, and limitations".
+
+The cutover plan
+([`docs/superpowers/plans/2026-10-20-struct-full-cutover-sequence.md`](superpowers/plans/2026-10-20-struct-full-cutover-sequence.md))
+relies on this document and repeats the same limitation: it cites this
+inventory as evidence input, marks every E-04 gate it does not satisfy as
+**PENDING**, and — where the inventories and the plan previously disagreed —
+corrects the plan against the observed state recorded here rather than the
+other way round.
 
 ## 1. What `PublicationGraph` actually is
 
@@ -613,6 +635,9 @@ exact package pin/version; graph-only digests are diagnostic only."*
 These are the **required** gates, derived from ADR-0001, the E-04 issue
 acceptance, and the app cutover plan, cross-referenced to the concrete
 artifacts that must change. **None of them is implemented or verified here.**
+Every row is **PENDING**, and the cutover plan's "E-04 future gates" table
+mirrors these rows as pending obligations; nothing in this table is a runtime,
+golden, receipt, or activation result.
 
 | # | Gate (required) | Concrete artifact that must change | Current status |
 |---|---|---|---|
@@ -626,7 +651,7 @@ artifacts that must change. **None of them is implemented or verified here.**
 | G-08 | Red-first static assertion: `PublicationGraph`, `publicationGraphSchema`, `serializePublicationGraph`, and graph persistence helpers are **absent** from storage / API / route / writer / release modules; only renderer/projection modules may import them | extend `tests/struct-adapter-boundary.test.ts` (AST harness at `:12-55`) to the `src/publication/**` + route/worker/writer roots | **does not exist** |
 | G-09 | Byte-identical double-adapt conformance for one pinned `StructDocument`, plus an assertion that the graph is never persisted or treated as canonical text | `src/publication/struct-adapter.ts:188` (`adaptStructDocument`), `src/publication/struct-adapter.test.ts` | not found |
 | G-10 | Receipts carry the canonical Struct digests and the exact package pin/version; graph digests demoted to diagnostic | `src/publication/renderers/vivliostyle.ts:109-117`; `src/publication/source-adapter.ts:25-61`; `src/publication/adapter-conformance.ts:447-494`; the CLI check at `tools/publication-check.mjs:1162` | not done |
-| G-11 | `ResearchPaper` stays a read-only compatibility model; a checked-in caller/test inventory exists for `src/publication/research-paper-adapter.ts` | `docs/struct-research-paper-caller-inventory.md` (this worktree) | inventory **exists** (companion doc); read-only enforcement not done |
+| G-11 | `ResearchPaper` stays a read-only compatibility model; a checked-in caller/test inventory exists for `src/publication/research-paper-adapter.ts` | [`docs/struct-research-paper-caller-inventory.md`](struct-research-paper-caller-inventory.md) (companion doc, same tree after the inventory merge) | inventory **exists** (companion doc; grep-bounded, not compiler-proven); read-only enforcement not done |
 | G-12 | EPUBCheck / Ace / human-accessibility acceptance stays app-owned | `src/publication/renderers/vivliostyle.ts:724` (`publicationEpubAccessibilityMetadata`), `src/research/publication-integrity.ts` | app-owned today |
 | G-13 | Legacy `research/epub.ts` overloads keep both-mode parity until the last `ResearchPaper` consumer migrates | `src/research/epub.ts:133-141`, `:1422-1447`, `:2094-2118` | parity **not demonstrated** here |
 | G-14 | E-07 deletion gates: zero production imports to removed portable modules; package-only app tests; retained-compatibility register with owner, caller inventory, warning/horizon, removal issue | `src/struct/**`, `src/struct-adapters/**` | not done |

@@ -12,6 +12,16 @@ recorded decision and not a recorded state.
 Nothing in this document was implemented, tested, built, deployed, or
 published while producing it. No source file was modified.
 
+This document is **evidence input for the cutover plan, not a decision**. It
+is linked reciprocally with
+[`docs/superpowers/plans/2026-10-20-struct-full-cutover-sequence.md`](superpowers/plans/2026-10-20-struct-full-cutover-sequence.md)
+(§"E-04 — Cut XHTML/EPUB and converge publication semantics" and §"E-04 exit
+evidence must include two checked-in inventories") and with its companion
+[`docs/struct-publication-graph-authority-inventory.md`](struct-publication-graph-authority-inventory.md).
+The plan requires the *existence and scope* of this document; it does not treat
+this document as gate satisfaction, and it records the same grep-bounded
+limitation described below.
+
 ## Authority and baseline
 
 | Item | Value |
@@ -20,9 +30,12 @@ published while producing it. No source file was modified.
 | Worktree | `/home/ubuntu/.local/state/struct-migration/20261020-continuation/worktrees/app-inventory` |
 | Source baseline (immutable) | `84747cb49a36fea0eb4db0322dbd092430daf754` |
 | HEAD observed while inventorying | `b65c75b0` (docs-only descendant of the baseline) |
+| Inventory commit (immutable) | `58c9097c7191c182416ee8329fee518b0355a791` |
+| Merged into | `docs/struct-cutover-integrated-plan-20261020` (the cutover plan branch; the plan now links to this document) |
 | Governing ADR | `docs/superpowers/specs/2026-08-27-cross-repository-domain-ownership-and-package-boundaries.md` (ADR-0001) |
 | Governing issue plan | `docs/superpowers/plans/2026-08-27-cross-repository-architecture-issue-plan.md` — E-04 (issue #284), E-07 (issue #287) |
-| App cutover sequence plan (read only, not edited here) | `docs/superpowers/plans/2026-10-20-struct-full-cutover-sequence.md`, section "E-04 — Cut XHTML/EPUB and converge publication semantics" |
+| App cutover sequence plan (read only when inventoried; linked reciprocally) | [`docs/superpowers/plans/2026-10-20-struct-full-cutover-sequence.md`](superpowers/plans/2026-10-20-struct-full-cutover-sequence.md), section "E-04 — Cut XHTML/EPUB and converge publication semantics" |
+| Companion inventory (same worktree, same scan; linked reciprocally) | [`docs/struct-publication-graph-authority-inventory.md`](struct-publication-graph-authority-inventory.md) |
 | Global agent guide | `/home/ubuntu/.codex/AGENTS.md`; repository `AGENTS.md` |
 
 ADR-0001 §"History-preserving moves and duplicate disposition" classifies
@@ -56,6 +69,14 @@ not be run here** (no installed dependencies). Consequently:
 > compiler-level proof requires the AST harness in
 > `tests/struct-adapter-boundary.test.ts` (or an equivalent) to be extended to
 > the `src/publication/**` and `src/research/**` roots and executed.
+
+The cutover plan
+([`docs/superpowers/plans/2026-10-20-struct-full-cutover-sequence.md`](superpowers/plans/2026-10-20-struct-full-cutover-sequence.md))
+relies on this document and repeats the same limitation: it cites this
+inventory as evidence input, marks the E-04 gates it does not satisfy as
+**PENDING**, and does not treat the call-site half of the ADR-0001 deletion
+gate ("Call-site inventory and both-mode parity") as satisfied by this
+document.
 
 ### Exact scan scope
 
@@ -430,8 +451,9 @@ Module exports and their actual callers:
 **The two `PublicationGraph`-anchored annotation surfaces are
 `src/annotations/annotation-bundle.ts` (graph → annotation bundle) and
 `src/annotations/annotations.ts` (ResearchPaper → demo annotations).** See the
-companion document `docs/struct-publication-graph-authority-inventory.md` §7
-for the anchor model.
+companion document
+[`docs/struct-publication-graph-authority-inventory.md`](struct-publication-graph-authority-inventory.md)
+§7 for the anchor model.
 
 ## 7. Unresolved / not proven by this inventory
 

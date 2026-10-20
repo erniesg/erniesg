@@ -391,7 +391,7 @@ production module:
 | B1 | `src/annotations/move-parity.test.ts` | 2 | runtime value import | `researchPaperToPublicationGraph` |
 | B2 | `src/annotations/annotation-bundle.test.ts` | 11 | runtime value import | `researchPaperToPublicationGraph` |
 | B3 | `src/publication/research-paper-adapter.test.ts` | 5-8 | runtime value import | `publicationGraphToResearchPaper`, `researchPaperToPublicationGraph` |
-| B4 | `src/publication/source-adapter.test.ts` | 5-8 | runtime value import | `researchPaperToPublicationGraph` |
+| B4 | `src/publication/source-adapter.test.ts` | 5-8 | runtime value import | `adaptResearchPaper`, `researchPaperToPublicationGraph` |
 
 Module exports and their actual callers:
 

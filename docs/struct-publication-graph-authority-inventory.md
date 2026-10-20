@@ -122,8 +122,8 @@ So graph ids cannot be assumed to be derived from a Struct/ResearchPaper id
 without an explicit mapping, and vice versa.
 
 The two id namespaces are **distinct and stricter**, not **disjoint**: the
-ResearchPaper→graph bridge copies `node.id` verbatim in every node case
-(`src/publication/research-paper-adapter.ts:207`, `:216`, `:224`, `:232`,
+graph→ResearchPaper reverse converter copies `node.id` verbatim in every node
+case (`src/publication/research-paper-adapter.ts:207`, `:216`, `:224`, `:232`,
 `:242`, `:253`), and the round-trip test asserts that graph ids equal the
 source paper ids (`src/publication/research-paper-adapter.test.ts:18-20`). The
 graph's stricter grammar therefore constrains which id strings the graph
@@ -318,7 +318,7 @@ into ResearchPaper nodes and rebuilds the paper envelope:
 
 | Graph input | Reverse output | Line |
 |---|---|---|
-| `node.id` | `node.id` (semantic id minted from the graph) | `:206`, `:215`, `:224`, `:233`, `:242`, `:253` |
+| `node.id` | `node.id` (semantic id minted from the graph) | `:207`, `:216`, `:224`, `:232`, `:242`, `:253` |
 | `node.text` / `node.sourceText` | `node.text` / `node.sourceText` (canonical text minted from the graph) | `:210`, `:219`, `:228`, `:237`, `:246`, `:255` |
 | `node.provenance.sourceId` | `node.source` | `:203` and each case |
 | `graph.id` | `paper.id` | `:276` |

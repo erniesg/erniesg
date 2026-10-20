@@ -82,9 +82,13 @@ describe('publication adapter output conformance CLI', () => {
     )
     const output = resolve(temporaryRoot, 'output')
     const renderedNodeIds = []
+    const renderedStructBlockIds = []
     const originalRender = vivliostyleRenderer.render
     vivliostyleRenderer.render = async (bundle) => {
       renderedNodeIds.push(bundle.graph.nodes.map((node) => node.id))
+      renderedStructBlockIds.push(
+        bundle.structDocument.blocks.map((block) => block.id),
+      )
       throw new Error('render-boundary-captured')
     }
     try {
@@ -94,7 +98,16 @@ describe('publication adapter output conformance CLI', () => {
       // The retired Payload adapter was the only second adapter, so exactly one
       // canonical graph is rendered now.
       expect(renderedNodeIds).toHaveLength(1)
-      expect(renderedNodeIds[0][0]).toBe('node-1')
+      // The graph authors no semantic id. The rendered node id is the id of
+      // the Struct block the node was projected from: the blocks are the ones
+      // the pinned Struct package produced from the Astro fixture
+      // (tests/fixtures/publication/astro/payload-equivalent.mdx), whose
+      // first block is the document heading.
+      const [nodeIds] = renderedNodeIds
+      const [structBlockIds] = renderedStructBlockIds
+      expect(nodeIds[0]).toMatch(/^struct-block-[0-9a-f]{24}$/u)
+      expect(structBlockIds).toContain(nodeIds[0])
+      expect(nodeIds[0]).toBe(structBlockIds[0])
     } finally {
       vivliostyleRenderer.render = originalRender
       await rm(temporaryRoot, { recursive: true, force: true })

@@ -4,8 +4,6 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { PDFDocument } from 'pdf-lib'
 import { describe, expect, it } from 'vitest'
-import { canonicalPublicationSourceResult } from '../src/publication/adapter-conformance.ts'
-import { adaptPayloadLexical } from '../src/publication/adapters/payload-lexical.ts'
 import {
   PUBLICATION_PROFILES,
   publicationInlineLinkTargets,
@@ -25,7 +23,7 @@ import {
   accessibilityLabel,
   assertPublicationPdfPageCountPolicy,
   assertPublicationReceiptSourceBinding,
-  assertPublicationReceiptMappingVersion,
+  assertPublicationReceiptRetiredPayloadSource,
   assertPublicationReceiptPolicyVersions,
   assertPublicationReceiptRepositoryBinding,
   assertPublicationReceiptRuntime,
@@ -635,23 +633,34 @@ describe('publication:check CLI', () => {
     ).toThrow(/policy versions/)
   })
 
-  it('pins Payload mapping receipts to the canonical accepted policy version', () => {
-    const receipt = {
+  it('refuses receipts that claim the retired Payload publication source', () => {
+    // The Payload publication path was retired (E-04 P-2). The adapter that
+    // produced Payload-sourced receipts is gone, and the Payload mapping
+    // policy version went with it, so a receipt that still claims a Payload
+    // source is refused instead of version-checked: a stale Payload receipt
+    // can never pass the check as if it were current.
+    const payloadReceipt = {
       source: {
         adapterId: 'payload-lexical',
         sourceType: 'payload',
         mappingVersion: '1.0.0',
       },
     }
-    expect(() => assertPublicationReceiptMappingVersion(receipt)).not.toThrow()
     expect(() =>
-      assertPublicationReceiptMappingVersion({
-        ...receipt,
-        source: { ...receipt.source, mappingVersion: '99.0.0' },
+      assertPublicationReceiptRetiredPayloadSource(payloadReceipt),
+    ).toThrow(/retired Payload publication source/)
+    expect(() =>
+      assertPublicationReceiptRetiredPayloadSource({
+        source: { adapterId: 'payload-lexical', sourceType: 'astro' },
       }),
-    ).toThrow(/Payload mapping version is missing or stale/)
+    ).toThrow(/retired Payload publication source/)
     expect(() =>
-      assertPublicationReceiptMappingVersion({
+      assertPublicationReceiptRetiredPayloadSource({
+        source: { adapterId: 'astro', sourceType: 'payload' },
+      }),
+    ).toThrow(/retired Payload publication source/)
+    expect(() =>
+      assertPublicationReceiptRetiredPayloadSource({
         source: { adapterId: 'astro', sourceType: 'astro' },
       }),
     ).not.toThrow()
@@ -978,62 +987,35 @@ describe('publication:check CLI', () => {
   })
 
   it('matches PDF requirements to rendered link ranges without crossing breaks or blocks', () => {
-    const source = adaptPayloadLexical({
-      id: 'link-boundaries',
-      title: 'Link boundaries',
-      locale: 'en',
-      content: {
-        root: {
-          type: 'root',
-          children: [
-            {
-              type: 'paragraph',
-              children: [
-                {
-                  type: 'link',
-                  url: 'https://example.com/formatted',
-                  children: [
-                    { type: 'text', text: 'Read ' },
-                    { type: 'text', text: 'more', format: 'bold' },
-                  ],
-                },
-                {
-                  type: 'link',
-                  url: 'https://example.com/adjacent',
-                  children: [{ type: 'text', text: 'one' }],
-                },
-                {
-                  type: 'link',
-                  url: 'https://example.com/adjacent',
-                  children: [{ type: 'text', text: 'two' }],
-                },
-                {
-                  type: 'link',
-                  url: 'https://example.com/break',
-                  children: [
-                    { type: 'text', text: 'up' },
-                    { type: 'linebreak' },
-                    { type: 'text', text: 'down' },
-                  ],
-                },
-              ],
-            },
-            {
-              type: 'paragraph',
-              children: [
-                {
-                  type: 'link',
-                  url: 'https://example.com/adjacent',
-                  children: [{ type: 'text', text: 'block' }],
-                },
-              ],
-            },
+    // The retired Payload adapter used to produce this graph. The check itself
+    // is about the canonical inline-run shape, so the fixture is stated
+    // directly as the canonical graph: the same runs the Payload export used
+    // to produce, with the link ranges they cover.
+    const graph = {
+      nodes: [
+        {
+          id: 'link-node-1',
+          type: 'paragraph',
+          text: 'Read moreonetwoup\ndown',
+          inlineRuns: [
+            { start: 0, end: 9, href: 'https://example.com/formatted' },
+            { start: 5, end: 9, bold: true },
+            { start: 9, end: 12, href: 'https://example.com/adjacent' },
+            { start: 12, end: 15, href: 'https://example.com/adjacent' },
+            { start: 15, end: 22, href: 'https://example.com/break' },
+            { start: 17, end: 18, hardBreak: true },
           ],
         },
-      },
-    })
-    const canonical = canonicalPublicationSourceResult(source)
-    const graph = canonical.graph
+        {
+          id: 'link-node-2',
+          type: 'paragraph',
+          text: 'block',
+          inlineRuns: [
+            { start: 0, end: 5, href: 'https://example.com/adjacent' },
+          ],
+        },
+      ],
+    }
     for (const profile of PUBLICATION_PROFILES) {
       expect(expectationsFrom(graph, profile).profiles[profile].pdfLinkRequirements).toEqual([
         'https://example.com/formatted',

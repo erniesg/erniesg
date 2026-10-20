@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { readdir, readFile } from 'node:fs/promises'
+import { access, readdir, readFile } from 'node:fs/promises'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import * as epubcheck from 'epubcheck-static'
@@ -8,29 +8,31 @@ import JSZip from 'jszip'
 import { parse } from 'parse5'
 import { PDFDocument } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
-import { canonicalPublicationSubsetSha256 } from '../src/publication/adapter-conformance.ts'
 import { PAYLOAD_MAPPING_POLICY_VERSION } from '../src/publication/adapters/payload-lexical.ts'
 import {
   PUBLICATION_PROFILES,
   publicationAssetFileExtension,
-  publicationInlineLinkTargets,
-  publicationNodeForProfile,
 } from '../src/publication/renderers/vivliostyle.ts'
-import { serializeAssetBundle } from '../src/publication/asset-bundle.ts'
+import {
+  createAssetBundle,
+  serializeAssetBundle,
+} from '../src/publication/asset-bundle.ts'
 import { publicationBrowserRuntimeEvidenceForCurrentPlatform } from '../src/publication/browser-runtime.ts'
 import { PUBLICATION_OUTPUT_POLICY_VERSIONS } from '../src/publication/output-contract.ts'
-import { publicationGraphSchema } from '../src/publication/schema.ts'
-import { serializePublicationGraph } from '../src/publication/schema.ts'
 import {
   publicationPdfRendererForRuntime,
   publicationPlatformKey,
   publicationBrowserRuntimeEvidenceForPlatform,
 } from '../src/publication/toolchain.ts'
 import {
+  assertPublicationPlanSourceBinding,
   canonicalRouteBodyFingerprint,
-  publicationGraphBodyFingerprint,
-  publicationRepositoryForCurrentCheckout,
-} from './publication-build.mjs'
+  canonicalSubsetSha256ForPlan,
+  decodePersistedStructDocument,
+  publicationPlanExpectations,
+  publicationPlanFromStructDocument,
+} from '../src/publication/publishing-facade.ts'
+import { publicationRepositoryForCurrentCheckout } from './publication-build.mjs'
 
 export function parsePublicationCheckArgs(argv) {
   const options = {}
@@ -262,7 +264,7 @@ const PUBLICATION_SOURCE_TYPE_BY_ADAPTER = Object.freeze({
   'payload-lexical': 'payload',
 })
 
-export function assertPublicationReceiptSourceBinding(receipt, graph) {
+export function assertPublicationReceiptSourceBinding(receipt, plan) {
   const source = receipt?.source
   const expectedSourceType =
     PUBLICATION_SOURCE_TYPE_BY_ADAPTER[source?.adapterId]
@@ -272,24 +274,14 @@ export function assertPublicationReceiptSourceBinding(receipt, graph) {
     'Publication receipt source type does not match its registered adapter',
   )
   assert(
-    Array.isArray(graph?.nodes) &&
-      graph.nodes.every(
-        (node) => node.provenance?.adapterId === source.adapterId,
-      ),
-    'Publication source adapter binding is missing or inconsistent',
-  )
-  assert(
-    typeof source.sourceId === 'string' &&
-      source.sourceId.length > 0 &&
-      graph.nodes.every(
-        (node) => node.provenance?.sourceId === source.sourceId,
-      ),
+    typeof source.sourceId === 'string' && source.sourceId.length > 0,
     'Publication source id binding is missing or inconsistent',
   )
+  // The source revision is the digest of the source bytes the plan was
+  // derived from, so the receipt and the persisted Struct document have to
+  // name the same source revision.
   assert(
-    graph.nodes.every(
-      (node) => node.provenance?.sourceRevision === source.sourceRevision,
-    ),
+    source.sourceRevision === plan.provenance.sourceRevision,
     'Publication source revision binding is missing or inconsistent',
   )
 }
@@ -314,80 +306,6 @@ export function normalizePdfVerificationText(value) {
     .replace(/[\s\p{Z}\p{C}]+/gu, '')
     .toLowerCase()
     .replace(/ς/gu, 'σ')
-}
-
-export function publicationPdfTextRequirements(graph, profile = 'a5-pdf') {
-  const required = []
-  const add = (value) => {
-    if (typeof value === 'string' && value.trim()) required.push(value)
-  }
-  add(graph.metadata.title)
-  add(graph.metadata.subtitle)
-  add(graph.metadata.abstract)
-  for (const contributor of graph.metadata.contributors ?? []) add(contributor)
-  let titleHeadingHeaderPending = true
-  for (const node of graph.nodes) {
-    const selected = publicationNodeForProfile(node, profile)
-    if (
-      selected.type === 'heading' &&
-      selected.level === 1 &&
-      selected.text === graph.metadata.title
-    )
-      if (titleHeadingHeaderPending) {
-        titleHeadingHeaderPending = false
-        continue
-      }
-    if ('text' in selected) add(selected.text)
-    switch (selected.type) {
-      case 'quote':
-        add(selected.attribution)
-        break
-      case 'code':
-        add(selected.code)
-        break
-      case 'figure':
-        add(selected.title)
-        add(selected.sourceText)
-        break
-      case 'table':
-        for (const row of selected.rows)
-          for (const cell of row.cells) add(cell.text)
-        break
-      case 'equation':
-        add(selected.source)
-        add(selected.label)
-        break
-      case 'note':
-        add(selected.label)
-        break
-      case 'media':
-        if (!selected.accessibility.decorative)
-          add(selected.accessibility.transcript)
-        break
-      default:
-        break
-    }
-  }
-  return required
-}
-
-export function publicationPdfWidowOrphanRequirements(
-  graph,
-  profile = 'a5-pdf',
-) {
-  const required = []
-  for (const node of graph.nodes) {
-    const selected = publicationNodeForProfile(node, profile)
-    if (selected.requirement === 'optional') continue
-    if (
-      selected.type === 'paragraph' ||
-      selected.type === 'list-item' ||
-      selected.type === 'quote' ||
-      selected.type === 'aside'
-    )
-      if (selected.text.trim()) required.push(selected.text)
-  }
-  return required
 }
 
 export function assertPdfSearchableTextRequirements(
@@ -567,66 +485,6 @@ export function orderPdfTextRequirements(requiredTexts, renderedText) {
     .map(({ value }) => value)
 }
 
-export function publicationPdfLinkRequirements(graph) {
-  return publicationPdfLinkRequirementsForProfile(graph, 'a5-pdf')
-}
-
-export function publicationPdfImageAssetRequirements(
-  graph,
-  profile = 'a5-pdf',
-) {
-  const assetIds = []
-  const seen = new Set()
-  for (const original of graph.nodes ?? []) {
-    const node = publicationNodeForProfile(original, profile)
-    if (node.requirement === 'optional') continue
-    const renderedAssetIds =
-      node.type === 'figure' && node.assetIds.length > 0
-        ? node.assetIds
-        : node.type === 'media' && node.mediaKind === 'image'
-          ? [node.assetId]
-          : []
-    for (const assetId of renderedAssetIds) {
-      if (seen.has(assetId)) continue
-      seen.add(assetId)
-      assetIds.push(assetId)
-    }
-  }
-  return assetIds
-}
-
-export function publicationPdfLinkRequirementsForProfile(
-  graph,
-  profile = 'a5-pdf',
-) {
-  const links = []
-  for (const node of graph.nodes) {
-    const selected = publicationNodeForProfile(node, profile)
-    const runs = selected.inlineRuns ?? []
-    if (
-      typeof selected.text === 'string' &&
-      runs.every(
-        (run) => Number.isInteger(run.start) && Number.isInteger(run.end),
-      )
-    ) {
-      links.push(...publicationInlineLinkTargets(selected.text, runs))
-    } else {
-      for (const run of runs) {
-        if (run.href) links.push(run.href)
-        else if (
-          (run.semanticRole === 'citation' ||
-            run.semanticRole === 'cross-reference') &&
-          run.targetIds?.length
-        )
-          links.push(`#${run.targetIds[0]}`)
-      }
-    }
-    if (selected.type === 'reference' && selected.href)
-      links.push(selected.href)
-  }
-  return links
-}
-
 export function assertPdfLinkAnnotations(annotations, requiredLinks) {
   const expected = [...(requiredLinks ?? [])]
   if (expected.length === 0) return
@@ -700,12 +558,18 @@ function imageElementsInNode(node) {
   return images
 }
 
+/**
+ * The accessibility label of a rendered node.
+ *
+ * The label is derived from the plan, so the checker never needs the
+ * accessibility record of a graph node.
+ */
 export function accessibilityLabel(node) {
   return (
     [
-      node.accessibility?.alternativeText,
-      node.accessibility?.longDescription,
-      node.accessibility?.transcript,
+      node?.alternativeText,
+      node?.longDescription,
+      node?.transcript,
     ].find((value) => typeof value === 'string' && value.trim()) ?? ''
   )
 }
@@ -761,16 +625,17 @@ function assertNodeImages(element, assetIds, alternative, label, assetPaths) {
   })
 }
 
-function assertWebPubNode(node, profile, elements, assetPaths) {
+function assertWebPubExpectation(node, profile, elements, assetPaths) {
   const label = profile === 'eink-epub' ? 'eink-epub' : 'WebPub'
-  if (node.type === 'heading') {
+  if (node.tag && /^h[1-6]$/u.test(node.tag)) {
     assert(
-      elements.get(node.id)?.tagName === `h${node.level}`,
+      elements.get(node.id)?.tagName === node.tag,
       `${label} dropped heading ${node.id}`,
     )
     return
   }
-  if (node.type === 'figure') {
+  if (node.mediaKind === undefined) {
+    if (node.tag !== 'figure') return
     const figure = elements.get(node.id)
     assert(figure?.tagName === 'figure', `${label} dropped figure ${node.id}`)
     const alternative = accessibilityLabel(node)
@@ -791,14 +656,13 @@ function assertWebPubNode(node, profile, elements, assetPaths) {
       )
     return
   }
-  if (node.type !== 'media') return
   const mediaFigure = elements.get(node.id)
   assert(mediaFigure?.tagName === 'figure', `${label} dropped media ${node.id}`)
   const alternative = accessibilityLabel(node)
   if (node.mediaKind === 'image') {
     assertNodeImages(
       mediaFigure,
-      [node.assetId],
+      node.assetIds,
       alternative,
       `${label} media ${node.id}`,
       assetPaths,
@@ -810,14 +674,14 @@ function assertWebPubNode(node, profile, elements, assetPaths) {
       ? 'audio'
       : node.mediaKind === 'video'
         ? 'video'
-        : node.mediaKind === 'interactive' && node.accessibility?.decorative
+        : node.mediaKind === 'interactive' && node.decorative === true
           ? 'span'
           : 'a'
   const media = mediaFigure.childNodes?.find(
     (child) => child.tagName === expectedTag,
   )
   assert(media, `${label} dropped ${node.mediaKind} media for ${node.id}`)
-  if (node.accessibility?.decorative === true) {
+  if (node.decorative === true) {
     assert(
       attribute(media, 'aria-hidden') === 'true',
       `${label} dropped decorative ${node.mediaKind} semantics for ${node.id}`,
@@ -830,16 +694,16 @@ function assertWebPubNode(node, profile, elements, assetPaths) {
   )
 }
 
-export function validateWebPubGraph(graph, html, assetPaths) {
+export function validateWebPubExpectations(expectations, html, assetPaths) {
   const index = publicationHtmlIndex(html)
   assert(
-    html.includes(`lang="${graph.edition.locale}"`) &&
+    html.includes(`lang="${expectations.locale}"`) &&
       html.includes('<main>') &&
       hasTag(index.root, 'h1'),
     'WebPub is missing language, landmarks, or headings',
   )
-  validatePublicationGraphContent(
-    graph,
+  validatePublicationProfileContent(
+    expectations.profiles['phone-webpub'],
     html,
     'phone-webpub',
     assetPaths,
@@ -849,70 +713,6 @@ export function validateWebPubGraph(graph, html, assetPaths) {
 
 function comparableHtmlText(value) {
   return normalizePdfSearchableText(String(value ?? ''))
-}
-
-function requiredNodeText(node) {
-  switch (node.type) {
-    case 'heading':
-    case 'paragraph':
-    case 'list-item':
-    case 'quote':
-    case 'caption':
-    case 'aside':
-    case 'reference':
-    case 'note':
-      return node.text ? [node.text] : []
-    case 'code':
-      return [node.code]
-    case 'figure':
-      return [node.title, node.sourceText]
-    case 'table':
-      return node.rows.flatMap((row) => row.cells.map((cell) => cell.text))
-    case 'equation':
-      return [node.source, node.label]
-    default:
-      return []
-  }
-}
-
-function requiredGraphNodeOrder(graph) {
-  const byId = new Map(graph.nodes.map((node) => [node.id, node]))
-  const required = (node) => node && node.requirement !== 'optional'
-  const nestedListIds = new Set(
-    graph.nodes
-      .filter((node) => node.type === 'list-item')
-      .flatMap((node) => node.childListIds ?? []),
-  )
-  const result = []
-  const visited = new Set()
-  const append = (node) => {
-    if (!node || visited.has(node.id)) return
-    visited.add(node.id)
-    if (required(node)) result.push(node.id)
-    if ('captionId' in node && node.captionId) append(byId.get(node.captionId))
-    if (node.type !== 'list') return
-    for (const itemId of node.itemIds ?? []) {
-      const item = byId.get(itemId)
-      append(item)
-      for (const childListId of item?.childListIds ?? [])
-        append(byId.get(childListId))
-    }
-  }
-  for (const node of graph.nodes) {
-    if (visited.has(node.id)) continue
-    if (node.type === 'caption') {
-      const parent = byId.get(node.parentId)
-      if (parent && parent.captionId === node.id) continue
-    }
-    if (node.type === 'list' && nestedListIds.has(node.id)) continue
-    if (
-      node.type === 'list-item' &&
-      byId.get(node.parentListId)?.type === 'list'
-    )
-      continue
-    append(node)
-  }
-  return result
 }
 
 function publicationHtmlIndex(html) {
@@ -931,47 +731,41 @@ function publicationHtmlIndex(html) {
   return { root, elements, renderedIds }
 }
 
-export function validatePublicationGraphContent(
-  graph,
+export function validatePublicationProfileContent(
+  profile,
   html,
-  profile = 'phone-webpub',
+  profileName = 'phone-webpub',
   assetPaths,
   index = publicationHtmlIndex(html),
 ) {
-  const requiredIds = new Set(
-    graph.nodes
-      .filter((node) => node.requirement !== 'optional')
-      .map((node) => node.id),
-  )
+  const requiredIds = new Set(profile.nodes.map((node) => node.id))
   const { elements } = index
   const renderedIds = index.renderedIds.filter((id) => requiredIds.has(id))
-  const expectedIds = requiredGraphNodeOrder(graph)
-  for (const original of graph.nodes) {
-    if (original.requirement === 'optional') continue
-    const node = publicationNodeForProfile(original, profile)
-    if (profile === 'phone-webpub' || profile === 'eink-epub')
-      assertWebPubNode(node, profile, elements, assetPaths)
+  const expectedIds = profile.nodeOrder
+  for (const node of profile.nodes) {
+    if (profileName === 'phone-webpub' || profileName === 'eink-epub')
+      assertWebPubExpectation(node, profileName, elements, assetPaths)
     const element = elements.get(node.id)
-    assert(element, `${profile} dropped required node ${node.id}`)
-    if (node.type === 'heading')
+    assert(element, `${profileName} dropped required node ${node.id}`)
+    if (node.tag && /^h[1-6]$/u.test(node.tag))
       assert(
-        element.tagName === `h${node.level}`,
-        `${profile} changed required heading ${node.id}`,
+        element.tagName === node.tag,
+        `${profileName} changed required heading ${node.id}`,
       )
-    for (const expected of requiredNodeText(node)) {
+    for (const expected of node.texts) {
       if (!expected?.trim()) continue
       assert(
         comparableHtmlText(textContent(element)).includes(
           comparableHtmlText(expected),
         ),
-        `${profile} dropped required node content ${node.id}: ${expected}`,
+        `${profileName} dropped required node content ${node.id}: ${expected}`,
       )
     }
   }
   assert(
     renderedIds.length === expectedIds.length &&
       renderedIds.every((id, index) => id === expectedIds[index]),
-    `${profile} changed required node order: expected ${expectedIds.join(',')} but rendered ${renderedIds.join(',')}`,
+    `${profileName} changed required node order: expected ${expectedIds.join(',')} but rendered ${renderedIds.join(',')}`,
   )
 }
 
@@ -1135,32 +929,73 @@ export async function checkPdf(
   return pdf.getPageCount()
 }
 
+/**
+ * Reject a persisted publication graph.
+ *
+ * The publication graph is never persisted: it is the ephemeral renderer plan
+ * between the one projection and the renderer. A `publication-graph.json` in
+ * the checked output is a stale artifact of an earlier pipeline, and the
+ * checker rejects it instead of reading it. The file is never opened: only
+ * its presence is observed.
+ */
+export async function assertNoPersistedPublicationGraph(root) {
+  const path = resolve(root, 'publication-graph.json')
+  let present = true
+  try {
+    await access(path)
+  } catch {
+    present = false
+  }
+  if (present)
+    throw new Error(
+      `Publication output contains a persisted publication graph at ${path}; the publication graph is never persisted and publication:check rejects it`,
+    )
+}
+
 export async function publicationCheck(
   argv = process.argv.slice(2),
   execution = {},
 ) {
   const options = parsePublicationCheckArgs(argv)
   const root = resolve(options.input)
-  const graph = publicationGraphSchema.parse(
-    JSON.parse(await readFile(resolve(root, 'publication-graph.json'), 'utf8')),
+  await assertNoPersistedPublicationGraph(root)
+  const structDocument = decodePersistedStructDocument(
+    JSON.parse(await readFile(resolve(root, 'struct-document.json'), 'utf8')),
   )
+  const structBundle = JSON.parse(
+    await readFile(resolve(root, 'struct-bundle.json'), 'utf8'),
+  )
+  const assetBundleDescriptor = JSON.parse(
+    await readFile(resolve(root, 'asset-bundle.json'), 'utf8'),
+  )
+  const assetBundle = createAssetBundle(assetBundleDescriptor, async () => {
+    throw new Error(
+      'The persisted asset descriptor carries no asset bytes; the checker never needs them',
+    )
+  })
+  const plan = await publicationPlanFromStructDocument(
+    structDocument,
+    assetBundle,
+  )
+  assert(
+    structBundle.documentSha256 === plan.structDocumentSha256,
+    'Persisted Struct bundle is bound to a different Struct document',
+  )
+  assert(
+    structBundle.bundleSha256 === plan.structBundleSha256,
+    'Persisted Struct bundle digest does not match the Struct document',
+  )
+  const expectations = publicationPlanExpectations(plan)
   const receiptBytes = await readFile(resolve(root, 'publication-receipt.json'))
   const receipt = JSON.parse(receiptBytes.toString('utf8'))
   assertPublicationReceiptPolicyVersions(receipt)
   const requiresCanonicalRouteParity =
     publicationReceiptRequiresCanonicalRouteParity(receipt, execution)
-  const assetBundle = JSON.parse(
-    await readFile(resolve(root, 'asset-bundle.json'), 'utf8'),
-  )
   const publicationAssetPaths = new Map(
-    assetBundle.assets.map((asset) => [
+    assetBundle.descriptor.assets.map((asset) => [
       asset.id,
       `assets/${asset.id}${publicationAssetFileExtension(asset.fileName, asset.mediaType)}`,
     ]),
-  )
-  assert(
-    receipt.source?.graphSha256 === sha256(serializePublicationGraph(graph)),
-    'Publication graph changed from its receipt',
   )
   assert(
     receipt.source?.assetBundleSha256 ===
@@ -1169,13 +1004,17 @@ export async function publicationCheck(
   )
   assert(
     receipt.source?.canonicalSubsetSha256 ===
-      canonicalPublicationSubsetSha256({
-        graph,
-        assetBundle: { descriptor: assetBundle },
-      }),
+      canonicalSubsetSha256ForPlan(plan),
     'Canonical publication semantics changed from the source receipt',
   )
-  assertPublicationReceiptSourceBinding(receipt, graph)
+  // The source identity of the publication is the Struct binding: the receipt
+  // has to name the very Struct document the plan was rebuilt from.
+  assertPublicationPlanSourceBinding(receipt, plan)
+  assert(
+    /^[a-f0-9]{64}$/u.test(String(receipt.source?.graphSha256 ?? '')),
+    'Publication receipt is missing its diagnostic graph digest',
+  )
+  assertPublicationReceiptSourceBinding(receipt, plan)
   assert(
     receipt.source?.adapterVersion === '1.0.0' &&
       typeof receipt.source?.sourceId === 'string',
@@ -1204,7 +1043,7 @@ export async function publicationCheck(
   )
   await checkWebPubReceipt(root, webpubArtifact)
   const html = await readFile(resolve(root, 'phone-webpub/index.html'), 'utf8')
-  validateWebPubGraph(graph, html, publicationAssetPaths)
+  validateWebPubExpectations(expectations, html, publicationAssetPaths)
   const epubPath = resolve(root, 'eink.epub')
   const epubArtifact = receipt.artifacts.find(
     (artifact) => artifact.profile === 'eink-epub',
@@ -1224,36 +1063,20 @@ export async function publicationCheck(
       navigation.includes('epub:type="landmarks"'),
     'EPUB is missing navigation or landmarks',
   )
-  validatePublicationGraphContent(
-    graph,
+  validatePublicationProfileContent(
+    expectations.profiles['eink-epub'],
     content ?? '',
     'eink-epub',
     publicationAssetPaths,
   )
   await run('java', ['-jar', epubcheck.path, epubPath])
-  const pdfNodes = graph.nodes.map((node) =>
-    publicationNodeForProfile(node, 'a5-pdf'),
-  )
+  const a5Expectations = expectations.profiles['a5-pdf']
   const pdfRequirements = {
-    requireLinks: pdfNodes.some(
-      (node) =>
-        ('inlineRuns' in node &&
-          node.inlineRuns?.some(
-            (run) =>
-              Boolean(run.href) ||
-              ((run.semanticRole === 'citation' ||
-                run.semanticRole === 'cross-reference') &&
-                Boolean(run.targetIds?.length)),
-          )) ||
-        (node.type === 'reference' && Boolean(node.href)),
-    ),
-    requiredLinks: publicationPdfLinkRequirementsForProfile(graph, 'a5-pdf'),
-    requiredImageCount: publicationPdfImageAssetRequirements(
-      graph,
-      'a5-pdf',
-    ).length,
-    requiredTexts: publicationPdfTextRequirements(graph, 'a5-pdf'),
-    widowOrphanTexts: publicationPdfWidowOrphanRequirements(graph, 'a5-pdf'),
+    requireLinks: a5Expectations.pdfRequiresLinks,
+    requiredLinks: a5Expectations.pdfLinkRequirements,
+    requiredImageCount: a5Expectations.pdfImageAssetIds.length,
+    requiredTexts: a5Expectations.pdfTextRequirements,
+    widowOrphanTexts: a5Expectations.pdfWidowOrphanTexts,
   }
   pdfRequirements.requireImages = pdfRequirements.requiredImageCount > 0
   const renderedPdfText = textContent(
@@ -1273,13 +1096,13 @@ export async function publicationCheck(
   await verifyArtifactReceipt(root, a4Artifact, 'a4-pdf.pdf')
   const a5Pages = await checkPdf(
     resolve(root, 'a5-pdf.pdf'),
-    graph.metadata.title,
+    expectations.title,
     'A5',
     pdfRequirements,
   )
   const a4Pages = await checkPdf(
     resolve(root, 'a4-pdf.pdf'),
-    graph.metadata.title,
+    expectations.title,
     'A4',
     pdfRequirements,
   )
@@ -1316,33 +1139,30 @@ export async function publicationCheck(
   const parity = JSON.parse(
     await readFile(resolve(root, 'astro-route-parity.json'), 'utf8'),
   )
-  const expectedHeadings = graph.nodes
-    .filter((node) => node.type === 'heading')
-    .map((node) => node.text)
-  const expectedImageAlternatives = graph.nodes
-    .filter(
-      (node) =>
-        (node.type === 'figure' && node.assetIds.length > 0) ||
-        (node.type === 'media' && node.mediaKind === 'image'),
-    )
-    .map((node) => accessibilityLabel(node))
-    .filter(Boolean)
-  const expectedCanonicalRoute = `/blog/${graph.id.replace(/^publication-/, '')}`
+  const expectedHeadings = expectations.headingOrder
+  const expectedImageAlternatives = expectations.localImageAlternatives
+  // The canonical route is the Astro entry the receipt's source identity
+  // names. The route's content is proven by the body and heading parity
+  // below, which are specific to the entry.
+  const expectedCanonicalRoute = receipt.source?.sourceType === 'astro'
+    ? `/blog/${String(receipt.source?.sourceId ?? '').replace(/^blog:/, '')}`
+    : undefined
   assert(
     parity.result === 'passed' && parity.version === '1.0.0',
     'Canonical Astro route parity did not pass',
   )
-  assert(
-    parity.canonicalRoute === expectedCanonicalRoute,
-    'Canonical Astro route parity points at the wrong entry',
-  )
+  if (expectedCanonicalRoute)
+    assert(
+      parity.canonicalRoute === expectedCanonicalRoute,
+      'Canonical Astro route parity points at the wrong entry',
+    )
   assert(
     JSON.stringify(parity.headingOrder) === JSON.stringify(expectedHeadings),
     'Canonical Astro route heading parity is stale',
   )
   assert(
     JSON.stringify(parity.bodyOrder) ===
-      JSON.stringify(publicationGraphBodyFingerprint(graph)),
+      JSON.stringify(expectations.bodyOrder),
     'Canonical Astro route body parity is stale',
   )
   assert(
@@ -1351,8 +1171,12 @@ export async function publicationCheck(
     'Canonical Astro route image alternative parity is stale',
   )
   assert(
-    parity.graphSha256 === sha256(serializePublicationGraph(graph)),
-    'Canonical Astro route parity graph binding is stale',
+    parity.structDocumentSha256 === plan.structDocumentSha256,
+    'Canonical Astro route parity Struct binding is stale',
+  )
+  assert(
+    parity.sourceBinding?.documentSha256 === plan.structDocumentSha256,
+    'Canonical Astro route parity source binding is stale',
   )
   assert(
     parity.assetBundleSha256 === sha256(serializeAssetBundle(assetBundle)),
@@ -1393,8 +1217,8 @@ export async function publicationCheck(
   )
   assert(
     JSON.stringify(canonicalRouteBodyFingerprint(canonicalRouteHtml)) ===
-      JSON.stringify(publicationGraphBodyFingerprint(graph)),
-    'Canonical Astro route body semantics differ from the publication graph',
+      JSON.stringify(expectations.bodyOrder),
+    'Canonical Astro route body semantics differ from the publication plan',
   )
   const canonicalRoute = canonicalRouteElements(canonicalRouteHtml)
   let headingCursor = 0
@@ -1406,24 +1230,20 @@ export async function publicationCheck(
     )
     headingCursor = index + 1
   }
-  const expectedImageNodes = graph.nodes.filter(
-    (node) =>
-      (node.type === 'figure' && node.assetIds.length > 0) ||
-      (node.type === 'media' && node.mediaKind === 'image'),
-  )
+  const expectedImageBindings = expectations.imageBindings
   assert(
     Array.isArray(parity.imageBindings) &&
-      parity.imageBindings.length === expectedImageNodes.length,
+      parity.imageBindings.length === expectedImageBindings.length,
     'Canonical Astro route image asset bindings are incomplete',
   )
   const assetById = new Map(
-    assetBundle.assets.map((asset) => [asset.id, asset]),
+    assetBundle.descriptor.assets.map((asset) => [asset.id, asset]),
   )
   for (const [index, binding] of parity.imageBindings.entries()) {
-    const node = expectedImageNodes[index]
-    const assetId = node.type === 'figure' ? node.assetIds[0] : node.assetId
+    const expected = expectedImageBindings[index]
+    const assetId = expected?.assetId
     const descriptor = assetById.get(assetId)
-    const alternativeText = accessibilityLabel(node)
+    const alternativeText = expected?.alternativeText ?? ''
     assert(
       descriptor &&
         binding.assetId === assetId &&

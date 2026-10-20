@@ -14,6 +14,7 @@ import {
   comparePublicationOutputReceipts,
   comparePublicationSemanticSubset,
 } from '../src/publication/adapter-conformance.ts'
+import { publicationSourceReceiptForSourceResult } from '../src/publication/publishing-facade.ts'
 import { adaptAstroBlogEntry } from '../src/publication/adapters/astro.ts'
 import { adaptPayloadLexical } from '../src/publication/adapters/payload-lexical.ts'
 import {
@@ -105,13 +106,13 @@ export async function publicationAdapterConformance(
     })
     astroReceipt = await bindPublicationSourceReceipt(
       astroOutput,
-      canonicalAstro,
+      publicationSourceReceiptForSourceResult(canonicalAstro),
       'adapter-conformance',
       [staging],
     )
     payloadReceipt = await bindPublicationSourceReceipt(
       payloadOutput,
-      canonicalPayload,
+      publicationSourceReceiptForSourceResult(canonicalPayload),
       'adapter-conformance',
       [staging],
     )

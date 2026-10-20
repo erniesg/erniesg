@@ -15,7 +15,7 @@ import {
   validateModelConsultationReceipt,
   type ModelFallbackReceipt,
 } from '../struct/model-consultation-receipt'
-import { recoverySummary, toStructDiagnostic } from '../struct/recovery'
+import { recoverySummary, toStructDiagnostic } from './recovery'
 import {
   orderBlocksByLayout,
   pageLayoutsFromBlocks,

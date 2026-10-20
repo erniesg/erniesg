@@ -8,13 +8,34 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import { adaptAstroBlogEntry, astroPublicationAdapter } from './astro'
 import {
   PublicationAdapterRegistry,
   buildRegisteredPublication,
 } from '../adapter-registry'
 import type { PublicationNode } from '../schema'
+import type {
+  AdapterDiagnostic,
+  PublicationSourceResult,
+} from '../source-adapter'
+import { adaptStructDocument } from '../struct-adapter'
+import { structDocumentSha256 } from '../struct-source-binding'
+
+const STRUCT_BLOCK_ID = /^struct-block-[0-9a-f]{24}$/u
+/**
+ * The Struct digest of the golden entry covers a 1.5 MB asset, so the
+ * adapter call is slower than the default test timeout allows.
+ */
+const SLOW = { timeout: 120_000 }
+
+let golden: PublicationSourceResult
+
+beforeAll(async () => {
+  golden = await adaptAstroBlogEntry({
+    entryId: 'moving-to-cloudflare-with-astro',
+  })
+}, SLOW.timeout)
 
 async function fixtureCollection(name: string) {
   const root = await mkdtemp(resolve(tmpdir(), 'publication-astro-'))
@@ -31,11 +52,22 @@ async function fixtureCollection(name: string) {
   return root
 }
 
+function lossyInlineStyles(result: { diagnostics: AdapterDiagnostic[] }) {
+  return result.diagnostics.filter(
+    (diagnostic) => diagnostic.code === 'lossy-inline-style',
+  )
+}
+
+function paragraphNode(result: PublicationSourceResult) {
+  return result.graph.nodes.find(
+    (node): node is Extract<PublicationNode, { type: 'paragraph' }> =>
+      node.type === 'paragraph',
+  )
+}
+
 describe('Astro publication adapter', () => {
   it('adapts the published golden entry with authored hero alt and local translations', async () => {
-    const result = await adaptAstroBlogEntry({
-      entryId: 'moving-to-cloudflare-with-astro',
-    })
+    const result = golden
     expect(result.graph.metadata).toMatchObject({
       title: 'Moving to Cloudflare Pages with Astro',
       abstract:
@@ -43,20 +75,62 @@ describe('Astro publication adapter', () => {
       contributors: ['erniesg'],
       created: '2025-02-10',
       defaultLocale: 'en',
-      sourceDocumentVersion: 'moving-to-cloudflare-with-astro',
+      // The graph is a projection of the Struct document, so the source
+      // document version is the Struct schema revision the app derived it
+      // from.
+      sourceDocumentVersion: '0.2.0',
     })
     expect(result.assetBundle.descriptor.assets).toHaveLength(1)
     expect(result.assetBundle.descriptor.assets[0]).toMatchObject({
       fileName: 'astro.png',
       accessibilityLabel:
         'The Astro logo in white on an orange-to-purple gradient',
+      width: 2048,
+      height: 1024,
     })
     expect(result.diagnostics.map((item) => item.message)).toEqual([
       'Resolved local translation sibling ja.mdx',
       'Resolved local translation sibling ko.mdx',
       'Resolved local translation sibling zh.mdx',
+      'The pinned Struct document has no inline code style; the inline code span was reduced to plain text.',
     ])
   })
+
+  it(
+    'projects exactly the Struct document the app-owned ingress produced',
+    SLOW,
+    () => {
+      const result = golden
+      expect(result.structDocument).toBeDefined()
+      const projected = adaptStructDocument(result.structDocument!)
+      expect(projected.graph.nodes.map((node) => node.id)).toEqual(
+        result.graph.nodes.map((node) => node.id),
+      )
+      expect(projected.graph.nodes.map((node) => node.type)).toEqual(
+        result.graph.nodes.map((node) => node.type),
+      )
+      expect(result.graph.metadata).toEqual(projected.graph.metadata)
+    },
+  )
+
+  it(
+    'binds the result to the Struct document this invocation produced',
+    SLOW,
+    () => {
+      const result = golden
+      expect(result.structDocument).toBeDefined()
+      const binding = result.sourceBinding
+      if (!binding || binding.kind !== 'struct-cutover')
+        throw new Error('the adapter result is not bound to a Struct document')
+      expect(binding.documentSha256).toBe(
+        structDocumentSha256(result.structDocument!),
+      )
+      expect(binding.semanticReceiptSha256).toMatch(/^[a-f0-9]{64}$/u)
+      expect(binding.packageSourceCommit).toBe(
+        '90f76f1f80b037cc065169d07b13779c03420026',
+      )
+    },
+  )
 
   it('preserves synthetic code, math, quote, footnote, caption, link, list, and image semantics', async () => {
     const contentRoot = await fixtureCollection('synthetic-publication')
@@ -79,9 +153,7 @@ describe('Astro publication adapter', () => {
         'note',
       ]),
     )
-    const paragraph = result.graph.nodes.find(
-      (node) => node.type === 'paragraph',
-    )
+    const paragraph = paragraphNode(result)
     expect(paragraph).toMatchObject({
       type: 'paragraph',
       inlineRuns: expect.arrayContaining([
@@ -153,7 +225,7 @@ describe('Astro publication adapter', () => {
     ).rejects.toThrow(/source escapes the blog collection/)
   })
 
-  it('preserves authored heading fragments, inline code, and nested list ownership while rejecting escaping assets', async () => {
+  it('preserves authored heading fragments, records the inline-code loss, and keeps nested list ownership while rejecting escaping assets', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'publication-contract-'))
     const entry = resolve(root, 'contract')
     const outside = await mkdtemp(resolve(tmpdir(), 'publication-outside-'))
@@ -174,21 +246,33 @@ describe('Astro publication adapter', () => {
       entryId: 'contract',
       contentRoot: root,
     })
+    const heading = result.graph.nodes.find(
+      (node): node is Extract<PublicationNode, { type: 'heading' }> =>
+        node.type === 'heading' && node.text === 'Why Astro?',
+    )
+    expect(heading).toBeDefined()
+    // The authored anchor survives as the Struct block id of the heading.
+    expect(heading?.id).toMatch(STRUCT_BLOCK_ID)
+    const paragraph = result.graph.nodes.find(
+      (node): node is Extract<PublicationNode, { type: 'paragraph' }> =>
+        node.type === 'paragraph' && node.text.includes('main'),
+    )
+    expect(paragraph?.text).toBe('Jump to main.')
+    // The inline code span is reduced to plain text and the loss is reported
+    // against the block that lost it.
     expect(
-      result.graph.nodes.find(
-        (node) => node.type === 'heading' && node.text === 'Why Astro?',
-      ),
-    ).toMatchObject({ id: 'why-astro' })
-    expect(
-      result.graph.nodes.find(
-        (node) => node.type === 'paragraph' && node.text.includes('main'),
-      ),
-    ).toMatchObject({
-      inlineRuns: expect.arrayContaining([
-        expect.objectContaining({ inlineCode: true }),
-        expect.objectContaining({ href: '#why-astro' }),
+      paragraph?.inlineRuns?.some((run) => run.inlineCode === true),
+    ).toBe(false)
+    const lossy = lossyInlineStyles(result)
+    expect(lossy).toHaveLength(1)
+    expect(lossy[0]?.message).toMatch(/inline code/u)
+    expect(lossy[0]?.nodeId).toBe(paragraph?.id)
+    // The authored fragment now resolves to the Struct block it names.
+    expect(paragraph?.inlineRuns).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ href: `#${heading?.id}` }),
       ]),
-    })
+    )
     const list = result.graph.nodes.find(
       (node): node is Extract<PublicationNode, { type: 'list' }> =>
         node.type === 'list' && node.ordered,
@@ -206,7 +290,7 @@ describe('Astro publication adapter', () => {
     ).toBeDefined()
   })
 
-  it('allocates generated ids around authored slugs without collisions', async () => {
+  it('mints unique Struct-derived ids for authored slugs without collisions', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'publication-id-collision-'))
     const entry = resolve(root, 'id-collision')
     await mkdir(entry)
@@ -221,11 +305,11 @@ describe('Astro publication adapter', () => {
     const ids = result.graph.nodes.map((node) => node.id)
     expect(new Set(ids).size).toBe(ids.length)
     expect(result.graph.nodes.find((node) => node.type === 'heading')).toMatchObject({
-      id: 'paragraph-2',
+      id: expect.stringMatching(STRUCT_BLOCK_ID),
     })
   })
 
-  it('reserves the fixed hero figure id before authored heading slugs', async () => {
+  it('keeps the hero figure distinct from the authored heading anchors', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'publication-hero-collision-'))
     const entry = resolve(root, 'hero-collision')
     await mkdir(entry)
@@ -241,15 +325,21 @@ describe('Astro publication adapter', () => {
       entryId: 'hero-collision',
       contentRoot: root,
     })
-    expect(result.graph.nodes.find((node) => node.type === 'figure')).toMatchObject({
-      id: 'hero-figure',
+    const ids = result.graph.nodes.map((node) => node.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    const figure = result.graph.nodes.find((node) => node.type === 'figure')
+    expect(figure?.id).toMatch(STRUCT_BLOCK_ID)
+    expect(figure).toMatchObject({
+      accessibility: {
+        alternativeText: 'Hero illustration',
+      },
     })
-    expect(result.graph.nodes.find((node) => node.type === 'heading')).toMatchObject({
-      id: 'hero-figure-1',
-    })
+    const heading = result.graph.nodes.find((node) => node.type === 'heading')
+    expect(heading?.id).toMatch(STRUCT_BLOCK_ID)
+    expect(heading?.id).not.toBe(figure?.id)
   })
 
-  it('normalizes non-ASCII heading slugs to schema-safe ids', async () => {
+  it('normalizes non-ASCII heading anchors to schema-safe ids', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'publication-heading-unicode-'))
     const entry = resolve(root, 'heading-unicode')
     await mkdir(entry)
@@ -261,15 +351,16 @@ describe('Astro publication adapter', () => {
       entryId: 'heading-unicode',
       contentRoot: root,
     })
-    expect(result.graph.nodes.filter((node) => node.type === 'heading').map((node) => node.id)).toEqual([
-      'cafe',
-      'heading-1',
-      'cafe-1',
-    ])
+    const headings = result.graph.nodes.filter((node) => node.type === 'heading')
+    expect(headings).toHaveLength(3)
+    expect(new Set(headings.map((node) => node.id)).size).toBe(3)
     expect(result.graph.nodes.every((node) => /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(node.id))).toBe(true)
+    // The authored anchor of a non-ASCII heading still resolves to its block.
+    const cafe = headings[0]
+    expect(cafe?.id).toMatch(STRUCT_BLOCK_ID)
   })
 
-  it('preserves deletion semantics, unique repeated footnote anchors, and all backlinks', async () => {
+  it('preserves deletion text, unique repeated footnote anchors, and all backlinks', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'publication-footnote-'))
     const entry = resolve(root, 'footnote-references')
     await mkdir(entry)
@@ -281,20 +372,22 @@ describe('Astro publication adapter', () => {
       entryId: 'footnote-references',
       contentRoot: root,
     })
-    const paragraph = result.graph.nodes.find(
-      (node) => node.type === 'paragraph',
-    )
+    const paragraph = paragraphNode(result)
+    expect(paragraph?.text).toBe('A removed claim [proof] and again [proof].')
+    // The struck-through text is preserved and the dropped style is reported.
+    const lossy = lossyInlineStyles(result)
+    expect(lossy).toHaveLength(1)
+    expect(lossy[0]?.message).toMatch(/strikethrough/u)
+    expect(lossy[0]?.nodeId).toBe(paragraph?.id)
     const note = result.graph.nodes.find((node) => node.type === 'note')
-    expect(paragraph).toMatchObject({
-      inlineRuns: expect.arrayContaining([
-        expect.objectContaining({ strikethrough: true }),
-        expect.objectContaining({ relationshipId: 'ref-proof' }),
-        expect.objectContaining({ relationshipId: 'ref-proof-2' }),
-      ]),
-    })
+    const relationships = paragraph?.inlineRuns
+      ?.map((run) => run.relationshipId)
+      .filter((id): id is string => Boolean(id))
+    expect(new Set(relationships).size).toBe(2)
     expect(note).toMatchObject({
-      backlinkIds: ['ref-proof', 'ref-proof-2'],
+      backlinkIds: expect.arrayContaining([expect.any(String)]),
     })
+    expect(note && 'backlinkIds' in note ? note.backlinkIds : []).toHaveLength(2)
   })
 
   it('reserves footnote anchors in the global node id namespace', async () => {
@@ -309,18 +402,22 @@ describe('Astro publication adapter', () => {
       entryId: 'footnote-collision',
       contentRoot: root,
     })
-    expect(result.graph.nodes.find((node) => node.type === 'heading')).toMatchObject({
-      id: 'ref-proof',
-    })
-    expect(result.graph.nodes.find((node) => node.type === 'paragraph')).toMatchObject({
-      inlineRuns: [expect.objectContaining({ relationshipId: 'ref-proof-2' })],
-    })
-    expect(result.graph.nodes.find((node) => node.type === 'note')).toMatchObject({
-      backlinkIds: ['ref-proof-2'],
+    const ids = result.graph.nodes.map((node) => node.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    const heading = result.graph.nodes.find((node) => node.type === 'heading')
+    expect(heading?.id).toMatch(STRUCT_BLOCK_ID)
+    const paragraph = paragraphNode(result)
+    const relationshipId = paragraph?.inlineRuns?.find(
+      (run) => run.relationshipId,
+    )?.relationshipId
+    expect(relationshipId).toMatch(/^struct-relationship-[0-9a-f]{24}$/u)
+    const note = result.graph.nodes.find((node) => node.type === 'note')
+    expect(note).toMatchObject({
+      backlinkIds: [relationshipId],
     })
   })
 
-  it('rewrites footnote targets when a heading already owns the preferred note id', async () => {
+  it('resolves footnote targets and heading links to distinct Struct blocks', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'publication-footnote-note-collision-'))
     const entry = resolve(root, 'footnote-note-collision')
     await mkdir(entry)
@@ -332,26 +429,24 @@ describe('Astro publication adapter', () => {
       entryId: 'footnote-note-collision',
       contentRoot: root,
     })
-    expect(result.graph.nodes.find((node) => node.type === 'heading')).toMatchObject({
-      id: 'note-proof',
-    })
-    expect(result.graph.nodes.find((node) => node.type === 'paragraph')).toMatchObject({
-      inlineRuns: [
-        expect.objectContaining({ href: '#note-proof' }),
-        expect.objectContaining({
-          href: '#note-proof-1',
-          targetIds: ['note-proof-1'],
-          semanticRole: 'cross-reference',
-        }),
-      ],
-    })
-    expect(result.graph.nodes.find((node) => node.type === 'note')).toMatchObject({
-      id: 'note-proof-1',
-      backlinkIds: ['ref-proof'],
-    })
+    const heading = result.graph.nodes.find((node) => node.type === 'heading')
+    expect(heading?.id).toMatch(STRUCT_BLOCK_ID)
+    const note = result.graph.nodes.find((node) => node.type === 'note')
+    expect(note?.id).toMatch(STRUCT_BLOCK_ID)
+    expect(note?.id).not.toBe(heading?.id)
+    const paragraph = paragraphNode(result)
+    const linked = paragraph?.inlineRuns?.filter((run) => run.href)
+    expect(linked).toEqual([
+      expect.objectContaining({ href: `#${heading?.id}` }),
+      expect.objectContaining({
+        href: `#${note?.id}`,
+        targetIds: [note?.id],
+        semanticRole: 'cross-reference',
+      }),
+    ])
   })
 
-  it('resolves definitions before references and preserves authored hard breaks', async () => {
+  it('resolves definitions before references and records the authored hard break loss', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'publication-footnote-order-'))
     const entry = resolve(root, 'definition-before-reference')
     await mkdir(entry)
@@ -366,9 +461,12 @@ describe('Astro publication adapter', () => {
     expect(result.graph.nodes.find((node) => node.type === 'note')).toMatchObject({
       text: 'Defined before its reference.',
     })
-    expect(result.graph.nodes.find((node) => node.type === 'paragraph')).toMatchObject({
-      inlineRuns: expect.arrayContaining([expect.objectContaining({ hardBreak: true })]),
-    })
+    const paragraph = paragraphNode(result)
+    expect(paragraph?.text).toBe('A hard\nbreak and a reference[proof].')
+    const lossy = lossyInlineStyles(result)
+    expect(lossy).toHaveLength(1)
+    expect(lossy[0]?.message).toMatch(/hard break/u)
+    expect(lossy[0]?.nodeId).toBe(paragraph?.id)
   })
 
   it('preserves zero ordered-list starts and rejects task-list and thematic-break loss', async () => {
@@ -389,6 +487,15 @@ describe('Astro publication adapter', () => {
     })
     expect(zeroList.graph.nodes.find((node) => node.type === 'list')).toMatchObject({
       start: 0,
+    })
+
+    await createEntry('one-list', '1. First item\n')
+    const oneList = await adaptAstroBlogEntry({
+      entryId: 'one-list',
+      contentRoot: root,
+    })
+    expect(oneList.graph.nodes.find((node) => node.type === 'list')).toMatchObject({
+      start: 1,
     })
 
     await createEntry('task-list', '- [x] Shipped\n')
@@ -418,26 +525,30 @@ describe('Astro publication adapter', () => {
     ).rejects.toThrow(/Unsupported MDX node blockquote/)
   })
 
-  it('selects the registered source before invoking a source-neutral renderer', async () => {
-    const registry = new PublicationAdapterRegistry().register(
-      astroPublicationAdapter,
-    )
-    let receivedTitle = ''
-    await buildRegisteredPublication(
-      registry,
-      {
-        id: 'fixture-renderer',
-        async render(bundle) {
-          receivedTitle = bundle.graph.metadata.title
+  it(
+    'selects the registered source before invoking a source-neutral renderer',
+    SLOW,
+    async () => {
+      const registry = new PublicationAdapterRegistry().register(
+        astroPublicationAdapter,
+      )
+      let receivedTitle = ''
+      await buildRegisteredPublication(
+        registry,
+        {
+          id: 'fixture-renderer',
+          async render(bundle) {
+            receivedTitle = bundle.graph.metadata.title
+          },
         },
-      },
-      {
-        adapterId: 'astro',
-        locator: { entryId: 'moving-to-cloudflare-with-astro' },
-        outputDirectory: 'unused',
-        profiles: ['phone-webpub'],
-      },
-    )
-    expect(receivedTitle).toBe('Moving to Cloudflare Pages with Astro')
-  })
+        {
+          adapterId: 'astro',
+          locator: { entryId: 'moving-to-cloudflare-with-astro' },
+          outputDirectory: 'unused',
+          profiles: ['phone-webpub'],
+        },
+      )
+      expect(receivedTitle).toBe('Moving to Cloudflare Pages with Astro')
+    },
+  )
 })

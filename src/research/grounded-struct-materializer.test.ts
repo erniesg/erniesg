@@ -59,6 +59,14 @@ import {
   verifyGroundedCoreMaterializationBinding,
   type GroundedStructCandidateSelection,
 } from './grounded-struct-materializer'
+import {
+  decodeStructDocument as packageDecodeStructDocument,
+  encodeStructDocument as packageEncodeStructDocument,
+} from '@erniesg/struct/document'
+import {
+  decodeStructDocument as localDecodeStructDocument,
+  encodeStructDocument as localEncodeStructDocument,
+} from '../struct/codec'
 import type {
   StructuredExtractionContext,
   StructuredExtractionProposal,
@@ -1137,6 +1145,48 @@ describe('candidate-grounded STRUCT materialization', () => {
       })),
     ).rejects.toThrow('EPUBCHECK_WARNINGS_FATAL')
   }, 60_000)
+
+  it('emits a STRUCT document the pinned package validator accepts', () => {
+    const selected = selections()
+    const materialized = materializeGroundedStruct({
+      graph: selected.graph,
+      context: context(),
+      proposal: proposal(),
+      verifierIdentity,
+      selections: selected.values,
+      sourceFileName: 'public-table-pilot.pdf',
+    })
+    const document = materialized.document
+    const blockTextSum = document.blocks.reduce(
+      (total, block) => total + block.text.length,
+      0,
+    )
+    // The pinned package is the authority: it must accept the document the
+    // app materializes, and so must the app's own local codec.
+    expect(() => packageDecodeStructDocument(document)).not.toThrow()
+    expect(() => packageEncodeStructDocument(document)).not.toThrow()
+    expect(() => localDecodeStructDocument(document)).not.toThrow()
+    expect(() => localEncodeStructDocument(document)).not.toThrow()
+    // Measured on this fixture: the source runs hold 28 characters, but the
+    // table block owns two runs and publishes them joined ("Header Body"),
+    // so the blocks carry 29. The receipt must describe the blocks.
+    expect(
+      context().sourceRuns.reduce((total, { text }) => total + text.length, 0),
+    ).toBe(28)
+    expect(document.blocks.map(({ kind, text }) => ({ kind, text }))).toEqual([
+      { kind: 'heading', text: 'Table Pilot' },
+      { kind: 'heading', text: 'Methods' },
+      { kind: 'table', text: 'Header Body' },
+    ])
+    expect(blockTextSum).toBe(29)
+    expect(document.receipt.textCharacterCount).toBe(blockTextSum)
+    expect(document.receipt.conservation.sourceTextCharacterCount).toBe(
+      blockTextSum,
+    )
+    expect(document.receipt.conservation.structTextCharacterCount).toBe(
+      blockTextSum,
+    )
+  })
 
   it('rejects unselected core and derived receipt tampering at the bridge', () => {
     const selected = selections()

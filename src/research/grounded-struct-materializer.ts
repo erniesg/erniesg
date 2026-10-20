@@ -1010,8 +1010,20 @@ export function materializeGroundedStruct(
     pages: [],
     sourceIds: [],
   }))
-  const sourceTextCharacterCount = input.context.sourceRuns.reduce(
-    (total, { text }) => total + text.length,
+  // The STRUCT receipt binds the document's text count to the source text the
+  // blocks carry: `receipt.textCharacterCount` must equal the sum of the
+  // block texts AND `conservation.sourceTextCharacterCount`.
+  //
+  // A verified node owns its source runs joined and whitespace-normalized, so
+  // the source side is measured on that carried text, exactly as the
+  // reconstruction adapter measures `sourceTextCharacterCount` on the source
+  // node texts it publishes. Measuring it on the raw run fragments instead
+  // undercounts every node that spans more than one source run by the
+  // separator the join itself introduces, so the receipt claimed fewer source
+  // characters than the document publishes and the app's own codec refused
+  // the document.
+  const sourceTextCharacterCount = output.nodes.reduce(
+    (total, node) => total + node.text.length,
     0,
   )
   const structTextCharacterCount = blocks.reduce(
@@ -1093,7 +1105,7 @@ export function materializeGroundedStruct(
     assetCount: assets.length,
     relationshipCount: relationships.length,
     diagnosticCount: diagnostics.length,
-    textCharacterCount: sourceTextCharacterCount,
+    textCharacterCount: structTextCharacterCount,
     conservation,
     generatedSha256: structDigest({
       ...withoutReceipt,

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 import type { StructDocument } from '@erniesg/struct/document'
 import {
@@ -37,10 +37,16 @@ import { papers } from './papers'
  * measurements of the two renderers, and the frozen parity snapshot
  * (`tests/fixtures/struct-adapter-parity/expected.json`) is left untouched.
  *
- * MEASURED OUTCOME (base commit 9003ea7657ef73cbad271e6a82eab5f27f649e91):
- * the two renderers DISAGREE on real repository fixtures, so the E-04
- * production import switch is NOT performed by the change that adds this file.
- * The measured divergence is:
+ * RULING (E-04 coordinator record): the pinned package renderers are the
+ * APPROVED AUTHORITY for the StructDocument render path, so the production
+ * import switch in `src/research/epub.ts` and
+ * `src/research/reconstruction-materialization.ts` PROCEEDS and adopts the
+ * package's output. The two renderers DISAGREE on two of the three real
+ * fixtures; those disagreements are INTENTIONAL, RECORDED output changes, not
+ * defects to paper over, and the local copies stay physically unchanged until
+ * E-07 deletes them.
+ *
+ * MEASURED DIVERGENCE (base commit 9003ea7657ef73cbad271e6a82eab5f27f649e91):
  *
  *  1. List rendering. The package renderer groups consecutive `list-item`
  *     blocks into `<ul>`/`<ol>` with `<li>` children; the local copy has no
@@ -59,6 +65,13 @@ import { papers } from './papers'
  *
  * The digests below pin that measurement so the divergence is visible, not
  * silent, and so the cut can be re-adjudicated against a recorded baseline.
+ * Every diverging fixture asserts the EXACT digest of BOTH renderers, so the
+ * test fails if either side moves; the one fixture whose two renderers agree
+ * is asserted byte-equal.
+ *
+ * The comparison imports of the stale local copies live in THIS FILE ONLY: no
+ * production module under `src/` may import `src/struct/**` for the render
+ * path any more.
  */
 
 /** The frozen adapter-parity reconstruction fixtures, decoded verbatim. */
@@ -243,6 +256,41 @@ describe('E-04 dual-render parity: StructDocument mode', () => {
     ])
   })
 
+  it('asserts byte equality of the two XHTML renderers on the agreeing fixture', async () => {
+    const document = await adapterParityDocument('ordinary-pdf')
+    const local = localRenderPublicationXhtml(document)
+    const packaged = packageRenderPublicationXhtml(document)
+
+    expect(local).toBe(packaged)
+    expect(sha256(local)).toBe(
+      '4d9bc0a62fb7d4ce8aefbd1811ab5ea7246f33f64cd8721582ab93e1532f14f2',
+    )
+  })
+
+  it('asserts byte inequality of the two XHTML renderers on every diverging fixture', async () => {
+    const document = await structuredManuscriptDocument()
+    expect(
+      localRenderPublicationXhtml(document),
+    ).not.toBe(packageRenderPublicationXhtml(document))
+
+    const preserved = await adapterParityDocument('source-preserved-pdf')
+    expect(localRenderPublicationXhtml(preserved)).not.toBe(
+      packageRenderPublicationXhtml(preserved),
+    )
+  })
+
+  it('asserts byte equality of the two EPUB builders on the agreeing fixture', async () => {
+    const document = await adapterParityDocument('ordinary-pdf')
+    const local = await localBuildStructEpub(document)
+    const packaged = await packageBuildStructEpub(document)
+
+    expect(bytesEqual(local.bytes, packaged.bytes)).toBe(true)
+    expect(local.sha256).toBe(packaged.sha256)
+    expect(local.sha256).toBe(
+      '1d3c048035a2228a552e9d45d3258c3e75b3dccbe8d141e7b3e0b0e85c26a335',
+    )
+  })
+
   it('characterises the list-rendering divergence on the list-bearing fixture', async () => {
     const document = await structuredManuscriptDocument()
     const local = localRenderPublicationXhtml(document)
@@ -311,29 +359,38 @@ describe('E-04 dual-render parity: StructDocument mode', () => {
 })
 
 describe('E-04 dual-render parity: production Struct branch', () => {
-  it('routes the app Struct branch through the local compatibility copy while the cut is blocked', async () => {
+  it('routes the app Struct branch through the pinned package renderer', async () => {
     const document = await structuredManuscriptDocument()
     const produced = renderResearchPublicationXhtml(document)
     const local = localRenderPublicationXhtml(document)
     const packaged = packageRenderPublicationXhtml(document)
 
-    // The app branch is byte-identical to one of the two renderers. While the
-    // E-04 cut is blocked it is the local copy; flipping the cut inverts this
-    // assertion and nothing else in this file.
-    expect(produced === local || produced === packaged).toBe(true)
-    expect(produced).toBe(local)
-    expect(produced).not.toBe(packaged)
+    // After the E-04 cut the app's renderer entry point IS the pinned package
+    // renderer, so the app adopts the package's approved output. The stale
+    // local copy stays on disk until E-07 and is no longer the reference.
+    expect(produced).toBe(packaged)
+    expect(produced).not.toBe(local)
   })
 
-  it('routes the app Struct EPUB branch through the local compatibility copy while the cut is blocked', async () => {
+  it('routes the app Struct EPUB branch through the pinned package builder', async () => {
     const document = await structuredManuscriptDocument()
     const produced = await renderResearchEpub(document)
     const local = await localBuildStructEpub(document)
     const packaged = await packageBuildStructEpub(document)
 
-    expect(produced.sha256).toBe(local.sha256)
-    expect(produced.sha256).not.toBe(packaged.sha256)
-    expect(bytesEqual(produced.bytes, local.bytes)).toBe(true)
+    expect(produced.sha256).toBe(packaged.sha256)
+    expect(produced.sha256).not.toBe(local.sha256)
+    expect(bytesEqual(produced.bytes, packaged.bytes)).toBe(true)
+  })
+
+  it('keeps the byte-identical fixture identical through the app and the local copy', async () => {
+    const document = await adapterParityDocument('ordinary-pdf')
+    const produced = renderResearchPublicationXhtml(document)
+    const local = localRenderPublicationXhtml(document)
+    const packaged = packageRenderPublicationXhtml(document)
+
+    expect(produced).toBe(packaged)
+    expect(produced).toBe(local)
   })
 })
 
@@ -464,6 +521,9 @@ describe('E-04 dual-render parity: failure and limit matrix', () => {
 
   it('records the measured XHTML acceptance matrix per renderer', async () => {
     const document = await structuredManuscriptDocument()
+    const invalidVersion = structuredClone(document)
+    Object.assign(invalidVersion, { schemaVersion: '9.9.9' })
+    Object.assign(invalidVersion.receipt, { schemaVersion: '9.9.9' })
     const invalidReceipt = structuredClone(document)
     invalidReceipt.receipt.generatedSha256 = 'b'.repeat(64)
     const missingTarget = structuredClone(document)
@@ -472,6 +532,14 @@ describe('E-04 dual-render parity: failure and limit matrix', () => {
     reseal(missingTarget)
 
     const measured = {
+      'invalid-version': {
+        local: await outcome(() =>
+          localRenderPublicationXhtml(invalidVersion),
+        ),
+        package: await outcome(() =>
+          packageRenderPublicationXhtml(invalidVersion),
+        ),
+      },
       'invalid-receipt-digest': {
         local: await outcome(() =>
           localRenderPublicationXhtml(invalidReceipt),
@@ -491,6 +559,11 @@ describe('E-04 dual-render parity: failure and limit matrix', () => {
     }
 
     expect(measured).toEqual({
+      'invalid-version': {
+        local: 'accepted',
+        package:
+          'STRUCT_CODEC_SCHEMA_VERSION at $.schemaVersion: unsupported schema version "9.9.9"',
+      },
       'invalid-receipt-digest': {
         local: 'accepted',
         package:
@@ -550,5 +623,83 @@ describe('E-04 dual-render parity: failure and limit matrix', () => {
         packaged.bytes.byteLength - 1,
       ),
     ).toThrow('STRUCT_EPUB_ARCHIVE_RESOURCE_LIMIT')
+  })
+})
+
+describe('E-04 dual-render parity: local copies stay test-local until E-07', () => {
+  it('keeps the stale local renderer copies out of every production module', async () => {
+    const sourceRoot = new URL('../', import.meta.url)
+
+    async function productionModules(directory: URL): Promise<URL[]> {
+      const entries = await readdir(directory, { withFileTypes: true })
+      const nested = await Promise.all(
+        entries
+          .filter((entry) => entry.isDirectory())
+          .map((entry) =>
+            productionModules(new URL(`${entry.name}/`, directory)),
+          ),
+      )
+      return [
+        ...nested.flat(),
+        ...entries
+          .filter(
+            (entry) =>
+              entry.isFile() &&
+              /\.(?:[cm]?[jt]sx?|astro)$/.test(entry.name) &&
+              !/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(entry.name),
+          )
+          .map((entry) => new URL(entry.name, directory)),
+      ]
+    }
+
+    const violations: string[] = []
+    for (const file of await productionModules(sourceRoot)) {
+      // The compatibility copies themselves are the stale reference and are
+      // deleted only at E-07; their own internal wiring is not a violation.
+      if (file.pathname.includes('/src/struct/')) continue
+      const source = await readFile(file, 'utf8')
+      for (const match of source.matchAll(
+        /(?:from\s+|import\s*\(\s*)['"]([^'"]+)['"]/gu,
+      )) {
+        const specifier = match[1]!
+        if (
+          /(?:^|\/)struct\/(?:xhtml|epub)$/u.test(specifier) &&
+          !specifier.startsWith('@erniesg/struct/')
+        ) {
+          violations.push(`${file.pathname}: stale local renderer import ${specifier}`)
+        }
+      }
+    }
+
+    expect(violations).toEqual([])
+  })
+
+  it('keeps the two switched production files on the pinned package subpaths', async () => {
+    const switched: Array<{ file: string; subpaths: string[] }> = [
+      {
+        file: 'src/research/epub.ts',
+        subpaths: [
+          '@erniesg/struct/renderers/xhtml',
+          '@erniesg/struct/renderers/epub',
+        ],
+      },
+      {
+        file: 'src/research/reconstruction-materialization.ts',
+        subpaths: ['@erniesg/struct/renderers/epub'],
+      },
+    ]
+
+    for (const { file, subpaths } of switched) {
+      const source = await readFile(
+        new URL(file, new URL('../../', import.meta.url)),
+        'utf8',
+      )
+      for (const subpath of subpaths) {
+        expect(source).toContain(`from '${subpath}'`)
+      }
+      expect(source).not.toMatch(
+        /from\s+['"][^'"]*\.\.\/struct\/(?:xhtml|epub)['"]/u,
+      )
+    }
   })
 })

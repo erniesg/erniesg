@@ -75,6 +75,15 @@ export type StructBundleDescriptor = {
 }
 
 /**
+ * The canonical serialized Struct document, as persisted. The bytes are
+ * produced by the pinned package, so the persisted file is the canonical
+ * form and not a re-serialization of the in-memory object.
+ */
+export function structDocumentJson(document: StructDocument): string {
+  return `${JSON.stringify(encodeStructDocument(document), null, 2)}\n`
+}
+
+/**
  * The persisted Struct bundle descriptor: the bundle identity plus the asset
  * digests. The asset bytes stay in the render output's asset directory; they
  * are not duplicated into the descriptor.

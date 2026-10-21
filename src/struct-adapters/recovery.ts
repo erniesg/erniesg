@@ -3,7 +3,10 @@ import type {
   StructDiagnosticSeverity,
   StructRecovery,
 } from '@erniesg/struct/document'
-import { diagnosticCategory as packageDiagnosticCategory } from '@erniesg/struct/recovery'
+import {
+  diagnosticCategory as packageDiagnosticCategory,
+  hasActionableRecovery as packageHasActionableRecovery,
+} from '@erniesg/struct/recovery'
 
 type DiagnosticCopy = Pick<
   StructDiagnostic,
@@ -403,8 +406,13 @@ export function recoverySummary(input: RecoveryInput): StructRecovery {
   }
 }
 
+/**
+ * The actionable-recovery predicate belongs to `@erniesg/struct/recovery`. The
+ * app keeps this facade so its callers do not change, but it must not carry a
+ * second rule that could silently outrank the package at runtime.
+ */
 export function hasActionableRecovery(
   recovery: StructRecovery | undefined,
 ): recovery is StructRecovery & { userAction: string } {
-  return Boolean(recovery?.userAction)
+  return packageHasActionableRecovery(recovery)
 }

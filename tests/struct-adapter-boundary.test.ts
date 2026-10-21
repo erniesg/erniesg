@@ -1,13 +1,78 @@
 import { readFile, readdir } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import * as ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import { buildStructDocument as legacyBuild } from '../src/struct/from-reconstruction'
 import { buildStructDocument as facadeBuild } from '../src/struct-adapters'
 import { buildStructDocument as rootBuild } from '../src/struct'
+import { diagnosticCategory as appDiagnosticCategory } from '../src/struct-adapters/recovery'
+import { diagnosticCategory as packageDiagnosticCategory } from '@erniesg/struct/recovery'
 
 const root = new URL('../src/', import.meta.url)
 const portableRoot = new URL('struct/', root)
 const adapterRoot = new URL('struct-adapters/', root)
+
+const tsconfig = JSON.parse(
+  readFileSync(new URL('../tsconfig.json', import.meta.url), 'utf8'),
+) as {
+  compilerOptions?: { baseUrl?: string; paths?: Record<string, string[]> }
+}
+const tsconfigBaseUrl = tsconfig.compilerOptions?.baseUrl ?? '.'
+const tsconfigPaths = tsconfig.compilerOptions?.paths ?? {}
+
+const projectRoot = new URL('../', import.meta.url)
+
+function resolveAliasSpecifier(specifier: string): string | null {
+  for (const [pattern, targets] of Object.entries(tsconfigPaths)) {
+    if (pattern.endsWith('/*')) {
+      const prefix = pattern.slice(0, -1)
+      if (specifier.startsWith(prefix)) {
+        const rest = specifier.slice(prefix.length)
+        const targetPattern = targets[0] ?? ''
+        const resolvedRelative = targetPattern.endsWith('/*')
+          ? `${targetPattern.slice(0, -1)}${rest}`
+          : targetPattern
+        const base = new URL(
+          `${tsconfigBaseUrl.replace(/\/$/, '') || '.'}/`,
+          projectRoot,
+        )
+        return new URL(resolvedRelative.replace(/^\.\//, ''), base).pathname
+      }
+    } else if (specifier === pattern) {
+      const target = targets[0]
+      if (target) {
+        const base = new URL(
+          `${tsconfigBaseUrl.replace(/\/$/, '') || '.'}/`,
+          projectRoot,
+        )
+        return new URL(target.replace(/^\.\//, ''), base).pathname
+      }
+    }
+  }
+  // Fall back to the alias forms actually used in this repository even if the
+  // tsconfig mapping is absent, so the guard stays robust.
+  if (specifier.startsWith('@/')) {
+    return new URL(`./src/${specifier.slice(2)}`, projectRoot).pathname
+  }
+  if (specifier.startsWith('~/')) {
+    return new URL(`./src/${specifier.slice(2)}`, projectRoot).pathname
+  }
+  if (specifier.startsWith('src/')) {
+    return new URL(`./${specifier}`, projectRoot).pathname
+  }
+  return null
+}
+
+const permittedRecoveryImporter = new URL('struct/recovery.ts', root).pathname
+const permittedAdapterRecoveryImporter = new URL(
+  'struct-adapters/recovery.ts',
+  root,
+).pathname
+const permittedRecoverySpecifiers = [
+  '../struct-adapters/recovery',
+  '../struct-adapters/recovery.ts',
+]
+const migratedFamilies = new Set(['types', 'ids', 'reading-order', 'codec'])
 
 function importedPaths(source: string, file: URL): string[] {
   if (file.pathname.endsWith('.astro')) {
@@ -141,6 +206,79 @@ async function portableFiles(directory: URL): Promise<URL[]> {
       )
       .map((entry) => new URL(entry.name, directory)),
   ]
+}
+
+function isMigratedFamilyTarget(target: string): boolean {
+  return /struct\/(types|ids|reading-order|codec)(?:\/(?:index)?)?$/.test(target)
+}
+
+function isStructBarrelTarget(target: string): boolean {
+  const normalized = target.replace(/\/(?:index(?:\.(?:ts|js|tsx|astro))?)?$/, '')
+  return (
+    normalized === portableRoot.pathname.replace(/\/$/, '') ||
+    normalized === new URL('struct', root).pathname
+  )
+}
+
+function e03ViolationsForSource(
+  source: string,
+  file: URL,
+  publicPaths: Set<string>,
+): string[] {
+  const violations: string[] = []
+  for (const specifier of importedPaths(source, file)) {
+    if (specifier === '@erniesg/struct' || specifier.startsWith('@erniesg/struct/')) {
+      if (!publicPaths.has(specifier)) {
+        violations.push(`${file.pathname}: private package import ${specifier}`)
+      }
+      continue
+    }
+    let target: string | null = null
+    if (specifier.startsWith('.')) {
+      target = new URL(specifier, file).pathname.replace(
+        /\.(?:[cm]?[jt]s|astro)$/u,
+        '',
+      )
+    } else {
+      const resolved = resolveAliasSpecifier(specifier)
+      if (resolved !== null) {
+        target = resolved.replace(/\.(?:[cm]?[jt]s|astro)$/u, '')
+      } else {
+        continue
+      }
+    }
+    if (target === null) continue
+
+    // Skip permitted recovery paths.
+    if (file.pathname === permittedRecoveryImporter) {
+      const permitted = permittedRecoverySpecifiers.some((s) => {
+        const t = new URL(s, file).pathname.replace(/\.(?:[cm]?[jt]s|astro)$/u, '')
+        return (
+          target === t ||
+          target === new URL('struct-adapters/recovery', root).pathname ||
+          target === new URL('struct-adapters/recovery.ts', root).pathname
+        )
+      })
+      if (permitted) continue
+    }
+
+    if (isMigratedFamilyTarget(target)) {
+      const match = target.match(
+        /struct\/(types|ids|reading-order|codec)(?:\/(?:index)?)?$/,
+      )
+      if (match && migratedFamilies.has(match[1]!)) {
+        violations.push(
+          `${file.pathname}: migrated family import ${specifier} -> ${target}`,
+        )
+      }
+    }
+    if (isStructBarrelTarget(target)) {
+      violations.push(
+        `${file.pathname}: migrated family import ${specifier} -> ${target}`,
+      )
+    }
+  }
+  return violations
 }
 
 describe('app-owned Struct adapter boundary', () => {
@@ -386,45 +524,62 @@ describe('app-owned Struct adapter boundary', () => {
 
   it('E-03: prohibits migrated-family imports (types/ids/reading-order/codec) and validates package paths', async () => {
     const publicPaths = await publicPackagePaths()
-    const migratedFamilies = new Set([
-      'types', 'ids', 'reading-order', 'codec',
-    ])
-    const permittedRecoveryImporter = new URL('struct/recovery.ts', root).pathname
-    const permittedAdapterRecoveryImporter = new URL('struct-adapters/recovery.ts', root).pathname
-    const permittedRecoverySpecifiers = [
-      '../struct-adapters/recovery', '../struct-adapters/recovery.ts',
-    ]
     const violations: string[] = []
     for (const file of await portableFiles(root)) {
       if (file.pathname.startsWith(portableRoot.pathname)) continue
       const source = await readFile(file, 'utf8')
-      for (const specifier of importedPaths(source, file)) {
-        // Check package-private imports
-        if (specifier === '@erniesg/struct' || specifier.startsWith('@erniesg/struct/')) {
-          if (!publicPaths.has(specifier)) {
-            violations.push(`${file.pathname}: private package import ${specifier}`)
-          }
-          continue
-        }
-        if (!specifier.startsWith('.')) continue
-        const target = new URL(specifier, file).pathname.replace(
-          /\.(?:[cm]?[jt]s|astro)$/u,
-          '',
-        )
-        // Skip permitted recovery paths
-        if (file.pathname === permittedRecoveryImporter && permittedRecoverySpecifiers.some(s => {
-          const t = new URL(s, file).pathname.replace(/\.(?:[cm]?[jt]s|astro)$/u, '')
-          return target === t || target === new URL('struct-adapters/recovery', root).pathname || target === new URL('struct-adapters/recovery.ts', root).pathname
-        })) continue
-        // Check migrated family prohibition for non-test production modules
-        const familyMatch = target.match(/struct\/(types|ids|reading-order|codec)(?:\/(?:index)?)?$/)
-        if (familyMatch && migratedFamilies.has(familyMatch[1]!)) {
-          // Only allowed if it is the adapter recovery permitted path (not a migrated family violation)
-          // The family list excludes recovery; recovery is handled separately.
-          violations.push(`${file.pathname}: migrated family import ${specifier} -> ${target}`)
-        }
-      }
+      violations.push(...e03ViolationsForSource(source, file, publicPaths))
     }
     expect(violations).toEqual([])
+
+    // Red-first proof: an aliased migrated-family import must be detected, while
+    // an aliased recovery import (the permitted app-owned path) stays clean.
+    const probeFile = new URL('struct-adapters/nested/probe.ts', root)
+    expect(
+      e03ViolationsForSource(
+        "import { T } from '@/struct/types'",
+        probeFile,
+        publicPaths,
+      ),
+    ).not.toEqual([])
+    expect(
+      e03ViolationsForSource(
+        "import { diagnosticCategory } from '@/struct/recovery'",
+        probeFile,
+        publicPaths,
+      ),
+    ).toEqual([])
+    expect(
+      e03ViolationsForSource(
+        "import { X } from '@erniesg/struct/src/document'",
+        probeFile,
+        publicPaths,
+      ),
+    ).not.toEqual([])
+  })
+
+  it('E-03: app diagnostic categories match package recovery facts', async () => {
+    const source = await readFile(
+      new URL('struct-adapters/recovery.ts', root),
+      'utf8',
+    )
+    const section = source.slice(
+      source.indexOf('const DIAGNOSTIC_COPY'),
+      source.indexOf('const FALLBACK_COPY'),
+    )
+    const appCodes = [
+      ...new Set(
+        [...section.matchAll(/^  ([A-Z][A-Z0-9_]*):/gm)].map((match) => match[1]!),
+      ),
+    ]
+    const unknownCode = 'E03_PARITY_UNKNOWN_CODE'
+    const codes = [...appCodes, unknownCode]
+
+    for (const code of codes) {
+      expect(
+        appDiagnosticCategory(code),
+        `diagnostic category for ${code}`,
+      ).toBe(packageDiagnosticCategory(code))
+    }
   })
 })

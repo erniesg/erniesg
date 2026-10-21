@@ -748,6 +748,43 @@ export function buildStructDocument(
       },
     })
   }
+  // The research graph declares the figure -> caption relationship in
+  // `node.relationships.caption`. The package renderer resolves an attached
+  // caption only through a matched `caption` relationship, and never by
+  // comparing caption text, so the declaration is published here: one
+  // matched relationship per figure that carries a caption of this document.
+  const blockById = new Map(allBlocks.map((block) => [block.id, block]))
+  let captionRelationshipCount = 0
+  for (const node of reconstruction.paper.nodes) {
+    if (node.type !== 'figure') continue
+    const captionSourceId = node.relationships?.caption
+    if (!captionSourceId) continue
+    const from = resolveEndpoint(node.id)
+    const to = resolveEndpoint(captionSourceId)
+    // A caption the document does not carry as a caption block would be a
+    // dangling endpoint, so the declaration is not published.
+    const captionBlock = blockById.get(to)
+    if (!captionBlock || captionBlock.kind !== 'caption') continue
+    const figureEvidence = boxEvidence(provenance[node.id], node.id)
+    relationships.push({
+      id: structId(
+        'relationship',
+        `${reconstruction.source.sha256}:caption:${from}:${to}`,
+      ),
+      kind: 'caption',
+      from,
+      to: [to],
+      status: 'matched',
+      confidence: 1,
+      evidence: {
+        confidence: 1,
+        pages: figureEvidence.pages,
+        boxes: figureEvidence.boxes,
+        sourceIds: [...figureEvidence.sourceIds, captionSourceId],
+      },
+    })
+    captionRelationshipCount += 1
+  }
   for (const note of reconstruction.noteRelationships) {
     if (
       note.status === 'citation' &&
@@ -1228,6 +1265,7 @@ export function buildStructDocument(
     reconstruction.noteRelationships.length +
     sourceAnnotationCount +
     sourceInlineRelationshipCount +
+    captionRelationshipCount +
     (pdf
       ? reconstruction.citationRelationships.length +
         reconstruction.crossReferenceRelationships.length +

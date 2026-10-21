@@ -318,6 +318,19 @@ export function adaptStructDocument(
   >()
   const captionIdsByParent = new Map<string, string>()
   const captionParentsByCaption = new Map<string, string>()
+  // The canonical claim for a (parentId, captionId) pair.  Two relationships
+  // that name the same pair describe ONE claim: the explicit `caption`
+  // relationship is the canonical form, and a typed visual relationship that
+  // names the same pair is superseded by it rather than competing with it.
+  const captionClaims = new Map<
+    string,
+    {
+      captionId: string
+      parentId: string
+      relationshipId: string
+      explicit: boolean
+    }
+  >()
   const graphBlockIds = new Set(baseGraphBlockIds)
   const knownAssetIds = new Set(document.assets.map((asset) => asset.id))
   const captionEndpointsFor = (relationship: StructRelationship) => {
@@ -377,6 +390,23 @@ export function adaptStructDocument(
       )
       continue
     }
+    const explicit = relationship.kind === 'caption'
+    const claimKey = JSON.stringify([endpoints.parentId, endpoints.captionId])
+    const claim = captionClaims.get(claimKey)
+    if (claim) {
+      // The SAME (parentId, captionId) pair, claimed twice.  That is one
+      // claim, not an ambiguity: the explicit `caption` relationship is the
+      // canonical form and a typed visual relationship that names the same
+      // pair is superseded by it.  The superseded relationship keeps resolving
+      // the same pair, so it stays in the accounting and its endpoints are
+      // not mistaken for unavailable ones.
+      if (explicit && !claim.explicit) {
+        claim.explicit = true
+        claim.relationshipId = relationship.id
+      }
+      captionLinks.set(relationship.id, endpoints)
+      continue
+    }
     if (
       captionIdsByParent.has(endpoints.parentId) ||
       captionParentsByCaption.has(endpoints.captionId)
@@ -392,6 +422,11 @@ export function adaptStructDocument(
     captionLinks.set(relationship.id, endpoints)
     captionIdsByParent.set(endpoints.parentId, endpoints.captionId)
     captionParentsByCaption.set(endpoints.captionId, endpoints.parentId)
+    captionClaims.set(claimKey, {
+      ...endpoints,
+      relationshipId: relationship.id,
+      explicit,
+    })
     if (
       baseGraphBlockIds.has(endpoints.parentId) &&
       blocksById.get(endpoints.captionId)?.text

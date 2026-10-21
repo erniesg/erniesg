@@ -6,7 +6,14 @@ import { buildStructDocument as legacyBuild } from '../src/struct/from-reconstru
 import { buildStructDocument as facadeBuild } from '../src/struct-adapters'
 import { buildStructDocument as rootBuild } from '../src/struct'
 import { diagnosticCategory as appDiagnosticCategory } from '../src/struct-adapters/recovery'
+import { decodeStructDocument as appDecodeStructDocument } from '../src/struct/codec'
+import { seal, validDocument } from '../src/struct/codec-test-fixtures'
 import { diagnosticCategory as packageDiagnosticCategory } from '@erniesg/struct/recovery'
+import {
+  decodeStructDocument as packageDecodeStructDocument,
+  type StructDocument,
+} from '@erniesg/struct/document'
+import { renderPublicationXhtml } from '@erniesg/struct/renderers/xhtml'
 
 const root = new URL('../src/', import.meta.url)
 const portableRoot = new URL('struct/', root)
@@ -60,6 +67,12 @@ function resolveAliasSpecifier(specifier: string): string | null {
   if (specifier.startsWith('src/')) {
     return new URL(`./${specifier}`, projectRoot).pathname
   }
+  // A project-root specifier resolves against the repository root, so
+  // '/src/struct/types' names the same local migrated family as
+  // '@/struct/types' and must not fall through the resolver.
+  if (specifier.startsWith('/')) {
+    return new URL(`.${specifier}`, projectRoot).pathname
+  }
   return null
 }
 
@@ -74,17 +87,40 @@ const permittedRecoverySpecifiers = [
 ]
 const migratedFamilies = new Set(['types', 'ids', 'reading-order', 'codec'])
 
-function importedPaths(source: string, file: URL): string[] {
-  if (file.pathname.endsWith('.astro')) {
-    const frontmatter = source.match(/^---\s*\n([\s\S]*?)\n---/)?.[1] ?? ''
-    const scripts = [
-      ...source.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g),
-    ].map((match) => match[1])
-    source = [frontmatter, ...scripts].join('\n')
-  }
+/**
+ * The local root of every migrated family. A nested module inside a family
+ * (for example `src/struct/codec/parsers`) is part of that family, so the
+ * prohibition covers the whole subtree and not only the family entry file.
+ */
+const migratedFamilyRoots = new Map(
+  [...migratedFamilies].map((family) => [
+    family,
+    `${portableRoot.pathname}${family}`,
+  ]),
+)
+
+/**
+ * The app-owned recovery presentation module. The plan enumerates its
+ * permitted importers, so a new production importer has to be added to that
+ * list deliberately instead of appearing by accident.
+ */
+const appRecoveryModule = new URL('struct-adapters/recovery', root).pathname
+const permittedRecoveryImporters = new Set([
+  permittedRecoveryImporter,
+  permittedAdapterRecoveryImporter,
+  new URL('struct-adapters/from-reconstruction.ts', root).pathname,
+  new URL('research/recovery-projection.ts', root).pathname,
+  new URL('components/research/PublicationImporter.tsx', root).pathname,
+])
+
+function importedPaths(
+  source: string,
+  file: URL,
+  computedDynamicImports?: string[][],
+): string[] {
   const ast = ts.createSourceFile(
     file.pathname,
-    source,
+    scanSource(source, file),
     ts.ScriptTarget.Latest,
     true,
   )
@@ -107,16 +143,107 @@ function importedPaths(source: string, file: URL): string[] {
       node.expression.kind === ts.SyntaxKind.ImportKeyword
     ) {
       const argument = node.arguments[0]
-      paths.push(
-        argument && ts.isStringLiteralLike(argument)
-          ? argument.text
-          : '<nonliteral dynamic import>',
-      )
+      if (argument && ts.isStringLiteralLike(argument)) {
+        paths.push(argument.text)
+      } else {
+        paths.push('<nonliteral dynamic import>')
+        computedDynamicImports?.push(stringLiteralsIn(argument))
+      }
+    } else if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === 'require'
+    ) {
+      // A CommonJS require is an import too.
+      const argument = node.arguments[0]
+      if (argument && ts.isStringLiteralLike(argument))
+        paths.push(argument.text)
+    } else if (
+      ts.isImportEqualsDeclaration(node) &&
+      ts.isExternalModuleReference(node.moduleReference)
+    ) {
+      // `import x = require('...')` is a TypeScript import too.
+      const expression = node.moduleReference.expression
+      if (ts.isStringLiteralLike(expression)) paths.push(expression.text)
     }
     ts.forEachChild(node, visit)
   }
   visit(ast)
   return paths
+}
+
+/**
+ * The source the guard parses for a module. An Astro file contributes its
+ * frontmatter and its inline scripts; an MDX file contributes the ESM block
+ * MDX allows at the top level, so a fenced code sample that merely shows an
+ * import is not mistaken for a module specifier.
+ */
+function scanSource(source: string, file: URL): string {
+  if (file.pathname.endsWith('.astro')) {
+    const frontmatter = source.match(/^---\s*\n([\s\S]*?)\n---/)?.[1] ?? ''
+    const scripts = [
+      ...source.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g),
+    ].map((match) => match[1])
+    return [frontmatter, ...scripts].join('\n')
+  }
+  if (file.pathname.endsWith('.mdx')) return mdxLeadingEsm(source)
+  return source
+}
+
+/** The net change in curly-brace depth of one line. */
+function mdxBraceDelta(line: string): number {
+  let delta = 0
+  for (const character of line) {
+    if (character === '{') delta += 1
+    else if (character === '}') delta -= 1
+  }
+  return delta
+}
+
+/** Whether a line ends an ESM statement that names a module. */
+function mdxEndsWithModuleSpecifier(line: string): boolean {
+  return (
+    /from\s*['"][^'"]*['"]\s*;?$/.test(line) ||
+    /^import\s*['"][^'"]*['"]\s*;?$/.test(line)
+  )
+}
+
+/**
+ * The leading ESM block of an MDX document. MDX allows import and export
+ * statements only at the top level of the document, before any markdown
+ * content, so only that block can carry a module specifier. Taking it keeps a
+ * fenced code sample that shows an import out of the scan, and keeps markdown
+ * prose from swallowing a real specifier inside an unterminated string.
+ */
+function mdxLeadingEsm(source: string): string {
+  const body = source.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '')
+  const kept: string[] = []
+  let depth = 0
+  for (const line of body.split('\n')) {
+    const trimmed = line.trim()
+    if (kept.length === 0) {
+      if (trimmed === '') continue
+      if (!/^(?:import|export)\b/.test(trimmed)) break
+    } else if (depth === 0) {
+      break
+    }
+    kept.push(line)
+    depth += mdxBraceDelta(line)
+    if (depth === 0 && mdxEndsWithModuleSpecifier(trimmed)) break
+  }
+  return kept.join('\n')
+}
+
+/** The string literals inside a node, used for a computed dynamic import. */
+function stringLiteralsIn(node: ts.Node | undefined): string[] {
+  if (!node) return []
+  const found: string[] = []
+  function visit(current: ts.Node): void {
+    if (ts.isStringLiteralLike(current)) found.push(current.text)
+    ts.forEachChild(current, visit)
+  }
+  visit(node)
+  return found
 }
 
 function boundaryViolations(
@@ -201,15 +328,28 @@ async function portableFiles(directory: URL): Promise<URL[]> {
       .filter(
         (entry) =>
           entry.isFile() &&
-          /\.(?:[cm]?[jt]sx?|astro)$/.test(entry.name) &&
+          /\.(?:[cm]?[jt]sx?|astro|mdx)$/.test(entry.name) &&
           !/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(entry.name),
       )
       .map((entry) => new URL(entry.name, directory)),
   ]
 }
 
+/**
+ * The migrated family a resolved local path belongs to, or null. The family
+ * root and every nested module under it are the same family, so
+ * `src/struct/codec/parsers` is a `codec` import just like `src/struct/codec`.
+ */
+function migratedFamilyForTarget(target: string): string | null {
+  for (const [family, familyRoot] of migratedFamilyRoots) {
+    if (target === familyRoot || target.startsWith(`${familyRoot}/`))
+      return family
+  }
+  return null
+}
+
 function isMigratedFamilyTarget(target: string): boolean {
-  return /struct\/(types|ids|reading-order|codec)(?:\/(?:index)?)?$/.test(target)
+  return migratedFamilyForTarget(target) !== null
 }
 
 function isStructBarrelTarget(target: string): boolean {
@@ -220,33 +360,93 @@ function isStructBarrelTarget(target: string): boolean {
   )
 }
 
+/**
+ * Resolve a module specifier to the local path it names, or null when the
+ * specifier does not name a local module.
+ */
+function resolveLocalTarget(specifier: string, file: URL): string | null {
+  if (
+    specifier === '@erniesg/struct' ||
+    specifier.startsWith('@erniesg/struct/')
+  ) {
+    return null
+  }
+  if (specifier.startsWith('.')) {
+    return new URL(specifier, file).pathname.replace(
+      /\.(?:[cm]?[jt]s|astro)$/u,
+      '',
+    )
+  }
+  const resolved = resolveAliasSpecifier(specifier)
+  if (resolved === null) return null
+  return resolved.replace(/\.(?:[cm]?[jt]s|astro)$/u, '')
+}
+
+/**
+ * The app-owned recovery presentation module has an enumerated importer list.
+ * Every other production importer is a violation, so a new consumer has to be
+ * added to that list deliberately.
+ */
+function recoveryImporterViolationsForSpecifiers(
+  specifiers: string[],
+  file: URL,
+): string[] {
+  const violations: string[] = []
+  for (const specifier of specifiers) {
+    if (specifier === '<nonliteral dynamic import>') continue
+    const target = resolveLocalTarget(specifier, file)
+    if (target === null || target !== appRecoveryModule) continue
+    if (permittedRecoveryImporters.has(file.pathname)) continue
+    violations.push(
+      `${file.pathname}: app recovery module import ${specifier} is not a permitted importer`,
+    )
+  }
+  return violations
+}
+
+function recoveryImporterViolations(source: string, file: URL): string[] {
+  return recoveryImporterViolationsForSpecifiers(
+    importedPaths(source, file),
+    file,
+  )
+}
+
 function e03ViolationsForSource(
   source: string,
   file: URL,
   publicPaths: Set<string>,
 ): string[] {
   const violations: string[] = []
-  for (const specifier of importedPaths(source, file)) {
+  const computedDynamicImports: string[][] = []
+  const specifiers = importedPaths(source, file, computedDynamicImports)
+  let computedIndex = 0
+  for (const specifier of specifiers) {
+    if (specifier === '<nonliteral dynamic import>') {
+      // A computed dynamic import has no literal specifier, so the guard
+      // cannot prove that it does not load a migrated family. It fails closed.
+      const fragments = computedDynamicImports[computedIndex++] ?? []
+      const offending = fragments
+        .map((fragment) => resolveLocalTarget(fragment, file))
+        .filter((target): target is string => target !== null)
+        .find((target) => {
+          const normalized = target.replace(/\/+$/, '')
+          return (
+            migratedFamilyForTarget(normalized) !== null ||
+            isStructBarrelTarget(normalized)
+          )
+        })
+      violations.push(
+        `${file.pathname}: computed dynamic import ${offending ?? 'with an unresolved target'} is not allowed`,
+      )
+      continue
+    }
     if (specifier === '@erniesg/struct' || specifier.startsWith('@erniesg/struct/')) {
       if (!publicPaths.has(specifier)) {
         violations.push(`${file.pathname}: private package import ${specifier}`)
       }
       continue
     }
-    let target: string | null = null
-    if (specifier.startsWith('.')) {
-      target = new URL(specifier, file).pathname.replace(
-        /\.(?:[cm]?[jt]s|astro)$/u,
-        '',
-      )
-    } else {
-      const resolved = resolveAliasSpecifier(specifier)
-      if (resolved !== null) {
-        target = resolved.replace(/\.(?:[cm]?[jt]s|astro)$/u, '')
-      } else {
-        continue
-      }
-    }
+    const target = resolveLocalTarget(specifier, file)
     if (target === null) continue
 
     // Skip permitted recovery paths.
@@ -263,10 +463,8 @@ function e03ViolationsForSource(
     }
 
     if (isMigratedFamilyTarget(target)) {
-      const match = target.match(
-        /struct\/(types|ids|reading-order|codec)(?:\/(?:index)?)?$/,
-      )
-      if (match && migratedFamilies.has(match[1]!)) {
+      const family = migratedFamilyForTarget(target)
+      if (family && migratedFamilies.has(family)) {
         violations.push(
           `${file.pathname}: migrated family import ${specifier} -> ${target}`,
         )
@@ -278,6 +476,7 @@ function e03ViolationsForSource(
       )
     }
   }
+  violations.push(...recoveryImporterViolationsForSpecifiers(specifiers, file))
   return violations
 }
 
@@ -335,6 +534,28 @@ function topLevelFunctionBody(source: string, name: string): string | null {
     return statement.body ? statement.body.getText(file) : null
   }
   return null
+}
+
+/**
+ * A document whose author-note identifiers collide only after the renderer's
+ * stable identifier normalization: `1author-note-1` and `n-1author-note-1`
+ * both normalize to `n-1author-note-1`. The document is otherwise valid, so
+ * the package decoder accepts it and the package renderer refuses it.
+ */
+function collidingEmittedIdentifierDocument(): StructDocument {
+  const document = validDocument() as unknown as {
+    metadata: { authorNotes: Array<Record<string, unknown>> }
+  }
+  document.metadata.authorNotes = [
+    { ...document.metadata.authorNotes[0], id: '1author-note-1' },
+    {
+      id: 'n-1author-note-1',
+      author: 'Author',
+      label: '1',
+      target: 'block-1',
+    },
+  ]
+  return seal(document) as unknown as StructDocument
 }
 
 describe('app-owned Struct adapter boundary', () => {
@@ -612,6 +833,22 @@ describe('app-owned Struct adapter boundary', () => {
         publicPaths,
       ),
     ).not.toEqual([])
+    // The configured alias forms all resolve to the same local migrated
+    // family, and the `@/struct` barrel is a migrated-family target too.
+    expect(
+      e03ViolationsForSource(
+        "import { T } from '~/struct/types'",
+        probeFile,
+        publicPaths,
+      ),
+    ).not.toEqual([])
+    expect(
+      e03ViolationsForSource(
+        "import { T } from '@/struct'",
+        probeFile,
+        publicPaths,
+      ),
+    ).not.toEqual([])
   })
 
   it('E-03: app diagnostic categories match package recovery facts', async () => {
@@ -785,5 +1022,33 @@ describe('app-owned Struct adapter boundary', () => {
         publicPaths,
       ),
     ).not.toEqual([])
+  })
+
+  it('E-03: enforces the app-owned recovery importer allowlist inside the retained tree', async () => {
+    const violations: string[] = []
+    for (const file of await portableFiles(root)) {
+      if (!file.pathname.startsWith(portableRoot.pathname)) continue
+      const source = await readFile(file, 'utf8')
+      violations.push(...recoveryImporterViolations(source, file))
+    }
+    expect(violations).toEqual([])
+  })
+
+  it('E-03: pins the decoder and renderer validation split for colliding emitted identifiers', () => {
+    const document = collidingEmittedIdentifierDocument()
+
+    // The package document decoder accepts the document: the emitted
+    // identifier constraint belongs to the renderer, not to the decoder.
+    expect(() => packageDecodeStructDocument(document)).not.toThrow()
+
+    // The package XHTML renderer refuses the same document.
+    expect(() => renderPublicationXhtml(document)).toThrow(
+      /emitted XHTML identifier/,
+    )
+
+    // The app's own decoder still fails closed on the same document.
+    expect(() => appDecodeStructDocument(document)).toThrow(
+      /DUPLICATE_IDENTIFIER/,
+    )
   })
 })

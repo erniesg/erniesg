@@ -1208,7 +1208,12 @@ export function buildStructDocument(
     ),
   ).size
   const sourceAnnotationCount = reconstruction.paper.nodes.reduce(
-    (count, node) => count + (provenance[node.id]?.links.length ?? 0),
+    (count, node) =>
+      count +
+      (provenance[node.id]?.links ?? []).filter(
+        (link) =>
+          !('id' in link && link.id && mappedAnnotationIds.has(link.id)),
+      ).length,
     0,
   )
   const sourceInlineRelationshipCount = reconstruction.paper.nodes.reduce(

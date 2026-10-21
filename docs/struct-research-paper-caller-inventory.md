@@ -12,6 +12,19 @@ recorded decision and not a recorded state.
 Nothing in this document was implemented, tested, built, deployed, or
 published while producing it. No source file was modified.
 
+**Refreshed 2026-10-21.** This inventory was re-measured against the E-04
+integrated head (branch `feat/struct-e04-integrated-20261021`, base
+`ead376c1541b67cc252ba77247185a36113ace36`) after the forward
+`ResearchPaper` -> `PublicationGraph` producer was retired by `a2a2ee1d`.
+Every row below now describes the tree at that head. A row that still
+describes a live module is kept and re-verified; the row that described the
+retired producer is kept and re-marked `RETIRED` with the commit that retired
+it; a row that named a line, a caller set or a disposition that no longer
+holds is corrected in place. The refresh is a re-measurement of the same
+grep-bounded method described below on a different head: **no source file was
+modified, no dependency was installed, and no build, test, renderer or golden
+was run.**
+
 This document is **evidence input for the cutover plan, not a decision**. It
 is linked reciprocally with
 [`docs/superpowers/plans/2026-10-20-struct-full-cutover-sequence.md`](superpowers/plans/2026-10-20-struct-full-cutover-sequence.md)
@@ -27,10 +40,14 @@ limitation described below.
 | Item | Value |
 |---|---|
 | Repository | `erniesg/erniesg` |
-| Worktree | `/home/ubuntu/.local/state/struct-migration/20261020-continuation/worktrees/app-inventory` |
+| Worktree (2026-10-20 scan) | `/home/ubuntu/.local/state/struct-migration/20261020-continuation/worktrees/app-inventory` |
+| Worktree (2026-10-21 refresh) | `/home/ubuntu/.local/state/struct-migration/20261020-continuation/worktrees/app-e04-record-refresh` |
 | Source baseline (immutable) | `84747cb49a36fea0eb4db0322dbd092430daf754` |
 | HEAD observed while inventorying | `b65c75b0` (docs-only descendant of the baseline) |
 | Inventory commit (immutable) | `58c9097c7191c182416ee8329fee518b0355a791` |
+| Refresh branch (2026-10-21) | `docs/struct-e04-record-refresh-20261021` |
+| Refresh base (immutable) | `ead376c1541b67cc252ba77247185a36113ace36` (the E-04 integrated head of `feat/struct-e04-integrated-20261021`) |
+| Refresh commit | the tip of `docs/struct-e04-record-refresh-20261021`; it carries documentation only, so no source content depends on it |
 | Merged into | `docs/struct-cutover-integrated-plan-20261020` (the cutover plan branch; the plan now links to this document) |
 | Governing ADR | `docs/superpowers/specs/2026-08-27-cross-repository-domain-ownership-and-package-boundaries.md` (ADR-0001) |
 | Governing issue plan | `docs/superpowers/plans/2026-08-27-cross-repository-architecture-issue-plan.md` — E-04 (issue #284), E-07 (issue #287) |
@@ -55,6 +72,13 @@ parity has been demonstrated** — no parity run was performed here.
 absent from this worktree (`ls node_modules` → no such directory), so
 `typescript`, `ts-morph`, `madge`, `dependency-cruiser` and `knip` were not
 importable, and installing dependencies is not authorized for this task.
+
+The **2026-10-21 refresh** used the same tool and the same bounds:
+`ripgrep 14.1.0` only, **no AST tooling**, and `node_modules/` is still absent
+from the refresh worktree (`ls node_modules` → no such directory), so no
+dependency was installed and no `package.json` / lockfile was touched. Every
+row below was re-measured at the refresh base recorded in §"Authority and
+baseline", and every `file:line` citation in it was re-read in that tree.
 
 The repository *does* contain an existing AST-based import scanner —
 `tests/struct-adapter-boundary.test.ts:12-55` implements `importedPaths()`
@@ -203,25 +227,43 @@ header/body row-group boundary.
 | R1 | `src/research/papers.ts` | 3 | `researchPaperSchema` | paper → schema | **authoritative parse** of the two shipped JSON papers | `researchPaperSchema.parse(...)` on both JSON files (`:5-8`); exports `papers`, `getPaper` | **keep** (E-04: unchanged); migrate later to a Struct-derived source once the Struct pipeline can emit the same nodes | `src/research/schema.test.ts` (schema semantics) |
 | R2 | `src/research/export-package.ts` | 32 | `researchPaperSchema`, `type ResearchPaper` | paper → schema | **parses and re-emits** the ResearchPaper as export `source.json` | `researchPaperSchema.parse` at `:441`; `canonicalContentHash(paper)` at `:364`; `verifyExportPackage` compares hashes at `:464`, `:679` | **keep** for E-04; **migrate** at E-07 (export package must be built from a Struct revision) | `src/research/export-package.test.ts` |
 | R3 | `src/research/docx-import.ts` | 13-17 | `researchPaperSchema`, `type ResearchNode`, `type ResearchPaper` | paper → schema | DOCX import produces ResearchPaper nodes | import-time parse of imported DOCX reconstruction | **keep** (import path is app-owned source reconstruction); migrate at E-07 | `src/research/docx-import.test.ts` |
-| R4 | `src/publication/research-paper-adapter.ts` | 1-5 | `researchPaperSchema`, `type ResearchNode`, `type ResearchPaper` | paper → schema | **graph bridge**; parses the paper before projecting to `PublicationGraph` | `:84` and `:302` parse; `:275` parses the reverse-projected paper | **keep** for E-04 (read-only bridge); the *reverse* direction is a **retire** candidate (see §4) | `src/publication/research-paper-adapter.test.ts`, `src/publication/source-adapter.test.ts` |
+| R4 | `src/publication/research-paper-adapter.ts` — **RETIRED** | — | `researchPaperSchema`, `type ResearchNode`, `type ResearchPaper` — all four gone with the module | paper → schema | **was** the bidirectional graph bridge: it parsed the paper before projecting it to `PublicationGraph` | **no line exists.** The file was deleted by `a2a2ee1d` ("refactor(publication): retire the forward ResearchPaper to PublicationGraph producer"); `ls src/publication/research-paper-adapter.ts` → no such file | **retired**, not kept and not renamed: the forward projection, the reverse projection, the adapter and the adapter id are gone, and the guard's allowlist entry for the module was removed with it (see §4) | **none.** The module's own test `src/publication/research-paper-adapter.test.ts` was deleted with it; the retirement is asserted instead by `src/publication/research-paper-source-retirement.test.ts` |
 | R5 | `src/research/epub-readable-fallback-fixtures.ts` | 13 | `researchPaperSchema` | paper → schema | fixture builder for readable-fallback | parses fixture papers | **keep** (test-support module, non-`.test.ts`) | `src/research/epub-readable-fallback.test.ts` |
 
 ### 2b. Runtime (value) importers — test files
 
-`src/publication/source-adapter.test.ts:3` · `src/publication/research-paper-adapter.test.ts:4` ·
-`src/annotations/move-parity.test.ts:5` · `src/annotations/annotation-bundle.test.ts:4` ·
-`src/annotations/annotations.test.ts:17` · `src/research/epub-note-relationships.test.ts:7` ·
-`src/research/epub-metadata-profiles.test.ts:6` · `src/research/epub-scholarly-references.test.ts:4` ·
+`src/annotations/annotation-bundle.test.ts:6` · `src/annotations/annotations.test.ts:17` ·
+`src/annotations/move-parity.test.ts:5` ·
+`src/publication/research-paper-source-retirement.test.ts:7` ·
+`src/research/docx-import.test.ts:6` · `src/research/epub-metadata-profiles.test.ts:6` ·
+`src/research/epub-note-relationships.test.ts:7` ·
+`src/research/epub-scholarly-references.test.ts:4` ·
 `src/research/epub-semantic-visuals.test.ts:10` · `src/research/epub.test.ts:38` ·
 `src/research/evaluation.test.ts:10` · `src/research/export-package.test.ts:19` ·
 `src/research/manifest.test.ts:16` · `src/research/overrides.test.ts:13` ·
-`src/research/pagination.test.ts:9` · `src/research/pdf-semantic-runtime-regression.test.ts:6` ·
-`src/research/schema.test.ts:4`.
+`src/research/pagination.test.ts:9` ·
+`src/research/pdf-semantic-runtime-regression.test.ts:6` ·
+`src/research/schema.test.ts:4` ·
+`src/research/struct-renderer-import-parity.test.ts:42`.
 
 All of these import `researchPaperSchema` as a **value**. All are **keep**
 under ADR-0001 ("`ResearchPaper` compatibility remains tested until its last
 production caller moves"), but each is a **migrate** candidate at E-07 if the
 schema is replaced by a Struct-derived model.
+
+**What changed at the 2026-10-21 refresh.** Two entries of the 2026-10-20 list
+are gone. `src/publication/research-paper-adapter.test.ts` was deleted with the
+module it tested. `src/publication/source-adapter.test.ts` no longer imports
+`researchPaperSchema` at all: the forward producer it exercised is retired, and
+the file now proves the source-adapter contract on the Struct projection alone
+(`src/publication/source-adapter.test.ts:1-10` imports only the parity fixture,
+the app-owned ingress and the adapter itself). Three entries are new:
+`src/publication/research-paper-source-retirement.test.ts:7` (the retirement
+proof), `src/research/docx-import.test.ts:6` (the DOCX importer's own test,
+which parses the reconstructed paper) and
+`src/research/struct-renderer-import-parity.test.ts:42` (the both-mode parity
+measurement). One entry moved: `src/annotations/annotation-bundle.test.ts`
+from `:4` to `:6`.
 
 ### 2c. Type-only importers — production (non-test) files
 
@@ -263,6 +305,7 @@ a runtime dependency on `src/research/schema.ts`.
 | T30 | `src/research/pdf-visual-validation.ts` | 21 | `ResearchPaper` | visual validation | keep; migrate |
 | T31 | `src/research/publication-integrity.ts` | 11 | `ResearchNode`, `ResearchPaper` | `assertPublicationIntegrity`, `renderableAuthorNoteReferences` — **pre-publication integrity gate for the legacy EPUB path** | keep; migrate |
 | T32 | `src/research/epub.ts` | 116 | `ResearchNode`, `ResearchPaper` | the legacy renderer itself (see §3) | keep (ResearchPaper branch) / migrate (Struct branch) |
+| T33 | `src/research/pdf-quality.test-helpers.ts` | 11 | `ResearchPaper` | shared PDF-quality test helper; it is a **non-test** module (its name is `*.test-helpers.ts`, not `*.test.ts`), so it was listed in §2d by mistake | keep; migrate |
 
 ### 2d. Type-only importers — test files
 
@@ -284,7 +327,6 @@ a runtime dependency on `src/research/schema.ts`.
 `src/research/pdf-quality-semantic-flow.test.ts:11` ·
 `src/research/pdf-quality-visual-obligations.test.ts:9` ·
 `src/research/pdf-quality-visual-text.test.ts:12` ·
-`src/research/pdf-quality.test-helpers.ts:11` ·
 `src/research/pdf-quality.test.ts:19` ·
 `src/research/pdf-visual-order-quality.test.ts:9` ·
 `src/research/pdf-visual-order.test.ts:3` ·
@@ -292,11 +334,14 @@ a runtime dependency on `src/research/schema.ts`.
 `src/research/publication-integrity.test.ts:15` ·
 `src/research/semantic-table-source.test.ts:13`.
 
-**Summary of the `research/schema` importer set:** 5 production runtime
-importers, 17 test runtime importers, 32+ production type-only importers, 25+
-test type-only importers. **No importer outside `src/research/`,
-`src/publication/`, `src/annotations/`, `src/components/research/` and
-`src/struct-adapters/` was found.**
+**Summary of the `research/schema` importer set (re-measured 2026-10-21):**
+**4** production runtime importers, **18** test runtime importers, **33**
+production type-only importers and **24** test type-only importers. **No
+importer outside `src/research/`, `src/publication/`, `src/annotations/`,
+`src/components/research/` and `src/struct-adapters/` was found.** The 2026-10-20
+scan measured 5 / 17 / 32+ / 25+; the difference is the retirement of the
+bridge (row R4), the three new test importers and the reclassification of
+`src/research/pdf-quality.test-helpers.ts` as a non-test module (row T33).
 
 ## 3. Legacy renderer / export entry points — `src/research/epub.ts`
 
@@ -339,9 +384,9 @@ branch at runtime.
 | L8 | `src/components/research/EpubDownloadLink.tsx` | 2 | `type EpubExport` (type-only) | — | UI download link | keep; migrate |
 | L9 | `src/components/research/PublicationImporter.tsx` | 25 | `type EpubExport` (type-only) | — | import UI typing | keep |
 | L10 | `src/research/reconstruction-materialization.ts` | 15 | `profileEpubCss` (runtime) | — | **Struct** path already uses `buildStructEpub` from `src/struct/epub` (`:2`) | migrate (E-04 renderer switch) |
-| L11 | `src/research/export-pdf.ts` | 3 | `type ResearchNode`, `type ResearchPaper` (type-only) | — | legacy PDF writer | keep; migrate |
-| L12 | `src/research/publication-integrity.ts` | 11 | `type ResearchNode`, `type ResearchPaper` (type-only) | — | pre-export integrity assertion | keep; migrate |
-| L13 | `tools/pdf-export.mjs`, `tools/pdf-private-fidelity.mjs`, `tools/pdf-corpus-audit-lib.mjs`, `tools/srt-source-output-evidence.mjs`, `tools/pdf-epub-package-scan.mjs` | (see §5) | `buildEpub` / `buildReadableEpub` / `inspectEpub` | paper → legacy renderer | offline evidence tooling | keep; migrate when the Struct renderer is authoritative |
+| L11 | `src/research/export-pdf.ts` | 3 | `type ResearchNode`, `type ResearchPaper` (type-only) | — | legacy PDF writer. **CORRECTED 2026-10-21: this file does NOT import `src/research/epub.ts`** — it is a type-only consumer of `src/research/schema.ts` (row T12), and the legacy path imports it in the other direction | keep; migrate |
+| L12 | `src/research/publication-integrity.ts` | 11 | `type ResearchNode`, `type ResearchPaper` (type-only) | — | pre-export integrity assertion. **CORRECTED 2026-10-21: this file does NOT import `src/research/epub.ts`** — it is a type-only consumer of `src/research/schema.ts` (row T31) | keep; migrate |
+| L13 | `tools/pdf-export.mjs`, `tools/pdf-private-fidelity.mjs`, `tools/pdf-corpus-audit-lib.mjs`, `tools/srt-source-output-evidence.mjs`, `tools/pdf-epub-package-scan.mjs`, `tools/pdf-association-fixture-audit.mjs` | (see §5) | `buildEpub` / `buildReadableEpub` / `inspectEpub` / `renderPublicationXhtml` | paper → legacy renderer | offline evidence tooling | keep; migrate when the Struct renderer is authoritative |
 | L14 | `tools/model-consultation-evidence.ts` | 97-100 | `typeof import('../src/research/epub')` (type-position dynamic import) | — | type-only evidence gathering | keep |
 
 **No production caller of `src/research/epub.ts` was found outside
@@ -350,82 +395,137 @@ branch at runtime.
 
 ### 3c. Test callers of the legacy renderer/export entries
 
-`src/research/epub.test.ts` · `src/research/epub-note-relationships.test.ts` ·
-`src/research/epub-metadata-profiles.test.ts` ·
-`src/research/epub-readable-fallback.test.ts` · `src/research/epub-source-fallback.test.ts` ·
-`src/research/epub-scholarly-references.test.ts` ·
-`src/research/epub-semantic-visuals.test.ts` · `src/research/epub-visual-packaging.test.ts` ·
-`src/research/decision-record.test.ts` · `src/research/docx-import.test.ts` ·
-`src/research/export-package.test.ts` · `src/research/pdf.test.ts` ·
-`src/research/pdf-fidelity-regression.test.ts` ·
-`src/research/pdf-layout.test.ts` · `src/research/pdf-layout-document-structure.test.ts` ·
-`src/research/pdf-layout-equation-lineage.test.ts` ·
-`src/research/pdf-layout-heading-classification.test.ts` ·
-`src/research/pdf-layout-inline-source-semantics.test.ts` ·
-`src/research/pdf-layout-link-target-resolution.test.ts` ·
-`src/research/pdf-layout-lists-and-heading-flow.test.ts` ·
-`src/research/pdf-layout-source-geometry.test.ts` ·
-`src/research/pdf-paragraph-math.test.ts` ·
-`src/research/pdf-regions.test.ts` · `src/research/pdf-regions-captions.test.ts` ·
-`src/research/pdf-regions-equations.test.ts` · `src/research/pdf-regions-notes.test.ts` ·
-`src/research/pdf-semantic-runtime-regression.test.ts` ·
-`src/research/pdf-table-citation-crop-regression.test.ts` ·
-`src/research/semantic-table-source.test.ts` ·
-`src/struct/struct.test.ts:25-27` (imports `buildEpub as buildPublicEpub`,
-`renderPublicationXhtml`) · `src/struct/codec.test.ts` ·
-`tools/pdf-export.test.mjs`.
+`src/components/research/EpubRenditionPreview.test.tsx:3` ·
+`src/components/research/PublicationImporter.test.tsx:3` ·
+`src/publication/research-paper-source-retirement.test.ts:6` ·
+`src/research/decision-record.test.ts:19` · `src/research/docx-import.test.ts:4` ·
+`src/research/epub-metadata-profiles.test.ts:4` ·
+`src/research/epub-note-relationships.test.ts:5` ·
+`src/research/epub-readable-fallback.test.ts:5` ·
+`src/research/epub-scholarly-references.test.ts:3` ·
+`src/research/epub-semantic-visuals.test.ts:4` ·
+`src/research/epub-source-fallback.test.ts:2` ·
+`src/research/epub-visual-packaging.test.ts:3` · `src/research/epub.test.ts:7` ·
+`src/research/export-package.test.ts:18` ·
+`src/research/pdf-fidelity-regression.test.ts:7` ·
+`src/research/pdf-layout-document-structure.test.ts:4` ·
+`src/research/pdf-layout-equation-lineage.test.ts:3` ·
+`src/research/pdf-layout-heading-classification.test.ts:3` ·
+`src/research/pdf-layout-inline-source-semantics.test.ts:2` ·
+`src/research/pdf-layout-link-target-resolution.test.ts:3` ·
+`src/research/pdf-layout-lists-and-heading-flow.test.ts:4` ·
+`src/research/pdf-layout-source-geometry.test.ts:3` ·
+`src/research/pdf-layout.test.ts:4` · `src/research/pdf-paragraph-math.test.ts:2` ·
+`src/research/pdf-regions-captions.test.ts:4` ·
+`src/research/pdf-regions-equations.test.ts:3` · `src/research/pdf-regions-notes.test.ts:4` ·
+`src/research/pdf-regions.test.ts:3` ·
+`src/research/pdf-semantic-runtime-regression.test.ts:2` ·
+`src/research/pdf-table-citation-crop-regression.test.ts:7` ·
+`src/research/pdf.test.ts:4` · `src/research/semantic-table-source.test.ts:14` ·
+`src/research/struct-renderer-import-parity.test.ts:36` (imports `buildEpub as
+renderResearchEpub`, `renderPublicationXhtml as renderResearchPublicationXhtml`) ·
+`src/struct/struct.test.ts:26` (imports `buildEpub as buildPublicEpub`,
+`renderPublicationXhtml`) · `tools/pdf-export.test.mjs` (stubs `buildEpub` at
+`:467`).
+
+**Type-only test consumers of `src/research/epub.ts`:**
+`src/components/research/EpubDownloadLink.test.tsx:2` ·
+`src/research/publication-worker-protocol.test.ts:2`.
+
+**What changed at the 2026-10-21 refresh.** `src/struct/codec.test.ts` was
+**removed from this list**: it imports `buildStructEpub` from `./epub`
+(`src/struct/codec.test.ts:11`), i.e. from the **local compatibility copy**
+`src/struct/epub.ts`, not from `src/research/epub.ts`. It was never a caller
+of the legacy renderer. Three entries are new
+(`src/publication/research-paper-source-retirement.test.ts:6`,
+`src/research/struct-renderer-import-parity.test.ts:36`, and the two component
+tests), and `src/struct/struct.test.ts` moved from `:25-27` to `:26`.
 
 **Frozen/struct-adapter fixtures (separate from tests):**
-`tests/fixtures/struct-adapter-parity/observe.ts:7,89` imports
+`tests/fixtures/struct-adapter-parity/observe.ts:15,97` imports
 `buildStructEpub` from `../../../src/struct/epub`; `tests/fixtures/struct-adapter-parity/reconstructions/` and
-`tests/fixtures/struct-package-parity/` hold the frozen parity inputs.
+`tests/fixtures/struct-package-parity/` hold the frozen parity inputs. The
+both-mode parity fixture is `tests/fixtures/struct-both-mode-parity/` (the
+`cases.json` and the comparator `view.ts`), and it is measured by
+`src/research/struct-renderer-import-parity.test.ts`.
 
-## 4. The graph bridge — `src/publication/research-paper-adapter.ts`
+## 4. The graph bridge — `src/publication/research-paper-adapter.ts` — **RETIRED**
 
-**This module is a bidirectional bridge, not a facade that gates all
-imports.** It is imported by **four** files, all of them tests, and by no
-production module:
+**Status at the 2026-10-21 refresh: the module does not exist.**
+`src/publication/research-paper-adapter.ts` was deleted by `a2a2ee1d`
+("refactor(publication): retire the forward ResearchPaper to PublicationGraph
+producer"), together with its test `src/publication/research-paper-adapter.test.ts`
+(`git diff --name-status 9675feea ead376c1 -- src/publication/research-paper-adapter.ts
+src/publication/research-paper-adapter.test.ts` → `D` for both;
+`ls src/publication/research-paper-adapter.ts` → no such file). The retirement
+was two steps: the **reverse** writer was retired first, by `5c6027ef`
+("feat(publication): retire the reverse graph -> ResearchPaper writer"), and the
+remaining **forward** producer by `a2a2ee1d`.
 
-| # | Importer | Line | Kind | Symbols |
+The rows below are kept, and re-marked, because the value of an inventory is
+the measured caller set — including for a module that is gone. They state what
+the module **was** and what happened to every caller that named it. **No caller
+of this module exists at the refresh base.**
+
+| # | Importer (2026-10-20) | Line | Kind | Symbols | Status at the refresh base |
+|---|---|---|---|---|---|
+| B1 | `src/annotations/move-parity.test.ts` | 2 | runtime value import | `researchPaperToPublicationGraph` | **gone.** The file no longer imports the bridge: it imports the pinned Struct identity function and the app-owned annotation modules only (`src/annotations/move-parity.test.ts:1-20`). |
+| B2 | `src/annotations/annotation-bundle.test.ts` | 11 | runtime value import | `researchPaperToPublicationGraph` | **gone.** The file no longer imports the bridge (`src/annotations/annotation-bundle.test.ts:1-18`). |
+| B3 | `src/publication/research-paper-adapter.test.ts` | 5-8 | runtime value import | `publicationGraphToResearchPaper`, `researchPaperToPublicationGraph` | **deleted** with the module, by `a2a2ee1d`. |
+| B4 | `src/publication/source-adapter.test.ts` | 5-8 | runtime value import | `adaptResearchPaper`, `researchPaperToPublicationGraph` | **gone.** The file no longer imports the bridge (`src/publication/source-adapter.test.ts:1-10`); it proves the source-adapter contract on the Struct projection alone. |
+
+Module exports and their callers — all four exports are gone, and so is every
+caller:
+
+| Export | Definition (retired) | Callers outside the module (2026-10-20) | Direction | Status at the refresh base |
 |---|---|---|---|---|
-| B1 | `src/annotations/move-parity.test.ts` | 2 | runtime value import | `researchPaperToPublicationGraph` |
-| B2 | `src/annotations/annotation-bundle.test.ts` | 11 | runtime value import | `researchPaperToPublicationGraph` |
-| B3 | `src/publication/research-paper-adapter.test.ts` | 5-8 | runtime value import | `publicationGraphToResearchPaper`, `researchPaperToPublicationGraph` |
-| B4 | `src/publication/source-adapter.test.ts` | 5-8 | runtime value import | `adaptResearchPaper`, `researchPaperToPublicationGraph` |
+| `RESEARCH_PAPER_ADAPTER_ID` | `:21` | **none** | — | **RETIRED.** The symbol appears in no source file of the tree; the only place it is named is the retirement test's absence list (`src/publication/research-paper-source-retirement.test.ts:53-58`). |
+| `researchPaperToPublicationGraph` | `:81-196` | tests only: `src/publication/research-paper-adapter.test.ts:7,16,22,30,33,41`; `src/publication/source-adapter.test.ts:7,54`; `src/annotations/move-parity.test.ts:2,77`; `src/annotations/annotation-bundle.test.ts:11,15,66,75,93,107,122,171,196,224,271,283,357,385` | paper → graph | **RETIRED** by `a2a2ee1d`. No caller remains; the symbol appears in no source file of the tree except the retirement test's absence list (`src/publication/research-paper-source-retirement.test.ts:54`). |
+| `publicationGraphToResearchPaper` | `:198-296` | **tests only**: `src/publication/research-paper-adapter.test.ts:6,17` | graph → paper | **RETIRED**, first by `5c6027ef` (the reverse writer), then the whole module by `a2a2ee1d`. The symbol appears in **no source file** of the tree: a repository-wide search for it matches only `docs/**`, never a module or a test. |
+| `adaptResearchPaper` | `:298-315` | `src/publication/source-adapter.test.ts:6,17,79` and the `researchPaperSourceAdapter` object at `:321` | paper → graph + receipt-less `PublicationSourceResult` | **RETIRED** by `a2a2ee1d`. |
+| `researchPaperSourceAdapter` | `:317-322` | **none** | — | **RETIRED**, and it was never registered: the default registry registers `astroPublicationAdapter` and `structPublicationAdapter` only (`src/publication/adapter-registry.ts:54-58`). The Payload-Lexical adapter that used to be registered beside them is gone too. |
 
-Module exports and their actual callers:
+### 4.1 The bridge semantics that mattered for E-04, and what replaced them
 
-| Export | Definition | Callers outside the module | Direction | Notes |
-|---|---|---|---|---|
-| `RESEARCH_PAPER_ADAPTER_ID` | `:21` | **none** | — | no importer found |
-| `researchPaperToPublicationGraph` | `:81-196` | tests only: `src/publication/research-paper-adapter.test.ts:7,16,22,30,33,41`; `src/publication/source-adapter.test.ts:7,54`; `src/annotations/move-parity.test.ts:2,77`; `src/annotations/annotation-bundle.test.ts:11,15,66,75,93,107,122,171,196,224,271,283,357,385` | paper → graph | forward projection |
-| `publicationGraphToResearchPaper` | `:198-296` | **tests only**: `src/publication/research-paper-adapter.test.ts:6,17` | graph → paper | **reverse path — the only place where a `PublicationGraph` can mint `ResearchPaper` semantic ids and text.** No production caller was found. |
-| `adaptResearchPaper` | `:298-315` | `src/publication/source-adapter.test.ts:6,17,79` and the `researchPaperSourceAdapter` object at `:321` | paper → graph + receipt-less `PublicationSourceResult` | forward |
-| `researchPaperSourceAdapter` | `:317-322` | **none** | — | **not registered** in `createDefaultPublicationAdapterRegistry()` (`src/publication/adapter-registry.ts:55-60` registers `astroPublicationAdapter`, `payloadLexicalSourceAdapter`, `structPublicationAdapter` only) |
+- The forward projection **rejected** several ResearchPaper features rather
+  than degrading them: scholarly metadata extensions (`authorNotes`,
+  `authorAffiliations`, `affiliations`, `metadataLineage` — `:85-94`), embedded
+  note references (`:59-68`), legacy list context (`:69-73`) and structured
+  figure subtypes (`table`/`equation` — `:150-159`). Those refusals were a
+  property of the retired module and are **not** a live contract at the refresh
+  base.
+- The reverse projection **reconstructed** a ResearchPaper from graph nodes,
+  mapping `note` → `footnote` (`:238-250`), `caption` → `caption`
+  (`:230-237`), `figure` → `figure` (`:251-267`), and rebuilding the paper-level
+  `id`/`version`/`status`/`title`/`subtitle`/`authors`/`language`/
+  `baseDirection`/`publicationDate`/`artifactModifiedAt`/`updated`/`abstract`
+  from graph metadata (`:275-295`). It threw for `author-note` nodes
+  (`:239-240`) and for every node type outside the ResearchPaper subset
+  (`:268-271`). It is gone.
+- **The consequence for E-04 is discharged.** The 2026-10-20 scan recorded the
+  reverse direction as "exactly the shape the ADR forbids — a second semantic
+  writer that can produce canonical ids and text from a graph", and recorded
+  the round-trip assertion at
+  `src/publication/research-paper-adapter.test.ts:17` as "the concrete thing
+  that must be retired or re-scoped before the graph can be narrowed". Both are
+  done: the reverse writer is retired, and the graph is narrowed to the
+  ephemeral renderer plan that the EG-08 guard enforces.
+- **The legacy app-owned path is untouched.** `src/research/epub.ts` is not part
+  of the bridge and still exports both overloads
+  (`src/research/epub.ts:1422-1447` and `:2094-2118`); the retirement test
+  proves that the legacy read-only surface survived
+  (`src/publication/research-paper-source-retirement.test.ts:143-155`).
 
-### Bridge semantics that matter for E-04
+### 4.2 The bridge's surfaces after the retirement
 
-- Forward (`researchPaperToPublicationGraph`) **rejects** several ResearchPaper
-  features rather than degrading: scholarly metadata extensions
-  (`authorNotes`, `authorAffiliations`, `affiliations`, `metadataLineage` —
-  `:85-94`), embedded note references (`:59-68`), legacy list context
-  (`:69-73`), and structured figure subtypes (`table`/`equation`
-  — `:150-159`).
-- Reverse (`publicationGraphToResearchPaper`) **reconstructs** a ResearchPaper
-  from graph nodes, mapping `note` → `footnote` (`:238-250`), `caption` →
-  `caption` (`:230-237`), `figure` → `figure` (`:251-267`), and rebuilding
-  the paper-level `id`/`version`/`status`/`title`/`subtitle`/`authors`/
-  `language`/`baseDirection`/`publicationDate`/`artifactModifiedAt`/`updated`/
-  `abstract` from graph metadata (`:275-295`). It throws for `author-note`
-  nodes (`:239-240`) and for every node type outside the ResearchPaper subset
-  (`:268-271`).
-- **Consequence for E-04:** the reverse direction is exactly the shape the ADR
-  forbids — a second semantic writer that can produce canonical ids and text
-  from a graph. It is currently exercised only by
-  `src/publication/research-paper-adapter.test.ts:17`, which asserts a
-  round-trip equality (`expect(publicationGraphToResearchPaper(graph)).toEqual(paper)`).
-  That round-trip test is the concrete thing that must be retired or
-  re-scoped before the graph can be narrowed.
+The research-paper **source adapter** the bridge served does not exist either:
+the default registry resolves no `research-paper` adapter
+(`src/publication/adapter-registry.ts:54-58`), and the retirement test asserts
+that `registry.resolve('research-paper', rawPaper)` is refused
+(`src/publication/research-paper-source-retirement.test.ts:136-141`). The two
+annotation surfaces that used the bridge now anchor on Struct block ids: a
+1.2.0 annotation bundle **requires** its `sourceId` and **must not** carry a
+`graphId` (`src/annotations/annotation-bundle.ts:66-96`).
 
 ## 5. Tooling callers of the legacy renderer
 
@@ -436,8 +536,23 @@ Module exports and their actual callers:
 | Corpus audit | `tools/pdf-corpus-audit-lib.mjs` | `buildEpub`, `buildReadableEpub`, `inspectEpub` |
 | SRT source-output evidence | `tools/srt-source-output-evidence.mjs` | `buildEpub` |
 | EPUB package scan | `tools/pdf-epub-package-scan.mjs` | `inspectEpub` |
-| Model consultation evidence | `tools/model-consultation-evidence.ts:97-100` | `typeof import(...)` types only |
+| Association-fixture audit | `tools/pdf-association-fixture-audit.mjs` | `renderPublicationXhtml` (**added 2026-10-21**: the tool loads the module through Vite at `:45` and renders a reconstruction at `:65`) |
+| Model consultation evidence | `tools/model-consultation-evidence.ts:93-101` | `typeof import(...)` types only; the `research/epub` type import is at `:98` |
 | Demo evaluation | `tools/srt/demo-evaluation.mjs:308` | `createDemoAnnotations(paper)` (ResearchPaper annotations) |
+
+**How these tools reach the module.** They reach it through a **dynamic Vite
+module load**, not through a static import statement:
+`tools/pdf-corpus-audit-lib.mjs:1801`, `tools/srt-source-output-evidence.mjs:780`,
+`tools/pdf-association-fixture-audit.mjs:45` and
+`tools/model-consultation-evidence.ts:93` call
+`ssrLoadModule('/src/research/epub.ts')` directly;
+`tools/pdf-epub-package-scan.mjs:96` calls
+`server.ssrLoadModule('/src/research/epub.ts')`; and
+`tools/pdf-export.mjs:1067` and `tools/pdf-private-fidelity.mjs:2736` reach the
+same module through the pipeline's `loadExportModules()`
+(`tools/pdf-corpus-audit-lib.mjs:1799-1801`). The literal-specifier scan does
+not see any of them; they were found by scanning `tools/**` for the module path
+and the entry-point names, and they are recorded here for that reason.
 
 ## 6. Current source-authority picture (as observed, not as target)
 
@@ -445,42 +560,55 @@ Module exports and their actual callers:
 |---|---|---|
 | Canonical text of a paper | `ResearchPaper` JSON under `src/research/papers/` | `src/research/papers.ts:1-8` |
 | Canonical content digest of a paper | `canonicalContentHash` (app-local, ResearchPaper-shaped) | `src/research/canonical-hash.ts:49`; consumed at `src/research/export-package.ts:364,464,679`, `src/research/manifest.ts:654,897`, `src/research/evaluation.ts:230` |
-| Layout manifest | `src/research/manifest.ts` (`LAYOUT_MANIFEST_VERSION = '1.3.0'`, `:36`) | `src/pages/papers/[id]/manifest.json.ts:11-15` |
+| Layout manifest | `src/research/manifest.ts` (`LAYOUT_MANIFEST_VERSION = '1.3.0'`, `:36`) | `src/pages/papers/[id]/manifest.json.ts:11-16` |
 | Public JSON exposure of the paper | `src/pages/papers/[id]/source.json.ts:7-9` serves the raw ResearchPaper as `application/json` | route file itself |
 | Public export artifacts | `src/pages/papers/[id]/exports/[file].ts:25-43` | route file itself |
-| Graph (`PublicationGraph`) | derived projection; **not** wired to any route, writer, or the default adapter registry | §4 above; `src/publication/adapter-registry.ts:55-60` |
-| Annotation anchors bound to graph nodes | `src/annotations/annotation-bundle.ts` — **test-only caller** | `src/annotations/annotation-bundle.test.ts`, `src/annotations/move-parity.test.ts` |
+| Graph (`PublicationGraph`) | an in-memory, Struct-derived renderer plan. It is produced by the Struct projection `src/publication/struct-adapter.ts` and may be **held** only by the six modules the EG-08 guard permits (`tests/helpers/publication-graph-boundary.ts:69-76`); it is **never persisted** and `publication:check` refuses a present `publication-graph.json` (`tools/publication-check.mjs:1043-1055`, called at `:1219`). It is **not** wired to any route, writer or release path. **CORRECTED 2026-10-21: it is now produced inside the `struct-document` adapter the default registry registers**, so the 2026-10-20 wording ("not wired to … the default adapter registry") no longer holds | §4 above; `src/publication/adapter-registry.ts:54-58`; `src/publication/struct-adapter.ts` |
+| Annotation anchors | `src/annotations/annotation-bundle.ts` — the anchors resolve from **Struct block ids and text**; a 1.2.0 bundle **requires** its `sourceId` and **must not** carry a `graphId`. The graph is no longer the anchor authority | `src/annotations/annotation-bundle.ts:66-96`; `src/annotations/annotation-bundle.test.ts`, `src/annotations/move-parity.test.ts` |
 
-**The two `PublicationGraph`-anchored annotation surfaces are
-`src/annotations/annotation-bundle.ts` (graph → annotation bundle) and
-`src/annotations/annotations.ts` (ResearchPaper → demo annotations).** See the
-companion document
+**The two annotation surfaces at the refresh base are
+`src/annotations/annotation-bundle.ts` (Struct document → annotation bundle)
+and `src/annotations/annotations.ts` (ResearchPaper → demo annotations).** The
+graph → annotation-bundle surface is **retired**: it was reachable only through
+the bridge that `a2a2ee1d` deleted (§4). See the companion document
 [`docs/struct-publication-graph-authority-inventory.md`](struct-publication-graph-authority-inventory.md)
-§7 for the anchor model.
+§7 for the anchor model; note that that companion inventory still describes the
+deleted bridge module and is **not** refreshed by this unit.
 
 ## 7. Unresolved / not proven by this inventory
 
 1. **No compiler-level import proof.** The absence of an importer is
    grep-bounded; see §"Known limitations".
-2. **No both-mode parity evidence.** The cutover plan's E-04 deletion gate
-   for `research/epub.ts` requires *"Call-site inventory and both-mode
-   parity"*. Only the call-site half is in this document. Parity was not run.
-3. **No E-04 static assertion was added or run.** The cutover plan's proposed
-   red-first assertion (`PublicationGraph`, `publicationGraphSchema`,
-   `serializePublicationGraph` absent from storage/API/route/writer/release
-   modules) does not exist in the repository today. `tests/struct-adapter-boundary.test.ts`
-   is the only AST-based boundary harness, and it currently covers
-   `src/struct/**` and `src/struct-adapters/**` only — it says nothing about
-   `src/publication/**`.
-4. **Existing partial precedent, not coverage.** `src/struct/struct.test.ts:1234-1250`
+2. **No both-mode parity evidence in this document.** The cutover plan's E-04
+   deletion gate for `research/epub.ts` requires *"Call-site inventory and
+   both-mode parity"*. Only the call-site half is in this document. The parity
+   half is measured elsewhere — in the E-04 dated record §6.1, on the integrated
+   head — and it is recorded there as **PARTIAL**, not met. This document does
+   not reproduce that measurement and does not assert it.
+3. **The E-04 static assertions now exist; this inventory is not their
+   evidence.** The compiler-based graph-absence guard is
+   `tests/publication-graph-boundary.test.ts`, with its machinery in
+   `tests/helpers/publication-graph-boundary.ts`; it covers
+   `src/publication/**` and resolves a graph-bearing **value** through the type
+   checker, not only by symbol name. The E-04 family entry of the app
+   boundary harness is `tests/struct-adapter-boundary.test.ts:814` ("E-04:
+   prohibits migrated-family imports (xhtml/epub/emitted-ids) through every
+   local path"). Neither guard proves the `ResearchPaper` importer set of §2,
+   and neither is an inventory of it.
+4. **Existing partial precedent, not coverage.** `src/struct/struct.test.ts:1264`
    asserts that `src/struct/{types,ids,reading-order,model-consultation-receipt,xhtml,epub}.ts`
    do not import any `research/` module and do not contain the literal
-   `ResearchPaper`. This covers the Struct side only; it does **not** assert
-   anything about `src/publication/**`.
-5. **Reverse-bridge round-trip test.** `src/publication/research-paper-adapter.test.ts:17`
-   currently *requires* `publicationGraphToResearchPaper` to round-trip
-   losslessly. Any E-04 "narrow or retire" decision must account for that
-   test.
+   `ResearchPaper` (`:1277`). This covers the Struct side only; it does **not**
+   assert anything about `src/publication/**`, and it says nothing about who
+   imports `src/research/schema.ts`.
+5. **The reverse-bridge round-trip test is retired with the module.** The
+   2026-10-20 scan recorded that `src/publication/research-paper-adapter.test.ts:17`
+   *required* `publicationGraphToResearchPaper` to round-trip losslessly, and
+   that any "narrow or retire" decision had to account for that test. At the
+   refresh base that test does not exist: the module and its test were deleted
+   by `a2a2ee1d`, and the symbol `publicationGraphToResearchPaper` appears in
+   no source file of the repository. The decision the scan called for has been
+   taken; nothing is left to re-scope.
 6. **`src/research/papers.ts` remains the only paper loader.** Whether the
    Struct-derived pipeline will emit the same node ids/text for the two
    shipped papers — and therefore whether `source.json` and the export
@@ -497,4 +625,7 @@ companion document
    `/src/research/publication.worker.ts`. The exact production bundle wiring
    was not re-derived for this document.
 8. **No frozen golden set was regenerated or compared.** No build, test,
-   renderer, or golden run was executed.
+   renderer, or golden run was executed for the 2026-10-21 refresh, and no
+   source file was modified by it. (The E-04 branch itself does re-freeze the
+   app's own parity baselines, in `3b48976b`; that is the branch's record, in
+   the E-04 dated record, and it is not re-verified here.)

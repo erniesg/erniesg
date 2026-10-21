@@ -19,12 +19,16 @@ supersedes the earlier §6 statuses; the historical measurements and the histori
 are kept below, because they are the record of what the E-04 candidate measured, but they
 are **not** gate satisfaction.
 
+**This section was refreshed a second time on 2026-10-21, against the E-04
+integrated head, because the branch that carries the audited head's outstanding
+units has since shipped them. See §0.3 and §6.**
+
 | rule | statement |
 | --- | --- |
 | what counts as MET | a gate is MET only when the proof was produced by an independent run **on the integrated head that carries the change**, and that run is recorded. A lane report, a pilot report, or this record's own prose is not proof. |
 | what happened | the earlier §6 marked EG-05, EG-06, EG-08, EG-10, EG-11 and EG-13 "met" on the strength of implementation and of lane-local runs. The audit's measurements contradict five of the six, and the sixth (EG-13) was never demonstrated at all. |
-| what this update does | §6 now carries the audit's verdict per gate with its basis, and every gate that depends on a not-yet-integrated unit is marked PENDING. The six named gates (EG-05, EG-06, EG-08, EG-10, EG-11, EG-13) are **not** met. |
-| what is NOT claimed here | no receipt repair, no renderer repair and no release-path repair is claimed as done. The units below are reviewed; their results are not yet in `main` / PR #455, and the gates that depend on them stay PENDING until they are integrated and re-measured. |
+| what this update does | §6 now carries the audit's verdict per gate with its basis, and every gate that depends on a not-yet-integrated unit is marked PENDING. **At the audited head `7370b71a`** the six named gates (EG-05, EG-06, EG-08, EG-10, EG-11, EG-13) are **not** met. |
+| what is NOT claimed here | **at the audited head `7370b71a`**: no receipt repair, no renderer repair and no release-path repair is claimed as done. The units below are reviewed; their results are not yet in `main` / PR #455, and the gates that depend on them stay PENDING until they are integrated and re-measured. **At the integrated head those repairs ARE in the branch** — see §0.3 and §6. |
 
 ### 0.1 The two independently reviewed units this record's base carries
 
@@ -38,6 +42,20 @@ combines them and carries no E-05 content). A review verdict on a unit is not th
 thing as the unit being integrated and re-measured on the integrated head, so every gate
 that depends on them stays PENDING here.
 
+> **Correction 2026-10-21 — the `be3556aa` attribution.** This section attributed the
+> property-access detection to `be3556aa10668b41c7374af6d206aa6cd8c872e4`. At the
+> integrated head **that SHA is not an ancestor of it**: `git merge-base --is-ancestor
+> be3556aa HEAD` exits `1`. The **same change is in this record's base** under
+> `9675feea`: `git log -S graphTypeOf -- tests/helpers/publication-graph-boundary.ts`
+> names `9675feea0a63a8ed4109aed2e540adae9d46c922` ("test(publication): detect
+> graph-bearing property access in the boundary guard") as the commit that introduced
+> it. The merge-conflict resolution `a0a4dcc7` **is** an ancestor of the integrated head
+> (`git merge-base --is-ancestor a0a4dcc7 HEAD` exits `0`). The truth is therefore:
+> **the property-access detection is in the base, under `9675feea`; `be3556aa` is a
+> reviewed unit of the same change that was folded into the base, and the integrated
+> head carries the change through the base.** §6's EG-06 and EG-08 rows are corrected
+> to say so.
+
 ### 0.2 Where this update was made
 
 | field | value |
@@ -47,6 +65,27 @@ that depends on them stays PENDING here.
 | governing plan | `docs/superpowers/plans/2026-10-20-struct-full-cutover-sequence.md` at commit `51c6656f` |
 | this update's scope | §0, §1.2 (the proof-artifact reference), §6 (the gate table), and the new §6.1 (both-mode parity) and §6.2 (the re-pointed assertion) |
 | source changes | none. This update changed no production source, no renderer, no binding, no helper, no schema, no manifest, no lock and no CI file. |
+
+### 0.3 The second update: the refresh against the integrated head (2026-10-21)
+
+**Why this update was made.** The independent final review of the E-04 integrated
+head (`S/app-e04-integrated-final-review-result.json`, verdict `PASS_WITH_FINDINGS`)
+returned two actionable findings against the **documentation**: the checked-in
+`ResearchPaper` caller inventory no longer matched the tree, and this record's §6
+gate table (with the migration-status E-04 row) still described the acceptance-audit
+head. This section records what this second update changed and what it did not.
+
+| field | value |
+| --- | --- |
+| branch | `docs/struct-e04-record-refresh-20261021` |
+| base | `ead376c1541b67cc252ba77247185a36113ace36` (the E-04 integrated head of `feat/struct-e04-integrated-20261021`) |
+| scope | §0.1 (the `be3556aa` attribution), §0.3 (this section), §2.4 (the note that annotates the EG-13 row), §5 (the scope note on the candidate's own measurements), §6 (the gate table, refreshed against the integrated head), §6.1 (the "what these cases do NOT prove" list), §7 (the not-done list), and the three documents this update owns |
+| source changes | **none.** This update changed no production source, no renderer, no binding, no helper, no schema, no manifest, no lock, no CI file, no fixture, no golden and no vendor artifact. It is a documentation-only refresh. |
+| what it does NOT claim | it does not claim that E-04 is accepted, that CI passed, that the branch was merged, that a gate that the evidence does not support is met, or that the independent review's findings are closed by anything other than this documentation refresh. |
+
+**The three documents this update owns** are `docs/struct-research-paper-caller-inventory.md`,
+`docs/struct-migration-status/e-04-dated-record-20261020.md` (this file) and
+`docs/struct-migration-status.md`.
 
 ---
 
@@ -458,9 +497,13 @@ exact final head.
 > record's base (`9675feea`), they were not re-run at the audited head (`7370b71a`), and
 > they are **not** gate satisfaction for EG-10, EG-12 or anything else: §6's corrected
 > table says which proof each gate still needs. In particular, the published receipt
-> quoted below is the receipt the candidate produced; the audit found that the release
-> path never compares that receipt's package identity against
-> `vendor/struct/provenance.json`, so the receipt is a measurement, not the EG-10 proof.
+> quoted below is the receipt the candidate produced; **at the audited head
+> `7370b71a`** the release path never compared that receipt's package identity against
+> `vendor/struct/provenance.json`, so at that head the receipt was a measurement and not
+> the EG-10 proof. **That is a fact about the audited head, not about the integrated
+> head**: at the integrated head the release path does compare it, and §6's EG-10 row
+> carries the evidence. The receipt quoted below is still the **candidate's** receipt,
+> from the candidate's own pin; it is not the proof.
 
 - **The real production build**: `npm run build:astro` (181 pages, exit 0) and then, at
   the same head, `npm run publication:build -- --adapter astro --entry moving-to-cloudflare-with-astro --output .agent/evidence/publication` (exit 0, 4 artifacts) and the matching
@@ -513,14 +556,18 @@ exact final head.
 
 ---
 
-## 6. The E-04 future-gate table (corrected 2026-10-21)
+## 6. The E-04 future-gate table (corrected 2026-10-21; refreshed against the integrated head 2026-10-21)
 
-**The statuses below are corrected.** The earlier version of this table marked every gate
-"met" except EG-14, on the strength of implementation and of lane-local runs. The
-independent acceptance audit at `7370b71a` measured the gates against the integrated tree
-and contradicted six of them (findings A-10, A-12 and the gate matrix in
-`S/app-e04-acceptance-audit-report.md` §4). The table now carries the audit's verdict and
-its basis. **A lane report saying PASS is not gate satisfaction.**
+**The statuses below were corrected twice, and each correction is scoped to the head it
+was measured at.** The earlier version of this table marked every gate "met" except
+EG-14, on the strength of implementation and of lane-local runs. The independent
+acceptance audit at `7370b71a` measured the gates against the integrated tree and
+contradicted six of them (findings A-10, A-12 and the gate matrix in
+`S/app-e04-acceptance-audit-report.md` §4). §6 then carried that audit's verdict and its
+basis. **On 2026-10-21 §6 was refreshed again against the E-04 integrated head**, because
+the branch that carries the audited head's outstanding units has since shipped them, and
+because several of the audited head's statements are false at the integrated head.
+**A lane report saying PASS is not gate satisfaction.**
 
 `SATISFIED` in this table means: an independent run on an integrated head demonstrated the
 gate and that run is recorded. `PARTIAL` means: part of the gate is demonstrated and the
@@ -528,32 +575,69 @@ rest is not. `NOT SATISFIED` means: the gate was measured and the measurement co
 it. `PENDING` means: the gate needs a proof that has not been produced on an integrated
 head.
 
+### 6.0 Which head each status is measured at, and which commits carry the obligations
+
+| head | what it is | what it carries |
+| --- | --- | --- |
+| `7370b71a` | the acceptance-audit head | the audit's measurements; every statement of the form "the audit found …" below belongs to that head |
+| `feat/struct-e04-integrated-20261021` | the integrated branch this record ships on | the source units named below |
+
+**The integrated branch's own tip SHA is deliberately not named here.** It goes stale the
+moment the branch is merged onto `main`. The obligations are named by the **source-unit
+commits** that carry them, because those SHAs are stable:
+
+| obligation | source-unit commit(s) |
+| --- | --- |
+| the forward `ResearchPaper` → `PublicationGraph` producer is retired | `a2a2ee1d` |
+| the receipt/admission lane | `90e3edd7` |
+| the renderer lane | `03dd4b9c` |
+| the both-mode parity evidence | `87cdb116` |
+| the caption lane | `5fca6c79`, `6d4783c1`, `28c9433a` |
+| the list-container expectation fix | `0401bc2f` |
+| the baseline re-freeze | `3b48976b` (the last **content** commit of the integrated branch) |
+| the vendor artifact repin | `993c0d3a` |
+
+**The pinned Struct artifact every row below is measured against** is the source commit
+`3d3a7c95b1c55a9ff4b527eee5acf36c168cd896`, the artifact
+`erniesg-struct-0.0.0-3d3a7c95b1c55a9ff4b527eee5acf36c168cd896.tgz`, sha256
+`836f6d3ead7a5ce1dc59f2799c80dfbe5c52931836a5b4f2749ab5b1920a55f9`
+(`vendor/struct/provenance.json`).
+
 > **Updated 2026-10-21 (§2.4).** One row moved after the re-freeze: **EG-13**
 > is re-measured on the integrated head and is now **PARTIAL** (the two
 > overloads agree over the common supported semantic domain; the remaining
 > inline-code difference is a scoped model boundary, and the corpus is still
-> a pilot). Every other row keeps the acceptance audit's verdict: **EG-05,
-> EG-06, EG-08, EG-10, EG-11 and EG-13 are not met**, and EG-01, EG-02,
-> EG-03 and EG-15 are partial or not satisfied. The re-freeze changed no
-> production source and no gate other than EG-13's row.
+> a pilot). Every other row keeps the acceptance audit's verdict **at the
+> audited head `7370b71a`**: **EG-05, EG-06, EG-08, EG-10 and EG-11 are not
+> met**, and EG-01, EG-02, EG-03 and EG-15 are partial or not satisfied.
+> **EG-13 is PARTIAL, which is not "met"**: a partially demonstrated gate is
+> not a satisfied gate, and the pilot corpus is not complete. The re-freeze
+> changed no production source and no gate other than EG-13's row.
+>
+> **Updated again 2026-10-21 (§6).** The gate table was refreshed against the
+> **integrated head**, because the branch that carries the audited head's
+> outstanding units has since shipped them. At the integrated head the
+> statuses differ from the audited head's, and §6 names the source-unit
+> commits that carry each obligation. The audited head's statements are kept
+> in §6 and attributed to that head, so both remain readable.
 
-| # | Gate | Status (corrected 2026-10-21) | Basis |
+| # | Gate | Status (refreshed 2026-10-21, at the integrated head) | Basis |
 | --- | --- | --- | --- |
-| EG-01 | the graph is an ephemeral renderer plan from one pinned approved Struct revision | **PARTIAL** | the Astro adapter produces the one approved Struct revision through the app-owned MDX ingress and the Payload publication path was retired; but at the audited head the non-Struct forward producer was still exported and allowlisted (audit A-04). A separate lane is retiring that producer in flight; its result is not claimed here. |
-| EG-02 | the graph owns no independent text | **PARTIAL** | the Struct projection copies `StructBlock.text` and `tests/publication-struct-double-adapt.test.ts` asserts the graph never authors text or a semantic id; but the research-paper bridge still minted graph text from a paper at the audited head (audit §4). |
-| EG-03 | the graph owns no independent semantic ids | **PARTIAL** | the projection's node ids are the Struct block id and the published element ids are Struct-derived; but the bridge's own test still asserted graph ids == paper ids at the audited head (audit §4). |
-| EG-04 | the graph owns no persistence | **SATISFIED** (at the audited head) | the renderer persists only the Struct artifacts and the checker rejects a present `publication-graph.json`; proven by `tests/publication-cli-facade.test.mjs` and `src/publication/renderers/vivliostyle.persistence.test.ts`, both green in the audit's run. |
-| EG-05 | the graph owns no receipt | **NOT SATISFIED** | the receipt's source identity is the discriminated `sourceBinding`, but the graph's own `canonicalSubsetSha256` is still produced and compared at admission, and `receipt.source.graphSha256` is still required (audit A-06/A-10). "graphSha256 is diagnostic only" was a provisional claim, not a measurement. |
-| EG-06 | the graph owns no writer and no release path | **PENDING** | neither CLI tool imported a graph symbol, but at the audited head the release path still ran the graph pipeline and the published EPUB/XHTML/HTML were graph-authored (audit A-03), and the guard could not see graph-bearing values (audit A-05). The independently reviewed property-access unit `be3556aa` closes the *detection* gap; it is not yet in `main` / PR #455, and the release path has not been re-measured on an integrated head without the graph. |
-| EG-07 | no reverse graph→ResearchPaper writer | **SATISFIED** (at the audited head) | `publicationGraphToResearchPaper` was removed and the module's own test asserts both that the export is absent and that the module source no longer contains the symbol (green in the audit's run). |
-| EG-08 | the red-first static absence assertion | **PENDING** | the compiler-based guard `tests/publication-graph-boundary.test.ts` with its non-vacuity probes was green at the audited head, but it resolved **symbol names only** there (audit A-05) and the forward bridge was allowlisted (audit A-04). This record's base carries the independently reviewed property-access unit `be3556aa` and the reviewed guard merge `a0a4dcc7`; both are **not yet in `main` / PR #455**, and the red-first run has not been repeated on the integrated head. |
-| EG-09 | byte-identical double adapt; the graph is never persisted | **SATISFIED** (at the audited head) | `tests/publication-struct-double-adapt.test.ts` (7 tests, green in the audit's run): identical graph bytes, identical encoded document bytes, identical binding, identical persisted serialization, and "never lets the graph author text or a semantic id". |
-| EG-10 | the receipts carry the Struct digests and the exact package pin | **NOT SATISFIED** | the binding *shape* exists, but at the audited head the semantic receipt was optional and never compared, there was no receipt-bound `struct-bundle.bin`, and no comparison of the receipt's package-identity fields against `vendor/struct/provenance.json` happened at admission (audit A-01, A-02, A-06). Re-checked at this record's base: `readStructPackagePin` is referenced only from tests, never from the release path, and `tools/publication-check.mjs` reads `struct-bundle.json`, not a receipt-bound `struct-bundle.bin`. The published receipt quoted in §5 is the receipt the E-04 candidate produced; it is **not** the EG-10 proof. |
-| EG-11 | `ResearchPaper` stays a read-only compatibility model with a caller inventory | **PARTIAL** | the app-owned `ResearchPaper` overloads are unchanged and the inventory exists, but the checked-in inventory still described the pre-E-04 tree at the audited head and no test asserts the inventory is accurate (audit A-11). The inventory is another lane's file and is not updated here. |
-| EG-12 | EPUBCheck / Ace / human accessibility stay app-owned | **SATISFIED** (at the audited head) | the checker runs EPUBCheck and asserts the accessibility metadata, the app builds that metadata, and the package renderer provably emits none of it, so app ownership is load-bearing (audit §4). |
-| EG-13 | the legacy overloads keep both-mode parity | **PARTIAL** | the earlier "met" was a provisional claim: the legacy-mode tests proved byte-stability and *distinctness* of the two modes and never agreement on the same content (audit A-12). **Re-measured 2026-10-21** on the integrated head at the pinned Struct artifact `3d3a7c95b1c55a9ff4b527eee5acf36c168cd896`: the two overloads now AGREE over the common supported semantic domain (the frozen manuscript compares clean over the whole comparison, with no exclusion at all), and the only difference the comparison still reports is the inline-code mark, which is a scoped model boundary of the deprecated legacy model. The gate is still **not** recorded as satisfied: the corpus is a pilot that does not cover quote blocks, code blocks, equations, footnote-heavy publications, multi-asset figures, right-to-left text, the readable fallback or the EPUB archive side, and this re-measurement has not been independently reviewed on the integrated head. See §6.1. |
+| EG-01 | the graph is an ephemeral renderer plan from one pinned approved Struct revision | **SATISFIED** | the non-Struct forward producer is gone: `a2a2ee1d` deleted `src/publication/research-paper-adapter.ts` (237 lines) and its test, and `src/publication/research-paper-source-retirement.test.ts:110-141` asserts that the module does not exist, that **no production module** of `src`, `tools`, `packages` or `scripts` declares `researchPaperToPublicationGraph`, `adaptResearchPaper`, `researchPaperSourceAdapter` or `RESEARCH_PAPER_ADAPTER_ID`, and that the default registry refuses a `research-paper` adapter. The default registry registers `astroPublicationAdapter` and `structPublicationAdapter` only (`src/publication/adapter-registry.ts:54-58`), and the Astro adapter produces the one approved Struct revision through the app-owned MDX ingress (`src/publication/adapters/astro.ts:32-33`). **At the audited head `7370b71a` this row was PARTIAL**, because the forward producer was still exported and allowlisted (audit A-04). |
+| EG-02 | the graph owns no independent text | **SATISFIED** | the only projection left is `src/publication/struct-adapter.ts`, and it copies `StructBlock.text` into the graph (`:779`, `:797`, `:803`, `:819`, `:918`, `:1102`, `:1280`); `tests/publication-struct-double-adapt.test.ts:155-156` asserts that the graph never authors text. The producer that minted graph text from a paper is retired (`a2a2ee1d`). **At the audited head `7370b71a` this row was PARTIAL**, because the research-paper bridge still minted graph text from a paper (audit §4). |
+| EG-03 | the graph owns no independent semantic ids | **SATISFIED** | the projection's node id is the Struct block id, verbatim (`src/publication/struct-adapter.ts:696`), and the published element ids are Struct-derived; the bridge's own "graph ids == paper ids" assertion went with the retired module (`a2a2ee1d`). **At the audited head `7370b71a` this row was PARTIAL** (audit §4). |
+| EG-04 | the graph owns no persistence | **SATISFIED** | the renderer persists only the Struct artifacts, and `publication:check` refuses a present `publication-graph.json` (`tools/publication-check.mjs:1043-1055`, called at `:1219`); proven by `tests/publication-cli-facade.test.mjs` and `src/publication/renderers/vivliostyle.persistence.test.ts`, green in the audit's run. |
+| EG-05 | the graph owns no receipt | **SATISFIED** | the receipt's source identity is the discriminated `sourceBinding`, and the struct-cutover variant makes `semanticReceiptSha256` **mandatory** (`src/publication/source-binding.ts:38-50`). The graph, asset and canonical-subset digests are produced only as back-compat diagnostics (`src/publication/publishing-facade.ts:444`, `src/publication/source-adapter.ts:232`), and admission neither compares nor requires them: a present diagnostic only has to be a well-formed digest (`tools/publication-check.mjs:1258-1272`), and the checker no longer imports `canonicalSubsetSha256ForPlan`. **At the audited head `7370b71a` this row was NOT SATISFIED**: `canonicalSubsetSha256` was still compared at admission and `receipt.source.graphSha256` was still required (audit A-06/A-10). |
+| EG-06 | the graph owns no writer and no release path | **SATISFIED** | no CLI tool **imports** a graph symbol: the only occurrence of a graph symbol's name in `tools/**` is the checker's own function name `assertNoPersistedPublicationGraph` (`tools/publication-check.mjs:1043`, called at `:1219`); the release path imports only the graph-free facade helpers and the pinned Struct decoders (`tools/publication-check.mjs:1-41`), and the published XHTML/HTML/EPUB come from the pinned package renderers (the renderer lane, `03dd4b9c`). The guard now sees a graph-bearing **value**, not only a graph-bearing name, because the property-access detection is **in this record's base** under `9675feea` (see §0.1) — **not** `be3556aa`, which is not an ancestor of the integrated head. **At the audited head `7370b71a` this row was PENDING**: the release path still ran the graph pipeline and the published EPUB/XHTML/HTML were graph-authored (audit A-03), and the guard could not see graph-bearing values (audit A-05). |
+| EG-07 | no reverse graph→ResearchPaper writer | **SATISFIED** | the reverse writer was retired by `5c6027ef` and the whole module by `a2a2ee1d`; the symbol `publicationGraphToResearchPaper` now appears in **no source file** of the repository — a repository-wide search for it matches only `docs/**`. **At the audited head `7370b71a` this row was SATISFIED** because the module's own test then asserted that the export was absent; that assertion went with the retired module, and the module's own absence is asserted instead (`src/publication/research-paper-source-retirement.test.ts:110-112`). |
+| EG-08 | the red-first static absence assertion | **SATISFIED** | the compiler-checker guard `tests/publication-graph-boundary.test.ts`, with its machinery in `tests/helpers/publication-graph-boundary.ts`, resolves a graph-bearing **value** through the type checker — property, element, binding and parameter reads whose declared or inferred type carries the graph — not only by symbol name, and it carries its own non-vacuity probes. The forward bridge's allowlist entry was removed from `PERMITTED_GRAPH_IMPORTERS` by `a2a2ee1d`, so the guard covers that module too; the permitted set is now six modules (`tests/helpers/publication-graph-boundary.ts:69-76`). The property-access detection itself is **in this record's base** under `9675feea`, not `be3556aa` (see §0.1). **At the audited head `7370b71a` this row was PENDING**: the guard resolved symbol names only there (audit A-05) and the forward bridge was allowlisted (audit A-04). |
+| EG-09 | byte-identical double adapt; the graph is never persisted | **SATISFIED** | `tests/publication-struct-double-adapt.test.ts` (7 tests, green in the audit's run and re-verified by the independent review of the integrated head, `S/app-e04-integrated-final-review-result.json` A-13): identical graph bytes, identical encoded document bytes, identical binding, identical persisted serialization, and "never lets the graph author text or a semantic id". |
+| EG-10 | the receipts carry the Struct digests and the exact package pin | **SATISFIED** | the struct-cutover binding carries the semantic receipt digest as a **mandatory** field and all five package-identity fields (`src/publication/source-binding.ts:38-50`); the release check compares all five against the trusted pin (`tools/publication-check.mjs:1143-1158`, `readStructPackagePin()` → `vendor/struct/provenance.json`) and reads the **receipt-bound `struct-bundle.bin`** with a bounded read and decodes it through the pinned package decoder under the digest the receipt claims (`tools/publication-check.mjs:1066-1111`, `:1182-1210`). The pin is the source commit `3d3a7c95b1c55a9ff4b527eee5acf36c168cd896`, the artifact `erniesg-struct-0.0.0-3d3a7c95b1c55a9ff4b527eee5acf36c168cd896.tgz`, sha256 `836f6d3ead7a5ce1dc59f2799c80dfbe5c52931836a5b4f2749ab5b1920a55f9`. **CORRECTION 2026-10-21:** the audited head's basis — "Re-checked at this record's base: `readStructPackagePin` is referenced only from tests, never from the release path, and `tools/publication-check.mjs` reads `struct-bundle.json`, not a receipt-bound `struct-bundle.bin`" — was true at `7370b71a` and at the base `9675feea`, and is **false at the integrated head**. The published receipt quoted in §5 is still the **candidate's** receipt, from the candidate's own pin; it is not the EG-10 proof. |
+| EG-11 | `ResearchPaper` stays a read-only compatibility model with a caller inventory | **SATISFIED** (the inventory half is refreshed by the companion documentation unit) | the app-owned `ResearchPaper` overloads are unchanged (`src/research/epub.ts:1422-1447`, `:2094-2118`), and the retirement test proves that the legacy read-only surface survived the bridge's retirement (`src/publication/research-paper-source-retirement.test.ts:143-155`). The checked-in inventory `docs/struct-research-paper-caller-inventory.md` was **stale** at this head: it still described the producer that `a2a2ee1d` deleted, and its §3b still named two files that do not import `src/research/epub.ts` at all. It is refreshed by the companion documentation unit `docs/struct-e04-record-refresh-20261021` (base `ead376c1…`), which re-measures every row against this head and re-marks the retired producer as `RETIRED`. **Not proved here:** no test asserts that the inventory is accurate; the grep-bounded limitation recorded in the inventory's own §7 stands. **At the audited head `7370b71a` this row was PARTIAL** (audit A-11). |
+| EG-12 | EPUBCheck / Ace / human accessibility stay app-owned | **SATISFIED** | the checker runs EPUBCheck and asserts the accessibility metadata, the app builds that metadata, and the pinned package renderer provably emits none of it, so app ownership is load-bearing (`tools/publication-check.mjs`; `src/publication/renderers/vivliostyle.ts`). |
+| EG-13 | the legacy overloads keep both-mode parity | **PARTIAL** | the earlier "met" was a provisional claim: the legacy-mode tests proved byte-stability and *distinctness* of the two modes and never agreement on the same content (audit A-12). **Re-measured 2026-10-21** on the integrated head at the pinned Struct artifact `3d3a7c95b1c55a9ff4b527eee5acf36c168cd896` (the both-mode evidence lane, `87cdb116`): the two overloads now AGREE over the common supported semantic domain — the frozen manuscript compares clean over the whole comparison, with no exclusion at all (`src/research/struct-renderer-import-parity.test.ts:1161-1183`) — and the only difference the comparison still reports is the inline-code mark, which is a scoped model boundary of the deprecated legacy model. The independent review of the integrated head reproduced that measurement from its own probe (`S/app-e04-integrated-final-review-result.json`, A-12). **The gate is still not recorded as satisfied**, and a reproduced measurement does not change that: the corpus is a pilot that does not cover quote blocks, code blocks, equations, footnote-heavy publications, multi-asset figures, right-to-left text, the readable fallback or the EPUB archive side. See §6.1. |
 | EG-14 | the E-07 deletion gates | **PENDING (E-07)** | the local `src/struct/**` copies stay; this record adds the E-07 notes |
-| EG-15 | no non-Struct graph producer remains | **NOT SATISFIED** at the audited head | the forward producer was still exported and allowlisted (audit A-04). A separate lane is retiring it in flight; that result is **not** claimed here, and EG-08's guard must stay red until it is gone. |
+| EG-15 | no non-Struct graph producer remains | **SATISFIED** | the forward producer is deleted (`a2a2ee1d`), the allowlist entry for it was removed from the guard's permitted importers with it (`tests/helpers/publication-graph-boundary.ts:69-76`), the default registry registers no `research-paper` adapter (`src/publication/adapter-registry.ts:54-58`), and the retirement test asserts the module's absence and the absence of its four symbols from every production module (`src/publication/research-paper-source-retirement.test.ts:109-134`). **CORRECTION 2026-10-21:** the audited head's basis — "the forward producer was still exported and allowlisted", "that result is **not** claimed here", and "EG-08's guard must stay red until it is gone" — was true at `7370b71a` and is **false at the integrated head**: the producer is gone, the allowlist entry is gone, and EG-08's guard is satisfied at this head. |
 
 ### 6.1 EG-13, measured: the same publication through both `research/epub.ts` overloads
 
@@ -653,14 +737,30 @@ accepted input. They cover a heading, a paragraph, a bold mark, an inline-code
 mark, an external hyperlink, one image asset with its alt text, one semantic
 table, an ordered list with a nested list, a figure caption, a table caption
 and one footnote/endnote reference pair. They do **not** cover: quote blocks,
-code blocks, equations, list items in the legacy mode, footnote-heavy
-publications, multi-asset figures, publications with more than one table,
-right-to-left text, the readable-fallback mode, or the EPUB archive side of
-either overload. The two divergences that this section used to record are
-fixed and re-measured, and the third (the inline-code mark) is a scoped
-model boundary that is now excluded from the common domain and classified.
-The gate stays **PARTIAL** until the uncovered constructs are covered and
-until this re-measurement is independently reviewed on the integrated head.
+code blocks, equations, footnote-heavy publications, multi-asset figures,
+publications with more than one table, right-to-left text, the
+readable-fallback mode, or the EPUB archive side of either overload. The two
+divergences that this section used to record are fixed and re-measured, and the
+third (the inline-code mark) is a scoped model boundary that is now excluded
+from the common domain and classified. The gate stays **PARTIAL** until the
+uncovered constructs are covered.
+
+> **Correction 2026-10-21 (a wording defect the independent review recorded).**
+> This list used to say the pilot does **not** cover *"list items in the legacy
+> mode"*. That contradicted this section's own measurement: the legacy overload
+> publishes an ordered list with a nested bullet list, at depths 1 and 2, and
+> the two overloads publish the same structure
+> (`src/research/struct-renderer-import-parity.test.ts:1255-1284`). The clause is
+> removed because it is false; the measured list coverage is stated above
+> instead. The independent review of the integrated head reproduced the same
+> list items on both sides (`S/app-e04-integrated-final-review-result.json`,
+> A-12).
+>
+> **The re-measurement has now been independently reviewed on the integrated
+> head** — the independent final review reproduced it from its own probe
+> (A-12) — so that condition is discharged. **The gate is still PARTIAL**, for
+> the reason that has not changed: the corpus is a pilot and the uncovered
+> constructs above are still uncovered.
 
 **The remaining broader gates are unchanged by this measurement.** §6's other rows are not
 affected by EG-13, and this measurement does not move EG-05, EG-06, EG-08, EG-10 or EG-11.
@@ -721,17 +821,25 @@ StructDocument render path, so the app adopts the package's output.
 - E-05 (durable editorial publication behind an inactive gate), E-06 (activation) and
   E-07 (deletion) are separate steps and are not part of this record.
 - **No receipt repair, no renderer repair and no release-path repair is claimed as done**
-  (added 2026-10-21). The receipt-binding rules, the package-pin comparison at admission,
-  and the release path's independence from the graph are exactly what the audit found
-  unmet (A-01, A-02, A-03, A-06). The two independently reviewed units this record's base
-  carries (`be3556aa`, `a0a4dcc7`) are reviewed but **not yet in `main` / PR #455**, and no
-  integrated re-measurement of them is claimed here.
-- **This record's 2026-10-21 update changed no production source, no renderer, no
+  (added 2026-10-21) — **CORRECTED 2026-10-21, and scoped to the audited head
+  `7370b71a`.** At that head the receipt-binding rules, the package-pin comparison at
+  admission, and the release path's independence from the graph were exactly what the
+  audit found unmet (A-01, A-02, A-03, A-06). **At the integrated head those repairs ARE in
+  the branch** — the receipt/admission lane (`90e3edd7`) and the renderer lane
+  (`03dd4b9c`) — and §6's EG-05, EG-06 and EG-10 rows carry the evidence for that.
+  What is still **not** claimed here: the branch is **not** in `main` / PR #455, no
+  merge, deploy, activation or publication has happened, the gates are statuses in a
+  dated record and not an acceptance, and the independent review of the integrated head
+  is a *review*, not an acceptance.
+- **This record's first 2026-10-21 update changed no production source, no renderer, no
   binding, no helper, no schema, no manifest, no lock, no CI file and no vendor file.**
   Its changes are: this document, the both-mode parity block in
   `src/research/struct-renderer-import-parity.test.ts`, and the NEW
   `tests/fixtures/struct-both-mode-parity/` directory. No existing fixture was rewritten,
-  and no golden, expected value, profile or snapshot was regenerated.
+  and no golden, expected value, profile or snapshot was regenerated. **The second
+  2026-10-21 update (this one, §0.3) is documentation-only too**: it changed this
+  document, `docs/struct-research-paper-caller-inventory.md` and
+  `docs/struct-migration-status.md`, and nothing else.
 
 ## 8. The independent review of this candidate, and the disposition of its findings
 

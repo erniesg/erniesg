@@ -107,11 +107,20 @@ describe('STRUCT canonical document graph', () => {
         ).length,
       0,
     )
+    // The app's ingress publishes the caption attachment the research graph
+    // declares (`node.relationships.caption`) as a relationship of its own: the
+    // pinned renderer resolves an attached caption ONLY through a matched
+    // `caption` relationship and never by matching caption text, so the
+    // declaration is part of the source relationship set.
+    const sourceCaptionRelationshipCount = reconstruction.paper.nodes.filter(
+      (node) => node.type === 'figure' && node.relationships?.caption,
+    ).length
     const sourceRelationshipCount =
       reconstruction.visualRelationships.length +
       reconstruction.noteRelationships.length +
       sourceAnnotationCount +
-      sourceInlineRelationshipCount
+      sourceInlineRelationshipCount +
+      sourceCaptionRelationshipCount
 
     expect(graph.schemaVersion).toBe('0.2.0')
     expect(graph.source.format).toBe('docx')
@@ -204,7 +213,7 @@ describe('STRUCT canonical document graph', () => {
   it('pins the structured DOCX receipt', async () => {
     const graph = buildStructDocument(await structuredDocx())
     expect(graph.receipt.generatedSha256).toBe(
-      '14b29b37de08f79306ebe414abec33a78f0ea5f374f2f603816b7124c9df4c27',
+      'fca88686d03f17870b0579f81bfcb5d0547178584f5173f4ba49d972718ae65a',
     )
   })
 

@@ -3,9 +3,9 @@
     "sourceSha256": "69d840e5f9cbbf91471d76e3afc92ddb61a4a360244bfbde100ea1ccb2b16bc4",
     "sourceNodeCount": 12,
     "sourceAssetCount": 2,
-    "documentJsonSha256": "48b93360122110f941252ea04543e5b6641ddf1a34123950f90a3771a9a73b2f",
+    "documentJsonSha256": "a38c3a4291a06fe43c255c069e09cba6e0edbf882fc1f8a676cc59bd076bc5ae",
     "localEncode": "accepted",
-    "receiptSha256": "14b29b37de08f79306ebe414abec33a78f0ea5f374f2f603816b7124c9df4c27",
+    "receiptSha256": "fca88686d03f17870b0579f81bfcb5d0547178584f5173f4ba49d972718ae65a",
     "conservation": {
       "sourceNodeCount": 12,
       "accountedSourceNodeCount": 12,
@@ -15,16 +15,16 @@
       "accountedSourceAnnotationCount": 0,
       "sourceAssetCount": 2,
       "accountedSourceAssetCount": 2,
-      "sourceRelationshipCount": 5,
-      "accountedSourceRelationshipCount": 5,
+      "sourceRelationshipCount": 7,
+      "accountedSourceRelationshipCount": 7,
       "sourceDiagnosticCount": 0,
       "accountedSourceDiagnosticCount": 0,
-      "sourceTextCharacterCount": 492,
+      "sourceTextCharacterCount": 416,
       "structBlockCount": 12,
       "structAssetCount": 2,
-      "structRelationshipCount": 5,
+      "structRelationshipCount": 7,
       "structDiagnosticCount": 0,
-      "structTextCharacterCount": 492
+      "structTextCharacterCount": 416
     },
     "blockIdsInOrder": [
       "struct-block-62c52718d4ab91f1214c89a0",
@@ -59,9 +59,11 @@
       }
     ],
     "relationshipIdsInOrder": [
+      "struct-relationship-286061498b86a41d8505f1af",
       "struct-relationship-381584fa125b11e7f8f8da40",
       "struct-relationship-9155fa59d238a557e82b1ba4",
       "struct-relationship-96c8433c436594d468c40107",
+      "struct-relationship-aa8694575c57edecc224d8dd",
       "struct-relationship-e77ed279d83da752286ca289",
       "struct-relationship-eb3cf2d64f940ae9b35cbcb5"
     ],
@@ -73,14 +75,14 @@
       "issues": []
     },
     "xhtmlSha256": "cf4eef0eb1edbddca464b1bcd7d1daac59a1b0715cc8e69c64c9a20270f2cd95",
-    "epubSha256": "f859d1ad1fadc8c897cc3a294a09845fdae5d5360fede37d2a40c16a81386c72",
+    "epubSha256": "05d10b8eb8fae0273217fa7d6c4b24310724536b468c2188536bd70c49953ff8",
     "epubEntries": {
       "EPUB/assets/asset-img-b0007-rId4-431ced6916a2.png": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
       "EPUB/assets/asset-table-docx-0010-7ef3a6fac311.xhtml": "7ef3a6fac31111282ef8f975c7f5078c3a6d0b0536263282c3fc626ea8178f36",
       "EPUB/content.xhtml": "cf4eef0eb1edbddca464b1bcd7d1daac59a1b0715cc8e69c64c9a20270f2cd95",
       "EPUB/nav.xhtml": "244deaedfdc4f3a7bd923f6b9c5efd798ae07f0954899b6ae54de00801184f25",
-      "EPUB/package.opf": "b11b2cf7396835cea5c348163b645cedba6ad9843a7148e719be8ccca4026bc4",
-      "EPUB/struct.json": "99f89a78440c5d096695b14d77fb9cffd3177c29753f8b61321f72cecf199f43",
+      "EPUB/package.opf": "b16fdaee1f73a0465c86b34530961ca4b73c1b4acbd3a7b2edcd38e01f48b732",
+      "EPUB/struct.json": "f5bf324171ab9b0ba546d588f5d1d23426346067328968cf747ec0954cdfee6b",
       "EPUB/styles.css": "2f60286229245b6a287b77049c12a83b0f56340b495420f666ad5f52beadd627",
       "META-INF/container.xml": "eb284afd303d7b3de499746d27b3c04e6c8b8c5a4fd788bdb240b985cf38e031",
       "mimetype": "e468e350d1143eb648f60c7b0bd6031101ec0544a361ca74ecef256ac901f48b"
@@ -153,9 +155,9 @@
     "sourceSha256": "f31fdc50a8216f80599644b51ff619a778d8e97268edadd457c3f556d1df03e9",
     "sourceNodeCount": 22,
     "sourceAssetCount": 3,
-    "documentJsonSha256": "f8e88784c3d705a2a379deb069fb71ef087d10c99510d2341ad7b344cedde7b5",
+    "documentJsonSha256": "98465d742a346a73c144a26a0ccfac29fd8bc7ccfee56eda07e4f08c66fa0fc1",
     "localEncode": "accepted",
-    "receiptSha256": "c3cead89160aa3bc93fd17ddf0026b0c8dbea96780d926097da7f180a88636d2",
+    "receiptSha256": "ef0e624aaae6d9bf5f07a055d2008d4df21ed2b30c30216a9b252759dc0669c6",
     "conservation": {
       "sourceNodeCount": 22,
       "accountedSourceNodeCount": 22,
@@ -165,16 +167,16 @@
       "accountedSourceAnnotationCount": 0,
       "sourceAssetCount": 3,
       "accountedSourceAssetCount": 3,
-      "sourceRelationshipCount": 26,
-      "accountedSourceRelationshipCount": 26,
+      "sourceRelationshipCount": 27,
+      "accountedSourceRelationshipCount": 27,
       "sourceDiagnosticCount": 19,
       "accountedSourceDiagnosticCount": 19,
-      "sourceTextCharacterCount": 1276,
+      "sourceTextCharacterCount": 1263,
       "structBlockCount": 26,
       "structAssetCount": 3,
-      "structRelationshipCount": 26,
+      "structRelationshipCount": 27,
       "structDiagnosticCount": 19,
-      "structTextCharacterCount": 1276,
+      "structTextCharacterCount": 1263,
       "sourceFurnitureBlockCount": 3,
       "accountedFurnitureBlockCount": 3,
       "sourceFurnitureTextCharacterCount": 96,
@@ -261,7 +263,8 @@
       "struct-relationship-dd589af29c26889f9c23c601",
       "struct-relationship-df544592265b49c545cffc83",
       "struct-relationship-f44db0f6918bc07088f6e843",
-      "struct-relationship-f65d9077e6ae15ba65ab26fc"
+      "struct-relationship-f65d9077e6ae15ba65ab26fc",
+      "struct-relationship-ff86f3c02c05ae114feb04aa"
     ],
     "diagnostics": [
       {
@@ -362,12 +365,12 @@
   },
   "bundle": {
     "structured-docx": {
-      "documentSha256": "bdfa62d0c805a6d61a60a4d442fd3b3ff0d6c166a2bc3d8e6097a148cb6d7620",
-      "bundleSha256": "6617fcc5d0ffa90574da88d9cee57aaa7e60461084c51e7b021ce3d496aa1767",
-      "encodedBundleSha256": "6617fcc5d0ffa90574da88d9cee57aaa7e60461084c51e7b021ce3d496aa1767",
-      "encodedBundleByteLength": 12019,
-      "decodedDocumentSha256": "bdfa62d0c805a6d61a60a4d442fd3b3ff0d6c166a2bc3d8e6097a148cb6d7620",
-      "decodedBundleSha256": "6617fcc5d0ffa90574da88d9cee57aaa7e60461084c51e7b021ce3d496aa1767",
+      "documentSha256": "57ca3e68d38fdad9beb6d40c10ff608fdfd18ebc67dcd45a629cb190781ce315",
+      "bundleSha256": "e778a879c06abe4ec6ba48b36d60b104e984c6b55c0854933892236dfd8c8527",
+      "encodedBundleSha256": "e778a879c06abe4ec6ba48b36d60b104e984c6b55c0854933892236dfd8c8527",
+      "encodedBundleByteLength": 12548,
+      "decodedDocumentSha256": "57ca3e68d38fdad9beb6d40c10ff608fdfd18ebc67dcd45a629cb190781ce315",
+      "decodedBundleSha256": "e778a879c06abe4ec6ba48b36d60b104e984c6b55c0854933892236dfd8c8527",
       "assetIds": [
         "struct-asset-2bdb35bf7481e3b2fb6363d4",
         "struct-asset-b0412fd7e5e0a8b6964ba576"
@@ -404,12 +407,12 @@
       "assetDigestConservationOk": true
     },
     "source-preserved-pdf": {
-      "documentSha256": "c0bd802395f2b4396cb8c71c8a6acf058ce3a7ee2cb80bfe7311f790871c0635",
-      "bundleSha256": "a72b11d1357efacb28f062b97fdc90e9d8963af63138710ed10cacd2302f3b8e",
-      "encodedBundleSha256": "a72b11d1357efacb28f062b97fdc90e9d8963af63138710ed10cacd2302f3b8e",
-      "encodedBundleByteLength": 46409,
-      "decodedDocumentSha256": "c0bd802395f2b4396cb8c71c8a6acf058ce3a7ee2cb80bfe7311f790871c0635",
-      "decodedBundleSha256": "a72b11d1357efacb28f062b97fdc90e9d8963af63138710ed10cacd2302f3b8e",
+      "documentSha256": "0088caa9e18259ac4a38d56a97adfca3e79fe1ea38911dd24661fa497f4af729",
+      "bundleSha256": "0e705fdc98534a35c91a5d23b78e90222a114803f1635039b502b347bf7d29ce",
+      "encodedBundleSha256": "0e705fdc98534a35c91a5d23b78e90222a114803f1635039b502b347bf7d29ce",
+      "encodedBundleByteLength": 46951,
+      "decodedDocumentSha256": "0088caa9e18259ac4a38d56a97adfca3e79fe1ea38911dd24661fa497f4af729",
+      "decodedBundleSha256": "0e705fdc98534a35c91a5d23b78e90222a114803f1635039b502b347bf7d29ce",
       "assetIds": [
         "struct-asset-313eb9ae2d0ccb445c6461fe",
         "struct-asset-322747c8e09f06ffae50de20",

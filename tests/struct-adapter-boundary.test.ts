@@ -1,6 +1,6 @@
-import { readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { existsSync, readFileSync, readdirSync, type Dirent } from 'node:fs'
-import { dirname, relative } from 'node:path'
+import { dirname, relative, resolve } from 'node:path'
 import * as ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import { buildStructDocument as legacyBuild } from '../src/struct/from-reconstruction'
@@ -34,6 +34,18 @@ const tsconfigBaseUrl = tsconfig.compilerOptions?.baseUrl ?? '.'
 const tsconfigPaths = tsconfig.compilerOptions?.paths ?? {}
 
 const projectRoot = new URL('../', import.meta.url)
+
+/**
+ * The project root as a path. Vite resolves a project-root glob pattern
+ * against this directory, so the guard normalises such a pattern into its
+ * project-root-relative form before it matches.
+ */
+const projectRootPath = projectRoot.pathname
+
+/**
+ * The directory the TypeScript path aliases are resolved against.
+ */
+const tsconfigBaseUrlDirectory = resolve(projectRootPath, tsconfigBaseUrl)
 
 function resolveAliasSpecifier(specifier: string): string | null {
   for (const [pattern, targets] of Object.entries(tsconfigPaths)) {
@@ -245,6 +257,16 @@ function importedPaths(
       // `import x = require('...')` is a TypeScript import too.
       const expression = node.moduleReference.expression
       if (ts.isStringLiteralLike(expression)) paths.push(expression.text)
+    } else if (
+      ts.isNewExpression(node) &&
+      isWorkerConstructor(node.expression) &&
+      (node.arguments?.length ?? 0) > 0
+    ) {
+      // `new Worker(new URL('./entry.ts', import.meta.url))` makes that file a
+      // worker entry: Vite bundles it as a module of its own, so it is an
+      // import the guard has to inspect.
+      const entry = workerEntrySpecifier(node.arguments?.[0])
+      if (entry !== null) paths.push(entry)
     }
     ts.forEachChild(node, visit)
   }
@@ -264,6 +286,47 @@ function isImportMetaGlobCall(node: ts.CallExpression): boolean {
   if (!ts.isMetaProperty(owner)) return false
   if (owner.keywordToken !== ts.SyntaxKind.ImportKeyword) return false
   return expression.name.text === 'glob' || expression.name.text === 'globEager'
+}
+
+/**
+ * Whether a constructor starts a worker. Both the dedicated worker and the
+ * shared worker take a worker entry the same way, so both are inspected.
+ */
+function isWorkerConstructor(expression: ts.Expression): boolean {
+  if (!ts.isIdentifier(expression)) return false
+  return expression.text === 'Worker' || expression.text === 'SharedWorker'
+}
+
+/**
+ * The literal target of a worker entry, or null when the worker is not
+ * started from a literal `new URL(..., import.meta.url)`. Vite treats that
+ * file as the entry of a separate module and bundles it, so the literal is a
+ * module specifier the guard has to inspect.
+ */
+function workerEntrySpecifier(
+  argument: ts.Expression | undefined,
+): string | null {
+  if (!argument || !ts.isNewExpression(argument)) return null
+  if (!ts.isIdentifier(argument.expression)) return null
+  if (argument.expression.text !== 'URL') return null
+  const target = argument.arguments?.[0]
+  const base = argument.arguments?.[1]
+  if (!target || !ts.isStringLiteralLike(target)) return null
+  if (!base || !isImportMetaUrl(base)) return null
+  return target.text
+}
+
+/**
+ * Whether an expression is `import.meta.url`, the base a worker entry is
+ * resolved against.
+ */
+function isImportMetaUrl(node: ts.Node): boolean {
+  if (!ts.isPropertyAccessExpression(node)) return false
+  if (!ts.isMetaProperty(node.expression)) return false
+  if (node.expression.keywordToken !== ts.SyntaxKind.ImportKeyword) {
+    return false
+  }
+  return node.name.text === 'url'
 }
 
 /**
@@ -346,26 +409,103 @@ function globFamilySpecifiers(patterns: string[], file: URL): string[] {
     .map((pattern) => pattern.slice(1))
   if (included.length === 0) return []
   const importerDirectory = dirname(file.pathname)
+  const includedPatterns = included.map((pattern) =>
+    normalizeGlobPattern(pattern, importerDirectory),
+  )
+  const excludedPatterns = excluded.map((pattern) =>
+    normalizeGlobPattern(pattern, importerDirectory),
+  )
   const specifiers: string[] = []
   for (const familyFile of migratedFamilyFiles()) {
-    const modulePath = relative(importerDirectory, familyFile)
-    if (!globMatchesAny(included, modulePath)) continue
-    if (globMatchesAny(excluded, modulePath)) continue
+    // A pattern is matched in its project-root-relative form, because that
+    // is the form a project-root or alias pattern resolves to.
+    const modulePath = relative(projectRootPath, familyFile)
+    if (!globMatchesAny(includedPatterns, modulePath)) continue
+    if (globMatchesAny(excludedPatterns, modulePath)) continue
+    // The reported specifier keeps the importer-relative spelling, so it
+    // names the module the way the importing module reaches it.
+    const importerPath = relative(importerDirectory, familyFile)
     specifiers.push(
-      modulePath.startsWith('.') ? modulePath : `./${modulePath}`,
+      importerPath.startsWith('.') ? importerPath : `./${importerPath}`,
     )
   }
   return specifiers
 }
 
 /**
+ * The project-root-relative form of a glob pattern.
+ *
+ * Vite resolves a glob pattern the way it resolves an import specifier: a
+ * pattern that starts with `/` is relative to the project root, an alias
+ * pattern is resolved through the alias, and every other pattern is relative
+ * to the directory of the importing module. The guard normalises the pattern
+ * before it matches, so a project-root or alias pattern reaches the family it
+ * names instead of matching nothing.
+ */
+function normalizeGlobPattern(
+  pattern: string,
+  importerDirectory: string,
+): string {
+  const aliased = aliasGlobTarget(pattern)
+  if (aliased !== null) return aliased
+  return relative(projectRootPath, resolve(importerDirectory, pattern))
+}
+
+/**
+ * The project-root-relative target of an alias glob pattern, or null when the
+ * pattern is not an alias pattern. A configured alias prefix and the alias
+ * forms this repository uses are recognised, and the pattern keeps its glob
+ * characters.
+ */
+function aliasGlobTarget(pattern: string): string | null {
+  for (const [aliasPattern, targets] of Object.entries(tsconfigPaths)) {
+    if (aliasPattern.endsWith('/*')) {
+      const prefix = aliasPattern.slice(0, -1)
+      if (!pattern.startsWith(prefix)) continue
+      const rest = pattern.slice(prefix.length)
+      const target = targets[0] ?? ''
+      const resolved = target.endsWith('/*')
+        ? `${target.slice(0, -1)}${rest}`
+        : target
+      return relative(
+        projectRootPath,
+        resolve(tsconfigBaseUrlDirectory, resolved),
+      )
+    }
+    if (pattern === aliasPattern) {
+      const target = targets[0]
+      if (!target) continue
+      return relative(projectRootPath, resolve(tsconfigBaseUrlDirectory, target))
+    }
+  }
+  if (pattern.startsWith('@/')) {
+    return relative(
+      projectRootPath,
+      resolve(projectRootPath, `src/${pattern.slice(2)}`),
+    )
+  }
+  if (pattern.startsWith('~/')) {
+    return relative(
+      projectRootPath,
+      resolve(projectRootPath, `src/${pattern.slice(2)}`),
+    )
+  }
+  if (pattern.startsWith('src/')) {
+    return relative(projectRootPath, resolve(projectRootPath, pattern))
+  }
+  if (pattern.startsWith('/')) {
+    return relative(projectRootPath, resolve(projectRootPath, `.${pattern}`))
+  }
+  return null
+}
+
+/**
  * Whether a module path matches one of the glob patterns. A brace group
  * lists alternatives, so every expansion of a pattern is tried.
  *
- * Vite resolves a pattern against the directory of the importing module, so
- * the canonical './' spelling of a pattern names a module below that
- * directory. `path.relative` never produces a './' prefix, so the module
- * path is matched in both spellings: the bare one and the './'-prefixed one.
+ * The pattern and the module path are both in the project-root-relative form
+ * the pattern was normalised into, so a project-root pattern, an alias
+ * pattern and an importer-relative pattern all match the module they name.
  */
 function globMatchesAny(patterns: string[], modulePath: string): boolean {
   const spellings = globPathSpellings(modulePath)
@@ -377,8 +517,8 @@ function globMatchesAny(patterns: string[], modulePath: string): boolean {
 }
 
 /**
- * The spellings of a module path a Vite glob pattern can name. A module
- * path that leaves the directory of the importing module keeps its '../'
+ * The spellings of a module path a Vite glob pattern can name. A module path
+ * that leaves the directory of the importing module keeps its '../'
  * form, and a module path below that directory is named both bare and with
  * the './' prefix that Vite's own resolution uses. The './'-prefixed
  * spelling of a path that leaves the importer's directory would name a
@@ -443,6 +583,10 @@ function globToRegExp(pattern: string): RegExp {
  * blocks MDX allows at the top level of the document, so a fenced code
  * sample that merely shows an import is not mistaken for a module
  * specifier.
+ *
+ * An Astro file also contributes its processed local script sources: Astro
+ * bundles a local `src` of a script element as a script entry, so that file
+ * is an import the guard has to inspect.
  */
 function scanSource(source: string, file: URL): string {
   if (file.pathname.endsWith('.astro')) {
@@ -450,10 +594,46 @@ function scanSource(source: string, file: URL): string {
     const scripts = [
       ...source.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g),
     ].map((match) => match[1])
-    return [frontmatter, ...scripts].join('\n')
+    const scriptSources = astroScriptSources(source).map(
+      (scriptSource) => `import ${JSON.stringify(scriptSource)}`,
+    )
+    return [frontmatter, ...scripts, ...scriptSources].join('\n')
   }
   if (file.pathname.endsWith('.mdx')) return mdxEsmStatements(source)
   return source
+}
+
+/**
+ * The processed local script sources of an Astro component.
+ *
+ * Astro processes a relative `src` of a script element as a script entry and
+ * bundles that file, so the source is a module specifier. A `src` that names
+ * a public asset or an external URL is not processed, so it contributes
+ * nothing. An inline script is not processed either, so its `src` is not a
+ * module specifier.
+ */
+function astroScriptSources(source: string): string[] {
+  const sources: string[] = []
+  for (const match of source.matchAll(/<script\b([^>]*)>/g)) {
+    const attributes = match[1] ?? ''
+    if (/(?:^|\s)is:inline(?:\s|=|$)/.test(attributes)) continue
+    const type = /\btype\s*=\s*("([^"]*)"|'([^']*)')/.exec(attributes)
+    const typeValue = type?.[2] ?? type?.[3]
+    if (
+      typeValue !== undefined &&
+      !['module', 'text/javascript', 'application/javascript'].includes(
+        typeValue.toLowerCase(),
+      )
+    ) {
+      continue
+    }
+    const src = /\bsrc\s*=\s*("([^"]*)"|'([^']*)')/.exec(attributes)
+    const value = src?.[2] ?? src?.[3]
+    if (value === undefined) continue
+    if (!value.startsWith('./') && !value.startsWith('../')) continue
+    sources.push(value)
+  }
+  return sources
 }
 
 /** The net change in curly-brace depth of one line. */
@@ -773,35 +953,96 @@ function isRetainedTreePath(path: string): boolean {
 }
 
 /**
- * The source of a local module, or null when no file backs the path. The
+ * A local module the guard resolved: the file that backs the path and the
+ * source of that file.
+ */
+type LocalModule = {
+  /** The file that backs the module. */
+  path: string
+  /** The source of the file. */
+  source: string
+}
+
+/**
+ * The local module a path names, or null when no file backs the path. The
  * path a specifier resolves to carries no extension, so the file names the
  * module can have are tried in turn.
+ *
+ * Every extension the scanner accepts is probed, so a retained wrapper
+ * stored as a CommonJS TypeScript module (`.cts`) or as a CommonJS module
+ * (`.cjs`) is found as well, together with the index variants of those
+ * extensions.
  */
-function readLocalModuleSource(target: string): string | null {
-  for (const candidate of [
-    `${target}.ts`,
-    `${target}.tsx`,
-    `${target}.mts`,
-    `${target}.js`,
-    `${target}.jsx`,
-    `${target}.mjs`,
-    `${target}/index.ts`,
-    `${target}/index.tsx`,
-  ]) {
+function readLocalModule(target: string): LocalModule | null {
+  const cached = localModuleCache.get(target)
+  if (cached !== undefined) return cached
+  let module: LocalModule | null = null
+  for (const candidate of localModuleCandidates(target)) {
+    if (!existsSync(candidate)) continue
     try {
-      return readFileSync(candidate, 'utf8')
+      const text = readFileSync(candidate, 'utf8')
+      module = {
+        path: candidate,
+        source:
+          candidate.endsWith('.astro') || candidate.endsWith('.mdx')
+            ? scanSource(text, new URL(`file://${candidate}`))
+            : text,
+      }
+      break
     } catch {
       continue
     }
   }
-  return null
+  localModuleCache.set(target, module)
+  return module
 }
+
+/**
+ * The file names a local module path can have. The extension list is the one
+ * the scanner accepts, and every extension also has an index variant.
+ */
+function localModuleCandidates(target: string): string[] {
+  return [
+    ...localModuleExtensions.map((extension) => `${target}${extension}`),
+    ...localModuleExtensions.map(
+      (extension) => `${target}/index${extension}`,
+    ),
+  ]
+}
+
+/**
+ * The extensions a local module can have. The list is the one the scanner
+ * accepts, so a module the scanner would read is a module the guard can
+ * resolve.
+ */
+const localModuleExtensions = [
+  '.ts',
+  '.tsx',
+  '.mts',
+  '.cts',
+  '.js',
+  '.jsx',
+  '.mjs',
+  '.cjs',
+  '.astro',
+  '.mdx',
+]
+
+/**
+ * Every local module the guard already resolved, so a module that is
+ * reached by more than one import is read once.
+ */
+const localModuleCache = new Map<string, LocalModule | null>()
 
 /**
  * The module specifiers a module re-exports. A retained-tree wrapper that
  * re-exports a migrated family is the way an external importer reaches the
  * local migrated authority, so the re-export targets are what the guard
  * follows.
+ *
+ * The ordinary two-step form counts as a re-export: a module that imports a
+ * binding and then exports that binding re-exports the module the binding
+ * came from, so the guard follows it as well.
  */
 function reexportSpecifiers(source: string): string[] {
   const file = ts.createSourceFile(
@@ -811,11 +1052,44 @@ function reexportSpecifiers(source: string): string[] {
     true,
   )
   const specifiers: string[] = []
+  const importedBindings = new Map<string, string>()
   for (const statement of file.statements) {
+    if (ts.isImportDeclaration(statement)) {
+      const moduleSpecifier = statement.moduleSpecifier
+      if (!moduleSpecifier || !ts.isStringLiteral(moduleSpecifier)) continue
+      const clause = statement.importClause
+      if (!clause) continue
+      if (clause.name) {
+        importedBindings.set(clause.name.text, moduleSpecifier.text)
+      }
+      const namedBindings = clause.namedBindings
+      if (!namedBindings) continue
+      if (ts.isNamedImports(namedBindings)) {
+        for (const element of namedBindings.elements) {
+          importedBindings.set(element.name.text, moduleSpecifier.text)
+        }
+      } else {
+        importedBindings.set(namedBindings.name.text, moduleSpecifier.text)
+      }
+      continue
+    }
     if (!ts.isExportDeclaration(statement)) continue
-    if (!statement.moduleSpecifier) continue
-    if (!ts.isStringLiteral(statement.moduleSpecifier)) continue
-    specifiers.push(statement.moduleSpecifier.text)
+    if (statement.moduleSpecifier) {
+      if (ts.isStringLiteral(statement.moduleSpecifier)) {
+        specifiers.push(statement.moduleSpecifier.text)
+      }
+      continue
+    }
+    // `export { name }` re-exports a local binding, so the module that
+    // binding was imported from is re-exported too.
+    const exportClause = statement.exportClause
+    if (!exportClause || !ts.isNamedExports(exportClause)) continue
+    for (const element of exportClause.elements) {
+      const local = element.propertyName?.text ?? element.name.text
+      const imported = importedBindings.get(local)
+      if (imported === undefined) continue
+      specifiers.push(imported)
+    }
   }
   return specifiers
 }
@@ -832,10 +1106,12 @@ function migratedFamilyInReexportChain(target: string): string | null {
     const current = pending.shift()!
     if (seen.has(current)) continue
     seen.add(current)
-    const source = readLocalModuleSource(current)
-    if (source === null) continue
-    const moduleUrl = new URL(current, 'file:///')
-    for (const specifier of reexportSpecifiers(source)) {
+    const module = readLocalModule(current)
+    if (module === null) continue
+    // The specifiers of a module are relative to the file that backs it, so
+    // an index module resolves them against its own directory.
+    const moduleUrl = new URL(module.path, 'file:///')
+    for (const specifier of reexportSpecifiers(module.source)) {
       const resolved = resolveLocalTarget(specifier, moduleUrl)
       if (resolved === null) continue
       const normalized = resolved.replace(/\/+$/, '')
@@ -912,12 +1188,59 @@ function recoveryImporterViolations(source: string, file: URL): string[] {
 }
 
 /**
+ * The recovery authority a module reaches by re-export, or null when it
+ * reaches none.
+ *
+ * The chain is followed transitively and across the retained-tree boundary,
+ * so a retained wrapper that re-exports the compatibility forwarder, and a
+ * wrapper that re-exports the app-owned recovery module directly, are both
+ * found. Only a path that leaves the imported module itself counts, so a
+ * direct import of the app-owned recovery module keeps its own allowlist.
+ */
+function recoveryAuthorityInReexportChain(
+  target: string,
+): 'compatibility forwarder' | 'app recovery module' | null {
+  const seen = new Set<string>()
+  const pending: string[] = []
+  const module = readLocalModule(target)
+  if (module === null) return null
+  const moduleUrl = new URL(module.path, 'file:///')
+  for (const specifier of reexportSpecifiers(module.source)) {
+    const resolved = resolveLocalTarget(specifier, moduleUrl)
+    if (resolved === null) continue
+    pending.push(resolved.replace(/\/+$/, ''))
+  }
+  while (pending.length > 0) {
+    const current = pending.shift()!
+    if (seen.has(current)) continue
+    seen.add(current)
+    if (current === compatibilityRecoveryForwarder) {
+      return 'compatibility forwarder'
+    }
+    if (current === appRecoveryModule) return 'app recovery module'
+    const currentModule = readLocalModule(current)
+    if (currentModule === null) continue
+    const currentUrl = new URL(currentModule.path, 'file:///')
+    for (const specifier of reexportSpecifiers(currentModule.source)) {
+      const resolved = resolveLocalTarget(specifier, currentUrl)
+      if (resolved === null) continue
+      pending.push(resolved.replace(/\/+$/, ''))
+    }
+  }
+  return null
+}
+
+/**
  * The compatibility forwarder is part of the recovery importer boundary: it
  * re-exports the app-owned recovery module, so a module outside the retained
  * `src/struct` tree reaches the recovery module through the legacy facade
  * when it imports the forwarder. The check works on the resolved target, so
  * every spelling of the forwarder is covered: the direct relative form, the
  * `@/` alias, the project-root form and a `.js` suffix form.
+ *
+ * A path that reaches the forwarder or the app-owned recovery module
+ * transitively is a violation as well: a retained wrapper that re-exports
+ * the forwarder is a way around the allowlist, so the chain is followed.
  */
 function compatibilityForwarderViolationsForSpecifiers(
   specifiers: string[],
@@ -931,9 +1254,17 @@ function compatibilityForwarderViolationsForSpecifiers(
     if (specifier === NONLITERAL_REQUIRE) continue
     if (specifier === NONLITERAL_GLOB) continue
     const target = resolveLocalTarget(specifier, file)
-    if (target === null || target !== compatibilityRecoveryForwarder) continue
+    if (target === null) continue
+    if (target === compatibilityRecoveryForwarder) {
+      violations.push(
+        `${file.pathname}: compatibility recovery forwarder import ${specifier} is not allowed outside the retained struct tree`,
+      )
+      continue
+    }
+    const authority = recoveryAuthorityInReexportChain(target)
+    if (authority === null) continue
     violations.push(
-      `${file.pathname}: compatibility recovery forwarder import ${specifier} is not allowed outside the retained struct tree`,
+      `${file.pathname}: recovery authority import ${specifier} -> ${target} reaches the ${authority}`,
     )
   }
   return violations
@@ -2086,6 +2417,200 @@ describe('app-owned Struct adapter boundary', () => {
       ).toEqual([])
     } finally {
       await rm(wrapper.pathname, { force: true })
+    }
+  })
+
+  it('E-03: normalises a project-root or alias Vite glob pattern before matching', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+
+    // Vite resolves a project-root glob pattern against the project root, so
+    // a root-absolute pattern reaches the migrated family it names.
+    const rootAbsolute =
+      "const codecs = import.meta.glob('/src/struct/**/*.ts', { eager: true })"
+    expect(importedPaths(rootAbsolute, research)).toContain('../struct/codec.ts')
+    expect(
+      e03ViolationsForSource(rootAbsolute, research, publicPaths),
+    ).not.toEqual([])
+
+    // An alias pattern resolves through the alias to the same family.
+    const aliased =
+      "const codecs = import.meta.glob('@/struct/**/*.ts', { eager: true })"
+    expect(importedPaths(aliased, research)).toContain('../struct/codec.ts')
+    expect(
+      e03ViolationsForSource(aliased, research, publicPaths),
+    ).not.toEqual([])
+
+    // A project-root pattern that names no migrated family is not a
+    // violation.
+    const rootSafe =
+      "const pages = import.meta.glob('/src/content/**/*.md', { eager: true })"
+    expect(importedPaths(rootSafe, research)).toEqual([])
+    expect(e03ViolationsForSource(rootSafe, research, publicPaths)).toEqual([])
+
+    // An alias pattern that names no migrated family is not a violation
+    // either.
+    const aliasSafe =
+      "const pages = import.meta.glob('@/content/**/*.md', { eager: true })"
+    expect(importedPaths(aliasSafe, research)).toEqual([])
+    expect(e03ViolationsForSource(aliasSafe, research, publicPaths)).toEqual([])
+  })
+
+  it('E-03: follows an imported binding that a retained wrapper re-exports', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+    const wrapper = new URL('struct/__e03_probe_legacy_ids.ts', root)
+    await writeFile(
+      wrapper.pathname,
+      "import { structId } from './ids'\nexport { structId }\n",
+      'utf8',
+    )
+    try {
+      // The ordinary two-step form re-exports the module the binding was
+      // imported from, so a retained wrapper that uses it reaches the local
+      // migrated authority.
+      expect(
+        e03ViolationsForSource(
+          "import { structId } from '../struct/__e03_probe_legacy_ids'",
+          research,
+          publicPaths,
+        ),
+      ).not.toEqual([])
+
+      // The retained tree keeps its own wrapper.
+      expect(
+        e03ViolationsForSource(
+          "export { structId } from './__e03_probe_legacy_ids'",
+          new URL('struct/probe.ts', root),
+          publicPaths,
+        ),
+      ).toEqual([])
+    } finally {
+      await rm(wrapper.pathname, { force: true })
+    }
+  })
+
+  it('E-03: inspects a Vite worker entry module', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+
+    // Vite bundles the file a worker entry names as a module of its own, so
+    // the entry is an import the guard has to inspect.
+    const worker =
+      "const worker = new Worker(new URL('../struct/ids.ts', import.meta.url), { type: 'module' })"
+    expect(importedPaths(worker, research)).toContain('../struct/ids.ts')
+    expect(
+      e03ViolationsForSource(worker, research, publicPaths),
+    ).not.toEqual([])
+
+    // A shared worker takes the same entry form.
+    const shared =
+      "const worker = new SharedWorker(new URL('../struct/codec.ts', import.meta.url), { type: 'module' })"
+    expect(importedPaths(shared, research)).toContain('../struct/codec.ts')
+    expect(
+      e03ViolationsForSource(shared, research, publicPaths),
+    ).not.toEqual([])
+
+    // A worker entry that names no migrated family is not a violation.
+    const safe =
+      "const worker = new Worker(new URL('../content/worker.ts', import.meta.url), { type: 'module' })"
+    expect(e03ViolationsForSource(safe, research, publicPaths)).toEqual([])
+  })
+
+  it('E-03: inspects a local Astro script source', async () => {
+    const publicPaths = await publicPackagePaths()
+    const astro = new URL('components/probe.astro', root)
+
+    // Astro processes a local script source and bundles that file, so the
+    // source is an import the guard has to inspect.
+    const source = '<script src="../struct/codec.ts"></script>\n'
+    expect(importedPaths(source, astro)).toContain('../struct/codec.ts')
+    expect(
+      e03ViolationsForSource(source, astro, publicPaths),
+    ).not.toEqual([])
+
+    // A script source that names no migrated family is not a violation.
+    const safe = '<script src="../components/helper.ts"></script>\n'
+    expect(e03ViolationsForSource(safe, astro, publicPaths)).toEqual([])
+  })
+
+  it('E-03: treats a transitive path to the recovery authority as a violation', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+    const forwarder = new URL('struct/__e03_probe_legacy_recovery.ts', root)
+    const direct = new URL('struct/__e03_probe_legacy_app_recovery.ts', root)
+    await writeFile(forwarder.pathname, "export * from './recovery'\n", 'utf8')
+    await writeFile(
+      direct.pathname,
+      "export * from '../struct-adapters/recovery'\n",
+      'utf8',
+    )
+    try {
+      // A retained wrapper that re-exports the compatibility forwarder
+      // reaches the recovery module through the legacy facade, so it is a
+      // violation for a module outside the retained tree.
+      expect(
+        e03ViolationsForSource(
+          "import { diagnosticCopy } from '../struct/__e03_probe_legacy_recovery'",
+          research,
+          publicPaths,
+        ),
+      ).not.toEqual([])
+
+      // A wrapper that re-exports the app-owned recovery module directly
+      // reaches it as well.
+      expect(
+        e03ViolationsForSource(
+          "import { diagnosticCopy } from '../struct/__e03_probe_legacy_app_recovery'",
+          research,
+          publicPaths,
+        ),
+      ).not.toEqual([])
+
+      // A permitted importer of the app-owned recovery module keeps its
+      // direct import.
+      expect(
+        e03ViolationsForSource(
+          "import { diagnosticCopy } from '../struct-adapters/recovery'",
+          new URL('research/recovery-projection.ts', root),
+          publicPaths,
+        ),
+      ).toEqual([])
+    } finally {
+      await rm(forwarder.pathname, { force: true })
+      await rm(direct.pathname, { force: true })
+    }
+  })
+
+  it('E-03: resolves a retained wrapper stored as a CommonJS TypeScript module', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+    const wrapper = new URL('struct/__e03_probe_legacy_family.cts', root)
+    const familyDirectory = new URL('struct/__e03_probe_cts_family/', root)
+    await mkdir(familyDirectory, { recursive: true })
+    await writeFile(
+      wrapper.pathname,
+      "export * from './__e03_probe_cts_family'\n",
+      'utf8',
+    )
+    await writeFile(
+      new URL('index.cts', familyDirectory).pathname,
+      "export * from '../types'\n",
+      'utf8',
+    )
+    try {
+      // A wrapper stored as a `.cts` module is a retained wrapper as well,
+      // so an external importer of it reaches the local migrated authority.
+      expect(
+        e03ViolationsForSource(
+          "import { T } from '../struct/__e03_probe_legacy_family'",
+          research,
+          publicPaths,
+        ),
+      ).not.toEqual([])
+    } finally {
+      await rm(wrapper.pathname, { force: true })
+      await rm(familyDirectory.pathname, { recursive: true, force: true })
     }
   })
 })

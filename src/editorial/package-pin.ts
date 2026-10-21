@@ -33,8 +33,8 @@
  *
  * The production registry below is the app's own pin: the Struct artifact the
  * repository is pinned to. `package-pin.test.ts` checks it against
- * `vendor/struct/provenance.json`, the provenance file of record, so the two
- * cannot drift.
+ * `vendor/struct/provenance.json`, the provenance file of record, field for
+ * field, so the two cannot drift.
  */
 import { z } from 'zod'
 
@@ -104,15 +104,21 @@ export type PackagePinCheck =
  * The values are the ones in `vendor/struct/provenance.json`, the
  * provenance file of record. They are stated here rather than read at import
  * time so that the policy is a compile-time constant of the app and not a
- * file read that could fail at runtime; the test compares the two.
+ * file read that could fail at runtime; `package-pin.test.ts` compares the
+ * two, field for field, and fails when they drift apart.
+ *
+ * The pin is the artifact the app ships: the one `vendor/struct/provenance.json`
+ * names, and the one `package.json` and `package-lock.json` resolve. It was
+ * re-pinned to it when E-04 re-pinned the vendored artifact; all five fields
+ * move together, because a pin is one artifact and not five separate facts.
  */
 export const APP_PACKAGE_PIN: ApprovedPackagePin = {
-  sourceCommit: '90f76f1f80b037cc065169d07b13779c03420026',
-  artifact: 'erniesg-struct-0.0.0-90f76f1f80b037cc065169d07b13779c03420026.tgz',
+  sourceCommit: '3d3a7c95b1c55a9ff4b527eee5acf36c168cd896',
+  artifact: 'erniesg-struct-0.0.0-3d3a7c95b1c55a9ff4b527eee5acf36c168cd896.tgz',
   artifactSha256:
-    '42fee58e9b1e1888c53e929ad6367a2c128d1607140225387836ee5da53df8f1',
+    '836f6d3ead7a5ce1dc59f2799c80dfbe5c52931836a5b4f2749ab5b1920a55f9',
   integrity:
-    'sha512-0WyBLp2PDZr4pOFYhfe6a1IbuZOuBemiR/alDgx73j8JYKZh7m8UthMsimjXp6wt3gUUiNumvXmykYeccnDUBQ==',
+    'sha512-1wpcnARYQmVSsxiLRiSEtp5hd8h9WvxH22cSN/XwCrx0NWPxFif8mswYvF40PybKzi//e1sCPKuap4UiY+deaQ==',
   version: '0.0.0',
   sequence: 1,
 }
@@ -121,8 +127,8 @@ export const APP_PACKAGE_PIN: ApprovedPackagePin = {
  * The production registry: the app's own pin, and nothing else.
  *
  * A second pin is not in it until the app is actually re-pinned, and a
- * re-pin is a change to `vendor/struct/provenance.json` — which is the
- * pinned artifact and is not touched by E-05.
+ * re-pin is a change to `vendor/struct/provenance.json` — the provenance
+ * file of record — together with a re-pin of `APP_PACKAGE_PIN` above.
  */
 export const APP_PACKAGE_PIN_REGISTRY: PackagePinRegistry = {
   pins: [APP_PACKAGE_PIN],

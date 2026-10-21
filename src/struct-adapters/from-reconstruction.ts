@@ -847,6 +847,15 @@ export function buildStructDocument(
       ...(candidates.length > 0 ? { candidates } : {}),
     })
   }
+  // Annotation ids whose inline run actually produced a relationship. A mapped
+  // PDF hyperlink annotation is ONE source relationship represented twice in
+  // the reconstruction (once in `provenance[node.id].links`, once as an inline
+  // run carrying the same annotation id), so an annotation in this set must
+  // not be counted twice in the source relationship total. An annotation whose
+  // inline run was skipped for emission (a citation, cross-reference or
+  // note-reference role run) is NOT in this set: it is a genuinely dropped
+  // annotation and stays counted on the source side.
+  const emittedInlineAnnotationIds = new Set<string>()
   for (const block of blocks) {
     for (const [index, inline] of block.inline.entries()) {
       if (
@@ -859,11 +868,21 @@ export function buildStructDocument(
       if (!inline.href && !inline.targetIds?.length) continue
       const href = inline.href
       const targets = inline.targetIds ?? (href ? [href] : [])
+      const relationshipId = structId(
+        'relationship',
+        `hyperlink:${block.id}:${index}:${href ?? targets.join(',')}`,
+      )
+      // The emitted relationship owns the id, so the run is bound to it
+      // whether or not the source supplied one. A source-supplied id is
+      // replaced by the generated id: the relationship that is actually
+      // emitted is looked up by that id downstream, so keeping the source id
+      // on the run would leave the run pointing at a relationship that does
+      // not exist. The run and its relationship therefore always agree on
+      // ONE id, and a run the adapter emits a relationship for is never left
+      // unbound (an unbound run makes the relationship look unprojected).
+      inline.relationshipId = relationshipId
       relationships.push({
-        id: structId(
-          'relationship',
-          `hyperlink:${block.id}:${index}:${href ?? targets.join(',')}`,
-        ),
+        id: relationshipId,
         kind: 'hyperlink',
         from: block.id,
         to: targets,
@@ -881,6 +900,8 @@ export function buildStructDocument(
           ],
         },
       })
+      if (inline.annotationId)
+        emittedInlineAnnotationIds.add(inline.annotationId)
     }
   }
   const mappedAnnotationIds = new Set(
@@ -1205,14 +1226,63 @@ export function buildStructDocument(
       ),
     ),
   ).size
+  // The source counts describe the SOURCE: `sourceAnnotationCount` is the raw
+  // number of provenance annotation links, mapped ones included, because a
+  // mapped annotation still exists in `provenance[node.id].links`.
   const sourceAnnotationCount = reconstruction.paper.nodes.reduce(
-    (count, node) => count + (provenance[node.id]?.links.length ?? 0),
+    (count, node) => count + (provenance[node.id]?.links ?? []).length,
+    0,
+  )
+  const mappedSourceAnnotationCount = reconstruction.paper.nodes.reduce(
+    (count, node) =>
+      count +
+      (provenance[node.id]?.links ?? []).filter(
+        (link) => 'id' in link && link.id && mappedAnnotationIds.has(link.id),
+      ).length,
+    0,
+  )
+  const accountedSourceAnnotationCount =
+    sourceAnnotationCount - mappedSourceAnnotationCount
+  // A mapped annotation whose inline run ACTUALLY produced a relationship is
+  // ONE source relationship represented twice in the reconstruction: once as
+  // the provenance annotation link and once as the inline run. It is therefore
+  // subtracted once from the annotation contribution to the source relationship
+  // total, so the total counts DISTINCT source relationships. A mapped
+  // annotation whose inline run was skipped for emission (a citation,
+  // cross-reference or note-reference role run) produced no relationship, so it
+  // is NOT subtracted: it is a genuinely dropped annotation, it keeps its place
+  // in the source total, and the gap against the accounted total stays visible.
+  const emittedMappedAnnotationIds = new Set<string>()
+  for (const node of reconstruction.paper.nodes) {
+    for (const link of provenance[node.id]?.links ?? []) {
+      if (
+        'id' in link &&
+        link.id &&
+        emittedInlineAnnotationIds.has(link.id) &&
+        !emittedMappedAnnotationIds.has(link.id)
+      ) {
+        emittedMappedAnnotationIds.add(link.id)
+      }
+    }
+  }
+  const sourceInlineRelationshipCount = reconstruction.paper.nodes.reduce(
+    (count, node) =>
+      count +
+      (node.inlineRuns ?? []).filter(
+        (run) =>
+          run.semanticRole !== 'citation' &&
+          run.semanticRole !== 'cross-reference' &&
+          run.semanticRole !== 'note-reference' &&
+          (Boolean(run.href) || (run.targetIds?.length ?? 0) > 0),
+      ).length,
     0,
   )
   const sourceRelationshipCount =
     reconstruction.visualRelationships.length +
     reconstruction.noteRelationships.length +
-    sourceAnnotationCount +
+    sourceAnnotationCount -
+    emittedMappedAnnotationIds.size +
+    sourceInlineRelationshipCount +
     (pdf
       ? reconstruction.citationRelationships.length +
         reconstruction.crossReferenceRelationships.length +
@@ -1240,11 +1310,16 @@ export function buildStructDocument(
     sourceRegionCount: pdf ? reconstruction.regions.length : 0,
     accountedSourceRegionCount,
     sourceAnnotationCount,
-    accountedSourceAnnotationCount: sourceAnnotationCount,
+    accountedSourceAnnotationCount,
     sourceAssetCount: reconstruction.assets.length,
     accountedSourceAssetCount: assets.length,
     sourceRelationshipCount,
-    accountedSourceRelationshipCount: sourceRelationshipCount,
+    // The accounted relationship count is what the document actually emitted.
+    // The source total counts DISTINCT source relationships, so the difference
+    // between the two is exactly the number of source relationships the
+    // document dropped: a dropped source relationship stays visible as a gap
+    // instead of being absorbed by the source count.
+    accountedSourceRelationshipCount: relationships.length,
     sourceDiagnosticCount: reconstruction.diagnostics.length,
     accountedSourceDiagnosticCount: diagnostics.length,
     sourceTextCharacterCount,

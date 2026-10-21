@@ -275,9 +275,11 @@ describe('the persisted Struct document of a checked output', () => {
     const root = await checkedOutput({
       structDocumentJson: `${JSON.stringify(persisted, null, 2)}\n`,
     })
+    // The pinned package's own document codec refuses the mutated document:
+    // the receipt text count no longer matches the block text.
     await expect(
       publicationCheck(['--input', root, '--matrix', matrix]),
-    ).rejects.toThrow()
+    ).rejects.toThrow(/receipt text count must match block text/u)
   })
 
   it('rejects mutated asset bytes', async () => {
@@ -289,9 +291,11 @@ describe('the persisted Struct document of a checked output', () => {
     const root = await checkedOutput({
       structDocumentJson: `${JSON.stringify(persisted, null, 2)}\n`,
     })
+    // The pinned package's own document codec refuses the mutated asset
+    // bytes: they no longer match the declared digest.
     await expect(
       publicationCheck(['--input', root, '--matrix', matrix]),
-    ).rejects.toThrow()
+    ).rejects.toThrow(/asset bytes do not match the declared SHA-256 digest/u)
   })
 })
 

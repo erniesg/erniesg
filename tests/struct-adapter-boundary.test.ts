@@ -687,4 +687,103 @@ describe('app-owned Struct adapter boundary', () => {
     )
     expect(actionableBody ?? '').not.toMatch(/userAction/)
   })
+
+  it('E-03: rejects project-root, nested-family, computed and CommonJS migrated-family imports', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+
+    // A project-root specifier resolves to the local migrated family; it must
+    // not fall through the resolver.
+    expect(
+      e03ViolationsForSource(
+        "import { T } from '/src/struct/types'",
+        research,
+        publicPaths,
+      ),
+    ).not.toEqual([])
+    expect(
+      e03ViolationsForSource(
+        "import { parse } from '/src/struct/codec/parsers'",
+        research,
+        publicPaths,
+      ),
+    ).not.toEqual([])
+
+    // A nested import inside the local codec family is a migrated-family import.
+    expect(
+      e03ViolationsForSource(
+        "import { parse } from '../struct/codec/parsers'",
+        research,
+        publicPaths,
+      ),
+    ).not.toEqual([])
+    expect(
+      e03ViolationsForSource(
+        "import { primitive } from '@/struct/codec/primitives'",
+        research,
+        publicPaths,
+      ),
+    ).not.toEqual([])
+
+    // A computed dynamic import has no literal specifier, so the guard must
+    // refuse it instead of skipping it.
+    expect(
+      e03ViolationsForSource(
+        "const load = () => import('../struct/' + name)",
+        research,
+        publicPaths,
+      ),
+    ).not.toEqual([])
+
+    // CommonJS requires are imports too.
+    expect(
+      e03ViolationsForSource(
+        "const types = require('../struct/types')",
+        research,
+        publicPaths,
+      ),
+    ).not.toEqual([])
+    expect(
+      e03ViolationsForSource(
+        "import types = require('../struct/types')",
+        research,
+        publicPaths,
+      ),
+    ).not.toEqual([])
+  })
+
+  it('E-03: inspects MDX modules under src for migrated-family imports', async () => {
+    const publicPaths = await publicPackagePaths()
+    const files = await portableFiles(root)
+    expect(files.map((file) => file.pathname)).toContain(
+      new URL('content/blog/mlops-for-museums/index.mdx', root).pathname,
+    )
+    const mdxProbe = new URL('research/probe.mdx', root)
+    expect(
+      e03ViolationsForSource(
+        "import { T } from '@/struct/types'\n\n# Heading\n",
+        mdxProbe,
+        publicPaths,
+      ),
+    ).not.toEqual([])
+  })
+
+  it('E-03: rejects a new production importer of the app-owned recovery module', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+    expect(
+      e03ViolationsForSource(
+        "import { diagnosticCopy } from '../struct-adapters/recovery'",
+        research,
+        publicPaths,
+      ),
+    ).not.toEqual([])
+    expect(
+      e03ViolationsForSource(
+        "import { diagnosticCopy } from '@/struct-adapters/recovery'",
+        research,
+        publicPaths,
+      ),
+    ).not.toEqual([])
+  })
 })

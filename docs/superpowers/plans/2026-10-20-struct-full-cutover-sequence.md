@@ -84,6 +84,9 @@ anchor used in this plan:
 | (F9) | Recovery subpath attribution (shapes vs facts) and the package-private `titleFromCode`, which must not be imported. |
 | (F10) | The pin-bump atomic file set and the `pnpm import` sequencing after a lockfile change. |
 | (F11) | The production publication path as a graph-owned EPUB/XHTML writer: `src/publication/renderers/vivliostyle.ts` builds `eink.epub` and its XHTML from the `PublicationGraph`, so the production path must use the package XHTML/EPUB renderer or be narrowed to print-only, with EG-12 (EPUBCheck / Ace / human accessibility stay app-owned) unchanged. |
+| (F12) | The production renderer parity obligation covers the **shipped** artifacts, not only the `eink.epub` archive: the shipped WebPub content document `phone-webpub/index.html` and every resource it declares or references - the stylesheet binding, the asset bindings, the stylesheet's own font references, and the declared resource manifests (`phone-webpub/publication.json`, `EPUB/package.opf`). The frozen production case set covers the Astro case **and** the Payload case the production CLI can select. |
+| (F13) | The production Astro path reaches the pinned Struct revision **before** any direct graph producer is retired: a concrete, tested Astro-to-pinned-Struct conversion, the production CLI `--adapter astro` mapping, the registry/locator flow that carries it, and a red-first guard that the Astro path no longer constructs a `PublicationGraph`. |
+| (F14) | The production recovery wrapper obtains the diagnostic **category** from the package recovery runtime export (`diagnosticCategory` from `@erniesg/struct/recovery`) while keeping the app UX overlay (titles, messages, actions, the enriched summary, `userAction`). A parity-only duplicate category table is not acceptance: the app must not keep a second category authority. |
 
 An anchor is a traceability marker, not a substitute for the obligation: the
 anchored text must keep stating the obligation in full, and adding or moving an
@@ -329,6 +332,12 @@ Not migrated (stay app-owned; do not widen the package API for them):
   `userAction`. The app `hasActionableRecovery` is a **local
   compatibility/presentation implementation, not a re-export** of the package
   fact of the same name.
+- E-03 changes exactly one of those four: the app `diagnosticCategory`
+  becomes a **delegation** to the package `diagnosticCategory` runtime
+  export, so the category stops being an app-owned fact and the app copy
+  table stops carrying a second category. The app `toStructDiagnostic`,
+  `recoverySummary`, and `hasActionableRecovery` stay local and stay
+  app-owned. (F14)
 - App-owned `src/struct-adapters/recovery` permitted importers (presentation or
   type-only; update this list deliberately if a new consumer is added):
   - `src/struct/recovery.ts` (compatibility forwarder) re-exports the app
@@ -356,20 +365,57 @@ Not migrated (stay app-owned; do not widen the package API for them):
   observable difference of the public `recoveryFact` result. Do not replace
   with the package default summary strings. That would change explanatory
   wording, serialized document bytes, and receipt hashes. (F9)
-- E-03 work: have the app adapter derive/verify each code's category from the
-  package fact source, and add a parity test asserting that every app
-  `DIAGNOSTIC_COPY` category equals `diagnosticCategory(code)`. Keep app
-  titles/messages/actions as the only rendered copy. (F9)
-- E-03 work (package fact source): import `diagnosticCategory` from
-  `@erniesg/struct/recovery` in a test (or otherwise parity-test against the
-  package fact source) and assert that every app `DIAGNOSTIC_COPY` entry's
-  category equals the package `diagnosticCategory(code)`, and that the app
-  fallback category matches the package default category. This step imports
-  and parity-tests the package **fact source** only. It does **not** replace
-  the app `recoverySummary` output, the app `diagnosticCopy`
-  titles/messages/actions, or the app `userAction` string with the package's
-  generic equivalents: doing so would change rendered copy and serialized
-  document/receipt bytes, which the rules above forbid. (F9)
+- E-03 work (production category authority): the **production** recovery
+  wrapper must obtain the category from the package recovery runtime export,
+  not from an app-owned copy. `src/struct-adapters/recovery.ts` must import
+  `diagnosticCategory` from `@erniesg/struct/recovery` - a runtime export of
+  the pinned artifact
+  (`vendor/struct/erniesg-struct-0.0.0-10116f4726da89ebabc823cb25706f2de5386f40.tgz::package/API_MANIFEST.json`
+  `runtimeExports['./recovery']`) - and use it as the single category
+  authority. The app `DIAGNOSTIC_COPY` entries (`:26-267`) and the app
+  `FALLBACK_COPY` (`:269-276`) stop carrying their own `category` field, so
+  no second category table remains in the app, and
+  `diagnosticCopy(code).category` returns the package category for every code,
+  including an unknown code (the package default `source`). The app
+  `diagnosticCategory` (`:285`) becomes a **delegation** to that package
+  export - not a re-export of the package module, and not a local table.
+  (F14)
+- E-03 work (app UX overlay, preserved): the delegation changes the category
+  only. The app keeps its presentation: `diagnosticCopy` (`:278-283`) still
+  returns the app title/message/action, `toStructDiagnostic` (`:289-308`)
+  still returns the app title/message/action, the app `recoverySummary`
+  (`:320-422`) still returns the enriched titles/summaries, the per-issue
+  `action`, and `userAction`, and the app `hasActionableRecovery` (`:424-428`)
+  stays the app-owned local implementation. Do **not** replace the app copy
+  with the package `recoveryFact` title derivation (`titleFromCode` is not a
+  public export and must not be imported) and do **not** replace it with the
+  package default summary strings: doing so would change rendered copy and
+  serialized document/receipt bytes, which the rules above forbid. (F9/F14)
+- E-03 work (guard, red first): `tests/struct-adapter-boundary.test.ts` must
+  gain an assertion that the production recovery module imports
+  `diagnosticCategory` from `@erniesg/struct/recovery` and that the app copy
+  table carries no local category field. Without that assertion the guard
+  would stay green while two category authorities existed, which is the
+  failure this gate exists to prevent. The existing assertions in that file
+  (the app module still contains `"} from '@erniesg/struct/document'"`, and
+  `src/struct/recovery.ts` still re-exports the same five app symbols) stay
+  green. (F14)
+- E-03 work (parity test, necessary but not sufficient): a parity test
+  asserting that every app code's category equals the package
+  `diagnosticCategory(code)`, and that the app fallback category matches the
+  package default category, remains required. It is **not** the acceptance
+  criterion for this gate: a parity test alone leaves the app table as the
+  runtime authority, so it can pass while the production wrapper still uses a
+  local category. The runtime delegation in the first bullet is what
+  discharges the gate. (F9/F14)
+- **Status at this head:** the E-03 candidate `ae4638ce`
+  (`feat/struct-e03-core-codecs-ids-order-20261020`) implements the
+  parity-test form only. It leaves `src/struct-adapters/recovery.ts`
+  unchanged - still a types-only import from `@erniesg/struct/document` at
+  `:1-5`, still a local `diagnosticCategory` at `:285` - and adds the guard
+  case "E-03: app diagnostic categories match package recovery facts", which
+  compares the app table against the package export. That candidate therefore
+  does **not** discharge the production-delegation obligation above. (F14)
 
 ### Semantic-vs-renderer validation mismatch decision
 
@@ -496,6 +542,108 @@ the package.
 
 Local `src/struct/{xhtml,epub,emitted-ids}.ts` remain compatibility-only until
 E-07; their tests stay green.
+
+### Production source path: Astro to the pinned Struct revision
+
+The production CLI resolves exactly one registered source adapter per build,
+and the registry has no chaining facility, so the Astro-to-Struct path has to
+be composed **inside** the registered `astro` adapter rather than by adding a
+second CLI-visible adapter.
+
+Current state at this head (grep-bounded, but line-exact):
+
+- The release build selects the Astro adapter: `npm run build:production`
+  (`package.json`) runs `publication:build --adapter astro --entry
+  moving-to-cloudflare-with-astro`. `parsePublicationBuildArgs`
+  (`tools/publication-build.mjs:31-69`) accepts only `astro` and
+  `payload-lexical` (`--adapter payload` is mapped to `payload-lexical` at
+  `:54`; any other id is rejected at `:66`), and the `astro` branch requires
+  `--entry` (`:55-59`).
+- `createDefaultPublicationAdapterRegistry()`
+  (`src/publication/adapter-registry.ts:55-60`) registers
+  `astroPublicationAdapter` (id `astro`), `payloadLexicalSourceAdapter`, and
+  `structPublicationAdapter` (id `struct-document`,
+  `src/publication/struct-adapter.ts:24`, `:1313-1318`).
+- `PublicationAdapterRegistry.resolve(adapterId, locator)`
+  (`src/publication/adapter-registry.ts:30-38`) looks up one adapter, calls
+  its `adapt(locator)`, and validates the result with
+  `validatePublicationSourceResult` (`src/publication/source-adapter.ts:177`).
+  There is no adapter-to-adapter delegation, and `register` rejects a
+  duplicate id (`:23-28`), so one CLI id can only ever reach one adapter.
+- The CLI builds the Astro locator as `{ entryId: options.entry }`
+  (`tools/publication-build.mjs:1054-1066`) and resolves it at `:1067`. The
+  Astro adapter's locator type is `AstroSourceLocator = { entryId: string;
+  contentRoot?: string }` (`src/publication/adapters/astro.ts:25-28`).
+- The Astro adapter is a **direct graph producer** today: it parses the graph
+  itself with `publicationGraphSchema.parse({...})`
+  (`src/publication/adapters/astro.ts:567`). The Payload adapter does the
+  same (`src/publication/adapters/payload-lexical.ts:1646`, and re-parses at
+  `:1726`), and the `ResearchPaper` bridge does it twice
+  (`src/publication/research-paper-adapter.ts:172`, `:201`).
+- The Struct projection already exists and is exported:
+  `adaptStructDocument(document)` (`src/publication/struct-adapter.ts:188`),
+  also re-exported as `structDocumentToPublicationSourceResult` (`:1320`).
+- The pinned package's public document surface is `decodeStructDocument`,
+  `encodeStructDocument`, `decodeCompatibleStructDocument`
+  (`vendor/struct/erniesg-struct-0.0.0-10116f4726da89ebabc823cb25706f2de5386f40.tgz::package/API_MANIFEST.json`
+  `runtimeExports['./document']`), and the pin authority is
+  `vendor/struct/provenance.json`.
+
+E-04 work, in this order (F13):
+
+1. **Astro-to-pinned-Struct ingress (new, app-owned).** E-04 adds one
+   app-owned conversion from an Astro MDX entry to a `StructDocument`. It does
+   not exist at this head. It must reuse the single MDX walk the app already
+   has - `gray-matter`, `remark-parse`, `remark-mdx`, `remark-gfm`,
+   `remark-math`, and `unified` are already imported at
+   `src/publication/adapters/astro.ts:1-11` - and must not introduce a second
+   MDX parser or a second front-matter reader. It must report every construct
+   it cannot express as an adapter diagnostic instead of dropping it
+   silently; the current behaviour is to fail closed with
+   `Unsupported MDX node ...` (`src/publication/adapters/astro.ts:84-92`), and
+   that fail-closed behaviour must survive the switch.
+2. **Pinned-Struct proof, not assertion.** The ingress output must be
+   accepted by the **pinned** artifact: the produced document must round-trip
+   through the pinned `decodeStructDocument`, and the document digest must be
+   bound to `vendor/struct/provenance.json`. The ingress test must assert
+   both against the pinned install, so that "pinned" is proven rather than
+   asserted.
+3. **Re-point the registered `astro` adapter.**
+   `src/publication/adapters/astro.ts` must stop constructing a graph (`:567`)
+   and must compose ingress -> `adaptStructDocument`
+   (`src/publication/struct-adapter.ts:188`) ->
+   `validatePublicationSourceResult` (`src/publication/source-adapter.ts:177`).
+   The adapter keeps `id: 'astro'` and
+   `version: PUBLICATION_SOURCE_ADAPTER_VERSION`
+   (`src/publication/adapters/astro.ts:606-611`), so the CLI mapping, the
+   registry entry, and the locator flow are unchanged by construction.
+4. **The production CLI mapping is part of the change.** `--adapter astro`
+   must keep resolving to the registered `astro` adapter, and that adapter
+   must be the pinned-Struct path, so `npm run build:production` runs the
+   pinned Struct revision with no CLI change. No second, direct graph path
+   may remain reachable from the CLI, and the `--adapter` allowlist
+   (`tools/publication-build.mjs:54-67`) must keep rejecting ids it cannot
+   serve.
+5. **Guard (red first).** The E-04 static guard must assert that
+   `src/publication/adapters/astro.ts` no longer constructs a
+   `PublicationGraph` (no `publicationGraphSchema.parse`, no
+   `serializePublicationGraph`, no graph construction) and must positively
+   assert that it imports `adaptStructDocument` from `../struct-adapter`. The
+   guard must be red before step 3 and green after it.
+6. **Ordering.** Steps 1-5 land **before** the direct graph producer is
+   retired (EG-01, EG-15, and the `payload-lexical` redirect). Retiring the
+   direct producer first would leave the production CLI with no graph source
+   at all.
+
+The existing frozen Astro case already exercises this path end to end: the
+conformance harness builds the Astro entry from
+`tests/fixtures/publication/astro/payload-equivalent.mdx` with
+`public/favicon-16x16.png` copied in as `fixture-image.png`, and calls
+`adaptAstroBlogEntry` (`tools/publication-adapter-conformance.mjs:59-79`). The
+ingress test must reuse that fixture and compare the projected semantics
+against the Payload case with `comparePublicationSemanticSubset`
+(`src/publication/adapter-conformance.ts:376`), so the ingress cannot change
+the rendered content unnoticed.
 
 ### Publication semantics decision
 
@@ -888,7 +1036,7 @@ Target state (what E-04 must produce; none of it is true today):
   red-first static assertion against storage/API/route/writer/release modules
   does not exist in the repository. The second inventory's §9 gate table is
   the source of the pending-gate list below. **Drift rule:** this table and the
-  inventory's §9 table (G-01..G-15) are the same obligation set; any row
+  inventory's §9 table (G-01..G-17) are the same obligation set; any row
   added, removed, or reworded in one must be applied identically to the other
   in the same change (the same change reaches the other table in the same
   commit), and a row present in only one of the two is a defect. The `EG-`/`G-`
@@ -897,10 +1045,11 @@ Target state (what E-04 must produce; none of it is true today):
   not required to be byte-identical between the two tables; what must match row
   for row is the `(Fn)` anchor marker set and the pending status (both documents
   record every row as pending). At this head the two tables are one-to-one and
-  in the same order (15 rows each), their `(Fn)` anchor marker sets match on all
-  15 pairs, and every row is pending; the gate wording still differs on 13 of
-  the 15 pairs and the artifact lists on 12 of the 15 pairs, a pre-existing
-  divergence this plan does not claim to have resolved.
+  in the same order (17 rows each), their `(Fn)` anchor marker sets match on all
+  17 pairs, and every row is pending; the two tables still word the same
+  obligations differently and name different artifact lists for most rows,
+  which is a pre-existing divergence this plan does not claim to have
+  resolved.
 
 ### E-04 future gates (every row PENDING)
 
@@ -926,6 +1075,8 @@ runtime, golden, or activation evidence.
 | EG-13 | Legacy `research/epub.ts` overloads keep both-mode parity until the last `ResearchPaper` consumer migrates (F5) | `src/research/epub.ts:133-141`, `:1422-1447`, `:2094-2118` | the call-site inventory exists; parity is **not** demonstrated | PENDING |
 | EG-14 | E-07 deletion gates: zero production imports to removed portable modules, package-only app tests, retained-compatibility register (F6) | `src/struct/**`, `src/struct-adapters/**` | not done; duplicate core deletion stays at E-07 | PENDING |
 | EG-15 | No non-Struct graph producer remains: the forward bridge is retired or migrated onto the Struct projection (F3/F4) | `src/publication/research-paper-adapter.ts:81`, `:298`, `:304`, `:317`; `src/publication/struct-adapter.ts:188`, `:1313` | the forward bridge still exports a `ResearchPaper` -> `PublicationGraph` producer; it has only test callers today, but the module is exported and callable, so a second producer would remain after the reverse direction is retired | PENDING |
+| EG-16 | Production renderer parity covers every **shipped artifact** of the production output, not only the `eink.epub` archive: the shipped WebPub content document `phone-webpub/index.html`, the resources it declares and references (the stylesheet, the assets, and the stylesheet's own font references), and the declared resource manifests (`phone-webpub/publication.json`, `EPUB/package.opf`); the frozen production case set covers the Astro case **and** the Payload case the production CLI can select (F12) | `src/publication/renderers/vivliostyle.ts:508`, `:610-662`, `:617-618`, `:634-638`, `:639-660`, `:793-904`; `tools/publication-build.mjs:54-67`; `tools/publication-adapter-conformance.mjs:59-91`; `tests/fixtures/publication/astro/payload-equivalent.mdx`; `tests/fixtures/payload/equivalent-publication.json`; `tests/fixtures/payload/mapping.json` | the production comparison is specified against `EPUB/content.xhtml` only; the frozen production inputs exist, but there is no frozen production-case fixture set and no `eink.epub` golden in the repository | PENDING |
+| EG-17 | The production Astro path reaches the pinned Struct revision **before** any direct graph producer is retired: a concrete, tested Astro-to-pinned-Struct conversion, the production CLI `--adapter astro` mapping, the registry/locator flow that carries it, and a red-first guard that the Astro path no longer constructs a `PublicationGraph` (F13) | `src/publication/adapters/astro.ts:25-28`, `:84-92`, `:567`, `:606-611`; `src/publication/struct-adapter.ts:188`, `:1313-1318`; `src/publication/adapter-registry.ts:30-38`, `:55-60`; `tools/publication-build.mjs:31-69`, `:54`, `:66`, `:1054-1067`; `tests/struct-adapter-boundary.test.ts`; `vendor/struct/provenance.json` | the Astro adapter builds the graph directly (`publicationGraphSchema.parse` at `src/publication/adapters/astro.ts:567`); no Astro-to-Struct ingress exists; the CLI maps `--adapter astro` to that direct producer, and the registry resolves exactly one adapter per id | PENDING |
 
 EPUBCheck, Ace, and human accessibility approval remain app-owned release
 evidence, not package unit tests.
@@ -935,28 +1086,29 @@ evidence, not package unit tests.
 - Dual-render first: for every frozen adapter case, compare local
   `renderPublicationXhtml`/`buildStructEpub` against the package renderers and
   assert byte/content-hash equality before switching imports.
-- Dual-render the production path too: for every production case the release path
-  can select - today exactly the pinned `--adapter astro --entry
-  moving-to-cloudflare-with-astro` case that `npm run build:production` runs
-  (`package.json` `build:production`), and any further case the release path is
-  extended with, each of which must be added to the checked-in frozen production
-  fixture set before it counts as a covered case. The CLI has no entry-id
-  allowlist: on the `astro` branch `--entry` is only required to be present
-  (`tools/publication-build.mjs:56-57`), so the release path - not the CLI -
-  fixes the case set. The CLI's `--adapter` dispatch
-  (`tools/publication-build.mjs:54-67`) accepts **two** adapters, not one:
-  `astro` and `payload-lexical`, with `--adapter payload` mapped to
-  `payload-lexical` at `:54`; any adapter outside that allowlist is rejected
-  (`:65-67`). The `payload-lexical` path is **not** a production case at this
-  head, because the wired release build (`npm run build:production`) does not
-  select it: that script invokes `publication:build` with `--adapter astro`
-  only (`package.json` `build:production`), even though the CLI can select
-  `payload-lexical`, that branch accepts `--input <json>` (`:60-64`), and it
-  reaches the same `vivliostyleRenderer.render` (`:1077-1080`). It becomes a
-  production case only if the wired release build is extended to select it,
-  and selecting it before the switch is out of E-04's scope; when that happens
-  it must be added to the checked-in frozen production fixture set before it
-  counts as a covered case, like every other production case above.
+- Dual-render the production path too: for every production case the
+  **production CLI can select** - that is every id in the CLI `--adapter`
+  allowlist, `astro` and `payload-lexical` (`--adapter payload` mapped to
+  `payload-lexical` at `tools/publication-build.mjs:54`; any adapter outside
+  that allowlist is rejected at `:66`) - each of which must be added to the
+  checked-in frozen production fixture set before it counts as a covered case.
+  The wired release build selects only the Astro case (`npm run
+  build:production` runs `publication:build --adapter astro --entry
+  moving-to-cloudflare-with-astro`), but the wired script is **not** the case
+  set: the CLI can select the Payload case as well, that branch accepts
+  `--input <json>` (`:60-64`), and it reaches the same
+  `vivliostyleRenderer.render` (`:1077-1080`), so the Payload case is a
+  production case for parity purposes and must be in the frozen set. The CLI
+  has no entry-id allowlist: on the `astro` branch `--entry` is only required
+  to be present (`tools/publication-build.mjs:55-59`), so the frozen set
+  pins the entry ids it covers rather than inheriting them from the release
+  script. The frozen inputs for both cases already exist:
+  `tests/fixtures/publication/astro/payload-equivalent.mdx` with
+  `public/favicon-16x16.png` copied in as `fixture-image.png` for the Astro
+  case, and `tests/fixtures/payload/equivalent-publication.json` with
+  `tests/fixtures/payload/mapping.json` for the Payload case - the same pair
+  the conformance harness already renders side by side
+  (`tools/publication-adapter-conformance.mjs:59-91`).
   Compare the Vivliostyle local renderers `publicationGraphToHtml`
   (`src/publication/renderers/vivliostyle.ts:508`) and `createPublicationEpub`
   (`:793-904`, reached from `vivliostyleRenderer.render` at `:1083-1207`) against
@@ -964,11 +1116,30 @@ evidence, not package unit tests.
   **content equality of the rendered publication content** for the same pinned
   source revision - the same document text in the same reading order, the same
   referenced asset set, and the same id/target mapping (every id emitted by one
-  render resolves to the same node or asset in the other) - for the XHTML that
-  `createPublicationEpub` writes as `EPUB/content.xhtml` (built through
-  `publicationGraphToHtml` at `:848`, written at `:855`) and for the archive's
-  semantic payload (that XHTML plus the packaged assets), before switching the
-  production path's imports. That comparison is on content identity, not on raw
+  render resolves to the same node or asset in the other) - for **every
+  shipped content document of the production output**, not for the EPUB alone:
+  - the XHTML that `createPublicationEpub` writes as `EPUB/content.xhtml`
+    (built through `publicationGraphToHtml` at `:848`, written at `:855`); and
+  - the WebPub content document `phone-webpub/index.html` (built through the
+    same `publicationGraphToHtml` call at `:636`, written at `:634-638`),
+    which is a separate shipped artifact with its own stylesheet, its own
+    asset directory, and its own resource manifest.
+
+  The comparison must also cover the **declared and referenced resources** of
+  each shipped artifact, not only the content document:
+  - the stylesheet reference the document head emits
+    (`<link rel="stylesheet" href="...">`, `:541`);
+  - the asset references the document body emits (`<img src>`, `<audio src>`,
+    `<video src>`, `<a href>`; `:407-453`);
+  - the stylesheet's own font references
+    (`src/styles/publication/publication.css:1-15`);
+  against the files those references resolve to and the resources those
+  artifacts declare (`phone-webpub/publication.json` `readingOrder` and
+  `resources`, `:639-660`; the `EPUB/package.opf` manifest items, `:891`).
+  A comparison that covers only `EPUB/content.xhtml` leaves the shipped
+  WebPub artifact uncompared, and the WebPub is the artifact a phone reader
+  receives.
+  That comparison is on content identity, not on raw
   strings: the app mints app-owned ids and hrefs
   (table-cell ids as `<node-id>-cell-<cell-id>`,
   `src/publication/struct-adapter.ts:895`; asset hrefs as `assets/<id><ext>`,
@@ -991,7 +1162,10 @@ evidence, not package unit tests.
   `payload-equivalent.mdx`, `synthetic-publication.mdx`, and
   `unsupported-component.mdx`). The production path is a separate implementation
   from `src/research/epub.ts`, so the `renderPublicationXhtml`/`buildStructEpub`
-  comparison above does not discharge it. (F11)
+  comparison above does not discharge it. When EG-01 redirects the
+  `payload-lexical` graph production onto the Struct projection, the same
+  frozen Payload case must still pass this comparison, so the redirect cannot
+  change the shipped content. (F11/F12)
 - The repackaging path must preserve a valid stylesheet resource contract, and
   the E-04 evidence must assert it by name. The package renderer emits
   `<link rel="stylesheet" type="text/css" href="styles.css" />` whenever its
@@ -1014,11 +1188,28 @@ evidence, not package unit tests.
   evidence set must then contain a named assertion - the *stylesheet binding*
   assertion - that every stylesheet reference in the shipped XHTML resolves to
   a file that is present in the archive **and** declared in the OPF manifest.
+  The same named assertion must cover the **WebPub** artifact, which is a
+  separate shipped artifact with its own bindings and its own resource
+  manifest, and which a phone reader receives:
+  - the WebPub content document's stylesheet reference (`publication.css`)
+    must resolve to a file present in `phone-webpub/` (written at `:618`)
+    **and** listed in `phone-webpub/publication.json` `resources` (`:648-654`);
+  - every asset the document references (`assets/<id><ext>`, written at
+    `:617`) must resolve to a file present in `phone-webpub/assets/` **and**
+    listed in that same `resources` array;
+  - the stylesheet's own `@font-face` references must resolve to the font
+    files the WebPub ships (`Geist-Regular.ttf`, `Geist-Bold.ttf`,
+    `GeistMono-Regular.ttf`, copied at `:619-633`) and that `resources` array
+    declares.
+  The EPUB side of the same assertion keeps its existing shape: the EPUB
+  stylesheet's font references are rewritten to `fonts/Geist-*.ttf`
+  (`:840-845`) and must resolve to the `EPUB/fonts/*` files that the OPF
+  manifest declares (`:891`).
   This is a resource-binding assertion only: the app-owned stylesheet
   (`EPUB/publication.css`), the app-owned fonts, the app-owned OPF metadata, and
   the app-owned nav labels stay app-owned and excluded from the content
   comparison, EG-12 (EPUBCheck, Ace, and human accessibility acceptance) is
-  unchanged, and no whole-archive byte-identity promise is added. (F11)
+  unchanged, and no whole-archive byte-identity promise is added. (F11/F12)
 - Do not regenerate app goldens to make the switch pass. Any intentional
   diff requires separate review and is not part of E-04's mechanical switch.
 - Keep failure parity (invalid version, invalid receipt, missing/unrenderable
@@ -1056,8 +1247,8 @@ Every stage is red-first and independently revertible:
 | Stage | Must show |
 | --- | --- |
 | E-02 | Atomic pin (F10); adapter -> package decode -> bundle verify conservation on PDF/DOCX fixtures (F1); bytes-only ingress; frozen parity unchanged except reviewed additions; no writer change |
-| E-03 | Static import guard red-then-green (F6); package/local dual-read equality; accepted/rejected matrix; recovery copy parity (F9); high-fan-in consumers enumerated and tested |
-| E-04 | Dual-render output/failure parity (F11 for the production path, F5 for the legacy `ResearchPaper` renderer overloads), including the named stylesheet-binding assertion for the production path (every stylesheet reference in the shipped XHTML resolves to a file that is present in the archive and declared in the OPF manifest, after the package XHTML is rendered with embedded styles or the stylesheet is shipped under the exact referenced name and declared in `EPUB/package.opf`); PublicationGraph ownership proof or retirement (F4) (enumerated importer set (F3), reverse-direction proof (F4), forward-producer retirement/migration proof (F3/F4), annotation authority decision (F4); static absence from storage/API/route/writer/release modules (F3); receipts bound to Struct digests/package pin via `vendor/struct/provenance.json`, with the mandatory `documentSha256` compared to the document digest recomputed from `decodedDocument` (as verified by `decodeStructBundle`) **and** the mandatory `semanticReceiptSha256` compared to `structReceiptDigest(decodedDocument)` decoded from the receipt-bound `struct-bundle.bin` artifact, and every receipt package-identity field compared against `vendor/struct/provenance.json`, by `tools/publication-check.mjs` (F8); E-04 static import guard red-then-green for `xhtml`/`epub`/`emitted-ids` (F6); EPUBCheck/Ace/human accessibility still app-owned (F11); checked-in authority inventories at `docs/struct-research-paper-caller-inventory.md` and `docs/struct-publication-graph-authority-inventory.md` (F5) (present at this head; grep-bounded, not compiler-proven, and not gate satisfaction by themselves); every row of the E-04 future-gate table still PENDING until the corresponding evidence exists |
+| E-03 | Static import guard red-then-green (F6); package/local dual-read equality; accepted/rejected matrix; recovery copy parity (F9) **and the production recovery wrapper obtaining the diagnostic category from the package recovery runtime export, with the app UX overlay preserved** (F14); high-fan-in consumers enumerated and tested |
+| E-04 | Dual-render output/failure parity (F11 for the production path, F5 for the legacy `ResearchPaper` renderer overloads), including the named stylesheet-binding assertion for the production path (every stylesheet reference in the shipped XHTML resolves to a file that is present in the archive and declared in the OPF manifest, after the package XHTML is rendered with embedded styles or the stylesheet is shipped under the exact referenced name and declared in `EPUB/package.opf`); the same named binding assertion on the shipped WebPub artifact (the `phone-webpub/index.html` stylesheet and asset references resolve to files present in `phone-webpub/` and declared in `phone-webpub/publication.json` `resources`, and the stylesheet's own font references resolve to the shipped font files); the production comparison covers **every shipped content document** (`EPUB/content.xhtml` and `phone-webpub/index.html`), not the EPUB alone, over a frozen production case set that contains the Astro case and the Payload case the production CLI can select (F12); the production Astro ingress to the pinned Struct revision, the production CLI `--adapter astro` mapping, the registry/locator flow that carries it, and the red-first guard that the Astro path no longer constructs a `PublicationGraph`, all landed **before** the direct graph producer is retired (F13); PublicationGraph ownership proof or retirement (F4) (enumerated importer set (F3), reverse-direction proof (F4), forward-producer retirement/migration proof (F3/F4), annotation authority decision (F4); static absence from storage/API/route/writer/release modules (F3); receipts bound to Struct digests/package pin via `vendor/struct/provenance.json`, with the mandatory `documentSha256` compared to the document digest recomputed from `decodedDocument` (as verified by `decodeStructBundle`) **and** the mandatory `semanticReceiptSha256` compared to `structReceiptDigest(decodedDocument)` decoded from the receipt-bound `struct-bundle.bin` artifact, and every receipt package-identity field compared against `vendor/struct/provenance.json`, by `tools/publication-check.mjs` (F8); E-04 static import guard red-then-green for `xhtml`/`epub`/`emitted-ids` (F6); EPUBCheck/Ace/human accessibility still app-owned (F11); checked-in authority inventories at `docs/struct-research-paper-caller-inventory.md` and `docs/struct-publication-graph-authority-inventory.md` (F5) (present at this head; grep-bounded, not compiler-proven, and not gate satisfaction by themselves); every row of the E-04 future-gate table still PENDING until the corresponding evidence exists |
 | E-05 | Design record; authenticated state machine; inactive route cannot expose unapproved/superseded artifact; concurrency + rollback/forward recovery rehearsal; writer still inactive |
 | E-06 | Accepted E-ACT receipt matching exact head/pins/targets; single writer; post-activation health/observation/read-after-write |
 | E-07 | Extraction-point hashes; package-test mapping; zero production imports to removed modules (F6); package-only app tests; retained-compatibility register |
@@ -1083,6 +1274,19 @@ Every stage is red-first and independently revertible:
 
 - This plan changes documentation only; it runs no dependency install, build, or
   test. `git diff --check` and path/reference verification are its validation.
+- This head tightens three normative gates and nothing else: the production
+  renderer parity scope (F12), the production Astro path to the pinned Struct
+  revision (F13), and the production recovery wrapper's category authority
+  (F14). Every one of them is **planned work that is not implemented at this
+  head**: there is no Astro-to-Struct ingress module, the Astro adapter still
+  builds the graph directly, the app recovery wrapper still imports types only
+  from the package and still carries its own category table, and there is no
+  frozen production-case fixture set. `EG-16` and `EG-17` carry the
+  renderer-parity and Astro-ingress obligations and are **PENDING**, exactly
+  like every other row of the E-04 future-gate table; the `F14` recovery
+  obligation is carried in the E-03 section above and is likewise
+  unimplemented. No source, test, fixture, golden, receipt, lockfile, or
+  CI file was changed by this head.
 - Runtime parity/boundary tests require the pinned artifact install
   (`node_modules/@erniesg/struct`), which is intentionally not performed for a
   planning-only change.

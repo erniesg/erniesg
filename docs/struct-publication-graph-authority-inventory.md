@@ -680,8 +680,8 @@ These are the **required** gates, derived from ADR-0001, the E-04 issue
 acceptance, and the app cutover plan, cross-referenced to the concrete
 artifacts that must change. **None of them is implemented or verified here.**
 Every row is **PENDING**, and the cutover plan's "E-04 future gates" table
-mirrors these rows as pending obligations (EG-01..EG-15 one-to-one with
-G-01..G-15); nothing in this table is a runtime, golden, receipt, or
+mirrors these rows as pending obligations (EG-01..EG-17 one-to-one with
+G-01..G-17); nothing in this table is a runtime, golden, receipt, or
 activation result. **Drift rule:** this table and the plan's "E-04 future
 gates" table are the same obligation set; any row added, removed, or reworded in
 one must be applied identically to the other in the same change (the same
@@ -692,10 +692,10 @@ names its own artifact list, so gate text and artifact lists are not required to
 be byte-identical between the two tables; what must match row for row is the
 `(Fn)` anchor marker set and the pending status (both documents record every row
 as pending). At this head the two tables are one-to-one and in the same order
-(15 rows each), their `(Fn)` anchor marker sets match on all 15 pairs, and every
-row is pending; the gate wording still differs on 13 of the 15 pairs and the
-artifact lists on 12 of the 15 pairs, a pre-existing divergence this inventory
-does not claim to have resolved.
+(17 rows each), their `(Fn)` anchor marker sets match on all 17 pairs, and every
+row is pending; the two tables still word the same obligations differently and
+name different artifact lists for most rows, which is a pre-existing divergence
+this inventory does not claim to have resolved.
 
 The `(Fn)` anchor markers in the gate text below name the review findings
 recorded in the plan's §"Review-finding anchors" register. They are traceability
@@ -719,6 +719,8 @@ satisfaction and they add no obligation beyond the row text.
 | G-13 | Legacy `research/epub.ts` overloads keep both-mode parity until the last `ResearchPaper` consumer migrates (F5) | `src/research/epub.ts:133-141`, `:1422-1447`, `:2094-2118` | parity **not demonstrated** here |
 | G-14 | E-07 deletion gates: zero production imports to removed portable modules; package-only app tests; retained-compatibility register with owner, caller inventory, warning/horizon, removal issue (F6) | `src/struct/**`, `src/struct-adapters/**` | not done |
 | G-15 | No non-Struct graph producer remains: the forward `ResearchPaper` -> `PublicationGraph` bridge is retired or migrated onto the Struct projection (F3/F4) | `src/publication/research-paper-adapter.ts:81`, `:298`, `:304`, `:317`; `src/publication/struct-adapter.ts:188`, `:1313` | not done |
+| G-16 | Production renderer parity covers **every shipped artifact** of the production output, not only the `eink.epub` archive: the shipped WebPub content document `phone-webpub/index.html`, the resources it declares and references (the stylesheet, the assets, and the stylesheet's own font references), and the declared resource manifests (`phone-webpub/publication.json`, `EPUB/package.opf`); the frozen production case set contains the Astro case **and** the Payload case the production CLI can select (F12) | `src/publication/renderers/vivliostyle.ts:508` (`publicationGraphToHtml`), `:610-662` (`createWebPub`), `:617-618` (WebPub assets + stylesheet), `:634-638` (`phone-webpub/index.html`), `:639-660` (`phone-webpub/publication.json`), `:793-904` (`createPublicationEpub`); `tools/publication-build.mjs:54-67`; `tools/publication-adapter-conformance.mjs:59-91`; `tests/fixtures/publication/astro/payload-equivalent.mdx`; `tests/fixtures/payload/equivalent-publication.json`; `tests/fixtures/payload/mapping.json` | the production comparison is specified against `EPUB/content.xhtml` only; the frozen inputs exist, but there is no frozen production-case fixture set and no `eink.epub` golden in the repository |
+| G-17 | The production Astro path reaches the pinned Struct revision **before** any direct graph producer is retired: a concrete, tested Astro-to-pinned-Struct conversion, the production CLI `--adapter astro` mapping, the registry/locator flow that carries it, and a red-first guard that the Astro path no longer constructs a `PublicationGraph` (F13) | `src/publication/adapters/astro.ts:25-28` (`AstroSourceLocator`), `:84-92` (fail-closed unsupported node), `:567` (direct `publicationGraphSchema.parse`), `:606-611` (adapter registration); `src/publication/struct-adapter.ts:188` (`adaptStructDocument`), `:1313-1318` (`structPublicationAdapter`); `src/publication/adapter-registry.ts:30-38` (`resolve`), `:55-60` (default registry); `tools/publication-build.mjs:31-69` (CLI allowlist), `:1054-1067` (locator + resolve); `tests/struct-adapter-boundary.test.ts`; `vendor/struct/provenance.json` | the Astro adapter builds the graph directly (`publicationGraphSchema.parse` at `src/publication/adapters/astro.ts:567`); no Astro-to-Struct ingress exists; the CLI maps `--adapter astro` to that direct producer |
 
 ## 10. Tests and frozen fixtures (kept separate from production callers)
 

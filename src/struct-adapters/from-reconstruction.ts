@@ -125,6 +125,48 @@ function nodeText(node: ResearchNode) {
   return 'text' in node ? node.text : ''
 }
 
+/**
+ * The host's own text and label, resolved against the caption it declares.
+ *
+ * The package renderer (Struct `e99a92a`) refuses a publication whose
+ * attached caption's text DIFFERS from the host block's own trimmed text:
+ * `RenderedPublicationPlanError`, code `CONFLICTING_CAPTION`. The caption
+ * block is the single authoritative carrier of the caption text, so a host
+ * that declares a caption may neither keep a second copy of that text nor
+ * contradict it.
+ *
+ * - an empty own text stays empty;
+ * - an own text that EQUALS the caption text is a copy of the caption (every
+ *   importer derives a figure's own text from its caption paragraph), so the
+ *   copy is removed from the host and the caption block carries the text
+ *   once. The host's label stays: the package publishes the label as the
+ *   host's alt text, so the figure keeps its own label;
+ * - an own text that DIFFERS from the caption text is the source's own
+ *   figure description, not a caption. It must not masquerade as a caption,
+ *   so it becomes the host's own label, the field the package publishes as
+ *   the host's alt text ("its label stays published as the alt attribute, so
+ *   nothing is lost"). A host that already owns a genuine label of its own
+ *   keeps it, and the description is kept with the host as an attribute.
+ */
+function resolveHostOwnText({
+  ownText,
+  ownLabel,
+  captionText,
+}: {
+  ownText: string
+  ownLabel: string
+  captionText: string
+}): { text: string; label: string; description?: string } {
+  const own = ownText.trim()
+  const caption = captionText.trim()
+  if (own === '') return { text: ownText, label: ownLabel }
+  if (own === caption) return { text: '', label: ownLabel }
+  const label = ownLabel.trim()
+  if (label !== '' && label !== caption)
+    return { text: '', label: ownLabel, description: ownText }
+  return { text: '', label: ownText }
+}
+
 function inlineRuns(
   node: ResearchNode,
   resolveEndpoint: (id: string) => string,
@@ -589,12 +631,43 @@ export function buildStructDocument(
       relationship,
     ]),
   )
+  // The caption text every host's own text is resolved against. The research
+  // graph states the figure -> caption relationship in
+  // `node.relationships.caption`, and the caption node carries the caption
+  // text the package attaches to the host.
+  const captionTextByHostNodeId = new Map<string, string>()
+  for (const node of reconstruction.paper.nodes) {
+    if (node.type !== 'figure') continue
+    const captionSourceId = node.relationships?.caption
+    if (!captionSourceId) continue
+    const captionNode = reconstruction.paper.nodes.find(
+      (candidate) => candidate.id === captionSourceId,
+    )
+    if (!captionNode || captionNode.type !== 'caption') continue
+    captionTextByHostNodeId.set(node.id, captionNode.text)
+  }
   const blocks = reconstruction.paper.nodes.map((node, order): StructBlock => {
     const evidenceId = node.id
     const evidence = boxEvidence(provenance[node.id], evidenceId)
     const visual = visualByNode.get(node.id)
     const kind = nodeKind(node)
-    const text = nodeText(node)
+    const captionText = captionTextByHostNodeId.get(node.id)
+    const own =
+      captionText === undefined || node.type !== 'figure'
+        ? undefined
+        : resolveHostOwnText({
+            ownText: nodeText(node),
+            ownLabel: node.title,
+            captionText,
+          })
+    const text = own?.text ?? nodeText(node)
+    // Inline runs annotate the host's own text. When that text is removed
+    // because it repeats the caption, the runs that measure into it go with
+    // it: the package requires an inline run to stay within the block text.
+    const inline =
+      own?.text === ''
+        ? []
+        : inlineRuns(node, resolveEndpoint, resolveRelationship)
     const table =
       node.type === 'figure'
         ? tableFromNode(node, evidenceId, resolveEndpoint, resolveRelationship)
@@ -603,11 +676,11 @@ export function buildStructDocument(
       id: resolveEndpoint(node.id),
       kind,
       text,
-      ...(node.type === 'figure' ? { label: node.title } : {}),
+      ...(node.type === 'figure' ? { label: own?.label ?? node.title } : {}),
       page: evidence.pages[0] ?? null,
       order,
       column: null,
-      inline: inlineRuns(node, resolveEndpoint, resolveRelationship),
+      inline,
       evidence,
       ...(table ? { table } : {}),
       ...(() => {
@@ -633,6 +706,7 @@ export function buildStructDocument(
         ...(node.type === 'figure' && node.objectType
           ? { objectType: node.objectType }
           : {}),
+        ...(own?.description ? { description: own.description } : {}),
       },
     }
   })
@@ -753,6 +827,13 @@ export function buildStructDocument(
   // caption only through a matched `caption` relationship, and never by
   // comparing caption text, so the declaration is published here: one
   // matched relationship per figure that carries a caption of this document.
+  //
+  // The package renderer refuses a publication whose attached caption's text
+  // differs from the host block's own trimmed text (`RenderedPublicationPlanError`,
+  // code `CONFLICTING_CAPTION`). The host's own text is resolved against the
+  // caption text when the blocks are built, so a matched caption relationship
+  // is declared only for a host whose own text is empty or equal to the
+  // caption's text.
   const blockById = new Map(allBlocks.map((block) => [block.id, block]))
   let captionRelationshipCount = 0
   for (const node of reconstruction.paper.nodes) {
@@ -765,6 +846,12 @@ export function buildStructDocument(
     // dangling endpoint, so the declaration is not published.
     const captionBlock = blockById.get(to)
     if (!captionBlock || captionBlock.kind !== 'caption') continue
+    // A host whose own text contradicts its caption would make the package
+    // refuse the whole publication, so no matched relationship is declared
+    // for it.
+    const hostText = blockById.get(from)?.text.trim() ?? ''
+    const captionText = captionBlock.text.trim()
+    if (hostText !== '' && hostText !== captionText) continue
     const figureEvidence = boxEvidence(provenance[node.id], node.id)
     relationships.push({
       id: structId(
@@ -1248,10 +1335,13 @@ export function buildStructDocument(
     (count, node) => count + (provenance[node.id]?.links.length ?? 0),
     0,
   )
-  const sourceInlineRelationshipCount = reconstruction.paper.nodes.reduce(
-    (count, node) =>
+  // The inline runs the document actually carries. A host whose own text is
+  // removed because it repeats its caption loses the runs that measured into
+  // that text, so the count follows the document rather than the raw nodes.
+  const sourceInlineRelationshipCount = blocks.reduce(
+    (count, block) =>
       count +
-      (node.inlineRuns ?? []).filter(
+      block.inline.filter(
         (run) =>
           run.semanticRole !== 'citation' &&
           run.semanticRole !== 'cross-reference' &&
@@ -1271,11 +1361,13 @@ export function buildStructDocument(
         reconstruction.crossReferenceRelationships.length +
         reconstruction.readingOrder.edges.length
       : 0)
+  // The source text characters the document accounts for. A caption's text is
+  // counted once, on the caption block that owns it: the copy a host carried
+  // of its own caption is the same source caption, not separate source text,
+  // and the receipt has to agree with the text the document carries.
   const sourceTextCharacterCount =
-    reconstruction.paper.nodes.reduce(
-      (count, node) => count + nodeText(node).length,
-      0,
-    ) + regionBlocks.reduce((count, block) => count + block.text.length, 0)
+    blocks.reduce((count, block) => count + block.text.length, 0) +
+    regionBlocks.reduce((count, block) => count + block.text.length, 0)
   const structTextCharacterCount = orderedBlocks.reduce(
     (count, block) => count + block.text.length,
     0,

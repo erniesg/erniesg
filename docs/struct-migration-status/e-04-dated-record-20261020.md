@@ -214,9 +214,14 @@ a follow-up candidate, not a permanent statement.
 
 ## 5. The measured evidence on the integrated candidate
 
-- **The real production build**: `npm run build:astro` (181 pages, exit 0), then
-  `npm run publication:build -- --adapter astro --entry moving-to-cloudflare-with-astro --output .agent/evidence/publication`
-  (exit 0, 4 artifacts). The output directory contains `struct-document.json`,
+Every number in this section was measured on the candidate head `c3c48d21` of
+`feat/struct-e04-candidate-20261020` (base `9003ea76`), on a committed and clean worktree.
+That head differs from the branch tip only by this record's own documentation commit; the
+acceptance (the PR request and the coordinator's result) names the exact final head.
+
+- **The real production build**: `npm run build:astro` (181 pages, exit 0) and then, at
+  the same head, `npm run publication:build -- --adapter astro --entry moving-to-cloudflare-with-astro --output .agent/evidence/publication` (exit 0, 4 artifacts) and the matching
+  publication check below. The output directory contains `struct-document.json`,
   `struct-bundle.json`, `publication-receipt.json`, `asset-bundle.json`,
   `astro-route-parity.json`, `publication.css`, `layout-assets/`, `phone-webpub/`,
   `eink.epub`, `a5-pdf.html`, `a5-pdf.pdf`, `a4-pdf.html`, `a4-pdf.pdf` and the three

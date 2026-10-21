@@ -347,6 +347,7 @@ branch at runtime.
 | L12 | `src/research/publication-integrity.ts` | 11 | `type ResearchNode`, `type ResearchPaper` (type-only) | — | pre-export integrity assertion | keep; migrate |
 | L13 | `tools/pdf-export.mjs`, `tools/pdf-private-fidelity.mjs`, `tools/pdf-corpus-audit-lib.mjs`, `tools/srt-source-output-evidence.mjs`, `tools/pdf-epub-package-scan.mjs` | (see §5) | `buildEpub` / `buildReadableEpub` / `inspectEpub` | paper → legacy renderer | offline evidence tooling | keep; migrate when the Struct renderer is authoritative |
 | L14 | `tools/model-consultation-evidence.ts` | 93, 135, 139 | `buildReadableEpub`, `inspectEpub` via `vite.ssrLoadModule('/src/research/epub.ts')` | paper → legacy renderer | **runtime** evidence tool: reopens a reconstruction as a readable EPUB and inspects it | keep for E-04; **execute in E-04 renderer-switch evidence** (a renderer change can break it), then migrate with the renderer |
+| L15 | `tools/pdf-association-fixture-audit.mjs` | 45, 65 | `renderPublicationXhtml` via `vite.ssrLoadModule('/src/research/epub.ts')` | paper → legacy renderer | **runtime** offline audit tool: loads `/src/research/epub.ts` in the same `Promise.all` as `/src/research/pdf.ts`, `/src/research/source-output-checkpoints.ts`, and `/src/research/targets.ts` (`:44-47`), then renders the reconstructed paper (`reconstruction.paper`) as XHTML (`:65`) | keep; **required path in the root `npm test` run** (see §5), so a renderer change must keep it green; migrate when the Struct renderer is authoritative |
 
 **No production caller of `src/research/epub.ts` was found outside
 `src/research/`, `src/components/research/`, `src/pages/papers/`, and
@@ -441,7 +442,25 @@ Module exports and their actual callers:
 | SRT source-output evidence | `tools/srt-source-output-evidence.mjs` | `buildEpub` |
 | EPUB package scan | `tools/pdf-epub-package-scan.mjs` | `inspectEpub` |
 | Model consultation evidence | `tools/model-consultation-evidence.ts:93,135,139` | `buildReadableEpub`, `inspectEpub` — **runtime**, via `vite.ssrLoadModule('/src/research/epub.ts')` |
+| PDF association fixture audit | `tools/pdf-association-fixture-audit.mjs:45,65` | `renderPublicationXhtml` — **runtime**, via `vite.ssrLoadModule('/src/research/epub.ts')` |
 | Demo evaluation | `tools/srt/demo-evaluation.mjs:308` | `createDemoAnnotations(paper)` (ResearchPaper annotations) |
+
+The PDF association fixture audit is a **required path in the root test run**,
+not an optional offline tool: `npm test` is `npm run audit:authority-workflows
+&& vitest run --exclude 'tests/e2e/**' --exclude
+'tools/agent-evidence-budget.test.mjs' --maxWorkers=1 && npm run
+pdf:association-audit:test` (`package.json:16`), and `pdf:association-audit:test`
+is `node --test --test-concurrency=1
+tools/pdf-association-fixture-audit.node-test.mjs` (`package.json:35`), whose
+tests spawn `tools/pdf-association-fixture-audit.mjs`
+(`tools/pdf-association-fixture-audit.node-test.mjs:176-178`, `:228-230`).
+The audited tool runtime-loads `/src/research/epub.ts` at `:45`, inside the same
+`Promise.all` that loads `/src/research/pdf.ts` (`:44`),
+`/src/research/source-output-checkpoints.ts` (`:46`), and
+`/src/research/targets.ts` (`:47`), and calls
+`epubModule.renderPublicationXhtml(reconstruction.paper, { reconstruction })` at
+`:65`. An E-04 renderer switch that breaks this audit breaks the root test
+run.
 
 ## 6. Current source-authority picture (as observed, not as target)
 

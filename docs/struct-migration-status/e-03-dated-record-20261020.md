@@ -54,4 +54,17 @@ Precondition: E-02 passed (`feat/struct-e03-core-codecs-ids-order-20261020` exis
   new work per identifier. The failure was observed while several suites ran concurrently on one machine; it is
   recorded here rather than hidden, and no assertion was weakened to hide it.
 - A bare `npx vitest run --maxWorkers=1` (which also collects the Playwright e2e specs, which the repository's script excludes) reports the e2e spec files as collection failures plus the `publication:build` symlink case, whose own setup fails when the gitignored `.agent/evidence/` directory does not exist yet in a fresh worktree. That invocation is not the repository's suite command and is recorded here only so the difference is not mistaken for a regression.
-- `git status --porcelain` clean (only 10 changed files: 8 production import switches + 1 guard extension + 1 dated record; 0 vendor / golden / expected / lockfile changes).
+- `git status --porcelain` clean. **The change is not documentation-only and not limited to the import switches.**
+  At the reviewed E-03 candidate head `ae4638ce` (`feat/struct-e03-core-codecs-ids-order-20261020`, whose parent
+  before the E-03 content is `3f671e2b`) the branch carries **12 changed files, not 10**: the 8 production import
+  switches, the guard extension, this dated record, **and the dependency-override pair** -
+  `package.json` (+1 line: the root `overrides` entry `"vite": "8.1.6"`, at `package.json:177`) and
+  `package-lock.json` (218 lines changed: 31 insertions, 187 deletions), both from commit `ae4638ce`
+  "fix(deps): override vite to the patched 8.1.6 for the runtime audit gate". The lock was regenerated with
+  `RUCKSACK_NPM_SHIM=passthrough npm install --package-lock-only --ignore-scripts` under npm 10.9.8.
+  0 vendor / golden / expected changes. The restacked branch `feat/struct-e03-core-codecs-ids-order-20261021`
+  (head `64e6774b`) does **not** contain `ae4638ce` as an ancestor: that override content is already byte-identical
+  on `main` (`5f8c76ab`; `package.json` blob `e39978fa68be8c703cf99fd1804aa05fe90da9f6` and `package-lock.json` blob
+  `f16d1dc1f78403c1a5b39f7ac3a35907d9c3ef8a` are the same blobs in both), so
+  `git diff 5f8c76ab 64e6774b -- package.json package-lock.json` is empty there while the override itself is present
+  in the tree. The dependency override is therefore part of the E-03 change's real scope in both frames.

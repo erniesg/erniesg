@@ -61,12 +61,15 @@ with a default recommendation and an admission gate.
 
 ### Review-finding anchors
 
-Obligations in this plan that answer a review finding carry an `(Fn)` anchor
-that names the review finding the obligation closes, so such an obligation can
-always be traced back to the finding it answers. Obligations that answer no
-review finding - the E-05/E-06 activation-gate evidence rows, for example -
-carry no anchor. The anchor register below lists every anchor used in this
-plan:
+Gate-level obligations - the E-04 future-gate table, the upstream-admission
+table and the per-stage evidence table in this plan, and the inventory's §9
+table - carry an `(Fn)` anchor that names the review finding the obligation
+closes, so such an obligation can always be traced back to the finding it
+answers. Obligations that answer no review finding - the E-05/E-06
+activation-gate evidence rows and the G-PR450 / G-E-WF / G-EACT admission
+rows, for example - carry no anchor. A prose obligation that states a review
+finding directly carries the same marker. The anchor register below lists every
+anchor used in this plan:
 
 | Anchor | Review finding the anchored obligation closes |
 | --- | --- |
@@ -145,7 +148,7 @@ Rules:
    `tests/struct-package-parity.test.ts`, or
    `tests/struct-adapter-boundary.test.ts`, except the reviewed expected
    closure-list change for `./bundle` described in rule 4, which must not
-   trigger a revert by construction.
+   trigger a revert by construction. (F2)
 3. Use the shared pnpm store. Do not commit generated `pnpm-lock.yaml`
    (see `docs/struct-migration-status.md`). After any bump that changes
    `package.json`/`package-lock.json`, re-run `pnpm import` from the updated
@@ -217,7 +220,7 @@ Owner: `erniesg/erniesg`. Preconditions: G-S04 and G-PR450.
    a fixture-only path to evade create acceptance; stop and resolve the upstream
    bundle surface with Struct first. A package-produced handle/fixture may be
    used only for read-only decode/encode parity, never as E-02 acceptance
-   evidence. There is no app-side bundle pin today.
+   evidence. (F1) There is no app-side bundle pin today.
    Add a new `tests/struct-adapter-bundle-parity.test.ts`. Do not regenerate the
    existing `expected.json` values; add a new reviewed `bundle` block only.
 3. Add a bytes-only ingress helper surface for Ernie.SG wire data. At the
@@ -356,7 +359,7 @@ Not migrated (stay app-owned; do not widen the package API for them):
 - E-03 work: have the app adapter derive/verify each code's category from the
   package fact source, and add a parity test asserting that every app
   `DIAGNOSTIC_COPY` category equals `diagnosticCategory(code)`. Keep app
-  titles/messages/actions as the only rendered copy.
+  titles/messages/actions as the only rendered copy. (F9)
 - E-03 work (package fact source): import `diagnosticCategory` from
   `@erniesg/struct/recovery` in a test (or otherwise parity-test against the
   package fact source) and assert that every app `DIAGNOSTIC_COPY` entry's
@@ -366,7 +369,7 @@ Not migrated (stay app-owned; do not widen the package API for them):
   the app `recoverySummary` output, the app `diagnosticCopy`
   titles/messages/actions, or the app `userAction` string with the package's
   generic equivalents: doing so would change rendered copy and serialized
-  document/receipt bytes, which the rules above forbid.
+  document/receipt bytes, which the rules above forbid. (F9)
 
 ### Semantic-vs-renderer validation mismatch decision
 
@@ -405,7 +408,7 @@ Add to `tests/struct-adapter-boundary.test.ts` (red first):
   physically unchanged until E-07. The retained tree is boundary-checked
   separately by the existing walk in `tests/struct-adapter-boundary.test.ts`
   (`portableFiles`/`boundaryViolations`, `:12-124`), which must stay green;
-  do not treat its internal family imports as consumer violations.
+  do not treat its internal family imports as consumer violations. (F6)
 - Resolve imports semantically, not by raw specifier text. Production modules
   under `src/` **outside `src/struct/**`** must not resolve to local
   `src/struct` migrated-family definitions or their re-exports for families
@@ -417,7 +420,7 @@ Add to `tests/struct-adapter-boundary.test.ts` (red first):
   `src/struct-adapters/*` and `src/struct/from-reconstruction.ts`. Public
   package specifiers `@erniesg/struct` and `@erniesg/struct/<subpath>` are
   allowed only when the subpath is in the installed export map: the public root
-  and public subpaths are valid; local barrels are closed.
+  and public subpaths are valid; local barrels are closed. (F6)
 - Migrated-family set by step:
   - E-03: `types`, `ids`, `reading-order`, `codec`.
   - E-04: `xhtml`, `epub`, `emitted-ids`.
@@ -435,8 +438,8 @@ Add to `tests/struct-adapter-boundary.test.ts` (red first):
   `src/struct/recovery.ts` importing `../struct-adapters/recovery` (plus
   barrel/index/alias spellings) for recovery presentation only. (F6/F7)
 - Every `@erniesg/struct/...` specifier must be in the installed package export
-  map (already enforced).
-- No import of package-private paths.
+  map (already enforced). (F6)
+- No import of package-private paths. (F9)
 - Retained local implementations are compatibility copies, not new authority;
   E-07 deletes them after parity. No new production semantics may be added to
   them. (F6)
@@ -541,7 +544,8 @@ absence** (`ripgrep` only; `node_modules/` absent; the repository AST harness
   `createDefaultPublicationAdapterRegistry()` registers `astro`,
   `payload-lexical`, and `struct` (`src/publication/adapter-registry.ts:55-60`),
   but the CLI `--adapter` allowlist accepts only `astro` / `payload-lexical`
-  (`tools/publication-build.mjs:54-67`), so the Struct→graph projection has no
+  (`tools/publication-build.mjs:54-67`; any other adapter is rejected at
+  `tools/publication-build.mjs:65-67`), so the Struct→graph projection has no
   CLI entry point today and the two non-Struct adapters are the only graph
   producers the release path can select. The ResearchPaper adapter
   (`researchPaperSourceAdapter`) is neither registered nor selectable, but it
@@ -850,7 +854,7 @@ Target state (what E-04 must produce; none of it is true today):
     **rejection**, not a warning, and there is no "pin unavailable" downgrade
     for the struct variant. (F8)
 - If any of text, semantic IDs, persistence, receipt, writer, or release path
-  proves load-bearing, retire the competing graph instead of renaming it.
+  proves load-bearing, retire the competing graph instead of renaming it. (F4)
 - `ResearchPaper` is defined in `src/research/schema.ts` and is directly
   imported by many production modules; it is not behind any facade.
   `src/publication/research-paper-adapter.ts` is a bidirectional
@@ -886,9 +890,17 @@ Target state (what E-04 must produce; none of it is true today):
   the source of the pending-gate list below. **Drift rule:** this table and the
   inventory's §9 table (G-01..G-15) are the same obligation set; any row
   added, removed, or reworded in one must be applied identically to the other
-  in the same change, and a row present in only one of the two is a defect.
-  The `EG-`/`G-` prefix is the only naming difference; gate text (including the
-  `(Fn)` anchor markers), artifact list, and pending status must match.
+  in the same change (the same change reaches the other table in the same
+  commit), and a row present in only one of the two is a defect. The `EG-`/`G-`
+  prefix is the only naming difference. Each table states a row in its own
+  wording and names its own artifact list, so gate text and artifact lists are
+  not required to be byte-identical between the two tables; what must match row
+  for row is the `(Fn)` anchor marker set and the pending status (both documents
+  record every row as pending). At this head the two tables are one-to-one and
+  in the same order (15 rows each), their `(Fn)` anchor marker sets match on all
+  15 pairs, and every row is pending; the gate wording still differs on 13 of
+  the 15 pairs and the artifact lists on 12 of the 15 pairs, a pre-existing
+  divergence this plan does not claim to have resolved.
 
 ### E-04 future gates (every row PENDING)
 
@@ -924,13 +936,19 @@ evidence, not package unit tests.
   `renderPublicationXhtml`/`buildStructEpub` against the package renderers and
   assert byte/content-hash equality before switching imports.
 - Dual-render the production path too: for every production case the release path
-  can select - today the pinned `--adapter astro --entry
-  moving-to-cloudflare-with-astro` case that `npm run build:production` runs,
-  plus any further entry ids that CLI accepts
-  (`tools/publication-build.mjs:54-67`) - compare the Vivliostyle local renderers
-  `publicationGraphToHtml` (`src/publication/renderers/vivliostyle.ts:508`) and
-  `createPublicationEpub` (`:793-904`, reached from `vivliostyleRenderer.render`
-  at `:1083-1207`) against the package XHTML/EPUB renderers, and assert
+  can select - today exactly the pinned `--adapter astro --entry
+  moving-to-cloudflare-with-astro` case that `npm run build:production` runs
+  (`package.json` `build:production`), and any further case the release path is
+  extended with, each of which must be added to the checked-in frozen production
+  fixture set before it counts as a covered case. The CLI has no entry-id
+  allowlist: `--entry` is only required to be present
+  (`tools/publication-build.mjs:56-57`), so the release path - not the CLI -
+  fixes the case set, and the CLI's `--adapter` dispatch
+  (`tools/publication-build.mjs:54-67`) rejects any other adapter (`:65-67`).
+  Compare the Vivliostyle local renderers `publicationGraphToHtml`
+  (`src/publication/renderers/vivliostyle.ts:508`) and `createPublicationEpub`
+  (`:793-904`, reached from `vivliostyleRenderer.render` at `:1083-1207`) against
+  the package XHTML/EPUB renderers, and assert
   **content equality of the rendered publication content** for the same pinned
   source revision - the same document text in the same reading order, the same
   referenced asset set, and the same id/target mapping (every id emitted by one
@@ -978,7 +996,7 @@ evidence, not package unit tests.
   E-06 plus family parity/deletion gates, with extraction-point hashes, a
   package-test mapping, zero production imports to removed modules, and
   package-only app tests. Retained compatibility files need an owner, caller
-  inventory, warning/horizon, and removal issue.
+  inventory, warning/horizon, and removal issue. (F6)
 
 ### Staged dual-read / switch / contract and rollback
 
@@ -989,7 +1007,7 @@ Every stage is red-first and independently revertible:
 2. Dual-render (E-04): reproduce local XHTML/EPUB with the package renderers.
 3. Switch (E-03/E-04): change production imports only; local modules stay
    unchanged.
-4. Contract (E-07): delete local duplicates after zero-import + parity proof.
+4. Contract (E-07): delete local duplicates after zero-import + parity proof. (F6)
 5. Rollback: revert the pin commit and/or the import-switch commit to restore the
    previous exact head and local compatibility paths. No durable data or route
    mutation is involved before E-06. Unsafe package downgrade is rejected.

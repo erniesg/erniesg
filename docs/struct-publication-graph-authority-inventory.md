@@ -272,7 +272,7 @@ and published by atomic rename.
 
 | Writer | Location | Adapter used | Notes |
 |---|---|---|---|
-| `tools/publication-build.mjs` (`npm run publication:build`) | `parsePublicationBuildArgs` (`:31-69`); registry at `:1053`; `registry.resolve(options.adapter, locator)` at `:1067`; output at `:1052`, receipt re-stamped at `:1023-1043` | `astro` and `payload-lexical` only — `--adapter` accepts only `astro`/`payload`→`payload-lexical` (`:54-67`) | `createDefaultPublicationAdapterRegistry()` also registers `struct`, but **the CLI cannot select it** — the option parser rejects any other adapter id |
+| `tools/publication-build.mjs` (`npm run publication:build`) | `parsePublicationBuildArgs` (`:31-69`); registry at `:1053`; `registry.resolve(options.adapter, locator)` at `:1067`; output at `:1052`, receipt re-stamped at `:1023-1043` | `astro` and `payload-lexical` only — `--adapter` accepts only `astro`/`payload`→`payload-lexical` (`:54-67`; any other adapter is rejected at `:65-67`) | `createDefaultPublicationAdapterRegistry()` also registers `struct`, but **the CLI cannot select it** — the option parser rejects any other adapter id |
 | `src/publication/renderers/vivliostyle.ts` (`vivliostyleRenderer`) | `:1081-1207` | receives an already-resolved `PublicationBundle` | writes graph + assets + artifacts + receipt |
 | `npm run publication:check` (`tools/publication-check.mjs`) | `:1144-1162`, `:1354` | re-parses the emitted `publication-graph.json` | compares `receipt.source?.graphSha256` to `sha256(serializePublicationGraph(graph))` |
 | `npm run build:production` | `package.json` `build:production` | `--adapter astro --entry moving-to-cloudflare-with-astro` → `.agent/evidence/publication` | the only wired production build path for the graph pipeline |
@@ -683,12 +683,19 @@ Every row is **PENDING**, and the cutover plan's "E-04 future gates" table
 mirrors these rows as pending obligations (EG-01..EG-15 one-to-one with
 G-01..G-15); nothing in this table is a runtime, golden, receipt, or
 activation result. **Drift rule:** this table and the plan's "E-04 future
-gates" table are the same obligation set; any row added, removed, or
-reworded in one must be applied identically to the other in the same change,
-and a row present in only one of the two is a defect. The plan's
-`EG-` prefix and this table's `G-` prefix are the only naming difference; the
-gate text (including the `(Fn)` anchor markers), artifact list, and pending
-status must match.
+gates" table are the same obligation set; any row added, removed, or reworded in
+one must be applied identically to the other in the same change (the same
+change reaches the other table in the same commit), and a row present in only
+one of the two is a defect. The plan's `EG-` prefix and this table's `G-` prefix
+are the only naming difference. Each table states a row in its own wording and
+names its own artifact list, so gate text and artifact lists are not required to
+be byte-identical between the two tables; what must match row for row is the
+`(Fn)` anchor marker set and the pending status (both documents record every row
+as pending). At this head the two tables are one-to-one and in the same order
+(15 rows each), their `(Fn)` anchor marker sets match on all 15 pairs, and every
+row is pending; the gate wording still differs on 13 of the 15 pairs and the
+artifact lists on 12 of the 15 pairs, a pre-existing divergence this inventory
+does not claim to have resolved.
 
 The `(Fn)` anchor markers in the gate text below name the review findings
 recorded in the plan's §"Review-finding anchors" register. They are traceability

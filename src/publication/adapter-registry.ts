@@ -4,7 +4,6 @@ import {
   type PublicationSourceResult,
 } from './source-adapter'
 import { astroPublicationAdapter } from './adapters/astro'
-import { payloadLexicalSourceAdapter } from './adapters/payload-lexical'
 import { structPublicationAdapter } from './struct-adapter'
 
 export type PublicationBundle = PublicationSourceResult
@@ -55,6 +54,5 @@ export async function buildRegisteredPublication(
 export function createDefaultPublicationAdapterRegistry() {
   return new PublicationAdapterRegistry()
     .register(astroPublicationAdapter)
-    .register(payloadLexicalSourceAdapter)
     .register(structPublicationAdapter)
 }

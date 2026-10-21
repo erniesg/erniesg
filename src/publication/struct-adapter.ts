@@ -172,6 +172,17 @@ function relationshipStatusIsResolved(
   return relationship?.status === 'matched'
 }
 
+/**
+ * The authored alternative text of a block. The pinned Struct document keeps
+ * it in the block attributes, so the publication projection reads it from
+ * there and carries it into the node accessibility metadata and the asset
+ * descriptor.
+ */
+function alternativeTextFor(block: StructBlock) {
+  const value = block.attributes?.alternativeText
+  return typeof value === 'string' && value.trim() ? value : undefined
+}
+
 function sourceType(
   document: StructDocument,
 ): 'astro' | 'payload' | 'docx' | 'pdf' | 'research-paper' {
@@ -831,6 +842,12 @@ export function adaptStructDocument(
           ...base,
           type: 'figure',
           title,
+          accessibility: {
+            ...base.accessibility,
+            ...(alternativeTextFor(block)
+              ? { alternativeText: alternativeTextFor(block)! }
+              : {}),
+          },
           ...(block.text ? { sourceText: block.text } : {}),
           ...(inlineRuns ? { inlineRuns } : {}),
           assetIds,
@@ -1067,6 +1084,17 @@ export function adaptStructDocument(
   const assetDescriptors: AssetDescriptor[] = []
   const assetBytes = new Map<string, Uint8Array>()
   const assetHashes = new Map<string, string>()
+  // The alternative text of a figure travels on the block that owns it, so
+  // the asset it references carries the same label into the bundle.
+  const assetAccessibilityLabels = new Map<string, string>()
+  for (const block of document.blocks) {
+    if (block.kind !== 'figure') continue
+    const label = alternativeTextFor(block)
+    if (!label) continue
+    for (const assetId of block.fallbackAssetIds ?? [])
+      if (!assetAccessibilityLabels.has(assetId))
+        assetAccessibilityLabels.set(assetId, label)
+  }
   for (const asset of document.assets) {
     if (!asset.bytes) {
       addDiagnostic(
@@ -1099,6 +1127,9 @@ export function adaptStructDocument(
       ...(basename(asset.href) ? { fileName: basename(asset.href) } : {}),
       ...(asset.width > 0 ? { width: asset.width } : {}),
       ...(asset.height > 0 ? { height: asset.height } : {}),
+      ...(assetAccessibilityLabels.has(asset.id)
+        ? { accessibilityLabel: assetAccessibilityLabels.get(asset.id)! }
+        : {}),
     })
     assetBytes.set(id, new Uint8Array(asset.bytes))
   }

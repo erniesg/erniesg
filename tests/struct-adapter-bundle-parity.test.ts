@@ -228,17 +228,38 @@ describe('app-owned Struct bundle parity at the S-04 pin', () => {
     // bundle adapter stays in-memory and test-scoped. Any future production
     // ingress must call decodeStructBundle(rawBytes, ...) and must not use the
     // embedded value verifier for wire data.
+    //
+    // E-04 changed exactly one thing here, and the rule is still the rule: the
+    // publication facade may CREATE a bundle from the document the build
+    // produced and ENCODE it to bind the receipt to those bytes, but no
+    // production module may READ bundle wire bytes and no production module
+    // may use the value verifier. The permitted bundle importer is therefore
+    // the one module that creates and encodes, and the wire reader and the
+    // value verifier stay out of production entirely.
     const production = await Promise.all(
-      (await sourceFiles(srcRoot)).map(async (file) => ({
-        path: file.pathname,
-        source: await readFile(file, 'utf8'),
-      })),
+      (await sourceFiles(srcRoot))
+        .filter((file) => !/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file.pathname))
+        .map(async (file) => ({
+          path: file.pathname,
+          source: await readFile(file, 'utf8'),
+        })),
     )
     expect(production.length).toBeGreaterThan(0)
     const bundleConsumers = production.filter((file) =>
       file.source.includes('@erniesg/struct/bundle'),
     )
-    expect(bundleConsumers.map((file) => file.path)).toEqual([])
+    expect(bundleConsumers.map((file) => file.path)).toEqual([
+      new URL('../src/publication/struct-source-binding.ts', import.meta.url)
+        .pathname,
+    ])
+    // The permitted importer creates and encodes; it never reads wire bytes.
+    expect(bundleConsumers[0]?.source).toContain('createStructBundle')
+    expect(bundleConsumers[0]?.source).toContain('encodeStructBundle')
+    expect(bundleConsumers[0]?.source).not.toContain('decodeStructBundle')
+    const wireReaders = production.filter((file) =>
+      file.source.includes('decodeStructBundle'),
+    )
+    expect(wireReaders.map((file) => file.path)).toEqual([])
     const valueVerifierUsers = production.filter((file) =>
       file.source.includes('verifyStructBundle'),
     )

@@ -13,6 +13,13 @@ E-04/E-07 gate is satisfied or that any proposed gate is implemented. Where
 this document describes an assertion that does not yet exist in the
 repository, it says so explicitly.
 
+**UPDATE (E-04, 2026-10-20):** the "E-04 outcome" section above records the
+measured post-E-04 state on the integrated candidate head, with a
+compiler-proven importer set. The rest of this document still describes the
+PRE-E-04 baseline, which is kept as the evidence the plan was written
+against; the E-04 gate status is in
+[`docs/struct-migration-status/e-04-dated-record-20261020.md`](struct-migration-status/e-04-dated-record-20261020.md).
+
 No source file was modified while producing it. No build, test, renderer,
 golden, or receipt run was executed.
 
@@ -27,6 +34,55 @@ The plan requires the *existence and scope* of this document; it does not treat
 this document as gate satisfaction, and it records the same grep-bounded
 limitation described below. The gate table in §9 below is the source of the
 plan's pending-gate list; every row of it is still **PENDING**.
+
+## E-04 outcome (measured on the integrated candidate)
+
+**This section supersedes the grep-bounded importer tables in §3 for the post-E-04
+state.** The tables in §3 record the PRE-E-04 baseline that the inventory observed; they
+are kept as the historical evidence the plan was written against. The set below is
+COMPILER-PROVEN (TypeScript checker, alias-resolving) at the integrated E-04 candidate
+head `296e8759` on `feat/struct-e04-candidate-20261020`, using the same analysis the
+checked-in guard `tests/publication-graph-boundary.test.ts` runs.
+
+**The complete set of production modules that can name a graph symbol is now SEVEN:**
+
+| # | Module | What it may name | Why |
+|---|---|---|---|
+| 1 | `src/publication/schema.ts` | the definitions | the definition module |
+| 2 | `src/publication/struct-adapter.ts` | `PUBLICATION_GRAPH_VERSION`, `PublicationInlineRun`, `PublicationNode`, `publicationGraphSchema` | the ONE projection: `StructDocument` -> the ephemeral renderer plan |
+| 3 | `src/publication/source-adapter.ts` | the graph contract symbols | the adapter contract and the contract receipt |
+| 4 | `src/publication/renderers/vivliostyle.ts` | `PublicationGraph`, `PublicationInlineRun`, `PublicationNode`, `serializePublicationGraph` | the renderer consumes the ephemeral plan |
+| 5 | `src/publication/adapter-conformance.ts` | the graph symbols | the canonical-subset comparison |
+| 6 | `src/publication/research-paper-adapter.ts` | the forward direction only | the read-only legacy compatibility bridge; the reverse writer is retired |
+| 7 | `src/publication/publishing-facade.ts` | all of the above | the ONLY module the CLI talks to; it owns the projection internally and exports no graph symbol |
+
+**Everything that used to name the graph outside that set no longer does:**
+
+| Former importer | Post-E-04 state |
+|---|---|
+| `src/publication/adapters/astro.ts` | the adapter produces the one approved Struct revision through the app-owned MDX ingress (`src/struct-adapters/from-markdown.ts`) and projects it; it names no graph symbol |
+| `src/publication/adapters/payload-lexical.ts` | **RETIRED** (the Payload publication path was retired; there is no payload dependency, no site and no production caller) |
+| `src/annotations/annotation-bundle.ts` | the bundle is v1.2.0 with a required `sourceId` and a forbidden `graphId`; anchors resolve from Struct block ids and text, and the legacy 1.0.0/1.1.0 bundles resolve through a read-only map |
+| `tools/publication-build.mjs` | the CLI consumes the app-owned publishing facade; it imports no graph symbol |
+| `tools/publication-check.mjs` | the CLI consumes the app-owned publishing facade; it imports no graph symbol and FAILS if `publication-graph.json` is present in its input directory |
+
+**The persistence, receipt and reverse-writer facts after E-04:**
+
+- `publication-graph.json` is written by nobody and read by nobody; the persisted semantic
+  artifacts are `struct-document.json`, `struct-bundle.json` and the Struct-bound
+  `publication-receipt.json`.
+- The receipt's source identity is the discriminated `sourceBinding`
+  (`struct-cutover` with the actual document/bundle/receipt digests and the exact package
+  pin from the one provenance source, or `legacy-research-paper` with no Struct binding);
+  `graphSha256` and `assetBundleSha256` remain diagnostic back-compat fields.
+- `publicationGraphToResearchPaper` (the reverse writer) is deleted; a red-first
+  assertion proves the module exports no reverse writer, and the round-trip assertion
+  that pinned it was replaced by a forward-invariance assertion, not deleted.
+
+The checked-in guard `tests/publication-graph-boundary.test.ts` enforces this set, with
+the four non-vacuity proofs (the permitted set is exercised, the forbidden classes are
+live, a synthetic barrel probe is flagged, and a synthetic renamed-import probe is
+flagged).
 
 ## Authority and baseline
 

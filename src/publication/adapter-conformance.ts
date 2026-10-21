@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { publicationGraphSchema, serializePublicationGraph, type PublicationGraph, type PublicationNode } from './schema'
 import { createAssetBundle, serializeAssetBundle, type AssetDescriptor } from './asset-bundle'
+import { publicationSourceBindingSchema } from './source-binding'
 import type { PublicationSourceResult } from './source-adapter'
 
 export const PUBLICATION_CONFORMANCE_VERSION = '1.0.0' as const
@@ -447,6 +448,7 @@ export function publicationOutputReceiptContract(receipt: unknown) {
   const allowedReceiptKeys = new Set([
     'version',
     'source',
+    'sourceBinding',
     'profiles',
     'policyVersions',
     'toolchain',
@@ -512,8 +514,20 @@ export function publicationOutputReceiptContract(receipt: unknown) {
     !Array.isArray(receipt.artifacts)
   )
     throw new Error('Publication output receipt is missing its shared contract')
+  // The Struct binding is part of the shared contract, not an adapter-private
+  // detail: a receipt that predates it, or that carries one that does not
+  // parse, must not pass silently. The parsed binding is what gets projected,
+  // so two receipts that differ only in their Struct binding are not equal.
+  const sourceBinding = publicationSourceBindingSchema.safeParse(
+    receipt.sourceBinding,
+  )
+  if (!sourceBinding.success)
+    throw new Error('Publication output receipt is missing its shared contract', {
+      cause: sourceBinding.error,
+    })
   return {
     version: receipt.version,
+    sourceBinding: sourceBinding.data,
     sourceAdapterVersion: source.adapterVersion,
     canonicalSubsetSha256: source.canonicalSubsetSha256,
     routeParity: source.routeParity,

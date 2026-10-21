@@ -30,6 +30,12 @@ import type {
   PublicationNode,
 } from '../schema'
 import { serializePublicationGraph } from '../schema'
+import type { PublicationSourceBinding } from '../source-binding'
+import {
+  createStructBundleForDocument,
+  structBundleDescriptor,
+  structDocumentJson,
+} from '../struct-source-binding'
 import type {
   PublicationBundle,
   PublicationRenderer,
@@ -108,7 +114,14 @@ type ArtifactFile = {
 
 export type PublicationReceipt = {
   version: '1.0.0'
+  /** Diagnostic back-compat digests. They are never the source identity. */
   source: { graphSha256: string; assetBundleSha256: string }
+  /**
+   * The source identity. It is carried from the source result and is never
+   * re-derived here, so a receipt can only claim a Struct binding whose
+   * digests were computed from the bytes this invocation produced.
+   */
+  sourceBinding?: PublicationSourceBinding
   profiles: typeof PROFILE_DETAILS
   policyVersions: typeof PUBLICATION_OUTPUT_POLICY_VERSIONS
   toolchain: ReturnType<typeof publicationToolchainForRuntime>
@@ -1078,6 +1091,41 @@ async function receiptForDirectory(
   }
 }
 
+/**
+ * Persist the semantic artifacts of a render.
+ *
+ * The publication graph is an ephemeral renderer plan and is never written
+ * out. The persisted semantic artifacts are the canonical serialized Struct
+ * document and the Struct bundle descriptor, and they exist only when the
+ * render was given a Struct document to derive them from. The asset bytes
+ * stay in the render output's asset directory; they are not duplicated into
+ * the descriptor.
+ */
+export async function writePublicationSemanticArtifacts(
+  output: string,
+  bundle: PublicationBundle,
+): Promise<void> {
+  const document = bundle.structDocument
+  if (!document) return
+  await writeFile(
+    resolve(output, 'struct-document.json'),
+    structDocumentJson(document),
+    EXCLUSIVE_WRITE,
+  )
+  await writeFile(
+    resolve(output, 'struct-bundle.json'),
+    `${JSON.stringify(
+      structBundleDescriptor(
+        document,
+        createStructBundleForDocument(document),
+      ),
+      null,
+      2,
+    )}\n`,
+    EXCLUSIVE_WRITE,
+  )
+}
+
 export const vivliostyleRenderer: PublicationRenderer = {
   id: 'vivliostyle',
   async render(bundle, request) {
@@ -1104,11 +1152,10 @@ export const vivliostyleRenderer: PublicationRenderer = {
         )
       throw error
     }
-    await writeFile(
-      resolve(output, 'publication-graph.json'),
-      `${JSON.stringify(bundle.graph, null, 2)}\n`,
-      EXCLUSIVE_WRITE,
-    )
+    // The graph is an ephemeral renderer plan. It is never persisted: the
+    // semantic artifacts of a render are the canonical Struct document and
+    // the Struct bundle descriptor.
+    await writePublicationSemanticArtifacts(output, bundle)
     await writeFile(
       resolve(output, 'asset-bundle.json'),
       `${JSON.stringify(bundle.assetBundle.descriptor, null, 2)}\n`,
@@ -1192,6 +1239,9 @@ export const vivliostyleRenderer: PublicationRenderer = {
         graphSha256: sha256(serializePublicationGraph(bundle.graph)),
         assetBundleSha256: sha256(serializeAssetBundle(bundle.assetBundle)),
       },
+      ...(bundle.sourceBinding
+        ? { sourceBinding: bundle.sourceBinding }
+        : {}),
       profiles: PROFILE_DETAILS,
       policyVersions: PUBLICATION_OUTPUT_POLICY_VERSIONS,
       toolchain: publicationToolchainForRuntime(publicationBrowser),

@@ -21,8 +21,20 @@ import { describe, expect, it } from 'vitest'
  *
  * The base commit is the parent of E05a's first commit: the state the
  * repository was in before the editorial record contract was written.
+ *
+ * This test also runs on the combined E-04/E-05 branch, where the tree
+ * contains E-04's legitimate changes on top of the same base. The E-05-only
+ * claim is kept intact there by scoping every comparison to the E-05 delta:
+ * E-04's own delta (`E03_BASE..E04_HEAD`) is allowed to differ, the branch's
+ * own post-E-04 maintenance commits are allowed to differ, and any other
+ * non-editorial difference from the base still fails. E-05's own delta is
+ * asserted separately to contain nothing outside the editorial scope, so the
+ * test still fails if E-05 touched anything else. The E-04 head anchor is
+ * the reviewed E-04 candidate `c1d5e92f`.
  */
-const BASE_COMMIT = '9003ea7657ef73cbad271e6a82eab5f27f649e91'
+const E03_BASE = '9003ea7657ef73cbad271e6a82eab5f27f649e91'
+const E04_HEAD = 'c1d5e92ff7cb4aac635d91baf33b20f58e98c2fc'
+const E05_HEAD = '25570506b6020add5ed2610e62dfb8abacdf308f'
 
 const PROJECT_ROOT = resolve(process.cwd())
 const EDITORIAL_DIRECTORY = resolve(PROJECT_ROOT, 'src/editorial')
@@ -125,6 +137,50 @@ function relativePaths(files: string[]): string[] {
   return files.map((file) => relative(PROJECT_ROOT, file).split(sep).join('/'))
 }
 
+/** The non-empty lines of a git command's stdout. */
+function gitLines(args: string[]): string[] {
+  return execFileSync('git', args)
+    .toString('utf8')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+}
+
+/** Whether a commit is an ancestor of HEAD. */
+function isAncestor(commit: string): boolean {
+  try {
+    execFileSync('git', ['merge-base', '--is-ancestor', commit, 'HEAD'])
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** The paths a commit range changed. */
+function changedPaths(from: string, to: string): Set<string> {
+  return new Set(gitLines(['diff', '--name-only', `${from}..${to}`]))
+}
+
+/** Whether a path is inside the E-05 editorial scope. */
+function isEditorialScope(path: string): boolean {
+  return (
+    path.startsWith('src/editorial/') ||
+    path.startsWith('migrations/editorial/') ||
+    path === 'docs/editorial-publication-design-20261020.md'
+  )
+}
+
+// E-04 is merged into this branch when its reviewed head is an ancestor of
+// HEAD; the E-05 delta is always measured against E-05's own head.
+const e04Merged = isAncestor(E04_HEAD)
+const e04Delta = changedPaths(E03_BASE, E04_HEAD)
+const e05Delta = changedPaths(E03_BASE, E05_HEAD)
+
+/** The revision a path's byte-identity expectation comes from. */
+function expectedRevision(path: string): string {
+  return e04Merged && e04Delta.has(path) ? E04_HEAD : E03_BASE
+}
+
 describe('the inactivity evidence', () => {
   it('keeps the editorial modules out of the Worker import graph', () => {
     const reached = reachableFrom([WORKER_ENTRY])
@@ -163,9 +219,15 @@ describe('the inactivity evidence', () => {
       'src/publication/renderers/vivliostyle.ts',
     ]
     for (const path of productionWriter) {
-      const atBase = execFileSync('git', ['show', `${BASE_COMMIT}:${path}`])
+      const atBase = execFileSync('git', [
+        'show',
+        `${expectedRevision(path)}:${path}`,
+      ])
       const inTree = readFileSync(resolve(PROJECT_ROOT, path))
       expect(Buffer.compare(atBase, inTree)).toBe(0)
+      // E-05 itself never touched the production writer, even where E-04
+      // also changed it: the E-05-only claim is proven from E-05's own delta.
+      expect(e05Delta.has(path)).toBe(false)
     }
   })
 
@@ -176,39 +238,40 @@ describe('the inactivity evidence', () => {
     expect(routes.length).toBeGreaterThan(0)
     for (const file of routes) {
       const path = relative(PROJECT_ROOT, file).split(sep).join('/')
-      const atBase = execFileSync('git', ['show', `${BASE_COMMIT}:${path}`])
+      const atBase = execFileSync('git', [
+        'show',
+        `${expectedRevision(path)}:${path}`,
+      ])
       expect(Buffer.compare(atBase, readFileSync(file))).toBe(0)
+      expect(e05Delta.has(path)).toBe(false)
     }
   })
 
   it('changes nothing but the editorial modules and the design record', () => {
-    const changed = execFileSync('git', [
-      'diff',
-      '--name-only',
-      BASE_COMMIT,
-    ])
-      .toString('utf8')
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-    const untracked = execFileSync('git', [
-      'ls-files',
-      '--others',
-      '--exclude-standard',
-    ])
-      .toString('utf8')
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
+    const changed = gitLines(['diff', '--name-only', E03_BASE])
+    const untracked = gitLines(['ls-files', '--others', '--exclude-standard'])
     const touched = [...new Set([...changed, ...untracked])]
     expect(touched.length).toBeGreaterThan(0)
-    const outside = touched.filter(
-      (path) =>
-        !path.startsWith('src/editorial/') &&
-        !path.startsWith('migrations/editorial/') &&
-        path !== 'docs/editorial-publication-design-20261020.md',
-    )
-    expect(outside).toEqual([])
+    const outside = touched.filter((path) => !isEditorialScope(path))
+    // The only non-editorial differences from E-05's base are E-04's own
+    // delta and the branch's own post-E-04 maintenance commits (the CI
+    // checkout fix), and only when E-04 is merged; otherwise the set is empty.
+    const branchMaintenance = e04Merged
+      ? gitLines(['diff', '--name-only', `${E04_HEAD}..HEAD`]).filter(
+          (path) => !isEditorialScope(path),
+        )
+      : []
+    const expectedOutside = e04Merged
+      ? [...new Set([...e04Delta, ...branchMaintenance])].sort()
+      : []
+    expect(outside.sort()).toEqual(expectedOutside)
+    // E-05's own delta contains nothing outside the editorial modules, the
+    // editorial migrations and its design record, so E-05 touched nothing
+    // else even where E-04 also changed the same file.
+    const e05Outside = [...e05Delta]
+      .filter((path) => !isEditorialScope(path))
+      .sort()
+    expect(e05Outside).toEqual([])
   })
 
   it('keeps the editorial migrations out of the margin runner', () => {

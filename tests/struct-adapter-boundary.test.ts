@@ -275,6 +275,42 @@ function importedPaths(
 }
 
 /**
+ * The imports a module names: the specifiers it imports and the computed
+ * imports it hides.
+ */
+type ParsedImports = {
+  /** Every specifier the module names. */
+  specifiers: string[]
+  /** The string literals inside every computed dynamic import. */
+  computedDynamicImports: string[][]
+  /** What the guard knows about every computed require. */
+  computedRequires: ComputedRequire[]
+  /** What the guard knows about every computed glob. */
+  computedGlobs: ComputedGlob[]
+}
+
+/**
+ * The imports of a module.
+ *
+ * The named specifiers are the same whether the computed imports are
+ * collected or not, so the collected form is the one the guard analyses and
+ * the plain form reuses it.
+ */
+function parseImports(source: string, file: URL): ParsedImports {
+  const computedDynamicImports: string[][] = []
+  const computedRequires: ComputedRequire[] = []
+  const computedGlobs: ComputedGlob[] = []
+  const specifiers = importedPaths(
+    source,
+    file,
+    computedDynamicImports,
+    computedRequires,
+    computedGlobs,
+  )
+  return { specifiers, computedDynamicImports, computedRequires, computedGlobs }
+}
+
+/**
  * Whether a call is a Vite glob import. `import.meta.glob` and its
  * deprecated alias `import.meta.globEager` both name a set of modules the
  * bundler resolves, so both are imports the guard has to inspect.
@@ -836,9 +872,10 @@ function boundaryViolations(
   source: string,
   file: URL,
   publicPaths: Set<string>,
+  specifiers?: string[],
 ): string[] {
   const portable = file.pathname.startsWith(portableRoot.pathname)
-  return importedPaths(source, file).filter((specifier) => {
+  return (specifiers ?? importedPaths(source, file)).filter((specifier) => {
     if (specifier === '<nonliteral dynamic import>')
       return portable || file.pathname.startsWith(adapterRoot.pathname)
     if (specifier === NONLITERAL_REQUIRE)
@@ -923,6 +960,42 @@ async function portableFiles(directory: URL): Promise<URL[]> {
       )
       .map((entry) => new URL(entry.name, directory)),
   ]
+}
+
+/**
+ * The analysis of one portable file of the repository: the file, its source
+ * and the imports it names.
+ */
+type RepositoryFileAnalysis = {
+  /** The file itself. */
+  file: URL
+  /** The source of the file. */
+  source: string
+  /** The imports the file names. */
+  imports: ParsedImports
+}
+
+/**
+ * The analysis of every portable file of the repository.
+ *
+ * The whole-repository guard cases need the same walk of the repository, the
+ * same sources and the same parse of every file, so the analysis is built
+ * once, lazily, and shared: the second case reuses the work of the first
+ * instead of repeating it.
+ */
+let repositoryAnalysis: Promise<RepositoryFileAnalysis[]> | null = null
+
+function repositoryAnalysisOnce(): Promise<RepositoryFileAnalysis[]> {
+  repositoryAnalysis ??= (async () => {
+    const files = await portableFiles(root)
+    return Promise.all(
+      files.map(async (file) => {
+        const source = await readFile(file, 'utf8')
+        return { file, source, imports: parseImports(source, file) }
+      }),
+    )
+  })()
+  return repositoryAnalysis
 }
 
 /**
@@ -1035,6 +1108,16 @@ const localModuleExtensions = [
 const localModuleCache = new Map<string, LocalModule | null>()
 
 /**
+ * Every module the guard already parsed for its re-exports, so a module that
+ * is reached by more than one import is parsed once.
+ *
+ * The re-export specifiers of a module depend on the source of the module
+ * alone, so the parse is a pure function of that source and the result can
+ * be reused.
+ */
+const reexportSpecifierCache = new Map<string, string[]>()
+
+/**
  * The module specifiers a module re-exports. A retained-tree wrapper that
  * re-exports a migrated family is the way an external importer reaches the
  * local migrated authority, so the re-export targets are what the guard
@@ -1045,6 +1128,14 @@ const localModuleCache = new Map<string, LocalModule | null>()
  * came from, so the guard follows it as well.
  */
 function reexportSpecifiers(source: string): string[] {
+  const cached = reexportSpecifierCache.get(source)
+  if (cached !== undefined) return [...cached]
+  const specifiers = computeReexportSpecifiers(source)
+  reexportSpecifierCache.set(source, specifiers)
+  return [...specifiers]
+}
+
+function computeReexportSpecifiers(source: string): string[] {
   const file = ts.createSourceFile(
     'module.ts',
     source,
@@ -1274,18 +1365,14 @@ function e03ViolationsForSource(
   source: string,
   file: URL,
   publicPaths: Set<string>,
+  imports?: ParsedImports,
 ): string[] {
+  const parsed = imports ?? parseImports(source, file)
   const violations: string[] = []
-  const computedDynamicImports: string[][] = []
-  const computedRequires: ComputedRequire[] = []
-  const computedGlobs: ComputedGlob[] = []
-  const specifiers = importedPaths(
-    source,
-    file,
-    computedDynamicImports,
-    computedRequires,
-    computedGlobs,
-  )
+  const computedDynamicImports = parsed.computedDynamicImports
+  const computedRequires = parsed.computedRequires
+  const computedGlobs = parsed.computedGlobs
+  const specifiers = parsed.specifiers
   let computedIndex = 0
   let computedRequireIndex = 0
   let computedGlobIndex = 0
@@ -1549,37 +1636,44 @@ describe('app-owned Struct adapter boundary', () => {
     }
   })
 
+  // The case walks the whole repository and analyses every portable file, so
+  // it needs more than the default per-test timeout on a loaded runner.
   it('keeps app recovery consumers on the app-owned path', async () => {
     const violations: string[] = []
-    for (const file of await portableFiles(root)) {
-      if (file.pathname.startsWith(portableRoot.pathname)) continue
-      const source = await readFile(file, 'utf8')
+    for (const analysis of await repositoryAnalysisOnce()) {
+      if (analysis.file.pathname.startsWith(portableRoot.pathname)) continue
       // The compatibility forwarder is resolved, not matched against a list
       // of spellings, so every alias of it is a violation here too.
       violations.push(
         ...compatibilityForwarderViolationsForSpecifiers(
-          importedPaths(source, file),
-          file,
+          analysis.imports.specifiers,
+          analysis.file,
         ),
       )
     }
     expect(violations).toEqual([])
-  })
+  }, 120000)
 
+  // The case walks the whole repository and analyses every portable file, so
+  // it needs more than the default per-test timeout on a loaded runner.
   it('keeps all implementation modules within their allowed import boundaries', async () => {
     const publicPaths = await publicPackagePaths()
-    const files = await portableFiles(root)
-    expect(files.map((file) => file.pathname)).toContain(
+    const files = await repositoryAnalysisOnce()
+    expect(files.map((analysis) => analysis.file.pathname)).toContain(
       new URL('research/import-types.ts', root).pathname,
     )
-    for (const file of files) {
-      const source = await readFile(file, 'utf8')
+    for (const analysis of files) {
       expect(
-        boundaryViolations(source, file, publicPaths),
-        file.pathname,
+        boundaryViolations(
+          analysis.source,
+          analysis.file,
+          publicPaths,
+          analysis.imports.specifiers,
+        ),
+        analysis.file.pathname,
       ).toEqual([])
     }
-  })
+  }, 120000)
 
   it('rejects app reconstruction and private package imports in synthetic modules', async () => {
     const publicPaths = await publicPackagePaths()
@@ -1722,13 +1816,21 @@ describe('app-owned Struct adapter boundary', () => {
     ).toEqual([])
   })
 
+  // The case walks the whole repository and analyses every portable file, so
+  // it needs more than the default per-test timeout on a loaded runner.
   it('E-03: prohibits migrated-family imports (types/ids/reading-order/codec) and validates package paths', async () => {
     const publicPaths = await publicPackagePaths()
     const violations: string[] = []
-    for (const file of await portableFiles(root)) {
-      if (file.pathname.startsWith(portableRoot.pathname)) continue
-      const source = await readFile(file, 'utf8')
-      violations.push(...e03ViolationsForSource(source, file, publicPaths))
+    for (const analysis of await repositoryAnalysisOnce()) {
+      if (analysis.file.pathname.startsWith(portableRoot.pathname)) continue
+      violations.push(
+        ...e03ViolationsForSource(
+          analysis.source,
+          analysis.file,
+          publicPaths,
+          analysis.imports,
+        ),
+      )
     }
     expect(violations).toEqual([])
 
@@ -1791,7 +1893,7 @@ describe('app-owned Struct adapter boundary', () => {
         publicPaths,
       ),
     ).not.toEqual([])
-  })
+  }, 120000)
 
   it('E-03: app diagnostic categories match package recovery facts', async () => {
     const source = await readFile(

@@ -32,6 +32,17 @@ export const REPOSITORY_ROOT = resolve(
 export const GRAPH_SCHEMA_MODULE = 'src/publication/schema.ts'
 
 /**
+ * The canonical graph type, declared in the schema module.
+ *
+ * The name alone is not the guard: a module that never writes
+ * `PublicationGraph` can still hold the graph, by receiving a value whose
+ * type carries it and reading the graph off that value. The guard therefore
+ * resolves this type through the checker and compares type identity, so the
+ * read is caught whatever the property is called.
+ */
+export const GRAPH_TYPE_NAME = 'PublicationGraph'
+
+/**
  * The graph symbols the guard watches. A reference to any of them, from any
  * module, is a hit; the hit is only a violation when the referencing module is
  * not in the permitted set.
@@ -133,6 +144,47 @@ export type ProgramAnalysis = {
   references: Map<string, Set<string>>
   /** Every source file of the program, keyed by its resolved path. */
   sourceFiles: Map<string, ts.SourceFile>
+  /**
+   * The canonical graph type of the schema module, resolved through the
+   * checker. It is the identity anchor of the value detection: a value whose
+   * resolved type is this exact type object carries the publication graph.
+   */
+  graphType?: ts.Type
+  /**
+   * Absolute source file name -> the graph-bearing value accesses the file
+   * performs. A property access, an element access, a destructuring pattern
+   * or a parameter whose resolved type is the graph type.
+   */
+  accesses: Map<string, GraphValueAccess[]>
+  /**
+   * Absolute source file name -> the number of value accesses the guard
+   * examined in that file. It is the vacuity counter: a file with a
+   * non-zero count was walked by the value detection, whatever it found.
+   */
+  examined: Map<string, number>
+}
+
+/**
+ * A value access that carries the publication graph.
+ *
+ * The access is proven by the checker, not by a text match: the resolved type
+ * of the accessed value is the canonical `PublicationGraph` type object of
+ * `src/publication/schema.ts`.
+ */
+export type GraphValueAccess = {
+  /**
+   * How the graph is reached: a property read, an element read, a
+   * destructured binding, or a parameter that receives the graph.
+   */
+  kind: 'property' | 'element' | 'binding' | 'parameter'
+  /** 1-based line of the access. */
+  line: number
+  /** 1-based column of the access. */
+  column: number
+  /** The source text of the access, for example `result.graph`. */
+  text: string
+  /** The graph symbol the access carries. */
+  symbol: string
 }
 
 const SCHEMA_FILE = resolve(REPOSITORY_ROOT, GRAPH_SCHEMA_MODULE)
@@ -198,16 +250,29 @@ export function analyzeProgram(
 ): ProgramAnalysis {
   const program = ts.createProgram([...rootNames], options)
   const checker = program.getTypeChecker()
+  const graphType = graphTypeOf(program, checker)
   const references = new Map<string, Set<string>>()
   const sourceFiles = new Map<string, ts.SourceFile>()
+  const accesses = new Map<string, GraphValueAccess[]>()
+  const examined = new Map<string, number>()
   for (const sourceFile of program.getSourceFiles()) {
     if (sourceFile.isDeclarationFile) continue
     if (isInsideNodeModules(sourceFile.fileName)) continue
     sourceFiles.set(resolve(sourceFile.fileName), sourceFile)
-    const symbols = graphSymbolsIn(sourceFile, checker)
-    if (symbols.size) references.set(sourceFile.fileName, symbols)
+    const found = graphReferencesIn(sourceFile, checker, graphType)
+    if (found.symbols.size) references.set(sourceFile.fileName, found.symbols)
+    if (found.accesses.length) accesses.set(sourceFile.fileName, found.accesses)
+    examined.set(sourceFile.fileName, found.examined)
   }
-  return { program, checker, references, sourceFiles }
+  return {
+    program,
+    checker,
+    references,
+    sourceFiles,
+    graphType,
+    accesses,
+    examined,
+  }
 }
 
 /** Build the program over the repository's own sources. */
@@ -223,6 +288,32 @@ export function repoReferences(
   const byRepoPath = new Map<string, Set<string>>()
   for (const [file, symbols] of analysis.references)
     byRepoPath.set(repoRelative(file), symbols)
+  return byRepoPath
+}
+
+/**
+ * The graph-bearing value accesses of an analysis, keyed by repository-relative
+ * path.
+ */
+export function repoPropertyAccesses(
+  analysis: ProgramAnalysis,
+): Map<string, GraphValueAccess[]> {
+  const byRepoPath = new Map<string, GraphValueAccess[]>()
+  for (const [file, accesses] of analysis.accesses)
+    byRepoPath.set(repoRelative(file), accesses)
+  return byRepoPath
+}
+
+/**
+ * The number of value accesses the guard examined in a repository-relative
+ * file. A non-zero count proves that the value detection walked the file.
+ */
+export function repoExaminedAccesses(
+  analysis: ProgramAnalysis,
+): Map<string, number> {
+  const byRepoPath = new Map<string, number>()
+  for (const [file, count] of analysis.examined)
+    byRepoPath.set(repoRelative(file), count)
   return byRepoPath
 }
 
@@ -337,8 +428,119 @@ function enclosingModuleSpecifier(node: ts.Node): ts.Expression | undefined {
 export function graphSymbolsIn(
   sourceFile: ts.SourceFile,
   checker: ts.TypeChecker,
+  graphType?: ts.Type,
 ): Set<string> {
+  return graphReferencesIn(sourceFile, checker, graphType).symbols
+}
+
+/**
+ * The canonical graph type, resolved through the checker from the schema
+ * module.
+ *
+ * The returned type object is the identity anchor of the value detection: a
+ * value whose resolved type is this exact object carries the publication
+ * graph, whatever the property that carries it is called. A module that
+ * declares its own identically named type has a different type object, so it
+ * is never a hit.
+ */
+export function graphTypeOf(
+  program: ts.Program,
+  checker: ts.TypeChecker,
+): ts.Type | undefined {
+  const schema = schemaSourceFile(program)
+  if (!schema) return undefined
+  for (const statement of schema.statements) {
+    if (!ts.isTypeAliasDeclaration(statement)) continue
+    if (statement.name.text !== GRAPH_TYPE_NAME) continue
+    const symbol = checker.getSymbolAtLocation(statement.name)
+    if (!symbol) continue
+    return checker.getDeclaredTypeOfSymbol(symbol)
+  }
+  return undefined
+}
+
+/** The schema module's source file inside a program. */
+function schemaSourceFile(program: ts.Program): ts.SourceFile | undefined {
+  for (const sourceFile of program.getSourceFiles()) {
+    if (sourceFile.isDeclarationFile) continue
+    if (repoRelative(sourceFile.fileName) === GRAPH_SCHEMA_MODULE)
+      return sourceFile
+  }
+  return undefined
+}
+
+/**
+ * Whether a resolved type is the canonical graph type.
+ *
+ * The comparison is by type identity, never by name and never by structure:
+ * a local type that merely shares the name of the graph type is a different
+ * type object and is not a hit. The alias fallback only fires for a type that
+ * still carries its alias, and it resolves the alias to its declaration, so
+ * the declaration must live in the schema module.
+ */
+function isGraphType(
+  type: ts.Type | undefined,
+  graphType: ts.Type,
+  checker: ts.TypeChecker,
+): boolean {
+  if (!type) return false
+  if (type === graphType) return true
+  const alias = type.aliasSymbol
+  if (!alias) return false
+  let symbol = alias
+  if (symbol.flags & ts.SymbolFlags.Alias) {
+    try {
+      symbol = checker.getAliasedSymbol(symbol)
+    } catch {
+      return false
+    }
+  }
+  for (const declaration of symbol.declarations ?? []) {
+    const name = (declaration as ts.NamedDeclaration).name
+    if (!name || !ts.isIdentifier(name)) continue
+    if (name.text !== GRAPH_TYPE_NAME) continue
+    if (!isSchemaDeclaration(declaration)) continue
+    return true
+  }
+  return false
+}
+
+/**
+ * The graph symbols a source file references and the graph-bearing values it
+ * accesses, both proven by the checker.
+ */
+export type GraphReferences = {
+  /** The graph symbols the file names. */
+  symbols: Set<string>
+  /** The graph-bearing value accesses the file performs. */
+  accesses: GraphValueAccess[]
+  /** The number of value accesses the guard examined in the file. */
+  examined: number
+}
+
+/**
+ * Every graph symbol a source file references and every graph-bearing value
+ * it accesses, proven by the checker.
+ *
+ * The name-based walk covers the identifiers themselves (a use, an import, a
+ * re-export), the imported or re-exported name of a specifier (which catches
+ * a renamed import, whose local name says nothing about the symbol) and the
+ * exports of a namespace import.
+ *
+ * The value walk covers the ways a module can hold the graph without ever
+ * writing its name: a property read (`result.graph`), an element read
+ * (`result['graph']`), a destructured binding (`const { graph } = result`)
+ * and a parameter that receives the graph. Each of them is a hit only when
+ * the checker resolves the accessed value to the canonical graph type.
+ */
+export function graphReferencesIn(
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
+  graphType?: ts.Type,
+): GraphReferences {
   const found = new Set<string>()
+  const accesses: GraphValueAccess[] = []
+  let examined = 0
   const visit = (node: ts.Node): void => {
     if (ts.isIdentifier(node) && GRAPH_SYMBOLS.includes(node.text)) {
       const resolved = resolveGraphSymbol(checker, node)
@@ -371,10 +573,98 @@ export function graphSymbolsIn(
           found.add(name)
       }
     }
+    if (graphType) {
+      if (
+        ts.isPropertyAccessExpression(node) ||
+        ts.isElementAccessExpression(node) ||
+        ts.isBindingElement(node) ||
+        ts.isParameter(node)
+      )
+        examined += 1
+      const access = graphValueAccess(sourceFile, checker, node, graphType)
+      if (access) {
+        accesses.push(access)
+        found.add(access.symbol)
+      }
+    }
     ts.forEachChild(node, visit)
   }
   visit(sourceFile)
-  return found
+  return { symbols: found, accesses, examined }
+}
+
+/**
+ * The graph-bearing value access a node performs, when the checker can prove
+ * one. The node is a property access, an element access, a destructured
+ * binding or a parameter.
+ */
+function graphValueAccess(
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
+  node: ts.Node,
+  graphType: ts.Type,
+): GraphValueAccess | undefined {
+  if (ts.isPropertyAccessExpression(node)) {
+    const type = checker.getTypeAtLocation(node)
+    if (!isGraphType(type, graphType, checker)) return undefined
+    const symbol = checker.getSymbolAtLocation(node.name)
+    const declared = symbol
+      ? checker.getTypeOfSymbolAtLocation(symbol, node)
+      : undefined
+    if (!isGraphType(declared, graphType, checker)) return undefined
+    return {
+      kind: 'property',
+      ...accessPosition(sourceFile, node),
+      text: node.getText(sourceFile),
+      symbol: GRAPH_TYPE_NAME,
+    }
+  }
+  if (ts.isElementAccessExpression(node)) {
+    const type = checker.getTypeAtLocation(node)
+    if (!isGraphType(type, graphType, checker)) return undefined
+    return {
+      kind: 'element',
+      ...accessPosition(sourceFile, node),
+      text: node.getText(sourceFile),
+      symbol: GRAPH_TYPE_NAME,
+    }
+  }
+  if (ts.isBindingElement(node)) {
+    const symbol = checker.getSymbolAtLocation(node.name)
+    if (!symbol) return undefined
+    const declared = checker.getTypeOfSymbolAtLocation(symbol, node)
+    if (!isGraphType(declared, graphType, checker)) return undefined
+    return {
+      kind: 'binding',
+      ...accessPosition(sourceFile, node),
+      text: node.getText(sourceFile),
+      symbol: GRAPH_TYPE_NAME,
+    }
+  }
+  if (ts.isParameter(node)) {
+    const symbol = checker.getSymbolAtLocation(node.name)
+    if (!symbol) return undefined
+    const declared = checker.getTypeOfSymbolAtLocation(symbol, node)
+    if (!isGraphType(declared, graphType, checker)) return undefined
+    return {
+      kind: 'parameter',
+      ...accessPosition(sourceFile, node),
+      text: node.getText(sourceFile),
+      symbol: GRAPH_TYPE_NAME,
+    }
+  }
+  return undefined
+}
+
+/** The 1-based position of a node in its source file. */
+function accessPosition(
+  sourceFile: ts.SourceFile,
+  node: ts.Node,
+): { line: number; column: number } {
+  const { line, character } = sourceFile.getLineAndCharacterOfPosition(
+    node.getStart(sourceFile),
+  )
+  return { line: line + 1, column: character + 1 }
 }
 
 /**
@@ -672,6 +962,29 @@ export type ProbeResult = {
   violations: string[]
   /** The `.astro` probes that import a graph symbol. */
   astroViolations: AstroViolation[]
+  /**
+   * One line per graph-bearing value access the probes perform:
+   * `<file>:<line>:<column> -> <symbol> (<access>)`.
+   */
+  propertyAccesses: string[]
+}
+
+/**
+ * The violation line of a referencing module: the file, the graph symbols it
+ * names and the graph-bearing values it reads.
+ *
+ * The access text is part of the line so that a violation names the read that
+ * caused it and not only the module that performed it.
+ */
+export function violationLine(
+  file: string,
+  symbols: Iterable<string>,
+  accesses: readonly GraphValueAccess[] = [],
+): string {
+  const named = [...symbols].sort().join(', ')
+  const reads = accesses.map((access) => access.text)
+  if (!reads.length) return `${file} -> ${named}`
+  return `${file} -> ${named} (${reads.join(', ')})`
 }
 
 /**
@@ -694,15 +1007,27 @@ export async function analyzeProbes(
     }
     const analysis = analyzeProgram(written, programOptions())
     const violations: string[] = []
+    const propertyAccesses: string[] = []
     for (const [file, symbols] of analysis.references) {
       // The definition module is the schema itself; it is the permitted
       // importer, not a probe.
       if (repoRelative(file) === GRAPH_SCHEMA_MODULE) continue
+      const accesses = analysis.accesses.get(file) ?? []
       violations.push(
-        `${relative(root, file).split(/[\\/]/).join('/')} -> ${[...symbols]
-          .sort()
-          .join(', ')}`,
+        violationLine(
+          relative(root, file).split(/[\\/]/).join('/'),
+          symbols,
+          accesses,
+        ),
       )
+    }
+    for (const [file, accesses] of analysis.accesses) {
+      if (repoRelative(file) === GRAPH_SCHEMA_MODULE) continue
+      for (const access of accesses) {
+        propertyAccesses.push(
+          `${relative(root, file).split(/[\\/]/).join('/')}:${access.line}:${access.column} -> ${access.symbol} (${access.text})`,
+        )
+      }
     }
     const astroFiles = written.filter((file) => file.endsWith('.astro'))
     const astroViolations = await astroGraphImportViolations(analysis, {
@@ -714,6 +1039,7 @@ export async function analyzeProbes(
       references: analysis.references,
       violations: violations.sort(),
       astroViolations,
+      propertyAccesses: propertyAccesses.sort(),
     }
   } finally {
     await rm(root, { recursive: true, force: true })

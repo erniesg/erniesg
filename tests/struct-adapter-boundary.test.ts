@@ -361,13 +361,33 @@ function globFamilySpecifiers(patterns: string[], file: URL): string[] {
 /**
  * Whether a module path matches one of the glob patterns. A brace group
  * lists alternatives, so every expansion of a pattern is tried.
+ *
+ * Vite resolves a pattern against the directory of the importing module, so
+ * the canonical './' spelling of a pattern names a module below that
+ * directory. `path.relative` never produces a './' prefix, so the module
+ * path is matched in both spellings: the bare one and the './'-prefixed one.
  */
 function globMatchesAny(patterns: string[], modulePath: string): boolean {
+  const spellings = globPathSpellings(modulePath)
   return patterns.some((pattern) =>
     expandGlobBraces(pattern).some((expanded) =>
-      globToRegExp(expanded).test(modulePath),
+      spellings.some((spelling) => globToRegExp(expanded).test(spelling)),
     ),
   )
+}
+
+/**
+ * The spellings of a module path a Vite glob pattern can name. A module
+ * path that leaves the directory of the importing module keeps its '../'
+ * form, and a module path below that directory is named both bare and with
+ * the './' prefix that Vite's own resolution uses. The './'-prefixed
+ * spelling of a path that leaves the importer's directory would name a
+ * different module, so it is not a candidate.
+ */
+function globPathSpellings(modulePath: string): string[] {
+  return modulePath.startsWith('.')
+    ? [modulePath]
+    : [modulePath, `./${modulePath}`]
 }
 
 /**
@@ -1977,6 +1997,66 @@ describe('app-owned Struct adapter boundary', () => {
     // A glob that names no module of the tree is not a violation either.
     const elsewhere = "const pages = import.meta.glob('../pages/**/*.ts')"
     expect(e03ViolationsForSource(elsewhere, research, publicPaths)).toEqual([])
+  })
+
+  it('E-03: resolves a Vite glob pattern against the directory of the importing module', async () => {
+    const publicPaths = await publicPackagePaths()
+    const srcModule = new URL('probe.ts', root)
+    const research = new URL('research/probe.ts', root)
+
+    // Vite resolves a './'-relative pattern against the directory of the
+    // importing module, so a module that sits above the migrated families
+    // reaches them with the canonical './' spelling.
+    const dotSlash = "const codecs = import.meta.glob('./struct/codec.ts', { eager: true })"
+    expect(importedPaths(dotSlash, srcModule)).toContain('./struct/codec.ts')
+    expect(
+      e03ViolationsForSource(dotSlash, srcModule, publicPaths),
+    ).not.toEqual([])
+
+    // The './'-relative subtree spelling reaches the family as well.
+    const subtree = "const all = import.meta.glob('./struct/**/*.ts', { eager: true })"
+    expect(
+      e03ViolationsForSource(subtree, srcModule, publicPaths),
+    ).not.toEqual([])
+
+    // An array of './'-relative patterns is reported too.
+    const patterns = "const all = import.meta.glob(['./struct/codec.ts', './struct/ids.ts'])"
+    expect(
+      e03ViolationsForSource(patterns, srcModule, publicPaths),
+    ).not.toEqual([])
+
+    // A negated './'-relative pattern removes the module it excludes, and
+    // only that module.
+    const negated = "const all = import.meta.glob(['./struct/**', '!./struct/codec.ts'])"
+    const negatedViolations = e03ViolationsForSource(
+      negated,
+      srcModule,
+      publicPaths,
+    )
+    expect(negatedViolations).not.toEqual([])
+    expect(negatedViolations.join('\n')).not.toContain('./struct/codec.ts ->')
+
+    // A './'-relative pattern that provably names no migrated family is not
+    // a violation.
+    const safe = "const pages = import.meta.glob('./content/**/*.md', { eager: true })"
+    expect(importedPaths(safe, srcModule)).toEqual([])
+    expect(e03ViolationsForSource(safe, srcModule, publicPaths)).toEqual([])
+
+    // The './'-relative pattern of a module in a subdirectory resolves
+    // against that subdirectory, so it names a different module and does
+    // not reach the family.
+    const elsewhere = "const codecs = import.meta.glob('./struct/codec.ts')"
+    expect(importedPaths(elsewhere, research)).toEqual([])
+    expect(e03ViolationsForSource(elsewhere, research, publicPaths)).toEqual([])
+
+    // The '../'-relative spelling keeps working.
+    const parentRelative = "const codecs = import.meta.glob('../struct/codec.ts', { eager: true })"
+    expect(importedPaths(parentRelative, research)).toContain(
+      '../struct/codec.ts',
+    )
+    expect(
+      e03ViolationsForSource(parentRelative, research, publicPaths),
+    ).not.toEqual([])
   })
 
   it('E-03: catches an external import of a retained-tree wrapper that re-exports a migrated family', async () => {

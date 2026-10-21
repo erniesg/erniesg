@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises'
+import { readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
 import * as ts from 'typescript'
 import { describe, expect, it } from 'vitest'
@@ -13,7 +13,12 @@ import {
   decodeStructDocument as packageDecodeStructDocument,
   type StructDocument,
 } from '@erniesg/struct/document'
+import {
+  buildEpub as appBuildEpub,
+  renderPublicationXhtml as appRenderPublicationXhtml,
+} from '../src/research/epub'
 import { renderPublicationXhtml } from '@erniesg/struct/renderers/xhtml'
+import { buildStructEpub as packageBuildStructEpub } from '@erniesg/struct/renderers/epub'
 
 const root = new URL('../src/', import.meta.url)
 const portableRoot = new URL('struct/', root)
@@ -88,6 +93,22 @@ const permittedRecoverySpecifiers = [
 const migratedFamilies = new Set(['types', 'ids', 'reading-order', 'codec'])
 
 /**
+ * The sentinel a computed CommonJS require records. A computed require has
+ * no literal specifier, so the guard cannot prove that it does not load a
+ * migrated family; it fails closed in the same way a computed dynamic
+ * import does.
+ */
+const NONLITERAL_REQUIRE = '<nonliteral require>'
+
+/** What the guard knows about a computed require. */
+type ComputedRequire = {
+  /** The string literals inside the argument. */
+  fragments: string[]
+  /** The static text of the argument. */
+  staticText: string
+}
+
+/**
  * The local root of every migrated family. A nested module inside a family
  * (for example `src/struct/codec/parsers`) is part of that family, so the
  * prohibition covers the whole subtree and not only the family entry file.
@@ -128,6 +149,7 @@ function importedPaths(
   source: string,
   file: URL,
   computedDynamicImports?: string[][],
+  computedRequires?: ComputedRequire[],
 ): string[] {
   const ast = ts.createSourceFile(
     file.pathname,
@@ -167,8 +189,18 @@ function importedPaths(
     ) {
       // A CommonJS require is an import too.
       const argument = node.arguments[0]
-      if (argument && ts.isStringLiteralLike(argument))
+      if (argument && ts.isStringLiteralLike(argument)) {
         paths.push(argument.text)
+      } else {
+        // A computed require has no literal specifier either, so the guard
+        // cannot prove that it does not load a migrated family. It fails
+        // closed in the same way a computed dynamic import does.
+        paths.push(NONLITERAL_REQUIRE)
+        computedRequires?.push({
+          fragments: stringLiteralsIn(argument),
+          staticText: staticTextIn(argument),
+        })
+      }
     } else if (
       ts.isImportEqualsDeclaration(node) &&
       ts.isExternalModuleReference(node.moduleReference)
@@ -185,9 +217,10 @@ function importedPaths(
 
 /**
  * The source the guard parses for a module. An Astro file contributes its
- * frontmatter and its inline scripts; an MDX file contributes the ESM block
- * MDX allows at the top level, so a fenced code sample that merely shows an
- * import is not mistaken for a module specifier.
+ * frontmatter and its inline scripts; an MDX file contributes the ESM flow
+ * blocks MDX allows at the top level of the document, so a fenced code
+ * sample that merely shows an import is not mistaken for a module
+ * specifier.
  */
 function scanSource(source: string, file: URL): string {
   if (file.pathname.endsWith('.astro')) {
@@ -197,7 +230,7 @@ function scanSource(source: string, file: URL): string {
     ].map((match) => match[1])
     return [frontmatter, ...scripts].join('\n')
   }
-  if (file.pathname.endsWith('.mdx')) return mdxLeadingEsm(source)
+  if (file.pathname.endsWith('.mdx')) return mdxEsmStatements(source)
   return source
 }
 
@@ -213,44 +246,103 @@ function mdxBraceDelta(line: string): number {
 
 /**
  * Whether a line can begin a top-level ESM statement. MDX allows `import` and
- * `export` statements only at the top level of a document, so a line that
- * starts with another keyword ends the leading ESM block.
+ * `export` statements at the top level of a document, wherever they appear,
+ * so such a line starts a candidate ESM block.
  */
 function mdxStartsEsmStatement(line: string): boolean {
   return /^(?:import|export)\b/.test(line)
 }
 
 /**
- * The leading ESM block of an MDX document. MDX allows import and export
- * statements only at the top level of the document, before any markdown
- * content, so only that block can carry a module specifier. Taking it keeps a
- * fenced code sample that shows an import out of the scan, and keeps markdown
- * prose from swallowing a real specifier inside an unterminated string.
- *
- * The block is the whole run of consecutive top-level ESM statements, not
- * just its first statement: a statement that names a module does not close
- * the block, so a migrated-family import that follows a safe import is still
- * collected. A blank line between two statements does not close the block
- * either, but a line that cannot begin a top-level ESM statement does, so
- * markdown content and fenced code samples stay out of the scan.
+ * The opening or closing fence of a markdown code block. A closing fence
+ * carries no info string, so it is recognised separately from an opening
+ * one.
  */
-function mdxLeadingEsm(source: string): string {
+function mdxFenceMarker(
+  line: string,
+): { marker: string; closing: boolean } | null {
+  const match = /^\s{0,3}(`{3,}|~{3,})(.*)$/.exec(line)
+  if (!match) return null
+  return { marker: match[1]!, closing: match[2]!.trim() === '' }
+}
+
+/**
+ * Whether a candidate statement names a module. The candidate is parsed as
+ * TypeScript, so markdown prose that happens to begin with `import` or
+ * `export` is not mistaken for an ESM statement.
+ */
+function mdxStatementNamesAModule(statement: string): boolean {
+  const file = ts.createSourceFile(
+    'mdx-esm.ts',
+    statement,
+    ts.ScriptTarget.Latest,
+    true,
+  )
+  return file.statements.some(
+    (node) =>
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      node.moduleSpecifier !== undefined &&
+      ts.isStringLiteral(node.moduleSpecifier),
+  )
+}
+
+/**
+ * The ESM flow blocks of an MDX document.
+ *
+ * MDX recognises an import or export statement anywhere at the top level of
+ * a document, not only in a leading prelude, so an import that follows
+ * markdown content is a real module specifier and is collected here. A
+ * fenced code sample and an indented code sample are markdown content
+ * instead, so both are excluded: a code sample that shows an import must
+ * never be collected as a module specifier.
+ *
+ * A statement runs until its braces balance, so a multi-line import is
+ * collected as one block, and a prose line that begins with `import` is
+ * dropped unless the TypeScript parser reads it as an ESM statement.
+ */
+function mdxEsmStatements(source: string): string {
   const body = source.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '')
   const kept: string[] = []
+  let fence: string | null = null
   let depth = 0
-  for (const line of body.split('\n')) {
-    const trimmed = line.trim()
-    if (depth === 0) {
-      if (trimmed === '') {
-        // A blank line can separate two top-level ESM statements, so the
-        // block continues until a line arrives that cannot start one.
-        continue
-      }
-      if (!mdxStartsEsmStatement(trimmed)) break
-    }
-    kept.push(line)
-    depth += mdxBraceDelta(line)
+  let block: string[] = []
+  const flush = () => {
+    const statement = block.join('\n')
+    block = []
+    if (mdxStatementNamesAModule(statement)) kept.push(statement)
   }
+  for (const line of body.split('\n')) {
+    if (depth > 0) {
+      // The line continues the ESM statement that is already open.
+      block.push(line)
+      depth += mdxBraceDelta(line)
+      if (depth === 0) flush()
+      continue
+    }
+    const fenceLine = mdxFenceMarker(line)
+    if (fence !== null) {
+      if (
+        fenceLine &&
+        fenceLine.closing &&
+        fenceLine.marker[0] === fence[0] &&
+        fenceLine.marker.length >= fence.length
+      )
+        fence = null
+      continue
+    }
+    if (fenceLine) {
+      fence = fenceLine.marker
+      continue
+    }
+    // An indented code sample is markdown content, not a module specifier.
+    if (/^(?: {4}|\t)/.test(line)) continue
+    const trimmed = line.trim()
+    if (!mdxStartsEsmStatement(trimmed)) continue
+    block = [line]
+    depth = mdxBraceDelta(line)
+    if (depth === 0) flush()
+  }
+  if (block.length > 0) flush()
   return kept.join('\n')
 }
 
@@ -266,6 +358,29 @@ function stringLiteralsIn(node: ts.Node | undefined): string[] {
   return found
 }
 
+/**
+ * The static text of an expression: the part a reader sees before any
+ * runtime value is substituted. A dynamic part is written as `${}`, so a
+ * computed require can be told apart from one that only names a package
+ * manifest.
+ */
+function staticTextIn(node: ts.Node | undefined): string {
+  if (!node) return ''
+  if (ts.isStringLiteralLike(node)) return node.text
+  if (ts.isTemplateExpression(node)) {
+    let text = node.head.text
+    for (const span of node.templateSpans) text += `\${}${span.literal.text}`
+    return text
+  }
+  if (
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind === ts.SyntaxKind.PlusToken
+  ) {
+    return staticTextIn(node.left) + staticTextIn(node.right)
+  }
+  return '${}'
+}
+
 function boundaryViolations(
   source: string,
   file: URL,
@@ -274,6 +389,8 @@ function boundaryViolations(
   const portable = file.pathname.startsWith(portableRoot.pathname)
   return importedPaths(source, file).filter((specifier) => {
     if (specifier === '<nonliteral dynamic import>')
+      return portable || file.pathname.startsWith(adapterRoot.pathname)
+    if (specifier === NONLITERAL_REQUIRE)
       return portable || file.pathname.startsWith(adapterRoot.pathname)
     if (
       specifier === '@erniesg/struct' ||
@@ -372,6 +489,94 @@ function isMigratedFamilyTarget(target: string): boolean {
   return migratedFamilyForTarget(target) !== null
 }
 
+/**
+ * Whether a path is inside the retained `src/struct` tree. The tree keeps
+ * its own legacy callers, so a re-export inside it stays exempt; a module
+ * outside it must not reach a migrated family through a retained-tree
+ * wrapper.
+ */
+function isRetainedTreePath(path: string): boolean {
+  return path.startsWith(portableRoot.pathname)
+}
+
+/**
+ * The source of a local module, or null when no file backs the path. The
+ * path a specifier resolves to carries no extension, so the file names the
+ * module can have are tried in turn.
+ */
+function readLocalModuleSource(target: string): string | null {
+  for (const candidate of [
+    `${target}.ts`,
+    `${target}.tsx`,
+    `${target}.mts`,
+    `${target}.js`,
+    `${target}.jsx`,
+    `${target}.mjs`,
+    `${target}/index.ts`,
+    `${target}/index.tsx`,
+  ]) {
+    try {
+      return readFileSync(candidate, 'utf8')
+    } catch {
+      continue
+    }
+  }
+  return null
+}
+
+/**
+ * The module specifiers a module re-exports. A retained-tree wrapper that
+ * re-exports a migrated family is the way an external importer reaches the
+ * local migrated authority, so the re-export targets are what the guard
+ * follows.
+ */
+function reexportSpecifiers(source: string): string[] {
+  const file = ts.createSourceFile(
+    'module.ts',
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+  )
+  const specifiers: string[] = []
+  for (const statement of file.statements) {
+    if (!ts.isExportDeclaration(statement)) continue
+    if (!statement.moduleSpecifier) continue
+    if (!ts.isStringLiteral(statement.moduleSpecifier)) continue
+    specifiers.push(statement.moduleSpecifier.text)
+  }
+  return specifiers
+}
+
+/**
+ * The migrated family a retained-tree wrapper reaches by re-export, or null
+ * when it reaches none. The chain is followed transitively, so a wrapper
+ * that re-exports another wrapper is traced as well.
+ */
+function migratedFamilyInReexportChain(target: string): string | null {
+  const seen = new Set<string>()
+  const pending = [target]
+  while (pending.length > 0) {
+    const current = pending.shift()!
+    if (seen.has(current)) continue
+    seen.add(current)
+    const source = readLocalModuleSource(current)
+    if (source === null) continue
+    const moduleUrl = new URL(current, 'file:///')
+    for (const specifier of reexportSpecifiers(source)) {
+      const resolved = resolveLocalTarget(specifier, moduleUrl)
+      if (resolved === null) continue
+      const normalized = resolved.replace(/\/+$/, '')
+      if (
+        isMigratedFamilyTarget(normalized) ||
+        isStructBarrelTarget(normalized)
+      )
+        return normalized
+      if (isRetainedTreePath(normalized)) pending.push(normalized)
+    }
+  }
+  return null
+}
+
 function isStructBarrelTarget(target: string): boolean {
   const normalized = target.replace(/\/(?:index(?:\.(?:ts|js|tsx|astro))?)?$/, '')
   return (
@@ -414,6 +619,7 @@ function recoveryImporterViolationsForSpecifiers(
   const violations: string[] = []
   for (const specifier of specifiers) {
     if (specifier === '<nonliteral dynamic import>') continue
+    if (specifier === NONLITERAL_REQUIRE) continue
     const target = resolveLocalTarget(specifier, file)
     if (target === null || target !== appRecoveryModule) continue
     if (permittedRecoveryImporters.has(file.pathname)) continue
@@ -448,6 +654,7 @@ function compatibilityForwarderViolationsForSpecifiers(
   const violations: string[] = []
   for (const specifier of specifiers) {
     if (specifier === '<nonliteral dynamic import>') continue
+    if (specifier === NONLITERAL_REQUIRE) continue
     const target = resolveLocalTarget(specifier, file)
     if (target === null || target !== compatibilityRecoveryForwarder) continue
     violations.push(
@@ -464,8 +671,15 @@ function e03ViolationsForSource(
 ): string[] {
   const violations: string[] = []
   const computedDynamicImports: string[][] = []
-  const specifiers = importedPaths(source, file, computedDynamicImports)
+  const computedRequires: ComputedRequire[] = []
+  const specifiers = importedPaths(
+    source,
+    file,
+    computedDynamicImports,
+    computedRequires,
+  )
   let computedIndex = 0
+  let computedRequireIndex = 0
   for (const specifier of specifiers) {
     if (specifier === '<nonliteral dynamic import>') {
       // A computed dynamic import has no literal specifier, so the guard
@@ -483,6 +697,34 @@ function e03ViolationsForSource(
         })
       violations.push(
         `${file.pathname}: computed dynamic import ${offending ?? 'with an unresolved target'} is not allowed`,
+      )
+      continue
+    }
+    if (specifier === NONLITERAL_REQUIRE) {
+      // A computed require is a computed import, so it fails closed in the
+      // same way a computed dynamic import does.
+      const computed = computedRequires[computedRequireIndex++]
+      const offending = (computed?.fragments ?? [])
+        .map((fragment) => resolveLocalTarget(fragment, file))
+        .filter((target): target is string => target !== null)
+        .find((target) => {
+          const normalized = target.replace(/\/+$/, '')
+          return (
+            migratedFamilyForTarget(normalized) !== null ||
+            isStructBarrelTarget(normalized)
+          )
+        })
+      if (offending) {
+        violations.push(
+          `${file.pathname}: computed require ${offending} is not allowed`,
+        )
+        continue
+      }
+      // A require that only names a package manifest cannot load a module
+      // of a migrated family, so it is not a boundary escape.
+      if (/\/package\.json$/.test(computed?.staticText ?? '')) continue
+      violations.push(
+        `${file.pathname}: computed require with an unresolved target is not allowed`,
       )
       continue
     }
@@ -513,6 +755,18 @@ function e03ViolationsForSource(
       if (family && migratedFamilies.has(family)) {
         violations.push(
           `${file.pathname}: migrated family import ${specifier} -> ${target}`,
+        )
+      }
+    }
+    // A retained-tree wrapper that re-exports a migrated family is another
+    // way into the local migrated authority, so an importer outside the
+    // retained tree is a violation. The wrapper's own re-export stays
+    // exempt, because it resides under `src/struct/**`.
+    if (!isRetainedTreePath(file.pathname) && isRetainedTreePath(target)) {
+      const reexported = migratedFamilyInReexportChain(target)
+      if (reexported !== null) {
+        violations.push(
+          `${file.pathname}: retained-tree wrapper import ${specifier} -> ${target} re-exports ${reexported}`,
         )
       }
     }
@@ -1212,5 +1466,143 @@ describe('app-owned Struct adapter boundary', () => {
     expect(() => appDecodeStructDocument(document)).toThrow(
       /DUPLICATE_IDENTIFIER/,
     )
+  })
+  it('E-03: the package EPUB renderer and the app render paths refuse colliding emitted identifiers', async () => {
+    const document = collidingEmittedIdentifierDocument()
+
+    // The package XHTML renderer refuses the colliding document.
+    expect(() => renderPublicationXhtml(document)).toThrow(
+      /emitted XHTML identifier/,
+    )
+
+    // The package EPUB renderer refuses the same document, so a regression
+    // that lets a colliding emitted identifier through `buildStructEpub` is
+    // caught here.
+    await expect(packageBuildStructEpub(document)).rejects.toThrow(
+      /emitted XHTML identifier/,
+    )
+
+    // The app's own render entry points refuse it as well, so a regression
+    // that lets a colliding emitted identifier through the app's
+    // `renderPublicationXhtml` or `buildEpub` is caught here.
+    expect(() => appRenderPublicationXhtml(document)).toThrow(/duplicate id/)
+    await expect(appBuildEpub(document)).rejects.toThrow(/duplicate id/)
+  })
+
+  it('E-03: collects MDX ESM flow blocks wherever they appear in the document', async () => {
+    const publicPaths = await publicPackagePaths()
+    const mdxProbe = new URL('research/probe.mdx', root)
+
+    // MDX recognises an import statement anywhere at the top level of a
+    // document, not only in a leading prelude, so an import that follows
+    // markdown content is a real module specifier.
+    const headingThenImport = [
+      '# Heading',
+      '',
+      "import { T } from '@/struct/types'",
+      '',
+    ].join('\n')
+    expect(importedPaths(headingThenImport, mdxProbe)).toEqual([
+      '@/struct/types',
+    ])
+    expect(
+      e03ViolationsForSource(headingThenImport, mdxProbe, publicPaths),
+    ).not.toEqual([])
+
+    // The reduction stays lossless: a fenced code sample and an indented
+    // code sample are markdown content, so an import-looking line inside
+    // either is not collected as a module specifier.
+    const fencedAfterHeading = [
+      '# Heading',
+      '',
+      '```js',
+      "import { T } from '@/struct/types'",
+      '```',
+      '',
+    ].join('\n')
+    expect(importedPaths(fencedAfterHeading, mdxProbe)).toEqual([])
+    expect(
+      e03ViolationsForSource(fencedAfterHeading, mdxProbe, publicPaths),
+    ).toEqual([])
+    const indentedSample = [
+      "    import { T } from '@/struct/types'",
+      '',
+    ].join('\n')
+    expect(importedPaths(indentedSample, mdxProbe)).toEqual([])
+    expect(
+      e03ViolationsForSource(indentedSample, mdxProbe, publicPaths),
+    ).toEqual([])
+  })
+
+  it('E-03: rejects a computed CommonJS require', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+
+    // A computed require has no literal specifier, so the guard cannot
+    // prove that it does not load a migrated family. It fails closed in the
+    // same way a computed dynamic import does.
+    expect(
+      e03ViolationsForSource(
+        "const types = require('../struct/' + family)",
+        research,
+        publicPaths,
+      ),
+    ).not.toEqual([])
+    expect(
+      e03ViolationsForSource(
+        'const types = require(pathVariable)',
+        research,
+        publicPaths,
+      ),
+    ).not.toEqual([])
+
+    // A string-literal require keeps its classification: it is a
+    // migrated-family import.
+    expect(
+      e03ViolationsForSource(
+        "const types = require('../struct/types')",
+        research,
+        publicPaths,
+      ),
+    ).not.toEqual([])
+
+    // A require of an unrelated module is not a violation.
+    expect(
+      e03ViolationsForSource(
+        "const safe = require('./safe')",
+        research,
+        publicPaths,
+      ),
+    ).toEqual([])
+  })
+
+  it('E-03: catches an external import of a retained-tree wrapper that re-exports a migrated family', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+    const wrapper = new URL('struct/__e03_probe_legacy_types.ts', root)
+    await writeFile(wrapper.pathname, "export * from './types'\n", 'utf8')
+    try {
+      // A retained-tree wrapper that re-exports a migrated family is a way
+      // into the local migrated authority, so an importer outside the
+      // retained tree is a violation.
+      expect(
+        e03ViolationsForSource(
+          "import { T } from '../struct/__e03_probe_legacy_types'",
+          research,
+          publicPaths,
+        ),
+      ).not.toEqual([])
+
+      // The retained tree's own internal re-export stays exempt.
+      expect(
+        e03ViolationsForSource(
+          "export * from './__e03_probe_legacy_types'",
+          new URL('struct/probe.ts', root),
+          publicPaths,
+        ),
+      ).toEqual([])
+    } finally {
+      await rm(wrapper.pathname, { force: true })
+    }
   })
 })

@@ -782,6 +782,95 @@ export function validatePublicationProfileContent(
   )
 }
 
+/**
+ * The canonical list item a list-container pseudo id belongs to.
+ *
+ * The projection mints the container of a list group as the id of the first
+ * item of that group with a `-list` suffix, and the pinned projection
+ * uniquifies that id when it collides with another node id. The base is
+ * therefore always a canonical list item, and nothing else may leave the
+ * required-node set.
+ */
+function listContainerBaseId(id, listItemIds) {
+  const match = /^(.*)-list(?:-\d+)?$/u.exec(id)
+  if (!match) return undefined
+  return listItemIds.has(match[1]) ? match[1] : undefined
+}
+
+/**
+ * The required-node expectations of the checked profiles, derived from the
+ * canonical Struct document the receipt is bound to.
+ *
+ * The requirement set of the release check is a property of the CANONICAL
+ * document: a required node is a canonical block of the document the receipt
+ * is bound to. The graph projection additionally mints structural
+ * list-container nodes (`<list-item id>-list`) that carry no canonical block,
+ * and the pinned package renderer publishes the canonical list structure
+ * without an identifier for them. Requiring one of those ids would demand an
+ * app-authored identifier the E-04 contract forbids, so a list container is
+ * not a required node. Every list ITEM is a canonical block, so it keeps its
+ * id, its text and its place in the order, and the nesting itself stays the
+ * renderer's own responsibility.
+ *
+ * The derivation cannot excuse content:
+ *
+ *  - every canonical block the plan carries stays required, with its
+ *    canonical text and its place in the canonical order;
+ *  - every canonical block the plan does NOT carry must be reported by the
+ *    projection as omitted, so a canonical block can never leave the
+ *    requirement set silently;
+ *  - every expectation that is not a canonical block must be the container
+ *    pseudo id of a canonical list item, so no other node can be quietly
+ *    excused.
+ */
+export function canonicalRequiredNodeExpectations(
+  expectations,
+  structDocument,
+  diagnostics = [],
+) {
+  const canonicalBlocks = structDocument?.blocks ?? []
+  const canonicalIds = new Set(canonicalBlocks.map((block) => block.id))
+  const listItemIds = new Set(
+    canonicalBlocks
+      .filter((block) => block.kind === 'list-item')
+      .map((block) => block.id),
+  )
+  const reported = new Set(
+    diagnostics.map((diagnostic) => diagnostic?.nodeId).filter(Boolean),
+  )
+  const profiles = {}
+  for (const [name, profile] of Object.entries(expectations.profiles ?? {})) {
+    const nodes = []
+    for (const node of profile.nodes ?? []) {
+      if (canonicalIds.has(node.id)) {
+        nodes.push(node)
+        continue
+      }
+      assert(
+        listContainerBaseId(node.id, listItemIds),
+        `${name} requires a node that is not canonical content: ${node.id}`,
+      )
+    }
+    const requiredIds = new Set(nodes.map((node) => node.id))
+    for (const block of canonicalBlocks) {
+      if (requiredIds.has(block.id)) continue
+      assert(
+        reported.has(block.id),
+        `${name} does not require the canonical block ${block.id} and the projection reported no reason for omitting it`,
+      )
+    }
+    const nodeOrder = (profile.nodeOrder ?? []).filter((id) =>
+      requiredIds.has(id),
+    )
+    assert(
+      nodeOrder.length === nodes.length,
+      `${name} required node order does not cover its required nodes`,
+    )
+    profiles[name] = { ...profile, nodes, nodeOrder }
+  }
+  return { ...expectations, profiles }
+}
+
 async function publicationFiles(root, directory = root) {
   const entries = (await readdir(directory, { withFileTypes: true })).sort(
     (left, right) => left.name.localeCompare(right.name),
@@ -1216,8 +1305,21 @@ export async function publicationCheck(
     (artifact) => artifact.profile === 'phone-webpub',
   )
   await checkWebPubReceipt(root, webpubArtifact)
+  // The required-node set is derived from the canonical Struct document the
+  // receipt is bound to: the document read above is the one the receipt's
+  // binding names and the one the receipt-bound wire bytes carry, so the
+  // requirement set never depends on a graph projection's synthetic nodes.
+  const requiredExpectations = canonicalRequiredNodeExpectations(
+    expectations,
+    structDocument,
+    plan.diagnostics,
+  )
   const html = await readFile(resolve(root, 'phone-webpub/index.html'), 'utf8')
-  validateWebPubExpectations(expectations, html, publicationAssetPaths)
+  validateWebPubExpectations(
+    requiredExpectations,
+    html,
+    publicationAssetPaths,
+  )
   const epubPath = resolve(root, 'eink.epub')
   const epubArtifact = receipt.artifacts.find(
     (artifact) => artifact.profile === 'eink-epub',
@@ -1238,13 +1340,13 @@ export async function publicationCheck(
     'EPUB is missing navigation or landmarks',
   )
   validatePublicationProfileContent(
-    expectations.profiles['eink-epub'],
+    requiredExpectations.profiles['eink-epub'],
     content ?? '',
     'eink-epub',
     publicationAssetPaths,
   )
   await run('java', ['-jar', epubcheck.path, epubPath])
-  const a5Expectations = expectations.profiles['a5-pdf']
+  const a5Expectations = requiredExpectations.profiles['a5-pdf']
   const pdfRequirements = {
     requireLinks: a5Expectations.pdfRequiresLinks,
     requiredLinks: a5Expectations.pdfLinkRequirements,

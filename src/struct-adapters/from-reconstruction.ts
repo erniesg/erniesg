@@ -872,7 +872,15 @@ export function buildStructDocument(
         'relationship',
         `hyperlink:${block.id}:${index}:${href ?? targets.join(',')}`,
       )
-      if (inline.relationshipId) inline.relationshipId = relationshipId
+      // The emitted relationship owns the id, so the run is bound to it
+      // whether or not the source supplied one. A source-supplied id is
+      // replaced by the generated id: the relationship that is actually
+      // emitted is looked up by that id downstream, so keeping the source id
+      // on the run would leave the run pointing at a relationship that does
+      // not exist. The run and its relationship therefore always agree on
+      // ONE id, and a run the adapter emits a relationship for is never left
+      // unbound (an unbound run makes the relationship look unprojected).
+      inline.relationshipId = relationshipId
       relationships.push({
         id: relationshipId,
         kind: 'hyperlink',

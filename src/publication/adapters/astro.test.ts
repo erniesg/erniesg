@@ -126,7 +126,7 @@ describe('Astro publication adapter', () => {
       )
       expect(binding.semanticReceiptSha256).toMatch(/^[a-f0-9]{64}$/u)
       expect(binding.packageSourceCommit).toBe(
-        '119d0411edb525dc7cce2f0f80a5c2ab37f5d040',
+        '3d3a7c95b1c55a9ff4b527eee5acf36c168cd896',
       )
     },
   )

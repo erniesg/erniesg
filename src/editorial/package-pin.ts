@@ -32,9 +32,10 @@
  * imported, which is not a property anybody can audit.
  *
  * The production registry below is the app's own pin: the Struct artifact the
- * repository is pinned to. `package-pin.test.ts` checks it against
- * `vendor/struct/provenance.json`, the provenance file of record, so the two
- * cannot drift.
+ * repository is pinned to. `package-pin.test.ts` compares all five fields of
+ * that pin against `vendor/struct/provenance.json`, the provenance file of
+ * record, so the hand-written constant and the vendor's independently
+ * maintained file cannot drift apart.
  */
 import { z } from 'zod'
 
@@ -102,9 +103,15 @@ export type PackagePinCheck =
  * The app's own pin: the Struct artifact this repository is pinned to.
  *
  * The values are the ones in `vendor/struct/provenance.json`, the
- * provenance file of record. They are stated here rather than read at import
- * time so that the policy is a compile-time constant of the app and not a
- * file read that could fail at runtime; the test compares the two.
+ * provenance file of record, and `package-pin.test.ts` compares all five of
+ * them field by field. They are stated here rather than read at import time
+ * so that the policy is a compile-time constant of the app and not a file
+ * read that could fail at runtime.
+ *
+ * A re-pin of the vendor's artifact is therefore two halves of one change:
+ * the provenance file moves, and this constant moves with it. If only the
+ * file moves, the comparison fails, and the app stops admitting the artifact
+ * the vendor actually published.
  */
 export const APP_PACKAGE_PIN: ApprovedPackagePin = {
   sourceCommit: '90f76f1f80b037cc065169d07b13779c03420026',
@@ -122,7 +129,9 @@ export const APP_PACKAGE_PIN: ApprovedPackagePin = {
  *
  * A second pin is not in it until the app is actually re-pinned, and a
  * re-pin is a change to `vendor/struct/provenance.json` — which is the
- * pinned artifact and is not touched by E-05.
+ * pinned artifact and is not touched by E-05. The same change repins
+ * `APP_PACKAGE_PIN`, and `package-pin.test.ts` is what makes the two halves
+ * of that change checkable against each other.
  */
 export const APP_PACKAGE_PIN_REGISTRY: PackagePinRegistry = {
   pins: [APP_PACKAGE_PIN],

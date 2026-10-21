@@ -847,6 +847,15 @@ export function buildStructDocument(
       ...(candidates.length > 0 ? { candidates } : {}),
     })
   }
+  // Annotation ids whose inline run actually produced a relationship. A mapped
+  // PDF hyperlink annotation is ONE source relationship represented twice in
+  // the reconstruction (once in `provenance[node.id].links`, once as an inline
+  // run carrying the same annotation id), so an annotation in this set must
+  // not be counted twice in the source relationship total. An annotation whose
+  // inline run was skipped for emission (a citation, cross-reference or
+  // note-reference role run) is NOT in this set: it is a genuinely dropped
+  // annotation and stays counted on the source side.
+  const emittedInlineAnnotationIds = new Set<string>()
   for (const block of blocks) {
     for (const [index, inline] of block.inline.entries()) {
       if (
@@ -883,6 +892,8 @@ export function buildStructDocument(
           ],
         },
       })
+      if (inline.annotationId)
+        emittedInlineAnnotationIds.add(inline.annotationId)
     }
   }
   const mappedAnnotationIds = new Set(
@@ -1209,11 +1220,7 @@ export function buildStructDocument(
   ).size
   // The source counts describe the SOURCE: `sourceAnnotationCount` is the raw
   // number of provenance annotation links, mapped ones included, because a
-  // mapped annotation still exists in `provenance[node.id].links`.  The
-  // de-duplication belongs to the ACCOUNTED side: a mapped annotation is
-  // emitted as ONE inline relationship (the provenance link is skipped), so it
-  // is not accounted as an annotation relationship and it is counted once -
-  // not twice - in the raw source relationship total.
+  // mapped annotation still exists in `provenance[node.id].links`.
   const sourceAnnotationCount = reconstruction.paper.nodes.reduce(
     (count, node) => count + (provenance[node.id]?.links ?? []).length,
     0,
@@ -1228,6 +1235,28 @@ export function buildStructDocument(
   )
   const accountedSourceAnnotationCount =
     sourceAnnotationCount - mappedSourceAnnotationCount
+  // A mapped annotation whose inline run ACTUALLY produced a relationship is
+  // ONE source relationship represented twice in the reconstruction: once as
+  // the provenance annotation link and once as the inline run. It is therefore
+  // subtracted once from the annotation contribution to the source relationship
+  // total, so the total counts DISTINCT source relationships. A mapped
+  // annotation whose inline run was skipped for emission (a citation,
+  // cross-reference or note-reference role run) produced no relationship, so it
+  // is NOT subtracted: it is a genuinely dropped annotation, it keeps its place
+  // in the source total, and the gap against the accounted total stays visible.
+  const emittedMappedAnnotationIds = new Set<string>()
+  for (const node of reconstruction.paper.nodes) {
+    for (const link of provenance[node.id]?.links ?? []) {
+      if (
+        'id' in link &&
+        link.id &&
+        emittedInlineAnnotationIds.has(link.id) &&
+        !emittedMappedAnnotationIds.has(link.id)
+      ) {
+        emittedMappedAnnotationIds.add(link.id)
+      }
+    }
+  }
   const sourceInlineRelationshipCount = reconstruction.paper.nodes.reduce(
     (count, node) =>
       count +
@@ -1243,7 +1272,8 @@ export function buildStructDocument(
   const sourceRelationshipCount =
     reconstruction.visualRelationships.length +
     reconstruction.noteRelationships.length +
-    sourceAnnotationCount +
+    sourceAnnotationCount -
+    emittedMappedAnnotationIds.size +
     sourceInlineRelationshipCount +
     (pdf
       ? reconstruction.citationRelationships.length +
@@ -1277,10 +1307,10 @@ export function buildStructDocument(
     accountedSourceAssetCount: assets.length,
     sourceRelationshipCount,
     // The accounted relationship count is what the document actually emitted.
-    // It is the raw source relationship total minus the mapped annotations
-    // (each of which is emitted once, as its inline relationship), so a
-    // dropped source relationship stays visible as a gap instead of being
-    // absorbed by the source count.
+    // The source total counts DISTINCT source relationships, so the difference
+    // between the two is exactly the number of source relationships the
+    // document dropped: a dropped source relationship stays visible as a gap
+    // instead of being absorbed by the source count.
     accountedSourceRelationshipCount: relationships.length,
     sourceDiagnosticCount: reconstruction.diagnostics.length,
     accountedSourceDiagnosticCount: diagnostics.length,

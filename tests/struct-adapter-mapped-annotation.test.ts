@@ -75,16 +75,27 @@ describe('mapped PDF hyperlink annotation accounting', () => {
     // inline relationship, not as an annotation relationship.
     expect(conservation.accountedSourceAnnotationCount).toBe(0)
 
-    // The source relationship total is the raw total ...
-    expect(conservation.sourceRelationshipCount).toBe(4)
+    // The source relationship total counts DISTINCT source relationships: the
+    // mapped annotation is ONE source relationship (the provenance link and the
+    // inline run are two representations of it), so the source has 3
+    // relationships - 2 reading-order relationships plus the hyperlink.
+    expect(conservation.sourceRelationshipCount).toBe(3)
     // ... and the accounted relationship count is what the document emitted.
     expect(conservation.accountedSourceRelationshipCount).toBe(
       document.relationships.length,
     )
     expect(conservation.accountedSourceRelationshipCount).toBe(3)
-    // The emitted relationships are the raw total minus the mapped annotations.
-    expect(conservation.sourceRelationshipCount - 1).toBe(
+    // The source total and the emitted total agree: nothing was dropped.
+    expect(conservation.sourceRelationshipCount).toBe(
       document.relationships.length,
+    )
+    expect(conservation.sourceRelationshipCount).toBe(
+      conservation.accountedSourceRelationshipCount,
+    )
+    // The gap is the number of DROPPED source relationships, so a correctly
+    // emitted mapped annotation leaves no gap at all.
+    expect(conservation.sourceRelationshipCount).toBe(
+      conservation.accountedSourceRelationshipCount,
     )
 
     // The package invariant holds with these numbers.
@@ -167,7 +178,10 @@ describe('mapped PDF hyperlink annotation accounting', () => {
     expect(conservation.sourceAnnotationCount).toBe(1)
     expect(conservation.accountedSourceAnnotationCount).toBe(0)
     // The dropped annotation leaves a visible gap between the raw source
-    // relationship total and the relationships the document emitted.
+    // relationship total and the relationships the document emitted. The
+    // source still has 3 relationships - the mapped annotation was a source
+    // relationship even though its inline run was skipped for emission - and
+    // the document emitted 2, so exactly ONE source relationship was dropped.
     expect(conservation.sourceRelationshipCount).toBe(3)
     expect(conservation.accountedSourceRelationshipCount).toBe(
       document.relationships.length,
@@ -176,6 +190,10 @@ describe('mapped PDF hyperlink annotation accounting', () => {
     expect(conservation.sourceRelationshipCount).toBeGreaterThan(
       conservation.accountedSourceRelationshipCount,
     )
+    expect(
+      conservation.sourceRelationshipCount -
+        conservation.accountedSourceRelationshipCount,
+    ).toBe(1)
 
     // The package still accepts the document: the accounted counts describe
     // what was emitted, so they never exceed the source counts.
@@ -199,5 +217,68 @@ describe('mapped PDF hyperlink annotation accounting', () => {
     )
     expect(() => encodeStructDocument(document)).not.toThrow()
     expect(() => packageDecode(packageEncode(document))).not.toThrow()
+  })
+
+  it('keeps the gap discriminating between a mapped and a dropped annotation', async () => {
+    // The plain source: 2 relationships.
+    const plain = buildStructDocument(await loadBase())
+    const plainConservation = plain.receipt.conservation
+
+    // The mapped source: the annotation produced a relationship, so the source
+    // gained exactly ONE distinct relationship and the document emitted it.
+    const mappedRecon = await loadBase()
+    mapInlineAnnotation(
+      mappedRecon,
+      'ann-mapped-gap',
+      'https://example.com/mapped-gap',
+    )
+    const mapped = buildStructDocument(mappedRecon)
+    const mappedConservation = mapped.receipt.conservation
+
+    // The dropped source: the annotation is the SAME source relationship, but
+    // its inline run is skipped for emission, so the document dropped it.
+    const droppedRecon = await loadBase()
+    mapInlineAnnotation(
+      droppedRecon,
+      'ann-dropped-gap',
+      'https://example.com/dropped-gap',
+      'citation',
+    )
+    const dropped = buildStructDocument(droppedRecon)
+    const droppedConservation = dropped.receipt.conservation
+
+    // Both annotated sources have the SAME source total: one more distinct
+    // source relationship than the plain source.
+    expect(mappedConservation.sourceRelationshipCount).toBe(
+      plainConservation.sourceRelationshipCount + 1,
+    )
+    expect(droppedConservation.sourceRelationshipCount).toBe(
+      plainConservation.sourceRelationshipCount + 1,
+    )
+    expect(mappedConservation.sourceRelationshipCount).toBe(
+      droppedConservation.sourceRelationshipCount,
+    )
+
+    // But only the dropped source has a gap: the gap is the number of source
+    // relationships the document did not emit.
+    expect(
+      mappedConservation.sourceRelationshipCount -
+        mappedConservation.accountedSourceRelationshipCount,
+    ).toBe(0)
+    expect(
+      droppedConservation.sourceRelationshipCount -
+        droppedConservation.accountedSourceRelationshipCount,
+    ).toBe(1)
+
+    // The gap is the ONLY difference between the two accounted totals.
+    expect(mappedConservation.accountedSourceRelationshipCount).toBe(
+      droppedConservation.accountedSourceRelationshipCount + 1,
+    )
+    expect(mappedConservation.accountedSourceRelationshipCount).toBe(
+      mapped.relationships.length,
+    )
+    expect(droppedConservation.accountedSourceRelationshipCount).toBe(
+      dropped.relationships.length,
+    )
   })
 })

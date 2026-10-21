@@ -113,6 +113,71 @@ export function structBundleDescriptor(
 }
 
 /**
+ * The exact bundle wire bytes of one Struct document, together with the
+ * digests that bind a receipt to those bytes.
+ *
+ * `bytes` are the canonical encoded bundle, produced by the pinned package
+ * from a handle this call created, so they are the wire form itself and not
+ * a re-serialization of it. `documentSha256` is the app's canonical document
+ * digest, which includes the asset bytes; it is deliberately NOT the bundle
+ * handle's byte-free `documentSha256`, and the two must never be compared to
+ * each other. `semanticReceiptSha256` is the package's own semantic receipt
+ * digest.
+ */
+export type StructBundleWire = {
+  /** The exact encoded bundle bytes, to be persisted as `struct-bundle.bin`. */
+  bytes: Uint8Array
+  /** The SHA-256 of `bytes`; it equals the verified handle's bundle digest. */
+  bundleSha256: string
+  /** The app's canonical document digest, asset bytes included. */
+  documentSha256: string
+  /** The package's semantic receipt digest. It is always present. */
+  semanticReceiptSha256: string
+  /** The persisted bundle descriptor. Its shape is unchanged. */
+  descriptor: StructBundleDescriptor
+}
+
+/**
+ * Produce the bundle wire bytes of one Struct document and the digests that
+ * bind a receipt to them.
+ *
+ * The helper creates and encodes a package bundle handle and returns the
+ * exact bytes it encoded; it never reads wire bytes and never uses the
+ * package's embedded value verifier. A document whose semantic receipt does
+ * not verify is refused: there is no "digest unavailable" downgrade, so a
+ * receipt can never be published with a missing semantic digest.
+ */
+export function structBundleWire(document: StructDocument): StructBundleWire {
+  if (!verifyStructReceipt(document))
+    throw new Error(
+      'Struct bundle wire requires a document whose semantic receipt verifies',
+    )
+  const bundle = createStructBundleForDocument(document)
+  const bytes = encodeStructBundle(bundle)
+  const bundleSha256 = createHash('sha256').update(bytes).digest('hex')
+  if (bundleSha256 !== bundle.bundleSha256)
+    throw new Error(
+      'Struct bundle wire digest does not match the package bundle handle',
+    )
+  const documentSha256 = structDocumentSha256(document)
+  const descriptor = structBundleDescriptor(document, bundle)
+  if (
+    descriptor.bundleSha256 !== bundleSha256 ||
+    descriptor.documentSha256 !== documentSha256
+  )
+    throw new Error(
+      'Struct bundle descriptor does not match the bundle wire it describes',
+    )
+  return {
+    bytes,
+    bundleSha256,
+    documentSha256,
+    semanticReceiptSha256: structSemanticReceiptSha256(document),
+    descriptor,
+  }
+}
+
+/**
  * Build the Struct variant of the source binding from the digests this
  * invocation actually produced.
  *

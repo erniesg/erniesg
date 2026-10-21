@@ -298,10 +298,12 @@ a follow-up candidate, not a permanent statement.
 
 ## 5. The measured evidence on the integrated candidate
 
-Every number in this section was measured on the candidate head `c3c48d21` of
-`feat/struct-e04-candidate-20261020` (base `9003ea76`), on a committed and clean worktree.
-That head differs from the branch tip only by this record's own documentation commit; the
-acceptance (the PR request and the coordinator's result) names the exact final head.
+Every number in this section was measured on a committed and clean worktree at the literal
+run head `f538884c` of `feat/struct-e04-candidate-20261020` (base `9003ea76`).
+`f538884c..c3c48d21` is documentation-only — it changes this record and the status row and
+nothing else — so the code that produced these numbers is byte-identical to the candidate
+head `c3c48d21`; the acceptance (the PR request and the coordinator's result) names the
+exact final head.
 
 - **The real production build**: `npm run build:astro` (181 pages, exit 0) and then, at
   the same head, `npm run publication:build -- --adapter astro --entry moving-to-cloudflare-with-astro --output .agent/evidence/publication` (exit 0, 4 artifacts) and the matching

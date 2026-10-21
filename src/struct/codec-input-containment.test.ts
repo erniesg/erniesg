@@ -174,8 +174,13 @@ describe('STRUCT codec input containment', () => {
 
     try {
       const snapshot = parseBytes(bytes, '$.asset.bytes')
-      expect(snapshot).not.toBe(bytes)
+      expect(Object.is(snapshot, bytes)).toBe(false)
+      expect(snapshot).toHaveLength(bytes.length)
       expect(snapshot[0]).toBe(17)
+      expect(snapshot[snapshot.length - 1]).toBe(29)
+      snapshot[0] = 31
+      expect(bytes[0]).toBe(17)
+      bytes[bytes.length - 1] = 37
       expect(snapshot[snapshot.length - 1]).toBe(29)
     } finally {
       Reflect.ownKeys = ownKeys

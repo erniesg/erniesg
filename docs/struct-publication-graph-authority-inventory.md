@@ -212,7 +212,7 @@ re-derivable from an arbitrary source without the projection logic.
 | `src/publication/adapters/astro.ts` | 611 | source adapter — `adaptAstroBlogEntry`, `astroPublicationAdapter` | yes (`:14`) | Astro blog entries → graph |
 | `src/publication/adapters/payload-lexical.ts` | 1745 | source adapter — `adaptPayloadLexical`, `adaptPayloadLexicalEditions`, `payloadMappingPolicySchema` | yes (`:3`) | Payload JSON → graph |
 | `src/publication/renderers/vivliostyle.ts` | 1208 | **render** — `publicationGraphToHtml` (`:508`), `createPublicationEpub` (`:793`), `publicationEpubAccessibilityMetadata` (`:724`), `publicationEpubTocHeadings` (`:678`), `renderEpubToc` (`:687`), `publicationEpubNavigationLabels` (`:711`), `publicationAssetFileExtension` (`:569`), `vivliostyleRenderer` (`:1081`), `PublicationReceipt` (`:109`) | yes (`:28-32`) | the only renderer of a graph |
-| `src/publication/adapter-conformance.ts` | 544 | **conformance** — `canonicalPublicationSubset` (`:364`), `serializeCanonicalPublicationSubset` (`:368`), `canonicalPublicationSubsetSha256` (`:372`), `comparePublicationSemanticSubset` (`:376`), `canonicalPublicationGraph` (`:385`), `canonicalPublicationSourceResult` (`:401`), `publicationOutputReceiptContract` (`:444`), `comparePublicationOutputReceipts` (`:528`), `sourceReceiptHashes` (`:535`), `PUBLICATION_CONFORMANCE_VERSION` (`:6`) | yes (`:2`) | semantic-subset hashing, receipt contract |
+| `src/publication/adapter-conformance.ts` | 544 | **conformance** — `canonicalPublicationSubset` (`:364`), `serializeCanonicalPublicationSubset` (`:368`), `canonicalPublicationSubsetSha256` (`:372`), `comparePublicationSemanticSubset` (`:376`), `canonicalPublicationGraph` (`:385`), `canonicalPublicationSourceResult` (`:401`), `publicationOutputReceiptContract` (`:444`), `comparePublicationOutputReceipts` (`:528`), `sourceReceiptHashes` (`:535`), `PUBLICATION_CONFORMANCE_VERSION` (`:6`) | yes (`:2`) | semantic-subset hashing, conformance-only receipt contract (not called by the release check) |
 | `src/publication/profiles.ts` | 289 | composition context — `COMPOSITION_CONTEXT_VERSION = '1.0.0'` (`:12`), `compositionContextSchema` (`:22`), `targetProfileToCompositionContext` (`:190`), `compositionContextToTargetProfile` (`:257`) | no | coupled to `src/research/targets.ts` `TARGET_PROFILE_IDS` (`:10`) |
 | `src/publication/transformation-policy.ts` | 144 | `TRANSFORMATION_POLICY_VERSION = '1.0.0'` (`:3`), `transformationPolicySchema` (`:107`), `parseTransformationPolicy` (`:136`), `serializeTransformationPolicy` (`:142`) | no | — |
 | `src/publication/output-contract.ts` | 11 | `PUBLICATION_CHECK_VERSION = '1.0.0'` (`:3`), `PUBLICATION_OUTPUT_POLICY_VERSIONS` (`:5-11`) | no | renderer policy versions |
@@ -504,10 +504,28 @@ What *is* present instead is a **graph digest as the sole source identity**:
 `PublicationReceipt.source.graphSha256` (`:111`) and
 `PublicationContractReceipt.graphSha256` (`:28`).
 
-### 6d. The shared output-receipt contract (used by the CLI tools)
+### 6d. The shared output-receipt contract (conformance comparison only — **not** the CLI admission path)
 
 `publicationOutputReceiptContract` (`src/publication/adapter-conformance.ts:444-526`)
-is the **closed allowlist** that the CLI build/check path enforces:
+is the **closed allowlist** used by `comparePublicationOutputReceipts`
+(`:528-533`). Its only callers are
+`tools/publication-adapter-conformance.mjs:131` and
+`src/publication/adapter-conformance.test.ts:1049-1065`. **No release-path CLI
+tool calls it:** neither `tools/publication-build.mjs` nor
+`tools/publication-check.mjs` imports or invokes it.
+
+The **actual release admission path** is `publicationCheck`
+(`tools/publication-check.mjs:1138-1200`), which parses `publication-receipt.json`
+(`:1147-1148`) and validates selected fields directly:
+`assertPublicationReceiptPolicyVersions` (`:238-249`, called `:1149`), the
+graph/asset/canonical-subset digest asserts (`:1161-1177`),
+`assertPublicationReceiptSourceBinding` (`:265-290`, called `:1178`), the
+source-provenance assert (`:1179-1183`), `assertPublicationReceiptMappingVersion`
+(`:251-263`, called `:1184`), `assertPublicationReceiptRepositoryBinding`
+(`:1185-1193`), `assertPublicationReceiptRuntime` (`:196-236`, called
+`:1194-1197`), and the four-artifact matrix check (`:1198-1201`).
+
+What the conformance allowlist itself enforces, when it is called:
 
 - top-level allowed keys (`:447-455`): `version`, `source`, `profiles`,
   `policyVersions`, `toolchain`, `repository`, `artifacts` — anything else
@@ -523,10 +541,17 @@ is the **closed allowlist** that the CLI build/check path enforces:
   `canonicalSubsetSha256` — again **no Struct digest**.
 
 **Concrete consequence:** adding a Struct digest or a Struct package pin to a
-receipt today would be *rejected* by `publicationOutputReceiptContract` as an
-"unsupported output receipt key" (`:456-462`, `:476-483`). Any future change
-that binds receipts to Struct must widen this allowlist **deliberately** —
-it cannot be added additively without touching this function.
+receipt is *not* rejected by the release check — `publicationCheck` never
+inspects unknown keys — but it is also **not required** by it: a receipt with
+no Struct binding at all still passes `publication:check`. The conformance
+allowlist would reject the extra keys in the adapter-conformance comparison
+(`:456-462`, `:476-483`), so it must be widened deliberately for that tool.
+Widening it alone changes nothing in the release path: requiring the
+`struct-cutover` variant means adding an assertion to
+`tools/publication-check.mjs` (for example inside
+`assertPublicationReceiptSourceBinding`, called at `:1178`) and comparing the
+mandatory `semanticReceiptSha256` with
+`structReceiptDigest(decodedDocument)`.
 
 ### 6e. Current callers of the two receipt factories
 
@@ -534,7 +559,7 @@ it cannot be added additively without touching this function.
 |---|---|
 | `createPublicationContractReceipt` | `src/publication/source-adapter.test.ts:11,87,88,103`; `src/publication/adapter-conformance.test.ts:34,94,95` — **tests only** |
 | `PublicationReceipt` construction | `src/publication/renderers/vivliostyle.ts:1189` (production renderer) |
-| `publicationOutputReceiptContract` | `tools/publication-check.mjs` (via the CLI check path); `src/publication/adapter-conformance.test.ts` |
+| `publicationOutputReceiptContract` | definition only: `src/publication/adapter-conformance.ts:444`; used through `comparePublicationOutputReceipts` (`:530-531`) by `tools/publication-adapter-conformance.mjs:131` and `src/publication/adapter-conformance.test.ts:1049-1065`. **No caller in `tools/publication-build.mjs` or `tools/publication-check.mjs`.** |
 
 ## 7. Graph-based annotation anchors
 
@@ -563,6 +588,14 @@ graph node text. The ResearchPaper is the anchor authority on the other side
 (`src/annotations/annotation-bundle.test.ts:40,42,65,74,92,106,141,171,196,224,271,327,357,385`;
 `src/annotations/move-parity.test.ts:76`). No route, worker, or storage path
 consumes an annotation bundle today.
+
+**Target disposition (plan §E-04):** `src/annotations/annotation-bundle.ts` is
+**not** in the cutover plan's target permitted `PublicationGraph` importer set.
+It must migrate anchor/node-id authority to Struct document nodes (or the
+competing graph must be retired) before E-04 can exit, and it must not be added
+to an allowlist. Its type-only import (`:13`) does not make it graph-free: the
+module resolves anchors against `graph.nodes` (`:76-128`) and persists
+`graphId` (`:24`, `:135`).
 
 **The two anchor models therefore disagree about what an anchor is anchored
 to**, and the only place they are reconciled is
@@ -632,7 +665,7 @@ as an implementation claim):
 | R9 | reverse writer | `publicationGraphToResearchPaper` converts graph nodes/text/ids back into a ResearchPaper, and a test asserts the round trip | `src/publication/research-paper-adapter.ts:198-296`; `src/publication/research-paper-adapter.test.ts:17` |
 | R10 | graph-anchored annotation authority | `createAnnotationBundle` anchors annotations to graph node ids and graph node text; only `graphId` is persisted, but the anchor semantics are graph-owned | `src/annotations/annotation-bundle.ts:13,24,65-140` |
 | R11 | no Struct digest / package pin in receipts | neither receipt shape carries a Struct package pin, artifact digest, `document` digest, or `receipt` digest | `src/publication/renderers/vivliostyle.ts:109-117`; `src/publication/source-adapter.ts:25-61` |
-| R12 | receipt allowlist blocks Struct bindings | `publicationOutputReceiptContract` rejects unknown receipt/source keys, so Struct bindings cannot be added additively | `src/publication/adapter-conformance.ts:456-462`, `:476-483` |
+| R12 | receipt admission ignores Struct bindings | the conformance allowlist rejects unknown receipt/source keys (adapter-conformance tool only), while the release check `publicationCheck` validates selected fields and neither rejects nor requires a Struct binding | `src/publication/adapter-conformance.ts:456-462`, `:476-483`; `tools/publication-check.mjs:1149-1197` |
 
 **Counter-facts that must not be overstated** (things that are *not* red):
 
@@ -678,7 +711,8 @@ exact package pin/version; graph-only digests are diagnostic only."*
   `:1192`) and in `PublicationContractReceipt`
   (`src/publication/source-adapter.ts:28`, `:155`).
 - `canonicalSubsetSha256` is **required** by the shared output-receipt
-  contract (`src/publication/adapter-conformance.ts:489`, `:494`), and the
+  contract (`src/publication/adapter-conformance.ts:489`, `:494`) — which the
+  release check does not call — and the
   CLI check compares `receipt.source?.graphSha256` to a freshly computed
   `sha256(serializePublicationGraph(graph))` (`tools/publication-check.mjs:1162`).
 - **No Struct digest and no Struct package pin exist in any receipt.** There
@@ -693,8 +727,8 @@ exact package pin/version; graph-only digests are diagnostic only."*
 > produce graphs and are the two the CLI can actually select; (2) no
 > byte-identical double-adapt conformance test for a pinned `StructDocument`
 > was found; (3) the red-first static assertion does **not** exist (see §9);
-> (4) receipt Struct bindings do **not** exist and the receipt allowlist
-> would currently reject them.
+> (4) receipt Struct bindings do **not** exist, the conformance receipt
+> allowlist would reject them, and the release check does not require them.
 
 ## 9. Exact gates that a future E-04 change must satisfy
 
@@ -711,12 +745,12 @@ golden, receipt, or activation result.
 | G-02 | The graph owns **no independent text** | `src/publication/schema.ts:172-315`, `:372-387` (text-bearing fields), `src/publication/research-paper-adapter.ts:198-296` (reverse text minting) | not done |
 | G-03 | The graph owns **no independent semantic IDs** | `src/publication/schema.ts:7-11` (own id grammar) — a narrowed plan must derive ids from the pinned Struct revision | not done |
 | G-04 | The graph owns **no persistence** | delete/disable `src/publication/renderers/vivliostyle.ts:1107-1111`; and the reader at `tools/publication-check.mjs:1145` | not done |
-| G-05 | The graph owns **no receipt** | `src/publication/renderers/vivliostyle.ts:109-117` + `:1189-1200`; `src/publication/source-adapter.ts:25-61` + `:148-175`; and the allowlist in `src/publication/adapter-conformance.ts:447-494` must be widened **deliberately** to accept the Struct bindings | not done |
+| G-05 | The graph owns **no receipt** | `src/publication/renderers/vivliostyle.ts:109-117` + `:1189-1200`; `src/publication/source-adapter.ts:25-61` + `:148-175`; a `struct-cutover` admission assertion in `tools/publication-check.mjs` (the release check never calls the conformance allowlist); and the conformance allowlist in `src/publication/adapter-conformance.ts:447-494` must be widened **deliberately** to accept the Struct bindings | not done |
 | G-06 | The graph owns **no writer** and **no release path** | `tools/publication-build.mjs` (`package.json` `build:production`); `src/publication/renderers/vivliostyle.ts:1081-1207` | not done |
 | G-07 | No reverse graph→ResearchPaper writer | `src/publication/research-paper-adapter.ts:198-296` and the round-trip assertion at `src/publication/research-paper-adapter.test.ts:17` | not done |
 | G-08 | Red-first static assertion: `PublicationGraph`, `publicationGraphSchema`, `serializePublicationGraph`, and graph persistence helpers are **absent** from storage / API / route / writer / release modules; only renderer/projection modules may import them | extend `tests/struct-adapter-boundary.test.ts` (AST harness at `:12-55`) to the `src/publication/**` + route/worker/writer roots | **does not exist** |
 | G-09 | Byte-identical double-adapt conformance for one pinned `StructDocument`, plus an assertion that the graph is never persisted or treated as canonical text | `src/publication/struct-adapter.ts:188` (`adaptStructDocument`), `src/publication/struct-adapter.test.ts` | not found |
-| G-10 | Receipts carry the canonical Struct digests and the exact package pin/version; graph digests demoted to diagnostic | `src/publication/renderers/vivliostyle.ts:109-117`; `src/publication/source-adapter.ts:25-61`; `src/publication/adapter-conformance.ts:447-494`; the CLI check at `tools/publication-check.mjs:1162` | not done |
+| G-10 | Receipts carry the canonical Struct digests and the exact package pin/version, including a mandatory `semanticReceiptSha256` compared with `structReceiptDigest(decodedDocument)`; graph digests demoted to diagnostic | `src/publication/renderers/vivliostyle.ts:109-117`; `src/publication/source-adapter.ts:25-61`; `src/publication/adapter-conformance.ts:447-494`; `tools/publication-check.mjs:1162`, `:1178`; `tests/struct-package-parity.test.ts:18-21` | not done |
 | G-11 | `ResearchPaper` stays a read-only compatibility model; a checked-in caller/test inventory exists for `src/publication/research-paper-adapter.ts` | [`docs/struct-research-paper-caller-inventory.md`](struct-research-paper-caller-inventory.md) (companion doc, same tree after the inventory merge) | inventory **exists** (companion doc; grep-bounded, not compiler-proven); read-only enforcement not done |
 | G-12 | EPUBCheck / Ace / human-accessibility acceptance stays app-owned | `src/publication/renderers/vivliostyle.ts:724` (`publicationEpubAccessibilityMetadata`), `src/research/publication-integrity.ts` | app-owned today |
 | G-13 | Legacy `research/epub.ts` overloads keep both-mode parity until the last `ResearchPaper` consumer migrates | `src/research/epub.ts:133-141`, `:1422-1447`, `:2094-2118` | parity **not demonstrated** here |

@@ -130,10 +130,14 @@ document.
   `projectReadableFallbackReconstruction`, `MAX_EPUB_ASSET_BYTES_PER_BOOK`,
   `MAX_EPUB_ASSETS_PER_BOOK`) and `src/annotations/annotations.ts:23-24`
   (`export * from '../../packages/margin/src/anchor'` and `.../document`).
-- `tools/model-consultation-evidence.ts:98` uses
-  `typeof import('../src/research/epub')` — a **type-position dynamic import
-  type**, not a runtime dynamic import. No runtime `await import(...)` of any
-  `research/*` or `publication/*` module was found.
+- `tools/model-consultation-evidence.ts` is **not** a type-only consumer. Its
+  main routine runtime-loads `/src/research/epub.ts` with
+  `vite.ssrLoadModule` at `:93` (the `typeof import('../src/research/epub')`
+  cast at `:98-99` only types the loaded module), then calls
+  `epubModule.buildReadableEpub` at `:135` and `epubModule.inspectEpub` at
+  `:139`. No literal runtime `await import('...research/...')` was found; the
+  runtime source-loading path in this repository is Vite's `ssrLoadModule`
+  (this tool and the §5 tools), which a literal import scan does not see.
 
 ### Known limitations of this scan
 
@@ -342,7 +346,8 @@ branch at runtime.
 | L11 | `src/research/export-pdf.ts` | 3 | `type ResearchNode`, `type ResearchPaper` (type-only) | — | legacy PDF writer | keep; migrate |
 | L12 | `src/research/publication-integrity.ts` | 11 | `type ResearchNode`, `type ResearchPaper` (type-only) | — | pre-export integrity assertion | keep; migrate |
 | L13 | `tools/pdf-export.mjs`, `tools/pdf-private-fidelity.mjs`, `tools/pdf-corpus-audit-lib.mjs`, `tools/srt-source-output-evidence.mjs`, `tools/pdf-epub-package-scan.mjs` | (see §5) | `buildEpub` / `buildReadableEpub` / `inspectEpub` | paper → legacy renderer | offline evidence tooling | keep; migrate when the Struct renderer is authoritative |
-| L14 | `tools/model-consultation-evidence.ts` | 97-100 | `typeof import('../src/research/epub')` (type-position dynamic import) | — | type-only evidence gathering | keep |
+| L14 | `tools/model-consultation-evidence.ts` | 93, 135, 139 | `buildReadableEpub`, `inspectEpub` via `vite.ssrLoadModule('/src/research/epub.ts')` | paper → legacy renderer | **runtime** evidence tool: reopens a reconstruction as a readable EPUB and inspects it | keep for E-04; **execute in E-04 renderer-switch evidence** (a renderer change can break it), then migrate with the renderer |
+| L15 | `tools/pdf-association-fixture-audit.mjs` | 45, 65 | `renderPublicationXhtml` via `vite.ssrLoadModule('/src/research/epub.ts')` | paper → legacy renderer | **runtime** offline audit tool: loads `/src/research/epub.ts` in the same `Promise.all` as `/src/research/pdf.ts`, `/src/research/source-output-checkpoints.ts`, and `/src/research/targets.ts` (`:44-47`), then renders the reconstructed paper (`reconstruction.paper`) as XHTML (`:65`) | keep; **required path in the root `npm test` run** (see §5), so a renderer change must keep it green; migrate when the Struct renderer is authoritative |
 
 **No production caller of `src/research/epub.ts` was found outside
 `src/research/`, `src/components/research/`, `src/pages/papers/`, and
@@ -436,8 +441,26 @@ Module exports and their actual callers:
 | Corpus audit | `tools/pdf-corpus-audit-lib.mjs` | `buildEpub`, `buildReadableEpub`, `inspectEpub` |
 | SRT source-output evidence | `tools/srt-source-output-evidence.mjs` | `buildEpub` |
 | EPUB package scan | `tools/pdf-epub-package-scan.mjs` | `inspectEpub` |
-| Model consultation evidence | `tools/model-consultation-evidence.ts:97-100` | `typeof import(...)` types only |
+| Model consultation evidence | `tools/model-consultation-evidence.ts:93,135,139` | `buildReadableEpub`, `inspectEpub` — **runtime**, via `vite.ssrLoadModule('/src/research/epub.ts')` |
+| PDF association fixture audit | `tools/pdf-association-fixture-audit.mjs:45,65` | `renderPublicationXhtml` — **runtime**, via `vite.ssrLoadModule('/src/research/epub.ts')` |
 | Demo evaluation | `tools/srt/demo-evaluation.mjs:308` | `createDemoAnnotations(paper)` (ResearchPaper annotations) |
+
+The PDF association fixture audit is a **required path in the root test run**,
+not an optional offline tool: `npm test` is `npm run audit:authority-workflows
+&& vitest run --exclude 'tests/e2e/**' --exclude
+'tools/agent-evidence-budget.test.mjs' --maxWorkers=1 && npm run
+pdf:association-audit:test` (`package.json:16`), and `pdf:association-audit:test`
+is `node --test --test-concurrency=1
+tools/pdf-association-fixture-audit.node-test.mjs` (`package.json:35`), whose
+tests spawn `tools/pdf-association-fixture-audit.mjs`
+(`tools/pdf-association-fixture-audit.node-test.mjs:176-178`, `:228-230`).
+The audited tool runtime-loads `/src/research/epub.ts` at `:45`, inside the same
+`Promise.all` that loads `/src/research/pdf.ts` (`:44`),
+`/src/research/source-output-checkpoints.ts` (`:46`), and
+`/src/research/targets.ts` (`:47`), and calls
+`epubModule.renderPublicationXhtml(reconstruction.paper, { reconstruction })` at
+`:65`. An E-04 renderer switch that breaks this audit breaks the root test
+run.
 
 ## 6. Current source-authority picture (as observed, not as target)
 
@@ -448,7 +471,7 @@ Module exports and their actual callers:
 | Layout manifest | `src/research/manifest.ts` (`LAYOUT_MANIFEST_VERSION = '1.3.0'`, `:36`) | `src/pages/papers/[id]/manifest.json.ts:11-15` |
 | Public JSON exposure of the paper | `src/pages/papers/[id]/source.json.ts:7-9` serves the raw ResearchPaper as `application/json` | route file itself |
 | Public export artifacts | `src/pages/papers/[id]/exports/[file].ts:25-43` | route file itself |
-| Graph (`PublicationGraph`) | derived projection; **not** wired to any route, writer, or the default adapter registry | §4 above; `src/publication/adapter-registry.ts:55-60` |
+| Graph (`PublicationGraph`) | renderer plan produced by three adapters (`astro`, `payload-lexical`, `struct`); **wired** to the default adapter registry and to the production writer/release path (the CLI can select only `astro` / `payload-lexical`) | §4 above; `src/publication/adapter-registry.ts:55-60`; `tools/publication-build.mjs:1053`, `:1067`, `:1077-1080` |
 | Annotation anchors bound to graph nodes | `src/annotations/annotation-bundle.ts` — **test-only caller** | `src/annotations/annotation-bundle.test.ts`, `src/annotations/move-parity.test.ts` |
 
 **The two `PublicationGraph`-anchored annotation surfaces are

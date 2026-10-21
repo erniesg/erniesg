@@ -127,6 +127,22 @@ Rules:
    `pnpm import` then
    `CI=true pnpm install --node-linker=hoisted --frozen-lockfile --ignore-scripts`,
    then `node tools/publication-install-browser.mjs`.
+   **Then remove the generated lockfile before any dirty-check or evidence
+   run.** The repository does not track `pnpm-lock.yaml` and `.gitignore` has
+   no entry for it, while `publicationRepositoryForCurrentCheckout`
+   (`tools/publication-build.mjs:874-899`) runs
+   `git status --short --untracked-files=all` and marks any untracked file as
+   dirty; `publicationCheck` then rejects the checkout through
+   `assertPublicationReceiptRepositoryBinding`
+   (`tools/publication-check.mjs:116-144`, called at `:1189-1193`). So, after
+   the frozen install and
+   before `publication:build`, `publication:check`, or any evidence run:
+   `rm -f pnpm-lock.yaml` (and any other untracked file the setup generated,
+   such as `pnpm-workspace.yaml` if present), then confirm
+   `git status --short --untracked-files=all` is empty. A local
+   `.git/info/exclude` entry is not repository policy and must not be relied
+   on; a committed ignore would be a separate reviewed change and is not
+   assumed here.
 4. If the S-04 export map adds `./bundle`, in the same reviewed commit (a)
    update the exact expected export list in
    `tests/struct-package-artifact.test.ts`, and (b) remove `'bundle'` from the
@@ -290,6 +306,13 @@ Not migrated (stay app-owned; do not widen the package API for them):
   - `src/struct/index.ts` via `./recovery` (barrel re-export);
   - `src/research/recovery-projection.ts` (type-only
     `RecoveryDiagnosticInput`);
+  - `src/struct-adapters/from-reconstruction.ts` — the app-owned
+    reconstruction adapter that E-02/E-03 retain. It imports
+    `recoverySummary, toStructDiagnostic` from `./recovery` (`:18`) and uses
+    `toStructDiagnostic` at `:1115` (reconstruction diagnostics) and
+    `recoverySummary` at `:1140` (readiness/coverage summary). Those are its
+    only two uses; they are presentation/recovery projection, not new
+    authority;
   - `src/components/research/PublicationImporter.tsx`
     (`diagnosticCopy`, `hasActionableRecovery`, `recoverySummary`).
   The app `hasActionableRecovery` is **locally implemented**, not re-exported
@@ -343,13 +366,23 @@ renderer owns renderer constraints).
 
 Add to `tests/struct-adapter-boundary.test.ts` (red first):
 
-- Scope: every non-test module under `src/` (the guard's existing walk;
-  `*.test.*`/`*.spec.*` excluded). Intra-`src/struct/` compatibility imports
-  are permitted only where explicitly listed below; `src/struct/index.ts`
-  re-exports are not a hidden intra-core path.
+- Scope: every non-test module under `src/` **except** the retained
+  `src/struct/**` compatibility tree (`*.test.*`/`*.spec.*` excluded). The
+  migrated-family prohibition applies to consumers **outside** `src/struct/**`.
+  The retained tree keeps intra-family imports by construction
+  (`src/struct/codec/parsers.ts:22` -> `../types`,
+  `src/struct/codec/primitives.ts:1` -> `../ids`,
+  `src/struct/codec/invariants.ts:6-8`, and the `src/struct/index.ts:15`
+  barrel re-export), so applying the prohibition inside it would make the guard
+  permanently red and contradict the strategy of leaving `src/struct/**`
+  physically unchanged until E-07. The retained tree is boundary-checked
+  separately by the existing walk in `tests/struct-adapter-boundary.test.ts`
+  (`portableFiles`/`boundaryViolations`, `:12-124`), which must stay green;
+  do not treat its internal family imports as consumer violations.
 - Resolve imports semantically, not by raw specifier text. Production modules
-  under `src/` must not resolve to local `src/struct` migrated-family
-  definitions or their re-exports for families `types`, `ids`, `reading-order`,
+  under `src/` **outside `src/struct/**`** must not resolve to local
+  `src/struct` migrated-family definitions or their re-exports for families
+  `types`, `ids`, `reading-order`,
   and `codec` in E-03 (and `xhtml`, `epub`, `emitted-ids` in E-04), including
   barrel/index forms (`src/struct/index`, `src/struct/index.ts`,
   `src/struct/codec/index.ts`), configured aliases (`@/struct`, `~/struct`,
@@ -366,7 +399,8 @@ Add to `tests/struct-adapter-boundary.test.ts` (red first):
 - E-04 adds a separate guard entry in the same test file for
   `src/struct/xhtml`, `src/struct/epub`, and `src/struct/emitted-ids`,
   covering local barrels/index/aliases/re-exports and transitive re-exports,
-  with the same scope and semantic resolution. (F6)
+  with the same scope (outside `src/struct/**`; the retained-tree walk is
+  unchanged) and semantic resolution. (F6)
 - Recovery allowlist: `src/struct-adapters/recovery` is app-owned presentation,
   not a migrated family, so it is not prohibited as a family; its permitted
   importers are enumerated in the recovery ownership decision. The only
@@ -467,7 +501,10 @@ absence** (`ripgrep` only; `node_modules/` absent; the repository AST harness
   (`tools/publication-build.mjs:54-67`), so the Struct→graph projection has no
   CLI entry point today and the two non-Struct adapters are the only graph
   producers the release path can select. The ResearchPaper adapter
-  (`researchPaperSourceAdapter`) is neither registered nor selectable.
+  (`researchPaperSourceAdapter`) is neither registered nor selectable, but it
+  is still an exported and callable producer
+  (`src/publication/research-paper-adapter.ts:317`), so the release path is
+  not the only way a non-Struct graph can be minted.
 - **The reverse direction and the graph-anchored annotation surface are
   test-only today.** `publicationGraphToResearchPaper`
   (`src/publication/research-paper-adapter.ts:198-296`) has exactly one
@@ -480,9 +517,12 @@ absence** (`ripgrep` only; `node_modules/` absent; the repository AST harness
   `src/annotations/annotation-bundle.test.ts:11`); and `createAnnotationBundle`
   (`src/annotations/annotation-bundle.ts:65`)
   has only test callers (`src/annotations/annotation-bundle.test.ts`,
-  `src/annotations/move-parity.test.ts`). That lowers the migration cost of the
-  narrow decision; it does not make the reverse writer conformant while it
-  exists, and it does not decide the durable anchor model.
+  `src/annotations/move-parity.test.ts`). The forward direction
+  (`researchPaperToPublicationGraph`) is test-only for the same reason: it is
+  exported and callable, but it has no production caller today. That lowers the
+  migration cost of the narrow decision; it does not make the reverse writer
+  conformant while it exists, it does not make the forward producer
+  Struct-derived, and it does not decide the durable anchor model.
 - **No route or worker endpoint consumes a graph.** `src/pages/**` and
   `src/worker/**` are graph-free today (grep-bounded).
 - **Receipts carry no Struct binding yet.** Neither `PublicationReceipt`
@@ -491,11 +531,15 @@ absence** (`ripgrep` only; `node_modules/` absent; the repository AST harness
   contains a Struct package pin, artifact digest, `document` digest, or
   `receipt` digest. `graphSha256` is the **primary and only** source identity
   today and `canonicalSubsetSha256` is *required* by
-  `publicationOutputReceiptContract` (`src/publication/adapter-conformance.ts:485-494`).
+  `publicationOutputReceiptContract` (`src/publication/adapter-conformance.ts:485-494`),
+  which is used only by the adapter-conformance comparison
+  (`tools/publication-adapter-conformance.mjs:131`), not by the release check.
   "Graph digests are diagnostic only" is the **target**; demotion requires
-  **adding** the Struct binding first, and the closed allowlist in
+  **adding** the Struct binding first and then wiring it into the release
+  admission path (`tools/publication-check.mjs`), because that path validates
+  selected fields and never calls the conformance allowlist. The allowlist in
   `publicationOutputReceiptContract` (`:447-494`) rejects unknown receipt and
-  source keys, so it must be widened deliberately.
+  source keys in the conformance tool, so it must also be widened deliberately.
 
 Target state (what E-04 must produce; none of it is true today):
 
@@ -515,17 +559,43 @@ Target state (what E-04 must produce; none of it is true today):
   - projection modules: `src/publication/struct-adapter.ts`,
     `src/publication/source-adapter.ts`;
   - renderer: `src/publication/renderers/vivliostyle.ts`;
-  - conformance helper: `src/publication/adapter-conformance.ts`;
-  - bridge: `src/publication/research-paper-adapter.ts` (subject to the
-    reverse-direction decision below);
-  - read-only annotation consumer: `src/annotations/annotation-bundle.ts`
-    (uses graph node ids/text for anchor resolution and emits `graphId`).
+  - conformance helper: `src/publication/adapter-conformance.ts`.
+
+  `src/publication/research-paper-adapter.ts` is **not** a permitted target
+  importer either. The reverse-direction decision below already covers
+  `publicationGraphToResearchPaper`; the same module also creates graphs in
+  the **forward** direction — `researchPaperToPublicationGraph` (`:81`) and
+  `adaptResearchPaper` (`:298`, which calls it at `:304`), exported as the
+  `researchPaperSourceAdapter` registration (`:317`). While that producer
+  exists, the graph has a second producer that is not derived from one pinned
+  Struct revision, which contradicts the invariant this list exists to
+  enforce and lets the red-first assertion go green while a second producer
+  remains. The forward bridge must therefore be **retired or migrated onto
+  the Struct projection** as part of the narrow-vs-retire decision (see the
+  bridge decision below), not merely excluded from this list while it stays a
+  live producer. (F3/F4)
+
+  `src/annotations/annotation-bundle.ts` is **not** a permitted target importer.
+  It currently imports `PublicationGraph` (`:13`), resolves every anchor against
+  graph node ids (`:76`, `:96-101`), quote-matches against graph node text
+  (`:112-127`), and persists `graphId` as the document identity (`:24`, `:135`).
+  If that dependency remains, the graph is canonical annotation authority and
+  the narrow option is invalid. It must migrate its anchor/node-id authority to
+  Struct document nodes (retiring graph authority) or the competing graph must
+  be retired, before E-04 can exit; until then the red-first assertion above
+  must stay red on it. Do not add the annotation module to an allowlist to make
+  the rule pass. (F4)
+
   This list is the **target** permitted set after the narrow decision, not the
   current importer set. The current importer set is wider and is recorded in
   `docs/struct-publication-graph-authority-inventory.md` §3: besides the
   modules above, `src/publication/adapters/astro.ts` and
   `src/publication/adapters/payload-lexical.ts` import graph symbols and are
-  the two adapters the release path can actually select, and the
+  the two adapters the release path can actually select,
+  `src/publication/research-paper-adapter.ts` imports graph symbols and still
+  exports a forward `ResearchPaper` -> `PublicationGraph` producer,
+  `src/annotations/annotation-bundle.ts` imports graph symbols for anchor
+  resolution, and the
   writer/release tools `tools/publication-build.mjs` and
   `tools/publication-check.mjs` import `serializePublicationGraph` /
   `publicationGraphSchema` today. Storage, API, and route modules (for example
@@ -537,7 +607,13 @@ Target state (what E-04 must produce; none of it is true today):
 - Red/green baseline: the red-first assertion must fail before migration on any
   importer outside the permitted set, and pass after the migration/removal; name
   the concrete modules constituting storage/API/route/writer/release classes so
-  the rule is mechanical. (F3)
+  the rule is mechanical. `src/annotations/annotation-bundle.ts` is expected to
+  keep the guard red until its anchor-authority migration lands; that red is the
+  intended signal, not a reason to allowlist it.
+  `src/publication/research-paper-adapter.ts` is expected to keep the guard red
+  until its forward producer is retired or migrated onto the Struct projection;
+  that red is the intended signal too, not a reason to allowlist the bridge.
+  (F3/F4)
 - `src/publication/research-paper-adapter.ts` is bidirectional:
   `researchPaperToPublicationGraph` and `publicationGraphToResearchPaper` (the
   latter synthesises a `ResearchPaper` — nodes, text, ids — from the graph).
@@ -551,8 +627,33 @@ Target state (what E-04 must produce; none of it is true today):
   is retired only inside this E-04 narrow-vs-retire decision, in the same
   reviewed change as the round-trip assertion that pins it
   (`src/publication/research-paper-adapter.test.ts:17`).
+- **The forward direction is a second graph producer and is in scope too.**
+  `researchPaperToPublicationGraph` (`src/publication/research-paper-adapter.ts:81`,
+  ends `:196`) builds a `PublicationGraph` directly from a `ResearchPaper`
+  (`:84` parses the paper), `adaptResearchPaper` (`:298`) calls it at `:304`,
+  and `researchPaperSourceAdapter` (`:317`) is the exported registration of
+  that projection. The reverse-direction decision above does not cover them.
+  A graph minted from a `ResearchPaper` is not mechanically derived from one
+  pinned Struct revision, so the narrow invariant does not hold and the
+  red-first assertion can pass while a second producer remains. (F3/F4)
+  The narrow decision must therefore **retire the forward bridge or migrate it
+  onto the Struct projection** (`src/publication/struct-adapter.ts:188`
+  `adaptStructDocument`, `:1313` `structPublicationAdapter`). Whichever branch
+  the decision takes for the reverse direction, no module may build a
+  `PublicationGraph` from a `ResearchPaper`. The forward bridge is **not**
+  removed as an early or parallel cleanup either: it changes in the same
+  reviewed change as the reverse-direction decision, and the test callers that
+  build a graph from a paper
+  (`src/publication/research-paper-adapter.test.ts:16`,
+  `src/publication/source-adapter.test.ts:54`,
+  `src/annotations/move-parity.test.ts:77`,
+  `src/annotations/annotation-bundle.test.ts:15`) move to the Struct
+  projection in that same change. The red-first assertion must stay red on
+  `src/publication/research-paper-adapter.ts` until that lands; that red is
+  the intended signal, not a reason to allowlist the bridge. (F3/F4)
 - `src/annotations/annotation-bundle.ts` anchor resolution depends on graph
-  node ids/text and persists `graphId`. If that dependency remains, the graph
+  node ids/text and persists `graphId`. It is therefore **not** in the target
+  permitted importer list above. If that dependency remains, the graph
   is canonical authority for annotations and the narrow option is invalid;
   either migrate annotation anchor authority to Struct document nodes (retiring
   graph authority) or retire the competing graph. Do not add the annotation
@@ -579,12 +680,27 @@ Target state (what E-04 must produce; none of it is true today):
   authority. Receipts must include the canonical Struct digests and exact
   package pin/version; graph-only digests are diagnostic only. (F8)
   **Current state, not the target:** no receipt carries any Struct binding
-  today, `graphSha256` is the primary and only source identity in both receipt
-  shapes, and the closed `publicationOutputReceiptContract` allowlist
-  (`src/publication/adapter-conformance.ts:447-494`) rejects unknown receipt
-  and source keys. The Struct binding must be added and the allowlist widened
-  deliberately, in that order, before any graph digest can be demoted to
-  diagnostic. (F8)
+  today and `graphSha256` is the primary and only source identity in both
+  receipt shapes. The only "closed allowlist" is
+  `publicationOutputReceiptContract` (`src/publication/adapter-conformance.ts:444-526`),
+  and **the release check does not call it**: `publicationCheck`
+  (`tools/publication-check.mjs:1138-1200`) parses the receipt and validates
+  selected fields directly. Widening that allowlist alone therefore makes
+  nothing in the release path require a Struct binding. The Struct binding must
+  be added, the admission requirement must be wired into `publicationCheck`
+  (`assertPublicationReceiptSourceBinding`, `tools/publication-check.mjs:265-290`,
+  called at `:1178`, or a new assertion invoked from `publicationCheck`), and
+  the conformance allowlist widened deliberately for the adapter-conformance
+  tool — in that order, before any graph digest can be demoted to diagnostic.
+  (F8)
+  Real runtime admission today, for reference: `assertPublicationReceiptPolicyVersions`
+  (`tools/publication-check.mjs:238-249`, called `:1149`), the graph/asset/
+  canonical-subset digest asserts (`:1161-1177`), the source binding (`:1178`),
+  the provenance check (`:1179-1183`), `assertPublicationReceiptMappingVersion`
+  (`:251-263`, called `:1184`), the repository binding (`:1185-1193`), the
+  runtime binding (`:196-236`, called `:1194-1197`), and the four-artifact
+  matrix check (`:1198-1201`). None of those inspects unknown keys or requires a
+  Struct variant today.
   Receipts and source binding: (F8)
   - Types/modules: `PublicationReceipt` in
     `src/publication/renderers/vivliostyle.ts` (built ~1189-1201, persisted to
@@ -599,21 +715,82 @@ Target state (what E-04 must produce; none of it is true today):
       binding, so legacy read-only render still works and no Struct binding is
       fabricated for `ResearchPaper` diagnostics;
     - struct variant `{ kind: 'struct-cutover', documentSha256,
-      bundleSha256? (when wire bytes are available), semanticReceiptSha256?
-      (canonical Struct receipt digest), packageSourceCommit, packageArtifact,
-      packageArtifactSha256, packageIntegrity, packageVersion }`.
+      semanticReceiptSha256, packageSourceCommit, packageArtifact,
+      packageArtifactSha256, packageIntegrity, packageVersion,
+      bundleSha256? (only when wire bytes are available) }`.
+      `semanticReceiptSha256` is **mandatory** for this variant. It is the
+      canonical Struct receipt digest of the decoded document,
+      `structReceiptDigest(document)`, a runtime export of
+      `@erniesg/struct/receipt` at the current pin
+      (`vendor/struct/...tgz::package/API_MANIFEST.json`
+      `runtimeExports['./receipt']`; used as `packageReceiptDigest` in
+      `tests/struct-package-parity.test.ts:18-21`). It is computable without
+      the original wire bytes, so absence is a failure, not a reason to omit
+      it. `bundleSha256` stays optional because it does need the wire bytes;
+      at struct-variant **admission** the wire bytes are required (see the
+      bundle-artifact requirement below), so it is required there.
   - Struct cutover/release admission requires the struct variant; the legacy
-    variant is render-only and is not admission evidence.
+    variant is render-only and is not admission evidence. Admission must also
+    decode the pinned Struct document from the bundle and assert
+    `sourceBinding.semanticReceiptSha256 === structReceiptDigest(decodedDocument)`.
+    A `struct-cutover` receipt with a missing or non-matching digest is
+    rejected; there is no "digest unavailable" downgrade for this variant.
+    Wire that check into `tools/publication-check.mjs` (see above), not only
+    into the conformance tool.
+  - **The decode input does not exist yet, so a receipt-bound Struct bundle
+    artifact is a required change.** `publication-check` receives only the
+    render output directory (`--input <dir>`; `parsePublicationCheckArgs`,
+    `tools/publication-check.mjs:35-59`), and the renderer writes
+    `publication-graph.json`, `asset-bundle.json`, `publication-receipt.json`
+    and the rendered outputs
+    (`src/publication/renderers/vivliostyle.ts:1107-1116`, `:1201-1205`) but
+    **no encoded Struct bundle and no pinned Struct document**. Once the graph
+    reader is removed (EG-04; reader at `tools/publication-check.mjs:1145`),
+    the checker has no bytes left to decode. E-04 must therefore add a
+    **receipt-bound Struct bundle artifact** to the render output directory:
+    the encoded bundle bytes written by the Struct adapter/renderer path as
+    `struct-bundle.bin`, with `sourceBinding.bundleSha256` set to the SHA-256
+    of exactly those bytes. `publicationCheck` must read that artifact from
+    the output directory, decode it with
+    `decodeStructBundle(bytes, { expectedBundleSha256:
+    receipt.sourceBinding.bundleSha256 })`, and compute
+    `structReceiptDigest(decodedDocument)` from the decoded document before
+    comparing it to `sourceBinding.semanticReceiptSha256`. The artifact is
+    required input for the struct variant, not an optional extra: a
+    `struct-cutover` receipt whose bundle artifact is missing, unreadable, or
+    whose digest does not match the receipt is **rejected**. The existing "no
+    digest-unavailable downgrade" rule for this variant is unchanged, and
+    `bundleSha256` stays optional in the variant shape only for the cases
+    that have no wire bytes — at struct-variant admission it is required,
+    because the bundle artifact is. (F8)
   - Canonical pin metadata authority is `vendor/struct/provenance.json`
     (`sourceCommit`, `artifact`, `sha256`, `integrity`, `packageVersion`),
     cross-checked against `package.json`, `package-lock.json`, and the tarball
-    by `tests/struct-package-artifact.test.ts`. Do not create a second
-    hand-maintained Struct pin in `src/publication/toolchain-manifest.json`;
-    if a manifest entry is added later it must be generated/validated from
-    provenance by the same test, not a second authority. (F8)
-  - Exact package identity fields map to provenance: `sourceCommit` ->
-    `sourceCommit`, artifact -> `artifact`, artifact sha256 -> `sha256`,
-    integrity -> `integrity`, version -> `packageVersion`. (F8)
+    by `tests/struct-package-artifact.test.ts`. The release check must
+    cross-check the **receipt's** package-identity fields against the same
+    provenance file (see below); the artifact test does not do that. Do not
+    create a second hand-maintained Struct pin in
+    `src/publication/toolchain-manifest.json`; if a manifest entry is added
+    later it must be generated/validated from provenance by the same test, not
+    a second authority. (F8)
+  - Exact package identity fields map to provenance, and `publication-check`
+    must compare **every one** of them directly against
+    `vendor/struct/provenance.json`:
+    `sourceBinding.packageSourceCommit` -> `provenance.sourceCommit`,
+    `sourceBinding.packageArtifact` -> `provenance.artifact`,
+    `sourceBinding.packageArtifactSha256` -> `provenance.sha256`,
+    `sourceBinding.packageIntegrity` -> `provenance.integrity`,
+    `sourceBinding.packageVersion` -> `provenance.packageVersion`.
+    `tests/struct-package-artifact.test.ts` cross-checks only the repository's
+    provenance file against `package.json`, `package-lock.json`, and the
+    tarball (`:45-77`); it never inspects a publication receipt. So a
+    `struct-cutover` receipt with a correct `semanticReceiptSha256` but an
+    arbitrary or stale `packageSourceCommit`, `packageArtifact`,
+    `packageArtifactSha256`, `packageIntegrity`, or `packageVersion` would
+    otherwise satisfy the release check while claiming an exact package pin
+    it does not have. A mismatch on any of the five fields is a
+    **rejection**, not a warning, and there is no "pin unavailable" downgrade
+    for the struct variant. (F8)
 - If any of text, semantic IDs, persistence, receipt, writer, or release path
   proves load-bearing, retire the competing graph instead of renaming it.
 - `ResearchPaper` is defined in `src/research/schema.ts` and is directly
@@ -663,16 +840,17 @@ runtime, golden, or activation evidence.
 | EG-02 | Graph owns no independent text | `src/publication/schema.ts:172-315`, `src/publication/research-paper-adapter.ts:198-296` | the graph has its own text fields and metadata envelope | PENDING |
 | EG-03 | Graph owns no independent semantic IDs | `src/publication/schema.ts:7-11` | the graph has its own id grammar, **distinct and stricter** than `src/research/schema.ts:3`; the namespaces are **not** disjoint, because the bridge may copy the same id string verbatim (`src/publication/research-paper-adapter.ts:207`, `:216`, `:224`, `:232`, `:242`, `:253`) and the round-trip test asserts graph ids equal the source paper ids (`src/publication/research-paper-adapter.test.ts:18-20`) | PENDING |
 | EG-04 | Graph owns no persistence | `src/publication/renderers/vivliostyle.ts:1107-1111`; reader at `tools/publication-check.mjs:1145` | the graph is written to the render output directory | PENDING |
-| EG-05 | Graph owns no receipt | `src/publication/renderers/vivliostyle.ts:109-117`; `src/publication/source-adapter.ts:25-65`; allowlist at `src/publication/adapter-conformance.ts:447-494` | both receipts bind the graph digest as the source identity | PENDING |
+| EG-05 | Graph owns no receipt | `src/publication/renderers/vivliostyle.ts:109-117`; `src/publication/source-adapter.ts:25-65`; release validation at `tools/publication-check.mjs:1149-1197`; conformance allowlist at `src/publication/adapter-conformance.ts:447-494` | both receipts bind the graph digest as the source identity; the release check never calls the conformance allowlist | PENDING |
 | EG-06 | Graph owns no writer and no release path | `tools/publication-build.mjs`; `package.json` `build:production` | the release build runs the graph pipeline | PENDING |
 | EG-07 | No reverse graph→ResearchPaper writer | `src/publication/research-paper-adapter.ts:198-296`; `src/publication/research-paper-adapter.test.ts:17` | the reverse converter exists; its only caller is the round-trip test | PENDING |
 | EG-08 | Red-first static assertion: graph symbols absent from storage/API/route/writer/release modules | extend the AST harness at `tests/struct-adapter-boundary.test.ts:12-55` to the `src/publication/**` and route/worker/writer roots | the harness covers only `src/struct/**` and `src/struct-adapters/**`; no such assertion exists for `src/publication/**` | PENDING |
 | EG-09 | Byte-identical double-adapt conformance for one pinned `StructDocument`; the graph is never persisted or treated as canonical text | `src/publication/struct-adapter.ts:188`; `src/publication/struct-adapter.test.ts` | not found | PENDING |
-| EG-10 | Receipts carry the canonical Struct digests and the exact package pin; graph digests demoted to diagnostic | `src/publication/renderers/vivliostyle.ts:109-117`; `src/publication/source-adapter.ts:25-65`; `src/publication/adapter-conformance.ts:447-494`; `tools/publication-check.mjs:1162` | no Struct binding exists, and the closed allowlist would reject one | PENDING |
+| EG-10 | Receipts carry the canonical Struct digests and the exact package pin, with `semanticReceiptSha256` mandatory and compared to `structReceiptDigest(decodedDocument)` decoded from the receipt-bound Struct bundle artifact (`struct-bundle.bin`) written into the render output directory, and every receipt package-identity field compared against `vendor/struct/provenance.json`; graph digests demoted to diagnostic | `src/publication/renderers/vivliostyle.ts:109-117`; `src/publication/source-adapter.ts:25-65`; `src/publication/adapter-conformance.ts:447-494`; `tools/publication-check.mjs:35-59`, `:1145`, `:1162`, `:1178`; `tests/struct-package-parity.test.ts:18-21`; `tests/struct-package-artifact.test.ts:45-77`; `vendor/struct/provenance.json` | no Struct binding exists; the renderer writes no Struct bundle artifact, `publicationCheck` receives only the output directory and does not require the variant, the conformance allowlist would reject the extra keys, and nothing compares a receipt's package identity against provenance | PENDING |
 | EG-11 | `ResearchPaper` stays a read-only compatibility model with a checked-in caller inventory | `docs/struct-research-paper-caller-inventory.md` | the inventory exists (grep-bounded); read-only enforcement and both-mode parity are not done | PENDING |
 | EG-12 | EPUBCheck / Ace / human accessibility stay app-owned | `src/publication/renderers/vivliostyle.ts:724`; `src/research/publication-integrity.ts` | app-owned today | PENDING |
 | EG-13 | Legacy `research/epub.ts` overloads keep both-mode parity until the last `ResearchPaper` consumer migrates | `src/research/epub.ts:133-141`, `:1422-1447`, `:2094-2118` | the call-site inventory exists; parity is **not** demonstrated | PENDING |
 | EG-14 | E-07 deletion gates: zero production imports to removed portable modules, package-only app tests, retained-compatibility register | `src/struct/**`, `src/struct-adapters/**` | not done; duplicate core deletion stays at E-07 | PENDING |
+| EG-15 | No non-Struct graph producer remains: the forward bridge is retired or migrated onto the Struct projection | `src/publication/research-paper-adapter.ts:81`, `:298`, `:304`, `:317`; `src/publication/struct-adapter.ts:188`, `:1313` | the forward bridge still exports a `ResearchPaper` -> `PublicationGraph` producer; it has only test callers today, but the module is exported and callable, so a second producer would remain after the reverse direction is retired | PENDING |
 
 EPUBCheck, Ace, and human accessibility approval remain app-owned release
 evidence, not package unit tests.
@@ -720,7 +898,7 @@ Every stage is red-first and independently revertible:
 | --- | --- |
 | E-02 | Atomic pin; adapter -> package decode -> bundle verify conservation on PDF/DOCX fixtures; bytes-only ingress; frozen parity unchanged except reviewed additions; no writer change |
 | E-03 | Static import guard red-then-green; package/local dual-read equality; accepted/rejected matrix; recovery copy parity; high-fan-in consumers enumerated and tested |
-| E-04 | Dual-render output/failure parity; PublicationGraph ownership proof or retirement (enumerated importer set, reverse-direction proof, annotation authority decision; static absence from storage/API/route/writer/release modules; receipts bound to Struct digests/package pin via `vendor/struct/provenance.json`); E-04 static import guard red-then-green for `xhtml`/`epub`/`emitted-ids`; EPUBCheck/Ace/human accessibility still app-owned; checked-in authority inventories at `docs/struct-research-paper-caller-inventory.md` and `docs/struct-publication-graph-authority-inventory.md` (present at this head; grep-bounded, not compiler-proven, and not gate satisfaction by themselves); every row of the E-04 future-gate table still PENDING until the corresponding evidence exists |
+| E-04 | Dual-render output/failure parity; PublicationGraph ownership proof or retirement (enumerated importer set, reverse-direction proof, forward-producer retirement/migration proof, annotation authority decision; static absence from storage/API/route/writer/release modules; receipts bound to Struct digests/package pin via `vendor/struct/provenance.json`, with the mandatory `semanticReceiptSha256` compared to `structReceiptDigest(decodedDocument)` decoded from the receipt-bound `struct-bundle.bin` artifact and every receipt package-identity field compared against `vendor/struct/provenance.json`, by `tools/publication-check.mjs`); E-04 static import guard red-then-green for `xhtml`/`epub`/`emitted-ids`; EPUBCheck/Ace/human accessibility still app-owned; checked-in authority inventories at `docs/struct-research-paper-caller-inventory.md` and `docs/struct-publication-graph-authority-inventory.md` (present at this head; grep-bounded, not compiler-proven, and not gate satisfaction by themselves); every row of the E-04 future-gate table still PENDING until the corresponding evidence exists |
 | E-05 | Design record; authenticated state machine; inactive route cannot expose unapproved/superseded artifact; concurrency + rollback/forward recovery rehearsal; writer still inactive |
 | E-06 | Accepted E-ACT receipt matching exact head/pins/targets; single writer; post-activation health/observation/read-after-write |
 | E-07 | Extraction-point hashes; package-test mapping; zero production imports to removed modules; package-only app tests; retained-compatibility register |

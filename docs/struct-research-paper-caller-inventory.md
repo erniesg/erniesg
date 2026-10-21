@@ -207,7 +207,7 @@ header/body row-group boundary.
 | R1 | `src/research/papers.ts` | 3 | `researchPaperSchema` | paper → schema | **authoritative parse** of the two shipped JSON papers | `researchPaperSchema.parse(...)` on both JSON files (`:5-8`); exports `papers`, `getPaper` | **keep** (E-04: unchanged); migrate later to a Struct-derived source once the Struct pipeline can emit the same nodes | `src/research/schema.test.ts` (schema semantics) |
 | R2 | `src/research/export-package.ts` | 32 | `researchPaperSchema`, `type ResearchPaper` | paper → schema | **parses and re-emits** the ResearchPaper as export `source.json` | `researchPaperSchema.parse` at `:441`; `canonicalContentHash(paper)` at `:364`; `verifyExportPackage` compares hashes at `:464`, `:679` | **keep** for E-04; **migrate** at E-07 (export package must be built from a Struct revision) | `src/research/export-package.test.ts` |
 | R3 | `src/research/docx-import.ts` | 13-17 | `researchPaperSchema`, `type ResearchNode`, `type ResearchPaper` | paper → schema | DOCX import produces ResearchPaper nodes | import-time parse of imported DOCX reconstruction | **keep** (import path is app-owned source reconstruction); migrate at E-07 | `src/research/docx-import.test.ts` |
-| R4 | `src/publication/research-paper-adapter.ts` | 1-5 | `researchPaperSchema`, `type ResearchNode`, `type ResearchPaper` | paper → schema | **graph bridge**; parses the paper before projecting to `PublicationGraph` | `:84` and `:302` parse; `:275` parses the reverse-projected paper | **keep** for E-04 (read-only bridge); the *reverse* direction is a **retire** candidate (see §4) | `src/publication/research-paper-adapter.test.ts`, `src/publication/source-adapter.test.ts` |
+| R4 | `src/publication/research-paper-adapter.ts` | 1-5 | `researchPaperSchema`, `type ResearchNode`, `type ResearchPaper` | paper → schema | **graph bridge**; parses the paper before projecting to `PublicationGraph` | `:84` and `:302` parse; `:275` parses the reverse-projected paper | **retire-or-migrate** obligation for E-04 in **both** directions: the *forward* direction (`researchPaperToPublicationGraph` `:81-196`, `adaptResearchPaper` `:298-315`, exported as `researchPaperSourceAdapter` `:317`) must be **retired or migrated onto the Struct projection** (the plan's EG-15 row; the companion authority inventory's G-15 row) in the same reviewed change as the reverse-direction decision, and the *reverse* direction is a **retire** candidate (see §4); nothing in this module is retired at this head | `src/publication/research-paper-adapter.test.ts`, `src/publication/source-adapter.test.ts` |
 | R5 | `src/research/epub-readable-fallback-fixtures.ts` | 13 | `researchPaperSchema` | paper → schema | fixture builder for readable-fallback | parses fixture papers | **keep** (test-support module, non-`.test.ts`) | `src/research/epub-readable-fallback.test.ts` |
 
 ### 2b. Runtime (value) importers — test files
@@ -355,6 +355,11 @@ branch at runtime.
 
 ### 3c. Test callers of the legacy renderer/export entries
 
+`src/components/research/EpubDownloadLink.test.tsx:2` (type-only `EpubExport`) ·
+`src/components/research/EpubRenditionPreview.test.tsx:3-6` (runtime
+`EPUB_EXPORT_POLICY_VERSION` + type-only `EpubExport`) ·
+`src/components/research/PublicationImporter.test.tsx:3-6` (runtime
+`EPUB_EXPORT_POLICY_VERSION` + type-only `EpubExport`) ·
 `src/research/epub.test.ts` · `src/research/epub-note-relationships.test.ts` ·
 `src/research/epub-metadata-profiles.test.ts` ·
 `src/research/epub-readable-fallback.test.ts` · `src/research/epub-source-fallback.test.ts` ·
@@ -375,10 +380,19 @@ branch at runtime.
 `src/research/pdf-regions-equations.test.ts` · `src/research/pdf-regions-notes.test.ts` ·
 `src/research/pdf-semantic-runtime-regression.test.ts` ·
 `src/research/pdf-table-citation-crop-regression.test.ts` ·
+`src/research/publication-worker-protocol.test.ts:2` (type-only `EpubExport`) ·
 `src/research/semantic-table-source.test.ts` ·
 `src/struct/struct.test.ts:25-27` (imports `buildEpub as buildPublicEpub`,
-`renderPublicationXhtml`) · `src/struct/codec.test.ts` ·
+`renderPublicationXhtml`) ·
 `tools/pdf-export.test.mjs`.
+
+**`src/struct/codec.test.ts` is not a caller of `src/research/epub.ts`** and is
+therefore not in this list: it imports only the local Struct renderer -
+`./epub` -> `buildStructEpub` (`:11`), `./xhtml` -> `renderPublicationXhtml`
+(`:12`), `./emitted-ids` -> `MAX_RENDERED_INLINE_SEGMENTS` (`:13`) - and it
+imports no `research/` module at all. `src/struct/struct.test.ts` is a caller:
+it imports `buildEpub as buildPublicEpub` and `renderPublicationXhtml as
+renderPublicXhtml` from `../research/epub` (`:25-27`).
 
 **Frozen/struct-adapter fixtures (separate from tests):**
 `tests/fixtures/struct-adapter-parity/observe.ts:7,89` imports
@@ -431,6 +445,28 @@ Module exports and their actual callers:
   round-trip equality (`expect(publicationGraphToResearchPaper(graph)).toEqual(paper)`).
   That round-trip test is the concrete thing that must be retired or
   re-scoped before the graph can be narrowed.
+- **Consequence for E-04 (the forward direction is in scope too):** the forward
+  direction is the same defect in the other direction and is **not** a "keep".
+  `researchPaperToPublicationGraph` (`src/publication/research-paper-adapter.ts:81`,
+  ends `:196`) builds a `PublicationGraph` directly from a `ResearchPaper`
+  (`:84` parses the paper), `adaptResearchPaper` (`:298`) calls it at `:304`,
+  and `researchPaperSourceAdapter` (`:317`) exports that projection. A graph
+  minted from a `ResearchPaper` is not mechanically derived from one pinned
+  Struct revision, so while these stay live a second, non-Struct graph producer
+  remains and the red-first static assertion can go green while that producer
+  remains. The narrow decision must therefore **retire the forward bridge or
+  migrate it onto the Struct projection**
+  (`src/publication/struct-adapter.ts:188` `adaptStructDocument`, `:1313`
+  `structPublicationAdapter`) — the plan's EG-15 row, mirrored by the companion
+  authority inventory's G-15 row. The forward bridge is **not** removed as an
+  early or parallel cleanup: it changes in the same reviewed change as the
+  reverse-direction decision, and the test callers that build a graph from a
+  paper (`src/publication/research-paper-adapter.test.ts:16`,
+  `src/publication/source-adapter.test.ts:54`,
+  `src/annotations/move-parity.test.ts:77`,
+  `src/annotations/annotation-bundle.test.ts:15`) move to the Struct projection
+  in that same change. This is a **proposed disposition for a future E-04
+  change**: nothing in this module is retired at this head.
 
 ## 5. Tooling callers of the legacy renderer
 

@@ -941,10 +941,22 @@ evidence, not package unit tests.
   (`package.json` `build:production`), and any further case the release path is
   extended with, each of which must be added to the checked-in frozen production
   fixture set before it counts as a covered case. The CLI has no entry-id
-  allowlist: `--entry` is only required to be present
+  allowlist: on the `astro` branch `--entry` is only required to be present
   (`tools/publication-build.mjs:56-57`), so the release path - not the CLI -
-  fixes the case set, and the CLI's `--adapter` dispatch
-  (`tools/publication-build.mjs:54-67`) rejects any other adapter (`:65-67`).
+  fixes the case set. The CLI's `--adapter` dispatch
+  (`tools/publication-build.mjs:54-67`) accepts **two** adapters, not one:
+  `astro` and `payload-lexical`, with `--adapter payload` mapped to
+  `payload-lexical` at `:54`; any adapter outside that allowlist is rejected
+  (`:65-67`). The `payload-lexical` path is **not** a production case at this
+  head, because the wired release build (`npm run build:production`) does not
+  select it: that script invokes `publication:build` with `--adapter astro`
+  only (`package.json` `build:production`), even though the CLI can select
+  `payload-lexical`, that branch accepts `--input <json>` (`:60-64`), and it
+  reaches the same `vivliostyleRenderer.render` (`:1077-1080`). It becomes a
+  production case only if the wired release build is extended to select it,
+  and selecting it before the switch is out of E-04's scope; when that happens
+  it must be added to the checked-in frozen production fixture set before it
+  counts as a covered case, like every other production case above.
   Compare the Vivliostyle local renderers `publicationGraphToHtml`
   (`src/publication/renderers/vivliostyle.ts:508`) and `createPublicationEpub`
   (`:793-904`, reached from `vivliostyleRenderer.render` at `:1083-1207`) against
@@ -980,6 +992,33 @@ evidence, not package unit tests.
   `unsupported-component.mdx`). The production path is a separate implementation
   from `src/research/epub.ts`, so the `renderPublicationXhtml`/`buildStructEpub`
   comparison above does not discharge it. (F11)
+- The repackaging path must preserve a valid stylesheet resource contract, and
+  the E-04 evidence must assert it by name. The package renderer emits
+  `<link rel="stylesheet" type="text/css" href="styles.css" />` whenever its
+  `embedStyles` option is not set (`src/struct/xhtml.ts:322`), while the
+  retained app-owned EPUB packaging writes `EPUB/publication.css`
+  (`src/publication/renderers/vivliostyle.ts:838`) and declares it in the OPF
+  manifest as `href="publication.css"`
+  (`src/publication/renderers/vivliostyle.ts:891`), and the app-owned XHTML
+  writer references that same name (`stylesheet = 'publication.css'`,
+  `src/publication/renderers/vivliostyle.ts:512`). Dropping the package XHTML
+  into that packaging unchanged would therefore ship an archive whose XHTML
+  references `styles.css` while the archive contains and declares only
+  `publication.css` - a missing stylesheet - and the content-equality
+  comparison above would still pass, because the stylesheet is app-owned and
+  excluded from that comparison. The E-04 repackaging must therefore either
+  (a) render the package XHTML with its styles **embedded** (the package
+  renderer's `embedStyles` option), or (b) ship the stylesheet in the archive
+  under the exact name the rendered XHTML references (`styles.css`) and declare
+  it in `EPUB/package.opf` next to the existing manifest items. The E-04
+  evidence set must then contain a named assertion - the *stylesheet binding*
+  assertion - that every stylesheet reference in the shipped XHTML resolves to
+  a file that is present in the archive **and** declared in the OPF manifest.
+  This is a resource-binding assertion only: the app-owned stylesheet
+  (`EPUB/publication.css`), the app-owned fonts, the app-owned OPF metadata, and
+  the app-owned nav labels stay app-owned and excluded from the content
+  comparison, EG-12 (EPUBCheck, Ace, and human accessibility acceptance) is
+  unchanged, and no whole-archive byte-identity promise is added. (F11)
 - Do not regenerate app goldens to make the switch pass. Any intentional
   diff requires separate review and is not part of E-04's mechanical switch.
 - Keep failure parity (invalid version, invalid receipt, missing/unrenderable
@@ -1018,7 +1057,7 @@ Every stage is red-first and independently revertible:
 | --- | --- |
 | E-02 | Atomic pin (F10); adapter -> package decode -> bundle verify conservation on PDF/DOCX fixtures (F1); bytes-only ingress; frozen parity unchanged except reviewed additions; no writer change |
 | E-03 | Static import guard red-then-green (F6); package/local dual-read equality; accepted/rejected matrix; recovery copy parity (F9); high-fan-in consumers enumerated and tested |
-| E-04 | Dual-render output/failure parity (F11 for the production path, F5 for the legacy `ResearchPaper` renderer overloads); PublicationGraph ownership proof or retirement (F4) (enumerated importer set (F3), reverse-direction proof (F4), forward-producer retirement/migration proof (F3/F4), annotation authority decision (F4); static absence from storage/API/route/writer/release modules (F3); receipts bound to Struct digests/package pin via `vendor/struct/provenance.json`, with the mandatory `documentSha256` compared to the document digest recomputed from `decodedDocument` (as verified by `decodeStructBundle`) **and** the mandatory `semanticReceiptSha256` compared to `structReceiptDigest(decodedDocument)` decoded from the receipt-bound `struct-bundle.bin` artifact, and every receipt package-identity field compared against `vendor/struct/provenance.json`, by `tools/publication-check.mjs` (F8); E-04 static import guard red-then-green for `xhtml`/`epub`/`emitted-ids` (F6); EPUBCheck/Ace/human accessibility still app-owned (F11); checked-in authority inventories at `docs/struct-research-paper-caller-inventory.md` and `docs/struct-publication-graph-authority-inventory.md` (F5) (present at this head; grep-bounded, not compiler-proven, and not gate satisfaction by themselves); every row of the E-04 future-gate table still PENDING until the corresponding evidence exists |
+| E-04 | Dual-render output/failure parity (F11 for the production path, F5 for the legacy `ResearchPaper` renderer overloads), including the named stylesheet-binding assertion for the production path (every stylesheet reference in the shipped XHTML resolves to a file that is present in the archive and declared in the OPF manifest, after the package XHTML is rendered with embedded styles or the stylesheet is shipped under the exact referenced name and declared in `EPUB/package.opf`); PublicationGraph ownership proof or retirement (F4) (enumerated importer set (F3), reverse-direction proof (F4), forward-producer retirement/migration proof (F3/F4), annotation authority decision (F4); static absence from storage/API/route/writer/release modules (F3); receipts bound to Struct digests/package pin via `vendor/struct/provenance.json`, with the mandatory `documentSha256` compared to the document digest recomputed from `decodedDocument` (as verified by `decodeStructBundle`) **and** the mandatory `semanticReceiptSha256` compared to `structReceiptDigest(decodedDocument)` decoded from the receipt-bound `struct-bundle.bin` artifact, and every receipt package-identity field compared against `vendor/struct/provenance.json`, by `tools/publication-check.mjs` (F8); E-04 static import guard red-then-green for `xhtml`/`epub`/`emitted-ids` (F6); EPUBCheck/Ace/human accessibility still app-owned (F11); checked-in authority inventories at `docs/struct-research-paper-caller-inventory.md` and `docs/struct-publication-graph-authority-inventory.md` (F5) (present at this head; grep-bounded, not compiler-proven, and not gate satisfaction by themselves); every row of the E-04 future-gate table still PENDING until the corresponding evidence exists |
 | E-05 | Design record; authenticated state machine; inactive route cannot expose unapproved/superseded artifact; concurrency + rollback/forward recovery rehearsal; writer still inactive |
 | E-06 | Accepted E-ACT receipt matching exact head/pins/targets; single writer; post-activation health/observation/read-after-write |
 | E-07 | Extraction-point hashes; package-test mapping; zero production imports to removed modules (F6); package-only app tests; retained-compatibility register |

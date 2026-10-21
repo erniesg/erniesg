@@ -1339,10 +1339,14 @@ the settlement is part of the contract.
 **The primitive: ECDSA over NIST P-256 with SHA-256, detached, through
 WebCrypto** (`globalThis.crypto.subtle`). No dependency is added; the app
 already uses `crypto.subtle.digest` in `src/research/epub.ts`,
-`src/research/docx-import.ts` and `src/research/overrides.ts`, and the
-primitive runs unchanged in Node, in the Worker and in a browser, so a
-producer in Node and a consumer in the Worker verify with the same code. It
-is asymmetric, so the consumer holds the *public* key and the key registry
+`src/research/docx-import.ts`, `src/research/pdf.ts` and
+`src/worker/margin/routes.ts`, and the primitive runs unchanged in Node, in
+the Worker and in a browser, so a producer in Node and a consumer in the
+Worker verify with the same code. (The app's other digests are not all
+WebCrypto's: `src/research/overrides.ts`, for one, hashes with
+`node:crypto`'s `createHash`, which is why the claim is stated by file and
+not in general.) It is asymmetric, so the consumer holds the *public* key
+and the key registry
 is publishable. P-256 is the one asymmetric algorithm every WebCrypto
 implementation is required to have. `EDITORIAL_SIGNATURE_ALGORITHMS` names
 three algorithms; **this implementation supports exactly one and refuses the

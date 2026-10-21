@@ -14,9 +14,11 @@
  * - It is **already in the repository**: no dependency is added, and the
  *   primitive is the one the app already uses for digests
  *   (`crypto.subtle.digest` in `src/research/epub.ts`,
- *   `src/research/docx-import.ts`, `src/research/overrides.ts`). It runs
- *   unchanged in Node, in the Cloudflare Worker and in a browser, so a
- *   producer in Node and a consumer in the Worker verify with the same code.
+ *   `src/research/docx-import.ts`, `src/research/pdf.ts` and
+ *   `src/worker/margin/routes.ts`; `src/research/overrides.ts` hashes with
+ *   `node:crypto`'s `createHash` instead). It runs unchanged in Node, in
+ *   the Cloudflare Worker and in a browser, so a producer in Node and a
+ *   consumer in the Worker verify with the same code.
  * - It is **asymmetric**: the consumer holds the *public* key, so the trust
  *   root can be published and every consumer does not need a shared secret.
  *   That is what makes the key registry of `trust-policy.ts` possible.

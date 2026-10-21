@@ -284,6 +284,7 @@ describe('the pinned package publication rendering', () => {
       {
         kind: 'struct-cutover',
         documentSha256: wire.documentSha256,
+        semanticReceiptSha256: wire.semanticReceiptSha256,
         packageSourceCommit: 'a'.repeat(40),
         packageArtifact: 'artifact.tgz',
         packageArtifactSha256: 'b'.repeat(64),
@@ -307,6 +308,7 @@ describe('the pinned package publication rendering', () => {
         {
           kind: 'struct-cutover',
           documentSha256: 'c'.repeat(64),
+          semanticReceiptSha256: wire.semanticReceiptSha256,
           packageSourceCommit: 'a'.repeat(40),
           packageArtifact: 'artifact.tgz',
           packageArtifactSha256: 'b'.repeat(64),
@@ -322,6 +324,7 @@ describe('the pinned package publication rendering', () => {
           kind: 'struct-cutover',
           documentSha256: wire.documentSha256,
           bundleSha256: 'd'.repeat(64),
+          semanticReceiptSha256: wire.semanticReceiptSha256,
           packageSourceCommit: 'a'.repeat(40),
           packageArtifact: 'artifact.tgz',
           packageArtifactSha256: 'b'.repeat(64),

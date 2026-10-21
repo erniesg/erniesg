@@ -87,6 +87,7 @@ type MdastNode = {
 type InlineStyle = {
   bold?: boolean
   italic?: boolean
+  code?: boolean
   verticalAlign?: 'superscript' | 'subscript'
   compactMathAtom?: boolean
   href?: string
@@ -602,8 +603,10 @@ export async function buildAstroStructDocument(
           break
         }
         case 'inlineCode':
-          lossy('inline code')
-          append(node.value ?? '', style)
+          // The pinned Struct document carries inline code as the optional
+          // `code` flag on the inline run, so the span keeps its styling
+          // instead of being reduced to plain text.
+          append(node.value ?? '', { ...style, code: true })
           break
         case 'inlineMath':
           append(node.value ?? '', { ...style, compactMathAtom: true })

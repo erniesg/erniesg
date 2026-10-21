@@ -256,7 +256,7 @@ The exported parser is currently dead surface.
 
 | Artifact | Location | Writer | Content |
 |---|---|---|---|
-| `publication-graph.json` | `src/publication/renderers/vivliostyle.ts:1107-1111` | `vivliostyleRenderer.render` (`:1081`), `writeFile(..., EXCLUSIVE_WRITE)` | `JSON.stringify(bundle.graph, null, 2)` |
+| `publication-graph.json` | `src/publication/renderers/vivliostyle.ts:1107-1111` | `vivliostyleRenderer.render` (`:1081-1207`), `writeFile(..., EXCLUSIVE_WRITE)` | `JSON.stringify(bundle.graph, null, 2)` |
 | `asset-bundle.json` | `src/publication/renderers/vivliostyle.ts:1112-1116` | same | asset descriptor |
 | `publication-receipt.json` | `src/publication/renderers/vivliostyle.ts:1201-1205` | same | `PublicationReceipt` (see §6) |
 | `astro-route-parity.json` | `tools/publication-build.mjs:990-1019` | CLI | route parity + `graphSha256` |

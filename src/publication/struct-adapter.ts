@@ -161,6 +161,7 @@ function inlineStyle(
   return {
     ...(inline.bold ? { bold: true } : {}),
     ...(inline.italic ? { italic: true } : {}),
+    ...(inline.code ? { inlineCode: true } : {}),
     ...(inline.verticalAlign ? { verticalAlign: inline.verticalAlign } : {}),
     ...(inline.compactMathAtom ? { compactMathAtom: true } : {}),
   }

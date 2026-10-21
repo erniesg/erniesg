@@ -125,6 +125,12 @@ lane against the base commit's output:
   **not silent**: the conversion emits a `lossy-inline-style` warning diagnostic naming
   the block that lost the style, and a test asserts that diagnostic.
 
+  **SUPERSEDED on 2026-10-21 by §2.3.** The user never approved that formatting loss, and
+  it blocked PR #455 readiness. The pinned package now carries an optional inline-code
+  flag, so the span keeps its `<code>` element again and the `lossy-inline-style`
+  diagnostic is gone. §2.3 records the new pin, the new Struct head, and what did and
+  did not change. The measurement below is kept as the E-04 candidate's own record.
+
   The pinned production entry has **no footnote**: neither the base commit's nor this
   head's published `phone-webpub/index.html` contains a `ref-` id, a `<sup>` or a
   `doc-noteref`. The re-target's footnote-reference change is a **code-level** change, not
@@ -154,6 +160,84 @@ copies through `tests/fixtures/struct-adapter-parity/observe.ts` and stays green
 
 **E-07 note:** when the local copies are deleted at E-07, `observe.ts` must migrate to the
 package renderers, and the frozen `xhtmlSha256`/`epubSha256` values will then change.
+
+### 2.3 The inline-code fidelity follow-up (2026-10-21)
+
+The E-04 candidate reduced every MDX inline-code span to plain text. The user never
+approved that formatting loss, and it blocked PR #455 readiness. The loss was real: the
+pre-E-04 app published `<code>main</code>` and the E-04 candidate published plain `main`.
+
+**Measured, before any design.** The corpus was scanned with the repository's own remark
+pipeline (`remark-parse` + `remark-mdx` + `remark-gfm` + `remark-math`) over
+`src/content/blog/**`: **373 inline-code spans in 41 files**, of which **1** is in the
+pinned production entry. The real publication output was built at the pre-E-04 base
+`9003ea7657ef73cbad271e6a82eab5f27f649e91` and at the E-04 candidate
+`c1d5e92ff7cb4aac635d91baf33b20f58e98c2fc` for the pinned production entry, and the
+published `phone-webpub/index.html` bytes differ exactly at that span:
+
+| side | published bytes around the span |
+| --- | --- |
+| base `9003ea76` | `...the site automatically redeploys when I push to <code>main</code>.</p>` |
+| E-04 candidate `c1d5e92f` | `...the site automatically redeploys when I push to main.</p>` |
+
+The E-04 candidate also emitted one `lossy-inline-style` warning diagnostic per inline-code
+span, and its Struct document carried **no** inline run at that span.
+
+**The upstream contract change (narrow).** `StructInline` gained one optional boolean
+field, `code?: boolean`, in the pinned package at Struct head
+`119d0411edb525dc7cce2f0f80a5c2ab37f5d040` (base `72a64ebbecde6718cbfcf59b17085bd794926cf9`):
+
+- the strict codec parses it as a boolean, refuses it on a zero-width run exactly like the
+  other formatting flags, still refuses every undeclared inline field, and carries it
+  through encode/decode;
+- the package XHTML renderer emits `<code>…</code>` inside the existing `styled()` pass,
+  applied first so the element is the innermost wrapper of the formatting it is combined
+  with (`<strong><code>…</code></strong>`); the EPUB renderer builds its content document
+  from the same XHTML path, so it renders the element too;
+- it is **additive and optional**: a document that omits the flag decodes and renders
+  exactly as before, so document schema `0.2.0` is unchanged and **needs no version bump**.
+  No runtime export, export path or `API_MANIFEST.json` entry changed. No strikethrough and
+  no hard-break field was added; those two constructs are still reported as genuinely
+  unrepresentable by the pinned document.
+
+**The app change.** `src/struct-adapters/from-markdown.ts` maps MDX `inlineCode` to
+`append(node.value ?? '', { ...style, code: true })` and no longer emits the
+`lossy-inline-style` diagnostic for inline code; the strikethrough and hard-break paths
+are unchanged and still report their loss. `src/publication/struct-adapter.ts` maps the
+Struct flag onto the publication schema's **existing** `inlineCode` field, so the app's
+own renderer emits `<code>`. There is no second renderer, no post-hoc HTML rewriting and
+no semantic workaround.
+
+**The new pin and artifact.** The app is repinned to the new Struct head:
+
+| field | value |
+| --- | --- |
+| Struct head | `119d0411edb525dc7cce2f0f80a5c2ab37f5d040` |
+| Struct base for this delta | `72a64ebbecde6718cbfcf59b17085bd794926cf9` |
+| artifact | `erniesg-struct-0.0.0-119d0411edb525dc7cce2f0f80a5c2ab37f5d040.tgz` |
+| sha256 | `bb86a4bc192c2485f1029dee32964e5488e9277345dfb5a222d17fa3cfce6296` |
+| integrity | `sha512-qHxaJ5MKq8XaxI8zbWSKcMs7Lft64rogSeVzyZoh8KuvqXcCswQH8Ri0/6dUWxgmn52PW3ieX8nL4isdYZWBUQ==` |
+| packed files / uncompressed bytes | 33 / 349,559 |
+| toolchain | node 22.22.3, npm 10.9.8, pnpm 12.8.1 |
+
+Two independent `npm ci` + `npm run test:package` + `npm pack --json` builds from the
+clean committed head produced **byte-identical** tarballs (same sha256 and same sha512).
+
+**What did NOT change.** The reviewed Struct 39 artifact
+`42fee58e9b1e1888c53e929ad6367a2c128d1607140225387836ee5da53df8f1` and the reviewed head
+`72a64ebbecde6718cbfcf59b17085bd794926cf9` are untouched; the old tarball file is still in
+`vendor/struct/` and is simply no longer the pinned one. The corpus statistic (373 spans),
+the published text bytes, the element-id change to `struct-block-…`, the Struct-derived
+asset file name and the "no footnote in the pinned entry" measurement are unchanged. No
+golden, expected output, profile or snapshot was regenerated. The app's local `src/struct/**`
+compatibility copies are unchanged, and the `ResearchPaper` overloads are unchanged.
+
+**The measured five-span comparison** is checked in at
+`tests/fixtures/struct-inline-code/case-comparison-20261021.json` and re-measured by
+`tests/struct-inline-code-fidelity.test.ts`. For all five real spans the **paragraph text
+bytes are identical** across the base, the E-04 candidate and this branch; the E-04
+candidate carried no inline-code run and one `lossy-inline-style` diagnostic per span; this
+branch carries the same inline runs the base carried and no loss diagnostic.
 
 ---
 
@@ -214,10 +298,12 @@ a follow-up candidate, not a permanent statement.
 
 ## 5. The measured evidence on the integrated candidate
 
-Every number in this section was measured on the candidate head `c3c48d21` of
-`feat/struct-e04-candidate-20261020` (base `9003ea76`), on a committed and clean worktree.
-That head differs from the branch tip only by this record's own documentation commit; the
-acceptance (the PR request and the coordinator's result) names the exact final head.
+Every number in this section was measured on a committed and clean worktree at the literal
+run head `f538884c` of `feat/struct-e04-candidate-20261020` (base `9003ea76`).
+`f538884c..c3c48d21` is documentation-only — it changes this record and the status row and
+nothing else — so the code that produced these numbers is byte-identical to the candidate
+head `c3c48d21`; the acceptance (the PR request and the coordinator's result) names the
+exact final head.
 
 - **The real production build**: `npm run build:astro` (181 pages, exit 0) and then, at
   the same head, `npm run publication:build -- --adapter astro --entry moving-to-cloudflare-with-astro --output .agent/evidence/publication` (exit 0, 4 artifacts) and the matching
@@ -248,6 +334,10 @@ acceptance (the PR request and the coordinator's result) names the exact final h
   tarball digest, the sha512 integrity, `package.json`, `package-lock.json` and the
   installed manifest, and the function throws on any mismatch. The legacy
   `legacy-research-paper` variant carries exactly one key and cannot hold a placeholder.
+
+  **This block is the E-04 candidate's measurement at its own head.** The 2026-10-21
+  inline-code follow-up (§2.3) repins the app, so the pin this receipt carried is the
+  previous one; the current pin is named in §2.3.
 - **The EG-08 graph-absence guard** (`tests/publication-graph-boundary.test.ts`,
   compiler-checker based, alias-resolving, `.astro` aware, with the four mandatory
   non-vacuity proofs) is GREEN on the integrated candidate, and the EG-09 double-adapt
@@ -291,11 +381,19 @@ acceptance (the PR request and the coordinator's result) names the exact final h
 
 - No merge, no deploy, no writer/route/publication activation, no database migration, no
   npm publication, no E-07 deletion.
-- The pinned Struct package is NOT changed: the reviewed candidate head
-  `72a64ebbecde6718cbfcf59b17085bd794926cf9` and the artifact
-  `42fee58e9b1e1888c53e929ad6367a2c128d1607140225387836ee5da53df8f1` are untouched.
-- No golden, fixture, expected value, profile, snapshot, lockfile, `package.json` or
-  `vendor/**` file was regenerated or edited.
+- The pinned Struct package IS changed, but only by the narrow inline-code follow-up
+  recorded in §2.3: Struct head `119d0411edb525dc7cce2f0f80a5c2ab37f5d040` adds one
+  optional boolean field to `StructInline`. The reviewed Struct 39 artifact
+  `42fee58e9b1e1888c53e929ad6367a2c128d1607140225387836ee5da53df8f1` and the reviewed head
+  `72a64ebbecde6718cbfcf59b17085bd794926cf9` are untouched: the old artifact file is still
+  in `vendor/struct/` and was neither rewritten nor reused, and the app's pin now names
+  the new artifact.
+- No golden, fixture, expected value, profile or snapshot was regenerated or edited. The
+  one fixture this change adds is a NEW measured record
+  (`tests/fixtures/struct-inline-code/case-comparison-20261021.json`); no existing fixture
+  was rewritten. `package.json`, `package-lock.json` and the locally excluded
+  `pnpm-lock.yaml` were changed only for the repin, and `vendor/struct/provenance.json`
+  and `vendor/struct/README.md` were changed only to name the new artifact truthfully.
 - The Struct repository's own host-harness census sampling race is a SEPARATE follow-up
   branch (`test/bundle-resolver-host-census-wait-20261020`); it does not change the
   reviewed Struct head or the app's pin.

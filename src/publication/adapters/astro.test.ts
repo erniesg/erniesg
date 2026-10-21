@@ -92,7 +92,6 @@ describe('Astro publication adapter', () => {
       'Resolved local translation sibling ja.mdx',
       'Resolved local translation sibling ko.mdx',
       'Resolved local translation sibling zh.mdx',
-      'The pinned Struct document has no inline code style; the inline code span was reduced to plain text.',
     ])
   })
 
@@ -127,7 +126,7 @@ describe('Astro publication adapter', () => {
       )
       expect(binding.semanticReceiptSha256).toMatch(/^[a-f0-9]{64}$/u)
       expect(binding.packageSourceCommit).toBe(
-        '90f76f1f80b037cc065169d07b13779c03420026',
+        '119d0411edb525dc7cce2f0f80a5c2ab37f5d040',
       )
     },
   )
@@ -225,7 +224,7 @@ describe('Astro publication adapter', () => {
     ).rejects.toThrow(/source escapes the blog collection/)
   })
 
-  it('preserves authored heading fragments, records the inline-code loss, and keeps nested list ownership while rejecting escaping assets', async () => {
+  it('preserves authored heading fragments, keeps the inline-code styling, and keeps nested list ownership while rejecting escaping assets', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'publication-contract-'))
     const entry = resolve(root, 'contract')
     const outside = await mkdtemp(resolve(tmpdir(), 'publication-outside-'))
@@ -258,15 +257,12 @@ describe('Astro publication adapter', () => {
         node.type === 'paragraph' && node.text.includes('main'),
     )
     expect(paragraph?.text).toBe('Jump to main.')
-    // The inline code span is reduced to plain text and the loss is reported
-    // against the block that lost it.
+    // The inline code span keeps its style: the pinned Struct document
+    // carries it and the projection maps it onto the publication inline run.
     expect(
       paragraph?.inlineRuns?.some((run) => run.inlineCode === true),
-    ).toBe(false)
-    const lossy = lossyInlineStyles(result)
-    expect(lossy).toHaveLength(1)
-    expect(lossy[0]?.message).toMatch(/inline code/u)
-    expect(lossy[0]?.nodeId).toBe(paragraph?.id)
+    ).toBe(true)
+    expect(lossyInlineStyles(result)).toHaveLength(0)
     // The authored fragment now resolves to the Struct block it names.
     expect(paragraph?.inlineRuns).toEqual(
       expect.arrayContaining([

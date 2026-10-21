@@ -140,18 +140,46 @@ describe('MDX to Struct document ingress', () => {
     })
   })
 
-  it('reports the inline-code loss as a lossy inline-style diagnostic', () => {
+  it('keeps the inline-code span as a code inline run', () => {
     const lossy = conversion.diagnostics.filter(
       (diagnostic) => diagnostic.code === 'lossy-inline-style',
     )
-    expect(lossy).toHaveLength(1)
-    expect(lossy[0]?.severity).toBe('warning')
-    expect(lossy[0]?.message).toMatch(/inline code/i)
-    const owner = conversion.document.blocks.find(
-      (block) => block.id === lossy[0]?.nodeId,
+    expect(lossy).toEqual([])
+    const paragraph = conversion.document.blocks.find(
+      (block) =>
+        block.kind === 'paragraph' &&
+        block.text.includes('when I push to main'),
     )
-    expect(owner).toBeDefined()
-    expect(owner?.text).toContain('main')
+    expect(paragraph).toBeDefined()
+    const code = paragraph?.inline.filter((run) => run.code === true) ?? []
+    expect(code).toHaveLength(1)
+    const run = code[0]
+    expect(run).toBeDefined()
+    // The exact span of the `main` span in the authored paragraph.
+    expect(run?.start).toBe(122)
+    expect(run?.end).toBe(126)
+    expect(paragraph?.text.slice(run!.start, run!.end)).toBe('main')
+  })
+
+  it('projects the code inline run into the publication inline run', () => {
+    const paragraph = conversion.document.blocks.find(
+      (block) =>
+        block.kind === 'paragraph' &&
+        block.text.includes('when I push to main'),
+    )
+    expect(paragraph).toBeDefined()
+    const node = projection.graph.nodes.find(
+      (candidate) => candidate.id === paragraph?.id,
+    )
+    expect(node).toBeDefined()
+    const runs = node && 'inlineRuns' in node ? (node.inlineRuns ?? []) : []
+    const code = runs.filter((run) => run.inlineCode === true)
+    expect(code).toHaveLength(1)
+    expect(code[0]?.start).toBe(122)
+    expect(code[0]?.end).toBe(126)
+    expect(
+      node && 'text' in node ? node.text.slice(code[0]!.start, code[0]!.end) : '',
+    ).toBe('main')
   })
 
   it('fails the unsupported constructs the Astro adapter rejects today', async () => {

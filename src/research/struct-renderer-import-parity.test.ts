@@ -23,12 +23,14 @@ import { buildAstroStructDocument } from '../struct-adapters/from-markdown'
 import { decodeReconstruction } from '../../tests/fixtures/struct-adapter-parity/observe'
 import bothModeCases from '../../tests/fixtures/struct-both-mode-parity/cases.json'
 import {
+  compareCommonDomain,
   comparePublications,
   externalLinks,
   internalTargets,
   publicationView,
   unitSignature,
   type PublicationComparison,
+  type PublicationView,
 } from '../../tests/fixtures/struct-both-mode-parity/view'
 import { reconstructDocx } from './docx-import'
 import {
@@ -82,6 +84,22 @@ import { researchPaperSchema } from './schema'
  * Every diverging fixture asserts the EXACT digest of BOTH renderers, so the
  * test fails if either side moves; the one fixture whose two renderers agree
  * is asserted byte-equal.
+ *
+ * RE-MEASURED 2026-10-21 at the pinned Struct artifact
+ * `3d3a7c95b1c55a9ff4b527eee5acf36c168cd896` (the pin the app now installs).
+ * The pinned package renderer now publishes the DECLARED list contract (an
+ * ordered container with the nested bullet list inside the parent item) and
+ * publishes an ATTACHED caption exactly once, inside the host's
+ * `<figcaption>`. The stale local copy is unchanged: it still has no list
+ * branch and still publishes the caption block again as a paragraph. The
+ * PACKAGE digests therefore moved for the two diverging fixtures, and the
+ * LOCAL digests moved only where the receipt digest is embedded in the
+ * archive (the EPUB `package.opf` and `struct.json`). The local XHTML
+ * digests did not move: the local renderer resolves the figure's caption
+ * from the caption block, so the host's own copy of the caption text
+ * dropping out of the host block's text left the local bytes identical.
+ * The measurements below are the ones this pin produces; they are pinned
+ * exactly, so a further move fails loudly.
  *
  * The comparison imports of the stale local copies live in THIS FILE ONLY: no
  * production module under `src/` may import `src/struct/**` for the render
@@ -201,7 +219,7 @@ describe('E-04 dual-render parity: StructDocument mode', () => {
     expect(measured).toEqual({
       'structured-manuscript-docx': {
         local: 'cf4eef0eb1edbddca464b1bcd7d1daac59a1b0715cc8e69c64c9a20270f2cd95',
-        package: 'a74427183599f3dc213465c5adac4451994603dbe4057962aefc5b2f0c198b28',
+        package: 'c4408a26f78577f7da86206ab7ff56ec0d18f883dd03f2d4cb7ff41e447dcc94',
       },
       'adapter-parity/ordinary-pdf': {
         local: '4d9bc0a62fb7d4ce8aefbd1811ab5ea7246f33f64cd8721582ab93e1532f14f2',
@@ -209,7 +227,7 @@ describe('E-04 dual-render parity: StructDocument mode', () => {
       },
       'adapter-parity/source-preserved-pdf': {
         local: 'eba808794a97517df241e6dff1d289bd19c2584a84b5dabcf58b61896f87c444',
-        package: '0106902dab681da128171ab2937f4ac9a6bfbd8c2418e135a0de25b6c48411be',
+        package: 'ea1838aa372cfb6c80b274c6163532861c759bcb69c88e16011768214854a8eb',
       },
     })
   })
@@ -239,8 +257,8 @@ describe('E-04 dual-render parity: StructDocument mode', () => {
 
     expect(measured).toEqual({
       'structured-manuscript-docx': {
-        local: 'f859d1ad1fadc8c897cc3a294a09845fdae5d5360fede37d2a40c16a81386c72',
-        package: 'ee11cb70bf0300a69f1ec4621c8d6d53cfc4f18dc9791a504f08f24b9afcf3c9',
+        local: '05d10b8eb8fae0273217fa7d6c4b24310724536b468c2188536bd70c49953ff8',
+        package: 'dabd7d18488eb11313bb8cfd6970a9c702160bd91426f73288ca8182736963ac',
       },
       'adapter-parity/ordinary-pdf': {
         local: '1d3c048035a2228a552e9d45d3258c3e75b3dccbe8d141e7b3e0b0e85c26a335',
@@ -310,14 +328,23 @@ describe('E-04 dual-render parity: StructDocument mode', () => {
     const local = localRenderPublicationXhtml(document)
     const packaged = packageRenderPublicationXhtml(document)
 
+    // The stale LOCAL copy still has no list branch: it renders each list item
+    // as a `<p>`. The pinned package renderer publishes the declared list
+    // contract: an ordered container with the nested bullet list inside the
+    // parent item. The package's `<li>` therefore carries the nested `<ul>`,
+    // so the item's text is not closed by `</li>` any more.
     expect(local).toContain(
       '<p id="struct-block-d594f834a24be295c09a8b7f" data-struct-id="struct-block-d594f834a24be295c09a8b7f">Ordered parent item</p>',
     )
     expect(local).not.toContain('<li ')
     expect(packaged).toContain(
-      '<li id="struct-block-d594f834a24be295c09a8b7f" data-struct-id="struct-block-d594f834a24be295c09a8b7f">Ordered parent item</li>',
+      '<li id="struct-block-d594f834a24be295c09a8b7f" data-struct-id="struct-block-d594f834a24be295c09a8b7f">Ordered parent item',
     )
+    expect(packaged).toContain('<ol>')
     expect(packaged).toContain('<ul>')
+    expect(packaged).toContain(
+      '<li id="struct-block-3994ae358137604a1b9c8820" data-struct-id="struct-block-3994ae358137604a1b9c8820">Nested bullet item</li>',
+    )
     expect(firstDifferenceOffset(local, packaged)).toBe(1786)
   })
 
@@ -361,10 +388,10 @@ describe('E-04 dual-render parity: StructDocument mode', () => {
     expect(sha256(local.bytes)).toBe(local.sha256)
     expect(sha256(packaged.bytes)).toBe(packaged.sha256)
     expect(local.sha256).toBe(
-      'c401019b44229f3d24e12987d0d386289e0a2ce42ae0d0c44f9504ca222b056c',
+      'cb5e77f46cf713dc9f8380524c217ca322cec66ee59e8ede66a7e7012dd4b813',
     )
     expect(packaged.sha256).toBe(
-      '6dc2547c5f60c459cfc4bb04a319c3b928ae84a4cb4a1984133d27523f4b0499',
+      '50cf76aba5947a105c2a05c72271319e163f12f4df11debf8af1492178e488f5',
     )
     expect(bytesEqual(local.bytes, packaged.bytes)).toBe(false)
     expect(packaged.entries).toEqual(local.entries)
@@ -725,26 +752,48 @@ describe('E-04 dual-render parity: local copies stay test-local until E-07', () 
  *
  * The blocks above prove that each mode is byte-stable and that the two
  * modes are DISTINCT. They never prove that the two modes publish the SAME
- * content. This block closes that gap with three pilot cases:
+ * content. This block closes that gap with the repository's own fixtures:
  *
  *  - `text-heading-inline-code`: one authored publication, projected into the
  *    app-owned MDX ingress (the Struct side) and into the legacy
  *    `ResearchPaper` model (the legacy side);
- *  - `asset-link` and `table-reference`: the repository's own frozen
- *    structured-manuscript DOCX, reconstructed ONCE and published through
- *    BOTH overloads, so neither side is hand-authored.
+ *  - the frozen structured-manuscript DOCX: reconstructed ONCE and published
+ *    through BOTH overloads, so neither side is hand-authored.
  *
  * What is compared is the publication itself: the canonical text in reading
  * order, the inline marks that carry that text, the published asset set with
- * its alt text, the external links with their meaning, and the internal
- * references RESOLVED TO THEIR TARGET. The legacy ids (`fn-docx-1`) and the
- * Struct ids (`struct-block-...`) are presentational aliases of the same
- * anchor, so the correspondence is asserted on the resolved target, never on
- * the id string. Whole-archive bytes, CSS and the two document envelopes
- * are deliberately NOT compared.
+ * its alt text, the external links with their meaning, the internal
+ * references RESOLVED TO THEIR TARGET, the caption placement and the nested
+ * list structure. The legacy ids (`fn-docx-1`) and the Struct ids
+ * (`struct-block-...`) are presentational aliases of the same anchor, so the
+ * correspondence is asserted on the resolved target, never on the id string.
+ * Whole-archive bytes, CSS and the two document envelopes are deliberately
+ * NOT compared.
  *
- * SCOPE. Three cases are a pilot, not a proof over every accepted input.
- * The exact coverage and the measured divergences are recorded in
+ * THE COMMON SUPPORTED SEMANTIC DOMAIN (re-measured 2026-10-21).
+ *
+ * The comparison is scoped to the semantic domain BOTH models can express,
+ * and over that domain the two overloads must AGREE: the same content, the
+ * same block identities and ordering, the same text, the same asset
+ * bindings, the same caption placement and the same nested list structure.
+ *
+ * Exactly ONE construct is outside that domain: the inline-code mark. The
+ * deprecated legacy `ResearchPaper` inline-run model (`src/research/schema.ts`)
+ * has NO field for an inline-code mark, so the legacy overload cannot publish
+ * the element at all - it degrades the mark to plain text inside the same
+ * text run. The deprecated legacy types are NOT widened to force a false
+ * equality: the mark is excluded from the common domain
+ * (`compareCommonDomain`), and the additive Struct capability is evidenced
+ * separately and truthfully, as a scoped model boundary, with the exact
+ * difference recorded.
+ *
+ * Every difference the comparison still reports is CLASSIFIED with a reason.
+ * A difference inside the common domain is a defect and must be empty; the
+ * only difference the comparison may report is the classified inline-code
+ * model boundary.
+ *
+ * SCOPE. The cases are a pilot, not a proof over every accepted input. The
+ * exact coverage and the measured state are recorded in
  * `docs/struct-migration-status/e-04-dated-record-20261020.md`.
  */
 
@@ -761,6 +810,14 @@ const bothModePilot = bothModeCases.cases[0] as unknown as BothModeCase
 const BOTH_MODE_TIMEOUT = { timeout: 30_000 }
 
 /**
+ * The two rendered views of one publication, one per overload.
+ */
+type BothModeViews = {
+  legacy: PublicationView
+  struct: PublicationView
+}
+
+/**
  * Publish one authored pilot case through both overloads.
  *
  * The Struct side is produced by the app-owned MDX ingress
@@ -769,9 +826,9 @@ const BOTH_MODE_TIMEOUT = { timeout: 30_000 }
  * validated by the app-owned `researchPaperSchema`. No production canonical
  * converter is involved and no production module is edited.
  */
-async function renderBothModePilot(
+async function renderBothModePilotViews(
   pilot: BothModeCase,
-): Promise<PublicationComparison> {
+): Promise<BothModeViews> {
   const collection = await mkdtemp(resolve(tmpdir(), 'both-mode-parity-'))
   const entry = resolve(collection, 'pilot')
   await mkdir(entry, { recursive: true })
@@ -788,6 +845,17 @@ async function renderBothModePilot(
   const struct = publicationView(
     renderResearchPublicationXhtml(conversion.document),
   )
+  return { legacy, struct }
+}
+
+/**
+ * The full comparison of one publication through the two overloads: every
+ * difference is reported, including the ones outside the common domain.
+ */
+async function renderBothModePilot(
+  pilot: BothModeCase,
+): Promise<PublicationComparison> {
+  const { legacy, struct } = await renderBothModePilotViews(pilot)
   return comparePublications(legacy, struct)
 }
 
@@ -821,16 +889,27 @@ function structuredManuscriptReconstruction() {
  * `StructDocument` for the SAME reconstruction. Neither side is authored by
  * this test.
  */
+async function renderBothModeManuscriptViews(
+  reconstruction?: DocxReconstruction,
+): Promise<BothModeViews> {
+  const source = reconstruction ?? (await structuredManuscriptReconstruction())
+  return {
+    legacy: publicationView(
+      renderResearchPublicationXhtml(source.paper, { reconstruction: source }),
+    ),
+    struct: publicationView(
+      renderResearchPublicationXhtml(buildStructDocument(source)),
+    ),
+  }
+}
+
+/**
+ * The full comparison of the frozen manuscript through the two overloads.
+ */
 async function renderBothModeManuscript(
   reconstruction?: DocxReconstruction,
 ): Promise<PublicationComparison> {
-  const source = reconstruction ?? (await structuredManuscriptReconstruction())
-  const legacy = publicationView(
-    renderResearchPublicationXhtml(source.paper, { reconstruction: source }),
-  )
-  const struct = publicationView(
-    renderResearchPublicationXhtml(buildStructDocument(source)),
-  )
+  const { legacy, struct } = await renderBothModeManuscriptViews(reconstruction)
   return comparePublications(legacy, struct)
 }
 
@@ -875,20 +954,29 @@ describe('E-04 both-mode parity: the same publication through both epub.ts overl
   )
 
   it(
-    'records the inline-code mark the legacy ResearchPaper model cannot carry',
+    'evidences the additive inline-code capability the legacy model cannot carry',
     BOTH_MODE_TIMEOUT,
     async () => {
       const comparison = await renderBothModePilot(bothModePilot)
 
       // The pinned Struct `StructInline` carries an optional `code` flag, so
-      // the Struct overload publishes `<code>build()</code>`. The legacy
+      // the Struct overload publishes `<code>main</code>`. The legacy
       // `ResearchPaper` inline-run model (src/research/schema.ts) has NO
       // field for an inline-code mark, so the legacy overload cannot publish
-      // the element at all. This is a measured DIVERGENCE, not agreement: the
-      // two modes differ by exactly the code element and by nothing else.
+      // the element at all: it degrades the mark to plain text inside the
+      // same text run. That is an ADDITIVE Struct capability and a scoped
+      // model boundary of the deprecated legacy model, recorded here and
+      // excluded from the common domain - NOT a silent mismatch and NOT a
+      // reason to widen the deprecated legacy types.
       expect(comparison.markupDifferences).toEqual([
         { index: 1, legacy: ['strong', 'a'], struct: ['strong', 'code', 'a'] },
       ])
+      expect(
+        comparison.legacy.units.flatMap((unit) => unit.markup),
+      ).not.toContain('code')
+      expect(comparison.struct.units[1]?.markup).toContain('code')
+      // The text itself is identical: the legacy side degrades the MARK, not
+      // the content.
       expect(comparison.legacy.units[1]?.text).toBe(
         comparison.struct.units[1]?.text,
       )
@@ -983,51 +1071,193 @@ describe('E-04 both-mode parity: the same publication through both epub.ts overl
   )
 })
 
-describe('E-04 both-mode parity: the measured divergences of the frozen manuscript', () => {
+/**
+ * A difference the comparison reports, with the scope it belongs to and the
+ * reason it exists. A difference inside the common domain is a defect; a
+ * model-boundary difference is a recorded, scoped limit of the deprecated
+ * legacy model.
+ */
+type ClassifiedDifference = {
+  scope: 'common-domain' | 'model-boundary'
+  reason: string
+  difference: unknown
+}
+
+const INLINE_CODE_BOUNDARY_REASON =
+  'the deprecated legacy ResearchPaper inline-run model has no inline-code field, so the legacy overload degrades the mark to plain text; the inline-code mark is outside the common supported semantic domain'
+
+/**
+ * The inline marks the deprecated legacy `ResearchPaper` model cannot carry.
+ * They are the marks the common supported semantic domain excludes, and they
+ * are a property of the MODEL, not of one comparison instance.
+ */
+const LEGACY_MODEL_EXCLUDED_MARKS = ['code']
+
+/**
+ * Is this inline-mark difference exactly the excluded model boundary?
+ */
+function isOnlyExcludedMarks(
+  difference: { legacy: string[]; struct: string[] },
+  excluded: string[],
+) {
+  if (excluded.length === 0) return false
+  if (difference.legacy.some((mark) => excluded.includes(mark))) return false
+  const projected = difference.struct.filter((mark) => !excluded.includes(mark))
+  return projected.join(',') === difference.legacy.join(',')
+}
+
+/**
+ * Classify every difference the comparison reports.
+ */
+function classifyDifferences(
+  comparison: PublicationComparison,
+  commonDomainMarks: string[] = LEGACY_MODEL_EXCLUDED_MARKS,
+): ClassifiedDifference[] {
+  const ledger: ClassifiedDifference[] = []
+  for (const difference of comparison.unitDifferences) {
+    ledger.push({
+      scope: 'common-domain',
+      reason:
+        'the two modes publish different block content, block identities or block order',
+      difference,
+    })
+  }
+  for (const difference of comparison.markupDifferences) {
+    const boundary = isOnlyExcludedMarks(difference, commonDomainMarks)
+    ledger.push({
+      scope: boundary ? 'model-boundary' : 'common-domain',
+      reason: boundary
+        ? INLINE_CODE_BOUNDARY_REASON
+        : 'the two modes carry different inline marks for the same published text',
+      difference,
+    })
+  }
+  for (const difference of comparison.assetDifferences) {
+    ledger.push({
+      scope: 'common-domain',
+      reason: 'the two modes publish a different asset set or a different alt text',
+      difference,
+    })
+  }
+  for (const difference of comparison.externalLinkDifferences) {
+    ledger.push({
+      scope: 'common-domain',
+      reason: 'the two modes publish a different external link or a different link text',
+      difference,
+    })
+  }
+  for (const difference of comparison.internalTargetDifferences) {
+    ledger.push({
+      scope: 'common-domain',
+      reason:
+        'the two modes resolve an internal reference to a different target',
+      difference,
+    })
+  }
+  return ledger
+}
+
+describe('E-04 both-mode parity: the common supported semantic domain', () => {
   it(
-    'records the caption the Struct overload publishes twice',
+    'agrees with the legacy overload on the frozen manuscript over the whole comparison',
     BOTH_MODE_TIMEOUT,
     async () => {
-      const comparison = await renderBothModeManuscript()
+      const { legacy, struct } = await renderBothModeManuscriptViews()
+      // The frozen manuscript carries no inline code, so the common domain
+      // excludes nothing that this publication uses: the FULL comparison, with
+      // no exclusion at all, must be clean.
+      const comparison = comparePublications(legacy, struct)
 
-      // The legacy overload publishes each caption once: the figure caption
-      // inside the figure's `<figcaption>` and the table caption inside the
-      // table figure's `<figcaption>`.
-      //
-      // The Struct overload publishes the FIGURE caption twice: once as the
-      // figure's `<figcaption>` and once as the separate `caption` block the
-      // adapter emits for the same caption node. That is a real content
-      // duplication, not a presentational difference.
-      //
-      // The TABLE caption is published once in each mode, but in a different
-      // place: the Struct mode renders the table figure without a
-      // `<figcaption>` and publishes the caption as its own block.
-      expect(
-        comparison.legacy.units
-          .filter((unit) => unit.kind === 'caption')
-          .map((unit) => unit.text),
-      ).toEqual([
-        'Figure 1. A source-preserved synthetic image.',
-        'Table 1. A semantic comparison.',
-      ])
-      expect(
-        comparison.struct.units
-          .filter((unit) => unit.kind === 'caption')
-          .map((unit) => unit.text),
-      ).toEqual([
-        'Figure 1. A source-preserved synthetic image.',
-        'Figure 1. A source-preserved synthetic image.',
-        'Table 1. A semantic comparison.',
-      ])
-      expect(comparison.unitsEqual).toBe(false)
+      expect(comparison.excludedMarks).toEqual([])
+      expect(comparison.unitsEqual).toBe(true)
+      expect(comparison.unitDifferences).toEqual([])
+      expect(comparison.markupDifferences).toEqual([])
+      expect(comparison.assetsEqual).toBe(true)
+      expect(comparison.assetDifferences).toEqual([])
+      expect(comparison.externalLinksEqual).toBe(true)
+      expect(comparison.externalLinkDifferences).toEqual([])
+      expect(comparison.internalTargetsEqual).toBe(true)
+      expect(comparison.internalTargetDifferences).toEqual([])
+      expect(classifyDifferences(comparison)).toEqual([])
     },
   )
 
   it(
-    'records the list structure the Struct overload flattens',
+    'publishes the same block identities, order and text in both modes',
     BOTH_MODE_TIMEOUT,
     async () => {
-      const comparison = await renderBothModeManuscript()
+      const { legacy, struct } = await renderBothModeManuscriptViews()
+
+      expect(struct.units.length).toBe(legacy.units.length)
+      expect(struct.units.map((unit) => unit.kind)).toEqual(
+        legacy.units.map((unit) => unit.kind),
+      )
+      expect(struct.units.map(unitSignature)).toEqual(
+        legacy.units.map(unitSignature),
+      )
+      // Every unit of the legacy mode resolves to the text of the unit at the
+      // same position in the Struct mode, and the other way round: the two
+      // modes publish the same content in the same order.
+      for (const [index, unit] of legacy.units.entries()) {
+        expect(struct.units[index]?.text, `unit ${index}`).toBe(unit.text)
+      }
+    },
+  )
+
+  it(
+    'publishes the caption exactly once, inside the host figcaption, in both modes',
+    BOTH_MODE_TIMEOUT,
+    async () => {
+      const source = await structuredManuscriptReconstruction()
+      const legacyXhtml = renderResearchPublicationXhtml(source.paper, {
+        reconstruction: source,
+      })
+      const structXhtml = renderResearchPublicationXhtml(
+        buildStructDocument(source),
+      )
+      const { legacy, struct } = await renderBothModeManuscriptViews(source)
+
+      // The pinned package renderer resolves an attached caption only through
+      // the document's declared caption relationship and publishes it exactly
+      // once, inside the host's `<figcaption>`. The caption block is not
+      // published again as a paragraph: there is no `class="caption"` element
+      // and no extra caption unit.
+      expect(structXhtml.match(/<figcaption/g)?.length).toBe(2)
+      expect(structXhtml).not.toContain('class="caption"')
+      expect(legacyXhtml.match(/<figcaption/g)?.length).toBe(2)
+      expect(legacy.units.filter((unit) => unit.kind === 'caption')).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            tag: 'figcaption',
+            text: 'Figure 1. A source-preserved synthetic image.',
+          }),
+          expect.objectContaining({
+            tag: 'figcaption',
+            text: 'Table 1. A semantic comparison.',
+          }),
+        ]),
+      )
+      // The SAME caption units, in the SAME place, in the same order.
+      expect(
+        struct.units
+          .filter((unit) => unit.kind === 'caption')
+          .map((unit) => [unit.tag, unit.text]),
+      ).toEqual(
+        legacy.units
+          .filter((unit) => unit.kind === 'caption')
+          .map((unit) => [unit.tag, unit.text]),
+      )
+      expect(
+        struct.units.filter((unit) => unit.kind === 'caption'),
+      ).toHaveLength(2)
+    },
+  )
+
+  it(
+    'preserves the ordered and nested list structure in both modes',
+    BOTH_MODE_TIMEOUT,
+    async () => {
+      const { legacy, struct } = await renderBothModeManuscriptViews()
       const shape = (unit: {
         text: string
         listTag: string | null
@@ -1035,26 +1265,68 @@ describe('E-04 both-mode parity: the measured divergences of the frozen manuscri
       }) => [unit.text, unit.listTag, unit.listDepth]
 
       // The legacy overload publishes an ordered list with a nested bullet
-      // list. The Struct overload publishes both items as siblings of one
-      // unordered list: the adapter emits `listLevel`/`listOrdered`, while the
-      // pinned renderer groups list items by `attributes.listId` and reads
-      // `attributes.ordered`.
+      // list. The Struct overload now publishes the same structure: the app
+      // ingress declares `listLevel`/`listOrdered` and the pinned renderer
+      // publishes the declared nesting and ordering.
       expect(
-        comparison.legacy.units
-          .filter((unit) => unit.kind === 'list-item')
-          .map(shape),
+        legacy.units.filter((unit) => unit.kind === 'list-item').map(shape),
       ).toEqual([
         ['Ordered parent item', 'ol', 1],
         ['Nested bullet item', 'ul', 2],
       ])
       expect(
-        comparison.struct.units
-          .filter((unit) => unit.kind === 'list-item')
-          .map(shape),
+        struct.units.filter((unit) => unit.kind === 'list-item').map(shape),
       ).toEqual([
-        ['Ordered parent item', 'ul', 1],
-        ['Nested bullet item', 'ul', 1],
+        ['Ordered parent item', 'ol', 1],
+        ['Nested bullet item', 'ul', 2],
       ])
+    },
+  )
+
+  it(
+    'agrees over the common domain on the pilot case, with the inline-code mark excluded',
+    BOTH_MODE_TIMEOUT,
+    async () => {
+      const { legacy, struct } = await renderBothModePilotViews(bothModePilot)
+      const comparison = compareCommonDomain(legacy, struct)
+
+      expect(comparison.excludedMarks).toEqual(['code'])
+      expect(comparison.unitsEqual).toBe(true)
+      expect(comparison.unitDifferences).toEqual([])
+      expect(comparison.markupDifferences).toEqual([])
+      expect(comparison.assetsEqual).toBe(true)
+      expect(comparison.externalLinksEqual).toBe(true)
+      expect(comparison.internalTargetsEqual).toBe(true)
+      expect(classifyDifferences(comparison)).toEqual([])
+    },
+  )
+
+  it(
+    'classifies every difference the comparison still reports',
+    BOTH_MODE_TIMEOUT,
+    async () => {
+      const { legacy, struct } = await renderBothModePilotViews(bothModePilot)
+      const full = comparePublications(legacy, struct)
+      const ledger = classifyDifferences(full)
+
+      // Exactly one difference is reported, and it is classified: the
+      // inline-code mark, which is outside the common domain because the
+      // deprecated legacy model has no field for it.
+      expect(ledger).toEqual([
+        {
+          scope: 'model-boundary',
+          reason: INLINE_CODE_BOUNDARY_REASON,
+          difference: {
+            index: 1,
+            legacy: ['strong', 'a'],
+            struct: ['strong', 'code', 'a'],
+          },
+        },
+      ])
+      // Nothing inside the common domain is outstanding.
+      expect(ledger.filter((entry) => entry.scope === 'common-domain')).toEqual(
+        [],
+      )
     },
   )
 })

@@ -10,15 +10,20 @@ remain authoritative.
 - Ernie.SG default: `453fb256` (PR #447, app-owned reconstruction adapter and frozen parity).
 - Struct default: `fae461e9` (MathML validation); its canonical checkout has unrelated
   PDF-service work and must not be reset to this default.
-- App artifact: source `119d0411edb525dc7cce2f0f80a5c2ab37f5d040`,
-  SHA-256 `bb86a4bc192c2485f1029dee32964e5488e9277345dfb5a222d17fa3cfce6296`
-  (33 packed files, 349,559 uncompressed bytes). The exact pin in
+- App artifact: source `3d3a7c95b1c55a9ff4b527eee5acf36c168cd896`,
+  SHA-256 `836f6d3ead7a5ce1dc59f2799c80dfbe5c52931836a5b4f2749ab5b1920a55f9`
+  (33 packed files, 368,119 uncompressed bytes). The exact pin in
   `vendor/struct/provenance.json` was updated to it by the atomic repin
-  of the 2026-10-21 inline-code follow-up (Struct base for this delta:
-  `72a64ebbecde6718cbfcf59b17085bd794926cf9`). The previous artifact
-  (source `90f76f1f80b037cc065169d07b13779c03420026`, SHA-256
+  of the 2026-10-21 nested-lists-and-captions follow-up (Struct base for
+  this delta: `119d0411edb525dc7cce2f0f80a5c2ab37f5d040`, the previous
+  pin, which added the optional inline-code flag). The previous artifact
+  (source `119d0411edb525dc7cce2f0f80a5c2ab37f5d040`, SHA-256
+  `bb86a4bc192c2485f1029dee32964e5488e9277345dfb5a222d17fa3cfce6296`)
+  is unchanged and still in `vendor/struct/`; it is no longer the pinned
+  one. The artifact before it (source
+  `90f76f1f80b037cc065169d07b13779c03420026`, SHA-256
   `42fee58e9b1e1888c53e929ad6367a2c128d1607140225387836ee5da53df8f1`)
-  is unchanged and still in `vendor/struct/`; it is no longer the pinned one.
+  is unchanged and still in `vendor/struct/` too.
 - Execution host: `erniesg-ai-vm`; laptop is a control interface. October 17
   preservation was verified by
   `/home/ubuntu/.local/state/erniesg-offload/20261017/SYNC-VERIFIED.json`.
@@ -37,7 +42,7 @@ remain authoritative.
 | S-04 Struct #7 | Open. Default packed-consumer proof establishes existing document subpaths, not complete Bundle acceptance. Re-run the full public negative matrix and deterministic goldens at the final integrated package head. |
 | E-02 #282 | PR #447 landed adapter relocation and frozen source parity. PR #450 separately owns inline-hyperlink conservation. The app is pinned to the reviewed S-04 artifact and the app-side bundle parity (create -> encode -> bytes-only decode with the asset digests conserved) is in place; the upstream S-04 release packet is measured at one immutable head. This is a candidate, not a landed cutover: no merge, no publication, no deploy and no route or writer activation has happened, and E-03/E-04/E-05/E-06/E-07 remain separate steps. |
 | E-03 #283 | Source candidate on `feat/struct-e03-core-codecs-ids-order-20261020` (PR #454, head `9003ea76`): the types/codecs/identity/ordering/recovery facts are switched to the pinned package subpaths with a red-first semantic AST guard. Not merged; E-04 is stacked on it. |
-| E-04 #284 | Source candidate on `feat/struct-e04-candidate-20261020` (base `9003ea76`, the E-03 candidate head). The portable renderer import cut is done (the app's StructDocument render branches use the pinned package renderers) and the PublicationGraph authority is converged: the graph is an ephemeral, Struct-derived renderer plan with no persistence, no receipt identity, no writer, no release path, no reverse writer and no annotation authority, proven by a compiler-checker guard. `ResearchPaper` compatibility is preserved and the local compatibility copies `src/struct/{xhtml,epub,emitted-ids}.ts` are unchanged until E-07 (only `src/struct/struct.test.ts`, its stale reference assertion, changes). The recorded output changes (the package renderer's list rendering and furniture handling) are in [`docs/struct-migration-status/e-04-dated-record-20261020.md`](struct-migration-status/e-04-dated-record-20261020.md). The one inline-code span in the pinned production entry that the E-04 candidate reduced to plain text is **fixed** on `feat/struct-e04-fidelity-inline-code-20261021`: the pinned Struct package now carries an optional `code` flag on `StructInline`, the app ingress keeps the span and the publication projection maps it onto the existing `inlineCode` field, so the published output carries `<code>main</code>` again. The measured five-span comparison is in §2.3 of the same record. This is a candidate, not a landed cutover: no merge, no deploy, no writer or route activation, and the Payload-Lexical publication path was retired with its coverage loss recorded. |
+| E-04 #284 | Source candidate on `feat/struct-e04-candidate-20261020` (base `9003ea76`, the E-03 candidate head). The portable renderer import cut is done (the app's StructDocument render branches use the pinned package renderers) and the PublicationGraph authority is converged: the graph is an ephemeral, Struct-derived renderer plan with no persistence, no receipt identity, no writer, no release path, no reverse writer and no annotation authority, proven by a compiler-checker guard. `ResearchPaper` compatibility is preserved and the local compatibility copies `src/struct/{xhtml,epub,emitted-ids}.ts` are unchanged until E-07 (only `src/struct/struct.test.ts`, its stale reference assertion, changes). The recorded output changes (the package renderer's list rendering and furniture handling) are in [`docs/struct-migration-status/e-04-dated-record-20261020.md`](struct-migration-status/e-04-dated-record-20261020.md). The one inline-code span in the pinned production entry that the E-04 candidate reduced to plain text is **fixed**: the pinned Struct package carries an optional `code` flag on `StructInline`, the app ingress keeps the span and the publication projection maps it onto the existing `inlineCode` field, so the published output carries `<code>main</code>` again. The app is now pinned to Struct head `3d3a7c95b1c55a9ff4b527eee5acf36c168cd896` (the nested-lists-and-captions follow-up): the pinned renderer publishes the declared list contract and publishes an attached caption exactly once, inside the host's `<figcaption>`. The frozen baselines and the both-mode parity evidence were **re-frozen and re-measured** against that pin (§2.4 of the same record): the two overloads now agree over the common supported semantic domain, and the only difference the comparison still reports is the inline-code mark, which is a scoped model boundary of the deprecated legacy model. EG-13 is recorded as **PARTIAL**, not met. This is a candidate, not a landed cutover: no merge, no deploy, no writer or route activation, and the Payload-Lexical publication path was retired with its coverage loss recorded. |
 | E-05 #285 | Durable editorial publication: the design record and the record/state-machine contract are implemented on `feat/struct-e05-editorial-records-20261020` behind an INACTIVE gate; the production writer and the public route are unchanged. The authenticated producer record, the trust contract and the inactive writer/route adapter follow as separate jobs. |
 | E-06/#286 | Activation remains separate and unauthorized: it needs an accepted E-ACT receipt, and this work activates no writer or route. |
 | E-07 #287 | Remove duplicates only after E-06, zero-import checks, parity and rollback proof. |

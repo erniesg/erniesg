@@ -92,14 +92,39 @@ direct ancestor of the new source head.
 The delta against the previous pin (`119d0411edb525dc7cce2f0f80a5c2ab37f5d040`,
 sha256 `bb86a4bc192c2485f1029dee32964e5488e9277345dfb5a222d17fa3cfce6296`) is
 the merged `erniesg/struct` PR #42 "feat(renderers): publish nested lists and
-attached captions once". It touches the XHTML renderer only:
+attached captions once". The source range `119d0411` → `3d3a7c95` changes
+**exactly EIGHT files**:
 
-- `src/renderers/xhtml-lists.ts` (new), `src/renderers/xhtml-plan.ts` and
-  `src/renderers/xhtml.ts` (modified), plus the `API.md` and `CONTRACT.md`
-  sections that state the new rules. The other two changed files in the
-  source range, `tests/fixtures/resolver-host/parent_harness.py` and
-  `tests/fixtures/resolver-host/real_host_manager.py`, are test fixtures and
-  are not part of the packed artifact.
+| # | file | state | in the packed artifact? |
+| --- | --- | --- | --- |
+| 1 | `API.md` | modified | **yes**, as `package/API.md` (its bytes changed) |
+| 2 | `CONTRACT.md` | modified | **yes**, as `package/CONTRACT.md` (its bytes changed) |
+| 3 | `src/renderers/xhtml-lists.ts` | new | **no**, as source; its compiled output is in `package/dist/` |
+| 4 | `src/renderers/xhtml-plan.ts` | modified | **no**, as source; its compiled output is in `package/dist/` |
+| 5 | `src/renderers/xhtml.ts` | modified | **no**, as source; its compiled output is in `package/dist/` |
+| 6 | `tests/fixtures/resolver-host/parent_harness.py` | modified | **no** (it lives under `tests/`) |
+| 7 | `tests/fixtures/resolver-host/real_host_manager.py` | modified | **no** (it lives under `tests/`) |
+| 8 | `tests/renderers-nested-lists-captions.test.ts` | new | **no** (it lives under `tests/`) |
+
+Precisely: the packed artifact is 33 files in BOTH pins, and it contains
+`package/API.md`, `package/CONTRACT.md`, `package/API_MANIFEST.json`,
+`package/LICENSE`, `package/MIGRATION.md`, `package/NOTICE`,
+`package/README.md`, `package/package.json` and `package/dist/**`. So of the
+eight changed files, only `API.md` and `CONTRACT.md` are part of the packed
+artifact as themselves, and their bytes changed; the three
+`src/renderers/*.ts` sources are NOT packed as sources (only their compiled
+output under `package/dist/` is: `package/dist/renderers/xhtml.js` changed and
+the shared chunk was rehashed from `chunk-ONW4MAUG.js` to
+`chunk-CDVRQ7SP.js`, which is why `package/dist/renderers/epub.js` differs
+only in its chunk import specifier); and the three `tests/**` files — the two
+resolver-host fixtures and the new `tests/renderers-nested-lists-captions.test.ts`
+— are NOT packed at all, because the package's `files` list does not include
+`tests/`. The omitted eighth file is the new test that PR #42 added; it does
+not affect the artifact bytes, the identity fields, the packed file count or
+the public surface.
+
+It touches the XHTML renderer only:
+
 - **Nested and ordered list attributes.** A `list-item` block gains optional,
   additive members of its existing free-form `attributes` bag: `listLevel`
   (integer — the declared nesting level; a negative integer is nesting

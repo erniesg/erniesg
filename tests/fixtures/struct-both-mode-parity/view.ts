@@ -60,6 +60,12 @@ const LIST_TAGS = new Set(['ul', 'ol'])
 
 export type PublicationUnit = {
   kind: string
+  /**
+   * The element the unit was read from (`figcaption`, `li`, `p`, `td`, …).
+   * It is what tells a caption published INSIDE a host's figcaption apart
+   * from a caption published again as a paragraph.
+   */
+  tag: string
   text: string
   id: string | null
   markup: string[]
@@ -104,6 +110,13 @@ export type MarkupDifference = {
 export type PublicationComparison = {
   legacy: PublicationView
   struct: PublicationView
+  /**
+   * The inline marks that were excluded from the comparison. The deprecated
+   * legacy `ResearchPaper` inline-run model has NO field for an inline-code
+   * mark, so that mark is outside the semantic domain both models can
+   * express; see `compareCommonDomain`.
+   */
+  excludedMarks: string[]
   unitsEqual: boolean
   unitDifferences: UnitDifference[]
   markupDifferences: MarkupDifference[]
@@ -273,6 +286,7 @@ function collect(
   if (isUnit && text.length > 0 && !suppressUnits && !isEnvelope) {
     view.units.push({
       kind: unitKind(element, ancestors),
+      tag: element.tag,
       text,
       id,
       markup: ownMarkup(element),
@@ -382,13 +396,31 @@ function differences<T>(
   return found
 }
 
+export type ComparisonOptions = {
+  /**
+   * Inline marks the STRUCT side may carry and the legacy side cannot
+   * express. They are removed from the STRUCT side's inline marks before the
+   * inline-mark comparison, and the exclusion is recorded on the result.
+   */
+  commonDomainMarks?: string[]
+}
+
 /**
  * Compare two rendered publications of the same content.
  */
 export function comparePublications(
   legacy: PublicationView,
   struct: PublicationView,
+  options: ComparisonOptions = {},
 ): PublicationComparison {
+  const excludedMarks = options.commonDomainMarks ?? []
+  // The excluded marks are the only thing that leaves the STRUCT side's
+  // inline marks, so the projected marks are compared and the ORIGINAL
+  // published view is still reported.
+  const structMarkup = struct.units.map((unit) => ({
+    ...unit,
+    markup: unit.markup.filter((mark) => !excludedMarks.includes(mark)),
+  }))
   const unitDifferences = differences(
     legacy.units,
     struct.units,
@@ -396,7 +428,7 @@ export function comparePublications(
   )
   const markupDifferences: MarkupDifference[] = []
   legacy.units.forEach((unit, index) => {
-    const counterpart = struct.units[index]
+    const counterpart = structMarkup[index]
     if (!counterpart) return
     // Only units that are the same published content are compared for their
     // inline marks; a shifted unit is reported by the unit differences.
@@ -426,6 +458,7 @@ export function comparePublications(
   return {
     legacy,
     struct,
+    excludedMarks,
     unitsEqual: unitDifferences.length === 0,
     unitDifferences,
     markupDifferences,
@@ -436,4 +469,30 @@ export function comparePublications(
     internalTargetsEqual: internalTargetDifferences.length === 0,
     internalTargetDifferences,
   }
+}
+
+/**
+ * The inline-code mark is an ADDITIVE Struct capability. The deprecated
+ * legacy `ResearchPaper` inline-run model (`src/research/schema.ts`) has no
+ * field for it, so the legacy overload cannot publish the element at all: it
+ * degrades the mark to plain text inside the same text run.
+ *
+ * The common supported semantic domain therefore EXCLUDES the inline-code
+ * mark. On that domain the two overloads must agree exactly, and the
+ * excluded mark is evidenced separately, as a scoped model boundary.
+ */
+export const INLINE_CODE_MARK = 'code'
+
+/**
+ * Compare two rendered publications over the common supported semantic
+ * domain: everything the legacy model can express, with the inline-code mark
+ * excluded because the legacy model cannot carry it.
+ */
+export function compareCommonDomain(
+  legacy: PublicationView,
+  struct: PublicationView,
+): PublicationComparison {
+  return comparePublications(legacy, struct, {
+    commonDomainMarks: [INLINE_CODE_MARK],
+  })
 }

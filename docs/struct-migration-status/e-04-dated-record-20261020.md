@@ -118,8 +118,6 @@ lane against the base commit's output:
   semantic ids;
 - the **published asset file name** follows the Struct asset id instead of
   `asset-<hash16>`;
-- the **footnote reference anchor id** is the Struct relationship id instead of
-  `ref-<identifier>`;
 - **one inline-code span** loses its `<code>` styling. The pinned `StructInline` has no
   code flag (nor a strikethrough or a hard-break flag), and the app's own Struct renderer
   already rendered only bold/italic/superscript/subscript, so the narrowing converges the
@@ -127,14 +125,26 @@ lane against the base commit's output:
   **not silent**: the conversion emits a `lossy-inline-style` warning diagnostic naming
   the block that lost the style, and a test asserts that diagnostic.
 
+  The pinned production entry has **no footnote**: neither the base commit's nor this
+  head's published `phone-webpub/index.html` contains a `ref-` id, a `<sup>` or a
+  `doc-noteref`. The re-target's footnote-reference change is a **code-level** change, not
+  a measured change of that entry: a footnote reference's anchor id is now the Struct
+  relationship id instead of `ref-<identifier>` (the renderer emits the link's
+  `relationshipId` as the element id, and the projection now mints a Struct relationship
+  id). It is pinned by `src/publication/renderers/vivliostyle.test.ts`, which follows the
+  graph's own relationship id, and it is visible in the synthetic publication fixture.
+
   The corpus statistic, measured with the repository's own remark pipeline
   (`remark-parse` + `remark-mdx` + `remark-gfm` + `remark-math`) over the 112 MDX files in
   `src/content/blog/**`: **0 strikethrough spans, 0 hard breaks and 373 inline-code
   spans** in the corpus, of which **exactly 1 is in the pinned production entry** - the
-  one that is published. (A narrower scan run during the E-04 proof reported 57 inline
-  code spans and 5 hard breaks; the discrepancy is in the counting scope, and only the
-  pinned-entry number is load-bearing for the E-04 outcome. The corpus-wide numbers here
-  are the ones the independent final review measured.)
+  one that is published. (The earlier E-04 proof scan reported 57 inline
+  code spans and 5 hard breaks; that scan was a RAW-TEXT grep over the 31 English
+  `index.mdx` files that counted matching LINES with a regular expression, not AST nodes
+  with the repository's remark pipeline, and it ran over a different file set. The two
+  numbers are therefore not comparable. Only the pinned-entry number is load-bearing for
+  the E-04 outcome, and it is 1 under both scans. The corpus-wide numbers here are the
+  ones the independent final review measured.)
 
 ### 2.2 The frozen golden was NOT regenerated
 
@@ -301,7 +311,7 @@ acceptance names what was fixed and what was deliberately kept:
 | the corpus statistic mixed scopes | LOW | **CORRECTED** in §2.1: the corpus-wide numbers are the ones the review measured, and the pinned-entry number (1) is stated separately. |
 | "git diff --stat shows no change under `src/struct/`" | NOTE | **CORRECTED** in §1.1: the compatibility copies are unchanged; `src/struct/struct.test.ts` changes only its stale reference assertion. |
 | the inventory did not yet carry the compiler-proven importer set at the reviewed head | NOTE | **FIXED** in a later commit (`af71a30f`): the inventory now carries the measured post-E-04 importer set, and the acceptance names the head that carries it. |
-| the branch tip moved during the review | NOTE | **ACCEPTED**: the acceptance names the exact head SHA. |
+| the branch tip moved during the review | NOTE | **ACCEPTED**: this record names the branch and the base; the acceptance (the PR request and the coordinator's result) names the exact head SHA. |
 | the bundle parity rule now excludes test files from the production scan | NOTE | **ACCEPTED as a deliberate reading**: the rule is about PRODUCTION readers. The scan still asserts that no production module reads bundle wire bytes and that no production module uses the value verifier, and it names the single permitted production importer. |
 | the byte counts in the divergence table are character lengths | NOTE | **CORRECTED** in §2: the counts are labelled as characters, with the UTF-8 byte counts. |
 

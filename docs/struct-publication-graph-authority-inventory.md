@@ -680,8 +680,14 @@ These are the **required** gates, derived from ADR-0001, the E-04 issue
 acceptance, and the app cutover plan, cross-referenced to the concrete
 artifacts that must change. **None of them is implemented or verified here.**
 Every row is **PENDING**, and the cutover plan's "E-04 future gates" table
-mirrors these rows as pending obligations; nothing in this table is a runtime,
-golden, receipt, or activation result.
+mirrors these rows as pending obligations (EG-01..EG-15 one-to-one with
+G-01..G-15); nothing in this table is a runtime, golden, receipt, or
+activation result. **Drift rule:** this table and the plan's "E-04 future
+gates" table are the same obligation set; any row added, removed, or
+reworded in one must be applied identically to the other in the same change,
+and a row present in only one of the two is a defect. The plan's
+`EG-` prefix and this table's `G-` prefix are the only naming difference; the
+gate text, artifact list, and pending status must match.
 
 | # | Gate (required) | Concrete artifact that must change | Current status |
 |---|---|---|---|
@@ -692,13 +698,14 @@ golden, receipt, or activation result.
 | G-05 | The graph owns **no receipt** | `src/publication/renderers/vivliostyle.ts:109-117` + `:1189-1200`; `src/publication/source-adapter.ts:25-61` + `:148-175`; a `struct-cutover` admission assertion in `tools/publication-check.mjs` (the release check never calls the conformance allowlist); and the conformance allowlist in `src/publication/adapter-conformance.ts:447-494` must be widened **deliberately** to accept the Struct bindings | not done |
 | G-06 | The graph owns **no writer** and **no release path** | `tools/publication-build.mjs` (`package.json` `build:production`); `src/publication/renderers/vivliostyle.ts:1081-1207` | not done |
 | G-07 | No reverse graph→ResearchPaper writer | `src/publication/research-paper-adapter.ts:198-296` and the round-trip assertion at `src/publication/research-paper-adapter.test.ts:17` | not done |
-| G-08 | Red-first static assertion: `PublicationGraph`, `publicationGraphSchema`, `serializePublicationGraph`, and graph persistence helpers are **absent** from storage / API / route / writer / release modules; only renderer/projection modules may import them | extend `tests/struct-adapter-boundary.test.ts` (AST harness at `:12-55`) to the `src/publication/**` + route/worker/writer roots | **does not exist** |
+| G-08 | Red-first static assertion: `PublicationGraph`, `publicationGraphSchema`, `serializePublicationGraph`, graph persistence helpers, and graph-bearing **values/property access** (including `bundle.graph` and `PublicationSourceResult.graph`) are **absent** from storage / API / route / writer / release modules; only renderer/projection modules may import or read them, and the concrete writer functions in `tools/publication-build.mjs` and `tools/publication-check.mjs` must not receive or read a graph | extend `tests/struct-adapter-boundary.test.ts` (AST harness at `:12-55`) to the `src/publication/**` + route/worker/writer roots, resolving imports AND property/dataflow access | **does not exist** |
 | G-09 | Byte-identical double-adapt conformance for one pinned `StructDocument`, plus an assertion that the graph is never persisted or treated as canonical text | `src/publication/struct-adapter.ts:188` (`adaptStructDocument`), `src/publication/struct-adapter.test.ts` | not found |
-| G-10 | Receipts carry the canonical Struct digests and the exact package pin/version, including a mandatory `semanticReceiptSha256` compared with `structReceiptDigest(decodedDocument)`; graph digests demoted to diagnostic | `src/publication/renderers/vivliostyle.ts:109-117`; `src/publication/source-adapter.ts:25-61`; `src/publication/adapter-conformance.ts:447-494`; `tools/publication-check.mjs:1162`, `:1178`; `tests/struct-package-parity.test.ts:18-21` | not done |
+| G-10 | Receipts carry the canonical Struct digests and the exact package pin/version, including a mandatory `documentSha256` compared with the document digest recomputed from `decodedDocument` (as verified by `decodeStructBundle`), a mandatory `semanticReceiptSha256` compared with `structReceiptDigest(decodedDocument)` decoded from the receipt-bound Struct bundle artifact `struct-bundle.bin` written into the render output directory, and every receipt package-identity field (`packageSourceCommit`, `packageArtifact`, `packageArtifactSha256`, `packageIntegrity`, `packageVersion`) compared against `vendor/struct/provenance.json`; graph digests demoted to diagnostic | `src/publication/renderers/vivliostyle.ts:109-117`; `src/publication/source-adapter.ts:25-61`; `src/publication/adapter-conformance.ts:447-494`; `tools/publication-check.mjs:35-59`, `:1145`, `:1162`, `:1178`; `tests/struct-package-parity.test.ts:18-21`; `tests/struct-package-artifact.test.ts:45-77`; `vendor/struct/provenance.json` | not done |
 | G-11 | `ResearchPaper` stays a read-only compatibility model; a checked-in caller/test inventory exists for `src/publication/research-paper-adapter.ts` | [`docs/struct-research-paper-caller-inventory.md`](struct-research-paper-caller-inventory.md) (companion doc, same tree after the inventory merge) | inventory **exists** (companion doc; grep-bounded, not compiler-proven); read-only enforcement not done |
 | G-12 | EPUBCheck / Ace / human-accessibility acceptance stays app-owned | `src/publication/renderers/vivliostyle.ts:724` (`publicationEpubAccessibilityMetadata`), `src/research/publication-integrity.ts` | app-owned today |
 | G-13 | Legacy `research/epub.ts` overloads keep both-mode parity until the last `ResearchPaper` consumer migrates | `src/research/epub.ts:133-141`, `:1422-1447`, `:2094-2118` | parity **not demonstrated** here |
 | G-14 | E-07 deletion gates: zero production imports to removed portable modules; package-only app tests; retained-compatibility register with owner, caller inventory, warning/horizon, removal issue | `src/struct/**`, `src/struct-adapters/**` | not done |
+| G-15 | No non-Struct graph producer remains: the forward `ResearchPaper` -> `PublicationGraph` bridge is retired or migrated onto the Struct projection | `src/publication/research-paper-adapter.ts:81`, `:298`, `:304`, `:317`; `src/publication/struct-adapter.ts:188`, `:1313` | not done |
 
 ## 10. Tests and frozen fixtures (kept separate from production callers)
 

@@ -19,9 +19,8 @@ Every challenge in this book takes five steps.
 4. **Try to break it.**
 5. **Send it in**, read what the grader says, go again.
 
-Nearly everyone skips step 4. It is the step that decides whether your code
-really works or only worked on the example. Two easy problems will show you
-why.
+Step 4 tells you whether your code works in general or only on the example.
+Two easy problems show how.
 
 ## A warm-up
 
@@ -29,19 +28,15 @@ why.
 > In: two numbers, `a` and `b`, on one line. Out: their sum.
 > Rules: each number is between 0 and 9. Example: `9 7` gives `16`.
 
-There is no clever idea here. This one is about the problem text itself, which
-is a deal: it tells you exactly what your code will be handed, and exactly what
-it must hand back.
+This one is about the problem text. The text is a deal: it says exactly what
+your code is given and exactly what it must give back.
 
-Read the deal again. Both numbers sit on **one** line, so read one line and
-split it. The answer is a number on its own — not "The answer is 16", just
-`16`. Each number has a single digit, so nothing huge is coming.
-
-Most wrong answers are not bad ideas. They are unread problems.
+Both numbers are on **one** line, so read one line and split it. The answer is
+the number alone: `16`, not "The answer is 16". Each number is a single digit,
+so the input is small.
 
 :::exercise{id="ch00-read-the-deal"}
-Try the deal yourself. The two numbers are already here; print their sum and
-nothing else — just the number, not a sentence around it.
+The two numbers are already here. Print their sum and nothing else.
 
 ```python
 a = 9
@@ -68,7 +63,7 @@ print(a + b)
 > Rules: at least 2 numbers, at most 200,000 of them. No number is above
 > 200,000. Example: `[1, 2, 3]` gives `6`.
 
-The first idea most people have: try every pair and keep the best.
+A first idea is to try every pair and keep the best.
 
 ```python run
 def biggest_product(numbers):
@@ -83,24 +78,20 @@ def biggest_product(numbers):
 print(biggest_product([1, 2, 3]))
 ```
 
-This gives right answers. It is still useless, and you can tell before you run
-it.
+This gives right answers, but it is too slow. You can tell before you run it.
 
-**Count the work first.** Every number gets paired with every number. With 10
-numbers that is 10 × 10 = 100 pairs. Fine. But the rules allow 200,000 numbers,
-and 200,000 × 200,000 is 40 billion pairs.
+**Count the work first.** Every number is paired with every number. With 10
+numbers that is 10 × 10 = 100 pairs. The rules allow 200,000 numbers, and
+200,000 × 200,000 is 40 billion pairs.
 
-How long is 40 billion multiplications? Python does about 10 million simple
-steps each second. Divide: 40,000,000,000 ÷ 10,000,000 = 4,000 seconds. That is
-over an hour. You get five seconds.
+Python does about 10 million simple steps a second. 40,000,000,000 ÷
+10,000,000 = 4,000 seconds, which is over an hour. You get five seconds.
 
-Here is the habit worth keeping: multiply the sizes, divide by ten million,
-look at the answer. It takes ten seconds and it saves you from writing an hour
-of code you would have thrown away.
+So: multiply the sizes, divide by ten million, and look at the answer. It takes
+ten seconds, before you write any code.
 
-**So think again.** None of the numbers are negative. Multiply two big numbers
-and you get a big result, so the answer has to be the two biggest numbers in
-the list. Find those instead of checking every pair:
+**Think again.** None of the numbers are negative, so the biggest product comes
+from the two biggest numbers. Find those instead of checking every pair:
 
 ```python run
 def biggest_product(numbers):
@@ -113,12 +104,11 @@ print(biggest_product([1, 2, 3]))   # 6, as promised
 print(biggest_product([5, 5, 1]))   # now try this one
 ```
 
-Two quick sweeps through the list. The example gives 6. Looks finished.
+This makes two passes through the list, and the example gives 6.
 
 :::exercise{id="ch00-count-the-work"}
-Do the arithmetic before you write anything. A problem allows up to 100,000
-numbers. Print how many seconds the every-pair method would take, at ten
-million steps a second.
+A problem allows up to 100,000 numbers. Print how many seconds the every-pair
+method would take, at ten million steps a second.
 
 ```python
 n = 100_000
@@ -143,26 +133,25 @@ print(pairs // steps_per_second)
 
 Try it on `[2, 2]`.
 
-`max` finds 2. The middle line then keeps everything that is *not* 2 — which
-throws away both of them. Now `rest` is empty, and asking for the biggest value
-in an empty list is an error. Your program crashes.
+`max` finds 2. The middle line keeps everything that is *not* 2, so both
+values are dropped. `rest` is empty, and `max` of an empty list is an error.
+The program crashes.
 
-Try `[5, 5, 1]`. Same trouble, but quieter. Both fives get thrown out, `rest`
-is `[1]`, and you get 5. The right answer is 25, because the two fives sit in
-different spots and the problem said that was allowed.
+Try `[5, 5, 1]`. Both fives are dropped, `rest` is `[1]`, and the result is 5.
+The right answer is 25: the two fives are in different spots, and the problem
+allows that.
 
-Throwing away *the biggest value* and throwing away *one copy of it* are
-different things. They only come apart when a value appears twice — and the
-example had no repeats, so the example said nothing about it.
+The code drops every copy of the biggest value when it should drop only one.
+The two only differ when a value appears twice. The example had no repeats, so
+it could not show the bug.
 
-That is the lesson. Your bugs hide on the inputs you never pictured, which is
-exactly why picturing inputs is a bad way to test.
+Bugs like this sit on inputs you didn't think of. That is why testing only the
+inputs you can think of is not enough.
 
 ## Let the computer find the bug
 
-You have two versions now. The every-pair one is slow but obviously right. The
-new one is fast and suspicious. So race them on random lists until they
-disagree.
+You now have two versions. The every-pair one is slow but clearly right. The
+new one is fast but may be wrong. Run both on random lists until they disagree.
 
 ```python run
 import random
@@ -183,23 +172,18 @@ while True:
         break
 ```
 
-Two things here are deliberate.
+**The lists are tiny**: two to four numbers, each between 0 and 3. A failing
+example that small can be read at a glance. Small numbers also make repeats
+common, and repeats are where this code breaks.
 
-**The lists are tiny** — two to four numbers, each between 0 and 3. A failing
-example you can read at a glance is worth far more than a huge one. Small
-numbers also mean repeats show up almost immediately, and repeats are exactly
-where your code breaks.
+**The slow version is the judge.** You don't have a fast correct answer to test
+against; that is what you are trying to write. The slow one is enough, because
+the lists are short.
 
-**The slow version is the judge.** You don't need a fast correct answer to test
-against; that's the thing you're trying to write. You need an obvious one, and
-slow doesn't matter when the list has four numbers in it.
+I ran this. It stopped after eleven tries, on `[0, 1, 3, 3]`. My version said 3
+and the slow one said 9, because both threes were dropped.
 
-I ran this. It stopped after eleven tries, on `[0, 1, 3, 3]`. My version said 3.
-The slow one said 9. Two threes — one of them deleted along with the other. One
-second of computer time, and it handed me the smallest example that proves I
-was wrong.
-
-Now fix it. Walk the list once and remember the best two values as you go:
+To fix it, walk the list once and keep the two best values as you go:
 
 ```python run
 def biggest_product(numbers):
@@ -215,39 +199,35 @@ def biggest_product(numbers):
 print(biggest_product([2, 2]), biggest_product([5, 5, 1]))
 ```
 
-`[2, 2]` gives 4. `[5, 5, 1]` gives 25. Start the race again and it stays
-quiet.
+Run the random comparison again and it finds no difference.
 
 ## The four tiers
 
-The grader runs that same idea for you, in this order, stopping at the first
+The grader runs these checks for you, in this order, and stops at the first
 failure.
 
-**Public** — the examples from the problem. Red here means you misread the
-deal.
-**Edge** — the awkward cases: only two numbers, every number the same, the
-largest number allowed.
-**Stress** — your code against the obvious slow one, on hundreds of small
+**Public**: the examples from the problem. A failure here usually means the
+problem was misread.
+**Edge**: awkward cases, such as only two numbers, every number the same, or
+the largest number allowed.
+**Stress**: your code against a slow, simple version on hundreds of small
 random lists. When it fails, it shows you the list, like `[0, 1, 3, 3]`.
-**Perf** — one list near the size limit. The every-pair version dies here
-however correct it is.
+**Perf**: one list near the size limit. The every-pair version fails here even
+though its answers are right.
 
-The order matters. Hearing that your code is too slow helps nobody while it is
-still wrong on `[2, 2]`.
+Speed is checked last because it only matters once the answers are right.
 
 ## What the agent does with this
 
-The agent you build has to check its own work after it changes code. It can't
-ask you every time.
+After the agent you build changes code, it has to check its own work. It
+can't ask you every time.
 
-So it runs this same loop: the tests that already exist, then the awkward
-cases, then the old code against the new one on inputs where nothing should
-have changed, then a check that it hasn't quietly made something slow.
-
-You're teaching it a habit. Hard to teach one you don't have.
+It runs the same loop: the existing tests, then awkward cases, then the old
+code against the new one on inputs where nothing should have changed, then a
+check that nothing got slower.
 
 ## Your turn
 
-Two challenges. The first checks you can read a deal. The second is the one
-above — write it, break it yourself, then fix it. The stress tier will try
-either way. Better that it finds nothing.
+Two challenges. The first checks that you can read a problem statement. The
+second is the one above: write it, try to break it, then fix it. The stress tier
+will also try to break it.

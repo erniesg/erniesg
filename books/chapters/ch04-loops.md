@@ -14,15 +14,13 @@ A man has 120 in his account and forty-three payments to get through before
 payday. Every time the balance dips below zero the bank takes 8, and it takes
 it on every dip, not once a month.
 
-Before he spends anything else he wants one number: what this month's dips will
-cost him. Forty-three subtractions by hand take ten minutes, and somewhere in
-the middle he will slip a digit and not know it. A loop takes four lines and
-does not slip.
+Before he spends anything else, he wants to know what this month's dips will
+cost him. Forty-three subtractions by hand take ten minutes, and it is easy to
+get a digit wrong without noticing. A loop does it in four lines.
 
 ## Doing the same thing to every item
 
-Here are five of his payments. The loop below would be the same for
-forty-three.
+Here are five of his payments. The same loop works for forty-three.
 
 ```python run
 payments = [45, 30, 28, 40, 19]
@@ -30,14 +28,14 @@ for payment in payments:
     print(payment)
 ```
 
-`payment` is a name Python re-points for you. First time round it holds 45,
-then 30, and so on until the list runs out. Nothing is counted and nothing is
-looked up by position — you get one item, then the next.
+Each time round, Python sets `payment` to the next item. First it holds 45,
+then 30, and so on until the list runs out. You don't count or use positions;
+you get one item, then the next.
 
 ## Keeping a running total
 
-The account is the interesting part, and it needs a name that survives from one
-time round to the next.
+To follow the balance, you need a name that keeps its value from one time
+round to the next.
 
 ```python run
 balance = 120
@@ -46,9 +44,9 @@ for payment in payments:
     print(balance)
 ```
 
-He is under by the fourth payment. `balance` is created once, *before* the
-loop; each time round changes it. Move that first line inside the loop and it
-is built fresh every time, which quietly answers a different question:
+He is under by the fourth payment. `balance` is set once, *before* the loop,
+and each time round changes it. Set inside the loop, it restarts at 120 every
+time:
 
 ```python run
 balance = 120
@@ -58,9 +56,8 @@ for payment in payments:
 print(balance)
 ```
 
-101 is 120 minus 19, the last payment and nothing else. No crash, no error
-message, and on the page it looks almost identical to the working version.
-Accumulators go before the loop.
+101 is 120 minus 19, the last payment only. A name that collects a total
+has to be set before the loop.
 
 :::exercise{id="ch04-add-them-up"}
 No `sum()` allowed. Add the payments up with a loop and print the total.
@@ -89,7 +86,7 @@ print(total)
 
 ## Keeping the best so far
 
-Same pass, one more name. How low did it actually get?
+One more name in the same loop tracks how low the balance went:
 
 ```python run
 balance = 120
@@ -101,10 +98,9 @@ for payment in payments:
 print(lowest)
 ```
 
-`lowest` starts at 120 because 120 is a balance that really happened. Start it
-at 0 instead and an account that never dipped would report a low of 0 — a
-number that was never true of it. Whatever you are tracking, start it at
-something genuinely in the running.
+`lowest` starts at 120 because 120 is a balance the account really had. If
+it started at 0, an account that never dipped would report a low of 0, which
+it never had. Start a best-so-far at a real value from the data.
 
 :::exercise{id="ch04-biggest-payment"}
 No `max()` allowed. Print the biggest payment, starting your best-so-far at a
@@ -135,7 +131,7 @@ print(biggest)
 
 ## Counting, with a condition
 
-Now his actual question.
+Now the charges:
 
 ```python run
 balance = 120
@@ -147,17 +143,15 @@ for payment in payments:
 print(charged)
 ```
 
-Two dips, 16. One pass answered all three questions — the running balance, the
-lowest point, the charge — because a loop can carry as many names as you give
-it.
+Two dips cost 16. A single loop can keep as many names as you need, so one
+pass could find the running balance, the lowest point and the charge together.
 
 :::figure{id="running-balance"}
 Two names updated as the marker moves, not worked out afterwards.
 :::
 
 :::exercise{id="ch04-thirty-or-more"}
-Count the payments of 30 **or more**. The 30 itself counts — read the
-boundary before you write the test.
+Count the payments of 30 **or more**. A payment of exactly 30 counts.
 
 ```python
 payments = [45, 30, 28, 40, 19]
@@ -182,8 +176,8 @@ print(count)
 
 ## enumerate, when the position matters
 
-He also wants to know *which* payment tipped him, so he can move it. `enumerate`
-hands you the position along with the item.
+He also wants to know *which* payment took him under, so he can move it.
+`enumerate` gives you the position along with the item.
 
 ```python run
 balance = 120
@@ -196,8 +190,8 @@ for position, payment in enumerate(payments):
 
 Positions count from zero, so payment 3 is the fourth one: the 40.
 
-`break` leaves the loop on the spot. Without it the message prints for every
-later payment too, since the balance stays under once it is under.
+`break` leaves the loop straight away. Without it, the message would print
+for every later payment too, because the balance stays below zero.
 
 :::exercise{id="ch04-first-big-one"}
 Print the position of the first payment over 35, then stop looking.
@@ -232,8 +226,7 @@ for payment in payments:
     print(payment)
 ```
 
-The 19 is missing. Everything below `continue` in the loop body is simply not
-reached for that item.
+For the 19, the lines below `continue` don't run, so it isn't printed.
 
 ## range, and the number it stops at
 
@@ -244,8 +237,8 @@ for week in range(5):
     print(week)
 ```
 
-`range(5)` gives five numbers and the last one is 4. This catches everyone
-once. Read `range(5)` as *how many*, never as *up to*.
+`range(5)` gives five numbers, 0 to 4. The number is how many, not the
+last one.
 
 ```python run
 print(list(range(5)))
@@ -253,17 +246,16 @@ print(list(range(1, 6)))
 print(list(range(0, 20, 5)))
 ```
 
-Two arguments give a start and a stop, and the stop is still left out. Three
-give you a step.
+With two arguments you give a start and a stop, and the stop is still left
+out. A third argument sets the step.
 
-If you catch yourself writing `range(len(payments))` in order to look items up
-by position, you wanted `enumerate`.
+To get positions and items from a list, use `enumerate` rather than looking
+items up with `range(len(payments))`.
 
 ## while, for when you do not know how many
 
-`for` needs something to walk along. `while` just repeats as long as a question
-stays true, which is what you want when the *number of rounds* is the answer
-you are after.
+`for` walks along a list or a range. `while` repeats as long as a test stays
+true. Use it when the *number of rounds* is what you want to find out.
 
 He is 42 under and puts 25 aside a week. How many weeks until he is 100 clear?
 
@@ -276,15 +268,13 @@ while balance < 100:
 print(weeks, balance)
 ```
 
-Every `while` needs three things, and a loop that runs forever is missing the
-third.
+A `while` loop that finishes has three parts:
 
-1. The question is true when you arrive. `-42 < 100`.
-2. Something in the body changes a name the question asks about. `balance`
-   grows by 25.
-3. That change moves the question towards false, and gets there.
+1. The test is true when the loop starts. `-42 < 100`.
+2. Something in the body changes a name the test uses. `balance` grows by 25.
+3. That change moves the test towards false, and gets there.
 
-Drop the line that changes the balance and the first two still hold:
+Here is the loop without the line that changes the balance:
 
 ```python
 balance = -42
@@ -294,13 +284,12 @@ while balance < 100:
 print(weeks)
 ```
 
-Do not run that one. `balance` stays at -42, the question stays true, and the
-program sits there until you kill it.
+If you ran it, `balance` would stay at -42, the test would stay true, and the
+loop would never end until you stopped the program.
 
-Point three is the one people miss even when something does change. If he put
-aside 0 a week, the balance moves by 0 each round and never arrives. That is
-not a bug in the loop — it is a case the loop cannot answer, and it belongs in
-an `if` before the loop rather than a guess inside it.
+Point three can fail even when something does change. If he put aside 0 a
+week, the balance would change by 0 each round and never reach 100. The loop
+can't answer that case, so check for it with an `if` before the loop.
 
 :::exercise{id="ch04-weeks-to-save"}
 He starts at 0 and puts 30 aside each week. Use a `while` loop to print how
@@ -329,7 +318,8 @@ print(weeks)
 
 ## Changing a list while you walk it
 
-This looks reasonable. It is not.
+Chapter 3 removed items from a list while looping over it. Here is the same
+mistake with payments:
 
 ```python run
 amounts = [10, 5, 5, 40]
@@ -339,13 +329,12 @@ for amount in amounts:
 print(amounts)
 ```
 
-A 5 survived. Underneath, the loop walks by position: it hands you position 0,
-then 1, then 2. Removing the 10 slides the first 5 down into position 0 — a
-position already passed — so position 1 now holds the *second* 5, and that is
-what the loop hands you next. One of the two is never visited at all, and the
-shrinking list runs out before the loop has been all the way along it.
+A 5 is still there. Removing the 10 moves everything down one place. The
+loop looks at position 1 next, which now holds the second 5, so the first 5 is
+skipped. Removing a 5 leaves `[5, 40]`, which has no position 2, so the loop
+stops before it reaches the 40.
 
-Read one list, build another.
+The fix is the same: read one list and build another.
 
 ```python run
 amounts = [10, 5, 5, 40]
@@ -358,19 +347,18 @@ print(kept)
 
 ## What this buys the agent
 
-The agent walks a repository — say 1,400 files — deciding file by file what is
-worth reading. That is this chapter and very little else: a running count of
-the tokens it has spent, the best-matching file so far, `continue` past the
-ones it cannot parse, `break` the moment the budget is gone, `enumerate` so the
-progress line can say 812 of 1,400.
+The agent walks a repository of, say, 1,400 files, deciding which are worth
+reading. It keeps a running count of the tokens it has spent and the
+best-matching file so far. It uses `continue` to skip files it cannot parse,
+`break` when the budget runs out, and `enumerate` so the progress line can say
+812 of 1,400.
 
-The list rule matters more to an agent than to a person. It gathers the edits
-it wants while walking the files, then applies them once the walk is over.
-Changing the thing you are in the middle of reading is how an agent skips half
-its own work and reports success.
+The agent also collects the edits it wants while walking the files, and
+applies them after the walk. If it changed the files while walking them, it
+could skip some of its own work and still report success.
 
 ## Your turn
 
-Two challenges, both a single pass. The first walks you through it. The second
-gives you hints, and its worked solution is for after your own is green — its
-last tier will not accept a loop that counts days one at a time.
+Two challenges, both solved in a single pass. The first walks you through it.
+The second gives hints; try to pass it before reading the worked solution. Its
+last tier needs a loop that does not count days one at a time.

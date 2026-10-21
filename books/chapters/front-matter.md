@@ -8,27 +8,26 @@ title = "Before the first line of code"
 
 ## Why this matters
 
-People care about outcomes, not computers.
+A clinic sees one patient every four minutes. At 4pm thirty-eight people are
+waiting when a man walks in with chest pain. If the queue is served in arrival
+order, he is seen at 6:32pm. If it is served by urgency, he is seen in four
+minutes. The cost is that someone has to re-scan the whole queue each time a
+new patient arrives.
 
-A clinic clears a patient every four minutes. At 4pm thirty-eight people are
-waiting when a man walks in with chest pain. Serve the queue in arrival order
-and he is seen at 6:32pm. Serve it by urgency and he is seen in four minutes —
-but someone has to re-scan the whole queue every time anyone new arrives.
+The list and the staff are the same in both cases. Only the method changed.
+Data structures and algorithms (DSA) are methods like this: ways of arranging
+what you have so the answer comes back in time.
 
-Same list, same staff. That whole difference is what data structures and
-algorithms are — ways of arranging what you have so the answer comes back in
-time. DSA, if you meet the initials somewhere.
-
-Code delivers outcomes like that at volumes people can't. Coding agents write
-the code. Both are only as good as the methods inside them, so you build one
-here, piece by piece, because that is how the intuition sticks.
+Code applies methods like these at volumes people can't. Coding agents write
+code, and they are only as good as the methods inside them. In this book you
+build one, piece by piece.
 
 ## What you build
 
-A coding agent: it indexes a repository, finds what a question needs, plans a
-change, applies a patch, runs the tests, reports back.
+A coding agent. It indexes a repository, finds what a question needs, plans a
+change, applies a patch, runs the tests and reports back.
 
-Every structure in this book earns its place by making it better.
+Each structure in this book makes the agent better.
 
 | Structure | What it buys the agent |
 |---|---|
@@ -54,21 +53,22 @@ Every structure in this book earns its place by making it better.
 - **IX · At scale** — design cases where the answer is an architecture.
 - **Capstone** — assemble the agent.
 
-Each chapter: a situation where the outcome matters, the idea, the agent's
-version of it, then challenges you write yourself.
+Each chapter has four parts: a situation where the outcome matters, the idea,
+the agent's version of it, and challenges you write yourself.
 
 ## How to work through it
 
-Every challenge is graded by four tiers that stop at the first failure; the
-next chapter earns them on a problem that fails three of them.
+Each challenge is graded in four tiers of tests. Grading stops at the first
+tier that fails. The next chapter explains the tiers using a problem that fails
+three of them.
 
-Every chapter ends with a ladder. The first problem is worked through with you,
-the next carry hints, and the last are yours alone: no hints, and a worked
-solution meant for after you have written your own. The book ends the same way,
-with a capstone that needs everything at once.
+Each chapter ends with a ladder of challenges. The first is worked through with
+you. The next ones have hints. The last ones have no hints, and their worked
+solution is for reading after you have written your own. The book ends the same
+way, with a capstone that uses everything.
 
-The first run is meant to be red. Hints are staged and free; read the solution
-only once you have a failing test you understand — that order is the method, and
-keeping to it is yours to do. Where the tiers can run, they will hold you to it:
-`python3 books/tools/preview.py` serves this same book with the grader
+Your first run will usually fail some tests. Hints are revealed one at a time
+and cost nothing. Read the solution only once you have a failing test you
+understand. Where the tiers can run, they hold you to that order:
+`python3 books/tools/preview.py` serves this book with the grader running
 behind it.

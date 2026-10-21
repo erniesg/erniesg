@@ -15,13 +15,13 @@ donation in cents per line, and runs a script that adds them up. The treasurer
 wants the total at 5pm. At 4:41 the script prints no total. It prints eleven
 lines of text and stops.
 
-Those eleven lines are not noise. They name the file, the line, and the exact
-thing Python refused to do. Read them and this costs a minute. Ignore them and
-you re-check 312 rows by eye.
+Those eleven lines name the file, the line, and the exact thing Python could
+not do. Reading them takes a minute. Without them, you re-check 312 rows by
+eye.
 
 ## Read it from the bottom
 
-Here is a smaller version of that script, four rows instead of 312:
+Here is a smaller version of that script, with four rows:
 
 ```python
 rows = ["1200", "850", "twelve", "3000"]
@@ -41,7 +41,7 @@ def total(rows):
 print(total(rows))
 ```
 
-Run it and you get this:
+Running it prints this:
 
 ```text
 Traceback (most recent call last):
@@ -57,32 +57,29 @@ Traceback (most recent call last):
 ValueError: invalid literal for int() with base 10: 'twelve'
 ```
 
-**The last line is what went wrong.** `ValueError: invalid literal for int()
-with base 10: 'twelve'`. Python was handed the text `'twelve'` and asked to
-make a number of it. There is no number in it. That is the entire fact, and it
-even quotes the offending value back to you.
+**The last line says what went wrong.** `ValueError: invalid literal for int()
+with base 10: 'twelve'` means Python was asked to turn the text `'twelve'`
+into a number, and it has no digits. The message quotes the bad value.
 
-**The lines above are how you got there.** Each `File ... line N` block is a
-call that was still in progress. Reading up from the bottom: it broke inside
-`read_cents`, at line 5. `read_cents` was called by `total`, at line 11.
-`total` was called from the bottom of the file, at line 15.
+**The lines above show how the program got there.** Each `File ... line N`
+block is a call that had not finished yet. Reading up from the bottom: it
+failed inside `read_cents`, at line 5. `read_cents` was called by `total`, at
+line 11. `total` was called from the bottom of the file, at line 15.
 
-So the route is printed in the order it was built, and you want it in the
-order it collapsed. Hence: bottom first, then upward. The `^^^^` marks are
-Python pointing at the part of the line it means.
+The calls are printed in the order they were made, so the one that failed is
+at the bottom. Start there and read upward. The `^^^^` marks point at the part
+of the line Python means.
 
-Two lines carry nearly all of it: the last one, and the lowest `File` line
-naming a file *you* wrote. Everything between them is usually somebody else's
-code doing what you asked.
+The two most useful lines are the last one and the lowest `File` line that
+names a file *you* wrote. Lines between them are usually other people's code.
 
 :::figure{id="reading-a-traceback"}
 Four lines, read from the bottom up.
 :::
 
-Here is the same failure, live. The `try` is only so the rest of this page
-keeps working, and `file=sys.stdout` only so the text lands here with
-everything else; `traceback.print_exc` prints exactly what Python prints when
-nothing catches the error.
+Here is the same failure, run live. `traceback.print_exc` prints what Python
+prints when nothing catches the error. The `try` keeps the rest of the page
+running, and `file=sys.stdout` shows the text here.
 
 ```python run
 import sys
@@ -107,7 +104,7 @@ except ValueError:
 
 ## The handful you meet constantly
 
-Seven names cover almost everything you will hit this year.
+These seven errors are the ones you will see most often.
 
 | Error | What Python is telling you |
 |---|---|
@@ -119,9 +116,9 @@ Seven names cover almost everything you will hit this year.
 | `ZeroDivisionError` | you divided by zero |
 | `IndentationError` | the spaces at the front of a line do not line up |
 
-Six of those happen while your program runs. `IndentationError` is different:
-Python reads the whole file before running any of it, so a crooked line stops
-everything before the first instruction:
+Six of those happen while your program runs. `IndentationError` happens
+earlier. Python reads the whole file before running any of it, so a badly
+indented line stops the program before the first instruction:
 
 ```text
   File "/Users/erniesg/crooked.py", line 5
@@ -130,13 +127,14 @@ everything before the first instruction:
 IndentationError: unindent does not match any outer indentation level
 ```
 
-No `Traceback` header, no call chain. Nothing had started yet.
+There is no `Traceback` header and no list of calls, because nothing had
+started yet.
 
 ## Catching one instead of crashing
 
-`try` says: attempt this. `except SomeError` says: if exactly that goes wrong,
-do this instead of stopping. `as problem` gives the error a name, so you can
-print what it said.
+`try` runs a block. If that block raises `SomeError`, `except SomeError` runs
+instead of the program stopping. `as problem` gives the error a name, so you
+can print its message.
 
 ```python run
 readings = [12, 9, 15]
@@ -163,8 +161,7 @@ except ZeroDivisionError as problem:
     print("ZeroDivisionError:", problem)
 ```
 
-Look at how thin `KeyError`'s message is — just the key it could not find. It
-is still the one fact you needed.
+`KeyError`'s message is only the key it could not find, `'south'`.
 
 :::exercise{id="ch08-count-bad-as-zero"}
 Add up the rows. A row that is not a number counts as 0 — catch exactly
@@ -197,7 +194,7 @@ print(total)
 
 ## A bare except is a trap
 
-You can leave the error name off and catch everything. Do not.
+If you leave the error name off, `except` catches every error:
 
 ```python run
 def total_quietly(rows):
@@ -212,12 +209,11 @@ def total_quietly(rows):
 print(total_quietly(rows))
 ```
 
-The total is zero, and nothing complained. There is a typo in there —
-`read_cnts` instead of `read_cents` — which is a `NameError` on every single
-row. The bare `except` caught it, `pass` threw it away, and the function
-returned a number that looks like an answer.
+The total is 0 and no error appears. The typo `read_cnts` raises `NameError`
+on every row. The bare `except` caught each one, `pass` discarded it, and the
+function returned 0 as if it were the total.
 
-Name the error you expect and the typo comes straight back out:
+Name the error you expect, and the typo shows up:
 
 ```python run
 def total_loudly(rows):
@@ -235,14 +231,12 @@ except NameError as problem:
     print("NameError:", problem)
 ```
 
-`except ValueError` catches the mess you planned for and lets the mess you did
-not plan for reach you. That is the whole difference. A bare `except` turns
-every future bug in that block into silence.
+`except ValueError` catches the bad rows you expected. Any other error, like
+this `NameError`, still reaches you.
 
 ## Say which row
 
-Skipping a bad row is fine. Skipping it in secret is not. Tell the person
-which one:
+When you skip a bad row, print which row it was:
 
 ```python run
 def total_reporting(rows):
@@ -257,9 +251,9 @@ def total_reporting(rows):
 print(total_reporting(rows))
 ```
 
-`enumerate` hands you the position along with the value, and `!r` prints the
-value with its quotes so you can see whether it is `12` or `"12 "`. Now the
-volunteer has one row to fix, not 312 to re-read.
+`enumerate` gives you the position along with the value. `!r` prints the
+value with its quotes, so you can tell `12` from `"12 "`. Now the volunteer has
+one row to fix, not 312 to re-read.
 
 :::exercise{id="ch08-name-the-rows"}
 Collect the row numbers, counting from 1, of rows that are not numbers. Print
@@ -295,8 +289,8 @@ print("total:", total)
 
 ## Raise it yourself
 
-Sometimes there is no sensible answer to give back. Say so, loudly, at the
-moment you find out:
+When a function has no sensible answer to return, it can raise an error
+itself:
 
 ```python run
 def cents_each(total_cents, people):
@@ -311,14 +305,13 @@ print(cents_each(5050, 0))
 The first call works. The second raises, and the traceback names your function
 and your message.
 
-Returning `0` or `None` instead would have been a lie that travels: some other
-function would have added it to a total, and the wrong number would surface
-hours later with nothing pointing back here. `raise` puts the complaint where
-the fault is.
+Returning `0` or `None` instead would let another function add it to a total.
+The wrong number would show up later, with nothing pointing back here.
 
-Pick the name honestly. `TypeError` means the wrong *kind* of value arrived —
-text where a number belonged. `ValueError` means the kind was right and the
-content was impossible — a negative count, an empty list, zero people.
+Choose the error that fits. `TypeError` means the wrong *kind* of value
+arrived, such as text where a number belonged. `ValueError` means the kind was
+right but the value was impossible, such as a negative count, an empty list or
+zero people.
 
 :::exercise{id="ch08-say-it-is-empty"}
 An empty list has no average. Make `average` raise `ValueError` with the
@@ -359,17 +352,16 @@ except ValueError as problem:
 
 ## What this buys the agent
 
-The agent you build edits code and then runs the tests. What comes back is a
-traceback. If it reads only the last line it knows the error but not the
-source; if it reads only the top it knows the entry point and nothing else. It
-has to do what you just did: last line for the fact, lowest frame in a file
-the project owns for the place.
+The agent you build edits code and then runs the tests. When a test fails,
+it gets a traceback. The last line tells it what the error was. The lowest
+`File` line in one of the project's own files tells it where. It needs both.
 
-It also raises. A tool handed a path that does not exist should stop there,
-not return an empty string that the next step happily pastes into a file.
+The agent's tools raise errors too. A tool given a path that does not exist
+should raise, not return an empty string that the next step pastes into a
+file.
 
 ## Your turn
 
 Two challenges. The first walks you through choosing between `TypeError` and
 `ValueError`. The second has no hints: you get messy input and have to report
-which line was bad without ever crashing on it.
+which line was bad without crashing.

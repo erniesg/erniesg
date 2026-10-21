@@ -19,12 +19,10 @@ One Monday the fastest-eight code was tidied up. Three months later, ten badges
 went to the ten fastest swimmers instead of the ten oldest members. Four of
 them had joined that year.
 
-Nothing in the badge code had changed. The fastest-eight function had sorted
-the club's list of names into time order, in place, and never put it back.
+The badge code had not changed. The fastest-eight function had sorted the
+club's list of names into time order, in place, and never put it back.
 
 ## Hand back a new list. Don't rearrange the one you were given
-
-Here is the crime, in four lines:
 
 ```python run
 members = ["mia", "sam", "ada", "hal"]     # joining order
@@ -39,11 +37,10 @@ print(shortlist(members))
 print(members)
 ```
 
-The first line of output is right. The second is the problem: `members` is no
-longer in joining order, and nothing said so. The function was asked a
-question and it rearranged the filing cabinet on its way out.
+The first line of output is right. The second shows that `members` is no
+longer in joining order. Calling `shortlist` changed the caller's list.
 
-The fix is one letter and no cleverness:
+The fix:
 
 ```python run
 def shortlist(names):
@@ -59,18 +56,17 @@ print(members)
 list and leaves the original alone. Same for `names.reverse()` against
 `reversed(names)`, and `names.append(x)` against `names + [x]`.
 
-This is not tidiness. A function that quietly changes its caller's list causes
-a bug *somewhere else*, in code that looks fine, possibly months later. The
-badge code was never wrong. It was reading a list that somebody else had turned
-over.
+A function that changes its caller's list causes a bug in other code that
+reads the list later. The badge code was correct. The list it read had been
+reordered by another function.
 
-So: take a list, return a new list. If you really do mean to change the
-caller's list, put it in the name — `add_member(club, name)` reads like it
-changes something, `shortlist` does not.
+So take a list and return a new list. If a function is meant to change the
+caller's list, say so in its name: `add_member(club, name)` sounds like it
+changes something, and `shortlist` does not.
 
 :::exercise{id="ch10-top-two"}
-Return the two highest scores, highest first — without changing the list you
-were handed.
+Return the two highest scores, highest first, without changing the list
+passed in.
 
 ```python
 def top_two(scores):
@@ -101,8 +97,7 @@ print(scores)
 
 ## A comprehension is a filter and a transform on one line
 
-You will write "go through this list and keep some of it" hundreds of times.
-The long way works:
+Going through a list and keeping some of it is a common job. The long way:
 
 ```python run
 times = [31, 48, 29, 55, 33]
@@ -115,7 +110,7 @@ for t in times:
 print(fast)
 ```
 
-The short way says the same thing in the order you'd say it out loud — what to
+A comprehension does it on one line, in the order you would say it: what to
 collect, where from, which ones:
 
 ```python run
@@ -132,18 +127,16 @@ print(tidy)
 print(raw)
 ```
 
-Note the second line of output. A comprehension always builds a new list, so
-you get the no-mutation habit for free.
+`raw` is unchanged, because a comprehension always builds a new list.
 
-Do both at once when you mean both:
+It can filter and transform at once:
 
 ```python run
 print([name.strip() for name in ["  mia ", "   ", "hal"] if name.strip()])
 ```
 
-One warning. A comprehension is for one clear step. When it grows three
-clauses and a condition you can't read aloud, write the loop back out. Short is
-not the goal; readable is.
+A comprehension suits one clear step. If it needs several clauses and a long
+condition, a loop is easier to read.
 
 :::exercise{id="ch10-penalty"}
 One comprehension: keep the times under 40 and add a 2-second penalty to each
@@ -168,20 +161,20 @@ print(penalised)
 
 ## `sorted` takes a key
 
-`sorted` on plain numbers or plain text needs no help. On anything with parts,
-you say which part to order by:
+`sorted` orders plain numbers or text by themselves. For items with parts, you
+say which part to order by:
 
 ```python run
 swimmers = [("mia", 31), ("sam", 48), ("ada", 29), ("hal", 33)]
 print(sorted(swimmers, key=lambda pair: pair[1]))
 ```
 
-`lambda pair: pair[1]` is a small function written where it is used: hand it a
-pair, it gives back the second thing in the pair. `sorted` calls it once per
-item and orders by what comes back.
+`lambda pair: pair[1]` is a small function written where it is used. Given a
+pair, it returns the pair's second item. `sorted` calls it once per item and
+orders by what it returns.
 
-Ask for the other direction with `reverse=True`, and break ties by handing back
-two things instead of one:
+`reverse=True` orders the other way. To break ties, return two things instead
+of one:
 
 ```python run
 swimmers = [("mia", 31), ("sam", 29), ("ada", 29), ("hal", 33)]
@@ -189,11 +182,10 @@ print(sorted(swimmers, key=lambda pair: pair[1], reverse=True))
 print(sorted(swimmers, key=lambda pair: (pair[1], pair[0])))
 ```
 
-The first line is slowest first: `reverse=True` flips the order and leaves the
-key alone. The second settles a tie. Sam and Ada both swam 29, so the keys
-`(29, "sam")` and `(29, "ada")` are compared on the number, which decides
-nothing, and then on the name, which puts Ada ahead. Tie-breaking is a tuple,
-not an `if`.
+The first line is slowest first. The second settles a tie. Sam and Ada both
+swam 29, so their keys `(29, "sam")` and `(29, "ada")` are equal on the number.
+Python then compares the names, which puts Ada ahead. A tuple key breaks the
+tie without an `if`.
 
 :::exercise{id="ch10-time-then-name"}
 Order the swimmers by time, and where two times tie, by name.
@@ -222,7 +214,7 @@ first, second = ("ada", 29)
 print(first, second)
 ```
 
-Which makes the famous swap possible without a spare variable:
+This lets you swap two values without a spare variable:
 
 ```python run
 a, b = 1, 2
@@ -230,24 +222,22 @@ a, b = b, a
 print(a, b)
 ```
 
-The right-hand side is worked out completely before anything is assigned. That
-is why it is a swap and not `a = b` followed by `b = a`, which would leave you
-with two copies of 2.
+The right-hand side is worked out in full before anything is assigned. `a = b`
+followed by `b = a` would instead leave two copies of 2.
 
-Unpacking works in a `for` line too, and this is where it earns its keep:
+Unpacking also works in a `for` line:
 
 ```python run
 for name, seconds in swimmers:
     print(name, "swam", seconds)
 ```
 
-`name` and `seconds` beat `pair[0]` and `pair[1]` in every way that matters.
-You can read the line six weeks later.
+`name` and `seconds` say what each value is; `pair[0]` and `pair[1]` don't.
 
 ## `enumerate` when you need the position, `zip` for two lists
 
-You can keep a counter by hand. It works, and it is two extra lines you have
-to get right — set it up, and remember to move it on:
+You can keep a counter by hand. That takes two extra lines: one to set it up
+and one to move it on.
 
 ```python run
 place = 1
@@ -256,8 +246,8 @@ for name, seconds in sorted(swimmers, key=lambda pair: pair[1]):
     place += 1
 ```
 
-`enumerate` hands you the position with the value, and you pick where the
-counting starts:
+`enumerate` gives you the position with each value. `start=1` makes it count
+from 1:
 
 ```python run
 ordered = sorted(swimmers, key=lambda pair: pair[1])
@@ -265,7 +255,7 @@ for place, (name, seconds) in enumerate(ordered, start=1):
     print(place, name, seconds)
 ```
 
-When two lists line up — names in one, times in another — `zip` walks them
+When two lists line up, names in one and times in the other, `zip` walks them
 together:
 
 ```python run
@@ -277,8 +267,8 @@ for name, time_taken in zip(names, seconds):
 print(list(zip(names, seconds)))
 ```
 
-`zip` stops at the shorter list. That is usually what you want and occasionally
-a silent bug, so if the two lists must be the same length, check it.
+`zip` stops at the end of the shorter list, without an error. If the two lists
+must be the same length, check that yourself.
 
 :::exercise{id="ch10-results-board"}
 Names and times arrive as two lists. Print a results board, fastest first:
@@ -319,10 +309,10 @@ if names:
     print("this does not print")
 ```
 
-`if not names` beats `if len(names) == 0`. Both work; one reads like a
-sentence.
+`if not names` and `if len(names) == 0` do the same thing; the first is
+shorter.
 
-One trap, worth ten seconds of your attention. `0` is also false:
+`0` is also false:
 
 ```python run
 seconds = 0
@@ -330,14 +320,14 @@ if not seconds:
     print("this fires for a swimmer who took 0 seconds, too")
 ```
 
-When the question is really "did we get a value at all?", ask that question:
-`if seconds is None`. Truthiness is for "is there anything here", not for "is
-this number missing".
+When the question is "did we get a value at all?", write `if seconds is None`.
+Use `if not x` to ask whether a list or text is empty, not whether a number is
+missing.
 
 ## Return early instead of nesting four deep
 
-Rules pile up, and each one adds an indent. Four levels in, nobody can see
-which `if` the last line belongs to:
+Each rule nested inside another adds an indent. Four levels in, it is hard to
+see which `if` a line belongs to:
 
 ```python
 def entry_fee(age, is_member, has_paid):
@@ -356,8 +346,8 @@ def entry_fee(age, is_member, has_paid):
         return None
 ```
 
-Every one of those branches is a special case that ends the story. So end it,
-at the top, one line each:
+Each of those branches ends the function. So handle each one at the top and
+return:
 
 ```python run
 def entry_fee(age, is_member, has_paid):
@@ -377,30 +367,25 @@ print(entry_fee(30, False, False), entry_fee(30, True, False))
 print(entry_fee(30, True, True))
 ```
 
-Same answers, no `else` anywhere, and the ordinary case — a paid-up member —
-sits at the bottom with no indentation at all. Deal with the awkward inputs
-first and get them out of the way. What is left is the real work, and now you
-can see it.
+The answers are the same, there is no `else`, and the ordinary case, a paid-up
+member, sits at the bottom with no extra indent. The special inputs are handled
+first, so the main case is easy to find.
 
 :::figure{id="six-idioms"}
 :::
 
 ## What this buys the agent
 
-Two things, and only one of them is about looks.
+The agent edits code and then checks its own work. If an edit changes a list
+that other code still uses, the failing test can be far from the line that
+caused it. A function that takes values and returns new ones can be tested on
+its own.
 
-The agent edits code and then has to check its own work. An edit that changes a
-list the rest of the program is still holding is the hardest kind of bug for it
-to find, because the failing test is nowhere near the line that caused it. A
-function that takes values in and hands new values out can be tested on its
-own, which is what the agent needs to be able to trust itself.
-
-The other thing: you will read what the agent writes. Code you can scan in ten
-seconds gets reviewed. Code that needs a pencil and a quiet room does not get
-reviewed, it gets approved, which is not the same and is how bad edits land.
+You will also read what the agent writes. Code that is quick to read is easier
+to review properly, so fewer bad edits get through.
 
 ## Your turn
 
-Two challenges. The first tells you exactly what the function must promise,
-hints included, and one of its tests checks that the list you were handed comes
-back untouched. The second gives you the problem and nothing else.
+Two challenges. The first states exactly what the function must do and has
+hints; one test checks that the list passed in is unchanged. The second gives
+you the problem and nothing else.

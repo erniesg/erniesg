@@ -1,5 +1,6 @@
 import { readFile, readdir, rm, writeFile } from 'node:fs/promises'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, type Dirent } from 'node:fs'
+import { dirname, relative } from 'node:path'
 import * as ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import { buildStructDocument as legacyBuild } from '../src/struct/from-reconstruction'
@@ -100,8 +101,23 @@ const migratedFamilies = new Set(['types', 'ids', 'reading-order', 'codec'])
  */
 const NONLITERAL_REQUIRE = '<nonliteral require>'
 
+/**
+ * The sentinel a computed glob records. A computed glob has no literal
+ * pattern, so the guard cannot prove that it does not load a migrated
+ * family; it fails closed in the same way a computed dynamic import does.
+ */
+const NONLITERAL_GLOB = '<nonliteral glob>'
+
 /** What the guard knows about a computed require. */
 type ComputedRequire = {
+  /** The string literals inside the argument. */
+  fragments: string[]
+  /** The static text of the argument. */
+  staticText: string
+}
+
+/** What the guard knows about a computed glob. */
+type ComputedGlob = {
   /** The string literals inside the argument. */
   fragments: string[]
   /** The static text of the argument. */
@@ -150,6 +166,7 @@ function importedPaths(
   file: URL,
   computedDynamicImports?: string[][],
   computedRequires?: ComputedRequire[],
+  computedGlobs?: ComputedGlob[],
 ): string[] {
   const ast = ts.createSourceFile(
     file.pathname,
@@ -202,6 +219,26 @@ function importedPaths(
         })
       }
     } else if (
+      ts.isCallExpression(node) &&
+      isImportMetaGlobCall(node)
+    ) {
+      // A Vite glob import names a set of modules the bundler resolves, so it
+      // is an import too.
+      const argument = node.arguments[0]
+      const patterns = globPatternsIn(argument)
+      if (patterns === null) {
+        // A computed glob pattern has no literal target, so the guard cannot
+        // prove that it does not load a migrated family. It fails closed in
+        // the same way a computed dynamic import does.
+        paths.push(NONLITERAL_GLOB)
+        computedGlobs?.push({
+          fragments: stringLiteralsIn(argument),
+          staticText: staticTextIn(argument),
+        })
+      } else {
+        paths.push(...globFamilySpecifiers(patterns, file))
+      }
+    } else if (
       ts.isImportEqualsDeclaration(node) &&
       ts.isExternalModuleReference(node.moduleReference)
     ) {
@@ -213,6 +250,171 @@ function importedPaths(
   }
   visit(ast)
   return paths
+}
+
+/**
+ * Whether a call is a Vite glob import. `import.meta.glob` and its
+ * deprecated alias `import.meta.globEager` both name a set of modules the
+ * bundler resolves, so both are imports the guard has to inspect.
+ */
+function isImportMetaGlobCall(node: ts.CallExpression): boolean {
+  const expression = node.expression
+  if (!ts.isPropertyAccessExpression(expression)) return false
+  const owner = expression.expression
+  if (!ts.isMetaProperty(owner)) return false
+  if (owner.keywordToken !== ts.SyntaxKind.ImportKeyword) return false
+  return expression.name.text === 'glob' || expression.name.text === 'globEager'
+}
+
+/**
+ * The literal patterns of a glob argument, or null when the argument is
+ * computed. Vite accepts a single pattern or an array of them, and every
+ * element of the array has to be a literal for the pattern to be known.
+ */
+function globPatternsIn(argument: ts.Node | undefined): string[] | null {
+  if (!argument) return null
+  if (ts.isStringLiteralLike(argument)) return [argument.text]
+  if (ts.isArrayLiteralExpression(argument)) {
+    const patterns: string[] = []
+    for (const element of argument.elements) {
+      if (!ts.isStringLiteralLike(element)) return null
+      patterns.push(element.text)
+    }
+    return patterns
+  }
+  return null
+}
+
+/**
+ * Every file of a migrated family: the family entry file and every module
+ * nested in the family directory. A glob can name any of them, so all of
+ * them are candidates.
+ */
+function migratedFamilyFiles(): string[] {
+  const files: string[] = []
+  for (const familyRoot of migratedFamilyRoots.values()) {
+    for (const extension of [
+      '.ts',
+      '.tsx',
+      '.mts',
+      '.cts',
+      '.js',
+      '.jsx',
+      '.mjs',
+      '.cjs',
+    ]) {
+      const entry = `${familyRoot}${extension}`
+      if (!existsSync(entry)) continue
+      files.push(entry)
+      break
+    }
+    files.push(...filesUnder(familyRoot))
+  }
+  return files
+}
+
+/**
+ * Every file under a directory, recursively. A directory that cannot be read
+ * contributes nothing.
+ */
+function filesUnder(directory: string): string[] {
+  let entries: Dirent[]
+  try {
+    entries = readdirSync(directory, { withFileTypes: true })
+  } catch {
+    return []
+  }
+  const files: string[] = []
+  for (const entry of entries) {
+    const path = `${directory}/${entry.name}`
+    if (entry.isDirectory()) files.push(...filesUnder(path))
+    else if (entry.isFile()) files.push(path)
+  }
+  return files
+}
+
+/**
+ * The specifiers a set of glob patterns can load from a migrated family,
+ * relative to the importing module. A pattern that names no migrated family
+ * contributes nothing, and a negated pattern removes the modules it
+ * excludes.
+ */
+function globFamilySpecifiers(patterns: string[], file: URL): string[] {
+  const included = patterns.filter((pattern) => !pattern.startsWith('!'))
+  const excluded = patterns
+    .filter((pattern) => pattern.startsWith('!'))
+    .map((pattern) => pattern.slice(1))
+  if (included.length === 0) return []
+  const importerDirectory = dirname(file.pathname)
+  const specifiers: string[] = []
+  for (const familyFile of migratedFamilyFiles()) {
+    const modulePath = relative(importerDirectory, familyFile)
+    if (!globMatchesAny(included, modulePath)) continue
+    if (globMatchesAny(excluded, modulePath)) continue
+    specifiers.push(
+      modulePath.startsWith('.') ? modulePath : `./${modulePath}`,
+    )
+  }
+  return specifiers
+}
+
+/**
+ * Whether a module path matches one of the glob patterns. A brace group
+ * lists alternatives, so every expansion of a pattern is tried.
+ */
+function globMatchesAny(patterns: string[], modulePath: string): boolean {
+  return patterns.some((pattern) =>
+    expandGlobBraces(pattern).some((expanded) =>
+      globToRegExp(expanded).test(modulePath),
+    ),
+  )
+}
+
+/**
+ * The expanded forms of a glob pattern. A brace group lists alternatives, so
+ * `../struct/{types,ids}.ts` names two modules.
+ */
+function expandGlobBraces(pattern: string): string[] {
+  const open = pattern.indexOf('{')
+  if (open === -1) return [pattern]
+  const close = pattern.indexOf('}', open)
+  if (close === -1) return [pattern]
+  const alternatives = pattern.slice(open + 1, close).split(',')
+  if (alternatives.length < 2) return [pattern]
+  const prefix = pattern.slice(0, open)
+  const suffix = pattern.slice(close + 1)
+  return alternatives.flatMap((alternative) =>
+    expandGlobBraces(`${prefix}${alternative}${suffix}`),
+  )
+}
+
+/**
+ * A glob pattern as a regular expression. `*` matches inside one path
+ * segment, `**` matches across segments and `?` matches a single character.
+ */
+function globToRegExp(pattern: string): RegExp {
+  let source = ''
+  for (let index = 0; index < pattern.length; index += 1) {
+    const character = pattern[index]!
+    if (character === '*') {
+      if (pattern[index + 1] === '*') {
+        index += 1
+        if (pattern[index + 1] === '/') {
+          index += 1
+          source += '(?:[^/]*/)*'
+        } else {
+          source += '.*'
+        }
+      } else {
+        source += '[^/]*'
+      }
+    } else if (character === '?') {
+      source += '[^/]'
+    } else {
+      source += character.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    }
+  }
+  return new RegExp(`^${source}$`)
 }
 
 /**
@@ -287,6 +489,40 @@ function mdxStatementNamesAModule(statement: string): boolean {
 }
 
 /**
+ * Whether a candidate statement can still be completed by more input.
+ *
+ * The TypeScript parser is the authority on whether a candidate is a finished
+ * declaration, so its complaints decide the question. A candidate whose
+ * complaint is at its own end is a declaration that is not finished yet: a
+ * valid `import T` without its `from` clause is exactly that. A candidate
+ * that broke earlier is not a declaration at all, so a prose line that
+ * begins with `import` is not read as one.
+ */
+function mdxStatementIsIncomplete(statement: string): boolean {
+  if (mdxStatementNamesAModule(statement)) return false
+  const file = ts.createSourceFile(
+    'mdx-esm.ts',
+    statement,
+    ts.ScriptTarget.Latest,
+    true,
+  )
+  const diagnostics =
+    ts.transpileModule(statement, {
+      reportDiagnostics: true,
+      compilerOptions: {
+        target: ts.ScriptTarget.Latest,
+        module: ts.ModuleKind.ESNext,
+      },
+    }).diagnostics ?? []
+  if (diagnostics.length === 0) return false
+  // The parser consumed nothing, so the candidate is a bare keyword that
+  // more input can still complete.
+  if (file.statements.length === 0) return true
+  const end = statement.trimEnd().length
+  return diagnostics.every((diagnostic) => (diagnostic.start ?? 0) >= end)
+}
+
+/**
  * The ESM flow blocks of an MDX document.
  *
  * MDX recognises an import or export statement anywhere at the top level of
@@ -296,9 +532,12 @@ function mdxStatementNamesAModule(statement: string): boolean {
  * instead, so both are excluded: a code sample that shows an import must
  * never be collected as a module specifier.
  *
- * A statement runs until its braces balance, so a multi-line import is
- * collected as one block, and a prose line that begins with `import` is
- * dropped unless the TypeScript parser reads it as an ESM statement.
+ * A statement is read until the parser recognises a complete declaration, so
+ * a declaration that spans several lines is collected as one block. The
+ * brace depth alone does not decide that a statement is finished, because a
+ * valid declaration without braces can put its `from` clause on a line of
+ * its own. A prose line that begins with `import` is dropped unless the
+ * TypeScript parser reads it as an ESM statement.
  */
 function mdxEsmStatements(source: string): string {
   const body = source.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '')
@@ -316,7 +555,7 @@ function mdxEsmStatements(source: string): string {
       // The line continues the ESM statement that is already open.
       block.push(line)
       depth += mdxBraceDelta(line)
-      if (depth === 0) flush()
+      if (depth === 0 && !mdxStatementIsIncomplete(block.join('\n'))) flush()
       continue
     }
     const fenceLine = mdxFenceMarker(line)
@@ -331,16 +570,28 @@ function mdxEsmStatements(source: string): string {
       continue
     }
     if (fenceLine) {
+      // A code block ends an open statement: the statement never completed.
+      if (block.length > 0) flush()
       fence = fenceLine.marker
       continue
     }
     // An indented code sample is markdown content, not a module specifier.
-    if (/^(?: {4}|\t)/.test(line)) continue
+    if (/^(?: {4}|\t)/.test(line)) {
+      if (block.length > 0) flush()
+      continue
+    }
+    if (block.length > 0) {
+      // The open statement is not a complete declaration yet, so this line
+      // can still complete it.
+      block.push(line)
+      if (!mdxStatementIsIncomplete(block.join('\n'))) flush()
+      continue
+    }
     const trimmed = line.trim()
     if (!mdxStartsEsmStatement(trimmed)) continue
     block = [line]
     depth = mdxBraceDelta(line)
-    if (depth === 0) flush()
+    if (depth === 0 && !mdxStatementIsIncomplete(line)) flush()
   }
   if (block.length > 0) flush()
   return kept.join('\n')
@@ -391,6 +642,8 @@ function boundaryViolations(
     if (specifier === '<nonliteral dynamic import>')
       return portable || file.pathname.startsWith(adapterRoot.pathname)
     if (specifier === NONLITERAL_REQUIRE)
+      return portable || file.pathname.startsWith(adapterRoot.pathname)
+    if (specifier === NONLITERAL_GLOB)
       return portable || file.pathname.startsWith(adapterRoot.pathname)
     if (
       specifier === '@erniesg/struct' ||
@@ -620,6 +873,7 @@ function recoveryImporterViolationsForSpecifiers(
   for (const specifier of specifiers) {
     if (specifier === '<nonliteral dynamic import>') continue
     if (specifier === NONLITERAL_REQUIRE) continue
+    if (specifier === NONLITERAL_GLOB) continue
     const target = resolveLocalTarget(specifier, file)
     if (target === null || target !== appRecoveryModule) continue
     if (permittedRecoveryImporters.has(file.pathname)) continue
@@ -655,6 +909,7 @@ function compatibilityForwarderViolationsForSpecifiers(
   for (const specifier of specifiers) {
     if (specifier === '<nonliteral dynamic import>') continue
     if (specifier === NONLITERAL_REQUIRE) continue
+    if (specifier === NONLITERAL_GLOB) continue
     const target = resolveLocalTarget(specifier, file)
     if (target === null || target !== compatibilityRecoveryForwarder) continue
     violations.push(
@@ -672,14 +927,17 @@ function e03ViolationsForSource(
   const violations: string[] = []
   const computedDynamicImports: string[][] = []
   const computedRequires: ComputedRequire[] = []
+  const computedGlobs: ComputedGlob[] = []
   const specifiers = importedPaths(
     source,
     file,
     computedDynamicImports,
     computedRequires,
+    computedGlobs,
   )
   let computedIndex = 0
   let computedRequireIndex = 0
+  let computedGlobIndex = 0
   for (const specifier of specifiers) {
     if (specifier === '<nonliteral dynamic import>') {
       // A computed dynamic import has no literal specifier, so the guard
@@ -725,6 +983,26 @@ function e03ViolationsForSource(
       if (/\/package\.json$/.test(computed?.staticText ?? '')) continue
       violations.push(
         `${file.pathname}: computed require with an unresolved target is not allowed`,
+      )
+      continue
+    }
+    if (specifier === NONLITERAL_GLOB) {
+      // A computed glob pattern has no literal target, so the guard cannot
+      // prove that it does not load a migrated family. It fails closed in
+      // the same way a computed dynamic import does.
+      const computed = computedGlobs[computedGlobIndex++]
+      const offending = (computed?.fragments ?? [])
+        .map((fragment) => resolveLocalTarget(fragment, file))
+        .filter((target): target is string => target !== null)
+        .find((target) => {
+          const normalized = target.replace(/\/+$/, '')
+          return (
+            migratedFamilyForTarget(normalized) !== null ||
+            isStructBarrelTarget(normalized)
+          )
+        })
+      violations.push(
+        `${file.pathname}: computed glob ${offending ?? 'with an unresolved target'} is not allowed`,
       )
       continue
     }
@@ -1534,6 +1812,78 @@ describe('app-owned Struct adapter boundary', () => {
     ).toEqual([])
   })
 
+  it('E-03: reads a multiline MDX import declaration until the parser recognises it', async () => {
+    const publicPaths = await publicPackagePaths()
+    const mdxProbe = new URL('research/probe.mdx', root)
+
+    // A valid ESM declaration can put its `from` clause on a line of its
+    // own, so the collection has to keep reading until the parser recognises
+    // the whole declaration. The brace depth alone does not decide that the
+    // statement is finished.
+    const multiline = ['import T', "from '@/struct/types'", ''].join('\n')
+    expect(importedPaths(multiline, mdxProbe)).toEqual(['@/struct/types'])
+    expect(
+      e03ViolationsForSource(multiline, mdxProbe, publicPaths),
+    ).not.toEqual([])
+
+    // A blank line does not end the declaration either.
+    const multilineWithBlankLine = [
+      'import T',
+      '',
+      "from '@/struct/types'",
+      '',
+    ].join('\n')
+    expect(importedPaths(multilineWithBlankLine, mdxProbe)).toEqual([
+      '@/struct/types',
+    ])
+    expect(
+      e03ViolationsForSource(multilineWithBlankLine, mdxProbe, publicPaths),
+    ).not.toEqual([])
+
+    // A line that only looks like a continuation is not part of a
+    // declaration, so it is never pulled into one.
+    const proseAfterStatement = [
+      'import T',
+      '',
+      'the previous section described the format',
+      '',
+    ].join('\n')
+    expect(importedPaths(proseAfterStatement, mdxProbe)).toEqual([])
+    expect(
+      e03ViolationsForSource(proseAfterStatement, mdxProbe, publicPaths),
+    ).toEqual([])
+
+    // A prose line that begins with `import` is not a declaration either.
+    const proseImport = [
+      'import the good stuff',
+      '',
+      'more prose',
+      '',
+    ].join('\n')
+    expect(importedPaths(proseImport, mdxProbe)).toEqual([])
+    expect(
+      e03ViolationsForSource(proseImport, mdxProbe, publicPaths),
+    ).toEqual([])
+
+    // A code sample that follows an unfinished statement stays markdown
+    // content.
+    const fencedAfterOpenStatement = [
+      'import T',
+      '```js',
+      "import { T } from '@/struct/types'",
+      '```',
+      '',
+    ].join('\n')
+    expect(importedPaths(fencedAfterOpenStatement, mdxProbe)).toEqual([])
+    expect(
+      e03ViolationsForSource(fencedAfterOpenStatement, mdxProbe, publicPaths),
+    ).toEqual([])
+
+    // A single-line declaration is still collected exactly as before.
+    const singleLine = ["import { T } from '@/struct/types'", ''].join('\n')
+    expect(importedPaths(singleLine, mdxProbe)).toEqual(['@/struct/types'])
+  })
+
   it('E-03: rejects a computed CommonJS require', async () => {
     const publicPaths = await publicPackagePaths()
     const research = new URL('research/probe.ts', root)
@@ -1574,6 +1924,59 @@ describe('app-owned Struct adapter boundary', () => {
         publicPaths,
       ),
     ).toEqual([])
+  })
+
+  it('E-03: inspects Vite glob imports', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+
+    // A literal glob that reaches a migrated family is a boundary escape:
+    // the bundler resolves the pattern to the local module, so production
+    // would run the local implementation.
+    const literal = "const codecs = import.meta.glob('../struct/codec.ts', { eager: true })"
+    expect(importedPaths(literal, research)).toContain('../struct/codec.ts')
+    expect(
+      e03ViolationsForSource(literal, research, publicPaths),
+    ).not.toEqual([])
+
+    // A glob over the subtree reaches the family as well.
+    const subtree = "const all = import.meta.glob('../struct/**/*.ts', { eager: true })"
+    expect(
+      e03ViolationsForSource(subtree, research, publicPaths),
+    ).not.toEqual([])
+
+    // A glob over another family of the same tree is reported too.
+    const types = "const all = import.meta.glob('../struct/types.ts')"
+    expect(
+      e03ViolationsForSource(types, research, publicPaths),
+    ).not.toEqual([])
+
+    // A glob over the whole tree in one array is reported as well.
+    const patterns = "const all = import.meta.glob(['../struct/codec.ts', '../struct/ids.ts'])"
+    expect(
+      e03ViolationsForSource(patterns, research, publicPaths),
+    ).not.toEqual([])
+
+    // A computed glob pattern has no literal target, so the guard cannot
+    // prove that it does not load a migrated family. It fails closed in the
+    // same way a computed dynamic import does.
+    const computed = 'const all = import.meta.glob(pattern, { eager: true })'
+    const computedViolations = e03ViolationsForSource(
+      computed,
+      research,
+      publicPaths,
+    )
+    expect(computedViolations).not.toEqual([])
+    expect(computedViolations.join('\n')).toContain('computed glob')
+
+    // A glob that provably names no migrated family is not a violation.
+    const safe = "const pages = import.meta.glob('../content/**/*.md', { eager: true })"
+    expect(importedPaths(safe, research)).toEqual([])
+    expect(e03ViolationsForSource(safe, research, publicPaths)).toEqual([])
+
+    // A glob that names no module of the tree is not a violation either.
+    const elsewhere = "const pages = import.meta.glob('../pages/**/*.ts')"
+    expect(e03ViolationsForSource(elsewhere, research, publicPaths)).toEqual([])
   })
 
   it('E-03: catches an external import of a retained-tree wrapper that re-exports a migrated family', async () => {

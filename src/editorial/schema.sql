@@ -5,9 +5,13 @@
 -- applies this file. It lives under `src/editorial/` and NOT under
 -- `migrations/`, so the Wrangler migration runner and the margin test
 -- harness (`src/worker/margin/sqlite-database.ts`, which applies every
--- `migrations/*.sql` in filename order) never see it. Nothing applies it
--- until the follow-up job (E05c) adds the numbered migration and the
--- coordinator authorises the apply.
+-- `migrations/*.sql` in filename order) never see it.
+--
+-- The numbered migration now exists: `migrations/editorial/0001_editorial_store.sql`
+-- carries this DDL, and `migrations/editorial/0002_editorial_control.sql` the
+-- control tables beside it. Nothing applies either of them — E05c created no
+-- database and applied no migration — and the coordinator authorises the
+-- apply.
 --
 -- The statements are the `IF NOT EXISTS` form, like
 -- `src/worker/margin/schema.sql`, so a fresh database needs no manual step

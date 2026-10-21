@@ -1,13 +1,15 @@
 -- 0001: the durable editorial store.
 --
 -- This is the numbered, forward-only migration E05c adds. It lives under
--- `src/editorial/migrations/`, NOT under the repository's `migrations/`
--- directory, so neither the Wrangler migration runner (whose pattern for
--- `MARGIN_DB` is `migrations/*.sql`) nor the margin test harness (which
--- applies every `migrations/*.sql` in filename order) ever sees it. The
--- editorial store is a separate database with a separate binding, and the
--- binding — and its `migrations_dir` — is added when the cutover is
--- authorised, not before.
+-- `migrations/editorial/` — the repository's own `migrations/` directory,
+-- in a subdirectory of its own — so neither the Wrangler migration runner
+-- (whose pattern for `MARGIN_DB` is `migrations/*.sql`) nor the margin
+-- test harness (which applies every `migrations/*.sql` in filename order)
+-- ever sees it: both read the *files* of `migrations/` itself, and a
+-- subdirectory is neither a `*.sql` file nor a file at all. The editorial
+-- store is a separate database with a separate binding, and the binding —
+-- and its `migrations_dir` — is added when the cutover is authorised, not
+-- before.
 --
 -- NOTHING HAS APPLIED THIS FILE. E-05c does not create a database, does not
 -- apply a migration and does not touch a live database. The coordinator

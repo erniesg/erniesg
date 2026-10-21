@@ -105,6 +105,17 @@ const migratedFamilyRoots = new Map(
  * list deliberately instead of appearing by accident.
  */
 const appRecoveryModule = new URL('struct-adapters/recovery', root).pathname
+
+/**
+ * The compatibility forwarder the retained `src/struct` tree keeps for its
+ * own legacy callers. It re-exports the app-owned recovery module, so a
+ * module outside that tree reaches the recovery module through the legacy
+ * facade when it imports the forwarder, whatever spelling it uses.
+ */
+const compatibilityRecoveryForwarder = new URL(
+  'struct/recovery',
+  root,
+).pathname
 const permittedRecoveryImporters = new Set([
   permittedRecoveryImporter,
   permittedAdapterRecoveryImporter,
@@ -200,12 +211,13 @@ function mdxBraceDelta(line: string): number {
   return delta
 }
 
-/** Whether a line ends an ESM statement that names a module. */
-function mdxEndsWithModuleSpecifier(line: string): boolean {
-  return (
-    /from\s*['"][^'"]*['"]\s*;?$/.test(line) ||
-    /^import\s*['"][^'"]*['"]\s*;?$/.test(line)
-  )
+/**
+ * Whether a line can begin a top-level ESM statement. MDX allows `import` and
+ * `export` statements only at the top level of a document, so a line that
+ * starts with another keyword ends the leading ESM block.
+ */
+function mdxStartsEsmStatement(line: string): boolean {
+  return /^(?:import|export)\b/.test(line)
 }
 
 /**
@@ -214,6 +226,13 @@ function mdxEndsWithModuleSpecifier(line: string): boolean {
  * content, so only that block can carry a module specifier. Taking it keeps a
  * fenced code sample that shows an import out of the scan, and keeps markdown
  * prose from swallowing a real specifier inside an unterminated string.
+ *
+ * The block is the whole run of consecutive top-level ESM statements, not
+ * just its first statement: a statement that names a module does not close
+ * the block, so a migrated-family import that follows a safe import is still
+ * collected. A blank line between two statements does not close the block
+ * either, but a line that cannot begin a top-level ESM statement does, so
+ * markdown content and fenced code samples stay out of the scan.
  */
 function mdxLeadingEsm(source: string): string {
   const body = source.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '')
@@ -221,15 +240,16 @@ function mdxLeadingEsm(source: string): string {
   let depth = 0
   for (const line of body.split('\n')) {
     const trimmed = line.trim()
-    if (kept.length === 0) {
-      if (trimmed === '') continue
-      if (!/^(?:import|export)\b/.test(trimmed)) break
-    } else if (depth === 0) {
-      break
+    if (depth === 0) {
+      if (trimmed === '') {
+        // A blank line can separate two top-level ESM statements, so the
+        // block continues until a line arrives that cannot start one.
+        continue
+      }
+      if (!mdxStartsEsmStatement(trimmed)) break
     }
     kept.push(line)
     depth += mdxBraceDelta(line)
-    if (depth === 0 && mdxEndsWithModuleSpecifier(trimmed)) break
   }
   return kept.join('\n')
 }
@@ -411,6 +431,32 @@ function recoveryImporterViolations(source: string, file: URL): string[] {
   )
 }
 
+/**
+ * The compatibility forwarder is part of the recovery importer boundary: it
+ * re-exports the app-owned recovery module, so a module outside the retained
+ * `src/struct` tree reaches the recovery module through the legacy facade
+ * when it imports the forwarder. The check works on the resolved target, so
+ * every spelling of the forwarder is covered: the direct relative form, the
+ * `@/` alias, the project-root form and a `.js` suffix form.
+ */
+function compatibilityForwarderViolationsForSpecifiers(
+  specifiers: string[],
+  file: URL,
+): string[] {
+  // The retained `src/struct` tree keeps its own compatibility forwarder.
+  if (file.pathname.startsWith(portableRoot.pathname)) return []
+  const violations: string[] = []
+  for (const specifier of specifiers) {
+    if (specifier === '<nonliteral dynamic import>') continue
+    const target = resolveLocalTarget(specifier, file)
+    if (target === null || target !== compatibilityRecoveryForwarder) continue
+    violations.push(
+      `${file.pathname}: compatibility recovery forwarder import ${specifier} is not allowed outside the retained struct tree`,
+    )
+  }
+  return violations
+}
+
 function e03ViolationsForSource(
   source: string,
   file: URL,
@@ -477,6 +523,9 @@ function e03ViolationsForSource(
     }
   }
   violations.push(...recoveryImporterViolationsForSpecifiers(specifiers, file))
+  violations.push(
+    ...compatibilityForwarderViolationsForSpecifiers(specifiers, file),
+  )
   return violations
 }
 
@@ -618,27 +667,18 @@ describe('app-owned Struct adapter boundary', () => {
   })
 
   it('keeps app recovery consumers on the app-owned path', async () => {
-    const legacyRecovery = new URL('struct/recovery', root).pathname
     const violations: string[] = []
     for (const file of await portableFiles(root)) {
       if (file.pathname.startsWith(portableRoot.pathname)) continue
       const source = await readFile(file, 'utf8')
-      for (const specifier of importedPaths(source, file)) {
-        if (!specifier.startsWith('.')) {
-          if (
-            specifier === '@/struct/recovery' ||
-            specifier === '@/struct/recovery.ts'
-          )
-            violations.push(`${file.pathname}: ${specifier}`)
-          continue
-        }
-        const target = new URL(specifier, file).pathname.replace(
-          /\.(?:[cm]?[jt]s|astro)$/u,
-          '',
-        )
-        if (target === legacyRecovery)
-          violations.push(`${file.pathname}: ${specifier}`)
-      }
+      // The compatibility forwarder is resolved, not matched against a list
+      // of spellings, so every alias of it is a violation here too.
+      violations.push(
+        ...compatibilityForwarderViolationsForSpecifiers(
+          importedPaths(source, file),
+          file,
+        ),
+      )
     }
     expect(violations).toEqual([])
   })
@@ -819,10 +859,29 @@ describe('app-owned Struct adapter boundary', () => {
         publicPaths,
       ),
     ).not.toEqual([])
+    // '@/struct/recovery' is the compatibility forwarder of the retained
+    // `src/struct` tree, not the app-owned recovery module, so it is
+    // rejected outside that tree whatever alias names it.
     expect(
       e03ViolationsForSource(
         "import { diagnosticCategory } from '@/struct/recovery'",
         probeFile,
+        publicPaths,
+      ),
+    ).not.toEqual([])
+    // The app-owned recovery path itself stays clean for a permitted
+    // importer, and the retained tree keeps its own forwarder.
+    expect(
+      e03ViolationsForSource(
+        "import { diagnosticCategory } from '@/struct-adapters/recovery'",
+        new URL('research/recovery-projection.ts', root),
+        publicPaths,
+      ),
+    ).toEqual([])
+    expect(
+      e03ViolationsForSource(
+        "export * from './recovery'",
+        new URL('struct/probe.ts', root),
         publicPaths,
       ),
     ).toEqual([])
@@ -1003,6 +1062,109 @@ describe('app-owned Struct adapter boundary', () => {
         publicPaths,
       ),
     ).not.toEqual([])
+  })
+
+  it('E-03: collects every consecutive leading MDX import statement', async () => {
+    const publicPaths = await publicPackagePaths()
+    const mdxProbe = new URL('research/probe.mdx', root)
+
+    // The leading ESM block of an MDX document is the whole run of
+    // consecutive top-level ESM statements, so a migrated-family import that
+    // follows a safe import in the same block is still collected.
+    const cases: Array<[string, string]> = [
+      [
+        'adjacent statements',
+        "import { A } from './a'\nimport { T } from '@/struct/types'\n\n# Heading\n",
+      ],
+      [
+        'statements separated by a blank line',
+        "import { A } from './a'\n\nimport { T } from '@/struct/types'\n\n# Heading\n",
+      ],
+      [
+        'statements separated by a multi-line statement',
+        "import { A } from './a'\nexport const meta = {\n  title: 'x',\n}\nimport { T } from '@/struct/types'\n",
+      ],
+    ]
+    const missed: string[] = []
+    for (const [label, source] of cases) {
+      if (
+        e03ViolationsForSource(source, mdxProbe, publicPaths).length === 0
+      ) {
+        missed.push(label)
+      }
+    }
+    expect(missed).toEqual([])
+
+    // The reduction stays lossless: the leading block still ends at the
+    // first line that cannot begin a top-level ESM statement, so a fenced
+    // code sample that shows an import is not collected as a module
+    // specifier.
+    const fenced = [
+      "import { A } from './a'",
+      '',
+      '```js',
+      "import { T } from '@/struct/types'",
+      '```',
+      '',
+    ].join('\n')
+    expect(importedPaths(fenced, mdxProbe)).toEqual(['./a'])
+    expect(
+      e03ViolationsForSource(fenced, mdxProbe, publicPaths),
+    ).toEqual([])
+    const fencedOnly = [
+      '# Heading',
+      '',
+      '```js',
+      "import { T } from '@/struct/types'",
+      '```',
+      '',
+    ].join('\n')
+    expect(importedPaths(fencedOnly, mdxProbe)).toEqual([])
+  })
+
+  it('E-03: rejects every spelling of the compatibility recovery forwarder', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+
+    // The compatibility forwarder re-exports the app-owned recovery module,
+    // so a module outside the retained `src/struct` tree must not reach the
+    // recovery module through it. The check is on the resolved target, so
+    // every spelling of the forwarder is rejected.
+    const spellings = [
+      '../struct/recovery',
+      '@/struct/recovery',
+      '/src/struct/recovery',
+      '@/struct/recovery.js',
+    ]
+    const accepted: string[] = []
+    for (const specifier of spellings) {
+      const violations = e03ViolationsForSource(
+        `import { diagnosticCopy } from '${specifier}'`,
+        research,
+        publicPaths,
+      )
+      if (violations.length === 0) accepted.push(specifier)
+    }
+    expect(accepted).toEqual([])
+    for (const specifier of spellings) {
+      expect(
+        e03ViolationsForSource(
+          `import { diagnosticCopy } from '${specifier}'`,
+          research,
+          publicPaths,
+        ),
+        specifier,
+      ).not.toEqual([])
+    }
+
+    // The retained tree keeps its own forwarder.
+    expect(
+      e03ViolationsForSource(
+        "export * from './recovery'",
+        new URL('struct/probe.ts', root),
+        publicPaths,
+      ),
+    ).toEqual([])
   })
 
   it('E-03: rejects a new production importer of the app-owned recovery module', async () => {

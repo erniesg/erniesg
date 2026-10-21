@@ -23,15 +23,24 @@ export const legacyResearchPaperSourceBindingSchema = z
 
 /**
  * Struct variant: bound to one actual Struct document and the exact package
- * pin that produced it. The optional digests are present only when the bytes
- * they describe were actually produced in the same invocation.
+ * pin that produced it.
+ *
+ * `semanticReceiptSha256` is mandatory. The package's semantic receipt
+ * digest is the only semantic identity the struct variant carries, so a
+ * struct-cutover binding that does not carry it is refused rather than
+ * downgraded to a binding without a digest.
+ *
+ * `bundleSha256` stays optional in the shape only for the nonpublishing
+ * metadata cases that have no wire bytes. At struct-variant admission it is
+ * required, because the receipt-bound bundle artifact is: the release check
+ * decodes those bytes and compares their digest with it.
  */
 export const structCutoverSourceBindingSchema = z
   .object({
     kind: z.literal('struct-cutover'),
     documentSha256: sha256Schema,
     bundleSha256: sha256Schema.optional(),
-    semanticReceiptSha256: sha256Schema.optional(),
+    semanticReceiptSha256: sha256Schema,
     packageSourceCommit: z.string().regex(/^[a-f0-9]{40}$/),
     packageArtifact: z.string().min(1).max(256),
     packageArtifactSha256: sha256Schema,

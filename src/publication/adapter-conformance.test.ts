@@ -1013,6 +1013,7 @@ describe('publication source adapter conformance', () => {
       sourceBinding: {
         kind: 'struct-cutover',
         documentSha256: '9'.repeat(64),
+        semanticReceiptSha256: '7'.repeat(64),
         packageSourceCommit: 'c'.repeat(40),
         packageArtifact: 'struct-0.0.0.tgz',
         packageArtifactSha256: '8'.repeat(64),

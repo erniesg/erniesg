@@ -183,22 +183,26 @@ export function structBundleWire(document: StructDocument): StructBundleWire {
  *
  * `documentSha256` is the digest of the canonical document bytes.
  * `bundleSha256` is present only when the bundle wire bytes were produced
- * here, and `semanticReceiptSha256` only when the document's own semantic
- * receipt verifies. Neither is ever faked, and the package pin fields come
- * from the single provenance authority.
+ * here. `semanticReceiptSha256` is the package's semantic receipt digest and
+ * is always present: a document whose own semantic receipt does not verify
+ * is refused here rather than published with the digest missing. None of
+ * them is ever faked, and the package pin fields come from the single
+ * provenance authority.
  */
 export function structCutoverSourceBindingSync(
   document: StructDocument,
   pin: StructPackagePin,
   bundle?: VerifiedStructBundle,
 ): StructCutoverSourceBinding {
+  if (!verifyStructReceipt(document))
+    throw new Error(
+      'Struct source binding requires a document whose semantic receipt verifies',
+    )
   return structCutoverSourceBindingSchema.parse({
     kind: 'struct-cutover',
     documentSha256: structDocumentSha256(document),
     ...(bundle ? { bundleSha256: structBundleSha256(bundle) } : {}),
-    ...(verifyStructReceipt(document)
-      ? { semanticReceiptSha256: structSemanticReceiptSha256(document) }
-      : {}),
+    semanticReceiptSha256: structSemanticReceiptSha256(document),
     packageSourceCommit: pin.sourceCommit,
     packageArtifact: pin.artifact,
     packageArtifactSha256: pin.artifactSha256,

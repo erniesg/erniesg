@@ -489,12 +489,18 @@ export function publicationOutputReceiptContract(receipt: unknown) {
     'adapterVersion',
     'sourceType',
     'sourceId',
-    'graphSha256',
-    'assetBundleSha256',
-    'canonicalSubsetSha256',
     'routeParity',
   ] as const
   const optionalSourceStrings = ['sourceRevision', 'mappingVersion'] as const
+  // The graph, asset and canonical-subset digests are diagnostic fields of the
+  // receipt: they describe what the render saw, and they are never the source
+  // identity - the Struct binding is. They stay allowed, they are not
+  // required, and a present one still has to be a well-formed digest.
+  const diagnosticSourceDigests = [
+    'graphSha256',
+    'assetBundleSha256',
+    'canonicalSubsetSha256',
+  ] as const
   if (
     !isRecord(source) ||
     requiredSourceStrings.some(
@@ -503,6 +509,11 @@ export function publicationOutputReceiptContract(receipt: unknown) {
     optionalSourceStrings.some(
       (key) => source[key] !== undefined &&
         (typeof source[key] !== 'string' || source[key].length === 0),
+    ) ||
+    diagnosticSourceDigests.some(
+      (key) =>
+        source[key] !== undefined &&
+        !/^[a-f0-9]{64}$/u.test(String(source[key])),
     ) ||
     !['astro-canonical-route', 'not-applicable', 'adapter-conformance'].includes(
       String(source.routeParity),
@@ -529,7 +540,9 @@ export function publicationOutputReceiptContract(receipt: unknown) {
     version: receipt.version,
     sourceBinding: sourceBinding.data,
     sourceAdapterVersion: source.adapterVersion,
-    canonicalSubsetSha256: source.canonicalSubsetSha256,
+    // The graph-derived digests are not part of the compared contract: they
+    // are diagnostics of one render, and the Struct binding is the identity
+    // two equivalent adapters have to share.
     routeParity: source.routeParity,
     profiles: receipt.profiles,
     policyVersions: receipt.policyVersions,

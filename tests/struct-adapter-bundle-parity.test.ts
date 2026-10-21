@@ -26,6 +26,7 @@ const frozen = JSON.parse(
 )
 
 const srcRoot = new URL('../src/', import.meta.url)
+const toolsRoot = new URL('../tools/', import.meta.url)
 
 async function sourceFiles(directory: URL): Promise<URL[]> {
   const entries = await readdir(directory, { withFileTypes: true })
@@ -38,6 +39,30 @@ async function sourceFiles(directory: URL): Promise<URL[]> {
     ...nested.flat(),
     ...entries
       .filter((entry) => entry.isFile() && /\.(?:ts|tsx|astro)$/.test(entry.name))
+      .map((entry) => new URL(entry.name, directory)),
+  ]
+}
+
+/**
+ * The tool sources, including the plain-JS tools. The release checker is a
+ * `.mjs` tool, so the wire-reader census has to see it.
+ */
+async function toolSourceFiles(directory: URL): Promise<URL[]> {
+  const entries = await readdir(directory, { withFileTypes: true })
+  const nested = await Promise.all(
+    entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) =>
+        toolSourceFiles(new URL(`${entry.name}/`, directory)),
+      ),
+  )
+  return [
+    ...nested.flat(),
+    ...entries
+      .filter(
+        (entry) =>
+          entry.isFile() && /\.(?:ts|tsx|astro|mjs|cjs|mts|cts)$/.test(entry.name),
+      )
       .map((entry) => new URL(entry.name, directory)),
   ]
 }
@@ -281,5 +306,59 @@ describe('app-owned Struct bundle parity at the S-04 pin', () => {
     ]) {
       expect(observeSource).not.toContain(option)
     }
+  })
+
+  it('requires the release checker to be the one bounded wire reader', async () => {
+    // E-04 gate EG-10 (plan clause F8, governing plan commit
+    // 51c6656f9e0cab725672d09efaf22a8c6b9af1b5) requires the release check
+    // to decode the receipt-bound `struct-bundle.bin` with
+    // `decodeStructBundle(bytes, { expectedBundleSha256 })`.
+    //
+    // This is a deliberate, cited amendment of the E-02 policy above, not a
+    // silent narrowing of it: `src/**` still contains NO wire reader and NO
+    // value verifier, and the release checker in `tools/` is the ONE required
+    // bounded reader. The value verifier stays forbidden for wire data
+    // everywhere, and the reader stays embedded-only: no resolver option and
+    // no external fetch is passed at the call site.
+    const releaseChecker = await readFile(
+      new URL('../tools/publication-check.mjs', import.meta.url),
+      'utf8',
+    )
+    expect(releaseChecker).toContain('decodeStructBundle')
+    expect(releaseChecker).toContain('expectedBundleSha256')
+    // The value verifier is forbidden for wire data, in the release checker
+    // as well as in src.
+    expect(releaseChecker).not.toContain('verifyStructBundle')
+    // The bounded reader stays embedded-only.
+    for (const option of [
+      'resolverExecutor',
+      'resolverPolicy',
+      'resolverBudget',
+      'resolverSignal',
+      'resolverHostSupervisor',
+    ]) {
+      expect(releaseChecker).not.toContain(option)
+    }
+
+    // The release checker is the ONLY wire reader outside the test scope.
+    const toolFiles = (
+      await Promise.all(
+        (await toolSourceFiles(toolsRoot)).map(async (file) => ({
+          path: file.pathname,
+          source: await readFile(file, 'utf8'),
+        })),
+      )
+    ).filter((file) => !/\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(file.path))
+    expect(toolFiles.length).toBeGreaterThan(0)
+    const toolWireReaders = toolFiles.filter((file) =>
+      file.source.includes('decodeStructBundle'),
+    )
+    expect(toolWireReaders.map((file) => file.path)).toEqual([
+      new URL('../tools/publication-check.mjs', import.meta.url).pathname,
+    ])
+    const toolValueVerifierUsers = toolFiles.filter((file) =>
+      file.source.includes('verifyStructBundle'),
+    )
+    expect(toolValueVerifierUsers.map((file) => file.path)).toEqual([])
   })
 })

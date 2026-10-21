@@ -97,13 +97,19 @@ describe('Struct source binding digests', () => {
     )
   })
 
-  it('omits the semantic receipt digest when the receipt does not verify', async () => {
+  it('refuses a document whose semantic receipt does not verify', async () => {
     const document = await realDocument()
     const pin = await readStructPackagePin(repositoryRoot)
     receiptVerification.override = () => false
     try {
-      const binding = structCutoverSourceBindingSync(document, pin)
-      expect('semanticReceiptSha256' in binding).toBe(false)
+      // There is no "digest unavailable" downgrade: a document whose receipt
+      // does not verify cannot be published with the digest missing.
+      expect(() => structCutoverSourceBindingSync(document, pin)).toThrow(
+        /semantic receipt verifies/u,
+      )
+      await expect(structCutoverSourceBinding(document, pin)).rejects.toThrow(
+        /semantic receipt verifies/u,
+      )
     } finally {
       receiptVerification.override = undefined
     }

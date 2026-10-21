@@ -31,6 +31,7 @@ limitation described below.
 | Source baseline (immutable) | `84747cb49a36fea0eb4db0322dbd092430daf754` |
 | HEAD observed while inventorying | `b65c75b0` (docs-only descendant of the baseline) |
 | Inventory commit (immutable) | `58c9097c7191c182416ee8329fee518b0355a791` |
+| AST cross-check snapshot head (§2 and §3 only) | `51c6656f9e0cab725672d09efaf22a8c6b9af1b5` |
 | Merged into | `docs/struct-cutover-integrated-plan-20261020` (the cutover plan branch; the plan now links to this document) |
 | Governing ADR | `docs/superpowers/specs/2026-08-27-cross-repository-domain-ownership-and-package-boundaries.md` (ADR-0001) |
 | Governing issue plan | `docs/superpowers/plans/2026-08-27-cross-repository-architecture-issue-plan.md` — E-04 (issue #284), E-07 (issue #287) |
@@ -51,10 +52,21 @@ parity has been demonstrated** — no parity run was performed here.
 
 ### Tooling actually used
 
-`ripgrep 14.1.0` only. **No AST tooling was executed.** `node_modules/` is
-absent from this worktree (`ls node_modules` → no such directory), so
-`typescript`, `ts-morph`, `madge`, `dependency-cruiser` and `knip` were not
-importable, and installing dependencies is not authorized for this task.
+The **original inventory pass** used `ripgrep 14.1.0` only. **No AST tooling
+was executed for that pass.** `node_modules/` is absent from this worktree
+(`ls node_modules` → no such directory), so `typescript`, `ts-morph`, `madge`,
+`dependency-cruiser` and `knip` were not importable, and installing
+dependencies is not authorized for this task.
+
+A **follow-up AST cross-check** was later run against this worktree's tree at
+head `51c6656f9e0cab725672d09efaf22a8c6b9af1b5`, using the TypeScript
+compiler that was already installed in a separate trusted checkout
+(`typescript@5.7.2`); no dependency was installed in this worktree and no
+`package.json` / lockfile was changed. It is scoped to **only** the two
+affected importer lists — §2 (`src/research/schema.ts`) and §3
+(`src/research/epub.ts`). See §"AST cross-check of the affected importer
+lists" below for its exact bounds, and §"Known limitations of this scan" for
+what it does **not** cover.
 
 The repository *does* contain an existing AST-based import scanner —
 `tests/struct-adapter-boundary.test.ts:12-55` implements `importedPaths()`
@@ -64,9 +76,11 @@ with `ts.createSourceFile(...)` and walks `ImportDeclaration`,
 "red-first static assertion" that the cutover plan calls for, but it **could
 not be run here** (no installed dependencies). Consequently:
 
-> **This inventory is grep-bounded, not compiler-proven.** Every claim below is
-> "no importer was found under the stated scan", not "no importer exists". A
-> compiler-level proof requires the AST harness in
+> **This inventory is grep-bounded, not compiler-proven — except for the two
+> affected importer lists in §2 and §3, which were AST-cross-checked at the
+> snapshot head recorded below.** Every other list in this document is "no
+> importer was found under the stated scan", not "no importer exists". A
+> repository-wide compiler-level proof requires the AST harness in
 > `tests/struct-adapter-boundary.test.ts` (or an equivalent) to be extended to
 > the `src/publication/**` and `src/research/**` roots and executed.
 
@@ -139,21 +153,62 @@ document.
   runtime source-loading path in this repository is Vite's `ssrLoadModule`
   (this tool and the §5 tools), which a literal import scan does not see.
 
+### AST cross-check of the affected importer lists
+
+A follow-up pass re-derived the §2 and §3 importer lists from the TypeScript
+AST and real module resolution, to catch missed importers of the same class as
+the DOCX test entry. It is deliberately **bounded to those two lists**.
+
+| Item | Value |
+|---|---|
+| Snapshot head | `51c6656f9e0cab725672d09efaf22a8c6b9af1b5` |
+| Compiler | `typescript@5.7.2`, already installed in the trusted checkout `/home/ubuntu/code/erniesg/erniesg/node_modules` — **nothing was installed in this worktree** and no `package.json` / lockfile was changed |
+| Runtime | Node `v22.22.3` (linux x64) |
+| Scope | **only** the direct-importer lists of `src/research/schema.ts` (§2a–§2d) and `src/research/epub.ts` (§3b–§3c) |
+| Resolution | real TypeScript module resolution (`ts.resolveModuleName`) using this worktree's `tsconfig.json` `baseUrl` + `paths` (`"@/*": ["./src/*"]`) and `moduleResolution: Bundler` |
+| Files parsed | 755 (`.ts`, `.tsx`, `.mjs`, `.js`, `.jsx`, `.cjs`) under the worktree, excluding `node_modules/`, `dist/`, `build/`, `coverage/`, `.git/` |
+| Reference forms | `import` declarations, `export … from` re-exports, `import(...)` type nodes, dynamic `import()` calls, `require()` calls |
+| Result — `src/research/schema.ts` | 79 direct importers: 23 runtime (5 production + 18 test) and 56 type-only (31 production + 25 test) |
+| Result — `src/research/epub.ts` | 44 direct importers: 37 runtime and 7 type-only |
+| Evidence artifact (not checked in) | `/home/ubuntu/.local/state/struct-migration/20261020-continuation/app-pr452-caller-census-census-evidence.json` |
+
+Runtime vs type-only is decided **syntactically** (`import type { … }`, an
+inline `type` modifier, or an `import(...)` type node), matching this
+repository's `verbatimModuleSyntax` setting. A file that binds a **value** is a
+runtime importer even when the binding is only compared rather than called
+(for example `src/research/epub-preview.ts:9` binds the two `MAX_EPUB_*`
+constants).
+
+One `.astro` row in §2c (`src/components/research/IfLettersPublication.astro:4`)
+is outside the AST scope and stays grep-backed, so §2c's 32 rows are 31
+AST-parsed + 1 grep-backed.
+
 ### Known limitations of this scan
 
-1. No compiler/type-checker resolution was performed; a specifier that
-   TypeScript resolves through a path mapping, `exports` field, or
-   `case-insensitive` filesystem match that the literal string search missed
-   would not appear here.
-2. Indirection through a local variable holding a module path
+1. **Compiler-level resolution was performed only for the two affected
+   lists.** §2 (`src/research/schema.ts`) and §3 (`src/research/epub.ts`) were
+   AST-cross-checked at the head recorded above. Every other list in this
+   document (§4, §5, §6) is still grep-bounded: a specifier that TypeScript
+   resolves through a path mapping, `exports` field, or `case-insensitive`
+   filesystem match that the literal string search missed would not appear
+   there.
+2. **The AST cross-check does not see dynamic Vite source loading.**
+   `vite.ssrLoadModule('/src/research/epub.ts')` is a runtime load with no
+   static specifier, so L13–L15 and the §5 tooling table remain grep-limited
+   evidence. The same holds for `.astro` single-file components, which the
+   TypeScript AST cannot parse.
+3. Indirection through a local variable holding a module path
    (`const p = 'research/schema'; await import(p)`) is not detectable by
    literal search; no such pattern was found, but absence is not proof.
-3. String-concatenated or template-built specifiers are not matched.
-4. Files excluded by the code globs (e.g. `.yml`, `.sql`, `.json` handled
+4. String-concatenated or template-built specifiers are not matched.
+5. Files excluded by the code globs (e.g. `.yml`, `.sql`, `.json` handled
    separately) are not import sites; `docs/**` was matched only to the extent
    that it contains import-like literals, which it does not.
-5. `git status` was clean before authoring, so the tree matched the stated
+6. `git status` was clean before authoring, so the tree matched the stated
    HEAD; the scan does not cover untracked or ignored files.
+7. **The AST cross-check is not a conformance gate.** It re-derived two
+   importer lists; it did not run a build, a test, a type-check, a parity run
+   or a golden comparison, and it satisfies no gate in §7.
 
 ## 1. What `ResearchPaper` actually is
 
@@ -214,7 +269,8 @@ header/body row-group boundary.
 
 `src/publication/source-adapter.test.ts:3` · `src/publication/research-paper-adapter.test.ts:4` ·
 `src/annotations/move-parity.test.ts:5` · `src/annotations/annotation-bundle.test.ts:4` ·
-`src/annotations/annotations.test.ts:17` · `src/research/epub-note-relationships.test.ts:7` ·
+`src/annotations/annotations.test.ts:17` · `src/research/docx-import.test.ts:6` ·
+`src/research/epub-note-relationships.test.ts:7` ·
 `src/research/epub-metadata-profiles.test.ts:6` · `src/research/epub-scholarly-references.test.ts:4` ·
 `src/research/epub-semantic-visuals.test.ts:10` · `src/research/epub.test.ts:38` ·
 `src/research/evaluation.test.ts:10` · `src/research/export-package.test.ts:19` ·
@@ -222,7 +278,9 @@ header/body row-group boundary.
 `src/research/pagination.test.ts:9` · `src/research/pdf-semantic-runtime-regression.test.ts:6` ·
 `src/research/schema.test.ts:4`.
 
-All of these import `researchPaperSchema` as a **value**. All are **keep**
+All of these import `researchPaperSchema` as a **value** — for example
+`src/research/docx-import.test.ts` calls
+`researchPaperSchema.safeParse(result.paper)` at `:34`. All are **keep**
 under ADR-0001 ("`ResearchPaper` compatibility remains tested until its last
 production caller moves"), but each is a **migrate** candidate at E-07 if the
 schema is replaced by a Struct-derived model.
@@ -297,7 +355,7 @@ a runtime dependency on `src/research/schema.ts`.
 `src/research/semantic-table-source.test.ts:13`.
 
 **Summary of the `research/schema` importer set:** 5 production runtime
-importers, 17 test runtime importers, 32+ production type-only importers, 25+
+importers, 18 test runtime importers, 32+ production type-only importers, 25+
 test type-only importers. **No importer outside `src/research/`,
 `src/publication/`, `src/annotations/`, `src/components/research/` and
 `src/struct-adapters/` was found.**
@@ -329,7 +387,13 @@ branch at runtime.
 | `renderSemanticTable` | `src/research/epub.ts:626` | legacy semantic-table rendering |
 | `renderResearchPublicationXhtml` | `src/research/epub.ts:1117` | the legacy XHTML writer (asserts semantic integrity at `:1418`) |
 
-### 3b. Production (non-test) callers of the legacy renderer/export entries
+### 3b. Production (non-test) files in the legacy renderer/export path
+
+L1, L2, L4–L10 are direct importers of `src/research/epub.ts`; L3 is a
+transitive caller through L2; L13–L15 are **runtime** callers that load the
+module through Vite rather than a static import. L11 and L12 are in the legacy
+path but are **not** importers of `src/research/epub.ts` — see the note below
+the table.
 
 | # | Caller | Line(s) | Entry used | Direction | Use | Proposed stage |
 |---|---|---|---|---|---|---|
@@ -343,15 +407,26 @@ branch at runtime.
 | L8 | `src/components/research/EpubDownloadLink.tsx` | 2 | `type EpubExport` (type-only) | — | UI download link | keep; migrate |
 | L9 | `src/components/research/PublicationImporter.tsx` | 25 | `type EpubExport` (type-only) | — | import UI typing | keep |
 | L10 | `src/research/reconstruction-materialization.ts` | 15 | `profileEpubCss` (runtime) | — | **Struct** path already uses `buildStructEpub` from `src/struct/epub` (`:2`) | migrate (E-04 renderer switch) |
-| L11 | `src/research/export-pdf.ts` | 3 | `type ResearchNode`, `type ResearchPaper` (type-only) | — | legacy PDF writer | keep; migrate |
-| L12 | `src/research/publication-integrity.ts` | 11 | `type ResearchNode`, `type ResearchPaper` (type-only) | — | pre-export integrity assertion | keep; migrate |
-| L13 | `tools/pdf-export.mjs`, `tools/pdf-private-fidelity.mjs`, `tools/pdf-corpus-audit-lib.mjs`, `tools/srt-source-output-evidence.mjs`, `tools/pdf-epub-package-scan.mjs` | (see §5) | `buildEpub` / `buildReadableEpub` / `inspectEpub` | paper → legacy renderer | offline evidence tooling | keep; migrate when the Struct renderer is authoritative |
+| L11 | `src/research/export-pdf.ts` | 3 | **not an importer of `src/research/epub.ts`** — `type ResearchNode`, `type ResearchPaper` (type-only) from `src/research/schema.ts` (T12) | schema → legacy PDF writer; imported *by* `src/research/export-package.ts:19` (L2) | legacy PDF writer | keep; migrate |
+| L12 | `src/research/publication-integrity.ts` | 11 | **not an importer of `src/research/epub.ts`** — `type ResearchNode`, `type ResearchPaper` (type-only) from `src/research/schema.ts` (T31) | schema → pre-export integrity assertion; imported *by* `src/research/epub.ts:113` | pre-export integrity assertion | keep; migrate |
+| L13 | `tools/pdf-export.mjs`, `tools/pdf-private-fidelity.mjs`, `tools/pdf-corpus-audit-lib.mjs`, `tools/srt-source-output-evidence.mjs`, `tools/pdf-epub-package-scan.mjs` | (see §5) | `buildEpub` / `buildReadableEpub` / `inspectEpub` — **runtime**, via `vite.ssrLoadModule('/src/research/epub.ts')` (not static imports) | paper → legacy renderer | offline evidence tooling | keep; migrate when the Struct renderer is authoritative |
 | L14 | `tools/model-consultation-evidence.ts` | 93, 135, 139 | `buildReadableEpub`, `inspectEpub` via `vite.ssrLoadModule('/src/research/epub.ts')` | paper → legacy renderer | **runtime** evidence tool: reopens a reconstruction as a readable EPUB and inspects it | keep for E-04; **execute in E-04 renderer-switch evidence** (a renderer change can break it), then migrate with the renderer |
 | L15 | `tools/pdf-association-fixture-audit.mjs` | 45, 65 | `renderPublicationXhtml` via `vite.ssrLoadModule('/src/research/epub.ts')` | paper → legacy renderer | **runtime** offline audit tool: loads `/src/research/epub.ts` in the same `Promise.all` as `/src/research/pdf.ts`, `/src/research/source-output-checkpoints.ts`, and `/src/research/targets.ts` (`:44-47`), then renders the reconstructed paper (`reconstruction.paper`) as XHTML (`:65`) | keep; **required path in the root `npm test` run** (see §5), so a renderer change must keep it green; migrate when the Struct renderer is authoritative |
 
 **No production caller of `src/research/epub.ts` was found outside
 `src/research/`, `src/components/research/`, `src/pages/papers/`, and
 `tools/`.**
+
+> **L11 and L12 are not importers of `src/research/epub.ts`.** Both files import
+> only `ResearchNode` / `ResearchPaper` **types** from `src/research/schema.ts`
+> (`src/research/export-pdf.ts:3`, `src/research/publication-integrity.ts:11`)
+> and are listed in §2c as T12 and T31. The legacy path imports *them*:
+> `src/research/export-package.ts:19` imports `src/research/export-pdf.ts`, and
+> `src/research/epub.ts:113` imports `src/research/publication-integrity.ts`.
+> They are kept as rows here because they are part of the legacy
+> renderer/export surface, but they are **not** direct importers of
+> `src/research/epub.ts` and must not be counted as such. (Verified by the AST
+> cross-check in §"AST cross-check of the affected importer lists".)
 
 ### 3c. Test callers of the legacy renderer/export entries
 
@@ -384,7 +459,13 @@ branch at runtime.
 `src/research/semantic-table-source.test.ts` ·
 `src/struct/struct.test.ts:25-27` (imports `buildEpub as buildPublicEpub`,
 `renderPublicationXhtml`) ·
-`tools/pdf-export.test.mjs`.
+`tools/pdf-export.test.mjs` (indirect: `tools/pdf-export.mjs` →
+`tools/pdf-corpus-audit-lib.mjs` → `vite.ssrLoadModule('/src/research/epub.ts')`;
+see L13 and §5).
+
+Every entry above except `tools/pdf-export.test.mjs` is a **direct** importer
+of `src/research/epub.ts` (verified by the AST cross-check in
+§"AST cross-check of the affected importer lists").
 
 **`src/struct/codec.test.ts` is not a caller of `src/research/epub.ts`** and is
 therefore not in this list: it imports only the local Struct renderer -
@@ -519,8 +600,11 @@ companion document
 
 ## 7. Unresolved / not proven by this inventory
 
-1. **No compiler-level import proof.** The absence of an importer is
-   grep-bounded; see §"Known limitations".
+1. **No repository-wide compiler-level import proof.** The two affected
+   importer lists (§2 and §3) were AST-cross-checked at head
+   `51c6656f9e0cab725672d09efaf22a8c6b9af1b5`, but §4, §5 and §6 remain
+   grep-bounded, and that cross-check satisfies no gate here; see
+   §"Known limitations of this scan".
 2. **No both-mode parity evidence.** The cutover plan's E-04 deletion gate
    for `research/epub.ts` requires *"Call-site inventory and both-mode
    parity"*. Only the call-site half is in this document. Parity was not run.

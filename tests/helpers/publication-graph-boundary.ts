@@ -72,7 +72,6 @@ export const PERMITTED_GRAPH_IMPORTERS: readonly string[] = [
   'src/publication/source-adapter.ts',
   'src/publication/renderers/vivliostyle.ts',
   'src/publication/adapter-conformance.ts',
-  'src/publication/research-paper-adapter.ts',
   'src/publication/publishing-facade.ts',
 ]
 

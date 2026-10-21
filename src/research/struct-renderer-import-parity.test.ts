@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto'
-import { readFile, readdir } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { StructDocument } from '@erniesg/struct/document'
 import {
@@ -17,13 +19,25 @@ import {
 } from '../struct/epub'
 import { renderPublicationXhtml as localRenderPublicationXhtml } from '../struct/xhtml'
 import { buildStructDocument } from '../struct-adapters'
+import { buildAstroStructDocument } from '../struct-adapters/from-markdown'
 import { decodeReconstruction } from '../../tests/fixtures/struct-adapter-parity/observe'
+import bothModeCases from '../../tests/fixtures/struct-both-mode-parity/cases.json'
+import {
+  comparePublications,
+  externalLinks,
+  internalTargets,
+  publicationView,
+  unitSignature,
+  type PublicationComparison,
+} from '../../tests/fixtures/struct-both-mode-parity/view'
 import { reconstructDocx } from './docx-import'
 import {
   buildEpub as renderResearchEpub,
   renderPublicationXhtml as renderResearchPublicationXhtml,
 } from './epub'
+import type { DocxReconstruction } from './import-types'
 import { papers } from './papers'
+import { researchPaperSchema } from './schema'
 
 /**
  * E-04 dual-render parity evidence for the portable renderer import cut.
@@ -702,4 +716,425 @@ describe('E-04 dual-render parity: local copies stay test-local until E-07', () 
       )
     }
   })
+})
+
+/**
+ * E-04 EG-13 both-mode parity: ONE publication, rendered through the legacy
+ * `ResearchPaper` overload and through the public `StructDocument` overload
+ * of `src/research/epub.ts`.
+ *
+ * The blocks above prove that each mode is byte-stable and that the two
+ * modes are DISTINCT. They never prove that the two modes publish the SAME
+ * content. This block closes that gap with three pilot cases:
+ *
+ *  - `text-heading-inline-code`: one authored publication, projected into the
+ *    app-owned MDX ingress (the Struct side) and into the legacy
+ *    `ResearchPaper` model (the legacy side);
+ *  - `asset-link` and `table-reference`: the repository's own frozen
+ *    structured-manuscript DOCX, reconstructed ONCE and published through
+ *    BOTH overloads, so neither side is hand-authored.
+ *
+ * What is compared is the publication itself: the canonical text in reading
+ * order, the inline marks that carry that text, the published asset set with
+ * its alt text, the external links with their meaning, and the internal
+ * references RESOLVED TO THEIR TARGET. The legacy ids (`fn-docx-1`) and the
+ * Struct ids (`struct-block-...`) are presentational aliases of the same
+ * anchor, so the correspondence is asserted on the resolved target, never on
+ * the id string. Whole-archive bytes, CSS and the two document envelopes
+ * are deliberately NOT compared.
+ *
+ * SCOPE. Three cases are a pilot, not a proof over every accepted input.
+ * The exact coverage and the measured divergences are recorded in
+ * `docs/struct-migration-status/e-04-dated-record-20261020.md`.
+ */
+
+type BothModeCase = {
+  id: string
+  contentKind: string
+  note: string
+  mdx: string
+  legacyPaper: Record<string, unknown>
+}
+
+const bothModePilot = bothModeCases.cases[0] as unknown as BothModeCase
+
+const BOTH_MODE_TIMEOUT = { timeout: 30_000 }
+
+/**
+ * Publish one authored pilot case through both overloads.
+ *
+ * The Struct side is produced by the app-owned MDX ingress
+ * (`src/struct-adapters/from-markdown.ts`), the same ingress the production
+ * Astro path uses. The legacy side is the legacy `ResearchPaper` model,
+ * validated by the app-owned `researchPaperSchema`. No production canonical
+ * converter is involved and no production module is edited.
+ */
+async function renderBothModePilot(
+  pilot: BothModeCase,
+): Promise<PublicationComparison> {
+  const collection = await mkdtemp(resolve(tmpdir(), 'both-mode-parity-'))
+  const entry = resolve(collection, 'pilot')
+  await mkdir(entry, { recursive: true })
+  await writeFile(resolve(entry, 'index.mdx'), pilot.mdx)
+  const conversion = await buildAstroStructDocument({
+    entryId: 'pilot',
+    contentRoot: collection,
+  })
+  const legacy = publicationView(
+    renderResearchPublicationXhtml(
+      researchPaperSchema.parse(pilot.legacyPaper),
+    ),
+  )
+  const struct = publicationView(
+    renderResearchPublicationXhtml(conversion.document),
+  )
+  return comparePublications(legacy, struct)
+}
+
+let manuscriptReconstruction: Promise<DocxReconstruction> | undefined
+
+/**
+ * The repository's own frozen structured-manuscript DOCX, reconstructed once.
+ */
+function structuredManuscriptReconstruction() {
+  manuscriptReconstruction ??= (async () => {
+    const bytes = await readFile(
+      new URL(
+        '../../tests/fixtures/docx/structured-manuscript.docx',
+        import.meta.url,
+      ),
+    )
+    return reconstructDocx(
+      new File([bytes], 'structured-manuscript.docx', {
+        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      }),
+    )
+  })()
+  return manuscriptReconstruction
+}
+
+/**
+ * Publish the frozen structured manuscript through BOTH overloads.
+ *
+ * The legacy side is the importer's own `ResearchPaper` with the importer's
+ * own reconstruction; the Struct side is the app-owned adapter's
+ * `StructDocument` for the SAME reconstruction. Neither side is authored by
+ * this test.
+ */
+async function renderBothModeManuscript(
+  reconstruction?: DocxReconstruction,
+): Promise<PublicationComparison> {
+  const source = reconstruction ?? (await structuredManuscriptReconstruction())
+  const legacy = publicationView(
+    renderResearchPublicationXhtml(source.paper, { reconstruction: source }),
+  )
+  const struct = publicationView(
+    renderResearchPublicationXhtml(buildStructDocument(source)),
+  )
+  return comparePublications(legacy, struct)
+}
+
+describe('E-04 both-mode parity: the same publication through both epub.ts overloads', () => {
+  it(
+    'agrees with the legacy overload on the canonical text and the reading order',
+    BOTH_MODE_TIMEOUT,
+    async () => {
+      const comparison = await renderBothModePilot(bothModePilot)
+
+      expect(comparison.legacy.units.map(unitSignature)).toEqual([
+        'heading:Deterministic heading',
+        'paragraph:Call build() with main to continue, then read the reference.',
+      ])
+      expect(comparison.struct.units.map(unitSignature)).toEqual(
+        comparison.legacy.units.map(unitSignature),
+      )
+      expect(comparison.unitsEqual).toBe(true)
+      expect(comparison.struct.title).toBe(comparison.legacy.title)
+      expect(comparison.struct.authors).toEqual(comparison.legacy.authors)
+    },
+  )
+
+  it(
+    'agrees with the legacy overload on the link meaning',
+    BOTH_MODE_TIMEOUT,
+    async () => {
+      const comparison = await renderBothModePilot(bothModePilot)
+
+      expect(externalLinks(comparison.legacy)).toEqual([
+        {
+          href: 'https://example.com/reference',
+          text: 'the reference',
+          internal: false,
+        },
+      ])
+      expect(externalLinks(comparison.struct)).toEqual(
+        externalLinks(comparison.legacy),
+      )
+      expect(comparison.externalLinksEqual).toBe(true)
+    },
+  )
+
+  it(
+    'records the inline-code mark the legacy ResearchPaper model cannot carry',
+    BOTH_MODE_TIMEOUT,
+    async () => {
+      const comparison = await renderBothModePilot(bothModePilot)
+
+      // The pinned Struct `StructInline` carries an optional `code` flag, so
+      // the Struct overload publishes `<code>build()</code>`. The legacy
+      // `ResearchPaper` inline-run model (src/research/schema.ts) has NO
+      // field for an inline-code mark, so the legacy overload cannot publish
+      // the element at all. This is a measured DIVERGENCE, not agreement: the
+      // two modes differ by exactly the code element and by nothing else.
+      expect(comparison.markupDifferences).toEqual([
+        { index: 1, legacy: ['strong', 'a'], struct: ['strong', 'code', 'a'] },
+      ])
+      expect(comparison.legacy.units[1]?.text).toBe(
+        comparison.struct.units[1]?.text,
+      )
+    },
+  )
+
+  it(
+    'agrees with the legacy overload on the published asset set and its alt text',
+    BOTH_MODE_TIMEOUT,
+    async () => {
+      const comparison = await renderBothModeManuscript()
+
+      expect(comparison.legacy.assets.length).toBeGreaterThan(0)
+      expect(comparison.legacy.assets).toEqual([
+        {
+          src: 'assets/asset-img-b0007-rId4-431ced6916a2.png',
+          alt: 'Figure 1. A source-preserved synthetic image.',
+        },
+      ])
+      expect(comparison.struct.assets).toEqual(comparison.legacy.assets)
+      expect(comparison.assetsEqual).toBe(true)
+    },
+  )
+
+  it(
+    'agrees with the legacy overload on the external link meaning',
+    BOTH_MODE_TIMEOUT,
+    async () => {
+      const comparison = await renderBothModeManuscript()
+
+      expect(externalLinks(comparison.legacy)).toEqual([
+        {
+          href: 'https://example.com/source',
+          text: 'linked text',
+          internal: false,
+        },
+      ])
+      expect(externalLinks(comparison.struct)).toEqual(
+        externalLinks(comparison.legacy),
+      )
+      expect(comparison.externalLinksEqual).toBe(true)
+    },
+  )
+
+  it(
+    'agrees with the legacy overload on the table reading order',
+    BOTH_MODE_TIMEOUT,
+    async () => {
+      const comparison = await renderBothModeManuscript()
+      const legacyCells = comparison.legacy.units.filter(
+        (unit) => unit.kind === 'table-cell',
+      )
+      const structCells = comparison.struct.units.filter(
+        (unit) => unit.kind === 'table-cell',
+      )
+
+      expect(legacyCells.map((cell) => cell.text)).toEqual([
+        'Language',
+        'Greeting',
+        'English',
+        'Hello',
+        '中文',
+        '你好',
+      ])
+      expect(structCells.map((cell) => cell.text)).toEqual(
+        legacyCells.map((cell) => cell.text),
+      )
+    },
+  )
+
+  it(
+    'agrees with the legacy overload on the reference targets',
+    BOTH_MODE_TIMEOUT,
+    async () => {
+      const comparison = await renderBothModeManuscript()
+
+      // The legacy reference points at `#fn-docx-1` and the Struct reference
+      // points at `#struct-block-...`: those ids are presentational aliases of
+      // the same anchor, so the correspondence is asserted on the resolved
+      // target text, not on the id string.
+      expect(internalTargets(comparison.legacy).length).toBeGreaterThan(0)
+      expect(
+        internalTargets(comparison.struct).map((target) => target.text),
+      ).toEqual(internalTargets(comparison.legacy).map((target) => target.text))
+      expect(
+        internalTargets(comparison.struct).map((target) => target.target),
+      ).toEqual(
+        internalTargets(comparison.legacy).map((target) => target.target),
+      )
+      expect(comparison.internalTargetsEqual).toBe(true)
+    },
+  )
+})
+
+describe('E-04 both-mode parity: the measured divergences of the frozen manuscript', () => {
+  it(
+    'records the caption the Struct overload publishes twice',
+    BOTH_MODE_TIMEOUT,
+    async () => {
+      const comparison = await renderBothModeManuscript()
+
+      // The legacy overload publishes each caption once: the figure caption
+      // inside the figure's `<figcaption>` and the table caption inside the
+      // table figure's `<figcaption>`.
+      //
+      // The Struct overload publishes the FIGURE caption twice: once as the
+      // figure's `<figcaption>` and once as the separate `caption` block the
+      // adapter emits for the same caption node. That is a real content
+      // duplication, not a presentational difference.
+      //
+      // The TABLE caption is published once in each mode, but in a different
+      // place: the Struct mode renders the table figure without a
+      // `<figcaption>` and publishes the caption as its own block.
+      expect(
+        comparison.legacy.units
+          .filter((unit) => unit.kind === 'caption')
+          .map((unit) => unit.text),
+      ).toEqual([
+        'Figure 1. A source-preserved synthetic image.',
+        'Table 1. A semantic comparison.',
+      ])
+      expect(
+        comparison.struct.units
+          .filter((unit) => unit.kind === 'caption')
+          .map((unit) => unit.text),
+      ).toEqual([
+        'Figure 1. A source-preserved synthetic image.',
+        'Figure 1. A source-preserved synthetic image.',
+        'Table 1. A semantic comparison.',
+      ])
+      expect(comparison.unitsEqual).toBe(false)
+    },
+  )
+
+  it(
+    'records the list structure the Struct overload flattens',
+    BOTH_MODE_TIMEOUT,
+    async () => {
+      const comparison = await renderBothModeManuscript()
+      const shape = (unit: {
+        text: string
+        listTag: string | null
+        listDepth: number
+      }) => [unit.text, unit.listTag, unit.listDepth]
+
+      // The legacy overload publishes an ordered list with a nested bullet
+      // list. The Struct overload publishes both items as siblings of one
+      // unordered list: the adapter emits `listLevel`/`listOrdered`, while the
+      // pinned renderer groups list items by `attributes.listId` and reads
+      // `attributes.ordered`.
+      expect(
+        comparison.legacy.units
+          .filter((unit) => unit.kind === 'list-item')
+          .map(shape),
+      ).toEqual([
+        ['Ordered parent item', 'ol', 1],
+        ['Nested bullet item', 'ul', 2],
+      ])
+      expect(
+        comparison.struct.units
+          .filter((unit) => unit.kind === 'list-item')
+          .map(shape),
+      ).toEqual([
+        ['Ordered parent item', 'ul', 1],
+        ['Nested bullet item', 'ul', 1],
+      ])
+    },
+  )
+})
+
+describe('E-04 both-mode parity: the comparator is not vacuous', () => {
+  it(
+    'trips on a text difference between the paired views',
+    BOTH_MODE_TIMEOUT,
+    async () => {
+      const mutated = structuredClone(bothModePilot) as BothModeCase
+      const nodes = mutated.legacyPaper['nodes'] as Array<
+        Record<string, unknown>
+      >
+      nodes[1]!['text'] =
+        'Call build() with main to continue, then read the reference!'
+
+      const comparison = await renderBothModePilot(mutated)
+
+      expect(comparison.unitsEqual).toBe(false)
+      expect(comparison.unitDifferences).toEqual([
+        {
+          index: 1,
+          legacy:
+            'paragraph:Call build() with main to continue, then read the reference!',
+          struct:
+            'paragraph:Call build() with main to continue, then read the reference.',
+        },
+      ])
+    },
+  )
+
+  it(
+    'trips on a link difference between the paired views',
+    BOTH_MODE_TIMEOUT,
+    async () => {
+      const mutated = structuredClone(bothModePilot) as BothModeCase
+      const nodes = mutated.legacyPaper['nodes'] as Array<
+        Record<string, unknown>
+      >
+      const runs = nodes[1]!['inlineRuns'] as Array<Record<string, unknown>>
+      runs[2]!['href'] = 'https://example.com/other'
+
+      const comparison = await renderBothModePilot(mutated)
+
+      expect(comparison.externalLinksEqual).toBe(false)
+      expect(comparison.externalLinkDifferences).toEqual([
+        {
+          index: 0,
+          legacy: 'https://example.com/other|the reference',
+          struct: 'https://example.com/reference|the reference',
+        },
+      ])
+    },
+  )
+
+  it(
+    'trips on an asset difference between the paired views',
+    BOTH_MODE_TIMEOUT,
+    async () => {
+      const reconstruction = structuredClone(
+        await structuredManuscriptReconstruction(),
+      )
+      const visual = reconstruction.visualRelationships.find(
+        (relationship) => relationship.canonicalNodeId !== null,
+      )
+      expect(visual).toBeDefined()
+      visual!.altText = 'A mutated alt text.'
+
+      const comparison = await renderBothModeManuscript(reconstruction)
+
+      expect(comparison.assetsEqual).toBe(false)
+      expect(comparison.assetDifferences).toEqual([
+        {
+          index: 0,
+          legacy:
+            'assets/asset-img-b0007-rId4-431ced6916a2.png|A mutated alt text.',
+          struct:
+            'assets/asset-img-b0007-rId4-431ced6916a2.png|Figure 1. A source-preserved synthetic image.',
+        },
+      ])
+    },
+  )
 })

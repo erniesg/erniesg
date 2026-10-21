@@ -1,0 +1,95 @@
+{
+  "contract": "publication-source-binding-contract",
+  "version": "1.0.0",
+  "description": "The neutral description of the publication source-binding contract: the variants, their field names, their requiredness and their formats. It is a description and NOT an authority. It carries no package pin, no artifact digest, no document digest and no source identity, and it decides nothing at runtime. It exists so that two lanes can compare their view of the same contract without a production import edge.",
+  "authority": false,
+  "discriminator": "kind",
+  "formats": {
+    "sha256-hex": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "hex-40": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "non-empty-string": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "variants": {
+    "legacy-research-paper": {
+      "kind": "legacy-research-paper",
+      "strict": true,
+      "admission": "render-only; never struct-variant release admission evidence",
+      "fields": {
+        "kind": {
+          "type": "literal",
+          "value": "legacy-research-paper",
+          "required": true
+        }
+      }
+    },
+    "struct-cutover": {
+      "kind": "struct-cutover",
+      "strict": true,
+      "admission": "the only variant a publication may be admitted with",
+      "fields": {
+        "kind": {
+          "type": "literal",
+          "value": "struct-cutover",
+          "required": true
+        },
+        "documentSha256": {
+          "type": "string",
+          "format": "sha256-hex",
+          "required": true,
+          "meaning": "the app canonical Struct document digest, asset bytes included"
+        },
+        "bundleSha256": {
+          "type": "string",
+          "format": "sha256-hex",
+          "required": false,
+          "requiredAt": "struct-variant admission",
+          "meaning": "the digest of the receipt-bound bundle wire bytes; optional only for the nonpublishing metadata cases that have no wire bytes"
+        },
+        "semanticReceiptSha256": {
+          "type": "string",
+          "format": "sha256-hex",
+          "required": true,
+          "meaning": "the package semantic receipt digest of the Struct document"
+        },
+        "packageSourceCommit": {
+          "type": "string",
+          "format": "hex-40",
+          "required": true,
+          "maxLength": 40
+        },
+        "packageArtifact": {
+          "type": "string",
+          "format": "non-empty-string",
+          "required": true,
+          "maxLength": 256
+        },
+        "packageArtifactSha256": {
+          "type": "string",
+          "format": "sha256-hex",
+          "required": true
+        },
+        "packageIntegrity": {
+          "type": "string",
+          "format": "non-empty-string",
+          "required": true,
+          "maxLength": 256
+        },
+        "packageVersion": {
+          "type": "string",
+          "format": "non-empty-string",
+          "required": true,
+          "maxLength": 64
+        }
+      }
+    }
+  }
+}

@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { loadAdapterCase } from './fixtures/struct-adapter-parity/cases'
 import { buildStructDocument } from '../src/struct-adapters'
 import { adaptStructDocument } from '../src/publication/struct-adapter'
-import { structDocumentJson } from '../src/publication/struct-source-binding'
 import {
+  structDocumentJson,
+  structSemanticReceiptSha256,
+} from '../src/publication/struct-source-binding'
+import {
+  assertPublicationPlanSourceBinding,
   buildPublicationPlan,
   canonicalRouteBodyFingerprint,
   canonicalSubsetSha256ForPlan,
@@ -163,5 +167,61 @@ describe('the canonical route fingerprint of the facade', () => {
     expect(canonicalRouteBodyFingerprint(html)).toEqual([
       'figcaption:Authored image title',
     ])
+  })
+})
+
+describe('the Struct binding of a publication plan', () => {
+  it('always carries the bundle and semantic receipt digests', async () => {
+    const document = await pinnedStructDocument()
+    const plan = await buildPublicationPlan({ adapterId: 'struct', document })
+    // A publication plan is always bundle-bound and always carries the
+    // package's semantic receipt digest: there is no plan without them.
+    expect(plan.structBundleSha256).toMatch(/^[a-f0-9]{64}$/)
+    expect(plan.semanticReceiptSha256).toBe(
+      structSemanticReceiptSha256(document),
+    )
+    if (plan.sourceBinding.kind !== 'struct-cutover')
+      throw new Error('The plan is not bound to a Struct document')
+    expect(plan.sourceBinding.bundleSha256).toBe(plan.structBundleSha256)
+    expect(plan.sourceBinding.semanticReceiptSha256).toBe(
+      plan.semanticReceiptSha256,
+    )
+  })
+
+  it('refuses a receipt that names another bundle or semantic receipt', async () => {
+    const document = await pinnedStructDocument()
+    const plan = await buildPublicationPlan({ adapterId: 'struct', document })
+    const receipt = { sourceBinding: plan.sourceBinding }
+    expect(assertPublicationPlanSourceBinding(receipt, plan)).toEqual(
+      plan.sourceBinding,
+    )
+    expect(() =>
+      assertPublicationPlanSourceBinding(
+        {
+          sourceBinding: {
+            ...plan.sourceBinding,
+            bundleSha256: 'f'.repeat(64),
+          },
+        },
+        plan,
+      ),
+    ).toThrow(/different Struct bundle/u)
+    expect(() =>
+      assertPublicationPlanSourceBinding(
+        {
+          sourceBinding: {
+            ...plan.sourceBinding,
+            semanticReceiptSha256: 'f'.repeat(64),
+          },
+        },
+        plan,
+      ),
+    ).toThrow(/different Struct semantic receipt/u)
+    expect(() =>
+      assertPublicationPlanSourceBinding(
+        { sourceBinding: { kind: 'legacy-research-paper' } },
+        plan,
+      ),
+    ).toThrow(/not bound to a Struct document/u)
   })
 })

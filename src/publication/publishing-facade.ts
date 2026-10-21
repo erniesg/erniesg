@@ -26,7 +26,7 @@ import {
 } from './struct-source-binding'
 import type { AdapterDiagnostic, AdapterProvenance } from './source-adapter'
 import type { PublicationSourceResult } from './source-adapter'
-import type { PublicationSourceBinding } from './source-binding'
+import type { StructCutoverSourceBinding } from './source-binding'
 import { publicationSourceBindingSchema } from './source-binding'
 
 /**
@@ -54,11 +54,13 @@ export type PublicationPlan = {
   /** The pinned approved Struct revision this plan is derived from. */
   structDocument: StructDocument
   structDocumentSha256: string
-  structBundleSha256?: string
-  semanticReceiptSha256?: string
+  /** The digest of the bundle wire bytes this plan is bound to. */
+  structBundleSha256: string
+  /** The package's semantic receipt digest of the pinned Struct revision. */
+  semanticReceiptSha256: string
   /** The app-owned asset carrier for the plan (bytes resolved lazily). */
   assetBundle: AssetBundle
-  sourceBinding: PublicationSourceBinding
+  sourceBinding: StructCutoverSourceBinding
   diagnostics: AdapterDiagnostic[]
   provenance: AdapterProvenance
 }
@@ -137,7 +139,14 @@ export type PublicationPlanExpectations = {
   >
 }
 
-/** The `source` block of a publication receipt. */
+/**
+ * The `source` block of a publication receipt.
+ *
+ * The graph, asset and canonical-subset digests are diagnostic back-compat
+ * fields: they describe what the render saw, and they are never the source
+ * identity. The source identity is the Struct binding the receipt carries
+ * separately.
+ */
 export type PublicationSourceReceiptBlock = {
   adapterId: string
   adapterVersion: string
@@ -149,7 +158,7 @@ export type PublicationSourceReceiptBlock = {
   graphSha256: string
   /** Diagnostic back-compat digest. It is never the source identity. */
   assetBundleSha256: string
-  /** The canonical semantic digest of the published source. */
+  /** Diagnostic back-compat digest. It is never the source identity. */
   canonicalSubsetSha256: string
 }
 
@@ -174,17 +183,21 @@ function projectPlan(structDocument: StructDocument) {
 }
 
 /**
- * The bundle handle of a document, when the pinned package can produce one.
+ * The bundle handle of a document.
  *
  * The bundle digest is only ever present when the bundle wire bytes were
- * really produced, so a document the package refuses to bundle simply has no
- * bundle digest. The digest is never faked and never taken from a constant.
+ * really produced, so the facade refuses a document the pinned package
+ * cannot bundle: a publication whose binding is not bundle-bound cannot be
+ * admitted, and there is no release downgrade that drops the bundle digest.
  */
-function createBundleOrUndefined(structDocument: StructDocument) {
+function createBundleForDocument(structDocument: StructDocument) {
   try {
     return createStructBundleForDocument(structDocument)
-  } catch {
-    return undefined
+  } catch (error) {
+    throw new Error(
+      'Publication source cannot produce a bundle-bound Struct binding; the pinned package refused the document',
+      { cause: error },
+    )
   }
 }
 
@@ -233,17 +246,18 @@ export async function buildPublicationPlan(
   const sourceBinding = await structCutoverSourceBinding(
     structDocument,
     pin,
-    createBundleOrUndefined(structDocument),
+    createBundleForDocument(structDocument),
   )
+  const bundleSha256 = sourceBinding.bundleSha256
+  if (!bundleSha256)
+    throw new Error(
+      'Publication plan is not bundle-bound; a publication plan carries the digest of its bundle wire bytes',
+    )
   return {
     structDocument,
     structDocumentSha256: structDocumentSha256(structDocument),
-    ...(sourceBinding.bundleSha256
-      ? { structBundleSha256: sourceBinding.bundleSha256 }
-      : {}),
-    ...(sourceBinding.semanticReceiptSha256
-      ? { semanticReceiptSha256: sourceBinding.semanticReceiptSha256 }
-      : {}),
+    structBundleSha256: bundleSha256,
+    semanticReceiptSha256: sourceBinding.semanticReceiptSha256,
     assetBundle: projection.assetBundle,
     sourceBinding,
     diagnostics: result.diagnostics,
@@ -268,17 +282,18 @@ export async function publicationPlanFromStructDocument(
   const sourceBinding = await structCutoverSourceBinding(
     structDocument,
     pin,
-    createBundleOrUndefined(structDocument),
+    createBundleForDocument(structDocument),
   )
+  const bundleSha256 = sourceBinding.bundleSha256
+  if (!bundleSha256)
+    throw new Error(
+      'Publication plan is not bundle-bound; a publication plan carries the digest of its bundle wire bytes',
+    )
   return {
     structDocument,
     structDocumentSha256: structDocumentSha256(structDocument),
-    ...(sourceBinding.bundleSha256
-      ? { structBundleSha256: sourceBinding.bundleSha256 }
-      : {}),
-    ...(sourceBinding.semanticReceiptSha256
-      ? { semanticReceiptSha256: sourceBinding.semanticReceiptSha256 }
-      : {}),
+    structBundleSha256: bundleSha256,
+    semanticReceiptSha256: sourceBinding.semanticReceiptSha256,
     assetBundle,
     sourceBinding,
     diagnostics: projection.diagnostics,
@@ -362,14 +377,21 @@ export function decodePersistedStructDocument(value: unknown): StructDocument {
  * Parse and cross-check the Struct binding a receipt carries.
  *
  * The binding is parsed by the strict schema, so an unknown field, a
- * malformed digest or a non-hex package commit is refused. A receipt that
- * names another Struct document than the plan it is checked against is
- * refused as well: the Struct binding is the source identity.
+ * malformed digest or a non-hex package commit is refused. The struct
+ * variant is the only variant a publication may be admitted with, so the
+ * legacy variant is refused here as well: there is no legacy escape from
+ * the struct-only release admission.
+ *
+ * The three digests of the binding are the source identity: the canonical
+ * document digest, the digest of the bundle wire bytes and the package's
+ * semantic receipt digest. A receipt that names another document, another
+ * bundle or another semantic receipt than the plan it is checked against is
+ * refused.
  */
 export function assertPublicationPlanSourceBinding(
   receipt: unknown,
   plan: PublicationPlan,
-): PublicationSourceBinding {
+): StructCutoverSourceBinding {
   const binding = publicationSourceBindingSchema.parse(
     (receipt as { sourceBinding?: unknown })?.sourceBinding,
   )
@@ -380,6 +402,18 @@ export function assertPublicationPlanSourceBinding(
   if (binding.documentSha256 !== plan.structDocumentSha256)
     throw new Error(
       'Publication receipt is bound to a different Struct document than the checked plan',
+    )
+  if (binding.bundleSha256 === undefined)
+    throw new Error(
+      'Publication receipt is not bound to its Struct bundle wire bytes',
+    )
+  if (binding.bundleSha256 !== plan.structBundleSha256)
+    throw new Error(
+      'Publication receipt is bound to a different Struct bundle than the checked plan',
+    )
+  if (binding.semanticReceiptSha256 !== plan.semanticReceiptSha256)
+    throw new Error(
+      'Publication receipt is bound to a different Struct semantic receipt than the checked plan',
     )
   return binding
 }

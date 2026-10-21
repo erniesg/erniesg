@@ -192,3 +192,49 @@ describe('publication output receipt source binding', () => {
     expect(comparePublicationOutputReceipts(left, left)).toBe(true)
   })
 })
+
+describe('the diagnostic digests of a publication output receipt', () => {
+  it('accepts a receipt without the optional graph diagnostics', () => {
+    const {
+      graphSha256: _graph,
+      assetBundleSha256: _asset,
+      canonicalSubsetSha256: _canonical,
+      ...source
+    } = baseReceipt.source
+    const contract = publicationOutputReceiptContract({
+      ...baseReceipt,
+      source,
+      sourceBinding: structBinding,
+    })
+    expect(contract.sourceBinding).toEqual(structBinding)
+  })
+
+  it('separates nothing on a changed diagnostic digest', () => {
+    // The graph, asset and canonical-subset digests are diagnostics: they
+    // describe one render and are never the source identity.
+    const left = receiptWith(structBinding)
+    const right = {
+      ...left,
+      source: {
+        ...baseReceipt.source,
+        graphSha256: hex('1'),
+        assetBundleSha256: hex('2'),
+        canonicalSubsetSha256: hex('3'),
+      },
+    }
+    expect(comparePublicationOutputReceipts(left, right)).toBe(true)
+  })
+
+  it('refuses a malformed diagnostic digest', () => {
+    const error = rejection(() =>
+      publicationOutputReceiptContract({
+        ...baseReceipt,
+        source: { ...baseReceipt.source, graphSha256: 'not-a-digest' },
+        sourceBinding: structBinding,
+      }),
+    )
+    expect(error.message).toBe(
+      'Publication output receipt is missing its shared contract',
+    )
+  })
+})

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { access, readdir, readFile } from 'node:fs/promises'
+import { access, open, readdir, readFile, stat } from 'node:fs/promises'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import * as epubcheck from 'epubcheck-static'
@@ -8,6 +8,12 @@ import JSZip from 'jszip'
 import { parse } from 'parse5'
 import { PDFDocument } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import {
+  STRUCT_BUNDLE_LIMITS_PROFILE,
+  decodeStructBundle,
+} from '@erniesg/struct/bundle'
+import { decodeStructDocument } from '@erniesg/struct/document'
+import { structReceiptDigest } from '@erniesg/struct/receipt'
 import {
   PUBLICATION_PROFILES,
   publicationAssetFileExtension,
@@ -26,11 +32,12 @@ import {
 import {
   assertPublicationPlanSourceBinding,
   canonicalRouteBodyFingerprint,
-  canonicalSubsetSha256ForPlan,
   decodePersistedStructDocument,
   publicationPlanExpectations,
   publicationPlanFromStructDocument,
 } from '../src/publication/publishing-facade.ts'
+import { readStructPackagePin } from '../src/publication/struct-package-pin.ts'
+import { structDocumentSha256 } from '../src/publication/struct-source-binding.ts'
 import { publicationRepositoryForCurrentCheckout } from './publication-build.mjs'
 
 export function parsePublicationCheckArgs(argv) {
@@ -958,6 +965,162 @@ export async function assertNoPersistedPublicationGraph(root) {
     )
 }
 
+/**
+ * The receipt-bound Struct bundle artifact of one checked output.
+ *
+ * The artifact is required input for the struct variant, not an optional
+ * extra. The read is bounded by the pinned package's own published resource
+ * profile: the size is checked BEFORE the bytes are read, and the read
+ * itself never allocates more than one byte above that limit, so a file
+ * that grew after the size check is refused instead of allocated.
+ */
+export async function readPublicationStructBundleBytes(root) {
+  const path = resolve(root, 'struct-bundle.bin')
+  const limit = STRUCT_BUNDLE_LIMITS_PROFILE.maxRawBytes
+  let stats
+  try {
+    stats = await stat(path)
+  } catch {
+    throw new Error(
+      `Publication output is missing its receipt-bound Struct bundle artifact at ${path}; the struct variant requires struct-bundle.bin`,
+    )
+  }
+  if (!stats.isFile())
+    throw new Error(
+      `Publication output has no Struct bundle artifact file at ${path}`,
+    )
+  if (stats.size === 0)
+    throw new Error(
+      `Publication output has an empty Struct bundle artifact at ${path}`,
+    )
+  if (stats.size > limit)
+    throw new Error(
+      `Publication Struct bundle artifact exceeds the pinned resource limit at ${path}`,
+    )
+  const handle = await open(path, 'r')
+  try {
+    const buffer = new Uint8Array(limit + 1)
+    let read = 0
+    while (read < buffer.length) {
+      const { bytesRead } = await handle.read(
+        buffer,
+        read,
+        buffer.length - read,
+        read,
+      )
+      if (bytesRead === 0) break
+      read += bytesRead
+    }
+    if (read > limit)
+      throw new Error(
+        `Publication Struct bundle artifact exceeds the pinned resource limit at ${path}`,
+      )
+    return buffer.slice(0, read)
+  } finally {
+    await handle.close()
+  }
+}
+
+/**
+ * The decoded document of a verified bundle handle.
+ *
+ * The bundle handle carries the byte-free document and the verified asset
+ * bytes. Rehydrating the asset bytes and decoding the result with the
+ * package's own document codec is what makes the app-style document digest -
+ * the digest over the document WITH its asset bytes - comparable with the
+ * digest the receipt claims.
+ */
+function rehydrateStructDocument(handle) {
+  const snapshot = handle.documentSnapshot()
+  const assets = snapshot.assets.map((asset) => {
+    const bytes = handle.assetBytes(asset.id)
+    if (!bytes)
+      throw new Error(
+        `Struct bundle is missing the verified asset bytes of ${asset.id}`,
+      )
+    return { ...asset, bytes }
+  })
+  return decodeStructDocument({ ...snapshot, assets })
+}
+
+/**
+ * Compare every package-identity field of a receipt against the pinned
+ * Struct provenance.
+ *
+ * The provenance file is the only pin authority, and the comparison never
+ * reads a path or a pin out of the receipt itself. A mismatch on any of the
+ * five fields is a rejection, not a warning.
+ */
+export async function assertPublicationPackageIdentity(binding) {
+  const pin = await readStructPackagePin()
+  const expected = {
+    packageSourceCommit: pin.sourceCommit,
+    packageArtifact: pin.artifact,
+    packageArtifactSha256: pin.artifactSha256,
+    packageIntegrity: pin.integrity,
+    packageVersion: pin.packageVersion,
+  }
+  for (const [field, value] of Object.entries(expected))
+    if (binding[field] !== value)
+      throw new Error(
+        `Publication receipt package identity does not match the pinned Struct provenance: ${field}`,
+      )
+  return pin
+}
+
+/**
+ * The Struct admission of one publication receipt.
+ *
+ * The source identity of a publication is the Struct binding, so the release
+ * check proves it against the receipt-bound wire bytes and not against the
+ * receipt's own claim:
+ *
+ *  - the receipt must be bound to the struct variant, and the strict schema
+ *    refuses an unknown field, a malformed digest or a missing digest;
+ *  - the bundle digest is required at admission, because the receipt-bound
+ *    bundle artifact is;
+ *  - the artifact is read with a bounded read and decoded through the
+ *    bytes-only ingress with the digest the receipt claims, so a corrupt or
+ *    mismatched artifact is refused instead of decoded;
+ *  - the decoded document is rehydrated with the verified asset bytes and
+ *    compared with the app-style document digest the receipt claims, and
+ *    with the package's semantic receipt digest;
+ *  - every package-identity field is compared against the pinned provenance.
+ *
+ * There is no downgrade anywhere on this path: a missing, unreadable,
+ * oversized, corrupt, mismatched or forged input is a rejection.
+ */
+export async function assertPublicationStructAdmission(root, receipt, plan) {
+  const binding = assertPublicationPlanSourceBinding(receipt, plan)
+  assert(
+    typeof binding.bundleSha256 === 'string',
+    'Publication receipt is not bound to its Struct bundle wire bytes',
+  )
+  const bytes = await readPublicationStructBundleBytes(root)
+  let handle
+  try {
+    handle = await decodeStructBundle(bytes, {
+      expectedBundleSha256: binding.bundleSha256,
+    })
+  } catch (error) {
+    throw new Error(
+      'Publication receipt-bound Struct bundle did not decode into the bundle the receipt names',
+      { cause: error },
+    )
+  }
+  const decodedDocument = rehydrateStructDocument(handle)
+  assert(
+    structDocumentSha256(decodedDocument) === binding.documentSha256,
+    'Publication receipt is bound to a different Struct document than the decoded bundle carries',
+  )
+  assert(
+    structReceiptDigest(decodedDocument) === binding.semanticReceiptSha256,
+    'Publication receipt is bound to a different Struct semantic receipt than the decoded bundle carries',
+  )
+  await assertPublicationPackageIdentity(binding)
+  return binding
+}
+
 export async function publicationCheck(
   argv = process.argv.slice(2),
   execution = {},
@@ -1003,23 +1166,28 @@ export async function publicationCheck(
       `assets/${asset.id}${publicationAssetFileExtension(asset.fileName, asset.mediaType)}`,
     ]),
   )
-  assert(
-    receipt.source?.assetBundleSha256 ===
-      sha256(serializeAssetBundle(assetBundle)),
-    'Asset bundle changed from its receipt',
-  )
-  assert(
-    receipt.source?.canonicalSubsetSha256 ===
-      canonicalSubsetSha256ForPlan(plan),
-    'Canonical publication semantics changed from the source receipt',
-  )
+  // The graph, asset and canonical-subset digests are diagnostic fields of
+  // the receipt: they describe what the render saw, and they are never the
+  // source identity. The Struct binding is. An omitted or changed diagnostic
+  // therefore never replaces the identity, and a present one still has to be
+  // a well-formed digest.
+  for (const diagnostic of [
+    'graphSha256',
+    'assetBundleSha256',
+    'canonicalSubsetSha256',
+  ]) {
+    const value = receipt.source?.[diagnostic]
+    if (value === undefined) continue
+    assert(
+      typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value),
+      `Publication receipt diagnostic ${diagnostic} is not a well-formed digest`,
+    )
+  }
   // The source identity of the publication is the Struct binding: the receipt
-  // has to name the very Struct document the plan was rebuilt from.
-  assertPublicationPlanSourceBinding(receipt, plan)
-  assert(
-    /^[a-f0-9]{64}$/u.test(String(receipt.source?.graphSha256 ?? '')),
-    'Publication receipt is missing its diagnostic graph digest',
-  )
+  // has to name the very Struct document, bundle and semantic receipt the
+  // checked plan was rebuilt from, and the receipt-bound wire bytes have to
+  // carry exactly that bundle.
+  await assertPublicationStructAdmission(root, receipt, plan)
   assertPublicationReceiptSourceBinding(receipt, plan)
   assert(
     receipt.source?.adapterVersion === '1.0.0' &&

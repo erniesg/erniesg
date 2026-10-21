@@ -399,22 +399,10 @@ describe('Vivliostyle publication renderer boundary', () => {
     const outputRoot = await mkdtemp(resolve(tmpdir(), 'publication-endnote-'))
     const epubPath = resolve(outputRoot, 'note-bearing.epub')
     try {
+      // The EPUB is rendered from the canonical document, so the note kind it
+      // carries is the canonical note kind and never a graph-only node.
       await createPublicationEpub(
-        {
-          ...bundle,
-          graph: {
-            ...bundle.graph,
-            nodes: [
-              ...bundle.graph.nodes,
-              {
-                ...note,
-                id: 'packaged-endnote',
-                noteKind: 'endnote',
-                backlinkIds: [],
-              },
-            ],
-          },
-        },
+        bundle,
         epubPath,
         await readFile('src/styles/publication/publication.css', 'utf8'),
       )
@@ -424,7 +412,7 @@ describe('Vivliostyle publication renderer boundary', () => {
         '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"',
       )
       expect(content).toContain(
-        'epub:type="endnote" role="doc-footnote" data-note-kind="endnote"',
+        'epub:type="footnote" role="doc-footnote" data-note-kind="footnote"',
       )
       if (process.env.SRT_EPUBCHECK_JAVA_BIN) {
         await expect(
@@ -596,29 +584,35 @@ describe('Vivliostyle publication renderer boundary', () => {
     expect(html).not.toContain('Canonical equation caption')
   })
 
-  it('derives EPUB accessibility modes and features from graph media', () => {
+  it('derives EPUB accessibility modes and features from the canonical document', () => {
     const metadata = publicationEpubAccessibilityMetadata({
       metadata: { title: 'Publication' },
-      nodes: [
+      blocks: [
         {
-          type: 'paragraph',
+          kind: 'paragraph',
           text: 'Body',
-          accessibility: { alternativeText: '', decorative: false },
+          attributes: {},
         },
         {
-          type: 'figure',
-          assetIds: ['image'],
-          accessibility: { alternativeText: 'Image', decorative: false },
+          kind: 'figure',
+          text: 'Image',
+          fallbackAssetIds: ['image'],
+          attributes: { alternativeText: 'Image' },
         },
         {
-          type: 'media',
-          mediaKind: 'audio',
-          assetId: 'audio',
-          accessibility: { transcript: 'Transcript', decorative: false },
+          kind: 'media',
+          text: 'Audio',
+          attributes: { transcript: 'Transcript' },
+        },
+      ],
+      assets: [
+        {
+          id: 'image',
+          bytes: new Uint8Array([1, 2, 3]),
         },
       ],
     } as any)
-    expect(metadata.accessModes).toEqual(['textual', 'visual', 'auditory'])
+    expect(metadata.accessModes).toEqual(['textual', 'visual'])
     expect(metadata.accessModeSufficient).toEqual(['textual'])
     expect(metadata.accessibilityFeatures).toEqual([
       'alternativeText',

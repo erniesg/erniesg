@@ -1,4 +1,5 @@
 import { access, mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -18,6 +19,10 @@ import {
 } from './vivliostyle'
 
 const repositoryRoot = resolve(import.meta.dirname, '../../..')
+
+function sha256(value: Uint8Array | string) {
+  return createHash('sha256').update(value).digest('hex')
+}
 
 async function listFiles(root: string, directory = root): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true })
@@ -55,6 +60,7 @@ describe('publication render persistence', () => {
         sourceBinding,
       } as Parameters<typeof writePublicationSemanticArtifacts>[1])
       expect(await readdir(output)).toEqual([
+        'struct-bundle.bin',
         'struct-bundle.json',
         'struct-document.json',
       ])
@@ -63,6 +69,10 @@ describe('publication render persistence', () => {
       )
       expect(descriptor.documentSha256).toBe(sourceBinding.documentSha256)
       expect(descriptor.bundleSha256).toBe(sourceBinding.bundleSha256)
+      // The persisted wire bytes are the exact bytes the helper encoded, so
+      // the digest of the persisted file is the bundle digest of the receipt.
+      const wire = await readFile(resolve(output, 'struct-bundle.bin'))
+      expect(sha256(wire)).toBe(descriptor.bundleSha256)
       await expect(
         access(resolve(output, 'publication-graph.json')),
       ).rejects.toMatchObject({ code: 'ENOENT' })
@@ -102,10 +112,11 @@ describe('publication render persistence', () => {
       // The graph digests stay in the receipt as diagnostic back-compat
       // fields; they are never the source identity and never a persisted
       // graph.
-      expect(receipt.source.graphSha256).toMatch(/^[a-f0-9]{64}$/)
-      expect(receipt.source.assetBundleSha256).toMatch(/^[a-f0-9]{64}$/)
+      expect(receipt.source?.graphSha256).toMatch(/^[a-f0-9]{64}$/)
+      expect(receipt.source?.assetBundleSha256).toMatch(/^[a-f0-9]{64}$/)
       const persisted = await listFiles(output)
       expect(persisted).toContain('publication-receipt.json')
+      expect(persisted).toContain('struct-bundle.bin')
       expect(persisted).not.toContain('publication-graph.json')
       for (const file of persisted.filter((path) => path.endsWith('.json'))) {
         const contents = await readFile(resolve(output, file), 'utf8')

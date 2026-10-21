@@ -87,6 +87,10 @@ anchor used in this plan:
 | (F12) | The production renderer parity obligation covers the **shipped** artifacts, not only the `eink.epub` archive: the shipped WebPub content document `phone-webpub/index.html` and every resource it declares or references - the stylesheet binding, the asset bindings, the stylesheet's own font references, and the declared resource manifests (`phone-webpub/publication.json`, `EPUB/package.opf`). The frozen production case set covers the Astro case **and** the Payload case the production CLI can select. The Payload case is produced through the app-owned Payload-to-pinned-Struct ingress, and that ingress must be specified, tested against the pinned artifact, and landed **before** the Payload case is an E-04 exit gate; the Payload parity obligation itself is not narrowed, deferred, or dropped. |
 | (F13) | The production Astro path reaches the pinned Struct revision **before** any direct graph producer is retired: a concrete, tested Astro-to-pinned-Struct conversion, the production CLI `--adapter astro` mapping, the registry/locator flow that carries it, and a red-first guard that the Astro path no longer constructs a `PublicationGraph`. The Astro provenance must survive the projection: the ingress must carry the outer Astro provenance through `adaptStructDocument` or explicitly restamp **both** the result provenance and every per-node provenance before validation, so the route-parity policy in `tools/publication-check.mjs:61-94` sees a consistent `(adapterId, sourceType)` pair and the planned production build passes admission. |
 | (F14) | The production recovery wrapper obtains the diagnostic **category** from the package recovery runtime export (`diagnosticCategory` from `@erniesg/struct/recovery`) while keeping the app UX overlay (titles, messages, actions, the enriched summary, `userAction`). A parity-only duplicate category table is not acceptance: the app must not keep a second category authority. |
+| (F15) | The Struct bundle must be **carried**, not reconstructed: the canonical `StructDocument` and the verified bundle handle (or the exact encoded bundle bytes) must travel from the ingress through the adapter result and its validation, through the registry, to the renderer, so that the `struct-bundle.bin` in the render output is exactly the receipt-bound bytes the release checker decodes. The closed `PublicationSourceResult` shape (`src/publication/source-adapter.ts:129-134`) and `validatePublicationSourceResult` (`src/publication/source-adapter.ts:177`) drop them today, so `EG-10` is not implementable as written until that contract is extended. |
+| (F16) | The Payload path must carry or restamp the **per-node** provenance to the Payload identity before validation, exactly as the Astro path must, because the release admission check requires every node's `provenance.adapterId` (and `provenance.sourceId`) to equal the receipt's source identity (`tools/publication-check.mjs:265-279`). Restamping only the result provenance is not sufficient. |
+| (F17) | The multi-locale linked-edition contract of the exported `adaptPayloadLexicalEditions` (`src/publication/adapters/payload-lexical.ts:1701-1726`) must have a stated disposition in the Payload ingress: either a per-locale Struct projection/linking design with a localized parity case, or the explicit retirement of that exported API with its callers named. The redirect must not silently drop the contract. |
+| (F18) | The real scope and validation evidence of this branch: the three documentation files **plus** the `package.json` vite 8.1.6 override and the regenerated `package-lock.json`. A validation record that describes the branch as documentation-only, or that says the lockfile was unchanged, or that justifies skipping dependency-install validation, is false and must be corrected. |
 
 An anchor is a traceability marker, not a substitute for the obligation: the
 anchored text must keep stating the obligation in full, and adding or moving an
@@ -543,6 +547,79 @@ the package.
 Local `src/struct/{xhtml,epub,emitted-ids}.ts` remain compatibility-only until
 E-07; their tests stay green.
 
+### The Struct bundle must survive the adapter result (new, blocking) (F15)
+
+`EG-10` requires a receipt-bound `struct-bundle.bin` **in the render output
+directory** whose bytes the release checker decodes. That obligation is **not
+implementable through the source-result contract as it stands**, and the gap is
+in the contract, not in the renderer:
+
+- `PublicationSourceResult` is a **closed four-field type**: `graph`,
+  `assetBundle`, `diagnostics`, `provenance`
+  (`src/publication/source-adapter.ts:129-134`).
+- `validatePublicationSourceResult` (`src/publication/source-adapter.ts:177`)
+  **reconstructs** that closed shape and returns only those four fields
+  (`:207-215`), so anything an adapter put beside them is dropped before the
+  result leaves the registry.
+- `PublicationAdapterRegistry.resolve` returns exactly that validated value
+  (`src/publication/adapter-registry.ts:30-38`), and `PublicationBundle` is an
+  alias of it (`src/publication/adapter-registry.ts:10`).
+- The renderer is the only component that writes into the output directory
+  (`src/publication/renderers/vivliostyle.ts:1081-1207`; the artifacts it
+  writes are at `:1107-1116`), and it reads only `bundle.graph` and
+  `bundle.assetBundle.descriptor`.
+
+So the exact encoded bundle produced from the Astro-derived `StructDocument`
+is discarded before the only component that can write into the output
+directory runs, and `EG-10` cannot produce the receipt-bound bytes the
+checker decodes. E-04 work, therefore (app-owned; no new package API is
+implied by this clause):
+
+1. **The source result must carry the Struct revision.** `PublicationSourceResult`
+   gains the fields that carry the canonical `StructDocument` and the verified
+   bundle handle (or the exact encoded bundle bytes). The registry must pass
+   them through unchanged, and `validatePublicationSourceResult` must
+   **preserve** them instead of reconstructing a shape that drops them. The
+   carry must cover the **Payload** path as well as the Astro path: both
+   ingresses end in the same projection.
+2. **The renderer must write the bytes it was given.** The `struct-bundle.bin`
+   written into the render output directory must be the exact byte sequence
+   the receipt's bundle digest was computed from - not a re-encoding of a
+   descriptor and not a re-serialization of the document - so that the
+   checker's decode is a decode of the same bytes the receipt names.
+3. **The receipt must bind those bytes and the checker must verify them.** The
+   receipt's bundle digest must be the digest of the written file, and
+   `publication-check` must decode the written file and compare the decoded
+   document's digest and semantic receipt digest with the receipt's, exactly as
+   `EG-10` requires. A bundle that was not carried through the contract is a
+   failed build, not a missing optional field.
+4. **Guard (red first).** The E-04 static guard must assert that the source
+   result, its validation and the registry all carry the Struct bundle fields,
+   so the renderer can never again be asked to write bytes the contract
+   dropped.
+
+**Measured observation (a lane implementation, not a plan statement).** The
+isolated E-04 receipt-admission lane already carries the Struct document
+alongside the adapter result in its own implementation, and its release
+checker already reads a `struct-bundle.bin`. At that lane's head
+(`90e3edd7bbf4773efc8c1278ca08215f799f8563`): its `PublicationSourceResult`
+adds `structDocument?: StructDocument` and
+`sourceBinding?: PublicationSourceBinding`
+(`worktrees/app-e04-receipt-admission:src/publication/source-adapter.ts:141-163`);
+its `validatePublicationSourceResult` preserves both
+(`worktrees/app-e04-receipt-admission:src/publication/source-adapter.ts:257-301`);
+its facade hands `structDocument` and `sourceBinding` to the renderer
+(`worktrees/app-e04-receipt-admission:src/publication/publishing-facade.ts:470-483`);
+it produces the exact encoded bundle bytes through `structBundleWire`
+(`worktrees/app-e04-receipt-admission:src/publication/struct-source-binding.ts:150-178`),
+whose `bytes` field is the `struct-bundle.bin` payload;
+and its checker reads `struct-bundle.bin` and decodes it through the pinned
+package (`worktrees/app-e04-receipt-admission:tools/publication-check.mjs:977-978`,
+`:1099-1104`). **That is a lane implementation in a separate worktree, not
+this plan's content and not a satisfied gate**: none of it is merged here, the
+`EG-10` row stays PENDING, and the obligation above is what this plan
+requires.
+
 ### Production source path: Astro to the pinned Struct revision
 
 The production CLI resolves exactly one registered source adapter per build,
@@ -617,6 +694,12 @@ E-04 work, in this order (F13):
    `version: PUBLICATION_SOURCE_ADAPTER_VERSION`
    (`src/publication/adapters/astro.ts:606-611`), so the CLI mapping, the
    registry entry, and the locator flow are unchanged by construction.
+   The composition must **carry the canonical `StructDocument` and the verified
+   bundle handle (or the exact encoded bundle bytes) through every one of
+   those steps** - the adapter result, its validation, the registry and the
+   renderer - exactly as the bundle-carry subsection above requires (F15).
+   Composing ingress -> projection -> validation and then dropping the
+   document before the renderer satisfies neither `EG-10` nor this step.
 4. **Provenance must survive the projection (new, blocking).** The release
    admission check reads the source identity out of the **receipt**, and the
    receipt copies that identity verbatim from the bundle's provenance
@@ -743,17 +826,89 @@ E-04 work, in this order (F12):
    `src/publication/adapters/payload-lexical.ts:9`, `:1732-1736`) and
    `version: PUBLICATION_SOURCE_ADAPTER_VERSION`, so the CLI mapping, the
    registry entry, and the locator flow are unchanged by construction.
-4. **Provenance.** The composed Payload result must keep the Payload source
-   identity (`adapterId: 'payload-lexical'`, `sourceType: 'payload'`) on its
-   provenance, for the same reason as the Astro step above: the receipt copies
-   the bundle's provenance verbatim (`tools/publication-build.mjs:452`,
-   `:454`). The Payload branch of the CLI binds the `'not-applicable'`
-   route-parity policy (`:1084-1086`), which
+   The composition must carry the canonical `StructDocument` and the verified
+   bundle handle (or the exact encoded bundle bytes) through the adapter
+   result, its validation, the registry and the renderer, exactly as the
+   bundle-carry subsection above requires (F15).
+4. **Provenance on the result.** The composed Payload result must keep the
+   Payload source identity (`adapterId: 'payload-lexical'`,
+   `sourceType: 'payload'`) on its provenance, for the same reason as the
+   Astro step above: the receipt copies the bundle's provenance verbatim
+   (`tools/publication-build.mjs:452`, `:454`). The Payload branch of the CLI
+   binds the `'not-applicable'` route-parity policy (`:1084-1086`), which
    `publicationReceiptRequiresCanonicalRouteParity` accepts for a non-Astro
    receipt (`tools/publication-check.mjs:92-94`), so the Payload case does not
    fail admission on provenance - but the receipt must still name the
    production case it came from.
-5. **Ordering against the Payload parity obligation.** The Payload
+5. **Per-node provenance (new, blocking).** Keeping the Payload identity on
+   the *result* provenance is **not sufficient**, and the Payload path must
+   satisfy the same obligation as the Astro path. Two facts decide this:
+   - The Struct projection stamps its own identity on **every node**:
+     `adaptStructDocument` sets each node's `provenance.adapterId` to
+     `STRUCT_PUBLICATION_ADAPTER_ID` (`'struct-document'`,
+     `src/publication/struct-adapter.ts:24`) at
+     `src/publication/struct-adapter.ts:660`, and each node's
+     `provenance.sourceId` is the Struct document's own source id
+     (`sourceIdFor`, `src/publication/struct-adapter.ts:133-143`, used at
+     `src/publication/struct-adapter.ts:192`).
+   - The release admission check requires **per-node** agreement, not just a
+     matching result provenance: `assertPublicationReceiptSourceBinding`
+     (`tools/publication-check.mjs:265`) asserts that every node's
+     `provenance.adapterId` equals the receipt's source adapter
+     (`:274-280`, clause at `:277`) and that every node's
+     `provenance.sourceId` equals the receipt's source id (`:281-288`, clause
+     at `:285`); it is called from `publicationCheck` at
+     `tools/publication-check.mjs:1178`.
+
+   A production `--adapter payload` build whose nodes still say
+   `'struct-document'` is therefore **rejected at admission** even though its
+   route-parity policy is valid. The Payload ingress must consequently
+   **carry the outer Payload provenance through the projection, or restamp
+   both the result provenance and every per-node provenance** -
+   `adapterId`, `sourceId` and `sourceType` - to the Payload identity
+   (`'payload-lexical'` / `'payload'`), before
+   `validatePublicationSourceResult` (`src/publication/source-adapter.ts:177`)
+   runs. Restamping only the result provenance leaves one build carrying two
+   adapter identities and still fails the node check. The E-04 evidence must
+   carry a named assertion that a `payload-lexical` receipt passes
+   `assertPublicationReceiptSourceBinding`. (F16)
+6. **Multi-locale editions: a stated disposition (new, blocking).** The
+   exported `adaptPayloadLexicalEditions`
+   (`src/publication/adapters/payload-lexical.ts:1701-1726`) builds **every
+   declared locale** as a separate linked edition and links the locale
+   variants by assigning `edition.equivalentNodeId` for matching
+   source-stable nodes (`:1722`; the graph's node-edition schema still
+   provides the field, `src/publication/schema.ts:166`, and the conformance
+   comparator still reads it, `src/publication/adapter-conformance.ts:276-277`).
+   Its existing assertions are in
+   `src/publication/adapters/payload-lexical.test.ts:2829-2830`.
+   `adaptStructDocument` never emits `equivalentNodeId`: it is single-locale
+   by construction (`localeFor`, `src/publication/struct-adapter.ts:55`, used
+   at `:229`) and stamps `edition: { editionId }` only
+   (`src/publication/struct-adapter.ts:668`). The redirect therefore leaves
+   the multi-locale contract with **no specified replacement**, and the plan
+   must state one explicitly:
+   - **either** the ingress specifies a **per-locale Struct projection and
+     linking design**: one `StructDocument` per declared locale, each
+     projected through `adaptStructDocument`, with the locale variants linked
+     across the per-locale projections by source-stable node id into
+     `edition.equivalentNodeId`, and a **localized parity case** in the
+     frozen production case set that proves the linkage; **or**
+   - **or** the plan **explicitly retires** the exported
+     `adaptPayloadLexicalEditions` API, names its callers, and states that
+     the multi-locale linked-edition capability leaves the app surface at that
+     point. The only callers of the exported API at this head are in
+     `src/publication/adapters/payload-lexical.test.ts` - the import at `:5`
+     and the calls at `:2241`, `:2790`, `:2829`, `:2832`, `:2844`, `:2879`,
+     `:2885` and `:2968` - and the production Payload path does not use it
+     (`payloadLexicalSourceAdapter.adapt` calls the single-locale
+     `adaptPayloadLexical`, `src/publication/adapters/payload-lexical.ts:1732-1736`,
+     which adapts one locale at `:1673-1698`).
+
+   Whichever disposition is chosen, it must be recorded in this plan **and** in
+   the `EG-18`/`G-18` gate row, and the redirect must not silently drop the
+   multi-locale contract. (F17)
+7. **Ordering against the Payload parity obligation.** The Payload
    case-parity obligation (EG-16, mirrored as G-16) is **unchanged and not
    narrowed**: the frozen production case set still contains the Payload case
    the production CLI can select, and it must still pass the shipped-artifact
@@ -762,7 +917,7 @@ E-04 work, in this order (F12):
    the Payload case is an E-04 exit gate, and before the `payload-lexical`
    redirect (EG-01) is performed. Without it the redirect is unimplementable
    and the Payload case has no Struct-derived producer to compare.
-6. **Guard (red first).** The E-04 static guard must assert that
+8. **Guard (red first).** The E-04 static guard must assert that
    `src/publication/adapters/payload-lexical.ts` no longer constructs a
    `PublicationGraph` (no `publicationGraphSchema.parse`, no
    `serializePublicationGraph`, no graph construction) and must positively
@@ -778,9 +933,13 @@ reuse that pair and compare the projected semantics with
 (`src/publication/adapter-conformance.ts:376`), so the ingress cannot change
 the rendered content unnoticed.
 
-The same two current-state facts are recorded as observed evidence in
+The same current-state facts are recorded as observed evidence in
 [`docs/struct-publication-graph-authority-inventory.md`](../../struct-publication-graph-authority-inventory.md)
-§8e, and the corresponding pending obligations are G-01, G-16 and G-17 in that
+§8e - the per-node provenance stamp of the Struct projection, the release
+admission check's per-node source-binding requirement, the multi-locale
+linked-edition contract of the exported `adaptPayloadLexicalEditions`, and the
+closed source-result shape that cannot carry the Struct bundle - and the
+corresponding pending obligations are G-01, G-10, G-16, G-17 and G-18 in that
 document's §9 gate table.
 
 ### Publication semantics decision
@@ -1174,7 +1333,7 @@ Target state (what E-04 must produce; none of it is true today):
   red-first static assertion against storage/API/route/writer/release modules
   does not exist in the repository. The second inventory's §9 gate table is
   the source of the pending-gate list below. **Drift rule:** this table and the
-  inventory's §9 table (G-01..G-17) are the same obligation set; any row
+  inventory's §9 table (G-01..G-18) are the same obligation set; any row
   added, removed, or reworded in one must be applied identically to the other
   in the same change (the same change reaches the other table in the same
   commit), and a row present in only one of the two is a defect. The `EG-`/`G-`
@@ -1183,8 +1342,8 @@ Target state (what E-04 must produce; none of it is true today):
   not required to be byte-identical between the two tables; what must match row
   for row is the `(Fn)` anchor marker set and the pending status (both documents
   record every row as pending). At this head the two tables are one-to-one and
-  in the same order (17 rows each), their `(Fn)` anchor marker sets match on all
-  17 pairs, and every row is pending; the two tables still word the same
+  in the same order (18 rows each), their `(Fn)` anchor marker sets match on all
+  18 pairs, and every row is pending; the two tables still word the same
   obligations differently and name different artifact lists for most rows,
   which is a pre-existing divergence this plan does not claim to have
   resolved.
@@ -1207,7 +1366,7 @@ runtime, golden, or activation evidence.
 | EG-07 | No reverse graph→ResearchPaper writer (F4) | `src/publication/research-paper-adapter.ts:198-296`; `src/publication/research-paper-adapter.test.ts:17` | the reverse converter exists; its only caller is the round-trip test | PENDING |
 | EG-08 | Red-first static assertion: graph symbols and graph-bearing values/property access absent from storage/API/route/writer/release modules (F3) | extend the AST harness at `tests/struct-adapter-boundary.test.ts:12-55` to the `src/publication/**` and route/worker/writer roots, resolving imports AND property/dataflow access (including `bundle.graph` and `PublicationSourceResult.graph`) | the harness covers only `src/struct/**` and `src/struct-adapters/**`; no such assertion exists for `src/publication/**`; `tools/publication-build.mjs` imports `serializePublicationGraph` (`:29`), obtains a `PublicationSourceResult` from `registry.resolve()` (`:1067`), and reads the graph through property access — `bundle.graph` at `:463` (source-receipt `graphSha256`) and `const { graph } = bundle` at `:904` (route parity) — so that writer/release module is red on the named-import clause **and** on the property-access clause | PENDING |
 | EG-09 | Byte-identical double-adapt conformance for one pinned `StructDocument`; the graph is never persisted or treated as canonical text (F4) | `src/publication/struct-adapter.ts:188`; `src/publication/struct-adapter.test.ts` | not found | PENDING |
-| EG-10 | Receipts carry the canonical Struct digests and the exact package pin, with `documentSha256` mandatory and compared to the document digest recomputed from `decodedDocument` (as verified by `decodeStructBundle`), `semanticReceiptSha256` mandatory and compared to `structReceiptDigest(decodedDocument)` decoded from the receipt-bound Struct bundle artifact (`struct-bundle.bin`) written into the render output directory, and every receipt package-identity field compared against `vendor/struct/provenance.json`; graph digests demoted to diagnostic (F8) | `src/publication/renderers/vivliostyle.ts:109-117`; `src/publication/source-adapter.ts:25-65`; `src/publication/adapter-conformance.ts:447-494`; `tools/publication-check.mjs:35-59`, `:1145`, `:1162`, `:1178`; `tests/struct-package-parity.test.ts:18-21`; `tests/struct-package-artifact.test.ts:45-77`; `vendor/struct/provenance.json` | no Struct binding exists; the renderer writes no Struct bundle artifact, `publicationCheck` receives only the output directory and does not require the variant, the conformance allowlist would reject the extra keys, and nothing compares a receipt's package identity against provenance | PENDING |
+| EG-10 | Receipts carry the canonical Struct digests and the exact package pin, with `documentSha256` mandatory and compared to the document digest recomputed from `decodedDocument` (as verified by `decodeStructBundle`), `semanticReceiptSha256` mandatory and compared to `structReceiptDigest(decodedDocument)` decoded from the receipt-bound Struct bundle artifact (`struct-bundle.bin`) written into the render output directory, and every receipt package-identity field compared against `vendor/struct/provenance.json`; graph digests demoted to diagnostic (F8). **The Struct bundle must be carried, not reconstructed:** the canonical `StructDocument` and the verified bundle handle (or the exact encoded bundle bytes) must travel from the ingress through the adapter result, through `validatePublicationSourceResult`, through the registry and into the renderer, so that the `struct-bundle.bin` in the render output is exactly the receipt-bound bytes the checker decodes; the renderer must write the bytes it was given and the receipt's bundle digest must be the digest of the written file (F15) | `src/publication/renderers/vivliostyle.ts:109-117`, `:1081-1207`, `:1107-1116`; `src/publication/source-adapter.ts:25-65`, `:129-134` (closed `PublicationSourceResult`), `:177-216` (`validatePublicationSourceResult`); `src/publication/adapter-registry.ts:10` (`PublicationBundle`), `:30-38` (`resolve`); `src/publication/adapter-conformance.ts:447-494`; `tools/publication-check.mjs:35-59`, `:1145`, `:1162`, `:1178`; `tests/struct-package-parity.test.ts:18-21`; `tests/struct-package-artifact.test.ts:45-77`; `vendor/struct/provenance.json` | no Struct binding exists; the renderer writes no Struct bundle artifact, `publicationCheck` receives only the output directory and does not require the variant, the conformance allowlist would reject the extra keys, and nothing compares a receipt's package identity against provenance; and the source result cannot carry the bundle at all today - `PublicationSourceResult` is a closed four-field type (`src/publication/source-adapter.ts:129-134`), `validatePublicationSourceResult` returns only those four fields (`:207-215`), and the registry passes exactly that value on (`src/publication/adapter-registry.ts:30-38`), so the encoded bundle is discarded before the renderer runs | PENDING |
 | EG-11 | `ResearchPaper` stays a read-only compatibility model with a checked-in caller inventory (F5) | `docs/struct-research-paper-caller-inventory.md` | the inventory exists (grep-bounded); read-only enforcement and both-mode parity are not done | PENDING |
 | EG-12 | EPUBCheck / Ace / human accessibility stay app-owned (F11) | `src/publication/renderers/vivliostyle.ts:724`; `src/research/publication-integrity.ts` | app-owned today | PENDING |
 | EG-13 | Legacy `research/epub.ts` overloads keep both-mode parity until the last `ResearchPaper` consumer migrates (F5) | `src/research/epub.ts:133-141`, `:1422-1447`, `:2094-2118` | the call-site inventory exists; parity is **not** demonstrated | PENDING |
@@ -1215,6 +1374,7 @@ runtime, golden, or activation evidence.
 | EG-15 | No non-Struct graph producer remains: the forward bridge is retired or migrated onto the Struct projection (F3/F4) | `src/publication/research-paper-adapter.ts:81`, `:298`, `:304`, `:317`; `src/publication/struct-adapter.ts:188`, `:1313` | the forward bridge still exports a `ResearchPaper` -> `PublicationGraph` producer; it has only test callers today, but the module is exported and callable, so a second producer would remain after the reverse direction is retired | PENDING |
 | EG-16 | Production renderer parity covers every **shipped artifact** of the production output, not only the `eink.epub` archive: the shipped WebPub content document `phone-webpub/index.html`, the resources it declares and references (the stylesheet, the assets, and the stylesheet's own font references), and the declared resource manifests (`phone-webpub/publication.json`, `EPUB/package.opf`); the frozen production case set covers the Astro case **and** the Payload case the production CLI can select; the Payload case is produced through the app-owned Payload-to-pinned-Struct ingress, which must be specified, tested against the pinned artifact, and landed **before** the Payload case is an E-04 exit gate - the Payload parity obligation itself is unchanged, not narrowed and not deferred (F12) | `src/publication/renderers/vivliostyle.ts:508`, `:610-662`, `:617-618`, `:634-638`, `:639-660`, `:793-904`; `tools/publication-build.mjs:54-67`; `tools/publication-adapter-conformance.mjs:59-91`; `tests/fixtures/publication/astro/payload-equivalent.mdx`; `tests/fixtures/payload/equivalent-publication.json`; `tests/fixtures/payload/mapping.json`; `src/publication/adapters/payload-lexical.ts:139`, `:1646`, `:1726` | no production comparison is implemented for any shipped artifact; the previous scope was `EPUB/content.xhtml` only; the frozen production inputs exist, but there is no frozen production-case fixture set and no `eink.epub` golden in the repository | PENDING |
 | EG-17 | The production Astro path reaches the pinned Struct revision **before** any direct graph producer is retired: a concrete, tested Astro-to-pinned-Struct conversion, the production CLI `--adapter astro` mapping, the registry/locator flow that carries it, and a red-first guard that the Astro path no longer constructs a `PublicationGraph`; the Astro provenance must survive the projection - the ingress must carry the outer Astro provenance through `adaptStructDocument` or explicitly restamp **both** the result provenance and every per-node provenance before validation, so the route-parity policy in `tools/publication-check.mjs:61-94` sees a consistent `(adapterId, sourceType)` pair and the planned production build passes admission (F13) | `src/publication/adapters/astro.ts:25-28`, `:84-92`, `:567`, `:606-611`; `src/publication/struct-adapter.ts:188` (`adaptStructDocument`), `:24` (`STRUCT_PUBLICATION_ADAPTER_ID`), `:175-181` (`sourceType`), `:660` (per-node provenance), `:1288-1296` (result provenance), `:1313-1318` (`structPublicationAdapter`); `src/publication/adapter-registry.ts:30-38`, `:55-60`; `tools/publication-build.mjs:31-69`, `:54`, `:66`, `:452-469`, `:1054-1067`, `:1081-1086`; `tools/publication-check.mjs:61-94`, `:1151`; `tests/struct-adapter-boundary.test.ts`; `vendor/struct/provenance.json` | the Astro adapter builds the graph directly (`publicationGraphSchema.parse` at `src/publication/adapters/astro.ts:567`); no Astro-to-Struct ingress exists; the CLI maps `--adapter astro` to that direct producer, and the registry resolves exactly one adapter per id; and the Struct projection stamps its own identity (`adapterId: 'struct-document'` at `src/publication/struct-adapter.ts:1290`, per node at `:660`; `sourceType: 'research-paper'` for a non-PDF/DOCX source at `:175-181`, `:1292`), while the Astro branch of the CLI binds the `'astro-canonical-route'` route-parity policy (`tools/publication-build.mjs:1081-1086`) - so a composed receipt would be rejected by `tools/publication-check.mjs:92-94` | PENDING |
+| EG-18 | The production Payload path reaches the pinned Struct revision **before** any direct graph producer is retired: a concrete, tested Payload-to-pinned-Struct conversion, the production CLI `--adapter payload` mapping, the registry/locator flow that carries it, and a red-first guard that the Payload path no longer constructs a `PublicationGraph`; **the Payload provenance must survive the projection** - the ingress must carry the outer Payload provenance through `adaptStructDocument` or explicitly restamp **both** the result provenance and every per-node provenance (`adapterId`, `sourceId`, `sourceType`) to the Payload identity before validation, because the release admission check requires every node's `provenance.adapterId` (and `provenance.sourceId`) to equal the receipt's source identity (`tools/publication-check.mjs:265-279`, `:281-288`), so a `payload-lexical` build whose nodes still say `'struct-document'` is rejected at admission even though its route-parity policy is valid (F16); and **the multi-locale linked-edition contract must have a stated disposition** - either a per-locale Struct projection/linking design with a localized parity case, or the explicit retirement of the exported `adaptPayloadLexicalEditions` API with its callers named (`src/publication/adapters/payload-lexical.ts:1701-1726`, `src/publication/adapters/payload-lexical.test.ts:2829-2830`), so the redirect does not silently drop that contract (F17) | `src/publication/adapters/payload-lexical.ts:9` (`PAYLOAD_LEXICAL_ADAPTER_ID`), `:139` (mapping policy), `:818-838` (`commonNode` per-node provenance), `:1646` (direct graph construction), `:1662-1668` (result provenance), `:1673-1698` (single-locale `adaptPayloadLexical`), `:1701-1726` (`adaptPayloadLexicalEditions`, `equivalentNodeId` at `:1722`), `:1732-1736` (adapter registration); `src/publication/struct-adapter.ts:188` (`adaptStructDocument`), `:24` (`STRUCT_PUBLICATION_ADAPTER_ID`), `:55` (`localeFor`), `:133-143` (`sourceIdFor`), `:192` (per-result source id), `:229`, `:660` (per-node provenance), `:668` (`edition: { editionId }`), `:1288-1296` (result provenance); `src/publication/adapter-registry.ts:30-38`, `:55-60`; `tools/publication-build.mjs:31-69`, `:54`, `:66`, `:452-469`, `:1054-1067`, `:1084-1086`; `tools/publication-check.mjs:61-94`, `:265-288`, `:1178`; `src/publication/schema.ts:166` (`edition.equivalentNodeId`); `src/publication/adapter-conformance.ts:276-277`; `src/publication/adapters/payload-lexical.test.ts:5`, `:2829-2830`; `tests/struct-adapter-boundary.test.ts` | the Payload adapter builds the graph directly (`publicationGraphSchema.parse` at `src/publication/adapters/payload-lexical.ts:1646`, edition re-parse at `:1726`); no Payload-to-Struct ingress exists; the CLI maps `--adapter payload` to that direct producer (`tools/publication-build.mjs:54`); and the Struct projection stamps its own identity on every node (`adapterId: 'struct-document'` at `src/publication/struct-adapter.ts:660`, result at `:1290`), while `adaptStructDocument` is single-locale and never emits `edition.equivalentNodeId` (`src/publication/struct-adapter.ts:55`, `:668`) - so a redirected Payload build would fail the per-node admission check, and the exported multi-locale edition API has no specified replacement | PENDING |
 
 EPUBCheck, Ace, and human accessibility approval remain app-owned release
 evidence, not package unit tests.
@@ -1393,7 +1553,7 @@ Every stage is red-first and independently revertible:
 | --- | --- |
 | E-02 | Atomic pin (F10); adapter -> package decode -> bundle verify conservation on PDF/DOCX fixtures (F1); bytes-only ingress; frozen parity unchanged except reviewed additions; no writer change |
 | E-03 | Static import guard red-then-green (F6); package/local dual-read equality; accepted/rejected matrix; recovery copy parity (F9) **and the production recovery wrapper obtaining the diagnostic category from the package recovery runtime export, with the app UX overlay preserved** (F14); high-fan-in consumers enumerated and tested |
-| E-04 | Dual-render output/failure parity (F11 for the production path, F5 for the legacy `ResearchPaper` renderer overloads), including the named stylesheet-binding assertion for the production path (every stylesheet reference in the shipped XHTML resolves to a file that is present in the archive and declared in the OPF manifest, after the package XHTML is rendered with embedded styles or the stylesheet is shipped under the exact referenced name and declared in `EPUB/package.opf`); the same named binding assertion on the shipped WebPub artifact (the `phone-webpub/index.html` stylesheet and asset references resolve to files present in `phone-webpub/` and declared in `phone-webpub/publication.json` `resources`, and the stylesheet's own font references resolve to the shipped font files); the production comparison covers **every shipped content document** (`EPUB/content.xhtml` and `phone-webpub/index.html`), not the EPUB alone, over a frozen production case set that contains the Astro case and the Payload case the production CLI can select (F12); the production Astro ingress to the pinned Struct revision, the production CLI `--adapter astro` mapping, the registry/locator flow that carries it, and the red-first guard that the Astro path no longer constructs a `PublicationGraph`, all landed **before** the direct graph producer is retired (F13); the Astro provenance carried through the projection or explicitly restamped on **both** the result provenance and every per-node provenance before validation, so the route-parity policy in `tools/publication-check.mjs:61-94` sees a consistent `(adapterId, sourceType)` pair and the planned production build passes admission (F13); the app-owned Payload-to-pinned-Struct ingress specified, tested against the pinned artifact, and landed **before** the Payload case in the frozen production case set is an E-04 exit gate and before the `payload-lexical` redirect (EG-01) is performed, with the Payload parity obligation itself unchanged (F12); PublicationGraph ownership proof or retirement (F4) (enumerated importer set (F3), reverse-direction proof (F4), forward-producer retirement/migration proof (F3/F4), annotation authority decision (F4); static absence from storage/API/route/writer/release modules (F3); receipts bound to Struct digests/package pin via `vendor/struct/provenance.json`, with the mandatory `documentSha256` compared to the document digest recomputed from `decodedDocument` (as verified by `decodeStructBundle`) **and** the mandatory `semanticReceiptSha256` compared to `structReceiptDigest(decodedDocument)` decoded from the receipt-bound `struct-bundle.bin` artifact, and every receipt package-identity field compared against `vendor/struct/provenance.json`, by `tools/publication-check.mjs` (F8); E-04 static import guard red-then-green for `xhtml`/`epub`/`emitted-ids` (F6); EPUBCheck/Ace/human accessibility still app-owned (F11); checked-in authority inventories at `docs/struct-research-paper-caller-inventory.md` and `docs/struct-publication-graph-authority-inventory.md` (F5) (present at this head; grep-bounded, not compiler-proven, and not gate satisfaction by themselves); every row of the E-04 future-gate table still PENDING until the corresponding evidence exists |
+| E-04 | Dual-render output/failure parity (F11 for the production path, F5 for the legacy `ResearchPaper` renderer overloads), including the named stylesheet-binding assertion for the production path (every stylesheet reference in the shipped XHTML resolves to a file that is present in the archive and declared in the OPF manifest, after the package XHTML is rendered with embedded styles or the stylesheet is shipped under the exact referenced name and declared in `EPUB/package.opf`); the same named binding assertion on the shipped WebPub artifact (the `phone-webpub/index.html` stylesheet and asset references resolve to files present in `phone-webpub/` and declared in `phone-webpub/publication.json` `resources`, and the stylesheet's own font references resolve to the shipped font files); the production comparison covers **every shipped content document** (`EPUB/content.xhtml` and `phone-webpub/index.html`), not the EPUB alone, over a frozen production case set that contains the Astro case and the Payload case the production CLI can select (F12); the production Astro ingress to the pinned Struct revision, the production CLI `--adapter astro` mapping, the registry/locator flow that carries it, and the red-first guard that the Astro path no longer constructs a `PublicationGraph`, all landed **before** the direct graph producer is retired (F13); the Astro provenance carried through the projection or explicitly restamped on **both** the result provenance and every per-node provenance before validation, so the route-parity policy in `tools/publication-check.mjs:61-94` sees a consistent `(adapterId, sourceType)` pair and the planned production build passes admission (F13); the Struct bundle carried from the ingress through the adapter result, its validation, the registry and into the renderer, so that the `struct-bundle.bin` in the render output is the exact receipt-bound bytes the checker decodes (F15); the app-owned Payload-to-pinned-Struct ingress specified, tested against the pinned artifact, and landed **before** the Payload case in the frozen production case set is an E-04 exit gate and before the `payload-lexical` redirect (EG-01) is performed, with the Payload parity obligation itself unchanged (F12); the Payload provenance carried through the projection or explicitly restamped on **both** the result provenance and every per-node provenance (`adapterId`, `sourceId`, `sourceType`) before validation, so the node-provenance clause of `tools/publication-check.mjs:265-288` binds every node to the receipt's source adapter and a production `--adapter payload` build is admitted rather than rejected (F16); a stated disposition for the multi-locale linked-edition contract of the exported `adaptPayloadLexicalEditions` - a per-locale Struct projection/linking design with a localized parity case, or the explicit retirement of that exported API with its callers named (F17); PublicationGraph ownership proof or retirement (F4) (enumerated importer set (F3), reverse-direction proof (F4), forward-producer retirement/migration proof (F3/F4), annotation authority decision (F4); static absence from storage/API/route/writer/release modules (F3); receipts bound to Struct digests/package pin via `vendor/struct/provenance.json`, with the mandatory `documentSha256` compared to the document digest recomputed from `decodedDocument` (as verified by `decodeStructBundle`) **and** the mandatory `semanticReceiptSha256` compared to `structReceiptDigest(decodedDocument)` decoded from the receipt-bound `struct-bundle.bin` artifact, and every receipt package-identity field compared against `vendor/struct/provenance.json`, by `tools/publication-check.mjs` (F8); E-04 static import guard red-then-green for `xhtml`/`epub`/`emitted-ids` (F6); EPUBCheck/Ace/human accessibility still app-owned (F11); checked-in authority inventories at `docs/struct-research-paper-caller-inventory.md` and `docs/struct-publication-graph-authority-inventory.md` (F5) (present at this head; grep-bounded, not compiler-proven, and not gate satisfaction by themselves); every row of the E-04 future-gate table still PENDING until the corresponding evidence exists |
 | E-05 | Design record; authenticated state machine; inactive route cannot expose unapproved/superseded artifact; concurrency + rollback/forward recovery rehearsal; writer still inactive |
 | E-06 | Accepted E-ACT receipt matching exact head/pins/targets; single writer; post-activation health/observation/read-after-write |
 | E-07 | Extraction-point hashes; package-test mapping; zero production imports to removed modules (F6); package-only app tests; retained-compatibility register |
@@ -1417,32 +1577,123 @@ Every stage is red-first and independently revertible:
 
 ## Plan validation
 
-- This plan changes documentation only; it runs no dependency install, build, or
-  test. `git diff --check` and path/reference verification are its validation.
-- This head tightens three normative gates and nothing else: the production
-  renderer parity scope (F12), the production Astro path to the pinned Struct
-  revision (F13), and the production recovery wrapper's category authority
-  (F14). Every one of them is **planned work that is not implemented at this
-  head**: there is no Astro-to-Struct ingress module, the Astro adapter still
-  builds the graph directly, the app recovery wrapper still imports types only
-  from the package and still carries its own category table, and there is no
-  frozen production-case fixture set. `EG-16` and `EG-17` carry the
-  renderer-parity and Astro-ingress obligations and are **PENDING**, exactly
-  like every other row of the E-04 future-gate table; the `F14` recovery
-  obligation is carried in the E-03 section above and is likewise
-  unimplemented. No source, test, fixture, golden, receipt, lockfile, or
-  CI file was changed by this head.
-- Runtime parity/boundary tests require the pinned artifact install
-  (`node_modules/@erniesg/struct`), which is intentionally not performed for a
-  planning-only change.
+- **Scope of this branch (corrected - it is not documentation-only).** Against
+  its base `6952ae4874b8f5e2617785e4d98375df2b8ec8ec` (the head of `main`
+  that PR #452 targets) this branch changes **five** files:
+  - the three documentation files this plan belongs to -
+    `docs/superpowers/plans/2026-10-20-struct-full-cutover-sequence.md`,
+    `docs/struct-publication-graph-authority-inventory.md` and
+    `docs/struct-research-paper-caller-inventory.md`;
+  - `package.json` - **one added line**, the `overrides` entry
+    `"vite": "8.1.6"` (commit
+    `eaee813218e46ed93937f7682547022b4e77d4ac`, "fix(deps): override vite to
+    the patched 8.1.6 for the runtime audit gate"); and
+  - `package-lock.json` - **regenerated for that override**, 31 insertions and
+    187 deletions against that commit's own parent `77c793fa`.
+
+  The lockfile **was** changed by this branch; "the lockfile was unchanged" is
+  false. The dependency change is **unrelated to this plan's normative
+  content** - it is a scoped security override that every later branch needs,
+  because the runtime npm-audit gate is evaluated per branch - but it is part
+  of this branch, and its validation evidence is recorded below. For the
+  dependency pair, `git diff e1844d2f HEAD -- package.json package-lock.json`
+  is empty: those two files are byte-identical between the CI-verified head
+  `e1844d2f` and this head, and `git log 6952ae48..HEAD -- package.json
+  package-lock.json` names `eaee8132` and nothing else.
+- **Recorded validation evidence for the dependency change.** The npm-audit
+  gate, the install and the lockfile checks below were executed by the
+  dependency lane that produced the equivalent override commit
+  `6b9d26730b45bd3fa60833556d027d7991a1718e` on base `9d10da27`; that commit
+  adds the identical `overrides` line and resolves a single hoisted
+  `vite@8.1.6`, and its only lock differences against `eaee8132` are
+  pre-existing base differences (the `@erniesg/struct` tarball pin and the dev
+  flag on `saxes`/`xmlchars`), not `vite`. The dry-run and CI evidence was
+  additionally executed against **this branch's own heads**.
+  - **npm audit gate.** The node policy evaluator extracted verbatim from
+    `.github/workflows/ci.yml:269-344` and run against the worktree: **before**
+    the override, exit 1 with `npm audit (runtime, level high): 1 blocking, 1
+    allowed` - blocking `GHSA-587h-7wmj-h5pm` (vite, high); **after**, exit 0
+    with `npm audit (runtime, level high): 0 blocking, 1 allowed`. The only
+    remaining runtime advisory is the pre-existing `GHSA-ch52-4w7c-c8xp`
+    (http-cache-semantics, high), which `.agent/audit.json` already allows
+    until 2026-11-02, plus the moderate `GHSA-r4xh-jqrq-34v2` (smol-toml),
+    which is below the high gate level. `vite` is absent from the runtime
+    audit and from the full all-scopes audit (25 advisories, down from 26). The
+    "before" state reproduces the reported Rucksack CI run `39540068334`
+    failure exactly.
+  - **Install.** `npm ci --ignore-scripts` exit 0 (added 1415 packages,
+    audited 1416); `npm ls vite --all` exit 0 with every `vite` resolving to
+    `8.1.6` (overridden or deduped) and no invalid, missing or `UNMET` entry
+    for `vite`; `npm ls --all` exit 0 with the whole tree valid.
+  - **Lockfile consistency.** `npm ci --dry-run --ignore-scripts --no-audit
+    --no-fund` exit 0 under **Node v24.22.0 / npm 11.4.2** on linux arm64
+    against this branch's own head
+    `51c6656f9e0cab725672d09efaf22a8c6b9af1b5` (recorded in
+    `npm24-lock51-repro-result.json`). The P1 "lockfile out of sync" finding
+    raised against `package.json` was reproduced and is a **false positive**:
+    the same dry run exits 0 under npm 10.9.8 (the repository's own CI Node
+    22 toolchain) and under npm 11.4.2, the lockfile does contain
+    `@emnapi/runtime` and `@napi-rs/wasm-runtime`, and the reported lines are
+    peer-dependency warnings, not a sync failure.
+  - **pnpm.** `pnpm import` exit 0 (pnpm v12.8.1) regenerates the
+    `pnpm-lock.yaml` from the new npm lock. That file is excluded by the
+    repository's local `.git/info/exclude`, is not tracked, and was not
+    committed; it must never be committed, because a tracked `pnpm-lock.yaml`
+    would make the CI gate branch skip the npm audit.
+  - **Targeted suites on the committed tree.** `npx vitest run src/publication
+    src/struct-adapters tests/struct-inline-code-fidelity.test.ts
+    tests/struct-package-artifact.test.ts --maxWorkers=1` exit 0 (20 files,
+    245 tests); `npx astro check` exit 0 (816 files, 0 errors, 0 warnings);
+    `npx astro build` exit 0 (181 pages); `npm run publication:build --
+    --adapter astro --entry moving-to-cloudflare-with-astro` exit 0 on the
+    committed tree; `npm run publication:check -- --input <output> --matrix
+    phone-webpub,eink-epub,a5-pdf,a4-pdf` exit 0 on the committed tree.
+  - **CI.** The recorded Rucksack CI run `39552130561`, together with
+    `evidence`, `secret-scan` and `GitGuardian Security Checks`, was
+    **SUCCESS** at head `e1844d2f6d993e582c037479f09daeef50bddc8d`, an
+    ancestor of this head that already carries this exact dependency change.
+    **This record does not claim a green CI run at this head**: CI must be
+    re-verified at the new head before the PR can be merged.
+  - **Not run.** The full repository suite `npm test` and the Playwright e2e
+    suites were not run; the targeted publication and fidelity suites above
+    were run instead.
+- **The normative content of this head is documentation-only.** This head
+  tightens the normative gates and nothing else: the production renderer
+  parity scope (F12), the production Astro path to the pinned Struct revision
+  (F13), the production recovery wrapper's category authority (F14), the
+  Struct bundle carry from ingress to renderer (F15), the Payload per-node
+  provenance (F16), the multi-locale linked-edition disposition (F17), and the
+  validation scope of this branch itself (F18). Every one of them is **planned
+  work that is not implemented at this head**: there is no Astro-to-Struct
+  ingress module, the Astro adapter still builds the graph directly, there is
+  no Payload-to-Struct ingress module, the Payload adapter still builds the
+  graph directly, the source result still cannot carry the Struct bundle, the
+  app recovery wrapper still imports types only from the package and still
+  carries its own category table, and there is no frozen production-case
+  fixture set. `EG-10`, `EG-16`, `EG-17` and `EG-18` carry the bundle-carry,
+  renderer-parity, Astro-ingress and Payload-ingress obligations and are
+  **PENDING**, exactly like every other row of the E-04 future-gate table; the
+  `F14` recovery obligation is carried in the E-03 section above and is
+  likewise unimplemented. **No source, test, fixture, golden, receipt, or CI
+  file was changed by this head**, and neither `package.json` nor
+  `package-lock.json` was changed by this head - they were changed earlier on
+  this branch by `eaee8132`, and that change is recorded above.
+- The runtime parity/boundary tests that this plan's stages require are still
+  **not** executed by this branch: the pinned artifact install
+  (`node_modules/@erniesg/struct`) exists only in the dependency lane's
+  checkout, where it was made by the `npm ci` above, and the E-02/E-03/E-04
+  runtime evidence (adapter -> package decode -> bundle verification, the
+  frozen cross-repository parity, the static boundary harness) is not produced
+  by this head and is not claimed by it.
 - This head also integrates the two checked-in authority inventories (merged
   from `58c9097c7191c182416ee8329fee518b0355a791`). That integration is a
   documentation merge plus link and correction edits only: no source, test,
   golden, fixture, receipt, or runtime behaviour changed, and no build, test,
-  render, hash, or activation was executed. Every "no importer was found"
-  statement inherited from those inventories remains **grep-bounded, not
-  compiler-proven**, and is recorded as such wherever this plan relies on it.
+  render, hash, or activation was executed **for that integration**. Every
+  "no importer was found" statement inherited from those inventories remains
+  **grep-bounded, not compiler-proven**, and is recorded as such wherever this
+  plan relies on it.
 - Nothing in this plan or in the two inventories claims a runtime result, a
   golden comparison, a receipt, a cutover, a writer or route activation, or a
   satisfied gate. The E-04 future-gate table above is the explicit list of what
-  is still pending.
+  is still pending. (F18)

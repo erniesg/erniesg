@@ -196,11 +196,17 @@ export function editorialRecordRef(
  * renderer, the profile or the schema versions, because those are how the
  * content is *presented*, not what it *is*: two revisions of the same content
  * under different renderers share a content hash and differ in their ids.
+ *
+ * `semanticReceiptSha256` is mandatory, because the source binding it comes
+ * from is: the semantic receipt digest is the only semantic identity a
+ * Struct-cutover source carries, so a content hash that could leave it out
+ * would not name the content it claims to name. `bundleSha256` stays
+ * optional, for the nonpublishing metadata cases that have no wire bytes.
  */
 export function editorialContentDigest(input: {
   documentSha256: string
   bundleSha256?: string | undefined
-  semanticReceiptSha256?: string | undefined
+  semanticReceiptSha256: string
 }): string {
   return editorialDigest({
     domain: EDITORIAL_CONTENT_DERIVATION,
@@ -208,9 +214,7 @@ export function editorialContentDigest(input: {
     ...(input.bundleSha256 === undefined
       ? {}
       : { bundleSha256: input.bundleSha256 }),
-    ...(input.semanticReceiptSha256 === undefined
-      ? {}
-      : { semanticReceiptSha256: input.semanticReceiptSha256 }),
+    semanticReceiptSha256: input.semanticReceiptSha256,
   })
 }
 

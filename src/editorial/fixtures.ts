@@ -175,7 +175,7 @@ export function revisionFixture(
   overrides: {
     documentSha256?: string
     bundleSha256?: string | undefined
-    semanticReceiptSha256?: string | undefined
+    semanticReceiptSha256?: string
     contentHash?: string
     author?: EditorialActor
     created?: string
@@ -186,10 +186,10 @@ export function revisionFixture(
     overrides.bundleSha256 === undefined
       ? BUNDLE_SHA256
       : overrides.bundleSha256
+  // The semantic receipt digest is mandatory in the source binding, so a
+  // fixture cannot leave it out: there is no "no semantic receipt" revision.
   const semanticReceiptSha256 =
-    overrides.semanticReceiptSha256 === undefined
-      ? SEMANTIC_RECEIPT_SHA256
-      : overrides.semanticReceiptSha256
+    overrides.semanticReceiptSha256 ?? SEMANTIC_RECEIPT_SHA256
   const contentHash =
     overrides.contentHash ??
     editorialContentDigest({
@@ -203,16 +203,12 @@ export function revisionFixture(
     contentHash,
     documentSha256,
     ...(bundleSha256 === undefined ? {} : { bundleSha256 }),
-    ...(semanticReceiptSha256 === undefined
-      ? {}
-      : { semanticReceiptSha256 }),
+    semanticReceiptSha256,
     sourceBinding: {
       kind: 'struct-cutover' as const,
       documentSha256,
       ...(bundleSha256 === undefined ? {} : { bundleSha256 }),
-      ...(semanticReceiptSha256 === undefined
-        ? {}
-        : { semanticReceiptSha256 }),
+      semanticReceiptSha256,
       packageSourceCommit: PACKAGE_SOURCE_COMMIT,
       packageArtifact: PACKAGE_ARTIFACT,
       packageArtifactSha256: PACKAGE_ARTIFACT_SHA256,

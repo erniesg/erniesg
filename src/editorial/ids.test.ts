@@ -94,7 +94,10 @@ describe('editorial ids', () => {
       }),
     )
     expect(
-      editorialContentDigest({ documentSha256: OTHER_DOCUMENT_SHA256 }),
+      editorialContentDigest({
+        documentSha256: OTHER_DOCUMENT_SHA256,
+        semanticReceiptSha256: revision.semanticReceiptSha256,
+      }),
     ).not.toBe(revision.contentHash)
   })
 
@@ -146,6 +149,7 @@ describe('editorial ids', () => {
       version: revisionFixture().version,
       contentHash: DOCUMENT_SHA256,
       documentSha256: DOCUMENT_SHA256,
+      semanticReceiptSha256: SEMANTIC_RECEIPT_SHA256,
       sourceBinding: revisionFixture().sourceBinding,
       schemaVersions: revisionFixture().schemaVersions,
       rendering: revisionFixture().rendering,

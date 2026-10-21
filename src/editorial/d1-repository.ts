@@ -102,9 +102,10 @@ function rowToRevision(row: Row) {
     ...(optionalText(row, 'bundle_sha256') === null
       ? {}
       : { bundleSha256: optionalText(row, 'bundle_sha256') }),
-    ...(optionalText(row, 'semantic_receipt_sha256') === null
-      ? {}
-      : { semanticReceiptSha256: optionalText(row, 'semantic_receipt_sha256') }),
+    // The semantic receipt digest is mandatory in the record, so a row that
+    // does not carry one is refused here rather than read as a revision
+    // without a semantic identity.
+    semanticReceiptSha256: text(row, 'semantic_receipt_sha256'),
     sourceBinding: json(row, 'source_binding'),
     schemaVersions: json(row, 'schema_versions'),
     rendering: json(row, 'rendering'),
@@ -369,7 +370,7 @@ function recordValues(
         record.contentHash,
         record.documentSha256,
         record.bundleSha256 ?? null,
-        record.semanticReceiptSha256 ?? null,
+        record.semanticReceiptSha256,
         encode(record.sourceBinding),
         encode(record.schemaVersions),
         encode(record.rendering),

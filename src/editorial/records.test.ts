@@ -155,6 +155,36 @@ describe('editorial record schemas', () => {
     ).toBe(false)
   })
 
+  it('refuses a source binding that does not carry the semantic receipt', () => {
+    const revision = revisionFixture()
+    const { semanticReceiptSha256: _omitted, ...withoutDigest } =
+      revision.sourceBinding
+
+    expect(editorialSourceBindingSchema.safeParse(withoutDigest).success).toBe(
+      false,
+    )
+    expect(
+      editorialRevisionSchema.safeParse({
+        ...revision,
+        sourceBinding: withoutDigest,
+      }).success,
+    ).toBe(false)
+  })
+
+  it('refuses a source binding that names a different semantic receipt', () => {
+    const revision = revisionFixture()
+
+    expect(
+      editorialRevisionSchema.safeParse({
+        ...revision,
+        sourceBinding: {
+          ...revision.sourceBinding,
+          semanticReceiptSha256: OTHER_DOCUMENT_SHA256,
+        },
+      }).success,
+    ).toBe(false)
+  })
+
   it('refuses a revision whose content hash is not the hash of its digests', () => {
     const revision = revisionFixture()
 

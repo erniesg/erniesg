@@ -123,6 +123,14 @@ hold the nested objects of §7 verbatim. The authoritative shape of each JSON
 column is the zod schema in `src/editorial/records.ts`; the column is where
 it is stored.
 
+`editorial_revisions.semantic_receipt_sha256` is nullable in the DDL but
+**mandatory in the record** (§7.1): the column is permissive, the app is not.
+The writer always writes the digest, and a row that does not carry one is
+refused when it is read rather than read as a revision without a semantic
+identity. The DDL is not changed by that alignment because the numbered
+migration is an artefact of the cutover and the coordinator authorises the
+apply.
+
 ### 1.3 The atomicity boundary
 
 **A reader never sees a record that is being written.** The unit of
@@ -207,11 +215,14 @@ under Lithuanian, and a collation-dependent id is not a portable id.
 ### 2.4 Two other digests
 
 - **`contentHash`** — the digest of `{ documentSha256, bundleSha256?,
-  semanticReceiptSha256? }` under
+  semanticReceiptSha256 }` under
   `erniesg.editorial.content.v1`. It is the *content* identity, and it is
   what a decision binds. It deliberately does not cover the renderer, the
   profile or the schema versions: those are how the content is presented,
-  not what it is.
+  not what it is. The semantic receipt digest is in it because it is
+  mandatory in the source binding (§7.1): a content hash that could leave
+  the only semantic identity out would not name the content it claims to
+  name.
 - **`artifactSetSha256`** — the digest of the artifact list, ordered by path,
   under `erniesg.editorial.artifact-set.v1`. It is what an approval binds,
   so an approval cannot be carried over to different bytes.
@@ -809,7 +820,7 @@ The immutable content revision.
 | `contentHash` | 64 hex | yes | the digest of the content digests (§2.4) |
 | `documentSha256` | 64 hex | yes | the Struct document digest |
 | `bundleSha256` | 64 hex | no | the Struct bundle digest |
-| `semanticReceiptSha256` | 64 hex | no | the Struct semantic receipt digest |
+| `semanticReceiptSha256` | 64 hex | yes | the Struct semantic receipt digest |
 | `sourceBinding` | see below | yes | the app-owned source binding |
 | `schemaVersions` | see below | yes | the artifact schema versions |
 | `rendering` | see below | yes | the rendering intent |
@@ -823,7 +834,7 @@ The immutable content revision.
   kind: 'struct-cutover',
   documentSha256: sha256,
   bundleSha256?: sha256,
-  semanticReceiptSha256?: sha256,
+  semanticReceiptSha256: sha256,
   packageSourceCommit: /^[a-f0-9]{40}$/,
   packageArtifact: string(1..256),
   packageArtifactSha256: sha256,
@@ -838,15 +849,39 @@ The package fields are the fields of the **one** provenance source,
 E-04 union is deliberately **not** admitted: a release in this contract must
 bind a Struct-cutover source.
 
-**This shape is app-owned and provisional.** It is *not* a verified copy of
-another contract's shape: E-04 has not landed on this branch, and no module
-in `src/**` defines a `sourceBinding` to check it against (measured — the
-E-04 worktree `app-e04-receipt@b4521168` has no such module either). The
-field list is pinned in the shared constant `EDITORIAL_SOURCE_BINDING_FIELDS`
-(`src/editorial/records.ts`), which `records.test.ts` checks against the
-schema's own field list, and **the E-04 module must compare its shape
-against that constant when it lands**. Until then a drift between the two
-shapes would not be visible, and this document does not claim that it is.
+**This shape is app-owned, and it is now checked against the neutral
+contract.** E-04 has landed, and the E-04 receipt lane produced a neutral
+description of the contract in
+`tests/fixtures/publication-source-binding-contract-v1.json`: the variants,
+their field names, their requiredness and their formats. The fixture is a
+description and **not** an authority — it carries no package pin, no artifact
+digest, no document digest and no source identity, and it decides nothing at
+runtime.
+
+The comparison is **test-only on both sides**, so that neither lane needs an
+import of the other:
+
+- the E-04 side (`src/publication/source-binding.test.ts`) compares the
+  E-04 `structCutoverSourceBindingSchema` against the same fixture;
+- the E-05 side (`src/editorial/source-binding-contract.test.ts`) compares
+  `editorialSourceBindingSchema` and the shared constant
+  `EDITORIAL_SOURCE_BINDING_FIELDS` (`src/editorial/records.ts`) against the
+  same fixture, field for field: the names and their order, the requiredness
+  of each field, the formats and the bounds, and the strictness of the
+  variant.
+
+Neither module imports the other, and neither module imports the other's
+production code; the boundary test in the E-05 file proves it by reading both
+sides' sources.
+
+The requiredness is therefore the contract's, not this module's preference:
+`semanticReceiptSha256` is **mandatory** (the semantic receipt digest is the
+only semantic identity a Struct-cutover source carries, so a binding that
+does not carry it is refused rather than downgraded to a binding without a
+digest), and `bundleSha256` is optional only for the nonpublishing metadata
+cases that have no wire bytes. This module's shape was aligned to the
+contract's when the two were compared, and a change to either side now fails
+a test on the side that changed.
 
 `schemaVersions`:
 

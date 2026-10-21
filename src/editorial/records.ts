@@ -144,10 +144,13 @@ export type EditorialActor = z.infer<typeof editorialActorSchema>
 /**
  * The field list of the source binding.
  *
- * It is a shared constant so that the shape is stated once. When the E-04
- * module lands, its module must compare its own field list against this
- * one; until then, this constant is the app's own statement and nothing
- * else.
+ * It is a shared constant so that the shape is stated once. The cross-module
+ * comparison now lives in the neutral contract fixture
+ * `tests/fixtures/publication-source-binding-contract-v1.json`, which the
+ * E-04 receipt lane produced: `source-binding-contract.test.ts` compares
+ * this module's shape against that fixture, and the E-04 side compares its
+ * own shape against the same fixture. Neither module imports the other, and
+ * neither module imports the other's production code.
  */
 export const EDITORIAL_SOURCE_BINDING_FIELDS = [
   'kind',
@@ -164,15 +167,21 @@ export const EDITORIAL_SOURCE_BINDING_FIELDS = [
 /**
  * The Struct-cutover source binding: the provenance a release must bind.
  *
- * **The shape is app-owned and provisional.** It is the app's own
- * restatement of the fields a Struct-cutover source carries —
- * `documentSha256`, `bundleSha256?`, `semanticReceiptSha256?`,
- * `packageSourceCommit`, `packageArtifact`, `packageArtifactSha256`,
- * `packageIntegrity`, `packageVersion` — and it is *not* yet checked
- * against an E-04 module, because E-04 has not landed on this branch and no
- * module in `src/**` defines a `sourceBinding` to check it against. The
- * field list is pinned in `EDITORIAL_SOURCE_BINDING_FIELDS` above, which
- * the E-04 module must compare against when it lands.
+ * **The shape is app-owned, and it is now checked against the neutral
+ * contract fixture.** It is the app's own restatement of the fields a
+ * Struct-cutover source carries — `documentSha256`, `bundleSha256?`,
+ * `semanticReceiptSha256`, `packageSourceCommit`, `packageArtifact`,
+ * `packageArtifactSha256`, `packageIntegrity`, `packageVersion` — and it is
+ * compared field for field against
+ * `tests/fixtures/publication-source-binding-contract-v1.json` by
+ * `source-binding-contract.test.ts`. The E-04 side compares its own schema
+ * against the same fixture, so a change to either shape is a change to the
+ * contract and fails a test on the side that changed.
+ *
+ * `semanticReceiptSha256` is **mandatory**, and `bundleSha256` is optional
+ * only for the nonpublishing metadata cases that have no wire bytes. That is
+ * the contract's requiredness, not this module's preference: the fixture
+ * says so, and the comparison test fails if this module says otherwise.
  *
  * The legacy `ResearchPaper` variant of the E-04 union is deliberately not
  * admitted here: a release in this contract must bind a Struct-cutover
@@ -183,7 +192,7 @@ export const editorialSourceBindingSchema = z
     kind: z.literal('struct-cutover'),
     documentSha256: sha256Schema,
     bundleSha256: sha256Schema.optional(),
-    semanticReceiptSha256: sha256Schema.optional(),
+    semanticReceiptSha256: sha256Schema,
     packageSourceCommit: commitShaSchema,
     packageArtifact: z.string().min(1).max(256),
     packageArtifactSha256: sha256Schema,
@@ -432,7 +441,7 @@ export const editorialRevisionSchema = z
     contentHash: sha256Schema,
     documentSha256: sha256Schema,
     bundleSha256: sha256Schema.optional(),
-    semanticReceiptSha256: sha256Schema.optional(),
+    semanticReceiptSha256: sha256Schema,
     sourceBinding: editorialSourceBindingSchema,
     schemaVersions: editorialSchemaVersionsSchema,
     rendering: editorialRenderingSchema,
@@ -452,8 +461,7 @@ export const editorialRevisionSchema = z
     const disagrees =
       binding.documentSha256 !== revision.documentSha256 ||
       (binding.bundleSha256 ?? null) !== (revision.bundleSha256 ?? null) ||
-      (binding.semanticReceiptSha256 ?? null) !==
-        (revision.semanticReceiptSha256 ?? null)
+      binding.semanticReceiptSha256 !== revision.semanticReceiptSha256
     if (disagrees) {
       context.addIssue({
         code: z.ZodIssueCode.custom,

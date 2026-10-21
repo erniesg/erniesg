@@ -281,6 +281,62 @@ function e03ViolationsForSource(
   return violations
 }
 
+/**
+ * The local names the production recovery module binds from
+ * `@erniesg/struct/recovery`. The E-03 guard asserts that the module really
+ * imports the package runtime exports, so an app-local copy of either fact
+ * cannot silently become the runtime authority again.
+ */
+function packageRecoveryImports(source: string): {
+  diagnosticCategory?: string
+  hasActionableRecovery?: string
+} {
+  const file = ts.createSourceFile(
+    'recovery.ts',
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+  )
+  const bindings: {
+    diagnosticCategory?: string
+    hasActionableRecovery?: string
+  } = {}
+  for (const statement of file.statements) {
+    if (!ts.isImportDeclaration(statement)) continue
+    const moduleSpecifier = statement.moduleSpecifier
+    if (!ts.isStringLiteral(moduleSpecifier)) continue
+    if (moduleSpecifier.text !== '@erniesg/struct/recovery') continue
+    const namedBindings = statement.importClause?.namedBindings
+    if (!namedBindings || !ts.isNamedImports(namedBindings)) continue
+    for (const element of namedBindings.elements) {
+      const imported = element.propertyName?.text ?? element.name.text
+      if (imported !== 'diagnosticCategory' && imported !== 'hasActionableRecovery')
+        continue
+      bindings[imported] = element.name.text
+    }
+  }
+  return bindings
+}
+
+/**
+ * The body of a top-level function declaration, so the guard can inspect what
+ * an app function actually decides instead of how it is spelled.
+ */
+function topLevelFunctionBody(source: string, name: string): string | null {
+  const file = ts.createSourceFile(
+    'recovery.ts',
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+  )
+  for (const statement of file.statements) {
+    if (!ts.isFunctionDeclaration(statement)) continue
+    if (statement.name?.text !== name) continue
+    return statement.body ? statement.body.getText(file) : null
+  }
+  return null
+}
+
 describe('app-owned Struct adapter boundary', () => {
   it('keeps one implementation and identity through the legacy and root exports', async () => {
     const implementation = await readFile(
@@ -581,5 +637,54 @@ describe('app-owned Struct adapter boundary', () => {
         `diagnostic category for ${code}`,
       ).toBe(packageDiagnosticCategory(code))
     }
+  })
+
+  it('E-03: the production recovery module takes its category and actionable-recovery authority from the package', async () => {
+    const source = await readFile(
+      new URL('struct-adapters/recovery.ts', root),
+      'utf8',
+    )
+    const imports = packageRecoveryImports(source)
+
+    // The production recovery module must import the package runtime exports,
+    // not keep a local copy of either source-neutral fact.
+    expect(
+      imports.diagnosticCategory,
+      'diagnosticCategory imported from @erniesg/struct/recovery',
+    ).toBeTruthy()
+    expect(
+      imports.hasActionableRecovery,
+      'hasActionableRecovery imported from @erniesg/struct/recovery',
+    ).toBeTruthy()
+
+    // The app copy table carries no local category field, so no second
+    // category table can exist in the app.
+    const copyTable = source.slice(
+      source.indexOf('const DIAGNOSTIC_COPY'),
+      source.indexOf('const FALLBACK_COPY'),
+    )
+    expect(copyTable.length).toBeGreaterThan(0)
+    expect(copyTable).not.toMatch(/category:/)
+
+    // The app facade delegates: the category function calls the package
+    // export and decides no category of its own.
+    const categoryBody = topLevelFunctionBody(source, 'diagnosticCategory')
+    expect(categoryBody).not.toBeNull()
+    expect(categoryBody ?? '').toContain(`${imports.diagnosticCategory}(`)
+    expect(categoryBody ?? '').not.toMatch(
+      /['"](?:text|layout|visuals|tables|equations|links|notes|source)['"]/,
+    )
+
+    // The app facade delegates: the actionable-recovery predicate calls the
+    // package export and reads no `userAction` truthiness of its own.
+    const actionableBody = topLevelFunctionBody(
+      source,
+      'hasActionableRecovery',
+    )
+    expect(actionableBody).not.toBeNull()
+    expect(actionableBody ?? '').toContain(
+      `${imports.hasActionableRecovery}(`,
+    )
+    expect(actionableBody ?? '').not.toMatch(/userAction/)
   })
 })

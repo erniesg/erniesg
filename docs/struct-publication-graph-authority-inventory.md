@@ -674,6 +674,82 @@ exact package pin/version; graph-only digests are diagnostic only."*
 > (4) receipt Struct bindings do **not** exist, the conformance receipt
 > allowlist would reject them, and the release check does not require them.
 
+### 8e. Two production-path facts the E-04 ingress work must respect
+
+These are **observed today** (grep-bounded, not compiler-proven). They are the
+current-state facts behind the two gate rows that name the Astro ingress
+(G-17) and the Payload ingress (G-01, G-16). The corresponding normative
+obligations are in the cutover plan's §"Production source path: Astro to the
+pinned Struct revision" and §"Production source path: Payload to the pinned
+Struct revision".
+
+**8e.1 The Struct projection stamps its own source identity, and the release
+admission check reads the identity from the receipt, not from the CLI flag.**
+
+- `adaptStructDocument` (`src/publication/struct-adapter.ts:188`) sets the
+  result provenance's `adapterId` to `STRUCT_PUBLICATION_ADAPTER_ID`
+  (`'struct-document'`, `src/publication/struct-adapter.ts:24`) at
+  `src/publication/struct-adapter.ts:1290`, and sets every node's provenance
+  `adapterId` to the same constant at `src/publication/struct-adapter.ts:660`.
+- The result provenance's `sourceType` comes from `sourceType(document)`
+  (`src/publication/struct-adapter.ts:1292`), and `sourceType`
+  (`src/publication/struct-adapter.ts:175-181`) returns `'pdf'` for a `'pdf'`
+  source, `'docx'` for a `'docx'` source, and `'research-paper'` for every
+  other format. `StructSourceFormat` is
+  `'pdf' | 'docx' | 'html' | 'image' | 'unknown'`
+  (`src/struct/types.ts:17`), so an HTML-format source is `'research-paper'`.
+- The release receipt's source identity is copied verbatim from the bundle's
+  provenance (`tools/publication-build.mjs:452` `adapterId`, `:454`
+  `sourceType`, `:469` `routeParity`), and its route-parity policy is bound
+  from the **requested** adapter id, not from the bundle: the `astro` branch
+  binds `'astro-canonical-route'` and every other branch binds
+  `'not-applicable'` (`tools/publication-build.mjs:1081-1086`).
+- The release admission check
+  (`publicationReceiptRequiresCanonicalRouteParity`,
+  `tools/publication-check.mjs:61-94`, called from `publicationCheck` at
+  `:1151`) derives `isAstro` from `adapterId === 'astro'` (`:72`), requires
+  `isAstro` to agree with `sourceType === 'astro'` (`:73-74`), and accepts
+  only the `'not-applicable'` policy for a non-Astro receipt (`:92-94`).
+
+**Consequence, stated as a fact about the current code and not as an
+implementation claim:** if the `astro` adapter is re-pointed at
+`adaptStructDocument` without resolving the provenance, the released receipt
+would carry `('struct-document', 'research-paper')` together with the
+`'astro-canonical-route'` policy, and `tools/publication-check.mjs:92-94`
+would throw `Non-Astro publication receipt has no recognized route-parity
+policy`. `npm run build:production` runs `publication:check` on that receipt
+(`package.json` `build:production`). The same identity question does **not**
+block the Payload case: the Payload branch binds `'not-applicable'`, which
+`tools/publication-check.mjs:92-94` accepts for a non-Astro receipt.
+
+**8e.2 The `payload-lexical` adapter is a direct graph producer; there is no
+Payload-to-Struct conversion.**
+
+- `src/publication/adapters/payload-lexical.ts` builds the `PublicationGraph`
+  itself with `publicationGraphSchema.parse({...})` at
+  `src/publication/adapters/payload-lexical.ts:1646` (inside `buildResult`,
+  which starts at `src/publication/adapters/payload-lexical.ts:1579`) and
+  re-parses the graph for the edition variants at
+  `src/publication/adapters/payload-lexical.ts:1726` (inside
+  `adaptPayloadLexicalEditions`, which starts at
+  `src/publication/adapters/payload-lexical.ts:1701`).
+- It imports no `StructDocument` and never calls `adaptStructDocument`
+  (`src/publication/struct-adapter.ts:188`). The only callers of
+  `adaptStructDocument` at this head are the `struct` registry entry
+  (`src/publication/struct-adapter.ts:1313-1318`) and
+  `src/publication/struct-adapter.test.ts`.
+- The adapter's own provenance is `adapterId: 'payload-lexical'`,
+  `sourceType: 'payload'` (`src/publication/adapters/payload-lexical.ts:1662-1664`),
+  and its mapping policy is `parseMapping` / `parsePayloadMappingPolicy`
+  (`src/publication/adapters/payload-lexical.ts:139`, `:1745`).
+
+**Consequence:** redirecting `payload-lexical` onto the Struct projection has
+no `StructDocument` to supply. The `payload-lexical` adapter is also a
+**selectable production CLI case** (`tools/publication-build.mjs:54-67`), and
+the frozen production case set requires that case (G-16), so removing the
+adapter is not an available substitute. A Payload-to-pinned-Struct ingress is
+a prerequisite for that redirect, not a consequence of it.
+
 ## 9. Exact gates that a future E-04 change must satisfy
 
 These are the **required** gates, derived from ADR-0001, the E-04 issue
@@ -704,7 +780,7 @@ satisfaction and they add no obligation beyond the row text.
 
 | # | Gate (required) | Concrete artifact that must change | Current status |
 |---|---|---|---|
-| G-01 | `PublicationGraph` is narrowed to an ephemeral, mechanically derived renderer plan from **one pinned approved Struct revision** (F4) | `src/publication/adapter-registry.ts:55-60` (drop/limit `astro` + `payload-lexical` graph production), `tools/publication-build.mjs:54-67` (`--adapter` allowlist), `src/publication/adapters/astro.ts`, `src/publication/adapters/payload-lexical.ts` | not done |
+| G-01 | `PublicationGraph` is narrowed to an ephemeral, mechanically derived renderer plan from **one pinned approved Struct revision** (F4); redirecting the two selectable adapters onto the Struct projection requires the app-owned Astro-to-pinned-Struct ingress **and** the app-owned Payload-to-pinned-Struct ingress to exist, be tested against the pinned artifact, and land **before** the redirects they enable | `src/publication/adapter-registry.ts:55-60` (drop/limit `astro` + `payload-lexical` graph production), `tools/publication-build.mjs:54-67` (`--adapter` allowlist), `src/publication/adapters/astro.ts`, `src/publication/adapters/payload-lexical.ts`, `src/publication/adapters/payload-lexical.ts:1646` (direct `publicationGraphSchema.parse`), `:1726` (edition re-parse) | not done |
 | G-02 | The graph owns **no independent text** (F4) | `src/publication/schema.ts:172-315`, `:372-387` (text-bearing fields), `src/publication/research-paper-adapter.ts:198-296` (reverse text minting) | not done |
 | G-03 | The graph owns **no independent semantic IDs** (F4) | `src/publication/schema.ts:7-11` (own id grammar) — a narrowed plan must derive ids from the pinned Struct revision | not done |
 | G-04 | The graph owns **no persistence** (F4) | delete/disable `src/publication/renderers/vivliostyle.ts:1107-1111`; and the reader at `tools/publication-check.mjs:1145` | not done |
@@ -719,8 +795,8 @@ satisfaction and they add no obligation beyond the row text.
 | G-13 | Legacy `research/epub.ts` overloads keep both-mode parity until the last `ResearchPaper` consumer migrates (F5) | `src/research/epub.ts:133-141`, `:1422-1447`, `:2094-2118` | parity **not demonstrated** here |
 | G-14 | E-07 deletion gates: zero production imports to removed portable modules; package-only app tests; retained-compatibility register with owner, caller inventory, warning/horizon, removal issue (F6) | `src/struct/**`, `src/struct-adapters/**` | not done |
 | G-15 | No non-Struct graph producer remains: the forward `ResearchPaper` -> `PublicationGraph` bridge is retired or migrated onto the Struct projection (F3/F4) | `src/publication/research-paper-adapter.ts:81`, `:298`, `:304`, `:317`; `src/publication/struct-adapter.ts:188`, `:1313` | not done |
-| G-16 | Production renderer parity covers **every shipped artifact** of the production output, not only the `eink.epub` archive: the shipped WebPub content document `phone-webpub/index.html`, the resources it declares and references (the stylesheet, the assets, and the stylesheet's own font references), and the declared resource manifests (`phone-webpub/publication.json`, `EPUB/package.opf`); the frozen production case set contains the Astro case **and** the Payload case the production CLI can select (F12) | `src/publication/renderers/vivliostyle.ts:508` (`publicationGraphToHtml`), `:610-662` (`createWebPub`), `:617-618` (WebPub assets + stylesheet), `:634-638` (`phone-webpub/index.html`), `:639-660` (`phone-webpub/publication.json`), `:793-904` (`createPublicationEpub`); `tools/publication-build.mjs:54-67`; `tools/publication-adapter-conformance.mjs:59-91`; `tests/fixtures/publication/astro/payload-equivalent.mdx`; `tests/fixtures/payload/equivalent-publication.json`; `tests/fixtures/payload/mapping.json` | no production comparison is implemented for any shipped artifact; the previous scope was `EPUB/content.xhtml` only; the frozen inputs exist, but there is no frozen production-case fixture set and no `eink.epub` golden in the repository |
-| G-17 | The production Astro path reaches the pinned Struct revision **before** any direct graph producer is retired: a concrete, tested Astro-to-pinned-Struct conversion, the production CLI `--adapter astro` mapping, the registry/locator flow that carries it, and a red-first guard that the Astro path no longer constructs a `PublicationGraph` (F13) | `src/publication/adapters/astro.ts:25-28` (`AstroSourceLocator`), `:84-92` (fail-closed unsupported node), `:567` (direct `publicationGraphSchema.parse`), `:606-611` (adapter registration); `src/publication/struct-adapter.ts:188` (`adaptStructDocument`), `:1313-1318` (`structPublicationAdapter`); `src/publication/adapter-registry.ts:30-38` (`resolve`), `:55-60` (default registry); `tools/publication-build.mjs:31-69` (CLI allowlist), `:1054-1067` (locator + resolve); `tests/struct-adapter-boundary.test.ts`; `vendor/struct/provenance.json` | the Astro adapter builds the graph directly (`publicationGraphSchema.parse` at `src/publication/adapters/astro.ts:567`); no Astro-to-Struct ingress exists; the CLI maps `--adapter astro` to that direct producer |
+| G-16 | Production renderer parity covers **every shipped artifact** of the production output, not only the `eink.epub` archive: the shipped WebPub content document `phone-webpub/index.html`, the resources it declares and references (the stylesheet, the assets, and the stylesheet's own font references), and the declared resource manifests (`phone-webpub/publication.json`, `EPUB/package.opf`); the frozen production case set contains the Astro case **and** the Payload case the production CLI can select; the Payload case is produced through the app-owned Payload-to-pinned-Struct ingress, which must be specified, tested against the pinned artifact, and landed **before** the Payload case is an E-04 exit gate - the Payload parity obligation itself is unchanged, not narrowed and not deferred (F12) | `src/publication/renderers/vivliostyle.ts:508` (`publicationGraphToHtml`), `:610-662` (`createWebPub`), `:617-618` (WebPub assets + stylesheet), `:634-638` (`phone-webpub/index.html`), `:639-660` (`phone-webpub/publication.json`), `:793-904` (`createPublicationEpub`); `tools/publication-build.mjs:54-67`; `tools/publication-adapter-conformance.mjs:59-91`; `tests/fixtures/publication/astro/payload-equivalent.mdx`; `tests/fixtures/payload/equivalent-publication.json`; `tests/fixtures/payload/mapping.json`; `src/publication/adapters/payload-lexical.ts:139` (mapping policy), `:1646` (direct graph construction), `:1726` (edition re-parse) | no production comparison is implemented for any shipped artifact; the previous scope was `EPUB/content.xhtml` only; the frozen inputs exist, but there is no frozen production-case fixture set and no `eink.epub` golden in the repository |
+| G-17 | The production Astro path reaches the pinned Struct revision **before** any direct graph producer is retired: a concrete, tested Astro-to-pinned-Struct conversion, the production CLI `--adapter astro` mapping, the registry/locator flow that carries it, and a red-first guard that the Astro path no longer constructs a `PublicationGraph`; the Astro provenance must survive the projection - the ingress must carry the outer Astro provenance through `adaptStructDocument` or explicitly restamp **both** the result provenance and every per-node provenance before validation, so the route-parity policy in `tools/publication-check.mjs:61-94` sees a consistent `(adapterId, sourceType)` pair and the planned production build passes admission (F13) | `src/publication/adapters/astro.ts:25-28` (`AstroSourceLocator`), `:84-92` (fail-closed unsupported node), `:567` (direct `publicationGraphSchema.parse`), `:606-611` (adapter registration); `src/publication/struct-adapter.ts:188` (`adaptStructDocument`), `:24` (`STRUCT_PUBLICATION_ADAPTER_ID`), `:175-181` (`sourceType`), `:660` (per-node provenance), `:1288-1296` (result provenance), `:1313-1318` (`structPublicationAdapter`); `src/publication/adapter-registry.ts:30-38` (`resolve`), `:55-60` (default registry); `tools/publication-build.mjs:31-69` (CLI allowlist), `:452-469` (source receipt from bundle provenance), `:1054-1067` (locator + resolve), `:1081-1086` (route-parity binding); `tools/publication-check.mjs:61-94` (`publicationReceiptRequiresCanonicalRouteParity`), `:1151` (release admission call); `tests/struct-adapter-boundary.test.ts`; `vendor/struct/provenance.json` | the Astro adapter builds the graph directly (`publicationGraphSchema.parse` at `src/publication/adapters/astro.ts:567`); no Astro-to-Struct ingress exists; the CLI maps `--adapter astro` to that direct producer; and the Struct projection stamps its own identity (`adapterId: 'struct-document'` at `src/publication/struct-adapter.ts:1290`, per node at `:660`; `sourceType: 'research-paper'` for a non-PDF/DOCX source at `:175-181`, `:1292`), while the Astro branch of the CLI binds the `'astro-canonical-route'` route-parity policy (`tools/publication-build.mjs:1081-1086`) - so a composed receipt would be rejected by `tools/publication-check.mjs:92-94` |
 
 ## 10. Tests and frozen fixtures (kept separate from production callers)
 

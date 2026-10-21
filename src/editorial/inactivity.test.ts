@@ -274,6 +274,25 @@ describe('the inactivity evidence', () => {
     expect(e05Outside).toEqual([])
   })
 
+  it('demonstrates that the E-05 delta is non-empty and in the editorial scope', () => {
+    // Without this, an E-05 delta of zero files would make every
+    // "E-05 changed nothing outside the editorial scope" assertion above
+    // pass VACUOUSLY: the filter would have nothing to reject, and the
+    // inactivity proof would prove nothing at all. This assertion is what
+    // makes the scope assertion non-vacuous, so it must itself hold.
+    expect(e05Delta.size).toBeGreaterThan(0)
+    // The delta is not one stray file: it really is the editorial contract
+    // this evidence is about, on both sides of the contract.
+    const editorialModules = [...e05Delta].filter((path) =>
+      path.startsWith('src/editorial/'),
+    )
+    const editorialMigrations = [...e05Delta].filter((path) =>
+      path.startsWith('migrations/editorial/'),
+    )
+    expect(editorialModules.length).toBeGreaterThan(0)
+    expect(editorialMigrations.length).toBeGreaterThan(0)
+  })
+
   it('keeps the editorial migrations out of the margin runner', () => {
     // The margin runner reads `migrations/*.sql` and the margin test
     // harness applies every `migrations/*.sql` in filename order. The

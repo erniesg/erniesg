@@ -2345,8 +2345,7 @@ function commonJsReexportSpecifier(
     }
     return null
   }
-  // Check for Object.assign(module.exports, require(...)) or
-  // Object.assign(module.exports, require(...), ...) with multiple sources
+  // Check for Object.assign(module.exports, require(...))
   if (
     ts.isCallExpression(expression) &&
     ts.isPropertyAccessExpression(expression.expression) &&
@@ -2357,17 +2356,14 @@ function commonJsReexportSpecifier(
     const args = expression.arguments
     if (args.length >= 2) {
       const target = args[0]
-      // Follow ALL source modules, not just args[1]
-      for (let i = 1; i < args.length; i += 1) {
-        const source = args[i]
-        if (isCommonJsExportTarget(target)) {
-          const required = requiredModuleOf(source, importedBindings)
-          if (required !== null) return required
-          // A require-bound alias assigned via Object.assign
-          if (ts.isIdentifier(source) && importedBindings) {
-            const imported = importedBindings.get(source.text)
-            if (imported !== undefined) return imported
-          }
+      const source = args[1]
+      if (isCommonJsExportTarget(target)) {
+        const required = requiredModuleOf(source, importedBindings)
+        if (required !== null) return required
+        // A require-bound alias assigned via Object.assign
+        if (ts.isIdentifier(source) && importedBindings) {
+          const imported = importedBindings.get(source.text)
+          if (imported !== undefined) return imported
         }
       }
     }

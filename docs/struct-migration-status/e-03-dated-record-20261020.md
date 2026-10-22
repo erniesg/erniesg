@@ -62,8 +62,10 @@ an ancestor of the branch that carries this record.
   `return packageHasActionableRecovery(recovery)` (`:414-418`); the old local `Boolean(recovery?.userAction)` rule is
   gone. The exported signature and the type guard `recovery is StructRecovery & { userAction: string }` are
   unchanged, so no app caller changes.
-- **Boundary-guard hardening** - commits `fc73a970` ("test(struct): resolve aliased imports and pin the package recovery
-  facts"), `5974df05` ("test(struct): guard the E-03 recovery authorities in the boundary test"), `a99a0f86` ("test(struct):
+- **Boundary-guard hardening** - commits `70727202` ("E-03: switch production imports to package subpaths; keep local
+  modules unchanged; extend static guard red→green; record dated E-07 note for /src/struct/ids.ts load", the first
+  guard commit of the E-03 candidate, which took the file from 5 cases / 386 lines to 6 cases / 429 lines), `fc73a970`
+  ("test(struct): resolve aliased imports and pin the package recovery facts"), `5974df05` ("test(struct): guard the E-03 recovery authorities in the boundary test"), `a99a0f86` ("test(struct):
   add the E-03 guard red-first cases"), `36916381` ("test(struct): close the E-03 boundary guard gaps"), `e9009551`
   ("test(struct): close the E-03 guard alias and MDX gaps"), `7907acff` ("test(struct): close the E-03 guard MDX, CommonJS,
   wrapper and render gaps"), `f6866e41` ("test(struct): close the E-03 guard MDX multiline and Vite glob gaps"),
@@ -270,7 +272,8 @@ an ancestor of the branch that carries this record.
   non-JavaScript Astro script".
   The case-to-commit attribution, re-derived at `ed7c320a` by reading the case names of
   `tests/struct-adapter-boundary.test.ts` at each guard commit and matching them against the file's case order: cases
-  1-5 at the base `5f8c76ab`; cases 6-7 at `fc73a970`; case 8 at `5974df05`; cases 9, 10 and 13 at `a99a0f86`;
+  1-5 at the base `5f8c76ab`; case 6 at `70727202`; case 7 at `fc73a970`; case 8 at `5974df05`; cases 9, 10 and 13 at
+  `a99a0f86`;
   cases 11-12 at `e9009551`; cases 14-15 at `36916381`; cases 16, 17, 19 and 22 at `7907acff`; cases 18 and 20 at
   `f6866e41`; case 21 at `79c0d7c5`; cases 23-26 and 28-29 at `dee1f860`; case 27 at `a832b8ed`;
   cases 30-35 at `d886ddcf`; cases 36, 37, 39 and 40 at `dc117894`; case 38 at `63af8a44`; cases 41 and 42 at

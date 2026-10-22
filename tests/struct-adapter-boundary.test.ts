@@ -1722,7 +1722,10 @@ function computeReexportSpecifiers(source: string): ReexportSpecifiers {
     }
     if (ts.isExpressionStatement(statement)) {
       // A CommonJS re-export: `module.exports = require('./types')`.
-      const required = commonJsReexportSpecifier(statement.expression)
+      const required = commonJsReexportSpecifier(
+        statement.expression,
+        importedBindings,
+      )
       if (required !== null) reexports.push(required)
       continue
     }
@@ -1749,6 +1752,37 @@ function computeReexportSpecifiers(source: string): ReexportSpecifiers {
           ),
         )
       }
+      continue
+    }
+    if (ts.isTypeAliasDeclaration(statement)) {
+      // `export type Foo = ImportedType` re-exports the module the imported
+      // type binding came from, and any other reference to an imported type
+      // binding in the alias reaches that module as well.
+      if (!hasExportModifier(statement)) continue
+      const typeNode = statement.type
+      if (
+        ts.isTypeReferenceNode(typeNode) &&
+        ts.isIdentifier(typeNode.typeName)
+      ) {
+        const imported = importedBindings.get(typeNode.typeName.text)
+        if (imported !== undefined) {
+          reexports.push(imported)
+          continue
+        }
+      }
+      reaches.push(
+        ...exportedTypeModules(typeNode, importedBindings, statement.name),
+      )
+      continue
+    }
+    if (ts.isInterfaceDeclaration(statement)) {
+      // `export interface Foo extends ImportedType` (and any member that
+      // names an imported type binding) reaches the module that binding came
+      // from, so the guard follows it as well.
+      if (!hasExportModifier(statement)) continue
+      reaches.push(
+        ...exportedTypeModules(statement, importedBindings, statement.name),
+      )
       continue
     }
     if (ts.isFunctionDeclaration(statement)) {
@@ -1916,6 +1950,64 @@ function referencedBindingNames(
       current.forEachChild((child) => {
         if (child !== member) visit(child)
       })
+      return
+    }
+    current.forEachChild(visit)
+  }
+  visit(node)
+  return names
+}
+
+/**
+ * The modules an exported type alias or interface reaches through the imported
+ * type bindings it references. A type reference is not erased here: the
+ * boundary guard follows imported type bindings as well as value bindings, so
+ * an exported type that names one reaches the module it came from.
+ */
+function exportedTypeModules(
+  node: ts.Node,
+  importedBindings: Map<string, string>,
+  declared?: ts.BindingName,
+): string[] {
+  const modules: string[] = []
+  for (const name of referencedTypeBindingNames(node, declared)) {
+    const imported = importedBindings.get(name)
+    if (imported === undefined) continue
+    modules.push(imported)
+  }
+  return modules
+}
+
+/**
+ * The names a type node references, including the identifiers of type
+ * references. A property name, a member name and a declared name name no
+ * binding, so none of them is collected.
+ */
+function referencedTypeBindingNames(
+  node: ts.Node,
+  declared?: ts.BindingName,
+): Set<string> {
+  const names = new Set<string>()
+  const declaredNames = new Set<string>()
+  if (declared && ts.isIdentifier(declared)) declaredNames.add(declared.text)
+  const visit = (current: ts.Node): void => {
+    if (ts.isIdentifier(current)) {
+      if (!declaredNames.has(current.text)) names.add(current.text)
+      return
+    }
+    const member = declaredMemberName(current)
+    if (member !== null) {
+      current.forEachChild((child) => {
+        if (child !== member) visit(child)
+      })
+      return
+    }
+    if (ts.isPropertyAccessExpression(current)) {
+      visit(current.expression)
+      return
+    }
+    if (ts.isPropertyAssignment(current)) {
+      visit(current.initializer)
       return
     }
     current.forEachChild(visit)
@@ -2118,11 +2210,23 @@ function computedPropertyModules(
  * A re-export can read a member of the required module, so a property access
  * and an element access that is rooted at the required module name it too.
  */
-function commonJsReexportSpecifier(expression: ts.Expression): string | null {
+function commonJsReexportSpecifier(
+  expression: ts.Expression,
+  importedBindings?: Map<string, string>,
+): string | null {
   if (!ts.isBinaryExpression(expression)) return null
   if (expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return null
   if (!isCommonJsExportTarget(expression.left)) return null
-  return requiredModuleOf(expression.right)
+  const required = requiredModuleOf(expression.right, importedBindings)
+  if (required !== null) return required
+  // A require-bound alias is an imported binding, so assigning it to
+  // `module.exports` re-exports the module it came from:
+  // `const Types = require('./types'); module.exports = Types`.
+  if (ts.isIdentifier(expression.right) && importedBindings) {
+    const imported = importedBindings.get(expression.right.text)
+    if (imported !== undefined) return imported
+  }
+  return null
 }
 
 /**
@@ -2236,7 +2340,10 @@ function hasExportModifier(statement: ts.HasModifiers): boolean {
  * that it does not load a migrated family. It fails closed in the same way a
  * computed dynamic import does.
  */
-function requiredModuleOf(expression: ts.Expression): string | null {
+function requiredModuleOf(
+  expression: ts.Expression,
+  _importedBindings?: Map<string, string>,
+): string | null {
   const call = commonJsRequireCall(expression)
   if (call === null) return null
   const argument = call.arguments[0]
@@ -5558,6 +5665,89 @@ describe('app-owned Struct adapter boundary', () => {
       await rm(harmless.pathname, { force: true })
       await rm(reexporting.pathname, { force: true })
       await rm(mdx.pathname, { force: true })
+    }
+  })
+
+  it('E-03: traces a CommonJS re-export that assigns a require-bound alias to module.exports', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+    const wrapper = new URL(
+      'struct/__e03_probe_legacy_cjs_require_alias.cts',
+      root,
+    )
+    await writeFile(
+      wrapper.pathname,
+      "const Types = require('./types')\nmodule.exports = Types\n",
+      'utf8',
+    )
+    try {
+      expect(
+        e03ViolationsForSource(
+          "import { Types } from '../struct/__e03_probe_legacy_cjs_require_alias'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      expect(
+        e03ViolationsForSource(
+          "export * from './__e03_probe_legacy_cjs_require_alias'",
+          new URL('struct/probe.ts', root),
+          publicPaths,
+        ),
+      ).toEqual([])
+    } finally {
+      await rm(wrapper.pathname, { force: true })
+    }
+  })
+
+  it('E-03: traces an exported type alias or interface that references an imported type binding', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+    const aliasWrapper = new URL(
+      'struct/__e03_probe_legacy_type_alias.ts',
+      root,
+    )
+    const interfaceWrapper = new URL(
+      'struct/__e03_probe_legacy_type_interface.ts',
+      root,
+    )
+    await writeFile(
+      aliasWrapper.pathname,
+      "import { T } from './types'\nexport type Foo = T\n",
+      'utf8',
+    )
+    await writeFile(
+      interfaceWrapper.pathname,
+      "import { T } from './types'\nexport interface Foo extends T {}\n",
+      'utf8',
+    )
+    try {
+      expect(
+        e03ViolationsForSource(
+          "import { Foo } from '../struct/__e03_probe_legacy_type_alias'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+      expect(
+        e03ViolationsForSource(
+          "import { Foo } from '../struct/__e03_probe_legacy_type_interface'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      expect(
+        e03ViolationsForSource(
+          "export { Foo } from './__e03_probe_legacy_type_alias'",
+          new URL('struct/probe.ts', root),
+          publicPaths,
+        ),
+      ).toEqual([])
+    } finally {
+      await rm(aliasWrapper.pathname, { force: true })
+      await rm(interfaceWrapper.pathname, { force: true })
     }
   })
 })

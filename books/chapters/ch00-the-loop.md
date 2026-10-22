@@ -19,9 +19,8 @@ Every challenge in this book takes five steps.
 4. **Try to break it.**
 5. **Send it in**, read what the grader says, go again.
 
-Nearly everyone skips step 4. It is the step that decides whether your code
-really works or only worked on the example. Two easy problems will show you
-why.
+Step 4 checks whether your code works beyond the example. Two easy problems
+will show you why.
 
 ## A warm-up
 
@@ -29,9 +28,8 @@ why.
 > In: two numbers, `a` and `b`, on one line. Out: their sum.
 > Rules: each number is between 0 and 9. Example: `9 7` gives `16`.
 
-There is no clever idea here. This one is about the problem text itself, which
-is a deal: it tells you exactly what your code will be handed, and exactly what
-it must hand back.
+The problem text tells you exactly what your code receives and what it must
+print.
 
 Read the deal again. Both numbers sit on **one** line, so read one line and
 split it. The answer is a number on its own — not "The answer is 16", just
@@ -60,7 +58,7 @@ print(a + b)
 ```
 :::
 
-## Now one with a trap
+## A larger problem
 
 > **Biggest product of two.** You get a bunch of whole numbers, none of them
 > negative. Multiply two of them together and get the biggest result you can.
@@ -68,7 +66,7 @@ print(a + b)
 > Rules: at least 2 numbers, at most 200,000 of them. No number is above
 > 200,000. Example: `[1, 2, 3]` gives `6`.
 
-The first idea most people have: try every pair and keep the best.
+A direct approach tries every pair and keeps the best result.
 
 ```python run
 def biggest_product(numbers):
@@ -83,8 +81,7 @@ def biggest_product(numbers):
 print(biggest_product([1, 2, 3]))
 ```
 
-This gives right answers. It is still useless, and you can tell before you run
-it.
+This gives right answers, but it cannot finish within the five-second limit.
 
 **Count the work first.** Every number gets paired with every number. With 10
 numbers that is 10 × 10 = 100 pairs. Fine. But the rules allow 200,000 numbers,
@@ -94,9 +91,8 @@ How long is 40 billion multiplications? Python does about 10 million simple
 steps each second. Divide: 40,000,000,000 ÷ 10,000,000 = 4,000 seconds. That is
 over an hour. You get five seconds.
 
-Here is the habit worth keeping: multiply the sizes, divide by ten million,
-look at the answer. It takes ten seconds and it saves you from writing an hour
-of code you would have thrown away.
+Estimate the work before writing the code: multiply the sizes and divide by ten
+million. This takes ten seconds and shows whether the approach can finish.
 
 **So think again.** None of the numbers are negative. Multiply two big numbers
 and you get a big result, so the answer has to be the two biggest numbers in
@@ -113,7 +109,7 @@ print(biggest_product([1, 2, 3]))   # 6, as promised
 print(biggest_product([5, 5, 1]))   # now try this one
 ```
 
-Two quick sweeps through the list. The example gives 6. Looks finished.
+This makes two quick sweeps through the list. The example gives 6.
 
 :::exercise{id="ch00-count-the-work"}
 Do the arithmetic before you write anything. A problem allows up to 100,000
@@ -155,13 +151,13 @@ Throwing away *the biggest value* and throwing away *one copy of it* are
 different things. They only come apart when a value appears twice — and the
 example had no repeats, so the example said nothing about it.
 
-That is the lesson. Your bugs hide on the inputs you never pictured, which is
-exactly why picturing inputs is a bad way to test.
+The example did not include repeated values. Tests need inputs that cover cases
+the example leaves out.
 
 ## Let the computer find the bug
 
-You have two versions now. The every-pair one is slow but obviously right. The
-new one is fast and suspicious. So race them on random lists until they
+You have two versions now. The every-pair version is slow but simple enough to
+check. The new version is fast. Compare them on random lists until they
 disagree.
 
 ```python run
@@ -183,12 +179,9 @@ while True:
         break
 ```
 
-Two things here are deliberate.
-
 **The lists are tiny** — two to four numbers, each between 0 and 3. A failing
-example you can read at a glance is worth far more than a huge one. Small
-numbers also mean repeats show up almost immediately, and repeats are exactly
-where your code breaks.
+example is easier to inspect than a huge one. Small numbers also make repeated
+values common, which tests the case above.
 
 **The slow version is the judge.** You don't need a fast correct answer to test
 against; that's the thing you're trying to write. You need an obvious one, and
@@ -244,7 +237,7 @@ So it runs this same loop: the tests that already exist, then the awkward
 cases, then the old code against the new one on inputs where nothing should
 have changed, then a check that it hasn't quietly made something slow.
 
-You're teaching it a habit. Hard to teach one you don't have.
+This gives the agent the same checking sequence used in this chapter.
 
 ## Your turn
 

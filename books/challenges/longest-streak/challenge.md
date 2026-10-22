@@ -40,8 +40,8 @@ The starter already has an answer written. It is wrong, and the tests will
 tell you how. Your job is to find out why, not to rewrite it from nothing.
 
 Run it first and read what fails. Then make it talk: a `print` inside the loop
-showing the day, the run so far, and the best run seen. The line that lies to
-you is the bug.
+showing the day, the run so far, and the best run seen. Compare the printed
+values with the expected result.
 :::
 
 :::io
@@ -66,7 +66,7 @@ output: the length of the longest unbroken run of `True`, as a whole number
 :::
 
 :::figure{id="stepping-a-loop"}
-Print the run so far on every pass and the wrong line names itself.
+Print the current run and best run on every pass to see where they differ.
 :::
 
 :::run{starter="starter.py"}
@@ -111,24 +111,17 @@ def longest_streak(days):
     return best
 ```
 
-**What the bug actually was.** The original only compared `current` against
-`best` when a `False` came along. That reads fine — "the run just ended, so
-see if it was the best" — and it is right for every run except the last one.
-A list that ends on `True` ends without a `False`, so the final run is counted
-and then thrown away. `[True, True, True]` returned 0 while `current` sat at 3.
+**The original missed the last run.** It compared `current` with `best` only
+when a `False` arrived. A list ending in `True` has no final `False`, so its
+last run was never compared. `[True, True, True]` returned 0 while `current`
+reached 3.
 
-**Why a print finds it faster than reading does.** Reading the code shows you
-what you meant. Printing `current` and `best` on every pass shows you what
-happened: `current` climbing 1, 2, 3 while `best` stays 0. The gap between
-those two columns *is* the bug, and it is visible in one screen.
+**Use a print to inspect the values.** Printing `current` and `best` on every
+pass shows `current` climbing 1, 2, 3 while `best` stays 0.
 
-**The fix that has no end case.** Comparing inside the `if ran:` branch means
-`best` is brought up to date the moment `current` moves. There is no "and also
-afterwards" to forget. The other repair — one more comparison after the loop —
-is equally correct and gives you a second place to forget something the next
-time you edit this function.
+**Update `best` inside the loop.** Comparing inside `if ran:` updates `best`
+whenever `current` changes. Comparing once more after the loop also works.
 
-**Why the perf tier is here.** The obvious slow way to solve this is to try
-every span of days and ask whether it is all `True`. That is right, and on
-200,000 days it will still be running tomorrow. One pass, one counter.
+**Use one pass through the list.** Trying every span of days is too slow for
+200,000 entries. This solution keeps one running count and one best count.
 :::

@@ -103,17 +103,14 @@ a tray when the division came out even. 310 + 11 is 321, and 321 // 12 is 26.
 180 + 11 is 191, and 191 // 12 is still 15.
 
 **Zero needs no special case.** `(0 + 11) // 12` is 0, and the spare is
-`0 * 12 - 0`. An `if portions == 0` here is a sign the rounding is being done
-by hand somewhere.
+`0 * 12 - 0`.
 
 **Why the spare is derived, not counted.** The two numbers are not independent:
-once you know the trays, the spare is fixed. Working both out separately is two
-chances to be wrong and two places to change if a tray size ever moves.
+once you know the trays, the spare is fixed. Calculate it from the tray count.
 
 **Why `per_tray` has a default and `portions` does not.** Arguments with
-defaults come last, and only the argument that is usually the same should have
-one. Every call knows its own portions; most calls do not care about tray size.
-That is the whole test for whether something deserves a default.
+defaults come last. `per_tray` has a default because most calls use 12; every
+call provides its own number of portions.
 
 **Counting up is correct and far too slow.** Adding `per_tray` to a running
 total until it reaches `portions` gives the right answer and reads clearly. At

@@ -72,9 +72,8 @@ output: the largest whole number `length` such that the pieces yield at least `w
 :::
 
 :::figure{id="halving-the-log"}
-The same narrowing, but what is being halved is not a list. It is every lead
-length from 1 mm to the longest piece — and the question asked at each step is
-one you have to write.
+Binary search halves the range of possible lead lengths: 1 mm to the longest
+piece. At each step, count how many leads that length produces.
 :::
 
 :::run{starter="starter.py"}
@@ -100,11 +99,9 @@ def longest_lead(pieces, wanted):
     return best
 ```
 
-**There is nothing to search.** The pile is unsorted, and sorting it tells you
-nothing about lead lengths. What you are searching is the range of possible
-answers: every whole length from 1 mm up to the longest piece on the pile.
-Nothing longer than that can yield even one lead, so `max(pieces)` is the top
-of the range.
+**Search possible lengths.** The pile is unsorted, and sorting it does not help.
+Search every whole length from 1 mm to the longest piece. Nothing longer can
+yield a lead, so `max(pieces)` is the top of the range.
 
 **The question you had to write.** For a given length, how many leads come
 off the pile? `piece // length` for each piece, added up. Floor division is
@@ -147,8 +144,7 @@ billion steps, and it measures at around forty seconds. The naive version is
 not wrong. It is 600 times slower than the one above, and the tier gives it
 three seconds.
 
-**The answer that looks obvious and is not.** `sum(pieces) // wanted` — the
-total length divided by the number of leads — ignores scrap. On the first
+**Do not divide the total length.** `sum(pieces) // wanted` ignores scrap. On the first
 sample it says 4,300 // 4 = 1,075 mm, and at 1,075 mm those three pieces
 yield 0 + 1 + 1 = 2 leads, not 4. You cannot average across pieces that get
 cut separately, and no amount of arithmetic will replace asking the question

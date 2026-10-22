@@ -19,6 +19,8 @@ const FIGURE_CHAPTER = '/books/build-a-coding-agent/ch05-functions/'
 const CHART_CHAPTER = '/books/build-a-coding-agent/ch06-dicts-sets/'
 // Has a walk figure: step boxes and back/next buttons.
 const WALK_CHAPTER = '/books/build-a-coding-agent/ch04-loops/'
+// Its output description is long enough to expose an uncapped I/O row.
+const IO_CHALLENGE = '/books/build-a-coding-agent/bad-row-report/'
 const SITE_HEADER = 'body > div > header'
 const PLAIN_BAR = '[data-book-bar]'
 
@@ -252,6 +254,38 @@ test.describe('the book look switch', () => {
   })
 
   for (const choice of ['site', 'plain'] as const) {
+    for (const viewport of [
+      { width: 375, height: 844 },
+      { width: 1440, height: 1000 },
+    ]) {
+      test(`${choice} keeps problem input and output aligned at ${viewport.width}px`, async ({ page }) => {
+        await page.addInitScript((value) => localStorage.setItem('book-look', value), choice)
+        await page.setViewportSize(viewport)
+        await page.goto(IO_CHALLENGE)
+
+        const layout = await page.evaluate(() => {
+          const summary = document.querySelector<HTMLElement>('.book-content .problem-summary')!
+          const rows = [...document.querySelectorAll<HTMLElement>('.book-content .io-row')]
+          const code = rows[1].querySelector('code')!
+          code.textContent = 'unbroken_identifier_'.repeat(12)
+          return {
+            summary: summary.getBoundingClientRect(),
+            rows: rows.map((row) => row.getBoundingClientRect()),
+            overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          }
+        })
+
+        expect(layout.rows).toHaveLength(2)
+        for (const row of layout.rows) {
+          expect(row.width).toBeCloseTo(layout.summary.width, 1)
+          expect(row.left).toBeCloseTo(layout.summary.left, 1)
+        }
+        expect(layout.overflow).toBeLessThanOrEqual(1)
+      })
+    }
+  }
+
+  for (const choice of ['site', 'plain'] as const) {
     test(`in the dark theme, ${choice} paints the book's panels dark and legible`, async ({
       page,
     }) => {
@@ -408,4 +442,3 @@ test.describe('the book look switch', () => {
     })
   }
 })
-

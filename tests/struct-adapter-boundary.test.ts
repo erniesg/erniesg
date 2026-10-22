@@ -6,6 +6,9 @@ import type {
   AttributeNode as AstroAttributeNode,
   Node as AstroNode,
 } from '@astrojs/compiler/types'
+import remarkMdx from 'remark-mdx'
+import remarkParse from 'remark-parse'
+import { unified } from 'unified'
 import * as ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import { buildStructDocument as legacyBuild } from '../src/struct/from-reconstruction'
@@ -124,6 +127,14 @@ const NONLITERAL_REQUIRE = '<nonliteral require>'
  * family; it fails closed in the same way a computed dynamic import does.
  */
 const NONLITERAL_GLOB = '<nonliteral glob>'
+
+/**
+ * The family a retained-tree wrapper reaches through a re-export that names
+ * no literal target. A computed re-export cannot be resolved, so the guard
+ * cannot prove that it does not reach a migrated family; it fails closed in
+ * the same way a computed require does.
+ */
+const UNRESOLVED_REEXPORT = 'an unresolved re-export' as const
 
 /** What the guard knows about a computed require. */
 type ComputedRequire = {
@@ -667,10 +678,12 @@ function globToRegExp(pattern: string): RegExp {
 
 /**
  * The source the guard parses for a module. An Astro file contributes its
- * frontmatter and its inline scripts; an MDX file contributes the ESM flow
- * blocks MDX allows at the top level of the document, so a fenced code
- * sample that merely shows an import is not mistaken for a module
- * specifier.
+ * frontmatter, the bodies of its script elements, its processed local script
+ * sources and the JavaScript of its template expressions, all of them taken
+ * from the compiler AST. An MDX file contributes the ESM flow blocks MDX
+ * allows at the top level of the document and the JavaScript of every
+ * expression MDX evaluates, so a fenced code sample that merely shows an
+ * import is not mistaken for a module specifier.
  *
  * An Astro file also contributes its processed local script sources: Astro
  * bundles a local `src` of a script element as a script entry, so that file
@@ -681,112 +694,175 @@ function globToRegExp(pattern: string): RegExp {
  */
 function scanSource(source: string, file: URL): string {
   if (file.pathname.endsWith('.astro')) {
-    const frontmatter = source.match(/^---\s*\n([\s\S]*?)\n---/)?.[1] ?? ''
-    const scripts = [
-      ...source.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g),
-    ].map((match) => match[1])
-    const scriptSources = astroScriptSources(source).map(
+    const document = analyzeAstroSource(source)
+    const scriptSources = document.scriptSources.map(
       (scriptSource) => `import ${JSON.stringify(scriptSource)}`,
     )
-    const expressions = astroTemplateExpressions(source)
-    return [frontmatter, ...scripts, ...scriptSources, ...expressions].join(
-      '\n',
-    )
+    return [
+      document.frontmatter,
+      ...document.scriptBodies,
+      ...scriptSources,
+      ...document.expressions,
+    ].join('\n')
   }
-  if (file.pathname.endsWith('.mdx')) return mdxEsmStatements(source)
+  if (file.pathname.endsWith('.mdx')) {
+    const esm = mdxEsmStatements(source)
+    const expressions = mdxExpressions(source, file)
+    return [esm, ...expressions].join(';\n')
+  }
   return source
 }
 
 /**
- * The JavaScript source of every Astro template expression: the expressions
- * in element children and the expression-valued attributes of elements and
- * components.
- *
- * The compiler parses the component, so prose, HTML comments, fenced and
- * indented code samples, `<pre><code>` text, `<style>` CSS and script source
- * text are not expressions and are not collected. An expression that
- * contains a nested element is visited as well, but the nested element's
- * text is not JavaScript, so only its expression attributes are collected.
- *
- * The compiler is the authority on what an expression is. When it cannot
- * parse a real component, the guard fails closed instead of quietly leaving
- * the expressions unscanned.
+ * The parts of an Astro component the guard scans.
  */
-function astroTemplateExpressions(source: string): string[] {
+type AstroAnalysis = {
+  /** The frontmatter of the component. */
+  frontmatter: string
+  /** The body of every script element of the component. */
+  scriptBodies: string[]
+  /** The local script sources the component processes. */
+  scriptSources: string[]
+  /** The JavaScript of every template expression. */
+  expressions: string[]
+}
+
+/**
+ * The parts of an Astro component the guard scans.
+ *
+ * Every part comes from the compiler AST, so only what Astro really executes
+ * is scanned. A script element is a script element: its text child is the
+ * JavaScript Astro runs. An HTML comment is a comment, a `<pre>` or `<code>`
+ * sample is a sample and a frontmatter string is a string, so none of them is
+ * a script element and none of them contributes a script body.
+ *
+ * The compiler is the authority on what a component contains. When it cannot
+ * parse a real component, the guard fails closed instead of quietly leaving
+ * the component unscanned.
+ */
+function analyzeAstroSource(source: string): AstroAnalysis {
   const { ast, diagnostics } = parseAstroSource(source, { position: true })
   const errors = diagnostics.filter((diagnostic) => diagnostic.severity === 1)
   if (errors.length > 0) {
     throw new Error(
-      `Astro component could not be parsed for template expressions: ${errors
+      `Astro component could not be parsed: ${errors
         .map((diagnostic) => diagnostic.text)
         .join('; ')}`,
     )
   }
-  const expressions: string[] = []
+  const analysis: AstroAnalysis = {
+    frontmatter: '',
+    scriptBodies: [],
+    scriptSources: [],
+    expressions: [],
+  }
   const collectAttribute = (attribute: AstroAttributeNode): void => {
     if (
       attribute.kind === 'expression' ||
       attribute.kind === 'template-literal'
     ) {
-      if (attribute.value.length > 0) expressions.push(attribute.value)
+      if (attribute.value.length > 0) analysis.expressions.push(attribute.value)
     } else if (attribute.kind === 'spread') {
       // The spread form keeps the expression in `name`.
-      if (attribute.name.length > 0) expressions.push(attribute.name)
+      if (attribute.name.length > 0) analysis.expressions.push(attribute.name)
     }
   }
-  const visit = (node: AstroNode): void => {
+  const visit = (node: AstroNode, insideSample: boolean): void => {
+    if (node.type === 'frontmatter') {
+      // The frontmatter is the module code of the component, so it is
+      // scanned as TypeScript. It is not a script element.
+      analysis.frontmatter = node.value
+      return
+    }
     if (node.type === 'expression') {
       // The compiler keeps each JavaScript fragment of the expression in a
       // text child; a nested element inside the expression is JavaScript
       // only through its own attributes and expressions.
       for (const child of node.children) {
         if (child.type === 'text' && child.value.length > 0) {
-          expressions.push(child.value)
+          analysis.expressions.push(child.value)
         }
       }
     }
     if ('attributes' in node) {
       for (const attribute of node.attributes) collectAttribute(attribute)
     }
+    if (node.type === 'element' && node.name === 'script' && !insideSample) {
+      // The text child of a script element is the JavaScript the element
+      // carries. A script element inside a `<pre>` or `<code>` sample is a
+      // sample of a script and not a script of the component.
+      for (const child of node.children) {
+        if (child.type === 'text' && child.value.length > 0) {
+          analysis.scriptBodies.push(child.value)
+        }
+      }
+      if (isProcessedScript(node.attributes)) {
+        const scriptSource = scriptSourceOf(node.attributes)
+        if (scriptSource !== null) analysis.scriptSources.push(scriptSource)
+      }
+    }
     if ('children' in node) {
-      for (const child of node.children) visit(child)
+      const sample =
+        insideSample ||
+        (node.type === 'element' &&
+          (node.name === 'pre' || node.name === 'code'))
+      for (const child of node.children) visit(child, sample)
     }
   }
-  visit(ast)
-  return expressions
+  visit(ast, false)
+  return analysis
 }
 
 /**
- * The processed local script sources of an Astro component.
- *
- * Astro processes a relative `src` of a script element as a script entry and
- * bundles that file, so the source is a module specifier. A `src` that names
- * a public asset or an external URL is not processed, so it contributes
- * nothing. An inline script is not processed either, so its `src` is not a
- * module specifier.
+ * The plain value of an attribute, or null when the attribute carries no
+ * plain value. An expression-valued attribute carries JavaScript, so it is
+ * not a literal the guard can resolve.
  */
-function astroScriptSources(source: string): string[] {
-  const sources: string[] = []
-  for (const match of source.matchAll(/<script\b([^>]*)>/g)) {
-    const attributes = match[1] ?? ''
-    if (/(?:^|\s)is:inline(?:\s|=|$)/.test(attributes)) continue
-    const type = /\btype\s*=\s*("([^"]*)"|'([^']*)')/.exec(attributes)
-    const typeValue = type?.[2] ?? type?.[3]
+function plainAttributeValue(attribute: AstroAttributeNode): string | null {
+  if (attribute.kind === 'quoted' || attribute.kind === 'empty') {
+    return attribute.value
+  }
+  return null
+}
+
+/**
+ * Whether Astro processes a script element. An inline script is not
+ * processed, and a script whose type is not JavaScript is not executed as
+ * JavaScript at all, so neither of them names a module Astro bundles.
+ */
+function isProcessedScript(attributes: AstroAttributeNode[]): boolean {
+  if (attributes.some((attribute) => attribute.name === 'is:inline')) {
+    return false
+  }
+  const type = attributes.find((attribute) => attribute.name === 'type')
+  if (type) {
+    const value = plainAttributeValue(type)
     if (
-      typeValue !== undefined &&
+      value !== null &&
       !['module', 'text/javascript', 'application/javascript'].includes(
-        typeValue.toLowerCase(),
+        value.toLowerCase(),
       )
     ) {
-      continue
+      return false
     }
-    const src = /\bsrc\s*=\s*("([^"]*)"|'([^']*)')/.exec(attributes)
-    const value = src?.[2] ?? src?.[3]
-    if (value === undefined) continue
-    if (!value.startsWith('./') && !value.startsWith('../')) continue
-    sources.push(value)
   }
-  return sources
+  return true
+}
+
+/**
+ * The local script source of a script element, or null when the element names
+ * no local module. Astro processes a relative `src` of a script element as a
+ * script entry and bundles that file, so the source is a module specifier. A
+ * `src` that names a public asset or an external URL is not processed, so it
+ * contributes nothing.
+ */
+function scriptSourceOf(attributes: AstroAttributeNode[]): string | null {
+  const src = attributes.find((attribute) => attribute.name === 'src')
+  if (!src) return null
+  const value = plainAttributeValue(src)
+  if (value === null) return null
+  if (!value.startsWith('./') && !value.startsWith('../')) return null
+  return value
 }
 
 /** The net change in curly-brace depth of one line. */
@@ -986,6 +1062,84 @@ function mdxEsmStatements(source: string): string {
   }
   if (block.length > 0) flush()
   return kept.join('\n')
+}
+
+/**
+ * The MDX processor of the guard. The processor is the real MDX toolchain of
+ * the repository, so the tree it produces is the tree MDX itself works on.
+ */
+const mdxProcessor = unified().use(remarkParse).use(remarkMdx)
+
+/**
+ * The shape of the MDX tree the guard walks. The guard reads the type and
+ * the value of a node only, so the tree is described in those terms.
+ */
+type MdxNode = {
+  /** The type of the node. */
+  type: string
+  /** The source of a node that carries one. */
+  value?: string
+  /** The children of a node that has them. */
+  children?: MdxNode[]
+}
+
+/**
+ * The JavaScript of every executable expression of an MDX document.
+ *
+ * MDX evaluates an expression such as `{import('../struct/ids')}` while it
+ * renders the document, so the expression reaches the module graph and the
+ * guard has to inspect it. The processor is the real MDX toolchain, so the
+ * expressions are the ones MDX evaluates: a fenced code block, an indented
+ * code sample, inline code and an HTML comment are markdown content, so an
+ * import that appears only in their text contributes nothing.
+ *
+ * The ESM flow blocks of the document are not collected here. The line
+ * scanner above reads them, and it recognises the declarations MDX allows
+ * at the top level of a document while tolerating prose that merely begins
+ * with `import` or `export`, which the MDX parser refuses outright.
+ *
+ * When the MDX parser refuses a document, the guard fails loudly for a
+ * document of the repository: such a document is production content, and the
+ * guard cannot prove that it holds no executable expression. A document that
+ * is not a file of the repository is a probe of the guard itself, and the
+ * line scanner still reads what it can there.
+ */
+function mdxExpressions(source: string, file: URL): string[] {
+  let tree: MdxNode
+  try {
+    tree = mdxProcessor.parse(source) as unknown as MdxNode
+  } catch (error) {
+    if (isRepositoryDocument(file)) {
+      throw new Error(
+        `MDX document could not be parsed: ${file.pathname}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      )
+    }
+    return []
+  }
+  const expressions: string[] = []
+  const visit = (node: MdxNode): void => {
+    if (
+      node.type === 'mdxFlowExpression' ||
+      node.type === 'mdxTextExpression'
+    ) {
+      if (node.value && node.value.length > 0) expressions.push(node.value)
+    }
+    for (const child of node.children ?? []) visit(child)
+  }
+  visit(tree)
+  return expressions
+}
+
+/**
+ * Whether a scanned document is a document of the repository. A document that
+ * exists on disk is production content, so a parser that refuses it is a
+ * failure the guard has to report. A document that does not exist is a probe
+ * of the guard itself.
+ */
+function isRepositoryDocument(file: URL): boolean {
+  return existsSync(file.pathname)
 }
 
 /** The string literals inside a node, used for a computed dynamic import. */
@@ -1329,13 +1483,17 @@ function computeReexportSpecifiers(source: string): string[] {
       continue
     }
     if (ts.isExportAssignment(statement)) {
-      // `export default structId` re-exports the module the imported binding
-      // came from.
       const expression = statement.expression
-      if (!ts.isIdentifier(expression)) continue
-      const imported = importedBindings.get(expression.text)
-      if (imported === undefined) continue
-      specifiers.push(imported)
+      if (ts.isIdentifier(expression)) {
+        // `export default structId` re-exports the module the imported binding
+        // came from.
+        const imported = importedBindings.get(expression.text)
+        if (imported !== undefined) specifiers.push(imported)
+        continue
+      }
+      // `export = require('./types')` re-exports the required module.
+      const required = requiredModuleSpecifier(expression)
+      if (required !== null) specifiers.push(required)
       continue
     }
     if (!ts.isExportDeclaration(statement)) continue
@@ -1438,6 +1596,23 @@ function hasExportModifier(statement: ts.VariableStatement): boolean {
 }
 
 /**
+ * The module a `require(...)` call names, the sentinel a computed require
+ * records, or null when the expression is not a require at all.
+ *
+ * A computed require has no literal specifier, so the guard cannot prove
+ * that it does not load a migrated family. It fails closed in the same way a
+ * computed dynamic import does.
+ */
+function requiredModuleSpecifier(expression: ts.Expression): string | null {
+  if (!ts.isCallExpression(expression)) return null
+  if (!ts.isIdentifier(expression.expression)) return null
+  if (expression.expression.text !== 'require') return null
+  const argument = expression.arguments[0]
+  if (argument && ts.isStringLiteralLike(argument)) return argument.text
+  return NONLITERAL_REQUIRE
+}
+
+/**
  * The migrated family a retained-tree wrapper reaches by re-export, or null
  * when it reaches none. The chain is followed transitively, so a wrapper
  * that re-exports another wrapper is traced as well.
@@ -1455,6 +1630,12 @@ function migratedFamilyInReexportChain(target: string): string | null {
     // an index module resolves them against its own directory.
     const moduleUrl = new URL(module.path, 'file:///')
     for (const specifier of reexportSpecifiers(module.source)) {
+      if (specifier === NONLITERAL_REQUIRE) {
+        // A computed re-export names no literal target, so the guard cannot
+        // prove that it does not reach a migrated family. It fails closed in
+        // the same way a computed require does.
+        return UNRESOLVED_REEXPORT
+      }
       const resolved = resolveLocalTarget(specifier, moduleUrl)
       if (resolved === null) continue
       const normalized = resolved.replace(/\/+$/, '')
@@ -1546,13 +1727,23 @@ function recoveryImporterViolations(source: string, file: URL): string[] {
  */
 function recoveryAuthorityInReexportChain(
   target: string,
-): 'compatibility forwarder' | 'app recovery module' | null {
+):
+  | 'compatibility forwarder'
+  | 'app recovery module'
+  | typeof UNRESOLVED_REEXPORT
+  | null {
   const seen = new Set<string>()
   const pending: string[] = []
   const module = readLocalModule(target)
   if (module === null) return null
   const moduleUrl = new URL(module.path, 'file:///')
   for (const specifier of reexportSpecifiers(module.source)) {
+    if (specifier === NONLITERAL_REQUIRE) {
+      // A computed re-export names no literal target, so the guard cannot
+      // prove that it does not reach the recovery authority. It fails closed
+      // in the same way a computed require does.
+      return UNRESOLVED_REEXPORT
+    }
     const resolved = resolveLocalTarget(specifier, moduleUrl)
     if (resolved === null) continue
     pending.push(resolved.replace(/\/+$/, ''))
@@ -1569,6 +1760,7 @@ function recoveryAuthorityInReexportChain(
     if (currentModule === null) continue
     const currentUrl = new URL(currentModule.path, 'file:///')
     for (const specifier of reexportSpecifiers(currentModule.source)) {
+      if (specifier === NONLITERAL_REQUIRE) return UNRESOLVED_REEXPORT
       const resolved = resolveLocalTarget(specifier, currentUrl)
       if (resolved === null) continue
       pending.push(resolved.replace(/\/+$/, ''))
@@ -1610,8 +1802,10 @@ function compatibilityForwarderViolationsForSpecifiers(
     }
     const authority = recoveryAuthorityInReexportChain(target)
     if (authority === null) continue
+    const reached =
+      authority === UNRESOLVED_REEXPORT ? authority : `the ${authority}`
     violations.push(
-      `${file.pathname}: recovery authority import ${specifier} -> ${target} reaches the ${authority}`,
+      `${file.pathname}: recovery authority import ${specifier} -> ${target} reaches ${reached}`,
     )
   }
   return violations
@@ -3271,5 +3465,179 @@ describe('app-owned Struct adapter boundary', () => {
     const safe =
       "const worker = new Worker(new URL('../content/worker.ts?worker', import.meta.url), { type: 'module' })"
     expect(e03ViolationsForSource(safe, research, publicPaths)).toEqual([])
+  })
+
+  it('E-03: inspects the executable expressions of an MDX document', async () => {
+    const publicPaths = await publicPackagePaths()
+    const mdxProbe = new URL('research/probe.mdx', root)
+
+    // MDX evaluates an expression while it renders the document, so a
+    // dynamic import inside an expression reaches the module graph even
+    // though the document declares no ESM block at all.
+    const flow = [
+      "{import('../struct/ids').then(({ structId }) => structId('x'))}",
+      '',
+    ].join('\n')
+    expect(importedPaths(flow, mdxProbe)).toContain('../struct/ids')
+    expect(e03ViolationsForSource(flow, mdxProbe, publicPaths)).toHaveLength(1)
+
+    // A text expression is evaluated as well.
+    const text = [
+      "The identifier is {import('../struct/ids')} today.",
+      '',
+    ].join('\n')
+    expect(importedPaths(text, mdxProbe)).toContain('../struct/ids')
+    expect(e03ViolationsForSource(text, mdxProbe, publicPaths)).toHaveLength(1)
+
+    // An expression that names no migrated module is not a violation.
+    const safe = ["{helper('x')}", ''].join('\n')
+    expect(importedPaths(safe, mdxProbe)).toEqual([])
+    expect(e03ViolationsForSource(safe, mdxProbe, publicPaths)).toEqual([])
+
+    // Markdown content is not an expression: a fenced code block, an
+    // indented code sample, inline code and an HTML comment that show an
+    // import contribute nothing.
+    const notCode = [
+      '```js',
+      "import x from '../struct/ids'",
+      '```',
+      '',
+      "    import x from '../struct/ids'",
+      '',
+      'Inline `import x from "../struct/ids"` sample.',
+      '',
+      '<!-- import x from "../struct/ids" -->',
+      '',
+    ].join('\n')
+    expect(importedPaths(notCode, mdxProbe)).toEqual([])
+    expect(e03ViolationsForSource(notCode, mdxProbe, publicPaths)).toEqual([])
+  })
+
+  it('E-03: fails loudly when a real MDX document cannot be parsed', async () => {
+    const publicPaths = await publicPackagePaths()
+    const document = new URL('research/__e03_probe_unparseable.mdx', root)
+    const source = ['import the good stuff', '', 'more prose', ''].join('\n')
+    await writeFile(document.pathname, source, 'utf8')
+    try {
+      // A document the MDX parser refuses is a document the guard cannot
+      // scan safely, so the guard fails loudly instead of skipping it.
+      expect(() => importedPaths(source, document)).toThrow(
+        /MDX document could not be parsed/,
+      )
+      expect(() =>
+        e03ViolationsForSource(source, document, publicPaths),
+      ).toThrow(/MDX document could not be parsed/)
+    } finally {
+      await rm(document.pathname, { force: true })
+    }
+  })
+
+  it('E-03: traces a CommonJS export assignment from a retained wrapper', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+    const wrapper = new URL(
+      'struct/__e03_probe_legacy_export_require.cts',
+      root,
+    )
+    const computed = new URL(
+      'struct/__e03_probe_legacy_export_computed.cts',
+      root,
+    )
+    await writeFile(wrapper.pathname, "export = require('./types')\n", 'utf8')
+    await writeFile(
+      computed.pathname,
+      'export = require(pathVariable)\n',
+      'utf8',
+    )
+    try {
+      // `export = require('./types')` re-exports the required module, so an
+      // importer outside the retained tree reaches the local migrated
+      // authority through the wrapper.
+      expect(
+        e03ViolationsForSource(
+          "import { T } from '../struct/__e03_probe_legacy_export_require'",
+          research,
+          publicPaths,
+        ),
+      ).not.toEqual([])
+
+      // A computed re-export names no literal target, so the guard cannot
+      // prove that it does not reach a migrated family. It fails closed in
+      // the same way a computed require does.
+      expect(
+        e03ViolationsForSource(
+          "import { T } from '../struct/__e03_probe_legacy_export_computed'",
+          research,
+          publicPaths,
+        ),
+      ).not.toEqual([])
+
+      // The retained tree keeps its own wrapper.
+      expect(
+        e03ViolationsForSource(
+          "export * from './__e03_probe_legacy_export_require'",
+          new URL('struct/probe.ts', root),
+          publicPaths,
+        ),
+      ).toEqual([])
+    } finally {
+      await rm(wrapper.pathname, { force: true })
+      await rm(computed.pathname, { force: true })
+    }
+  })
+
+  it('E-03: reads the script bodies of an Astro component from its AST', async () => {
+    const publicPaths = await publicPackagePaths()
+    const astro = new URL('components/probe.astro', root)
+
+    // A script element is a script element: Astro runs its body, so an
+    // import in it reaches the module graph.
+    const script = ["<script>import x from '../struct/ids'</script>", ''].join(
+      '\n',
+    )
+    expect(importedPaths(script, astro)).toContain('../struct/ids')
+    expect(e03ViolationsForSource(script, astro, publicPaths)).toHaveLength(1)
+
+    // An HTML comment and a `<pre>` sample that show a script are not script
+    // elements, so Astro never runs them and the guard does not scan them.
+    // Each example on its own contributes nothing.
+    for (const sample of [
+      '<!-- <script>import x from "../struct/ids"</script> -->\n',
+      '<pre><script>import x from "../struct/ids"</script></pre>\n',
+      '<pre>&lt;script&gt;import x from "../struct/ids"&lt;/script&gt;</pre>\n',
+    ]) {
+      expect(importedPaths(sample, astro)).toEqual([])
+      expect(e03ViolationsForSource(sample, astro, publicPaths)).toEqual([])
+    }
+
+    // The same holds when the examples share one component.
+    const notScript = [
+      '<!-- <script>import x from "../struct/ids"</script> -->',
+      '<pre><script>import x from "../struct/ids"</script></pre>',
+      '',
+    ].join('\n')
+    expect(importedPaths(notScript, astro)).toEqual([])
+    expect(e03ViolationsForSource(notScript, astro, publicPaths)).toEqual([])
+
+    // A frontmatter string that shows a script is not a script element
+    // either. The frontmatter itself is module code, so it is still scanned.
+    const frontmatter = [
+      '---',
+      'const note = `<script>import x from "../struct/ids"</script>`',
+      '---',
+      '<div>Example</div>',
+      '',
+    ].join('\n')
+    expect(importedPaths(frontmatter, astro)).toEqual([])
+    expect(e03ViolationsForSource(frontmatter, astro, publicPaths)).toEqual([])
+
+    // An inline script is not processed by Astro, but the browser runs it,
+    // so its body is scanned as well.
+    const inline = [
+      "<script is:inline>import x from '../struct/ids'</script>",
+      '',
+    ].join('\n')
+    expect(importedPaths(inline, astro)).toContain('../struct/ids')
+    expect(e03ViolationsForSource(inline, astro, publicPaths)).toHaveLength(1)
   })
 })

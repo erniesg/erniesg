@@ -349,7 +349,20 @@ function workerEntrySpecifier(
   const base = argument.arguments?.[1]
   if (!target || !ts.isStringLiteralLike(target)) return null
   if (!base || !isImportMetaUrl(base)) return null
-  return target.text
+  // Vite's worker suffix is a query of the worker URL, so it is removed
+  // before the target is resolved: the query names the worker mode, not a
+  // different module.
+  return normalizeModuleQuery(target.text)
+}
+
+/**
+ * A module specifier without its query and hash suffix. A query names a
+ * bundler mode (`?worker`, `?raw`, `?url`) and a hash names a position in a
+ * file, so neither of them is part of the module a specifier names.
+ */
+function normalizeModuleQuery(specifier: string): string {
+  const cut = specifier.search(/[?#]/)
+  return cut === -1 ? specifier : specifier.slice(0, cut)
 }
 
 /**
@@ -413,6 +426,34 @@ function migratedFamilyFiles(): string[] {
 }
 
 /**
+ * The entry file of the retained `src/struct` barrel.
+ *
+ * The barrel re-exports the migrated families, so a glob that reaches the
+ * barrel reaches the local migrated authority as well. The barrel is
+ * therefore a candidate of its own: a glob that names no family file but
+ * names the barrel still loads the migrated families.
+ */
+function retainedBarrelFiles(): string[] {
+  const files: string[] = []
+  for (const extension of [
+    '.ts',
+    '.tsx',
+    '.mts',
+    '.cts',
+    '.js',
+    '.jsx',
+    '.mjs',
+    '.cjs',
+  ]) {
+    const entry = `${portableRoot.pathname}index${extension}`
+    if (!existsSync(entry)) continue
+    files.push(entry)
+    break
+  }
+  return files
+}
+
+/**
  * Every file under a directory, recursively. A directory that cannot be read
  * contributes nothing.
  */
@@ -437,6 +478,9 @@ function filesUnder(directory: string): string[] {
  * relative to the importing module. A pattern that names no migrated family
  * contributes nothing, and a negated pattern removes the modules it
  * excludes.
+ *
+ * The retained barrel is a candidate as well: it re-exports the migrated
+ * families, so a pattern that names only the barrel still loads them.
  */
 function globFamilySpecifiers(patterns: string[], file: URL): string[] {
   const included = patterns.filter((pattern) => !pattern.startsWith('!'))
@@ -452,7 +496,10 @@ function globFamilySpecifiers(patterns: string[], file: URL): string[] {
     normalizeGlobPattern(pattern, importerDirectory),
   )
   const specifiers: string[] = []
-  for (const familyFile of migratedFamilyFiles()) {
+  for (const familyFile of [
+    ...migratedFamilyFiles(),
+    ...retainedBarrelFiles(),
+  ]) {
     // A pattern is matched in its project-root-relative form, because that
     // is the form a project-root or alias pattern resolves to.
     const modulePath = relative(projectRootPath, familyFile)
@@ -742,7 +789,22 @@ function mdxStatementIsIncomplete(statement: string): boolean {
     ts.ScriptTarget.Latest,
     true,
   )
-  const diagnostics =
+  const diagnostics = mdxStatementDiagnostics(statement)
+  if (diagnostics.length === 0) return false
+  // The parser consumed nothing, so the candidate is a bare keyword that
+  // more input can still complete.
+  if (file.statements.length === 0) return true
+  const end = statement.trimEnd().length
+  return diagnostics.every((diagnostic) => (diagnostic.start ?? 0) >= end)
+}
+
+/**
+ * The complaints the TypeScript parser has about a candidate statement. A
+ * statement the parser accepts without a complaint is a finished
+ * declaration.
+ */
+function mdxStatementDiagnostics(statement: string): readonly ts.Diagnostic[] {
+  return (
     ts.transpileModule(statement, {
       reportDiagnostics: true,
       compilerOptions: {
@@ -750,12 +812,27 @@ function mdxStatementIsIncomplete(statement: string): boolean {
         module: ts.ModuleKind.ESNext,
       },
     }).diagnostics ?? []
-  if (diagnostics.length === 0) return false
-  // The parser consumed nothing, so the candidate is a bare keyword that
-  // more input can still complete.
-  if (file.statements.length === 0) return true
-  const end = statement.trimEnd().length
-  return diagnostics.every((diagnostic) => (diagnostic.start ?? 0) >= end)
+  )
+}
+
+/**
+ * Whether a candidate statement is a declaration the parser accepts. A
+ * declaration that names no module is a declaration all the same, so it is
+ * preserved for the AST scan: a module-free declaration can still load a
+ * module, as `export const x = require('./types')` does.
+ *
+ * Prose that happens to begin with `import` or `export` is not a
+ * declaration, so it is not preserved.
+ */
+function mdxStatementIsDeclaration(statement: string): boolean {
+  const file = ts.createSourceFile(
+    'mdx-esm.ts',
+    statement,
+    ts.ScriptTarget.Latest,
+    true,
+  )
+  if (file.statements.length === 0) return false
+  return mdxStatementDiagnostics(statement).length === 0
 }
 
 /**
@@ -774,6 +851,10 @@ function mdxStatementIsIncomplete(statement: string): boolean {
  * valid declaration without braces can put its `from` clause on a line of
  * its own. A prose line that begins with `import` is dropped unless the
  * TypeScript parser reads it as an ESM statement.
+ *
+ * Every declaration the parser accepts is collected, not only the ones that
+ * name a module: a declaration that names no module is still a declaration
+ * of the document, and it can load a module of its own.
  */
 function mdxEsmStatements(source: string): string {
   const body = source.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '')
@@ -784,7 +865,11 @@ function mdxEsmStatements(source: string): string {
   const flush = () => {
     const statement = block.join('\n')
     block = []
-    if (mdxStatementNamesAModule(statement)) kept.push(statement)
+    if (
+      mdxStatementNamesAModule(statement) ||
+      mdxStatementIsDeclaration(statement)
+    )
+      kept.push(statement)
   }
   for (const line of body.split('\n')) {
     if (depth > 0) {
@@ -1125,7 +1210,13 @@ const reexportSpecifierCache = new Map<string, string[]>()
  *
  * The ordinary two-step form counts as a re-export: a module that imports a
  * binding and then exports that binding re-exports the module the binding
- * came from, so the guard follows it as well.
+ * came from, so the guard follows it as well. An export declaration that
+ * aliases an imported binding counts as well, whether it aliases the binding
+ * in a named export, in an exported variable or in a default export.
+ *
+ * The ordinary CommonJS form counts as a re-export too: a wrapper that
+ * assigns a required module to `module.exports` re-exports that module, so
+ * the guard follows it as well.
  */
 function reexportSpecifiers(source: string): string[] {
   const cached = reexportSpecifierCache.get(source)
@@ -1143,25 +1234,38 @@ function computeReexportSpecifiers(source: string): string[] {
     true,
   )
   const specifiers: string[] = []
-  const importedBindings = new Map<string, string>()
+  const importedBindings = importedBindingModules(file)
   for (const statement of file.statements) {
     if (ts.isImportDeclaration(statement)) {
-      const moduleSpecifier = statement.moduleSpecifier
-      if (!moduleSpecifier || !ts.isStringLiteral(moduleSpecifier)) continue
-      const clause = statement.importClause
-      if (!clause) continue
-      if (clause.name) {
-        importedBindings.set(clause.name.text, moduleSpecifier.text)
+      continue
+    }
+    if (ts.isExpressionStatement(statement)) {
+      // A CommonJS re-export: `module.exports = require('./types')`.
+      const required = commonJsReexportSpecifier(statement.expression)
+      if (required !== null) specifiers.push(required)
+      continue
+    }
+    if (ts.isVariableStatement(statement)) {
+      // `export const id = structId` re-exports the module the imported
+      // binding came from.
+      if (!hasExportModifier(statement)) continue
+      for (const declaration of statement.declarationList.declarations) {
+        const initializer = declaration.initializer
+        if (!initializer || !ts.isIdentifier(initializer)) continue
+        const imported = importedBindings.get(initializer.text)
+        if (imported === undefined) continue
+        specifiers.push(imported)
       }
-      const namedBindings = clause.namedBindings
-      if (!namedBindings) continue
-      if (ts.isNamedImports(namedBindings)) {
-        for (const element of namedBindings.elements) {
-          importedBindings.set(element.name.text, moduleSpecifier.text)
-        }
-      } else {
-        importedBindings.set(namedBindings.name.text, moduleSpecifier.text)
-      }
+      continue
+    }
+    if (ts.isExportAssignment(statement)) {
+      // `export default structId` re-exports the module the imported binding
+      // came from.
+      const expression = statement.expression
+      if (!ts.isIdentifier(expression)) continue
+      const imported = importedBindings.get(expression.text)
+      if (imported === undefined) continue
+      specifiers.push(imported)
       continue
     }
     if (!ts.isExportDeclaration(statement)) continue
@@ -1183,6 +1287,84 @@ function computeReexportSpecifiers(source: string): string[] {
     }
   }
   return specifiers
+}
+
+/**
+ * The module every imported binding of a module came from, keyed by the
+ * local name of the binding. A default import, a named import and a
+ * namespace import all bind a local name.
+ *
+ * The bindings are collected before the re-exports are read, so an export
+ * that aliases an imported binding is recognised whatever order the module
+ * declares them in.
+ */
+function importedBindingModules(
+  file: ts.SourceFile,
+): Map<string, string> {
+  const importedBindings = new Map<string, string>()
+  for (const statement of file.statements) {
+    if (!ts.isImportDeclaration(statement)) continue
+    const moduleSpecifier = statement.moduleSpecifier
+    if (!moduleSpecifier || !ts.isStringLiteral(moduleSpecifier)) continue
+    const clause = statement.importClause
+    if (!clause) continue
+    if (clause.name) {
+      importedBindings.set(clause.name.text, moduleSpecifier.text)
+    }
+    const namedBindings = clause.namedBindings
+    if (!namedBindings) continue
+    if (ts.isNamedImports(namedBindings)) {
+      for (const element of namedBindings.elements) {
+        importedBindings.set(element.name.text, moduleSpecifier.text)
+      }
+    } else {
+      importedBindings.set(namedBindings.name.text, moduleSpecifier.text)
+    }
+  }
+  return importedBindings
+}
+
+/**
+ * The module a CommonJS re-export names, or null when the statement is not a
+ * CommonJS re-export. The ordinary form `module.exports = require('./types')`
+ * re-exports the required module, and so does `exports.types = require(...)`.
+ */
+function commonJsReexportSpecifier(expression: ts.Expression): string | null {
+  if (!ts.isBinaryExpression(expression)) return null
+  if (expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return null
+  if (!isCommonJsExportTarget(expression.left)) return null
+  const required = expression.right
+  if (!ts.isCallExpression(required)) return null
+  if (!ts.isIdentifier(required.expression)) return null
+  if (required.expression.text !== 'require') return null
+  const argument = required.arguments[0]
+  if (!argument || !ts.isStringLiteralLike(argument)) return null
+  return argument.text
+}
+
+/**
+ * Whether an assignment target names a CommonJS export. `module.exports` and
+ * every property of `exports` name one.
+ */
+function isCommonJsExportTarget(expression: ts.Expression): boolean {
+  if (ts.isIdentifier(expression)) return expression.text === 'exports'
+  if (!ts.isPropertyAccessExpression(expression)) return false
+  const owner = expression.expression
+  if (!ts.isIdentifier(owner)) return false
+  if (owner.text === 'exports') return true
+  return owner.text === 'module' && expression.name.text === 'exports'
+}
+
+/**
+ * Whether a variable statement is exported. `export const id = ...` is an
+ * export declaration that aliases a binding.
+ */
+function hasExportModifier(statement: ts.VariableStatement): boolean {
+  return (
+    statement.modifiers?.some(
+      (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
+    ) ?? false
+  )
 }
 
 /**
@@ -1228,6 +1410,10 @@ function isStructBarrelTarget(target: string): boolean {
 /**
  * Resolve a module specifier to the local path it names, or null when the
  * specifier does not name a local module.
+ *
+ * The extension of the module is removed, so every spelling of the same
+ * module resolves to the same path: an explicit `.mdx` suffix names the same
+ * retained MDX wrapper as the suffix-free spelling of it.
  */
 function resolveLocalTarget(specifier: string, file: URL): string | null {
   if (
@@ -1238,13 +1424,13 @@ function resolveLocalTarget(specifier: string, file: URL): string | null {
   }
   if (specifier.startsWith('.')) {
     return new URL(specifier, file).pathname.replace(
-      /\.(?:[cm]?[jt]s|astro)$/u,
+      /\.(?:[cm]?[jt]s|astro|mdx)$/u,
       '',
     )
   }
   const resolved = resolveAliasSpecifier(specifier)
   if (resolved === null) return null
-  return resolved.replace(/\.(?:[cm]?[jt]s|astro)$/u, '')
+  return resolved.replace(/\.(?:[cm]?[jt]s|astro|mdx)$/u, '')
 }
 
 /**
@@ -2714,5 +2900,239 @@ describe('app-owned Struct adapter boundary', () => {
       await rm(wrapper.pathname, { force: true })
       await rm(familyDirectory.pathname, { recursive: true, force: true })
     }
+  })
+
+  it('E-03: traces a CommonJS re-export from a retained wrapper', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+    const wrapper = new URL('struct/__e03_probe_legacy_cjs.cjs', root)
+    const propertyWrapper = new URL(
+      'struct/__e03_probe_legacy_cjs_property.cts',
+      root,
+    )
+    await writeFile(
+      wrapper.pathname,
+      "module.exports = require('./types')\n",
+      'utf8',
+    )
+    await writeFile(
+      propertyWrapper.pathname,
+      "exports.types = require('./ids')\n",
+      'utf8',
+    )
+    try {
+      // A CommonJS wrapper re-exports the module it requires, so an importer
+      // outside the retained tree reaches the local migrated authority
+      // through it.
+      expect(
+        e03ViolationsForSource(
+          "import { T } from '../struct/__e03_probe_legacy_cjs'",
+          research,
+          publicPaths,
+        ),
+      ).not.toEqual([])
+
+      // The property form of the same re-export is traced as well.
+      expect(
+        e03ViolationsForSource(
+          "import { structId } from '../struct/__e03_probe_legacy_cjs_property'",
+          research,
+          publicPaths,
+        ),
+      ).not.toEqual([])
+
+      // The retained tree keeps its own wrapper.
+      expect(
+        e03ViolationsForSource(
+          "export * from './__e03_probe_legacy_cjs'",
+          new URL('struct/probe.ts', root),
+          publicPaths,
+        ),
+      ).toEqual([])
+    } finally {
+      await rm(wrapper.pathname, { force: true })
+      await rm(propertyWrapper.pathname, { force: true })
+    }
+  })
+
+  it('E-03: normalises an explicit MDX extension before the wrapper traversal', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+    const wrapper = new URL('struct/__e03_probe_legacy_wrapper.mdx', root)
+    await writeFile(wrapper.pathname, "export { T } from './types'\n", 'utf8')
+    try {
+      // An explicit `.mdx` suffix names the same retained wrapper as the
+      // suffix-free spelling of it, so the chain is followed in both
+      // spellings.
+      expect(
+        e03ViolationsForSource(
+          "import { T } from '../struct/__e03_probe_legacy_wrapper.mdx'",
+          research,
+          publicPaths,
+        ),
+      ).not.toEqual([])
+      expect(
+        e03ViolationsForSource(
+          "import { T } from '../struct/__e03_probe_legacy_wrapper'",
+          research,
+          publicPaths,
+        ),
+      ).not.toEqual([])
+
+      // The retained tree keeps its own wrapper.
+      expect(
+        e03ViolationsForSource(
+          "export { T } from './__e03_probe_legacy_wrapper.mdx'",
+          new URL('struct/probe.ts', root),
+          publicPaths,
+        ),
+      ).toEqual([])
+    } finally {
+      await rm(wrapper.pathname, { force: true })
+    }
+  })
+
+  it('E-03: treats the retained barrel as a Vite glob candidate', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+
+    // The retained barrel re-exports the migrated families, so a glob that
+    // reaches the barrel reaches the local migrated authority as well.
+    const barrel =
+      "const all = import.meta.glob('../struct/index.ts', { eager: true })"
+    expect(importedPaths(barrel, research)).toContain('../struct/index.ts')
+    expect(
+      e03ViolationsForSource(barrel, research, publicPaths),
+    ).not.toEqual([])
+
+    // A glob over the retained tree reaches the barrel as well.
+    const tree = "const all = import.meta.glob('../struct/*.ts', { eager: true })"
+    expect(importedPaths(tree, research)).toContain('../struct/index.ts')
+    expect(e03ViolationsForSource(tree, research, publicPaths)).not.toEqual([])
+
+    // A glob that names no module of the retained tree is not a violation.
+    const safe =
+      "const pages = import.meta.glob('../content/**/*.md', { eager: true })"
+    expect(importedPaths(safe, research)).toEqual([])
+    expect(e03ViolationsForSource(safe, research, publicPaths)).toEqual([])
+  })
+
+  it('E-03: preserves a module-free MDX ESM block for the AST scan', async () => {
+    const publicPaths = await publicPackagePaths()
+    const mdxProbe = new URL('research/probe.mdx', root)
+
+    // A declaration that names no module is a declaration of the document
+    // all the same, so it is preserved for the AST scan.
+    expect(mdxEsmStatements('export const x = 1\n')).toContain(
+      'export const x = 1',
+    )
+
+    // A preserved declaration can load a module of its own, so the require
+    // it holds is a module specifier the guard has to inspect.
+    const required = "export const x = require('../struct/types')\n"
+    expect(mdxEsmStatements(required)).toContain("require('../struct/types')")
+    expect(
+      e03ViolationsForSource(required, mdxProbe, publicPaths),
+    ).not.toEqual([])
+
+    // Prose that begins with `import` is not a declaration, so it is not
+    // preserved.
+    expect(mdxEsmStatements('import the good stuff\n')).toEqual('')
+
+    // A fenced code sample and an indented code sample are markdown
+    // content, so neither is collected as a module specifier.
+    const fenced = [
+      '```js',
+      "export const x = require('../struct/types')",
+      '```',
+      '',
+    ].join('\n')
+    expect(mdxEsmStatements(fenced)).toEqual('')
+    expect(importedPaths(fenced, mdxProbe)).toEqual([])
+    const indented = [
+      "    export const x = require('../struct/types')",
+      '',
+    ].join('\n')
+    expect(mdxEsmStatements(indented)).toEqual('')
+    expect(importedPaths(indented, mdxProbe)).toEqual([])
+  })
+
+  it('E-03: traces an exported alias of an imported binding', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+    const wrapper = new URL('struct/__e03_probe_legacy_alias.ts', root)
+    const defaultWrapper = new URL(
+      'struct/__e03_probe_legacy_default.ts',
+      root,
+    )
+    await writeFile(
+      wrapper.pathname,
+      "import { structId } from './ids'\nexport const id = structId\n",
+      'utf8',
+    )
+    await writeFile(
+      defaultWrapper.pathname,
+      "import { structId } from './ids'\nexport default structId\n",
+      'utf8',
+    )
+    try {
+      // An exported variable that aliases an imported binding re-exports the
+      // module the binding came from, so the chain is followed.
+      expect(
+        e03ViolationsForSource(
+          "import { id } from '../struct/__e03_probe_legacy_alias'",
+          research,
+          publicPaths,
+        ),
+      ).not.toEqual([])
+
+      // A default export that aliases an imported binding does as well.
+      expect(
+        e03ViolationsForSource(
+          "import id from '../struct/__e03_probe_legacy_default'",
+          research,
+          publicPaths,
+        ),
+      ).not.toEqual([])
+
+      // The retained tree keeps its own wrapper.
+      expect(
+        e03ViolationsForSource(
+          "export { id } from './__e03_probe_legacy_alias'",
+          new URL('struct/probe.ts', root),
+          publicPaths,
+        ),
+      ).toEqual([])
+    } finally {
+      await rm(wrapper.pathname, { force: true })
+      await rm(defaultWrapper.pathname, { force: true })
+    }
+  })
+
+  it('E-03: normalises a worker URL query suffix before resolving the target', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+
+    // Vite's worker suffix is a query of the worker URL, so it is removed
+    // before the target is resolved and the worker entry is reported.
+    const worker =
+      "const worker = new Worker(new URL('../struct/ids.ts?worker', import.meta.url), { type: 'module' })"
+    expect(importedPaths(worker, research)).toContain('../struct/ids.ts')
+    expect(e03ViolationsForSource(worker, research, publicPaths)).not.toEqual(
+      [],
+    )
+
+    // The inline form of the same suffix is normalised as well.
+    const inline =
+      "const worker = new Worker(new URL('../struct/ids.ts?worker&inline', import.meta.url), { type: 'module' })"
+    expect(importedPaths(inline, research)).toContain('../struct/ids.ts')
+    expect(e03ViolationsForSource(inline, research, publicPaths)).not.toEqual(
+      [],
+    )
+
+    // A worker entry that names no migrated family is not a violation.
+    const safe =
+      "const worker = new Worker(new URL('../content/worker.ts?worker', import.meta.url), { type: 'module' })"
+    expect(e03ViolationsForSource(safe, research, publicPaths)).toEqual([])
   })
 })

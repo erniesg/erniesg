@@ -6,7 +6,7 @@ the E-03 content was originally
 carried on `feat/struct-e03-core-codecs-ids-order-20261020`)
 Worktree: `/home/ubuntu/.local/state/struct-migration/20261020-continuation/worktrees/app-e03-guard-round10`
 Precondition: E-02 passed (`feat/struct-e03-core-codecs-ids-order-20261020` exists with commits).
-Guard state described by this record: `ed7c320a` ("test(struct): close the two E-03 boundary-guard findings of round 10").
+Guard state described by this record: `d6850f19` ("fix(struct): widen the exported-expression walk to a node in the E-03 boundary guard").
 **This record describes the tree as of that guard commit.** The record's own commit comes later on the same
 branch and changes only this document, so the guard state described here does not move with it; the record therefore
 names the guard commit, and never a branch tip, as the state it describes.
@@ -35,16 +35,17 @@ names the guard commit, and never a branch tip, as the state it describes.
 - `src/struct/codec*` local modules kept; no new production semantics added to retained copies.
 - `src/struct/sha256.ts`, `src/research/sha256-sync.ts`, `legacyStructDigest`, model-consultation modules, and `src/struct/recovery.ts` were not migrated (per "Not migrated" list).
 
-## Runtime recovery delegations and guard hardening (guard state at `ed7c320a`, with earlier heads marked inline)
+## Runtime recovery delegations and guard hardening (guard state at `d6850f19`, with earlier heads marked inline)
 
 This section records the E-03 scope that the restack added on top of the dated candidate measurement recorded below.
-It describes the guard state at the commit that last changed the guard, `ed7c320a` ("test(struct): close the two
-E-03 boundary-guard findings of round 10"), which is the state of `tests/struct-adapter-boundary.test.ts`
-in the reviewed tree; the guard runs of this section were measured in the round-10 worktree
+It describes the guard state at the commit that last changed the guard, `d6850f19` ("fix(struct): widen the
+exported-expression walk to a node in the E-03 boundary guard"), which is the state of
+`tests/struct-adapter-boundary.test.ts` in the reviewed tree; the guard runs of this section were measured in the
+round-10 worktree
 `/home/ubuntu/.local/state/struct-migration/20261020-continuation/worktrees/app-e03-guard-round10`. Bullets whose
 measurements were taken at an earlier head say so inline. This record describes the tree **as of that guard
 commit**; it does not name a branch tip as the reviewed head, because the record's own commit moves that tip. The guard
-commits included in the reviewed tree are the sixteen listed under "Boundary-guard hardening" below, and each of them is
+commits included in the reviewed tree are the eighteen listed under "Boundary-guard hardening" below, and each of them is
 an ancestor of the branch that carries this record.
 
 - **Category delegation** - source unit `554ce8e2` ("fix(struct): make the package recovery category authoritative at
@@ -75,22 +76,26 @@ an ancestor of the branch that carries this record.
   `a832b8ed` ("test(struct): scan Astro template expressions for imports") and `dc117894` ("test(struct): scan MDX
   expressions, export assignments and Astro script ASTs"), `63af8a44` ("test(struct): scan hoisted Astro script
   bodies and MDX JSX attribute expressions"), `957d9b7d` ("test(struct): close the two E-03 boundary-guard
-  findings of round 9") and `ed7c320a` ("test(struct): close the two E-03 boundary-guard findings of round 10").
-  These sixteen are the guard commits
+  findings of round 9"), `ed7c320a` ("test(struct): close the two E-03 boundary-guard findings of round 10") and
+  `d6850f19` ("fix(struct): widen the exported-expression walk to a node in the E-03 boundary guard", which changes the
+  guard's implementation only and adds no case).
+  These eighteen are the guard commits
   included in the reviewed tree.
   `d886ddcf` is the replay of the round-6 unit's `b3beed76` onto `fb1250a0`: the expected conflict in the
   `reexportSpecifiers` region was resolved by keeping `fb1250a0`'s `reexportSpecifierCache` wrapper and its
   `computeReexportSpecifiers` rename while taking the round-6 body, its four helpers
   (`importedBindingModules`, `commonJsReexportSpecifier`, `isCommonJsExportTarget`, `hasExportModifier`) and all six
   round-6 cases. Nothing else conflicted, and the describe-block change is a pure append.
-  `tests/struct-adapter-boundary.test.ts` grows from 5 cases (386 lines) at the base `5f8c76ab`, to 7 cases (584 lines)
+  `tests/struct-adapter-boundary.test.ts` grows from 5 cases (386 lines) at the base `5f8c76ab`, to 6 cases (429 lines)
+  at `70727202`, to 7 cases (584 lines)
   at `fc73a970`, to 8 cases (689 lines) at `5974df05` (the same state the record commit `64e6774b` carries), to 11 cases
   (788 lines) at `a99a0f86`, to 13 cases (1053 lines) at `36916381` (the same state the record commit `64209924`
   carries), to 15 cases (1215 lines) at `e9009551`, to 19 cases (1607 lines) at `7907acff`, to 21 cases (2010 lines) at
   `f6866e41`, to 22 cases (2090 lines) at `79c0d7c5` (the same state the record commit `8411b8c5` carries), to 28 cases
   (2615 lines) at `dee1f860`, to 28 cases (2717 lines) at `fb1250a0`, to 34 cases (3137 lines) at `d886ddcf`, to
   35 cases (3274 lines) at `a832b8ed`, to 39 cases (3642 lines) at `dc117894`, to 40 cases (3783 lines) at
-  `63af8a44`, to 42 cases (4300 lines) at `957d9b7d`, and to 44 cases (4490 lines) at `ed7c320a`. Every count is
+  `63af8a44`, to 42 cases (4300 lines) at `957d9b7d`, and to 44 cases (4490 lines) at `ed7c320a`, which `d6850f19`
+  leaves unchanged (44 cases, 4490 lines). Every count is
   `grep -c "^  it("` on the file at that commit and every line
   count is `wc -l` on it.
   **The complete reviewed set is closed - forty-four reviewed items.** The enumeration and the count are the same
@@ -197,12 +202,22 @@ an ancestor of the branch that carries this record.
   The two
   (F14) assertions are in the file the plan names: the case
   "E-03: the production recovery module takes its category and actionable-recovery authority from the package"
-  (`tests/struct-adapter-boundary.test.ts:2756-2803` at `ed7c320a`; it was `:2725-2772` at `957d9b7d`, it was
+  (`tests/struct-adapter-boundary.test.ts:2756-2803` at `ed7c320a` and the same range at `d6850f19`; it was
+  `:2725-2772` at `957d9b7d`, it was
   `:2438-2485` at `63af8a44` and the record
   quoted `:1821-1868` before, which was a stale line reference) asserts both package runtime imports, the absence of any
   `category:` field in the app copy table, and that the app facade delegates instead of deciding either fact. The two
   new focused files `tests/struct-recovery-category-authority.test.ts` and `tests/struct-recovery-actionable-authority.test.ts`
   pin the behaviour.
+- **Round-11 guard commit `d6850f19`** - "fix(struct): widen the exported-expression walk to a node in the E-03 boundary
+  guard" is the commit that last changed the guard in the reviewed tree, and it is the guard state this record names.
+  It changes the guard file only (`git show --stat d6850f19`: `tests/struct-adapter-boundary.test.ts`, 21 insertions
+  and 21 deletions) and it adds no case: the file stays at 44 cases and 4490 lines, the same as at `ed7c320a`. The
+  diff widens the parameter type of `exportedExpressionModules` and of the `referencedBindingNames` helper it calls
+  from `ts.Expression` to `ts.Node` - the type the exported-function-declaration form passes (`statement.body`, a
+  `ts.Block`) - and renames the visitor's parameter; the traversal it performs is the same code, so it adds no rule and
+  no census is due for it. **Every measurement frame
+  of this section is the round-10 frame at `ed7c320a`: no suite, census or type check was run at `d6850f19`.**
 - **Shape of the MDX fix at `dc117894`** - the MDX path is two paths, not one, and the reason is measured rather than
   assumed. The MDX processor (`unified` + `remark-parse` + `remark-mdx`) yields `mdxjsEsm` nodes for the ESM flow blocks
   and `mdxFlowExpression`/`mdxTextExpression` nodes for the executable expressions, but it **throws** on a document whose
@@ -241,7 +256,7 @@ an ancestor of the branch that carries this record.
     compiler AST holds no script element (the string is part of the frontmatter node).
   The guard therefore scans a script element wherever the compiler AST puts it, and the controls that are true - the
   HTML comment and the frontmatter string - stay at 0.
-- **Case inventory at `ed7c320a`** - the 44 cases of `tests/struct-adapter-boundary.test.ts`, in file order:
+- **Case inventory at `d6850f19`** - the 44 cases of `tests/struct-adapter-boundary.test.ts`, in file order:
   "keeps one implementation and identity through the legacy and root exports"; "keeps one app-owned recovery
   implementation and legacy forwarding"; "keeps app recovery consumers on the app-owned path"; "keeps all implementation
   modules within their allowed import boundaries"; "rejects app reconstruction and private package imports in synthetic
@@ -270,14 +285,15 @@ an ancestor of the branch that carries this record.
   expression that uses an imported binding"; "E-03: resolves a Vite glob pattern against a literal base option";
   "E-03: matches a Vite glob pattern with the glob matcher Vite uses"; "E-03: does not scan the body of a
   non-JavaScript Astro script".
-  The case-to-commit attribution, re-derived at `ed7c320a` by reading the case names of
+  The case-to-commit attribution, re-derived at `d6850f19` by reading the case names of
   `tests/struct-adapter-boundary.test.ts` at each guard commit and matching them against the file's case order: cases
   1-5 at the base `5f8c76ab`; case 6 at `70727202`; case 7 at `fc73a970`; case 8 at `5974df05`; cases 9, 10 and 13 at
   `a99a0f86`;
   cases 11-12 at `e9009551`; cases 14-15 at `36916381`; cases 16, 17, 19 and 22 at `7907acff`; cases 18 and 20 at
   `f6866e41`; case 21 at `79c0d7c5`; cases 23-26 and 28-29 at `dee1f860`; case 27 at `a832b8ed`;
   cases 30-35 at `d886ddcf`; cases 36, 37, 39 and 40 at `dc117894`; case 38 at `63af8a44`; cases 41 and 42 at
-  `957d9b7d`; cases 43 and 44 at `ed7c320a`.
+  `957d9b7d`; cases 43 and 44 at `ed7c320a`. `fb1250a0` and `d6850f19` changed the guard's implementation without
+  adding a case, so no position of this inventory is attributed to either of them.
   (Case indices are the 1-based positions in this inventory. The attribution is measured, not inherited: it is the case
   list of the file at each guard commit, compared with the case list at its parent commit, with the positions read in
   the inventory above. The only change against the attribution this record carried at `dc117894` is the pair
@@ -299,13 +315,15 @@ an ancestor of the branch that carries this record.
   equality, the accepted/rejected input matrix, and the high-fan-in consumer enumeration and test are not produced by
   these commits and have not been accepted. The two delegations discharge the (F14) production-delegation clause only.
   The round-10 guard commit `ed7c320a` changes the guard file and this record only: it closes two guard findings and it
-  claims no gate, changes no plan row and discharges no clause. **The E-03 stage gate is still PENDING.**
+  claims no gate, changes no plan row and discharges no clause. The round-11 guard commit `d6850f19` changes the guard
+  file only and closes no reviewed item: it adds no case, changes no plan row, discharges no clause and claims no gate.
+  **The E-03 stage gate is still PENDING.**
 - **Measurement frames** - the app-suite numbers (318 files, 4986 tests) and the `astro check` result (0 errors, 279
   hints) recorded in "Not done / not in scope" below, and the FIRST red→green guard pair in "Static guard" above, are the
   dated CANDIDATE-frame measurements (the E-03 step and the candidate `ae4638ce`); they are not re-claimed for the guard
   state described in this section, and the whole app suite was not re-run at that guard state. The round-10 guard runs of
-  this section are the two focused commands named under "Guard measurements at `ed7c320a`"; no other suite was run at
-  that guard state. The independent review of
+  this section are the two focused commands named under "Guard measurements at `ed7c320a`"; they are the round-10 frames,
+  and no other suite was run at `ed7c320a` or at `d6850f19`. The independent review of
   the earlier head ran the focused suites (`tests/struct-adapter-boundary.test.ts`,
   `tests/struct-recovery-category-authority.test.ts`, `tests/struct-recovery-actionable-authority.test.ts`,
   `src/struct/struct.test.ts`, `tests/struct-adapter-parity.test.ts`, `tests/struct-package-parity.test.ts`,
@@ -314,11 +332,11 @@ an ancestor of the branch that carries this record.
   for the guard state described in this section. No CI result is claimed.
 - **Guard measurements at `ed7c320a`** - `npx vitest run tests/struct-adapter-boundary.test.ts --maxWorkers=1
   --testTimeout=30000` reports 1 file, 44 tests, 44 passed, exit 0 (12.31 s total: transform 2.15 s, import 3.30 s,
-  tests 8.67 s; wall time 13.18 s), measured at the guard state described in this section, in the round-10 worktree
+  tests 8.67 s; wall time 13.18 s), measured at `ed7c320a`, the round-10 guard state, in the round-10 worktree
   `/home/ubuntu/.local/state/struct-migration/20261020-continuation/worktrees/app-e03-guard-round10`
   (node 22.22.3, vitest 4.1.11, shared 4-CPU VM). The two focused recovery-authority files
   (`tests/struct-recovery-category-authority.test.ts`, `tests/struct-recovery-actionable-authority.test.ts`) were
-  measured at the same guard state with `npx vitest run tests/struct-recovery-category-authority.test.ts
+  measured at the same `ed7c320a` frame with `npx vitest run tests/struct-recovery-category-authority.test.ts
   tests/struct-recovery-actionable-authority.test.ts --maxWorkers=1 --testTimeout=30000` (2 files, 11 tests, 11 passed,
   exit 0, 675 ms total: transform 94 ms, import 131 ms, tests 43 ms; wall time 1.47 s). The baseline frame at the PR #454 head
   `52c9f0f6` was measured in the same worktree with the same command on an unmodified copy of the guard file of that
@@ -329,11 +347,13 @@ an ancestor of the branch that carries this record.
   reported 1 file, 35 tests, 35 passed, exit 0, the `d886ddcf` frame reported 1 file, 34 tests, 34 passed, exit 0, and
   the `dee1f860` frame reported 28 tests, 28 passed. No other suite was run - in particular the whole app suite was not
   re-run - and no CI result is claimed.
-- **Known limits of the guard at `ed7c320a` (recorded, NOT closed)** - three of the six P3 observations from the
+- **Known limits of the guard at `d6850f19` (recorded, NOT closed)** - three of the six P3 observations from the
   independent review of the earlier head are still limits of the guard at this state, and this record does not claim
   that any of them is closed. The first two and the fifth were re-measured at `ed7c320a` with the guard's own
-  functions, on a scratch copy of the guard file of this state run against this worktree's tree; the measured values
-  are unchanged from the values the record quoted at `dee1f860`, at `d886ddcf`, at `dc117894` and at `63af8a44`. The
+  functions, on a scratch copy of the guard file of `ed7c320a` run against this worktree's tree; the measured values
+  are unchanged from the values the record quoted at `dee1f860`, at `d886ddcf`, at `dc117894` and at `63af8a44`.
+  `d6850f19` changes only the exported-expression walk - its diff touches `exportedExpressionModules` and
+  `referencedBindingNames` only - so it does not touch any of the three. The
   measured result is quoted: (1) an MDX declaration whose `from` clause is separated from the import clause by a comment line is not
   collected - the probe `import T` / `// a comment line` / `from '@/struct/types'` in the MDX frame yields
   `mdxEsmStatements` `""`, `importedPaths` `[]` and an empty violations list; (2) an MDX declaration whose continuation
@@ -558,7 +578,7 @@ an ancestor of the branch that carries this record.
   record's own commit moves it. Nothing in this record is merged, released or deployed.
 - `astro check` passes (0 errors, 279 hints pre-existing). **That is the dated candidate-frame result (the candidate
   `ae4638ce`) and it is not a claim about the guard state described in this section** - the measured result at the
-  guard state `ed7c320a` is the next bullet.
+  round-10 guard state `ed7c320a` is the next bullet.
 - **`astro check` re-measured at the guard state `ed7c320a`**: `npx astro check` reports 801 files, **1 error** and
   278 hints. The one error is `tests/struct-adapter-boundary.test.ts:1717:38` -
   `ts(2345): Argument of type 'Block' is not assignable to parameter of type 'Expression'` - and it is **pre-existing
@@ -571,7 +591,10 @@ an ancestor of the branch that carries this record.
   was asked to close: the code this round adds introduces no diagnostic (the picomatch binding is typed locally, and
   the `isJavaScriptScript` helper is typed with the compiler's own attribute type). Fixing the round-9 type error
   belongs to the round that introduced it and is recorded as a production finding of this round's review, not as
-  work of this round.
+  work of this round. The round-11 commit `d6850f19` widens the parameter of that call from `ts.Expression` to
+  `ts.Node`, the type `ts.Block` is assignable to, so the error above is addressed by that commit - stated here from
+  its diff: this record makes no new `astro check` measurement at `d6850f19`, so the figure above stays the round-10
+  frame.
 - The repository's own app suite (`npx vitest run --exclude 'tests/e2e/**' --exclude 'tools/agent-evidence-budget.test.mjs' --maxWorkers=1`):
   318 files (316 passed, 2 skipped), 4986 tests (4969 passed, 17 skipped), exit 0 - no failures. The independent
   review of this candidate measured the same numbers at the same commit.
@@ -621,10 +644,15 @@ an ancestor of the branch that carries this record.
   round-10 boundary-guard branch `e03/boundary-guard-round10` is based on the PR #454 head `52c9f0f6` and carries the
   guard commit `ed7c320a` and this record's commit; against `52c9f0f6` it changes two paths (the boundary guard and
   this dated record) and against `main` (`5f8c76ab`) it still carries the same 14 paths, because both of its paths are
-  already among them.
-  **No manifest, lockfile, vendor, golden or expected file changed at `ed7c320a`:**
+  already among them. The round-11 boundary-guard branch `fix/struct-e03-guard-exported-body-type-20261022` carries the
+  guard commit `d6850f19` and the record commits `2b0a7049` and `bfc9d116`; against `ed7c320a` it changes two paths (the
+  boundary guard and this dated record) and against `main` (`5f8c76ab`) it still carries the same 14 paths, because both
+  of its paths are already among them.
+  **No manifest, lockfile, vendor, golden or expected file changed at `ed7c320a`, and none changed at `d6850f19`
+  either:**
   `git diff 5f8c76ab ed7c320a -- package.json package-lock.json` is empty, `git diff 52c9f0f6 ed7c320a -- package.json
-  package-lock.json` is empty, and the guard reaches the MDX toolchain (`unified` 11.0.5, `remark-parse` 11.0.0,
+  package-lock.json` is empty, `git diff 5f8c76ab d6850f19 -- package.json package-lock.json` is empty and
+  `git diff ed7c320a d6850f19 -- package.json package-lock.json` is empty, and the guard reaches the MDX toolchain (`unified` 11.0.5, `remark-parse` 11.0.0,
   `remark-mdx` 3.1.1) through the direct `devDependencies` the repository already declares, so no dependency
   declaration was added. The glob matcher of the round-10 change is `picomatch` 4.0.5, which the guard reaches as a
   TRANSITIVE dependency that the lockfile already places deterministically: `vite` 8.1.6 depends on `picomatch`

@@ -1042,30 +1042,19 @@ function mdxStatementNamesAModule(statement: string): boolean {
 }
 
 /**
- * Whether a candidate statement can still be completed by more input.
+ * Whether a candidate statement is a finished declaration.
  *
- * The TypeScript parser is the authority on whether a candidate is a finished
- * declaration, so its complaints decide the question. A candidate whose
- * complaint is at its own end is a declaration that is not finished yet: a
- * valid `import T` without its `from` clause is exactly that. A candidate
- * that broke earlier is not a declaration at all, so a prose line that
- * begins with `import` is not read as one.
+ * The TypeScript parser is the authority on that question: a candidate the
+ * parser accepts as a complete declaration is finished, whatever its text
+ * contains. A count of the brace characters does not decide it: a brace
+ * inside a string or inside a comment is not a block, so a declaration that
+ * carries one is finished all the same, and a candidate the parser has not
+ * accepted yet can still be completed by more input.
  */
-function mdxStatementIsIncomplete(statement: string): boolean {
-  if (mdxStatementNamesAModule(statement)) return false
-  const file = ts.createSourceFile(
-    'mdx-esm.ts',
-    statement,
-    ts.ScriptTarget.Latest,
-    true,
+function mdxStatementIsComplete(statement: string): boolean {
+  return (
+    mdxStatementNamesAModule(statement) || mdxStatementIsDeclaration(statement)
   )
-  const diagnostics = mdxStatementDiagnostics(statement)
-  if (diagnostics.length === 0) return false
-  // The parser consumed nothing, so the candidate is a bare keyword that
-  // more input can still complete.
-  if (file.statements.length === 0) return true
-  const end = statement.trimEnd().length
-  return diagnostics.every((diagnostic) => (diagnostic.start ?? 0) >= end)
 }
 
 /**
@@ -1117,10 +1106,11 @@ function mdxStatementIsDeclaration(statement: string): boolean {
  *
  * A statement is read until the parser recognises a complete declaration, so
  * a declaration that spans several lines is collected as one block. The
- * brace depth alone does not decide that a statement is finished, because a
- * valid declaration without braces can put its `from` clause on a line of
- * its own. A prose line that begins with `import` is dropped unless the
- * TypeScript parser reads it as an ESM statement.
+ * parser decides that a statement is finished, because a count of the brace
+ * characters does not: a brace inside a string or inside a comment is not a
+ * block, and a declaration that carries one is finished all the same. A
+ * prose line that begins with `import` is dropped unless the TypeScript
+ * parser reads it as an ESM statement.
  *
  * Every declaration the parser accepts is collected, not only the ones that
  * name a module: a declaration that names no module is still a declaration
@@ -1135,18 +1125,15 @@ function mdxEsmStatements(source: string): string {
   const flush = () => {
     const statement = block.join('\n')
     block = []
-    if (
-      mdxStatementNamesAModule(statement) ||
-      mdxStatementIsDeclaration(statement)
-    )
-      kept.push(statement)
+    depth = 0
+    if (mdxStatementIsComplete(statement)) kept.push(statement)
   }
   for (const line of body.split('\n')) {
     if (depth > 0) {
       // The line continues the ESM statement that is already open.
       block.push(line)
       depth += mdxBraceDelta(line)
-      if (depth === 0 && !mdxStatementIsIncomplete(block.join('\n'))) flush()
+      if (mdxStatementIsComplete(block.join('\n'))) flush()
       continue
     }
     const fenceLine = mdxFenceMarker(line)
@@ -1175,14 +1162,14 @@ function mdxEsmStatements(source: string): string {
       // The open statement is not a complete declaration yet, so this line
       // can still complete it.
       block.push(line)
-      if (!mdxStatementIsIncomplete(block.join('\n'))) flush()
+      if (mdxStatementIsComplete(block.join('\n'))) flush()
       continue
     }
     const trimmed = line.trim()
     if (!mdxStartsEsmStatement(trimmed)) continue
     block = [line]
     depth = mdxBraceDelta(line)
-    if (depth === 0 && !mdxStatementIsIncomplete(line)) flush()
+    if (mdxStatementIsComplete(line)) flush()
   }
   if (block.length > 0) flush()
   return kept.join('\n')
@@ -1735,6 +1722,14 @@ function computeReexportSpecifiers(source: string): ReexportSpecifiers {
           )
         }
       }
+      // A member of an exported class is part of what the class hands out,
+      // so a member that uses an imported binding reaches the module the
+      // binding came from as well.
+      for (const member of statement.members) {
+        reaches.push(
+          ...classMemberModules(member, importedBindings, statement.name),
+        )
+      }
       continue
     }
     if (ts.isExportAssignment(statement)) {
@@ -1902,21 +1897,112 @@ function importedBindingModules(
 }
 
 /**
+ * The modules an exported class member reaches through the bindings it
+ * references. A member of an exported class is part of what the class hands
+ * out, so a method body, a property initializer, a static block and a
+ * computed property name are walked for the bindings they reference. A
+ * binding the class defines itself reaches no other module.
+ */
+function classMemberModules(
+  member: ts.ClassElement,
+  importedBindings: Map<string, string>,
+  declared?: ts.BindingName,
+): string[] {
+  const modules: string[] = []
+  if (
+    ts.isMethodDeclaration(member) ||
+    ts.isGetAccessorDeclaration(member) ||
+    ts.isSetAccessorDeclaration(member)
+  ) {
+    if (member.body) {
+      modules.push(
+        ...exportedExpressionModules(member.body, importedBindings, declared),
+      )
+    }
+    modules.push(
+      ...computedPropertyModules(member.name, importedBindings, declared),
+    )
+    return modules
+  }
+  if (ts.isPropertyDeclaration(member)) {
+    if (member.initializer) {
+      modules.push(
+        ...exportedExpressionModules(
+          member.initializer,
+          importedBindings,
+          declared,
+        ),
+      )
+    }
+    modules.push(
+      ...computedPropertyModules(member.name, importedBindings, declared),
+    )
+    return modules
+  }
+  if (ts.isClassStaticBlockDeclaration(member)) {
+    modules.push(
+      ...exportedExpressionModules(member.body, importedBindings, declared),
+    )
+  }
+  return modules
+}
+
+/**
+ * The modules a computed property name reaches. A computed name is
+ * evaluated when the class is defined, so the expression of the name is
+ * walked like every other expression of the class.
+ */
+function computedPropertyModules(
+  name: ts.PropertyName | undefined,
+  importedBindings: Map<string, string>,
+  declared?: ts.BindingName,
+): string[] {
+  if (!name || !ts.isComputedPropertyName(name)) return []
+  return exportedExpressionModules(name.expression, importedBindings, declared)
+}
+
+/**
  * The module a CommonJS re-export names, or null when the statement is not a
  * CommonJS re-export. The ordinary form `module.exports = require('./types')`
  * re-exports the required module, and so does `exports.types = require(...)`.
+ *
+ * A re-export can read a member of the required module, so a property access
+ * and an element access that is rooted at the required module name it too.
  */
 function commonJsReexportSpecifier(expression: ts.Expression): string | null {
   if (!ts.isBinaryExpression(expression)) return null
   if (expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return null
   if (!isCommonJsExportTarget(expression.left)) return null
-  const required = expression.right
-  if (!ts.isCallExpression(required)) return null
-  if (!ts.isIdentifier(required.expression)) return null
-  if (required.expression.text !== 'require') return null
+  const required = commonJsRequireCall(expression.right)
+  if (required === null) return null
   const argument = required.arguments[0]
-  if (!argument || !ts.isStringLiteralLike(argument)) return null
-  return argument.text
+  if (argument && ts.isStringLiteralLike(argument)) return argument.text
+  // A computed require has no literal specifier, so the guard cannot prove
+  // that it does not load a migrated family. It fails closed in the same way
+  // a computed dynamic import does.
+  return NONLITERAL_REQUIRE
+}
+
+/**
+ * The `require(...)` call a CommonJS re-export is rooted at. A re-export that
+ * reads a member of the required module - `module.exports =
+ * require('./ids').structId` - is rooted at the require call, so a property
+ * access and an element access are unwrapped to find it.
+ */
+function commonJsRequireCall(
+  expression: ts.Expression,
+): ts.CallExpression | null {
+  let current: ts.Expression = expression
+  while (
+    ts.isPropertyAccessExpression(current) ||
+    ts.isElementAccessExpression(current)
+  ) {
+    current = current.expression
+  }
+  if (!ts.isCallExpression(current)) return null
+  if (!ts.isIdentifier(current.expression)) return null
+  if (current.expression.text !== 'require') return null
+  return current
 }
 
 /**
@@ -4487,5 +4573,290 @@ describe('app-owned Struct adapter boundary', () => {
     expect(e03ViolationsForSource(computedType, astro, publicPaths)).toHaveLength(
       1,
     )
+  })
+
+  it('E-03: ends an MDX statement with the parser, not with a brace count', async () => {
+    const publicPaths = await publicPackagePaths()
+    const mdxProbe = new URL('research/probe.mdx', root)
+
+    // A declaration that carries an unmatched brace inside a string is a
+    // finished declaration: the TypeScript parser accepts it as one. A count
+    // of the brace characters does not know that, so the scanner used to keep
+    // the declaration open, absorb the markdown that follows it and the
+    // import after it, and drop the whole block at the end of the document -
+    // which let the migrated-family import pass the guard.
+    const withString = [
+      "export const marker = '{'",
+      '',
+      'The marker is a brace.',
+      '',
+      "import { T } from '@/struct/types'",
+      '',
+    ].join('\n')
+    expect(importedPaths(withString, mdxProbe)).toEqual(['@/struct/types'])
+    expect(
+      e03ViolationsForSource(withString, mdxProbe, publicPaths),
+    ).not.toEqual([])
+
+    // A declaration that carries an unmatched brace inside a comment is a
+    // finished declaration as well.
+    const withComment = [
+      'export const marker = 1 // {',
+      '',
+      "import { T } from '@/struct/types'",
+      '',
+    ].join('\n')
+    expect(importedPaths(withComment, mdxProbe)).toEqual(['@/struct/types'])
+    expect(
+      e03ViolationsForSource(withComment, mdxProbe, publicPaths),
+    ).not.toEqual([])
+
+    // The declarations the scanner collected before are still collected: a
+    // module-free declaration, a declaration that names a module and a
+    // declaration that spans several lines.
+    expect(mdxEsmStatements('export const x = 1\n')).toContain(
+      'export const x = 1',
+    )
+    expect(mdxEsmStatements("import { T } from '@/struct/types'\n")).toContain(
+      "import { T } from '@/struct/types'",
+    )
+    const multiline = ['export const meta = {', "  title: 'x',", '}', ''].join(
+      '\n',
+    )
+    expect(mdxEsmStatements(multiline)).toContain("title: 'x',")
+
+    // A fenced code block, an indented code sample and prose are markdown
+    // content, so none of them is collected.
+    expect(
+      mdxEsmStatements(
+        ['```js', "import { T } from '@/struct/types'", '```', ''].join('\n'),
+      ),
+    ).toEqual('')
+    expect(
+      mdxEsmStatements(
+        ["    import { T } from '@/struct/types'", ''].join('\n'),
+      ),
+    ).toEqual('')
+    expect(mdxEsmStatements('import the good stuff\n')).toEqual('')
+  })
+
+  it('E-03: traces an exported class whose member uses an imported binding', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+    const method = new URL('struct/__e03_probe_legacy_class_method.ts', root)
+    const field = new URL('struct/__e03_probe_legacy_class_field.ts', root)
+    const staticBlock = new URL(
+      'struct/__e03_probe_legacy_class_static.ts',
+      root,
+    )
+    const computed = new URL(
+      'struct/__e03_probe_legacy_class_computed.ts',
+      root,
+    )
+    const local = new URL('struct/__e03_probe_legacy_class_local.ts', root)
+    await writeFile(
+      method.pathname,
+      "import { structId } from './ids'\nexport class Legacy {\n  id(value: string) {\n    return structId('legacy', value)\n  }\n}\n",
+      'utf8',
+    )
+    await writeFile(
+      field.pathname,
+      "import { structId } from './ids'\nexport class Legacy {\n  id = structId('legacy', 'seed')\n}\n",
+      'utf8',
+    )
+    await writeFile(
+      staticBlock.pathname,
+      "import { structId } from './ids'\nexport class Legacy {\n  static {\n    Legacy.seed = structId('legacy', 'seed')\n  }\n}\n",
+      'utf8',
+    )
+    await writeFile(
+      computed.pathname,
+      "import { structId } from './ids'\nconst key = 'id'\nexport class Legacy {\n  [key]() {\n    return structId('legacy', 'seed')\n  }\n}\n",
+      'utf8',
+    )
+    await writeFile(
+      local.pathname,
+      "const localId = (value: string) => value\nexport class Legacy {\n  id(value: string) {\n    return localId(value)\n  }\n}\n",
+      'utf8',
+    )
+    try {
+      // A method of an exported class that uses an imported binding reaches
+      // the module the binding came from, so an importer outside the
+      // retained tree reaches the local identity authority through the
+      // wrapper.
+      expect(
+        e03ViolationsForSource(
+          "import { Legacy } from '../struct/__e03_probe_legacy_class_method'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // A field initializer of an exported class does as well.
+      expect(
+        e03ViolationsForSource(
+          "import { Legacy } from '../struct/__e03_probe_legacy_class_field'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // A static block of an exported class does as well.
+      expect(
+        e03ViolationsForSource(
+          "import { Legacy } from '../struct/__e03_probe_legacy_class_static'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // A computed member of an exported class does as well.
+      expect(
+        e03ViolationsForSource(
+          "import { Legacy } from '../struct/__e03_probe_legacy_class_computed'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // A binding the module defines itself reaches no other module, so it
+      // is not a re-export target.
+      expect(
+        e03ViolationsForSource(
+          "import { Legacy } from '../struct/__e03_probe_legacy_class_local'",
+          research,
+          publicPaths,
+        ),
+      ).toEqual([])
+
+      // The retained tree keeps its own wrapper.
+      expect(
+        e03ViolationsForSource(
+          "export { Legacy } from './__e03_probe_legacy_class_method'",
+          new URL('struct/probe.ts', root),
+          publicPaths,
+        ),
+      ).toEqual([])
+    } finally {
+      await rm(method.pathname, { force: true })
+      await rm(field.pathname, { force: true })
+      await rm(staticBlock.pathname, { force: true })
+      await rm(computed.pathname, { force: true })
+      await rm(local.pathname, { force: true })
+    }
+  })
+
+  it('E-03: traces a CommonJS re-export that reads a member of a required module', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+    const property = new URL(
+      'struct/__e03_probe_legacy_cjs_member.cjs',
+      root,
+    )
+    const element = new URL(
+      'struct/__e03_probe_legacy_cjs_element.cjs',
+      root,
+    )
+    await writeFile(
+      property.pathname,
+      "module.exports = require('./ids').structId\n",
+      'utf8',
+    )
+    await writeFile(
+      element.pathname,
+      "module.exports = require('./ids')['structId']\n",
+      'utf8',
+    )
+    try {
+      // A CommonJS re-export that reads a member of the required module
+      // re-exports that module, so an importer outside the retained tree
+      // reaches the local migrated authority through the wrapper.
+      expect(
+        e03ViolationsForSource(
+          "import { structId } from '../struct/__e03_probe_legacy_cjs_member'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // The element-access spelling of the same re-export is traced as
+      // well.
+      expect(
+        e03ViolationsForSource(
+          "import { structId } from '../struct/__e03_probe_legacy_cjs_element'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // The retained tree keeps its own wrapper.
+      expect(
+        e03ViolationsForSource(
+          "export * from './__e03_probe_legacy_cjs_member'",
+          new URL('struct/probe.ts', root),
+          publicPaths,
+        ),
+      ).toEqual([])
+    } finally {
+      await rm(property.pathname, { force: true })
+      await rm(element.pathname, { force: true })
+    }
+  })
+
+  it('E-03: fails closed on a computed CommonJS re-export', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+    const computed = new URL(
+      'struct/__e03_probe_legacy_cjs_computed.cjs',
+      root,
+    )
+    const property = new URL(
+      'struct/__e03_probe_legacy_cjs_computed_property.cjs',
+      root,
+    )
+    await writeFile(
+      computed.pathname,
+      'module.exports = require(target)\n',
+      'utf8',
+    )
+    await writeFile(
+      property.pathname,
+      'exports.value = require(target)\n',
+      'utf8',
+    )
+    try {
+      // A computed CommonJS re-export names no literal target, so the guard
+      // cannot prove that it does not reach a migrated family. It fails
+      // closed in the same way a computed require does. Two chains report
+      // the same sentinel: the migrated-family chain and the recovery chain.
+      const moduleForm = e03ViolationsForSource(
+        "import { value } from '../struct/__e03_probe_legacy_cjs_computed'",
+        research,
+        publicPaths,
+      )
+      expect(moduleForm).toHaveLength(2)
+      expect(moduleForm.join('\n')).toContain('unresolved re-export')
+
+      // The property form of the same re-export fails closed as well.
+      const propertyForm = e03ViolationsForSource(
+        "import { value } from '../struct/__e03_probe_legacy_cjs_computed_property'",
+        research,
+        publicPaths,
+      )
+      expect(propertyForm).toHaveLength(2)
+      expect(propertyForm.join('\n')).toContain('unresolved re-export')
+
+      // The retained tree's own use of the same form is not reported.
+      expect(
+        e03ViolationsForSource(
+          "import { value } from './__e03_probe_legacy_cjs_computed'",
+          new URL('struct/probe.ts', root),
+          publicPaths,
+        ),
+      ).toEqual([])
+    } finally {
+      await rm(computed.pathname, { force: true })
+      await rm(property.pathname, { force: true })
+    }
   })
 })

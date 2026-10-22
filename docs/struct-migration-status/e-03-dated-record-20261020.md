@@ -1,12 +1,12 @@
 # E-03 Implementation Record — 2026-10-20
 
 Owner: `erniesg/erniesg` (E-03 IMPLEMENTATION owner for `erniesg/struct` app cutover)
-Branch: `e03/boundary-guard-round9` (local round-9 boundary-guard branch, based on the PR #454 head `d4b05448`;
+Branch: `e03/boundary-guard-round10` (local round-10 boundary-guard branch, based on the PR #454 head `52c9f0f6`;
 the E-03 content was originally
 carried on `feat/struct-e03-core-codecs-ids-order-20261020`)
-Worktree: `/home/ubuntu/.local/state/struct-migration/20261020-continuation/worktrees/app-e03-guard-round9`
+Worktree: `/home/ubuntu/.local/state/struct-migration/20261020-continuation/worktrees/app-e03-guard-round10`
 Precondition: E-02 passed (`feat/struct-e03-core-codecs-ids-order-20261020` exists with commits).
-Guard state described by this record: `957d9b7d` ("test(struct): close the two E-03 boundary-guard findings of round 9").
+Guard state described by this record: `ed7c320a` ("test(struct): close the two E-03 boundary-guard findings of round 10").
 **This record describes the tree as of that guard commit.** The record's own commit comes later on the same
 branch and changes only this document, so the guard state described here does not move with it; the record therefore
 names the guard commit, and never a branch tip, as the state it describes.
@@ -35,16 +35,16 @@ names the guard commit, and never a branch tip, as the state it describes.
 - `src/struct/codec*` local modules kept; no new production semantics added to retained copies.
 - `src/struct/sha256.ts`, `src/research/sha256-sync.ts`, `legacyStructDigest`, model-consultation modules, and `src/struct/recovery.ts` were not migrated (per "Not migrated" list).
 
-## Runtime recovery delegations and guard hardening (guard state at `957d9b7d`, with earlier heads marked inline)
+## Runtime recovery delegations and guard hardening (guard state at `ed7c320a`, with earlier heads marked inline)
 
 This section records the E-03 scope that the restack added on top of the dated candidate measurement recorded below.
-It describes the guard state at the commit that last changed the guard, `957d9b7d` ("test(struct): close the two
-E-03 boundary-guard findings of round 9"), which is the state of `tests/struct-adapter-boundary.test.ts`
-in the reviewed tree; the guard runs of this section were measured in the round-9 worktree
-`/home/ubuntu/.local/state/struct-migration/20261020-continuation/worktrees/app-e03-guard-round9`. Bullets whose
+It describes the guard state at the commit that last changed the guard, `ed7c320a` ("test(struct): close the two
+E-03 boundary-guard findings of round 10"), which is the state of `tests/struct-adapter-boundary.test.ts`
+in the reviewed tree; the guard runs of this section were measured in the round-10 worktree
+`/home/ubuntu/.local/state/struct-migration/20261020-continuation/worktrees/app-e03-guard-round10`. Bullets whose
 measurements were taken at an earlier head say so inline. This record describes the tree **as of that guard
 commit**; it does not name a branch tip as the reviewed head, because the record's own commit moves that tip. The guard
-commits included in the reviewed tree are the fifteen listed under "Boundary-guard hardening" below, and each of them is
+commits included in the reviewed tree are the sixteen listed under "Boundary-guard hardening" below, and each of them is
 an ancestor of the branch that carries this record.
 
 - **Category delegation** - source unit `554ce8e2` ("fix(struct): make the package recovery category authoritative at
@@ -72,8 +72,9 @@ an ancestor of the branch that carries this record.
   timeouts and one shared analysis"), `d886ddcf` ("test(struct): close the six E-03 boundary-guard findings of round 6"),
   `a832b8ed` ("test(struct): scan Astro template expressions for imports") and `dc117894` ("test(struct): scan MDX
   expressions, export assignments and Astro script ASTs"), `63af8a44` ("test(struct): scan hoisted Astro script
-  bodies and MDX JSX attribute expressions"), and `957d9b7d` ("test(struct): close the two E-03 boundary-guard
-  findings of round 9"). These fifteen are the guard commits
+  bodies and MDX JSX attribute expressions"), `957d9b7d` ("test(struct): close the two E-03 boundary-guard
+  findings of round 9") and `ed7c320a` ("test(struct): close the two E-03 boundary-guard findings of round 10").
+  These sixteen are the guard commits
   included in the reviewed tree.
   `d886ddcf` is the replay of the round-6 unit's `b3beed76` onto `fb1250a0`: the expected conflict in the
   `reexportSpecifiers` region was resolved by keeping `fb1250a0`'s `reexportSpecifierCache` wrapper and its
@@ -87,10 +88,10 @@ an ancestor of the branch that carries this record.
   `f6866e41`, to 22 cases (2090 lines) at `79c0d7c5` (the same state the record commit `8411b8c5` carries), to 28 cases
   (2615 lines) at `dee1f860`, to 28 cases (2717 lines) at `fb1250a0`, to 34 cases (3137 lines) at `d886ddcf`, to
   35 cases (3274 lines) at `a832b8ed`, to 39 cases (3642 lines) at `dc117894`, to 40 cases (3783 lines) at
-  `63af8a44`, and to 42 cases (4300 lines) at `957d9b7d`. Every count is
+  `63af8a44`, to 42 cases (4300 lines) at `957d9b7d`, and to 44 cases (4490 lines) at `ed7c320a`. Every count is
   `grep -c "^  it("` on the file at that commit and every line
   count is `wc -l` on it.
-  **The complete reviewed set is closed - forty-two reviewed items.** The enumeration and the count are the same
+  **The complete reviewed set is closed - forty-four reviewed items.** The enumeration and the count are the same
   thing, and each item names the commit that closed it:
   - The ten reviewed gaps of the first review of PR #454: (1) aliased local imports resolved before skipping -
     `fc73a970`; (2) package recovery-fact parity check importing `@erniesg/struct/recovery` - `fc73a970`; (3) project-root
@@ -174,11 +175,28 @@ an ancestor of the branch that carries this record.
     way a computed pattern does, while a relative pattern without a base, a project-root pattern, an alias pattern and a
     computed pattern keep their behaviour - `957d9b7d` (one case: "E-03: resolves a Vite glob pattern against a literal
     base option").
-  Thirty-nine of the forty-two are guard-behaviour items; the other three (items 8, 19 and 28) are documentation items.
+  - The two findings of the review raised against the PR #454 head `52c9f0f6` and closed at `ed7c320a` (the coordinator
+    calls this batch "round 10"): (43) a Vite glob pattern is matched with the glob matcher Vite itself uses -
+    picomatch, the matcher the bundler depends on and the one the globber Vite calls for a glob import matches with -
+    so a character class (`../struct/types.[t]s`), a brace alternation (`../struct/types.{ts,tsx}`) and a negated
+    class (`../struct/types.[!x]s`) name the modules they name in the bundler and are reported here as well (the
+    character class and the negated class were not reported at all at `52c9f0f6`, because the hand-written conversion
+    escaped `[` and `]`; the brace alternation was already reported by the hand-written brace expansion of that head
+    and stays reported), while a
+    negated class that excludes the family (`../struct/types.[!t]s`), a pattern that names no migrated family, a
+    computed pattern and a pattern that reaches the family only through a literal base, a project-root pattern or an
+    alias pattern keep their behaviour - `ed7c320a` (one case: "E-03: matches a Vite glob pattern with the glob matcher
+    Vite uses"); (44) the body of an Astro script element whose type is not a JavaScript type (`text/plain`,
+    `application/json`, `text/x-component`, `application/ld+json`) is a data block that Astro never executes, so it is
+    not scanned, while a module script (no type, `module`, `text/javascript`, `application/javascript`) and an inline
+    script are executed and are still scanned - `ed7c320a` (one case: "E-03: does not scan the body of a non-JavaScript
+    Astro script").
+  Forty-one of the forty-four are guard-behaviour items; the other three (items 8, 19 and 28) are documentation items.
   The two
   (F14) assertions are in the file the plan names: the case
   "E-03: the production recovery module takes its category and actionable-recovery authority from the package"
-  (`tests/struct-adapter-boundary.test.ts:2725-2772` at `957d9b7d`; it was `:2438-2485` at `63af8a44` and the record
+  (`tests/struct-adapter-boundary.test.ts:2756-2803` at `ed7c320a`; it was `:2725-2772` at `957d9b7d`, it was
+  `:2438-2485` at `63af8a44` and the record
   quoted `:1821-1868` before, which was a stale line reference) asserts both package runtime imports, the absence of any
   `category:` field in the app copy table, and that the app facade delegates instead of deciding either fact. The two
   new focused files `tests/struct-recovery-category-authority.test.ts` and `tests/struct-recovery-actionable-authority.test.ts`
@@ -221,7 +239,7 @@ an ancestor of the branch that carries this record.
     compiler AST holds no script element (the string is part of the frontmatter node).
   The guard therefore scans a script element wherever the compiler AST puts it, and the controls that are true - the
   HTML comment and the frontmatter string - stay at 0.
-- **Case inventory at `957d9b7d`** - the 42 cases of `tests/struct-adapter-boundary.test.ts`, in file order:
+- **Case inventory at `ed7c320a`** - the 44 cases of `tests/struct-adapter-boundary.test.ts`, in file order:
   "keeps one implementation and identity through the legacy and root exports"; "keeps one app-owned recovery
   implementation and legacy forwarding"; "keeps app recovery consumers on the app-owned path"; "keeps all implementation
   modules within their allowed import boundaries"; "rejects app reconstruction and private package imports in synthetic
@@ -247,14 +265,16 @@ an ancestor of the branch that carries this record.
   executable expressions of an MDX document"; "E-03: fails loudly when a real MDX document cannot be parsed"; "E-03:
   inspects the MDX JSX attribute expressions of an MDX document"; "E-03: traces a CommonJS export assignment from a
   retained wrapper"; "E-03: reads the script bodies of an Astro component from its AST"; "E-03: traces an exported
-  expression that uses an imported binding"; "E-03: resolves a Vite glob pattern against a literal base option".
-  The case-to-commit attribution, re-derived at `957d9b7d` by reading the case names of
+  expression that uses an imported binding"; "E-03: resolves a Vite glob pattern against a literal base option";
+  "E-03: matches a Vite glob pattern with the glob matcher Vite uses"; "E-03: does not scan the body of a
+  non-JavaScript Astro script".
+  The case-to-commit attribution, re-derived at `ed7c320a` by reading the case names of
   `tests/struct-adapter-boundary.test.ts` at each guard commit and matching them against the file's case order: cases
   1-5 at the base `5f8c76ab`; cases 6-7 at `fc73a970`; case 8 at `5974df05`; cases 9, 10 and 13 at `a99a0f86`;
   cases 11-12 at `e9009551`; cases 14-15 at `36916381`; cases 16, 17, 19 and 22 at `7907acff`; cases 18 and 20 at
   `f6866e41`; case 21 at `79c0d7c5`; cases 23-26 and 28-29 at `dee1f860`; case 27 at `a832b8ed`;
   cases 30-35 at `d886ddcf`; cases 36, 37, 39 and 40 at `dc117894`; case 38 at `63af8a44`; cases 41 and 42 at
-  `957d9b7d`.
+  `957d9b7d`; cases 43 and 44 at `ed7c320a`.
   (Case indices are the 1-based positions in this inventory. The attribution is measured, not inherited: it is the case
   list of the file at each guard commit, compared with the case list at its parent commit, with the positions read in
   the inventory above. The only change against the attribution this record carried at `dc117894` is the pair
@@ -275,36 +295,40 @@ an ancestor of the branch that carries this record.
   is unchanged - the two rows are byte-identical and only the line number moved: the package/local dual-read
   equality, the accepted/rejected input matrix, and the high-fan-in consumer enumeration and test are not produced by
   these commits and have not been accepted. The two delegations discharge the (F14) production-delegation clause only.
-  The round-9 guard commit `957d9b7d` changes the guard file and this record only: it closes two guard findings and it
+  The round-10 guard commit `ed7c320a` changes the guard file and this record only: it closes two guard findings and it
   claims no gate, changes no plan row and discharges no clause. **The E-03 stage gate is still PENDING.**
 - **Measurement frames** - the app-suite numbers (318 files, 4986 tests) and the `astro check` result (0 errors, 279
   hints) recorded in "Not done / not in scope" below, and the FIRST red→green guard pair in "Static guard" above, are the
   dated CANDIDATE-frame measurements (the E-03 step and the candidate `ae4638ce`); they are not re-claimed for the guard
-  state described in this section, and the whole app suite was not re-run at that guard state. The independent review of
+  state described in this section, and the whole app suite was not re-run at that guard state. The round-10 guard runs of
+  this section are the two focused commands named under "Guard measurements at `ed7c320a`"; no other suite was run at
+  that guard state. The independent review of
   the earlier head ran the focused suites (`tests/struct-adapter-boundary.test.ts`,
   `tests/struct-recovery-category-authority.test.ts`, `tests/struct-recovery-actionable-authority.test.ts`,
   `src/struct/struct.test.ts`, `tests/struct-adapter-parity.test.ts`, `tests/struct-package-parity.test.ts`,
   `tests/struct-adapter-mapped-annotation.test.ts`, `tests/struct-adapter-inline-links.test.ts`,
   `tests/struct-adapter-inline-binding.test.ts`): 9 files, 87 tests, 0 failures, exit 0. That review is not re-claimed
   for the guard state described in this section. No CI result is claimed.
-- **Guard measurements at `957d9b7d`** - `npx vitest run tests/struct-adapter-boundary.test.ts --maxWorkers=1
-  --testTimeout=30000` reports 1 file, 42 tests, 42 passed, exit 0 (12.68 s total: transform 2.17 s, import 3.26 s,
-  tests 9.08 s; wall time 13.55 s), measured at the guard state described in this section, in the round-9 worktree
-  `/home/ubuntu/.local/state/struct-migration/20261020-continuation/worktrees/app-e03-guard-round9`
+- **Guard measurements at `ed7c320a`** - `npx vitest run tests/struct-adapter-boundary.test.ts --maxWorkers=1
+  --testTimeout=30000` reports 1 file, 44 tests, 44 passed, exit 0 (12.31 s total: transform 2.15 s, import 3.30 s,
+  tests 8.67 s; wall time 13.18 s), measured at the guard state described in this section, in the round-10 worktree
+  `/home/ubuntu/.local/state/struct-migration/20261020-continuation/worktrees/app-e03-guard-round10`
   (node 22.22.3, vitest 4.1.11, shared 4-CPU VM). The two focused recovery-authority files
   (`tests/struct-recovery-category-authority.test.ts`, `tests/struct-recovery-actionable-authority.test.ts`) were
   measured at the same guard state with `npx vitest run tests/struct-recovery-category-authority.test.ts
   tests/struct-recovery-actionable-authority.test.ts --maxWorkers=1 --testTimeout=30000` (2 files, 11 tests, 11 passed,
-  exit 0, 644 ms; wall time 1.42 s). The baseline frame at the PR #454 head `d4b05448` was measured in the same
-  worktree with the same command on an unmodified copy of the guard file of that head: 1 file, 40 tests, 40 passed,
-  exit 0. For continuity: the `63af8a44` frame of this section reported 1 file, 40 tests, 40 passed, exit 0 (11.58 s
+  exit 0, 675 ms total: transform 94 ms, import 131 ms, tests 43 ms; wall time 1.47 s). The baseline frame at the PR #454 head
+  `52c9f0f6` was measured in the same worktree with the same command on an unmodified copy of the guard file of that
+  head: 1 file, 42 tests, 42 passed, exit 0 (12.99 s total: transform 2.50 s, import 3.68 s, tests 8.94 s). For
+  continuity: the `957d9b7d` frame of this section reported 1 file, 42 tests, 42 passed, exit 0 (12.68 s total; wall
+  time 13.55 s), the `63af8a44` frame reported 1 file, 40 tests, 40 passed, exit 0 (11.58 s
   total; wall time 12.44 s), the `dc117894` frame reported 1 file, 39 tests, 39 passed, exit 0, the `a832b8ed` frame
   reported 1 file, 35 tests, 35 passed, exit 0, the `d886ddcf` frame reported 1 file, 34 tests, 34 passed, exit 0, and
   the `dee1f860` frame reported 28 tests, 28 passed. No other suite was run - in particular the whole app suite was not
   re-run - and no CI result is claimed.
-- **Known limits of the guard at `957d9b7d` (recorded, NOT closed)** - four of the six P3 observations from the
+- **Known limits of the guard at `ed7c320a` (recorded, NOT closed)** - three of the six P3 observations from the
   independent review of the earlier head are still limits of the guard at this state, and this record does not claim
-  that any of them is closed. The first three and the fifth were re-measured at `957d9b7d` with the guard's own
+  that any of them is closed. The first two and the fifth were re-measured at `ed7c320a` with the guard's own
   functions, on a scratch copy of the guard file of this state run against this worktree's tree; the measured values
   are unchanged from the values the record quoted at `dee1f860`, at `d886ddcf`, at `dc117894` and at `63af8a44`. The
   measured result is quoted: (1) an MDX declaration whose `from` clause is separated from the import clause by a comment line is not
@@ -313,8 +337,12 @@ an ancestor of the branch that carries this record.
   line is indented by four spaces is not collected - the probe `import T` / `    from '@/struct/types'` in the MDX
   frame yields `mdxEsmStatements` `""`, `importedPaths` `[]` and an empty violations list (an indented line *inside*
   a braced import is still collected, so the limit is the indented continuation line, not the indentation itself); (3)
-  a glob pattern with a character class (`'../struct/[ct]odec.ts'`) is not matched - the probe yields `importedPaths`
-  `[]`, an empty violations list and `globMatchesAny` `false`, because `globToRegExp` escapes `[` and `]`; (4) **the
+  **the observation about a glob pattern with a character class is CLOSED at `ed7c320a` and is no longer a limit**:
+  the probe `'../struct/[ct]odec.ts'` yielded `importedPaths` `[]`, an empty violations list and `globMatchesAny`
+  `false` at `957d9b7d` and at every earlier head, because the hand-written `globToRegExp` escaped `[` and `]`; at
+  `ed7c320a` the same probe yields `["../struct/codec.ts"]` and two violations (the migrated family the glob reaches,
+  and the pre-existing wrapper report of the same target), and the character class of the review's own example
+  (`'../struct/types.[t]s'`) yields `["../struct/types.ts"]` and one violation; (4) **the
   observation about the `base` option of a glob is CLOSED at `957d9b7d` and is no longer a limit**: the probe
   `import.meta.glob('./struct/codec.ts', { eager: true, base: '/src' })` in a module of `src/research/` yielded
   `importedPaths` `[]` and an empty violations list at `63af8a44`, and yields `["../struct/codec.ts"]` and two
@@ -322,9 +350,9 @@ an ancestor of the branch that carries this record.
   target); (5) `createRequire(import.meta.url)('./local')` contributes no specifier - the probe yields
   `importedPaths` `[]` and an empty violations list, because the collector recognises only the identifier `require`
   as the callee of a require call (the control `require('./local')` yields `["./local"]`).
-  The `957d9b7d` change lifts the `base` observation and none of the others: the two MDX probes still fail closed to
-  the line scanner, which reads them exactly as before, and the character-class and `createRequire` probes are untouched
-  by it. Each of the six round-6 findings
+  The `ed7c320a` change lifts the character-class observation and none of the others: the two MDX probes still fail
+  closed to the line scanner, which reads them exactly as before, and the `createRequire` probe is untouched by it.
+  Each of the six round-6 findings
   and each of the three findings closed at `dc117894` is provably closed at this state instead -
   the CommonJS wrapper re-export chain, the explicit MDX extension, the barrel as a glob candidate, the module-free
   MDX ESM block, the exported alias form and the worker URL query suffix all report violations now (cases 30-35, red
@@ -332,7 +360,9 @@ an ancestor of the branch that carries this record.
   and the Astro script AST now report violations as well (cases 36, 37, 39 and 40, red against `9daf2b1e`, green at
   `dc117894`), and the hoisted Astro script body and the MDX JSX attribute expression report violations as well (cases
   38 and 40, red against `5b0eaad8`, green at `63af8a44`), and the exported expression and the Vite glob base now
-  report violations as well (cases 41 and 42, red against `d4b05448`, green at `957d9b7d`).
+  report violations as well (cases 41 and 42, red against `d4b05448`, green at `957d9b7d`), and the glob matcher and
+  the non-JavaScript Astro script body now report violations as well (cases 43 and 44, red against `52c9f0f6`, green at
+  `ed7c320a`).
   The sixth observation - that a worker entry (`new Worker(new URL('../struct/codec.ts', import.meta.url), { type:
   'module' })`) contributes no specifier - **still no longer holds at this state**: it was closed by `dee1f860`, and
   the round-6 case 35 extends the same coverage to the query-suffixed spelling
@@ -344,10 +374,10 @@ an ancestor of the branch that carries this record.
 - Added E-03 entry to `tests/struct-adapter-boundary.test.ts`.
 - Red run recorded against a temporarily reverted import (`src/research/grounded-struct-materializer.ts` restored to `../struct/ids` and `../struct/types`): guard reported 2 violations (`migrated family import ../struct/ids` and `../struct/types`).
 - Green run confirmed after restoring switched imports.
-- The boundary guard was hardened on top of that red→green pair: the forty-two reviewed items enumerated under
+- The boundary guard was hardened on top of that red→green pair: the forty-four reviewed items enumerated under
   "Runtime recovery delegations and guard hardening" above (which include the two (F14) assertions) and the cases added
   at `64209924`, `e9009551`, `7907acff`, `f6866e41`, `79c0d7c5`, `dee1f860`, `d886ddcf`, `a832b8ed`, `dc117894`,
-  `63af8a44` and `957d9b7d` are
+  `63af8a44`, `957d9b7d` and `ed7c320a` are
   recorded there.
 - The hardening at `7907acff` has its own red→green pair, measured against `e9009551`: the three new guard cases (MDX
   ESM flow blocks wherever they appear in the document, a computed CommonJS require, and an external import of a
@@ -480,6 +510,37 @@ an ancestor of the branch that carries this record.
   wrapper, a relative pattern without a base, a project-root pattern, an alias pattern, an absolute base, a relative
   base, a base that names no family, a computed pattern and a computed base) pass in the green run; the red run stops
   at the first assertion of each case, so it does not exercise them.
+- The hardening at `ed7c320a` has its own red→green pair, measured against `52c9f0f6` (the PR #454 head the two
+  findings of this batch were raised against): the two new guard cases (a Vite glob pattern matched with the glob
+  matcher Vite uses, and the body of a non-JavaScript Astro script) FAIL against the `52c9f0f6` implementation
+  (1 file, 44 tests, 2 failed, 42 passed, exit 1, 12.32 s total: transform 2.18 s, import 3.33 s, tests 8.65 s) and PASS
+  at `ed7c320a` (1 file, 44 tests, 44 passed, exit 0, 12.31 s total: transform 2.15 s, import 3.30 s, tests 8.67 s;
+  wall time 13.18 s). The red run is the `52c9f0f6` guard implementation with the two new cases injected into it,
+  measured in a scratch copy of the file inside this worktree, so the reviewed tree itself was not modified to produce
+  it; the scratch copy was deleted afterwards and is not part of the reviewed tree. The two case bodies of the red copy
+  are byte-identical to the case bodies at `ed7c320a` (verified by diffing the two files: the only difference between
+  them is the implementation the two findings change), and the two failing assertions at the red state measure the
+  before-state of each finding directly:
+  - the glob-matcher case fails with `AssertionError: expected [] to include '../struct/types.ts'`: the probe
+    `import.meta.glob('../struct/types.[t]s', { eager: true })` in a module of `src/research/` collects no specifier and
+    yields 0 violations at `52c9f0f6`, and collects `["../struct/types.ts"]` and yields 1 violation at `ed7c320a`. The
+    other spellings of the class behave the same way: the negated class `'../struct/types.[!x]s'` and the negated class
+    `'../struct/types.[^x]s'` collect no specifier and yield 0 violations at `52c9f0f6` and collect
+    `["../struct/types.ts"]` and yield 1 violation at `ed7c320a`, and the class that names the codec family
+    (`'../struct/[ct]odec.ts'`) collects no specifier and yields 0 violations at `52c9f0f6` and collects
+    `["../struct/codec.ts"]` and yields 2 violations at `ed7c320a`. The brace alternation
+    `'../struct/types.{ts,tsx}'` is **not** a red-first pair and is recorded as such: the hand-written brace expansion
+    of the old head already reported it, so it collects `["../struct/types.ts"]` and yields 1 violation at `52c9f0f6`
+    and the same at `ed7c320a`; the case pins it, so that the replacement of that expansion by the matcher of the
+    bundler does not lose the brace alternation;
+  - the Astro script case fails with `AssertionError: expected [ '../struct/ids' ] to deeply equal []`: the probe
+    `<script type="text/plain">import x from '../struct/ids'</script>` yields 1 collected specifier and 1 violation at
+    `52c9f0f6` and 0 collected specifiers and 0 violations at `ed7c320a`, while the real inline module script
+    `<script type="module">import x from '../struct/ids'</script>` yields 1 collected specifier and 1 violation at both
+    heads, and a script element with no type and an inline script yield 1 violation at both heads as well.
+  The negative controls of the two new cases (a negated class that excludes the family, a pattern that names no
+  migrated family, a computed pattern, a data block with a `src`, and the data blocks of the real tree) pass in the
+  green run; the red run stops at the first assertion of each case, so it does not exercise them.
 
 ## Evidence tools (E-07 note)
 - Evidence tools (`tools/srt-source-output-evidence.mjs`, `tools/pdf-epub-package-scan.mjs`, `tools/pdf-corpus-audit-lib.mjs`, `tools/pdf-association-fixture-audit.mjs`, `tools/model-consultation-evidence.ts`) keep working because local modules remain.
@@ -492,7 +553,22 @@ an ancestor of the branch that carries this record.
 - No `npm publish`, no deploy, no writer/route change, no PR created, no push, no merge **by the E-03 implementation
   step**. The branch itself is carried by the coordinator's PR #454; this record does not name a PR tip, because the
   record's own commit moves it. Nothing in this record is merged, released or deployed.
-- `astro check` passes (0 errors, 279 hints pre-existing).
+- `astro check` passes (0 errors, 279 hints pre-existing). **That is the dated candidate-frame result (the candidate
+  `ae4638ce`) and it is not a claim about the guard state described in this section** - the measured result at the
+  guard state `ed7c320a` is the next bullet.
+- **`astro check` re-measured at the guard state `ed7c320a`**: `npx astro check` reports 801 files, **1 error** and
+  278 hints. The one error is `tests/struct-adapter-boundary.test.ts:1717:38` -
+  `ts(2345): Argument of type 'Block' is not assignable to parameter of type 'Expression'` - and it is **pre-existing
+  and not introduced by this round**: the same error is at `:1686` of the guard file of the base head `52c9f0f6`, which
+  was measured with the same command in the same worktree (801 files, 1 error, 278 hints - the identical result), and it
+  was introduced by the round-9 commit `957d9b7d`, which added the `exportedExpressionModules(body, ...)` call of the
+  exported-function-declaration form. The 0-error/279-hint figure quoted above is the dated candidate-frame result
+  (the candidate `ae4638ce`) and is not a claim about this head; it is stated as such under "Measurement frames". The
+  error is recorded here rather than hidden, and it is NOT fixed by this round, which changes only the two findings it
+  was asked to close: the code this round adds introduces no diagnostic (the picomatch binding is typed locally, and
+  the `isJavaScriptScript` helper is typed with the compiler's own attribute type). Fixing the round-9 type error
+  belongs to the round that introduced it and is recorded as a production finding of this round's review, not as
+  work of this round.
 - The repository's own app suite (`npx vitest run --exclude 'tests/e2e/**' --exclude 'tools/agent-evidence-budget.test.mjs' --maxWorkers=1`):
   318 files (316 passed, 2 skipped), 4986 tests (4969 passed, 17 skipped), exit 0 - no failures. The independent
   review of this candidate measured the same numbers at the same commit.
@@ -536,14 +612,23 @@ an ancestor of the branch that carries this record.
   guard commit `63af8a44` and that record's commit; against `5b0eaad8` it changes two paths (the boundary guard and the
   dated record, 163 insertions and 22 deletions in the guard file) and against `main` (`5f8c76ab`) it still carries the
   same 14 paths, because both of its paths are already among them. The round-9 boundary-guard branch
-  `e03/boundary-guard-round9` is based on the PR #454 head `d4b05448` and carries the guard commit `957d9b7d` and this
+  `e03/boundary-guard-round9` is based on the PR #454 head `d4b05448` and carries the guard commit `957d9b7d` and that
   record's commit; against `d4b05448` it changes two paths (the boundary guard and this dated record) and against
-  `main` (`5f8c76ab`) it still carries the same 14 paths, because both of its paths are already among them.
-  **No manifest, lockfile, vendor, golden or expected file changed at `957d9b7d`:**
-  `git diff 5f8c76ab 957d9b7d -- package.json package-lock.json` is empty, `git diff d4b05448 957d9b7d -- package.json
+  `main` (`5f8c76ab`) it still carries the same 14 paths, because both of its paths are already among them. The
+  round-10 boundary-guard branch `e03/boundary-guard-round10` is based on the PR #454 head `52c9f0f6` and carries the
+  guard commit `ed7c320a` and this record's commit; against `52c9f0f6` it changes two paths (the boundary guard and
+  this dated record) and against `main` (`5f8c76ab`) it still carries the same 14 paths, because both of its paths are
+  already among them.
+  **No manifest, lockfile, vendor, golden or expected file changed at `ed7c320a`:**
+  `git diff 5f8c76ab ed7c320a -- package.json package-lock.json` is empty, `git diff 52c9f0f6 ed7c320a -- package.json
   package-lock.json` is empty, and the guard reaches the MDX toolchain (`unified` 11.0.5, `remark-parse` 11.0.0,
   `remark-mdx` 3.1.1) through the direct `devDependencies` the repository already declares, so no dependency
-  declaration was added.
+  declaration was added. The glob matcher of the round-10 change is `picomatch` 4.0.5, which the guard reaches as a
+  TRANSITIVE dependency that the lockfile already places deterministically: `vite` 8.1.6 depends on `picomatch`
+  ^4.0.5 and `tinyglobby` 0.2.17 depends on `picomatch` ^4.0.4, and `package-lock.json` resolves
+  `node_modules/picomatch` to 4.0.5 (integrity
+  `sha512-RvwwcruNjI1ncT5xRakeyS9Lf8lcItv34KD+aif+VH9kduAyfYBipGh12274xtenIPZ119/R9BdTBa8gAwSh0A==`).
+  No `package.json` entry and no lockfile line was added, removed or changed by the round-10 commit.
 - **Census of the new rules at `957d9b7d`** - the rules of the round-9 batch were measured against the real tree before
   they were trusted. The measurement was taken with the guard's own functions over the real tree (426 portable files
   under `src/`, 22 of them in the retained `src/struct` tree):
@@ -572,6 +657,24 @@ an ancestor of the branch that carries this record.
     the recovery allowlist, so the narrower rule is used and the wider measurement is recorded here rather than hidden.
   **No production file is a violation because of the findings of this batch or of the earlier ones, and no assertion was
   weakened to hide one.**
+- **Census of the new rules at `ed7c320a`** - the rules of the round-10 batch were measured against the real tree
+  before they were trusted. The measurement was taken with the guard's own functions over the real tree (426 portable
+  files under `src/`, 22 of them in the retained `src/struct` tree, 39 of them `.astro` files):
+  - the glob-matcher rule adds **0** violations to the real tree: **no** portable file of the repository calls
+    `import.meta.glob` at all (0 of the 426 scanned files name it - the only occurrences of the call in the repository
+    are in the guard file itself and in this record), so the matcher the guard now uses changes nothing in the real
+    tree. The rule is a widening of the guard's own resolution, not a new prohibition: a pattern that the bundler
+    resolves to a migrated family is now reported, and no production file names one;
+  - the non-JavaScript Astro script rule adds **0** violations to the real tree: the 39 `.astro` files of `src/` hold
+    18 script elements, 13 of them with no `type` and 5 with a type that is not a JavaScript type
+    (`application/json` four times, `application/ld+json` once, in `src/components/Head.astro`,
+    `src/pages/books/[book]/[node].astro` and `src/pages/books/[book]/map.astro`). All five are data blocks whose
+    body is set with `set:html`, so they carry no text child at all and the rule changes nothing for them. The rule can
+    only REMOVE a violation - a data block that names a migrated family in its body is not executed and is not an
+    escape - and no data block of the tree names one.
+  The tree-wide case of the guard ("E-03: prohibits migrated-family imports ...") reports 0 violations for every
+  portable file of the tree at `ed7c320a`, exactly as at `957d9b7d`. **No production file is a violation because of the
+  findings of this batch or of the earlier ones, and no assertion was weakened to hide one.**
 - **Census of the new rules at `63af8a44`** - the rules of the round-8 batch were measured against the real tree before
   they were trusted, and each of them adds 0 violations to it. The MDX census: all 115 tracked `.mdx` files parse with the
   MDX processor (0 parse failures), and the collector of `63af8a44` collects **1** expression in the whole tree, against

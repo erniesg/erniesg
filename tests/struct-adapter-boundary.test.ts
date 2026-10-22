@@ -208,6 +208,8 @@ type ComputedGlob = {
   fragments: string[]
   /** The static text of the argument. */
   staticText: string
+  /** Whether the glob is case-sensitive. */
+  caseSensitive?: boolean
 }
 
 /**
@@ -292,10 +294,12 @@ function importedPaths(
           (specifier === '@erniesg/struct' || specifier.startsWith('@erniesg/struct/'))
         ) {
           const names: string[] = []
-          const importClause = node.importClause
-          if (importClause?.namedBindings && ts.isNamedImports(importClause.namedBindings)) {
-            for (const element of importClause.namedBindings.elements) {
-              names.push(element.propertyName?.text ?? element.name.text)
+          if (ts.isImportDeclaration(node)) {
+            const importClause = node.importClause
+            if (importClause?.namedBindings && ts.isNamedImports(importClause.namedBindings)) {
+              for (const element of importClause.namedBindings.elements) {
+                names.push(element.propertyName?.text ?? element.name.text)
+              }
             }
           }
           if (names.length > 0) {
@@ -2016,7 +2020,7 @@ function dynamicImportSpecifiers(node: ts.Node): string[] {
   function visit(current: ts.Node): void {
     if (
       ts.isCallExpression(current) &&
-      ts.isImportKeyword(current.expression)
+      current.expression.kind === ts.SyntaxKind.ImportKeyword
     ) {
       const argument = current.arguments[0]
       if (argument && ts.isStringLiteralLike(argument)) {

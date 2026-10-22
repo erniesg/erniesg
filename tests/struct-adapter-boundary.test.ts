@@ -1,5 +1,6 @@
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { existsSync, readFileSync, readdirSync, type Dirent } from 'node:fs'
+import { createRequire } from 'node:module'
 import { dirname, relative, resolve } from 'node:path'
 import { parse as parseAstroSource } from '@astrojs/compiler/sync'
 import type {
@@ -28,6 +29,63 @@ import {
 } from '../src/research/epub'
 import { renderPublicationXhtml } from '@erniesg/struct/renderers/xhtml'
 import { buildStructEpub as packageBuildStructEpub } from '@erniesg/struct/renderers/epub'
+
+/**
+ * A glob matcher: it answers whether one path matches a pattern.
+ */
+type GlobMatcher = (input: string) => boolean
+
+/**
+ * The factory that builds a glob matcher for one pattern.
+ */
+type GlobMatcherFactory = (
+  pattern: string,
+  options?: {
+    dot?: boolean
+    nocase?: boolean
+    noextglob?: boolean
+    noglobstar?: boolean
+    posix?: boolean
+  },
+) => GlobMatcher
+
+/**
+ * The glob matcher Vite itself uses for a glob import.
+ *
+ * Vite resolves an `import.meta.glob` pattern with picomatch: the bundler
+ * depends on picomatch directly, and the globber Vite calls to enumerate the
+ * files of a glob import (tinyglobby) matches the enumerated files with
+ * picomatch as well. The guard therefore matches a pattern with the matcher
+ * the bundler matches it with, instead of a hand-written conversion of its
+ * own, so a pattern form the bundler resolves - a character class, a brace
+ * alternation, a negated class - is a pattern form the guard resolves.
+ *
+ * The package is a transitive dependency of the repository: `vite` 8.1.6
+ * depends on `picomatch` ^4.0.5 and `tinyglobby` 0.2.17 depends on
+ * `picomatch` ^4.0.4, and the lockfile places picomatch 4.0.5 at the root of
+ * `node_modules`. It ships no type declarations, so the matcher is required
+ * through `createRequire` and typed here.
+ */
+const picomatch = createRequire(import.meta.url)(
+  'picomatch',
+) as GlobMatcherFactory
+
+/**
+ * The options Vite matches a glob pattern with.
+ *
+ * Vite calls the globber with `extglob: false` and matches case-sensitively
+ * unless the glob asks for something else, and the globber matches with
+ * POSIX brackets. The guard matches with the same options: an extended glob
+ * (`@(a|b)`) is a literal name, `[!x]` and `[^x]` are negated classes, a
+ * brace group lists alternatives and `*` does not reach a dot file.
+ */
+const viteGlobOptions = {
+  dot: false,
+  nocase: false,
+  noextglob: true,
+  noglobstar: false,
+  posix: true,
+}
 
 const root = new URL('../src/', import.meta.url)
 const portableRoot = new URL('struct/', root)
@@ -690,8 +748,13 @@ function aliasGlobTarget(pattern: string): string | null {
 }
 
 /**
- * Whether a module path matches one of the glob patterns. A brace group
- * lists alternatives, so every expansion of a pattern is tried.
+ * Whether a module path matches one of the glob patterns.
+ *
+ * The pattern is matched with picomatch, the matcher Vite matches a glob
+ * import with, so every pattern form the bundler understands is understood
+ * here: a character class (`types.[t]s`), a brace alternation
+ * (`types.{ts,tsx}`) and a negated class (`types.[!x]s`) name the modules
+ * they name in the bundler, and they name them here too.
  *
  * The pattern and the module path are both in the project-root-relative form
  * the pattern was normalised into, so a project-root pattern, an alias
@@ -699,11 +762,10 @@ function aliasGlobTarget(pattern: string): string | null {
  */
 function globMatchesAny(patterns: string[], modulePath: string): boolean {
   const spellings = globPathSpellings(modulePath)
-  return patterns.some((pattern) =>
-    expandGlobBraces(pattern).some((expanded) =>
-      spellings.some((spelling) => globToRegExp(expanded).test(spelling)),
-    ),
-  )
+  return patterns.some((pattern) => {
+    const matches = picomatch(pattern, viteGlobOptions)
+    return spellings.some((spelling) => matches(spelling))
+  })
 }
 
 /**
@@ -718,53 +780,6 @@ function globPathSpellings(modulePath: string): string[] {
   return modulePath.startsWith('.')
     ? [modulePath]
     : [modulePath, `./${modulePath}`]
-}
-
-/**
- * The expanded forms of a glob pattern. A brace group lists alternatives, so
- * `../struct/{types,ids}.ts` names two modules.
- */
-function expandGlobBraces(pattern: string): string[] {
-  const open = pattern.indexOf('{')
-  if (open === -1) return [pattern]
-  const close = pattern.indexOf('}', open)
-  if (close === -1) return [pattern]
-  const alternatives = pattern.slice(open + 1, close).split(',')
-  if (alternatives.length < 2) return [pattern]
-  const prefix = pattern.slice(0, open)
-  const suffix = pattern.slice(close + 1)
-  return alternatives.flatMap((alternative) =>
-    expandGlobBraces(`${prefix}${alternative}${suffix}`),
-  )
-}
-
-/**
- * A glob pattern as a regular expression. `*` matches inside one path
- * segment, `**` matches across segments and `?` matches a single character.
- */
-function globToRegExp(pattern: string): RegExp {
-  let source = ''
-  for (let index = 0; index < pattern.length; index += 1) {
-    const character = pattern[index]!
-    if (character === '*') {
-      if (pattern[index + 1] === '*') {
-        index += 1
-        if (pattern[index + 1] === '/') {
-          index += 1
-          source += '(?:[^/]*/)*'
-        } else {
-          source += '.*'
-        }
-      } else {
-        source += '[^/]*'
-      }
-    } else if (character === '?') {
-      source += '[^/]'
-    } else {
-      source += character.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    }
-  }
-  return new RegExp(`^${source}$`)
 }
 
 /**
@@ -887,10 +902,14 @@ function analyzeAstroSource(source: string): AstroAnalysis {
       // carries. The element is scanned wherever the compiler AST puts it:
       // Astro hoists and executes a script element inside a `<pre>` or a
       // `<code>` sample as well, so such a body is JavaScript the component
-      // runs and not a sample of a script.
-      for (const child of node.children) {
-        if (child.type === 'text' && child.value.length > 0) {
-          analysis.scriptBodies.push(child.value)
+      // runs and not a sample of a script. A script element whose type is
+      // not a JavaScript type is a data block, which nobody executes, so its
+      // body is not JavaScript the component runs and is not scanned.
+      if (isJavaScriptScript(node.attributes)) {
+        for (const child of node.children) {
+          if (child.type === 'text' && child.value.length > 0) {
+            analysis.scriptBodies.push(child.value)
+          }
         }
       }
       if (isProcessedScript(node.attributes)) {
@@ -919,6 +938,30 @@ function plainAttributeValue(attribute: AstroAttributeNode): string | null {
 }
 
 /**
+ * Whether a script element carries JavaScript that is executed.
+ *
+ * A script element without a `type` is a classic script, and a script whose
+ * type is `module`, `text/javascript` or `application/javascript` is a
+ * module or a classic script, so the browser executes the body in every one
+ * of those cases. A script whose type is anything else - `text/plain`,
+ * `application/json`, `text/x-component` - is a data block: the HTML
+ * standard does not execute it, Astro does not bundle it and the body is
+ * never run, so it is not a module the component loads.
+ *
+ * A `type` that is not a literal - `type={someType}` - cannot be read, so
+ * the guard cannot prove that the body is not JavaScript and scans it.
+ */
+function isJavaScriptScript(attributes: AstroAttributeNode[]): boolean {
+  const type = attributes.find((attribute) => attribute.name === 'type')
+  if (!type) return true
+  const value = plainAttributeValue(type)
+  if (value === null) return true
+  return ['module', 'text/javascript', 'application/javascript'].includes(
+    value.toLowerCase(),
+  )
+}
+
+/**
  * Whether Astro processes a script element. An inline script is not
  * processed, and a script whose type is not JavaScript is not executed as
  * JavaScript at all, so neither of them names a module Astro bundles.
@@ -927,19 +970,7 @@ function isProcessedScript(attributes: AstroAttributeNode[]): boolean {
   if (attributes.some((attribute) => attribute.name === 'is:inline')) {
     return false
   }
-  const type = attributes.find((attribute) => attribute.name === 'type')
-  if (type) {
-    const value = plainAttributeValue(type)
-    if (
-      value !== null &&
-      !['module', 'text/javascript', 'application/javascript'].includes(
-        value.toLowerCase(),
-      )
-    ) {
-      return false
-    }
-  }
-  return true
+  return isJavaScriptScript(attributes)
 }
 
 /**
@@ -4297,5 +4328,164 @@ describe('app-owned Struct adapter boundary', () => {
     )
     expect(computedBaseViolations).not.toEqual([])
     expect(computedBaseViolations.join('\n')).toContain('computed glob')
+  })
+
+  it('E-03: matches a Vite glob pattern with the glob matcher Vite uses', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+
+    // A character class is a valid Vite glob: `types.[t]s` names `types.ts`,
+    // and the bundler resolves the eager import to the retained local
+    // implementation, so the guard has to resolve the pattern the way the
+    // bundler resolves it.
+    const characterClass =
+      "const types = import.meta.glob('../struct/types.[t]s', { eager: true })"
+    expect(importedPaths(characterClass, research)).toContain(
+      '../struct/types.ts',
+    )
+    const characterClassViolations = e03ViolationsForSource(
+      characterClass,
+      research,
+      publicPaths,
+    )
+    expect(characterClassViolations).toHaveLength(1)
+    expect(characterClassViolations.join('\n')).toContain(
+      'migrated family import',
+    )
+
+    // A brace alternation names the same module, and so does a negated
+    // class.
+    const brace =
+      "const types = import.meta.glob('../struct/types.{ts,tsx}', { eager: true })"
+    expect(importedPaths(brace, research)).toContain('../struct/types.ts')
+    expect(e03ViolationsForSource(brace, research, publicPaths)).toHaveLength(1)
+
+    const negatedClass =
+      "const types = import.meta.glob('../struct/types.[!x]s', { eager: true })"
+    expect(importedPaths(negatedClass, research)).toContain(
+      '../struct/types.ts',
+    )
+    expect(
+      e03ViolationsForSource(negatedClass, research, publicPaths),
+    ).toHaveLength(1)
+
+    // A character class that names another family reaches that family as
+    // well.
+    const codecClass =
+      "const codecs = import.meta.glob('../struct/[ct]odec.ts', { eager: true })"
+    expect(importedPaths(codecClass, research)).toContain('../struct/codec.ts')
+    expect(
+      e03ViolationsForSource(codecClass, research, publicPaths),
+    ).toHaveLength(2)
+
+    // The class is not one spelling only: a project-root pattern and an
+    // alias pattern that carry it reach the family as well.
+    const rootAbsolute =
+      "const types = import.meta.glob('/src/struct/types.[t]s', { eager: true })"
+    expect(importedPaths(rootAbsolute, research)).toContain(
+      '../struct/types.ts',
+    )
+    expect(
+      e03ViolationsForSource(rootAbsolute, research, publicPaths),
+    ).toHaveLength(1)
+
+    const aliased =
+      "const types = import.meta.glob('@/struct/types.[t]s', { eager: true })"
+    expect(importedPaths(aliased, research)).toContain('../struct/types.ts')
+    expect(e03ViolationsForSource(aliased, research, publicPaths)).toHaveLength(
+      1,
+    )
+
+    // A literal base still resolves the pattern from the base it names.
+    const based =
+      "const types = import.meta.glob('./struct/types.[t]s', { eager: true, base: '/src' })"
+    expect(importedPaths(based, research)).toContain('../struct/types.ts')
+    expect(e03ViolationsForSource(based, research, publicPaths)).toHaveLength(
+      1,
+    )
+
+    // A negated class that excludes the family names no migrated family, so
+    // it is not a violation.
+    const excluding =
+      "const types = import.meta.glob('../struct/types.[!t]s', { eager: true })"
+    expect(importedPaths(excluding, research)).toEqual([])
+    expect(e03ViolationsForSource(excluding, research, publicPaths)).toEqual([])
+
+    // A pattern that names no migrated family is not a violation either.
+    const safe =
+      "const pages = import.meta.glob('../content/**/*.md', { eager: true })"
+    expect(importedPaths(safe, research)).toEqual([])
+    expect(e03ViolationsForSource(safe, research, publicPaths)).toEqual([])
+
+    // A computed glob pattern still fails closed.
+    const computed = 'const all = import.meta.glob(pattern, { eager: true })'
+    const computedViolations = e03ViolationsForSource(
+      computed,
+      research,
+      publicPaths,
+    )
+    expect(computedViolations).not.toEqual([])
+    expect(computedViolations.join('\n')).toContain('computed glob')
+  })
+
+  it('E-03: does not scan the body of a non-JavaScript Astro script', async () => {
+    const publicPaths = await publicPackagePaths()
+    const astro = new URL('components/probe.astro', root)
+
+    // A script element whose type is not a JavaScript type is a data block:
+    // Astro never executes it, so an import in its body reaches no module
+    // and is not a boundary escape.
+    for (const type of [
+      'text/plain',
+      'application/json',
+      'text/x-component',
+      'application/ld+json',
+    ]) {
+      const data = `<script type="${type}">import x from '../struct/ids'</script>`
+      expect(importedPaths(data, astro)).toEqual([])
+      expect(e03ViolationsForSource(data, astro, publicPaths)).toEqual([])
+    }
+
+    // A module script is executed, so its body is scanned - and so is the
+    // body of an inline script, which the browser runs.
+    for (const script of [
+      "<script>import x from '../struct/ids'</script>",
+      '<script type="module">import x from "../struct/ids"</script>',
+      '<script type="text/javascript">import x from "../struct/ids"</script>',
+      '<script type="application/javascript">import x from "../struct/ids"</script>',
+      "<script is:inline>import x from '../struct/ids'</script>",
+    ]) {
+      expect(importedPaths(script, astro)).toContain('../struct/ids')
+      expect(e03ViolationsForSource(script, astro, publicPaths)).toHaveLength(1)
+    }
+
+    // A data block and a module script in one component: only the module
+    // script is JavaScript the component runs.
+    const mixed = [
+      "<script type=\"text/plain\">import x from '../struct/ids'</script>",
+      "<script type=\"module\">import y from '../struct/types'</script>",
+      '',
+    ].join('\n')
+    expect(importedPaths(mixed, astro)).toEqual(['../struct/types'])
+    expect(e03ViolationsForSource(mixed, astro, publicPaths)).toHaveLength(1)
+
+    // A data block names no module Astro bundles either.
+    const dataSource = [
+      '<script type="application/json" src="../struct/ids.ts"></script>',
+      '',
+    ].join('\n')
+    expect(importedPaths(dataSource, astro)).toEqual([])
+    expect(e03ViolationsForSource(dataSource, astro, publicPaths)).toEqual([])
+
+    // A type the guard cannot read is scanned, because the guard cannot
+    // prove that the body is not JavaScript.
+    const computedType = [
+      "<script type={someType}>import x from '../struct/ids'</script>",
+      '',
+    ].join('\n')
+    expect(importedPaths(computedType, astro)).toContain('../struct/ids')
+    expect(e03ViolationsForSource(computedType, astro, publicPaths)).toHaveLength(
+      1,
+    )
   })
 })

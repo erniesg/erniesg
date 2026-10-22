@@ -269,6 +269,7 @@ function importedPaths(
   computedDynamicImports?: string[][],
   computedRequires?: ComputedRequire[],
   computedGlobs?: ComputedGlob[],
+  packageNamedImports?: Map<string, string[]>,
 ): string[] {
   const ast = ts.createSourceFile(
     file.pathname,
@@ -282,8 +283,26 @@ function importedPaths(
       (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
       node.moduleSpecifier
     ) {
-      if (ts.isStringLiteral(node.moduleSpecifier))
-        paths.push(node.moduleSpecifier.text)
+      if (ts.isStringLiteral(node.moduleSpecifier)) {
+        const specifier = node.moduleSpecifier.text
+        paths.push(specifier)
+        // Collect named imports for package imports to validate symbols
+        if (
+          packageNamedImports &&
+          (specifier === '@erniesg/struct' || specifier.startsWith('@erniesg/struct/'))
+        ) {
+          const names: string[] = []
+          const importClause = node.importClause
+          if (importClause?.namedBindings && ts.isNamedImports(importClause.namedBindings)) {
+            for (const element of importClause.namedBindings.elements) {
+              names.push(element.propertyName?.text ?? element.name.text)
+            }
+          }
+          if (names.length > 0) {
+            packageNamedImports.set(specifier, names)
+          }
+        }
+      }
     } else if (
       ts.isImportTypeNode(node) &&
       ts.isLiteralTypeNode(node.argument)
@@ -328,7 +347,9 @@ function importedPaths(
       // is an import too.
       const argument = node.arguments[0]
       const patterns = globPatternsIn(argument)
-      const base = globBaseOption(node.arguments[1])
+      const options = node.arguments[1]
+      const caseSensitive = globCaseSensitiveOption(options)
+      const base = globBaseOption(options)
       if (patterns === null || base.kind === 'computed') {
         // A computed glob pattern has no literal target, so the guard cannot
         // prove that it does not load a migrated family. It fails closed in
@@ -339,12 +360,13 @@ function importedPaths(
         computedGlobs?.push({
           fragments: [
             ...stringLiteralsIn(argument),
-            ...stringLiteralsIn(node.arguments[1]),
+            ...stringLiteralsIn(options),
           ],
           staticText: staticTextIn(argument),
+          caseSensitive,
         })
       } else {
-        paths.push(...globFamilySpecifiers(patterns, file, base))
+        paths.push(...globFamilySpecifiers(patterns, file, base, caseSensitive))
       }
     } else if (
       ts.isImportEqualsDeclaration(node) &&
@@ -383,6 +405,8 @@ type ParsedImports = {
   computedRequires: ComputedRequire[]
   /** What the guard knows about every computed glob. */
   computedGlobs: ComputedGlob[]
+  /** Named imports for package imports (specifier -> imported names). */
+  packageNamedImports: Map<string, string[]>
 }
 
 /**
@@ -396,14 +420,16 @@ function parseImports(source: string, file: URL): ParsedImports {
   const computedDynamicImports: string[][] = []
   const computedRequires: ComputedRequire[] = []
   const computedGlobs: ComputedGlob[] = []
+  const packageNamedImports = new Map<string, string[]>()
   const specifiers = importedPaths(
     source,
     file,
     computedDynamicImports,
     computedRequires,
     computedGlobs,
+    packageNamedImports,
   )
-  return { specifiers, computedDynamicImports, computedRequires, computedGlobs }
+  return { specifiers, computedDynamicImports, computedRequires, computedGlobs, packageNamedImports }
 }
 
 /**
@@ -531,6 +557,43 @@ function globBaseOption(options: ts.Node | undefined): GlobBase {
 }
 
 /**
+ * The `caseSensitive` option of a glob call.
+ *
+ * Vite supports `caseSensitive: false` in the options of `import.meta.glob`,
+ * which makes the glob match case-insensitively. The guard must propagate
+ * this option to the picomatch matcher.
+ */
+function globCaseSensitiveOption(options: ts.Node | undefined): boolean {
+  if (!options) return false
+  // An options argument that is not an object literal cannot be read, so the
+  // guard cannot prove that it does not use case-insensitive matching.
+  if (!ts.isObjectLiteralExpression(options)) return false
+  for (const property of options.properties) {
+    // A spread carries properties the guard cannot read.
+    if (ts.isSpreadAssignment(property)) continue
+    const name = property.name
+    // A computed property name may name the option, so the guard cannot prove
+    // that it does not.
+    if (ts.isComputedPropertyName(name)) continue
+    const isCaseSensitive =
+      ts.isIdentifier(name)
+        ? name.text === 'caseSensitive'
+        : ts.isStringLiteralLike(name) && name.text === 'caseSensitive'
+    if (!isCaseSensitive) continue
+    if (!ts.isPropertyAssignment(property)) continue
+    const initializer = property.initializer
+    if (ts.isStringLiteralLike(initializer)) {
+      return initializer.text === 'false'
+    }
+    // For a bare `caseSensitive` without a value (unlikely but handle gracefully),
+    // treat as case-insensitive
+    if (initializer === undefined) return true
+    return false
+  }
+  return false // default: case-sensitive
+}
+
+/**
  * The directory a relative glob pattern is resolved from when the glob call
  * names a literal base.
  *
@@ -640,6 +703,7 @@ function globFamilySpecifiers(
   patterns: string[],
   file: URL,
   base: GlobBase,
+  caseSensitive: boolean,
 ): string[] {
   const included = patterns.filter((pattern) => !pattern.startsWith('!'))
   const excluded = patterns
@@ -667,8 +731,8 @@ function globFamilySpecifiers(
     // A pattern is matched in its project-root-relative form, because that
     // is the form a project-root or alias pattern resolves to.
     const modulePath = relative(projectRootPath, familyFile)
-    if (!globMatchesAny(includedPatterns, modulePath)) continue
-    if (globMatchesAny(excludedPatterns, modulePath)) continue
+    if (!globMatchesAny(includedPatterns, modulePath, caseSensitive)) continue
+    if (globMatchesAny(excludedPatterns, modulePath, caseSensitive)) continue
     // The reported specifier keeps the importer-relative spelling, so it
     // names the module the way the importing module reaches it.
     const importerPath = relative(importerDirectory, familyFile)
@@ -760,10 +824,27 @@ function aliasGlobTarget(pattern: string): string | null {
  * the pattern was normalised into, so a project-root pattern, an alias
  * pattern and an importer-relative pattern all match the module they name.
  */
-function globMatchesAny(patterns: string[], modulePath: string): boolean {
+function globMatchesAny(
+  patterns: string[],
+  modulePath: string,
+  caseSensitive: boolean,
+): boolean {
   const spellings = globPathSpellings(modulePath)
   return patterns.some((pattern) => {
-    const matches = picomatch(pattern, viteGlobOptions)
+    const options: {
+      dot: boolean
+      nocase: boolean
+      noextglob: boolean
+      noglobstar: boolean
+      posix: boolean
+    } = {
+      dot: false,
+      nocase: !caseSensitive,
+      noextglob: true,
+      noglobstar: false,
+      posix: true,
+    }
+    const matches = picomatch(pattern, options)
     return spellings.some((spelling) => matches(spelling))
   })
 }
@@ -1487,8 +1568,13 @@ function repositoryAnalysisOnce(): Promise<RepositoryFileAnalysis[]> {
  * `src/struct/codec/parsers` is a `codec` import just like `src/struct/codec`.
  */
 function migratedFamilyForTarget(target: string): string | null {
+  // Strip file extension case-insensitively (the guard normalizes extensions),
+  // then lowercase for case-insensitive comparison when the glob uses
+  // caseSensitive: false.
+  const stripped = target.replace(/\.([cm]?[jt]sx?|astro|mdx)$/i, '').toLowerCase()
   for (const [family, familyRoot] of migratedFamilyRoots) {
-    if (target === familyRoot || target.startsWith(`${familyRoot}/`))
+    const lowerFamilyRoot = familyRoot.toLowerCase()
+    if (stripped === lowerFamilyRoot || stripped.startsWith(lowerFamilyRoot + "/"))
       return family
   }
   return null
@@ -1901,6 +1987,10 @@ function computeReexportSpecifiers(source: string): ReexportSpecifiers {
  * An exported expression that references a binding the module imported
  * reaches the module that binding came from, so that module is a re-export
  * target. A binding the module defines itself reaches no other module.
+ *
+ * An exported expression that contains a dynamic import also reaches the
+ * module that dynamic import loads, so that module is a re-export target
+ * as well.
  */
 function exportedExpressionModules(
   node: ts.Node,
@@ -1913,7 +2003,30 @@ function exportedExpressionModules(
     if (imported === undefined) continue
     modules.push(imported)
   }
+  // Also find dynamic imports in the expression
+  modules.push(...dynamicImportSpecifiers(node))
   return modules
+}
+
+/**
+ * The module specifiers of any dynamic imports in a node.
+ */
+function dynamicImportSpecifiers(node: ts.Node): string[] {
+  const specifiers: string[] = []
+  function visit(current: ts.Node): void {
+    if (
+      ts.isCallExpression(current) &&
+      ts.isImportKeyword(current.expression)
+    ) {
+      const argument = current.arguments[0]
+      if (argument && ts.isStringLiteralLike(argument)) {
+        specifiers.push(argument.text)
+      }
+    }
+    ts.forEachChild(current, visit)
+  }
+  visit(node)
+  return specifiers
 }
 
 /**
@@ -2209,22 +2322,52 @@ function computedPropertyModules(
  *
  * A re-export can read a member of the required module, so a property access
  * and an element access that is rooted at the required module name it too.
+ *
+ * The `Object.assign(module.exports, require(...))` form is also a CommonJS
+ * re-export: it assigns the required module's exports to `module.exports`.
  */
 function commonJsReexportSpecifier(
   expression: ts.Expression,
   importedBindings?: Map<string, string>,
 ): string | null {
-  if (!ts.isBinaryExpression(expression)) return null
-  if (expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return null
-  if (!isCommonJsExportTarget(expression.left)) return null
-  const required = requiredModuleOf(expression.right, importedBindings)
-  if (required !== null) return required
-  // A require-bound alias is an imported binding, so assigning it to
-  // `module.exports` re-exports the module it came from:
-  // `const Types = require('./types'); module.exports = Types`.
-  if (ts.isIdentifier(expression.right) && importedBindings) {
-    const imported = importedBindings.get(expression.right.text)
-    if (imported !== undefined) return imported
+  // Check for direct assignment: `module.exports = require(...)`
+  if (ts.isBinaryExpression(expression)) {
+    if (expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return null
+    if (!isCommonJsExportTarget(expression.left)) return null
+    const required = requiredModuleOf(expression.right, importedBindings)
+    if (required !== null) return required
+    // A require-bound alias is an imported binding, so assigning it to
+    // `module.exports` re-exports the module it came from:
+    // `const Types = require('./types'); module.exports = Types`.
+    if (ts.isIdentifier(expression.right) && importedBindings) {
+      const imported = importedBindings.get(expression.right.text)
+      if (imported !== undefined) return imported
+    }
+    return null
+  }
+  // Check for Object.assign(module.exports, require(...))
+  if (
+    ts.isCallExpression(expression) &&
+    ts.isPropertyAccessExpression(expression.expression) &&
+    ts.isIdentifier(expression.expression.expression) &&
+    expression.expression.expression.text === 'Object' &&
+    expression.expression.name.text === 'assign'
+  ) {
+    const args = expression.arguments
+    if (args.length >= 2) {
+      const target = args[0]
+      const source = args[1]
+      if (isCommonJsExportTarget(target)) {
+        const required = requiredModuleOf(source, importedBindings)
+        if (required !== null) return required
+        // A require-bound alias assigned via Object.assign
+        if (ts.isIdentifier(source) && importedBindings) {
+          const imported = importedBindings.get(source.text)
+          if (imported !== undefined) return imported
+        }
+      }
+    }
+    return null
   }
   return null
 }
@@ -2695,6 +2838,25 @@ function e03ViolationsForSource(
     if (specifier === '@erniesg/struct' || specifier.startsWith('@erniesg/struct/')) {
       if (!publicPaths.has(specifier)) {
         violations.push(`${file.pathname}: private package import ${specifier}`)
+      } else if (specifier === '@erniesg/struct') {
+        // The package root export is allowed in general, but codec consumers
+        // MUST use @erniesg/struct/document. The deprecated migrateStructDocument
+        // is also excluded from the root by the implementation record.
+        // Check the named imports to enforce this.
+        const namedImports = parsed.packageNamedImports.get('@erniesg/struct')
+        if (namedImports) {
+          const forbiddenRootImports = new Set([
+            'decodeStructDocument',
+            'migrateStructDocument',
+          ])
+          for (const name of namedImports) {
+            if (forbiddenRootImports.has(name)) {
+              violations.push(
+                `${file.pathname}: ${name} must be imported from '@erniesg/struct/document', not the package root`,
+              )
+            }
+          }
+        }
       }
       continue
     }
@@ -5848,5 +6010,111 @@ describe('app-owned Struct adapter boundary', () => {
     } finally {
       await rm(jsxWrapper.pathname, { force: true })
     }
+  })
+
+  // ==== Red tests for the four new bot findings ====
+
+  it('O1b5: traces a dynamic import inside an exported wrapper expression', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+    const wrapper = new URL('struct/__e03_probe_o1b5_dynamic.ts', root)
+    await writeFile(
+      wrapper.pathname,
+      "import { structId } from './ids'\nexport const load = () => import('./ids')\n",
+      'utf8',
+    )
+    try {
+      // A retained wrapper that exports a loader with a dynamic import
+      // should be detected as reaching the migrated family
+      expect(
+        e03ViolationsForSource(
+          "import { load } from '../struct/__e03_probe_o1b5_dynamic'",
+          research,
+          publicPaths,
+        ),
+      ).not.toEqual([])
+    } finally {
+      await rm(wrapper.pathname, { force: true })
+    }
+  })
+
+  it('O1cB: recognizes Object.assign CommonJS re-exports', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+    const wrapper = new URL('struct/__e03_probe_o1cb_object_assign.cjs', root)
+    await writeFile(
+      wrapper.pathname,
+      "Object.assign(module.exports, require('./ids'))\n",
+      'utf8',
+    )
+    try {
+      // Object.assign(module.exports, require('./ids')) should be recognized
+      // as a CommonJS re-export
+      expect(
+        e03ViolationsForSource(
+          "import { structId } from '../struct/__e03_probe_o1cb_object_assign'",
+          research,
+          publicPaths,
+        ),
+      ).not.toEqual([])
+    } finally {
+      await rm(wrapper.pathname, { force: true })
+    }
+  })
+
+  it('O1cF: rejects codec imports from the package root', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+
+    // The E-03 mapping requires codec consumers to use @erniesg/struct/document
+    // Importing decodeStructDocument from the package root should be rejected
+    expect(
+      e03ViolationsForSource(
+        "import { decodeStructDocument } from '@erniesg/struct'",
+        research,
+        publicPaths,
+      ),
+    ).not.toEqual([])
+
+    // The deprecated migrateStructDocument should also be rejected from root
+    expect(
+      e03ViolationsForSource(
+        "import { migrateStructDocument } from '@erniesg/struct'",
+        research,
+        publicPaths,
+      ),
+    ).not.toEqual([])
+
+    // But the proper subpath import should be allowed
+    expect(
+      e03ViolationsForSource(
+        "import { decodeStructDocument } from '@erniesg/struct/document'",
+        research,
+        publicPaths,
+      ),
+    ).toEqual([])
+  })
+
+  it('O1cL: honors case-insensitive Vite glob matching', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+
+    // Vite supports caseSensitive: false option for glob imports
+    // The guard should propagate this option to the matcher
+    const caseInsensitiveGlob =
+      "const codecs = import.meta.glob('../STRUCT/IDS.TS', { eager: true, caseSensitive: false })"
+
+    // With caseSensitive: false, the glob should match regardless of case,
+    // detecting the migrated local ids module
+    const paths = importedPaths(caseInsensitiveGlob, research)
+    // The matched path should correspond to the actual lowercase file
+    expect(paths).toContain('../struct/ids.ts')
+    // The real e03ViolationsForSource should detect the migrated local ids module
+    const violations = e03ViolationsForSource(
+      "import { structId } from '../STRUCT/IDS.TS'",
+      research,
+      publicPaths,
+    )
+    expect(violations).not.toEqual([])
   })
 })

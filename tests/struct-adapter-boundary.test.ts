@@ -732,9 +732,13 @@ type AstroAnalysis = {
  *
  * Every part comes from the compiler AST, so only what Astro really executes
  * is scanned. A script element is a script element: its text child is the
- * JavaScript Astro runs. An HTML comment is a comment, a `<pre>` or `<code>`
- * sample is a sample and a frontmatter string is a string, so none of them is
- * a script element and none of them contributes a script body.
+ * JavaScript Astro runs. Astro hoists and executes a script element wherever
+ * the element stands, so a script element inside a `<pre>` or a `<code>`
+ * sample is hoisted out of the sample exactly like a top-level script and is
+ * executed too: the compiler renders `<pre></pre>` and hoists the script, so
+ * the guard scans that body as well. An HTML comment is a comment and a
+ * frontmatter string is a string, so neither of them is a script element and
+ * neither of them contributes a script body.
  *
  * The compiler is the authority on what a component contains. When it cannot
  * parse a real component, the guard fails closed instead of quietly leaving
@@ -767,7 +771,7 @@ function analyzeAstroSource(source: string): AstroAnalysis {
       if (attribute.name.length > 0) analysis.expressions.push(attribute.name)
     }
   }
-  const visit = (node: AstroNode, insideSample: boolean): void => {
+  const visit = (node: AstroNode): void => {
     if (node.type === 'frontmatter') {
       // The frontmatter is the module code of the component, so it is
       // scanned as TypeScript. It is not a script element.
@@ -787,10 +791,12 @@ function analyzeAstroSource(source: string): AstroAnalysis {
     if ('attributes' in node) {
       for (const attribute of node.attributes) collectAttribute(attribute)
     }
-    if (node.type === 'element' && node.name === 'script' && !insideSample) {
+    if (node.type === 'element' && node.name === 'script') {
       // The text child of a script element is the JavaScript the element
-      // carries. A script element inside a `<pre>` or `<code>` sample is a
-      // sample of a script and not a script of the component.
+      // carries. The element is scanned wherever the compiler AST puts it:
+      // Astro hoists and executes a script element inside a `<pre>` or a
+      // `<code>` sample as well, so such a body is JavaScript the component
+      // runs and not a sample of a script.
       for (const child of node.children) {
         if (child.type === 'text' && child.value.length > 0) {
           analysis.scriptBodies.push(child.value)
@@ -802,14 +808,10 @@ function analyzeAstroSource(source: string): AstroAnalysis {
       }
     }
     if ('children' in node) {
-      const sample =
-        insideSample ||
-        (node.type === 'element' &&
-          (node.name === 'pre' || node.name === 'code'))
-      for (const child of node.children) visit(child, sample)
+      for (const child of node.children) visit(child)
     }
   }
-  visit(ast, false)
+  visit(ast)
   return analysis
 }
 
@@ -1081,6 +1083,34 @@ type MdxNode = {
   value?: string
   /** The children of a node that has them. */
   children?: MdxNode[]
+  /** The JSX attributes of a node that has them. */
+  attributes?: MdxAttribute[]
+}
+
+/**
+ * The value of an MDX JSX attribute. A named attribute carries either its
+ * plain text or an object that carries the JavaScript of an expression.
+ */
+type MdxAttributeValue = {
+  /** The type of the value, when the value carries one. */
+  type?: string
+  /** The JavaScript of an expression-valued attribute. */
+  value?: string
+}
+
+/**
+ * The shape of an MDX JSX attribute the guard walks. The guard reads the type
+ * and the value of an attribute only, so the attribute is described in those
+ * terms.
+ */
+type MdxAttribute = {
+  /** The type of the attribute node. */
+  type: string
+  /**
+   * The value of the attribute: the JavaScript of a spread attribute, or the
+   * plain text or the expression of a named attribute.
+   */
+  value?: string | MdxAttributeValue | null
 }
 
 /**
@@ -1088,10 +1118,13 @@ type MdxNode = {
  *
  * MDX evaluates an expression such as `{import('../struct/ids')}` while it
  * renders the document, so the expression reaches the module graph and the
- * guard has to inspect it. The processor is the real MDX toolchain, so the
- * expressions are the ones MDX evaluates: a fenced code block, an indented
- * code sample, inline code and an HTML comment are markdown content, so an
- * import that appears only in their text contributes nothing.
+ * guard has to inspect it. MDX evaluates the expression of a JSX attribute
+ * value as well, so `bar={import('../struct/ids')}` is collected too, and so
+ * is the spread form `{...import('../struct/ids')}`. The processor is the real
+ * MDX toolchain, so the expressions are the ones MDX evaluates: a fenced code
+ * block, an indented code sample, inline code and an HTML comment are
+ * markdown content, so an import that appears only in their text contributes
+ * nothing.
  *
  * The ESM flow blocks of the document are not collected here. The line
  * scanner above reads them, and it recognises the declarations MDX allows
@@ -1119,6 +1152,34 @@ function mdxExpressions(source: string, file: URL): string[] {
     return []
   }
   const expressions: string[] = []
+  const collectAttribute = (attribute: MdxAttribute): void => {
+    if (attribute.type === 'mdxJsxExpressionAttribute') {
+      // The spread form keeps the expression in `value`. The spread marker
+      // is not part of the expression, so it is removed before the
+      // expression is scanned.
+      if (typeof attribute.value === 'string') {
+        const expression = attribute.value.replace(/^\.\.\./, '')
+        if (expression.length > 0) expressions.push(expression)
+      }
+      return
+    }
+    if (attribute.type === 'mdxJsxAttribute') {
+      // A named attribute carries either plain text or an expression. MDX
+      // evaluates an expression-valued attribute, so its JavaScript is
+      // collected; plain text is a string the component renders, so it is
+      // not.
+      const value = attribute.value
+      if (
+        value !== null &&
+        typeof value === 'object' &&
+        value.type === 'mdxJsxAttributeValueExpression' &&
+        typeof value.value === 'string' &&
+        value.value.length > 0
+      ) {
+        expressions.push(value.value)
+      }
+    }
+  }
   const visit = (node: MdxNode): void => {
     if (
       node.type === 'mdxFlowExpression' ||
@@ -1126,6 +1187,10 @@ function mdxExpressions(source: string, file: URL): string[] {
     ) {
       if (node.value && node.value.length > 0) expressions.push(node.value)
     }
+    // The attributes of a JSX element are not children of the element, so
+    // they are visited here: an expression-valued attribute is JavaScript
+    // MDX evaluates.
+    for (const attribute of node.attributes ?? []) collectAttribute(attribute)
     for (const child of node.children ?? []) visit(child)
   }
   visit(tree)
@@ -3532,6 +3597,59 @@ describe('app-owned Struct adapter boundary', () => {
     }
   })
 
+  it('E-03: inspects the MDX JSX attribute expressions of an MDX document', async () => {
+    const publicPaths = await publicPackagePaths()
+    const mdxProbe = new URL('research/probe.mdx', root)
+
+    // MDX evaluates the expression of a JSX attribute value while it renders
+    // the document, so a dynamic import in an attribute reaches the module
+    // graph even though the document declares no ESM block at all.
+    const attribute = ["<Foo bar={import('../struct/ids')} />", ''].join('\n')
+    expect(importedPaths(attribute, mdxProbe)).toEqual(['../struct/ids'])
+    expect(e03ViolationsForSource(attribute, mdxProbe, publicPaths)).toHaveLength(
+      1,
+    )
+
+    // The spread form of an attribute is evaluated as well.
+    const spread = ["<Foo {...import('../struct/ids')} />", ''].join('\n')
+    expect(importedPaths(spread, mdxProbe)).toEqual(['../struct/ids'])
+    expect(e03ViolationsForSource(spread, mdxProbe, publicPaths)).toHaveLength(1)
+
+    // An attribute expression that names no migrated module is not a
+    // violation.
+    const safe = ["<Foo bar={helper('x')} />", ''].join('\n')
+    expect(importedPaths(safe, mdxProbe)).toEqual([])
+    expect(e03ViolationsForSource(safe, mdxProbe, publicPaths)).toEqual([])
+
+    // A plain attribute value is a string the document renders, so an import
+    // that appears only in its text is not collected.
+    const plain = ["<Foo bar=\"import x from '../struct/ids'\" />", ''].join(
+      '\n',
+    )
+    expect(importedPaths(plain, mdxProbe)).toEqual([])
+    expect(e03ViolationsForSource(plain, mdxProbe, publicPaths)).toEqual([])
+
+    // Markdown content is not an expression: a fenced code block, an indented
+    // code sample, inline code and an HTML comment that show an import
+    // contribute nothing, and the JSX text of an element is rendered text.
+    const notCode = [
+      '```js',
+      "import x from '../struct/ids'",
+      '```',
+      '',
+      "    import x from '../struct/ids'",
+      '',
+      'Inline `import x from "../struct/ids"` sample.',
+      '',
+      '<!-- import x from "../struct/ids" -->',
+      '',
+      "<Foo>import x from '../struct/ids'</Foo>",
+      '',
+    ].join('\n')
+    expect(importedPaths(notCode, mdxProbe)).toEqual([])
+    expect(e03ViolationsForSource(notCode, mdxProbe, publicPaths)).toEqual([])
+  })
+
   it('E-03: traces a CommonJS export assignment from a retained wrapper', async () => {
     const publicPaths = await publicPackagePaths()
     const research = new URL('research/probe.ts', root)
@@ -3598,12 +3716,23 @@ describe('app-owned Struct adapter boundary', () => {
     expect(importedPaths(script, astro)).toContain('../struct/ids')
     expect(e03ViolationsForSource(script, astro, publicPaths)).toHaveLength(1)
 
-    // An HTML comment and a `<pre>` sample that show a script are not script
-    // elements, so Astro never runs them and the guard does not scan them.
-    // Each example on its own contributes nothing.
+    // A script element inside a `<pre>` or a `<code>` sample is hoisted and
+    // executed by Astro: the compiler takes it out of the sample and hoists
+    // it exactly like a top-level script, so its body is JavaScript the
+    // component runs and the guard scans it.
+    for (const hoisted of [
+      '<pre><script>import x from "../struct/ids"</script></pre>\n',
+      '<code><script>import x from "../struct/ids"</script></code>\n',
+    ]) {
+      expect(importedPaths(hoisted, astro)).toEqual(['../struct/ids'])
+      expect(e03ViolationsForSource(hoisted, astro, publicPaths)).toHaveLength(1)
+    }
+
+    // An HTML comment and an escaped `<pre>` sample are not script elements,
+    // so Astro never runs them and the guard does not scan them. Each example
+    // on its own contributes nothing.
     for (const sample of [
       '<!-- <script>import x from "../struct/ids"</script> -->\n',
-      '<pre><script>import x from "../struct/ids"</script></pre>\n',
       '<pre>&lt;script&gt;import x from "../struct/ids"&lt;/script&gt;</pre>\n',
     ]) {
       expect(importedPaths(sample, astro)).toEqual([])
@@ -3613,11 +3742,23 @@ describe('app-owned Struct adapter boundary', () => {
     // The same holds when the examples share one component.
     const notScript = [
       '<!-- <script>import x from "../struct/ids"</script> -->',
-      '<pre><script>import x from "../struct/ids"</script></pre>',
+      '<pre>&lt;script&gt;import x from "../struct/ids"&lt;/script&gt;</pre>',
       '',
     ].join('\n')
     expect(importedPaths(notScript, astro)).toEqual([])
     expect(e03ViolationsForSource(notScript, astro, publicPaths)).toEqual([])
+
+    // A hoisted sample script shares the component with the comment: the
+    // comment contributes nothing, the hoisted script is the one violation.
+    const hoistedScript = [
+      '<!-- <script>import x from "../struct/ids"</script> -->',
+      '<pre><script>import x from "../struct/ids"</script></pre>',
+      '',
+    ].join('\n')
+    expect(importedPaths(hoistedScript, astro)).toEqual(['../struct/ids'])
+    expect(
+      e03ViolationsForSource(hoistedScript, astro, publicPaths),
+    ).toHaveLength(1)
 
     // A frontmatter string that shows a script is not a script element
     // either. The frontmatter itself is module code, so it is still scanned.

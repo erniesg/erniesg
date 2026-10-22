@@ -8,7 +8,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { NAV_LINKS } from '@/consts'
 import { detectPreferredLocale, getStaticText } from '@/lib/use-site-locale'
-import { type SupportedLocale } from '@/lib/i18n'
+import { type SupportedLocale, SUPPORTED_LOCALES } from '@/lib/i18n'
 import { resolveDocumentLocale } from '@/lib/page-locales'
 import {
   SITE_LOCALE_CHANGE_EVENT,
@@ -16,6 +16,22 @@ import {
   LEGACY_BLOG_LOCALE_STORAGE_KEY,
 } from '@/lib/site-preferences'
 import { Menu } from 'lucide-react'
+
+const supportedLocaleSet = new Set(SUPPORTED_LOCALES)
+
+function getLocaleFromPathname(pathname: string): SupportedLocale | null {
+  const segments = pathname.split('/').filter(Boolean)
+  // URLs are structured as /<section>/<locale>/ (e.g., /research/zh/, /about/ja/)
+  // The locale is the second segment if the first is a known section
+  const knownSections = ['research', 'about', 'blog', 'tags', 'books', 'library', 'projects']
+  if (segments.length >= 2 && knownSections.includes(segments[0])) {
+    const localeSegment = segments[1]
+    if (supportedLocaleSet.has(localeSegment) && localeSegment !== 'en') {
+      return localeSegment as SupportedLocale
+    }
+  }
+  return null
+}
 
 const MobileMenu = () => {
   const [isOpen, setIsOpen] = useState(false)
@@ -33,15 +49,15 @@ const MobileMenu = () => {
       } catch {
         /* Reading navigation does not require preference storage. */
       }
-      setLocale(
-        resolveDocumentLocale(
-          storedLocale,
-          document
-            .querySelector('meta[name="site-document-locale"]')
-            ?.getAttribute('content') ?? document.documentElement.lang,
-          detectPreferredLocale(),
-        ),
-      )
+      // First try to get locale from URL pathname (for native localized routes)
+      const urlLocale = getLocaleFromPathname(window.location.pathname)
+      const documentLocale =
+        document
+          .querySelector('meta[name="site-document-locale"]')
+          ?.getAttribute('content') ?? document.documentElement.lang
+      const resolvedLocale = urlLocale ??
+        resolveDocumentLocale(storedLocale, documentLocale, detectPreferredLocale())
+      setLocale(resolvedLocale)
       const hrefs: Record<string, string> = {}
       // These are the incoming page's actual, build-validated destinations.
       document
@@ -61,6 +77,8 @@ const MobileMenu = () => {
     document.addEventListener('astro:before-swap', handleViewTransitionStart)
     document.addEventListener('astro:page-load', syncDocumentNavigation)
     window.addEventListener(SITE_LOCALE_CHANGE_EVENT, syncDocumentNavigation)
+    // Also listen to popstate for navigations that don't trigger astro:page-load
+    window.addEventListener('popstate', syncDocumentNavigation)
 
     return () => {
       document.removeEventListener(
@@ -72,6 +90,7 @@ const MobileMenu = () => {
         SITE_LOCALE_CHANGE_EVENT,
         syncDocumentNavigation,
       )
+      window.removeEventListener('popstate', syncDocumentNavigation)
     }
   }, [])
 

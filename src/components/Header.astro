@@ -26,6 +26,7 @@ const supportedLocales = JSON.stringify(SUPPORTED_LOCALES)
 const siteLocaleStorageKey = SITE_LOCALE_STORAGE_KEY
 const legacyBlogLocaleStorageKey = LEGACY_BLOG_LOCALE_STORAGE_KEY
 const siteLocaleChangeEvent = SITE_LOCALE_CHANGE_EVENT
+const supportedLocaleSet = new Set(SUPPORTED_LOCALES)
 ---
 
 <header
@@ -163,6 +164,31 @@ const siteLocaleChangeEvent = SITE_LOCALE_CHANGE_EVENT
     })
   }
 
+  function getLocaleFromPathname(pathname) {
+    const segments = pathname.split('/').filter(Boolean)
+    // URLs are structured as /<section>/<locale>/ (e.g., /research/zh/, /about/ja/)
+    // The locale is the second segment if the first is a known section
+    const knownSections = ['research', 'about', 'blog', 'tags', 'books', 'library', 'projects']
+    if (segments.length >= 2 && knownSections.includes(segments[0])) {
+      const localeSegment = segments[1]
+      if (supportedLocaleSet.has(localeSegment) && localeSegment !== 'en') {
+        return localeSegment
+      }
+    }
+    return null
+  }
+
+  function updateNavLinks(locale) {
+    if (!locale || locale === 'en') return
+    document.querySelectorAll('header [data-header-link]').forEach((link) => {
+      const baseHref = link.getAttribute('data-header-link')
+      if (baseHref && baseHref !== '/') {
+        // Locale is a suffix: /about/zh/, /blog/zh/, /research/zh/, /tags/zh/
+        link.setAttribute('href', `${baseHref}/${locale}/`)
+      }
+    })
+  }
+
   function updateBlogCards(locale) {
     document.querySelectorAll('[data-i18n-card]').forEach((card) => {
       const localizationsValue = card.getAttribute('data-localizations')
@@ -229,6 +255,7 @@ const siteLocaleChangeEvent = SITE_LOCALE_CHANGE_EVENT
     const preferredLocale = getPreferredLocale()
     updateStaticText(preferredLocale)
     updateBlogCards(preferredLocale)
+    updateNavLinks(preferredLocale)
 
     if (document.documentElement.dataset.siteLanguageChoiceListener) return
     document.documentElement.dataset.siteLanguageChoiceListener = 'true'
@@ -254,6 +281,7 @@ const siteLocaleChangeEvent = SITE_LOCALE_CHANGE_EVENT
       if (locale) {
         updateStaticText(locale)
         updateBlogCards(locale)
+        updateNavLinks(locale)
       }
     })
   })

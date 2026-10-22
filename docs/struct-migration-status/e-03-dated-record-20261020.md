@@ -1,12 +1,12 @@
 # E-03 Implementation Record — 2026-10-20
 
 Owner: `erniesg/erniesg` (E-03 IMPLEMENTATION owner for `erniesg/struct` app cutover)
-Branch: `feature/e03-guard-round13` (local round-13 boundary-guard branch, based on the PR #454 head `450e6778`;
+Branch: `fix/struct-e03-final-guard-aliases-20261022` (local round-14 boundary-guard branch, based on the PR #454 head `913297086a1ffa686e25c1a5bc95bb4aeb6d081c`;
 the E-03 content was originally
 carried on `feat/struct-e03-core-codecs-ids-order-20261020`)
-Worktree: `/home/ubuntu/.local/state/struct-migration/20261020-continuation/worktrees/app-e03-guard-round13`
+Worktree: `/home/ubuntu/.local/state/struct-migration/20261020-continuation/worktrees/app-pr454-final-two-guard-fix`
 Precondition: E-02 passed (`feat/struct-e03-core-codecs-ids-order-20261020` exists with commits).
-Guard state described by this record: `bdde1080` ("test(struct): close the two E-03 boundary-guard findings of round 13").
+Guard state described by this record: `dd90a833` ("test(struct): close the two E-03 boundary-guard findings of round 14").
 **This record describes the tree as of that guard commit.** The record's own commit comes later on the same
 branch and changes only this document, so the guard state described here does not move with it; the record therefore
 names the guard commit, and never a branch tip, as the state it describes.
@@ -105,10 +105,10 @@ an ancestor of the branch that carries this record.
   35 cases (3274 lines) at `a832b8ed`, to 39 cases (3642 lines) at `dc117894`, to 40 cases (3783 lines) at
   `63af8a44`, to 42 cases (4300 lines) at `957d9b7d`, to 44 cases (4490 lines) at `ed7c320a`, which `d6850f19`
   leaves unchanged (44 cases, 4490 lines), to 48 cases (4861 lines) at `c0afa42f`, to 50 cases (5296 lines) at
-  `490b46f1` and to 52 cases (5562 lines) at `bdde1080`. Every count is
+  `490b46f1` and to 52 cases (5562 lines) at `bdde1080`, and to 54 cases (5752 lines) at `dd90a833`. Every count is
   `grep -c "^  it("` on the file at that commit and every line
   count is `wc -l` on it.
-  **The complete reviewed set is closed - fifty-two reviewed items.** The enumeration and the count are the same
+  **The complete reviewed set is closed - fifty-four reviewed items.** The enumeration and the count are the same
   thing, and each item names the commit that closed it:
   - The ten reviewed gaps of the first review of PR #454: (1) aliased local imports resolved before skipping -
     `fc73a970`; (2) package recovery-fact parity check importing `@erniesg/struct/recovery` - `fc73a970`; (3) project-root
@@ -259,7 +259,16 @@ an ancestor of the branch that carries this record.
     extensionless candidates, the `.mdx` extension is still stripped consistently and a wrapper that does not exist is
     still handled as before - `bdde1080` (one case: "E-03: probes an explicitly suffixed wrapper before the
     extensionless candidates").
-  Forty-nine of the fifty-two are guard-behaviour items; the other three (items 8, 19 and 28) are documentation items.
+  Fifty-one of the fifty-four are guard-behaviour items; the other three (items 8, 19 and 28) are documentation items.
+  - The two findings of the review raised against the PR #454 head `91329708` and closed at `dd90a833` (the coordinator
+    calls this batch "round 14"): (53) a CommonJS re-export that assigns a require-bound alias to `module.exports`
+    (`const Types = require('./types'); module.exports = Types`) re-exports the required module, so an importer outside
+    the retained tree that reaches such a wrapper is reported, and a computed alias in the same position fails closed;
+    (54) an exported type alias or interface that references an imported type binding (`export type Foo = T` and
+    `export interface Foo extends T {}`) reaches the module that binding came from, so an importer outside the retained
+    tree that reaches such a wrapper is reported. The guard now inspects the exported type alias and interface declarations
+    for imported type bindings instead of skipping type nodes, and it resolves a `module.exports` assignment through the
+    collected imported bindings instead of only through a literal `require(...)` call.
   The two
   (F14) assertions are in the file the plan names: the case
   "E-03: the production recovery module takes its category and actionable-recovery authority from the package"

@@ -1520,17 +1520,36 @@ type LocalModule = {
 }
 
 /**
- * The local module a path names, or null when no file backs the path. The
- * path a specifier resolves to carries no extension, so the file names the
- * module can have are tried in turn.
+ * A local module a specifier names: the path of the module and the exact
+ * file the specifier names, when it names one with an extension.
+ *
+ * The path carries no extension, so every spelling of the same module names
+ * the same path. The exact file is the file a specifier names with an
+ * explicit extension: `../struct/legacy.js` names the `legacy.js` wrapper,
+ * not a `legacy.ts` wrapper of the same basename.
+ */
+type LocalTarget = {
+  /** The path of the module, with the extension removed. */
+  path: string
+  /** The exact file the specifier names, or null when it names none. */
+  exact: string | null
+}
+
+/**
+ * The local module a target names, or null when no file backs the target.
+ *
+ * The path a specifier resolves to carries no extension, so the file names
+ * the module can have are tried in turn. A specifier that names a file with
+ * an explicit extension names that file, so the exact path is tried first.
  *
  * Every extension the scanner accepts is probed, so a retained wrapper
  * stored as a CommonJS TypeScript module (`.cts`) or as a CommonJS module
  * (`.cjs`) is found as well, together with the index variants of those
  * extensions.
  */
-function readLocalModule(target: string): LocalModule | null {
-  const cached = localModuleCache.get(target)
+function readLocalModule(target: LocalTarget): LocalModule | null {
+  const key = localTargetKey(target)
+  const cached = localModuleCache.get(key)
   if (cached !== undefined) return cached
   let module: LocalModule | null = null
   for (const candidate of localModuleCandidates(target)) {
@@ -1549,21 +1568,51 @@ function readLocalModule(target: string): LocalModule | null {
       continue
     }
   }
-  localModuleCache.set(target, module)
+  localModuleCache.set(key, module)
   return module
 }
 
 /**
  * The file names a local module path can have. The extension list is the one
  * the scanner accepts, and every extension also has an index variant.
+ *
+ * A specifier that names a file with an explicit extension names that file,
+ * so the exact path is probed first: two wrappers that share a basename are
+ * told apart by the extension the specifier uses. The extensionless
+ * candidates follow, so a specifier that names no existing file is still
+ * resolved the way it was before.
  */
-function localModuleCandidates(target: string): string[] {
-  return [
-    ...localModuleExtensions.map((extension) => `${target}${extension}`),
+function localModuleCandidates(target: LocalTarget): string[] {
+  const candidates = [
+    ...localModuleExtensions.map((extension) => `${target.path}${extension}`),
     ...localModuleExtensions.map(
-      (extension) => `${target}/index${extension}`,
+      (extension) => `${target.path}/index${extension}`,
     ),
   ]
+  if (target.exact === null) return candidates
+  return [
+    target.exact,
+    ...candidates.filter((candidate) => candidate !== target.exact),
+  ]
+}
+
+/**
+ * The key a local module is cached under. The exact file is part of the key,
+ * because the same path with a different exact file can name a different
+ * module.
+ */
+function localTargetKey(target: LocalTarget): string {
+  return target.exact === null ? target.path : `${target.path}\n${target.exact}`
+}
+
+/**
+ * A local target without the trailing slashes a directory spelling carries.
+ */
+function normalizeLocalTarget(target: LocalTarget): LocalTarget {
+  return {
+    path: target.path.replace(/\/+$/, ''),
+    exact: target.exact === null ? null : target.exact.replace(/\/+$/, ''),
+  }
 }
 
 /**
@@ -1736,6 +1785,33 @@ function computeReexportSpecifiers(source: string): ReexportSpecifiers {
       for (const member of statement.members) {
         reaches.push(
           ...classMemberModules(member, importedBindings, statement.name),
+        )
+      }
+      continue
+    }
+    if (ts.isEnumDeclaration(statement)) {
+      // `export enum Legacy { IdLength = structId('legacy', 'x').length }`
+      // reaches the module the imported binding came from as well.
+      if (!hasExportModifier(statement)) continue
+      for (const member of statement.members) {
+        if (member.initializer) {
+          reaches.push(
+            ...exportedExpressionModules(
+              member.initializer,
+              importedBindings,
+              statement.name,
+            ),
+          )
+        }
+        // A computed member name is evaluated when the enum is defined, so
+        // the expression of the name is walked like every other expression of
+        // the enum.
+        reaches.push(
+          ...computedPropertyModules(
+            member.name,
+            importedBindings,
+            statement.name,
+          ),
         )
       }
       continue
@@ -2178,13 +2254,14 @@ function requiredModuleOf(expression: ts.Expression): string | null {
  * authority produced, so an importer outside the retained tree reaches the
  * local authority through the wrapper.
  */
-function migratedFamilyInReexportChain(target: string): string | null {
+function migratedFamilyInReexportChain(target: LocalTarget): string | null {
   const seen = new Set<string>()
-  const pending = [target]
+  const pending: LocalTarget[] = [target]
   while (pending.length > 0) {
     const current = pending.shift()!
-    if (seen.has(current)) continue
-    seen.add(current)
+    const key = localTargetKey(current)
+    if (seen.has(key)) continue
+    seen.add(key)
     const module = readLocalModule(current)
     if (module === null) continue
     // The specifiers of a module are relative to the file that backs it, so
@@ -2200,13 +2277,13 @@ function migratedFamilyInReexportChain(target: string): string | null {
       }
       const resolved = resolveLocalTarget(specifier, moduleUrl)
       if (resolved === null) continue
-      const normalized = resolved.replace(/\/+$/, '')
+      const normalized = normalizeLocalTarget(resolved)
       if (
-        isMigratedFamilyTarget(normalized) ||
-        isStructBarrelTarget(normalized)
+        isMigratedFamilyTarget(normalized.path) ||
+        isStructBarrelTarget(normalized.path)
       )
-        return normalized
-      if (isRetainedTreePath(normalized)) pending.push(normalized)
+        return normalized.path
+      if (isRetainedTreePath(normalized.path)) pending.push(normalized)
     }
     for (const specifier of specifiers.reaches) {
       if (specifier === NONLITERAL_REQUIRE) {
@@ -2217,13 +2294,13 @@ function migratedFamilyInReexportChain(target: string): string | null {
       }
       const resolved = resolveLocalTarget(specifier, moduleUrl)
       if (resolved === null) continue
-      const normalized = resolved.replace(/\/+$/, '')
+      const normalized = normalizeLocalTarget(resolved)
       // Only the authority of a migrated family is followed here: the entry
       // module of the family. A nested module of a family is an
       // implementation detail of that family, and the retained modules that
       // use one - the renderer branch the cutover plan switches to the
       // package in E-04 - are not an E-03 boundary escape.
-      if (isMigratedFamilyAuthority(normalized)) return normalized
+      if (isMigratedFamilyAuthority(normalized.path)) return normalized.path
     }
   }
   return null
@@ -2255,24 +2332,42 @@ function isStructBarrelTarget(target: string): boolean {
  * The extension of the module is removed, so every spelling of the same
  * module resolves to the same path: an explicit `.mdx` suffix names the same
  * retained MDX wrapper as the suffix-free spelling of it.
+ *
+ * The exact file the specifier names is kept as well, so the resolution can
+ * probe that file before the extensionless candidates: a specifier that names
+ * a file with an explicit extension names that file.
  */
-function resolveLocalTarget(specifier: string, file: URL): string | null {
+function resolveLocalTarget(specifier: string, file: URL): LocalTarget | null {
   if (
     specifier === '@erniesg/struct' ||
     specifier.startsWith('@erniesg/struct/')
   ) {
     return null
   }
-  if (specifier.startsWith('.')) {
-    return new URL(specifier, file).pathname.replace(
-      /\.(?:[cm]?[jt]s|astro|mdx)$/u,
-      '',
-    )
-  }
-  const resolved = resolveAliasSpecifier(specifier)
+  const resolved = resolveLocalSpecifier(specifier, file)
   if (resolved === null) return null
-  return resolved.replace(/\.(?:[cm]?[jt]s|astro|mdx)$/u, '')
+  return {
+    path: resolved.replace(moduleExtensionPattern, ''),
+    exact: moduleExtensionPattern.test(resolved) ? resolved : null,
+  }
 }
+
+/**
+ * The path a local module specifier names, with its extension still in place.
+ */
+function resolveLocalSpecifier(specifier: string, file: URL): string | null {
+  if (specifier.startsWith('.')) {
+    return new URL(specifier, file).pathname
+  }
+  return resolveAliasSpecifier(specifier)
+}
+
+/**
+ * The extension a local module can carry. The list is the one the scanner
+ * accepts, so a module the scanner would read is a module the guard can
+ * resolve.
+ */
+const moduleExtensionPattern = /\.(?:[cm]?[jt]s|astro|mdx)$/u
 
 /**
  * The app-owned recovery presentation module has an enumerated importer list.
@@ -2289,7 +2384,7 @@ function recoveryImporterViolationsForSpecifiers(
     if (specifier === NONLITERAL_REQUIRE) continue
     if (specifier === NONLITERAL_GLOB) continue
     const target = resolveLocalTarget(specifier, file)
-    if (target === null || target !== appRecoveryModule) continue
+    if (target === null || target.path !== appRecoveryModule) continue
     if (permittedRecoveryImporters.has(file.pathname)) continue
     violations.push(
       `${file.pathname}: app recovery module import ${specifier} is not a permitted importer`,
@@ -2321,14 +2416,14 @@ function recoveryImporterViolations(source: string, file: URL): string[] {
  * permitted importer does not import the recovery module itself.
  */
 function recoveryAuthorityInReexportChain(
-  target: string,
+  target: LocalTarget,
 ):
   | 'compatibility forwarder'
   | 'app recovery module'
   | typeof UNRESOLVED_REEXPORT
   | null {
   const seen = new Set<string>()
-  const pending: string[] = []
+  const pending: LocalTarget[] = []
   const module = readLocalModule(target)
   if (module === null) return null
   const moduleUrl = new URL(module.path, 'file:///')
@@ -2341,16 +2436,17 @@ function recoveryAuthorityInReexportChain(
     }
     const resolved = resolveLocalTarget(specifier, moduleUrl)
     if (resolved === null) continue
-    pending.push(resolved.replace(/\/+$/, ''))
+    pending.push(normalizeLocalTarget(resolved))
   }
   while (pending.length > 0) {
     const current = pending.shift()!
-    if (seen.has(current)) continue
-    seen.add(current)
-    if (current === compatibilityRecoveryForwarder) {
+    const key = localTargetKey(current)
+    if (seen.has(key)) continue
+    seen.add(key)
+    if (current.path === compatibilityRecoveryForwarder) {
       return 'compatibility forwarder'
     }
-    if (current === appRecoveryModule) return 'app recovery module'
+    if (current.path === appRecoveryModule) return 'app recovery module'
     const currentModule = readLocalModule(current)
     if (currentModule === null) continue
     const currentUrl = new URL(currentModule.path, 'file:///')
@@ -2358,7 +2454,7 @@ function recoveryAuthorityInReexportChain(
       if (specifier === NONLITERAL_REQUIRE) return UNRESOLVED_REEXPORT
       const resolved = resolveLocalTarget(specifier, currentUrl)
       if (resolved === null) continue
-      pending.push(resolved.replace(/\/+$/, ''))
+      pending.push(normalizeLocalTarget(resolved))
     }
   }
   return null
@@ -2389,7 +2485,7 @@ function compatibilityForwarderViolationsForSpecifiers(
     if (specifier === NONLITERAL_GLOB) continue
     const target = resolveLocalTarget(specifier, file)
     if (target === null) continue
-    if (target === compatibilityRecoveryForwarder) {
+    if (target.path === compatibilityRecoveryForwarder) {
       violations.push(
         `${file.pathname}: compatibility recovery forwarder import ${specifier} is not allowed outside the retained struct tree`,
       )
@@ -2400,7 +2496,7 @@ function compatibilityForwarderViolationsForSpecifiers(
     const reached =
       authority === UNRESOLVED_REEXPORT ? authority : `the ${authority}`
     violations.push(
-      `${file.pathname}: recovery authority import ${specifier} -> ${target} reaches ${reached}`,
+      `${file.pathname}: recovery authority import ${specifier} -> ${target.path} reaches ${reached}`,
     )
   }
   return violations
@@ -2428,9 +2524,9 @@ function e03ViolationsForSource(
       const fragments = computedDynamicImports[computedIndex++] ?? []
       const offending = fragments
         .map((fragment) => resolveLocalTarget(fragment, file))
-        .filter((target): target is string => target !== null)
-        .find((target) => {
-          const normalized = target.replace(/\/+$/, '')
+        .filter((target): target is LocalTarget => target !== null)
+        .map((target) => target.path.replace(/\/+$/, ''))
+        .find((normalized) => {
           return (
             migratedFamilyForTarget(normalized) !== null ||
             isStructBarrelTarget(normalized)
@@ -2447,9 +2543,9 @@ function e03ViolationsForSource(
       const computed = computedRequires[computedRequireIndex++]
       const offending = (computed?.fragments ?? [])
         .map((fragment) => resolveLocalTarget(fragment, file))
-        .filter((target): target is string => target !== null)
-        .find((target) => {
-          const normalized = target.replace(/\/+$/, '')
+        .filter((target): target is LocalTarget => target !== null)
+        .map((target) => target.path.replace(/\/+$/, ''))
+        .find((normalized) => {
           return (
             migratedFamilyForTarget(normalized) !== null ||
             isStructBarrelTarget(normalized)
@@ -2476,9 +2572,9 @@ function e03ViolationsForSource(
       const computed = computedGlobs[computedGlobIndex++]
       const offending = (computed?.fragments ?? [])
         .map((fragment) => resolveLocalTarget(fragment, file))
-        .filter((target): target is string => target !== null)
-        .find((target) => {
-          const normalized = target.replace(/\/+$/, '')
+        .filter((target): target is LocalTarget => target !== null)
+        .map((target) => target.path.replace(/\/+$/, ''))
+        .find((normalized) => {
           return (
             migratedFamilyForTarget(normalized) !== null ||
             isStructBarrelTarget(normalized)
@@ -2495,8 +2591,9 @@ function e03ViolationsForSource(
       }
       continue
     }
-    const target = resolveLocalTarget(specifier, file)
-    if (target === null) continue
+    const resolved = resolveLocalTarget(specifier, file)
+    if (resolved === null) continue
+    const target = resolved.path
 
     // Skip permitted recovery paths.
     if (file.pathname === permittedRecoveryImporter) {
@@ -2524,7 +2621,7 @@ function e03ViolationsForSource(
     // retained tree is a violation. The wrapper's own re-export stays
     // exempt, because it resides under `src/struct/**`.
     if (!isRetainedTreePath(file.pathname) && isRetainedTreePath(target)) {
-      const reexported = migratedFamilyInReexportChain(target)
+      const reexported = migratedFamilyInReexportChain(resolved)
       if (reexported !== null) {
         violations.push(
           `${file.pathname}: retained-tree wrapper import ${specifier} -> ${target} re-exports ${reexported}`,
@@ -5292,6 +5389,175 @@ describe('app-owned Struct adapter boundary', () => {
       await rm(importAlias.pathname, { force: true })
       await rm(exportAlias.pathname, { force: true })
       await rm(computed.pathname, { force: true })
+    }
+  })
+
+  it('E-03: traces an exported enum whose member uses an imported binding', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+    const member = new URL('struct/__e03_probe_legacy_enum_member.ts', root)
+    const computed = new URL('struct/__e03_probe_legacy_enum_computed.ts', root)
+    const call = new URL('struct/__e03_probe_legacy_enum_call.ts', root)
+    const local = new URL('struct/__e03_probe_legacy_enum_local.ts', root)
+    await writeFile(
+      member.pathname,
+      "import { structId } from './ids'\nexport enum Legacy {\n  IdLength = structId('legacy', 'x').length,\n}\n",
+      'utf8',
+    )
+    await writeFile(
+      computed.pathname,
+      "import { structId } from './ids'\nconst key = 'legacy'\nexport enum Legacy {\n  [key] = structId('legacy', 'x'),\n}\n",
+      'utf8',
+    )
+    await writeFile(
+      call.pathname,
+      "import * as ids from './ids'\nexport enum Legacy {\n  Seed = ids.structId('legacy', 'x'),\n}\n",
+      'utf8',
+    )
+    await writeFile(
+      local.pathname,
+      "const legacyId = (value: string) => value\nexport enum Legacy {\n  Seed = legacyId('x'),\n}\n",
+      'utf8',
+    )
+    try {
+      // A member of an exported enum that uses an imported binding reaches
+      // the module the binding came from, so an importer outside the retained
+      // tree reaches the local identity authority through the wrapper.
+      expect(
+        e03ViolationsForSource(
+          "import { Legacy } from '../struct/__e03_probe_legacy_enum_member'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // A computed member of an exported enum is walked as well.
+      expect(
+        e03ViolationsForSource(
+          "import { Legacy } from '../struct/__e03_probe_legacy_enum_computed'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // A member that calls an imported function is walked as well.
+      expect(
+        e03ViolationsForSource(
+          "import { Legacy } from '../struct/__e03_probe_legacy_enum_call'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // A binding the enum defines itself reaches no other module, so it
+      // creates no target.
+      expect(
+        e03ViolationsForSource(
+          "import { Legacy } from '../struct/__e03_probe_legacy_enum_local'",
+          research,
+          publicPaths,
+        ),
+      ).toEqual([])
+
+      // The retained tree keeps its own wrapper.
+      expect(
+        e03ViolationsForSource(
+          "export { Legacy } from './__e03_probe_legacy_enum_member'",
+          new URL('struct/probe.ts', root),
+          publicPaths,
+        ),
+      ).toEqual([])
+    } finally {
+      await rm(member.pathname, { force: true })
+      await rm(computed.pathname, { force: true })
+      await rm(call.pathname, { force: true })
+      await rm(local.pathname, { force: true })
+    }
+  })
+
+  it('E-03: probes an explicitly suffixed wrapper before the extensionless candidates', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+    const harmless = new URL('struct/__e03_probe_legacy_basename.ts', root)
+    const reexporting = new URL('struct/__e03_probe_legacy_basename.js', root)
+    const mdx = new URL('struct/__e03_probe_legacy_basename_mdx.mdx', root)
+    await writeFile(harmless.pathname, 'export const marker = 1\n', 'utf8')
+    await writeFile(reexporting.pathname, "export { T } from './types'\n", 'utf8')
+    await writeFile(mdx.pathname, "export { T } from './types'\n", 'utf8')
+    try {
+      // Two retained wrappers share a basename, and the explicit `.js` path
+      // names the JavaScript one, so the traversal follows that wrapper and
+      // the importer outside the retained tree is reported.
+      expect(
+        e03ViolationsForSource(
+          "import { T } from '../struct/__e03_probe_legacy_basename.js'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // The extensionless spelling resolves through the extensionless
+      // candidates, so it keeps its behaviour: the first candidate is the
+      // harmless TypeScript wrapper.
+      expect(
+        e03ViolationsForSource(
+          "import { T } from '../struct/__e03_probe_legacy_basename'",
+          research,
+          publicPaths,
+        ),
+      ).toEqual([])
+
+      // The explicit `.ts` path names the harmless TypeScript wrapper, so it
+      // reports nothing.
+      expect(
+        e03ViolationsForSource(
+          "import { marker } from '../struct/__e03_probe_legacy_basename.ts'",
+          research,
+          publicPaths,
+        ),
+      ).toEqual([])
+
+      // The `.mdx` extension is still stripped consistently: the explicit
+      // `.mdx` spelling names the same MDX wrapper as the suffix-free
+      // spelling of it, and both report the retained wrapper.
+      expect(
+        e03ViolationsForSource(
+          "import { T } from '../struct/__e03_probe_legacy_basename_mdx.mdx'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+      expect(
+        e03ViolationsForSource(
+          "import { T } from '../struct/__e03_probe_legacy_basename_mdx'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // A wrapper that does not exist is still handled as before: the exact
+      // path is probed, no file backs it, and the extensionless candidates
+      // name no file either.
+      expect(
+        e03ViolationsForSource(
+          "import { T } from '../struct/__e03_probe_legacy_absent.js'",
+          research,
+          publicPaths,
+        ),
+      ).toEqual([])
+
+      // The retained tree keeps its own wrapper.
+      expect(
+        e03ViolationsForSource(
+          "export { T } from './__e03_probe_legacy_basename.js'",
+          new URL('struct/probe.ts', root),
+          publicPaths,
+        ),
+      ).toEqual([])
+    } finally {
+      await rm(harmless.pathname, { force: true })
+      await rm(reexporting.pathname, { force: true })
+      await rm(mdx.pathname, { force: true })
     }
   })
 })

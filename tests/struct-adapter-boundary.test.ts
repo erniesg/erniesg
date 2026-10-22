@@ -1,6 +1,11 @@
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { existsSync, readFileSync, readdirSync, type Dirent } from 'node:fs'
 import { dirname, relative, resolve } from 'node:path'
+import { parse as parseAstroSource } from '@astrojs/compiler/sync'
+import type {
+  AttributeNode as AstroAttributeNode,
+  Node as AstroNode,
+} from '@astrojs/compiler/types'
 import * as ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import { buildStructDocument as legacyBuild } from '../src/struct/from-reconstruction'
@@ -670,6 +675,9 @@ function globToRegExp(pattern: string): RegExp {
  * An Astro file also contributes its processed local script sources: Astro
  * bundles a local `src` of a script element as a script entry, so that file
  * is an import the guard has to inspect.
+ *
+ * Astro executes the JavaScript in a template expression too, so an import
+ * inside an expression reaches the module graph as well.
  */
 function scanSource(source: string, file: URL): string {
   if (file.pathname.endsWith('.astro')) {
@@ -680,10 +688,72 @@ function scanSource(source: string, file: URL): string {
     const scriptSources = astroScriptSources(source).map(
       (scriptSource) => `import ${JSON.stringify(scriptSource)}`,
     )
-    return [frontmatter, ...scripts, ...scriptSources].join('\n')
+    const expressions = astroTemplateExpressions(source)
+    return [frontmatter, ...scripts, ...scriptSources, ...expressions].join(
+      '\n',
+    )
   }
   if (file.pathname.endsWith('.mdx')) return mdxEsmStatements(source)
   return source
+}
+
+/**
+ * The JavaScript source of every Astro template expression: the expressions
+ * in element children and the expression-valued attributes of elements and
+ * components.
+ *
+ * The compiler parses the component, so prose, HTML comments, fenced and
+ * indented code samples, `<pre><code>` text, `<style>` CSS and script source
+ * text are not expressions and are not collected. An expression that
+ * contains a nested element is visited as well, but the nested element's
+ * text is not JavaScript, so only its expression attributes are collected.
+ *
+ * The compiler is the authority on what an expression is. When it cannot
+ * parse a real component, the guard fails closed instead of quietly leaving
+ * the expressions unscanned.
+ */
+function astroTemplateExpressions(source: string): string[] {
+  const { ast, diagnostics } = parseAstroSource(source, { position: true })
+  const errors = diagnostics.filter((diagnostic) => diagnostic.severity === 1)
+  if (errors.length > 0) {
+    throw new Error(
+      `Astro component could not be parsed for template expressions: ${errors
+        .map((diagnostic) => diagnostic.text)
+        .join('; ')}`,
+    )
+  }
+  const expressions: string[] = []
+  const collectAttribute = (attribute: AstroAttributeNode): void => {
+    if (
+      attribute.kind === 'expression' ||
+      attribute.kind === 'template-literal'
+    ) {
+      if (attribute.value.length > 0) expressions.push(attribute.value)
+    } else if (attribute.kind === 'spread') {
+      // The spread form keeps the expression in `name`.
+      if (attribute.name.length > 0) expressions.push(attribute.name)
+    }
+  }
+  const visit = (node: AstroNode): void => {
+    if (node.type === 'expression') {
+      // The compiler keeps each JavaScript fragment of the expression in a
+      // text child; a nested element inside the expression is JavaScript
+      // only through its own attributes and expressions.
+      for (const child of node.children) {
+        if (child.type === 'text' && child.value.length > 0) {
+          expressions.push(child.value)
+        }
+      }
+    }
+    if ('attributes' in node) {
+      for (const attribute of node.attributes) collectAttribute(attribute)
+    }
+    if ('children' in node) {
+      for (const child of node.children) visit(child)
+    }
+  }
+  visit(ast)
+  return expressions
 }
 
 /**
@@ -2820,6 +2890,73 @@ describe('app-owned Struct adapter boundary', () => {
     // A script source that names no migrated family is not a violation.
     const safe = '<script src="../components/helper.ts"></script>\n'
     expect(e03ViolationsForSource(safe, astro, publicPaths)).toEqual([])
+
+    // An `is:inline` script is not processed, and a public or external
+    // source is not a local module, so neither is collected.
+    for (const source of [
+      '<script is:inline src="../struct/ids.ts"></script>\n',
+      '<script src="/struct/ids.ts"></script>\n',
+      '<script src="https://example.com/struct/ids.ts"></script>\n',
+    ]) {
+      expect(importedPaths(source, astro)).toEqual([])
+      expect(e03ViolationsForSource(source, astro, publicPaths)).toEqual([])
+    }
+  })
+
+  it('E-03: inspects Astro template expressions', async () => {
+    const publicPaths = await publicPackagePaths()
+    const astro = new URL('components/probe.astro', root)
+
+    // Astro executes a template expression, so an import inside it reaches
+    // the module graph. The frontmatter/script scan does not see it.
+    const template =
+      "<div>{(await import('../struct/ids')).structId('x')}</div>\n"
+    expect(importedPaths(template, astro)).toContain('../struct/ids')
+    expect(e03ViolationsForSource(template, astro, publicPaths)).toHaveLength(
+      1,
+    )
+
+    // An expression-valued attribute and an expression nested inside another
+    // expression are executed as well.
+    const attribute =
+      "<Comp value={(await import('../struct/ids')).structId} />\n"
+    expect(importedPaths(attribute, astro)).toContain('../struct/ids')
+    expect(e03ViolationsForSource(attribute, astro, publicPaths)).toHaveLength(
+      1,
+    )
+
+    const nested =
+      "<div>{ok ? <span>{(await import('../struct/ids')).structId}</span> : null}</div>\n"
+    expect(importedPaths(nested, astro)).toContain('../struct/ids')
+    expect(e03ViolationsForSource(nested, astro, publicPaths)).toHaveLength(1)
+
+    // A template expression that names no migrated module is not a
+    // violation.
+    const safe = "<div>{helper('x')}</div>\n"
+    expect(importedPaths(safe, astro)).toEqual([])
+    expect(e03ViolationsForSource(safe, astro, publicPaths)).toEqual([])
+
+    // Prose, fenced and indented code samples, `<pre><code>` text, an HTML
+    // comment, `<style>` CSS and script source text are not expressions, so
+    // an import that appears only in their text is not collected.
+    const notCode = [
+      '<p>Example: import x from "../struct/ids"</p>',
+      '<p>```ts\nimport x from "../struct/ids"\n```</p>',
+      '<p>\n    import x from "../struct/ids"\n</p>',
+      '<pre><code>import x from "../struct/ids"</code></pre>',
+      '<!-- import x from "../struct/ids" -->',
+      '<style>.x { background: url("../struct/ids") }</style>',
+      '<script>const note = "import x from \\"../struct/ids\\""</script>',
+    ].join('\n')
+    expect(importedPaths(notCode, astro)).toEqual([])
+    expect(e03ViolationsForSource(notCode, astro, publicPaths)).toEqual([])
+
+    // Astro's nested JSX text is rendered text, not JavaScript, so an import
+    // that appears in it is not collected.
+    const jsxText =
+      "<div>{ok ? <span>import x from '../struct/ids'</span> : null}</div>\n"
+    expect(importedPaths(jsxText, astro)).toEqual([])
+    expect(e03ViolationsForSource(jsxText, astro, publicPaths)).toEqual([])
   })
 
   it('E-03: treats a transitive path to the recovery authority as a violation', async () => {

@@ -153,6 +153,22 @@ type ComputedGlob = {
 }
 
 /**
+ * The `base` option of a glob call. Vite resolves a relative glob pattern
+ * from the resolved base, so the guard has to know which directory the
+ * pattern is resolved from.
+ *
+ * A call that names no base resolves its relative patterns from the
+ * directory of the importing module, a call that names a literal base
+ * resolves them from that base, and a call whose base is not a literal fails
+ * closed, because the guard cannot prove which directory the pattern is
+ * resolved from.
+ */
+type GlobBase =
+  | { kind: 'none' }
+  | { kind: 'literal'; base: string }
+  | { kind: 'computed' }
+
+/**
  * The local root of every migrated family. A nested module inside a family
  * (for example `src/struct/codec/parsers`) is part of that family, so the
  * prohibition covers the whole subtree and not only the family entry file.
@@ -254,17 +270,23 @@ function importedPaths(
       // is an import too.
       const argument = node.arguments[0]
       const patterns = globPatternsIn(argument)
-      if (patterns === null) {
+      const base = globBaseOption(node.arguments[1])
+      if (patterns === null || base.kind === 'computed') {
         // A computed glob pattern has no literal target, so the guard cannot
         // prove that it does not load a migrated family. It fails closed in
-        // the same way a computed dynamic import does.
+        // the same way a computed dynamic import does. A computed `base`
+        // option fails closed the same way, because the guard cannot prove
+        // which directory the pattern is resolved from.
         paths.push(NONLITERAL_GLOB)
         computedGlobs?.push({
-          fragments: stringLiteralsIn(argument),
+          fragments: [
+            ...stringLiteralsIn(argument),
+            ...stringLiteralsIn(node.arguments[1]),
+          ],
           staticText: staticTextIn(argument),
         })
       } else {
-        paths.push(...globFamilySpecifiers(patterns, file))
+        paths.push(...globFamilySpecifiers(patterns, file, base))
       }
     } else if (
       ts.isImportEqualsDeclaration(node) &&
@@ -414,6 +436,60 @@ function globPatternsIn(argument: ts.Node | undefined): string[] | null {
 }
 
 /**
+ * The `base` option of a glob call.
+ *
+ * Vite resolves a relative glob pattern from the resolved base, so the
+ * guard reads the option instead of always resolving the pattern from the
+ * directory of the importing module. A literal base names the directory the
+ * pattern is resolved from; a base that is not a literal fails closed, in
+ * the same way a computed pattern does, because the guard cannot prove which
+ * directory the pattern is resolved from.
+ */
+function globBaseOption(options: ts.Node | undefined): GlobBase {
+  if (!options) return { kind: 'none' }
+  // An options argument that is not an object literal cannot be read, so the
+  // guard cannot prove that it names no base.
+  if (!ts.isObjectLiteralExpression(options)) return { kind: 'computed' }
+  for (const property of options.properties) {
+    // A spread carries properties the guard cannot read.
+    if (ts.isSpreadAssignment(property)) return { kind: 'computed' }
+    const name = property.name
+    // A computed property name may name the base, so the guard cannot prove
+    // that it does not.
+    if (ts.isComputedPropertyName(name)) return { kind: 'computed' }
+    const isBase =
+      ts.isIdentifier(name)
+        ? name.text === 'base'
+        : ts.isStringLiteralLike(name) && name.text === 'base'
+    if (!isBase) continue
+    if (!ts.isPropertyAssignment(property)) return { kind: 'computed' }
+    const initializer = property.initializer
+    if (ts.isStringLiteralLike(initializer)) {
+      return { kind: 'literal', base: initializer.text }
+    }
+    return { kind: 'computed' }
+  }
+  return { kind: 'none' }
+}
+
+/**
+ * The directory a relative glob pattern is resolved from when the glob call
+ * names a literal base.
+ *
+ * Vite resolves a base that starts with '/' against the project root, so
+ * '/src' names the `src` directory of the project. A base that names an
+ * absolute directory that the project does not hold is used as it is, and a
+ * relative base is resolved against the directory of the importing module,
+ * the way Vite resolves it.
+ */
+function globBaseDirectory(base: string, importerDirectory: string): string {
+  if (!base.startsWith('/')) return resolve(importerDirectory, base)
+  const fromProjectRoot = resolve(projectRootPath, `.${base}`)
+  if (existsSync(fromProjectRoot)) return fromProjectRoot
+  return base
+}
+
+/**
  * Every file of a migrated family: the family entry file and every module
  * nested in the family directory. A glob can name any of them, so all of
  * them are candidates.
@@ -497,19 +573,33 @@ function filesUnder(directory: string): string[] {
  *
  * The retained barrel is a candidate as well: it re-exports the migrated
  * families, so a pattern that names only the barrel still loads them.
+ *
+ * A glob that names a literal `base` resolves its relative patterns from
+ * that base, the way Vite resolves them, so the pattern is matched from the
+ * base directory instead of the directory of the importing module.
  */
-function globFamilySpecifiers(patterns: string[], file: URL): string[] {
+function globFamilySpecifiers(
+  patterns: string[],
+  file: URL,
+  base: GlobBase,
+): string[] {
   const included = patterns.filter((pattern) => !pattern.startsWith('!'))
   const excluded = patterns
     .filter((pattern) => pattern.startsWith('!'))
     .map((pattern) => pattern.slice(1))
   if (included.length === 0) return []
   const importerDirectory = dirname(file.pathname)
+  // A relative pattern is resolved from the base the glob call names, and
+  // from the directory of the importing module when it names none.
+  const resolutionDirectory =
+    base.kind === 'literal'
+      ? globBaseDirectory(base.base, importerDirectory)
+      : importerDirectory
   const includedPatterns = included.map((pattern) =>
-    normalizeGlobPattern(pattern, importerDirectory),
+    normalizeGlobPattern(pattern, resolutionDirectory),
   )
   const excludedPatterns = excluded.map((pattern) =>
-    normalizeGlobPattern(pattern, importerDirectory),
+    normalizeGlobPattern(pattern, resolutionDirectory),
   )
   const specifiers: string[] = []
   for (const familyFile of [
@@ -537,17 +627,18 @@ function globFamilySpecifiers(patterns: string[], file: URL): string[] {
  * Vite resolves a glob pattern the way it resolves an import specifier: a
  * pattern that starts with `/` is relative to the project root, an alias
  * pattern is resolved through the alias, and every other pattern is relative
- * to the directory of the importing module. The guard normalises the pattern
- * before it matches, so a project-root or alias pattern reaches the family it
- * names instead of matching nothing.
+ * to the directory the pattern is resolved from - the base the glob call
+ * names, or the directory of the importing module when it names none. The
+ * guard normalises the pattern before it matches, so a project-root or alias
+ * pattern reaches the family it names instead of matching nothing.
  */
 function normalizeGlobPattern(
   pattern: string,
-  importerDirectory: string,
+  resolutionDirectory: string,
 ): string {
   const aliased = aliasGlobTarget(pattern)
   if (aliased !== null) return aliased
-  return relative(projectRootPath, resolve(importerDirectory, pattern))
+  return relative(projectRootPath, resolve(resolutionDirectory, pattern))
 }
 
 /**
@@ -1489,7 +1580,7 @@ const localModuleCache = new Map<string, LocalModule | null>()
  * alone, so the parse is a pure function of that source and the result can
  * be reused.
  */
-const reexportSpecifierCache = new Map<string, string[]>()
+const reexportSpecifierCache = new Map<string, ReexportSpecifiers>()
 
 /**
  * The module specifiers a module re-exports. A retained-tree wrapper that
@@ -1503,26 +1594,52 @@ const reexportSpecifierCache = new Map<string, string[]>()
  * aliases an imported binding counts as well, whether it aliases the binding
  * in a named export, in an exported variable or in a default export.
  *
+ * An exported expression that uses an imported binding counts as well: an
+ * exported arrow function, an exported function declaration, an exported
+ * call, an exported object literal or an exported default expression that
+ * references a binding the module imported reaches the module that binding
+ * came from, so the guard follows it as well.
+ *
  * The ordinary CommonJS form counts as a re-export too: a wrapper that
  * assigns a required module to `module.exports` re-exports that module, so
  * the guard follows it as well.
+ *
+ * The two lists are kept apart, because they answer different questions. A
+ * re-export names a module the module hands out itself, and the recovery
+ * chain follows it. A reach names a module an exported expression uses, and
+ * the migrated-family chain follows it only when it is the authority of a
+ * migrated family.
  */
-function reexportSpecifiers(source: string): string[] {
+function reexportSpecifiers(source: string): ReexportSpecifiers {
   const cached = reexportSpecifierCache.get(source)
-  if (cached !== undefined) return [...cached]
+  if (cached !== undefined) {
+    return { reexports: [...cached.reexports], reaches: [...cached.reaches] }
+  }
   const specifiers = computeReexportSpecifiers(source)
   reexportSpecifierCache.set(source, specifiers)
-  return [...specifiers]
+  return { reexports: [...specifiers.reexports], reaches: [...specifiers.reaches] }
 }
 
-function computeReexportSpecifiers(source: string): string[] {
+/**
+ * The modules a module names itself and the modules its exported expressions
+ * use.
+ */
+type ReexportSpecifiers = {
+  /** The modules the module re-exports. */
+  reexports: string[]
+  /** The modules the exported expressions of the module reach. */
+  reaches: string[]
+}
+
+function computeReexportSpecifiers(source: string): ReexportSpecifiers {
   const file = ts.createSourceFile(
     'module.ts',
     source,
     ts.ScriptTarget.Latest,
     true,
   )
-  const specifiers: string[] = []
+  const reexports: string[] = []
+  const reaches: string[] = []
   const importedBindings = importedBindingModules(file)
   for (const statement of file.statements) {
     if (ts.isImportDeclaration(statement)) {
@@ -1531,7 +1648,7 @@ function computeReexportSpecifiers(source: string): string[] {
     if (ts.isExpressionStatement(statement)) {
       // A CommonJS re-export: `module.exports = require('./types')`.
       const required = commonJsReexportSpecifier(statement.expression)
-      if (required !== null) specifiers.push(required)
+      if (required !== null) reexports.push(required)
       continue
     }
     if (ts.isVariableStatement(statement)) {
@@ -1540,10 +1657,52 @@ function computeReexportSpecifiers(source: string): string[] {
       if (!hasExportModifier(statement)) continue
       for (const declaration of statement.declarationList.declarations) {
         const initializer = declaration.initializer
-        if (!initializer || !ts.isIdentifier(initializer)) continue
-        const imported = importedBindings.get(initializer.text)
-        if (imported === undefined) continue
-        specifiers.push(imported)
+        if (!initializer) continue
+        if (ts.isIdentifier(initializer)) {
+          const imported = importedBindings.get(initializer.text)
+          if (imported !== undefined) reexports.push(imported)
+          continue
+        }
+        // An exported expression that uses an imported binding reaches the
+        // module the binding came from:
+        // `export const legacyId = (value) => structId('legacy', value)`.
+        reaches.push(
+          ...exportedExpressionModules(
+            initializer,
+            importedBindings,
+            declaration.name,
+          ),
+        )
+      }
+      continue
+    }
+    if (ts.isFunctionDeclaration(statement)) {
+      // `export function legacyId(value) { return structId('legacy', value) }`
+      // reaches the module the imported binding came from as well.
+      if (!hasExportModifier(statement)) continue
+      const body = statement.body
+      if (!body) continue
+      reaches.push(
+        ...exportedExpressionModules(body, importedBindings, statement.name),
+      )
+      continue
+    }
+    if (ts.isClassDeclaration(statement)) {
+      // `export class Legacy extends Base` reaches the module the imported
+      // binding came from as well.
+      if (!hasExportModifier(statement)) continue
+      for (const clause of statement.heritageClauses ?? []) {
+        for (const heritage of clause.types) {
+          const expression = heritage.expression
+          if (!expression) continue
+          reaches.push(
+            ...exportedExpressionModules(
+              expression,
+              importedBindings,
+              statement.name,
+            ),
+          )
+        }
       }
       continue
     }
@@ -1553,18 +1712,26 @@ function computeReexportSpecifiers(source: string): string[] {
         // `export default structId` re-exports the module the imported binding
         // came from.
         const imported = importedBindings.get(expression.text)
-        if (imported !== undefined) specifiers.push(imported)
+        if (imported !== undefined) reexports.push(imported)
         continue
       }
       // `export = require('./types')` re-exports the required module.
       const required = requiredModuleSpecifier(expression)
-      if (required !== null) specifiers.push(required)
+      if (required !== null) {
+        reexports.push(required)
+        continue
+      }
+      // `export default structId('legacy')` reaches the module the imported
+      // binding came from.
+      reaches.push(
+        ...exportedExpressionModules(expression, importedBindings),
+      )
       continue
     }
     if (!ts.isExportDeclaration(statement)) continue
     if (statement.moduleSpecifier) {
       if (ts.isStringLiteral(statement.moduleSpecifier)) {
-        specifiers.push(statement.moduleSpecifier.text)
+        reexports.push(statement.moduleSpecifier.text)
       }
       continue
     }
@@ -1576,10 +1743,96 @@ function computeReexportSpecifiers(source: string): string[] {
       const local = element.propertyName?.text ?? element.name.text
       const imported = importedBindings.get(local)
       if (imported === undefined) continue
-      specifiers.push(imported)
+      reexports.push(imported)
     }
   }
-  return specifiers
+  return { reexports, reaches }
+}
+
+/**
+ * The modules an exported expression reaches through the bindings it
+ * references.
+ *
+ * An exported expression that references a binding the module imported
+ * reaches the module that binding came from, so that module is a re-export
+ * target. A binding the module defines itself is not such a target: it
+ * reaches no other module.
+ */
+function exportedExpressionModules(
+  expression: ts.Expression,
+  importedBindings: Map<string, string>,
+  declared?: ts.BindingName,
+): string[] {
+  const modules: string[] = []
+  for (const name of referencedBindingNames(expression, declared)) {
+    const imported = importedBindings.get(name)
+    if (imported === undefined) continue
+    modules.push(imported)
+  }
+  return modules
+}
+
+/**
+ * The names an expression references. A property name names no binding, a
+ * member name names no binding, and a type reference is erased at runtime,
+ * so none of them is collected.
+ */
+function referencedBindingNames(
+  expression: ts.Expression,
+  declared?: ts.BindingName,
+): Set<string> {
+  const names = new Set<string>()
+  const declaredNames = new Set<string>()
+  if (declared && ts.isIdentifier(declared)) declaredNames.add(declared.text)
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node)) {
+      if (!declaredNames.has(node.text)) names.add(node.text)
+      return
+    }
+    if (ts.isTypeNode(node)) return
+    if (ts.isPropertyAccessExpression(node)) {
+      // `holder.structId` names a property, not a binding.
+      visit(node.expression)
+      return
+    }
+    if (ts.isPropertyAssignment(node)) {
+      // `{ structId: 1 }` names a property key, not a binding.
+      visit(node.initializer)
+      return
+    }
+    const member = declaredMemberName(node)
+    if (member !== null) {
+      // The name a member declares names no binding, so it is not collected.
+      node.forEachChild((child) => {
+        if (child !== member) visit(child)
+      })
+      return
+    }
+    node.forEachChild(visit)
+  }
+  visit(expression)
+  return names
+}
+
+/**
+ * The name a declaration declares, or null when the node declares no name.
+ * The name of a member is not a reference to a binding, so it is never
+ * collected as one.
+ */
+function declaredMemberName(node: ts.Node): ts.Node | null {
+  if (
+    ts.isMethodDeclaration(node) ||
+    ts.isPropertyDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node) ||
+    ts.isMethodSignature(node) ||
+    ts.isPropertySignature(node) ||
+    ts.isEnumMember(node) ||
+    ts.isBindingElement(node)
+  ) {
+    return node.name
+  }
+  return null
 }
 
 /**
@@ -1649,10 +1902,11 @@ function isCommonJsExportTarget(expression: ts.Expression): boolean {
 }
 
 /**
- * Whether a variable statement is exported. `export const id = ...` is an
- * export declaration that aliases a binding.
+ * Whether a declaration is exported. `export const id = ...` and
+ * `export function legacyId() { ... }` are export declarations that alias or
+ * use a binding.
  */
-function hasExportModifier(statement: ts.VariableStatement): boolean {
+function hasExportModifier(statement: ts.HasModifiers): boolean {
   return (
     statement.modifiers?.some(
       (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
@@ -1681,6 +1935,11 @@ function requiredModuleSpecifier(expression: ts.Expression): string | null {
  * The migrated family a retained-tree wrapper reaches by re-export, or null
  * when it reaches none. The chain is followed transitively, so a wrapper
  * that re-exports another wrapper is traced as well.
+ *
+ * An exported expression that uses a binding of a migrated family's authority
+ * reaches that family as well: the wrapper hands out a value the local
+ * authority produced, so an importer outside the retained tree reaches the
+ * local authority through the wrapper.
  */
 function migratedFamilyInReexportChain(target: string): string | null {
   const seen = new Set<string>()
@@ -1694,7 +1953,8 @@ function migratedFamilyInReexportChain(target: string): string | null {
     // The specifiers of a module are relative to the file that backs it, so
     // an index module resolves them against its own directory.
     const moduleUrl = new URL(module.path, 'file:///')
-    for (const specifier of reexportSpecifiers(module.source)) {
+    const specifiers = reexportSpecifiers(module.source)
+    for (const specifier of specifiers.reexports) {
       if (specifier === NONLITERAL_REQUIRE) {
         // A computed re-export names no literal target, so the guard cannot
         // prove that it does not reach a migrated family. It fails closed in
@@ -1711,8 +1971,30 @@ function migratedFamilyInReexportChain(target: string): string | null {
         return normalized
       if (isRetainedTreePath(normalized)) pending.push(normalized)
     }
+    for (const specifier of specifiers.reaches) {
+      const resolved = resolveLocalTarget(specifier, moduleUrl)
+      if (resolved === null) continue
+      const normalized = resolved.replace(/\/+$/, '')
+      // Only the authority of a migrated family is followed here: the entry
+      // module of the family. A nested module of a family is an
+      // implementation detail of that family, and the retained modules that
+      // use one - the renderer branch the cutover plan switches to the
+      // package in E-04 - are not an E-03 boundary escape.
+      if (isMigratedFamilyAuthority(normalized)) return normalized
+    }
   }
   return null
+}
+
+/**
+ * Whether a resolved path is the authority of a migrated family: the entry
+ * module of the family, the module the family's own name names.
+ */
+function isMigratedFamilyAuthority(target: string): boolean {
+  for (const familyRoot of migratedFamilyRoots.values()) {
+    if (target === familyRoot) return true
+  }
+  return false
 }
 
 function isStructBarrelTarget(target: string): boolean {
@@ -1789,6 +2071,11 @@ function recoveryImporterViolations(source: string, file: URL): string[] {
  * wrapper that re-exports the app-owned recovery module directly, are both
  * found. Only a path that leaves the imported module itself counts, so a
  * direct import of the app-owned recovery module keeps its own allowlist.
+ *
+ * Only the re-exports of a module are followed here, and not the modules
+ * its exported expressions use: the allowlist of the app-owned recovery
+ * module names the modules that import it, and a module that uses a
+ * permitted importer does not import the recovery module itself.
  */
 function recoveryAuthorityInReexportChain(
   target: string,
@@ -1802,7 +2089,7 @@ function recoveryAuthorityInReexportChain(
   const module = readLocalModule(target)
   if (module === null) return null
   const moduleUrl = new URL(module.path, 'file:///')
-  for (const specifier of reexportSpecifiers(module.source)) {
+  for (const specifier of reexportSpecifiers(module.source).reexports) {
     if (specifier === NONLITERAL_REQUIRE) {
       // A computed re-export names no literal target, so the guard cannot
       // prove that it does not reach the recovery authority. It fails closed
@@ -1824,7 +2111,7 @@ function recoveryAuthorityInReexportChain(
     const currentModule = readLocalModule(current)
     if (currentModule === null) continue
     const currentUrl = new URL(currentModule.path, 'file:///')
-    for (const specifier of reexportSpecifiers(currentModule.source)) {
+    for (const specifier of reexportSpecifiers(currentModule.source).reexports) {
       if (specifier === NONLITERAL_REQUIRE) return UNRESOLVED_REEXPORT
       const resolved = resolveLocalTarget(specifier, currentUrl)
       if (resolved === null) continue
@@ -3780,5 +4067,235 @@ describe('app-owned Struct adapter boundary', () => {
     ].join('\n')
     expect(importedPaths(inline, astro)).toContain('../struct/ids')
     expect(e03ViolationsForSource(inline, astro, publicPaths)).toHaveLength(1)
+  })
+
+  it('E-03: traces an exported expression that uses an imported binding', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+    const arrow = new URL('struct/__e03_probe_legacy_arrow.ts', root)
+    const declared = new URL('struct/__e03_probe_legacy_function.ts', root)
+    const called = new URL('struct/__e03_probe_legacy_call.ts', root)
+    const held = new URL('struct/__e03_probe_legacy_object.ts', root)
+    const defaulted = new URL(
+      'struct/__e03_probe_legacy_default_expression.ts',
+      root,
+    )
+    const local = new URL('struct/__e03_probe_legacy_local.ts', root)
+    await writeFile(
+      arrow.pathname,
+      "import { structId } from './ids'\nexport const legacyId = (value) => structId('legacy', value)\n",
+      'utf8',
+    )
+    await writeFile(
+      declared.pathname,
+      "import { structId } from './ids'\nexport function legacyId(value) { return structId('legacy', value) }\n",
+      'utf8',
+    )
+    await writeFile(
+      called.pathname,
+      "import { structId } from './ids'\nexport const legacyId = structId('legacy', 'seed')\n",
+      'utf8',
+    )
+    await writeFile(
+      held.pathname,
+      "import { structId } from './ids'\nexport const legacy = { id: structId }\n",
+      'utf8',
+    )
+    await writeFile(
+      defaulted.pathname,
+      "import { structId } from './ids'\nexport default structId('legacy', 'seed')\n",
+      'utf8',
+    )
+    await writeFile(
+      local.pathname,
+      'const localId = (value) => value\nexport const legacyId = localId\n',
+      'utf8',
+    )
+    try {
+      // An exported arrow function that uses an imported binding reaches the
+      // module the binding came from, so an importer outside the retained
+      // tree reaches the local identity authority through the wrapper.
+      expect(
+        e03ViolationsForSource(
+          "import { legacyId } from '../struct/__e03_probe_legacy_arrow'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // An exported function declaration that uses an imported binding does
+      // as well.
+      expect(
+        e03ViolationsForSource(
+          "import { legacyId } from '../struct/__e03_probe_legacy_function'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // An exported call that uses an imported binding does as well.
+      expect(
+        e03ViolationsForSource(
+          "import { legacyId } from '../struct/__e03_probe_legacy_call'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // An exported object literal that holds an imported binding does as
+      // well.
+      expect(
+        e03ViolationsForSource(
+          "import { legacy } from '../struct/__e03_probe_legacy_object'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // An exported default expression that uses an imported binding does as
+      // well.
+      expect(
+        e03ViolationsForSource(
+          "import legacyId from '../struct/__e03_probe_legacy_default_expression'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // A binding the module defines itself reaches no other module, so it
+      // is not a re-export target.
+      expect(
+        e03ViolationsForSource(
+          "import { legacyId } from '../struct/__e03_probe_legacy_local'",
+          research,
+          publicPaths,
+        ),
+      ).toEqual([])
+
+      // The retained tree keeps its own wrapper.
+      expect(
+        e03ViolationsForSource(
+          "export { legacyId } from './__e03_probe_legacy_arrow'",
+          new URL('struct/probe.ts', root),
+          publicPaths,
+        ),
+      ).toEqual([])
+    } finally {
+      await rm(arrow.pathname, { force: true })
+      await rm(declared.pathname, { force: true })
+      await rm(called.pathname, { force: true })
+      await rm(held.pathname, { force: true })
+      await rm(defaulted.pathname, { force: true })
+      await rm(local.pathname, { force: true })
+    }
+  })
+
+  it('E-03: resolves a Vite glob pattern against a literal base option', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+
+    // Vite resolves a relative glob pattern from the resolved base, so the
+    // pattern reaches the migrated family the base names.
+    const based =
+      "const codecs = import.meta.glob('./struct/codec.ts', { eager: true, base: '/src' })"
+    expect(importedPaths(based, research)).toContain('../struct/codec.ts')
+    const basedViolations = e03ViolationsForSource(
+      based,
+      research,
+      publicPaths,
+    )
+    expect(basedViolations).not.toEqual([])
+    expect(basedViolations.join('\n')).toContain('migrated family import')
+    // The family file is reported twice: once as the migrated family the glob
+    // reaches, and once by the wrapper rule, which reports the same target
+    // for every import of a retained-tree module.
+    expect(basedViolations).toHaveLength(2)
+
+    // A glob that reaches the identity family is reported once, because the
+    // identity module re-exports no other family.
+    const identity =
+      "const ids = import.meta.glob('./struct/ids.ts', { eager: true, base: '/src' })"
+    expect(importedPaths(identity, research)).toContain('../struct/ids.ts')
+    expect(
+      e03ViolationsForSource(identity, research, publicPaths),
+    ).toHaveLength(1)
+
+    // The same pattern without a base is still resolved against the
+    // directory of the importing module, so it names no migrated family.
+    const withoutBase =
+      "const codecs = import.meta.glob('./struct/codec.ts', { eager: true })"
+    expect(importedPaths(withoutBase, research)).toEqual([])
+    expect(
+      e03ViolationsForSource(withoutBase, research, publicPaths),
+    ).toEqual([])
+
+    // A project-root pattern is still normalised against the project root,
+    // whatever base the call names.
+    const rootAbsolute =
+      "const codecs = import.meta.glob('/src/struct/codec.ts', { eager: true, base: '/src' })"
+    expect(importedPaths(rootAbsolute, research)).toContain(
+      '../struct/codec.ts',
+    )
+    expect(
+      e03ViolationsForSource(rootAbsolute, research, publicPaths),
+    ).not.toEqual([])
+
+    // An alias pattern is still normalised through the alias, whatever base
+    // the call names.
+    const aliased =
+      "const codecs = import.meta.glob('@/struct/codec.ts', { eager: true, base: '/src' })"
+    expect(importedPaths(aliased, research)).toContain('../struct/codec.ts')
+    expect(
+      e03ViolationsForSource(aliased, research, publicPaths),
+    ).not.toEqual([])
+
+    // A base that names an absolute directory is used as it is, so the
+    // pattern reaches the family it names.
+    const absoluteBase = `const ids = import.meta.glob('./struct/ids.ts', { eager: true, base: '${new URL('src/', projectRoot).pathname}' })`
+    expect(importedPaths(absoluteBase, research)).toContain(
+      '../struct/ids.ts',
+    )
+    expect(
+      e03ViolationsForSource(absoluteBase, research, publicPaths),
+    ).toHaveLength(1)
+
+    // A relative base is resolved against the directory of the importing
+    // module, so the pattern reaches the family it names.
+    const relativeBase =
+      "const ids = import.meta.glob('./struct/ids.ts', { eager: true, base: '..' })"
+    expect(importedPaths(relativeBase, research)).toContain(
+      '../struct/ids.ts',
+    )
+    expect(
+      e03ViolationsForSource(relativeBase, research, publicPaths),
+    ).toHaveLength(1)
+
+    // A base that names no migrated family is not a violation.
+    const safeBase =
+      "const pages = import.meta.glob('./pages/*.ts', { eager: true, base: '/src' })"
+    expect(importedPaths(safeBase, research)).toEqual([])
+    expect(e03ViolationsForSource(safeBase, research, publicPaths)).toEqual([])
+
+    // A computed glob pattern still fails closed.
+    const computed = 'const all = import.meta.glob(pattern, { eager: true })'
+    const computedViolations = e03ViolationsForSource(
+      computed,
+      research,
+      publicPaths,
+    )
+    expect(computedViolations).not.toEqual([])
+    expect(computedViolations.join('\n')).toContain('computed glob')
+
+    // A base that is not a literal fails closed as well, because the guard
+    // cannot prove which directory the pattern is resolved from.
+    const computedBase =
+      'const all = import.meta.glob(\'./struct/codec.ts\', { eager: true, base: someBase })'
+    const computedBaseViolations = e03ViolationsForSource(
+      computedBase,
+      research,
+      publicPaths,
+    )
+    expect(computedBaseViolations).not.toEqual([])
+    expect(computedBaseViolations.join('\n')).toContain('computed glob')
   })
 })

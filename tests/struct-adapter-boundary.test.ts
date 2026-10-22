@@ -1663,6 +1663,14 @@ function computeReexportSpecifiers(source: string): ReexportSpecifiers {
     if (ts.isImportDeclaration(statement)) {
       continue
     }
+    if (ts.isImportEqualsDeclaration(statement)) {
+      // `export import Types = require('./types')` re-exports the required
+      // module.
+      if (!hasExportModifier(statement)) continue
+      const required = importAliasModule(statement.moduleReference)
+      if (required !== null) reexports.push(required)
+      continue
+    }
     if (ts.isExpressionStatement(statement)) {
       // A CommonJS re-export: `module.exports = require('./types')`.
       const required = commonJsReexportSpecifier(statement.expression)
@@ -1742,7 +1750,7 @@ function computeReexportSpecifiers(source: string): ReexportSpecifiers {
         continue
       }
       // `export = require('./types')` re-exports the required module.
-      const required = requiredModuleSpecifier(expression)
+      const required = requiredModuleOf(expression)
       if (required !== null) {
         reexports.push(required)
         continue
@@ -1866,6 +1874,13 @@ function declaredMemberName(node: ts.Node): ts.Node | null {
  * local name of the binding. A default import, a named import and a
  * namespace import all bind a local name.
  *
+ * A require binds a local name as well, so the require-bound aliases are
+ * collected here too: `const Types = require('./types')`,
+ * `const { structId } = require('./ids')` and the TypeScript import alias
+ * `import Types = require('./types')` all bind a local name to a required
+ * module. A computed require names no literal module, so it fails closed in
+ * the same way a computed dynamic import does.
+ *
  * The bindings are collected before the re-exports are read, so an export
  * that aliases an imported binding is recognised whatever order the module
  * declares them in.
@@ -1875,25 +1890,79 @@ function importedBindingModules(
 ): Map<string, string> {
   const importedBindings = new Map<string, string>()
   for (const statement of file.statements) {
-    if (!ts.isImportDeclaration(statement)) continue
-    const moduleSpecifier = statement.moduleSpecifier
-    if (!moduleSpecifier || !ts.isStringLiteral(moduleSpecifier)) continue
-    const clause = statement.importClause
-    if (!clause) continue
-    if (clause.name) {
-      importedBindings.set(clause.name.text, moduleSpecifier.text)
-    }
-    const namedBindings = clause.namedBindings
-    if (!namedBindings) continue
-    if (ts.isNamedImports(namedBindings)) {
-      for (const element of namedBindings.elements) {
-        importedBindings.set(element.name.text, moduleSpecifier.text)
+    if (ts.isImportDeclaration(statement)) {
+      const moduleSpecifier = statement.moduleSpecifier
+      if (!moduleSpecifier || !ts.isStringLiteral(moduleSpecifier)) continue
+      const clause = statement.importClause
+      if (!clause) continue
+      if (clause.name) {
+        importedBindings.set(clause.name.text, moduleSpecifier.text)
       }
-    } else {
-      importedBindings.set(namedBindings.name.text, moduleSpecifier.text)
+      const namedBindings = clause.namedBindings
+      if (!namedBindings) continue
+      if (ts.isNamedImports(namedBindings)) {
+        for (const element of namedBindings.elements) {
+          importedBindings.set(element.name.text, moduleSpecifier.text)
+        }
+      } else {
+        importedBindings.set(namedBindings.name.text, moduleSpecifier.text)
+      }
+      continue
+    }
+    // A TypeScript import alias binds a local name to a required module:
+    // `import Types = require('./types')`.
+    if (ts.isImportEqualsDeclaration(statement)) {
+      const required = importAliasModule(statement.moduleReference)
+      if (required === null) continue
+      importedBindings.set(statement.name.text, required)
+      continue
+    }
+    if (!ts.isVariableStatement(statement)) continue
+    // A require-bound variable binds a local name to a required module as
+    // well: `const Types = require('./types')`.
+    for (const declaration of statement.declarationList.declarations) {
+      const initializer = declaration.initializer
+      if (!initializer) continue
+      const required = requiredModuleOf(initializer)
+      if (required === null) continue
+      for (const name of boundNames(declaration.name)) {
+        importedBindings.set(name, required)
+      }
     }
   }
   return importedBindings
+}
+
+/**
+ * The names a binding name binds. A destructuring pattern binds every name
+ * it names, so `const { structId } = require('./ids')` binds `structId`.
+ */
+function boundNames(name: ts.BindingName): string[] {
+  if (ts.isIdentifier(name)) return [name.text]
+  const names: string[] = []
+  for (const element of name.elements) {
+    if (ts.isOmittedExpression(element)) continue
+    names.push(...boundNames(element.name))
+  }
+  return names
+}
+
+/**
+ * The module a TypeScript import alias names, the sentinel a computed alias
+ * records, or null when the alias names no module.
+ *
+ * The alias names its module in the module reference itself:
+ * `import Types = require('./types')` names `./types`. A computed alias names
+ * no literal module, so the guard cannot prove that it does not load a
+ * migrated family; it fails closed in the same way a computed require does.
+ */
+function importAliasModule(
+  moduleReference: ts.ModuleReference,
+): string | null {
+  if (!ts.isExternalModuleReference(moduleReference)) return null
+  const expression = moduleReference.expression
+  if (ts.isStringLiteralLike(expression)) return expression.text
+  return NONLITERAL_REQUIRE
 }
 
 /**
@@ -1966,6 +2035,10 @@ function computedPropertyModules(
  * CommonJS re-export. The ordinary form `module.exports = require('./types')`
  * re-exports the required module, and so does `exports.types = require(...)`.
  *
+ * A property of an export target is an export target, so the named-export
+ * form `module.exports.api = require('./types')` re-exports the required
+ * module as well.
+ *
  * A re-export can read a member of the required module, so a property access
  * and an element access that is rooted at the required module name it too.
  */
@@ -1973,14 +2046,7 @@ function commonJsReexportSpecifier(expression: ts.Expression): string | null {
   if (!ts.isBinaryExpression(expression)) return null
   if (expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return null
   if (!isCommonJsExportTarget(expression.left)) return null
-  const required = commonJsRequireCall(expression.right)
-  if (required === null) return null
-  const argument = required.arguments[0]
-  if (argument && ts.isStringLiteralLike(argument)) return argument.text
-  // A computed require has no literal specifier, so the guard cannot prove
-  // that it does not load a migrated family. It fails closed in the same way
-  // a computed dynamic import does.
-  return NONLITERAL_REQUIRE
+  return requiredModuleOf(expression.right)
 }
 
 /**
@@ -2008,14 +2074,64 @@ function commonJsRequireCall(
 /**
  * Whether an assignment target names a CommonJS export. `module.exports` and
  * every property of `exports` name one.
+ *
+ * A property of an export target names an export target as well, so the
+ * ordinary named-export form `module.exports.api = require('./types')` names
+ * one: its owner is the `module.exports` property access, not the `module`
+ * identifier. The element access and the nested property access are the same
+ * spelling of the same rule: `module.exports['api']` and
+ * `module.exports.api.types`.
  */
 function isCommonJsExportTarget(expression: ts.Expression): boolean {
   if (ts.isIdentifier(expression)) return expression.text === 'exports'
-  if (!ts.isPropertyAccessExpression(expression)) return false
-  const owner = expression.expression
-  if (!ts.isIdentifier(owner)) return false
-  if (owner.text === 'exports') return true
-  return owner.text === 'module' && expression.name.text === 'exports'
+  if (ts.isPropertyAccessExpression(expression)) {
+    // `module.exports` is the export target of the module.
+    if (isModuleExportsRoot(expression.expression, expression.name.text)) {
+      return true
+    }
+    // A property of an export target is an export target.
+    return isCommonJsExportTarget(expression.expression)
+  }
+  if (ts.isElementAccessExpression(expression)) {
+    // `module['exports']` is the export target of the module.
+    if (isModuleExportsRoot(expression.expression, elementAccessName(expression))) {
+      return true
+    }
+    // An element of an export target is an export target.
+    return isCommonJsExportTarget(expression.expression)
+  }
+  return false
+}
+
+/**
+ * Whether an expression is the `module.exports` of a CommonJS module. The
+ * property form is `module.exports` and the element form is
+ * `module['exports']`; any other name of a property of `module` is not the
+ * export target of the module.
+ *
+ * An element access whose argument is not a literal names no property the
+ * guard can prove, so it fails closed: the guard cannot prove that it is not
+ * the export target of the module.
+ */
+function isModuleExportsRoot(
+  owner: ts.Expression,
+  name: string | null,
+): boolean {
+  if (!ts.isIdentifier(owner) || owner.text !== 'module') return false
+  if (name === null) return true
+  return name === 'exports'
+}
+
+/**
+ * The name an element access names, or null when the argument is not a
+ * literal and names no property the guard can prove.
+ */
+function elementAccessName(
+  expression: ts.ElementAccessExpression,
+): string | null {
+  const argument = expression.argumentExpression
+  if (!ts.isStringLiteralLike(argument)) return null
+  return argument.text
 }
 
 /**
@@ -2035,15 +2151,19 @@ function hasExportModifier(statement: ts.HasModifiers): boolean {
  * The module a `require(...)` call names, the sentinel a computed require
  * records, or null when the expression is not a require at all.
  *
+ * A re-export and a binding can read a member of the required module, so a
+ * property access and an element access that is rooted at the require call
+ * name the required module as well: `require('./ids').structId` and
+ * `require('./ids')['structId']` name `./ids`.
+ *
  * A computed require has no literal specifier, so the guard cannot prove
  * that it does not load a migrated family. It fails closed in the same way a
  * computed dynamic import does.
  */
-function requiredModuleSpecifier(expression: ts.Expression): string | null {
-  if (!ts.isCallExpression(expression)) return null
-  if (!ts.isIdentifier(expression.expression)) return null
-  if (expression.expression.text !== 'require') return null
-  const argument = expression.arguments[0]
+function requiredModuleOf(expression: ts.Expression): string | null {
+  const call = commonJsRequireCall(expression)
+  if (call === null) return null
+  const argument = call.arguments[0]
   if (argument && ts.isStringLiteralLike(argument)) return argument.text
   return NONLITERAL_REQUIRE
 }
@@ -2089,6 +2209,12 @@ function migratedFamilyInReexportChain(target: string): string | null {
       if (isRetainedTreePath(normalized)) pending.push(normalized)
     }
     for (const specifier of specifiers.reaches) {
+      if (specifier === NONLITERAL_REQUIRE) {
+        // A computed require reaches no literal target, so the guard cannot
+        // prove that it does not reach the authority of a migrated family. It
+        // fails closed in the same way a computed re-export does.
+        return UNRESOLVED_REEXPORT
+      }
       const resolved = resolveLocalTarget(specifier, moduleUrl)
       if (resolved === null) continue
       const normalized = resolved.replace(/\/+$/, '')
@@ -4857,6 +4983,315 @@ describe('app-owned Struct adapter boundary', () => {
     } finally {
       await rm(computed.pathname, { force: true })
       await rm(property.pathname, { force: true })
+    }
+  })
+
+  it('E-03: traces a CommonJS re-export that names a property of module.exports', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+    const moduleProperty = new URL(
+      'struct/__e03_probe_legacy_cjs_module_property.cjs',
+      root,
+    )
+    const moduleElement = new URL(
+      'struct/__e03_probe_legacy_cjs_module_element.cjs',
+      root,
+    )
+    const moduleNested = new URL(
+      'struct/__e03_probe_legacy_cjs_module_nested.cjs',
+      root,
+    )
+    const exportsProperty = new URL(
+      'struct/__e03_probe_legacy_cjs_exports_property.cjs',
+      root,
+    )
+    const moduleComputed = new URL(
+      'struct/__e03_probe_legacy_cjs_module_computed.cjs',
+      root,
+    )
+    await writeFile(
+      moduleProperty.pathname,
+      "module.exports.api = require('./types')\n",
+      'utf8',
+    )
+    await writeFile(
+      moduleElement.pathname,
+      "module.exports['api'] = require('./types')\n",
+      'utf8',
+    )
+    await writeFile(
+      moduleNested.pathname,
+      "module.exports.api.types = require('./types')\n",
+      'utf8',
+    )
+    await writeFile(
+      exportsProperty.pathname,
+      "exports.api = require('./types')\n",
+      'utf8',
+    )
+    await writeFile(
+      moduleComputed.pathname,
+      'module.exports.api = require(target)\n',
+      'utf8',
+    )
+    try {
+      // The ordinary named-export form of a CommonJS wrapper re-exports the
+      // module it requires, so an importer outside the retained tree reaches
+      // the local migrated authority through the wrapper.
+      expect(
+        e03ViolationsForSource(
+          "import { api } from '../struct/__e03_probe_legacy_cjs_module_property'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // The element-access spelling of the same re-export is traced as well.
+      expect(
+        e03ViolationsForSource(
+          "import { api } from '../struct/__e03_probe_legacy_cjs_module_element'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // The nested property access of the same re-export is traced as well.
+      expect(
+        e03ViolationsForSource(
+          "import { api } from '../struct/__e03_probe_legacy_cjs_module_nested'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // The `exports` spelling of the same re-export is traced as well.
+      expect(
+        e03ViolationsForSource(
+          "import { api } from '../struct/__e03_probe_legacy_cjs_exports_property'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // A computed require in the same position names no literal target, so
+      // it fails closed with the same sentinel the direct-import path uses.
+      // Two chains report the same sentinel: the migrated-family chain and
+      // the recovery chain.
+      const computedForm = e03ViolationsForSource(
+        "import { api } from '../struct/__e03_probe_legacy_cjs_module_computed'",
+        research,
+        publicPaths,
+      )
+      expect(computedForm).toHaveLength(2)
+      expect(computedForm.join('\n')).toContain('unresolved re-export')
+
+      // The retained tree keeps its own wrapper.
+      expect(
+        e03ViolationsForSource(
+          "export * from './__e03_probe_legacy_cjs_module_property'",
+          new URL('struct/probe.ts', root),
+          publicPaths,
+        ),
+      ).toEqual([])
+    } finally {
+      await rm(moduleProperty.pathname, { force: true })
+      await rm(moduleElement.pathname, { force: true })
+      await rm(moduleNested.pathname, { force: true })
+      await rm(exportsProperty.pathname, { force: true })
+      await rm(moduleComputed.pathname, { force: true })
+    }
+  })
+
+  it('E-03: traces a require-bound alias that a retained wrapper re-exports', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+    const named = new URL('struct/__e03_probe_legacy_require_named.cts', root)
+    const defaultExport = new URL(
+      'struct/__e03_probe_legacy_require_default.cts',
+      root,
+    )
+    const exportedVariable = new URL(
+      'struct/__e03_probe_legacy_require_variable.cts',
+      root,
+    )
+    const exportedArrow = new URL(
+      'struct/__e03_probe_legacy_require_arrow.cts',
+      root,
+    )
+    const destructured = new URL(
+      'struct/__e03_probe_legacy_require_destructured.cts',
+      root,
+    )
+    const member = new URL('struct/__e03_probe_legacy_require_member.cts', root)
+    const importAlias = new URL(
+      'struct/__e03_probe_legacy_require_import_alias.cts',
+      root,
+    )
+    const exportAlias = new URL(
+      'struct/__e03_probe_legacy_require_export_alias.cts',
+      root,
+    )
+    const computed = new URL(
+      'struct/__e03_probe_legacy_require_computed.cts',
+      root,
+    )
+    await writeFile(
+      named.pathname,
+      "const Types = require('./types')\nexport { Types }\n",
+      'utf8',
+    )
+    await writeFile(
+      defaultExport.pathname,
+      "const Types = require('./types')\nexport default Types\n",
+      'utf8',
+    )
+    await writeFile(
+      exportedVariable.pathname,
+      "const Types = require('./types')\nexport const t = Types\n",
+      'utf8',
+    )
+    await writeFile(
+      exportedArrow.pathname,
+      "const Types = require('./types')\nexport const t = () => Types\n",
+      'utf8',
+    )
+    await writeFile(
+      destructured.pathname,
+      "const { structId } = require('./ids')\nexport { structId }\n",
+      'utf8',
+    )
+    await writeFile(
+      member.pathname,
+      "const structId = require('./ids').structId\nexport { structId }\n",
+      'utf8',
+    )
+    await writeFile(
+      importAlias.pathname,
+      "import Types = require('./types')\nexport { Types }\n",
+      'utf8',
+    )
+    await writeFile(
+      exportAlias.pathname,
+      "export import Types = require('./types')\n",
+      'utf8',
+    )
+    await writeFile(
+      computed.pathname,
+      "const Types = require(target)\nexport { Types }\n",
+      'utf8',
+    )
+    try {
+      // A binding a require binds is an imported binding, so a wrapper that
+      // hands it out re-exports the module it came from, and an importer
+      // outside the retained tree reaches the local migrated authority
+      // through the wrapper.
+      expect(
+        e03ViolationsForSource(
+          "import { Types } from '../struct/__e03_probe_legacy_require_named'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // The default-export spelling of the same re-export is traced as well.
+      expect(
+        e03ViolationsForSource(
+          "import Types from '../struct/__e03_probe_legacy_require_default'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // The exported-variable spelling of the same re-export is traced as
+      // well.
+      expect(
+        e03ViolationsForSource(
+          "import { t } from '../struct/__e03_probe_legacy_require_variable'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // The exported-expression spelling of the same re-export is traced as
+      // well.
+      expect(
+        e03ViolationsForSource(
+          "import { t } from '../struct/__e03_probe_legacy_require_arrow'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // A destructuring pattern binds every name it names, so the
+      // destructuring spelling of the same re-export is traced as well.
+      expect(
+        e03ViolationsForSource(
+          "import { structId } from '../struct/__e03_probe_legacy_require_destructured'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // A binding that reads a member of the required module is bound to
+      // that module as well, so the member spelling is traced as well.
+      expect(
+        e03ViolationsForSource(
+          "import { structId } from '../struct/__e03_probe_legacy_require_member'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // The TypeScript import alias is a binding of a required module as
+      // well, so the alias spelling is traced as well.
+      expect(
+        e03ViolationsForSource(
+          "import { Types } from '../struct/__e03_probe_legacy_require_import_alias'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // The exported TypeScript import alias re-exports the required module
+      // itself, so the exported-alias spelling is traced as well.
+      expect(
+        e03ViolationsForSource(
+          "import { Types } from '../struct/__e03_probe_legacy_require_export_alias'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // A computed require in a variable initialiser names no literal
+      // target, so it fails closed with the same sentinel the direct-import
+      // path uses. Two chains report the same sentinel: the migrated-family
+      // chain and the recovery chain.
+      const computedForm = e03ViolationsForSource(
+        "import { Types } from '../struct/__e03_probe_legacy_require_computed'",
+        research,
+        publicPaths,
+      )
+      expect(computedForm).toHaveLength(2)
+      expect(computedForm.join('\n')).toContain('unresolved re-export')
+
+      // The retained tree keeps its own wrapper.
+      expect(
+        e03ViolationsForSource(
+          "export * from './__e03_probe_legacy_require_named'",
+          new URL('struct/probe.ts', root),
+          publicPaths,
+        ),
+      ).toEqual([])
+    } finally {
+      await rm(named.pathname, { force: true })
+      await rm(defaultExport.pathname, { force: true })
+      await rm(exportedVariable.pathname, { force: true })
+      await rm(exportedArrow.pathname, { force: true })
+      await rm(destructured.pathname, { force: true })
+      await rm(member.pathname, { force: true })
+      await rm(importAlias.pathname, { force: true })
+      await rm(exportAlias.pathname, { force: true })
+      await rm(computed.pathname, { force: true })
     }
   })
 })

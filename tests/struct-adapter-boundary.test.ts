@@ -2474,7 +2474,7 @@ function resolveLocalSpecifier(specifier: string, file: URL): string | null {
  * accepts, so a module the scanner would read is a module the guard can
  * resolve.
  */
-const moduleExtensionPattern = /\.(?:[cm]?[jt]s|astro|mdx)$/u
+const moduleExtensionPattern = /\.(?:[cm]?[jt]sx?|astro|mdx)$/u
 
 /**
  * The app-owned recovery presentation module has an enumerated importer list.
@@ -5748,6 +5748,105 @@ describe('app-owned Struct adapter boundary', () => {
     } finally {
       await rm(aliasWrapper.pathname, { force: true })
       await rm(interfaceWrapper.pathname, { force: true })
+    }
+  })
+
+  it('E-03: catches an explicit .jsx wrapper that re-exports a migrated family', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+    const jsxWrapper = new URL(
+      'struct/__e03_probe_legacy_jsx.jsx',
+      root,
+    )
+    await writeFile(
+      jsxWrapper.pathname,
+      "export { T } from './ids'\n",
+      'utf8',
+    )
+    try {
+      // An external import of the explicit .jsx wrapper that re-exports
+      // a migrated family (ids) should be caught.
+      expect(
+        e03ViolationsForSource(
+          "import { T } from '../struct/__e03_probe_legacy_jsx.jsx'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // The retained tree keeps its own wrapper - internal re-export is allowed.
+      expect(
+        e03ViolationsForSource(
+          "export { T } from './__e03_probe_legacy_jsx.jsx'",
+          new URL('struct/probe.ts', root),
+          publicPaths,
+        ),
+      ).toEqual([])
+    } finally {
+      await rm(jsxWrapper.pathname, { force: true })
+    }
+  })
+
+  it('E-03: catches an explicit .tsx wrapper that re-exports a migrated family', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+    const tsxWrapper = new URL(
+      'struct/__e03_probe_legacy_tsx.tsx',
+      root,
+    )
+    await writeFile(
+      tsxWrapper.pathname,
+      "export { T } from './types'\n",
+      'utf8',
+    )
+    try {
+      // An external import of the explicit .tsx wrapper that re-exports
+      // a migrated family (types) should be caught.
+      expect(
+        e03ViolationsForSource(
+          "import { T } from '../struct/__e03_probe_legacy_tsx.tsx'",
+          research,
+          publicPaths,
+        ),
+      ).toHaveLength(1)
+
+      // The retained tree keeps its own wrapper - internal re-export is allowed.
+      expect(
+        e03ViolationsForSource(
+          "export { T } from './__e03_probe_legacy_tsx.tsx'",
+          new URL('struct/probe.ts', root),
+          publicPaths,
+        ),
+      ).toEqual([])
+    } finally {
+      await rm(tsxWrapper.pathname, { force: true })
+    }
+  })
+
+  it('E-03: legal negative control - .jsx wrapper not re-exporting migrated family is allowed', async () => {
+    const publicPaths = await publicPackagePaths()
+    const research = new URL('research/probe.ts', root)
+    const jsxWrapper = new URL(
+      'struct/__e03_probe_legacy_jsx_harmless.jsx',
+      root,
+    )
+    await writeFile(
+      jsxWrapper.pathname,
+      "export const marker = 1\n",
+      'utf8',
+    )
+    try {
+      // A .jsx wrapper that does NOT re-export a migrated family should NOT
+      // be flagged - this is the legal negative control.
+      expect(
+        e03ViolationsForSource(
+          "import { marker } from '../struct/__e03_probe_legacy_jsx_harmless.jsx'",
+          research,
+          publicPaths,
+        ),
+      ).toEqual([])
+    } finally {
+      await rm(jsxWrapper.pathname, { force: true })
     }
   })
 })

@@ -1782,20 +1782,20 @@ function computeReexportSpecifiers(source: string): ReexportSpecifiers {
 
 /**
  * The modules an exported expression reaches through the bindings it
- * references.
+ * references. The walked node is not necessarily an expression: the body
+ * of an exported function declaration is walked as well.
  *
  * An exported expression that references a binding the module imported
  * reaches the module that binding came from, so that module is a re-export
- * target. A binding the module defines itself is not such a target: it
- * reaches no other module.
+ * target. A binding the module defines itself reaches no other module.
  */
 function exportedExpressionModules(
-  expression: ts.Expression,
+  node: ts.Node,
   importedBindings: Map<string, string>,
   declared?: ts.BindingName,
 ): string[] {
   const modules: string[] = []
-  for (const name of referencedBindingNames(expression, declared)) {
+  for (const name of referencedBindingNames(node, declared)) {
     const imported = importedBindings.get(name)
     if (imported === undefined) continue
     modules.push(imported)
@@ -1804,44 +1804,44 @@ function exportedExpressionModules(
 }
 
 /**
- * The names an expression references. A property name names no binding, a
- * member name names no binding, and a type reference is erased at runtime,
- * so none of them is collected.
+ * The names a node references. A property name names no binding, a member
+ * name names no binding, and a type reference is erased at runtime, so
+ * none of them is collected.
  */
 function referencedBindingNames(
-  expression: ts.Expression,
+  node: ts.Node,
   declared?: ts.BindingName,
 ): Set<string> {
   const names = new Set<string>()
   const declaredNames = new Set<string>()
   if (declared && ts.isIdentifier(declared)) declaredNames.add(declared.text)
-  const visit = (node: ts.Node): void => {
-    if (ts.isIdentifier(node)) {
-      if (!declaredNames.has(node.text)) names.add(node.text)
+  const visit = (current: ts.Node): void => {
+    if (ts.isIdentifier(current)) {
+      if (!declaredNames.has(current.text)) names.add(current.text)
       return
     }
-    if (ts.isTypeNode(node)) return
-    if (ts.isPropertyAccessExpression(node)) {
+    if (ts.isTypeNode(current)) return
+    if (ts.isPropertyAccessExpression(current)) {
       // `holder.structId` names a property, not a binding.
-      visit(node.expression)
+      visit(current.expression)
       return
     }
-    if (ts.isPropertyAssignment(node)) {
+    if (ts.isPropertyAssignment(current)) {
       // `{ structId: 1 }` names a property key, not a binding.
-      visit(node.initializer)
+      visit(current.initializer)
       return
     }
-    const member = declaredMemberName(node)
+    const member = declaredMemberName(current)
     if (member !== null) {
       // The name a member declares names no binding, so it is not collected.
-      node.forEachChild((child) => {
+      current.forEachChild((child) => {
         if (child !== member) visit(child)
       })
       return
     }
-    node.forEachChild(visit)
+    current.forEachChild(visit)
   }
-  visit(expression)
+  visit(node)
   return names
 }
 

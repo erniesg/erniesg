@@ -34,4 +34,4 @@ cutover, the approved migration plan still requires the app-owned adapter,
 complete parity corpus and unfinished Bundle/package gates. Recovery UI copy,
 PDF/model semantics, acquisition and publication approval remain app-owned.
 
-A second clean archive/build of source commit `10116f4726da89ebabc823cb25706f2de5386f40` reproduced SHA-256 `e18d743de5e2c8431b64a830974bd1180299f21cc8ab8cf70a9b184c36ab1374`. The producer passes 298 unit tests, typecheck, source-boundary checks and the clean packed-consumer runtime/declaration check. Independent review of that exact source commit found no actionable defects.
+Two independent `npm pack` runs at upstream source commit `90f76f1f80b037cc065169d07b13779c03420026` produced byte-identical tarballs with SHA-256 `42fee58e9b1e1888c53e929ad6367a2c128d1607140225387836ee5da53df8f1` (33 packed files, 346,288 uncompressed bytes). The producer's suite at that commit is 35 files / 1003 tests, plus a clean typecheck, a clean source-boundary check and the packed-consumer runtime/declaration/private-negative check.

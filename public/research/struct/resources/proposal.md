@@ -1,0 +1,354 @@
+# Semantic Responsive Typesetting
+
+## Product Requirements Document + Agent Handoff
+
+**Proof of concept:** scholarly document recomposition across print, e-ink, and digital surfaces  
+**Version:** 0.2
+**Status:** Active implementation and PDF-ingestion fidelity hardening
+**Prepared:** 12 July 2026
+
+> **Core proposition:** One semantic document. Multiple computed renditions. Persistent identity, relationships, reading position, and annotations.
+
+---
+
+## 0. Agent handoff — read this first
+
+### Mission
+
+Build and harden the end-to-end proof of concept that demonstrates **semantic responsive typesetting**. PDF ingestion is now a shipped local adapter, but it remains lossy and fail-closed rather than a universal converter.
+
+The POC should take one canonical scholarly document and compose it into four materially different surfaces while preserving semantic identity, figure-caption relationships, reading position, and text annotations. The system should make layout decisions visible and permit target-specific overrides without mutating source content.
+
+### Defaults
+
+| Decision             | Default                                                                                                                  |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Name                 | Semantic Responsive Typesetting (SRT)                                                                                    |
+| Canonical model      | Custom validated JSON graph inspired by JATS; not PDF, EPUB, or TeX                                                      |
+| First input          | Structured article fixture, preferably JATS-derived or manually normalized                                               |
+| Rendering approach   | HTML/CSS plus a paged-media engine and a thin policy layer                                                               |
+| Targets              | A4 print, large 4:3 e-ink, small tall e-ink, continuous mobile                                                           |
+| Annotations          | Text highlight and anchored note in P0; freehand ink is a stretch goal                                                   |
+| PDF ingestion        | Local lossy adapter with deterministic fixtures, private-corpus regression gates, provenance, and explicit review states |
+| Designer editability | Target-specific rule overrides in P1; design-tool round-trip is out of MVP                                               |
+| Automation           | Deterministic, explainable rules first; no generative layout dependency                                                  |
+
+### Immediate deliverable
+
+- Runnable repository with one command to launch the studio.
+- One golden scholarly article rendered from the same source into four target profiles.
+- Stable semantic IDs in every rendition and a generated layout manifest.
+- Target switching that preserves the semantic reading anchor.
+- A text highlight that remains attached after reflow.
+- Screenshot and structural tests.
+- ADRs for schema, pagination, and annotation anchoring.
+
+> A clean demonstration of one paper across four targets is more valuable than partial support for arbitrary PDFs, scans, equations, collaboration, and design-tool round-tripping.
+
+### Current PDF-ingestion acceptance authority
+
+Issues 012, 013, 018, and 023-026 own the region/order/note, visual-object, inline-structure, truthful-preview, adjudication, and target-profile contracts. Issue 032 is the integrated privacy-safe `2408.10903v5` regression gate. A component issue is not complete if its isolated fixture passes while that integrated upload-to-preview-to-EPUB gate still reproduces title fragments, broken prose, missing scientific objects, or stale/mismatched previews.
+
+---
+
+## 1. Executive summary
+
+Semantic Responsive Typesetting is a document composition model in which the canonical document is a persistent semantic graph, while pages, columns, coordinates, and line breaks are computed renditions for a particular surface. Components may move, resize, change variants, or fragment, but their identities and relationships remain stable.
+
+The scholarly-paper case is the benchmark domain, not the product boundary. It combines long-form prose, finite-page composition, figures, captions, citations, equations, tables, cross-references, and annotation-intensive reading. It also exposes the weakness of fixed PDFs on differently shaped e-ink displays.
+
+**Primary hypothesis:** A canonical semantic graph plus target constraints, layout policies, and non-destructive overrides can generate coherent renditions across heterogeneous widths and finite heights while preserving identity, relationships, reader position, and annotations.
+
+## 2. Context and problem
+
+Current workflows often flatten incoming structured data into a fixed PDF too early, then require downstream movement in Illustrator or InDesign and a separate rebuild for digital output.
+
+```text
+incoming data
+  → manual coordinate calculations
+  → fixed-size PDF
+  → downstream movement and repair
+  → separate digital rendition
+
+structured content + relationships + layout policy
+  → composition for a target profile
+  → print, e-ink, web, and inspectable/editable renditions
+  → designers edit only exceptions
+```
+
+**Problem statement:** Publishers lack a simple, inspectable workflow in which structured text and visual components can be recomposed across different page dimensions while retaining semantic identity, editorial relationships, annotation anchors, and target-specific designer control.
+
+## 3. Vision and principles
+
+```text
+canonical semantic document
++ target profile
++ composition policy
++ target-specific overrides
+→ computed rendition
+```
+
+Principles:
+
+1. The page is a rendition.
+2. Identity survives movement.
+3. Movement is governed by constraints.
+4. Width and finite height are first-class.
+5. Relationships outrank visual proximity.
+6. Current-region stability matters more than immediate global page count.
+7. No silent content loss.
+8. Designers edit exceptions, not source semantics.
+9. Fidelity may be hybrid for complex scientific objects.
+
+## 4. Terminology
+
+- **Semantic node:** stable object such as paragraph, heading, figure, caption, equation, table, or reference.
+- **Canonical graph:** presentation-independent source of truth.
+- **Layout capability:** what a node may do: split, float, span, scale, change variant, or fall back.
+- **Target profile:** dimensions, typography, columns, interaction, and output constraints.
+- **Composition policy:** global layout and fragmentation rules.
+- **Rendition:** one computed arrangement for a target.
+- **Override:** target-specific non-destructive exception.
+- **Provenance map:** rendered element to canonical source and optional original-PDF coordinates.
+- **Semantic reading anchor:** node/text position independent of page number.
+- **Layout version:** cache key for document + target + typography + policy + overrides.
+
+## 5. Users and jobs
+
+Primary users are publishing automation engineers, designers/art directors, active readers, content operations teams, and document/HCI researchers.
+
+Core jobs:
+
+- Recompute layout from retained intent when content or target dimensions change.
+- Preserve figure/caption/reference identity while objects move.
+- Preserve reader position and annotations across devices and typography changes.
+- Expose layout failures and fallbacks.
+- Record designer overrides without contaminating other targets.
+
+## 6. Scope
+
+### P0
+
+- One canonical paper plus 3–5 regression fixtures.
+- Canonical JSON and optionally one JATS/HTML importer.
+- Title, authors, abstract, headings, paragraphs, lists, figures, captions, citations, references, simple tables, and atomic display equations.
+- A4 print, large 4:3 e-ink, small tall e-ink, continuous mobile.
+- Width-and-height responsive composition.
+- Text highlight and anchored note.
+- Reading-position preservation.
+- Studio, manifest, diagnostics, and HTML/PDF/EPUB-oriented outputs.
+
+### Non-goals
+
+- Perfect arbitrary PDF or scan reconstruction.
+- Production CMS or collaboration.
+- Full Illustrator/InDesign round-trip.
+- Perfect freehand ink deformation.
+- AI-generated layout or silent summarization.
+
+## 7. Golden-path demo
+
+1. Load a structured paper and show semantic outline/provenance.
+2. Render it in the large e-ink profile.
+3. Switch to the small tall profile; text and figures recompose, caption relationships and reading position persist.
+4. Resize width/height/font.
+5. Highlight a sentence and attach a note.
+6. Reflow again; annotations remain attached.
+7. Inspect a rendered object’s ID, source, constraints, variant, page, and fallback.
+8. Apply one print-only override.
+9. Export paginated PDF, reflowable HTML/EPUB, and the manifest.
+
+## 8. Functional requirements
+
+- **FR-01:** Validated canonical graph with stable IDs and provenance.
+- **FR-02:** Structured normalization path.
+- **FR-03:** Composition using width, finite height, typography, columns, keep rules, and fragmentation.
+- **FR-04:** Runtime target profiles.
+- **FR-05:** Target-aware component variants.
+- **FR-06:** Semantic reading anchor.
+- **FR-07:** Text-range annotation anchoring.
+- **FR-08:** Layout-versioned geometry cache.
+- **FR-09:** Provenance mapping.
+- **FR-10:** Explicit atomic visual fallbacks.
+- **FR-11:** Target-specific overrides.
+- **FR-12:** Current-region-first progressive composition.
+- **FR-13:** HTML, paginated, PDF, EPUB-oriented, and manifest outputs.
+- **FR-14:** Inspection studio.
+- **FR-15:** Structural and visual regression harness.
+- **FR-16:** Source-backed inline semantics for bold, italic, superscript, subscript, safe links, citations, and footnote references, including composed overlapping semantics, exact source-backed citation anchors and bibliography targets, preview/EPUB parity, and measured supported/mapped coverage.
+- **FR-17:** Evidence-based scholarly structure recovery for title/authors/affiliations/abstract, numbered and unnumbered section headings, nested and cross-page lists with retained marker/ordinal identity, references, bibliography, captions, notes, tables, and display equations.
+- **FR-18:** Truthful upload preview of the checked selected-profile artifact before an optional matching-profile download; a fresh upload invalidates every prior reconstruction, object URL, receipt, preview, and download.
+- **FR-19:** Authoritative Paper Pro Move `954 × 1696 @ 264 PPI` and Paper Pro `1620 × 2160 @ 229 PPI` device profiles, with browser scaling and density derived from the registry and reader-controlled EPUB behavior stated explicitly.
+- **FR-20:** Deterministic PDF-to-EPUB regression benchmarking using generated redistributable fixtures plus hash-bound private inputs whose bytes, prose, paths, screenshots, and traces never enter Git or GitHub. Schema `1.4.0` same-toolchain repeats compare bytes and recomputed structural receipts that bind exact citation anchors and line-transition/structural-boundary evidence; model/parser promotion compares against frozen synthetic decisions and separately human-accepted sanitized baselines. Serialized corpus receipts retain exact per-code diagnostic counts but use deterministic redacted samples bounded to three per code and 64 per document, with an explicit truncation count.
+- **FR-21:** Globally unique source-anchored canonical IDs for citations, scientific objects, captions, and their relationships. Repeated display labels and lossy slug collisions remain distinct; preview/export validation fails closed on duplicate canonical/asset IDs, duplicate asset hrefs, duplicate XHTML IDs, or dangling internal fragments.
+
+### 8.1 PDF ingestion and rendition acceptance gates
+
+These gates measure semantic recovery. They do not require an EPUB reader to reproduce the source PDF's coordinates.
+
+- **Continuous prose:** normalized text is conserved in source-region/provenance order, not scored as one unordered bag of characters. Every adjacent source-line transition inside a region has exactly one unique decision, and the ledger rejects missing, duplicate, extra, wrong-page, or cross-region entries. Supported decisions cover spaces, no-space joins, preserved lexical hyphens, removed discretionary line-wrap hyphens, `structural-boundary`, and unresolved evidence. `structural-boundary` is valid only for a transition wholly owned by one strictly validated visual relationship and no rendered text node, is counted separately in `structurallyConsumedLineBoundaryCount`, and is never credited as lexical dehyphenation. Readiness requires zero unresolved corrupting joins, isolated alphabetic prose glyphs, duplicate canonical spans, and cross-column/cross-region joins.
+- **No reconstruction debris:** small-cap/all-cap styling, font size, boldness, or whitespace alone cannot create a heading. A heading requires compatible geometry plus section syntax/boundary evidence. Title, author, affiliation, list-marker, equation-label, and page-furniture fragments cannot become detached prose nodes.
+- **Inline meaning and hierarchy:** every deterministically supported bold, italic, bold-italic, superscript, subscript, link, citation, and note-marker span maps once with valid Unicode offsets. Overlapping source-backed meanings compose, such as an italic citation or emphasized link, instead of silently discarding one role. Relative hierarchy remains ordered as title > section heading > body, while captions, affiliations, and notes remain subordinate; absolute PDF font sizes and families are not copied as semantics or promised as visual parity.
+- **Document structure:** front matter is classified explicitly as title, author, affiliation, abstract heading, and abstract body. Title/author/affiliation values are promoted once to metadata while the source-backed abstract stays in canonical flow. Numbered/unnumbered sections, nested lists, cross-page list continuations, references, and bibliography entries retain typed nodes and canonical order. List marker text/style, ordinal, numbering identity, and nesting level survive; markers do not become paragraphs, bibliography entries do not merge across columns, and table rows or equation glyphs claimed by an object region do not leak into body prose.
+- **Notes and citations:** supported footnote markers map to typed note bodies and backlinks. A matched citation retains its marker semantics, exact source-backed canonical anchor `{ nodeId, start, end }`, inline run relationship/range/ordered targets, and explicit canonical bibliography-entry node targets. Relationship IDs remain globally unique across display-label collisions. An unmatched or non-bibliography citation target, stale anchor, ambiguous citation-versus-note classification, or ambiguous marker-to-body match remains review-required; reclassification never deletes the relationship obligation.
+- **Scientific objects:** each accepted diagram, figure, table, and display equation has globally unique source-anchored canonical/relationship IDs, stable source object/region IDs, normalized bounds, provenance, a canonical position, packaged non-empty assets when required, and a complete anchored caption when one exists. A multi-fragment diagram is accepted only as one validated bounded component set. Tables use semantic HTML only after aligned multi-row/multi-column structure validates. A nonsemantic or nonuniform table may use a non-blocking sharp image fallback only when a real page-raster/crop capability returns the complete bounded source region; without that capability it remains review-required, and a text-derived SVG or synthetic grid is not an exact crop. Equations use source semantics when available or a real source-backed bounded SVG/raster asset. No invented cells, labels, LaTeX, or MathML are allowed.
+- **Semantic reflow:** Mobile, Paper Pro Move, and Paper Pro follow canonical reading order and do not mimic source PDF columns, source line breaks, or coordinate-shaped whitespace. Figures/captions/floats are placed by semantic relationships and target policy rather than raw page coordinates.
+- **Preview and download:** choosing a new upload reprocesses its bytes even when filename metadata matches the prior upload. The user can inspect Mobile, Paper Pro Move, and Paper Pro checked previews before downloading; switching previews has no download side effect, and every optional action returns only the artifact whose profile id/version and hash match the visible receipt. Duplicate canonical/asset identity, asset href, XHTML `id`, or a dangling internal fragment blocks the preview-ready/downloadable verdict.
+- **Deterministic evidence:** generated fixtures gate CI. Schema `1.4.0` repeated runs reconstruct afresh and compare artifact bytes plus structural receipts derived from canonical node order/content, inline/list/front-matter semantics, a citation graph with canonical anchors, note/visual relationships, asset manifests, and the exact line ledger plus structural-boundary count. Missing, malformed, stale, duplicate, or count-inconsistent evidence fails closed. Named/private papers are keyed by basename/public id and SHA-256 and may emit only aggregate metrics, normalized boxes, diagnostic codes and bounded redacted samples, versions, hashes, timings, and verdicts. Diagnostic counts remain exact even when samples are truncated. Source bytes/text, absolute paths, screenshots, browser traces, and unpacked artifacts remain owner-only outside the repository. A candidate cannot appoint its own output as an accepted baseline.
+
+### 8.2 Named-paper acceptance status
+
+`2408.10903v5` is the integrated paper designated for the trusted-VM acceptance gate in issue 032. As of 2026-07-21, the repository-owned synthetic strict report is `1/1 ready` with text `0.99057`, inline `14/14`, assets `3/3`, relationships `4/4`, zero unresolved obligations, and identical EPUBCheck-valid A/B artifacts for Mobile, Paper Pro Move, and Paper Pro. The latest hash-verified owner-only named repeat replays all 44 bounded line decisions and is deterministic: text `0.99996`, inline `705/714`, validated visuals `12/51`, relationships `33/86`, zero unresolved corrupting joins, and 4 strictly visual structural boundaries. All six exact artifacts repeat byte-for-byte and pass internal validation plus EPUBCheck 5.3.0. The paper remains `review-required` on incomplete/ambiguous visuals and tables plus 9 citations embedded in non-semantic table visuals, and no separately human-accepted sanitized baseline is configured.
+
+The final conservative-visual frozen-ten A/B run covers 10 papers, 495 pages, and `19,758,997` bytes. It remains `0 ready / 10 review-required / 0 failed`, with mean text `0.998058`, weighted inline `51,638/51,709` (`0.99862693`), assets `726/1,146` (`0.63350785`), relationships `1,043/1,673` (`0.62343096`), and `1,125` unresolved obligations. Both runs produced all 30 profile EPUBs: 60/60 passed internal structural validation and EPUBCheck 5.3.0, while the strict artifact-and-structure comparator passed with zero regressions. Identical export-report and sorted artifact-index SHA-256 values are `bf88a61602a0299ef76af141c241e66451796e08bcb181d4eef567be5f849ce3` and `3ea2dc48d1899e6dd192259b1a70371c5a7d1cf1825dabc39787bb6bf4dfc140`; strict comparison SHA-256 is `b3f247bfd52c88da3e5b60e4ef48889d3a0f86b187d3706d5fb40efe8b91b85d`. All ten papers correctly remain review-required.
+
+Synthetic success and frozen-corpus repeatability are necessary but not sufficient: product acceptance still requires a fresh exact-head named run, checked Mobile/Paper Pro Move/Paper Pro previews and downloads, zero blocking fidelity diagnostics, and a non-regressing comparison with an independently accepted external receipt. No trusted-VM or external acceptance is claimed. The paper bytes, extracted text, images, local path, screenshots, traces, and unpacked EPUBs never enter this repository or GitHub.
+
+## 9. Non-functional requirements
+
+Deterministic, fidelity-preserving, inspectable, modular, offline-capable, accessible, testable, and observable. Provisional POC targets are no more than one second median to first stable viewport and five seconds for full composition of a roughly twenty-page article on a documented reference machine; measure and revise after establishing a baseline.
+
+## 10. Canonical data model
+
+Use a validated JSON graph inspired by JATS. TeX, HTML, EPUB, and PDF are inputs or outputs.
+
+Canonical node and relationship IDs are globally unique within a publication and stable across deterministic repeats. PDF-derived citation and visual IDs include source identity and position; visible labels are metadata, not identity. Exporters must reject a graph whose IDs collide before it can become a preview or downloadable artifact.
+
+```json
+{
+  "id": "fig-3",
+  "type": "figure",
+  "content": { "asset": "assets/fig-3.svg" },
+  "relationships": {
+    "caption": "cap-3",
+    "referencedBy": ["p-17", "p-24"]
+  },
+  "layout": {
+    "mayFloat": true,
+    "maySplit": false,
+    "allowedSpans": [1, 2],
+    "variants": ["inline", "full-width", "dedicated-view"]
+  },
+  "source": {
+    "kind": "jats",
+    "locator": "/article/body/sec[2]/fig[1]"
+  }
+}
+```
+
+Highlights should store node ID, text offsets, exact quote, prefix/suffix context, appearance, and a layout-versioned geometry cache.
+
+## 11. Composition model
+
+```text
+1. Normalize source
+2. Resolve target and overrides
+3. Select component variants
+4. Build semantic flow and priority region
+5. Measure text and atomic objects
+6. Place, fragment, and paginate
+7. Record decisions and violations
+8. Resolve annotation geometry
+9. Emit rendition, manifest, and cache entry
+```
+
+The layout key hashes document version, target profile, typography, policy version, and overrides. Canonical content and annotations do not mutate when the key changes.
+
+## 12. Studio UX
+
+- **Left:** semantic outline, relationships, annotations, provenance.
+- **Center:** live rendition, page boundaries, current anchor, annotation overlays.
+- **Right:** target profile, dimensions, type, margins, columns, figure policy, overrides.
+- **Bottom:** timing, page-count status, variants, fallbacks, overflow, and constraints.
+
+## 13. Recommended architecture
+
+Use a TypeScript monorepo with a renderer-neutral graph and manifest.
+
+```text
+apps/studio
+packages/schema
+packages/import-jats
+packages/composer
+packages/render-html
+packages/render-paged
+packages/annotations
+packages/export-epub
+packages/export-pdf
+packages/provenance
+packages/benchmarks
+fixtures/golden
+docs/adrs
+```
+
+Use semantic HTML/CSS for continuous view, a paged-media engine behind an adapter, named deterministic policies, browser measurement for the POC, and manifest/screenshot regression tests.
+
+## 14. Research plan
+
+Central question: Can a semantic, constraint-based document model generate coherent paginated renditions across heterogeneous widths and heights while preserving content identity, relationships, reader state, and annotations?
+
+Evaluate system correctness, layout quality, performance, and later a user study comparing original PDF, optimized fixed layout, and semantic reflow across large and small e-ink classes.
+
+## 15. Success criteria
+
+- One canonical source renders four targets.
+- Stable semantic IDs and content hashes in every rendition.
+- All mandatory nodes and figure-caption/citation-reference links preserved.
+- No clipping, overlap, or silent content loss in the golden set.
+- Materially different compositions across target classes.
+- Same semantic sentence remains visible after target switch.
+- Highlights re-resolve to the exact text.
+- Diagnostics explain moves and fallbacks.
+- Target overrides are isolated.
+- PDF plus reflowable output and manifest are generated.
+- Repository, tests, and demo are reproducible.
+
+## 16. Risks
+
+Main risks are scope collapsing into PDF parsing, paged-renderer limitations, complex tables/equations, design-tool editability, freehand annotation complexity, aesthetic quality, progressive pagination jumps, and overclaiming novelty. Mitigate with structured input first, adapters, hybrid fallbacks, text annotations first, a small design system, semantic anchors, and a verified literature review.
+
+## 17. Milestones
+
+- **M0:** Skeleton, fixtures, ADRs, tests.
+- **M1:** Semantic continuous rendering across profiles.
+- **M2:** Responsive pagination and manifests.
+- **M3:** Reading anchors, annotations, provenance.
+- **M4:** Overrides and exports.
+- **M5:** Evaluation package and demo.
+
+## 18. First sprint
+
+1. Create repository and ADRs.
+2. Select or synthesize one legally usable scholarly fixture.
+3. Define the minimum canonical schema.
+4. Validate fixture without target coordinates.
+5. Render semantic HTML with stable IDs.
+6. Implement four target profiles.
+7. Emit a preliminary layout manifest.
+8. Add structural and screenshot tests.
+9. Record failures rather than hiding them with special-case coordinates.
+
+**Exit artifact:** one source paper visibly recomposes across four profiles with stable IDs, no clipped content, and a machine-readable manifest.
+
+## 19. Open decisions — recommended defaults
+
+- Canonical source is a semantic graph, not TeX.
+- Start from structured source, not PDF.
+- EPUB is an output, not source of truth.
+- Reuse browser/paged-media machinery; own schema, policies, manifest, anchors, and overrides.
+- Deterministic rules before AI.
+- Permit provisional page count during current-region-first reflow.
+- Use hybrid fallbacks for complex scientific content.
+- Model freehand attachment policies now; implement highlights first.
+
+## 20. Research seeds
+
+Verify primary sources before publication claims: Adaptive Grid-Based Document Layout; Adaptive Document Layout; Conversion of PDF Books in ePub Format; Reflowing and Annotating Scientific Papers on eBook Readers; Robust Annotation Positioning; Moving Markup; Reflowing Digital Ink Annotations; GROBID; S2ORC; PubLayNet; DocLayNet; VILA; SciA11y; Nougat; Docling; MinerU; JATS; EPUB; Web Annotation; EPUB Annotations; DocDancer; FlexDoc; e-ink and active-reading studies.
+
+## 21. Fresh-agent kickoff prompt
+
+> You are the implementation and research agent for the Semantic Responsive Typesetting proof of concept. Read this PRD as the source of truth. Build a narrow end-to-end system proving that one canonical semantic scholarly document can be recomposed across A4 print, a large 4:3 e-ink profile, a small tall e-ink profile, and continuous mobile while preserving stable node identity, relationships, reading position, and text annotations. Use the defaults unless a true blocker arises. Start with structured input and a validated JSON graph. Do not begin with arbitrary PDF reconstruction, full freehand ink, AI layout generation, a production CMS, or design-tool round-trip. Your first milestone is a runnable studio that renders one golden article into four visibly different profiles from the same source, embeds stable semantic IDs, and emits a layout manifest with chosen variants and geometry. Add tests and ADRs as you go. Make rules deterministic and inspectable; record failures rather than hiding them with one-off coordinates. After the core path is stable, add finite-height pagination, semantic reading anchors, text highlights, target-specific overrides, exports, progressive composition, and optional original-PDF provenance in that order. Deliver the repository, README, demo script, golden fixtures, tests, ADRs, benchmark results, limitations log, and a short research-method outline. The page is a rendition, not the document.
+
+## 22. Definition of done
+
+The repository runs locally; one canonical article and a small golden set are included; four materially different profiles are generated; pagination responds to width and finite height; semantic identity and relationships are preserved; reading position and highlights survive reflow; one override is isolated; the studio explains layout decisions; PDF and reflowable outputs plus a manifest are produced; tests cover the golden path; and limitations are documented without overstating novelty.

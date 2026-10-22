@@ -119,7 +119,8 @@
     "src/content/blog/raggaeton-scaling-a-i-augmented-writing-for-any-content/zh.mdx",
     "src/content/blog/sight-before-sound-seeing-and-searching-with-machines/zh.mdx",
     "src/content/blog/sound-before-symbols-on-human-creativity-and-intelligence/zh.mdx",
-    "src/content/blog/symbols-and-the-fabric-of-reality-what-a-i-taught-me-about-the-human/zh.mdx"
+    "src/content/blog/symbols-and-the-fabric-of-reality-what-a-i-taught-me-about-the-human/zh.mdx",
+    "src/content/blog/loss-price-love/zh.mdx"
   ],
   "requiredPublishLocales": ["en", "zh", "ko", "ja"],
   "failPublishOnMissingRequiredLocales": true,

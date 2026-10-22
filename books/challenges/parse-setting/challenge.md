@@ -33,32 +33,29 @@ timeout = 20
 +++
 
 :::statement
-A nightly backup reads its settings from a file someone typed by hand. One line
-says `keep = 30`, and that 30 is how many days of backups survive. Other lines
-are switched off with a `#`, a few have the key in capitals, and one value is a
-greeting that contains an `=` of its own.
+A nightly backup reads its settings from a file typed by hand. The line
+`keep = 30` means backups are kept for 30 days. Some lines are switched off
+with a `#`, some keys are in capitals, and one value contains an `=`.
 
-Read one line and say what setting it holds.
-
-Return the key and the value as a pair. Return `None` for a line that holds no
-setting at all.
+Read one line and return its key and value as a pair. Return `None` if the
+line holds no setting.
 :::
 
 :::io
 input: `line`, one line from the file
-output: a pair — the key and the value — or `None`
+output: a pair of the key and the value, or `None`
 :::
 
 :::constraints
 - `line` is 0 to 1,000 characters. Whitespace means spaces, tabs and the line's
-  own newline, and it may sit at either end and around the `=`.
+  own newline. It may appear at either end and around the `=`.
 - Strip the line first. If what is left is empty, or starts with `#`, the line
   holds no setting.
 - If there is no `=`, the line holds no setting.
-- The key is everything before the **first** `=`, stripped, lowercased. If that
-  is empty, the line holds no setting.
-- The value is everything after the first `=`, stripped, with its case left
-  exactly as it came. It may be empty text.
+- The key is everything before the **first** `=`, stripped and lowercased. If
+  that is empty, the line holds no setting.
+- The value is everything after the first `=`, stripped, with its case
+  unchanged. It may be empty text.
 - A `#` anywhere other than the start of the stripped line is an ordinary
   character. There are no comments at the end of a line.
 :::
@@ -75,33 +72,33 @@ output: a pair — the key and the value — or `None`
 :::
 
 :::figure{id="text-pipeline"}
-Strip, cut, strip again. Four new strings and the caller's line untouched.
+Strip, split, strip again. Each step makes a new string, and the caller's line
+is unchanged.
 :::
 
 :::run{starter="starter.py"}
 :::
 
 :::hint{level=1}
-Strip the whole line before anything else. Every rule after that is about what
-is left, which is why `"  # off"` is a comment and `"  "` is nothing.
+Strip the whole line first. Every later rule is about the stripped text, so
+`"  # off"` is a comment and `"  "` is empty.
 :::
 
 :::hint{level=2}
-`"a = b = c".split("=", 1)` cuts once and hands back exactly two pieces.
-`.split("=")` hands back three, and the value loses the `=` that belonged to
-it.
+`"a = b = c".split("=", 1)` splits once and returns two pieces. `.split("=")`
+returns three, and the value loses its own `=`.
 :::
 
 :::hint{level=3}
-Four different lines all answer `None`: the empty one, the one starting with
-`#`, the one with no `=`, and the one whose key is empty once stripped. Settle
-all four before you build the pair.
+Four kinds of line return `None`: an empty one, one starting with `#`, one with
+no `=`, and one whose key is empty after stripping. Handle all four before you
+build the pair.
 :::
 
 :::hint{level=4}
-Lowercase the key only. The value is somebody's path or password, and changing
-its case changes what it means. `("retries", "")` is a real answer — empty is
-not the same as absent.
+Lowercase only the key. The value may be a path or a password, where case
+matters. `("retries", "")` is a real answer: an empty value is not a missing
+setting.
 :::
 
 :::solution
@@ -119,25 +116,24 @@ def parse_setting(line):
     return (key, value.strip())
 ```
 
-**The order of the checks is the whole problem.** Strip first, because every
-rule below is about the stripped text. Then get rid of the lines that hold
-nothing, one reason at a time. Only then split, and only then look at the key
-you actually got.
+**The order of the checks matters.** Strip first. Then return `None` for each
+kind of line that holds no setting, one check at a time. Only then split, and
+then check the key you got.
 
-**Why `split("=", 1)`.** The second argument is the number of cuts. Without it,
-`"greeting = a = b"` comes back as three pieces and the natural next move —
-taking the second one — hands you `" a "`. The `=` inside a value is somebody's
-data, not your separator.
+**Why `split("=", 1)`.** The second argument is the most splits to make.
+Without it, `"greeting = a = b"` comes back as three pieces, and taking the
+second one gives `" a "`. The `=` inside the value is part of the data, not
+the separator.
 
 **Why the value keeps its case.** `/Usr/Bin` and `/usr/bin` are different paths
-on most systems, and a password is worse. Lowercasing is for the key, where a
-human writing `PATH` and a human writing `path` mean the same thing.
+on most systems, and a password with its case changed is a different password.
+Only the key is lowercased, because `PATH` and `path` name the same setting.
 
-**Empty is not absent.** `"retries ="` returns `("retries", "")`, which says
-*this setting exists and is set to nothing*. Returning `None` there would tell
-the caller the line was blank, and the backup would quietly keep its default of
-30 days when somebody had asked for none.
+**Empty is not absent.** `"retries ="` returns `("retries", "")`: the setting
+exists and is set to nothing. Returning `None` would tell the caller the line
+held no setting. For `keep =`, the backup would then use its default of 30 days
+when someone had asked for none.
 
-**Three new strings, one original.** `line` is unchanged when you return. That
-is not politeness, it is the only thing a string will let you do.
+**The caller's line is unchanged.** Strings cannot be changed in place, so
+each step makes a new string and `line` stays as it was.
 :::

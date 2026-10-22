@@ -33,18 +33,18 @@ timeout = 5
 +++
 
 :::statement
-A prepaid electricity meter holds a number of units of credit and works
-through a fixed repeating pattern: `usage[0]` units on the first day,
-`usage[1]` on the second, and so on. When the pattern runs out it starts again
-from the beginning.
+A prepaid electricity meter holds some units of credit and uses them in a
+fixed, repeating pattern: `usage[0]` units on the first day, `usage[1]` on the
+second, and so on. When the pattern runs out, it starts again from the
+beginning.
 
-A day is **covered** if, once that day's units have come off, the credit is
-still zero or more.
+A day is **covered** if the credit is still zero or more after that day's
+units come off.
 
 Return how many days in a row are covered, counting from the first day.
 
-If the credit never runs out, return `-1`. That happens exactly when the
-pattern uses nothing at all.
+If the credit never runs out, return `-1`. That happens only when the pattern
+uses nothing at all.
 :::
 
 :::io
@@ -57,8 +57,8 @@ output: the number of covered days, or `-1` if the credit never runs out
 - `usage` holds between 1 and 1,000 numbers.
 - `0 <= usage[i] <= 1,000,000`
 - A day that uses 0 units is still a day, and it is covered.
-- The answer can be a billion. Five seconds is the whole budget, so the answer
-  has to come from arithmetic, not from living through every day.
+- The answer can be a billion, and the time limit is five seconds. The answer
+  has to come from arithmetic, not from stepping through every day.
 :::
 
 :::sample
@@ -77,30 +77,28 @@ output: the number of covered days, or `-1` if the credit never runs out
 :::
 
 :::hint{level=1}
-Count the work before you write it. A loop that takes one day at a time is
-easy to get right, and with a billion units of credit and one unit a day it
-runs a billion times. The perf tier is built around exactly that input.
+Count the steps before you write the loop. A loop that takes one day at a time
+is easy to get right. With a billion units of credit and one unit a day, it
+runs a billion times. The perf tier uses exactly that input.
 :::
 
 :::hint{level=2}
-One full trip through the pattern always costs `sum(usage)` units and always
-covers `len(usage)` days, no matter where in the credit it happens. So the
-first question is not "what happens on day one" — it is "how many whole trips
-does this credit buy".
+One full trip through the pattern always costs `sum(usage)` units and covers
+`len(usage)` days. So start by asking how many whole trips the credit pays
+for.
 :::
 
 :::hint{level=3}
 Call the cost of one trip `cycle`. Then `credit // cycle` is the number of
-whole trips and `credit % cycle` is what is left once they are paid for. The
-leftover is smaller than a whole trip, so walking the pattern once from the
-start is enough to finish the count — stop at the first day the leftover
-cannot pay for.
+whole trips, and `credit % cycle` is what is left after paying for them. The
+leftover is less than one trip, so one walk through the pattern from the start
+finishes the count. Stop at the first day the leftover cannot pay for.
 :::
 
 :::hint{level=4}
-`cycle` can be 0, and `credit // 0` raises `ZeroDivisionError`. Answer that
-case before you divide, not after. A pattern costing nothing covers every day
-there will ever be, which is what the `-1` is for.
+`cycle` can be 0, and `credit // 0` raises `ZeroDivisionError`. Check for that
+case before you divide. A pattern that costs nothing covers every day, and
+that is what the `-1` is for.
 :::
 
 :::solution
@@ -120,35 +118,32 @@ def days_of_credit(credit, usage):
 ```
 
 **Skip the trips, walk the remainder.** Every trip through the pattern costs
-the same, so you never have to live through one. `credit // cycle` counts the
-trips the credit pays for outright, and each of those covers `len(usage)` days.
-What is left over, `credit % cycle`, is by definition less than one trip — so
-the loop that follows runs at most `len(usage)` times, which the constraints
-cap at 1,000. That is the whole difference between a billion steps and a
-thousand.
+the same, so you don't need to step through any of them. `credit // cycle`
+counts the whole trips the credit pays for, and each covers `len(usage)` days.
+The leftover, `credit % cycle`, is less than one trip. So the loop after it
+runs at most `len(usage)` times, and the constraints cap that at 1,000. That
+is a thousand steps instead of a billion.
 
 **Why the leftover loop starts from the beginning.** After a whole number of
-trips the meter is back at `usage[0]`, exactly where it started. There is no
-offset to work out.
+trips the meter is back at `usage[0]`, where it started. There is no offset to
+work out.
 
 **`break`, not `return`.** The first day the leftover cannot pay for ends the
-count, but the answer is `days`, which already holds the trips. Leaving the
-loop and returning once is clearer than returning from two places, and it makes
-the case where the leftover covers the *whole* pattern impossible to get wrong
-— the loop simply finishes on its own. That case cannot actually happen here,
-since the leftover is always less than a full trip, but code that only works
-because of a fact two lines away is code that breaks when the fact moves.
+count, and `days` already includes the trips. Returning in one place is
+clearer than returning from two. It also handles a leftover that covers the
+*whole* pattern: the loop just finishes. That can't happen here, because the
+leftover is always less than a full trip. But code that relies on a fact two
+lines away breaks when that line changes.
 
-**The zero pattern is not an edge case, it is a different question.** With
-`cycle` at 0 there is no number of days that exhausts the credit, so there is
-nothing for the arithmetic to compute and nothing for a loop to count down. It
-has to be answered before the division, because `credit // 0` raises rather
-than returning something useless. This is the `while` rule from the chapter
-wearing a different coat: if nothing moves the question towards false, the loop
-is not the answer — an `if` in front of it is.
+**A zero pattern needs its own answer.** With `cycle` at 0, no number of days
+uses up the credit. There is nothing for the arithmetic to compute and nothing
+for a loop to count down. It has to be handled before the division, because
+`credit // 0` raises an error. This is the `while` rule from the chapter
+again: if nothing in the loop moves its condition towards false, put an `if`
+in front of it instead of a loop.
 
-**What the day-by-day version is good for.** It is not wasted work. It is
-simple enough to be obviously right, which makes it the perfect referee, and
-the stress tier uses precisely that: small credits, small patterns, your
-arithmetic against a meter that really does tick over one day at a time.
+**What the day-by-day version is good for.** It is simple enough to be clearly
+right, which makes it a good referee. The stress tier uses it that way: small
+credits and small patterns, with your arithmetic checked against a meter that
+steps through one day at a time.
 :::

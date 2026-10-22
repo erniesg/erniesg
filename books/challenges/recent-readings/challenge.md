@@ -33,16 +33,15 @@ timeout = 5
 +++
 
 :::statement
-A village water pump logs a reading every hour and keeps all of them — tens of
-thousands by now, oldest first. The caretaker has a small screen that shows
-the last few.
+A village water pump logs a reading every hour and keeps all of them, oldest
+first. There are tens of thousands by now. The caretaker has a small screen
+that shows the last few.
 
-Given the whole log and how many readings fit on the screen, hand back those
-last few, still oldest first.
+Given the whole log and how many readings fit on the screen, return those last
+few, still oldest first.
 
-Two rules from the caretaker. The log must come back exactly as you got it,
-and what you hand over has to be a list of its own — she goes on logging while
-the screen is up.
+The caretaker has two rules. The log must be unchanged. And what you return
+must be a list of its own, because she keeps logging while the screen is up.
 :::
 
 :::io
@@ -53,7 +52,7 @@ output: a new list holding the last `n` readings, oldest first
 :::constraints
 - `0 <= len(readings) <= 200,000`
 - `0 <= n <= 1,000`
-- If the log holds fewer than `n` readings, hand back all of them.
+- If the log holds fewer than `n` readings, return all of them.
 - `readings` must be unchanged afterwards, and the list you return must not be
   `readings` itself.
 :::
@@ -68,26 +67,26 @@ output: a new list holding the last `n` readings, oldest first
 :::
 
 :::figure{id="two-names-one-list"}
-A slice is a second list. Handing back the log itself would be one list with
-two owners.
+A slice is a second list. Returning the log itself would give the caller and
+the screen the same list.
 :::
 
 :::run{starter="starter.py"}
 :::
 
 :::hint{level=1}
-A slice of a list is already a new list, so "leave the log alone" costs you
-nothing as long as you slice rather than edit.
+A slice of a list is already a new list. If you slice rather than edit, the
+log stays unchanged.
 :::
 
 :::hint{level=2}
-Negative positions count from the end: `readings[-2:]` is the last two. Slices
-do not complain about running off the start, so a screen bigger than the log
-looks after itself.
+Negative positions count from the end: `readings[-2:]` is the last two. A
+slice that starts before the beginning just starts at the beginning, so a
+screen bigger than the log needs no extra code.
 :::
 
 :::hint{level=3}
-Work out what your code does when `n` is 0, before you run it. `-0` is `0`.
+Before you run it, work out what your code does when `n` is 0. `-0` is `0`.
 :::
 
 :::solution
@@ -102,28 +101,25 @@ def recent(readings, n):
 the end, go to the end". With `n` at 2 and a log of five, that starts at
 position 3 and gives `[9, 4]`.
 
-**The screen bigger than the log is already handled.** `[3, 8, 2]` with `n` at
-7 asks to start seven places from the end of a three-item list. Rather than
-erroring, Python clips the start to the beginning and gives you all three.
-This is why no `if` is needed for that case — and worth checking rather than
-assuming, because the same generosity is not on offer when you index a single
-position: `readings[-7]` on a three-item list is an `IndexError`.
+**A screen bigger than the log is already handled.** `[3, 8, 2]` with `n` at
+7 asks to start seven places from the end of a three-item list. Python moves
+the start to the beginning and gives you all three, so no `if` is needed.
+Indexing a single position works differently: `readings[-7]` on a three-item
+list raises an `IndexError`.
 
-**Now the one that catches everyone.** `-0` and `0` are the same number, so
-`readings[-0:]` is `readings[0:]`, which is the whole log. An empty screen
-would show every reading ever taken. Nothing in Python will warn you: the
-slice is legal, it just answers a different question. So `n == 0` is settled
-on its own rung, before any slicing happens, exactly like the divide-by-zero
-guard in Chapter 1.
+**When `n` is 0.** `-0` and `0` are the same number, so `readings[-0:]` is
+`readings[0:]`, the whole log. An empty screen would show every reading ever
+taken, with no error. So `n == 0` gets its own rung before any slicing, like
+the divide-by-zero guard in Chapter 1.
 
 **Why a slice and not the list itself.** Returning `readings` when `n` is
-larger than the log would pass every test that only checks the contents — and
-then the caretaker's next reading appears on a screen that was supposed to be
-a snapshot, because both names point at one list. The edge tier asks `is not`
-directly. The habit worth taking away: hand out a slice, keep the original.
+larger than the log would pass every test that only checks the contents. But
+then both names point at one list, and the caretaker's next reading would
+appear on a screen that was meant to be a snapshot. The edge tier checks
+`is not` directly. Return a slice and keep the original.
 
-**What it costs.** Copying `n` readings, whatever the log's length. That is
-why the perf tier, which calls this thousands of times against a log of
-200,000, does not notice it — while a solution that copies the whole log each
-time to get at its tail runs for seconds.
+**What it costs.** Copying `n` readings, whatever the log's length. The perf
+tier calls this thousands of times on a log of 200,000, and the slice keeps
+it fast. A solution that copies the whole log each time to get at its tail
+runs for seconds.
 :::

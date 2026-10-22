@@ -37,10 +37,10 @@ A corner shop's tills keep every basket that goes through them: the items, in
 the order they were scanned. A busy week is 200,000 baskets.
 
 The owner has one metre of shelf by the door and wants to know what to put on
-it. So: which exact basket goes through the tills most often?
+it. Which exact basket goes through the tills most often?
 
 Two baskets count as the same only if they hold the same items scanned in the
-same order. If two baskets tie, answer with the one that went through first.
+same order. If two baskets tie, return the one that went through first.
 :::
 
 :::io
@@ -52,10 +52,10 @@ output: the most frequent basket, as a list of item names
 - The log holds 0 to 200,000 baskets.
 - Each basket holds 0 to 8 items.
 - Each item name is 1 to 20 lower-case letters.
-- Ties go to whichever of them appeared first in the log.
-- An empty log has no most-frequent basket, so the answer is `[]`.
-- The baskets you were handed must come back unchanged.
-- At 200,000 baskets, counting one basket by searching the log for it is too
+- A tie goes to whichever basket appeared first in the log.
+- An empty log has no most frequent basket, so the answer is `[]`.
+- The baskets passed in must not be changed.
+- At 200,000 baskets, counting each basket by searching the log for it is too
   slow to pass.
 :::
 
@@ -69,34 +69,34 @@ output: the most frequent basket, as a list of item names
 :::
 
 :::figure{id="key-to-slot"}
-A basket is a list, and a list cannot be turned into a slot. Freeze it first.
+A basket is a list, and a list cannot be used as a dict key. Turn it into a
+tuple first.
 :::
 
 :::run{starter="starter.py"}
 :::
 
 :::hint{level=1}
-One pass over the log, counting as you go, exactly like counting names in
-Chapter 6. The only new problem is what to count *by*.
+Make one pass over the log and count as you go, as with counting names in
+Chapter 6. The new question is what to use as the key.
 :::
 
 :::hint{level=2}
-`counts[basket] = ...` raises `TypeError: unhashable type: 'list'`. A basket is
-a list, and a list can be edited after you file it, so Python will not let it
-be a key. `tuple(basket)` is the same items frozen: it hashes, and it compares
-equal to another tuple holding the same items in the same order.
+`counts[basket] = ...` raises `TypeError: unhashable type: 'list'`. A list can
+be changed after you store it, so Python does not allow it as a key.
+`tuple(basket)` holds the same items and cannot be changed. It hashes, and it
+is equal to another tuple with the same items in the same order.
 :::
 
 :::hint{level=3}
-The answer has to be a list, not a tuple, so convert back on the way out:
+The answer has to be a list, not a tuple, so convert it back at the end:
 `list(winner)`.
 :::
 
 :::hint{level=4}
-`max(counts, key=counts.get)` gives the key with the biggest count. Ties go to
-whichever the loop reaches first, and a dict is walked in the order keys were
-added — which is the order the baskets first appeared. That is the tie rule the
-statement asked for, for free.
+`max(counts, key=counts.get)` gives the key with the biggest count. On a tie
+it keeps the first key it reaches. A dict gives its keys in the order they
+were added, which is the order the baskets first appeared.
 :::
 
 :::solution
@@ -111,23 +111,21 @@ def most_common_basket(baskets):
     return list(max(counts, key=counts.get))
 ```
 
-**Why the tuple is not optional.** A dict finds a slot by hashing the key, and
-hashing has to give the same number every time or the entry is lost. A list can
-be appended to after you file it, so its contents — and any number worked out
-from them — can change behind the dict's back. Python refuses rather than let
-you build that bug. `tuple(basket)` copies the items into something that can
-never be edited, so the number stays put.
+**Why the key has to be a tuple.** A dict finds a key's slot by hashing it,
+and the hash must not change or the entry is lost. A list can be appended to
+after you store it, and its hash would change with it, so Python refuses list
+keys. `tuple(basket)` copies the items into something that cannot be changed.
 
-Note that this also copies. If the caller changes their basket afterwards, your
-count is unaffected, which is exactly right: you counted what went through the
-till, not what the list holds now.
+The tuple is also a copy. If the caller changes their basket afterwards, your
+count does not change. You counted what went through the till, not what the
+list holds now.
 
-**Why the tie rule needs no code.** A dict remembers the order keys were first
-inserted. `max` walks the keys in that order and keeps the first one that
-reaches the highest count, so a tie is settled by which basket appeared
-earliest. Writing an explicit tie-break here is three lines that do nothing.
+**Why the tie rule needs no code.** `max` walks the dict's keys in the order
+they were first added and keeps the first one with the highest count. So a tie
+goes to the basket that appeared earliest. An explicit tie-break would be
+three lines that do nothing.
 
-**The version that fails the clock.** This is the natural first draft:
+**The version that is too slow.** This is a natural first draft:
 
 ```python
 def most_common_basket(baskets):          # do not do this
@@ -139,15 +137,14 @@ def most_common_basket(baskets):          # do not do this
     return list(best)
 ```
 
-It is correct, and `baskets.count(basket)` walks the whole log once for every
-basket in it. 200,000 × 200,000 is 40 billion basket comparisons, and each
-comparison compares up to eight item names. Measured, it takes about fifteen
-minutes; the perf tier allows three seconds. The dict version reads each basket
-once — 200,000 steps, under three hundredths of a second.
+It is correct, but `baskets.count(basket)` walks the whole log for every
+basket in it. 200,000 × 200,000 is 40 billion basket comparisons, each of up
+to eight item names. Measured, it takes about fifteen minutes; the perf tier
+allows three seconds. The dict version reads each basket once: 200,000 steps,
+under three hundredths of a second.
 
-**Where the time actually went.** Both versions do the same *comparisons*; the
-difference is how many. Counting by searching asks "is this basket equal to
-that one" 40 billion times. Counting by hashing turns each basket into a number
-once and lets the number say where to look. That is the whole of Chapter 12
-applied to one line of code.
+**Where the time went.** Counting by searching asks "is this basket equal to
+that one" 40 billion times. Counting by hashing turns
+each basket into a number once, and the number says where to look. That is
+Chapter 12 applied to one line of code.
 :::

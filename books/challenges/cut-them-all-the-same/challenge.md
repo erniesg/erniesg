@@ -39,8 +39,8 @@ year of that is 200,000 pieces, none longer than 20 metres, in whatever order
 they arrived.
 
 An order comes in for 150,000 leads. The customer does not care how long they
-are, as long as every single one is the same length, and pays by the
-millimetre — so the longer the yard can cut them, the better the invoice.
+are, as long as every one is the same length. They pay by the millimetre, so
+the longer the yard can cut them, the more it earns.
 
 Each lead has to come out of one piece. You cannot join two ends together, and
 a part-lead is worth nothing: a 9,000 mm piece cut into 4,000 mm leads gives
@@ -58,7 +58,7 @@ output: the largest whole number `length` such that the pieces yield at least `w
 - The pile holds 0 to 200,000 pieces.
 - Each piece is a whole number of millimetres between 1 and 20,000.
 - `wanted` is a whole number between 1 and 1,000,000.
-- The pile is not sorted, and sorting it will not help you here.
+- The pile is not sorted, and sorting it will not help.
 - Lead lengths are whole millimetres.
 :::
 
@@ -72,9 +72,9 @@ output: the largest whole number `length` such that the pieces yield at least `w
 :::
 
 :::figure{id="halving-the-log"}
-The same narrowing, but what is being halved is not a list. It is every lead
-length from 1 mm to the longest piece — and the question asked at each step is
-one you have to write.
+The same halving, but what is being halved is not a list. It is every lead
+length from 1 mm to the longest piece. The question asked at each step is one
+you have to write.
 :::
 
 :::run{starter="starter.py"}
@@ -100,20 +100,18 @@ def longest_lead(pieces, wanted):
     return best
 ```
 
-**There is nothing to search.** The pile is unsorted, and sorting it tells you
-nothing about lead lengths. What you are searching is the range of possible
-answers: every whole length from 1 mm up to the longest piece on the pile.
-Nothing longer than that can yield even one lead, so `max(pieces)` is the top
-of the range.
+**What is being searched.** Sorting the pile tells you nothing about lead
+lengths. What you search is the range of possible answers: every whole length
+from 1 mm up to the longest piece. Nothing longer than that can yield even one
+lead, so `max(pieces)` is the top of the range.
 
 **The question you had to write.** For a given length, how many leads come
-off the pile? `piece // length` for each piece, added up. Floor division is
-the whole problem statement in one operator: it counts whole leads and throws
-the remainder away, which is exactly what "a part-lead is worth nothing"
-means. Use `/` instead and a pile of 900 mm ends will cheerfully report half a
-lead each.
+off the pile? `piece // length` for each piece, added up. Floor division
+counts whole leads and drops the remainder, because a part-lead is worth
+nothing. With `/` instead, a pile of 900 mm ends would report half a lead
+each.
 
-**Which way the answers run.** Write the column out for the first sample:
+**Which way the answers run.** Here is the column for the first sample:
 
 | length | leads | fills an order of 4? |
 |---|---|---|
@@ -122,39 +120,36 @@ lead each.
 | 1000 | 3 | no |
 | 2000 | 1 | no |
 
-Yes, yes, no, no — the opposite way round from the reading plan in the
-chapter, where the yeses were on the right. It has to be this way: making the
-leads longer can only ever give you fewer of them. So a yes means "try
-longer", which moves `low` up, and a no means "too long", which brings `high`
-down. Get those two swapped and the loop still runs, still finishes, and still
-returns a number — it just returns the shortest length that works, which is
-1 mm, and a 1 mm lead is not an invoice.
+The yeses come first. In the chapter's reading plan they were on the right.
+Here they must be on the left, because longer leads can only give you fewer of
+them. So a yes means "try longer", which moves `low` up. A no means "too
+long", which brings `high` down. If you swap those two, the loop still runs and still returns a number,
+but the wrong one. On the first sample it returns 0. When the first length it
+tries does fill the order, it returns 1 mm.
 
-**Why `best`.** A length that fills the order is not necessarily the longest
-one that does, so write it down before going looking for a better one. When
-the window closes, `best` holds the longest length that ever answered yes.
-Starting it at 0 also answers the impossible case for free: if even 1 mm
-cannot fill the order, nothing was ever written down and 0 comes back.
+**Why `best`.** A length that fills the order may not be the longest that
+does, so record it before looking for a better one. When the window closes,
+`best` holds the longest length that answered yes. Starting it at 0 also
+covers the impossible case. If even 1 mm cannot fill the order, nothing is
+ever recorded and 0 is returned.
 
 **The count.** There are 20,000 candidate lengths, so the halving asks the
 question fifteen times at most. Each ask is one pass over 200,000 pieces, so
-the whole thing is about 3 million steps — measured, under a tenth of a
-second.
+the whole thing is about 3 million steps. Measured, it takes under a tenth of
+a second.
 
-Try every length instead, 1 mm at a time, and you stop at the answer — which
-in the perf tier is 8,325. That is 8,325 passes over 200,000 pieces: 1.7
-billion steps, and it measures at around forty seconds. The naive version is
-not wrong. It is 600 times slower than the one above, and the tier gives it
-three seconds.
+You could instead try every length, 1 mm at a time, and stop at the answer. In
+the perf tier the answer is 8,325. That is 8,325 passes over 200,000 pieces:
+1.7 billion steps, and it measures at around forty seconds. It gives the right
+answer, but it is 600 times slower, and the tier allows three seconds.
 
-**The answer that looks obvious and is not.** `sum(pieces) // wanted` — the
-total length divided by the number of leads — ignores scrap. On the first
-sample it says 4,300 // 4 = 1,075 mm, and at 1,075 mm those three pieces
-yield 0 + 1 + 1 = 2 leads, not 4. You cannot average across pieces that get
-cut separately, and no amount of arithmetic will replace asking the question
-properly.
+**Dividing the total does not work.** `sum(pieces) // wanted` divides the
+total length by the number of leads, and ignores scrap. On the first sample it
+says 4,300 // 4 = 1,075 mm. At 1,075 mm those three pieces yield
+0 + 1 + 1 = 2 leads, not 4. Each piece is cut separately, so you cannot
+average across them.
 
 **The empty pile.** `max([])` raises `ValueError`, so the guard at the top is
-not decoration. Nothing on the pile means no leads at any length, and the
-order cannot be filled.
+needed. Nothing on the pile means no leads at any length, and the order cannot
+be filled.
 :::

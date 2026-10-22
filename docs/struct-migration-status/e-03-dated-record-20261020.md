@@ -4,7 +4,7 @@ Owner: `erniesg/erniesg` (E-03 IMPLEMENTATION owner for `erniesg/struct` app cut
 Branch: `feat/struct-e03-core-codecs-ids-order-20261020`
 Worktree: `/home/ubuntu/.local/state/struct-migration/20261020-continuation/worktrees/app-e03-candidate`
 Precondition: E-02 passed (`feat/struct-e03-core-codecs-ids-order-20261020` exists with commits).
-Guard state described by this record: `dee1f860` ("test(struct): close the seven E-03 boundary-guard findings").
+Guard state described by this record: `b3beed76` ("test(struct): close the six E-03 boundary-guard findings of round 6").
 **This record describes the tree as of that guard commit.** The record's own commit comes later on the same
 branch and changes only this document, so the guard state described here does not move with it; the record therefore
 names the guard commit, and never a branch tip, as the state it describes.
@@ -33,15 +33,17 @@ names the guard commit, and never a branch tip, as the state it describes.
 - `src/struct/codec*` local modules kept; no new production semantics added to retained copies.
 - `src/struct/sha256.ts`, `src/research/sha256-sync.ts`, `legacyStructDigest`, model-consultation modules, and `src/struct/recovery.ts` were not migrated (per "Not migrated" list).
 
-## Runtime recovery delegations and guard hardening (guard state at `dee1f860`)
+## Runtime recovery delegations and guard hardening (guard state at `b3beed76`, with the round-5 head `dee1f860` marked inline)
 
 This section records the E-03 scope that the restack added on top of the dated candidate measurement recorded below.
-It describes the guard state at the commit that last changed the guard, `dee1f860` ("test(struct): close the seven
-E-03 boundary-guard findings"), which is the state of `tests/struct-adapter-boundary.test.ts` in the
-reviewed tree. This record describes the tree **as of that guard commit**; it does not name a branch tip as the
-reviewed head, because the record's own commit moves that tip. The guard commits included in the reviewed tree are the
-nine listed under "Boundary-guard hardening" below, and each of them is an ancestor of the branch that carries this
-record.
+It describes the guard state at the commit that last changed the guard, `b3beed76` ("test(struct): close the six
+E-03 boundary-guard findings of round 6"), which is the state of `tests/struct-adapter-boundary.test.ts` in the
+reviewed tree; the guard runs of this section were measured in the round-6 worktree
+`/home/ubuntu/.local/state/struct-migration/20261020-continuation/worktrees/app-e03-guard-round6`. Bullets whose
+measurements were taken at the round-5 head `dee1f860` say so inline. This record describes the tree **as of that guard
+commit**; it does not name a branch tip as the reviewed head, because the record's own commit moves that tip. The guard
+commits included in the reviewed tree are the ten listed under "Boundary-guard hardening" below, and each of them is an
+ancestor of the branch that carries this record.
 
 - **Category delegation** - source unit `554ce8e2` ("fix(struct): make the package recovery category authoritative at
   runtime"), replayed onto this branch as `0aef7178`. `src/struct-adapters/recovery.ts` imports the package runtime
@@ -63,16 +65,17 @@ record.
   add the E-03 guard red-first cases"), `36916381` ("test(struct): close the E-03 boundary guard gaps"), `e9009551`
   ("test(struct): close the E-03 guard alias and MDX gaps"), `7907acff` ("test(struct): close the E-03 guard MDX, CommonJS,
   wrapper and render gaps"), `f6866e41` ("test(struct): close the E-03 guard MDX multiline and Vite glob gaps"),
-  `79c0d7c5` ("test(struct): resolve E-03 Vite glob patterns against the importing module") and `dee1f860` ("test(struct):
-  close the seven E-03 boundary-guard findings"). These nine are the guard commits included in the reviewed tree.
+  `79c0d7c5` ("test(struct): resolve E-03 Vite glob patterns against the importing module"), `dee1f860` ("test(struct):
+  close the seven E-03 boundary-guard findings") and `b3beed76` ("test(struct): close the six E-03 boundary-guard findings
+  of round 6"). These ten are the guard commits included in the reviewed tree.
   `tests/struct-adapter-boundary.test.ts` grows from 5 cases (386 lines) at the base `5f8c76ab`, to 7 cases (584 lines)
   at `fc73a970`, to 8 cases (689 lines) at `5974df05` (the same state the record commit `64e6774b` carries), to 11 cases
   (788 lines) at `a99a0f86`, to 13 cases (1053 lines) at `36916381` (the same state the record commit `64209924`
   carries), to 15 cases (1215 lines) at `e9009551`, to 19 cases (1607 lines) at `7907acff`, to 21 cases (2010 lines) at
   `f6866e41`, to 22 cases (2090 lines) at `79c0d7c5` (the same state the record commit `8411b8c5` carries), to 28 cases
-  (2615 lines) at `dee1f860`. Every count is `grep -c "^  it("` on the file at that commit and every line count is
-  `wc -l` on it.
-  **The complete reviewed set is closed - twenty-eight reviewed items.** The enumeration and the count are the same
+  (2615 lines) at `dee1f860`, to 34 cases (3035 lines) at `b3beed76`. Every count is `grep -c "^  it("` on the file at
+  that commit and every line count is `wc -l` on it.
+  **The complete reviewed set is closed - thirty-four reviewed items.** The enumeration and the count are the same
   thing, and each item names the commit that closed it:
   - The ten reviewed gaps of the first review of PR #454: (1) aliased local imports resolved before skipping -
     `fc73a970`; (2) package recovery-fact parity check importing `@erniesg/struct/recovery` - `fc73a970`; (3) project-root
@@ -100,7 +103,18 @@ record.
     path to the recovery authority is a violation for a module outside the retained tree - `dee1f860`; (27) a retained
     wrapper stored as a CommonJS TypeScript module is resolved - `dee1f860`; (28) the cutover plan's stale current-state
     recovery description is corrected - `dee1f860` (a document finding, not a guard gap).
-  Twenty-five of the twenty-eight are guard-behaviour items; the other three (items 8, 19 and 28) are documentation items.
+  - The six findings of round 6: (29) a CommonJS re-export form in a retained wrapper
+    (`module.exports = require('./types')` and the equivalent property form `exports.types = require(...)`) is traced,
+    so an external import of such a wrapper is reported - `b3beed76`; (30) an explicit extension on an imported retained
+    MDX wrapper is normalised before the wrapper traversal, so the chain is followed - `b3beed76`; (31) the retained
+    barrel is considered as a glob candidate of its own, so an eager glob over the retained tree is reported -
+    `b3beed76`; (32) an MDX ESM block that names no module is preserved for the AST scan, so a module-free declaration
+    is not silently dropped from the reduction, while a fenced or indented code sample is still not collected as a real
+    import - `b3beed76`; (33) an export declaration that aliases an imported binding is traced to the imported module,
+    in the named, exported-variable and default-export forms - `b3beed76`; (34) a worker URL's query suffix is
+    normalised before its target is resolved, so a worker entry spelled with Vite's `?worker` suffix is reported -
+    `b3beed76`.
+  Thirty-one of the thirty-four are guard-behaviour items; the other three (items 8, 19 and 28) are documentation items.
   The two
   (F14) assertions are in the file the plan names: the case
   "E-03: the production recovery module takes its category and actionable-recovery authority from the package"
@@ -108,7 +122,7 @@ record.
   `category:` field in the app copy table, and that the app facade delegates instead of deciding either fact. The two
   new focused files `tests/struct-recovery-category-authority.test.ts` and `tests/struct-recovery-actionable-authority.test.ts`
   pin the behaviour.
-- **Case inventory at `dee1f860`** - the 28 cases of `tests/struct-adapter-boundary.test.ts`, in file order:
+- **Case inventory at `b3beed76`** - the 34 cases of `tests/struct-adapter-boundary.test.ts`, in file order:
   "keeps one implementation and identity through the legacy and root exports"; "keeps one app-owned recovery
   implementation and legacy forwarding"; "keeps app recovery consumers on the app-owned path"; "keeps all implementation
   modules within their allowed import boundaries"; "rejects app reconstruction and private package imports in synthetic
@@ -127,9 +141,18 @@ record.
   alias Vite glob pattern before matching"; "E-03: follows an imported binding that a retained wrapper re-exports";
   "E-03: inspects a Vite worker entry module"; "E-03: inspects a local Astro script source"; "E-03: treats a transitive
   path to the recovery authority as a violation"; "E-03: resolves a retained wrapper stored as a CommonJS TypeScript
-  module".
-  The last four are the cases added at `7907acff`, the next two at `f6866e41`, the next one at `79c0d7c5`, and the last
-  six at `dee1f860`.
+  module"; "E-03: traces a CommonJS re-export from a retained wrapper"; "E-03: normalises an explicit MDX extension
+  before the wrapper traversal"; "E-03: treats the retained barrel as a Vite glob candidate"; "E-03: preserves a
+  module-free MDX ESM block for the AST scan"; "E-03: traces an exported alias of an imported binding"; "E-03:
+  normalises a worker URL query suffix before resolving the target".
+  The case-to-commit attribution, measured with `git show <commit> -- tests/struct-adapter-boundary.test.ts` and
+  matched against the file's case order: cases 16, 17, 19 and 22 were added at `7907acff`; cases 18 and 20 at
+  `f6866e41`; case 21 at `79c0d7c5`; cases 23 through 28 at `dee1f860`; cases 29 through 34 at `b3beed76`.
+  (Case indices are the 1-based positions in this inventory and correspond directly to the reviewed-gap indices above,
+  which share the case names. The older sentence that attributed the last four cases of the 28-case list to
+  `7907acff` was wrong and is corrected here; the measured attribution above is the true one - `7907acff` added the
+  EPUB-refusal case and three cases that sit earlier in the file than the `f6866e41` and `dee1f860` cases inserted
+  before them.)
 - **Plan status update** - `docs/superpowers/plans/2026-10-20-struct-full-cutover-sequence.md` carries the E-03
   "Status at this head" bullet (`:494-533` at `dee1f860`; it was `:479-518` at `79c0d7c5`), confined to the E-03 status
   bullet: it records that the two source units above discharge the (F14) production-delegation clause, and that the E-03
@@ -153,36 +176,44 @@ record.
   `tests/struct-adapter-mapped-annotation.test.ts`, `tests/struct-adapter-inline-links.test.ts`,
   `tests/struct-adapter-inline-binding.test.ts`): 9 files, 87 tests, 0 failures, exit 0. That review is not re-claimed
   for the guard state described in this section. No CI result is claimed.
-- **Guard measurements at `dee1f860`** - `npx vitest run tests/struct-adapter-boundary.test.ts --maxWorkers=1
-  --testTimeout=30000` reports 1 file, 28 tests, 28 passed, exit 0 (24.84 s), measured at the guard state described in
-  this section, in the worktree that carries this record. The two focused recovery-authority files
+- **Guard measurements at `b3beed76`** - `npx vitest run tests/struct-adapter-boundary.test.ts --maxWorkers=1
+  --testTimeout=30000` reports 1 file, 34 tests, 34 passed, exit 0 (25.03 s total: transform 2.08 s, import 3.10 s,
+  tests 21.60 s), measured at the guard state described in this section, in the round-6 worktree
+  `/home/ubuntu/.local/state/struct-migration/20261020-continuation/worktrees/app-e03-guard-round6`
+  (node 22.22.3, vitest 4.1.11, shared 4-CPU VM). The two focused recovery-authority files
   (`tests/struct-recovery-category-authority.test.ts`, `tests/struct-recovery-actionable-authority.test.ts`) were
-  measured at `79c0d7c5` (2 files, 11 tests, 11 passed, exit 0); they were NOT re-run at the guard state described in
-  this section, because this round's scope is the guard file alone, so that earlier measurement is NOT re-claimed here.
-  No other suite was run and no CI result is claimed.
-- **Known limits of the guard at `dee1f860` (recorded, NOT closed)** - five of the six P3 observations from the
-  independent review of the earlier head are still limits of the guard at this state, and this record does not claim that
-  any of them is closed. Each of the five was re-derived at this state with the guard's own functions, in a scratch copy
-  of the tree, and the measured result is quoted: (1) an MDX declaration whose `from` clause is separated from the import
-  clause by a comment line is not collected - the probe `import T` / `// a comment line` / `from '@/struct/types'` yields
+  measured at the same guard state (2 files, 11 tests, 11 passed, exit 0, 0.764 s). For continuity: the earlier
+  `dee1f860` frame of this section reported 1 file, 28 tests, 28 passed, exit 0 (24.84 s), and the recovery files were
+  then measured only at `79c0d7c5`. No other suite was run and no CI result is claimed.
+- **Known limits of the guard at `b3beed76` (recorded, NOT closed)** - five of the six P3 observations from the
+  independent review of the earlier head are still limits of the guard at this state, and this record does not claim
+  that any of them is closed. Each of the five was re-measured at `b3beed76` with the guard's own functions, on a
+  stripped copy of the round-6 guard file run against the real round-6 worktree tree, and the measured result is
+  quoted: (1) an MDX declaration whose `from` clause is separated from the import clause by a comment line is not
+  collected - the probe `import T` / `// a comment line` / `from '@/struct/types'` in the MDX frame yields
   `mdxEsmStatements` `""`, `importedPaths` `[]` and an empty violations list; (2) an MDX declaration whose continuation
-  line is indented by four spaces is not collected - the probe `import T` / `    from '@/struct/types'` yields
-  `importedPaths` `[]` and an empty violations list (an indented line *inside* a braced import is still collected, so the
-  limit is the indented continuation line, not the indentation itself); (3) a glob pattern with a character class
-  (`'../struct/[ct]odec.ts'`) is not matched - the probe yields `importedPaths` `[]`, an empty violations list and
-  `globMatchesAny` `false`, because `globToRegExp` escapes `[` and `]`; (4) a glob that carries the `base` option is
-  matched against the importing module's own directory rather than against `base` - the probe
-  `import.meta.glob('./struct/codec.ts', { eager: true, base: '/src' })` in a module of `src/research/` yields
-  `importedPaths` `[]`, an empty violations list and an empty `globFamilySpecifiers` list, although Vite would resolve
-  that pattern against `base` to `src/struct/codec.ts`; (5) `createRequire(import.meta.url)('./local')` contributes no
-  specifier - the probe yields `importedPaths` `[]` and an empty violations list, because the collector recognises only
-  the identifier `require` as the callee of a require call (the control `require('./local')` yields `["./local"]`).
-  The sixth observation - that a Vite worker entry (`new Worker(new URL('../struct/codec.ts', import.meta.url), { type:
-  'module' })`) contributes no specifier - **no longer holds at this state** and is therefore NOT listed as a limit of
-  the guard at this state: it was closed by `dee1f860`, which added the case "E-03: inspects a Vite worker entry module"
-  and the collection of the literal worker-entry target. The probe at this state measures `importedPaths`
-  `["../struct/codec.ts"]` and two violations for that worker entry, and the same probe is red against the parent
-  `8411b8c5` (see the red→green pair below). No limit is recorded here that was not measured at this state.
+  line is indented by four spaces is not collected - the probe `import T` / `    from '@/struct/types'` in the MDX
+  frame yields `mdxEsmStatements` `""`, `importedPaths` `[]` and an empty violations list (an indented line *inside*
+  a braced import is still collected, so the limit is the indented continuation line, not the indentation itself); (3)
+  a glob pattern with a character class (`'../struct/[ct]odec.ts'`) is not matched - the probe yields `importedPaths`
+  `[]`, an empty violations list and `globMatchesAny` `false`, because `globToRegExp` escapes `[` and `]`; (4) a glob
+  that carries the `base` option is matched against the importing module's own directory rather than against `base` -
+  the probe `import.meta.glob('./struct/codec.ts', { eager: true, base: '/src' })` in a module of `src/research/`
+  yields `importedPaths` `[]` and an empty violations list, although Vite would resolve that pattern against `base` to
+  `src/struct/codec.ts`; (5) `createRequire(import.meta.url)('./local')` contributes no specifier - the probe yields
+  `importedPaths` `[]` and an empty violations list, because the collector recognises only the identifier `require`
+  as the callee of a require call (the control `require('./local')` yields `["./local"]`).
+  All five of these re-measurements returned the same values the previous record recorded at `dee1f860`: none of the
+  six round-6 fixes lifts any of them, and each of the six round-6 findings is provably closed at this state instead -
+  the CommonJS wrapper re-export chain, the explicit MDX extension, the barrel as a glob candidate, the module-free
+  MDX ESM block, the exported alias form and the worker URL query suffix all report violations now (cases 29-34, red
+  against the base `394fba68`, green at `b3beed76`).
+  The sixth observation - that a worker entry (`new Worker(new URL('../struct/codec.ts', import.meta.url), { type:
+  'module' })`) contributes no specifier - **still no longer holds at this state**: it was closed by `dee1f860`, and
+  the round-6 case 34 extends the same coverage to the query-suffixed spelling
+  `new Worker(new URL('../struct/ids.ts?worker', import.meta.url), { type: 'module' })`, which now collects
+  `["../struct/ids.ts"]` and is reported, red against the base `394fba68` (see the red→green pair below). No limit is
+  recorded here that was not measured at this state.
 
 ## Static guard (red → green)
 - Added E-03 entry to `tests/struct-adapter-boundary.test.ts`.
@@ -216,6 +247,24 @@ record.
   implementation (1 file, 28 tests, 6 failed, 22 passed, exit 1) and PASS at `dee1f860` (1 file, 28 tests, 28 passed,
   exit 0). The red run is the parent implementation with the six new cases injected into it, and it was measured in a
   scratch copy of the tree, so the reviewed tree itself was not modified to produce it.
+- The hardening at `b3beed76` has its own red→green pair, measured against the base `394fba68` (the PR #454 head the
+  six round-6 findings were raised against): the six new guard cases (a CommonJS re-export from a retained wrapper
+  traced, an explicit MDX extension on an imported retained wrapper normalised before the wrapper traversal, the
+  retained barrel treated as a Vite glob candidate, a module-free MDX ESM block preserved for the AST scan, an
+  exported alias of an imported binding traced, and a worker URL query suffix normalised before the target is
+  resolved) FAIL against the `394fba68` implementation (1 file, 34 tests, 6 failed, 28 passed, exit 1) and PASS at
+  `b3beed76` (1 file, 34 tests, 34 passed, exit 0). The red run is the `394fba68` guard implementation with the six
+  new cases injected into it; the six case bodies in the red copy of `tests/struct-adapter-boundary.test.ts` are
+  byte-identical to the six case bodies at `b3beed76` (verified by diffing the two `describe(...)` blocks), and the
+  red run was measured in a scratch copy of the tree at `/tmp/opencode/app-e03-guard-round6` (node 22.22.3, vitest
+  4.1.11), so the reviewed tree itself was not modified to produce it. The six failing assertions at the red state
+  measure the before-state of each finding directly: the CommonJS wrapper import of `../struct/__e03_probe_legacy_cjs`
+  collects no violation; the retained tree warnings list for the same wrapper is empty even at the chain check;
+  `importedPaths` of the explicit-`.mdx` wrapper import collects nothing; the barrel glob
+  `import.meta.glob('../struct/index.ts', { eager: true })` collects no specifier at all; `mdxEsmStatements('export
+  const x = 1')` returns `""` instead of preserving the module-free declaration; the alias wrapper and the
+  default-alias wrapper collect no violation; and the query-suffixed worker URL keeps its suffix and collects
+  `['../struct/ids.ts?worker']` instead of `['../struct/ids.ts']`.
 
 ## Evidence tools (E-07 note)
 - Evidence tools (`tools/srt-source-output-evidence.mjs`, `tools/pdf-epub-package-scan.mjs`, `tools/pdf-corpus-audit-lib.mjs`, `tools/pdf-association-fixture-audit.mjs`, `tools/model-consultation-evidence.ts`) keep working because local modules remain.

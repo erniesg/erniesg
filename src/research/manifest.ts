@@ -249,7 +249,7 @@ const manifestEntrySchema = z
         source: z.string().min(1),
       })
       .strict(),
-    relationships: z.record(relationshipValueSchema),
+    relationships: z.record(z.string(), relationshipValueSchema),
     chosenVariant: z.string().min(1),
     paginationPolicy: nodePaginationPolicySchema,
     representation: representationSchema,

@@ -36,13 +36,14 @@ export type StructPackagePin = {
 }
 
 const packageJsonSchema = z
-  .object({ dependencies: z.record(z.string()) })
+  .object({ dependencies: z.record(z.string(), z.string()) })
   .passthrough()
 
 const packageLockSchema = z
   .object({
     packages: z
       .record(
+        z.string(),
         z
           .object({
             version: z.string().optional(),

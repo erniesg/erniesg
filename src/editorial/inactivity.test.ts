@@ -111,7 +111,7 @@ function projectOptions(): ts.CompilerOptions {
   if (config.error) {
     throw new Error(
       `the project's tsconfig cannot be read: ${ts.flattenDiagnosticMessageText(
-        config.error.message,
+        config.error.messageText,
         ' ',
       )}`,
     )

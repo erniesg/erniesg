@@ -1,0 +1,1423 @@
+{
+  "version": 1,
+  "sourceHead": "eda74c7f5605b5c190789092ef3d6fbcc174755f",
+  "zodVersion": "3.25.76",
+  "syntheticOnly": true,
+  "note": "Captured before migration; preserve results and undefined-key presence. Rejected issue wording is not snapshotted; API error/refusal tests remain required.",
+  "vectors": [
+    {
+      "id": "principalSchema-0",
+      "module": "src/worker/principal.ts",
+      "schema": "principalSchema",
+      "input": null,
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "principalSchema-1",
+      "module": "src/worker/principal.ts",
+      "schema": "principalSchema",
+      "input": false,
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "principalSchema-2",
+      "module": "src/worker/principal.ts",
+      "schema": "principalSchema",
+      "input": "",
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "principalSchema-3",
+      "module": "src/worker/principal.ts",
+      "schema": "principalSchema",
+      "input": [],
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "principalSchema-4",
+      "module": "src/worker/principal.ts",
+      "schema": "principalSchema",
+      "input": 1,
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "principalSchema-5",
+      "module": "src/worker/principal.ts",
+      "schema": "principalSchema",
+      "input": {},
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "principalSchema-6",
+      "module": "src/worker/principal.ts",
+      "schema": "principalSchema",
+      "input": {
+        "provider": "test",
+        "issuer": "urn:synthetic:issuer",
+        "subject": "test-user"
+      },
+      "expected": {
+        "success": true,
+        "data": {
+          "issuer": "urn:synthetic:issuer",
+          "provider": "test",
+          "subject": "test-user"
+        }
+      }
+    },
+    {
+      "id": "principalSchema-7",
+      "module": "src/worker/principal.ts",
+      "schema": "principalSchema",
+      "input": {
+        "provider": "test",
+        "issuer": "urn:synthetic:issuer",
+        "subject": "test-user",
+        "email": "synthetic@example.invalid"
+      },
+      "expected": {
+        "success": true,
+        "data": {
+          "email": "synthetic@example.invalid",
+          "issuer": "urn:synthetic:issuer",
+          "provider": "test",
+          "subject": "test-user"
+        }
+      }
+    },
+    {
+      "id": "principalSchema-8",
+      "module": "src/worker/principal.ts",
+      "schema": "principalSchema",
+      "input": {
+        "provider": "test",
+        "issuer": "urn:synthetic:issuer",
+        "subject": "test-user",
+        "role": "admin"
+      },
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "principalSchema-9",
+      "module": "src/worker/principal.ts",
+      "schema": "principalSchema",
+      "input": {
+        "provider": "",
+        "issuer": "test",
+        "subject": "test"
+      },
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "marginSessionSchema-0",
+      "module": "src/worker/margin/session.ts",
+      "schema": "marginSessionSchema",
+      "input": null,
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "marginSessionSchema-1",
+      "module": "src/worker/margin/session.ts",
+      "schema": "marginSessionSchema",
+      "input": false,
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "marginSessionSchema-2",
+      "module": "src/worker/margin/session.ts",
+      "schema": "marginSessionSchema",
+      "input": "",
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "marginSessionSchema-3",
+      "module": "src/worker/margin/session.ts",
+      "schema": "marginSessionSchema",
+      "input": [],
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "marginSessionSchema-4",
+      "module": "src/worker/margin/session.ts",
+      "schema": "marginSessionSchema",
+      "input": 1,
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "marginSessionSchema-5",
+      "module": "src/worker/margin/session.ts",
+      "schema": "marginSessionSchema",
+      "input": {},
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "marginSessionSchema-6",
+      "module": "src/worker/margin/session.ts",
+      "schema": "marginSessionSchema",
+      "input": {
+        "accessToken": "synthetic-token",
+        "expiresAt": 1800000000
+      },
+      "expected": {
+        "success": true,
+        "data": {
+          "accessToken": "synthetic-token",
+          "expiresAt": 1800000000
+        }
+      }
+    },
+    {
+      "id": "marginSessionSchema-7",
+      "module": "src/worker/margin/session.ts",
+      "schema": "marginSessionSchema",
+      "input": {
+        "accessToken": "synthetic-token",
+        "expiresAt": 1800000000,
+        "ceiling": 1800000200,
+        "refreshToken": "synthetic-refresh",
+        "email": "synthetic@example.invalid",
+        "emailVerified": true
+      },
+      "expected": {
+        "success": true,
+        "data": {
+          "accessToken": "synthetic-token",
+          "ceiling": 1800000200,
+          "email": "synthetic@example.invalid",
+          "emailVerified": true,
+          "expiresAt": 1800000000,
+          "refreshToken": "synthetic-refresh"
+        }
+      }
+    },
+    {
+      "id": "marginSessionSchema-8",
+      "module": "src/worker/margin/session.ts",
+      "schema": "marginSessionSchema",
+      "input": {
+        "accessToken": "x",
+        "expiresAt": 0
+      },
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "marginSessionSchema-9",
+      "module": "src/worker/margin/session.ts",
+      "schema": "marginSessionSchema",
+      "input": {
+        "accessToken": "x",
+        "expiresAt": 1800000000,
+        "emailVerified": false
+      },
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "marginSessionSchema-10",
+      "module": "src/worker/margin/session.ts",
+      "schema": "marginSessionSchema",
+      "input": {
+        "accessToken": "x",
+        "expiresAt": 1800000000,
+        "role": "admin"
+      },
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "loginStateSchema-0",
+      "module": "src/worker/margin/session.ts",
+      "schema": "loginStateSchema",
+      "input": null,
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "loginStateSchema-1",
+      "module": "src/worker/margin/session.ts",
+      "schema": "loginStateSchema",
+      "input": false,
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "loginStateSchema-2",
+      "module": "src/worker/margin/session.ts",
+      "schema": "loginStateSchema",
+      "input": "",
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "loginStateSchema-3",
+      "module": "src/worker/margin/session.ts",
+      "schema": "loginStateSchema",
+      "input": [],
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "loginStateSchema-4",
+      "module": "src/worker/margin/session.ts",
+      "schema": "loginStateSchema",
+      "input": 1,
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "loginStateSchema-5",
+      "module": "src/worker/margin/session.ts",
+      "schema": "loginStateSchema",
+      "input": {},
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "loginStateSchema-6",
+      "module": "src/worker/margin/session.ts",
+      "schema": "loginStateSchema",
+      "input": {
+        "state": "synthetic",
+        "returnTo": "/books/test/"
+      },
+      "expected": {
+        "success": true,
+        "data": {
+          "returnTo": "/books/test/",
+          "state": "synthetic"
+        }
+      }
+    },
+    {
+      "id": "loginStateSchema-7",
+      "module": "src/worker/margin/session.ts",
+      "schema": "loginStateSchema",
+      "input": {
+        "state": "synthetic",
+        "returnTo": "https://external.invalid/"
+      },
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "loginStateSchema-8",
+      "module": "src/worker/margin/session.ts",
+      "schema": "loginStateSchema",
+      "input": {
+        "state": "",
+        "returnTo": "/"
+      },
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "loginStateSchema-9",
+      "module": "src/worker/margin/session.ts",
+      "schema": "loginStateSchema",
+      "input": {
+        "state": "synthetic",
+        "returnTo": "/",
+        "injected": true
+      },
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "progressBodySchema-0",
+      "module": "src/worker/margin/progress.ts",
+      "schema": "progressBodySchema",
+      "input": null,
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "progressBodySchema-1",
+      "module": "src/worker/margin/progress.ts",
+      "schema": "progressBodySchema",
+      "input": false,
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "progressBodySchema-2",
+      "module": "src/worker/margin/progress.ts",
+      "schema": "progressBodySchema",
+      "input": "",
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "progressBodySchema-3",
+      "module": "src/worker/margin/progress.ts",
+      "schema": "progressBodySchema",
+      "input": [],
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "progressBodySchema-4",
+      "module": "src/worker/margin/progress.ts",
+      "schema": "progressBodySchema",
+      "input": 1,
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "progressBodySchema-5",
+      "module": "src/worker/margin/progress.ts",
+      "schema": "progressBodySchema",
+      "input": {},
+      "expected": {
+        "success": true,
+        "data": {
+          "drafts": {},
+          "solved": [],
+          "solvedAt": {}
+        }
+      }
+    },
+    {
+      "id": "progressBodySchema-6",
+      "module": "src/worker/margin/progress.ts",
+      "schema": "progressBodySchema",
+      "input": {
+        "solved": [
+          "node-1"
+        ],
+        "solvedAt": {
+          "node-1": "2026-10-01T00:00:00Z"
+        },
+        "drafts": {
+          "node-2": {
+            "code": "synthetic code",
+            "updatedAt": "2026-10-01T00:00:00Z"
+          }
+        }
+      },
+      "expected": {
+        "success": true,
+        "data": {
+          "drafts": {
+            "node-2": {
+              "code": "synthetic code",
+              "updatedAt": "2026-10-01T00:00:00Z"
+            }
+          },
+          "solved": [
+            "node-1"
+          ],
+          "solvedAt": {
+            "node-1": "2026-10-01T00:00:00Z"
+          }
+        }
+      }
+    },
+    {
+      "id": "progressBodySchema-7",
+      "module": "src/worker/margin/progress.ts",
+      "schema": "progressBodySchema",
+      "input": {
+        "solved": []
+      },
+      "expected": {
+        "success": true,
+        "data": {
+          "drafts": {},
+          "solved": [],
+          "solvedAt": {}
+        }
+      }
+    },
+    {
+      "id": "progressBodySchema-8",
+      "module": "src/worker/margin/progress.ts",
+      "schema": "progressBodySchema",
+      "input": {
+        "drafts": {
+          "BAD": {
+            "code": "x",
+            "updatedAt": "2026-10-01T00:00:00Z"
+          }
+        }
+      },
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "progressBodySchema-9",
+      "module": "src/worker/margin/progress.ts",
+      "schema": "progressBodySchema",
+      "input": {
+        "solvedAt": {
+          "x": "invalid"
+        }
+      },
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "progressBodySchema-10",
+      "module": "src/worker/margin/progress.ts",
+      "schema": "progressBodySchema",
+      "input": {
+        "unexpected": true
+      },
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "semanticTextAnchorSchema-0",
+      "module": "packages/margin/src/anchor.ts",
+      "schema": "semanticTextAnchorSchema",
+      "input": null,
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "semanticTextAnchorSchema-1",
+      "module": "packages/margin/src/anchor.ts",
+      "schema": "semanticTextAnchorSchema",
+      "input": false,
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "semanticTextAnchorSchema-2",
+      "module": "packages/margin/src/anchor.ts",
+      "schema": "semanticTextAnchorSchema",
+      "input": "",
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "semanticTextAnchorSchema-3",
+      "module": "packages/margin/src/anchor.ts",
+      "schema": "semanticTextAnchorSchema",
+      "input": [],
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "semanticTextAnchorSchema-4",
+      "module": "packages/margin/src/anchor.ts",
+      "schema": "semanticTextAnchorSchema",
+      "input": 1,
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "semanticTextAnchorSchema-5",
+      "module": "packages/margin/src/anchor.ts",
+      "schema": "semanticTextAnchorSchema",
+      "input": {},
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "semanticTextAnchorSchema-6",
+      "module": "packages/margin/src/anchor.ts",
+      "schema": "semanticTextAnchorSchema",
+      "input": {
+        "nodeId": "block-1",
+        "position": {
+          "start": 0,
+          "end": 5
+        },
+        "quote": {
+          "exact": "hello",
+          "prefix": "",
+          "suffix": ""
+        }
+      },
+      "expected": {
+        "success": true,
+        "data": {
+          "nodeId": "block-1",
+          "position": {
+            "end": 5,
+            "start": 0
+          },
+          "quote": {
+            "exact": "hello",
+            "prefix": "",
+            "suffix": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "semanticTextAnchorSchema-7",
+      "module": "packages/margin/src/anchor.ts",
+      "schema": "semanticTextAnchorSchema",
+      "input": {
+        "nodeId": "block-1",
+        "position": {
+          "start": 0,
+          "end": 5
+        },
+        "quote": {
+          "exact": "hello",
+          "prefix": "",
+          "suffix": ""
+        },
+        "struct": {
+          "id": "struct-block-1",
+          "digest": "synthetic-digest"
+        },
+        "positionUnit": "utf16"
+      },
+      "expected": {
+        "success": true,
+        "data": {
+          "nodeId": "block-1",
+          "position": {
+            "end": 5,
+            "start": 0
+          },
+          "positionUnit": "utf16",
+          "quote": {
+            "exact": "hello",
+            "prefix": "",
+            "suffix": ""
+          },
+          "struct": {
+            "digest": "synthetic-digest",
+            "id": "struct-block-1"
+          }
+        }
+      }
+    },
+    {
+      "id": "semanticTextAnchorSchema-8",
+      "module": "packages/margin/src/anchor.ts",
+      "schema": "semanticTextAnchorSchema",
+      "input": {
+        "nodeId": "emoji",
+        "position": {
+          "start": 0,
+          "end": 2
+        },
+        "quote": {
+          "exact": "😀",
+          "prefix": "",
+          "suffix": ""
+        }
+      },
+      "expected": {
+        "success": true,
+        "data": {
+          "nodeId": "emoji",
+          "position": {
+            "end": 2,
+            "start": 0
+          },
+          "quote": {
+            "exact": "😀",
+            "prefix": "",
+            "suffix": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "semanticTextAnchorSchema-9",
+      "module": "packages/margin/src/anchor.ts",
+      "schema": "semanticTextAnchorSchema",
+      "input": {
+        "nodeId": "emoji",
+        "positionUnit": "codepoint",
+        "position": {
+          "start": 0,
+          "end": 1
+        },
+        "quote": {
+          "exact": "😀",
+          "prefix": "",
+          "suffix": ""
+        }
+      },
+      "expected": {
+        "success": true,
+        "data": {
+          "nodeId": "emoji",
+          "position": {
+            "end": 1,
+            "start": 0
+          },
+          "positionUnit": "codepoint",
+          "quote": {
+            "exact": "😀",
+            "prefix": "",
+            "suffix": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "semanticTextAnchorSchema-10",
+      "module": "packages/margin/src/anchor.ts",
+      "schema": "semanticTextAnchorSchema",
+      "input": {
+        "nodeId": "block-1",
+        "position": {
+          "start": 0,
+          "end": 6
+        },
+        "quote": {
+          "exact": "hello",
+          "prefix": "",
+          "suffix": ""
+        }
+      },
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "semanticTextAnchorSchema-11",
+      "module": "packages/margin/src/anchor.ts",
+      "schema": "semanticTextAnchorSchema",
+      "input": {
+        "nodeId": "block-1",
+        "position": {
+          "start": 0,
+          "end": 5
+        },
+        "quote": {
+          "exact": "hello",
+          "prefix": "",
+          "suffix": ""
+        },
+        "unexpected": true
+      },
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "annotationBundleSchema-0",
+      "module": "src/annotations/annotation-bundle.ts",
+      "schema": "annotationBundleSchema",
+      "input": null,
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "annotationBundleSchema-1",
+      "module": "src/annotations/annotation-bundle.ts",
+      "schema": "annotationBundleSchema",
+      "input": false,
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "annotationBundleSchema-2",
+      "module": "src/annotations/annotation-bundle.ts",
+      "schema": "annotationBundleSchema",
+      "input": "",
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "annotationBundleSchema-3",
+      "module": "src/annotations/annotation-bundle.ts",
+      "schema": "annotationBundleSchema",
+      "input": [],
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "annotationBundleSchema-4",
+      "module": "src/annotations/annotation-bundle.ts",
+      "schema": "annotationBundleSchema",
+      "input": 1,
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "annotationBundleSchema-5",
+      "module": "src/annotations/annotation-bundle.ts",
+      "schema": "annotationBundleSchema",
+      "input": {},
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "annotationBundleSchema-6",
+      "module": "src/annotations/annotation-bundle.ts",
+      "schema": "annotationBundleSchema",
+      "input": {
+        "version": "1.0.0",
+        "graphId": "legacy-graph",
+        "anchors": [],
+        "annotations": []
+      },
+      "expected": {
+        "success": true,
+        "data": {
+          "anchors": [],
+          "annotations": [],
+          "graphId": "legacy-graph",
+          "version": "1.0.0"
+        }
+      }
+    },
+    {
+      "id": "annotationBundleSchema-7",
+      "module": "src/annotations/annotation-bundle.ts",
+      "schema": "annotationBundleSchema",
+      "input": {
+        "version": "1.0.0",
+        "graphId": "legacy-graph",
+        "anchors": [
+          {
+            "id": "anchor-1",
+            "anchor": {
+              "nodeId": "block-1",
+              "position": {
+                "start": 0,
+                "end": 5
+              },
+              "quote": {
+                "exact": "hello",
+                "prefix": "",
+                "suffix": ""
+              }
+            }
+          }
+        ],
+        "annotations": [
+          {
+            "id": "note-1",
+            "kind": "note",
+            "body": "Synthetic annotation",
+            "target": {
+              "nodeId": "block-1",
+              "position": {
+                "start": 0,
+                "end": 5
+              },
+              "quote": {
+                "exact": "hello",
+                "prefix": "",
+                "suffix": ""
+              }
+            },
+            "geometryCache": []
+          }
+        ]
+      },
+      "expected": {
+        "success": true,
+        "data": {
+          "anchors": [
+            {
+              "anchor": {
+                "nodeId": "block-1",
+                "position": {
+                  "end": 5,
+                  "start": 0
+                },
+                "quote": {
+                  "exact": "hello",
+                  "prefix": "",
+                  "suffix": ""
+                }
+              },
+              "id": "anchor-1"
+            }
+          ],
+          "annotations": [
+            {
+              "body": "Synthetic annotation",
+              "geometryCache": [],
+              "id": "note-1",
+              "kind": "note",
+              "target": {
+                "nodeId": "block-1",
+                "position": {
+                  "end": 5,
+                  "start": 0
+                },
+                "quote": {
+                  "exact": "hello",
+                  "prefix": "",
+                  "suffix": ""
+                }
+              }
+            }
+          ],
+          "graphId": "legacy-graph",
+          "version": "1.0.0"
+        }
+      }
+    },
+    {
+      "id": "annotationBundleSchema-8",
+      "module": "src/annotations/annotation-bundle.ts",
+      "schema": "annotationBundleSchema",
+      "input": {
+        "version": "1.1.0",
+        "graphId": "legacy-graph",
+        "anchors": [],
+        "annotations": []
+      },
+      "expected": {
+        "success": true,
+        "data": {
+          "anchors": [],
+          "annotations": [],
+          "graphId": "legacy-graph",
+          "version": "1.1.0"
+        }
+      }
+    },
+    {
+      "id": "annotationBundleSchema-9",
+      "module": "src/annotations/annotation-bundle.ts",
+      "schema": "annotationBundleSchema",
+      "input": {
+        "version": "1.1.0",
+        "graphId": "legacy-graph",
+        "anchors": [
+          {
+            "id": "anchor-1",
+            "anchor": {
+              "nodeId": "block-1",
+              "position": {
+                "start": 0,
+                "end": 5
+              },
+              "quote": {
+                "exact": "hello",
+                "prefix": "",
+                "suffix": ""
+              }
+            }
+          }
+        ],
+        "annotations": [
+          {
+            "id": "note-1",
+            "kind": "note",
+            "body": "Synthetic annotation",
+            "target": {
+              "nodeId": "block-1",
+              "position": {
+                "start": 0,
+                "end": 5
+              },
+              "quote": {
+                "exact": "hello",
+                "prefix": "",
+                "suffix": ""
+              }
+            },
+            "geometryCache": []
+          }
+        ]
+      },
+      "expected": {
+        "success": true,
+        "data": {
+          "anchors": [
+            {
+              "anchor": {
+                "nodeId": "block-1",
+                "position": {
+                  "end": 5,
+                  "start": 0
+                },
+                "quote": {
+                  "exact": "hello",
+                  "prefix": "",
+                  "suffix": ""
+                }
+              },
+              "id": "anchor-1"
+            }
+          ],
+          "annotations": [
+            {
+              "body": "Synthetic annotation",
+              "geometryCache": [],
+              "id": "note-1",
+              "kind": "note",
+              "target": {
+                "nodeId": "block-1",
+                "position": {
+                  "end": 5,
+                  "start": 0
+                },
+                "quote": {
+                  "exact": "hello",
+                  "prefix": "",
+                  "suffix": ""
+                }
+              }
+            }
+          ],
+          "graphId": "legacy-graph",
+          "version": "1.1.0"
+        }
+      }
+    },
+    {
+      "id": "annotationBundleSchema-10",
+      "module": "src/annotations/annotation-bundle.ts",
+      "schema": "annotationBundleSchema",
+      "input": {
+        "version": "1.2.0",
+        "sourceId": "struct-document-1",
+        "anchors": [
+          {
+            "id": "anchor-1",
+            "anchor": {
+              "nodeId": "block-1",
+              "position": {
+                "start": 0,
+                "end": 5
+              },
+              "quote": {
+                "exact": "hello",
+                "prefix": "",
+                "suffix": ""
+              }
+            }
+          }
+        ],
+        "annotations": [
+          {
+            "id": "note-1",
+            "kind": "note",
+            "body": "Synthetic annotation",
+            "target": {
+              "nodeId": "block-1",
+              "position": {
+                "start": 0,
+                "end": 5
+              },
+              "quote": {
+                "exact": "hello",
+                "prefix": "",
+                "suffix": ""
+              }
+            },
+            "geometryCache": []
+          }
+        ]
+      },
+      "expected": {
+        "success": true,
+        "data": {
+          "anchors": [
+            {
+              "anchor": {
+                "nodeId": "block-1",
+                "position": {
+                  "end": 5,
+                  "start": 0
+                },
+                "quote": {
+                  "exact": "hello",
+                  "prefix": "",
+                  "suffix": ""
+                }
+              },
+              "id": "anchor-1"
+            }
+          ],
+          "annotations": [
+            {
+              "body": "Synthetic annotation",
+              "geometryCache": [],
+              "id": "note-1",
+              "kind": "note",
+              "target": {
+                "nodeId": "block-1",
+                "position": {
+                  "end": 5,
+                  "start": 0
+                },
+                "quote": {
+                  "exact": "hello",
+                  "prefix": "",
+                  "suffix": ""
+                }
+              }
+            }
+          ],
+          "sourceId": "struct-document-1",
+          "version": "1.2.0"
+        }
+      }
+    },
+    {
+      "id": "annotationBundleSchema-11",
+      "module": "src/annotations/annotation-bundle.ts",
+      "schema": "annotationBundleSchema",
+      "input": {
+        "version": "1.2.0",
+        "graphId": "legacy-graph",
+        "anchors": [],
+        "annotations": []
+      },
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "annotationBundleSchema-12",
+      "module": "src/annotations/annotation-bundle.ts",
+      "schema": "annotationBundleSchema",
+      "input": {
+        "version": "1.0.0",
+        "sourceId": "wrong-authority",
+        "anchors": [],
+        "annotations": []
+      },
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "publicationInlineRunSchema-0",
+      "module": "src/publication/schema.ts",
+      "schema": "publicationInlineRunSchema",
+      "input": null,
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "publicationInlineRunSchema-1",
+      "module": "src/publication/schema.ts",
+      "schema": "publicationInlineRunSchema",
+      "input": false,
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "publicationInlineRunSchema-2",
+      "module": "src/publication/schema.ts",
+      "schema": "publicationInlineRunSchema",
+      "input": "",
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "publicationInlineRunSchema-3",
+      "module": "src/publication/schema.ts",
+      "schema": "publicationInlineRunSchema",
+      "input": [],
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "publicationInlineRunSchema-4",
+      "module": "src/publication/schema.ts",
+      "schema": "publicationInlineRunSchema",
+      "input": 1,
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "publicationInlineRunSchema-5",
+      "module": "src/publication/schema.ts",
+      "schema": "publicationInlineRunSchema",
+      "input": {},
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "publicationInlineRunSchema-6",
+      "module": "src/publication/schema.ts",
+      "schema": "publicationInlineRunSchema",
+      "input": {
+        "start": 0,
+        "end": 5
+      },
+      "expected": {
+        "success": true,
+        "data": {
+          "end": 5,
+          "start": 0
+        }
+      }
+    },
+    {
+      "id": "publicationInlineRunSchema-7",
+      "module": "src/publication/schema.ts",
+      "schema": "publicationInlineRunSchema",
+      "input": {
+        "start": 0,
+        "end": 5,
+        "inlineCode": true,
+        "href": "https://example.invalid/"
+      },
+      "expected": {
+        "success": true,
+        "data": {
+          "end": 5,
+          "href": "https://example.invalid/",
+          "inlineCode": true,
+          "start": 0
+        }
+      }
+    },
+    {
+      "id": "publicationInlineRunSchema-8",
+      "module": "src/publication/schema.ts",
+      "schema": "publicationInlineRunSchema",
+      "input": {
+        "start": 0,
+        "end": 5,
+        "href": "javascript:alert(1)"
+      },
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "publicationInlineRunSchema-9",
+      "module": "src/publication/schema.ts",
+      "schema": "publicationInlineRunSchema",
+      "input": {
+        "start": 0,
+        "end": 5,
+        "semanticRole": "citation",
+        "targetIds": [
+          "ref-1"
+        ]
+      },
+      "expected": {
+        "success": true,
+        "data": {
+          "end": 5,
+          "semanticRole": "citation",
+          "start": 0,
+          "targetIds": [
+            "ref-1"
+          ]
+        }
+      }
+    },
+    {
+      "id": "publicationInlineRunSchema-10",
+      "module": "src/publication/schema.ts",
+      "schema": "publicationInlineRunSchema",
+      "input": {
+        "start": -1,
+        "end": 2
+      },
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "editorialActorSchema-0",
+      "module": "src/editorial/records.ts",
+      "schema": "editorialActorSchema",
+      "input": null,
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "editorialActorSchema-1",
+      "module": "src/editorial/records.ts",
+      "schema": "editorialActorSchema",
+      "input": false,
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "editorialActorSchema-2",
+      "module": "src/editorial/records.ts",
+      "schema": "editorialActorSchema",
+      "input": "",
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "editorialActorSchema-3",
+      "module": "src/editorial/records.ts",
+      "schema": "editorialActorSchema",
+      "input": [],
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "editorialActorSchema-4",
+      "module": "src/editorial/records.ts",
+      "schema": "editorialActorSchema",
+      "input": 1,
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "editorialActorSchema-5",
+      "module": "src/editorial/records.ts",
+      "schema": "editorialActorSchema",
+      "input": {},
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "editorialActorSchema-6",
+      "module": "src/editorial/records.ts",
+      "schema": "editorialActorSchema",
+      "input": {
+        "kind": "editor",
+        "principal": "urn:margin:principal:synthetic",
+        "provider": "test",
+        "issuer": "urn:synthetic",
+        "subject": "user-1"
+      },
+      "expected": {
+        "success": true,
+        "data": {
+          "issuer": "urn:synthetic",
+          "kind": "editor",
+          "principal": "urn:margin:principal:synthetic",
+          "provider": "test",
+          "subject": "user-1"
+        }
+      }
+    },
+    {
+      "id": "editorialActorSchema-7",
+      "module": "src/editorial/records.ts",
+      "schema": "editorialActorSchema",
+      "input": {
+        "kind": "tool",
+        "toolId": "synthetic-tool",
+        "toolVersion": "1"
+      },
+      "expected": {
+        "success": true,
+        "data": {
+          "kind": "tool",
+          "toolId": "synthetic-tool",
+          "toolVersion": "1"
+        }
+      }
+    },
+    {
+      "id": "editorialActorSchema-8",
+      "module": "src/editorial/records.ts",
+      "schema": "editorialActorSchema",
+      "input": {
+        "kind": "producer",
+        "keyId": "synthetic-key",
+        "policyEpoch": 1
+      },
+      "expected": {
+        "success": true,
+        "data": {
+          "keyId": "synthetic-key",
+          "kind": "producer",
+          "policyEpoch": 1
+        }
+      }
+    },
+    {
+      "id": "editorialActorSchema-9",
+      "module": "src/editorial/records.ts",
+      "schema": "editorialActorSchema",
+      "input": {
+        "kind": "producer",
+        "keyId": "synthetic-key",
+        "policyEpoch": -1
+      },
+      "expected": {
+        "success": false
+      }
+    },
+    {
+      "id": "editorialActorSchema-10",
+      "module": "src/editorial/records.ts",
+      "schema": "editorialActorSchema",
+      "input": {
+        "kind": "tool",
+        "toolId": "synthetic-tool",
+        "toolVersion": "1",
+        "principal": "injected"
+      },
+      "expected": {
+        "success": false
+      }
+    }
+  ]
+}

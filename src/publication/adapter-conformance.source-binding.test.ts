@@ -141,7 +141,7 @@ describe('publication output receipt source binding', () => {
       {
         code: 'unrecognized_keys',
         path: [],
-        message: "Unrecognized key(s) in object: 'packageSha256'",
+        message: 'Unrecognized key: "packageSha256"',
       },
     ])
   })
@@ -156,7 +156,11 @@ describe('publication output receipt source binding', () => {
       'Publication output receipt is missing its shared contract',
     )
     expect(zodIssues(error)).toEqual([
-      { code: 'invalid_string', path: ['documentSha256'], message: 'Invalid' },
+      {
+        code: 'invalid_format',
+        path: ['documentSha256'],
+        message: 'Invalid string: must match pattern /^[a-f0-9]{64}$/',
+      },
     ])
   })
 
@@ -171,9 +175,9 @@ describe('publication output receipt source binding', () => {
     )
     expect(zodIssues(error)).toEqual([
       {
-        code: 'invalid_string',
+        code: 'invalid_format',
         path: ['packageSourceCommit'],
-        message: 'Invalid',
+        message: 'Invalid string: must match pattern /^[a-f0-9]{40}$/',
       },
     ])
   })

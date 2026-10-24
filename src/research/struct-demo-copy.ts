@@ -6,13 +6,12 @@ import type { SupportedLocale } from '../lib/i18n'
 
 const en = {
   remaining: (remaining: number, limit: number) =>
-    `${remaining} of ${limit} conversions remaining for this network today.`,
+    `${remaining}/${limit} today`,
   limit: 'The daily limit has been reached.',
   reset: (time: string) => ` Resets at ${time}.`,
   nextReset: ' Resets at the next UTC day.',
   samples: ' Preconverted samples still work.',
-  unavailable:
-    'Uploads are unavailable. Paper conversion is unavailable too. Preconverted samples still work; try checking availability again later.',
+  unavailable: 'Uploads are unavailable. Samples still work.',
   complete: 'Conversion complete. Your EPUB is ready.',
   noEpub:
     'Conversion finished, but no EPUB is available. Please try another PDF.',
@@ -42,14 +41,12 @@ type DemoCopy = typeof en
 const copy: Record<SupportedLocale, DemoCopy> = {
   en,
   zh: {
-    remaining: (remaining, limit) =>
-      `此网络今天还可转换 ${remaining} 次，每日限额为 ${limit} 次。`,
+    remaining: (remaining, limit) => `${remaining}/${limit}（今日）`,
     limit: '已达到每日限额。',
     reset: (time) => ` 将于 ${time} 重置。`,
     nextReset: ' 将于下一个 UTC 日重置。',
     samples: ' 已转换的示例仍可使用。',
-    unavailable:
-      '暂时无法上传或转换论文。已转换的示例仍可使用，请稍后重新检查服务是否可用。',
+    unavailable: '上传暂不可用。样本仍可浏览。',
     complete: '转换完成，EPUB 已准备好。',
     noEpub: '转换已结束，但没有可用的 EPUB。请尝试其他 PDF。',
     failed: '转换失败，请尝试其他 PDF。',
@@ -71,14 +68,12 @@ const copy: Record<SupportedLocale, DemoCopy> = {
     refresh: '检查上传服务是否可用',
   },
   ja: {
-    remaining: (remaining, limit) =>
-      `このネットワークでは本日あと ${remaining} 回変換できます（1日の上限は ${limit} 回）。`,
+    remaining: (remaining, limit) => `${remaining}/${limit}（今日）`,
     limit: '1日の上限に達しました。',
     reset: (time) => ` ${time} にリセットされます。`,
     nextReset: ' 次の UTC 日にリセットされます。',
     samples: ' 変換済みのサンプルは引き続き利用できます。',
-    unavailable:
-      'アップロードと論文の変換は現在利用できません。変換済みのサンプルは引き続き利用できます。後ほど利用状況を再確認してください。',
+    unavailable: 'アップロードは利用できません。サンプルは閲覧できます。',
     complete: '変換が完了しました。EPUB をダウンロードできます。',
     noEpub:
       '変換は終了しましたが、EPUB がありません。別の PDF をお試しください。',
@@ -105,14 +100,12 @@ const copy: Record<SupportedLocale, DemoCopy> = {
     refresh: 'アップロードの利用状況を確認',
   },
   ko: {
-    remaining: (remaining, limit) =>
-      `이 네트워크에서 오늘 ${remaining}회 더 변환할 수 있습니다(하루 한도 ${limit}회).`,
+    remaining: (remaining, limit) => `${remaining}/${limit} (오늘)`,
     limit: '하루 한도에 도달했습니다.',
     reset: (time) => ` ${time}에 초기화됩니다.`,
     nextReset: ' 다음 UTC 날짜에 초기화됩니다.',
     samples: ' 변환된 샘플은 계속 이용할 수 있습니다.',
-    unavailable:
-      '현재 업로드와 논문 변환을 이용할 수 없습니다. 변환된 샘플은 계속 이용할 수 있습니다. 나중에 이용 가능 여부를 다시 확인해 주세요.',
+    unavailable: '업로드를 사용할 수 없습니다. 샘플은 볼 수 있습니다.',
     complete: '변환이 완료되었습니다. EPUB을 다운로드할 수 있습니다.',
     noEpub: '변환은 끝났지만 EPUB이 없습니다. 다른 PDF를 시도해 주세요.',
     failed: '변환에 실패했습니다. 다른 PDF를 시도해 주세요.',

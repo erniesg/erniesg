@@ -41,6 +41,10 @@ import { describe, expect, it } from 'vitest'
  *   commit is the one that pins it and a commit cannot contain its own
  *   SHA.
  *
+ * `PUBLIC_SITE_HEAD` pins the existing public site integrated after those
+ * lanes. Route byte-identity uses that anchor; the E-05-only delta and writer
+ * checks retain their original anchors.
+ *
  * ## The E-04 allowance
  *
  * The proof does not assert that the branch changed nothing but the editorial
@@ -69,6 +73,7 @@ const E04_HEAD = '0e6a8bd2ac1a22a580e96ed58346093cd423ccd8'
 const E05_LANE_HEAD = '25570506b6020add5ed2610e62dfb8abacdf308f'
 const E05_CONTENT_HEAD = '6040e9ebde12cf3b494d51feb8ac0def09902bdb'
 const E05_HEAD = 'be195eddeb0abca11e127c67f812c6aaf3b267cc'
+const PUBLIC_SITE_HEAD = '840540f2139e95cbe54b8270e191f3adb4f3cb38'
 
 /**
  * The generated lockfile of the pnpm store, which `pnpm import` writes next
@@ -302,14 +307,15 @@ describe('the inactivity evidence', () => {
     }
   })
 
-  it('keeps the public route byte-identical to the commit it came from', () => {
+  it('keeps the public routes byte-identical to the existing site baseline', () => {
+    expect(isAncestor(PUBLIC_SITE_HEAD)).toBe(true)
     const routes = filesUnder(PAGES_DIRECTORY).filter((file) =>
       /\.(astro|ts|tsx|js|mjs)$/.test(file),
     )
     expect(routes.length).toBeGreaterThan(0)
     for (const file of routes) {
       const path = relative(PROJECT_ROOT, file).split(sep).join('/')
-      const atBase = fileAt(expectedRevision(path), path)
+      const atBase = fileAt(PUBLIC_SITE_HEAD, path)
       expect(Buffer.compare(atBase, readFileSync(file))).toBe(0)
       expect(e05Delta.has(path)).toBe(false)
     }
@@ -429,6 +435,7 @@ describe('the inactivity evidence', () => {
     // The margin runner reads `migrations/*.sql` and the margin test
     // harness applies every `migrations/*.sql` in filename order. The
     // editorial migrations are a *directory*, so neither of them sees them.
+    // The root runner also carries the existing public Struct demo migration.
     const marginMigrations = readdirSync(resolve(PROJECT_ROOT, 'migrations'))
       .filter((name) => name.endsWith('.sql'))
       .sort()
@@ -437,6 +444,7 @@ describe('the inactivity evidence', () => {
       '0002_margin_progress.sql',
       '0003_margin_proposals.sql',
       '0004_margin_idempotency_receipts.sql',
+      '0005_struct_demo.sql',
     ])
 
     const editorialMigrations = readdirSync(
